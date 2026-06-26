@@ -60,8 +60,8 @@ def prompt_choice(question: str, choices: List[str]) -> str:
             sys.exit(1)
 
 
-def prompt_input(prompt_text: str, default: str = None, validator=None) -> str:
-    """让用户输入值"""
+def prompt_input(prompt_text: str, default: str = None, validator=None, optional: bool = False) -> str:
+    """让用户输入值。optional=True 时允许留空（返回 ""）。"""
     if default:
         full_prompt = f"{prompt_text} [{default}]: "
     else:
@@ -74,6 +74,8 @@ def prompt_input(prompt_text: str, default: str = None, validator=None) -> str:
                 value = default
 
             if not value:
+                if optional:
+                    return ""
                 print("❌ 不能为空，请重新输入")
                 continue
 
@@ -137,9 +139,13 @@ def collect_env_vars(engine_class) -> Dict[str, str]:
             value = prompt_input(
                 var_spec.get('prompt', f"请输入 {name}"),
                 default=var_spec.get('default'),
-                validator=var_spec.get('validator')
+                validator=var_spec.get('validator'),
+                optional=var_spec.get('optional', False)
             )
 
+        # 可选项留空 → 不写入 .env，保持配置文件干净
+        if value == "" and var_spec.get('optional'):
+            continue
         env_vars[name] = value
 
     return env_vars

@@ -76,13 +76,13 @@ class EngineConfig:
 
     workspace_id 与 squad_id 的区别（以 multica 为例）：
     - workspace_id：顶层工作空间，定位"在哪个空间建 issue / 找成员"，来自 env/配置（与 multica CLI 的全局 --workspace-id / MULTICA_WORKSPACE_ID 对齐）
-    - squad_id：工作空间内的小队，派发与成员池都限定在该小队，来自 manifest 的 squad 字段
+    - squad_id：工作空间内的小队，派发与成员池都限定在该小队；manifest.squad 优先，未配置时可回退 MULTICA_SQUAD_ID
 
     github / mock 无小队概念时，squad_id 可与 workspace_id 同值或留空。
     """
     engine_type: str  # 'multica' | 'github' | 'mock'
     workspace_id: str  # multica: workspace_id（env）, github: owner/repo
-    squad_id: Optional[str] = None  # multica: 小队 id（manifest.squad）；其它引擎可空
+    squad_id: Optional[str] = None  # multica: 小队 id（manifest.squad 优先，env 可作默认值）；其它引擎可空
 
     # 轮询配置
     polling_interval: int = 30  # 默认 30 秒

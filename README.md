@@ -146,6 +146,46 @@ cp -R skills/parallel-dev-executor <your-agent-skills-dir>/
 .env 文件 < 进程环境变量 export < 命令行参数 --engine / --workspace
 ```
 
+各引擎前置准备：
+
+加载本 skill 的 Agent 自己装不全外部依赖（CLI 登录、平台 id、成员池都在用户侧）。
+**选定引擎后，按下表逐项引导用户完成**，每项缺失都会让真实编排卡住：
+
+### Mock —— 零前置，先验证机制
+- [ ] 无需任何外部依赖；`ENGINE_TYPE=mock` + 任意 `MOCK_WORKSPACE_ID` 即可。
+- [ ] 不连真实平台、不真派 Agent，仅验证 lint→frontier→派发→状态机链路。
+- 适用：第一次上手、CI、演示。**真实开发请切 github / multica。**
+
+### GitHub —— issue 即 GitHub Issue
+引导用户：
+- [ ] **登录 `gh` CLI 管认证**：`gh auth login`（token 由 gh 自己保管，**不写进配置/.env**）。
+- [ ] **确认目标仓库**：`GITHUB_REPO=owner/repo`，且账号对该仓有 **issue 读写权限**。
+- [ ] **worker/reviewer 名 = 仓库可 assign 的 GitHub 用户名**——manifest 里写的名字必须是该仓能被指派 issue 的协作者/成员，否则派发失败。
+- [ ] **确认集成分支存在**（manifest 的 `integration_branch`），PR 以它为 base。
+- 配置：`ENGINE_TYPE=github` + `GITHUB_REPO=...`（`.env` / `export` / `--workspace owner/repo` 任一）
+
+### Multica —— issue 即 Multica issue
+引导用户：
+- [ ] **登录 `multica` CLI 管认证**，确认 `multica` 在 PATH（认证存 `~/.multica`，**不写进配置/.env**）。
+- [ ] **拿 workspace id**：`multica workspace list` → 填 `MULTICA_WORKSPACE_ID`。
+- [ ] **拿 squad id**：`multica squad list`（或 `multica squad member list <squad-id>` 核对成员）。把它经 `setup.py` 填进 **`MULTICA_SQUAD_ID`（.env）**，作为默认派发小队——orchestrator 据此枚举成员、生成 manifest，无需先手编一个尚不存在的 manifest。各 manifest 的 `meta.squad` 为**可选覆盖**：写了则以 manifest 为准，没写就回退这个 env 默认值。
+- [ ] **在小队里给每个 Agent 配好角色**：`worker` / `reviewer` / `architect`（编排者据此挑选——把擅长后端的 worker、专职评审的 reviewer 放到对应卡）。
+- [ ] **确认成员池**：manifest 里每个 `worker:` / `reviewer:` 填的是 **agent 名**，且必须是该 squad 的真实成员；reviewer ≠ worker。
+
+> **关于「为什么 manifest 里是 agent 名而不是 role」**：引擎按**名字**在 squad 成员池里校验与派发（`multica squad member list` 取成员名）。role 是**编排者选人的依据**——你按角色挑出合适的 agent，再把它的**名字**写进 `worker`/`reviewer` 字段。所以「在平台上配好角色」与「manifest 里写名字」二者配合：角色帮你选对人，名字是实际派发句柄。
+
+- 配置：`ENGINE_TYPE=multica` + `MULTICA_WORKSPACE_ID=...`（`.env` / `export` / `--workspace <id>` 任一；`MULTICA_SQUAD_ID` 可选）
+
+### id 用环境变量驱动（不必手改文件）
+
+manifest 的字段支持 **`${ENV_VAR:-默认值}`** 展开。这样 squad / 仓库标识等 id 不必硬写进文件——
+用户设环境变量即可，未设则用默认值（mock 下开箱即跑）：
+
+```yaml
+meta:
+  squad: "${ORCH_SQUAD:-mock-workspace}"   # 真实运行：export ORCH_SQUAD=<你的squad>
+```
+
 配置入口：
 
 ```bash

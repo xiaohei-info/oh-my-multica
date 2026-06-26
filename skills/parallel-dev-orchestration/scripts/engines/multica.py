@@ -23,7 +23,9 @@ class MulticaEngine(CollaborationEngine):
         """Multica 引擎需要的环境变量
 
         workspace 走 env（顶层空间，定位在哪建 issue/找成员）；
-        小队 squad 由 manifest 的 squad 字段提供，不在此配置。
+        squad 走 env（可选）：manifest 未指定 squad 时回退到此值，使「clone → setup → run」
+        这条 onboarding 路径成立（manifest 由 orchestrator 自动生成，clone 时尚不存在）。
+        优先级见 run_dag.start_new_run：manifest.meta.squad 优先，缺失才回退 MULTICA_SQUAD_ID。
         """
         return [
             {
@@ -31,6 +33,14 @@ class MulticaEngine(CollaborationEngine):
                 'description': 'Multica 工作空间 ID',
                 'prompt': '请输入 multica workspace ID (可通过 `multica workspace list` 查看)',
                 'validator': lambda x: len(x) > 0
+            },
+            {
+                'name': 'MULTICA_SQUAD_ID',
+                'description': 'Multica 默认派发小队 ID（可选）',
+                'prompt': '请输入默认 squad ID (可通过 `multica squad list` 查看；可留空，'
+                          '由各 manifest 的 meta.squad 指定)',
+                'optional': True,
+                'validator': lambda x: True  # 可空：留空表示不设默认 squad
             }
         ]
 
