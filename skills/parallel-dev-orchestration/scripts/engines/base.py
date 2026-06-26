@@ -6,7 +6,7 @@ CollaborationEngine 抽象接口 — manifest 驱动，纯业务语义
 知道如何根据当前引擎的平台特性来实现。
 """
 from abc import ABC, abstractmethod
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from .models import WorkspaceInfo, WorkItem, WorkItemStatus, EngineConfig
 
 
@@ -180,9 +180,11 @@ class CollaborationEngine(ABC):
         worker: Optional[str] = None,
         reviewer: Optional[str] = None,
         blocked_by: Optional[List[str]] = None,
-        artifacts: Optional[Dict[str, str]] = None,
+        artifacts: Optional[Dict[str, Any]] = None,
         review_verdict: Optional[str] = None,
-        review_comment: Optional[str] = None
+        review_comment: Optional[str] = None,
+        verification: Optional[Dict[str, Any]] = None,
+        review_report: Optional[Dict[str, Any]] = None
     ) -> WorkItem:
         """更新工作单元的业务元数据（不改 status）。
 

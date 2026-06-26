@@ -2,7 +2,9 @@
 Multica 引擎实现
 """
 import json
+import os
 import subprocess
+import tempfile
 from typing import List, Dict, Any, Optional
 from .base import CollaborationEngine
 from .models import WorkspaceInfo, WorkItem, WorkItemStatus, EngineConfig
@@ -76,6 +78,18 @@ class MulticaEngine(CollaborationEngine):
                 return result.stdout.strip()
         return None
 
+    def _run_multica_with_text_file(self, args: List[str], flag: str, content: str, capture=True) -> Any:
+        fd, path = tempfile.mkstemp(prefix="parallel-dev-", suffix=".md", text=True)
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write(content or "")
+            return self._run_multica(args + [flag, path], capture=capture)
+        finally:
+            try:
+                os.unlink(path)
+            except FileNotFoundError:
+                pass
+
     def _status_to_multica(self, status: WorkItemStatus) -> str:
         """将业务状态转换为 multica status"""
         mapping = {
@@ -101,6 +115,16 @@ class MulticaEngine(CollaborationEngine):
         }
         return mapping.get(multica_status, WorkItemStatus.TODO)
 
+    @staticmethod
+    def _json_metadata(metadata: Dict, key: str):
+        value = metadata.get(key)
+        if isinstance(value, str):
+            try:
+                return json.loads(value)
+            except Exception:
+                return {"raw": value} if value else None
+        return value
+
     def _issue_to_work_item(self, issue_data: Dict, workspace_id: str) -> WorkItem:
         """将 multica issue 转换为 WorkItem"""
         metadata = issue_data.get('metadata', {})
@@ -113,13 +137,9 @@ class MulticaEngine(CollaborationEngine):
             except:
                 blocked_by = []
 
-        # 解析 artifacts
-        artifacts = metadata.get('artifacts')
-        if isinstance(artifacts, str):
-            try:
-                artifacts = json.loads(artifacts)
-            except:
-                artifacts = {"raw": artifacts} if artifacts else None
+        artifacts = self._json_metadata(metadata, 'artifacts')
+        verification = self._json_metadata(metadata, 'verification')
+        review_report = self._json_metadata(metadata, 'review_report')
 
         # 解析 wave
         wave = metadata.get('wave')
@@ -141,8 +161,10 @@ class MulticaEngine(CollaborationEngine):
             blocked_by=blocked_by if isinstance(blocked_by, list) else [],
             wave=wave,
             artifacts=artifacts,
+            verification=verification,
             review_verdict=metadata.get('review_verdict'),
-            review_comment=metadata.get('review_comment')
+            review_comment=metadata.get('review_comment'),
+            review_report=review_report
         )
 
     def _resolve_agent_id(self, agent_name: str) -> str:
@@ -222,13 +244,12 @@ class MulticaEngine(CollaborationEngine):
         """创建工作单元"""
         # 1. 创建 issue
         multica_status = self._status_to_multica(initial_status)
-        result = self._run_multica([
+        result = self._run_multica_with_text_file([
             "issue", "create",
             "--title", f"[DAG:{dag_key}] {title}",
-            "--description", description,
             "--status", multica_status,
             "--output", "json"
-        ])
+        ], "--description-file", description)
 
         if not isinstance(result, dict) or 'id' not in result:
             raise RuntimeError(f"创建 issue 失败: {result}")
@@ -292,9 +313,11 @@ class MulticaEngine(CollaborationEngine):
         worker: Optional[str] = None,
         reviewer: Optional[str] = None,
         blocked_by: Optional[List[str]] = None,
-        artifacts: Optional[Dict[str, str]] = None,
+        artifacts: Optional[Dict[str, Any]] = None,
         review_verdict: Optional[str] = None,
-        review_comment: Optional[str] = None
+        review_comment: Optional[str] = None,
+        verification: Optional[Dict[str, Any]] = None,
+        review_report: Optional[Dict[str, Any]] = None
     ) -> WorkItem:
         """更新工作单元的元数据"""
         if worker is not None:
@@ -339,6 +362,20 @@ class MulticaEngine(CollaborationEngine):
                 "--value", review_comment
             ], capture=False)
 
+        if verification is not None:
+            self._run_multica([
+                "issue", "metadata", "set", item_id,
+                "--key", "verification",
+                "--value", json.dumps(verification)
+            ], capture=False)
+
+        if review_report is not None:
+            self._run_multica([
+                "issue", "metadata", "set", item_id,
+                "--key", "review_report",
+                "--value", json.dumps(review_report)
+            ], capture=False)
+
         return self.get_work_item(item_id)
 
     def list_work_items(
@@ -374,10 +411,9 @@ class MulticaEngine(CollaborationEngine):
 
     def add_comment(self, item_id: str, comment: str):
         """添加评论"""
-        self._run_multica([
-            "issue", "comment", "add", item_id,
-            "--content", comment
-        ], capture=False)
+        self._run_multica_with_text_file([
+            "issue", "comment", "add", item_id
+        ], "--content-file", comment, capture=False)
 
     # ==================== 第三组：状态和分配 ====================
 

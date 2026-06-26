@@ -32,6 +32,20 @@ def test_roundtrip_preserves_all_fields(tmp_path):
         "    risk: high\n"
         "    gate:\n"
         "      min_reviews: 1\n"
+        "    contract:\n"
+        "      objective: Implement frontend task\n"
+        "      source_of_truth:\n"
+        "        - docs/design.md#frontend\n"
+        "      required_contracts:\n"
+        "        - skills/parallel-dev-orchestration/scripts/tests/test_manifest_roundtrip.py\n"
+        "      acceptance:\n"
+        "        - UI renders API result\n"
+        "      non_goals:\n"
+        "        - Do not rewrite backend\n"
+        "      verification_commands:\n"
+        "        - pytest tests/frontend\n"
+        "      pr_base: feature/v1\n"
+        "      coverage_gate: 91\n"
         "    work_item_id: '42'\n"
         "    status: done\n"
     )
@@ -47,6 +61,9 @@ def test_roundtrip_preserves_all_fields(tmp_path):
     assert m.nodes["M1"].reviewer == "agent-rev"
     assert m.nodes["M1"].risk == "high"
     assert m.nodes["M1"].gate == {"min_reviews": 1}
+    assert m.nodes["M1"].contract.objective == "Implement frontend task"
+    assert m.nodes["M1"].contract.required_contracts == ["skills/parallel-dev-orchestration/scripts/tests/test_manifest_roundtrip.py"]
+    assert m.nodes["M1"].contract.coverage_gate == 91
     assert m.nodes["M1"].work_item_id == "42"
     assert m.nodes["M1"].status == "done"
 
@@ -64,6 +81,13 @@ def test_roundtrip_preserves_all_fields(tmp_path):
     assert m2.nodes["M1"].reviewer == "agent-rev"
     assert m2.nodes["M1"].risk == "high"
     assert m2.nodes["M1"].gate == {"min_reviews": 1}
+    assert m2.nodes["M1"].contract.objective == "Implement frontend task"
+    assert m2.nodes["M1"].contract.source_of_truth == ["docs/design.md#frontend"]
+    assert m2.nodes["M1"].contract.acceptance == ["UI renders API result"]
+    assert m2.nodes["M1"].contract.non_goals == ["Do not rewrite backend"]
+    assert m2.nodes["M1"].contract.verification_commands == ["pytest tests/frontend"]
+    assert m2.nodes["M1"].contract.pr_base == "feature/v1"
+    assert m2.nodes["M1"].contract.coverage_gate == 91
     assert m2.nodes["M1"].work_item_id == "42"
     assert m2.nodes["M1"].status == "done"
 

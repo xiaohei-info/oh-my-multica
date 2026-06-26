@@ -31,6 +31,52 @@ def _expand_env(value):
     return value
 
 @dataclass
+class Contract:
+    objective: str | None = None
+    source_of_truth: list = field(default_factory=list)
+    required_contracts: list = field(default_factory=list)
+    acceptance: list = field(default_factory=list)
+    non_goals: list = field(default_factory=list)
+    verification_commands: list = field(default_factory=list)
+    pr_base: str | None = None
+    coverage_gate: int | float = 90
+
+
+def _load_contract(raw):
+    if raw is None:
+        return None
+    return Contract(
+        objective=raw.get("objective"),
+        source_of_truth=list(raw.get("source_of_truth", [])),
+        required_contracts=list(raw.get("required_contracts", [])),
+        acceptance=list(raw.get("acceptance", [])),
+        non_goals=list(raw.get("non_goals", [])),
+        verification_commands=list(raw.get("verification_commands", [])),
+        pr_base=raw.get("pr_base"),
+        coverage_gate=raw.get("coverage_gate", 90),
+    )
+
+
+def _dump_contract(contract):
+    if contract is None:
+        return None
+    data = {
+        "objective": contract.objective,
+        "acceptance": list(contract.acceptance),
+        "non_goals": list(contract.non_goals),
+        "verification_commands": list(contract.verification_commands),
+        "pr_base": contract.pr_base,
+    }
+    if contract.source_of_truth:
+        data["source_of_truth"] = list(contract.source_of_truth)
+    if contract.required_contracts:
+        data["required_contracts"] = list(contract.required_contracts)
+    if contract.coverage_gate != 90:
+        data["coverage_gate"] = contract.coverage_gate
+    return data
+
+
+@dataclass
 class Node:
     id: str
     worker: str
@@ -40,8 +86,13 @@ class Node:
     reviewer: str | None = None
     risk: str | None = None
     gate: dict | None = None
+    contract: Contract | None = None
     work_item_id: str | None = None   # 平台返回的 work item id（Phase 2 回填）
     status: str = "todo"           # manifest 携带的节点状态
+
+    def __post_init__(self):
+        if isinstance(self.contract, dict):
+            self.contract = _load_contract(self.contract)
 
 @dataclass
 class Manifest:
@@ -66,6 +117,7 @@ def load_manifest(path: str) -> Manifest:
             reviewer=n.get("reviewer"),
             risk=n.get("risk"),
             gate=n.get("gate"),
+            contract=_load_contract(n.get("contract")),
             work_item_id=n.get("work_item_id"),
             status=n.get("status", "todo"),
         )
@@ -96,6 +148,8 @@ def save_manifest(manifest: Manifest, path: str):
             node["risk"] = n.risk
         if n.gate is not None:
             node["gate"] = n.gate
+        if n.contract is not None:
+            node["contract"] = _dump_contract(n.contract)
         node_list.append(node)
 
     data = {"meta": manifest.meta, "nodes": node_list}

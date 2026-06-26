@@ -46,3 +46,33 @@ def test_missing_required_worker_raises(tmp_path):
     p.write_text("meta: {squad: x}\nnodes:\n  - id: M0\n    blocked_by: []\n")
     with pytest.raises(ValueError, match="worker"):
         load_manifest(str(p))
+
+
+def test_load_contract_defaults_coverage_gate(tmp_path):
+    p = tmp_path / "m.yaml"
+    p.write_text(
+        "meta:\n  squad: dev team\n"
+        "nodes:\n"
+        "  - id: M0\n"
+        "    worker: agent-be\n"
+        "    contract:\n"
+        "      objective: Implement user API\n"
+        "      acceptance:\n"
+        "        - GET /users/:id returns 200\n"
+        "      non_goals:\n"
+        "        - Do not modify auth flow\n"
+        "      verification_commands:\n"
+        "        - pytest tests/user_api\n"
+        "      pr_base: feature/v1\n"
+    )
+    m = load_manifest(str(p))
+
+    contract = m.nodes["M0"].contract
+    assert contract.objective == "Implement user API"
+    assert contract.acceptance == ["GET /users/:id returns 200"]
+    assert contract.non_goals == ["Do not modify auth flow"]
+    assert contract.verification_commands == ["pytest tests/user_api"]
+    assert contract.pr_base == "feature/v1"
+    assert contract.coverage_gate == 90
+    assert contract.source_of_truth == []
+    assert contract.required_contracts == []

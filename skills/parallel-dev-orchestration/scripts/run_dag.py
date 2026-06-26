@@ -17,6 +17,7 @@ from typing import Set
 sys.path.insert(0, str(Path(__file__).parent))
 
 from core import load_manifest, save_manifest, set_node, lint, frontier, downstream_of
+from core.evidence import validate_worker_evidence, validate_review_evidence
 from utils import commit_manifest, git_sync_enabled
 
 from engines import (
@@ -98,22 +99,20 @@ def _harvest(
         # ---- in_progress: worker 完成 -> done 或 reviewer 过渡 ----
         if node.status == "in_progress":
             if item.status == WorkItemStatus.DONE:
-                has_pr = (item.artifacts and
-                          ("pr" in item.artifacts or "PR" in str(item.artifacts)))
                 reviewer = getattr(node, "reviewer", None)
-                if has_pr:
-                    if reviewer:
-                        print(f"  harvest: {key} worker done，过渡到 reviewer {reviewer}")
-                        pending_review.append((key, node.work_item_id, reviewer))
-                    else:
-                        print(f"  harvest: {key} -> done")
-                        set_node(manifest, key, status="done")
-                        completed.add(key)
-                else:
-                    print(f"  harvest: {key} worker done 但缺 PR 产物 -> blocked")
+                gate_errors = validate_worker_evidence(node, item)
+                if gate_errors:
+                    print(f"  harvest: {key} worker evidence gate failed -> blocked: {'; '.join(gate_errors)}")
                     engine.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
                     set_node(manifest, key, status="blocked")
                     failed.add(key)
+                elif reviewer:
+                    print(f"  harvest: {key} worker done，过渡到 reviewer {reviewer}")
+                    pending_review.append((key, node.work_item_id, reviewer))
+                else:
+                    print(f"  harvest: {key} -> done")
+                    set_node(manifest, key, status="done")
+                    completed.add(key)
                 changed = True
             elif item.status == WorkItemStatus.FAILED:
                 print(f"  harvest: {key} worker failed -> blocked")
@@ -132,13 +131,14 @@ def _harvest(
             verdict = item.review_verdict
             if not verdict:
                 continue
-            if verdict in REVIEW_APPROVE:
+            gate_errors = validate_review_evidence(node, item)
+            if not gate_errors:
                 print(f"  harvest: {key} reviewer approved -> done")
                 engine.update_status(node.work_item_id, WorkItemStatus.DONE)
                 set_node(manifest, key, status="done")
                 completed.add(key)
             else:
-                print(f"  harvest: {key} reviewer rejected ({verdict}) -> blocked")
+                print(f"  harvest: {key} reviewer evidence gate failed ({verdict}) -> blocked: {'; '.join(gate_errors)}")
                 engine.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
                 set_node(manifest, key, status="blocked")
                 failed.add(key)
@@ -270,6 +270,8 @@ def execute_dag(
                     reviewer=getattr(node, "reviewer", None),
                     blocked_by=node.blocked_by,
                 )
+                if hasattr(engine, "set_node_contract") and getattr(node, "contract", None) is not None:
+                    engine.set_node_contract(item.id, node.contract)
                 set_node(manifest, key, work_item_id=item.id)
                 print(f"  建 work item {item.id} for {key}")
 

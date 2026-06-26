@@ -43,13 +43,15 @@ class WorkItem:
     wave: Optional[int] = None
 
     # 执行产物（由 worker 写入）
-    artifacts: Optional[Dict[str, str]] = None
-    # 例如: {"pr": "https://github.com/owner/repo/pull/123", "commit": "abc123"}
+    artifacts: Optional[Dict[str, Any]] = None
+    # 例如: {"pr_url": "https://github.com/owner/repo/pull/123", "commit": "abc123"}
+    verification: Optional[Dict[str, Any]] = None
 
     # 审核信息（由 reviewer 写入）
     review_verdict: Optional[str] = None
     # 可能的值: "pass" | "pass-with-nits" | "blocked" | "needs-changes"
     review_comment: Optional[str] = None
+    review_report: Optional[Dict[str, Any]] = None
 
     def is_completed(self) -> bool:
         """是否已完成"""
@@ -74,13 +76,13 @@ class EngineConfig:
 
     workspace_id 与 squad_id 的区别（以 multica 为例）：
     - workspace_id：顶层工作空间，定位"在哪个空间建 issue / 找成员"，来自 env/配置（与 multica CLI 的全局 --workspace-id / MULTICA_WORKSPACE_ID 对齐）
-    - squad_id：工作空间内的小队，派发与成员池都限定在该小队，来自 manifest 的 squad 字段
+    - squad_id：工作空间内的小队，派发与成员池都限定在该小队；manifest.squad 优先，未配置时可回退 MULTICA_SQUAD_ID
 
     github / mock 无小队概念时，squad_id 可与 workspace_id 同值或留空。
     """
     engine_type: str  # 'multica' | 'github' | 'mock'
     workspace_id: str  # multica: workspace_id（env）, github: owner/repo
-    squad_id: Optional[str] = None  # multica: 小队 id（manifest.squad）；其它引擎可空
+    squad_id: Optional[str] = None  # multica: 小队 id（manifest.squad 优先，env 可作默认值）；其它引擎可空
 
     # 轮询配置
     polling_interval: int = 30  # 默认 30 秒

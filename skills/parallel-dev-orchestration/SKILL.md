@@ -338,9 +338,39 @@ user-api
 - `nodes.<key>.worker`: worker agent 名(必须∈小队成员池)
 - `nodes.<key>.reviewer`: reviewer agent 名(可选,非空时必须≠worker)
 - `nodes.<key>.depends_on`: 依赖节点 key 列表(空 = Wave 0 可立即开始)
-- `nodes.<key>.gate`: 自定义验收条件(可选,默认="测试全绿 + 本卡改动分支覆盖 ≥ 90%")。**改动分支覆盖(diff branch coverage)是硬门槛**:只卡本卡改动的分支、不卡整仓总分;reviewer 独立复跑 `diff-cover` 判决,CI 也设同口径闸门(见「质量门禁」)。要升/降阈值就在 gate 文本写明(如 `"...覆盖 ≥ 80%(glue 代码,理由:...)"`）
+- `nodes.<key>.gate`: 旧版自由文本验收条件(可选)。新 manifest 优先使用 `contract`，让 lint/harvest 能机器判定。
+- `nodes.<key>.contract`: 新版硬合同(推荐)。声明目标、验收、非目标、验证命令、PR base、覆盖率门槛。旧节点没有 `contract` 时按 legacy 规则运行；声明后必须通过结构化证据门禁。
 
 **环境变量展开**:manifest 任意字段值支持 `${VAR}` 与 `${VAR:-默认值}`，加载时用环境变量替换。用于把 squad / 仓库标识等 id **从文件里挪到环境变量**——团队/CI/他人克隆后设环境变量即可，不必手改 manifest；未设且无默认值则保留原样（一眼看出"未配"）。例：`squad: "${MULTICA_TEST_SQUAD:-mock-squad}"`。
+
+**contract 示例**:
+```yaml
+nodes:
+  - id: user-api
+    worker: backend-agent
+    reviewer: review-agent
+    blocked_by: [shared-contracts]
+    contract:
+      objective: 实现用户查询 API
+      source_of_truth:
+        - docs/design.md#user-api
+      required_contracts:
+        - shared/contracts/user.py
+      acceptance:
+        - GET /users/:id returns 200 for existing users
+        - GET /users/:id returns 404 for missing users
+      non_goals:
+        - Do not modify auth flow
+      verification_commands:
+        - pytest tests/user_api --cov=app.user --cov-branch --cov-report=xml
+        - diff-cover coverage.xml --compare-branch=feature/v1 --fail-under=90
+      pr_base: feature/v1
+      coverage_gate: 90
+```
+
+Lint 规则：`objective`、`acceptance`、`non_goals`、`verification_commands`、`pr_base` 必填；`coverage_gate` 缺省 90，填写时必须是 0-100；`required_contracts` 中的仓库路径必须存在。
+
+Harvest 规则：worker done 后必须有 `artifacts.pr_url`、`verification.commands` 覆盖 contract 里的每条命令且 `exit_code == 0`、`verification.pr_base == contract.pr_base`、`verification.coverage >= coverage_gate`。有 reviewer 时通过后进入 `in_review`，无 reviewer 时直接 `done`；不通过则 `blocked`。reviewer verdict 为 `pass` 或 `pass-with-nits` 时，还必须有结构化 `review_report` 且 diff/tests/coverage 三项检查为 true、每条 acceptance 有 pass mapping、blockers 为空。
 
 #### 粒度与依赖（拆图规则速查）
 
@@ -642,8 +672,8 @@ Reviewer 侧对应铁律：只读共享态、不动主树（见 `parallel-dev-ex
 
 Worker/Reviewer 通过 `parallel-dev-executor` skill 知道:
 - 从 issue metadata 读配置(worker/gate/blocked_by)
-- TDD 实现 → 产 PR → 写证据(metadata.artifacts)
-- Reviewer 复跑测试 → 判 verdict(metadata.review_verdict)
+- TDD 实现 → 产 PR → 写结构化证据(`metadata.artifacts` + `metadata.verification`)
+- Reviewer 复跑测试 → 写 verdict 与结构化报告(`metadata.review_verdict` + `metadata.review_report`)
 
 你(leader)只负责:
 - **拆解**(从设计文档 → manifest DAG)
