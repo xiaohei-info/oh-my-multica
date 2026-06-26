@@ -22,6 +22,25 @@ def test_load_minimal_manifest(tmp_path):
     assert m.nodes["M0"].reviewer is None   # 可选旋钮缺省 None
     assert m.nodes["M1"].risk == "high"
 
+def test_env_expansion_default_and_override(tmp_path, monkeypatch):
+    p = tmp_path / "m.yaml"
+    p.write_text(
+        'meta:\n  squad: "${SMOKE_SQUAD:-fallback-squad}"\n  bare: "${SMOKE_BARE}"\n'
+        "nodes:\n"
+        "  - id: M0\n    worker: agent-be\n    blocked_by: []\n"
+    )
+    # env 未设 → 取默认值；无默认且未设 → 保留原样
+    monkeypatch.delenv("SMOKE_SQUAD", raising=False)
+    monkeypatch.delenv("SMOKE_BARE", raising=False)
+    m = load_manifest(str(p))
+    assert m.meta["squad"] == "fallback-squad"
+    assert m.meta["bare"] == "${SMOKE_BARE}"
+    # env 已设 → 覆盖默认值
+    monkeypatch.setenv("SMOKE_SQUAD", "real-squad")
+    m = load_manifest(str(p))
+    assert m.meta["squad"] == "real-squad"
+
+
 def test_missing_required_worker_raises(tmp_path):
     p = tmp_path / "m.yaml"
     p.write_text("meta: {squad: x}\nnodes:\n  - id: M0\n    blocked_by: []\n")

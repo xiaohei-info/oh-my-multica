@@ -1,8 +1,34 @@
 # manifest.py
 from dataclasses import dataclass, field
+import os
+import re
 import yaml
 
 _UNSET = object()  # sentinel: 参数未传（区别于 None=显式清空）
+
+# 仅匹配 ${VAR} 与 ${VAR:-default}，不碰裸 $VAR（避免误伤 description 里的 $ 文本）
+_ENV_PAT = re.compile(r"\$\{(\w+)(?::-([^}]*))?\}")
+
+
+def _expand_env(value):
+    """递归把 manifest 里的 ${VAR} / ${VAR:-默认值} 用环境变量展开。
+
+    让 manifest 不必把 squad/workspace 等 id 硬写进文件——CI/他人克隆后
+    设环境变量即可，未设则用默认值。VAR 未设且无默认值时保留原样（显式可见）。
+    """
+    if isinstance(value, str):
+        def sub(m):
+            name, default = m.group(1), m.group(2)
+            env = os.environ.get(name)
+            if env is not None:
+                return env
+            return default if default is not None else m.group(0)
+        return _ENV_PAT.sub(sub, value)
+    if isinstance(value, dict):
+        return {k: _expand_env(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_expand_env(v) for v in value]
+    return value
 
 @dataclass
 class Node:
@@ -24,7 +50,7 @@ class Manifest:
 
 def load_manifest(path: str) -> Manifest:
     with open(path) as f:
-        raw = yaml.safe_load(f)
+        raw = _expand_env(yaml.safe_load(f))
     nodes = {}
     for n in raw.get("nodes", []):
         if "id" not in n:
