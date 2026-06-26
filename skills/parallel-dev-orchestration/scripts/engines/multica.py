@@ -378,33 +378,61 @@ class MulticaEngine(CollaborationEngine):
 
         return self.get_work_item(item_id)
 
+    # multica issue list 服务端单页上限 100；`--limit 1000` 会被静默截断为 100。
+    _LIST_PAGE_SIZE = 100
+
+    def _list_issues_paginated(self, extra_args: List[str]) -> List[Dict]:
+        """分页拉取 issue list 全集。
+
+        服务端单页封顶 100 条，旧实现 `--limit 1000` 会被静默截断——大 workspace 下
+        只能拿到前 100 条。这里用 `--offset` 逐页翻，直到某页不足一整页为止。
+        """
+        issues: List[Dict] = []
+        offset = 0
+        while True:
+            result = self._run_multica([
+                "issue", "list",
+                "--limit", str(self._LIST_PAGE_SIZE),
+                "--offset", str(offset),
+                "--output", "json",
+            ] + extra_args)
+
+            if isinstance(result, dict) and 'issues' in result:
+                page = result['issues']
+            elif isinstance(result, list):
+                page = result
+            else:
+                page = []
+
+            issues.extend(page)
+            if len(page) < self._LIST_PAGE_SIZE:
+                break
+            offset += len(page)
+        return issues
+
     def list_work_items(
         self,
         workspace_id: str,
         status: Optional[WorkItemStatus] = None
     ) -> List[WorkItem]:
-        """列出工作单元"""
-        result = self._run_multica([
-            "issue", "list",
-            "--limit", "1000",
-            "--output", "json"
-        ])
+        """列出工作单元。
 
-        # 处理返回值格式
-        if isinstance(result, dict) and 'issues' in result:
-            issues = result['issues']
-        elif isinstance(result, list):
-            issues = result
-        else:
-            issues = []
+        status 给定时把过滤下推到服务端（`--status`），减少传输量并让取消/完成等
+        终态 issue 不必整表拉回客户端再筛——同时配合分页拿全集，不再被 100 条上限截断。
+        """
+        extra_args: List[str] = []
+        if status is not None:
+            extra_args += ["--status", self._status_to_multica(status)]
+
+        issues = self._list_issues_paginated(extra_args)
 
         work_items = [
             self._issue_to_work_item(issue, workspace_id)
             for issue in issues
         ]
 
-        # 按状态过滤
-        if status:
+        # 服务端按 multica 态过滤后，再按业务态精确收口（多对一映射的兜底）
+        if status is not None:
             work_items = [item for item in work_items if item.status == status]
 
         return work_items
