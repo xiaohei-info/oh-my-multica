@@ -334,7 +334,7 @@ user-api
 ```
 
 **关键字段**:
-- `squad`: 派发小队 id —— 成员池与派发限定在该小队内。**workspace 不写在 manifest**，由引擎 env/配置提供（multica: `MULTICA_WORKSPACE_ID`）。multica 下层级为 workspace > squad > member；GitHub 等无小队概念的引擎，此字段填仓库标识（如 `owner/repo`）。
+- `squad`: 派发小队 id —— 成员池与派发限定在该小队内。**可选**：写了以 manifest 为准，没写则回退引擎 env 的默认小队（multica: `MULTICA_SQUAD_ID`）；二者皆无才报错。这让 orchestrator 生成 manifest 时可缺省 `meta.squad`、直接复用 env 默认小队（成员枚举也用同一来源），不必手编空文件。**workspace 不写在 manifest**，由引擎 env/配置提供（multica: `MULTICA_WORKSPACE_ID`）。multica 下层级为 workspace > squad > member；GitHub 等无小队概念的引擎，此字段填仓库标识（如 `owner/repo`）。
 - `nodes.<key>.worker`: worker agent 名(必须∈小队成员池)
 - `nodes.<key>.reviewer`: reviewer agent 名(可选,非空时必须≠worker)
 - `nodes.<key>.depends_on`: 依赖节点 key 列表(空 = Wave 0 可立即开始)

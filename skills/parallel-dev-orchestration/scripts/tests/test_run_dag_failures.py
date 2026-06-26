@@ -224,9 +224,12 @@ def test_harvest_reviewer_reject_blocked(tmp_path, monkeypatch):
 
 # ==================== start_new_run 失败旁路 ====================
 
-# 6. manifest.meta 缺 squad -> SystemExit (run_dag.py:301-304)
+# 6. manifest 无 squad 且 env(config.squad_id) 也无 squad -> SystemExit
 def test_start_new_run_missing_squad_exit(tmp_path, monkeypatch):
-    """manifest.meta 没有 squad -> sys.exit(1)。"""
+    """manifest.meta 无 squad 且 config.squad_id 为空 -> sys.exit(1)。
+
+    squad 优先级改为「manifest 优先、回退 env」后，只有两个来源都缺才退出。
+    """
     manifest_path = str(tmp_path / "dag.yaml")
     yaml_text = (
         "meta:\n"
@@ -241,11 +244,44 @@ def test_start_new_run_missing_squad_exit(tmp_path, monkeypatch):
         f.write(yaml_text)
 
     engine = _make_mock_engine()
+    assert not engine.config.squad_id, "前置：env 未提供 squad"
     monkeypatch.setattr(rd, "commit_manifest", lambda *a, **k: False)
 
     with pytest.raises(SystemExit) as exc_info:
         start_new_run(manifest_path, engine=engine)
-    assert exc_info.value.code == 1, "缺 squad 应 exit(1)"
+    assert exc_info.value.code == 1, "manifest 与 env 都缺 squad 应 exit(1)"
+
+
+# 6b. 契约测试：manifest 不写 squad，env(MULTICA_SQUAD_ID -> config.squad_id) 提供 squad
+#     -> 应回退到 env 的 squad 并正常派发跑通（issue #4 的核心契约）。
+def test_start_new_run_squad_from_env_fallback(tmp_path, monkeypatch):
+    """manifest 无 meta.squad、env 提供 squad -> 用 env 的 squad，run 跑到 done。
+
+    这正是 clone → setup(写 MULTICA_SQUAD_ID) → run 这条 onboarding 路径：
+    manifest 由 orchestrator 生成、可不带 squad，引擎回退到 env 默认小队。
+    """
+    manifest_path = str(tmp_path / "dag.yaml")
+    yaml_text = (
+        "meta:\n"
+        "  name: env-squad\n"          # 故意不写 squad
+        "nodes:\n"
+        "  - id: A\n"
+        "    worker: alice\n"
+        "    title: Task A\n"
+        "    description: 'Test'\n"
+    )
+    with open(manifest_path, "w") as f:
+        f.write(yaml_text)
+
+    engine = _make_mock_engine()
+    engine.config.squad_id = "sq"  # 模拟 from_env 读到的 MULTICA_SQUAD_ID（成员池注册在 "sq"）
+    monkeypatch.setattr(rd, "commit_manifest", lambda *a, **k: False)
+
+    start_new_run(manifest_path, engine=engine)  # 不应抛 SystemExit
+
+    m = load_manifest(manifest_path)
+    assert m.nodes["A"].status == "done", f"A 应 done（用 env squad 派发），实际 {m.nodes['A'].status}"
+    assert engine.config.squad_id == "sq", "运行后 config.squad_id 应仍为 env 提供的 sq"
 
 
 # 7. Lint 失败 -> SystemExit (run_dag.py:328-332)

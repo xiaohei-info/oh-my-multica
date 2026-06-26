@@ -306,19 +306,23 @@ def start_new_run(manifest_path: str, engine: CollaborationEngine = None, max_pa
     print(f"=== 加载 manifest: {manifest_path} ===")
     manifest = load_manifest(manifest_path)
 
-    squad_id = manifest.meta.get("squad")
-    if not squad_id:
-        print("错误: manifest.meta 缺少 'squad'（派发小队）")
-        sys.exit(1)
-
     if engine is None:
         print("=== 初始化引擎 ===")
         engine = create_engine_from_env(engine_type=engine_type, workspace_id=workspace_id)
-        print(f"  引擎类型: {engine.__class__.__name__}")
-        print(f"  工作空间: {engine.config.workspace_id}")
-        print(f"  小队: {squad_id}")
-        print(f"  轮询间隔: {engine.config.polling_interval}s")
-        print(f"  git 回写: {'开（ORCH_GIT_SYNC）' if git_sync_enabled() else '关（默认，仅本地写文件，不 commit/push）'}")
+
+    # squad 优先级：manifest.meta.squad 优先，缺失则回退到 env 来的 config.squad_id（MULTICA_SQUAD_ID）。
+    # 二者皆无才报错——消除「manifest 硬必填 squad」这个特殊情况，让 clone → setup(env) → run
+    # 这条 onboarding 路径成立（manifest 由 orchestrator 自动生成，clone 时尚不存在，无法预先编辑）。
+    squad_id = manifest.meta.get("squad") or engine.config.squad_id
+    if not squad_id:
+        print("错误: 未提供派发小队 squad —— 在 manifest.meta.squad 指定，或设置 MULTICA_SQUAD_ID 环境变量")
+        sys.exit(1)
+
+    print(f"  引擎类型: {engine.__class__.__name__}")
+    print(f"  工作空间: {engine.config.workspace_id}")
+    print(f"  小队: {squad_id}")
+    print(f"  轮询间隔: {engine.config.polling_interval}s")
+    print(f"  git 回写: {'开（ORCH_GIT_SYNC）' if git_sync_enabled() else '关（默认，仅本地写文件，不 commit/push）'}")
 
     engine.config.squad_id = squad_id
 
