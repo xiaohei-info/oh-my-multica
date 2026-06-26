@@ -165,8 +165,13 @@ meta:
 | 未设 / `0` / `false`（默认） | 只在本地写 manifest 文件，**不 `git add/commit/push`** | 首次试跑、单机、mock/demo、CI |
 | `1` / `true` / `yes` / `on` | 状态变更回写并 `git commit`（有远程则 `push`） | **真实跨机器协作**：manifest 落在项目 `.orchestrator/`、受版本管理 |
 
+两种配法都生效（显式 `export` 优先于 `.env`）：
+
 ```bash
-# 真实项目里开启跨机器口径同步：
+# 法一：写进 .env（与引擎配置同处管理）
+echo 'ORCH_GIT_SYNC=1' >> .env
+
+# 法二：跑前 export（不依赖 .env，适合走 run_dag --engine/--workspace 命令行参数的场景）
 export ORCH_GIT_SYNC=1
 python3 scripts/run_dag.py .orchestrator/<name>.yaml
 ```
@@ -174,6 +179,10 @@ python3 scripts/run_dag.py .orchestrator/<name>.yaml
 > 引擎启动时会打印「git 回写: 开/关」当前状态，便于确认。无论开关如何，manifest
 > 文件本身都会被写状态——故跑 demo 仍建议用临时副本（见下方快速开始），别直接对
 > committed 样例跑。
+>
+> 注：引擎有两条配置入口——`.env`（`create_engine_from_env`）或命令行
+> `--engine/--workspace`（`create_engine_from_config`，不读 `.env`）。走命令行参数那条
+> 路时 `.env` 不会被加载，`ORCH_GIT_SYNC` 需用 `export`。
 
 ---
 

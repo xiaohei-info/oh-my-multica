@@ -487,3 +487,35 @@ def test_harvest_worker_blocked_on_platform(tmp_path, monkeypatch):
     assert m.nodes["A"].status == "blocked", f"BLOCKED 应 -> blocked，实际 {m.nodes['A'].status}"
     assert "A" in failed, "BLOCKED 应进 failed 集合"
     assert "A" not in completed
+
+
+# ==================== git 回写开关：.env 桥接 ====================
+def test_bridge_runtime_env_makes_dotenv_sync_work(monkeypatch):
+    """.env 里的 ORCH_GIT_SYNC 经 _bridge_runtime_env 进 os.environ -> git_sync_enabled 生效。"""
+    from utils import git_sync_enabled
+
+    class _Cfg:
+        extra = {"ORCH_GIT_SYNC": "1"}
+
+    class _Eng:
+        config = _Cfg()
+
+    monkeypatch.delenv("ORCH_GIT_SYNC", raising=False)
+    assert git_sync_enabled() is False
+    rd._bridge_runtime_env(_Eng())
+    assert git_sync_enabled() is True
+
+
+def test_bridge_runtime_env_does_not_override_explicit_export(monkeypatch):
+    """显式 export 优先：.env=1 不覆盖 export=0。"""
+    from utils import git_sync_enabled
+
+    class _Cfg:
+        extra = {"ORCH_GIT_SYNC": "1"}
+
+    class _Eng:
+        config = _Cfg()
+
+    monkeypatch.setenv("ORCH_GIT_SYNC", "0")
+    rd._bridge_runtime_env(_Eng())
+    assert git_sync_enabled() is False
