@@ -1,121 +1,152 @@
 # parallel-dev-skills
 
-> 一套**通用、与平台无关**的 Agent Skills：把一份设计/plan 拆成声明式 manifest DAG，用固定引擎驱动**多 Agent 并行开发**到收敛闭环。核心是「契约先行」方法论 + 防跑偏闸门 + 多协作平台适配（Mock / GitHub / Multica）。
+把复杂开发计划变成可并行、可验收、可恢复的多 Agent 工程流水线。
 
-任何支持 **Agent Skills**（`SKILL.md` 约定）的运行时都能装上即用——Claude Code、Codex、OpenCode、ClosedCode 等。Skill 正文是引擎中立的纯文本与 Python 脚本，不绑定任何特定 Agent 平台。
+`parallel-dev-skills` 是一套平台无关的 Agent Harness。它把复杂软件开发从
+「一个 agent 靠长上下文硬扛」变成「契约先行 + manifest DAG + 多 Agent 并行执行 +
+结构化证据 + reviewer 独立验收」的可收敛工程流程。
+
+它解决的问题：
+
+- Agent 长任务容易跑偏、忘上下文、提前宣布完成。
+- 多 Agent 并行时接口漂移、重复造契约、集成地狱。
+- worker 自述「已完成」，但缺少 PR、verification、coverage、review report 等客观证据。
+- 任务状态靠聊天和人肉跟进，失败后难以断点续跑。
+- GitHub、Multica、本地演示各自重写一套编排逻辑。
+
+核心效果：
+
+- 把一份设计或 plan 拆成可并行执行的 manifest DAG。
+- 自动在 Mock / GitHub / Multica 中创建 work items 并按依赖派发 worker。
+- 通过 manifest contract schema、lint、required contracts、acceptance、non-goals、
+  verification commands、PR base、coverage gate 把软约束变成硬合同。
+- worker 必须交付 PR、结构化 artifacts、verification、coverage 证据。
+- reviewer 必须交付结构化 verdict 和 review report，独立验收 diff、测试、覆盖率和验收映射。
+- 已完成节点可复用，失败节点可隔离，支持断点续跑和跨机器接力。
+
+适合：
+
+- 想用多个 coding agent 并行推进复杂 feature 的团队。
+- 已有设计文档或 plan，希望拆成可派发、可验收任务的人。
+- 使用 GitHub Issues 或 Multica issues 管理 agent 工作流的人。
+- 想把 agentic engineering 从 vibe coding 升级到可治理流程的人。
+
+不适合：
+
+- 一次性小改动。
+- 契约尚未摸清的探索性原型。
+- 没有测试、CI、PR 习惯的项目。
+- 只想要一个「更强 prompt」的场景。
 
 ---
 
-## 包含两个 Skill
+## 1. 效果与价值：for human
 
-| Skill | 谁加载 | 作用 |
+### 它能实现什么
+
+`parallel-dev-skills` 不是让一个 agent 更努力，而是在模型外部加一套工程控制系统：
+
+1. 先把共享契约、骨架、mock、CI gate 打好，冻结并行开发的地基。
+2. 把计划拆成 `.orchestrator/<name>.yaml` manifest DAG。
+3. 通过固定引擎 lint、reconcile、frontier、dispatch、harvest。
+4. worker 按 contract 交 PR 和结构化 verification。
+5. reviewer 独立复跑并产出结构化 review report。
+6. 引擎根据机器可读证据推进状态，而不是相信 prose 总结。
+
+### 痛点对比
+
+| 痛点 | 没有这套机制 | 使用这套机制 |
 |---|---|---|
-| **`parallel-dev-orchestration`** | 编排者（leader / 你） | 把设计拆成 manifest DAG，跑引擎派活、盯进度、失败决策、收尾。自带编排引擎脚本（`scripts/run_dag.py`）。 |
-| **`parallel-dev-executor`** | 被派到任务的 worker / reviewer Agent | 执行协议：从 work item 读配置 → TDD 实现 → 产可评审 PR → 写证据；reviewer 独立复跑测试判决。纯方法论，无脚本。 |
+| 长任务跑偏 | agent 靠上下文硬记 | issue / manifest / AGENTS.md 外置约束 |
+| 接口漂移 | 各自发明 DTO、事件、状态 | Wave 0 契约先行，required contracts 可 lint |
+| 完成标准模糊 | worker 自述完成 | PR + verification + coverage gate + reviewer |
+| 评审不可消费 | reviewer 写自然语言结论 | `review_verdict` + `review_report` 结构化输出 |
+| 状态混乱 | 人肉跟进聊天记录 | manifest 状态机 + reconcile + harvest |
+| 平台绑定 | 每个平台重写流程 | engine adapter 抽象：Mock / GitHub / Multica |
 
-二者配合：**orchestration 在协作平台建 issue 并派发，被派到的 Agent 加载 executor 干活。** 你只直接运行 orchestration 一侧的引擎脚本。
+### 交付形态
+
+本仓提供两个 skills 和一个可复制的运行护栏：
+
+| 文件 | 谁使用 | 作用 |
+|---|---|---|
+| [`skills/parallel-dev-orchestration/SKILL.md`](./skills/parallel-dev-orchestration/SKILL.md) | 编排者 leader | 拆 DAG、写 manifest、跑引擎、处理失败、收尾 |
+| [`skills/parallel-dev-executor/SKILL.md`](./skills/parallel-dev-executor/SKILL.md) | worker / reviewer | 执行、验证、产 PR、写结构化证据、独立评审 |
+| [`AGENTS.md`](./AGENTS.md) | 业务项目中的常驻 agent 上下文 | 短、硬、可复制的通用运行护栏 |
+
+README 只负责讲清价值、安装、最短使用路径和设计边界。完整 DAG 拆解方法论、worker/reviewer
+执行协议、comment 模板和评审细则留在两个 skill 中。
 
 ---
 
-## 目录结构
+## 2. 安装与使用：for agent
 
-```
+### 目录结构
+
+```text
 parallel-dev-skills/
-├── README.md                 # 本文件（安装/配置指南）
-├── AGENTS.md                 # 配套通用工作规范（合并进你项目的 AGENTS.md/CLAUDE.md）
-├── LICENSE                   # MIT
-├── scripts/install.sh        # 安装脚本：把 skills 复制/软链进 Agent 的 skills 目录
+├── README.md
+├── AGENTS.md
+├── LICENSE
+├── scripts/
+│   └── install.sh
 └── skills/
     ├── parallel-dev-orchestration/
-    │   ├── SKILL.md          # 编排方法论 + 引擎用法
-    │   ├── .env.example      # 引擎配置示例
-    │   └── scripts/          # 编排引擎（CLI + core + engines + tests）
-    │       ├── run_dag.py    # ★ 编排入口
-    │       ├── setup.py      # 交互式配置向导（生成 .env）
-    │       ├── core/         # manifest / graph(frontier) / lint
-    │       ├── engines/      # mock / github / multica 适配
-    │       └── tests/        # 116 passed 的测试套件
+    │   ├── SKILL.md
+    │   ├── .env.example
+    │   └── scripts/
+    │       ├── run_dag.py
+    │       ├── setup.py
+    │       ├── core/
+    │       ├── engines/
+    │       └── tests/
     └── parallel-dev-executor/
-        └── SKILL.md          # worker/reviewer 执行协议
+        └── SKILL.md
 ```
 
----
-
-## 安装
-
-### 方式一：用安装脚本（推荐）
-
-把两个 skill 装进目标 Agent 的 skills 目录：
+### 安装
 
 ```bash
 git clone https://github.com/xiaohei-info/parallel-dev-skills.git
 cd parallel-dev-skills
 
-# 默认装到 ~/.claude/skills（复制模式）
+# 默认复制到 ~/.claude/skills
 ./scripts/install.sh
 
-# 或指定目标目录；--link 用软链以便跟随仓库更新
+# 指定目标目录
 ./scripts/install.sh ~/.codex/skills
+
+# 用软链安装，便于跟随仓库更新
 ./scripts/install.sh ./.claude/skills --link
 ```
 
-### 方式二：手动放置
-
-把 `skills/parallel-dev-orchestration` 和 `skills/parallel-dev-executor` 两个目录整体复制进你的 Agent 的 skills 目录即可。
-
-### 各 Agent 的 skills 目录
-
-不同 Agent 的 skill 发现路径不同，安装到对应位置：
-
-| Agent | 用户级 skills 目录 | 项目级 |
-|---|---|---|
-| Claude Code | `~/.claude/skills/` | `<project>/.claude/skills/` |
-| Codex / OpenCode / 其它 | 见各自文档的 skills/插件目录 | 通常为项目内 skills 目录 |
-
-> 不确定你的 Agent 用哪个目录时，查其「skills」或「plugins」文档；`install.sh` 接受任意目标路径，放对地方即可被发现。
-
-安装后，每个 skill 是一个含 `SKILL.md`（YAML frontmatter 带 `name` / `description`）的自包含目录，符合 Agent Skills 通用约定。
-
----
-
-## 配置编排引擎
-
-**配置只放非敏感的「配置项」（engine 类型、workspace、squad）；认证交给各 CLI 自己管理**
-（github 用 `gh auth login`，multica 用其自身登录）——不要把 token 写进配置。
-
-配置面统一为「环境变量」，有三种给法，优先级 **低 → 高**：
-
-```
-.env 文件（可选）  <  进程环境变量（export）  <  命令行参数（--engine / --workspace）
-```
-
-- `.env` **可选**：存在就加载，不存在不报错。适合持久化 workspace/squad 这类常用值。
-- `export`：覆盖 `.env`，适合临时切换。
-- `--engine/--workspace`：覆盖一切，最显式。
-- **缺必填项**（engine 的 workspace）→ 报清晰错误，直接告诉你设哪个环境变量或传哪个参数。
+也可以手动复制：
 
 ```bash
-cd <skills-dir>/parallel-dev-orchestration
-
-# 任选其一即可：
-python3 scripts/setup.py                                  # A. 向导生成 .env
-cp .env.example .env                                      # B. 手填 .env
-python3 scripts/run_dag.py m.yaml --engine multica --workspace <ws>   # C. 纯命令行，不用 .env
+cp -R skills/parallel-dev-orchestration <your-agent-skills-dir>/
+cp -R skills/parallel-dev-executor <your-agent-skills-dir>/
 ```
 
-### 三种引擎与所需配置
+不同 Agent 的 skill 发现路径不同。Claude Code 通常使用 `~/.claude/skills/` 或项目内
+`.claude/skills/`；Codex、OpenCode 等请使用各自的 skills 或 plugin 目录。安装脚本接受任意目标路径。
 
-| 引擎 | `ENGINE_TYPE` | 必需配置（env 或 `--workspace`） | 认证（不在配置面） |
+### 选择引擎
+
+配置只放非敏感项。认证交给对应 CLI 自己管理，不要把 token 写进 `.env`。
+
+| 引擎 | 用途 | 必需配置 | 认证 |
 |---|---|---|---|
-| **Mock** | `mock` | `MOCK_WORKSPACE_ID`（任意串，有默认） | 无——本地空跑 |
-| **GitHub** | `github` | `GITHUB_REPO=owner/repo` | `gh auth login`（gh 管 token） |
-| **Multica** | `multica` | `MULTICA_WORKSPACE_ID`（`MULTICA_SQUAD_ID` 可选） | `multica` 自身登录（`~/.multica`） |
+| Mock | 本地演示、CI、首次试跑 | `ENGINE_TYPE=mock`，可选 `MOCK_WORKSPACE_ID` | 无 |
+| GitHub | 用 GitHub Issue 派发 work item | `ENGINE_TYPE=github`，`GITHUB_REPO=owner/repo` | `gh auth login` |
+| Multica | 用 Multica issue 派发 work item | `ENGINE_TYPE=multica`，`MULTICA_WORKSPACE_ID`，可选 `MULTICA_SQUAD_ID` | `multica` CLI 登录 |
 
-> work item 在 GitHub 下即 GitHub Issue，在 Multica 下即 Multica issue。manifest 里 `worker:` / `reviewer:` 填的 Agent 名必须真实存在于该 workspace/squad 的成员池。
+环境变量优先级：
 
----
+```text
+.env 文件 < 进程环境变量 export < 命令行参数 --engine / --workspace
+```
 
-## 各引擎前置准备（Agent 引导用户清单）
+各引擎前置准备：
 
 加载本 skill 的 Agent 自己装不全外部依赖（CLI 登录、平台 id、成员池都在用户侧）。
 **选定引擎后，按下表逐项引导用户完成**，每项缺失都会让真实编排卡住：
@@ -155,141 +186,265 @@ meta:
   squad: "${ORCH_SQUAD:-mock-workspace}"   # 真实运行：export ORCH_SQUAD=<你的squad>
 ```
 
-- 未设环境变量 → 取默认 `mock-workspace`（mock 引擎不校验成员，直接跑）。
-- `export ORCH_SQUAD=<squad-id>` 后重跑 → 自动展开为真实 squad，**无需编辑 manifest**。
-- 变量未设且无默认值（`${FOO}`）→ 保留原样，便于一眼看出"这里还没配"。
-
-> 这条机制就是为了避免「committed 文件里留个占位符、别人不知道要替换」——
-> 看到 `${VAR}` 即知"设这个环境变量"，自解释。
-
-### git 回写开关（`ORCH_GIT_SYNC`，默认关）
-
-引擎以 manifest 为唯一口径，跨机器协作时靠 **git commit + push** 流转状态。但这一步
-**默认关闭**，避免你第一次装完跑测试 / demo 时往业务项目仓库塞 commit：
-
-| `ORCH_GIT_SYNC` | 行为 | 适用 |
-|---|---|---|
-| 未设 / `0` / `false`（默认） | 只在本地写 manifest 文件，**不 `git add/commit/push`** | 首次试跑、单机、mock/demo、CI |
-| `1` / `true` / `yes` / `on` | 状态变更回写并 `git commit`（有远程则 `push`） | **真实跨机器协作**：manifest 落在项目 `.orchestrator/`、受版本管理 |
-
-两种配法都生效（显式 `export` 优先于 `.env`）：
-
-```bash
-# 法一：写进 .env（与引擎配置同处管理）
-echo 'ORCH_GIT_SYNC=1' >> .env
-
-# 法二：跑前 export（不依赖 .env，适合走 run_dag --engine/--workspace 命令行参数的场景）
-export ORCH_GIT_SYNC=1
-python3 scripts/run_dag.py .orchestrator/<name>.yaml
-```
-
-> 引擎启动时会打印「git 回写: 开/关」当前状态，便于确认。无论开关如何，manifest
-> 文件本身都会被写状态——故跑 demo 仍建议用临时副本（见下方快速开始），别直接对
-> committed 样例跑。
->
-> 注：引擎有两条配置入口——`.env`（`create_engine_from_env`）或命令行
-> `--engine/--workspace`（`create_engine_from_config`，不读 `.env`）。走命令行参数那条
-> 路时 `.env` 不会被加载，`ORCH_GIT_SYNC` 需用 `export`。
-
----
-
-## 快速开始（Mock 空跑，零依赖）
-
-第一次先用 mock 引擎跑通机制，不连任何平台：
+配置入口：
 
 ```bash
 cd <skills-dir>/parallel-dev-orchestration
 
-# 1) 配置 mock 引擎（workspace 用 mock-workspace，与 demo manifest 的默认 squad 对齐）
-printf 'ENGINE_TYPE=mock\nMOCK_WORKSPACE_ID=mock-workspace\n' > .env
+# 交互式生成 .env
+python3 scripts/setup.py
 
-# 2) 看 CLI 用法
+# 或复制示例后手填
+cp .env.example .env
+
+# 或不用 .env，直接传命令行参数
+python3 scripts/run_dag.py .orchestrator/demo.yaml --engine multica --workspace <workspace-id>
+```
+
+### 快速开始：Mock 空跑
+
+第一次建议用 Mock 跑通机制，不连接真实平台。
+
+```bash
+cd <skills-dir>/parallel-dev-orchestration
+
+printf 'ENGINE_TYPE=mock\nMOCK_WORKSPACE_ID=mock-workspace\n' > .env
 python3 scripts/run_dag.py --help
 
-# 3) 跑一个最小 manifest（自带冒烟样例）
-#    引擎会把状态回写进 manifest 文件，故先拷贝到临时路径，避免弄脏 committed 样例
 cp scripts/tests/smoke_test_manifest.yaml /tmp/demo.yaml
 python3 scripts/run_dag.py /tmp/demo.yaml
 ```
 
-引擎会自动 lint → reconcile → 建 work item → 算 frontier → 派发 → 轮询到终态 → 写回状态。
-mock 引擎预置成员 `alice/bob/charlie`，样例的 `worker/reviewer` 用的就是它们，开箱即跑（3 节点 100% 完成）。看懂流程后，再切到 github/multica 跑真任务。
+引擎会执行 lint、reconcile、work item 创建、frontier 计算、dispatch、harvest，并把状态写回
+manifest。Mock 引擎预置成员 `alice`、`bob`、`charlie`，冒烟样例可直接跑。
 
-> 注：引擎以 manifest 为唯一口径，会把状态**回写进 manifest 文件**。git 提交默认**关闭**
-> （`ORCH_GIT_SYNC` 未开），所以不会污染仓库历史；但文件本身仍会被改写，故 demo 用 `/tmp`
-> 副本，不动 committed 样例。真实跨机器协作再开 `ORCH_GIT_SYNC=1`（见上「git 回写开关」）。
+注意：manifest 文件本身会被改写，所以 demo 使用 `/tmp/demo.yaml`。真实跨机器协作时再把
+manifest 放在业务项目 `.orchestrator/` 下，并按需开启 git 回写。
 
----
+### 真实项目使用
 
-## 真实使用的完整闭环
+高层路径如下，协作细节见 skill 正文：
 
-由编排者 Agent 加载 `parallel-dev-orchestration` skill 后驱动，分两个阶段（详见该 skill 正文）：
+1. 让 orchestrator agent 加载 `parallel-dev-orchestration`。
+2. 做 Wave 0：共享契约、项目骨架、mock/fake、CI gate。
+3. 生成 `.orchestrator/<name>.yaml`，每个节点声明 worker、reviewer、依赖和 contract。
+4. 让 manifest 过 PR 或人工评审门。
+5. 运行 `python3 scripts/run_dag.py .orchestrator/<name>.yaml`。
+6. 被派发的 worker / reviewer 加载 `parallel-dev-executor`。
+7. worker 交 PR、artifacts、verification；reviewer 交 verdict、review report。
+8. 编排者看 manifest、issues、PR、verification digest 收尾。
 
-1. **Wave 0 打地基（串行）**：把跨模块契约写成**代码**、搭骨架 + CI、给对端写 mock，验证地基全绿。地基没冻结就扇出 = 最常见的失败。
-2. **拆 manifest DAG**：按 track 切并行单元，写成 `.orchestrator/<name>.yaml`，每节点带 `worker` / `depends_on` / `description`。
-3. **manifest 走 PR 评审门**：评审通过才进下一步。
-4. **跑引擎**：`python3 scripts/run_dag.py .orchestrator/<name>.yaml`，全自动派发与监督。
-5. **失败 / 断点续跑**：改 manifest（换 worker / 拆小 / 降范围）后对同一文件重跑——已 done 自动跳过，失败的重做（幂等）。
-6. **收尾**：汇总 digest（PR 列表、验收状态、遗留问题）。
+相关入口：
 
-被派到任务的 worker / reviewer Agent 则加载 `parallel-dev-executor` skill，按执行协议 TDD 实现并产出可评审 PR。
+- DAG 怎么拆：[`parallel-dev-orchestration`](./skills/parallel-dev-orchestration/SKILL.md)
+- worker/reviewer 怎么执行：[`parallel-dev-executor`](./skills/parallel-dev-executor/SKILL.md)
+- 常驻护栏怎么放：[`AGENTS.md`](./AGENTS.md)
 
----
+### Manifest contract 最小示例
 
-## 配套通用规范（[AGENTS.md](./AGENTS.md)）
+新任务建议给每个节点写 `contract`。旧 manifest 仍可运行；没有 `contract` 的节点按 legacy
+规则处理。一旦声明 `contract`，lint 和 harvest 会启用硬门禁。
 
-两个 skill 定义的是「**怎么编排**」与「**怎么执行**」的协议；要让一群 Agent 在并行开发中
-**不跑偏**，还需要一组**常驻护栏**——全局工作纪律必须放进「每次都会被加载」的文件里
-（`AGENTS.md` / `CLAUDE.md`），而不是埋在长文档中。这正是编排 skill 防跑偏模型的一环。
+```yaml
+nodes:
+  - id: user-api
+    title: Implement user API
+    worker: backend-agent
+    reviewer: review-agent
+    blocked_by: [shared-contracts]
+    contract:
+      objective: 实现用户查询 API
+      source_of_truth:
+        - docs/design.md#user-api
+      required_contracts:
+        - shared/contracts/user.py
+      acceptance:
+        - GET /users/:id returns 200 for existing users
+        - GET /users/:id returns 404 for missing users
+      non_goals:
+        - Do not modify auth flow
+      verification_commands:
+        - pytest tests/user_api --cov=app.user --cov-branch --cov-report=xml
+        - diff-cover coverage.xml --compare-branch=feature/v1 --fail-under=90
+      pr_base: feature/v1
+      coverage_gate: 90
+```
 
-本仓自带这份通用底稿：[`AGENTS.md`](./AGENTS.md)（项目无关，只含工程纪律：契约先行 /
-先规划后实现 / 测试同步 / 完成需证据 / 根因调试 / 代码品味准则）。
+lint 口径：
 
-**怎么用**（三选一，详见 `AGENTS.md` 文末）：
+- `objective` 必填。
+- `acceptance`、`non_goals`、`verification_commands` 必填且非空。
+- `pr_base` 必填，避免 PR 打到错误基线。
+- `coverage_gate` 缺省 90，填写时必须是 0 到 100。
+- `required_contracts` 中的仓库路径必须存在。
+- reviewer 存在时必须不同于 worker。
 
-1. **合并（推荐）**：把 `AGENTS.md` 的工作纪律整合进你项目**已有的 `AGENTS.md` / `CLAUDE.md`**，
-   与你的业务专属约束（架构边界、领域规则）并列。这样 worker/reviewer 每次加载即受同一套约束。
-2. **引用**：在你项目的 `AGENTS.md` 顶部加一行指针，指向本文件。
-3. **直接放置**：项目还没有 `AGENTS.md` 时，拷到项目根作起点，再叠加业务约束。
+harvest 口径：
 
-> 边界：`AGENTS.md` 只放**通用工程纪律**；项目专属口径（架构分层、技术选型、领域模型、
-> 权限角色、部署）仍写在你自己的 `AGENTS.md` 里，不要塞进这份通用底稿。
+- worker 必须写 `artifacts.pr_url`。
+- `verification.commands` 必须覆盖 contract 中声明的 `verification_commands`。
+- 所有 command `exit_code` 必须为 0。
+- `verification.pr_base` 必须等于 `contract.pr_base`。
+- `verification.coverage` 必须达到 `coverage_gate`。
+- 有 reviewer 时，`review_verdict` 必须是 `pass` 或 `pass-with-nits`，且 `review_report`
+  满足 diff、tests、coverage、acceptance mapping、blockers 等结构化检查。
 
----
+### AGENTS.md 的采用
 
-## 前置依赖
+[`AGENTS.md`](./AGENTS.md) 是可复制到业务项目根目录的运行护栏。它只放每次加载后都该看见的高频硬规则：
 
-- **Python ≥ 3.9**（引擎脚本仅用标准库 + PyYAML；`python3` 可直接调用）
-- 选 GitHub 引擎：`gh` CLI 已登录
-- 选 Multica 引擎：`multica` CLI 已登录
-- Mock 引擎：无外部依赖
+- 契约先行，且契约以代码存在。
+- 只消费共享契约，不平行重定义。
+- 先规划后实现，测试同步，完成必须有证据。
+- reviewer 独立复跑测试、看真实 diff、只读共享态。
+- PR base 指向集成分支，不直接打到主干。
 
-安装 PyYAML（若环境缺）：
+推荐做法：
+
+1. 已有业务项目 `AGENTS.md` / `CLAUDE.md`：把本仓护栏合并进去，与业务专属规则并列。
+2. 没有运行护栏：直接复制本仓 `AGENTS.md` 作为起点。
+3. 只需要引用：在业务项目护栏顶部放一行指针，项目规则仍写在业务项目自己的文件里。
+
+不要把安装步骤、完整方法论、worker/reviewer 长协议放进业务项目 `AGENTS.md`。常驻上下文越短，越不容易稀释注意力。
+
+### 前置依赖与测试
+
+- Python >= 3.9。
+- PyYAML。
+- GitHub 引擎需要已登录的 `gh` CLI。
+- Multica 引擎需要已登录的 `multica` CLI。
+- Mock 引擎无外部平台依赖。
+
+安装 PyYAML：
 
 ```bash
 python3 -m pip install pyyaml
 ```
 
----
-
-## 开发与测试
+运行编排引擎测试：
 
 ```bash
 cd skills/parallel-dev-orchestration/scripts
-python3 -m pytest tests/ -q                       # 全套
-python3 -m pytest tests/ -q -m "not live_multica" # 排除需真 CLI 的 live 测试
+python3 -m pytest tests/ -q
+python3 -m pytest tests/ -q -m "not live_multica"
 ```
 
-live 测试默认 skip，仅当 `multica` CLI 在 PATH 且显式设置 `MULTICA_WORKSPACE_ID` + `MULTICA_TEST_SQUAD` 时才运行（仓库不携带任何私有 workspace/squad 默认值）。
+live Multica 测试默认 skip。只有 `multica` CLI 在 PATH，且显式设置 `MULTICA_WORKSPACE_ID`
+和 `MULTICA_TEST_SQUAD` 时才会运行。
 
 ---
 
-## 设计要点（一句话）
+## 3. 机制与设计：for dev
 
-- **接口是地基，不是产物**：契约先于实现冻结、以代码存在，下游只 import、禁重定义——接口漂移直接编译/测试不过。
-- **对端可以是假的**：契约冻结后每个模块对着 mock 独立开发，这是并行度的来源。
-- **manifest 是唯一口径**：节点状态直接写进 manifest 经 git 流转，无自造存储；幂等重跑、跨机器接力都靠它。
-- **完成必须有证据**：worker 自报只是线索，以 reviewer 独立复跑判决 + 引擎状态为准。
+### Agent = Model + Harness
+
+本项目不增强模型本身，而是补齐模型外部的工程控制层：
+
+- context 外置：issue body、manifest、contract、AGENTS.md、skill 分层承载上下文。
+- 任务拆解：leader 将 plan 转成可 lint 的 manifest DAG。
+- 状态持久化：manifest 记录节点状态和 work item id，支持幂等重跑。
+- 平台适配：Mock、GitHub、Multica 共享同一套 engine 抽象。
+- 验证闭环：worker 输出结构化 artifacts / verification，reviewer 输出结构化 verdict / report。
+- 机器门禁：harvest 阶段消费结构化证据，决定 done、in_review、blocked。
+
+### Harness 四象限映射
+
+本仓按 Harness 四象限补强并行开发，而不是只堆 prompt。
+
+| 象限 | 项目组件 | 作用 |
+|---|---|---|
+| Guide x Inferential | `AGENTS.md` 瘦身、orchestration skill、executor skill、常驻护栏分层 | 行动前软约束。把高频铁律放在短上下文里，把长方法论留在 skill 中，降低注意力噪音 |
+| Guide x Computational | manifest contract schema、DAG lint、required contracts、acceptance、non-goals、verification commands、PR base、coverage gate | 行动前硬约束。非法 DAG、缺失合同、错误 agent、错误 PR base、缺失 required contracts 在执行前失败 |
+| Sensor x Computational | 结构化 artifacts、verification、PR、CI、coverage gate、harvest 机器门禁 | 行动后机器检查。worker 自述不算完成，必须有 PR、命令结果、coverage、base branch 等可消费证据 |
+| Sensor x Inferential | 结构化 reviewer report、review verdict、acceptance mapping、blockers、nits | 行动后语义检查。reviewer 对照 diff、测试、覆盖率和验收条目做独立判断，报告能被引擎消费 |
+
+这对应 AITEAM-193 的落地方案：先把 contract 字段和 lint 硬化，再把 worker/reviewer 产物升级成结构化 metadata，最后让 harvest 阶段用这些证据推进状态。
+
+### 组件架构图
+
+```mermaid
+flowchart TD
+    Plan[Design / Plan] --> Orchestrator[parallel-dev-orchestration skill]
+    Orchestrator --> Wave0[Wave 0: contracts / scaffold / mock / CI gate]
+    Wave0 --> Manifest[Manifest DAG .orchestrator/*.yaml]
+    Manifest --> Contract[Node contract schema]
+    Contract --> Lint[DAG lint + contract lint]
+    Lint --> Engine[run_dag.py]
+
+    Engine --> Reconcile[Reconcile platform state]
+    Reconcile --> Frontier[Frontier: ready nodes]
+    Frontier --> Adapter{Collaboration engine}
+    Adapter --> Mock[Mock]
+    Adapter --> GitHub[GitHub Issues]
+    Adapter --> Multica[Multica Issues]
+
+    GitHub --> Worker[Worker + executor skill]
+    Multica --> Worker
+    Mock --> Worker
+    Worker --> Artifacts[artifacts.pr_url / branch / commit]
+    Worker --> Verification[verification.commands / pr_base / coverage / ci_status]
+    Artifacts --> Harvest[Harvest machine gates]
+    Verification --> Harvest
+
+    Harvest --> ReviewDispatch[Dispatch reviewer when required]
+    ReviewDispatch --> Reviewer[Reviewer + executor skill]
+    Reviewer --> Report[review_verdict + review_report]
+    Report --> Harvest
+
+    Harvest --> Done[done]
+    Harvest --> Blocked[blocked / failed]
+    Done --> Manifest
+    Blocked --> Manifest
+```
+
+### 状态机
+
+```text
+todo -> in_progress -> in_review -> done
+                  \-> blocked / failed
+```
+
+核心动作：
+
+- `lint`：执行前校验 DAG、成员池、依赖、contract 字段和 required contract 路径。
+- `reconcile`：用 manifest 中的 `work_item_id` 读取平台真实状态，同步回 manifest。
+- `frontier`：找出依赖已完成的 ready nodes。
+- `dispatch`：创建或认领 work item，派发 worker。
+- `harvest`：收割 worker/reviewer 的结构化证据，执行机器门禁。
+- `blocked`：失败节点隔离下游，独立分支继续推进。
+- `rerun`：对同一 manifest 重跑，已完成节点跳过，失败节点可调整后重试。
+
+### 为什么这套设计先进
+
+- 不是单 agent 长上下文硬扛，而是把上下文、状态、合同和证据放到模型外部。
+- 不是临时 prompt，而是可安装、可复用、可版本化的 skills。
+- 不是平台绑定，而是通过 engine adapter 适配 Mock、GitHub、Multica。
+- 不是 worker 自证完成，而是 PR、verification、coverage、reviewer report 多层证据闭环。
+- 不是只靠 LLM 语义判断，而是把 Guide / Sensor、Inferential / Computational 四象限都补齐。
+- 不是一次性调度脚本，而是可 lint、可 harvest、可 reconcile、可断点续跑的状态机。
+
+### 组件边界
+
+| 组件 | 负责 | 不负责 |
+|---|---|---|
+| README | 价值、安装、最短路径、架构解释 | 复述完整 worker/reviewer 协议 |
+| `AGENTS.md` | 常驻高频护栏 | 安装说明、平台配置、长方法论 |
+| orchestration skill | DAG 拆解、manifest、编排器用法、失败处理 | worker 具体实现步骤 |
+| executor skill | worker/reviewer/architect 执行协议、结构化证据格式 | leader 如何拆完整 DAG |
+| `run_dag.py` | lint、reconcile、dispatch、harvest、状态回写 | 替业务项目写测试或替 reviewer 做语义判断 |
+| engine adapters | 平台 work item 创建、读取、状态/metadata 映射 | 改变 manifest 语义 |
+
+### 开发入口
+
+主要代码在 `skills/parallel-dev-orchestration/scripts/`：
+
+- `run_dag.py`：编排入口。
+- `core/manifest.py`：manifest 数据模型、contract 字段、YAML load/save。
+- `core/lint.py`：DAG 和 contract lint。
+- `core/evidence.py`：artifacts、verification、review report 校验。
+- `core/graph.py`：frontier、依赖、失败隔离。
+- `engines/`：Mock / GitHub / Multica adapters。
+- `tests/`：manifest、lint、evidence、engine、harvest gates、幂等重跑测试。
 
 ---
 

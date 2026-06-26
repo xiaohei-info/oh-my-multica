@@ -77,20 +77,24 @@ def test_get_recommended_polling_interval():
 
 
 def test_update_metadata_all_fields():
-    """update_work_item_metadata 覆盖 reviewer/blocked_by/artifacts/review_verdict/review_comment 分支。"""
+    """update_work_item_metadata 覆盖 reviewer/blocked_by/artifacts/verification/review 分支。"""
     engine = _make_engine()
     item = engine.create_work_item(
         workspace_id="ws", title="T", description="D",
         dag_key="k", worker="alice")
     result = engine.update_work_item_metadata(
         item.id, reviewer="bob", blocked_by=["A"],
-        artifacts={"pr": "https://example.com/pr/1"},
-        review_verdict="pass", review_comment="LGTM")
+        artifacts={"pr_url": "https://example.com/pr/1"},
+        verification={"commands": [{"cmd": "pytest", "exit_code": 0}], "coverage": 91},
+        review_verdict="pass", review_comment="LGTM",
+        review_report={"diff_reviewed": True, "blockers": []})
     assert result.reviewer == "bob"
     assert result.blocked_by == ["A"]
-    assert result.artifacts == {"pr": "https://example.com/pr/1"}
+    assert result.artifacts == {"pr_url": "https://example.com/pr/1"}
+    assert result.verification == {"commands": [{"cmd": "pytest", "exit_code": 0}], "coverage": 91}
     assert result.review_verdict == "pass"
     assert result.review_comment == "LGTM"
+    assert result.review_report == {"diff_reviewed": True, "blockers": []}
 
 
 def test_list_work_items_basic():

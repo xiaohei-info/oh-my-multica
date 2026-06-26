@@ -55,6 +55,58 @@ def _write_manifest(path):
         f.write(yaml_text)
 
 
+def _write_contract_reviewer_manifest(path):
+    yaml_text = (
+        "meta:\n"
+        "  name: contract-reviewer-test\n"
+        "  squad: sq\n"
+        "nodes:\n"
+        "  - id: A\n"
+        "    worker: alice\n"
+        "    reviewer: bob\n"
+        "    title: Contract task A\n"
+        "    description: 'Build contracted task A'\n"
+        "    contract:\n"
+        "      objective: Implement contracted task A\n"
+        "      acceptance:\n"
+        "        - A returns success\n"
+        "      non_goals:\n"
+        "        - Do not modify B\n"
+        "      verification_commands:\n"
+        "        - pytest tests/a\n"
+        "      pr_base: feature/v1\n"
+        "      coverage_gate: 90\n"
+    )
+    with open(path, "w") as f:
+        f.write(yaml_text)
+
+
+def test_e2e_contract_reviewer_mock_auto_complete_done(tmp_path, monkeypatch):
+    """contract + reviewer + mock auto-complete should generate enough evidence to finish."""
+    manifest_path = str(tmp_path / "contract-reviewer.yaml")
+    _write_contract_reviewer_manifest(manifest_path)
+
+    engine = _make_mock_engine(str(tmp_path))
+    import run_dag as rd
+    monkeypatch.setattr(rd, "commit_manifest", lambda *a, **k: False)
+
+    start_new_run(manifest_path, engine=engine)
+
+    m = load_manifest(manifest_path)
+    item = engine.get_work_item(m.nodes["A"].work_item_id)
+    assert m.nodes["A"].status == "done"
+    assert item.verification["commands"][0]["cmd"] == "pytest tests/a"
+    assert item.verification["pr_base"] == "feature/v1"
+    assert item.verification["coverage"] == 90
+    assert item.review_report["acceptance_mapping"] == [
+        {
+            "acceptance": "A returns success",
+            "evidence": "Mock auto-review for A returns success",
+            "status": "pass",
+        }
+    ]
+
+
 # ==================== tests ====================
 
 def test_e2e_full_dag_done(tmp_path, monkeypatch):
