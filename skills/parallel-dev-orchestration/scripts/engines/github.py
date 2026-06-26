@@ -110,9 +110,11 @@ class GithubEngine(CollaborationEngine):
         reviewer: Optional[str] = None,
         blocked_by: Optional[List[str]] = None,
         wave: Optional[int] = None,
-        artifacts: Optional[Dict[str, str]] = None,
+        artifacts: Optional[Dict[str, Any]] = None,
         review_verdict: Optional[str] = None,
-        review_comment: Optional[str] = None
+        review_comment: Optional[str] = None,
+        verification: Optional[Dict[str, Any]] = None,
+        review_report: Optional[Dict[str, Any]] = None
     ) -> str:
         """构建包含 YAML frontmatter 的 issue body"""
         metadata = {'dag_key': dag_key, 'worker': worker}
@@ -128,6 +130,10 @@ class GithubEngine(CollaborationEngine):
             metadata['review_verdict'] = review_verdict
         if review_comment:
             metadata['review_comment'] = review_comment
+        if verification:
+            metadata['verification'] = verification
+        if review_report:
+            metadata['review_report'] = review_report
 
         frontmatter = yaml.dump(metadata, default_flow_style=False, allow_unicode=True)
         return f"---\n{frontmatter}---\n\n{description}"
@@ -176,8 +182,10 @@ class GithubEngine(CollaborationEngine):
             blocked_by=metadata.get('blocked_by', []),
             wave=metadata.get('wave'),
             artifacts=metadata.get('artifacts'),
+            verification=metadata.get('verification'),
             review_verdict=metadata.get('review_verdict'),
-            review_comment=metadata.get('review_comment')
+            review_comment=metadata.get('review_comment'),
+            review_report=metadata.get('review_report')
         )
 
     # ==================== 第一组：工作空间 ====================
@@ -267,9 +275,11 @@ class GithubEngine(CollaborationEngine):
         worker: Optional[str] = None,
         reviewer: Optional[str] = None,
         blocked_by: Optional[List[str]] = None,
-        artifacts: Optional[Dict[str, str]] = None,
+        artifacts: Optional[Dict[str, Any]] = None,
         review_verdict: Optional[str] = None,
-        review_comment: Optional[str] = None
+        review_comment: Optional[str] = None,
+        verification: Optional[Dict[str, Any]] = None,
+        review_report: Optional[Dict[str, Any]] = None
     ) -> WorkItem:
         """更新工作单元的元数据"""
         # 先获取当前 issue
@@ -284,7 +294,9 @@ class GithubEngine(CollaborationEngine):
             'wave': current.wave,
             'artifacts': artifacts if artifacts is not None else current.artifacts,
             'review_verdict': review_verdict if review_verdict is not None else current.review_verdict,
-            'review_comment': review_comment if review_comment is not None else current.review_comment
+            'review_comment': review_comment if review_comment is not None else current.review_comment,
+            'verification': verification if verification is not None else current.verification,
+            'review_report': review_report if review_report is not None else current.review_report
         }
 
         # 重新构建 body

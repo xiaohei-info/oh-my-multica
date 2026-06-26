@@ -1,4 +1,5 @@
 # lint.py
+import os
 from .manifest import Manifest
 
 def _has_cycle(nodes):
@@ -17,6 +18,34 @@ def _has_cycle(nodes):
         return False
     return any(color[k] == WHITE and dfs(k) for k in nodes)
 
+def _contract_errors(node) -> list:
+    contract = getattr(node, "contract", None)
+    if contract is None:
+        return []
+
+    errs = []
+    prefix = f"node {node.id}: contract"
+    if not contract.objective:
+        errs.append(f"{prefix}.objective is required")
+    if not contract.acceptance:
+        errs.append(f"{prefix}.acceptance must be non-empty")
+    if not contract.non_goals:
+        errs.append(f"{prefix}.non_goals must be non-empty")
+    if not contract.verification_commands:
+        errs.append(f"{prefix}.verification_commands must be non-empty")
+    if not contract.pr_base:
+        errs.append(f"{prefix}.pr_base is required")
+
+    coverage_gate = contract.coverage_gate
+    if not isinstance(coverage_gate, (int, float)) or isinstance(coverage_gate, bool) or not 0 <= coverage_gate <= 100:
+        errs.append(f"{prefix}.coverage_gate must be a 0-100 number")
+
+    for required_path in contract.required_contracts:
+        if not os.path.exists(required_path):
+            errs.append(f"{prefix}.required_contracts path does not exist: {required_path}")
+    return errs
+
+
 def lint(m: Manifest, pool: set) -> list:
     errs = []
     for n in m.nodes.values():
@@ -30,6 +59,7 @@ def lint(m: Manifest, pool: set) -> list:
                 errs.append(f"node {n.id}: reviewer must differ from worker")
             if n.reviewer not in pool:
                 errs.append(f"node {n.id}: reviewer '{n.reviewer}' not in squad pool")
+        errs.extend(_contract_errors(n))
     if _has_cycle(m.nodes):
         errs.append("manifest DAG has a cycle")
     return errs

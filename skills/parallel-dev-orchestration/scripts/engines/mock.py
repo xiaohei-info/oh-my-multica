@@ -31,6 +31,7 @@ class MockEngine(CollaborationEngine):
 
         # 失败注入：dag_key 集合中的节点会被模拟为失败（而不是自动完成）
         self._fail_keys: set = set()
+        self._contracts_by_item_id: Dict[str, Any] = {}
 
         # 派发日志：记录每次 assign_work_item 的 (item_id, dag_key, role, timestamp)
         # 测试用于验证并发派发（同一批 ready 节点的 assign 时间戳接近）
@@ -75,18 +76,67 @@ class MockEngine(CollaborationEngine):
                 else:
                     print(f"[Mock] 自动完成任务 {item_id}")
                     item.status = WorkItemStatus.DONE
-                    item.artifacts = {"pr": f"https://mock.example.com/pr/{item_id}"}
+                    item.artifacts = {"pr_url": f"https://mock.example.com/pr/{item_id}"}
+                    verification = self._mock_verification(item_id)
+                    if verification is not None:
+                        item.verification = verification
                 del self._assigned_items[item_id]
 
             elif item.status == WorkItemStatus.IN_REVIEW:
                 print(f"[Mock] 🤖 自动审核通过任务 {item_id}")
                 item.review_verdict = "pass"
                 item.review_comment = "Mock: LGTM"
+                item.review_report = self._mock_review_report(item_id) or {
+                    "diff_reviewed": True,
+                    "tests_rerun": True,
+                    "coverage_checked": True,
+                    "acceptance_mapping": [],
+                    "blockers": [],
+                    "nits": [],
+                }
                 del self._assigned_items[item_id]
 
     def set_fail_keys(self, keys: set):
         """设置应模拟失败的 dag_key 集合（测试用）。"""
         self._fail_keys = set(keys)
+
+    def set_node_contract(self, item_id: str, contract: Any):
+        """Register manifest contract so mock auto-complete can emit valid evidence."""
+        self._contracts_by_item_id[item_id] = contract
+
+    def _mock_verification(self, item_id: str) -> Optional[Dict[str, Any]]:
+        contract = self._contracts_by_item_id.get(item_id)
+        if contract is None:
+            return None
+        return {
+            "commands": [
+                {"cmd": cmd, "exit_code": 0, "summary": "Mock: passed"}
+                for cmd in contract.verification_commands
+            ],
+            "pr_base": contract.pr_base,
+            "ci_status": "passed",
+            "coverage": contract.coverage_gate,
+        }
+
+    def _mock_review_report(self, item_id: str) -> Optional[Dict[str, Any]]:
+        contract = self._contracts_by_item_id.get(item_id)
+        if contract is None:
+            return None
+        return {
+            "diff_reviewed": True,
+            "tests_rerun": True,
+            "coverage_checked": True,
+            "acceptance_mapping": [
+                {
+                    "acceptance": acceptance,
+                    "evidence": f"Mock auto-review for {acceptance}",
+                    "status": "pass",
+                }
+                for acceptance in contract.acceptance
+            ],
+            "blockers": [],
+            "nits": [],
+        }
 
     # ==================== 环境变量管理 ====================
 
@@ -179,9 +229,11 @@ class MockEngine(CollaborationEngine):
         worker: Optional[str] = None,
         reviewer: Optional[str] = None,
         blocked_by: Optional[List[str]] = None,
-        artifacts: Optional[Dict[str, str]] = None,
+        artifacts: Optional[Dict[str, Any]] = None,
         review_verdict: Optional[str] = None,
-        review_comment: Optional[str] = None
+        review_comment: Optional[str] = None,
+        verification: Optional[Dict[str, Any]] = None,
+        review_report: Optional[Dict[str, Any]] = None
     ) -> WorkItem:
         """更新工作单元的元数据"""
         item = self.get_work_item(item_id)
@@ -200,6 +252,10 @@ class MockEngine(CollaborationEngine):
             print(f"[Mock] 任务 {item_id} 审核结果: {review_verdict}")
         if review_comment is not None:
             item.review_comment = review_comment
+        if verification is not None:
+            item.verification = verification
+        if review_report is not None:
+            item.review_report = review_report
 
         return item
 

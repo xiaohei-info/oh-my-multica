@@ -35,3 +35,68 @@ def test_reviewer_not_in_pool():
     m = mk([Node("M0", "agent-be", reviewer="ghost-reviewer")])
     errs = lint(m, POOL)
     assert any("ghost-reviewer" in e and "pool" in e for e in errs)
+
+
+def contract(**overrides):
+    data = {
+        "objective": "Implement user API",
+        "acceptance": ["GET /users/:id returns 200"],
+        "non_goals": ["Do not modify auth flow"],
+        "verification_commands": ["pytest tests/user_api"],
+        "pr_base": "feature/v1",
+    }
+    data.update(overrides)
+    return data
+
+
+def test_contract_missing_required_fields_reported():
+    m = mk([
+        Node(
+            "M0",
+            "agent-be",
+            contract={
+                "objective": "Implement user API",
+                "acceptance": [],
+                "non_goals": [],
+                "verification_commands": [],
+            },
+        )
+    ])
+
+    errs = lint(m, POOL)
+
+    assert any("contract.acceptance" in e for e in errs)
+    assert any("contract.non_goals" in e for e in errs)
+    assert any("contract.verification_commands" in e for e in errs)
+    assert any("contract.pr_base" in e for e in errs)
+
+
+def test_contract_coverage_gate_must_be_0_to_100():
+    m = mk([Node("M0", "agent-be", contract=contract(coverage_gate=101))])
+
+    errs = lint(m, POOL)
+
+    assert any("coverage_gate" in e and "0-100" in e for e in errs)
+
+
+def test_contract_required_contract_path_must_exist():
+    m = mk([Node("M0", "agent-be", contract=contract(required_contracts=["missing/file.py"]))])
+
+    errs = lint(m, POOL)
+
+    assert any("required_contracts" in e and "missing/file.py" in e for e in errs)
+
+
+def test_valid_contract_has_no_contract_lint_errors():
+    m = mk([
+        Node(
+            "M0",
+            "agent-be",
+            contract=contract(
+                required_contracts=["skills/parallel-dev-orchestration/scripts/tests/test_lint.py"],
+                coverage_gate=95,
+            ),
+        )
+    ])
+
+    assert lint(m, POOL) == []

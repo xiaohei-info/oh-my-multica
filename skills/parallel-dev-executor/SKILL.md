@@ -134,8 +134,8 @@ git push origin <branch-name>
 # 开 PR（base = 集成分支）
 # 使用 gh/hub 或其他工具，确保 base 指向集成分支
 ```
-- 写 metadata 证据：用引擎 CLI 写入 `artifacts`（PR URL/分支/测试命令）和 `verification`（测试结果/手工验证路径），可选 `known_issues`
-- **`verification` 必须含改动分支覆盖证据**：diff-cover 命令 + 实测数字（如 `diff branch coverage: 93% (≥90 gate)`）+ 若有未覆盖分支说明理由。写进 `verification` 自由文本，**不新增 metadata 字段**。
+- 写 metadata 证据：用引擎 CLI 写入结构化 `artifacts`（PR URL/分支/commit）和 `verification`（每条命令、退出码、coverage、PR base），可选 `known_issues`
+- **`verification` 必须覆盖 contract.verification_commands**：每条命令都要出现在 `verification.commands[].cmd`，且成功命令 `exit_code == 0`；diff-cover 数字写入 `verification.coverage`。
 - 命令和参数以 `<engine-cli> --help` 为准，不要编造
 
 ### 8. 写 comment + 转状态
@@ -500,15 +500,56 @@ grep -r "class.*DTO" --include="*.py" | grep -v "shared/contracts"
   - 度量口径：`pytest --cov=<改动模块> --cov-branch --cov-report=xml` → `diff-cover coverage.xml --compare-branch=<集成分支> --fail-under=90`。
   - 节点可经 manifest `gate` 覆盖阈值（升/降需在 gate 文本写明理由）。
 
-**Worker 写入**（Reviewer 读取）：
-- `artifacts`: PR/分支/文件/截图/说明文档
-- `verification`: 测试命令/结果/手工验证路径
-- `known_issues`: 已知问题与限制
+**Worker 写入**（Reviewer 和编排引擎读取）：
+```json
+{
+  "artifacts": {
+    "pr_url": "https://github.com/org/repo/pull/123",
+    "branch": "agent/issue-slug",
+    "commit": "abc123"
+  },
+  "verification": {
+    "commands": [
+      {
+        "cmd": "pytest tests/user_api --cov=app.user --cov-branch --cov-report=xml",
+        "exit_code": 0,
+        "summary": "42 passed"
+      },
+      {
+        "cmd": "diff-cover coverage.xml --compare-branch=feature/v1 --fail-under=90",
+        "exit_code": 0,
+        "coverage": 93
+      }
+    ],
+    "pr_base": "feature/v1",
+    "ci_status": "passed",
+    "coverage": 93
+  }
+}
+```
 
 **Reviewer 写入**（编排引擎读取）：
-- `review_verdict`: `pass` | `blocked` | `pass-with-nits`
+```json
+{
+  "review_verdict": "pass-with-nits",
+  "review_report": {
+    "diff_reviewed": true,
+    "tests_rerun": true,
+    "coverage_checked": true,
+    "acceptance_mapping": [
+      {
+        "acceptance": "GET /users/:id returns 404 for missing users",
+        "evidence": "tests/test_user_api.py::test_missing_user_404",
+        "status": "pass"
+      }
+    ],
+    "blockers": [],
+    "nits": ["Rename local helper in follow-up"]
+  }
+}
+```
 
-**不要发明第二套字段**（如 `pr_url` / `test_result`）——统一用 `artifacts` / `verification` 自由文本。
+**不要发明第二套字段**。PR 链接统一放 `artifacts.pr_url`；命令结果统一放 `verification.commands`；验收映射统一放 `review_report.acceptance_mapping`。
 
 ## 环境假设
 
@@ -570,7 +611,7 @@ grep -r "class.*DTO" --include="*.py" | grep -v "shared/contracts"
 - **改动分支覆盖 ≥ gate 阈值（缺省 90%）**：`diff-cover coverage.xml --compare-branch=<集成分支> --fail-under=90` 退出码 0
 - PR 已产出并指向正确 base
 - metadata.artifacts 已写入
-- metadata.verification 已写入（含改动分支覆盖数字）
+- metadata.verification 已写入（含 commands/pr_base/coverage）
 - issue 状态改为 `in_review`
 
 **如遇阻塞**：
@@ -608,7 +649,7 @@ grep -r "class.*DTO" --include="*.py" | grep -v "shared/contracts"
 **判决输出**：
 - `pass`: 无 blocker（含改动分支覆盖达标）→ 改 status 为 `done`
 - `blocked`: 有 blocker → comment 详细问题 + 保持 `in_review`
-- `pass-with-nits`: 可合并但有建议 → metadata.known_issues
+- `pass-with-nits`: 可合并但有建议 → `review_report.nits`
 
 **执行协议**：
 参照 `parallel-dev-executor` skill 的 Reviewer 6 步清单

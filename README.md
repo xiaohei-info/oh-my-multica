@@ -234,6 +234,37 @@ mock 引擎预置成员 `alice/bob/charlie`，样例的 `worker/reviewer` 用的
 
 被派到任务的 worker / reviewer Agent 则加载 `parallel-dev-executor` skill，按执行协议 TDD 实现并产出可评审 PR。
 
+### Manifest contract 与结构化证据
+
+新任务建议给每个节点写 `contract`。旧 manifest 仍可运行：没有 `contract` 的节点按 legacy 规则只要求 PR 产物和 reviewer verdict；一旦节点声明 `contract`，lint 和 harvest 会启用硬门禁：
+
+```yaml
+nodes:
+  - id: user-api
+    title: Implement user API
+    worker: backend-agent
+    reviewer: review-agent
+    blocked_by: [shared-contracts]
+    contract:
+      objective: 实现用户查询 API
+      source_of_truth:
+        - docs/design.md#user-api
+      required_contracts:
+        - shared/contracts/user.py
+      acceptance:
+        - GET /users/:id returns 200 for existing users
+        - GET /users/:id returns 404 for missing users
+      non_goals:
+        - Do not modify auth flow
+      verification_commands:
+        - pytest tests/user_api --cov=app.user --cov-branch --cov-report=xml
+        - diff-cover coverage.xml --compare-branch=feature/v1 --fail-under=90
+      pr_base: feature/v1
+      coverage_gate: 90
+```
+
+门禁口径：`objective`、`acceptance`、`non_goals`、`verification_commands`、`pr_base` 必填；`coverage_gate` 缺省 90 且必须是 0-100；`required_contracts` 中的仓库路径必须存在。worker done 后必须写 `artifacts.pr_url` 和覆盖这些命令的 `verification.commands`，且覆盖率达到 `coverage_gate`；reviewer pass/pass-with-nits 后必须写结构化 `review_report`，否则 harvest 会把节点标为 `blocked`。
+
 ---
 
 ## 配套 AGENTS.md 的职责

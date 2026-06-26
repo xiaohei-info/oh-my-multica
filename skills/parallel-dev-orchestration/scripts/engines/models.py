@@ -43,13 +43,15 @@ class WorkItem:
     wave: Optional[int] = None
 
     # 执行产物（由 worker 写入）
-    artifacts: Optional[Dict[str, str]] = None
-    # 例如: {"pr": "https://github.com/owner/repo/pull/123", "commit": "abc123"}
+    artifacts: Optional[Dict[str, Any]] = None
+    # 例如: {"pr_url": "https://github.com/owner/repo/pull/123", "commit": "abc123"}
+    verification: Optional[Dict[str, Any]] = None
 
     # 审核信息（由 reviewer 写入）
     review_verdict: Optional[str] = None
     # 可能的值: "pass" | "pass-with-nits" | "blocked" | "needs-changes"
     review_comment: Optional[str] = None
+    review_report: Optional[Dict[str, Any]] = None
 
     def is_completed(self) -> bool:
         """是否已完成"""
