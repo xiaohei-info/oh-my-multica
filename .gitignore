@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.venv/
+venv/
+
+# 引擎运行时状态与本地配置
+.env
+.multica_state/
+
+# 编排产物（用户项目里的 manifest 落点，不应进本仓）
+.orchestrator/
+
+# 日志与临时
+*.log
+test_output/
+
+# 编辑器
+.idea/
+.vscode/
+.DS_Store

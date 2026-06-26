@@ -1,0 +1,60 @@
+# Phase 2 冒烟测试 manifest
+# 验证：agent name→ID 映射、issue 创建、frontier 计算、worker/reviewer 派发
+
+meta:
+  squad: "<your-squad-id>"  # 替换为你的 squad/workspace 标识（multica: squad id；github: owner/repo）
+  integration_branch: "feature/smoke-test"
+  title: "Multica 编排机制冒烟测试"
+  description: "验证 manifest → DAG 引擎的完整链路"
+
+nodes:
+  # Node A: 地基节点（无依赖）
+  - id: smoke-A
+    title: "冒烟测试 Node A - 地基"
+    description: |
+      这是冒烟测试的第一个节点，无依赖。
+
+      **验收标准**：
+      - [ ] 成功被 codex-ubuntu 认领
+      - [ ] 确认能读取到 manifest metadata
+      - [ ] 回复简单的完成确认
+
+      不需要实际实现任何功能，只需确认整个派发→认领→执行流程打通。
+    worker: codex-ubuntu
+    blocked_by: []
+    risk: low
+
+  # Node B: 中间节点（依赖 A）
+  - id: smoke-B
+    title: "冒烟测试 Node B - 中间层"
+    description: |
+      这是冒烟测试的第二个节点，依赖 smoke-A。
+
+      **验收标准**：
+      - [ ] 在 smoke-A 完成后才能被认领（frontier 计算正确）
+      - [ ] 成功被 hermes-backend-eng 认领
+      - [ ] 评审流程正常触发（hermes-reviewer）
+      - [ ] 确认能看到 smoke-A 的状态
+
+      同样不需要实际实现，验证依赖阻塞→解除→派发流程。
+    worker: hermes-backend-eng
+    reviewer: hermes-reviewer
+    blocked_by: [smoke-A]
+    risk: medium
+
+  # Node C: 终端节点（依赖 B）
+  - id: smoke-C
+    title: "冒烟测试 Node C - 终端"
+    description: |
+      这是冒烟测试的最后一个节点，依赖 smoke-B。
+
+      **验收标准**：
+      - [ ] 在 smoke-B 评审通过后才能被认领
+      - [ ] 成功被 claude-ubuntu 认领
+      - [ ] 确认整条依赖链（A→B→C）状态流转正确
+      - [ ] 完成后整个 manifest 所有节点都进入 closed 状态
+
+      这是最后的验证点，确认整个 DAG 执行完整闭环。
+    worker: claude-ubuntu
+    blocked_by: [smoke-B]
+    risk: low
