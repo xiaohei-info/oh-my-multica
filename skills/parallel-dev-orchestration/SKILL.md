@@ -245,14 +245,16 @@ nodes:
 - 底座组件(DB / 配置 / 认证)
 - 骨架(项目结构 / CI)
 - 闸门与假件
+- 测试地基(route matrix / app assembly 测试入口 / service fixture / E2E harness / 测试数据种子)
 
-这些是**串行前提**,产出 Wave 0 节点。
+这些是**串行前提**,产出 Wave 0 节点。若需求文档、技术设计或架构设计存在，先从文档抽取最终交付目标、关键 user journey、跨端/跨服务集成点、响应契约、数据/权限边界与失败语义；后续 integration gate 必须回链这些 source-of-truth。
 
 **步骤 2 — 找"集成缝"(划分并行 track)**
 
 沿契约边界切分独立 track:
 - 各 track 对着 mock 并行开发
 - track 间无运行时依赖(只通过契约对接)
+- 同步产出集成覆盖矩阵: 每条集成缝要标明由哪个 integration gate 覆盖，gate 要锚定需求/设计文档中的 delivery goal，而不是根据实现细节脑补
 
 示例:
 ```
@@ -273,7 +275,7 @@ Track C: 通知服务(邮件 / 短信 / 推送)
 
 **步骤 5 — 留集成验收波 (Wave 2)**
 
-最后一波:替换 mock → 真对端,跑端到端测试。
+最后一波:替换 mock → 真对端,跑端到端测试。同时不要把所有集成覆盖都拖到 Wave 2: 业务节点 contract 可声明局部 L1/L2 integration gate，Wave 2 节点负责跨 track 的 L2/L3 主链验收。
 
 #### 阶段 B 收尾：manifest 落盘 + PR 评审门
 
@@ -364,13 +366,30 @@ nodes:
       verification_commands:
         - pytest tests/user_api --cov=app.user --cov-branch --cov-report=xml
         - diff-cover coverage.xml --compare-branch=feature/v1 --fail-under=90
+      integration_gates:
+        - name: user-api-contract
+          layer: L1 API contract
+          source_of_truth:
+            - docs/design.md#user-api
+          delivery_goal: User API returns documented envelopes and problem+json errors
+          covers:
+            - route_contract
+          acceptance_refs:
+            - GET /users/:id returns 200 for existing users
+            - GET /users/:id returns 404 for missing users
+          commands:
+            - pytest tests/integration/user_api
+          required_metrics:
+            route_contract_coverage: 100
+          artifacts:
+            - coverage.xml
       pr_base: feature/v1
       coverage_gate: 90
 ```
 
-Lint 规则：`objective`、`acceptance`、`non_goals`、`verification_commands`、`pr_base` 必填；`coverage_gate` 缺省 90，填写时必须是 0-100；`required_contracts` 中的仓库路径必须存在。
+Lint 规则：`objective`、`acceptance`、`non_goals`、`verification_commands`、`integration_gates`、`pr_base` 必填；`coverage_gate` 缺省 90，填写时必须是 0-100；`required_contracts` 中的仓库路径必须存在。
 
-Harvest 规则：worker done 后必须有 `artifacts.pr_url`、`verification.commands` 覆盖 contract 里的每条命令且 `exit_code == 0`、`verification.pr_base == contract.pr_base`、`verification.coverage >= coverage_gate`。有 reviewer 时通过后进入 `in_review`，无 reviewer 时直接 `done`；不通过则 `blocked`。reviewer verdict 为 `pass` 或 `pass-with-nits` 时，还必须有结构化 `review_report` 且 diff/tests/coverage 三项检查为 true、每条 acceptance 有 pass mapping、blockers 为空。
+Harvest 规则：worker done 后必须有 `artifacts.pr_url`、`verification.commands` 覆盖 contract 里的每条单测/覆盖率命令且 `exit_code == 0`、`verification.integration_gates` 覆盖 contract 里的每个 integration gate 的命令、metrics、artifacts 和文档锚点、`verification.pr_base == contract.pr_base`、`verification.coverage >= coverage_gate`。有 reviewer 时通过后进入 `in_review`，无 reviewer 时直接 `done`；不通过则 `blocked`。reviewer verdict 为 `pass` 或 `pass-with-nits` 时，还必须有结构化 `review_report` 且 diff/tests/integration_tests/coverage 检查为 true、每条 acceptance 有 pass mapping、每个 integration gate 有通过映射并回链 source_of_truth / delivery_goal、blockers 为空。
 
 #### 粒度与依赖（拆图规则速查）
 
