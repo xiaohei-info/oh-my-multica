@@ -176,6 +176,37 @@ cp -R skills/parallel-dev-executor <your-agent-skills-dir>/
 
 - 配置：`ENGINE_TYPE=multica` + `MULTICA_WORKSPACE_ID=...`（`.env` / `export` / `--workspace <id>` 任一；`MULTICA_SQUAD_ID` 可选）
 
+### Multica 部署最佳实践：全程 CLI，一劳永逸（免 `.env`）
+
+`.env` 是**本地便捷面**，不进仓、也不随 `multica skill import` 分发。把 orchestrator 跑在 Multica
+agent 上时，更省心的做法是**全部走 CLI**：skill 用 CLI 上传并绑定到 agent，引擎配置用 CLI 写进
+该 agent 的环境变量——配一次，之后每次该 agent 被触发都自带配置，不必每台 runtime 再铺 `.env`。
+
+```bash
+# 1) 上传 skill（用 tree URL 才会带上 scripts/ 下的引擎；blob URL 只导 SKILL.md）
+multica skill import \
+  --url https://github.com/xiaohei-info/parallel-dev-skills/tree/main/skills/parallel-dev-orchestration \
+  --on-conflict overwrite
+multica skill import \
+  --url https://github.com/xiaohei-info/parallel-dev-skills/blob/main/skills/parallel-dev-executor/SKILL.md
+
+# 2) 把 orchestration 绑到编排 agent，executor 绑到各 worker/reviewer agent
+multica agent skills add <orchestrator-agent-id> --skill-ids <orchestration-skill-id>
+multica agent skills add <worker-agent-id>       --skill-ids <executor-skill-id>
+
+# 3) 把 Multica 引擎配置写进 orchestrator agent 的环境变量（免 .env）
+#    注意：env set 是「整体替换」式——先 get 看现有键，连同已有项一起写回，别覆盖丢失。
+#    该命令仅 workspace owner/admin 可执行，且每次调用都会被审计。
+multica agent env get <orchestrator-agent-id>     # 先看现有 custom_env
+printf '{"ENGINE_TYPE":"multica","MULTICA_WORKSPACE_ID":"<workspace-id>","MULTICA_SQUAD_ID":"<squad-id>"}' \
+  | multica agent env set <orchestrator-agent-id> --custom-env-stdin
+```
+
+之后该 agent 运行 `run_dag.py` 时，配置按 `.env（可选） < 进程环境变量 < 命令行参数` 解析，
+agent 环境变量这一层即可满足 `ENGINE_TYPE` / `MULTICA_WORKSPACE_ID` / `MULTICA_SQUAD_ID`，无需 `.env`。
+认证仍由 `multica` CLI 自管（runtime 内已登录），**不要**把 token 写进环境变量或 `.env`。
+单次运行要覆盖时，再用 `--engine multica --workspace <id>` 或 manifest 的 `meta.squad` 临时盖过默认值。
+
 ### id 用环境变量驱动（不必手改文件）
 
 manifest 的字段支持 **`${ENV_VAR:-默认值}`** 展开。这样 squad / 仓库标识等 id 不必硬写进文件——
