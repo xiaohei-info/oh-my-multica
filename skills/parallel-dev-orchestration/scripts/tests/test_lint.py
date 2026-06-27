@@ -43,6 +43,19 @@ def contract(**overrides):
         "acceptance": ["GET /users/:id returns 200"],
         "non_goals": ["Do not modify auth flow"],
         "verification_commands": ["pytest tests/user_api"],
+        "integration_gates": [
+            {
+                "name": "user-api-contract",
+                "layer": "L1 API contract",
+                "source_of_truth": ["docs/requirements.md#user-api"],
+                "delivery_goal": "User API returns documented envelopes",
+                "covers": ["route_contract"],
+                "acceptance_refs": ["GET /users/:id returns 200"],
+                "commands": ["pytest tests/integration/user_api"],
+                "required_metrics": {"route_contract_coverage": 100},
+                "artifacts": ["coverage.xml"],
+            }
+        ],
         "pr_base": "feature/v1",
     }
     data.update(overrides)
@@ -59,6 +72,7 @@ def test_contract_missing_required_fields_reported():
                 "acceptance": [],
                 "non_goals": [],
                 "verification_commands": [],
+                "integration_gates": [],
             },
         )
     ])
@@ -68,6 +82,7 @@ def test_contract_missing_required_fields_reported():
     assert any("contract.acceptance" in e for e in errs)
     assert any("contract.non_goals" in e for e in errs)
     assert any("contract.verification_commands" in e for e in errs)
+    assert any("contract.integration_gates" in e for e in errs)
     assert any("contract.pr_base" in e for e in errs)
 
 
@@ -100,3 +115,38 @@ def test_valid_contract_has_no_contract_lint_errors():
     ])
 
     assert lint(m, POOL) == []
+
+
+def test_contract_integration_gate_requires_document_anchor_and_delivery_goal():
+    m = mk([
+        Node(
+            "M0",
+            "agent-be",
+            contract=contract(
+                integration_gates=[
+                    {
+                        "name": "thin-gate",
+                        "layer": "L1 API contract",
+                        "commands": ["pytest tests/integration/user_api"],
+                    }
+                ]
+            ),
+        )
+    ])
+
+    errs = lint(m, POOL)
+
+    assert any("source_of_truth" in e for e in errs)
+    assert any("delivery_goal" in e for e in errs)
+    assert any("covers" in e for e in errs)
+    assert any("acceptance_refs" in e for e in errs)
+
+
+def test_contract_integration_gate_commands_must_be_non_empty():
+    gate = contract()["integration_gates"][0]
+    gate["commands"] = []
+    m = mk([Node("M0", "agent-be", contract=contract(integration_gates=[gate]))])
+
+    errs = lint(m, POOL)
+
+    assert any("integration_gates[0].commands" in e for e in errs)

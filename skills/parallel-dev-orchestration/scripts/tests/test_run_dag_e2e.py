@@ -74,6 +74,22 @@ def _write_contract_reviewer_manifest(path):
         "        - Do not modify B\n"
         "      verification_commands:\n"
         "        - pytest tests/a\n"
+        "      integration_gates:\n"
+        "        - name: a-contract\n"
+        "          layer: L1 API contract\n"
+        "          source_of_truth:\n"
+        "            - docs/requirements.md#a\n"
+        "          delivery_goal: A returns documented success envelope\n"
+        "          covers:\n"
+        "            - route_contract\n"
+        "          acceptance_refs:\n"
+        "            - A returns success\n"
+        "          commands:\n"
+        "            - pytest tests/integration/a\n"
+        "          required_metrics:\n"
+        "            route_contract_coverage: 100\n"
+        "          artifacts:\n"
+        "            - playwright-report/index.html\n"
         "      pr_base: feature/v1\n"
         "      coverage_gate: 90\n"
     )
@@ -96,8 +112,26 @@ def test_e2e_contract_reviewer_mock_auto_complete_done(tmp_path, monkeypatch):
     item = engine.get_work_item(m.nodes["A"].work_item_id)
     assert m.nodes["A"].status == "done"
     assert item.verification["commands"][0]["cmd"] == "pytest tests/a"
+    assert item.verification["integration_gates"][0]["name"] == "a-contract"
+    assert item.verification["integration_gates"][0]["commands"][0]["cmd"] == "pytest tests/integration/a"
+    assert item.verification["integration_gates"][0]["source_of_truth"] == ["docs/requirements.md#a"]
     assert item.verification["pr_base"] == "feature/v1"
     assert item.verification["coverage"] == 90
+    assert item.review_report["integration_tests_rerun"] is True
+    assert item.review_report["integration_gate_mapping"] == [
+        {
+            "gate": "a-contract",
+            "source_of_truth": ["docs/requirements.md#a"],
+            "delivery_goal": "A returns documented success envelope",
+            "evidence": "Mock auto-review integration gate: a-contract",
+            "commands": [
+                {"cmd": "pytest tests/integration/a", "exit_code": 0, "summary": "Mock: integration rerun passed"},
+            ],
+            "metrics": {"route_contract_coverage": 100},
+            "artifacts": ["playwright-report/index.html"],
+            "status": "pass",
+        }
+    ]
     assert item.review_report["acceptance_mapping"] == [
         {
             "acceptance": "A returns success",

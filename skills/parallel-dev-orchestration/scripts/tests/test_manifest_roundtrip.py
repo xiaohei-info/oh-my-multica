@@ -44,6 +44,20 @@ def test_roundtrip_preserves_all_fields(tmp_path):
         "        - Do not rewrite backend\n"
         "      verification_commands:\n"
         "        - pytest tests/frontend\n"
+        "      integration_gates:\n"
+        "        - name: frontend-backend-flow\n"
+        "          layer: L2 service integration\n"
+        "          source_of_truth:\n"
+        "            - docs/design.md#frontend\n"
+        "          delivery_goal: UI renders API result from real backend contract\n"
+        "          covers:\n"
+        "            - service_flow\n"
+        "          acceptance_refs:\n"
+        "            - UI renders API result\n"
+        "          commands:\n"
+        "            - pytest tests/integration/frontend_backend\n"
+        "          required_metrics:\n"
+        "            route_contract_coverage: 100\n"
         "      pr_base: feature/v1\n"
         "      coverage_gate: 91\n"
         "    work_item_id: '42'\n"
@@ -86,6 +100,9 @@ def test_roundtrip_preserves_all_fields(tmp_path):
     assert m2.nodes["M1"].contract.acceptance == ["UI renders API result"]
     assert m2.nodes["M1"].contract.non_goals == ["Do not rewrite backend"]
     assert m2.nodes["M1"].contract.verification_commands == ["pytest tests/frontend"]
+    assert m2.nodes["M1"].contract.integration_gates[0]["name"] == "frontend-backend-flow"
+    assert m2.nodes["M1"].contract.integration_gates[0]["source_of_truth"] == ["docs/design.md#frontend"]
+    assert m2.nodes["M1"].contract.integration_gates[0]["delivery_goal"] == "UI renders API result from real backend contract"
     assert m2.nodes["M1"].contract.pr_base == "feature/v1"
     assert m2.nodes["M1"].contract.coverage_gate == 91
     assert m2.nodes["M1"].work_item_id == "42"

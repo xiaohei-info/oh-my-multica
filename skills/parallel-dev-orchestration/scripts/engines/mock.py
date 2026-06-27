@@ -113,6 +113,21 @@ class MockEngine(CollaborationEngine):
                 {"cmd": cmd, "exit_code": 0, "summary": "Mock: passed"}
                 for cmd in contract.verification_commands
             ],
+            "integration_gates": [
+                {
+                    "name": gate.get("name"),
+                    "commands": [
+                        {"cmd": cmd, "exit_code": 0, "summary": "Mock: integration passed"}
+                        for cmd in gate.get("commands", [])
+                    ],
+                    "metrics": dict(gate.get("required_metrics", {})),
+                    "artifacts": list(gate.get("artifacts", [])),
+                    "covers": list(gate.get("covers", [])),
+                    "source_of_truth": list(gate.get("source_of_truth", [])),
+                    "delivery_goal": gate.get("delivery_goal"),
+                }
+                for gate in contract.integration_gates
+            ],
             "pr_base": contract.pr_base,
             "ci_status": "passed",
             "coverage": contract.coverage_gate,
@@ -125,7 +140,24 @@ class MockEngine(CollaborationEngine):
         return {
             "diff_reviewed": True,
             "tests_rerun": True,
+            "integration_tests_rerun": True,
             "coverage_checked": True,
+            "integration_gate_mapping": [
+                {
+                    "gate": gate.get("name"),
+                    "source_of_truth": list(gate.get("source_of_truth", [])),
+                    "delivery_goal": gate.get("delivery_goal"),
+                    "evidence": f"Mock auto-review integration gate: {gate.get('name')}",
+                    "commands": [
+                        {"cmd": cmd, "exit_code": 0, "summary": "Mock: integration rerun passed"}
+                        for cmd in gate.get("commands", [])
+                    ],
+                    "metrics": dict(gate.get("required_metrics", {})),
+                    "artifacts": list(gate.get("artifacts", [])),
+                    "status": "pass",
+                }
+                for gate in contract.integration_gates
+            ],
             "acceptance_mapping": [
                 {
                     "acceptance": acceptance,

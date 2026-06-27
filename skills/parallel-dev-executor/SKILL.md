@@ -134,8 +134,8 @@ git push origin <branch-name>
 # 开 PR（base = 集成分支）
 # 使用 gh/hub 或其他工具，确保 base 指向集成分支
 ```
-- 写 metadata 证据：用引擎 CLI 写入结构化 `artifacts`（PR URL/分支/commit）和 `verification`（每条命令、退出码、coverage、PR base），可选 `known_issues`
-- **`verification` 必须覆盖 contract.verification_commands**：每条命令都要出现在 `verification.commands[].cmd`，且成功命令 `exit_code == 0`；diff-cover 数字写入 `verification.coverage`。
+- 写 metadata 证据：用引擎 CLI 写入结构化 `artifacts`（PR URL/分支/commit）和 `verification`（单测/覆盖率命令、集成门、退出码、coverage、PR base），可选 `known_issues`
+- **`verification` 必须覆盖 contract.verification_commands 与 contract.integration_gates**：单测/覆盖率命令出现在 `verification.commands[].cmd`，集成门出现在 `verification.integration_gates[].commands[].cmd`，全部成功命令 `exit_code == 0`；diff-cover 数字写入 `verification.coverage`。
 - 命令和参数以 `<engine-cli> --help` 为准，不要编造
 
 ### 8. 写 comment + 转状态
@@ -161,9 +161,10 @@ git push origin <branch-name>
 - 使用引擎 CLI 查询 work item metadata（先跑 `<engine-cli> --help`，不要编造参数）
 
 ### 2. 读取上游证据
-- 从 work item metadata 中提取 PR 链接、测试命令、验证路径
+- 从 work item metadata 中提取 PR 链接、测试命令、集成门证据、验证路径
 - 找到 PR URL
-- 找到测试命令
+- 找到 `verification.commands` 中的单测/覆盖率命令
+- 找到 `verification.integration_gates` 中每个 gate 的 `name`、`source_of_truth`、`delivery_goal`、`commands`、`metrics`、`artifacts`
 - 找到手工验证路径
 
 ### 3. 独立复跑验证（收活铁律）
@@ -185,8 +186,17 @@ pytest --cov=<改动模块> --cov-branch --cov-report=xml
 diff-cover coverage.xml --compare-branch=<集成分支> --fail-under=<gate阈值,缺省90>
 # 退出码非 0 = 改动分支覆盖不达标 → Blocker，判 blocked
 
+# 独立复跑集成门（不信 worker 报的数字）
+# 对 contract.integration_gates / verification.integration_gates 中每个 gate:
+# 1. 先读 source_of_truth / delivery_goal，确认 gate 锚定的是需求/技术设计中的交付目标
+# 2. 逐条复跑 gate.commands
+# 3. 核对 gate.metrics 是否满足 required_metrics
+# 4. 核对 gate.artifacts 是否存在且足以诊断失败
+# 5. 在 review_report.integration_gate_mapping 中写回 gate、source_of_truth、delivery_goal、commands、metrics、artifacts、status
+# 缺 gate、命令失败、metrics 不达标、artifact 缺失、或未锚定文档目标 = Blocker，判 blocked
+
 # 手工验证关键路径
-# 按 issue 验收清单 + worker 的 verification 路径，亲自走一遍
+# 按 issue 验收清单 + worker 的 verification 路径 + integration gate 的 delivery_goal，亲自走一遍
 ```
 
 **为什么必须看 diff**：worker 的 prose 总结可能漏掉关键改动、或美化实际情况；只有 diff 是真实的。
@@ -246,10 +256,11 @@ diff-cover coverage.xml --compare-branch=<集成分支> --fail-under=<gate阈值
 - 边界处理：错误、边界值、失败路径
 - 契约遵守：只 import 共享契约，没重定义
 - 测试质量：覆盖主路径 + 失败路径，无 flake
+- **集成门复核**：独立复跑 `integration_gates` 的 commands，核对 metrics / artifacts，并确认 `source_of_truth` / `delivery_goal` 指向需求或技术设计中的最终交付目标，而不是实现细节
 - **改动分支覆盖**：独立复跑 `diff-cover`，本卡改动分支覆盖 ≥ gate 阈值
 
 **区分四类发现**：
-- **Blocker**（必修）：违反约束、破坏契约、功能缺失、测试不过、**改动分支覆盖 < gate 阈值**
+- **Blocker**（必修）：违反约束、破坏契约、功能缺失、测试不过、integration gate 缺失/失败/metrics 不达标/未锚定文档目标、**改动分支覆盖 < gate 阈值**
 - **重要风险**（强烈建议修）：边界处理缺失、错误处理不当
 - **普通建议**（可后续）：性能优化、代码风格、注释完善
 - **风格偏好**（不拦）：个人习惯差异
@@ -260,7 +271,8 @@ diff-cover coverage.xml --compare-branch=<集成分支> --fail-under=<gate阈值
 
 #### 验收↔测试映射（强制产出表格）
 - 每条「验收」锚定到具体 test 函数，产出一张映射表
-- 无对应 test = 覆盖缺口，必须在 comment 中标出
+- 每个 integration gate 锚定到 `source_of_truth` / `delivery_goal`，并在 `review_report.integration_gate_mapping` 里映射到复跑命令、metrics、artifacts 和证据
+- 无对应 test / gate mapping = 覆盖缺口，必须在 comment 中标出
 - **改动分支未被覆盖 = 覆盖缺口**：把 `diff-cover` 报告的未覆盖分支逐条列出；低于 gate 阈值则整体判 Blocker
 
 ### 5. 判决 + 写回
@@ -521,6 +533,23 @@ grep -r "class.*DTO" --include="*.py" | grep -v "shared/contracts"
         "coverage": 93
       }
     ],
+    "integration_gates": [
+      {
+        "name": "user-api-contract",
+        "source_of_truth": ["docs/design.md#user-api"],
+        "delivery_goal": "User API returns documented envelopes and problem+json errors",
+        "covers": ["route_contract"],
+        "commands": [
+          {
+            "cmd": "pytest tests/integration/user_api",
+            "exit_code": 0,
+            "summary": "8 passed"
+          }
+        ],
+        "metrics": {"route_contract_coverage": 100},
+        "artifacts": ["coverage.xml"]
+      }
+    ],
     "pr_base": "feature/v1",
     "ci_status": "passed",
     "coverage": 93
@@ -535,11 +564,26 @@ grep -r "class.*DTO" --include="*.py" | grep -v "shared/contracts"
   "review_report": {
     "diff_reviewed": true,
     "tests_rerun": true,
+    "integration_tests_rerun": true,
     "coverage_checked": true,
     "acceptance_mapping": [
       {
         "acceptance": "GET /users/:id returns 404 for missing users",
         "evidence": "tests/test_user_api.py::test_missing_user_404",
+        "status": "pass"
+      }
+    ],
+    "integration_gate_mapping": [
+      {
+        "gate": "user-api-contract",
+        "source_of_truth": ["docs/design.md#user-api"],
+        "delivery_goal": "User API returns documented envelopes and problem+json errors",
+        "evidence": "tests/integration/test_user_api.py::test_frontend_backend_contract",
+        "commands": [
+          {"cmd": "pytest tests/integration/user_api", "exit_code": 0}
+        ],
+        "metrics": {"route_contract_coverage": 100},
+        "artifacts": ["coverage.xml"],
         "status": "pass"
       }
     ],
@@ -549,7 +593,7 @@ grep -r "class.*DTO" --include="*.py" | grep -v "shared/contracts"
 }
 ```
 
-**不要发明第二套字段**。PR 链接统一放 `artifacts.pr_url`；命令结果统一放 `verification.commands`；验收映射统一放 `review_report.acceptance_mapping`。
+**不要发明第二套字段**。PR 链接统一放 `artifacts.pr_url`；单测/覆盖率命令结果统一放 `verification.commands`；集成门证据统一放 `verification.integration_gates`；验收映射统一放 `review_report.acceptance_mapping`；集成门映射统一放 `review_report.integration_gate_mapping`。
 
 ## 环境假设
 
@@ -609,9 +653,11 @@ grep -r "class.*DTO" --include="*.py" | grep -v "shared/contracts"
 **完成标准**：
 - 测试全绿（全量测试套件，不只本模块）
 - **改动分支覆盖 ≥ gate 阈值（缺省 90%）**：`diff-cover coverage.xml --compare-branch=<集成分支> --fail-under=90` 退出码 0
+- **集成测试全绿**：contract.integration_gates 每个 gate 都有 `verification.integration_gates[]` 证据，且锚定 source_of_truth / delivery_goal
+- Worker 必须按 integration gate 的 source_of_truth / delivery_goal 生成证据，不得把实现细节当成交付目标
 - PR 已产出并指向正确 base
 - metadata.artifacts 已写入
-- metadata.verification 已写入（含 commands/pr_base/coverage）
+- metadata.verification 已写入（含 commands/integration_gates/pr_base/coverage）
 - issue 状态改为 `in_review`
 
 **如遇阻塞**：
@@ -630,6 +676,7 @@ grep -r "class.*DTO" --include="*.py" | grep -v "shared/contracts"
 
 **关键约束（必读）**：
 1. **收活铁律**：先 `git diff <base>...<head>` 看真实改动，再跑测试，绝不只凭 worker 自述
+1a. **集成门铁律**：逐个复跑 `verification.integration_gates` 的 commands，核对 metrics/artifacts，并按 source_of_truth / delivery_goal 判断是否覆盖真实交付目标
 2. **只读共享态**：契约、入口、映射表位于 `<共享契约路径>`，审查时确认 worker 只 import 未重定义
 3. **对照三份材料**：
    - Issue body 的唯一口径文档: `<文档路径>` §<章节号>
