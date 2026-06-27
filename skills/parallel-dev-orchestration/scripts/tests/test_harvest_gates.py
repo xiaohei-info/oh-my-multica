@@ -43,6 +43,22 @@ def _write_manifest(path, *, reviewer=None, coverage_gate=90):
         "        - Do not modify B\n"
         "      verification_commands:\n"
         "        - pytest tests/a\n"
+        "      integration_gates:\n"
+        "        - name: a-contract\n"
+        "          layer: L1 API contract\n"
+        "          source_of_truth:\n"
+        "            - docs/requirements.md#a\n"
+        "          delivery_goal: A returns documented success envelope\n"
+        "          covers:\n"
+        "            - route_contract\n"
+        "          acceptance_refs:\n"
+        "            - A returns success\n"
+        "          commands:\n"
+        "            - pytest tests/integration/a\n"
+        "          required_metrics:\n"
+        "            route_contract_coverage: 100\n"
+        "          artifacts:\n"
+        "            - playwright-report/index.html\n"
         "      pr_base: feature/v1\n"
         f"      coverage_gate: {coverage_gate}\n"
     )
@@ -81,6 +97,19 @@ def valid_verification(*, coverage=92):
         "commands": [
             {"cmd": "pytest tests/a", "exit_code": 0, "summary": "3 passed"},
         ],
+        "integration_gates": [
+            {
+                "name": "a-contract",
+                "commands": [
+                    {"cmd": "pytest tests/integration/a", "exit_code": 0, "summary": "2 passed"},
+                ],
+                "metrics": {"route_contract_coverage": 100},
+                "artifacts": ["playwright-report/index.html"],
+                "covers": ["route_contract"],
+                "source_of_truth": ["docs/requirements.md#a"],
+                "delivery_goal": "A returns documented success envelope",
+            }
+        ],
         "pr_base": "feature/v1",
         "ci_status": "passed",
         "coverage": coverage,
@@ -91,7 +120,22 @@ def valid_review_report():
     return {
         "diff_reviewed": True,
         "tests_rerun": True,
+        "integration_tests_rerun": True,
         "coverage_checked": True,
+        "integration_gate_mapping": [
+            {
+                "gate": "a-contract",
+                "source_of_truth": ["docs/requirements.md#a"],
+                "delivery_goal": "A returns documented success envelope",
+                "evidence": "tests/integration/test_a.py::test_a_integration",
+                "commands": [
+                    {"cmd": "pytest tests/integration/a", "exit_code": 0, "summary": "2 passed"},
+                ],
+                "metrics": {"route_contract_coverage": 100},
+                "artifacts": ["playwright-report/index.html"],
+                "status": "pass",
+            }
+        ],
         "acceptance_mapping": [
             {
                 "acceptance": "A returns success",
@@ -130,10 +174,83 @@ def test_harvest_worker_done_missing_declared_command_blocks(tmp_path, monkeypat
         engine,
         verification={
             "commands": [{"cmd": "pytest other", "exit_code": 0}],
+            "integration_gates": [{"name": "a-contract", "commands": [{"cmd": "pytest tests/integration/a", "exit_code": 0}], "metrics": {"route_contract_coverage": 100}, "artifacts": ["playwright-report/index.html"]}],
             "pr_base": "feature/v1",
             "coverage": 92,
         },
     )
+    m = _load_in_progress(manifest_path, item.id)
+
+    completed, failed = set(), set()
+    _harvest(engine, m, str(manifest_path), completed, failed)
+
+    assert m.nodes["A"].status == "blocked"
+    assert "A" in failed
+
+
+def test_harvest_worker_done_missing_integration_test_blocks(tmp_path, monkeypatch):
+    manifest_path = tmp_path / "dag.yaml"
+    _write_manifest(manifest_path)
+    engine = _make_mock_engine()
+    monkeypatch.setattr(rd, "commit_manifest", lambda *a, **k: False)
+    verification = valid_verification()
+    verification["integration_gates"] = [
+        {"name": "a-contract", "commands": [{"cmd": "pytest tests/integration/other", "exit_code": 0}], "metrics": {"route_contract_coverage": 100}, "artifacts": ["playwright-report/index.html"]}
+    ]
+    item = _make_done_item(engine, verification=verification)
+    m = _load_in_progress(manifest_path, item.id)
+
+    completed, failed = set(), set()
+    _harvest(engine, m, str(manifest_path), completed, failed)
+
+    assert m.nodes["A"].status == "blocked"
+    assert "A" in failed
+
+
+def test_harvest_worker_done_failed_integration_test_blocks(tmp_path, monkeypatch):
+    manifest_path = tmp_path / "dag.yaml"
+    _write_manifest(manifest_path)
+    engine = _make_mock_engine()
+    monkeypatch.setattr(rd, "commit_manifest", lambda *a, **k: False)
+    verification = valid_verification()
+    verification["integration_gates"] = [
+        {"name": "a-contract", "commands": [{"cmd": "pytest tests/integration/a", "exit_code": 1}], "metrics": {"route_contract_coverage": 100}, "artifacts": ["playwright-report/index.html"]}
+    ]
+    item = _make_done_item(engine, verification=verification)
+    m = _load_in_progress(manifest_path, item.id)
+
+    completed, failed = set(), set()
+    _harvest(engine, m, str(manifest_path), completed, failed)
+
+    assert m.nodes["A"].status == "blocked"
+    assert "A" in failed
+
+
+def test_harvest_worker_done_low_integration_metric_blocks(tmp_path, monkeypatch):
+    manifest_path = tmp_path / "dag.yaml"
+    _write_manifest(manifest_path)
+    engine = _make_mock_engine()
+    monkeypatch.setattr(rd, "commit_manifest", lambda *a, **k: False)
+    verification = valid_verification()
+    verification["integration_gates"][0]["metrics"] = {"route_contract_coverage": 99}
+    item = _make_done_item(engine, verification=verification)
+    m = _load_in_progress(manifest_path, item.id)
+
+    completed, failed = set(), set()
+    _harvest(engine, m, str(manifest_path), completed, failed)
+
+    assert m.nodes["A"].status == "blocked"
+    assert "A" in failed
+
+
+def test_harvest_worker_done_missing_integration_artifact_blocks(tmp_path, monkeypatch):
+    manifest_path = tmp_path / "dag.yaml"
+    _write_manifest(manifest_path)
+    engine = _make_mock_engine()
+    monkeypatch.setattr(rd, "commit_manifest", lambda *a, **k: False)
+    verification = valid_verification()
+    verification["integration_gates"][0]["artifacts"] = []
+    item = _make_done_item(engine, verification=verification)
     m = _load_in_progress(manifest_path, item.id)
 
     completed, failed = set(), set()
@@ -219,6 +336,60 @@ def test_harvest_reviewer_pass_with_blockers_blocks(tmp_path, monkeypatch):
     item.review_verdict = "pass"
     report = valid_review_report()
     report["blockers"] = [{"type": "contract_violation", "reason": "Wrong DTO"}]
+    item.review_report = report
+    m = _load_in_review(manifest_path, item.id)
+
+    completed, failed = set(), set()
+    _harvest(engine, m, str(manifest_path), completed, failed)
+
+    assert m.nodes["A"].status == "blocked"
+    assert "A" in failed
+
+
+def test_harvest_reviewer_pass_without_integration_confirmation_blocks(tmp_path, monkeypatch):
+    manifest_path = tmp_path / "dag.yaml"
+    _write_manifest(manifest_path, reviewer="bob")
+    engine = _make_mock_engine()
+    monkeypatch.setattr(rd, "commit_manifest", lambda *a, **k: False)
+    item = engine.create_work_item(
+        workspace_id="sq",
+        title="Task A",
+        description="Test",
+        dag_key="A",
+        worker="alice",
+        reviewer="bob",
+    )
+    engine.update_status(item.id, WorkItemStatus.IN_REVIEW)
+    item.review_verdict = "pass"
+    report = valid_review_report()
+    report["integration_tests_rerun"] = False
+    item.review_report = report
+    m = _load_in_review(manifest_path, item.id)
+
+    completed, failed = set(), set()
+    _harvest(engine, m, str(manifest_path), completed, failed)
+
+    assert m.nodes["A"].status == "blocked"
+    assert "A" in failed
+
+
+def test_harvest_reviewer_pass_missing_integration_mapping_blocks(tmp_path, monkeypatch):
+    manifest_path = tmp_path / "dag.yaml"
+    _write_manifest(manifest_path, reviewer="bob")
+    engine = _make_mock_engine()
+    monkeypatch.setattr(rd, "commit_manifest", lambda *a, **k: False)
+    item = engine.create_work_item(
+        workspace_id="sq",
+        title="Task A",
+        description="Test",
+        dag_key="A",
+        worker="alice",
+        reviewer="bob",
+    )
+    engine.update_status(item.id, WorkItemStatus.IN_REVIEW)
+    item.review_verdict = "pass"
+    report = valid_review_report()
+    report["integration_gate_mapping"] = []
     item.review_report = report
     m = _load_in_review(manifest_path, item.id)
 

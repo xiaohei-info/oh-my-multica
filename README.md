@@ -19,9 +19,9 @@
 - 把一份设计或 plan 拆成可并行执行的 manifest DAG。
 - 自动在 Mock / GitHub / Multica 中创建 work items 并按依赖派发 worker。
 - 通过 manifest contract schema、lint、required contracts、acceptance、non-goals、
-  verification commands、PR base、coverage gate 把软约束变成硬合同。
-- worker 必须交付 PR、结构化 artifacts、verification、coverage 证据。
-- reviewer 必须交付结构化 verdict 和 review report，独立验收 diff、测试、覆盖率和验收映射。
+  verification commands、integration gates、PR base、coverage gate 把软约束变成硬合同。
+- worker 必须交付 PR、结构化 artifacts、verification、integration gate evidence、coverage 证据。
+- reviewer 必须交付结构化 verdict 和 review report，独立验收 diff、测试、集成测试、覆盖率和验收映射。
 - 已完成节点可复用，失败节点可隔离，支持断点续跑和跨机器接力。
 
 适合：
@@ -59,7 +59,7 @@
 |---|---|---|
 | 长任务跑偏 | agent 靠上下文硬记 | issue / manifest / AGENTS.md 外置约束 |
 | 接口漂移 | 各自发明 DTO、事件、状态 | Wave 0 契约先行，required contracts 可 lint |
-| 完成标准模糊 | worker 自述完成 | PR + verification + coverage gate + reviewer |
+| 完成标准模糊 | worker 自述完成 | PR + verification + integration gate evidence + coverage gate + reviewer |
 | 评审不可消费 | reviewer 写自然语言结论 | `review_verdict` + `review_report` 结构化输出 |
 | 状态混乱 | 人肉跟进聊天记录 | manifest 状态机 + reconcile + harvest |
 | 平台绑定 | 每个平台重写流程 | engine adapter 抽象：Mock / GitHub / Multica |
@@ -266,6 +266,23 @@ nodes:
       verification_commands:
         - pytest tests/user_api --cov=app.user --cov-branch --cov-report=xml
         - diff-cover coverage.xml --compare-branch=feature/v1 --fail-under=90
+      integration_gates:
+        - name: user-api-contract
+          layer: L1 API contract
+          source_of_truth:
+            - docs/design.md#user-api
+          delivery_goal: User API returns documented envelopes and problem+json errors
+          covers:
+            - route_contract
+          acceptance_refs:
+            - GET /users/:id returns 200 for existing users
+            - GET /users/:id returns 404 for missing users
+          commands:
+            - pytest tests/integration/user_api
+          required_metrics:
+            route_contract_coverage: 100
+          artifacts:
+            - coverage.xml
       pr_base: feature/v1
       coverage_gate: 90
 ```
@@ -273,7 +290,7 @@ nodes:
 lint 口径：
 
 - `objective` 必填。
-- `acceptance`、`non_goals`、`verification_commands` 必填且非空。
+- `acceptance`、`non_goals`、`verification_commands`、`integration_gates` 必填且非空；每个 integration gate 必须锚定 `source_of_truth`、`delivery_goal`、`covers`、`acceptance_refs` 和 `commands`。
 - `pr_base` 必填，避免 PR 打到错误基线。
 - `coverage_gate` 缺省 90，填写时必须是 0 到 100。
 - `required_contracts` 中的仓库路径必须存在。
@@ -283,11 +300,12 @@ harvest 口径：
 
 - worker 必须写 `artifacts.pr_url`。
 - `verification.commands` 必须覆盖 contract 中声明的 `verification_commands`。
-- 所有 command `exit_code` 必须为 0。
+- `verification.integration_gates` 必须逐项覆盖 contract 中声明的 `integration_gates`。
+- 所有 command / integration gate command `exit_code` 必须为 0，gate metrics/artifacts 必须满足声明。
 - `verification.pr_base` 必须等于 `contract.pr_base`。
 - `verification.coverage` 必须达到 `coverage_gate`。
 - 有 reviewer 时，`review_verdict` 必须是 `pass` 或 `pass-with-nits`，且 `review_report`
-  满足 diff、tests、coverage、acceptance mapping、blockers 等结构化检查。
+  满足 diff、tests、integration tests、coverage、acceptance mapping、integration gate mapping、blockers 等结构化检查。
 
 ### AGENTS.md 的采用
 
@@ -354,9 +372,9 @@ live Multica 测试默认 skip。只有 `multica` CLI 在 PATH，且显式设置
 | 象限 | 项目组件 | 作用 |
 |---|---|---|
 | Guide x Inferential | `AGENTS.md` 瘦身、orchestration skill、executor skill、常驻护栏分层 | 行动前软约束。把高频铁律放在短上下文里，把长方法论留在 skill 中，降低注意力噪音 |
-| Guide x Computational | manifest contract schema、DAG lint、required contracts、acceptance、non-goals、verification commands、PR base、coverage gate | 行动前硬约束。非法 DAG、缺失合同、错误 agent、错误 PR base、缺失 required contracts 在执行前失败 |
-| Sensor x Computational | 结构化 artifacts、verification、PR、CI、coverage gate、harvest 机器门禁 | 行动后机器检查。worker 自述不算完成，必须有 PR、命令结果、coverage、base branch 等可消费证据 |
-| Sensor x Inferential | 结构化 reviewer report、review verdict、acceptance mapping、blockers、nits | 行动后语义检查。reviewer 对照 diff、测试、覆盖率和验收条目做独立判断，报告能被引擎消费 |
+| Guide x Computational | manifest contract schema、DAG lint、required contracts、acceptance、non-goals、verification commands、integration gates、PR base、coverage gate | 行动前硬约束。非法 DAG、缺失合同、错误 agent、错误 PR base、缺失 required contracts、缺失集成门在执行前失败 |
+| Sensor x Computational | 结构化 artifacts、verification、integration gate evidence、PR、CI、coverage gate、harvest 机器门禁 | 行动后机器检查。worker 自述不算完成，必须有 PR、单测命令结果、集成门证据、coverage、base branch 等可消费证据 |
+| Sensor x Inferential | 结构化 reviewer report、review verdict、acceptance mapping、integration gate mapping、blockers、nits | 行动后语义检查。reviewer 对照 diff、单测、集成测试、覆盖率和验收条目做独立判断，报告能被引擎消费 |
 
 这对应 AITEAM-193 的落地方案：先把 contract 字段和 lint 硬化，再把 worker/reviewer 产物升级成结构化 metadata，最后让 harvest 阶段用这些证据推进状态。
 
@@ -382,7 +400,7 @@ flowchart TD
     Multica --> Worker
     Mock --> Worker
     Worker --> Artifacts[artifacts.pr_url / branch / commit]
-    Worker --> Verification[verification.commands / pr_base / coverage / ci_status]
+    Worker --> Verification[verification.commands / integration_gates / pr_base / coverage / ci_status]
     Artifacts --> Harvest[Harvest machine gates]
     Verification --> Harvest
 
@@ -419,7 +437,7 @@ todo -> in_progress -> in_review -> done
 - 不是单 agent 长上下文硬扛，而是把上下文、状态、合同和证据放到模型外部。
 - 不是临时 prompt，而是可安装、可复用、可版本化的 skills。
 - 不是平台绑定，而是通过 engine adapter 适配 Mock、GitHub、Multica。
-- 不是 worker 自证完成，而是 PR、verification、coverage、reviewer report 多层证据闭环。
+- 不是 worker 自证完成，而是 PR、verification、integration gate evidence、coverage、reviewer report 多层证据闭环。
 - 不是只靠 LLM 语义判断，而是把 Guide / Sensor、Inferential / Computational 四象限都补齐。
 - 不是一次性调度脚本，而是可 lint、可 harvest、可 reconcile、可断点续跑的状态机。
 

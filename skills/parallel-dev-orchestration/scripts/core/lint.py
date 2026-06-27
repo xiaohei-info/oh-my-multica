@@ -18,6 +18,32 @@ def _has_cycle(nodes):
         return False
     return any(color[k] == WHITE and dfs(k) for k in nodes)
 
+def _integration_gate_errors(prefix: str, gate, index: int) -> list:
+    errs = []
+    gate_prefix = f"{prefix}.integration_gates[{index}]"
+    if not isinstance(gate, dict):
+        return [f"{gate_prefix} must be an object"]
+
+    for field in ("name", "layer", "delivery_goal"):
+        if not gate.get(field):
+            errs.append(f"{gate_prefix}.{field} is required")
+
+    for field in ("source_of_truth", "covers", "acceptance_refs", "commands"):
+        value = gate.get(field)
+        if not isinstance(value, list) or not value:
+            errs.append(f"{gate_prefix}.{field} must be non-empty")
+
+    metrics = gate.get("required_metrics", {})
+    if metrics is not None and not isinstance(metrics, dict):
+        errs.append(f"{gate_prefix}.required_metrics must be an object")
+
+    artifacts = gate.get("artifacts", [])
+    if artifacts is not None and not isinstance(artifacts, list):
+        errs.append(f"{gate_prefix}.artifacts must be a list")
+
+    return errs
+
+
 def _contract_errors(node) -> list:
     contract = getattr(node, "contract", None)
     if contract is None:
@@ -33,6 +59,11 @@ def _contract_errors(node) -> list:
         errs.append(f"{prefix}.non_goals must be non-empty")
     if not contract.verification_commands:
         errs.append(f"{prefix}.verification_commands must be non-empty")
+    if not contract.integration_gates:
+        errs.append(f"{prefix}.integration_gates must be non-empty")
+    else:
+        for index, gate in enumerate(contract.integration_gates):
+            errs.extend(_integration_gate_errors(prefix, gate, index))
     if not contract.pr_base:
         errs.append(f"{prefix}.pr_base is required")
 

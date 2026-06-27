@@ -63,6 +63,22 @@ def test_load_contract_defaults_coverage_gate(tmp_path):
         "        - Do not modify auth flow\n"
         "      verification_commands:\n"
         "        - pytest tests/user_api\n"
+        "      integration_gates:\n"
+        "        - name: user-api-contract\n"
+        "          layer: L1 API contract\n"
+        "          source_of_truth:\n"
+        "            - docs/requirements.md#user-api\n"
+        "          delivery_goal: User API returns documented envelopes\n"
+        "          covers:\n"
+        "            - route_contract\n"
+        "          acceptance_refs:\n"
+        "            - GET /users/:id returns 200\n"
+        "          commands:\n"
+        "            - pytest tests/integration/user_api\n"
+        "          required_metrics:\n"
+        "            route_contract_coverage: 100\n"
+        "          artifacts:\n"
+        "            - coverage.xml\n"
         "      pr_base: feature/v1\n"
     )
     m = load_manifest(str(p))
@@ -72,6 +88,19 @@ def test_load_contract_defaults_coverage_gate(tmp_path):
     assert contract.acceptance == ["GET /users/:id returns 200"]
     assert contract.non_goals == ["Do not modify auth flow"]
     assert contract.verification_commands == ["pytest tests/user_api"]
+    assert contract.integration_gates == [
+        {
+            "name": "user-api-contract",
+            "layer": "L1 API contract",
+            "source_of_truth": ["docs/requirements.md#user-api"],
+            "delivery_goal": "User API returns documented envelopes",
+            "covers": ["route_contract"],
+            "acceptance_refs": ["GET /users/:id returns 200"],
+            "commands": ["pytest tests/integration/user_api"],
+            "required_metrics": {"route_contract_coverage": 100},
+            "artifacts": ["coverage.xml"],
+        }
+    ]
     assert contract.pr_base == "feature/v1"
     assert contract.coverage_gate == 90
     assert contract.source_of_truth == []
