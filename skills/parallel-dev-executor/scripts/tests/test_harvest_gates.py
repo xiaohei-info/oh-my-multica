@@ -1,0 +1,509 @@
+"""Structured harvest gates for worker verification and reviewer reports."""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from core import load_manifest, save_manifest, set_node
+from engines import create_engine_from_config, WorkItemStatus
+from run_dag import _harvest
+import run_dag as rd
+
+
+def _make_mock_engine():
+    env = {
+        "ENGINE_TYPE": "mock",
+        "MOCK_WORKSPACE_ID": "ws",
+        "MOCK_AUTO_COMPLETE": "false",
+        "POLLING_INTERVAL": "1",
+    }
+    engine = create_engine_from_config("mock", "ws", **env)
+    engine.config.polling_interval = 0.001
+    engine._members["sq"] = ["alice", "bob"]
+    return engine
+
+
+def _write_manifest(path, *, reviewer=None, coverage_gate=90):
+    reviewer_line = f"    reviewer: {reviewer}\n" if reviewer else ""
+    path.write_text(
+        "meta:\n"
+        "  name: harvest-gates\n"
+        "  squad: sq\n"
+        "nodes:\n"
+        "  - id: A\n"
+        "    worker: alice\n"
+        "    title: Task A\n"
+        "    description: 'Test task'\n"
+        f"{reviewer_line}"
+        "    contract:\n"
+        "      objective: Implement A\n"
+        "      acceptance:\n"
+        "        - A returns success\n"
+        "      non_goals:\n"
+        "        - Do not modify B\n"
+        "      verification_commands:\n"
+        "        - pytest tests/a\n"
+        "      integration_gates:\n"
+        "        - name: a-contract\n"
+        "          layer: L1 API contract\n"
+        "          source_of_truth:\n"
+        "            - docs/requirements.md#a\n"
+        "          delivery_goal: A returns documented success envelope\n"
+        "          covers:\n"
+        "            - route_contract\n"
+        "          acceptance_refs:\n"
+        "            - A returns success\n"
+        "          commands:\n"
+        "            - pytest tests/integration/a\n"
+        "          required_metrics:\n"
+        "            route_contract_coverage: 100\n"
+        "          artifacts:\n"
+        "            - playwright-report/index.html\n"
+        "      pr_base: feature/v1\n"
+        f"      coverage_gate: {coverage_gate}\n"
+    )
+
+
+def _make_done_item(engine, *, verification=None):
+    item = engine.create_work_item(
+        workspace_id="sq",
+        title="Task A",
+        description="Test",
+        dag_key="A",
+        worker="alice",
+    )
+    engine.update_status(item.id, WorkItemStatus.DONE)
+    item.artifacts = {"pr_url": "https://mock.example.com/pr/1"}
+    item.verification = verification
+    return item
+
+
+def _load_in_progress(path, item_id):
+    m = load_manifest(str(path))
+    set_node(m, "A", work_item_id=item_id, status="in_progress")
+    save_manifest(m, str(path))
+    return m
+
+
+def _load_in_review(path, item_id):
+    m = load_manifest(str(path))
+    set_node(m, "A", work_item_id=item_id, status="in_review")
+    save_manifest(m, str(path))
+    return m
+
+
+def valid_verification(*, coverage=92):
+    return {
+        "commands": [
+            {"cmd": "pytest tests/a", "exit_code": 0, "summary": "3 passed"},
+        ],
+        "integration_gates": [
+            {
+                "name": "a-contract",
+                "commands": [
+                    {"cmd": "pytest tests/integration/a", "exit_code": 0, "summary": "2 passed"},
+                ],
+                "metrics": {"route_contract_coverage": 100},
+                "artifacts": ["playwright-report/index.html"],
+                "covers": ["route_contract"],
+                "source_of_truth": ["docs/requirements.md#a"],
+                "delivery_goal": "A returns documented success envelope",
+            }
+        ],
+        "pr_base": "feature/v1",
+        "ci_status": "passed",
+        "coverage": coverage,
+    }
+
+
+def valid_review_report():
+    return {
+        "diff_reviewed": True,
+        "tests_rerun": True,
+        "integration_tests_rerun": True,
+        "coverage_checked": True,
+        "integration_gate_mapping": [
+            {
+                "gate": "a-contract",
+                "source_of_truth": ["docs/requirements.md#a"],
+                "delivery_goal": "A returns documented success envelope",
+                "evidence": "tests/integration/test_a.py::test_a_integration",
+                "commands": [
+                    {"cmd": "pytest tests/integration/a", "exit_code": 0, "summary": "2 passed"},
+                ],
+                "metrics": {"route_contract_coverage": 100},
+                "artifacts": ["playwright-report/index.html"],
+                "status": "pass",
+            }
+        ],
+        "acceptance_mapping": [
+            {
+                "acceptance": "A returns success",
+                "evidence": "tests/test_a.py::test_success",
+                "status": "pass",
+            }
+        ],
+        "blockers": [],
+        "nits": ["Rename temporary variable"],
+    }
+
+
+def test_harvest_worker_done_without_verification_blocks(tmp_path, monkeypatch):
+    manifest_path = tmp_path / "dag.yaml"
+    _write_manifest(manifest_path)
+    engine = _make_mock_engine()
+    monkeypatch.setattr(rd, "commit_manifest", lambda *a, **k: False)
+    item = _make_done_item(engine, verification=None)
+    m = _load_in_progress(manifest_path, item.id)
+
+    completed, failed = set(), set()
+    _harvest(engine, m, str(manifest_path), completed, failed)
+
+    assert m.nodes["A"].status == "blocked"
+    assert "A" in failed
+    assert "A" not in completed
+    assert engine._work_items[item.id].status == WorkItemStatus.BLOCKED
+
+
+def test_harvest_worker_done_missing_declared_command_blocks(tmp_path, monkeypatch):
+    manifest_path = tmp_path / "dag.yaml"
+    _write_manifest(manifest_path)
+    engine = _make_mock_engine()
+    monkeypatch.setattr(rd, "commit_manifest", lambda *a, **k: False)
+    item = _make_done_item(
+        engine,
+        verification={
+            "commands": [{"cmd": "pytest other", "exit_code": 0}],
+            "integration_gates": [{"name": "a-contract", "commands": [{"cmd": "pytest tests/integration/a", "exit_code": 0}], "metrics": {"route_contract_coverage": 100}, "artifacts": ["playwright-report/index.html"]}],
+            "pr_base": "feature/v1",
+            "coverage": 92,
+        },
+    )
+    m = _load_in_progress(manifest_path, item.id)
+
+    completed, failed = set(), set()
+    _harvest(engine, m, str(manifest_path), completed, failed)
+
+    assert m.nodes["A"].status == "blocked"
+    assert "A" in failed
+
+
+def test_harvest_worker_done_missing_integration_test_blocks(tmp_path, monkeypatch):
+    manifest_path = tmp_path / "dag.yaml"
+    _write_manifest(manifest_path)
+    engine = _make_mock_engine()
+    monkeypatch.setattr(rd, "commit_manifest", lambda *a, **k: False)
+    verification = valid_verification()
+    verification["integration_gates"] = [
+        {"name": "a-contract", "commands": [{"cmd": "pytest tests/integration/other", "exit_code": 0}], "metrics": {"route_contract_coverage": 100}, "artifacts": ["playwright-report/index.html"]}
+    ]
+    item = _make_done_item(engine, verification=verification)
+    m = _load_in_progress(manifest_path, item.id)
+
+    completed, failed = set(), set()
+    _harvest(engine, m, str(manifest_path), completed, failed)
+
+    assert m.nodes["A"].status == "blocked"
+    assert "A" in failed
+
+
+def test_harvest_worker_done_failed_integration_test_blocks(tmp_path, monkeypatch):
+    manifest_path = tmp_path / "dag.yaml"
+    _write_manifest(manifest_path)
+    engine = _make_mock_engine()
+    monkeypatch.setattr(rd, "commit_manifest", lambda *a, **k: False)
+    verification = valid_verification()
+    verification["integration_gates"] = [
+        {"name": "a-contract", "commands": [{"cmd": "pytest tests/integration/a", "exit_code": 1}], "metrics": {"route_contract_coverage": 100}, "artifacts": ["playwright-report/index.html"]}
+    ]
+    item = _make_done_item(engine, verification=verification)
+    m = _load_in_progress(manifest_path, item.id)
+
+    completed, failed = set(), set()
+    _harvest(engine, m, str(manifest_path), completed, failed)
+
+    assert m.nodes["A"].status == "blocked"
+    assert "A" in failed
+
+
+def test_harvest_worker_done_low_integration_metric_blocks(tmp_path, monkeypatch):
+    manifest_path = tmp_path / "dag.yaml"
+    _write_manifest(manifest_path)
+    engine = _make_mock_engine()
+    monkeypatch.setattr(rd, "commit_manifest", lambda *a, **k: False)
+    verification = valid_verification()
+    verification["integration_gates"][0]["metrics"] = {"route_contract_coverage": 99}
+    item = _make_done_item(engine, verification=verification)
+    m = _load_in_progress(manifest_path, item.id)
+
+    completed, failed = set(), set()
+    _harvest(engine, m, str(manifest_path), completed, failed)
+
+    assert m.nodes["A"].status == "blocked"
+    assert "A" in failed
+
+
+def test_harvest_worker_done_missing_integration_artifact_blocks(tmp_path, monkeypatch):
+    manifest_path = tmp_path / "dag.yaml"
+    _write_manifest(manifest_path)
+    engine = _make_mock_engine()
+    monkeypatch.setattr(rd, "commit_manifest", lambda *a, **k: False)
+    verification = valid_verification()
+    verification["integration_gates"][0]["artifacts"] = []
+    item = _make_done_item(engine, verification=verification)
+    m = _load_in_progress(manifest_path, item.id)
+
+    completed, failed = set(), set()
+    _harvest(engine, m, str(manifest_path), completed, failed)
+
+    assert m.nodes["A"].status == "blocked"
+    assert "A" in failed
+
+
+def test_harvest_worker_done_low_coverage_blocks(tmp_path, monkeypatch):
+    manifest_path = tmp_path / "dag.yaml"
+    _write_manifest(manifest_path, coverage_gate=95)
+    engine = _make_mock_engine()
+    monkeypatch.setattr(rd, "commit_manifest", lambda *a, **k: False)
+    item = _make_done_item(engine, verification=valid_verification(coverage=94))
+    m = _load_in_progress(manifest_path, item.id)
+
+    completed, failed = set(), set()
+    _harvest(engine, m, str(manifest_path), completed, failed)
+
+    assert m.nodes["A"].status == "blocked"
+    assert "A" in failed
+
+
+def test_harvest_worker_done_valid_verification_enters_review(tmp_path, monkeypatch):
+    manifest_path = tmp_path / "dag.yaml"
+    _write_manifest(manifest_path, reviewer="bob")
+    engine = _make_mock_engine()
+    monkeypatch.setattr(rd, "commit_manifest", lambda *a, **k: False)
+    item = _make_done_item(engine, verification=valid_verification())
+    m = _load_in_progress(manifest_path, item.id)
+
+    completed, failed = set(), set()
+    _harvest(engine, m, str(manifest_path), completed, failed)
+
+    assert m.nodes["A"].status == "in_review"
+    assert "A" not in failed
+    assert engine._work_items[item.id].status == WorkItemStatus.IN_REVIEW
+    assert engine._work_items[item.id].reviewer == "bob"
+
+
+def test_harvest_reviewer_pass_without_report_blocks(tmp_path, monkeypatch):
+    manifest_path = tmp_path / "dag.yaml"
+    _write_manifest(manifest_path, reviewer="bob")
+    engine = _make_mock_engine()
+    monkeypatch.setattr(rd, "commit_manifest", lambda *a, **k: False)
+    item = engine.create_work_item(
+        workspace_id="sq",
+        title="Task A",
+        description="Test",
+        dag_key="A",
+        worker="alice",
+        reviewer="bob",
+    )
+    engine.update_status(item.id, WorkItemStatus.IN_REVIEW)
+    item.review_verdict = "pass"
+    item.review_report = None
+    m = _load_in_review(manifest_path, item.id)
+
+    completed, failed = set(), set()
+    _harvest(engine, m, str(manifest_path), completed, failed)
+
+    assert m.nodes["A"].status == "blocked"
+    assert "A" in failed
+    assert "A" not in completed
+    assert engine._work_items[item.id].status == WorkItemStatus.BLOCKED
+
+
+def test_harvest_reviewer_pass_with_blockers_blocks(tmp_path, monkeypatch):
+    manifest_path = tmp_path / "dag.yaml"
+    _write_manifest(manifest_path, reviewer="bob")
+    engine = _make_mock_engine()
+    monkeypatch.setattr(rd, "commit_manifest", lambda *a, **k: False)
+    item = engine.create_work_item(
+        workspace_id="sq",
+        title="Task A",
+        description="Test",
+        dag_key="A",
+        worker="alice",
+        reviewer="bob",
+    )
+    engine.update_status(item.id, WorkItemStatus.IN_REVIEW)
+    item.review_verdict = "pass"
+    report = valid_review_report()
+    report["blockers"] = [{"type": "contract_violation", "reason": "Wrong DTO"}]
+    item.review_report = report
+    m = _load_in_review(manifest_path, item.id)
+
+    completed, failed = set(), set()
+    _harvest(engine, m, str(manifest_path), completed, failed)
+
+    assert m.nodes["A"].status == "blocked"
+    assert "A" in failed
+
+
+def test_harvest_reviewer_pass_without_integration_confirmation_blocks(tmp_path, monkeypatch):
+    manifest_path = tmp_path / "dag.yaml"
+    _write_manifest(manifest_path, reviewer="bob")
+    engine = _make_mock_engine()
+    monkeypatch.setattr(rd, "commit_manifest", lambda *a, **k: False)
+    item = engine.create_work_item(
+        workspace_id="sq",
+        title="Task A",
+        description="Test",
+        dag_key="A",
+        worker="alice",
+        reviewer="bob",
+    )
+    engine.update_status(item.id, WorkItemStatus.IN_REVIEW)
+    item.review_verdict = "pass"
+    report = valid_review_report()
+    report["integration_tests_rerun"] = False
+    item.review_report = report
+    m = _load_in_review(manifest_path, item.id)
+
+    completed, failed = set(), set()
+    _harvest(engine, m, str(manifest_path), completed, failed)
+
+    assert m.nodes["A"].status == "blocked"
+    assert "A" in failed
+
+
+def test_harvest_reviewer_pass_missing_integration_mapping_blocks(tmp_path, monkeypatch):
+    manifest_path = tmp_path / "dag.yaml"
+    _write_manifest(manifest_path, reviewer="bob")
+    engine = _make_mock_engine()
+    monkeypatch.setattr(rd, "commit_manifest", lambda *a, **k: False)
+    item = engine.create_work_item(
+        workspace_id="sq",
+        title="Task A",
+        description="Test",
+        dag_key="A",
+        worker="alice",
+        reviewer="bob",
+    )
+    engine.update_status(item.id, WorkItemStatus.IN_REVIEW)
+    item.review_verdict = "pass"
+    report = valid_review_report()
+    report["integration_gate_mapping"] = []
+    item.review_report = report
+    m = _load_in_review(manifest_path, item.id)
+
+    completed, failed = set(), set()
+    _harvest(engine, m, str(manifest_path), completed, failed)
+
+    assert m.nodes["A"].status == "blocked"
+    assert "A" in failed
+
+
+def test_harvest_reviewer_pass_with_nits_and_valid_report_done(tmp_path, monkeypatch):
+    manifest_path = tmp_path / "dag.yaml"
+    _write_manifest(manifest_path, reviewer="bob")
+    engine = _make_mock_engine()
+    monkeypatch.setattr(rd, "commit_manifest", lambda *a, **k: False)
+    item = engine.create_work_item(
+        workspace_id="sq",
+        title="Task A",
+        description="Test",
+        dag_key="A",
+        worker="alice",
+        reviewer="bob",
+    )
+    engine.update_status(item.id, WorkItemStatus.IN_REVIEW)
+    item.review_verdict = "pass-with-nits"
+    item.review_report = valid_review_report()
+    m = _load_in_review(manifest_path, item.id)
+
+    completed, failed = set(), set()
+    _harvest(engine, m, str(manifest_path), completed, failed)
+
+    assert m.nodes["A"].status == "done"
+    assert "A" in completed
+    assert "A" not in failed
+    assert engine._work_items[item.id].status == WorkItemStatus.DONE
+
+
+def test_harvest_reviewer_platform_blocked_without_verdict_blocks(tmp_path, monkeypatch):
+    """reviewer 在平台标 blocked 但只写 prose、没写结构化 review_verdict：
+    runner 不能无限等待，应判 blocked + 失败隔离。"""
+    manifest_path = tmp_path / "dag.yaml"
+    _write_manifest(manifest_path, reviewer="bob")
+    engine = _make_mock_engine()
+    monkeypatch.setattr(rd, "commit_manifest", lambda *a, **k: False)
+    item = engine.create_work_item(
+        workspace_id="sq",
+        title="Task A",
+        description="Test",
+        dag_key="A",
+        worker="alice",
+        reviewer="bob",
+    )
+    engine.update_status(item.id, WorkItemStatus.IN_REVIEW)
+    engine.update_status(item.id, WorkItemStatus.BLOCKED)
+    item.review_verdict = None
+    m = _load_in_review(manifest_path, item.id)
+
+    completed, failed = set(), set()
+    _harvest(engine, m, str(manifest_path), completed, failed)
+
+    assert m.nodes["A"].status == "blocked"
+    assert "A" in failed
+    assert "A" not in completed
+
+
+def test_harvest_reviewer_platform_done_without_verdict_blocks(tmp_path, monkeypatch):
+    """reviewer 在平台标 done 但没写结构化 review_verdict：无证据不予门控通过，
+    应判 blocked + 失败隔离，而不是无限等待。"""
+    manifest_path = tmp_path / "dag.yaml"
+    _write_manifest(manifest_path, reviewer="bob")
+    engine = _make_mock_engine()
+    monkeypatch.setattr(rd, "commit_manifest", lambda *a, **k: False)
+    item = engine.create_work_item(
+        workspace_id="sq",
+        title="Task A",
+        description="Test",
+        dag_key="A",
+        worker="alice",
+        reviewer="bob",
+    )
+    engine.update_status(item.id, WorkItemStatus.IN_REVIEW)
+    engine.update_status(item.id, WorkItemStatus.DONE)
+    item.review_verdict = None
+    m = _load_in_review(manifest_path, item.id)
+
+    completed, failed = set(), set()
+    _harvest(engine, m, str(manifest_path), completed, failed)
+
+    assert m.nodes["A"].status == "blocked"
+    assert "A" in failed
+    assert "A" not in completed
+
+
+def test_harvest_reviewer_still_in_review_without_verdict_waits(tmp_path, monkeypatch):
+    """reviewer 仍在评审中（平台 in_review）且无 verdict：保持等待，不误判 blocked。"""
+    manifest_path = tmp_path / "dag.yaml"
+    _write_manifest(manifest_path, reviewer="bob")
+    engine = _make_mock_engine()
+    monkeypatch.setattr(rd, "commit_manifest", lambda *a, **k: False)
+    item = engine.create_work_item(
+        workspace_id="sq",
+        title="Task A",
+        description="Test",
+        dag_key="A",
+        worker="alice",
+        reviewer="bob",
+    )
+    engine.update_status(item.id, WorkItemStatus.IN_REVIEW)
+    item.review_verdict = None
+    m = _load_in_review(manifest_path, item.id)
+
+    completed, failed = set(), set()
+    _harvest(engine, m, str(manifest_path), completed, failed)
+
+    assert m.nodes["A"].status == "in_review"
+    assert "A" not in failed
+    assert "A" not in completed

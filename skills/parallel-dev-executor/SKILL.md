@@ -612,7 +612,8 @@ python3 scripts/agent_cli.py submit-review <issue-id> \
 - **集成分支**：由 issue metadata 指定（如 `feature/v1.0.0`），不是 `master`
 - **Python 环境**：本机 python3 + pytest（或 issue 指定的测试框架）
 - **引擎 CLI**：所选协作引擎的客户端已配置（先跑 `<engine-cli> --help` 确认可用命令）
-- **agent_cli**：`scripts/agent_cli.py` 是读/写证据的唯一入口，与 orchestration skill 共用引擎层（依赖 `parallel-dev-orchestration` 同仓同级安装）。引擎类型/工作空间走 `--engine`/`--workspace` 或 `.env`/环境变量，与 run_dag 一致。
+- **agent_cli**：`scripts/agent_cli.py` 是读/写证据的唯一入口。本 skill **自带完整 `scripts/`（引擎层 engines/ + core/）**，自给自足，不依赖运行时是否同时装了 orchestration skill（Multica 按 agent 隔离物化 skill）。引擎类型/工作空间走 `--engine`/`--workspace` 或 `.env`/环境变量，与 run_dag 一致。
+  - 该 `scripts/` 与 orchestration skill 的 `scripts/` 逐字一致：以 orchestration 为权威源开发，改完跑 `sync_to_executor.sh` 同步，`test_skill_scripts_parity` 守门。
 - **Git CLI**：`git` 可用；提 PR 用 `gh` 或项目约定的工具
 
 ## 失败处理

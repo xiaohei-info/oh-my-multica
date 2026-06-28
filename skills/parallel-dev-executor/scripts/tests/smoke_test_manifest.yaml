@@ -1,0 +1,70 @@
+# 冒烟/演示 manifest —— 验证 manifest → DAG 引擎完整链路
+# （agent 名→ID 映射、issue 创建、frontier 计算、worker/reviewer 派发、状态流转）
+#
+# 开箱即跑（mock 引擎）。注意：引擎会把节点状态回写进 manifest 文件，
+# 为不弄脏这份 committed 样例，请先拷贝到临时路径再跑：
+#   printf 'ENGINE_TYPE=mock\nMOCK_WORKSPACE_ID=mock-workspace\n' > ../../.env
+#   cp smoke_test_manifest.yaml /tmp/demo.yaml
+#   python3 ../run_dag.py /tmp/demo.yaml
+#   说明：mock 引擎预置成员池 alice/bob/charlie，squad 默认对齐 mock workspace。
+#
+# 用于真实引擎（github/multica）：照此 shape 复制成你自己的 manifest，
+#   - squad 用环境变量驱动：export ORCH_SQUAD=<你的squad或owner/repo>
+#   - 把 worker/reviewer 换成你 squad/仓库里真实存在的 agent 名。
+
+meta:
+  # ${环境变量:-默认值}：真实引擎 export ORCH_SQUAD=...；mock 下用默认值即可
+  squad: "${ORCH_SQUAD:-mock-workspace}"
+  integration_branch: "feature/smoke-test"
+  title: "编排机制冒烟测试"
+  description: "验证 manifest → DAG 引擎的完整链路"
+
+nodes:
+  # Node A: 地基节点（无依赖）
+  - id: smoke-A
+    title: "冒烟测试 Node A - 地基"
+    description: |
+      这是冒烟测试的第一个节点，无依赖。
+
+      **验收标准**：
+      - [ ] 成功被认领
+      - [ ] 确认能读取到 manifest metadata
+      - [ ] 回复简单的完成确认
+
+      不需要实际实现任何功能，只需确认整个派发→认领→执行流程打通。
+    worker: alice
+    blocked_by: []
+    risk: low
+
+  # Node B: 中间节点（依赖 A）+ reviewer
+  - id: smoke-B
+    title: "冒烟测试 Node B - 中间层"
+    description: |
+      这是冒烟测试的第二个节点，依赖 smoke-A。
+
+      **验收标准**：
+      - [ ] 在 smoke-A 完成后才能被认领（frontier 计算正确）
+      - [ ] 评审流程正常触发（reviewer ≠ worker）
+      - [ ] 确认能看到 smoke-A 的状态
+
+      同样不需要实际实现，验证依赖阻塞→解除→派发→评审流程。
+    worker: bob
+    reviewer: charlie
+    blocked_by: [smoke-A]
+    risk: medium
+
+  # Node C: 终端节点（依赖 B）
+  - id: smoke-C
+    title: "冒烟测试 Node C - 终端"
+    description: |
+      这是冒烟测试的最后一个节点，依赖 smoke-B。
+
+      **验收标准**：
+      - [ ] 在 smoke-B 评审通过后才能被认领
+      - [ ] 确认整条依赖链（A→B→C）状态流转正确
+      - [ ] 完成后整个 manifest 所有节点都进入终态
+
+      这是最后的验证点，确认整个 DAG 执行完整闭环。
+    worker: alice
+    blocked_by: [smoke-B]
+    risk: low
