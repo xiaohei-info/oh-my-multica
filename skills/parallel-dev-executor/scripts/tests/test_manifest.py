@@ -1,0 +1,107 @@
+# tests/test_manifest.py
+import pytest
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from core import load_manifest, Manifest
+from core.manifest import Node
+
+def test_load_minimal_manifest(tmp_path):
+    p = tmp_path / "m.yaml"
+    p.write_text(
+        "meta:\n  squad: dev team\n  integration_branch: feature/v1.0.0\n"
+        "nodes:\n"
+        "  - id: M0\n    worker: agent-be\n    blocked_by: []\n"
+        "  - id: M1\n    worker: agent-fe\n    blocked_by: [M0]\n    reviewer: agent-rev\n    risk: high\n"
+    )
+    m = load_manifest(str(p))
+    assert isinstance(m, Manifest)
+    assert m.meta["integration_branch"] == "feature/v1.0.0"
+    assert m.nodes["M1"].blocked_by == ["M0"]
+    assert m.nodes["M1"].reviewer == "agent-rev"
+    assert m.nodes["M0"].reviewer is None   # 可选旋钮缺省 None
+    assert m.nodes["M1"].risk == "high"
+
+def test_env_expansion_default_and_override(tmp_path, monkeypatch):
+    p = tmp_path / "m.yaml"
+    p.write_text(
+        'meta:\n  squad: "${SMOKE_SQUAD:-fallback-squad}"\n  bare: "${SMOKE_BARE}"\n'
+        "nodes:\n"
+        "  - id: M0\n    worker: agent-be\n    blocked_by: []\n"
+    )
+    # env 未设 → 取默认值；无默认且未设 → 保留原样
+    monkeypatch.delenv("SMOKE_SQUAD", raising=False)
+    monkeypatch.delenv("SMOKE_BARE", raising=False)
+    m = load_manifest(str(p))
+    assert m.meta["squad"] == "fallback-squad"
+    assert m.meta["bare"] == "${SMOKE_BARE}"
+    # env 已设 → 覆盖默认值
+    monkeypatch.setenv("SMOKE_SQUAD", "real-squad")
+    m = load_manifest(str(p))
+    assert m.meta["squad"] == "real-squad"
+
+
+def test_missing_required_worker_raises(tmp_path):
+    p = tmp_path / "m.yaml"
+    p.write_text("meta: {squad: x}\nnodes:\n  - id: M0\n    blocked_by: []\n")
+    with pytest.raises(ValueError, match="worker"):
+        load_manifest(str(p))
+
+
+def test_load_contract_defaults_coverage_gate(tmp_path):
+    p = tmp_path / "m.yaml"
+    p.write_text(
+        "meta:\n  squad: dev team\n"
+        "nodes:\n"
+        "  - id: M0\n"
+        "    worker: agent-be\n"
+        "    contract:\n"
+        "      objective: Implement user API\n"
+        "      acceptance:\n"
+        "        - GET /users/:id returns 200\n"
+        "      non_goals:\n"
+        "        - Do not modify auth flow\n"
+        "      verification_commands:\n"
+        "        - pytest tests/user_api\n"
+        "      integration_gates:\n"
+        "        - name: user-api-contract\n"
+        "          layer: L1 API contract\n"
+        "          source_of_truth:\n"
+        "            - docs/requirements.md#user-api\n"
+        "          delivery_goal: User API returns documented envelopes\n"
+        "          covers:\n"
+        "            - route_contract\n"
+        "          acceptance_refs:\n"
+        "            - GET /users/:id returns 200\n"
+        "          commands:\n"
+        "            - pytest tests/integration/user_api\n"
+        "          required_metrics:\n"
+        "            route_contract_coverage: 100\n"
+        "          artifacts:\n"
+        "            - coverage.xml\n"
+        "      pr_base: feature/v1\n"
+    )
+    m = load_manifest(str(p))
+
+    contract = m.nodes["M0"].contract
+    assert contract.objective == "Implement user API"
+    assert contract.acceptance == ["GET /users/:id returns 200"]
+    assert contract.non_goals == ["Do not modify auth flow"]
+    assert contract.verification_commands == ["pytest tests/user_api"]
+    assert contract.integration_gates == [
+        {
+            "name": "user-api-contract",
+            "layer": "L1 API contract",
+            "source_of_truth": ["docs/requirements.md#user-api"],
+            "delivery_goal": "User API returns documented envelopes",
+            "covers": ["route_contract"],
+            "acceptance_refs": ["GET /users/:id returns 200"],
+            "commands": ["pytest tests/integration/user_api"],
+            "required_metrics": {"route_contract_coverage": 100},
+            "artifacts": ["coverage.xml"],
+        }
+    ]
+    assert contract.pr_base == "feature/v1"
+    assert contract.coverage_gate == 90
+    assert contract.source_of_truth == []
+    assert contract.required_contracts == []
