@@ -425,3 +425,85 @@ def test_harvest_reviewer_pass_with_nits_and_valid_report_done(tmp_path, monkeyp
     assert "A" in completed
     assert "A" not in failed
     assert engine._work_items[item.id].status == WorkItemStatus.DONE
+
+
+def test_harvest_reviewer_platform_blocked_without_verdict_blocks(tmp_path, monkeypatch):
+    """reviewer 在平台标 blocked 但只写 prose、没写结构化 review_verdict：
+    runner 不能无限等待，应判 blocked + 失败隔离。"""
+    manifest_path = tmp_path / "dag.yaml"
+    _write_manifest(manifest_path, reviewer="bob")
+    engine = _make_mock_engine()
+    monkeypatch.setattr(rd, "commit_manifest", lambda *a, **k: False)
+    item = engine.create_work_item(
+        workspace_id="sq",
+        title="Task A",
+        description="Test",
+        dag_key="A",
+        worker="alice",
+        reviewer="bob",
+    )
+    engine.update_status(item.id, WorkItemStatus.IN_REVIEW)
+    engine.update_status(item.id, WorkItemStatus.BLOCKED)
+    item.review_verdict = None
+    m = _load_in_review(manifest_path, item.id)
+
+    completed, failed = set(), set()
+    _harvest(engine, m, str(manifest_path), completed, failed)
+
+    assert m.nodes["A"].status == "blocked"
+    assert "A" in failed
+    assert "A" not in completed
+
+
+def test_harvest_reviewer_platform_done_without_verdict_blocks(tmp_path, monkeypatch):
+    """reviewer 在平台标 done 但没写结构化 review_verdict：无证据不予门控通过，
+    应判 blocked + 失败隔离，而不是无限等待。"""
+    manifest_path = tmp_path / "dag.yaml"
+    _write_manifest(manifest_path, reviewer="bob")
+    engine = _make_mock_engine()
+    monkeypatch.setattr(rd, "commit_manifest", lambda *a, **k: False)
+    item = engine.create_work_item(
+        workspace_id="sq",
+        title="Task A",
+        description="Test",
+        dag_key="A",
+        worker="alice",
+        reviewer="bob",
+    )
+    engine.update_status(item.id, WorkItemStatus.IN_REVIEW)
+    engine.update_status(item.id, WorkItemStatus.DONE)
+    item.review_verdict = None
+    m = _load_in_review(manifest_path, item.id)
+
+    completed, failed = set(), set()
+    _harvest(engine, m, str(manifest_path), completed, failed)
+
+    assert m.nodes["A"].status == "blocked"
+    assert "A" in failed
+    assert "A" not in completed
+
+
+def test_harvest_reviewer_still_in_review_without_verdict_waits(tmp_path, monkeypatch):
+    """reviewer 仍在评审中（平台 in_review）且无 verdict：保持等待，不误判 blocked。"""
+    manifest_path = tmp_path / "dag.yaml"
+    _write_manifest(manifest_path, reviewer="bob")
+    engine = _make_mock_engine()
+    monkeypatch.setattr(rd, "commit_manifest", lambda *a, **k: False)
+    item = engine.create_work_item(
+        workspace_id="sq",
+        title="Task A",
+        description="Test",
+        dag_key="A",
+        worker="alice",
+        reviewer="bob",
+    )
+    engine.update_status(item.id, WorkItemStatus.IN_REVIEW)
+    item.review_verdict = None
+    m = _load_in_review(manifest_path, item.id)
+
+    completed, failed = set(), set()
+    _harvest(engine, m, str(manifest_path), completed, failed)
+
+    assert m.nodes["A"].status == "in_review"
+    assert "A" not in failed
+    assert "A" not in completed

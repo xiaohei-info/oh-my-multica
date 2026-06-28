@@ -53,6 +53,9 @@ class WorkItem:
     review_comment: Optional[str] = None
     review_report: Optional[Dict[str, Any]] = None
 
+    # 验收契约（由编排器 dispatch 时下发）：worker 读回后用同一套 validator 自校验
+    contract: Optional[Dict[str, Any]] = None
+
     def is_completed(self) -> bool:
         """是否已完成"""
         return self.status == WorkItemStatus.DONE

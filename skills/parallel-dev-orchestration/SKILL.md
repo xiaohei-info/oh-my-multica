@@ -515,6 +515,17 @@ manifest 写好后，这部分讲「**怎么把它跑起来、出问题怎么处
 
 PR 评审通过后，执行本 skill 附带的引擎脚本跑 Phase 2（跑 DAG）:
 
+> **前台阻塞监督铁律（最重要）**：`run_dag.py` 是**前台阻塞**进程——内置主循环
+> （harvest→派发→轮询）一直跑到 DAG 终态（全 done 或失败收口）才返回。你必须在**当前轮以前台
+> 同步方式**把它跑到返回、并收集其退出结果，**才算"在监督"**。
+>
+> - ❌ 不要放后台、不要 `&`、不要寄望"未来某轮再看"。在 Multica/真实 runtime 里，**你这一轮
+>   turn 退出 = 本次任务结束**，没有被收集的后台进程不会替你推进 DAG。
+> - ❌ 没有活跃的 `run_dag.py` 在跑，就**禁止**在回复里说"继续监督/持续观察/等待完成"——
+>   那是假监督：parent issue 看着像有人盯，实际无人推进。
+> - ✅ 要么前台把 `run_dag.py` 跑到返回再汇报；要么明确告诉用户"**当前未在监督**，要我启动/继续吗"。
+> - DAG 大、单轮久：仍前台跑，靠 `max_parallel` 控并发、靠日志看进度，而不是退出后口头声称在盯。
+
 ### 启动编排
 
 ```bash
@@ -530,7 +541,7 @@ python3 scripts/run_dag.py .orchestrator/<name>.yaml
 - ✅ Reconcile（启动校验：逐节点拿 work_item_id 去平台核对真实状态 vs manifest 记录，补齐 gap）
 - ✅ 创建 work items（首次建后 work_item_id 回填进 manifest 并 commit+push）
 - ✅ 计算 frontier 并派发
-- ✅ 轮询直到完成
+- ✅ 前台阻塞轮询直到 DAG 终态才返回（不是后台守护——你需在本轮跑到它返回）
 - ✅ 节点状态变更实时写回 manifest（关键节点 commit+push）
 - ✅ 失败隔离（阻塞下游）
 - ✅ 幂等重跑（已 done 且有 work_item_id 的节点直接 get_work_item 精准取，0 新建）
@@ -623,6 +634,11 @@ nodes:
 
 ## 收尾(Closeout)
 
+> **收尾前置自检（防假监督）**：在汇报"完成/已收尾"前，先核对 manifest——若存在非终态节点
+> （todo/in_progress/in_review）**且当前没有活跃的 `run_dag.py` 在前台跑**，你**不算在监督**。
+> 此时只有两条诚实路径：① 前台再跑 `run_dag.py` 推进到终态；② 明确向用户说"**尚未收敛、当前未在监督**，
+> 还剩哪些非终态节点、需要我继续吗"。**禁止**在仍有非终态节点时用"持续监督中/等待完成"收尾。
+
 全 done 或你判断可收尾时:
 1. **汇总 digest**:
    - 哪些 done、哪些 failed
@@ -690,14 +706,18 @@ Reviewer 侧对应铁律：只读共享态、不动主树（见 `parallel-dev-ex
 ## 与 Executor Skill 的关系
 
 Worker/Reviewer 通过 `parallel-dev-executor` skill 知道:
-- 从 issue metadata 读配置(worker/gate/blocked_by)
-- TDD 实现 → 产 PR → 写结构化证据(`metadata.artifacts` + `metadata.verification`)
-- Reviewer 复跑测试 → 写 verdict 与结构化报告(`metadata.review_verdict` + `metadata.review_report`)
+- 用 `agent_cli.py read-task` 读配置(worker/gate/blocked_by/contract)，不手敲 metadata
+- TDD 实现 → 产 PR → `agent_cli.py submit-worker` 写结构化证据(`artifacts` + `verification`)并自校验、标 done
+- Reviewer 复跑测试 → `agent_cli.py submit-review` 写 verdict 与结构化报告(`review_verdict` + `review_report`)
+
+> executor 端的 `agent_cli.py` 与你这边的 `run_dag.py` 对称：双方共用同一套引擎层与证据
+> validator（单一事实源）。worker 写出的就是 runner harvest 能读的唯一 JSON 口径，杜绝
+> dotted key / prose / 三套口径并存导致的误判失败隔离。
 
 你(leader)只负责:
 - **拆解**(从设计文档 → manifest DAG)
 - **编排**(跑 run_dag.py)
-- **监督**(引擎自动)
+- **监督**(前台阻塞跑 run_dag.py 到终态并收集退出——不是后台自动，见上「前台阻塞监督铁律」)
 - **失败决策**(调整 manifest)
 - **收尾**(汇总 digest)
 
@@ -713,5 +733,7 @@ Worker/Reviewer 通过 `parallel-dev-executor` skill 知道:
 4. ❌ 不要混用本机制与 kanban 看板机制(两套并行,按基底择一)
 5. ❌ 不要自己实现循环逻辑(引擎是固定的,你只负责拆解)
 6. ❌ 不要拆成数百微任务(粒度=并行单元,半天~两天可收口)
+7. ❌ 不要在没有活跃 `run_dag.py` 前台进程时声称"在监督/持续观察/等待完成"(假监督，见「前台阻塞监督铁律」)
+8. ❌ 不要把监督寄望于后台进程或"未来某轮"——turn 退出即任务结束，监督必须在本轮前台跑到 runner 返回
 
 ---
