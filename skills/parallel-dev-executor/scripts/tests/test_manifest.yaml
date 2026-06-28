@@ -1,0 +1,24 @@
+meta:
+  name: "简单测试 DAG"
+  squad: "test-workspace"
+
+nodes:
+  - id: "task-1"
+    title: "第一个任务"
+    description: "这是第一个测试任务"
+    worker: "alice"
+    reviewer: "bob"
+    blocked_by: []
+
+  - id: "task-2"
+    title: "第二个任务"
+    description: "这是第二个测试任务，依赖 task-1"
+    worker: "bob"
+    reviewer: "charlie"
+    blocked_by: ["task-1"]
+
+  - id: "task-3"
+    title: "第三个任务"
+    description: "这是第三个测试任务，依赖 task-1"
+    worker: "charlie"
+    blocked_by: ["task-1"]

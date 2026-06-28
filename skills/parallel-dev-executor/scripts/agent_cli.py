@@ -2,7 +2,9 @@
 """agent_cli —— executor 端确定性入口（worker/reviewer 的「机床」）。
 
 与 orchestrator 端 run_dag.py 对称：run_dag 管编排侧的确定性读写，agent_cli 管执行侧。
-两者共用同一套协作引擎（engines/）与证据校验（core.evidence），单一事实源。
+两者跑的是**同一份** scripts/（engines/ + core.evidence）——两个 skill 的 scripts 目录逐字一致，
+以 orchestration 为权威源、整体复制到 executor（见 sync_to_executor.sh + test_skill_scripts_parity）。
+这样 executor 自带完整引擎层、自给自足，不依赖运行时另一个 skill 是否在场（Multica 按 agent 隔离物化 skill）。
 
 为什么需要它：让 worker/reviewer 不再手敲 `multica issue metadata set`。手敲会冒出
 dotted key（artifacts.pr_url）/ prose / JSON 三套口径，runner 读不到就误判 blocked、
@@ -19,8 +21,10 @@ runner 同一套 validator 自校验，证据不全当场拒绝，而不是甩�
 import argparse
 import json
 import sys
+from pathlib import Path
 
-import _engine_path  # noqa: F401  # 接入共享引擎层（必须在 engines/core 之前 import）
+sys.path.insert(0, str(Path(__file__).parent))  # 与 run_dag.py 一致：引擎层在本 skill 自带的 scripts/ 内
+
 from core.evidence import validate_worker_evidence, validate_review_evidence
 from core.manifest import _load_contract
 from engines import create_engine_from_env, WorkItemStatus
