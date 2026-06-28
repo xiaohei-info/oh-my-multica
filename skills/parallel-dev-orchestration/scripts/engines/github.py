@@ -114,7 +114,8 @@ class GithubEngine(CollaborationEngine):
         review_verdict: Optional[str] = None,
         review_comment: Optional[str] = None,
         verification: Optional[Dict[str, Any]] = None,
-        review_report: Optional[Dict[str, Any]] = None
+        review_report: Optional[Dict[str, Any]] = None,
+        contract: Optional[Dict[str, Any]] = None
     ) -> str:
         """构建包含 YAML frontmatter 的 issue body"""
         metadata = {'dag_key': dag_key, 'worker': worker}
@@ -134,6 +135,8 @@ class GithubEngine(CollaborationEngine):
             metadata['verification'] = verification
         if review_report:
             metadata['review_report'] = review_report
+        if contract:
+            metadata['contract'] = contract
 
         frontmatter = yaml.dump(metadata, default_flow_style=False, allow_unicode=True)
         return f"---\n{frontmatter}---\n\n{description}"
@@ -185,7 +188,8 @@ class GithubEngine(CollaborationEngine):
             verification=metadata.get('verification'),
             review_verdict=metadata.get('review_verdict'),
             review_comment=metadata.get('review_comment'),
-            review_report=metadata.get('review_report')
+            review_report=metadata.get('review_report'),
+            contract=metadata.get('contract')
         )
 
     # ==================== 第一组：工作空间 ====================
@@ -296,7 +300,9 @@ class GithubEngine(CollaborationEngine):
             'review_verdict': review_verdict if review_verdict is not None else current.review_verdict,
             'review_comment': review_comment if review_comment is not None else current.review_comment,
             'verification': verification if verification is not None else current.verification,
-            'review_report': review_report if review_report is not None else current.review_report
+            'review_report': review_report if review_report is not None else current.review_report,
+            # contract 全量重建 frontmatter 时必须透传，否则后续任何 metadata 更新都会冲掉它
+            'contract': current.contract
         }
 
         # 重新构建 body
@@ -313,6 +319,35 @@ class GithubEngine(CollaborationEngine):
         ], capture=False)
 
         return self.get_work_item(item_id)
+
+    def set_node_contract(self, item_id: str, contract: Any):
+        """把节点 contract 下发到 issue frontmatter（单一事实源）。
+
+        contract 可为 Contract dataclass 或 dict；统一转 dict 合并进 frontmatter，
+        worker 读回后用同一套 validator 自校验。
+        """
+        from dataclasses import asdict, is_dataclass
+        payload = asdict(contract) if is_dataclass(contract) else contract
+        current = self.get_work_item(item_id)
+        new_body = self._build_issue_body(
+            current.description,
+            dag_key=current.dag_key,
+            worker=current.worker,
+            reviewer=current.reviewer,
+            blocked_by=current.blocked_by,
+            wave=current.wave,
+            artifacts=current.artifacts,
+            review_verdict=current.review_verdict,
+            review_comment=current.review_comment,
+            verification=current.verification,
+            review_report=current.review_report,
+            contract=payload
+        )
+        self._run_gh([
+            "issue", "edit", item_id,
+            "--repo", self.config.workspace_id,
+            "--body", new_body
+        ], capture=False)
 
     def list_work_items(
         self,

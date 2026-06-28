@@ -140,6 +140,7 @@ class MulticaEngine(CollaborationEngine):
         artifacts = self._json_metadata(metadata, 'artifacts')
         verification = self._json_metadata(metadata, 'verification')
         review_report = self._json_metadata(metadata, 'review_report')
+        contract = self._json_metadata(metadata, 'contract')
 
         # 解析 wave
         wave = metadata.get('wave')
@@ -164,7 +165,8 @@ class MulticaEngine(CollaborationEngine):
             verification=verification,
             review_verdict=metadata.get('review_verdict'),
             review_comment=metadata.get('review_comment'),
-            review_report=review_report
+            review_report=review_report,
+            contract=contract
         )
 
     def _resolve_agent_id(self, agent_name: str) -> str:
@@ -377,6 +379,20 @@ class MulticaEngine(CollaborationEngine):
             ], capture=False)
 
         return self.get_work_item(item_id)
+
+    def set_node_contract(self, item_id: str, contract: Any):
+        """把节点 contract 下发到 work item（JSON metadata，单一事实源）。
+
+        contract 可为 Contract dataclass 或已是 dict；统一序列化成 JSON 写入
+        `contract` 键，worker 读回后用同一套 validator 自校验。
+        """
+        from dataclasses import asdict, is_dataclass
+        payload = asdict(contract) if is_dataclass(contract) else contract
+        self._run_multica([
+            "issue", "metadata", "set", item_id,
+            "--key", "contract",
+            "--value", json.dumps(payload)
+        ], capture=False)
 
     # multica issue list 服务端单页上限 100；`--limit 1000` 会被静默截断为 100。
     _LIST_PAGE_SIZE = 100

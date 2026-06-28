@@ -130,6 +130,14 @@ def _harvest(
         elif node.status == "in_review":
             verdict = item.review_verdict
             if not verdict:
+                # reviewer 已在平台落终态（done/failed/blocked）但没写结构化 review_verdict：
+                # 不能无限等待——按 evidence-gate 判 blocked（无证据不予通过）。
+                if item.status in (WorkItemStatus.DONE, WorkItemStatus.FAILED, WorkItemStatus.BLOCKED):
+                    print(f"  harvest: {key} reviewer 平台 {item.status.value} 但缺 review_verdict 结构化证据 -> blocked")
+                    engine.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
+                    set_node(manifest, key, status="blocked")
+                    failed.add(key)
+                    changed = True
                 continue
             gate_errors = validate_review_evidence(node, item)
             if not gate_errors:

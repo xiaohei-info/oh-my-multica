@@ -74,10 +74,11 @@ description: Worker/Reviewer 在并行开发机制中的执行协议——从 me
 
 ### 1. 认领前检查
 ```bash
-# 确认依赖已关闭（实时查询，不信列表快照）
-# 查询 work item 的 blocked_by metadata，确保依赖已完成
+# 读任务配置（worker/reviewer/blocked_by/contract），实时查询，不信列表快照
+python3 scripts/agent_cli.py read-task <issue-id>
+# blocked_by 非空且依赖未完成 → 不开工
 ```
-- 使用引擎 CLI 认领并标记进行中（先跑 `<engine-cli> --help` 查看子命令，不要编造参数）
+- 认领并标记进行中由编排器/runner 派发时完成（worker 被派发即处于 in_progress），无需手动改态。
 
 ### 2. 读全唯一口径
 - 打开 issue body 中的 **🎯 目标** 与 **定位表** 找到唯一口径文档
@@ -134,13 +135,26 @@ git push origin <branch-name>
 # 开 PR（base = 集成分支）
 # 使用 gh/hub 或其他工具，确保 base 指向集成分支
 ```
-- 写 metadata 证据：用引擎 CLI 写入结构化 `artifacts`（PR URL/分支/commit）和 `verification`（单测/覆盖率命令、集成门、退出码、coverage、PR base），可选 `known_issues`
-- **`verification` 必须覆盖 contract.verification_commands 与 contract.integration_gates**：单测/覆盖率命令出现在 `verification.commands[].cmd`，集成门出现在 `verification.integration_gates[].commands[].cmd`，全部成功命令 `exit_code == 0`；diff-cover 数字写入 `verification.coverage`。
-- 命令和参数以 `<engine-cli> --help` 为准，不要编造
+**写证据 + 自校验 + 标 done（唯一入口，禁止手敲 `metadata set`）**：
 
-### 8. 写 comment + 转状态
-- 用引擎 CLI 写 comment 汇总（PR 链接、验证结果、手工验证路径、已知限制）
-- 将 work item 转为 `in_review` 状态，交给 reviewer
+```bash
+python3 scripts/agent_cli.py submit-worker <issue-id> \
+    --pr-url <PR链接> --branch <分支> --commit <sha> \
+    --command 'pytest tests/x --cov=... --cov-branch::0::N passed' \
+    --command 'diff-cover coverage.xml --compare-branch=<集成分支> --fail-under=90::0' \
+    --coverage <diff-cover 数字> --pr-base <集成分支> \
+    --integration-gates-file gates.json    # contract 有 integration_gates 时必填
+```
+
+- `submit-worker` 把 `--pr-url/--command/--coverage/...` 组装成**唯一 JSON 口径**的 `artifacts` + `verification`（不产 dotted key、不产 prose），并用 **runner 同一套 validator** 在提交前自校验。
+- `verification` 必须覆盖 `contract.verification_commands` 与 `contract.integration_gates`：单测/覆盖率命令逐条 `--command 'cmd::exit_code::summary'`；集成门证据写进 `--integration-gates-file`（每个 gate 的 name/commands/metrics/artifacts/source_of_truth/delivery_goal）。
+- 证据不全 → 当场被证据门拦截、非零退出、打印缺项，**不写入、不转状态**；补齐再来，别把缺口甩给 reviewer/harvest。
+- 通过 → 写证据并把 work item 标 `done`，交 runner harvest 收割（有 reviewer 则由 runner 指派 reviewer 并转 in_review）。
+
+### 8. 写 comment（叙述，不承载证据）
+- `submit-worker` 已写结构化证据并标 `done`。这里只补一条 prose comment 汇总（PR 链接、验证结果、手工验证路径、已知限制）。
+- 评论是给人读的叙述，**结构化证据一律走 `submit-worker`**，不要在评论里塞 metadata。
+- 状态转换交给 runner：worker 标 `done` 即可，指派 reviewer + 转 `in_review` 是 runner harvest 的职责，worker 不自行指派。
 
 ### Worker 禁止事项
 
@@ -158,10 +172,11 @@ git push origin <branch-name>
 ### 1. 接手前检查
 - 确认 work item 状态已进入 `in_review`
 - 确认 worker 已写入证据（`artifacts` 和 `verification` metadata）
-- 使用引擎 CLI 查询 work item metadata（先跑 `<engine-cli> --help`，不要编造参数）
+- 读任务配置走 `python3 scripts/agent_cli.py read-task <issue-id>`（归一化吐出 worker/reviewer/contract）
 
 ### 2. 读取上游证据
-- 从 work item metadata 中提取 PR 链接、测试命令、集成门证据、验证路径
+- 读上游证据走 `python3 scripts/agent_cli.py read-evidence <issue-id>`（归一化吐出 artifacts/verification/review_*）
+- 从中提取 PR 链接、测试命令、集成门证据、验证路径
 - 找到 PR URL
 - 找到 `verification.commands` 中的单测/覆盖率命令
 - 找到 `verification.integration_gates` 中每个 gate 的 `name`、`source_of_truth`、`delivery_goal`、`commands`、`metrics`、`artifacts`
@@ -277,37 +292,26 @@ diff-cover coverage.xml --compare-branch=<集成分支> --fail-under=<gate阈值
 
 ### 5. 判决 + 写回
 
-```bash
-# 判决写入 metadata
-# 使用引擎 CLI 设置 metadata
-```
+判决一律走 `submit-review`（唯一入口，禁止手敲 `metadata set`）。`review_report` 是结构化 JSON 文件（见 [Metadata 契约](#metadata-契约与编排引擎的接口)）。
 
-**三种判决**：
 > **硬门槛**：改动分支覆盖 < gate 阈值（缺省 90%）一律判 `blocked`，不接受"功能没问题先合、覆盖后补"——补在哪张卡就该在哪张卡过门。
 
-- **`pass`**：无 blocker，可合并
+- **`pass` / `pass-with-nits`**：无 blocker，可合并
   ```bash
-  # 使用引擎 CLI 更新状态
+  python3 scripts/agent_cli.py submit-review <issue-id> \
+      --verdict pass --report-file review_report.json
+  # submit-review 用 runner 同一套 validator 校验 review_report：
+  # 报告不全（缺 acceptance/integration 映射、blockers 非空、未独立复跑）当场拒绝、非零退出。
+  # 通过 → 写 review_verdict + review_report，并标 done。
   ```
 
 - **`blocked`**：有 blocker，必须返工
   ```bash
-  # 使用引擎 CLI 添加评论
-  ❌ Blocked
-  必修项：
-  1. <精确描述 blocker + 修复方向>
-  2. ...
-  修复后请重新提交。
-  "
-  # 保持 in_review 或改回 todo，等 worker 返工
+  python3 scripts/agent_cli.py submit-review <issue-id> --verdict blocked \
+      --report-file review_report.json    # report 可省；blocker 详情走下方 comment
+  # 写 review_verdict=blocked 并失败隔离（转 blocked），回流给编排器/worker
   ```
-
-- **`pass-with-nits`**：可合并，但有建议
-  ```bash
-  # 使用引擎 CLI 设置 metadata
-  # 使用引擎 CLI 更新状态
-  # nits 可以挂入后续卡或忽略
-  ```
+  返工要点另写一条 prose comment（见第 6 步），评论不承载结构化证据。
 
 ### 6. 写 comment 汇总
 
@@ -450,9 +454,9 @@ grep -r "class.*DTO" --include="*.py" | grep -v "shared/contracts"
 - 统一错误处理模式（可后续优化）
 "
 
-# 写入判决
-# 使用引擎 CLI 设置 metadata
-# 使用引擎 CLI 设置 metadata
+# 写入判决（结构化证据走 agent_cli，禁止手敲 metadata set）
+python3 scripts/agent_cli.py submit-review <issue-id> \
+    --verdict <pass|blocked> --report-file review_report.json
 ```
 
 ### Architect 禁止事项
@@ -502,6 +506,13 @@ grep -r "class.*DTO" --include="*.py" | grep -v "shared/contracts"
 6. ❌ **放任 scope 蔓延**：worker 越界做了非目标的活，reviewer 没拦 → 后续卡冲突
 
 ## Metadata 契约（与编排引擎的接口）
+
+> **唯一写入口径**：下面的 `artifacts`/`verification`/`review_verdict`/`review_report` 一律由
+> `scripts/agent_cli.py`（`submit-worker`/`submit-review`）写入——它负责把零散入参组装成这套
+> 结构化 JSON、用 runner 同一套 validator 自校验、并把状态一起转好。**禁止手敲
+> `<engine-cli> metadata set`**：手敲会冒出 dotted key（`artifacts.pr_url`）/ prose / JSON 三套
+> 口径，runner 读不到就误判 blocked、甚至失败隔离整条 DAG。下面的 schema 是 agent_cli 的产物口径，
+> 给你理解字段含义、以及组织 `--integration-gates-file` / `--report-file` 用。
 
 **编排引擎写入**（你只读）：
 - `worker`: worker agent 名
@@ -601,6 +612,7 @@ grep -r "class.*DTO" --include="*.py" | grep -v "shared/contracts"
 - **集成分支**：由 issue metadata 指定（如 `feature/v1.0.0`），不是 `master`
 - **Python 环境**：本机 python3 + pytest（或 issue 指定的测试框架）
 - **引擎 CLI**：所选协作引擎的客户端已配置（先跑 `<engine-cli> --help` 确认可用命令）
+- **agent_cli**：`scripts/agent_cli.py` 是读/写证据的唯一入口，与 orchestration skill 共用引擎层（依赖 `parallel-dev-orchestration` 同仓同级安装）。引擎类型/工作空间走 `--engine`/`--workspace` 或 `.env`/环境变量，与 run_dag 一致。
 - **Git CLI**：`git` 可用；提 PR 用 `gh` 或项目约定的工具
 
 ## 失败处理
@@ -608,18 +620,17 @@ grep -r "class.*DTO" --include="*.py" | grep -v "shared/contracts"
 ### Worker 失败
 - 做不了 / 卡住 / 发现依赖有问题：
   ```bash
-  # 使用引擎 CLI 添加评论
-  # 使用引擎 CLI 设置 metadata
-  # 使用引擎 CLI 更新状态
+  python3 scripts/agent_cli.py block <issue-id> --reason "<坦诚说明原因+卡点>"
+  # block 写一条 ❌ Blocked 评论并把 work item 标 blocked，回流给编排器
   ```
 - 不要硬撑到 `in_review`，坦诚标 `blocked` 回流给编排器
 
 ### Reviewer blocked
 - 发现 blocker：
   ```bash
-  # 使用引擎 CLI 添加评论
-  # 使用引擎 CLI 设置 metadata
-  # 保持 in_review 或改回 todo，等 worker 返工
+  python3 scripts/agent_cli.py submit-review <issue-id> --verdict blocked \
+      --report-file review_report.json
+  # 写 review_verdict=blocked 并失败隔离；blocker 详情另写 prose comment
   ```
 - 不要自己改，回流给 worker
 
@@ -656,12 +667,11 @@ grep -r "class.*DTO" --include="*.py" | grep -v "shared/contracts"
 - **集成测试全绿**：contract.integration_gates 每个 gate 都有 `verification.integration_gates[]` 证据，且锚定 source_of_truth / delivery_goal
 - Worker 必须按 integration gate 的 source_of_truth / delivery_goal 生成证据，不得把实现细节当成交付目标
 - PR 已产出并指向正确 base
-- metadata.artifacts 已写入
-- metadata.verification 已写入（含 commands/integration_gates/pr_base/coverage）
-- issue 状态改为 `in_review`
+- 经 `agent_cli submit-worker` 写入 `artifacts` + `verification`（含 commands/integration_gates/pr_base/coverage）并通过自校验
+- work item 标 `done`（指派 reviewer + 转 `in_review` 由 runner harvest 完成）
 
 **如遇阻塞**：
-标记 `blocked` + comment 说明原因，不要硬撑
+`agent_cli block <id> --reason ...` 标 `blocked` + 说明原因，不要硬撑
 ```
 
 ### Reviewer Dispatch Prompt
