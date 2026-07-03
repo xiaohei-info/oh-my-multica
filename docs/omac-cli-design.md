@@ -45,7 +45,7 @@
               omac CLI(唯一入口层)
 ```
 
-三者本质都在消费同一套 CLI 能力。Web UI 只是 omac 的进程包装(全命令支持 `--output json`)。
+三者本质都在消费同一套 CLI 能力。Web UI 只是 omac 的进程包装(全命令支持 `--output json`),落地为 `omac web` 子命令(§13)。
 
 ### 1.5 机制优势一览
 
@@ -149,6 +149,8 @@ omac
     config   get | set
   GUIDE
     guide    workflow | manifest | roles | worker | reviewer | recovery
+  WEB
+    web      启动本地只读可视化面板(选 manifest、看进度与证据链,§13)
 ```
 
 ### 5.1 退出码契约(稳定,可脚本分支)
@@ -655,6 +657,7 @@ dag run 结果回收 ──► 权威门(编排侧,信任但验证)
 | **P2** | `work show/submit`(六类任务统一接口 + 左移校验)+ 证据 schema 扩展(`env_setup`、`review_goals`)+ 派发 body 模板 | live Multica 下 worker/reviewer 全程零 skill 走通 |
 | **P3** | `plan create/check/show` 流水线(planner/orchestrator 双角色 + 验收文档环节 + 全程 review 门)+ `guide` 全量迁移 + 删除清单执行 | skills/ 删除,README 重写为 CLI 产品文档 |
 | **P4** | 交付闭环:CI 监控与回退、自动 merge 与冲突回退、总控验收 + DAG 增量扩展外层循环 | 一个 feature 从 plan 到「验收全 pass 才 exit 0」全程无人工递手 |
+| **P5(可选)** | `omac web` 只读可视化面板:内嵌 SPA + 与 CLI 共用命令层 + status 短缓存(§13) | 浏览器里选 manifest、看 DAG 进度与证据链;API 输出与对应 CLI 命令的 JSON 逐字节一致 |
 
 ---
 
@@ -749,3 +752,56 @@ CollaborationEngine
 2. **接口的 docstring 契约(写后读一致性、确定性 id)保持平台中立措辞**,不渗入 Multica 术语。
 
 守住这两条,加上 P1 已落地的双接口,未来接 Linear = 一个 ~500 行 Store 适配器 + 选定执行面方案;接 Jira 同理再加 transition 映射。边界同样明确:**接口当期落地,实现不预建**——不为 Linear/Jira 留空壳适配器,第二个平台的实现由其真实约束驱动。
+
+---
+
+## 13. Web 可视化面板:`omac web`
+
+> 定位:§1.4「三种使用形态」中 Web UI 的落地——**CLI 的第三种调用者,不是第二套系统**。Web 层零业务逻辑、零独立状态:每个 API 端点与一条 CLI 命令一一对应,响应体就是该命令 `--output json` 的原样输出。用户在页面上做的每一次"查看",本质都是一次 omac 命令调用。
+
+### 13.1 命令与形态
+
+```
+omac web [--port 8321] [--host 127.0.0.1] [--open] [--refresh 10]
+```
+
+- **单进程、零依赖**:HTTP 服务 + 内嵌静态单页应用(前端构建产物随 pip 包分发,无 CDN、无 Node 运行时依赖,离线可用);`omac web` 即起,Ctrl-C 即停,无守护进程。
+- **默认只绑 `127.0.0.1`**,本机工具无鉴权;显式指定 `--host 0.0.0.0` 对外暴露时,强制要求 `--token`,所有请求校验请求头。
+- `--open` 启动后自动打开浏览器;`--refresh` 控制前端轮询间隔(秒)。
+
+### 13.2 架构:同一命令层,两种呈现
+
+```
+浏览器 SPA ──── HTTP / JSON ────► omac web(薄路由层)
+                                     │ 进程内调用
+                              命令实现层(CLI 子命令与 web 端点共用同一函数)
+                                     │
+                              pipeline / core / engines(Store + Runtime)
+```
+
+新增一条纪律(与 §12.4 的红线同级):**web 路由层只做「解析参数 → 调命令函数 → 原样返回 JSON」**,禁止在 web 层直接读 manifest、调 engine、二次加工数据——那些都是命令层的职责。保证手段:mock 引擎下的一致性测试,逐端点断言 **API 响应 == 对应 CLI 命令 `--output json` 的输出**。这条纪律保证了三种调用者(人/agent/Web)看到的永远是同一个事实,CLI 是唯一事实源。
+
+### 13.3 页面信息架构
+
+打开即是 manifest 选择页,选定后进入该 manifest 的仪表盘:
+
+| 页面区域 | 内容 | 数据来源(← 对应 CLI 命令) |
+|---|---|---|
+| **manifest 选择器** | 扫描 `.orchestrator/*.yaml`(排除 config.yaml),显示各自进度摘要,记住上次选择 | `GET /api/manifests` |
+| **DAG 总览** | DAG 图可视化,节点按状态着色(todo / in_progress / ci_check / in_review / merging / done / blocked / abandoned),依赖边、进度统计(x/y done)、当前所处循环(内层 tick / 总控验收第 N 轮) | `GET /api/dag/status` ← `dag status --output json` |
+| **节点详情**(点节点展开) | contract 全量(objective / acceptance / non_goals / 验证命令)、证据链(verification、评审 report + 评审目标、env_setup)、PR 链接、平台 issue 链接(跳转看完整时间线)、回退计数 | `GET /api/node/{key}` ← `node show --output json` |
+| **静态信息页** | config.yaml 只读呈现(角色映射、CI/merge 配置)、manifest 原文、验收文档逐条清单 | `GET /api/config` ← `config get --output json`;`GET /api/plan/acceptance` |
+| **异常面板** | 与 exit 20 同款的结构化报告:失败节点、证据摘要、受阻下游、**可复制的下一步动作命令**(`omac node retry ...`) | `dag status` 输出中的 needs_decision 字段,无独立端点 |
+
+### 13.4 刷新模型:前端轮询 + 服务端短缓存
+
+- 前端**定时轮询**(缺省 10s),不引入 WebSocket/SSE——数据源头(引擎对平台的 reconcile)本身就是十秒到分钟级,秒级实时是伪需求,不为它引入实时基础设施。
+- `dag status` 每次调用会触发 reconcile(打平台 API)。web 服务端对 status 结果做 **TTL = poll_interval 的短缓存**:多个浏览器标签、多次轮询共享同一次 reconcile,页面侧的轮询放大不会传导为平台 API 调用放大。
+
+### 13.5 边界:一期只读,仪表盘不是方向盘
+
+- **一期无任何操作按钮**。`dag run` 是长驻前台循环,归属权在终端调用者,web 不代跑;异常面板给出的是**可复制的 CLI 命令**,处置动作回到终端执行。
+- 二期再考虑操作能力(`POST /api/node/{key}/retry|abandon` + 确认对话框,复用同一命令层;`dag run` 以受管后台任务形式提供)——届时鉴权从"可选"升级为"强制"。
+- 不做多项目聚合、不做用户体系、不做历史统计存储(与 §6 的无 SQLite 原则一致)。
+
+这个边界让一期的 web 保持在最有价值、最零风险的形态:**观测面板**——把 CLI 已经能回答的所有问题,变成一眼能看懂的页面。
