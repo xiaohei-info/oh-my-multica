@@ -11,7 +11,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
-from .models import EngineConfig, WorkItem, WorkItemStatus
+from .models import EngineConfig, WorkItem, WorkItemStatus, WorkspaceInfo
 
 
 class WorkItemStore(ABC):
@@ -35,6 +35,16 @@ class WorkItemStore(ABC):
         契约:返回的名称与 manifest 中 worker/reviewer 字段按字符串完全匹配,
         否则 lint 报 "not in agent pool"。平台若用 id 标识成员,内部做 name->id
         映射,此方法返回 name。
+        """
+
+    # ==================== 工作空间发现 ====================
+
+    @abstractmethod
+    def list_workspaces(self) -> List[WorkspaceInfo]:
+        """列出当前账号可见的全部工作空间(omac init 配置 / --check 体检用)。
+
+        契约:返回 WorkspaceInfo 列表(至少含 id 与 name),供 init 交互式选择;
+        平台不可达时抛 PlatformError/AuthError,调用方据此降级为本地体检+警告。
         """
 
     # ==================== 工作单元 CRUD ====================
