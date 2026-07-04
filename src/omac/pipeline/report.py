@@ -11,7 +11,6 @@ from __future__ import annotations
 from ..core.manifest import Manifest
 from ..engines.store import WorkItemStore
 from ..core import graph
-from .loop import reconcile
 
 
 # ==================== schema 常量(测试锁定) ====================
@@ -88,20 +87,14 @@ def _node_row(node, item) -> dict:
     }
 
 
-def _build_failed_node(node, item) -> dict:
+def _build_failed_node(node, item, reason: str | None = None) -> dict:
+    """单个失败/受阻节点详情(锁定结构)。reason 优先使用调用方传入的精确原因。"""
     pr_url = None
-    reason = None
     evidence_summary = None
 
     if item is not None:
         if item.artifacts:
             pr_url = item.artifacts.get("pr_url")
-        if item.review_verdict and item.review_verdict not in ("pass", "pass-with-nits"):
-            reason = f"review rejected: {item.review_verdict}"
-        elif item.status.value == "failed":
-            reason = "worker failed"
-        elif item.status.value == "blocked":
-            reason = "blocked on platform"
         evidence_summary = {
             "review_verdict": item.review_verdict,
             "review_comment": item.review_comment,
@@ -109,7 +102,16 @@ def _build_failed_node(node, item) -> dict:
         }
 
     if reason is None:
-        reason = node.status
+        # 无精确原因时,从 item 状态推导(仅供 status 观测回退)
+        if item is not None:
+            if item.review_verdict and item.review_verdict not in ("pass", "pass-with-nits"):
+                reason = f"review rejected: {item.review_verdict}"
+            elif item.status.value == "failed":
+                reason = "worker failed"
+            elif item.status.value == "blocked":
+                reason = "blocked on platform"
+        if reason is None:
+            reason = node.status
 
     return {
         "key": node.id,
@@ -121,8 +123,7 @@ def _build_failed_node(node, item) -> dict:
     }
 
 
-def _next_actions(failed_nodes: list, blocked_downstream: list,
-                  manifest_path: str) -> list:
+def _next_actions(failed_nodes: list, manifest_path: str) -> list:
     """为每个失败节点给出可执行的下一步命令(§5.2:精确到完整命令行)。"""
     actions = []
     for fn in failed_nodes:
@@ -130,6 +131,35 @@ def _next_actions(failed_nodes: list, blocked_downstream: list,
         actions.append(f"omac node retry {manifest_path} {key}")
         actions.append(f"omac node abandon {manifest_path} {key}")
     return actions
+
+
+def build_needs_decision(
+    store: WorkItemStore,
+    manifest: Manifest,
+    manifest_path: str,
+    failed_keys: set[str],
+    evidence: dict[str, str] | None = None,
+) -> dict:
+    """构建 needs-decision 段(锁定 NEEDS_DECISION_KEYS)。
+
+    evidence: 节点 key → 精确失败原因(由 tick 的 collect_results 提供);
+             未传入时(/status 路径)从 item 状态推导。
+    """
+    evidence = evidence or {}
+    items = _fetch_items(store, manifest)
+    snapshot = _graph_snapshot(manifest)
+    downstream = graph.downstream_of(snapshot, failed_keys)
+    blocked_downstream = sorted(downstream)
+    failed_nodes = [
+        _build_failed_node(manifest.nodes[key], items.get(key), reason=evidence.get(key))
+        for key in sorted(failed_keys)
+    ]
+    next_actions = _next_actions(failed_nodes, manifest_path)
+    return {
+        "failed_nodes": failed_nodes,
+        "blocked_downstream": blocked_downstream,
+        "next_actions": next_actions,
+    }
 
 
 def build_status_report(
@@ -143,6 +173,7 @@ def build_status_report(
     2. 精准取回 work item 缓存(pr_url / 证据摘要)
     3. 构建 progress / nodes / needs_decision
     """
+    from .loop import reconcile  # 延迟导入,避免与 loop 的循环依赖
     reconcile(store, manifest, manifest_path)
     items = _fetch_items(store, manifest)
 
@@ -156,24 +187,7 @@ def build_status_report(
 
     failed_keys = {key for key, node in manifest.nodes.items()
                    if node.status in FAILED_STATUSES}
-    if failed_keys:
-        snapshot = _graph_snapshot(manifest)
-        downstream = graph.downstream_of(snapshot, failed_keys)
-        blocked_downstream = sorted(
-            k for k in downstream
-            if manifest.nodes[k].status not in TERMINAL_ALL
-        )
-        failed_nodes = [
-            _build_failed_node(manifest.nodes[key], items.get(key))
-            for key in sorted(failed_keys)
-        ]
-        needs_decision = {
-            "failed_nodes": failed_nodes,
-            "blocked_downstream": blocked_downstream,
-            "next_actions": _next_actions(failed_nodes, blocked_downstream, manifest_path),
-        }
-    else:
-        needs_decision = None
+    needs_decision = build_needs_decision(store, manifest, manifest_path, failed_keys) if failed_keys else None
 
     return {
         "manifest": manifest_path,
