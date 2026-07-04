@@ -160,7 +160,7 @@ def _validate_worker(manifest, node, new_worker: str, config: dict, engine) -> s
     pool = set(roles_workers) if isinstance(roles_workers, list) and roles_workers else set()
     if not pool and engine is not None:
         # 用引擎解析后的有效 workspace_id(兼顾 config.yaml / env / 命令行),
-        # 避免仅 env 设 OMCA_WORKSPACE_ID 时传入空串导致 list_members 返回空池。
+        # 避免仅 env 设 OMAC_WORKSPACE_ID 时传入空串导致 list_members 返回空池。
         effective_ws = getattr(getattr(engine.store, "config", None), "workspace_id", None)
         if not effective_ws:
             effective_ws = config.get("workspace")
