@@ -4,13 +4,10 @@
 """
 
 DONE = "done"
-# 依赖满足:done 或 abandoned(abandoned 上游视同依赖已满足,§2.4 P1.4)
-SATISFIED = {"done", "abandoned"}
+# 依赖「已满足」的上游状态:done 正常满足,abandoned 视同满足(§2.4 P1.4 / §7.5)
+SATISFIED = {DONE, "abandoned"}
 TERMINAL = {"done", "cancelled", "abandoned"}
 RUNNING = {"in_progress", "in_review"}  # 进行中节点的状态集合
-
-# 依赖「已满足」的上游状态:done 正常满足,abandoned 视同满足(§7.5)
-SATISFIED = {DONE, "abandoned"}
 
 
 def is_done(issue) -> bool:
