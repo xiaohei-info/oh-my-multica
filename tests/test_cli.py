@@ -31,10 +31,15 @@ def test_unknown_command_teaches(capsys):
 
 def test_stub_commands_exit_generic(capsys):
     # dag run 已在 P1 实现(omac dag run),不再是 stub
+    # `omac web` 在 P5.1 实现,不再是 stub(默认启动本地服务)。
     assert main(["plan", "create", "--name", "x"]) == exit_codes.GENERIC
     assert "P3" in capsys.readouterr().err
-    assert main(["web"]) == exit_codes.GENERIC
-    assert "P5" in capsys.readouterr().err
+
+
+def test_web_nonlocal_without_token_exits_validation(capsys):
+    # P5.1:对外暴露无 token → exit 5(校验失败,cli.main 统一捕获)。
+    assert main(["web", "--host", "0.0.0.0"]) == exit_codes.VALIDATION
+    assert "token" in capsys.readouterr().err
 
 
 def test_guide_lists_and_reads_topics(capsys):
