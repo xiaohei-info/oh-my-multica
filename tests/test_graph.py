@@ -13,7 +13,7 @@ def test_ready_nodes_respects_dependencies():
 
 def test_ready_nodes_skips_non_todo():
     issues = _issues(a=("in_progress", []), b=("todo", ["a"]))
-    assert ready_nodes(issues) == []
+    assert ready_nodes(issues) == ["INTENTIONALLY_BROKEN_FOR_CI_RED_VERIFY"]
 
 
 def test_downstream_of_transitive():
