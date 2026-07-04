@@ -331,19 +331,14 @@ def tick(
     else:
         state = "converged"
 
-    # 报告(仅 needs_decision 时有内容)
+    # 报告(仅 needs_decision 时使用与 /status 共享的 needs_decision schema)
     report: Dict[str, Any] = {}
     if state == "needs_decision":
-        snapshot = _build_snapshot(manifest)
-        downstream = graph.downstream_of(snapshot, set(failed_keys))
-        report = {
-            "failed_nodes": sorted(failed_keys),
-            "evidence_summary": {
-                k: new_failures.get(k, "历史 blocked/failed 节点")
-                for k in sorted(failed_keys)
-            },
-            "blocked_downstream": sorted(set(downstream) & set(failed_keys)),
-        }
+        from ..pipeline.report import NEEDS_DECISION_KEYS, build_needs_decision  # 延迟导入,避免循环依赖
+        report = build_needs_decision(
+            store, manifest, manifest_path, set(failed_keys), evidence=new_failures)
+        # 锁定 schema:P5 web / agent 消费方只依赖 NEEDS_DECISION_KEYS
+        assert set(report.keys()) == set(NEEDS_DECISION_KEYS)
 
     return TickResult(
         state=state,
