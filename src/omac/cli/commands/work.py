@@ -20,6 +20,17 @@ issue 类型与交付参数:
   develop           产出: --pr-url --verification-file(env 依赖时须含 env_setup)
                                                  review: 同上(report 必含评审目标)
   final-acceptance  产出: --acceptance-results-file(逐项 pass/fail,无 review 阶段)
+
+硬约束:
+  - 唯一写入口:交付物只经 `work submit` 写入,禁止手搓 metadata set(会冒出 dotted key /
+    prose / JSON 三套口径,引擎读不到就误判 blocked、甚至失败隔离整条 DAG)。
+  - 证据门:submit 时左移校验,verification 必须覆盖 contract.verification_commands 与
+    contract.integration_gates,缺什么当场 exit 5 并精确告知;不写入、不转状态。
+  - 改动分支覆盖硬门槛(缺省 90%):`diff-cover` 退出码非 0 = 不达标,不得转 in_review;
+    不接受"先合后补"。
+  - 收活铁律(reviewer):先 `git diff` 看真实改动,再独立复跑测试,绝不只凭 worker 自述;
+    改动分支覆盖 < gate 阈值 = Blocker。
+  - 只读共享态:reviewer 用 `git diff`/`git show` 审阅,绝不在共享主工作树 reset/checkout/merge。
 """
 
 
