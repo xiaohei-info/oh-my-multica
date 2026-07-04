@@ -328,6 +328,13 @@ class MockStore(WorkItemStore):
         item = self.get_work_item(item_id)
         item.status = status
 
+    def reset_review(self, item_id: str):
+        item = self.get_work_item(item_id)
+        item.review_verdict = None
+        item.review_comment = None
+        item.review_report = None
+        item.phase = TaskPhase.AUTHORING
+
     def assign_work_item(self, item_id: str, assignee: str, role: str):
         item = self.get_work_item(item_id)
         if role == "worker":
