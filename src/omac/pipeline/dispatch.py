@@ -45,11 +45,12 @@ worker/reviewer 在 agent 池内。
 交付:omac work submit <issue-id> --manifest-file <path>
 """
 
-WORKER_AUTHORING_PROTOCOL = """你是 worker(develop × authoring)。永远只需要两个命令:
+WORKER_AUTHORING_PROTOCOL = """你是 worker(develop × authoring)。交付必须走三步闭环,缺一环即断:
 
-1. omac work show <issue-id> —— 取 contract 全量(objective/acceptance/
-   non_goals/verification_commands/pr_base/coverage_gate)与本协议
-2. 完成后 omac work submit <issue-id> --pr-url <PR> --verification-file <path>
+1. `omac work show <issue-id>` —— 取 contract 全量(objective/acceptance/
+   non_goals/verification_commands/pr_base/coverage_gate)与本协议;
+2. **推分支 + 开 PR**(PR 由 worker 自建;omac 不代建):`git push` 起 feature 分支,再用 `git`/`gh` 自行开 PR,base 必须指向 contract.pr_base(集成分支),不直接打主干;
+3. `omac work submit <issue-id> --pr-url <PR URL> --verification-file <path>` —— omac 只登记 pr_url 并在权威门校验,不接受"只交代码没开 PR"。
 
 铁律:
 - 契约先行:只消费共享契约,不平行重定义
