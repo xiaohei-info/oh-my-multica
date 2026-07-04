@@ -14,6 +14,11 @@ import subprocess
 import tempfile
 from typing import Any, Dict, List, Optional
 
+from ..core.taskmeta import (
+    CI_BOUNCE_KEY, DELIVERABLE_KEY, KIND_KEY, MERGE_BOUNCE_KEY,
+    PHASE_KEY, REVIEW_BOUNCE_KEY, TaskKind, TaskPhase,
+    parse_bounces, parse_kind, parse_phase,
+)
 from ..errors import AuthError, PlatformError
 from .models import EngineConfig, WorkItem, WorkItemStatus, WorkspaceInfo
 from .runtime import AgentRuntime
@@ -132,6 +137,10 @@ class MulticaStore(WorkItemStore):
             review_comment=metadata.get("review_comment"),
             review_report=self._json_metadata(metadata, "review_report"),
             contract=self._json_metadata(metadata, "contract"),
+            kind=parse_kind(metadata.get(KIND_KEY)),
+            phase=parse_phase(metadata.get(PHASE_KEY)),
+            bounces=parse_bounces(metadata),
+            deliverable=metadata.get(DELIVERABLE_KEY),
         )
 
     def _resolve_agent_id(self, agent_name: str) -> str:
@@ -198,6 +207,7 @@ class MulticaStore(WorkItemStore):
         blocked_by: Optional[List[str]] = None,
         wave: Optional[int] = None,
         initial_status: WorkItemStatus = WorkItemStatus.TODO,
+        kind: TaskKind = TaskKind.DEVELOP,
     ) -> WorkItem:
         result = self._run_multica_with_text_file([
             "issue", "create",
@@ -212,6 +222,7 @@ class MulticaStore(WorkItemStore):
 
         self._set_metadata(issue_id, "dag_key", dag_key)
         self._set_metadata(issue_id, "worker", worker)
+        self._set_metadata(issue_id, KIND_KEY, kind.value)
         if reviewer:
             self._set_metadata(issue_id, "reviewer", reviewer)
         if blocked_by:
@@ -244,6 +255,11 @@ class MulticaStore(WorkItemStore):
         review_comment: Optional[str] = None,
         verification: Optional[Dict[str, Any]] = None,
         review_report: Optional[Dict[str, Any]] = None,
+        phase: Optional[TaskPhase] = None,
+        ci_bounce: Optional[int] = None,
+        review_bounce: Optional[int] = None,
+        merge_bounce: Optional[int] = None,
+        deliverable: Optional[str] = None,
     ) -> WorkItem:
         if worker is not None:
             self._set_metadata(item_id, "worker", worker)
@@ -261,6 +277,16 @@ class MulticaStore(WorkItemStore):
             self._set_metadata(item_id, "verification", json.dumps(verification))
         if review_report is not None:
             self._set_metadata(item_id, "review_report", json.dumps(review_report))
+        if phase is not None:
+            self._set_metadata(item_id, PHASE_KEY, phase.value)
+        if ci_bounce is not None:
+            self._set_metadata(item_id, CI_BOUNCE_KEY, str(ci_bounce))
+        if review_bounce is not None:
+            self._set_metadata(item_id, REVIEW_BOUNCE_KEY, str(review_bounce))
+        if merge_bounce is not None:
+            self._set_metadata(item_id, MERGE_BOUNCE_KEY, str(merge_bounce))
+        if deliverable is not None:
+            self._set_metadata(item_id, DELIVERABLE_KEY, deliverable)
         return self.get_work_item(item_id)
 
     def set_node_contract(self, item_id: str, contract: Any):

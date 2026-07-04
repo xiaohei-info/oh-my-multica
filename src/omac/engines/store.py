@@ -11,6 +11,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
+from ..core.taskmeta import Bounces, TaskKind, TaskPhase
 from .models import EngineConfig, WorkItem, WorkItemStatus, WorkspaceInfo
 
 
@@ -61,6 +62,7 @@ class WorkItemStore(ABC):
         blocked_by: Optional[List[str]] = None,
         wave: Optional[int] = None,
         initial_status: WorkItemStatus = WorkItemStatus.TODO,
+        kind: TaskKind = TaskKind.DEVELOP,
     ) -> WorkItem:
         """创建工作单元,返回带**稳定且唯一** id 的 WorkItem。
 
@@ -68,6 +70,10 @@ class WorkItemStore(ABC):
         get_work_item(id) 精准取,不再全量扫描。metadata 存法由实现决定,
         但存完后立刻 get_work_item(id) 应能读回全部字段。
         title 会由编排层加 [DAG:{dag_key}] 前缀语义,实现内负责拼接。
+
+        kind 写入 metadata(§7.4),缺省 develop —— 未带 kind 的旧调用路径
+        与旧 issue 读回均走缺省,向后兼容。phase 流转不在此处,由 pipeline
+        经 update_work_item_metadata 推进。
         """
 
     @abstractmethod
@@ -90,8 +96,20 @@ class WorkItemStore(ABC):
         review_comment: Optional[str] = None,
         verification: Optional[Dict[str, Any]] = None,
         review_report: Optional[Dict[str, Any]] = None,
+        phase: Optional[TaskPhase] = None,
+        ci_bounce: Optional[int] = None,
+        review_bounce: Optional[int] = None,
+        merge_bounce: Optional[int] = None,
+        deliverable: Optional[str] = None,
     ) -> WorkItem:
-        """更新业务元数据(不改 status)。None 的字段不更新;写后读一致。"""
+        """更新业务元数据(不改 status)。None 的字段不更新;写后读一致。
+
+        phase 流转与回退计数递增由 pipeline 经此方法写入(§7.4):
+        - phase:产出(authoring)↔ 评审(review)的阶段切换;
+        - ci_bounce/review_bounce/merge_bounce:三类回退的绝对值
+          (pipeline 读当前值、+1、写回;Store 只存取不做状态机);
+        - deliverable:按 kind 承载 plan/acceptance/manifest 等交付正文。
+        """
 
     @abstractmethod
     def set_node_contract(self, item_id: str, contract: Any):
