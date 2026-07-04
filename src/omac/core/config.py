@@ -14,7 +14,11 @@
       max_parallel / poll_interval / coverage_gate
     ci:    { check_command, timeout_minutes }   # 可选,缺省跳过 CI 环节
     merge: { command }                           # 可选,缺省不自动合并
-    acceptance: { max_rounds }
+    acceptance: { max_rounds }                   # 总控验收外层循环上限(与 retry 正交)
+    retry:                                     # 三类「回到 worker」回退次数上限
+      ci: 3                                    # CI 失败 → worker 重修(0 = 立即 blocked,不回退)
+      review: 3                                # reviewer reject → worker 重修(节点开发与 plan 流水线共用)
+      merge: 3                                 # 合并冲突 → worker 重解
 """
 from __future__ import annotations
 
@@ -32,6 +36,17 @@ DEFAULTS = {
     "poll_interval": 30,
     "coverage_gate": 90,
 }
+
+# 三类「回到 worker」回退次数上限(设计文档 §6 / §7.3;缺省 3,0 = 该类失败即 blocked)
+DEFAULT_RETRY = {
+    "ci": 3,
+    "review": 3,
+    "merge": 3,
+}
+
+# 总控验收外层循环上限(设计文档 §6;与 retry 正交)
+DEFAULT_MAX_ROUNDS = 3
+
 
 # 环境变量回退(设计文档 §5:全局 flag 带 env 回退)
 ENV_ENGINE = "OMAC_ENGINE"
@@ -76,6 +91,32 @@ def set_value(data: dict, dotted_key: str, value):
             cur[part] = nxt
         cur = nxt
     cur[parts[-1]] = value
+
+
+def resolve_retry(config: dict) -> dict:
+    """解析 retry 块:以 DEFAULT_RETRY 为缺省,合并 config.retry,并校验。
+
+    校验规则(设计文档 §6):retry.{ci|review|merge} 必须为整数且 ≥ 0;
+    负数在「校验期」报错(ValidationError → exit 5)。
+    """
+    raw = get_value(config, "retry")
+    if raw is None:
+        return dict(DEFAULT_RETRY)
+    if not isinstance(raw, dict):
+        raise ValidationError(
+            f"retry 配置应为 YAML 映射(ci/review/merge),got {type(raw).__name__}")
+    resolved = dict(DEFAULT_RETRY)
+    for key in DEFAULT_RETRY:
+        if key not in raw:
+            continue
+        val = raw[key]
+        if isinstance(val, bool) or not isinstance(val, int):
+            raise ValidationError(
+                f"retry.{key} 必须为整数,got {type(val).__name__}({val!r})")
+        if val < 0:
+            raise ValidationError(f"retry.{key} 不能为负数(非法值 {val});需 ≥ 0")
+        resolved[key] = val
+    return resolved
 
 
 def resolve_engine_settings(config: dict, *, engine: str | None = None,

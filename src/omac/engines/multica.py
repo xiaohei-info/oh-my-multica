@@ -347,6 +347,12 @@ class MulticaStore(WorkItemStore):
             "--status", self._status_to_multica(status),
         ], capture=False)
 
+    def reset_review(self, item_id: str):
+        self._set_metadata(item_id, "review_verdict", "")
+        self._set_metadata(item_id, "review_comment", "")
+        self._set_metadata(item_id, "review_report", "{}")
+        self._set_metadata(item_id, PHASE_KEY, TaskPhase.AUTHORING.value)
+
     def assign_work_item(self, item_id: str, assignee: str, role: str):
         agent_id = self._resolve_agent_id(assignee)
         self._run_multica(["issue", "assign", item_id, "--to", agent_id], capture=False)

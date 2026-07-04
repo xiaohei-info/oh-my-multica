@@ -56,7 +56,22 @@ def run(args) -> int:
         value = yaml.safe_load(args.value)
     except yaml.YAMLError:
         value = args.value
+    _validate_set_value(args.key, value)
     config_mod.set_value(cfg, args.key, value)
     config_mod.save_config(cfg)
     print(f"{args.key} = {value!r} 已写入 {config_mod.CONFIG_PATH}")
     return exit_codes.OK
+
+
+def _validate_set_value(key: str, value):
+    """写入前校验:retry.* 必须为整数且 ≥ 0(负数 → ValidationError ≡ exit 5)。"""
+    if not key.startswith("retry."):
+        return
+    sub = key.split(".", 1)[1]
+    if sub not in config_mod.DEFAULT_RETRY:
+        return
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValidationError(
+            f"{key} 必须为整数,got {type(value).__name__}({value!r})")
+    if value < 0:
+        raise ValidationError(f"{key} 不能为负数(非法值 {value});需 ≥ 0")

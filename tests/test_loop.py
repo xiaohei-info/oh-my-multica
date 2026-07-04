@@ -618,3 +618,149 @@ class TestEvidenceGateRegression:
         assert result.state == "converged"
         assert "a" in result.done
         assert manifest.nodes["a"].status == "done"
+
+
+# ==================== AITEAM-354:reviewer reject 有界回退受 retry.review 控制 ====================
+
+class TestReviewerRejectBoundedFallback:
+    """节点 reviewer reject 的「回到 worker」回退次数受 config.retry.review 控制。
+
+    - retry.review=0 → reject 立即 blocked,不回退
+    - retry.review=1 → 允许 1 次回退,第二次 reject 耗尽 → blocked
+    - review_bounce 按节点按类独立计数
+    通过 tick(..., retry_limits=...) 注入上限,与未来 dag run 读 config 消费同形。
+    """
+
+    @staticmethod
+    def _simple_contract():
+        from omac.core.manifest import Contract
+        return Contract(
+            objective="do it",
+            acceptance=["works"],
+            non_goals=["no creep"],
+            verification_commands=["pytest -q"],
+            pr_base="main",
+            coverage_gate=0,
+        )
+
+    def _setup_reject_node(self, eng, path, key="a", worker="alice", reviewer="bob",
+                           contract=None):
+        from omac.core.manifest import Manifest, Node
+        contract = contract or self._simple_contract()
+        node = Node(id=key, worker=worker, reviewer=reviewer, title=key,
+                    description=f"Task {key}", contract=contract)
+        manifest = Manifest(meta={"workspace_id": "ws"}, nodes={node.id: node})
+        save_manifest(manifest, path)
+
+        # tick 1: 派发 worker
+        tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+
+        # 手动模拟 worker 合规提交(DONE + 过证据门),让节点进入 in_review
+        item = eng.store.get_work_item(manifest.nodes[key].work_item_id)
+        eng.store.set_node_contract(item.id, contract)
+        eng.store.update_work_item_metadata(
+            item.id,
+            artifacts={"pr_url": f"https://mock.example.com/pr/{item.id}"},
+            verification={
+                "commands": [{"cmd": "pytest -q", "exit_code": 0}],
+                "pr_base": "main",
+                "coverage": 90,
+            },
+        )
+        eng.store.update_status(item.id, __import__("omac").engines.models.WorkItemStatus.DONE)
+
+        # tick 2: worker 完成 → 转评审(in_review + assign reviewer)
+        tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        from omac.core.manifest import set_node
+        set_node(manifest, key, status="in_review")
+        save_manifest(manifest, path)
+
+        # 置为 reject 评审结论
+        eng.store.update_work_item_metadata(item.id, review_verdict="reject")
+        eng.store.update_status(
+            item.id, __import__("omac").engines.models.WorkItemStatus.IN_REVIEW)
+        return manifest, eng, item
+
+    def test_retry_review_zero_blocks_immediately(self, tmp_path):
+        """retry.review=0 → 首次 reject 立即 blocked,review_bounce 保持 0。"""
+        from omac.engines import create_engine
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        manifest, eng, item = self._setup_reject_node(eng, str(tmp_path / "m.yaml"))
+        path = str(tmp_path / "m.yaml")
+
+        result = tick(eng.store, eng.runtime, manifest, path,
+                      max_parallel=4, retry_limits={"review": 0})
+
+        got = eng.store.get_work_item(item.id)
+        assert manifest.nodes["a"].status == "blocked"
+        assert got.bounces.review == 0
+        assert any("上界" in c for c in eng.store.get_comments(item.id))
+        assert result.state == "needs_decision"
+
+    def test_retry_review_one_allows_single_fallback(self, tmp_path):
+        """retry.review=1 → 第 1 次 reject 回退 worker(bounce→1),第 2 次 reject 耗尽 → blocked。"""
+        from omac.engines import create_engine
+        from omac.core.manifest import set_node
+        from omac.engines.models import WorkItemStatus
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        fpath = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, fpath)
+
+        # 第 1 次 reject:回退 worker,review_bounce 0→1
+        tick(eng.store, eng.runtime, manifest, fpath,
+             max_parallel=4, retry_limits={"review": 1})
+        got = eng.store.get_work_item(item.id)
+        assert manifest.nodes["a"].status == "in_progress"
+        assert got.bounces.review == 1
+        # 评审结论已清除,等待重新评审
+        assert got.review_verdict is None
+
+        # 模拟 worker 修完重新提交(合规)→ 再次 in_review
+        eng.store.set_node_contract(item.id, self._simple_contract())
+        eng.store.update_work_item_metadata(
+            item.id, review_verdict=None, review_report=None, review_comment=None,
+            artifacts={"pr_url": f"https://mock.example.com/pr/{item.id}"},
+            verification={"commands": [{"cmd": "pytest -q", "exit_code": 0}],
+                         "pr_base": "main", "coverage": 90})
+        eng.store.update_status(item.id, WorkItemStatus.DONE)
+        tick(eng.store, eng.runtime, manifest, fpath, max_parallel=4)
+        set_node(manifest, "a", status="in_review")
+        save_manifest(manifest, fpath)
+        eng.store.update_work_item_metadata(item.id, review_verdict="reject")
+        eng.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+
+        # 第 2 次 reject:已耗尽 → blocked
+        tick(eng.store, eng.runtime, manifest, fpath,
+             max_parallel=4, retry_limits={"review": 1})
+        got = eng.store.get_work_item(item.id)
+        assert manifest.nodes["a"].status == "blocked"
+        assert got.bounces.review == 1  # 不再增长,已达上界
+
+    def test_retry_review_default_three_allows_multiple_fallbacks(self, tmp_path):
+        """缺省(retry.review 未传入=3)→ 连续 3 次 reject 均回退 worker。"""
+        from omac.engines import create_engine
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        fpath = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, fpath)
+
+        # 不传 retry_limits:使用 DEFAULT_RETRY 缺省(review=3)
+        for i in range(3):
+            eng.store.update_work_item_metadata(item.id, review_verdict="reject")
+            eng.store.update_status(
+                item.id, __import__("omac").engines.models.WorkItemStatus.IN_REVIEW)
+            tick(eng.store, eng.runtime, manifest, fpath, max_parallel=4)
+            got = eng.store.get_work_item(item.id)
+            assert manifest.nodes["a"].status == "in_progress", f"第 {i+1} 次应回退 worker"
+            # 推进:worker 修完重新提交 → in_review
+            eng.store.set_node_contract(item.id, self._simple_contract())
+            eng.store.update_work_item_metadata(
+                item.id, review_verdict=None, review_report=None, review_comment=None,
+                artifacts={"pr_url": f"https://mock.example.com/pr/{item.id}"},
+                verification={"commands": [{"cmd": "pytest -q", "exit_code": 0}],
+                             "pr_base": "main", "coverage": 90})
+            eng.store.update_status(
+                item.id, __import__("omac").engines.models.WorkItemStatus.DONE)
+            tick(eng.store, eng.runtime, manifest, fpath, max_parallel=4)
+            from omac.core.manifest import set_node
+            set_node(manifest, "a", status="in_review")
+            save_manifest(manifest, fpath)
