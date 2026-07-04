@@ -179,6 +179,10 @@ class StatusCache:
     """dag status 的 TTL 缓存,key = manifest 绝对路径。
 
     多请求共享一次 reconcile,TTL = poll_interval(秒,缺省 30)。
+
+    演进提示(非阻塞):当前一期只读面板场景下 reconcile 结果可直接 TTL 缓存;
+    未来若 web 服务与 CLI 共享同一进程的 reconcile 状态,需评估该缓存与 manifest
+    源状态之间的失效策略(manifest 写入后是否应主动 invalidate)。
     """
 
     def __init__(self, ttl: int | None = None, cfg: dict | None = None):

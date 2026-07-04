@@ -27,6 +27,13 @@ from omac.errors import OmacError, ValidationError
 
 from . import api
 
+# 一期 Bearer token 未携带 / 不匹配时的教学式提示(报错即教学)。
+_UNAUTHORIZED_HINT = (
+    "需在请求头中携带 Bearer token。示例:\n"
+    "  GET /api/dag/status?manifest=...\n"
+    "  Authorization: Bearer <token>"
+)
+
 
 HTML_PAGE = """<!doctype html>
 <html lang="en">
@@ -177,7 +184,9 @@ class _JSONResponder:
 
 
 def _looks_client(e: OmacError) -> bool:
-    # ValidationError 子集 / 缺失配置 / 客户端校验类错误 → 4xx。
+    # 边界说明:本层(api/server)当前所有面向客户端的校验错误都是 ValidationError
+    # (缺参数 / manifest 不存在 / 命令校验失败),统一视为 4xx。
+    # 其它 OmacError(平台/网络/内部)归为 5xx,避免把服务端抖动暴露为客户端错误。
     if isinstance(e, ValidationError):
         return True
     return False
@@ -215,8 +224,7 @@ class _Handler(BaseHTTPRequestHandler):
         if not auth.startswith("Bearer ") or not _constant_time_eq(auth[7:], self.token):
             responder = _JSONResponder(self, self.cache, self.refresh)
             responder._send_json(401, _error_response(
-                401, "Unauthorized",
-                "需在请求头中携带 Bearer token:  GET /api/...  Authorization: Bearer <token>"))
+                401, "Unauthorized", _UNAUTHORIZED_HINT))
             return False
         return True
 
