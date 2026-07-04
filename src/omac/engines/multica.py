@@ -260,6 +260,7 @@ class MulticaStore(WorkItemStore):
         review_bounce: Optional[int] = None,
         merge_bounce: Optional[int] = None,
         deliverable: Optional[str] = None,
+        description: Optional[str] = None,
     ) -> WorkItem:
         if worker is not None:
             self._set_metadata(item_id, "worker", worker)
@@ -287,6 +288,9 @@ class MulticaStore(WorkItemStore):
             self._set_metadata(item_id, MERGE_BOUNCE_KEY, str(merge_bounce))
         if deliverable is not None:
             self._set_metadata(item_id, DELIVERABLE_KEY, deliverable)
+        if description is not None:
+            self._run_multica_with_text_file(
+                ["issue", "update", item_id], "--description-file", description)
         return self.get_work_item(item_id)
 
     def set_node_contract(self, item_id: str, contract: Any):
