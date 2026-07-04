@@ -14,7 +14,7 @@ from omac.cli import exit_codes
 from omac.cli.main import main
 from omac.engines import create_engine
 from omac.engines.models import EngineConfig, WorkItemStatus
-from omac.engines.mock import MockStore
+from omac.engines.mock import MockStore, MockRuntime
 from omac.core.manifest import load_manifest, save_manifest, Node, Manifest
 from omac.pipeline.loop import reconcile
 from omac.pipeline.report import (
@@ -362,3 +362,92 @@ class TestDagStatusCLI:
         self._write_config(tmp_path)
         code = main(["dag", "status", str(tmp_path / "nope.yaml")])
         assert code == exit_codes.VALIDATION
+
+"""P1.5 cross-check: tick() exit-20 report shares /status needs_decision schema.
+
+Reviewer request: assert tick(...).report keys == NEEDS_DECISION_KEYS and is
+structurally isomorphic with build_status_report(...)["needs_decision"]
+—— /status and exit-20 draw from a single schema module.
+"""
+import os
+
+import yaml
+
+from omac.engines.models import WorkItemStatus
+from omac.pipeline.loop import tick
+
+
+class TestNeedsDecisionContract:
+    """tick() exit-20 report must be isomorphic with /status needs_decision schema."""
+
+    def test_tick_report_keys_match_needs_decision_keys(self, tmp_path):
+        """tick() 进入 needs_decision 时,report 键集 == NEEDS_DECISION_KEYS。"""
+        path = _manifest_yaml(tmp_path, [
+            {"id": "a", "worker": "alice", "status": "in_progress", "work_item_id": "1"},
+            {"id": "b", "worker": "bob", "status": "todo", "blocked_by": ["a"]},
+        ])
+        manifest = load_manifest(path)
+        store = _mock_store()
+        store.create_work_item("ws", "A", "d", dag_key="a", worker="alice")
+        store.update_status("1", WorkItemStatus.FAILED)
+
+        result = tick(store, MockRuntime(store), manifest, path)
+
+        assert result.state == "needs_decision"
+        assert set(result.report.keys()) == set(NEEDS_DECISION_KEYS)
+        failed_keys = {n["key"] for n in result.report["failed_nodes"]}
+        assert "a" in failed_keys
+        # blocked downstream of a (b) present
+        assert "b" in result.report["blocked_downstream"]
+
+    def test_tick_report_isomorphic_with_status_report(self, tmp_path):
+        """tick() exit-20 报告与 /status needs_decision 同构(同一 schema 模块)。
+
+        build_status_report 是"观测"(只 reconcile,不推进),而 tick 会先把失败节点
+        的下游标为 failed 再落盘。因此真正的同构要在 tick 落盘后的 manifest 上再跑
+        一次 build_status_report——两者此时面对同一 failed set,输出的 needs_decision
+        必须完全相等,从而证明共用单一 schema 模块(字段与结构一致)。
+        """
+        spec = [
+            {"id": "a", "worker": "alice", "status": "in_progress", "work_item_id": "1"},
+            {"id": "b", "worker": "bob", "status": "todo", "blocked_by": ["a"]},
+            {"id": "c", "worker": "charlie", "status": "todo", "blocked_by": ["b"]},
+        ]
+
+        path = _manifest_yaml(tmp_path, spec)
+        manifest = load_manifest(path)
+
+        # 路径 A:tick() 推演 —— a 在工作台 FAILED,collect_results 把 a 转 blocked,
+        # 下游 b,c 标 failed,落盘后 manifest 含完整失败拓扑。
+        store = _mock_store()
+        store.create_work_item("ws", "A", "d", dag_key="a", worker="alice")
+        store.update_status("1", WorkItemStatus.FAILED)
+        result = tick(store, MockRuntime(store), manifest, path)
+        assert result.state == "needs_decision"
+        failed_keys = sorted(n["key"] for n in result.report["failed_nodes"])
+
+        # 路径 B:在 tick 落盘后的同一 manifest 上观测 build_status_report
+        manifest_after = load_manifest(path)
+        store_obs = _mock_store()
+        store_obs.create_work_item("ws", "A", "d", dag_key="a", worker="alice")
+        store_obs.update_status("1", WorkItemStatus.FAILED)
+        report_b = build_status_report(manifest_after, store_obs, path)
+        nd_b = report_b["needs_decision"]
+        assert nd_b is not None
+
+        # 同构:顶层键集 == NEEDS_DECISION_KEYS (单一 schema 模块)
+        assert set(result.report.keys()) == set(NEEDS_DECISION_KEYS)
+        assert set(nd_b.keys()) == set(NEEDS_DECISION_KEYS)
+
+        # failed_nodes 键集 + blocked_downstream + next_actions 完全一致
+        status_failed = sorted(n["key"] for n in nd_b["failed_nodes"])
+        assert failed_keys == status_failed
+        assert result.report["blocked_downstream"] == nd_b["blocked_downstream"]
+        assert result.report["next_actions"] == nd_b["next_actions"]
+        # 每个 failed_node 字段集相同(对象结构一致)
+        by_key_tick = {n["key"]: n for n in result.report["failed_nodes"]}
+        by_key_status = {n["key"]: n for n in nd_b["failed_nodes"]}
+        for key in by_key_status:
+            assert set(by_key_tick[key].keys()) == set(by_key_status[key].keys())
+        # next_actions 都是可执行的 omac node 命令
+        assert all(a.startswith("omac node ") for a in nd_b["next_actions"])

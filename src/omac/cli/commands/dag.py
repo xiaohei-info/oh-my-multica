@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 
 from ._stub import not_implemented
-from ..output import add_output_flag, print_json, print_table, hint
+from ..output import add_output_flag, print_json
 from .. import exit_codes
 from ...core.config import load_config, resolve_engine_settings, DEFAULTS, CONFIG_PATH
 from ...core.manifest import load_manifest

@@ -177,8 +177,8 @@ class TestFailureInjection:
         assert "a" in result.failed
         assert "b" in result.failed  # 下游 blocked
         assert "c" in result.failed  # 传递下游 blocked
-        assert result.report["failed_nodes"] == sorted(result.failed)
-        assert "a" in result.report["evidence_summary"]
+        assert [n["key"] for n in result.report["failed_nodes"]] == sorted(result.failed)
+        assert any(n["key"] == "a" for n in result.report["failed_nodes"])
         assert result.report["blocked_downstream"]  # 非空
 
     def test_independent_node_still_done(self):
@@ -211,8 +211,8 @@ class TestFailureInjection:
         result = _loop_to_settle(eng.store, eng.runtime, manifest, path)
 
         assert result.state == "needs_decision"
-        summary = result.report["evidence_summary"]["a"]
-        assert "失败" in summary or "failed" in summary.lower()
+        node_a = next(n for n in result.report["failed_nodes"] if n["key"] == "a")
+        assert "失败" in node_a["reason"] or "failed" in node_a["reason"].lower()
 
 
 # ==================== 3. 幂等:中途重建 loop 继续推进 ====================
@@ -387,7 +387,8 @@ class TestReconcile:
         # reconcile 不再把 in_progress → done;collect_results 过证据门 → blocked
         assert "a" in r.failed
         assert r.state == "needs_decision"
-        assert "pr_url" in r.report["evidence_summary"]["a"]
+        node_a = next(n for n in r.report["failed_nodes"] if n["key"] == "a")
+        assert "pr_url" in node_a["reason"]
 
     def test_reconcile_syncs_non_running_platform_status(self):
         """reconcile:非运行态节点的平台状态仍正常同步(如 todo 节点被外部标 done)。"""
@@ -494,7 +495,8 @@ class TestEvidenceGateRegression:
 
         assert result.state == "needs_decision"
         assert "a" in result.failed
-        assert "pr_url" in result.report["evidence_summary"]["a"]
+        node_a = next(n for n in result.report["failed_nodes"] if n["key"] == "a")
+        assert "pr_url" in node_a["reason"]
         # 失败原因经 add_comment 回贴
         assert any("证据门" in c for c in eng.store.get_comments(item.id))
 
@@ -532,8 +534,8 @@ class TestEvidenceGateRegression:
 
         assert result.state == "needs_decision"
         assert "a" in result.failed
-        assert "coverage" in result.report["evidence_summary"]["a"].lower() or \
-               "below gate" in result.report["evidence_summary"]["a"]
+        node_a = next(n for n in result.report["failed_nodes"] if n["key"] == "a")
+        assert "coverage" in node_a["reason"].lower() or "below gate" in node_a["reason"].lower()
 
     def test_valid_evidence_with_reviewer_enters_in_review(self):
         """worker DONE + 合规证据 + reviewer → in_review + assign reviewer + wake。"""
