@@ -665,7 +665,7 @@ KIND_GUIDE = {
     TaskKind.ACCEPTANCE: "workflow",
     TaskKind.DECOMPOSE: "manifest",
     TaskKind.DEVELOP: "worker",
-    TaskKind.FINAL_ACCEPTANCE: "workflow",
+    TaskKind.FINAL_ACCEPTANCE: "roles",
 }
 
 KIND_LABEL = {
@@ -758,8 +758,8 @@ def render_issue_body(node, contract, kind, issue_id):
     return "\n\n".join([bootstrap, briefing, hard])
 
 
-def render_review_rollout_comment(node, contract, verdict, report=None,
-                             item_id=None):
+def render_review_rollout_comment(node, contract, verdict: Optional[str], report=None,
+                                  item_id=None):
     """review 转派评论模板(设计文档 §7.4 阶段交接)。
 
     包含:阶段变更说明 + 评审对象定位。三种语境:

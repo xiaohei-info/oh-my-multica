@@ -111,11 +111,27 @@ class TestRenderIssueBody:
             assert label in body, f"{kind} 缺标签 {label}"
 
     def test_missing_contract_fields_get_human_placeholder(self):
+        """contract=None 时 objective/source_of_truth/acceptance 走「见 contract.X」占位,
+        硬约束不渲染非目标/pr_base/reviewer/coverage 分支;三条 fallback 必须显式区分于正常渲染。"""
         n = Node(id="n", worker="alice", title="t")  # contract=None
         body = render_issue_body(n, None, TaskKind.DEVELOP, "ID")
-        assert "未声明" in body or "contract" in body
+        # 三条占位显式带「见 contract.」前缀(而非静默留空或误渲染真实值)
+        assert "见 contract.objective" in body
+        assert "见 contract.source_of_truth" in body
+        assert "见 contract.acceptance" in body
+        # 缺省时硬约束各分支不出现(与正常渲染可区分)
+        assert "pr_base=" not in body
+        assert "non_goals 是红线" not in body
+        assert "reviewer（" not in body
+        assert "coverage_gate=" not in body
         # 三段仍然齐全
         assert "简报" in body and "硬约束" in body and "omac work show ID" in body
+
+    def test_contract_summary_none_returns_fallback(self):
+        """_contract_summary 在 contract=None 时应直接返回 fallback,作为占位的根。"""
+        from omac.pipeline.dispatch import _contract_summary
+        assert _contract_summary(None, "objective", "fallback-obj") == "fallback-obj"
+        assert _contract_summary(None, "acceptance", ["x"]) == ["x"]
 
     def test_optional_fields_omit_when_absent(self):
         """pr_base / reviewer / non_goals 缺省时对应段落不出现。"""
