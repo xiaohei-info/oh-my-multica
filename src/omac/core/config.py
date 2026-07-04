@@ -136,3 +136,23 @@ def resolve_engine_settings(config: dict, *, engine: str | None = None,
             "未指定 workspace —— 三种给法任选:config.yaml 的 workspace 字段 / "
             f"环境变量 {ENV_WORKSPACE} / 命令行 --workspace")
     return engine_type, workspace_id
+
+
+def get_ci_config(config: dict) -> dict | None:
+    """返回 ci 配置块;未配置或缺少 check_command 时返回 None(环节整体跳过)。
+
+    设计文档 §6/§7.3:ci 可选,缺省跳过 CI 环节。check_command 是带 {pr_url}
+    占位的模板命令,subprocess 执行,退出码即结论。timeout_minutes 缺省 30。
+    """
+    ci = config.get("ci")
+    if not isinstance(ci, dict) or not ci.get("check_command"):
+        return None
+    return ci
+
+
+def get_merge_config(config: dict) -> dict | None:
+    """返回 merge 配置块;未配置或缺少 command 时返回 None(不自动合并)。"""
+    merge = config.get("merge")
+    if not isinstance(merge, dict) or not merge.get("command"):
+        return None
+    return merge
