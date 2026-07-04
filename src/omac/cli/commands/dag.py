@@ -107,6 +107,7 @@ def status(args) -> int:
             f"manifest 文件不存在: {args.manifest}\n"
             f"  用 omac plan create --name <name> 生成,或检查路径")
     engine, _ = _assemble_engine(args)
+    config = load_config(CONFIG_PATH)
     manifest = load_manifest(args.manifest)
     report = build_status_report(manifest, engine.store, args.manifest)
 
@@ -163,6 +164,7 @@ def _loop_or_single(args, single_round: bool) -> int:
     import time as _time
 
     engine, _ = _assemble_engine(args)
+    config = load_config(CONFIG_PATH)
     manifest = load_manifest(args.manifest)
     max_parallel = _default_max_parallel(args)
     max_rounds = getattr(args, "max_rounds", None)
@@ -175,7 +177,7 @@ def _loop_or_single(args, single_round: bool) -> int:
     while True:
         last_result = tick(
             engine.store, engine.runtime, manifest, args.manifest,
-            max_parallel=max_parallel)
+            max_parallel=max_parallel, config=config)
         rounds += 1
 
         if last_result.state == "converged":

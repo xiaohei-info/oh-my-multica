@@ -1,42 +1,39 @@
-"""delivery — 交付阶段状态机:CI 监控 + 有界回退(设计文档 §7.3/§7.4)。
+"""delivery — CI 监控与 ci_check 有界回退引擎(设计文档 §7.3)。
 
-本模块承载 loop 收割顺序中「worker 证据过门」之后的交付环节:
+本模块承载 loop 收割顺序「worker 证据过门 → ci_check →(绿)in_review」中
+worker 证据过门之后、进评审之前的 CI 门:
 
-    worker 证据过门 → ci_check* →(绿)in_review 转派 reviewer
-                      │
-                      └ CI 失败 / 评审 reject → 转回 worker(有界 ≤3,耗尽 → blocked)
+    worker 证据过门 ─► ci_check ─ 绿 ──► in_review 转派 reviewer
+                              │
+                              └ 失败/超时 ──► 有界转回 worker(ci_bounce+1,
+                                               ≥ 上界 → blocked)
 
-`*` 标注的环节由 config 的 ci/merge 决定是否启用;未配置则整体跳过,
-退化为现行为(P4.1 的回归保证)。
+评审 reject 的回退(P4 任务 §7.3)由 ``loop.collect_results`` 内联实现
+(读/写 ``WorkItem.bounces.review``),本模块不重复——避免与主线状态机分歧。
 
-三类回退(CI 失败 / 评审 reject / merge 冲突)共用同一套「评论 + 转派 worker +
-唤醒 + 计数 + 封顶」机制,只是计数器不同(ci_bounce / review_bounce /
-merge_bounce)。本 issue(P4.1)实现 ci_bounce 与 review_bounce;merge_bounce
-留待 P4.2。
+回退计数统一存放在平台侧 ``WorkItem.bundles`` 的 ``.ci`` 字段,
+由 ``WorkItemStore.update_work_item_metadata(ci_bounce=...)`` 写入,Store 只存取;
+manifest 的 ``Node`` 不携带回退计数(单一事实源)。上界由 ``config.retry.ci``
+(缺省 3)经 ``resolve_retry`` 解析后注入 ``loop.tick`` 的 ``retry_limits``。
 
-纪律(§12.4):本层只调 engines 的 WorkItemStore/AgentRuntime 接口,
-CI/merge 走模板命令(subprocess),绝不直接 shell out 平台 CLI。
+纪律(§12.4):CI 走模板命令(subprocess),绝不直接 shell out 平台 CLI;CI 检查
+只在主 loop 配置了 ``config.ci.check_command`` 时启用,未配置则环节整体跳过
+(现行为不变,由未配 ci 的回归保证)。考试点:退出码契约不可破(§5.1),
+术语 §10.2 用「进行中节点」「就绪节点」,禁止 harvest/在飞 等硬译行话。
 """
 from __future__ import annotations
 
 import subprocess
 from dataclasses import dataclass
 
-from ..core.config import get_ci_config
+from ..core.config import DEFAULT_RETRY, get_ci_config
 from ..engines.models import WorkItemStatus
 from ..engines.runtime import AgentRuntime
-from ..engines.store import WorkItemStore
 from ..core.manifest import Manifest
 
-# 评审通过集合(与 core/evidence.REVIEW_APPROVE 一致,本地复制避免循环依赖)
-REVIEW_APPROVE = {"pass", "pass-with-nits"}
-
-DEFAULT_MAX_BOUNCES = 3
-DEFAULT_TIMEOUT_MINUTES = 30
-
-# ── manifest 侧状态 ↔ 平台 WorkItemStatus 映射表 ──────────────────────────
-# ci_check / merging 是 manifest 侧细分态:平台侧仍映射到 in_progress / in_review,
-# 保证平台状态机不被细分态污染(设计文档 §7.3)。映射表写清并测试。
+# ── manifest 侧细分态 ↔ 平台 WorkItemStatus 映射表 ──────────────────────────
+# ci_check 是 manifest 侧细分态;平台侧仍映射到 in_progress,保证平台状态机不被
+# 细分态污染(设计文档 §7.3)。映射表写清并测试;未知状态报错即教学。
 MANIFEST_TO_PLATFORM_STATUS: dict[str, WorkItemStatus] = {
     "todo": WorkItemStatus.TODO,
     "in_progress": WorkItemStatus.IN_PROGRESS,
@@ -60,16 +57,18 @@ def to_platform_status(manifest_status: str) -> WorkItemStatus:
     return MANIFEST_TO_PLATFORM_STATUS[manifest_status]
 
 
-# ── CI 检查执行 ────────────────────────────────────────────────────────────
+# ── CI 检查执行 ──────────────────────────────────────────────────────────────
 
 @dataclass
 class CIResult:
-    """CI 检查结论。退出码即结论(0=绿,非0=失败);timeout_minutes 内未返回视为超时。"""
+    """CI 检查结论。退出码即结论(0 = 绿,非 0 = 失败);
+    timeout_minutes 内未返回视为超时,外层安全阀兜底。"""
+
     passed: bool
     timed_out: bool
     exit_code: int | None
-    output: str          # 命令完整输出(stdout+stderr)
-    summary: str         # 输出尾部(回退评论里贴给 worker,指明修什么)
+    output: str        # 命令完整输出(stdout + stderr)
+    summary: str       # 输出尾部;回退评论里贴给 worker 定位
 
     @property
     def label(self) -> str:
@@ -79,26 +78,24 @@ class CIResult:
 
 
 def _tail(text: str, n: int = 2000) -> str:
-    """输出尾部:回退评论只贴尾部,够 worker 定位问题又不刷屏。"""
+    """输出尾部:回退评论只贴尾部,够 worker 定位问题又不刷屏。短输出整段返回。"""
     text = text.rstrip()
     if len(text) <= n:
         return text
     return "..." + text[-n:]
 
 
-def run_ci_check(check_command: str, pr_url: str,
-                 timeout_minutes: int = DEFAULT_TIMEOUT_MINUTES) -> CIResult:
-    """执行 ci.check_command 模板命令,{pr_url} 占位替换为实际 PR 地址。
+def run_ci_check(check_command: str, pr_url: str, timeout_minutes: int = 30) -> CIResult:
+    """执行 ``ci.check_command`` 模板命令,把 ``{pr_url}`` 占位替换为实际 PR 地址。
 
-    命令自身负责轮询远端 CI 直到出结果(退出码即结论);本函数用 timeout_minutes
+    命令本身负责轮询远端 CI 直到出结果(退出码即结论);本函数用 ``timeout_minutes``
     作为外层安全阀,超时即判定失败并带回退。
     """
     cmd = check_command.replace("{pr_url}", pr_url)
     timeout = max(1, int(timeout_minutes)) * 60
     try:
         proc = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True, timeout=timeout,
-        )
+            cmd, shell=True, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
         out = ""
         for stream in (exc.stdout, exc.stderr):
@@ -106,157 +103,92 @@ def run_ci_check(check_command: str, pr_url: str,
                 out += stream.decode("utf-8", errors="replace")
             elif isinstance(stream, str):
                 out += stream
-        return CIResult(
-            passed=False, timed_out=True, exit_code=None,
-            output=out, summary=_tail(out) or "(无输出)",
-        )
+        return CIResult(passed=False, timed_out=True, exit_code=None,
+                        output=out, summary=_tail(out) or "(无输出)")
     output = (proc.stdout or "") + (proc.stderr or "")
-    return CIResult(
-        passed=proc.returncode == 0, timed_out=False,
-        exit_code=proc.returncode, output=output, summary=_tail(output) or "(无输出)",
-    )
+    return CIResult(passed=proc.returncode == 0, timed_out=False,
+                    exit_code=proc.returncode, output=output,
+                    summary=_tail(output) or "(无输出)")
 
 
-# ── 回退机制(三类共用) ──────────────────────────────────────────────────
-
-def _bounce_back(
-    manifest: Manifest, node_key: str, store: WorkItemStore, runtime: AgentRuntime,
-    *, kind: str, comment: str, max_bounces: int = DEFAULT_MAX_BOUNCES,
-) -> str:
-    """评论回 issue + 转回 worker + 唤醒 + 计数 + 封顶。
-
-    kind: 'ci' | 'review' | 'merge'(对应 ci_bounce / review_bounce / merge_bounce)。
-    返回新 manifest 状态:'in_progress'(已转回 worker)或 'blocked'(回退耗尽)。
-    封顶后节点标 blocked,平台同步 BLOCKED,不再转派。
-    """
-    node = manifest.nodes[node_key]
-    item_id = node.work_item_id
-    attr = f"{kind}_bounce"
-    next_count = int(getattr(node, attr, 0)) + 1
-    setattr(node, attr, next_count)
-
-    store.add_comment(item_id, comment)
-
-    if next_count >= max_bounces:
-        node.status = "blocked"
-        store.update_status(item_id, to_platform_status("blocked"))
-        return "blocked"
-
-    node.status = "in_progress"
-    store.update_status(item_id, to_platform_status("in_progress"))
-    store.assign_work_item(item_id, node.worker, "worker")
-    runtime.wake(item_id, node.worker, "worker")
-    return "in_progress"
-
-
-# ── 交付推进:worker 证据过门 → ci_check → in_review ─────────────────────
-
-def _transition_to_review(manifest: Manifest, node_key: str,
-                          store: WorkItemStore, runtime: AgentRuntime) -> str:
-    """CI 绿(或未配置)→ in_review,转派 reviewer 并唤醒。无 reviewer 则只标态。"""
-    node = manifest.nodes[node_key]
-    item_id = node.work_item_id
-    node.status = "in_review"
-    store.update_status(item_id, to_platform_status("in_review"))
-    if node.reviewer:
-        store.assign_work_item(item_id, node.reviewer, "reviewer")
-        runtime.wake(item_id, node.reviewer, "reviewer")
-    return "in_review"
-
+# ── worker 证据过门后的 CI 门推进 ─────────────────────────────────────────────
 
 def advance_delivery(
-    config: dict, manifest: Manifest, node_key: str,
-    store: WorkItemStore, runtime: AgentRuntime,
-    *, max_bounces: int = DEFAULT_MAX_BOUNCES,
+    config: dict,
+    manifest: Manifest,
+    node_key: str,
+    store: object,
+    runtime: AgentRuntime,
+    retry_limits: dict,
 ) -> str:
-    """worker 证据已过门后推进交付环节。
+    """worker 证据已过门后推进 CI 门(§7.3)。
 
-    收割顺序(§7.3):worker 证据过门 → ci_check →(绿)in_review 转派 reviewer。
-    - 未配置 ci → 整体跳过,直接 in_review(现行为,回归保证)。
-    - CI 绿 → in_review 转派 reviewer。
-    - CI 失败/超时 → 评论失败摘要(输出尾部)+ 转回 worker + ci_bounce+1;
-      ≥max_bounces → blocked。
-    返回新 manifest 状态:'in_review' | 'in_progress'(已回退) | 'blocked'。
+    - 未配置 ci → 环节整体跳过,返回 ``'pass'``(loop 按原路径转 review/done)。
+    - 配置了 ci → 进入 ``ci_check``(manifest 细分态,平台仍 in_progress),执行
+      ``ci.check_command``:
+        * 绿 → 回到 ``in_progress``,返回 ``'pass'``
+        * 失败/超时 → 失败摘要(命令输出尾部) add_comment + 转回 worker +
+          wake + ``ci_bounce``+1;
+          - ≥ ``retry_limits['ci']`` → blocked,返回 ``'blocked'``
+          - 否则返回 ``'bounce'``(节点已置回 in_progress,loop 本 tick 不动它)。
+
+    回退计数(读/写)经平台 ``WorkItem.bounces.ci``(单一事实源,Store 只存取);
+    manifest Node 不持计数。
+    返回:'pass'(继续) | 'bounce'(已转回 worker,上界未到) | 'blocked'(上界耗尽)。
     """
     node = manifest.nodes[node_key]
     item_id = node.work_item_id
-    item = store.get_work_item(item_id)
-
     ci = get_ci_config(config)
     if ci is None:
-        return _transition_to_review(manifest, node_key, store, runtime)
+        return "pass"
 
+    item = store.get_work_item(item_id)
     pr_url = ""
     if isinstance(item.artifacts, dict):
         pr_url = item.artifacts.get("pr_url") or item.artifacts.get("pr") or ""
+
     if not pr_url:
         # CI 已配置但 worker 未提交 pr_url —— 证据门本应挡住,此处防御性阻断并教化。
         store.add_comment(
             item_id,
-            "⚠️ CI 已配置(check_command)但 worker 未提交 pr_url,无法运行 CI 检查。\n"
+            "⚠️ CI 已配置(check_command)但 worker 未提交 pr_url,无法运行 CI 检查。\\n"
             "请用 `omac work submit <id> --pr-url <url> --verification-file <ev.yaml>` "
-            "补交 PR 地址后重新提交。",
-        )
+            "补交 PR 地址后重新提交。")
         node.status = "blocked"
-        store.update_status(item_id, to_platform_status("blocked"))
+        store.update_status(item_id, WorkItemStatus.BLOCKED)
         return "blocked"
 
-    # 进入 ci_check(manifest 侧细分态,平台仍 in_progress)
+    # 进入 ci_check(manifest 细分态;平台仍 in_progress)
     node.status = "ci_check"
     store.update_status(item_id, to_platform_status("ci_check"))
 
     result = run_ci_check(
-        ci["check_command"], pr_url,
-        ci.get("timeout_minutes", DEFAULT_TIMEOUT_MINUTES),
-    )
+        ci["check_command"], pr_url, ci.get("timeout_minutes", 30))
     if result.passed:
-        return _transition_to_review(manifest, node_key, store, runtime)
+        node.status = "in_progress"
+        store.update_status(item_id, to_platform_status("in_progress"))
+        return "pass"
 
+    # CI 失败/超时:先贴失败摘要(让 worker 知道修什么)。
     comment = (
-        f"⚠️ {result.label} —— CI 未通过,转回 worker 修复后重新提交。\n\n"
-        f"--- 命令输出尾部 ---\n{result.summary}"
-    )
-    return _bounce_back(
-        manifest, node_key, store, runtime,
-        kind="ci", comment=comment, max_bounces=max_bounces,
-    )
+        f"⚠️ {result.label} —— CI 未通过,转回 worker 修复后重新提交。\\n\\n"
+        f"--- 命令输出尾部 ---\\n{result.summary}")
+    store.add_comment(item_id, comment)
 
+    # 回退计数读/写经平台 WorkItem.bounces.ci(单一事实源,Store 只存取)。
+    cur_bounce = item.bounces.ci
+    next_bounce = cur_bounce + 1
+    store.update_work_item_metadata(item_id, ci_bounce=next_bounce)
 
-# ── 评审结果回收:reject 有界回退 ─────────────────────────────────────────
+    ci_limit = retry_limits.get("ci", DEFAULT_RETRY["ci"])
+    if ci_limit == 0 or next_bounce >= ci_limit:
+        node.status = "blocked"
+        store.update_status(item_id, WorkItemStatus.BLOCKED)
+        return "blocked"
 
-def handle_review_result(
-    config: dict, manifest: Manifest, node_key: str,
-    store: WorkItemStore, runtime: AgentRuntime,
-    *, max_bounces: int = DEFAULT_MAX_BOUNCES,
-) -> str:
-    """回收 reviewer verdict。
-
-    - pass / pass-with-nits → 留在 in_review(自动 merge 是 P4.2 的职责)。
-    - reject → 评审意见 + 评审目标落 issue → 转回 worker + review_bounce+1;
-      ≥max_bounces → blocked。
-    返回新 manifest 状态:'in_review'(通过) | 'in_progress'(已回退) | 'blocked'。
-    """
-    node = manifest.nodes[node_key]
-    item_id = node.work_item_id
-    item = store.get_work_item(item_id)
-    verdict = item.review_verdict
-
-    if verdict in REVIEW_APPROVE:
-        node.status = "in_review"
-        return "in_review"
-
-    report = item.review_report if isinstance(item.review_report, dict) else {}
-    review_goals = report.get("review_goals")
-    parts = ["⚠️ 评审 reject —— 转回 worker 按评审目标修复后重新提交。"]
-    parts.append("")
-    parts.append("评审意见:")
-    parts.append(item.review_comment or "(reviewer 未留意见)")
-    if review_goals:
-        parts.append("")
-        parts.append("评审目标:")
-        parts.append(str(review_goals))
-    comment = "\n".join(parts)
-    return _bounce_back(
-        manifest, node_key, store, runtime,
-        kind="review", comment=comment, max_bounces=max_bounces,
-    )
+    # 有界转回 worker:改回 in_progress,重新派发 worker 并唤醒,让它修后重走 ci→review。
+    node.status = "in_progress"
+    store.update_status(item_id, to_platform_status("in_progress"))
+    store.assign_work_item(item_id, node.worker, "worker")
+    runtime.wake(item_id, node.worker, "worker")
+    return "bounce"

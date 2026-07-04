@@ -1,66 +1,50 @@
-"""delivery:CI 监控与有界回退(P4.1 验收)。
+"""delivery:CI 监控与有界回退(P4.1 验收)——对齐主线 canonical 数据模型。
 
-覆盖设计文档 §7.3 的三类路径与回退封顶:
-  - 假 CI 脚本(exit 0/1/超时)三路径 e2e;回退计数与封顶断言
-  - 评审 reject 回退:mock 注入 reject 1 次 → worker 重交 → 过
-  - 未配置 ci 的全量回归不变(直接 in_review)
+主线 loop.loop(L1.8) 已用 canonical 存储(WorkItem.bounces.review +
+config.retry)实现评审 reject 回退,因此本模块只补 CI 门(advance_delivery)。
+测试据此重写:回退计数经 WorkItemStore.update_work_item_metadata(ci_bounce=...) 读写,
+经 WorkItem.bounces.ci 回读;上界走 config.retry.ci(缺省 DEFAULT_RETRY["ci"])。
+
+覆盖(对主线的 harvest 顺序 §7.3 worker 证据过门 → ci_check → in_review):
+  - 假 CI 脚本(exit 0/1/超时,注入 TimeoutExpired)三路径 across collect_results;
+  - 回退计数与封顶断言(item.bounces.ci >= limit → blocked + 失败隔离);
+  - 未配置 ci 的全量回归不变(经真实 collect_results 直转 in_review);
+  - config.retry.ci 自定义上界 + 0 值立即 blocked。
 """
 from __future__ import annotations
 
 import os
 import stat
-
 import pytest
 
-from omac.core.manifest import Manifest, Node, save_manifest
+from omac.core.manifest import Manifest, Node
+from omac.core.config import DEFAULT_RETRY
 from omac.engines.models import EngineConfig, WorkItemStatus
 from omac.engines.mock import MockRuntime, MockStore
 from omac.pipeline.delivery import (
-    DEFAULT_MAX_BOUNCES,
-    DEFAULT_TIMEOUT_MINUTES,
     MANIFEST_TO_PLATFORM_STATUS,
     VALID_MANIFEST_STATUSES,
-    handle_review_result,
     advance_delivery,
     run_ci_check,
     to_platform_status,
 )
+from omac.pipeline import loop
 
 
 # ── fixtures ──────────────────────────────────────────────────────────────
 
 def _store():
-    cfg = EngineConfig(
+    return MockStore(EngineConfig(
         engine_type="mock", workspace_id="ws",
-        extra={"MOCK_AUTO_COMPLETE": "false", "MOCK_AUTO_COMPLETE_DELAY": "0"},
-    )
-    return MockStore(cfg)
+        extra={"MOCK_AUTO_COMPLETE": "false", "MOCK_AUTO_COMPLETE_DELAY": "0"}))
 
 
-def _runtime(store):
+def _runtime(store):  # noqa: ARG001 — kept for symmetry with loop signature
     return MockRuntime(store)
 
 
-def _make_node(store, *, reviewer="bob", worker="alice"):
-    item = store.create_work_item(
-        "ws", "node-a", "d", dag_key="a", worker=worker, reviewer=reviewer,
-        initial_status=WorkItemStatus.IN_PROGRESS,
-    )
-    store.update_work_item_metadata(
-        item.id,
-        artifacts={"pr_url": "https://example.com/pr/1"},
-        verification={
-            "commands": [{"cmd": "pytest -q", "exit_code": 0, "summary": "ok"}],
-            "integration_gates": [],
-            "pr_base": "feature/v1",
-            "coverage": 95,
-        },
-    )
-    store.update_status(item.id, WorkItemStatus.DONE)
-    node = Node(id="a", worker=worker, reviewer=reviewer, work_item_id=item.id,
-                status="in_progress")
-    manifest = Manifest(meta={"name": "demo"}, nodes={"a": node})
-    return manifest, node, item
+def _node(worker="alice", reviewer="bob"):
+    return Node(id="a", worker=worker, reviewer=reviewer)
 
 
 def _ci_script(tmp_path, body, name="ci.sh"):
@@ -70,9 +54,24 @@ def _ci_script(tmp_path, body, name="ci.sh"):
     return str(p)
 
 
-def _ci_config(script_path, timeout_minutes=DEFAULT_TIMEOUT_MINUTES):
+def _ci_config(script_path, timeout_minutes=DEFAULT_RETRY["ci"] or 30):
+    # timeout_minutes 用 30 与 delivery 缺省对齐
     return {"ci": {"check_command": f"sh {script_path} {{pr_url}}",
-                   "timeout_minutes": timeout_minutes}}
+                   "timeout_minutes": 30}}
+
+
+def _worker_done_item(store, reviewer="bob"):
+    """worker 已提交、证据过门的 work item(DONE + pr_url + verification)。"""
+    item = store.create_work_item(
+        "ws", "node-a", "d", dag_key="a", worker="alice", reviewer=reviewer,
+        initial_status=WorkItemStatus.IN_PROGRESS)
+    store.update_work_item_metadata(
+        item.id,
+        artifacts={"pr_url": "https://example.com/pr/1"},
+        verification={"commands": [{"cmd": "pytest -q", "exit_code": 0, "summary": "ok"}],
+                      "integration_gates": [], "pr_base": "feature/v1", "coverage": 95})
+    store.update_status(item.id, WorkItemStatus.DONE)
+    return item
 
 
 # ── 状态映射表 ─────────────────────────────────────────────────────────────
@@ -84,316 +83,299 @@ class TestStatusMapping:
     def test_merging_maps_to_in_review(self):
         assert to_platform_status("merging") is WorkItemStatus.IN_REVIEW
 
-    def test_full_mapping_table(self):
+    def test_full_table(self):
         assert MANIFEST_TO_PLATFORM_STATUS == {
-            "todo": WorkItemStatus.TODO,
-            "in_progress": WorkItemStatus.IN_PROGRESS,
-            "ci_check": WorkItemStatus.IN_PROGRESS,
-            "in_review": WorkItemStatus.IN_REVIEW,
-            "merging": WorkItemStatus.IN_REVIEW,
-            "done": WorkItemStatus.DONE,
-            "blocked": WorkItemStatus.BLOCKED,
-        }
+            "todo": WorkItemStatus.TODO, "in_progress": WorkItemStatus.IN_PROGRESS,
+            "ci_check": WorkItemStatus.IN_PROGRESS, "in_review": WorkItemStatus.IN_REVIEW,
+            "merging": WorkItemStatus.IN_REVIEW, "done": WorkItemStatus.DONE,
+            "blocked": WorkItemStatus.BLOCKED}
 
     def test_unknown_status_teaches(self):
         with pytest.raises(ValueError) as exc:
             to_platform_status("bogus")
         assert "合法值" in str(exc.value)
 
-    def test_valid_statuses_cover_lifecycle(self):
+    def test_valid_statuses_complete(self):
         assert VALID_MANIFEST_STATUSES == set(MANIFEST_TO_PLATFORM_STATUS)
 
 
-# ── 未配置 CI:回归保证 ──────────────────────────────────────────────────
+# ── advance_delivery 单元测试(对齐 canonical WorkItem.bounces.ci) ──────────
 
-class TestCiNotConfigured:
-    def test_skip_ci_direct_to_review(self, tmp_path):
+class TestAdvanceDeliveryUnit:
+    def test_skip_ci_when_unconfigured(self, tmp_path):
         store = _store()
+        item = _worker_done_item(store)
+        manifest = Manifest(meta={"name": "demo"}, nodes={"a": _node()})
+        manifest.nodes["a"].work_item_id = item.id
+        manifest.nodes["a"].status = "in_progress"
         rt = _runtime(store)
-        manifest, node, item = _make_node(store)
-        new = advance_delivery({}, manifest, "a", store, rt)
-        assert new == "in_review"
-        assert node.status == "in_review"
-        got = store.get_work_item(item.id)
-        assert got.status is WorkItemStatus.IN_REVIEW
-        assert any(e[2] == "reviewer" for e in store.assign_log)
+        assert advance_delivery({}, manifest, "a", store, rt, dict(DEFAULT_RETRY)) == "pass"
+        # 无任何评论 / 状态不变
         assert store.get_comments(item.id) == []
+        assert manifest.nodes["a"].status == "in_progress"
 
-    def test_ci_block_missing_means_skip(self, tmp_path):
+    def test_ci_block_missing_means_pass(self, tmp_path):
         store = _store()
-        rt = _runtime(store)
-        manifest, node, item = _make_node(store)
-        new = advance_delivery({"ci": {"timeout_minutes": 30}}, manifest, "a", store, rt)
-        assert new == "in_review"
-        assert node.status == "in_review"
+        item = _worker_done_item(store)
+        manifest = Manifest(meta={}, nodes={"a": _node()})
+        manifest.nodes["a"].work_item_id = item.id
+        # ci 块存在但缺 check_command → get_ci_config 返回 None → 跳过
+        assert advance_delivery(
+            {"ci": {"timeout_minutes": 30}}, manifest, "a", store, _runtime(store),
+            dict(DEFAULT_RETRY)) == "pass"
 
-
-# ── CI 三路径(直跑与失败) ────────────────────────────────────────────────
-
-class TestCiCheckPaths:
-    def test_ci_pass_transitions_to_review(self, tmp_path):
+    def test_ci_passes_returns_pass(self, tmp_path):
         store = _store()
-        rt = _runtime(store)
-        manifest, node, item = _make_node(store)
-        script = _ci_script(tmp_path, 'echo "all green for $1"; exit 0')
+        item = _worker_done_item(store)
+        manifest = Manifest(meta={}, nodes={"a": _node()})
+        manifest.nodes["a"].work_item_id = item.id
+        script = _ci_script(tmp_path, 'echo green; exit 0')
         cfg = _ci_config(script)
-        new = advance_delivery(cfg, manifest, "a", store, rt)
-        assert new == "in_review"
-        assert node.status == "in_review"
-        assert store.get_work_item(item.id).status is WorkItemStatus.IN_REVIEW
-        assert node.ci_bounce == 0
+        limits = dict(DEFAULT_RETRY)
+        assert advance_delivery(cfg, manifest, "a", store, _runtime(store), limits) == "pass"
+        assert manifest.nodes["a"].status == "in_progress"  # 回到 in_progress,由 loop 转 in_review
+        assert store.get_work_item(item.id).bounces.ci == 0
 
-    def test_ci_fail_bounces_to_worker(self, tmp_path):
+    def test_ci_fail_bounces_worker(self, tmp_path):
         store = _store()
-        rt = _runtime(store)
-        manifest, node, item = _make_node(store)
-        script = _ci_script(tmp_path, 'echo "boom fail"; exit 1')
+        item = _worker_done_item(store)
+        manifest = Manifest(meta={}, nodes={"a": _node()})
+        manifest.nodes["a"].work_item_id = item.id
+        script = _ci_script(tmp_path, 'echo boom; exit 1')
         cfg = _ci_config(script)
-        new = advance_delivery(cfg, manifest, "a", store, rt)
-        assert new == "in_progress"
-        assert node.status == "in_progress"
-        assert node.ci_bounce == 1
-        got = store.get_work_item(item.id)
-        assert got.status is WorkItemStatus.IN_PROGRESS
+        limits = dict(DEFAULT_RETRY)
+        assert advance_delivery(cfg, manifest, "a", store, _runtime(store), limits) == "bounce"
+        assert manifest.nodes["a"].status == "in_progress"
+        assert store.get_work_item(item.id).bounces.ci == 1
         comments = store.get_comments(item.id)
-        assert len(comments) == 1
-        assert "CI 检查失败" in comments[0]
-        assert "boom fail" in comments[0]
-        assert any(e[2] == "worker" for e in store.assign_log)
+        assert any("CI 检查失败" in c for c in comments)
+        assert any("boom" in c for c in comments)
 
-    def test_ci_fail_exit_code_in_comment(self, tmp_path):
-        store = _store()
-        rt = _runtime(store)
-        manifest, node, item = _make_node(store)
-        script = _ci_script(tmp_path, 'echo "segfault-ish"; exit 2')
-        cfg = _ci_config(script)
-        new = advance_delivery(cfg, manifest, "a", store, rt)
-        assert new == "in_progress"
-        assert node.ci_bounce == 1
-        assert "退出码 2" in store.get_comments(item.id)[0]
-
-
-# ── 超时路径(注入 TimeoutExpired) ─────────────────────────────────────────
-
-class TestCiTimeoutBranch:
-    def test_timeout_branch_returns_timeout_result(self, tmp_path, monkeypatch):
+    def test_ci_timeout_bounces_worker(self, tmp_path, monkeypatch):
         import omac.pipeline.delivery as delivery
         import subprocess as sp
 
         def fake_run(cmd, **kw):
             raise sp.TimeoutExpired(cmd=cmd, timeout=kw.get("timeout"),
-                                    output=b"partial stdout", stderr=b"")
-
+                                    output=b"still running", stderr=b"")
         monkeypatch.setattr(delivery.subprocess, "run", fake_run)
-        result = run_ci_check("gh pr checks {pr_url}", "https://x", timeout_minutes=1)
-        assert result.passed is False
-        assert result.timed_out is True
-        assert result.exit_code is None
-        assert "partial stdout" in result.output
-        assert "CI 检查超时" in result.label
-
-    def test_timeout_then_bounce_to_worker(self, tmp_path, monkeypatch):
         store = _store()
-        rt = _runtime(store)
-        manifest, node, item = _make_node(store)
-        import omac.pipeline.delivery as delivery
-        import subprocess as sp
+        item = _worker_done_item(store)
+        manifest = Manifest(meta={}, nodes={"a": _node()})
+        manifest.nodes["a"].work_item_id = item.id
+        cfg = _ci_config(_ci_script(tmp_path, "exit 0"))
+        assert advance_delivery(cfg, manifest, "a", store, _runtime(store), dict(DEFAULT_RETRY)) == "bounce"
+        assert store.get_work_item(item.id).bounces.ci == 1
+        assert any("CI 检查超时" in c for c in store.get_comments(item.id))
 
-        def fake_run(cmd, **kw):
-            raise sp.TimeoutExpired(cmd=cmd, timeout=kw.get("timeout"),
-                                    output=b"ci still running", stderr=b"")
-
-        monkeypatch.setattr(delivery.subprocess, "run", fake_run)
-        script = _ci_script(tmp_path, "exit 0")
-        cfg = _ci_config(script)
-        new = advance_delivery(cfg, manifest, "a", store, rt)
-        assert new == "in_progress"
-        assert node.ci_bounce == 1
-        comments = store.get_comments(item.id)
-        assert "CI 检查超时" in comments[0]
-        assert "ci still running" in comments[0]
-
-
-# ── 回退计数与封顶 ─────────────────────────────────────────────────────────
-
-class TestBounceCap:
-    def test_ci_bounce_cap_blocks(self, tmp_path):
+    def test_ci_bounce_reaches_cap_blocks(self, tmp_path):
         store = _store()
-        rt = _runtime(store)
-        manifest, node, item = _make_node(store)
-        script = _ci_script(tmp_path, 'echo "fail"; exit 1')
+        item = _worker_done_item(store)
+        manifest = Manifest(meta={}, nodes={"a": _node()})
+        manifest.nodes["a"].work_item_id = item.id
+        script = _ci_script(tmp_path, 'echo fail; exit 1')
         cfg = _ci_config(script)
-        results = []
-        for _ in range(DEFAULT_MAX_BOUNCES):
+        limits = dict(DEFAULT_RETRY)
+        # 连续 3 次失败,第 3 次到顶 → blocked
+        for _ in range(DEFAULT_RETRY["ci"]):
+            manifest.nodes["a"].status = "in_progress"
             store.update_work_item_metadata(item.id, artifacts={"pr_url": "https://example.com/pr/1"})
             store.update_status(item.id, WorkItemStatus.DONE)
-            node.status = "in_progress"
-            results.append(advance_delivery(cfg, manifest, "a", store, rt))
-        assert results == ["in_progress", "in_progress", "blocked"]
-        assert node.ci_bounce == DEFAULT_MAX_BOUNCES
-        assert node.status == "blocked"
-        assert store.get_work_item(item.id).status is WorkItemStatus.BLOCKED
-        assert len(store.get_comments(item.id)) == DEFAULT_MAX_BOUNCES
-
-    def test_ci_bounce_then_resubmit_passes(self, tmp_path):
-        store = _store()
-        rt = _runtime(store)
-        manifest, node, item = _make_node(store)
-        fail_script = _ci_script(tmp_path, 'echo "fail"; exit 1', name="fail.sh")
-        pass_script = _ci_script(tmp_path, 'echo "green"; exit 0', name="pass.sh")
-        cfg = _ci_config(fail_script)
-        assert advance_delivery(cfg, manifest, "a", store, rt) == "in_progress"
-        assert node.ci_bounce == 1
-        store.update_work_item_metadata(item.id, artifacts={"pr_url": "https://example.com/pr/1"})
-        store.update_status(item.id, WorkItemStatus.DONE)
-        node.status = "in_progress"
-        cfg2 = _ci_config(pass_script)
-        assert advance_delivery(cfg2, manifest, "a", store, rt) == "in_review"
-        assert node.status == "in_review"
-        assert node.ci_bounce == 1
-        assert store.get_work_item(item.id).status is WorkItemStatus.IN_REVIEW
-
-
-# ── 评审 reject 回退 ──────────────────────────────────────────────────────
-
-class TestReviewReject:
-    def _reject_item(self, store, item):
-        store.update_work_item_metadata(
-            item.id,
-            review_verdict="reject",
-            review_comment="覆盖率不达标,补测试",
-            review_report={
-                "diff_reviewed": True,
-                "tests_rerun": True,
-                "coverage_checked": False,
-                "review_goals": "覆盖率 >= 90,补全 edge case",
-            },
-        )
-
-    def _pass_item(self, store, item):
-        store.update_work_item_metadata(
-            item.id,
-            review_verdict="pass",
-            review_comment="LGTM",
-            review_report={"diff_reviewed": True, "tests_rerun": True,
-                           "coverage_checked": True, "review_goals": "ok"},
-        )
-
-    def test_reject_bounces_to_worker(self, tmp_path):
-        store = _store()
-        rt = _runtime(store)
-        manifest, node, item = _make_node(store)
-        node.status = "in_review"
-        store.update_status(item.id, WorkItemStatus.IN_REVIEW)
-        self._reject_item(store, item)
-        new = handle_review_result({}, manifest, "a", store, rt)
-        assert new == "in_progress"
-        assert node.review_bounce == 1
-        assert node.status == "in_progress"
-        comments = store.get_comments(item.id)
-        assert "评审 reject" in comments[0]
-        assert "覆盖率不达标" in comments[0]
-        assert "覆盖率 >= 90" in comments[0]
-        assert any(e[2] == "worker" for e in store.assign_log)
-
-    def test_reject_cap_blocks(self, tmp_path):
-        store = _store()
-        rt = _runtime(store)
-        manifest, node, item = _make_node(store)
-        results = []
-        for _ in range(DEFAULT_MAX_BOUNCES):
-            store.update_status(item.id, WorkItemStatus.IN_REVIEW)
-            node.status = "in_review"
-            self._reject_item(store, item)
-            results.append(handle_review_result({}, manifest, "a", store, rt))
-        assert results == ["in_progress", "in_progress", "blocked"]
-        assert node.review_bounce == DEFAULT_MAX_BOUNCES
-        assert node.status == "blocked"
+            res = advance_delivery(cfg, manifest, "a", store, _runtime(store), limits)
+        assert res == "blocked"
+        assert manifest.nodes["a"].status == "blocked"
+        assert store.get_work_item(item.id).bounces.ci == DEFAULT_RETRY["ci"]
         assert store.get_work_item(item.id).status is WorkItemStatus.BLOCKED
 
-    def test_reject_then_resubmit_passes(self, tmp_path):
+    def test_ci_cap_zero_blocks_immediately(self, tmp_path):
         store = _store()
-        rt = _runtime(store)
-        manifest, node, item = _make_node(store)
-        store.update_status(item.id, WorkItemStatus.IN_REVIEW)
-        node.status = "in_review"
-        self._reject_item(store, item)
-        assert handle_review_result({}, manifest, "a", store, rt) == "in_progress"
-        assert node.review_bounce == 1
-        store.update_status(item.id, WorkItemStatus.IN_REVIEW)
-        node.status = "in_review"
-        self._pass_item(store, item)
-        assert handle_review_result({}, manifest, "a", store, rt) == "in_review"
-        assert node.review_bounce == 1
-        assert node.status == "in_review"
-
-
-# ── manifest 持久化与防御分支 ─────────────────────────────────────────────
-
-class TestBouncePersist:
-    def test_ci_bounce_roundtrip(self, tmp_path):
-        store = _store()
-        rt = _runtime(store)
-        manifest, node, item = _make_node(store)
+        item = _worker_done_item(store)
+        manifest = Manifest(meta={}, nodes={"a": _node()})
+        manifest.nodes["a"].work_item_id = item.id
         script = _ci_script(tmp_path, "exit 1")
-        cfg = _ci_config(script)
-        advance_delivery(cfg, manifest, "a", store, rt)
-        assert node.ci_bounce == 1
-        path = str(tmp_path / "m.yaml")
-        save_manifest(manifest, path)
-        from omac.core.manifest import load_manifest
-        m2 = load_manifest(path)
-        assert m2.nodes["a"].ci_bounce == 1
-        assert m2.nodes["a"].status == "in_progress"
+        assert advance_delivery(
+            _ci_config(script), manifest, "a", store, _runtime(store),
+            {"ci": 0, "review": 3, "merge": 3}) == "blocked"
 
-    def test_state_mapping_survives_save(self, tmp_path):
+    def test_custom_retry_ci_limit(self, tmp_path):
         store = _store()
-        rt = _runtime(store)
-        manifest, node, item = _make_node(store)
+        item = _worker_done_item(store)
+        manifest = Manifest(meta={}, nodes={"a": _node()})
+        manifest.nodes["a"].work_item_id = item.id
         script = _ci_script(tmp_path, "exit 1")
-        cfg = _ci_config(script)
-        advance_delivery(cfg, manifest, "a", store, rt)
-        path = str(tmp_path / "m.yaml")
-        save_manifest(manifest, path)
-        text = open(path).read()
-        assert "status: in_progress" in text
+        limits = {"ci": 5, "review": 3, "merge": 3}
+        for i in range(5):
+            manifest.nodes["a"].status = "in_progress"
+            store.update_work_item_metadata(item.id, artifacts={"pr_url": "https://example.com/pr/1"})
+            store.update_status(item.id, WorkItemStatus.DONE)
+            res = advance_delivery(_ci_config(script), manifest, "a", store, _runtime(store), limits)
+            if i < 4:
+                assert res == "bounce"
+            else:
+                assert res == "blocked"
+        assert store.get_work_item(item.id).bounces.ci == 5
 
-
-class TestDeliveryDefensive:
-    def test_ci_configured_but_no_pr_url_blocks_with_teaching(self, tmp_path):
+    def test_ci_configured_without_pr_url_blocks_with_teaching(self, tmp_path):
         store = _store()
-        rt = _runtime(store)
-        manifest, node, item = _make_node(store)
-        store.update_work_item_metadata(item.id, artifacts={})
+        item = _worker_done_item(store)
+        store.update_work_item_metadata(item.id, artifacts={})  # 清掉 pr_url
+        manifest = Manifest(meta={}, nodes={"a": _node()})
+        manifest.nodes["a"].work_item_id = item.id
         script = _ci_script(tmp_path, "exit 0")
-        cfg = _ci_config(script)
-        new = advance_delivery(cfg, manifest, "a", store, rt)
-        assert new == "blocked"
-        assert node.status == "blocked"
+        res = advance_delivery(
+            _ci_config(script), manifest, "a", store, _runtime(store), dict(DEFAULT_RETRY))
+        assert res == "blocked"
         comments = store.get_comments(item.id)
-        assert "pr_url" in comments[0]
-        assert "omac work submit" in comments[0]
+        assert any("pr_url" in c for c in comments)
+        assert any("omac work submit" in c for c in comments)
 
-    def test_ci_short_output_tail(self, tmp_path):
-        store = _store()
-        rt = _runtime(store)
-        manifest, node, item = _make_node(store)
-        script = _ci_script(tmp_path, 'echo "tiny"; exit 1')
-        cfg = _ci_config(script)
-        advance_delivery(cfg, manifest, "a", store, rt)
-        comm = store.get_comments(item.id)[0]
-        assert "tiny" in comm
-        assert "..." not in comm  # 短输出不应出现省略号
+
+# ── run_ci_check 直接测试 ───────────────────────────────────────────────────
+
+class TestRunCiCheck:
+    def test_pass_exit_0(self, tmp_path):
+        script = _ci_script(tmp_path, 'echo ok; exit 0')
+        res = run_ci_check(f"sh {script} {{pr_url}}", "https://x")
+        assert res.passed is True and res.timed_out is False and res.exit_code == 0
+
+    def test_fail_exit_1(self, tmp_path):
+        script = _ci_script(tmp_path, 'echo bad; exit 1')
+        res = run_ci_check(f"sh {script} {{pr_url}}", "https://x")
+        assert res.passed is False and res.timed_out is False and res.exit_code == 1
+        assert "bad" in res.summary
+
+    def test_fail_tail_output(self, tmp_path):
+        script = _ci_script(tmp_path, "exit 2")
+        res = run_ci_check(f"sh {script} {{pr_url}}", "https://x")
+        assert "退出码 2" in res.label
+
+    def test_timeout_branch(self, tmp_path, monkeypatch):
+        import omac.pipeline.delivery as delivery
+        import subprocess as sp
+        def fake_run(cmd, **kw):
+            raise sp.TimeoutExpired(cmd=cmd, timeout=kw.get("timeout"),
+                                    output=b"partial", stderr=b"")
+        monkeypatch.setattr(delivery.subprocess, "run", fake_run)
+        res = run_ci_check("gh pr checks {pr_url}", "https://x")
+        assert res.timed_out is True and res.passed is False and res.exit_code is None
+        assert "CI 检查超时" in res.label
 
     def test_timeout_str_decode_branch(self, tmp_path, monkeypatch):
         import omac.pipeline.delivery as delivery
         import subprocess as sp
-
         def fake_run(cmd, **kw):
             raise sp.TimeoutExpired(cmd=cmd, timeout=kw.get("timeout"),
                                     output="out-str", stderr="err-str")
-
         monkeypatch.setattr(delivery.subprocess, "run", fake_run)
-        result = run_ci_check("gh pr checks {pr_url}", "https://x", timeout_minutes=1)
-        assert result.timed_out is True
-        assert "out-str" in result.output
+        res = run_ci_check("gh pr checks {pr_url}", "https://x")
+        assert res.timed_out is True and "out-str" in res.output
+
+
+# ── 经真实 collect_results 的 e2e(对齐主线 harvest 顺序) ──────────────────
+
+class TestCollectResultsCi:
+    """把节点推进到「worker DONE + 证据过门」后调 loop.collect_results,验证
+    worker → ci_check →(绿)in_review 的收割顺序及失败回退。"""
+
+    def _advance_to_worker_done(self, store, worker="alice", reviewer="bob"):
+        item = _worker_done_item(store, reviewer=reviewer)
+        manifest = Manifest(meta={}, nodes={"a": Node(id="a", worker=worker, reviewer=reviewer,
+                                                       work_item_id=item.id,
+                                                       status="in_progress")})
+        return manifest, item
+
+    def test_no_config_skips_to_review(self, tmp_path):
+        store = _store()
+        rt = _runtime(store)
+        manifest, item = self._advance_to_worker_done(store)
+        path = str(tmp_path / "m.yaml")
+        import omac.core.manifest as mmod
+        mmod.save_manifest(manifest, path)
+        loop.collect_results(store, rt, manifest, path, retry_limits=dict(DEFAULT_RETRY),
+                            config={})
+        assert manifest.nodes["a"].status == "in_review"
+        assert store.get_work_item(item.id).status is WorkItemStatus.IN_REVIEW
+        # reviewer 被转派并唤醒
+        assert any(e[2] == "reviewer" for e in store.assign_log)
+
+    def test_ci_passes_goes_in_review(self, tmp_path):
+        store = _store()
+        rt = _runtime(store)
+        manifest, item = self._advance_to_worker_done(store)
+        path = str(tmp_path / "m.yaml")
+        import omac.core.manifest as mmod
+        mmod.save_manifest(manifest, path)
+        script = _ci_script(tmp_path, 'echo green; exit 0')
+        loop.collect_results(store, rt, manifest, path, retry_limits=dict(DEFAULT_RETRY),
+                            config=_ci_config(script))
+        # ci_check 仅做 manifest 侧细分态,最终应在 in_review
+        assert manifest.nodes["a"].status == "in_review"
+        assert store.get_work_item(item.id).bounces.ci == 0
+
+    def test_ci_fails_bounces_worker(self, tmp_path):
+        store = _store()
+        rt = _runtime(store)
+        manifest, item = self._advance_to_worker_done(store)
+        path = str(tmp_path / "m.yaml")
+        import omac.core.manifest as mmod
+        mmod.save_manifest(manifest, path)
+        script = _ci_script(tmp_path, 'echo boom; exit 1')
+        fails = loop.collect_results(store, rt, manifest, path,
+                                    retry_limits=dict(DEFAULT_RETRY),
+                                    config=_ci_config(script))
+        # 未到顶:bounce,节点留在 in_progress(已转回 worker)
+        assert store.get_work_item(item.id).bounces.ci == 1
+        assert manifest.nodes["a"].status == "in_progress"
+        assert "a" in fails and "CI" in fails["a"]
+        assert any("boom" in c for c in store.get_comments(item.id))
+
+    def test_ci_bounce_then_resubmit_passes(self, tmp_path):
+        store = _store()
+        rt = _runtime(store)
+        manifest, item = self._advance_to_worker_done(store)
+        path = str(tmp_path / "m.yaml")
+        import omac.core.manifest as mmod
+        mmod.save_manifest(manifest, path)
+        script_fail = _ci_script(tmp_path, "exit 1", name="fail.sh")
+        script_pass = _ci_script(tmp_path, "exit 0", name="pass.sh")
+        # 第 1 次:CI 红 → bounce
+        loop.collect_results(store, rt, manifest, path, retry_limits=dict(DEFAULT_RETRY),
+                            config=_ci_config(script_fail))
+        assert manifest.nodes["a"].status == "in_progress"
+        assert store.get_work_item(item.id).bounces.ci == 1
+        # worker 修后重交:重新置为 worker DONE
+        store.update_work_item_metadata(item.id, artifacts={"pr_url": "https://example.com/pr/1"})
+        store.update_status(item.id, WorkItemStatus.DONE)
+        manifest.nodes["a"].status = "in_progress"
+        # 第 2 次:CI 绿 → in_review
+        loop.collect_results(store, rt, manifest, path, retry_limits=dict(DEFAULT_RETRY),
+                            config=_ci_config(script_pass))
+        assert manifest.nodes["a"].status == "in_review"
+        assert store.get_work_item(item.id).bounces.ci == 1  # 历史计数保留
+
+    def test_ci_bounce_cap_blocks_and_fails_isolated(self, tmp_path):
+        store = _store()
+        rt = _runtime(store)
+        manifest, item = self._advance_to_worker_done(store)
+        path = str(tmp_path / "m.yaml")
+        import omac.core.manifest as mmod
+        mmod.save_manifest(manifest, path)
+        script = _ci_script(tmp_path, "exit 1")
+        cfg = _ci_config(script)
+        fails_all = None
+        for _ in range(DEFAULT_RETRY["ci"]):
+            store.update_work_item_metadata(item.id, artifacts={"pr_url": "https://example.com/pr/1"})
+            store.update_status(item.id, WorkItemStatus.DONE)
+            manifest.nodes["a"].status = "in_progress"
+            fails_all = loop.collect_results(store, rt, manifest, path,
+                                             retry_limits=dict(DEFAULT_RETRY), config=cfg)
+        assert manifest.nodes["a"].status == "blocked"
+        assert store.get_work_item(item.id).status is WorkItemStatus.BLOCKED
+        assert store.get_work_item(item.id).bounces.ci == DEFAULT_RETRY["ci"]
+        assert fails_all is not None and "a" in fails_all
+        # 失败隔离:加一个下游节点 b 依赖 a,应被标 blocked
+        manifest.nodes["b"] = Node(id="b", worker="alice", reviewer="charlie",
+                                   blocked_by=["a"])
+        mmod.save_manifest(manifest, path)
+        loop._mark_downstream_blocked(manifest, path, {"a"})
+        assert manifest.nodes["b"].status == "blocked"
