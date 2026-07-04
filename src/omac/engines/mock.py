@@ -8,6 +8,7 @@ from __future__ import annotations
 import time
 from typing import Any, Dict, List, Optional
 
+from ..core.taskmeta import Bounces, TaskKind, TaskPhase
 from .models import EngineConfig, WorkItem, WorkItemStatus, WorkspaceInfo
 from .runtime import AgentRuntime
 from .store import WorkItemStore
@@ -179,6 +180,7 @@ class MockStore(WorkItemStore):
         blocked_by: Optional[List[str]] = None,
         wave: Optional[int] = None,
         initial_status: WorkItemStatus = WorkItemStatus.TODO,
+        kind: TaskKind = TaskKind.DEVELOP,
     ) -> WorkItem:
         item_id = str(self._next_id)
         self._next_id += 1
@@ -193,6 +195,7 @@ class MockStore(WorkItemStore):
             reviewer=reviewer,
             blocked_by=blocked_by or [],
             wave=wave,
+            kind=kind,
         )
         self._work_items[item_id] = work_item
         return work_item
@@ -214,6 +217,11 @@ class MockStore(WorkItemStore):
         review_comment: Optional[str] = None,
         verification: Optional[Dict[str, Any]] = None,
         review_report: Optional[Dict[str, Any]] = None,
+        phase: Optional[TaskPhase] = None,
+        ci_bounce: Optional[int] = None,
+        review_bounce: Optional[int] = None,
+        merge_bounce: Optional[int] = None,
+        deliverable: Optional[str] = None,
     ) -> WorkItem:
         item = self.get_work_item(item_id)
         if worker is not None:
@@ -232,6 +240,16 @@ class MockStore(WorkItemStore):
             item.verification = verification
         if review_report is not None:
             item.review_report = review_report
+        if phase is not None:
+            item.phase = phase
+        if ci_bounce is not None:
+            item.bounces.ci = ci_bounce
+        if review_bounce is not None:
+            item.bounces.review = review_bounce
+        if merge_bounce is not None:
+            item.bounces.merge = merge_bounce
+        if deliverable is not None:
+            item.deliverable = deliverable
         return item
 
     def set_node_contract(self, item_id: str, contract: Any):

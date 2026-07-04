@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
+from ..core.taskmeta import Bounces, TaskKind, TaskPhase
+
 
 class WorkItemStatus(Enum):
     """工作单元状态(业务语义)"""
@@ -56,6 +58,16 @@ class WorkItem:
 
     # 验收契约(编排器 dispatch 时下发):worker 读回后用同一套 validator 自校验
     contract: Optional[Dict[str, Any]] = None
+
+    # 任务类型×阶段模型(§7.4):issue 自描述——是哪类任务、处于哪个阶段、回退几次。
+    # kind 缺省 develop(旧 issue 无 kind 字段时向后兼容);phase 缺省 authoring;
+    # bounces 为三类回退计数(CI / 评审 / merge),由 pipeline 经
+    # update_work_item_metadata 递增,Store 只存取。
+    kind: TaskKind = TaskKind.DEVELOP
+    phase: TaskPhase = TaskPhase.AUTHORING
+    bounces: Bounces = field(default_factory=Bounces)
+    # 通用交付物:按 kind 承载 plan/acceptance/manifest/acceptance-results 正文
+    deliverable: Optional[str] = None
 
     def is_completed(self) -> bool:
         return self.status == WorkItemStatus.DONE
