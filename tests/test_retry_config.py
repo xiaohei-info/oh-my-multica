@@ -64,6 +64,9 @@ def test_init_writes_retry_block(tmp_path, monkeypatch):
     assert code == exit_codes.OK
     cfg = config_mod.load_config()
     assert cfg["retry"] == {"ci": 3, "review": 3, "merge": 3}
+    # DEFAULT_MAX_ROUNDS 与 acceptance.max_rounds 同源,无重复 authority(Nit 6)
+    assert cfg["acceptance"] == {"max_rounds": config_mod.DEFAULT_MAX_ROUNDS}
+    assert cfg["acceptance"]["max_rounds"] == 3
 
 
 # ==================== config get/set 可读写 retry ====================

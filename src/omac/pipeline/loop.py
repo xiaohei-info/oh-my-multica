@@ -127,9 +127,9 @@ def collect_results(
 
     limits = dict(DEFAULT_RETRY)
     if retry_limits:
-        for _k, _v in retry_limits.items():
-            if _k in limits:
-                limits[_k] = _v
+        for k, v in retry_limits.items():
+            if k in limits:
+                limits[k] = v
 
     for key, node in manifest.nodes.items():
         if node.status not in RUNNING_STATUSES or not node.work_item_id:
@@ -193,18 +193,23 @@ def collect_results(
                     set_node(manifest, key, status="blocked")
                     failures[key] = f"评审证据门未通过(回退上界 {review_limit} 已耗尽): {reason}"
                 else:
+                    # 有界「回到 worker」:先记回退计数并清除旧评审判定,再重新派发 worker。
+                    # 派发失败时回滚回退计数并把节点标 blocked,避免卡在「已清判定/未派发」中间态。
                     store.update_work_item_metadata(node.work_item_id, review_bounce=cur_bounce + 1)
                     store.reset_review(node.work_item_id)
-                    store.assign_work_item(node.work_item_id, node.worker, "worker")
-                    store.update_status(node.work_item_id, WorkItemStatus.IN_PROGRESS)
-                    set_node(manifest, key, status="in_progress")
                     try:
+                        store.assign_work_item(node.work_item_id, node.worker, "worker")
+                        store.update_status(node.work_item_id, WorkItemStatus.IN_PROGRESS)
+                        set_node(manifest, key, status="in_progress")
                         runtime.wake(node.work_item_id, node.worker, "worker")
                     except PlatformError as exc:
+                        store.update_work_item_metadata(node.work_item_id, review_bounce=cur_bounce)
                         store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
-                        store.add_comment(node.work_item_id, f"唤醒 worker {node.worker} 失败: {exc}")
+                        store.add_comment(
+                            node.work_item_id,
+                            f"回退到 worker {node.worker} 失败(已回滚回退计数): {exc}")
                         set_node(manifest, key, status="blocked")
-                        failures[key] = f"唤醒 worker {node.worker} 失败: {exc}"
+                        failures[key] = f"回退到 worker {node.worker} 失败: {exc}"
 
     # ---- reviewer 阶段过渡(遍历后执行,避免改 manifest 影响遍历)----
     for key, item_id, reviewer in pending_review:
@@ -322,9 +327,9 @@ def tick(
     幂等:全部状态在 manifest + 平台,中断重跑即续跑。
 
     retry_limits: config.retry 解析后的 {ci, review, merge} 上界(None = 全缺省 3);
-    reviewer reject 的「回到 worker」回退次数由此控制。注:「无自动重试」指 tick
-    不会自动把已 blocked 节点重置为 todo(必须经 `omac node retry` 显式决策);
-    节点内的有界回退(retry_limits)是设计文档 §7.3 明确的有界往返,非自动重试。
+    reviewer reject 的「回到 worker」有界退回次数由此控制(见设计文档 §7.3)。
+    与「自动重试」不同 —— tick 不会把已 blocked 节点重置为 todo
+    (必须经 `omac node retry` 显式决策);retry_limits 是节点内的有界往返。
     """
     # 1. Reconcile: 平台状态同步回 manifest
     reconcile(store, manifest, manifest_path)

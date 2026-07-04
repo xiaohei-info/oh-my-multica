@@ -764,3 +764,67 @@ class TestReviewerRejectBoundedFallback:
             from omac.core.manifest import set_node
             set_node(manifest, "a", status="in_review")
             save_manifest(manifest, fpath)
+
+
+class TestReviewerRejectFallbackRollback:
+    """Nit 3:回退到 worker 失败时应回滚 review_bounce 并把节点标 blocked。"""
+
+    @staticmethod
+    def _simple_contract():
+        from omac.core.manifest import Contract
+        return Contract(
+            objective="do it", acceptance=["works"], non_goals=["no creep"],
+            verification_commands=["pytest -q"], pr_base="main", coverage_gate=0,
+        )
+
+    def _setup_reject_node(self, eng, fpath, key="a", worker="alice", reviewer="bob"):
+        from omac.core.manifest import Manifest, Node, set_node
+        contract = self._simple_contract()
+        node = Node(id=key, worker=worker, reviewer=reviewer, title=key,
+                    description=f"Task {key}", contract=contract)
+        manifest = Manifest(meta={"workspace_id": "ws"}, nodes={node.id: node})
+        save_manifest(manifest, fpath)
+
+        tick(eng.store, eng.runtime, manifest, fpath, max_parallel=4)
+        item = eng.store.get_work_item(manifest.nodes[key].work_item_id)
+        eng.store.set_node_contract(item.id, contract)
+        eng.store.update_work_item_metadata(
+            item.id,
+            artifacts={"pr_url": f"https://mock.example.com/pr/{item.id}"},
+            verification={"commands": [{"cmd": "pytest -q", "exit_code": 0}],
+                         "pr_base": "main", "coverage": 90})
+        from omac.engines.models import WorkItemStatus
+        eng.store.update_status(item.id, WorkItemStatus.DONE)
+        tick(eng.store, eng.runtime, manifest, fpath, max_parallel=4)
+        set_node(manifest, key, status="in_review")
+        save_manifest(manifest, fpath)
+        eng.store.update_work_item_metadata(item.id, review_verdict="reject")
+        eng.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+        return manifest, eng, item
+
+    def test_fallback_failure_rolls_back_bounce(self, tmp_path, monkeypatch):
+        """assign/wake worker 抛 PlatformError 时应回滚 review_bounce,节点标 blocked。"""
+        from unittest.mock import patch
+        from omac.engines import create_engine
+        from omac.engines.models import WorkItemStatus
+        from omac.core.manifest import set_node
+        from omac.engines.mock import MockRuntime
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        fpath = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, fpath)
+
+        def boom(*args, **kwargs):
+            from omac.errors import PlatformError
+            raise PlatformError("wake failed")
+
+        with patch.object(MockRuntime, "wake", boom):
+            tick(eng.store, eng.runtime, manifest, fpath,
+                 max_parallel=4, retry_limits={"review": 3})
+
+        got = eng.store.get_work_item(item.id)
+        # 回滚:review_bounce 不增长
+        assert got.bounces.review == 0
+        # 节点置 blocked,不再滞留 in_review
+        assert manifest.nodes["a"].status == "blocked"
+        assert got.status == WorkItemStatus.BLOCKED
+        assert any("回退到 worker" in c for c in eng.store.get_comments(item.id))
