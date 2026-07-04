@@ -1,12 +1,19 @@
 """omac work — 被派发 agent 的统一执行接口(5 类 issue × 产出/评审阶段)。"""
 from __future__ import annotations
 
+import sys
+
 from ._stub import not_implemented
 from ...core import config as config_mod
 from ...engines import create_engine
 from ...engines.models import EngineConfig
 from ...errors import ValidationError
-from ...pipeline.dispatch import SUBMIT_PARAM_SPECS, build_show_output
+from ...pipeline.dispatch import (
+    SUBMIT_PARAM_SPECS,
+    SubmitResult,
+    build_show_output,
+    submit,
+)
 from .. import exit_codes
 from ..output import add_output_flag, print_json
 
@@ -100,6 +107,51 @@ def _render_table(output: dict) -> None:
     print(f"  {output['submit']}")
 
 
+
+def _submit(args) -> int:
+    """work submit 入口:调 dispatch 左移门,ValidationError → exit 5。"""
+    try:
+        item = _get_item(args.issue_id)
+    except ValidationError:
+        raise
+    result = submit(
+        _resolve_store_for(item),
+        args.issue_id,
+        plan_file=args.plan_file,
+        acceptance_file=args.acceptance_file,
+        manifest_file=args.manifest_file,
+        pr_url=args.pr_url,
+        verification_file=args.verification_file,
+        verdict=args.verdict,
+        report_file=args.report_file,
+        acceptance_results_file=args.acceptance_results_file,
+    )
+    target = (
+        result.advanced_to.value
+        if hasattr(result.advanced_to, "value")
+        else result.advanced_to
+    )
+    print(
+        f"交付物已提交 —— {result.kind.value} × {result.phase.value}\n"
+        f"deliverable: {result.deliverable_key}\n"
+        f"状态推进: {target}",
+    )
+    return exit_codes.OK
+
+
+def _get_item(issue_id: str):
+    store = _resolve_store()
+    try:
+        return store.get_work_item(issue_id)
+    except Exception as e:
+        raise ValidationError(f"无法读取 work item '{issue_id}' —— {e}")
+
+
+def _resolve_store_for(item) -> object:
+    """submit 与 show 共用同一引擎/工作空间上下文,保证读写同源。"""
+    return _resolve_store()
+
+
 def _run_show(args) -> int:
     store = _resolve_store()
     try:
@@ -120,4 +172,10 @@ def _run_show(args) -> int:
 def run(args) -> int:
     if args.action == "show":
         return _run_show(args)
+    if args.action == "submit":
+        try:
+            return _submit(args)
+        except ValidationError as e:
+            print(str(e), file=sys.stderr)
+            return exit_codes.VALIDATION
     return not_implemented(f"work {args.action}", "P2")
