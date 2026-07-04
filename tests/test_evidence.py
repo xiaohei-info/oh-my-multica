@@ -6,7 +6,7 @@ from omac.core.evidence import (
     validate_review_evidence,
     validate_worker_evidence,
 )
-from omac.core.acceptance import load_acceptance_doc
+from omac.core.acceptance import load_acceptance_doc, load_acceptance_doc_file
 from omac.core.manifest import Contract, Node
 
 CONTRACT = Contract(
@@ -297,3 +297,34 @@ def test_acceptance_results_accepts_raw_dict():
     }
     errs = validate_acceptance_results(raw_doc, [{"id": "only", "status": "pass"}])
     assert errs == []
+
+
+# ---------- acceptance doc schema (load_acceptance_doc) ----------
+
+def _flow(flow_id="f1", name="flow one", step="s"):
+    return {"id": flow_id, "name": name, "actions": [
+        {"step": step, "how": "h", "expected": "e"},
+    ]}
+
+
+def test_load_acceptance_doc_requires_name():
+    raw = {"flows": [{"id": "f1", "actions": [{"step": "s", "how": "h", "expected": "e"}]}]}
+    with pytest.raises(ValueError, match="name is required"):
+        load_acceptance_doc(raw)
+
+
+def test_load_acceptance_doc_blank_name_rejected():
+    raw = {"flows": [_flow(name="   ")]}
+    with pytest.raises(ValueError, match="name is required"):
+        load_acceptance_doc(raw)
+
+
+def test_load_acceptance_doc_non_string_name_rejected():
+    raw = {"flows": [_flow(name=123)]}
+    with pytest.raises(ValueError, match="name is required"):
+        load_acceptance_doc(raw)
+
+
+def test_load_acceptance_doc_name_preserved_when_valid():
+    doc = load_acceptance_doc({"flows": [_flow(name="my flow")]})
+    assert doc.flows[0].name == "my flow"

@@ -69,17 +69,21 @@ def load_acceptance_doc(raw) -> AcceptanceDoc:
             raise ValueError(f"duplicate flow id: {flow_id}")
         seen_ids.add(flow_id)
 
+        name = f.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(f"flow {flow_id} name is required")
+
         actions_raw = f.get("actions")
         if not isinstance(actions_raw, list) or not actions_raw:
             raise ValueError(f"flow {flow_id} actions must be a non-empty list")
         flows.append(Flow(
             id=flow_id,
-            name=f.get("name", flow_id),
+            name=name,
             actions=[_load_action(a) for a in actions_raw],
         ))
     return AcceptanceDoc(flows=flows)
 
 
 def load_acceptance_doc_file(path: str) -> AcceptanceDoc:
-    with open(path) as fh:
+    with open(path, encoding="utf-8") as fh:
         return load_acceptance_doc(yaml.safe_load(fh))
