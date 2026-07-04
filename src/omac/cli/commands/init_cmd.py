@@ -181,6 +181,8 @@ def _build_config(engine: str, workspace: str, planner: str, orchestrator: str,
         "workspace": workspace,
         "roles": roles,
         "defaults": dict(config_mod.DEFAULTS),
+        "retry": dict(config_mod.DEFAULT_RETRY),
+        "acceptance": {"max_rounds": config_mod.DEFAULT_MAX_ROUNDS},
     }
 
 

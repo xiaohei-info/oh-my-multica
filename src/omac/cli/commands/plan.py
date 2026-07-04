@@ -1,7 +1,20 @@
 """omac plan — 计划制定 + DAG 拆解流水线(全程内置 review 阶段)。"""
 from __future__ import annotations
 
+from ...core import config as config_mod
 from ._stub import not_implemented
+
+
+def resolve_review_rounds(cfg: dict | None = None) -> int:
+    """plan 流水线评审修订轮次上界,与 dag run 节点评审共用 config.retry.review。
+
+    设计文档 §7.2:每个 LLM 环节的修订循环有界(评审轮次读 config.retry.review,缺省 ≤3),
+    耗尽则 exit 20 移交调用者。此处统一从 config.retry 读取,消除第二处硬编码。
+    """
+    cfg = cfg if cfg is not None else config_mod.load_config()
+    retry = config_mod.resolve_retry(cfg)
+    return int(retry["review"])
+
 
 NAME = "plan"
 SUMMARY = "计划制定 + DAG 拆解流水线(全程内置 review 阶段)"
