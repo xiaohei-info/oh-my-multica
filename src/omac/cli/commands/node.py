@@ -2,14 +2,13 @@
 from __future__ import annotations
 
 import os
-import sys
 from dataclasses import asdict
 from typing import Any
 
 from .. import exit_codes
-from ..output import JSON, add_output_flag, hint, print_json
+from ..output import add_output_flag, hint, print_json
 from ...core.config import ENV_ENGINE, ENV_WORKSPACE, load_config, resolve_engine_settings
-from ...core.manifest import Contract, load_manifest, save_manifest
+from ...core.manifest import load_manifest, save_manifest
 from ...core.graph import downstream_of
 from ...engines import EngineConfig, create_engine
 from ...engines.models import WorkItemStatus
@@ -160,8 +159,17 @@ def _validate_worker(manifest, node, new_worker: str, config: dict, engine) -> s
     roles_workers = config.get("roles", {}).get("workers") if isinstance(config.get("roles"), dict) else None
     pool = set(roles_workers) if isinstance(roles_workers, list) and roles_workers else set()
     if not pool and engine is not None:
+        # 用引擎解析后的有效 workspace_id(兼顾 config.yaml / env / 命令行),
+        # 避免仅 env 设 OMCA_WORKSPACE_ID 时传入空串导致 list_members 返回空池。
+        effective_ws = getattr(getattr(engine.store, "config", None), "workspace_id", None)
+        if not effective_ws:
+            effective_ws = config.get("workspace")
+        if not effective_ws:
+            raise ValidationError(
+                "无法确定 workspace 以校验 agent 池 —— 三种给法任选:config.yaml 的 workspace 字段 / "
+                "环境变量 OMAC_WORKSPACE_ID / 命令行 --workspace")
         try:
-            pool = set(engine.store.list_members(config.get("workspace", "")))
+            pool = set(engine.store.list_members(effective_ws))
         except Exception:
             pool = set()
 
