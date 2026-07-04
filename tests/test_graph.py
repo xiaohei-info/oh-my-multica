@@ -24,3 +24,14 @@ def test_downstream_of_transitive():
 def test_all_terminal():
     assert all_terminal(_issues(a=("done", []), b=("abandoned", [])))
     assert not all_terminal(_issues(a=("done", []), b=("in_review", [])))
+
+
+def test_ready_nodes_abandoned_satisfies_dep():
+    """abandoned 上游视同依赖已满足(§2.4 P1.4)。"""
+    issues = _issues(a=("abandoned", []), b=("todo", ["a"]))
+    assert ready_nodes(issues) == ["b"]
+
+
+def test_downstream_of_excludes_independent():
+    issues = _issues(a=("todo", []), b=("todo", ["a"]), c=("todo", []))
+    assert downstream_of(issues, {"a"}) == {"b"}

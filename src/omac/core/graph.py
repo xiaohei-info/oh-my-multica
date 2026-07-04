@@ -4,6 +4,8 @@
 """
 
 DONE = "done"
+# 依赖满足:done 或 abandoned(abandoned 上游视同依赖已满足,§2.4 P1.4)
+SATISFIED = {"done", "abandoned"}
 TERMINAL = {"done", "cancelled", "abandoned"}
 RUNNING = {"in_progress", "in_review"}  # 进行中节点的状态集合
 
@@ -18,7 +20,7 @@ def ready_nodes(issues: dict) -> list:
     for key, it in issues.items():
         if it["status"] != "todo":
             continue
-        if all(issues.get(b, {}).get("status") == DONE for b in it["blocked_by"]):
+        if all(issues.get(b, {}).get("status") in SATISFIED for b in it["blocked_by"]):
             out.append(key)
     return out
 
