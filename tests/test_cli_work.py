@@ -33,7 +33,9 @@ def _make_item(store, kind: TaskKind, phase: TaskPhase, dag_key: str = "a",
         kind=kind)
     store.update_work_item_metadata(item.id, phase=phase)
     if with_contract:
-        item.contract = {
+        # 走真实 dispatch 路径:set_node_contract 下发 contract(§7.4),
+        # 验证 work show 能读回完整上下文(回归 set_node_contract → work show 链路)。
+        store.set_node_contract(item.id, {
             "objective": "实现 X",
             "acceptance": ["A 工作", "B 工作"],
             "non_goals": ["不做 Y"],
@@ -41,8 +43,7 @@ def _make_item(store, kind: TaskKind, phase: TaskPhase, dag_key: str = "a",
             "integration_gates": [],
             "pr_base": "feature/v1",
             "coverage_gate": 90,
-        }
-        store.update_work_item_metadata(item.id, phase=phase)
+        })
     if with_deliverable:
         store.update_work_item_metadata(
             item.id, phase=phase, deliverable="# 计划正文")
@@ -175,6 +176,28 @@ def test_show_cli_table_output(tmp_path, monkeypatch, capsys):
         assert section in out
     assert "plan" in out
     assert "review" in out
+
+
+def test_set_node_contract_visible_in_show():
+    """回归:set_node_contract 下发的 contract 必须在 work show 中可见(真实 dispatch 路径)。
+
+    这是被派发 agent 第一入口的关键链路:dispatch 侧调用 set_node_contract 下发契约,
+    被派发 agent 调 work show 必须能读回完整 contract,否则拿到的是空上下文。
+    """
+    store = _store()
+    item = _make_item(store, TaskKind.DEVELOP, TaskPhase.AUTHORING,
+                      with_contract=True)
+    # 从 store 重新读取(模拟 agent 侧 get_work_item),确认 contract 已持久化
+    got = store.get_work_item(item.id)
+    assert got.contract is not None, (
+        "set_node_contract 后 WorkItem.contract 必须非空,否则 work show 拿不到上下文")
+    assert got.contract["objective"] == "实现 X"
+    # 走 build_show_output 验证上下文完整
+    out = build_show_output(got, f"worker:{got.worker}")
+    assert out["context"]["contract"] is not None
+    assert out["context"]["contract"]["acceptance"] == ["A 工作", "B 工作"]
+    assert out["context"]["contract"]["pr_base"] == "feature/v1"
+
 
 
 def test_show_unknown_issue_id(tmp_path, monkeypatch, capsys):

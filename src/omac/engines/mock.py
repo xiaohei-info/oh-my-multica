@@ -288,8 +288,15 @@ class MockStore(WorkItemStore):
         return item
 
     def set_node_contract(self, item_id: str, contract: Any):
-        """注册 contract,使自动完成能生成可过证据校验的 verification。"""
+        """注册 contract,使自动完成能生成可过证据校验的 verification。
+
+        同时同步到 WorkItem.contract,保证 work show 能读回完整上下文
+        (与 MulticaStore 读回语义一致)。
+        """
         _shared_contracts_by_item_id[item_id] = contract
+        item = _shared_work_items.get(item_id)
+        if item is not None:
+            item.contract = contract
 
     def list_work_items(
         self,
