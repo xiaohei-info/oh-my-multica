@@ -30,8 +30,7 @@ def test_unknown_command_teaches(capsys):
 
 
 def test_stub_commands_exit_generic(capsys):
-    assert main(["dag", "run", "m.yaml"]) == exit_codes.GENERIC
-    assert "P1" in capsys.readouterr().err
+    # dag run 已在 P1 实现(omac dag run),不再是 stub
     assert main(["plan", "create", "--name", "x"]) == exit_codes.GENERIC
     assert "P3" in capsys.readouterr().err
     assert main(["web"]) == exit_codes.GENERIC
