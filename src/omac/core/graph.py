@@ -9,13 +9,20 @@ SATISFIED = {"done", "abandoned"}
 TERMINAL = {"done", "cancelled", "abandoned"}
 RUNNING = {"in_progress", "in_review"}  # 进行中节点的状态集合
 
+# 依赖「已满足」的上游状态:done 正常满足,abandoned 视同满足(§7.5)
+SATISFIED = {DONE, "abandoned"}
+
 
 def is_done(issue) -> bool:
     return issue["status"] == DONE
 
 
 def ready_nodes(issues: dict) -> list:
-    """就绪节点:status==todo 且所有 blocked_by 节点已 done(连续推进,不分层)。"""
+    """就绪节点:status==todo 且所有 blocked_by 节点的依赖已满足。
+
+    依赖「已满足」= 上游 done 或 abandoned(§7.5:abandoned 上游视同依赖已满足,
+    下游可继续推进;报告中会对经过 abandoned 上游的节点加注记)。
+    """
     out = []
     for key, it in issues.items():
         if it["status"] != "todo":
