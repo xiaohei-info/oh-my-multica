@@ -28,3 +28,6 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+    "live: tests that hit a real platform (Multica/GitHub). Skipped by default in CI; run locally with `-m live`.",
+]
