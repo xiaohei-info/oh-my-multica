@@ -145,6 +145,35 @@ def test_retry_reassign_worker_validated_against_config(tmp_path, capsys, monkey
     assert m.nodes["b"].status == "todo"
 
 
+def test_retry_worker_validated_via_env_workspace(tmp_path, capsys, monkeypatch):
+    """env-only(无 config.yaml):--worker 仍应通过 engine.config.workspace_id
+    校验 agent 池,非法 worker 应 exit 5 且 manifest 不变。(reviewer blocker)
+    """
+    import json
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OMAC_ENGINE", "mock")
+    monkeypatch.setenv("OMAC_WORKSPACE_ID", "ws-1")
+    # 不写任何 config.yaml —— 模拟纯 env 使用路径
+
+    nodes = [{"id": "b", "worker": "bob", "status": "blocked"}]
+    path = _write_manifest(tmp_path, nodes)
+
+    code = main(["node", "retry", path, "b", "--worker", "ghost"])
+    assert code == exit_codes.VALIDATION
+    err = capsys.readouterr().err
+    # exit 5 的报错不要求精确措辞,但应拒绝改派
+    from omac.core.manifest import load_manifest
+    m = load_manifest(path)
+    assert m.nodes["b"].worker == "bob"            # manifest 未被改写
+    assert m.nodes["b"].status == "blocked"        # 未重置 todo
+
+    # 池内 worker(charlie 在 mock 默认池)→ 放行
+    assert main(["node", "retry", path, "b", "--worker", "charlie"]) == exit_codes.OK
+    capsys.readouterr()
+    m = load_manifest(path)
+    assert m.nodes["b"].worker == "charlie"
+
+
 def test_retry_hints_rerun(tmp_path, capsys, monkeypatch):
     monkeypatch.chdir(tmp_path)
     path = _write_manifest(tmp_path, _basic_nodes())
