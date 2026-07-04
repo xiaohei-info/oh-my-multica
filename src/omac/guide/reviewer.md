@@ -8,6 +8,28 @@ issue 时间线上。
    不信任何自述
 3. `omac work submit <issue-id> --verdict pass|pass-with-nits|reject --report-file r.yaml`
 
+## 何时用 / 不用
+
+**适用场景**:
+- issue 的 metadata / 派发载荷中有 `reviewer` 字段指向你(且 ≠ worker)
+- worker 已写入结构化证据(artifacts + verification),work item 进入 in_review
+- 需要独立验证与质量把关
+
+**不适用场景**:
+- 单人单模块的小改动(无需并行编排机制)
+- 探索性原型(契约还没稳定)
+- 临时热修复(绕过完整流程)
+
+**判断标准**:如果 issue 是通过 manifest → DAG 引擎创建的、且有 reviewer 字段,就用本协议。
+
+## 环境假设
+
+- **仓库路径**:由 issue metadata 或编排引擎指定
+- **集成分支**:由 contract / issue 指定(如 `feature/v1.0.0`),不是 `master`
+- **env_setup 可复跑**:按 worker 在 verification.env_setup 里声明的步骤搭环境
+- **平台 CLI**:已登录;评审对象(PR / issue / 证据)可经 `omac work show` 取到
+- **只读工具**:`git diff` / `git show` / `gh pr checkout` 可用
+
 ## 收活铁律
 
 **先看 `git diff` 真实改动,再跑测试,绝不只凭 worker 自述判断。**
@@ -55,6 +77,22 @@ diff-cover coverage.xml --compare-branch=<集成分支> --fail-under=<gate阈值
 按上方「收活铁律」代码块执行。
 
 ### 4. 质量审查(三层对照)
+
+issue body / 派发载荷有固定结构,这是(worker 和你的)共同"防跑偏锚点"。
+接手后先对照下表确认载荷完整,再进入三层对照:
+
+| 区块 | 含义 | 你要做什么 |
+|------|------|-----------|
+| 🎯 **目标** | 这张卡交付什么 | 确认意图 |
+| **定位表** | 唯一口径文档 + 裁决 | 打开并**全文读完**对应章节 |
+| 🚧 **范围边界(非目标)** | 明确"什么不归这张卡" | 检查 worker 是否越界 |
+| **必消费契约** | 该用的共享类型 | grep 确认只 import、未重定义 |
+| 📚 **参考锚点** | 契约源/假件/范例/规范 | 需要时查阅 |
+| **依赖** | blocked_by 指针 | 知晓上下文 |
+| 🚫 **红线** | 硬边界 | 审查重点 |
+| ✅ **验收** | 可验证的完成标准 | 逐条验证,产出 acceptance_mapping |
+| 🧪 **测试落点** | 测试写哪 | 确认覆盖主路径 + 失败路径 |
+| 🤖 **执行协议** | 过程规范 | 对照检查 |
 
 对照三份材料逐条核对:
 1. **Issue body 的唯一口径文档** —— 需求、设计是否对齐

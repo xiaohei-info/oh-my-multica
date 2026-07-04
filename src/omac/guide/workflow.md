@@ -110,4 +110,98 @@ Reviewer 侧对应铁律:只读共享态、不动主树。两边一起守,并发
 7. ❌ 不要在没有活跃 `omac dag run` 前台进程时声称"在监督/持续观察/等待完成"(假监督)
 8. ❌ 不要把监督寄望于后台进程或"未来某轮" —— turn 退出即任务结束
 
+
+## 派发 body 模板 (dispatch prompt)
+
+以下是派发给 worker / reviewer / architect 的权威文本(随任务送达,版本永远正确)。
+`src/omac/pipeline/dispatch.py`(P2.3 落地)注入时,内容与此处保持同源。
+
+### Worker 派发
+
+```
+🎯 你被派发为 worker 执行此任务
+
+**任务信息**:
+- Issue ID: <issue-id>
+- 任务标题: <title>
+- 集成分支: <integration-branch>
+
+**关键约束(必读)**:
+1. **只读共享态**:契约、入口、映射表位于 contract 的 required_contracts / source_of_truth,只 import,禁重定义
+2. **守红线**:见 issue body 🚫 红线部分
+3. **非目标边界**:见 issue body 🚧 范围边界部分
+4. **唯一口径文档**:见 issue body 定位表(全文读完对应章节)
+5. **PR base**:必须指向 contract.pr_base,不是 master
+
+**执行协议**:
+参照 `omac guide worker` 的完整执行清单(8 步)
+
+**完成标准**:
+- 测试全绿(全量测试套件,不只本模块)
+- 改动分支覆盖 ≥ coverage_gate(缺省 90%):`diff-cover` 退出码 0
+- 集成测试全绿:contract.integration_gates 每个 gate 都有 verification 证据,且锚定 source_of_truth / delivery_goal
+- PR 已产出并指向正确 base
+- 经 `omac work submit --pr-url --verification-file` 写入 artifacts + verification 并通过自校验
+- work item 标 done(指派 reviewer + 转 in_review 由引擎回收完成)
+
+**如遇阻塞**:
+在 issue 评论坦诚说明原因 + 卡点,回流给编排器,不要硬撑
+```
+
+### Reviewer 派发
+
+```
+🔍 你被派发为 reviewer 评审此任务
+
+**任务信息**:
+- Issue ID: <issue-id>
+- Worker: <worker-agent-name>
+- PR: <pr-url>(从 artifacts.pr_url 读取)
+
+**关键约束(必读)**:
+1. **收活铁律**:先 `git diff <base>...<head>` 看真实改动,再独立复跑测试,绝不只凭 worker 自述
+1a. **集成门铁律**:逐个复跑 verification.integration_gates 的 commands,核对 metrics/artifacts,按 source_of_truth / delivery_goal 判断是否覆盖真实交付目标
+2. **只读共享态**:审查时确认 worker 只 import 共享契约、未重定义
+3. **对照三份材料**:
+   - Issue body 的唯一口径文档
+   - Issue body 的约束与红线
+   - Git diff 的真实改动
+4. **独立复跑改动分支覆盖**:亲自跑 `diff-cover`,不信 worker 报的数字; < gate 阈值 = Blocker
+
+**评审重点**:
+- 需求对齐 / 设计对齐 / 边界处理 / 契约遵守 / 测试质量
+- 改动分支覆盖 ≥ gate 阈值(缺省 90%),未覆盖分支逐条列出
+
+**判决输出**:
+- `pass`: 无 blocker → done
+- `reject`: 有 blocker → 转回 worker,comment 详细问题
+- `pass-with-nits`: 可合并但有建议 → review_report.nits
+
+**执行协议**:
+参照 `omac guide reviewer` 的完整执行清单
+```
+
+### Architect 派发
+
+```
+🏗️ 你被派发为 architect 执行架构任务/评审
+
+**任务信息**:
+- Issue ID: <issue-id>
+- 任务类型: <架构设计 | 架构评审>
+
+**架构设计任务(作为 worker)**:
+- 产出:共享契约代码 + 架构决策记录 + 模块依赖图
+- 关注:模块边界、数据流向、依赖方向、跨模块契约
+- 验收:契约可 import + 不变量测试已写 + 决策已文档化
+
+**架构评审任务(作为 reviewer)**:
+- 评审范围:模块边界清晰度、契约遵守、依赖方向、设计模式一致性、架构漂移
+- 不关注:实现细节、变量命名、算法优化
+- 判决:必修项(架构问题)vs 建议项(优化方向)
+
+**执行协议**:
+参照 `omac guide roles` 的 Architect 执行清单
+```
+
 完整设计:docs/omac-cli-design.md

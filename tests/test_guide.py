@@ -101,3 +101,63 @@ def test_roles_topic_has_all_roles() -> None:
     content = load_topic("roles")
     for role in ["planner", "orchestrator", "reviewer", "worker", "acceptor"]:
         assert role in content, f"roles missing role: {role}"
+
+
+# --- P3.2 迁移补齐的额外守卫(reader blocker fix) ---
+
+
+def test_worker_has_when_to_use() -> None:
+    """何时用 / 不用 必须出现在 worker 协议中。"""
+    content = load_topic("worker")
+    for item in ["何时用", "不适用", "适用场景", "判断标准"]:
+        assert item in content, f"worker missing when-to-use section: {item}"
+
+
+def test_reviewer_has_when_to_use() -> None:
+    content = load_topic("reviewer")
+    for item in ["何时用", "不适用", "适用场景"]:
+        assert item in content, f"reviewer missing when-to-use section: {item}"
+
+
+def test_worker_has_issue_body_识别表() -> None:
+    """issue body / 派发载荷完整结构表必须出现在 worker 协议中。"""
+    content = load_topic("worker")
+    for item in ["定位表", "必消费契约", "红线", "验收", "测试落点", "执行协议"]:
+        assert item in content, f"worker missing issue body field: {item}"
+
+
+def test_reviewer_has_issue_body_识别表() -> None:
+    content = load_topic("reviewer")
+    for item in ["定位表", "必消费契约", "红线", "验收", "测试落点", "唯一口径"]:
+        assert item in content, f"reviewer missing issue body field: {item}"
+
+
+def test_worker_has_env_assumptions() -> None:
+    content = load_topic("worker")
+    for item in ["环境假设", "集成分支", "Python", "Git"]:
+        assert item in content, f"worker missing env assumption: {item}"
+
+
+def test_reviewer_has_env_assumptions() -> None:
+    content = load_topic("reviewer")
+    for item in ["环境假设", "集成分支", "env_setup", "只读"]:
+        assert item in content, f"reviewer missing env assumption: {item}"
+
+
+def test_workflow_has_dispatch_template() -> None:
+    """dispatch body 模板必须出现在 workflow guide 中(P2.3 同源锚点)。"""
+    content = load_topic("workflow")
+    for item in ["派发 body 模板", "dispatch", "Worker 派发", "Reviewer 派发", "Architect 派发"]:
+        assert item in content, f"workflow missing dispatch template: {item}"
+
+
+def test_dispatch_template_uses_omac_commands() -> None:
+    """dispatch 模板必须使用 omac 命令口径(不能残留 agent_cli)。"""
+    content = load_topic("workflow")
+    dispatch_area = content[content.index("派发 body 模板"):]
+    assert "agent_cli" not in dispatch_area, "dispatch template still references agent_cli(wrong tool)"
+    assert "omac work submit" in dispatch_area, "dispatch template missing omac work submit"
+
+
+def test_dispatch_no_skill_residue() -> None:
+    _assert_no_residue(load_topic("workflow"), "guide/workflow.md")
