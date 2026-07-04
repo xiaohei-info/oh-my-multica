@@ -101,6 +101,7 @@ class WorkItemStore(ABC):
         review_bounce: Optional[int] = None,
         merge_bounce: Optional[int] = None,
         deliverable: Optional[str] = None,
+        description: Optional[str] = None,
     ) -> WorkItem:
         """更新业务元数据(不改 status)。None 的字段不更新;写后读一致。
 
@@ -109,6 +110,7 @@ class WorkItemStore(ABC):
         - ci_bounce/review_bounce/merge_bounce:三类回退的绝对值
           (pipeline 读当前值、+1、写回;Store 只存取不做状态机);
         - deliverable:按 kind 承载 plan/acceptance/manifest 等交付正文。
+        - description:回填 issue 正文(派发模板在三段 bootstrap 中嵌入真实 id)。
         """
 
     @abstractmethod

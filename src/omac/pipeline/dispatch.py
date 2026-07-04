@@ -645,3 +645,174 @@ def submit(
         return SubmitResult(kind, TaskPhase.REVIEW, "manifest", WorkItemStatus.IN_REVIEW)
 
     raise ValidationError(f"未支持的交付组合: {kind.value} × {phase.value}")
+
+
+# ==================== 派发 issue body 三段式模板(§7.4) ====================
+
+
+# 任务类型 → 角色 / 角色说明文本(同源 guide;模板只引用 guide 不复制其内容)
+KIND_ROLE = {
+    TaskKind.PLAN: "planner",
+    TaskKind.ACCEPTANCE: "planner",
+    TaskKind.DECOMPOSE: "orchestrator",
+    TaskKind.DEVELOP: "worker",
+    TaskKind.FINAL_ACCEPTANCE: "acceptor",
+}
+
+KIND_GUIDE = {
+    # 各 issue 类型指向对应的 guide topic;模板与 guide 同源、不重复
+    TaskKind.PLAN: "workflow",
+    TaskKind.ACCEPTANCE: "workflow",
+    TaskKind.DECOMPOSE: "manifest",
+    TaskKind.DEVELOP: "worker",
+    TaskKind.FINAL_ACCEPTANCE: "workflow",
+}
+
+KIND_LABEL = {
+    TaskKind.PLAN: "plan",
+    TaskKind.ACCEPTANCE: "acceptance",
+    TaskKind.DECOMPOSE: "decompose",
+    TaskKind.DEVELOP: "develop",
+    TaskKind.FINAL_ACCEPTANCE: "final-acceptance",
+}
+
+
+def _contract_summary(contract, key, fallback):
+    """从 contract 取字段摘要,缺失 gives 占位(人可读)。"""
+    if contract is None:
+        return fallback
+    value = getattr(contract, key, None)
+    if isinstance(value, list):
+        return value if value else fallback
+    return value if value not in (None, "") else fallback
+
+
+def render_issue_body(node, contract, kind, issue_id):
+    """三段式派发模板(设计文档 §7.4)。
+
+    第一段 bootstrap:两条命令(work show / work submit 精确模板) +
+    omac guide <topic> 指引 + 必须经 omac 交互;第二段简报(title/objective/
+    source_of_truth/acceptance 摘要);第三段硬约束(non_goals/pr_base/reviewer 独立
+    复跑等铁律)。模板文本与 guide 同源,不复制。
+    """
+    role = KIND_ROLE.get(kind, "worker")
+    label = KIND_LABEL.get(kind, kind.value)
+    guide_topic = KIND_GUIDE.get(kind, "workflow")
+
+    # ---- 第一段:bootstrap ----
+    title = getattr(node, "title", None) or getattr(node, "id", issue_id)
+    base_cmd = f"omac work show {issue_id}"
+    submit_cmd = submit_template_for(kind, TaskPhase.AUTHORING, issue_id)
+    bootstrap = (
+        f"你被分配了一件 {label} 任务(必须经 omac 交互):\n"
+        f"  1. {base_cmd}  —— 获取完整任务上下文与执行协议（你的 contract 全量）\n"
+        f"  2. {submit_cmd}  —— 完成后交付（show 输出里有本角色精确交付参数）\n"
+        f"遇到不明确的地方:运行 omac guide {guide_topic} 查阅「{role}」角色说明与执行清单。"
+    )
+
+    # ---- 第二段:任务简报(人可读) ----
+    objective = _contract_summary(contract, "objective", "见 contract.objective")
+    source_of_truth = _contract_summary(
+        contract, "source_of_truth", "见 contract.source_of_truth")
+    acceptance = _contract_summary(contract, "acceptance", "见 contract.acceptance")
+
+    def _lines(value):
+        if isinstance(value, list):
+            if not value:
+                return "（未声明）"
+            return "\n".join(f"- {v}" for v in value)
+        return str(value)
+
+    briefing = (
+        "## 简报\n"
+        f"- title: {title}\n"
+        f"- objective: {_lines(objective)}\n"
+        f"- source_of_truth: {_lines(source_of_truth)}\n"
+        f"- acceptance: {_lines(acceptance)}"
+    )
+
+    # ---- 第三段:硬约束(铁律) ----
+    non_goals = _contract_summary(contract, "non_goals", None)
+    pr_base = _contract_summary(contract, "pr_base", None)
+    reviewer = getattr(node, "reviewer", None)
+
+    rules = []
+    rules.append("契约先行:只消费同源 contract,不平行重定义（TDD 同步）")
+    if non_goals:
+        rules.append(
+            "non_goals 是红线,越界即 reject:\n"
+            + "\n".join(f"  - {g}" for g in non_goals))
+    rules.append("完成必须有结构化证据（verification/report）,不接受自述")
+    if pr_base:
+        rules.append(f"PR base 必须指向集成分支（pr_base={pr_base}）,不合主干")
+    if reviewer:
+        rules.append(
+            f"reviewer（{reviewer}）独立复跑验证命令与集成测试,"
+            "按 env_setup 重建环境、不信任何自述")
+    if contract is not None and getattr(contract, "coverage_gate", None) not in (None,):
+        rules.append(
+            f"改动分支覆盖 ≥ coverage_gate={contract.coverage_gate}")
+    rules.append("平台状态由 loop 推进,不手动改 issue 状态/assignee")
+    hard = "## 硬约束（铁律）\n" + "\n".join(f"- {r}" for r in rules)
+
+    return "\n\n".join([bootstrap, briefing, hard])
+
+
+def render_review_rollout_comment(node, contract, verdict, report=None,
+                             item_id=None):
+    """review 转派评论模板(设计文档 §7.4 阶段交接)。
+
+    包含:阶段变更说明 + 评审对象定位。三种语境:
+      - verdict=None:worker 交付完毕,转派 reviewer 接手(进入 review);
+      - pass / pass-with-nits:reviewer 给出通过结论(含 nits);
+      - reject:转回 worker 返工,附 review_goals + blockers + nits,
+        让开发者朝目标修。
+    report 缺省视为空结构;item_id 用于定位评审对象(缺省用节点 id)。
+    """
+    report = report or {}
+    reviewer = getattr(node, "reviewer", "reviewer")
+    location = item_id if item_id is not None else getattr(node, "id", "issue")
+
+    def _bul(label, items):
+        if not items:
+            return ""
+        return label + "\n" + "\n".join(f"  - {x}" for x in items)
+
+    if verdict is None:
+        heading = "阶段变更:worker 交付完毕,转派 reviewer 进入 review"
+        body = (
+            f"评审对象(本 issue={location}):交付物 / contract / worker env_setup "
+            f"(reviewer={reviewer})。\n"
+            f"请 reviewer 独立复跑(env_setup + verification_commands)后 "
+            f"omac work submit {location} --verdict ... --report-file ..."
+        )
+        return f"## {heading}\n{body}"
+
+    if verdict in ("pass", "pass-with-nits"):
+        heading = f"verdict={verdict}: reviewer 评审通过"
+        body_lines = [f"评审对象(issue={location})交付通过(reviewer={reviewer})。"]
+        if verdict == "pass-with-nits":
+            n = _bul("nits(建议项,不阻塞):", report.get("nits") or [])
+            if n:
+                body_lines.append(n)
+        body_lines.append("由 loop 推进下一步(节点完成 / 后续节点解锁)。")
+        return "## {}\n{}".format(heading, "\n".join(body_lines))
+
+    # reject → 回转 worker
+    heading = "verdict=reject: 转回 worker 返工(朝评审目标修,不只是列出的问题)"
+    goals = report.get("review_goals") or ["独立复跑验证 + 验收映射 + 契约遵守"]
+    blockers = report.get("blockers") or []
+    nits = report.get("nits") or []
+    body_lines = [
+        f"评审对象(issue={location})未通过(reviewer={reviewer}),回转 worker 返工。"
+    ]
+    body_lines.append(_bul("评审目标(review_goals):", goals))
+    if blockers:
+        body_lines.append(_bul("阻塞项(blockers):", blockers))
+    if nits:
+        body_lines.append(_bul("建议项(nits):", nits))
+    body_lines.append(
+        f"请按评审目标修完后重新 "
+        f"omac work submit {location} --pr-url ... --verification-file ..."
+    )
+    return "## {}\n{}".format(heading, "\n".join(body_lines))
