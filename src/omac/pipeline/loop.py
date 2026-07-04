@@ -63,6 +63,10 @@ def reconcile(store: WorkItemStore, manifest: Manifest, manifest_path: str) -> b
 
     - work_item_id 指向的 item 平台不存在 → 清空 work_item_id,标 todo 走新建
     - 平台状态与 manifest 不一致 → 以平台为准写回 manifest
+
+    运行中节点(in_progress/in_review)的终态回收由 collect_results 统一处理
+    (证据门 + 阶段交接),reconcile 不同步其状态,避免把平台 DONE 直接写成
+    manifest done 而短路证据门和 reviewer 交接。
     """
     changed = False
     for key, node in manifest.nodes.items():
@@ -75,6 +79,10 @@ def reconcile(store: WorkItemStore, manifest: Manifest, manifest_path: str) -> b
             if node.status not in TERMINAL_STATUSES:
                 set_node(manifest, key, work_item_id=None, status="todo")
                 changed = True
+            continue
+
+        # 运行中节点的终态回收归 collect_results(证据门 + 阶段交接)
+        if node.status in RUNNING_STATUSES:
             continue
 
         platform_status = item.status.value if hasattr(item.status, "value") else str(item.status)

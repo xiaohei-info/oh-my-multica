@@ -367,14 +367,15 @@ class TestNoAutoRetry:
 # ==================== 6. reconcile ====================
 
 class TestReconcile:
-    def test_reconcile_syncs_platform_status(self):
-        """reconcile:平台状态与 manifest 不一致时,以平台为准。"""
+    def test_reconcile_skips_running_nodes(self):
+        """reconcile:运行中节点(in_progress)不归 reconcile 同步,
+        由 collect_results 过证据门——平台 DONE 但缺 pr_url 应被拦住。"""
         nodes = [_node("a")]
         manifest = _manifest(nodes)
         path = _tmp_manifest_path(manifest)
-        eng = _engine()
+        eng = _engine(MOCK_AUTO_COMPLETE="false")
 
-        # 手动建 work item + 标 done(模拟平台已有结果)
+        # 平台 DONE 但缺 pr_url(不合规提交)
         item = eng.store.create_work_item(
             "ws", "a", "d", dag_key="a", worker="alice")
         eng.store.update_status(item.id, __import__("omac").engines.models.WorkItemStatus.DONE)
@@ -383,7 +384,28 @@ class TestReconcile:
         save_manifest(manifest, path)
 
         r = tick(eng.store, eng.runtime, manifest, path)
-        # reconcile 把 in_progress → done,然后 collect_results 跳过(done 非 running)
+        # reconcile 不再把 in_progress → done;collect_results 过证据门 → blocked
+        assert "a" in r.failed
+        assert r.state == "needs_decision"
+        assert "pr_url" in r.report["evidence_summary"]["a"]
+
+    def test_reconcile_syncs_non_running_platform_status(self):
+        """reconcile:非运行态节点的平台状态仍正常同步(如 todo 节点被外部标 done)。"""
+        nodes = [_node("a")]
+        manifest = _manifest(nodes)
+        path = _tmp_manifest_path(manifest)
+        eng = _engine()
+
+        # 手动建 work item + 标 done,manifest 保持 todo(非运行态)
+        item = eng.store.create_work_item(
+            "ws", "a", "d", dag_key="a", worker="alice")
+        eng.store.update_status(item.id, __import__("omac").engines.models.WorkItemStatus.DONE)
+        manifest.nodes["a"].work_item_id = item.id
+        manifest.nodes["a"].status = "todo"
+        save_manifest(manifest, path)
+
+        r = tick(eng.store, eng.runtime, manifest, path)
+        # reconcile 把 todo → done(非运行态,直接同步)
         assert "a" in r.done
         assert r.state == "converged"
 
@@ -428,3 +450,164 @@ class TestContractEvidence:
         result = _loop_to_settle(eng.store, eng.runtime, manifest, path)
         assert result.state == "converged"
         assert "a" in result.done
+
+
+# ==================== 8. 证据门回归测试(reviewer 要求) ====================
+
+class TestEvidenceGateRegression:
+    """验证证据门不被 reconcile 短路——collect_results 真正执行证据校验。
+
+    使用 MOCK_AUTO_COMPLETE=false + 手动构造平台终态,绕过 mock 自动完成。
+    """
+
+    def _manual_done_item(self, eng, key, worker="alice", reviewer=None,
+                          artifacts=None, verification=None, contract=None):
+        """手动建 work item 并标 DONE(不触发 mock 自动完成)。"""
+        item = eng.store.create_work_item(
+            "ws", key, f"Task {key}", dag_key=key, worker=worker, reviewer=reviewer)
+        if contract is not None:
+            eng.store.set_node_contract(item.id, contract)
+        if artifacts is not None:
+            eng.store.update_work_item_metadata(item.id, artifacts=artifacts)
+        if verification is not None:
+            eng.store.update_work_item_metadata(item.id, verification=verification)
+        eng.store.update_status(item.id, __import__("omac").engines.models.WorkItemStatus.DONE)
+        return item
+
+    def test_invalid_worker_evidence_blocks_node(self):
+        """worker DONE 但缺 pr_url → 证据门不过 → blocked + 回贴。"""
+        contract = _contract()
+        nodes = [_node("a", contract=contract)]
+        manifest = _manifest(nodes)
+        path = _tmp_manifest_path(manifest)
+        eng = _engine(MOCK_AUTO_COMPLETE="false")
+
+        # 手动构造:worker 提交但缺 pr_url 和 verification
+        item = self._manual_done_item(eng, "a", contract=contract,
+                                      artifacts={}, verification=None)
+
+        manifest.nodes["a"].work_item_id = item.id
+        manifest.nodes["a"].status = "in_progress"
+        save_manifest(manifest, path)
+
+        result = tick(eng.store, eng.runtime, manifest, path)
+
+        assert result.state == "needs_decision"
+        assert "a" in result.failed
+        assert "pr_url" in result.report["evidence_summary"]["a"]
+        # 失败原因经 add_comment 回贴
+        assert any("证据门" in c for c in eng.store.get_comments(item.id))
+
+    def test_invalid_worker_evidence_coverage_gate(self):
+        """worker DONE + pr_url 但 coverage 不达标 → 证据门不过 → blocked。"""
+        contract = _contract()
+        nodes = [_node("a", contract=contract)]
+        manifest = _manifest(nodes)
+        path = _tmp_manifest_path(manifest)
+        eng = _engine(MOCK_AUTO_COMPLETE="false")
+
+        item = self._manual_done_item(
+            eng, "a", contract=contract,
+            artifacts={"pr_url": "https://x/pr/1"},
+            verification={
+                "commands": [{"cmd": "pytest -q", "exit_code": 0}],
+                "integration_gates": [{
+                    "name": "gate-1",
+                    "commands": [{"cmd": "pytest tests/int", "exit_code": 0}],
+                    "metrics": {"route_coverage": 100},
+                    "artifacts": ["coverage.xml"],
+                    "source_of_truth": ["docs/d.md"],
+                    "delivery_goal": "delivers",
+                }],
+                "pr_base": "feature/v1",
+                "coverage": 50,  # 低于 gate 90
+            },
+        )
+
+        manifest.nodes["a"].work_item_id = item.id
+        manifest.nodes["a"].status = "in_progress"
+        save_manifest(manifest, path)
+
+        result = tick(eng.store, eng.runtime, manifest, path)
+
+        assert result.state == "needs_decision"
+        assert "a" in result.failed
+        assert "coverage" in result.report["evidence_summary"]["a"].lower() or \
+               "below gate" in result.report["evidence_summary"]["a"]
+
+    def test_valid_evidence_with_reviewer_enters_in_review(self):
+        """worker DONE + 合规证据 + reviewer → in_review + assign reviewer + wake。"""
+        contract = _contract()
+        nodes = [_node("a", reviewer="bob", contract=contract)]
+        manifest = _manifest(nodes)
+        path = _tmp_manifest_path(manifest)
+        eng = _engine(MOCK_AUTO_COMPLETE="false")
+
+        item = self._manual_done_item(
+            eng, "a", reviewer="bob", contract=contract,
+            artifacts={"pr_url": "https://x/pr/1"},
+            verification={
+                "commands": [{"cmd": "pytest -q", "exit_code": 0}],
+                "integration_gates": [{
+                    "name": "gate-1",
+                    "commands": [{"cmd": "pytest tests/int", "exit_code": 0}],
+                    "metrics": {"route_coverage": 100},
+                    "artifacts": ["coverage.xml"],
+                    "source_of_truth": ["docs/d.md"],
+                    "delivery_goal": "delivers",
+                }],
+                "pr_base": "feature/v1",
+                "coverage": 95,
+            },
+        )
+
+        manifest.nodes["a"].work_item_id = item.id
+        manifest.nodes["a"].status = "in_progress"
+        save_manifest(manifest, path)
+
+        result = tick(eng.store, eng.runtime, manifest, path)
+
+        # 证据门过 → 转 in_review(有 reviewer)
+        assert manifest.nodes["a"].status == "in_review"
+        assert "a" in result.running  # in_review 属于 running
+        # reviewer 已分配
+        got = eng.store.get_work_item(item.id)
+        assert got.reviewer == "bob"
+        # assign_log 含 reviewer 分配
+        assert any(role == "reviewer" for _, _, role, _ in eng.store.assign_log)
+
+    def test_valid_evidence_without_reviewer_direct_done(self):
+        """worker DONE + 合规证据 + 无 reviewer → 直接 done。"""
+        contract = _contract()
+        nodes = [_node("a", reviewer=None, contract=contract)]
+        manifest = _manifest(nodes)
+        path = _tmp_manifest_path(manifest)
+        eng = _engine(MOCK_AUTO_COMPLETE="false")
+
+        item = self._manual_done_item(
+            eng, "a", contract=contract,
+            artifacts={"pr_url": "https://x/pr/1"},
+            verification={
+                "commands": [{"cmd": "pytest -q", "exit_code": 0}],
+                "integration_gates": [{
+                    "name": "gate-1",
+                    "commands": [{"cmd": "pytest tests/int", "exit_code": 0}],
+                    "metrics": {"route_coverage": 100},
+                    "artifacts": ["coverage.xml"],
+                    "source_of_truth": ["docs/d.md"],
+                    "delivery_goal": "delivers",
+                }],
+                "pr_base": "feature/v1",
+                "coverage": 95,
+            },
+        )
+
+        manifest.nodes["a"].work_item_id = item.id
+        manifest.nodes["a"].status = "in_progress"
+        save_manifest(manifest, path)
+
+        result = tick(eng.store, eng.runtime, manifest, path)
+
+        assert result.state == "converged"
+        assert "a" in result.done
+        assert manifest.nodes["a"].status == "done"
