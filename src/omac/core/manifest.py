@@ -94,6 +94,8 @@ class Node:
     contract: Contract | None = None
     work_item_id: str | None = None   # 平台返回的 work item id（Phase 2 回填）
     status: str = "todo"           # manifest 携带的节点状态
+    ci_bounce: int = 0            # CI 失败回退次数(有界,设计文档 §7.3)
+    review_bounce: int = 0        # 评审 reject 回退次数(有界,设计文档 §7.3)
 
     def __post_init__(self):
         if isinstance(self.contract, dict):
@@ -125,6 +127,8 @@ def load_manifest(path: str) -> Manifest:
             contract=_load_contract(n.get("contract")),
             work_item_id=n.get("work_item_id"),
             status=n.get("status", "todo"),
+            ci_bounce=int(n.get("ci_bounce", 0) or 0),
+            review_bounce=int(n.get("review_bounce", 0) or 0),
         )
     return Manifest(meta=raw.get("meta", {}), nodes=nodes)
 
@@ -143,6 +147,10 @@ def save_manifest(manifest: Manifest, path: str):
             "work_item_id": n.work_item_id,
             "status": n.status,
         }
+        if n.ci_bounce:
+            node["ci_bounce"] = n.ci_bounce
+        if n.review_bounce:
+            node["review_bounce"] = n.review_bounce
         if n.title is not None:
             node["title"] = n.title
         if n.description is not None:

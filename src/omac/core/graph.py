@@ -7,7 +7,7 @@ DONE = "done"
 # 依赖「已满足」的上游状态:done 正常满足,abandoned 视同满足(§2.4 P1.4 / §7.5)
 SATISFIED = {DONE, "abandoned"}
 TERMINAL = {"done", "cancelled", "abandoned"}
-RUNNING = {"in_progress", "in_review"}  # 进行中节点的状态集合
+RUNNING = {"in_progress", "ci_check", "in_review", "merging"}  # 进行中节点的状态集合(manifest 侧细分态 ci_check/merging 仍属进行中)
 
 
 def is_done(issue) -> bool:
