@@ -1,6 +1,7 @@
 """Mock 引擎 — 内存模拟,撑起全部测试与 CI(现有资产平移,按双接口重组)。
 
-特性:数据全在内存;assign 后按延迟自动模拟完成/失败/评审通过,
+特性:数据全在内存(模块级共享,CLI 与测试共用同一份);
+assign 后按延迟自动模拟完成/失败/评审通过,
 并按注册的 contract 生成能通过证据校验的 verification / review_report。
 """
 from __future__ import annotations
@@ -14,63 +15,94 @@ from .runtime import AgentRuntime
 from .store import WorkItemStore
 
 
+# 模块级共享状态:所有 MockStore 实例共用,CLI 与测试读写同一份
+_shared_workspaces: Dict[str, WorkspaceInfo] = {}
+_shared_members: Dict[str, List[str]] = {}
+_shared_work_items: Dict[str, WorkItem] = {}
+_shared_comments: Dict[str, List[str]] = {}
+_shared_next_id: int = 1
+_shared_contracts_by_item_id: Dict[str, Any] = {}
+_shared_assigned_items: Dict[str, float] = {}
+_shared_fail_keys: set = set()
+_shared_assign_log: list = []
+# 默认行为(可在实例创建时覆盖)
+_shared_auto_complete_enabled: bool = True
+_shared_auto_complete_delay: int = 2
+
+
+def _init_default_workspace():
+    global _shared_workspaces, _shared_members
+    _shared_workspaces = {
+        "mock-workspace": WorkspaceInfo(
+            id="mock-workspace", name="Mock Workspace",
+            description="测试用工作空间", member_count=3),
+        "mock-team-b": WorkspaceInfo(
+            id="mock-team-b", name="Mock Team B",
+            description="副工作空间", member_count=2),
+    }
+    _shared_members = {
+        "mock-workspace": ["alice", "bob", "charlie"],
+        "mock-team-b": ["alice", "bob"],
+    }
+
+
 class MockStore(WorkItemStore):
-    """数据面的内存实现 + 任务执行模拟(自动完成)。"""
+    """数据面的内存实现 + 任务执行模拟(自动完成)。
+
+    模块级共享状态:同一进程内所有实例共用,CLI 与测试读写同一份。
+    """
 
     def __init__(self, config: EngineConfig):
         super().__init__(config)
-        self._workspaces: Dict[str, WorkspaceInfo] = {}
-        self._members: Dict[str, List[str]] = {}
-        self._work_items: Dict[str, WorkItem] = {}
-        self._comments: Dict[str, List[str]] = {}
-        self._next_id = 1
-
-        self._auto_complete_enabled = str(
+        _init_default_workspace()
+        # 实例创建时刷新全局行为设置(以最后一次创建为准)
+        global _shared_auto_complete_enabled, _shared_auto_complete_delay
+        _shared_auto_complete_enabled = str(
             config.extra.get("MOCK_AUTO_COMPLETE", "true")).lower() == "true"
-        self._auto_complete_delay = int(config.extra.get("MOCK_AUTO_COMPLETE_DELAY", "2"))
-        self._assigned_items: Dict[str, float] = {}
+        _shared_auto_complete_delay = int(
+            config.extra.get("MOCK_AUTO_COMPLETE_DELAY", "2"))
 
-        # 失败注入:dag_key 集合中的节点模拟失败(测试用)
-        self._fail_keys: set = set()
-        self._contracts_by_item_id: Dict[str, Any] = {}
+    # ==================== 测试辅助(类级) ====================
 
-        # 派发日志:(item_id, dag_key, role, timestamp),测试验证并发派发
-        self.assign_log: list = []
+    @classmethod
+    def reset(cls):
+        """清空全部共享状态(测试隔离用)。"""
+        global _shared_workspaces, _shared_members, _shared_work_items
+        global _shared_comments, _shared_next_id, _shared_contracts_by_item_id
+        global _shared_assigned_items, _shared_fail_keys, _shared_assign_log
+        global _shared_auto_complete_enabled, _shared_auto_complete_delay
+        _shared_workspaces = {}
+        _shared_members = {}
+        _shared_work_items = {}
+        _shared_comments = {}
+        _shared_next_id = 1
+        _shared_contracts_by_item_id = {}
+        _shared_assigned_items = {}
+        _shared_fail_keys = set()
+        _shared_assign_log = []
+        _shared_auto_complete_enabled = True
+        _shared_auto_complete_delay = 2
+        _init_default_workspace()
 
-        self._init_default_workspace()
-
-    def _init_default_workspace(self):
-        # 固定发现集(独立于 config.workspace_id),便于 init/体检测试断言
-        self._workspaces = {
-            "mock-workspace": WorkspaceInfo(
-                id="mock-workspace", name="Mock Workspace",
-                description="测试用工作空间", member_count=3),
-            "mock-team-b": WorkspaceInfo(
-                id="mock-team-b", name="Mock Team B",
-                description="副工作空间", member_count=2),
-        }
-        self._members = {
-            "mock-workspace": ["alice", "bob", "charlie"],
-            "mock-team-b": ["alice", "bob"],
-        }
+    @classmethod
+    def set_fail_keys(cls, keys: set):
+        """设置应模拟失败的 dag_key 集合(测试用)。"""
+        global _shared_fail_keys
+        _shared_fail_keys = set(keys)
 
     # ==================== 模拟执行 ====================
 
-    def set_fail_keys(self, keys: set):
-        """设置应模拟失败的 dag_key 集合(测试用)。"""
-        self._fail_keys = set(keys)
-
     def _auto_complete_check(self, item_id: str):
-        if not self._auto_complete_enabled or item_id not in self._assigned_items:
+        if not _shared_auto_complete_enabled or item_id not in _shared_assigned_items:
             return
-        item = self._work_items.get(item_id)
+        item = _shared_work_items.get(item_id)
         if not item:
             return
-        if time.time() - self._assigned_items[item_id] < self._auto_complete_delay:
+        if time.time() - _shared_assigned_items[item_id] < _shared_auto_complete_delay:
             return
 
         if item.status == WorkItemStatus.IN_PROGRESS:
-            if item.dag_key in self._fail_keys:
+            if item.dag_key in _shared_fail_keys:
                 item.status = WorkItemStatus.FAILED
             else:
                 item.status = WorkItemStatus.DONE
@@ -78,7 +110,7 @@ class MockStore(WorkItemStore):
                 verification = self._mock_verification(item_id)
                 if verification is not None:
                     item.verification = verification
-            del self._assigned_items[item_id]
+            del _shared_assigned_items[item_id]
         elif item.status == WorkItemStatus.IN_REVIEW:
             item.review_verdict = "pass"
             item.review_comment = "Mock: LGTM"
@@ -90,10 +122,10 @@ class MockStore(WorkItemStore):
                 "blockers": [],
                 "nits": [],
             }
-            del self._assigned_items[item_id]
+            del _shared_assigned_items[item_id]
 
     def _mock_verification(self, item_id: str) -> Optional[Dict[str, Any]]:
-        contract = self._contracts_by_item_id.get(item_id)
+        contract = _shared_contracts_by_item_id.get(item_id)
         if contract is None:
             return None
         return {
@@ -105,7 +137,8 @@ class MockStore(WorkItemStore):
                 {
                     "name": gate.get("name"),
                     "commands": [
-                        {"cmd": cmd, "exit_code": 0, "summary": "Mock: integration passed"}
+                        {"cmd": cmd, "exit_code": 0,
+                         "summary": "Mock: integration passed"}
                         for cmd in gate.get("commands", [])
                     ],
                     "metrics": dict(gate.get("required_metrics", {})),
@@ -125,7 +158,7 @@ class MockStore(WorkItemStore):
         }
 
     def _mock_review_report(self, item_id: str) -> Optional[Dict[str, Any]]:
-        contract = self._contracts_by_item_id.get(item_id)
+        contract = _shared_contracts_by_item_id.get(item_id)
         if contract is None:
             return None
         return {
@@ -141,7 +174,8 @@ class MockStore(WorkItemStore):
                     "delivery_goal": gate.get("delivery_goal"),
                     "evidence": f"Mock auto-review integration gate: {gate.get('name')}",
                     "commands": [
-                        {"cmd": cmd, "exit_code": 0, "summary": "Mock: integration rerun passed"}
+                        {"cmd": cmd, "exit_code": 0,
+                         "summary": "Mock: integration rerun passed"}
                         for cmd in gate.get("commands", [])
                     ],
                     "metrics": dict(gate.get("required_metrics", {})),
@@ -163,13 +197,13 @@ class MockStore(WorkItemStore):
     # ==================== 成员池 ====================
 
     def list_members(self, workspace_id: str) -> List[str]:
-        return self._members.get(workspace_id, ["alice", "bob", "charlie"])
+        return _shared_members.get(workspace_id, ["alice", "bob", "charlie"])
 
     # ==================== 工作空间发现 ====================
 
     def list_workspaces(self) -> List[WorkspaceInfo]:
         """mock 固定值:返回已注册的工作空间(默认含配置 workspace_id 那一个)。"""
-        return list(self._workspaces.values())
+        return list(_shared_workspaces.values())
 
     # ==================== 工作单元 CRUD ====================
 
@@ -186,8 +220,9 @@ class MockStore(WorkItemStore):
         initial_status: WorkItemStatus = WorkItemStatus.TODO,
         kind: TaskKind = TaskKind.DEVELOP,
     ) -> WorkItem:
-        item_id = str(self._next_id)
-        self._next_id += 1
+        global _shared_next_id
+        item_id = str(_shared_next_id)
+        _shared_next_id += 1
         work_item = WorkItem(
             id=item_id,
             workspace_id=workspace_id,
@@ -201,14 +236,14 @@ class MockStore(WorkItemStore):
             wave=wave,
             kind=kind,
         )
-        self._work_items[item_id] = work_item
+        _shared_work_items[item_id] = work_item
         return work_item
 
     def get_work_item(self, item_id: str) -> WorkItem:
-        if item_id not in self._work_items:
+        if item_id not in _shared_work_items:
             raise RuntimeError(f"工作单元不存在: {item_id}")
         self._auto_complete_check(item_id)
-        return self._work_items[item_id]
+        return _shared_work_items[item_id]
 
     def update_work_item_metadata(
         self,
@@ -257,15 +292,23 @@ class MockStore(WorkItemStore):
         return item
 
     def set_node_contract(self, item_id: str, contract: Any):
-        """注册 contract,使自动完成能生成可过证据校验的 verification。"""
-        self._contracts_by_item_id[item_id] = contract
+        """注册 contract,使自动完成能生成可过证据校验的 verification。
+
+        同时同步到 WorkItem.contract,保证 work show 能读回完整上下文
+        (与 MulticaStore 读回语义一致)。
+        """
+        _shared_contracts_by_item_id[item_id] = contract
+        item = _shared_work_items.get(item_id)
+        if item is not None:
+            item.contract = contract
 
     def list_work_items(
         self,
         workspace_id: str,
         status: Optional[WorkItemStatus] = None,
     ) -> List[WorkItem]:
-        items = [i for i in self._work_items.values() if i.workspace_id == workspace_id]
+        items = [i for i in _shared_work_items.values()
+                 if i.workspace_id == workspace_id]
         for item in items:
             self._auto_complete_check(item.id)
         if status:
@@ -273,11 +316,11 @@ class MockStore(WorkItemStore):
         return items
 
     def add_comment(self, item_id: str, comment: str):
-        self._comments.setdefault(item_id, []).append(comment)
+        _shared_comments.setdefault(item_id, []).append(comment)
 
     def get_comments(self, item_id: str) -> List[str]:
         """测试辅助:读回评论。"""
-        return list(self._comments.get(item_id, []))
+        return list(_shared_comments.get(item_id, []))
 
     # ==================== 状态和分配 ====================
 
@@ -291,8 +334,12 @@ class MockStore(WorkItemStore):
             item.worker = assignee
         elif role == "reviewer":
             item.reviewer = assignee
-        self.assign_log.append((item_id, item.dag_key, role, time.time()))
-        self._assigned_items[item_id] = time.time()
+        _shared_assign_log.append((item_id, item.dag_key, role, time.time()))
+        _shared_assigned_items[item_id] = time.time()
+
+    @property
+    def assign_log(self):
+        return _shared_assign_log
 
 
 class MockRuntime(AgentRuntime):

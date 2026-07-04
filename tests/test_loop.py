@@ -562,6 +562,7 @@ class TestEvidenceGateRegression:
                 "env_setup": ["mock: integration env ready"],
                 "pr_base": "feature/v1",
                 "coverage": 95,
+                "env_setup": ["mock: provision integration env for gate-1"],
             },
         )
 
@@ -604,6 +605,7 @@ class TestEvidenceGateRegression:
                 "env_setup": ["mock: integration env ready"],
                 "pr_base": "feature/v1",
                 "coverage": 95,
+                "env_setup": ["mock: provision integration env for gate-1"],
             },
         )
 
