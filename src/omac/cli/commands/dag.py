@@ -3,14 +3,14 @@ from __future__ import annotations
 
 import os
 
-from ._stub import not_implemented
-from ..output import add_output_flag, print_json
 from .. import exit_codes
+from ..output import add_output_flag, print_json
 from ...core.config import load_config, resolve_engine_settings, DEFAULTS, CONFIG_PATH
 from ...core.manifest import load_manifest
 from ...engines import create_engine
 from ...engines.models import EngineConfig
-from ...errors import ValidationError
+from ...errors import NeedsDecision, ValidationError
+from ...pipeline.loop import tick
 from ...pipeline.report import build_status_report, render_table
 
 NAME = "dag"
@@ -81,7 +81,23 @@ def _assemble_engine(args):
         workspace_id=workspace_id,
         polling_interval=poll_interval,
     )
-    return create_engine(engine_type, engine_config), engine_config
+    engine = create_engine(engine_type, engine_config)
+
+    # 测试钩子:OMAC_MOCK_FAIL_KEYS 注入失败节点(逗号分隔 dag_key)。
+    # mock 引擎下可驱动失败场景;真实引擎忽略(set_fail_keys 不存在)。
+    fail_keys = os.environ.get("OMAC_MOCK_FAIL_KEYS")
+    if fail_keys and hasattr(engine.store, "set_fail_keys"):
+        engine.store.set_fail_keys({k.strip() for k in fail_keys.split(",") if k.strip()})
+
+    return engine, engine_config
+
+
+def _default_max_parallel(args) -> int:
+    override = getattr(args, "max_parallel", None)
+    if override is not None:
+        return override
+    return load_config(CONFIG_PATH).get("defaults", {}).get(
+        "max_parallel", DEFAULTS["max_parallel"])
 
 
 def status(args) -> int:
@@ -102,7 +118,97 @@ def status(args) -> int:
     return exit_codes.OK
 
 
+def _emit(result, manifest, args) -> None:
+    """stdout 出数据:--output json 打完整 payload,否则 table 推进进度。
+
+    run/tick 输出 loop 推进结果,schema 与 status 解耦(轻量、面向推进过程)。
+    """
+    payload = {
+        "state": result.state,
+        "done": result.done,
+        "running": result.running,
+        "failed": result.failed,
+        "dispatched": result.dispatched,
+    }
+    if result.report:
+        payload["report"] = result.report
+
+    if args.output == "json":
+        print_json(payload)
+        return
+
+    import sys
+    headers = ("KEY", "STATUS", "WORKER", "WORK_ITEM_ID")
+    rows = []
+    for key in manifest.nodes:
+        n = manifest.nodes[key]
+        rows.append((key, n.status, n.worker or "-", n.work_item_id or "-"))
+    widths = [len(h) for h in headers]
+    for row in rows:
+        for i, cell in enumerate(row):
+            widths[i] = max(widths[i], len(str(cell)))
+    fmt = "  ".join(f"{{:<{w}}}" for w in widths)
+    sys.stdout.write(fmt.format(*headers).rstrip() + "\n")
+    for row in rows:
+        sys.stdout.write(fmt.format(*row).rstrip() + "\n")
+
+
+def _loop_or_single(args, single_round: bool) -> int:
+    """共享核心:single_round=True → tick 一次退出;否则跑到收敛/需决策。"""
+    if not os.path.exists(args.manifest):
+        raise ValidationError(
+            f"manifest 文件不存在: {args.manifest}\n"
+            f"  用 omac plan create --name <name> 生成,或检查路径")
+
+    import time as _time
+
+    engine, _ = _assemble_engine(args)
+    manifest = load_manifest(args.manifest)
+    max_parallel = _default_max_parallel(args)
+    max_rounds = getattr(args, "max_rounds", None)
+    max_minutes = getattr(args, "max_minutes", None)
+
+    start = _time.monotonic()
+    rounds = 0
+    last_result = None
+
+    while True:
+        last_result = tick(
+            engine.store, engine.runtime, manifest, args.manifest,
+            max_parallel=max_parallel)
+        rounds += 1
+
+        if last_result.state == "converged":
+            _emit(last_result, manifest, args)
+            return exit_codes.OK
+
+        if last_result.state == "needs_decision":
+            _emit(last_result, manifest, args)
+            raise NeedsDecision(
+                f"需调用者决策:节点 {last_result.failed} 失败/受阻,重跑/重试/abandon 后继续。",
+                report=last_result.report,
+            )
+
+        if single_round:
+            _emit(last_result, manifest, args)
+            return exit_codes.IN_PROGRESS
+
+        if max_rounds is not None and rounds >= max_rounds:
+            _emit(last_result, manifest, args)
+            return exit_codes.IN_PROGRESS
+        if max_minutes is not None and (_time.monotonic() - start) >= max_minutes * 60:
+            _emit(last_result, manifest, args)
+            return exit_codes.IN_PROGRESS
+
+
 def run(args) -> int:
+    """前台 loop:sync → decide → dispatch,直到收敛或需决策(设计文档 §7.3)。
+
+    幂等:全部状态在 manifest + 平台,任意中断重跑即续跑,done 节点复用。
+    有界:--max-rounds / --max-minutes 支持分段跑。
+    """
     if args.action == "status":
         return status(args)
-    return not_implemented(f"dag {args.action}", "P1")
+    if args.action == "tick":
+        return _loop_or_single(args, single_round=True)
+    return _loop_or_single(args, single_round=False)

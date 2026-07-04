@@ -85,9 +85,21 @@ def reconcile(store: WorkItemStore, manifest: Manifest, manifest_path: str) -> b
         if node.status in RUNNING_STATUSES:
             continue
 
+        # abandoned 是调用者显式决策(omac node abandon),不归 reconcile 同步,
+        # 否则平台侧仍 DONE/BLOCKED 的 work_item 会把 manifest 的 abandoned 覆盖回 done/blocked
+        if node.status == "abandoned":
+            continue
+
         platform_status = item.status.value if hasattr(item.status, "value") else str(item.status)
         manifest_status = _PLATFORM_TO_MANIFEST.get(platform_status, platform_status)
         if manifest_status != node.status:
+            # manifest==todo 是一个显式意图(首次派发 或 node retry 写回)。
+            # 若平台工单仍是失败态,不自作主张把 todo 拉回 blocked/failed:
+            #   - 首次派发时 work_item_id 本为空,这里不会触发(前一分支已清空)
+            #   - node retry 显式把 todo 写回并保留 work_item_id,此时应让 dispatch
+            #     经 assign_work_item 把工单重新 IN_PROGRESS 派活,而非被平台旧态覆盖
+            if node.status == "todo" and manifest_status in {"blocked", "failed"}:
+                continue
             set_node(manifest, key, status=manifest_status)
             changed = True
 
@@ -280,6 +292,34 @@ def _dispatch(
 
 # ==================== tick(单轮完整推进) ====================
 
+def _maybe_unblock(manifest: Manifest, manifest_path: str) -> bool:
+    """将「因上游失败而被隔离的 blocked 下游」解锁回 todo,使其可被重派。
+
+    判断依据:
+      - status == blocked
+      - 所有 blocked_by 依赖均已满足(done 或 abandoned,见 graph.SATISFIED)
+      - 该节点自身从未真正派发过(work_item_id 为空,说明是上游失败在 todo 阶段标 blocked)
+    自身失败(work_item_id 非空)的节点不在此处自动解锁——必须经 ``omac node retry`` 显式决策,
+    捍卫 §2.4「重试是显式决策,废除自动重试」的红线。
+    """
+    changed = False
+    for key, node in list(manifest.nodes.items()):
+        if node.status != "blocked" or node.work_item_id:
+            continue
+        deps = node.blocked_by
+        if not deps:
+            continue
+        if all(
+            b in manifest.nodes and manifest.nodes[b].status in graph.SATISFIED
+            for b in deps
+        ):
+            set_node(manifest, key, work_item_id=None, status="todo")
+            changed = True
+    if changed:
+        save_manifest(manifest, manifest_path)
+    return changed
+
+
 def tick(
     store: WorkItemStore,
     runtime: AgentRuntime,
@@ -306,6 +346,10 @@ def tick(
     # 失败隔离: 下游标 blocked
     if all_failed:
         _mark_downstream_blocked(manifest, manifest_path, all_failed)
+
+    # 3.5 失败解锁: 上游已满足(done/abandon)的「未派发 blocked 下游」解封回 todo
+    #    自身失败的节点(work_item_id 非空)不经此处自活——须显式 omac node retry。
+    _maybe_unblock(manifest, manifest_path)
 
     # 4. DECIDE: 计算就绪节点
     snapshot = _build_snapshot(manifest)
