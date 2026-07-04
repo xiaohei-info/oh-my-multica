@@ -41,6 +41,7 @@ class Contract:
     integration_gates: list = field(default_factory=list)
     pr_base: str | None = None
     coverage_gate: int | float = 90
+    acceptance_doc: dict | list | None = None
 
 
 def _load_contract(raw):
@@ -56,6 +57,7 @@ def _load_contract(raw):
         integration_gates=list(raw.get("integration_gates", [])),
         pr_base=raw.get("pr_base"),
         coverage_gate=raw.get("coverage_gate", 90),
+        acceptance_doc=raw.get("acceptance_doc"),
     )
 
 
