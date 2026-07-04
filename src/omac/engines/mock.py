@@ -119,6 +119,9 @@ class MockStore(WorkItemStore):
             "pr_base": contract.pr_base,
             "ci_status": "passed",
             "coverage": contract.coverage_gate,
+            "env_setup": [
+                f"Mock env: {gate.get('name')}" for gate in contract.integration_gates
+            ] if contract.integration_gates else [],
         }
 
     def _mock_review_report(self, item_id: str) -> Optional[Dict[str, Any]]:
@@ -126,6 +129,7 @@ class MockStore(WorkItemStore):
         if contract is None:
             return None
         return {
+            "review_goals": ["Mock review goal"],
             "diff_reviewed": True,
             "tests_rerun": True,
             "integration_tests_rerun": True,
