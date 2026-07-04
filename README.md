@@ -1,5 +1,7 @@
 # oh-my-agent-cluster
 
+[![CI](https://github.com/xiaohei-info/oh-my-agent-cluster/actions/workflows/ci.yml/badge.svg)](https://github.com/xiaohei-info/oh-my-agent-cluster/actions/workflows/ci.yml)
+
 把复杂开发计划变成可并行、可验收、可恢复的多 Agent 工程流水线。
 
 `oh-my-agent-cluster` 是一套平台无关的 Agent Harness。它把复杂软件开发从
