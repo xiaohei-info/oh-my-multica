@@ -261,6 +261,7 @@ class MockStore(WorkItemStore):
         review_bounce: Optional[int] = None,
         merge_bounce: Optional[int] = None,
         deliverable: Optional[str] = None,
+        description: Optional[str] = None,
     ) -> WorkItem:
         item = self.get_work_item(item_id)
         if worker is not None:
@@ -289,6 +290,8 @@ class MockStore(WorkItemStore):
             item.bounces.merge = merge_bounce
         if deliverable is not None:
             item.deliverable = deliverable
+        if description is not None:
+            item.description = description
         return item
 
     def set_node_contract(self, item_id: str, contract: Any):
