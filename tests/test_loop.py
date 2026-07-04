@@ -520,6 +520,7 @@ class TestEvidenceGateRegression:
                     "delivery_goal": "delivers",
                 }],
                 "pr_base": "feature/v1",
+                "env_setup": ["mock: integration env ready"],
                 "coverage": 50,  # 低于 gate 90
             },
         )
@@ -556,6 +557,7 @@ class TestEvidenceGateRegression:
                     "source_of_truth": ["docs/d.md"],
                     "delivery_goal": "delivers",
                 }],
+                "env_setup": ["mock: integration env ready"],
                 "pr_base": "feature/v1",
                 "coverage": 95,
             },
@@ -597,6 +599,7 @@ class TestEvidenceGateRegression:
                     "source_of_truth": ["docs/d.md"],
                     "delivery_goal": "delivers",
                 }],
+                "env_setup": ["mock: integration env ready"],
                 "pr_base": "feature/v1",
                 "coverage": 95,
             },
