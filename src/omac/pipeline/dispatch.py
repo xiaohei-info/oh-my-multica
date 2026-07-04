@@ -1,17 +1,29 @@
-"""dispatch — 协议文本与 submit 模板(设计文档 §7.4)。
+"""dispatch — 协议文本、submit 模板与左移校验入口(设计文档 §7.4)。
 
 work show 按(kind × phase × 身份)输出任务上下文与执行协议。
 协议文本与 submit 参数在此集中定义,供 work show 与 work submit 共享,
 避免双份拷贝导致漂移(验收标准:submit 模板与实际参数一致)。
+
+work submit 的左移参数门 + 证据校验 + 原子 metadata 写入 + 阶段推进,
+由 cli.commands.work 调用;复用 P2.2 evidence validators 与 core/lint。
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+import json
+from typing import Any, Dict, List, Optional, Set, Tuple
 
+import yaml
+
+from omac.core import evidence as evidence_mod
+from omac.core.acceptance import load_acceptance_doc, load_acceptance_doc_file
+from omac.core.lint import lint as lint_manifest
+from omac.core.manifest import _load_contract, load_manifest
 from omac.core.taskmeta import TaskKind, TaskPhase
+from omac.engines.models import WorkItem, WorkItemStatus
+from omac.engines.store import WorkItemStore
+from omac.errors import ValidationError
 
 
-# ==================== 协议文本(按角色集中,避免双份) ====================
 
 PLANNER_AUTHORING_PROTOCOL = """你是 planner。
 
@@ -236,3 +248,400 @@ def build_show_output(item: Any, identity: str) -> Dict[str, Any]:
         "protocol": protocol,
         "submit": submit,
     }
+
+
+# ==================== work submit 左移校验(P2.4) ====================
+
+ALL_PARAMS = (
+    "plan_file",
+    "acceptance_file",
+    "manifest_file",
+    "pr_url",
+    "verification_file",
+    "verdict",
+    "report_file",
+    "acceptance_results_file",
+)
+
+# kind * phase → 该组合合法且必填的参数名。
+SPECS: Dict[TaskKind, Dict[TaskPhase, tuple]] = {
+    TaskKind.PLAN: {
+        TaskPhase.AUTHORING: ("plan_file",),
+        TaskPhase.REVIEW: ("verdict", "report_file"),
+    },
+    TaskKind.ACCEPTANCE: {
+        TaskPhase.AUTHORING: ("acceptance_file",),
+        TaskPhase.REVIEW: ("verdict", "report_file"),
+    },
+    TaskKind.DECOMPOSE: {
+        TaskPhase.AUTHORING: ("manifest_file",),
+        TaskPhase.REVIEW: ("verdict", "report_file"),
+    },
+    TaskKind.DEVELOP: {
+        TaskPhase.AUTHORING: ("pr_url", "verification_file"),
+        TaskPhase.REVIEW: ("verdict", "report_file"),
+    },
+    TaskKind.FINAL_ACCEPTANCE: {
+        TaskPhase.AUTHORING: ("acceptance_results_file",),
+    },
+}
+
+
+def _kind(value: Any) -> TaskKind:
+    if isinstance(value, TaskKind):
+        return value
+    try:
+        return TaskKind(str(value))
+    except ValueError:
+        raise ValidationError(
+            f"未知的任务类型 {value!r} —— 应为: "
+            f"{', '.join(k.value for k in TaskKind)}"
+        )
+
+
+def _phase(value: Any) -> TaskPhase:
+    if isinstance(value, TaskPhase):
+        return value
+    try:
+        return TaskPhase(str(value))
+    except ValueError:
+        raise ValidationError(
+            f"未知的阶段 {value!r} —— 应为: "
+            f"{', '.join(p.value for p in TaskPhase)}"
+        )
+
+
+def _param_cli_name(param: str) -> str:
+    return "--" + param.replace("_", "-")
+
+
+def validate_params(kind: TaskKind, phase: TaskPhase, provided: Dict[str, Any]) -> None:
+    """参数按 kind×phase 校验:缺 / 多 / 错 → raise ValidationError(报错即教学)。"""
+
+    if kind not in SPECS or phase not in SPECS[kind]:
+        available = ", ".join(p.value for p in SPECS.get(kind, {})) or "无"
+        raise ValidationError(
+            f"{kind.value} 没有 {phase.value} 阶段的交付 —— "
+            f"该 kind 可用的阶段为: {available}"
+        )
+
+    expected = set(SPECS[kind][phase])
+    given = {name for name, value in provided.items() if value is not None}
+
+    missing = sorted(expected - given)
+    extra = sorted(given - expected)
+
+    if not missing and not extra:
+        return
+
+    spec_human = " + ".join(_param_cli_name(p) for p in sorted(expected))
+    lines = []
+    if missing:
+        lines.append(
+            f"缺少参数({kind.value} × {phase.value} 需要): "
+            + ", ".join(_param_cli_name(m) for m in missing)
+        )
+    if extra:
+        lines.append(
+            f"多余参数({kind.value} × {phase.value} 不需要): "
+            + ", ".join(_param_cli_name(e) for e in extra)
+        )
+    lines.append(f"正确用法: omac work submit <issue-id> {spec_human}")
+    raise ValidationError("\n".join(lines))
+
+
+def _read_text(path: str) -> str:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read()
+    except FileNotFoundError:
+        raise ValidationError(f"文件不存在: {path}")
+    except OSError as exc:
+        raise ValidationError(f"无法读取文件 {path}: {exc}")
+
+
+def _parse_structured(path: str) -> Any:
+    """交付结构文件统一解析:优先 JSON,失败回退 YAML;plan 交付不在此列(纯文本)。"""
+    text = _read_text(path)
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    else:
+        if data is None:
+            raise ValidationError(f"{path} 内容为空(null)")
+        return data
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise ValidationError(
+            f"{path} 既不是合法 JSON 也不是合法 YAML: {exc}\n"
+            "请修正文件内容后重试"
+        )
+    if data is None:
+        raise ValidationError(f"{path} 内容为空")
+    return data
+
+
+def _contract_from_item(item: WorkItem) -> Any:
+    """把 work item 上的 contract 统一成 Contract 对象(若已是则透传)。
+
+    multica 落在 metadata 里,get 回的是 dict;mock 直接把 Contract 挂回 item。
+    """
+    from ..core.manifest import Contract as _Contract
+
+    raw = getattr(item, "contract", None)
+    if raw is None:
+        return None
+    if isinstance(raw, _Contract):
+        return raw
+    return _load_contract(raw)
+
+
+# 供左移校验用的轻量 node / item 形态(P2.2 validators 只看这几个属性)。
+class _Node:
+    def __init__(self, contract: Any):
+        self.contract = contract
+
+
+class _Item:
+    def __init__(
+        self,
+        artifacts: Optional[Dict[str, Any]] = None,
+        verification: Optional[Dict[str, Any]] = None,
+        review_verdict: Optional[str] = None,
+        review_report: Optional[Dict[str, Any]] = None,
+    ):
+        self.artifacts = artifacts
+        self.verification = verification
+        self.review_verdict = review_verdict
+        self.review_report = review_report
+
+
+def _validate_plan_authoring(plan_file: str) -> str:
+    """plan 交付做基础结构校验:文件存在且非空。返回文件内容。"""
+    content = _read_text(plan_file)
+    if not content.strip():
+        raise ValidationError(f"plan 文件为空: {plan_file}")
+    return content
+
+
+def _validate_acceptance_authoring(acceptance_file: str) -> str:
+    """acceptance 交付按验收文档 schema 校验。返回文件内容。"""
+    try:
+        load_acceptance_doc_file(acceptance_file)
+    except (ValueError, OSError) as exc:
+        raise ValidationError(f"acceptance 文件校验失败: {exc}")
+    return _read_text(acceptance_file)
+
+
+def _validate_decompose_authoring(manifest_file: str, pool: Set[str]) -> str:
+    """decompose 交付做基础结构校验 + manifest 过 core/lint。返回文件内容。"""
+    content = _read_text(manifest_file)
+    try:
+        manifest = load_manifest(manifest_file)
+    except (ValueError, OSError) as exc:
+        raise ValidationError(f"manifest 解析失败: {exc}")
+    errors = lint_manifest(manifest, pool)
+    if errors:
+        raise ValidationError("manifest lint 失败:\n  - " + "\n  - ".join(errors))
+    return content
+
+
+def _validate_develop_authoring(
+    pr_url: str, verification_file: str, item: WorkItem
+) -> Dict[str, Any]:
+    """develop × authoring 左移校验:复用 P2.2 validate_worker_evidence。"""
+    verification = _parse_structured(verification_file)
+    node = _Node(_contract_from_item(item))
+    probe = _Item(artifacts={"pr_url": pr_url}, verification=verification)
+    errors = evidence_mod.validate_worker_evidence(node, probe)
+    if errors:
+        raise ValidationError(
+            "verification 证据校验失败:\n  - " + "\n  - ".join(errors)
+        )
+    return verification
+
+
+def _validate_review(
+    kind: TaskKind, verdict: str, report_file: str, item: WorkItem
+) -> Dict[str, Any]:
+    """review 阶段(各 kind 共用)左移校验:复用 P2.2 validate_review_evidence。"""
+    report = _parse_structured(report_file)
+    if verdict not in evidence_mod.REVIEW_APPROVE:
+        raise ValidationError(
+            f"verdict={verdict!r} 不可用于通过 —— review 通过需 pass 或 "
+            "pass-with-nits;如需回退请走平台的驳回/重派流程(参见 §7.4)"
+        )
+    node = _Node(_contract_from_item(item))
+    probe = _Item(review_verdict=verdict, review_report=report)
+    errors = evidence_mod.validate_review_evidence(node, probe)
+    if errors:
+        raise ValidationError(
+            "review report 校验失败:\n  - " + "\n  - ".join(errors)
+        )
+    return report
+
+
+def _validate_final_acceptance_authoring(
+    results_file: str, item: WorkItem
+) -> Dict[str, Any]:
+    """final-acceptance × authoring 左移校验:复用 P2.2 validate_acceptance_results。"""
+    results = _parse_structured(results_file)
+
+    raw_doc = None
+    contract = getattr(item, "contract", None)
+    if isinstance(contract, dict):
+        raw_doc = contract.get("acceptance_doc")
+    elif contract is not None:
+        raw_doc = getattr(contract, "acceptance_doc", None)
+
+    if raw_doc is None:
+        raise ValidationError(
+            "final-acceptance 缺少关联的 acceptance_doc —— "
+            "需先在 contract.acceptance_doc 中挂载验收文档(参见 §8)"
+        )
+
+    try:
+        acceptance_doc = load_acceptance_doc(raw_doc) if isinstance(raw_doc, dict) else raw_doc
+    except ValueError as exc:
+        raise ValidationError(f"关联的 acceptance_doc 不合法: {exc}")
+
+    errors = evidence_mod.validate_acceptance_results(acceptance_doc, results)
+    if errors:
+        raise ValidationError(
+            "acceptance-results 校验失败:\n  - " + "\n  - ".join(errors)
+        )
+    return results
+
+
+def _resolve_phase(item: WorkItem, declared: TaskPhase) -> TaskPhase:
+    """把 work item 的阶段归一化为可路由的 phase。
+
+    设计文档 §7.4:平台状态(status)由 loop / plan 流水线驱动,phase 只是
+    metadata 的快拍。当 status 已经是 IN_REVIEW 时(无论 phase 字段是否更新),
+    按审稿阶段路由 —— 否则同一张 issue 上后续 work submit 会被误派为 authoring。
+    """
+    status = getattr(item, "status", None)
+    if status == WorkItemStatus.IN_REVIEW and declared == TaskPhase.AUTHORING:
+        return TaskPhase.REVIEW
+    return declared
+
+
+class SubmitResult:
+    """submit 成功后的结果(用于 cli 层展示)。"""
+
+    def __init__(
+        self,
+        kind: TaskKind,
+        phase: TaskPhase,
+        deliverable_key: str,
+        advanced_to: WorkItemStatus,
+    ):
+        self.kind = kind
+        self.phase = phase
+        self.deliverable_key = deliverable_key
+        self.advanced_to = advanced_to
+
+
+def submit(
+    store: WorkItemStore,
+    issue_id: str,
+    *,
+    plan_file: Optional[str] = None,
+    acceptance_file: Optional[str] = None,
+    manifest_file: Optional[str] = None,
+    pr_url: Optional[str] = None,
+    verification_file: Optional[str] = None,
+    verdict: Optional[str] = None,
+    report_file: Optional[str] = None,
+    acceptance_results_file: Optional[str] = None,
+    agent_pool: Optional[Set[str]] = None,
+) -> SubmitResult:
+    """work submit 的核心入口。
+
+    按 kind×phase 校验参数 → 左移证据校验 → 原子写 metadata + 阶段推进。
+    任何校验失败统一 raise ValidationError(调用方转 exit 5),不做任何
+    metadata 写入(原子性)。
+    """
+
+    item = store.get_work_item(issue_id)
+    kind = _kind(item.kind.value if hasattr(item.kind, "value") else item.kind)
+    raw_phase = _phase(item.phase.value if hasattr(item.phase, "value") else item.phase)
+    phase = _resolve_phase(item, raw_phase)
+
+    provided = {
+        "plan_file": plan_file,
+        "acceptance_file": acceptance_file,
+        "manifest_file": manifest_file,
+        "pr_url": pr_url,
+        "verification_file": verification_file,
+        "verdict": verdict,
+        "report_file": report_file,
+        "acceptance_results_file": acceptance_results_file,
+    }
+    validate_params(kind, phase, provided)
+
+    pool = set(agent_pool) if agent_pool is not None else set()
+
+    # ---------- develop × authoring ----------
+    if kind == TaskKind.DEVELOP and phase == TaskPhase.AUTHORING:
+        verification = _validate_develop_authoring(pr_url, verification_file, item)
+        store.update_work_item_metadata(
+            issue_id,
+            artifacts={"pr_url": pr_url},
+            verification=verification,
+        )
+        store.update_status(issue_id, WorkItemStatus.DONE)
+        return SubmitResult(kind, phase, "verification", WorkItemStatus.DONE)
+
+    # ---------- review(各 kind 共用) ----------
+    if phase == TaskPhase.REVIEW:
+        report = _validate_review(kind, verdict, report_file, item)
+        store.update_work_item_metadata(
+            issue_id,
+            review_verdict=verdict,
+            review_report=report,
+            phase=TaskPhase.REVIEW,
+        )
+        # 状态保持 IN_REVIEW,由 loop / plan 流水线收割判定 done / blocked。
+        return SubmitResult(kind, phase, "review_report", WorkItemStatus.IN_REVIEW)
+
+    # ---------- final-acceptance × authoring ----------
+    if kind == TaskKind.FINAL_ACCEPTANCE and phase == TaskPhase.AUTHORING:
+        _validate_final_acceptance_authoring(acceptance_results_file, item)
+        store.update_work_item_metadata(
+            issue_id,
+            deliverable=_read_text(acceptance_results_file),
+        )
+        store.update_status(issue_id, WorkItemStatus.DONE)
+        return SubmitResult(kind, phase, "acceptance_results", WorkItemStatus.DONE)
+
+    # ---------- plan × authoring ----------
+    if kind == TaskKind.PLAN and phase == TaskPhase.AUTHORING:
+        content = _validate_plan_authoring(plan_file)
+        store.update_work_item_metadata(
+            issue_id, deliverable=content, phase=TaskPhase.REVIEW,
+        )
+        store.update_status(issue_id, WorkItemStatus.IN_REVIEW)
+        return SubmitResult(kind, TaskPhase.REVIEW, "plan", WorkItemStatus.IN_REVIEW)
+
+    # ---------- acceptance × authoring ----------
+    if kind == TaskKind.ACCEPTANCE and phase == TaskPhase.AUTHORING:
+        content = _validate_acceptance_authoring(acceptance_file)
+        store.update_work_item_metadata(
+            issue_id, deliverable=content, phase=TaskPhase.REVIEW,
+        )
+        store.update_status(issue_id, WorkItemStatus.IN_REVIEW)
+        return SubmitResult(kind, TaskPhase.REVIEW, "acceptance", WorkItemStatus.IN_REVIEW)
+
+    # ---------- decompose × authoring ----------
+    if kind == TaskKind.DECOMPOSE and phase == TaskPhase.AUTHORING:
+        content = _validate_decompose_authoring(manifest_file, pool)
+        store.update_work_item_metadata(
+            issue_id, deliverable=content, phase=TaskPhase.REVIEW,
+        )
+        store.update_status(issue_id, WorkItemStatus.IN_REVIEW)
+        return SubmitResult(kind, TaskPhase.REVIEW, "manifest", WorkItemStatus.IN_REVIEW)
+
+    raise ValidationError(f"未支持的交付组合: {kind.value} × {phase.value}")
