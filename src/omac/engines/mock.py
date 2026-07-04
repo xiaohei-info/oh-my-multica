@@ -128,9 +128,6 @@ class MockStore(WorkItemStore):
         contract = _shared_contracts_by_item_id.get(item_id)
         if contract is None:
             return None
-        # env_setup:contract 声明 integration_gates 时必填,否则证据门不过
-        env_setup = ["mock: prepare env for " + g.get("name", "gate")
-                     for g in contract.integration_gates] if contract.integration_gates else []
         return {
             "commands": [
                 {"cmd": cmd, "exit_code": 0, "summary": "Mock: passed"}
@@ -155,7 +152,9 @@ class MockStore(WorkItemStore):
             "pr_base": contract.pr_base,
             "ci_status": "passed",
             "coverage": contract.coverage_gate,
-            "env_setup": list(env_setup),
+            "env_setup": [
+                f"Mock env: {gate.get('name')}" for gate in contract.integration_gates
+            ] if contract.integration_gates else [],
         }
 
     def _mock_review_report(self, item_id: str) -> Optional[Dict[str, Any]]:
@@ -163,11 +162,7 @@ class MockStore(WorkItemStore):
         if contract is None:
             return None
         return {
-            "review_goals": [
-                "acceptance 全覆盖且逐条可验证",
-                "integration gates 逐项复跑",
-                "coverage ≥ gate",
-            ],
+            "review_goals": ["Mock review goal"],
             "diff_reviewed": True,
             "tests_rerun": True,
             "integration_tests_rerun": True,

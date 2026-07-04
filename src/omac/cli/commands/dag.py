@@ -19,6 +19,14 @@ DESCRIPTION = """确定性编排循环:sync(回收结果)→ decide(就绪节点
   tick     单轮推进后立即退出:exit 0 收敛 / 10 推进中 / 20 需决策(调试用)
 
 有界运行:--max-rounds N / --max-minutes N(给不想长阻塞的 agent 调用者分段跑)
+
+硬约束:
+  - 前台阻塞监督铁律:run 是前台进程,必须在本轮跑到它返回才算"在监督";
+    禁止放后台、禁止寄望"未来某轮再看"、禁止在无活跃 run 时声称"持续监督中"。
+  - 重试显式:节点不会自动重试,必须经 `omac node retry` 显式决策。
+  - 失败隔离:某节点 failed → 其下游自动 blocked,不再派发;不可绕过。
+  - 不自动 merge:合并是外部门控,引擎只推进到 done,不替你合入。
+  - manifest 唯一口径:全局状态只在 manifest + 平台,不依赖 checkpoint / event log。
 """
 
 
