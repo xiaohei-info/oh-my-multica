@@ -1,6 +1,16 @@
-"""Structured evidence validators — 左移门(work submit)与权威门(结果回收)共用同一套 schema。"""
+"""Structured evidence validators —— 左移门(worker submit)与权威门(结果回收)共用同一套 schema。
+
+三类新证据字段(均左移门强制):
+  1. verification.env_setup        contract 声明 integration_gates 或 env 依赖时必填
+  2. review_report.review_goals    review 阶段必填
+  3. acceptance_results            final-acceptance 必填,逐项按 id 对齐验收文档条目
+"""
+
+from .acceptance import AcceptanceDoc, load_acceptance_doc
 
 REVIEW_APPROVE = {"pass", "pass-with-nits"}
+
+ACCEPTANCE_STATUS = {"pass", "fail"}
 
 
 def _commands_by_text(commands):
@@ -94,6 +104,13 @@ def _has_pr_url(artifacts) -> bool:
     return bool(artifacts.get("pr_url") or artifacts.get("pr"))
 
 
+def _requires_env_setup(contract) -> bool:
+    """contract 声明 integration_gates(或后续 env 依赖标记)时,env_setup 必填。"""
+    if not contract:
+        return False
+    return bool(getattr(contract, "integration_gates", None))
+
+
 def validate_worker_evidence(node, item) -> list:
     """Return gate failure messages for worker artifacts + verification."""
     errors = []
@@ -136,6 +153,15 @@ def validate_worker_evidence(node, item) -> list:
                 )
             )
 
+    if _requires_env_setup(contract):
+        env_setup = verification.get("env_setup")
+        if not isinstance(env_setup, list) or not env_setup:
+            errors.append("verification.env_setup is required when contract declares integration_gates")
+        else:
+            for step in env_setup:
+                if not isinstance(step, str) or not step.strip():
+                    errors.append("verification.env_setup entries must be non-empty strings")
+
     if verification.get("pr_base") != contract.pr_base:
         errors.append("verification.pr_base must match contract.pr_base")
 
@@ -165,6 +191,14 @@ def validate_review_evidence(node, item) -> list:
 
     if not isinstance(report, dict):
         return ["review_report is required"]
+
+    review_goals = report.get("review_goals")
+    if not isinstance(review_goals, list) or not review_goals:
+        errors.append("review_report.review_goals must be non-empty")
+    else:
+        for goal in review_goals:
+            if not isinstance(goal, str) or not goal.strip():
+                errors.append("review_report.review_goals entries must be non-empty strings")
 
     review_flags = ["diff_reviewed", "tests_rerun", "coverage_checked"]
     if contract.integration_gates:
@@ -211,5 +245,60 @@ def validate_review_evidence(node, item) -> list:
                         prefix="review_report",
                     )
                 )
+
+    return errors
+
+
+def validate_acceptance_results(acceptance_doc, results) -> list:
+    """逐项校验总控验收结果:results 必须按 id 对齐覆盖验收文档全部条目。
+
+    每项 status ∈ pass|fail;fail 须有 notes;漏项/多项均报错。
+    acceptance_doc 可为 AcceptanceDoc 或原始 dict(内部 load)。
+    """
+    errors = []
+
+    if isinstance(acceptance_doc, dict):
+        try:
+            acceptance_doc = load_acceptance_doc(acceptance_doc)
+        except ValueError as exc:
+            return [f"acceptance doc invalid: {exc}"]
+    if not isinstance(acceptance_doc, AcceptanceDoc):
+        return [f"acceptance doc must be an AcceptanceDoc or dict, got {type(acceptance_doc).__name__}"]
+
+    expected_ids = acceptance_doc.flow_ids
+
+    if not isinstance(results, list):
+        return ["acceptance_results must be a list"]
+
+    result_by_id = {}
+    for entry in results:
+        if not isinstance(entry, dict):
+            errors.append("each acceptance_result must be an object")
+            continue
+        entry_id = entry.get("id")
+        if not isinstance(entry_id, str) or not entry_id.strip():
+            errors.append("acceptance_result.id is required")
+            continue
+        if entry_id in result_by_id:
+            errors.append(f"duplicate acceptance_result id: {entry_id}")
+            continue
+        result_by_id[entry_id] = entry
+
+    for flow_id in expected_ids:
+        if flow_id not in result_by_id:
+            errors.append(f"acceptance_results missing acceptance flow: {flow_id}")
+
+    for entry_id, entry in result_by_id.items():
+        if entry_id not in expected_ids:
+            errors.append(f"acceptance_results has extra flow not in acceptance doc: {entry_id}")
+            continue
+        status = entry.get("status")
+        if status not in ACCEPTANCE_STATUS:
+            errors.append(f"acceptance_result {entry_id} status must be pass|fail, got {status!r}")
+            continue
+        if status == "fail":
+            notes = entry.get("notes")
+            if not isinstance(notes, str) or not notes.strip():
+                errors.append(f"acceptance_result {entry_id} failed but has no notes")
 
     return errors
