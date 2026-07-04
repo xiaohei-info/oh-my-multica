@@ -39,11 +39,19 @@ class MockStore(WorkItemStore):
         self._init_default_workspace()
 
     def _init_default_workspace(self):
-        workspace_id = self.config.workspace_id or "mock-workspace"
-        self._workspaces[workspace_id] = WorkspaceInfo(
-            id=workspace_id, name="Mock Workspace",
-            description="测试用工作空间", member_count=3)
-        self._members[workspace_id] = ["alice", "bob", "charlie"]
+        # 固定发现集(独立于 config.workspace_id),便于 init/体检测试断言
+        self._workspaces = {
+            "mock-workspace": WorkspaceInfo(
+                id="mock-workspace", name="Mock Workspace",
+                description="测试用工作空间", member_count=3),
+            "mock-team-b": WorkspaceInfo(
+                id="mock-team-b", name="Mock Team B",
+                description="副工作空间", member_count=2),
+        }
+        self._members = {
+            "mock-workspace": ["alice", "bob", "charlie"],
+            "mock-team-b": ["alice", "bob"],
+        }
 
     # ==================== 模拟执行 ====================
 
@@ -150,7 +158,13 @@ class MockStore(WorkItemStore):
     # ==================== 成员池 ====================
 
     def list_members(self, workspace_id: str) -> List[str]:
-        return self._members.get(workspace_id, [])
+        return self._members.get(workspace_id, ["alice", "bob", "charlie"])
+
+    # ==================== 工作空间发现 ====================
+
+    def list_workspaces(self) -> List[WorkspaceInfo]:
+        """mock 固定值:返回已注册的工作空间(默认含配置 workspace_id 那一个)。"""
+        return list(self._workspaces.values())
 
     # ==================== 工作单元 CRUD ====================
 

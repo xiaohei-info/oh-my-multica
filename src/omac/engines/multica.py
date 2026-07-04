@@ -15,7 +15,7 @@ import tempfile
 from typing import Any, Dict, List, Optional
 
 from ..errors import AuthError, PlatformError
-from .models import EngineConfig, WorkItem, WorkItemStatus
+from .models import EngineConfig, WorkItem, WorkItemStatus, WorkspaceInfo
 from .runtime import AgentRuntime
 from .store import WorkItemStore
 
@@ -154,6 +154,36 @@ class MulticaStore(WorkItemStore):
         if not isinstance(agents, list):
             return []
         return [a.get("name") for a in agents if isinstance(a, dict) and a.get("name")]
+
+    # ==================== 工作空间发现 ====================
+
+    def list_workspaces(self) -> List[WorkspaceInfo]:
+        """multica workspace list --output json → WorkspaceInfo 列表。
+
+        init 配置 / --check 体检用;认证失败或 CLI 缺失由 _run_multica 抛
+        AuthError/PlatformError(调用方降级为本地体检)。
+        """
+        result = self._run_multica(["workspace", "list", "--output", "json"])
+        if isinstance(result, dict):
+            items = result.get("workspaces") or result.get("data") or []
+        elif isinstance(result, list):
+            items = result
+        else:
+            items = []
+        infos: List[WorkspaceInfo] = []
+        for w in items:
+            if not isinstance(w, dict):
+                continue
+            wid = w.get("id")
+            if not wid:
+                continue
+            infos.append(WorkspaceInfo(
+                id=str(wid),
+                name=w.get("name") or str(wid),
+                description=w.get("description"),
+                member_count=int(w.get("member_count") or 0),
+            ))
+        return infos
 
     # ==================== 工作单元 CRUD ====================
 

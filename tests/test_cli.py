@@ -76,7 +76,7 @@ def test_init_check_reports_problems(tmp_path, monkeypatch, capsys):
     assert "config.yaml" in err
 
     main(["config", "set", "engine", "mock"])
-    main(["config", "set", "workspace", "ws"])
+    main(["config", "set", "workspace", "mock-workspace"])
     main(["config", "set", "roles.workers", '["alice"]'])
     capsys.readouterr()
     assert main(["init", "--check"]) == exit_codes.OK
