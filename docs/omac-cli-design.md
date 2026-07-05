@@ -362,6 +362,12 @@ todo → in_progress → ci_check* → in_review → merging* → done
               (每类有界,次数读 config.retry.{ci·review·merge},缺省 3,耗尽 → blocked)
 ```
 
+> 读图约定:上表是一条**带环的**生命周期,不是单向前推。``ci_check`` 环节由
+> ``config.ci`` 决定是否存在(缺省跳过);CI 失败经 ``delivery.advance_delivery``
+> 把节点顶回 ``in_progress`` 转派 worker,同时 ``WorkItem.bounces.ci``+1;
+> ``in_review`` 的评审 reject 同理(``bounces.review``)。两类回退各自耗尽上界后
+> 节点标 ``blocked`` 并隔离下游。
+
 **done 的语义 = 已合入集成分支**(配置了 `merge` 时),消除"评审过了但没合"的悬空中间态。未配置 CI/merge 时对应环节自动跳过,退化为现行为。
 
 **每个 DAG 节点对应一条 issue**,覆盖开发 → CI → 评审 → 合并的完整阶段:worker 与 reviewer 之间的交接是同一 issue 的**转派**,CI 失败/评审 reject/merge 冲突的回退同样是转回 worker——全程一条时间线,不新建评审 issue。

@@ -13,6 +13,7 @@ from ..core import graph
 from ..core.config import DEFAULT_RETRY
 from ..core.evidence import validate_review_evidence, validate_worker_evidence
 from ..core.manifest import Manifest, save_manifest, set_node
+from ..pipeline.delivery import advance_delivery
 from ..engines.models import WorkItemStatus
 from ..engines.runtime import AgentRuntime
 from ..engines.store import WorkItemStore
@@ -21,7 +22,7 @@ from ..pipeline.dispatch import (render_issue_body, render_review_rollout_commen
 from ..core.taskmeta import TaskKind
 
 # manifest status 字符串常量
-RUNNING_STATUSES = {"in_progress", "in_review"}
+RUNNING_STATUSES = {"in_progress", "ci_check", "in_review"}
 FAILED_STATUSES = {"blocked", "failed"}
 TERMINAL_STATUSES = {"done", "blocked", "failed", "cancelled", "abandoned"}
 
@@ -120,6 +121,7 @@ def collect_results(
     manifest: Manifest,
     manifest_path: str,
     retry_limits: dict | None = None,
+    config: dict | None = None,
 ) -> Dict[str, str]:
     """SYNC:回收进行中节点的结果。
 
@@ -127,6 +129,7 @@ def collect_results(
 
     retry_limits: config.retry 解析后的 {ci, review, merge} 上界(None = 全缺省 3)。
     reviewer reject 触发的「回到 worker」回退受 retry_limits["review"] 约束(0 = 立即 blocked)。
+    config: 项目配置;用于决定是否启用 ci 门(§7.3)。未配置 ci.check_command 时环节整体跳过。
 
     in_progress 节点:
       worker DONE + 证据门过 → 有 reviewer: 转 in_review + assign reviewer + wake
@@ -164,7 +167,21 @@ def collect_results(
                     store.add_comment(node.work_item_id, f"证据门未通过: {reason}")
                     set_node(manifest, key, status="blocked")
                     failures[key] = f"worker 证据门未通过: {reason}"
-                elif node.reviewer:
+                    continue
+                # worker 证据已过门 → CI 门(§7.3)。配置 ci 时运行 CI,绿才进评审;
+                # 失败/超时 → 有界「回到 worker」(retry_limits["ci"])。
+                # advance_delivery 已处理节点状态与平台状态切换;返回 'pass' 继续,
+                # 'bounce' 已转回 worker(本 tick 不再推进), 'blocked' 则阻止后续。
+                ci_action = advance_delivery(
+                    config or {}, manifest, key, store, runtime, limits)
+                if ci_action == "bounce":
+                    failures[key] = "CI 未通过,已转回 worker(上界未耗尽,待重交)"
+                    continue
+                if ci_action == "blocked":
+                    failures[key] = "CI 检查未通过,回退上界(retry.ci)已耗尽"
+                    continue
+                # CI 绿(或未配置 ci 整体跳过):原路径 —— 有 reviewer 进评审,否则 done。
+                if node.reviewer:
                     pending_review.append((key, node.work_item_id, node.reviewer))
                 else:
                     set_node(manifest, key, status="done")
@@ -216,6 +233,9 @@ def collect_results(
                         node, node.contract, verdict, report=report,
                         item_id=node.work_item_id)
                     store.add_comment(node.work_item_id, rollout)
+                    # 派发失败时回滚 review_bounce,避免把「未成功的回退」计为消耗;
+                    # 这与 CI 回退路径(delivery.advance_delivery)的语义对称 ——
+                    # 两者都是「计数只在派发成功时才真正消耗」。
                     try:
                         store.assign_work_item(node.work_item_id, node.worker, "worker")
                         store.update_status(node.work_item_id, WorkItemStatus.IN_PROGRESS)
@@ -372,6 +392,7 @@ def tick(
     manifest_path: str,
     max_parallel: int = 4,
     retry_limits: dict | None = None,
+    config: dict | None = None,
 ) -> TickResult:
     """执行单轮 tick:reconcile → collect_results → decide → dispatch。
 
@@ -387,7 +408,7 @@ def tick(
 
     # 2. SYNC: 回收进行中节点的结果
     new_failures = collect_results(store, runtime, manifest, manifest_path,
-                                   retry_limits=retry_limits)
+                                   retry_limits=retry_limits, config=config)
 
     # 3. 收集全部失败节点(含本轮新失败 + 历史已 blocked/failed)
     all_failed: Set[str] = set(new_failures.keys())
