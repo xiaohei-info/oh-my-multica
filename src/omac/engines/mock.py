@@ -55,12 +55,15 @@ class MockStore(WorkItemStore):
     def __init__(self, config: EngineConfig):
         super().__init__(config)
         _init_default_workspace()
-        # 实例创建时刷新全局行为设置(以最后一次创建为准)
+        # 实例创建时刷新全局行为设置(以最后一次创建为准)。
+        # config.extra 可能为 None:见于 dag.py 在无额外 OMAC_* env 时传 None,
+        # 此时沿用模块默认值(与 EngineConfig.extra 默认 factory 一致)。
+        cfg_extra = config.extra or {}
         global _shared_auto_complete_enabled, _shared_auto_complete_delay
         _shared_auto_complete_enabled = str(
-            config.extra.get("MOCK_AUTO_COMPLETE", "true")).lower() == "true"
+            cfg_extra.get("MOCK_AUTO_COMPLETE", "true")).lower() == "true"
         _shared_auto_complete_delay = int(
-            config.extra.get("MOCK_AUTO_COMPLETE_DELAY", "2"))
+            cfg_extra.get("MOCK_AUTO_COMPLETE_DELAY", "2"))
 
     # ==================== 测试辅助(类级) ====================
 

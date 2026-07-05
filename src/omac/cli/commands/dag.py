@@ -5,7 +5,7 @@ import os
 
 from .. import exit_codes
 from ..output import add_output_flag, print_json
-from ...core.config import load_config, resolve_engine_settings, DEFAULTS, CONFIG_PATH
+from ...core.config import ENV_ENGINE, ENV_WORKSPACE, load_config, resolve_engine_settings, DEFAULTS, CONFIG_PATH
 from ...core.manifest import load_manifest
 from ...engines import create_engine
 from ...engines.models import EngineConfig
@@ -76,10 +76,18 @@ def _assemble_engine(args):
 
     poll_interval = config.get("defaults", {}).get(
         "poll_interval", DEFAULTS["poll_interval"])
+    # OMAC_* 与 MOCK_* env vars 透传给 EngineConfig.extra(对齐 node.py/init_cmd 模式);
+    # 让 MOCK_AUTO_COMPLETE / MOCK_AUTO_COMPLETE_DELAY 等 mock 配置可被 e2e 测试携带。
+    extra = {
+        k: v for k, v in os.environ.items()
+        if (k.startswith('OMAC_') or k.startswith('MOCK_'))
+        and k not in (ENV_ENGINE, ENV_WORKSPACE)
+    } or None
     engine_config = EngineConfig(
         engine_type=engine_type,
         workspace_id=workspace_id,
         polling_interval=poll_interval,
+        extra=extra,
     )
     engine = create_engine(engine_type, engine_config)
 
