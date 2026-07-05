@@ -1,0 +1,28 @@
+# P2.6 live single-node smoke manifest
+meta:
+  title: "P2.6 live single-node smoke"
+
+nodes:
+  - id: live-smoke-A
+    title: "Live smoke node"
+    description: "Single develop node exercising real Multica data plane."
+    worker: ${OMAC_LIVE_WORKER:-alice}
+    reviewer: ${OMAC_LIVE_REVIEWER:-bob}
+    blocked_by: []
+    contract:
+      objective: "Exercise the real Multica data plane end-to-end."
+      acceptance: ["real work item created", "status can progress to done"]
+      non_goals: ["do not assign to a real agent", "do not wake any runtime"]
+      verification_commands: ["pytest --version"]
+      integration_gates:
+        - name: "live-gate"
+          layer: "L1"
+          delivery_goal: "live data plane verified"
+          source_of_truth: ["docs"]
+          covers: ["data-plane"]
+          acceptance_refs: ["real work item created"]
+          commands: ["pytest --version"]
+          required_metrics: {"route_coverage": 100}
+          artifacts: ["coverage.xml"]
+      pr_base: "feature/live-smoke"
+      coverage_gate: 90
