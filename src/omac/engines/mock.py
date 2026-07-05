@@ -28,6 +28,8 @@ _shared_assign_log: list = []
 # 默认行为(可在实例创建时覆盖)
 _shared_auto_complete_enabled: bool = True
 _shared_auto_complete_delay: int = 2
+_shared_kind_deliverables: Dict[str, Dict[str, Any]] = {}
+_shared_review_rejects_remaining: int = 0
 
 
 def _init_default_workspace():
@@ -71,6 +73,7 @@ class MockStore(WorkItemStore):
         global _shared_comments, _shared_next_id, _shared_contracts_by_item_id
         global _shared_assigned_items, _shared_fail_keys, _shared_assign_log
         global _shared_auto_complete_enabled, _shared_auto_complete_delay
+        global _shared_kind_deliverables, _shared_review_rejects_remaining
         _shared_workspaces = {}
         _shared_members = {}
         _shared_work_items = {}
@@ -82,6 +85,8 @@ class MockStore(WorkItemStore):
         _shared_assign_log = []
         _shared_auto_complete_enabled = True
         _shared_auto_complete_delay = 2
+        _shared_kind_deliverables = {}
+        _shared_review_rejects_remaining = 0
         _init_default_workspace()
 
     @classmethod
@@ -90,9 +95,22 @@ class MockStore(WorkItemStore):
         global _shared_fail_keys
         _shared_fail_keys = set(keys)
 
+    @classmethod
+    def set_kind_delivery(cls, kind: str, deliverable: Dict[str, Any]):
+        """注册 kind 的交付物,done 时 auto-complete 产出(测试用)。"""
+        global _shared_kind_deliverables
+        _shared_kind_deliverables[kind] = deliverable
+
+    @classmethod
+    def set_review_rejects(cls, n: int):
+        """注入:接下来 n 次 review 自动 verdict=reject,用于测修订循环。"""
+        global _shared_review_rejects_remaining
+        _shared_review_rejects_remaining = max(0, int(n))
+
     # ==================== 模拟执行 ====================
 
     def _auto_complete_check(self, item_id: str):
+        global _shared_review_rejects_remaining
         if not _shared_auto_complete_enabled or item_id not in _shared_assigned_items:
             return
         item = _shared_work_items.get(item_id)
@@ -106,14 +124,22 @@ class MockStore(WorkItemStore):
                 item.status = WorkItemStatus.FAILED
             else:
                 item.status = WorkItemStatus.DONE
-                item.artifacts = {"pr_url": f"https://mock.example.com/pr/{item_id}"}
+                item.artifacts = dict(
+                    _shared_kind_deliverables.get(
+                        item.dag_key,
+                        {"pr_url": f"https://mock.example.com/pr/{item_id}"}))
                 verification = self._mock_verification(item_id)
                 if verification is not None:
                     item.verification = verification
             del _shared_assigned_items[item_id]
         elif item.status == WorkItemStatus.IN_REVIEW:
-            item.review_verdict = "pass"
-            item.review_comment = "Mock: LGTM"
+            if _shared_review_rejects_remaining > 0:
+                item.review_verdict = "reject"
+                item.review_comment = "Mock: needs revision"
+                _shared_review_rejects_remaining -= 1
+            else:
+                item.review_verdict = "pass"
+                item.review_comment = "Mock: LGTM"
             item.review_report = self._mock_review_report(item_id) or {
                 "diff_reviewed": True,
                 "tests_rerun": True,
