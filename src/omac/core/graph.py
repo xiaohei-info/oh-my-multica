@@ -37,6 +37,29 @@ def all_terminal(issues: dict) -> bool:
     return all(it["status"] in TERMINAL for it in issues.values())
 
 
+def node_waves(nodes: dict) -> dict:
+    """每个节点的拓扑层级(wave):根节点(无 blocked_by)wave=0,其余 = max(前置 wave)+1。
+
+    用于 plan show 的按 wave 拓扑摘要。含环保护(环上节点回落到 0)。
+    """
+    waves, visiting = {}, set()
+
+    def compute(k):
+        if k in waves:
+            return waves[k]
+        if k in visiting:
+            return 0
+        visiting.add(k)
+        deps = [d for d in nodes[k].blocked_by if d in nodes]
+        waves[k] = max((compute(d) for d in deps), default=-1) + 1
+        visiting.discard(k)
+        return waves[k]
+
+    for k in nodes:
+        compute(k)
+    return waves
+
+
 def downstream_of(issues: dict, failed_keys: set) -> set:
     """所有(传递)依赖了 failed_keys 的节点 key。"""
     rev = {k: set() for k in issues}          # blocker -> dependents
