@@ -8,6 +8,10 @@ DONE = "done"
 SATISFIED = {DONE, "abandoned"}
 TERMINAL = {"done", "cancelled", "abandoned"}
 RUNNING = {"in_progress", "in_review"}  # 进行中节点的状态集合
+# 细分态 ci_check / merging 是 manifest 中间切片、不是终态,故意不进
+# SATISFIED / TERMINAL / RUNNING —— 它们的终态由平台侧 IN_REVIEW / BLOCKED 接管,
+# 因此也不应被视为「已满足」上游依赖。进行中节点的显式枚举在
+# loop.py 的 RUNNING_STATUSES(已含 ci_check)中维护,本处不必重复。
 
 
 def is_done(issue) -> bool:

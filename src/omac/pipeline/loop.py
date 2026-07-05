@@ -233,6 +233,9 @@ def collect_results(
                         node, node.contract, verdict, report=report,
                         item_id=node.work_item_id)
                     store.add_comment(node.work_item_id, rollout)
+                    # 派发失败时回滚 review_bounce,避免把「未成功的回退」计为消耗;
+                    # 这与 CI 回退路径(delivery.advance_delivery)的语义对称 ——
+                    # 两者都是「计数只在派发成功时才真正消耗」。
                     try:
                         store.assign_work_item(node.work_item_id, node.worker, "worker")
                         store.update_status(node.work_item_id, WorkItemStatus.IN_PROGRESS)

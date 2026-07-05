@@ -11,7 +11,7 @@ worker 证据过门之后、进评审之前的 CI 门:
 评审 reject 的回退(P4 任务 §7.3)由 ``loop.collect_results`` 内联实现
 (读/写 ``WorkItem.bounces.review``),本模块不重复——避免与主线状态机分歧。
 
-回退计数统一存放在平台侧 ``WorkItem.bundles`` 的 ``.ci`` 字段,
+回退计数统一存放在平台侧 ``WorkItem.bounces`` 的 ``.ci`` 字段,
 由 ``WorkItemStore.update_work_item_metadata(ci_bounce=...)`` 写入,Store 只存取;
 manifest 的 ``Node`` 不携带回退计数(单一事实源)。上界由 ``config.retry.ci``
 (缺省 3)经 ``resolve_retry`` 解析后注入 ``loop.tick`` 的 ``retry_limits``。
