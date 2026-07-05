@@ -52,95 +52,72 @@ omac --version
 
 ## 快速开始
 
-以下命令均可在本仓根目录实测运行(Mock 引擎)。
+以下命令均可在本仓根目录实测运行(Mock 引擎)。Mock 成员池预设
+`alice`、`bob`、`charlie`,下文以这三者为例配置角色。
 
 ### 1. 一次性配置(`omac init`)
 
 ```bash
-# 体检:检查 multica CLI / 配置文件 / 角色映射是否就绪
+# 体检:检查配置文件与角色映射是否就绪
 omac init --check
 
-# 写入最小配置(Mock 引擎)
+# 写入最小配置(Mock 引擎,使用 mock 成员池内的 agent 名)
 omac config set engine mock
 omac config set workspace mock-workspace
-omac config set roles.planner planning-agent
-omac config set roles.orchestrator arch-agent
-omac config set roles.workers '["backend-agent", "fe-agent"]'
-omac config set roles.reviewers '["review-agent"]'
+omac config set roles.planner alice
+omac config set roles.orchestrator bob
+omac config set roles.workers '["alice"]'
+omac config set roles.reviewers '["charlie"]'
 
 # 再次体检,应输出「体检通过」
 omac init --check
 ```
 
+> exit 5 提示"角色不在工作空间 agent 池内"?一定用的是 `alice`/`bob`/`charlie`
+> 三者之一,mock 池不接受其他名字。
+
 ### 2. 计划与 DAG 拆解(`omac plan`)
 
+`omac plan create` / `omac plan check`(从零制定计划、校验现成 manifest)仍在
+开发中(规划于 §10.3),当前以 CLI 契约先行:请阅读 `omac plan --help` 与
+`omac guide manifest` 了解字段与流程;待实现后即可按设计文档 §7.2 直接调用。
+
+仓内自带 `tests/fixtures/smoke_p1.yaml` 作为 contract 示例可先行阅读。
+
 ```bash
-# 从零制定计划 + 验收文档 + 拆解为 manifest DAG
-omac plan create --name feature-x
-
-# 跳过 planner 制定计划,直接给设计文档进验收文档 + 拆解
-omac plan create --name feature-x --doc docs/design.md
-
-# 调用者自己拆好的 manifest:只走 lint 门 + manifest review
-omac plan check .orchestrator/feature-x.yaml
+cat tests/fixtures/smoke_p1.yaml
 ```
 
 ### 3. 确定性 Loop 执行(`omac dag run`)
 
-```bash
-# 前台循环直到收敛或需决策
-omac dag run .orchestrator/feature-x.yaml
+把 smoke fixture 复制到 `.orchestrator/` 下(该目录会落库 git,被 DAG 改写状态):
+(演示用 `/tmp/` 以免污染本仓)
 
-# 查看快照(不推进)
-omac dag status .orchestrator/feature-x.yaml
+```bash
+cp tests/fixtures/smoke_p1.yaml /tmp/smoke.yaml
+
+# 前台循环,	mock 引擎自动完成所有节点,收敛后 exit 0
+omac dag run /tmp/smoke.yaml
+
+# 随时查看快照(不推进)
+omac dag status /tmp/smoke.yaml
 
 # 单轮推进后退出(exit 0 收敛 / 10 推进中 / 20 需决策)
-omac dag tick .orchestrator/feature-x.yaml
+omac dag tick /tmp/smoke.yaml
 ```
 
-### 4. 异常决策(`omac node`)
+### 4. 知识分发(`omac guide`)
 
-`dag run` 以 exit 20 退出时,由调用者决策:
-
-```bash
-# 看单节点完整证据链
-omac node show feature-x.yaml user-api
-
-# 显式重试(可换人)
-omac node retry feature-x.yaml user-api --worker other-agent
-
-# 放弃节点,解锁非硬依赖下游
-omac node abandon feature-x.yaml user-api
-
-# 决策后重跑(重跑即续跑,done 节点复用)
-omac dag run .orchestrator/feature-x.yaml
-```
-
-### 5. 被派发 Agent 的接口(`omac work`)
-
-被派发的 agent 永远只需要两个命令:
+协议细节不在 README 里堆,按需读取 guide 即可:
 
 ```bash
-# 取任务上下文与执行协议
-omac work show <issue-id>
-
-# 提交交付物(左移校验:缺什么当场打回,exit 5)
-omac work submit <issue-id> --pr-url <PR> --verification-file ev.yaml
-```
-
-### 6. 知识分发(`omac guide`)
-
-```bash
-# 列出全部 topic
-omac guide
-
-# 按需阅读
-omac guide workflow     # 整体工作流
-omac guide manifest    # manifest DAG 拆解方法论
-omac guide roles       # 角色模型与配置
-omac guide worker      # worker 执行协议
-omac guide reviewer    # reviewer 评审协议
-omac guide recovery    # exit 20 之后的恢复手册
+omac guide                   # 列出全部 topic
+omac guide workflow          # 整体工作流:init → plan → dag run → 异常处理闭环
+omac guide manifest          # manifest DAG 拆解方法论与 contract 字段
+omac guide roles             # 角色模型与配置
+omac guide worker            # worker 执行协议(TDD·证据·env_setup)
+omac guide reviewer          # reviewer 评审协议(独立复跑·评审目标)
+omac guide recovery          # exit 20 之后的恢复手册
 ```
 
 ## 命令面一览
@@ -182,12 +159,13 @@ omac
 
 ## 测试
 
-```bash
-# 全量测试(live 测试默认 skip)
-python3 -m pytest tests/ -q -m "not live"
+macOS / Linux 开发期建议用 editable 安装,让 `omac` 进入 PATH 才能跑 e2e:
 
-# 含 live Multica 测试(需 multica CLI 登录 + 环境变量)
-python3 -m pytest tests/ -m "live"
+```bash
+pip install -e .
+pip install pytest
+python3 -m pytest tests/ -q -m "not live"   # 全量 e2e(含 CLI 子进程级测试)
+python3 -m pytest tests/ -q -m live        # live 测试需已登录 multica
 ```
 
 ## License
