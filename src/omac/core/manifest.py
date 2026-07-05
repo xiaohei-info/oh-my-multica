@@ -194,3 +194,15 @@ def set_node(manifest: Manifest, key: str, *, work_item_id=_UNSET, status: str |
         n.work_item_id = work_item_id
     if status is not None:
         n.status = status
+
+def merge_increment(manifest: Manifest, increment: Manifest) -> None:
+    """并入增量 fix 节点到原 manifest(原地修改,§7.6)。
+
+    - id 冲突 -> raise ValueError(「并入原 manifest,id 冲突报错」)
+    - 已存在(含已 done)节点不动(「已 done 节点不动」)
+    - 新增节点按 manifest.nodes 写入顺序追加(保留原 DAG 顺序,可续跑)
+    """
+    for node_id, node in increment.nodes.items():
+        if node_id in manifest.nodes:
+            raise ValueError(f"node id conflict: {node_id!r} already in manifest")
+        manifest.nodes[node_id] = node
