@@ -30,6 +30,9 @@ _shared_auto_complete_enabled: bool = True
 _shared_auto_complete_delay: int = 2
 _shared_kind_deliverables: Dict[str, Dict[str, Any]] = {}
 _shared_review_rejects_remaining: int = 0
+# 总控验收/增量拆解的行为注册(final-acceptance / decompose 任务完成时落 deliverable,测试用)
+_accepted_results: dict[str, object] = {}   # dag_key -> acceptance_results dict
+_increments: dict[str, object] = {}        # dag_key -> Manifest(增量 fix 节点)
 _shared_kind_delivery_sequences: Dict[str, list] = {}
 
 
@@ -92,6 +95,8 @@ class MockStore(WorkItemStore):
         _shared_kind_deliverables = {}
         _shared_kind_delivery_sequences = {}
         _shared_review_rejects_remaining = 0
+        _accepted_results = {}
+        _increments = {}
         _init_default_workspace()
 
     @classmethod
@@ -113,6 +118,17 @@ class MockStore(WorkItemStore):
         _shared_review_rejects_remaining = max(0, int(n))
 
     @classmethod
+    def set_acceptance_behaviors(cls, accepted: dict, increments: dict):
+        """注册 final-acceptance / decompose 年完成行为(测试用)。
+
+        accepted: {dag_key -> acceptance_results dict(list of {id,status,notes})}
+        increments: {dag_key -> Manifest(增量 fix 节点)}
+        """
+        global _accepted_results, _increments
+        _accepted_results = dict(accepted or {})
+        _increments = dict(increments or {})
+
+    @classmethod
     def set_kind_delivery_sequence(cls, kind: str, sequence: list):
         """注册 kind 的交付品序列(按次产出,用于测 lint 修订循环「坏→好」)。
 
@@ -120,6 +136,13 @@ class MockStore(WorkItemStore):
         """
         global _shared_kind_delivery_sequences
         _shared_kind_delivery_sequences[kind] = list(sequence)
+
+    @classmethod
+    def set_auto_complete(cls, enabled: bool = True, delay: int = 0):
+        """配置自动完成开关与延迟(测试用)。"""
+        global _shared_auto_complete_enabled, _shared_auto_complete_delay
+        _shared_auto_complete_enabled = bool(enabled)
+        _shared_auto_complete_delay = max(0, int(delay))
 
     # ==================== 模拟执行 ====================
 
@@ -136,6 +159,17 @@ class MockStore(WorkItemStore):
         if item.status == WorkItemStatus.IN_PROGRESS:
             if item.dag_key in _shared_fail_keys:
                 item.status = WorkItemStatus.FAILED
+                del _shared_assigned_items[item_id]
+            elif getattr(item, "kind", None) == TaskKind.FINAL_ACCEPTANCE:
+                item.status = WorkItemStatus.DONE
+                item.deliverable = _accepted_results.get(item.dag_key)
+                del _shared_assigned_items[item_id]
+            elif getattr(item, "kind", None) == TaskKind.DECOMPOSE:
+                item.status = WorkItemStatus.DONE
+                increment = _increments.get(item.dag_key)
+                if increment is not None:
+                    item.artifacts = {"increment": increment}
+                del _shared_assigned_items[item_id]
             else:
                 item.status = WorkItemStatus.DONE
                 seq = _shared_kind_delivery_sequences.get(item.dag_key)
@@ -149,7 +183,7 @@ class MockStore(WorkItemStore):
                 verification = self._mock_verification(item_id)
                 if verification is not None:
                     item.verification = verification
-            del _shared_assigned_items[item_id]
+                del _shared_assigned_items[item_id]
         elif item.status == WorkItemStatus.IN_REVIEW:
             if _shared_review_rejects_remaining > 0:
                 item.review_verdict = "reject"
