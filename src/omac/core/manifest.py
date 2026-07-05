@@ -107,9 +107,8 @@ class Manifest:
     meta: dict
     nodes: dict  # id -> Node
 
-def load_manifest(path: str) -> Manifest:
-    with open(path) as f:
-        raw = _expand_env(yaml.safe_load(f))
+def _build_nodes(raw) -> dict:
+    """从已展开的 raw dict 构造 {id: Node}(共享于文件加载与不落盘文本解析)。"""
     nodes = {}
     for n in raw.get("nodes", []):
         if "id" not in n:
@@ -131,7 +130,20 @@ def load_manifest(path: str) -> Manifest:
             merged=bool(n.get("merged", False)),
             merged_at=n.get("merged_at"),
         )
-    return Manifest(meta=raw.get("meta", {}), nodes=nodes)
+    return nodes
+
+
+def load_manifest(path: str) -> Manifest:
+    """从文件路径加载 manifest(环境变量展开 + schema 校验)。"""
+    with open(path) as f:
+        raw = _expand_env(yaml.safe_load(f))
+    return Manifest(meta=raw.get("meta", {}), nodes=_build_nodes(raw))
+
+
+def loads_manifest(text: str) -> Manifest:
+    """从 YAML 文本解析 manifest(不落盘,供 pipeline 直接消费 LLM 产出的 manifest)。"""
+    raw = _expand_env(yaml.safe_load(text))
+    return Manifest(meta=raw.get("meta", {}), nodes=_build_nodes(raw))
 
 def save_manifest(manifest: Manifest, path: str):
     """把 manifest 序列化回 YAML，原地覆盖。

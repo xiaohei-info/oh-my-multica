@@ -15,6 +15,7 @@ from ...pipeline.review import run_review
 from .. import exit_codes
 from ..output import add_output_flag, hint, print_json, print_table
 from ._stub import not_implemented
+from ...pipeline.plan import PlanContext, plan_create
 
 def resolve_review_rounds(cfg: dict | None = None) -> int:
     """plan 流水线评审修订轮次上界,与 dag run 节点评审共用 config.retry.review。
@@ -203,9 +204,45 @@ def _show(args) -> int:
     return exit_codes.OK
 
 
+def _create(args) -> int:
+    """mac plan create:装配 PlanContext + 调 plan_create 编排三阶段。"""
+    cfg = config_mod.load_config()
+    engine = _resolve_engine(args)
+    workspace_id = engine.store.config.workspace_id
+    roles = cfg.get("roles") or {}
+
+    workers = roles.get("workers") or []
+    if isinstance(workers, str):
+        workers = [workers]
+    reviewers = roles.get("reviewers") or []
+    if isinstance(reviewers, str):
+        reviewers = [reviewers]
+    planner = roles.get("planner") or (workers[0] if workers else None)
+    orchestrator = roles.get("orchestrator") or planner
+
+    if not planner:
+        raise ValidationError(
+            "缺少 planner 角色 —— 请 `omac config set roles.planner <agent>`,"
+            "或设置 roles.workers(取首位作为 planner)")
+
+    members = set(engine.store.list_members(workspace_id))
+    ctx = PlanContext(
+        engine=engine,
+        workspace_id=workspace_id,
+        planner=planner,
+        orchestrator=orchestrator,
+        reviewers=reviewers,
+        max_revisions=resolve_review_rounds(cfg),
+        no_review=args.no_review,
+        no_acceptance=args.no_acceptance,
+        members=members,
+    )
+    return plan_create(ctx, args.name, doc_path=getattr(args, "doc", None))
+
+
 def run(args) -> int:
     if args.action == "create":
-        return not_implemented("plan create", "P3.1")
+        return _create(args)
     if args.action == "check":
         return _check(args)
     if args.action == "show":

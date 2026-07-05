@@ -76,6 +76,7 @@ def run_task(
     reviewers: Optional[List[str]] = None,
     max_revisions: int = 3,
     poll: Callable[[], None],
+    guard: Optional[Callable[[WorkItem], List[str]]] = None,
 ) -> Dict[str, Any]:
     """派任务→等终态→取交付→有界修订循环。
 
@@ -103,7 +104,7 @@ def run_task(
     body = render_issue_body(body_node, contract, kind, item_id)
     store.update_work_item_metadata(item_id, description=body)
 
-    def _produce() -> WorkItem:
+    def _produce(hint: Optional[List[str]] = None) -> WorkItem:
         store.mark_in_progress(item_id)
         store.assign_work_item(item_id, assignee, "worker")
         runtime.wake(item_id, assignee, "worker")
@@ -114,13 +115,34 @@ def run_task(
                 f"{kind.value} 产出阶段失败(item {item_id})",
                 report={"item_id": item_id, "kind": kind.value, "rounds": 0,
                         "last_opinion": "producer failed"})
+        if hint:
+            store.add_comment(
+                item_id,
+                "产出修订(错误原文回贴):\n" + "\n".join(f"- {e}" for e in hint))
         return produced
 
-    delivery = _produce().artifacts
+    delivered = _produce()
+    delivery = delivered.artifacts
+
+    # 机器门(零 token):通过即止,耗尽转 NeedsDecision
+    if guard is not None:
+        for guard_round in range(1, max_revisions + 1):
+            guard_errors: List[str] = guard(delivered)
+            if not guard_errors:
+                break
+            store.reset_review(item_id)
+            delivered = _produce(hint=guard_errors)
+            delivery = delivered.artifacts
+        else:
+            raise NeedsDecision(
+                f"{kind.value} 任务经 {max_revisions} 轮 machine-gate 仍未通过",
+                report={"item_id": item_id, "kind": kind.value,
+                        "rounds": max_revisions, "phase": "guard",
+                        "last_opinion": "\n".join(guard_errors)})
 
     if not reviewers:
-        return {"item_id": item_id, "delivery": delivery, "rounds": 0,
-                "verdict": "pass", "kind": kind.value}
+        return {"item_id": item_id, "delivery": delivery,
+                "rounds": 0, "verdict": "pass", "kind": kind.value}
 
     # ── review 阶段(有界修订循环) ──
     last_opinion: Optional[str] = None
@@ -145,7 +167,8 @@ def run_task(
             item_id,
             f"reviewer {reviewer} 第 {round_index} 轮 reject: {last_opinion}")
         store.reset_review(item_id)
-        delivery = _produce().artifacts
+        delivered = _produce()
+        delivery = delivered.artifacts
 
     raise NeedsDecision(
         f"{kind.value} 任务在 {max_revisions} 轮修订后仍未通过评审",

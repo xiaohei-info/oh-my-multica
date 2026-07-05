@@ -30,6 +30,7 @@ _shared_auto_complete_enabled: bool = True
 _shared_auto_complete_delay: int = 2
 _shared_kind_deliverables: Dict[str, Dict[str, Any]] = {}
 _shared_review_rejects_remaining: int = 0
+_shared_kind_delivery_sequences: Dict[str, list] = {}
 
 
 def _init_default_workspace():
@@ -89,6 +90,7 @@ class MockStore(WorkItemStore):
         _shared_auto_complete_enabled = True
         _shared_auto_complete_delay = 2
         _shared_kind_deliverables = {}
+        _shared_kind_delivery_sequences = {}
         _shared_review_rejects_remaining = 0
         _init_default_workspace()
 
@@ -110,6 +112,15 @@ class MockStore(WorkItemStore):
         global _shared_review_rejects_remaining
         _shared_review_rejects_remaining = max(0, int(n))
 
+    @classmethod
+    def set_kind_delivery_sequence(cls, kind: str, sequence: list):
+        """注册 kind 的交付品序列(按次产出,用于测 lint 修订循环「坏→好」)。
+
+        sequence 为空列表时回退到 set_kind_delivery 的单值语义。
+        """
+        global _shared_kind_delivery_sequences
+        _shared_kind_delivery_sequences[kind] = list(sequence)
+
     # ==================== 模拟执行 ====================
 
     def _auto_complete_check(self, item_id: str):
@@ -127,10 +138,14 @@ class MockStore(WorkItemStore):
                 item.status = WorkItemStatus.FAILED
             else:
                 item.status = WorkItemStatus.DONE
-                item.artifacts = dict(
-                    _shared_kind_deliverables.get(
+                seq = _shared_kind_delivery_sequences.get(item.dag_key)
+                if seq:
+                    deliverable = seq.pop(0)
+                else:
+                    deliverable = _shared_kind_deliverables.get(
                         item.dag_key,
-                        {"pr_url": f"https://mock.example.com/pr/{item_id}"}))
+                        {"pr_url": f"https://mock.example.com/pr/{item_id}"})
+                item.artifacts = dict(deliverable)
                 verification = self._mock_verification(item_id)
                 if verification is not None:
                     item.verification = verification
