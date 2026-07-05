@@ -157,6 +157,7 @@ class MockStore(WorkItemStore):
         _shared_kind_deliverables = {}
         _shared_kind_delivery_sequences = {}
         _shared_review_rejects_remaining = 0
+        global _accepted_results, _increments
         _accepted_results = {}
         _increments = {}
         _init_default_workspace()

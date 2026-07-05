@@ -207,8 +207,9 @@ def run_acceptance_loop(
         merge_increment(manifest, increment)
         save_manifest(manifest, manifest_path)
 
-        # ── 步骤 7:回到内层 tick-loop 继续推进 ──
-        _run_inner_loop(engine, manifest, manifest_path, config)
+        # ── 步骤 7:回到内层 tick-loop 继续推进(收敛后才有下一轮验收) ──
+        _run_inner_loop(
+            engine, manifest, manifest_path, config, poll=poll)
 
     # ── 耗尽仍 fail -> exit 20 ──
     return AcceptanceOutcome(
@@ -270,20 +271,38 @@ def _run_inner_loop(
     manifest: Manifest,
     manifest_path: str,
     config: dict,
+    *,
+    poll: Callable[[], None] = _poll_no_op,
+    max_ticks: int = 1000,
 ) -> None:
-    """把内层 tick-loop 跑到收敛(全部 done)或需决策(不抛,外层继续)。
+    """把内层 tick-loop 跑到收敛(全部 done)或需决策(阻塞)。
 
     幂等:done 节点不动;只推进新并入的 todo 节点。
+
+    语义保障:只在 tick 返回 converged 时静默返回;needs_decision 或达到安全
+    上限仍未收敛 → 抛 NeedsDecision(让外层以 exit 20 结束),绝不在节点仍
+    in_progress 时悄悄返回,避免外层误判 exit 0。
     """
     retry_limits = resolve_retry(config)
     max_parallel = config.get("defaults", {}).get("max_parallel", 4)
 
-    for _ in range(min(10, 5)):
+    for _ in range(max_ticks):
         result = loop_mod.tick(
             engine.store, engine.runtime, manifest, manifest_path,
             max_parallel=max_parallel, retry_limits=retry_limits, config=config)
-        if result.state in ("converged", "needs_decision"):
+        if result.state == "converged":
             return
+        if result.state == "needs_decision":
+            raise NeedsDecision(
+                f"内层 loop 需决策:节点 {result.failed} 失败/受阻,无法继续推进",
+                report=result.report)
+        poll()
+
+    # 安全上限耗尽仍不收敛 → 需决策而非静默放行
+    snapshot = {k: n.status for k, n in manifest.nodes.items()}
+    raise NeedsDecision(
+        f"内层 loop {max_ticks} tick 仍未收敛,节点状态={snapshot}",
+        report={"state": "running", "nodes": snapshot})
 
 
 def _collect_workers(manifest: Manifest) -> List[str]:
