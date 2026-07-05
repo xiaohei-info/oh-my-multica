@@ -161,8 +161,7 @@ def _emit(result, manifest, args) -> None:
         "failed": result.failed,
         "dispatched": result.dispatched,
     }
-    if result.report:
-        payload["report"] = result.report
+    payload["report"] = result.report or None
 
     if args.output == "json":
         print_json(payload)
@@ -241,6 +240,12 @@ def _loop_or_single(args, single_round: bool) -> int:
             acceptance_exit = _maybe_acceptance(
                 args, engine, config, manifest)
             if acceptance_exit is not None:
+                # 验收外层循环可能已并入 fix 节点并收敛;重新 tick 一次
+                # (幂等:全部 done 时不派发)拿到最新 done 列表再 emit,
+                # 否则 emit 反映的是验收前的 3 节点,用户看不到增量节点。
+                last_result = tick(
+                    engine.store, engine.runtime, manifest, args.manifest,
+                    max_parallel=max_parallel, config=config)
                 _emit(last_result, manifest, args)
                 return acceptance_exit
             _emit(last_result, manifest, args)

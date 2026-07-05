@@ -1,6 +1,7 @@
 # omac
 
 [![CI](https://github.com/xiaohei-info/oh-my-agent-cluster/actions/workflows/ci.yml/badge.svg)](https://github.com/xiaohei-info/oh-my-agent-cluster/actions/workflows/ci.yml)
+[![Version](https://img.shields.io/badge/version-1.0.0-blue)](https://github.com/xiaohei-info/oh-my-agent-cluster)
 
 **omac** 是确定性 CLI 驱动的多 Agent 并行开发编排。它把复杂软件开发从「一个
 agent 靠长上下文硬扛」变成「契约先行 + manifest DAG + 多 Agent 并行执行 +
@@ -150,6 +151,10 @@ omac
 | `5` | 校验失败(lint / 证据 schema) |
 | `10` | 推进中(仅单轮 tick 模式) |
 | `20` | 需要调用者决策(附结构化报告) |
+
+## 变更日志
+
+详见 [CHANGELOG.md](./CHANGELOG.md)。
 
 ## 设计文档与 Guide
 
