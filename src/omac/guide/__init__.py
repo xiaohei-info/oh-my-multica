@@ -1,4 +1,4 @@
-"""guide — 知识分发 topic 文本(随包分发的 markdown,承接原 skill 全量内容)。"""
+"""guide — 知识分发 topic 文本(随包分发的 markdown)。"""
 from __future__ import annotations
 
 from importlib import resources
