@@ -1,4 +1,4 @@
-"""pipeline/tasks.py — 派任务→等终态→取交付→有界修订循环(P3.1)。
+"""pipeline/tasks.py —— 派任务→等终态→取交付→有界修订循环(P3.1)。
 
 plan 流水线(§7.2)与总控验收(§7.6)共用的确定性原语:建 issue → assign+wake
 → 轮询终态 → 取交付;reviewers 非空时进入 review 阶段(同一 issue 转派 reviewer),
@@ -35,10 +35,17 @@ def _payload_contract(raw: Any) -> Any:
 
 
 def _pick_reviewer(reviewers: List[str], producer: str, round_index: int) -> str:
-    """reviewers 池轮转,且 ≠ 产出者。"""
+    """reviewers 池轮转,且 ≠ 产出者。
+
+    池内必须至少有一名非产出者 agent,否则等于「自己审自己」,在工程上无意义。
+    这里显式报错(报错即教学),而不是静默 fallback 回产出者。
+    """
     candidates = [r for r in reviewers if r != producer]
     if not candidates:
-        candidates = list(reviewers)
+        raise ValueError(
+            f"reviewers 池 {reviewers!r} 剔除产出者 '{producer}' 后为空"
+            " —— 至少需要一名非产出者 agent 担任 reviewer。"
+            " 请扩大 reviewers 池,或指定 assignee 不在池中。")
     return candidates[round_index % len(candidates)]
 
 
@@ -46,15 +53,18 @@ def _poll_until(
     store,
     item_id: str,
     predicate: Callable[[WorkItem], bool],
-    poll: Optional[Callable[[], None]],
+    poll: Callable[[], None],
 ) -> WorkItem:
-    """轮询 work item 直到 predicate 为真。poll 为每轮等待钩子(测试用 no-op)。"""
+    """轮询 work item 直到 predicate 为真。
+
+    poll 由调用方提供(如 time.sleep / asyncio 协作点),是本原语唯一的等待钩子:
+    调用方需保证经若干次 poll 后 predicate 能收敛,否则本函数不会返回。
+    """
     while True:
         item = store.get_work_item(item_id)
         if predicate(item):
             return item
-        if poll is not None:
-            poll()
+        poll()
 
 
 def run_task(
@@ -65,7 +75,7 @@ def run_task(
     *,
     reviewers: Optional[List[str]] = None,
     max_revisions: int = 3,
-    poll: Optional[Callable[[], None]] = None,
+    poll: Callable[[], None],
 ) -> Dict[str, Any]:
     """派任务→等终态→取交付→有界修订循环。
 
@@ -87,8 +97,9 @@ def run_task(
         workspace_id, title, "", dag_key=kind.value, worker=assignee, kind=kind,
     )
     item_id = item.id
-    body_node = SimpleNamespace(
-        title=title, reviewer=reviewers[0] if reviewers else None, id=item_id)
+    # body 里 reviewer 留 None:reviewer 在 review 阶段按轮次由 _pick_reviewer 动态选取,
+    # 创建时没有「当前 reviewer」的概念,不写死池内第一位以免误导。
+    body_node = SimpleNamespace(title=title, reviewer=None, id=item_id)
     body = render_issue_body(body_node, contract, kind, item_id)
     store.update_work_item_metadata(item_id, description=body)
 
@@ -128,7 +139,7 @@ def run_task(
             return {"item_id": item_id, "delivery": delivery,
                     "rounds": round_index, "verdict": "pass", "kind": kind.value}
 
-        # reject:意见落 issue,reset_review 清旧判定,转回产出者修订
+        # reject: 意见落 issue, reset_review 清旧判定, 转回产出者修订
         last_opinion = reviewed.review_comment
         store.add_comment(
             item_id,
