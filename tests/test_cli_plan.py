@@ -13,6 +13,7 @@ import pytest
 from omac.cli import exit_codes
 from omac.cli.main import main
 from omac.engines import create_engine
+from omac.engines.mock import MockStore
 from omac.engines.models import EngineConfig
 
 
@@ -232,3 +233,181 @@ nodes:
     assert data["nodes"]["total"] == 2
     assert data["nodes"]["with_contract"] == 1
     assert data["nodes"]["contract_coverage"] == "1/2"
+
+
+# ── plan create(P3.3) ──────────────────────────────────────────────────────
+
+PLAN_TEXT = """\
+# 演示计划
+
+目标:实现 demo 特性,包含 login 与 dashboard 两个节点。
+步骤:
+1. 搭 login
+2. 搭 dashboard
+"""
+
+ACCEPTANCE_YAML = """\
+flows:
+  - id: flow-login
+    name: 登录流程
+    actions:
+      - step: 打开登录页
+        how: GET /login
+        expected: 返回 200 与登录表单
+      - step: 提交合法凭证
+        how: POST /login {user, pwd}
+        expected: 跳转到首页
+  - id: flow-dashboard
+    name: 仪表盘流程
+    actions:
+      - step: 访问仪表盘
+        how: GET /dash
+        expected: 显示数据卡片
+"""
+
+GOOD_MANIFEST = """\
+meta:
+  name: demo-create
+nodes:
+  - id: login
+    worker: alice
+    contract:
+      objective: 实现登录
+      acceptance:
+        - flow-login
+      non_goals: ["不改 dashboard"]
+      verification_commands: ["pytest tests/login"]
+      integration_gates:
+        - name: login-gate
+          layer: L1
+          delivery_goal: 登录交付
+          source_of_truth: ["docs/login.md"]
+          covers: ["route-login"]
+          acceptance_refs: ["flow-login"]
+          commands: ["pytest tests/int/login"]
+      pr_base: feature/demo
+  - id: dashboard
+    worker: bob
+    blocked_by: [login]
+    contract:
+      objective: 实现仪表盘
+      acceptance:
+        - flow-dashboard
+      non_goals: ["不改 login"]
+      verification_commands: ["pytest tests/dash"]
+      integration_gates:
+        - name: dash-gate
+          layer: L1
+          delivery_goal: 仪表盘交付
+          source_of_truth: ["docs/dash.md"]
+          covers: ["route-dash"]
+          acceptance_refs: ["flow-dashboard"]
+          commands: ["pytest tests/int/dash"]
+      pr_base: feature/demo
+"""
+
+BAD_MANIFEST_LINT = """\
+meta:
+  name: bad-create
+nodes:
+  - id: login
+    worker: ghost
+    blocked_by: [missing]
+    contract:
+      objective: ""
+      acceptance: []
+      non_goals: []
+      verification_commands: []
+      integration_gates: []
+      pr_base: ""
+"""
+
+
+def _configure_create_mock(tmp_path, monkeypatch):
+    """完整 mock 配置:planner/orchestrator/workers/reviewers 角色齐全。"""
+    from omac.core.taskmeta import TaskKind
+    monkeypatch.chdir(tmp_path)
+    assert main(["config", "set", "engine", "mock"]) == exit_codes.OK
+    assert main(["config", "set", "workspace", "mock-workspace"]) == exit_codes.OK
+    assert main(["config", "set", "roles.planner", "alice"]) == exit_codes.OK
+    assert main(["config", "set", "roles.orchestrator", "bob"]) == exit_codes.OK
+    assert main(["config", "set", "roles.workers", '["alice", "bob"]']) == exit_codes.OK
+    assert main(["config", "set", "roles.reviewers",
+                 '["alice", "bob", "charlie"]']) == exit_codes.OK
+    engine = create_engine(
+        "mock",
+        EngineConfig(
+            engine_type="mock",
+            workspace_id="mock-workspace",
+            extra={"MOCK_AUTO_COMPLETE": "true", "MOCK_AUTO_COMPLETE_DELAY": "0"},
+        ),
+    )
+    engine.store.set_review_rejects(0)
+    MockStore.set_kind_delivery("plan", {"plan": PLAN_TEXT})
+    MockStore.set_kind_delivery("acceptance", {"acceptance": ACCEPTANCE_YAML})
+    MockStore.set_kind_delivery("decompose", {"manifest": GOOD_MANIFEST})
+    return engine
+
+
+def _first_item_of_kind(engine, kind):
+    """取该 kind 的首个 work item(按创建顺序)。"""
+    from omac.core.taskmeta import TaskKind
+    items = [i for i in engine.store.list_work_items(engine.store.config.workspace_id)
+             if i.kind == kind]
+    return items[0] if items else None
+
+
+def test_create_default_combination(tmp_path, monkeypatch):
+    engine = _configure_create_mock(tmp_path, monkeypatch)
+    assert main(["plan", "create", "--name", "demo-create"]) == exit_codes.OK
+    assert (tmp_path / ".orchestrator" / "demo-create.yaml").exists()
+    assert (tmp_path / ".orchestrator" / "demo-create.acceptance.yaml").exists()
+    # 验证上游产物已流入 acceptance / decompose 的 issue body
+    from omac.core.taskmeta import TaskKind
+    acc_item = _first_item_of_kind(engine, TaskKind.ACCEPTANCE)
+    assert acc_item is not None, "应创建 acceptance work item"
+    assert "演示计划" in acc_item.description, "acceptance issue body 应含定稿计划"
+    dec_item = _first_item_of_kind(engine, TaskKind.DECOMPOSE)
+    assert dec_item is not None, "应创建 decompose work item"
+    assert "演示计划" in dec_item.description, "decompose issue body 应含定稿计划"
+    assert "登录流程" in dec_item.description, "decompose issue body 应含验收文档(flow)"
+
+
+def test_create_with_doc_skips_plan(tmp_path, monkeypatch):
+    """给了 --doc 时,不应创建 plan 阶段的 work item。"""
+    from omac.core.taskmeta import TaskKind
+    engine = _configure_create_mock(tmp_path, monkeypatch)
+    doc = tmp_path / "design.md"
+    doc.write_text(PLAN_TEXT)
+    assert main(["plan", "create", "--name", "demo-doc", "--doc", str(doc)]) == exit_codes.OK
+    assert (tmp_path / ".orchestrator" / "demo-doc.yaml").exists()
+    plan_item = _first_item_of_kind(engine, TaskKind.PLAN)
+    assert plan_item is None, "带 --doc 时不应创建 plan 阶段 work item"
+
+
+def test_create_no_review_skips_review_stages(tmp_path, monkeypatch):
+    _configure_create_mock(tmp_path, monkeypatch)
+    # 即便注入 reject,--no-review 应跳过 review 仍 exit 0
+    assert main(["plan", "create", "--name", "demo-noreview",
+                 "--no-review"]) == exit_codes.OK
+
+
+def test_create_no_acceptance_skips_acceptance_phase(tmp_path, monkeypatch):
+    from omac.core.taskmeta import TaskKind
+    engine = _configure_create_mock(tmp_path, monkeypatch)
+    assert main(["plan", "create", "--name", "demo-noacc",
+                 "--no-acceptance"]) == exit_codes.OK
+    assert (tmp_path / ".orchestrator" / "demo-noacc.yaml").exists()
+    assert not (tmp_path / ".orchestrator" / "demo-noacc.acceptance.yaml").exists()
+    acc_item = _first_item_of_kind(engine, TaskKind.ACCEPTANCE)
+    assert acc_item is None, "带 --no-acceptance 时不应创建 acceptance work item"
+
+
+def test_create_lint_reject_revises_then_passes(tmp_path, monkeypatch):
+    """注入一次坏 manifest → lint 机器门回贴修订 → 第二次好 manifest 通过。"""
+    _configure_create_mock(tmp_path, monkeypatch)
+    MockStore.set_kind_delivery_sequence(
+        "decompose",
+        [{"manifest": BAD_MANIFEST_LINT}, {"manifest": GOOD_MANIFEST}])
+    assert main(["plan", "create", "--name", "demo-lint"]) == exit_codes.OK
+    assert (tmp_path / ".orchestrator" / "demo-lint.yaml").exists()

@@ -77,7 +77,12 @@ def _contract_errors(node) -> list:
     return errs
 
 
-def lint(m: Manifest, pool: set) -> list:
+def lint(m: Manifest, pool: set, *, acceptance=None) -> list:
+    """schema 校验 manifest。
+
+    acceptance(AcceptanceDoc|None):有验收文档时,每个节点的 contract.acceptance
+    条目须为验收文档 flow.id 之一(锚定,否则提示未锚定)。缺省 None = 不做锚定校验。
+    """
     errs = []
     for n in m.nodes.values():
         if n.worker not in pool:
@@ -91,6 +96,16 @@ def lint(m: Manifest, pool: set) -> list:
             if n.reviewer not in pool:
                 errs.append(f"node {n.id}: reviewer '{n.reviewer}' not in agent pool")
         errs.extend(_contract_errors(n))
+    if acceptance is not None:
+        flow_ids = set(getattr(acceptance, "flow_ids", None) or [])
+        for n in m.nodes.values():
+            contract = getattr(n, "contract", None)
+            if not contract:
+                continue
+            for a in contract.acceptance:
+                if a not in flow_ids:
+                    errs.append(
+                        f"node {n.id}: contract.acceptance '{a}' 未锚定验收文档 flow")
     if _has_cycle(m.nodes):
         errs.append("manifest DAG has a cycle")
     return errs

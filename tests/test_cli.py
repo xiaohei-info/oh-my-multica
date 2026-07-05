@@ -32,8 +32,8 @@ def test_unknown_command_teaches(capsys):
 def test_stub_commands_exit_generic(capsys):
     # dag run 已在 P1 实现(omac dag run),不再是 stub
     # `omac web` 在 P5.1 实现,不再是 stub(默认启动本地服务)。
-    assert main(["plan", "create", "--name", "x"]) == exit_codes.GENERIC
-    assert "P3" in capsys.readouterr().err
+    # plan create 已在 P3.3 实现;无配置时走 engine 校验门 exit 5。
+    assert main(["plan", "create", "--name", "x"]) == exit_codes.VALIDATION
 
 
 def test_web_nonlocal_without_token_exits_validation(capsys):
