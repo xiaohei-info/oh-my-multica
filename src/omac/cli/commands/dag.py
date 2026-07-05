@@ -13,7 +13,7 @@ from ...engines.models import EngineConfig
 from ...errors import NeedsDecision, ValidationError
 from ...pipeline.loop import tick
 from ...pipeline.acceptance import (
-    acceptance_doc_path, load_acceptance_doc_file, run_acceptance_loop,
+    acceptance_doc_path, run_acceptance_loop,
 )
 from ...pipeline.report import build_status_report, render_table
 
@@ -206,7 +206,7 @@ def _maybe_acceptance(args, engine, config, manifest) -> Optional[int]:
     import time as _time
     outcome = run_acceptance_loop(
         engine, manifest, manifest_path, doc, config, no_acceptance=False,
-        poll=lambda: _time.sleep(config.get("defaults", {}).get("poll_interval", 0) * 0),
+        poll=lambda: _time.sleep(config.get("defaults", {}).get("poll_interval", 0)),
     )
     return outcome.exit_code
 

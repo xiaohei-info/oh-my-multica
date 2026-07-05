@@ -6,6 +6,7 @@
   - max_rounds 耗尽路径 exit 20
 """
 import os
+import yaml
 
 import pytest
 
@@ -37,8 +38,8 @@ def _engine(**extra):
 def _done_manifest(path):
     """2 节点、全部 done 的 manifest(模拟内层 loop 已收敛)."""
     m = Manifest(meta={"name": "feature-x", "pr_base": "feature/v1"}, nodes={
-        "a": Node(id="a", worker="alice", status="done", work_item_id="1"),
-        "b": Node(id="b", worker="bob", blocked_by=["a"], status="done", work_item_id="2"),
+        "a": Node(id="a", worker="alice", status="done", work_item_id="wi-a"),
+        "b": Node(id="b", worker="bob", blocked_by=["a"], status="done", work_item_id="wi-b"),
     })
     save_manifest(m, path)
     return m
@@ -61,7 +62,6 @@ def _acceptance_doc(flows):
 def _write_doc(tmp_path, doc):
     doc_path = os.path.join(str(tmp_path), ".orchestrator", "feature-x.acceptance.yaml")
     os.makedirs(os.path.dirname(doc_path), exist_ok=True)
-    import yaml
     with open(doc_path, "w") as f:
         yaml.dump({"flows": [
             {"id": fl.id, "name": fl.name,
@@ -259,3 +259,145 @@ def test_no_acceptance_skips(tmp_path):
         engine, manifest, path, doc, config, no_acceptance=True)
     assert outcome.exit_code == 0
     assert outcome.rounds == 0
+
+
+# ── entry-level: real work submit 路径 ─────────────────────────────
+
+import json as _json
+from omac.engines.models import WorkItemStatus as _WIS
+from omac.core.taskmeta import TaskKind
+from omac.engines.store import WorkItemStore
+from omac.pipeline import dispatch as dispatch_mod
+
+
+def _decompose_store(tmp_path):
+    """造一个 mock 引擎 + 一个 DECOMPOSE mock work item。"""
+    eng = _engine()
+    store = eng.store
+    item = store.create_work_item(
+        workspace_id="mock-workspace",
+        title="decompose decompose-r1",
+        description="payload",
+        dag_key="decompose-r1",
+        worker="bob",
+        kind=TaskKind.DECOMPOSE,
+    )
+    return eng, store, item
+
+
+def test_decompose_submit_real_path(tmp_path):
+    """real work submit --manifest-file 路径:decompose authoring 落 IN_REVIEW + deliverable。"""
+    eng, store, item = _decompose_store(tmp_path)
+    existing = Manifest(meta={"pr_base": "feature/v1"}, nodes={
+        "b": Node(id="b", worker="bob", blocked_by=["a"], status="done"),
+    })
+    manifest = Manifest(meta={}, nodes={
+        "fix-b": Node(id="fix-b", worker="alice", blocked_by=["b"]),
+    })
+    mpath = str(tmp_path / "increment.yaml")
+    save_manifest(manifest, mpath)
+
+    # 直接在真实 store 上调 dispatch.submit(manifest_file=..., base_manifest=existing)
+    result = dispatch_mod.submit(
+        store, item.id, manifest_file=mpath,
+        agent_pool={"alice", "bob"}, base_manifest=existing,
+    )
+    assert result.kind == TaskKind.DECOMPOSE
+    assert result.advanced_to == _WIS.IN_REVIEW
+
+    updated = store.get_work_item(item.id)
+    assert updated.status == _WIS.IN_REVIEW
+    assert updated.deliverable is not None
+    # deliverable 是 manifest 文本,可被解析
+    parsed = yaml.safe_load(updated.deliverable)
+    assert any(n["id"] == "fix-b" for n in parsed["nodes"])
+
+
+def test_decompose_submit_rejects_unknown_blocked_by(tmp_path):
+    """decompose authoring 引用不存在节点 → 校验失败,状态不动。"""
+    eng, store, item = _decompose_store(tmp_path)
+    manifest = Manifest(meta={}, nodes={
+        "fix-b": Node(id="fix-b", worker="alice", blocked_by=["nonexistent"]),
+    })
+    mpath = str(tmp_path / "bad.yaml")
+    save_manifest(manifest, mpath)
+
+    with pytest.raises(Exception):
+        dispatch_mod.submit(
+            store, item.id, manifest_file=mpath,
+            agent_pool={"alice"}, base_manifest=None,
+        )
+    # 失败不应推进状态
+    assert store.get_work_item(item.id).status == _WIS.TODO
+
+
+def _final_acceptance_store(tmp_path):
+    eng = _engine()
+    store = eng.store
+    doc = _acceptance_doc([("f1", "F1", 1), ("f2", "F2", 1)])
+    acceptance_doc_raw = {
+        "flows": [
+            {"id": f.id, "name": f.name,
+             "actions": [{"step": a.step, "how": a.how, "expected": a.expected}
+                         for a in f.actions]}
+            for f in doc.flows
+        ]
+    }
+    item = store.create_work_item(
+        workspace_id="mock-workspace",
+        title="final-acceptance final-acceptance-r1",
+        description="payload",
+        dag_key="final-acceptance-r1",
+        worker="charlie",
+        kind=TaskKind.FINAL_ACCEPTANCE,
+    )
+    store.set_node_contract(item.id, {"acceptance_doc": acceptance_doc_raw})
+    return eng, store, item, acceptance_doc_raw
+
+
+def test_final_acceptance_submit_real_path(tmp_path):
+    """real work submit --acceptance-results-file 路径(contract 挂 acceptance_doc 才能过校验)。"""
+    eng, store, item, _ = _final_acceptance_store(tmp_path)
+    results = [
+        {"id": "f1", "status": "pass", "evidence": "ok"},
+        {"id": "f2", "status": "pass", "evidence": "ok"},
+    ]
+    rpath = str(tmp_path / "results.json")
+    with open(rpath, "w") as f:
+        _json.dump(results, f)
+
+    result = dispatch_mod.submit(
+        store, item.id, acceptance_results_file=rpath,
+    )
+    assert result.kind == TaskKind.FINAL_ACCEPTANCE
+    assert result.advanced_to == _WIS.DONE
+
+    updated = store.get_work_item(item.id)
+    assert updated.status == _WIS.DONE
+    assert updated.deliverable is not None
+    parsed = yaml.safe_load(updated.deliverable)
+    assert isinstance(parsed, list)
+    assert parsed[0]["id"] == "f1"
+
+
+def test_final_acceptance_submit_requires_contract(tmp_path):
+    """final-acceptance × authoring 无 acceptance_doc contract → submit 报错(Blocker 1 验证)。"""
+    eng = _engine()
+    store = eng.store
+    # 故意不挂 contract
+    item = store.create_work_item(
+        workspace_id="mock-workspace",
+        title="final-acceptance no-contract",
+        description="payload",
+        dag_key="final-acceptance-x",
+        worker="charlie",
+        kind=TaskKind.FINAL_ACCEPTANCE,
+    )
+    results = [{"id": "f1", "status": "pass"}]
+    rpath = str(tmp_path / "results.json")
+    with open(rpath, "w") as f:
+        _json.dump(results, f)
+
+    with pytest.raises(Exception) as exc:
+        dispatch_mod.submit(store, item.id, acceptance_results_file=rpath)
+    assert "acceptance_doc" in str(exc.value)
