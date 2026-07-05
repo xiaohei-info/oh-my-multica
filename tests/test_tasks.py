@@ -37,10 +37,22 @@ def _payload(**over):
     return base
 
 
+def _poll():
+    """测试用 no-op poll(配合 MOCK_AUTO_COMPLETE_DELAY=0 立即收敛)。"""
+    pass
+
+
+def test_poll_is_required():
+    """poll 是必填关键字参数,不传应抛 TypeError。"""
+    eng = _engine()
+    with pytest.raises(TypeError):
+        run_task(eng, TaskKind.PLAN, _payload(), "alice")
+
+
 def test_one_pass_no_reviewers():
     eng = _engine()
     MockStore.set_kind_delivery("plan", {"plan_file": "plan.md"})
-    res = run_task(eng, TaskKind.PLAN, _payload(), "alice")
+    res = run_task(eng, TaskKind.PLAN, _payload(), "alice", poll=_poll)
     assert res["item_id"]
     assert res["delivery"] == {"plan_file": "plan.md"}
     assert res["rounds"] == 0
@@ -61,7 +73,7 @@ def test_reject_twice_then_pass():
     MockStore.set_review_rejects(2)
     res = run_task(
         eng, TaskKind.PLAN, _payload(), "alice",
-        reviewers=["bob"], max_revisions=3)
+        reviewers=["bob"], max_revisions=3, poll=_poll)
     assert res["delivery"] == {"plan_file": "plan.md"}
     assert res["rounds"] == 3  # 2 次 reject + 1 次 pass
     assert res["verdict"] == "pass"
@@ -81,7 +93,7 @@ def test_exhausted_needs_decision():
     MockStore.set_review_rejects(99)  # 永远 reject
     with pytest.raises(NeedsDecision) as exc:
         run_task(eng, TaskKind.PLAN, _payload(), "alice",
-                 reviewers=["bob"], max_revisions=3)
+                 reviewers=["bob"], max_revisions=3, poll=_poll)
     report = exc.value.report
     assert report["rounds"] == 3
     assert report["last_opinion"]
@@ -96,10 +108,19 @@ def test_reviewer_rotation_avoids_producer():
     eng = _engine()
     MockStore.set_kind_delivery("plan", {"plan_file": "plan.md"})
     res = run_task(eng, TaskKind.PLAN, _payload(), "alice",
-                   reviewers=["alice", "bob", "charlie"])
+                   reviewers=["alice", "bob", "charlie"], poll=_poll)
     item = eng.store.get_work_item(res["item_id"])
     # reviewer ≠ producer (alice)
     assert item.reviewer in ("bob", "charlie")
+
+
+def test_review_pool_must_contain_non_producer():
+    """reviewers 池剔除产出者后不可为空,否则抛 ValueError(不允许自审)。"""
+    eng = _engine()
+    MockStore.set_kind_delivery("plan", {"plan_file": "plan.md"})
+    with pytest.raises(ValueError, match="reviewers 池"):
+        run_task(eng, TaskKind.PLAN, _payload(), "alice",
+                 reviewers=["alice"], poll=_poll)
 
 
 def test_failure_in_production_short_circuits():
@@ -107,6 +128,6 @@ def test_failure_in_production_short_circuits():
     # dag_key == kind == "plan",注入失败
     MockStore.set_fail_keys({"plan"})
     with pytest.raises(NeedsDecision) as exc:
-        run_task(eng, TaskKind.PLAN, _payload(), "alice")
+        run_task(eng, TaskKind.PLAN, _payload(), "alice", poll=_poll)
     assert exc.value.report["rounds"] == 0
     assert "producer failed" in exc.value.report["last_opinion"]
