@@ -1,0 +1,535 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'self'; form-action 'self'" />
+<title>omac web — DAG 可视化面板</title>
+<style>
+:root{
+  --bg:#0f172a; --panel:#1e293b; --panel-2:#334155;
+  --text:#e2e8f0; --muted:#94a3b8; --border:#334155;
+  --accent:#38bdf8; --accent-weak:#0ea5e9;
+  --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444; --info:#3b82f6;
+  --todo:#94a3b8; --in_progress:#3b82f6; --ci_check:#a855f7;
+  --in_review:#f59e0b; --merging:#10b981; --done:#22c55e;
+  --blocked:#ef4444; --abandoned:#6b7280;
+  --row-h:84; --col-w:200;
+}
+html.light{
+  --bg:#f8fafc; --panel:#ffffff; --panel-2:#e2e8f0;
+  --text:#0f172a; --muted:#475569; --border:#cbd5e1;
+  --row-h:84; --col-w:200;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  background:var(--bg);color:var(--text);display:flex;flex-direction:column;min-height:100vh}
+header.topbar{display:flex;align-items:center;gap:16px;padding:10px 16px;
+  background:var(--panel);border-bottom:1px solid var(--border);flex-wrap:wrap}
+header h1{font-size:15px;margin:0;white-space:nowrap}
+header .spacer{flex:1}
+label.field{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+select,button{font-family:inherit;font-size:12px;background:var(--panel-2);
+  color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 8px;cursor:pointer}
+button:hover{border-color:var(--accent)}
+button.primary{background:var(--accent-weak);color:#fff;border-color:var(--accent-weak)}
+.badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;
+  background:var(--panel-2);border:1px solid var(--border)}
+.pulse{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--ok);margin-right:6px}
+main{flex:1;display:grid;grid-template-columns:1fr 360px;min-height:0}
+@media(max-width:900px){main{grid-template-columns:1fr}}
+.dag-wrap{position:relative;overflow:auto;border-right:1px solid var(--border);min-height:0}
+#dag-canvas{display:block;width:100%;min-height:100%}
+aside.detail{background:var(--panel);border:none;overflow:auto;padding:16px}
+aside.detail.hidden{display:none}
+@media(min-width:900px){aside.detail.hidden{display:block;overflow:auto}}
+.region-title{font-size:13px;font:600 13px inherit;margin:0 0 8px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:12px;margin:8px 0}
+.kv dt{color:var(--muted);font-weight:600}
+.kv dd{margin:0;word-break:break-word}
+pre.contract{background:var(--panel-2);padding:8px;border-radius:6px;font-size:11px;
+  overflow:auto;max-height:180px;white-space:pre-wrap;border:1px solid var(--border)}
+ul.acceptance{padding-left:18px;font-size:12px}
+ul.acceptance li{margin:3px 0}
+.copy-row{display:flex;align-items:center;gap:6px;margin:4px 0}
+.copy-row code{flex:1;background:var(--panel-2);padding:6px 8px;border-radius:4px;
+  font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border:1px solid var(--border)}
+
+/* SVG DAG */
+.edge{stroke:var(--border);stroke-width:1.5;fill:none;opacity:.75}
+.node rect{rx:8;ry:8;stroke-width:1.5;cursor:pointer}
+.node text{fill:var(--text);font-size:11px;font-family:inherit;pointer-events:none}
+.node .nk{font-weight:600}
+.node .ns{font-size:10px;fill:var(--muted)}
+.node.selected rect{stroke:var(--accent);stroke-width:3}
+.edge.dim{opacity:.18}
+.node.dim rect{opacity:.35}
+.edge.hl{stroke:var(--accent);stroke-width:2.5;opacity:1}
+.tick-label{fill:var(--muted);font-size:10px}
+
+footer.tabs{display:flex;background:var(--panel);border-top:1px solid var(--border)}
+footer.tabs input{display:none}
+footer.tabs label{padding:10px 16px;font-size:12px;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent}
+footer.tabs input:checked + label{color:var(--text);border-bottom-color:var(--accent)}
+.tab-body{display:none;padding:16px;overflow:auto}
+.tab-body.active{display:block}
+.tab-body-wrap{max-height:320px;overflow:auto}
+
+.anomaly-card{border-left:3px solid var(--bad);background:var(--panel);border-radius:6px;
+  padding:10px 12px;margin-bottom:10px;border:1px solid var(--border);border-left-width:3px}
+.anomaly-card .state{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.anomaly-card.blocked{border-left-color:var(--warn)}
+.anomaly-card .reason{font-size:12px;color:var(--text);margin-top:2px}
+.hl-todo{color:var(--todo)} .hl-in_progress{color:var(--in_progress)}
+.hl-ci_check{color:var(--ci_check)} .hl-in_review{color:var(--in_review)}
+.hl-merging{color:var(--merging)} .hl-done{color:var(--done)}
+.hl-blocked{color:var(--blocked)} .hl-abandoned{color:var(--abandoned)}
+.empty{color:var(--muted);font-size:11px;font-style:italic;padding:8px 0}
+.toolbar{display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;align-items:center}
+.legend{display:flex;gap:10px;flex-wrap:wrap;font-size:11px;color:var(--muted)}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:4px;vertical-align:middle}
+.msg{position:fixed;bottom:12px;left:50%;transform:translateX(-50%);background:var(--panel-2);
+  border:1px solid var(--border);padding:6px 14px;border-radius:6px;font-size:12px;z-index:99;
+  box-shadow:0 4px 16px rgba(0,0,0,.3)}
+.msg.err{border-color:var(--bad)}
+a.ext{color:var(--accent);text-decoration:none}
+a.ext:hover{text-decoration:underline}
+</style>
+</head>
+<body>
+<header class="topbar">
+  <h1>omac web</h1>
+  <label class="field">manifest
+    <select id="manifest-selector" title="选择要查看的 manifest"><option value="">— 选择 —</option></select>
+  </label>
+  <span class="badge" id="progress-badge" style="display:none"></span>
+  <span class="spacer"></span>
+  <span class="badge" id="poll-state" title="最后状态刷新时间"><span class="pulse"></span><span id="poll-ts">—</span></span>
+  <label class="field">主题
+    <select id="theme-select">
+      <option value="auto">跟随系统</option>
+      <option value="dark">深色</option>
+      <option value="light">浅色</option>
+    </select>
+  </label>
+</header>
+
+<main>
+  <section class="dag-wrap" aria-label="DAG 总览">
+    <div class="toolbar" id="dag-toolbar">
+      <span class="region-title" style="margin:0">DAG 总览</span>
+      <span class="spacer" style="flex:1"></span>
+      <button id="fit-btn" title="回到全图视野">全图</button>
+      <div class="legend" id="dag-legend"></div>
+    </div>
+    <svg id="dag-canvas" xmlns="http://www.w3.org/2000/svg" aria-label="DAG 可视化" role="img"></svg>
+  </section>
+
+  <aside class="detail" id="node-detail" aria-label="节点详情">
+    <p class="empty" id="detail-empty">点击 DAG 中的一个节点查看 contract / 证据 / 链接。</p>
+    <div id="detail-content"></div>
+  </aside>
+</main>
+
+<footer class="tabs">
+  <input type="radio" name="tab" id="tab-anomaly" checked/>
+  <label for="tab-anomaly">异常面板</label>
+  <input type="radio" name="tab" id="tab-static"/>
+  <label for="tab-static">静态信息页</label>
+  <div style="flex:1"></div>
+  <span class="badge" id="tick-state" style="align-self:center;margin-right:8px">—</span>
+
+  <div class="tab-body-wrap" style="position:absolute">
+  <div class="tab-body active" id="anomaly-panel" data-tab="tab-anomaly">
+    <p class="empty" id="anomaly-empty">当前无异常(无 failed / blocked 节点)——所有节点收敛或推进中。</p>
+    <div id="anomaly-content"></div>
+  </div>
+  <div class="tab-body" id="static-info" data-tab="tab-static">
+    <button class="primary" id="reload-static" style="margin-bottom:10px">刷新</button>
+    <div id="static-content"><p class="empty">选择一个 manifest 后加载 config / manifest 原文 / 验收清单。</p></div>
+  </div>
+  </div>
+</footer>
+
+<div class="msg" id="toast" style="display:none"></div>
+
+<script>
+(function(){
+"use strict";
+
+/* ---------- 状态 → 着色 ---------- */
+const STATES = ["todo","in_progress","ci_check","in_review","merging","done","blocked","abandoned"];
+const STATE_LABEL = {
+  todo:"待开始", in_progress:"进行中", ci_check:"CI 校验",
+  in_review:"评审中", merging:"合并中", done:"完成",
+  blocked:"受阻", abandoned:"已放弃"
+};
+function stateColor(s, root){
+  return getComputedStyle(root||document.documentElement).getPropertyValue("--"+s).trim() || "#888";
+}
+
+/* ---------- 全局状态 ---------- */
+const state = {
+  manifests: [],
+  current: null,
+  status: null,
+  refresh: 10,
+  nodes: {},
+  selected: null,
+  pollTimer: null,
+};
+
+/* ---------- 工具 ---------- */
+const $ = (id) => document.getElementById(id);
+function toast(msg, isErr){
+  const t = $("toast");
+  t.textContent = msg;
+  t.style.display = "block";
+  t.classList.toggle("err", !!isErr);
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => t.style.display = "none", 2500);
+}
+async function api(path){
+  const r = await fetch(path);
+  if(!r.ok){
+    let detail = r.status;
+    try { detail = (await r.json()).detail || (await r.json()).error || detail; } catch(e){}
+    throw new Error(path+" → "+detail);
+  }
+  if(((r.headers.get("content-type"))||"").includes("application/json")) return r.json();
+  return r.text();
+}
+function esc(s){
+  return String(s==null?"":s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+}
+function setTheme(mode){
+  localStorage.setItem("omac-theme", mode);
+  applyTheme(mode);
+}
+function applyTheme(mode){
+  const dark = mode==="dark" || (mode==="auto" && window.matchMedia("(prefers-color-scheme:dark)").matches);
+  document.documentElement.classList.toggle("light", !dark);
+}
+applyTheme(localStorage.getItem("omac-theme")||"auto");
+
+$("theme-select").value = localStorage.getItem("omac-theme")||"auto";
+$("theme-select").addEventListener("change", e => setTheme(e.target.value));
+window.matchMedia("(prefers-color-scheme:dark)").addEventListener("change", ()=>{
+  if((localStorage.getItem("omac-theme")||"auto")==="auto") applyTheme("auto");
+});
+
+/* ---------- manifest 选择 ---------- */
+async function loadManifests(){
+  state.manifests = await api("/api/manifests");
+  const sel = $("manifest-selector");
+  sel.innerHTML = '<option value="">— 选择 —</option>' +
+    state.manifests.map(m => '<option value="'+esc(m.path)+'">'+esc(m.name)+' ('+m.done+'/'+m.total+')</option>').join("");
+  // 记住上次选择
+  const last = localStorage.getItem("omac-last-manifest");
+  if(last && state.manifests.some(m => m.path===last)){
+    sel.value = last;
+    selectManifest(last);
+  }
+}
+$("manifest-selector").addEventListener("change", e => selectManifest(e.target.value));
+
+async function selectManifest(path){
+  if(!path){ state.current=null; return; }
+  localStorage.setItem("omac-last-manifest", path);
+  state.current = path;
+  cancelPoll();
+  await fetchStatus();
+  startPoll();
+}
+
+/* ---------- 状态获取 + 轮询 ---------- */
+async function fetchStatus(){
+  try{
+    const s = await api("/api/dag/status?manifest="+encodeURIComponent(state.current));
+    state.status = s;
+    state.nodes = {};
+    (s.nodes||[]).forEach(n => state.nodes[n.key]=n);
+    renderDAG(s);
+    renderAnomaly(s);
+    const pb = $("progress-badge");
+    pb.style.display="";
+    pb.textContent = "进度 "+(s.progress?s.progress.done+"/"+s.progress.total:"?");
+    $("poll-ts").textContent = new Date().toLocaleTimeString();
+  }catch(e){ toast("刷新失败: "+e.message, true); }
+}
+function startPoll(){
+  cancelPoll();
+  state.pollTimer = setInterval(fetchStatus, state.refresh*1000);
+}
+function cancelPoll(){ if(state.pollTimer){ clearInterval(state.pollTimer); state.pollTimer=null; } }
+
+/* ---------- DAG 布局渲染 ---------- */
+function layeredLayout(s){
+  const nodes = s.nodes||[];
+  const byKey = {};
+  nodes.forEach(n => byKey[n.key]=n);
+  // 最长路径分层(layer = max(layer[dep]) + 1)
+  const layer = {};
+  const depsOf = {};
+  nodes.forEach(n => { depsOf[n.key]=n.blocked_by||[]; });
+  function lay(k, stack){
+    if(layer[k]!==undefined) return layer[k];
+    if(stack.has(k)){ layer[k]=0; return 0; }
+    stack.add(k);
+    let l=0;
+    (depsOf[k]||[]).forEach(d => { if(byKey[d]) l=Math.max(l, lay(d, stack)+1); });
+    stack.delete(k);
+    layer[k]=l;
+    return l;
+  }
+  nodes.forEach(n => lay(n.key, new Set()));
+  // 按 layer 分组, 组内按 key 稳定排序
+  const groups={};
+  nodes.forEach(n => { (groups[layer[n.key]]=groups[layer[n.key]]||[]).push(n); });
+  Object.values(groups).forEach(g => g.sort((a,b)=> a.key<b.key?-1:1));
+  const colW=parseInt(getComputedStyle(document.documentElement).getPropertyValue("--col-w"))||200;
+  const rowH=parseInt(getComputedStyle(document.documentElement).getPropertyValue("--row-h"))||84;
+  const padX=48, padY=56;
+  let maxRow=0;
+  const pos={};
+  Object.keys(groups).sort((a,b)=>+a-+b).forEach(li => {
+    const row=groups[li];
+    maxRow=Math.max(maxRow, row.length);
+    row.forEach((n, i) => { pos[n.key]={x:padX+ +li*colW, y:padY+i*rowH}; });
+  });
+  const W = padX*2 + (Math.max(...Object.values(layer),0))*colW;
+  const H = padY*2 + maxRow*rowH;
+  return { pos, W, H, layer, depsOf, byKey, colW, rowH, padX, padY };
+}
+
+function renderDAG(s){
+  const svg = $("dag-canvas");
+  const L = layeredLayout(s);
+  svg.setAttribute("viewBox", "0 0 "+Math.max(L.W,400)+" "+Math.max(L.H,200));
+  // 清空 + 渲染组
+  const ns = "http://www.w3.org/2000/svg";
+  while(svg.firstChild) svg.removeChild(svg.firstChild);
+  const edgesG = document.createElementNS(ns,"g");
+  const nodesG = document.createElementNS(ns,"g");
+  svg.appendChild(edgesG); svg.appendChild(nodesG);
+
+  // edges: dep -> node (dep 先完成, 箭头指向 node)
+
+  (s.nodes||[]).forEach(n => {
+    (n.blocked_by||[]).forEach(d => {
+      if(!L.pos[d]||!L.pos[n.key]) return;
+      const a=L.pos[d], b=L.pos[n.key];
+      const x1=a.x+120, y1=a.y+28, x2=b.x, y2=b.y+28;
+      const mx=(x1+x2)/2;
+      const path=document.createElementNS(ns,"path");
+      path.setAttribute("d","M "+x1+" "+y1+" C "+mx+" "+y1+", "+mx+" "+y2+", "+x2+" "+y2);
+      path.setAttribute("class","edge");
+      path.dataset.from=d; path.dataset.to=n.key;
+      edgesG.appendChild(path);
+    });
+  });
+
+  // nodes
+  (s.nodes||[]).forEach(n => {
+    const p=L.pos[n.key]; if(!p) return;
+    const g=document.createElementNS(ns,"g");
+    g.setAttribute("class","node"+(state.selected===n.key?" selected":""));
+    g.dataset.key=n.key;
+    const rect=document.createElementNS(ns,"rect");
+    rect.setAttribute("x",p.x); rect.setAttribute("y",p.y);
+    rect.setAttribute("width",120); rect.setAttribute("height",56);
+    rect.setAttribute("fill", stateColor(n.status, document.documentElement)+"22");
+    rect.setAttribute("stroke", stateColor(n.status, document.documentElement));
+    g.appendChild(rect);
+    const t1=document.createElementNS(ns,"text");
+    t1.setAttribute("x",p.x+10); t1.setAttribute("y",p.y+22);
+    t1.setAttribute("class","nk"); t1.textContent=n.key;
+    g.appendChild(t1);
+    const t2=document.createElementNS(ns,"text");
+    t2.setAttribute("x",p.x+10); t2.setAttribute("y",p.y+40);
+    t2.setAttribute("class","ns"); t2.textContent=STATE_LABEL[n.status]||n.status;
+    g.appendChild(t2);
+    g.addEventListener("click", ()=> selectNode(n.key));
+    nodesG.appendChild(g);
+  });
+
+  // legend
+  const lg = $("dag-legend");
+  lg.innerHTML = STATES.filter(st => (s.nodes||[]).some(n=>n.status===st))
+    .map(st=> '<span><i style="background:'+stateColor(st, document.documentElement)+'"></i>'+STATE_LABEL[st]+'</span>').join("");
+}
+
+function dimForSelected(){
+  const svg=$("dag-canvas"); if(!state.selected){
+    svg.querySelectorAll(".node,.edge").forEach(e=>{e.classList.remove("dim","hl");}); return;
+  }
+  // 高亮 selected 及其上下游
+  const up=new Set(), down=new Set();
+  // upstream: 依赖链(祖先)
+  function walkUp(k){ if(up.has(k)) return; up.add(k);
+    (state.nodes[k].blocked_by||[]).forEach(d=>{ if(state.nodes[d]) walkUp(d); }); }
+  // downstream: 被依赖链(后代)
+  function walkDown(k){ if(down.has(k)) return; down.add(k);
+    Object.values(state.nodes).forEach(n=>{ if((n.blocked_by||[]).includes(k)) walkDown(n.key); }); }
+  walkUp(state.selected); walkDown(state.selected);
+  const reach=new Set([...up, ...down]);
+  svg.querySelectorAll(".node").forEach(g=>{
+    const k=g.dataset.key;
+    g.classList.toggle("dim", !reach.has(k));
+  });
+  svg.querySelectorAll(".edge").forEach(e=>{
+    const f=e.dataset.from, t=e.dataset.to;
+    const hlU = (up.has(f)&&up.has(t)) || (down.has(f)&&down.has(t));
+    e.classList.toggle("hl", hlU && (state.selected===f||state.selected===t||reach.has(f)&&reach.has(t)));
+  });
+}
+
+/* ---------- 节点详情 ---------- */
+function selectNode(key){
+  state.selected = (state.selected===key? null : key);
+  $("dag-canvas").querySelectorAll(".node").forEach(g=>{
+    g.classList.toggle("selected", g.dataset.key===state.selected);
+  });
+  dimForSelected();
+  renderDetail(key);
+}
+async function renderDetail(key){
+  // 立即用 status 中的节点信息绘制基本卡, 再通过 /api/node/{key} 拿合约与证据
+  const n = state.nodes[key];
+  const dc = $("detail-content");
+  $("detail-empty").style.display="none";
+  if(!n){ dc.innerHTML='<p class="empty">当前无选中节点。</p>'; return; }
+  const sub = (arr)=> (Array.isArray(arr)&&arr.length)?"<ul class='acceptance'>"+arr.map(x=>"<li>"+esc(x)+"</li>")+"</ul>" : '<span class="empty">无</span>';
+  dc.innerHTML =
+    '<h3 class="region-title">节点 '+esc(key)+'</h3>'+
+    '<dl class="kv">'+
+      '<dt>状态</dt><dd class="hl-'+esc(n.status)+'">'+(STATE_LABEL[n.status]||n.status)+'</dd>'+
+      '<dt>worker</dt><dd>'+esc(n.worker||"—")+'</dd>'+
+      '<dt>reviewer</dt><dd>'+esc(n.reviewer||"—")+'</dd>'+
+      '<dt>work_item_id</dt><dd>'+esc(n.work_item_id||"—")+'</dd>'+
+      '<dt>pr_url</dt><dd>'+(n.pr_url?'<a class="ext" href="'+esc(n.pr_url)+'" target="_blank" rel="noopener">'+esc(n.pr_url)+'</a>':"—")+'</dd>'+
+      '<dt>依赖</dt><dd>'+((n.blocked_by||[]).join(", ")||"无")+'</dd>'+
+    '</dl>'+
+    '<p class="empty" id="detail-extra">加载合约/证据中…</p>';
+  try{
+    const full = await api("/api/node/"+encodeURIComponent(key)+"?manifest="+encodeURIComponent(state.current));
+    const c = full.contract||{};
+    const ev = full.evidence;
+    $("detail-extra").outerHTML =
+      '<h3 class="region-title" style="margin-top:12px">Contract</h3>'+
+      '<dl class="kv">'+
+        '<dt>objective</dt><dd>'+esc(c.objective||"—")+'</dd>'+
+        '<dt>pr_base</dt><dd>'+esc(c.pr_base||"—")+'</dd>'+
+        '<dt>non_goals</dt><dd>'+sub(c.non_goals)+'</dd>'+
+        '<dt>acceptance</dt><dd>'+sub(c.acceptance)+'</dd>'+
+        '<dt>verification_commands</dt><dd>'+sub(c.verification_commands)+'</dd>'+
+        '<dt>integration_gates</dt><dd>'+sub(c.integration_gates)+'</dd>'+
+      '</dl>'+
+      '<h3 class="region-title" style="margin-top:12px">证据链</h3>'+
+      (ev ? '<dl class="kv">'+
+        '<dt>work_item_id</dt><dd>'+esc(ev.work_item_id||"—")+'</dd>'+
+        '<dt>platform_status</dt><dd>'+esc(ev.platform_status||"—")+'</dd>'+
+        '<dt>review_verdict</dt><dd>'+esc(ev.review_verdict||"—")+'</dd>'+
+        '<dt>review_comment</dt><dd>'+esc(ev.review_comment||"—")+'</dd>'+
+        '<dt>has verification</dt><dd>'+(ev.verification? "✓":"—")+'</dd>'+
+        '<dt>artifacts</dt><dd><pre class="contract">'+esc(JSON.stringify(ev.artifacts||{},null,2))+'</pre></dd>'+
+      '</dl>' : '<p class="empty">该节点暂无收集的证据(work_item_id 为空或尚未 emit)。</p>')+
+      '<p style="font-size:11px;color:var(--muted);margin-top:8px">回退计数: '+(full.rollback_count!=null?full.rollback_count:"—")+' · '+esc(full.comments||"")+'</p>'+
+      '<div style="margin-top:10px" class="copy-row"><code id="retry-cmd">omac node retry '+esc(state.current)+' '+esc(key)+'</code><button data-copy="retry-cmd">复制 retry</button></div>'+
+      '<div class="copy-row"><code id="abandon-cmd">omac node abandon '+esc(state.current)+' '+esc(key)+'</code><button data-copy="abandon-cmd">复制 abandon</button></div>';
+    wireCopy();
+  }catch(e){
+    $("detail-extra").outerHTML = '<p class="empty">节点详情加载失败: '+esc(e.message)+'</p>';
+  }
+}
+
+/* ---------- 异常面板 ---------- */
+function renderAnomaly(s){
+  const nd = s.needs_decision;
+  const wrap = $("anomaly-content");
+  $("anomaly-empty").style.display = nd? "none":"block";
+  if(!nd){ wrap.innerHTML=""; return; }
+  const card = (n) =>
+    '<div class="anomaly-card '+(n.status==="blocked"?"blocked":"")+'">'+
+      '<span class="state hl-'+esc(n.status)+'">'+(STATE_LABEL[n.status]||n.status)+' · '+esc(n.key)+'</span>'+
+      '<div class="reason">原因: '+esc(n.reason||"—")+'</div>'+
+      (n.pr_url?'<div style="font-size:11px">PR: <a class="ext" href="'+esc(n.pr_url)+'" target="_blank" rel="noopener">'+esc(n.pr_url)+'</a></div>':"")+
+      (n.work_item_id?'<div style="font-size:11px;color:var(--muted)">work_item_id: '+esc(n.work_item_id)+'</div>':"")+
+      (n.evidence_summary?'<div style="font-size:11px;color:var(--muted)">review_verdict: '+esc(n.evidence_summary.review_verdict||"—")+'</div>':"")+
+    '</div>';
+  wrap.innerHTML =
+    (nd.failed_nodes||[]).map(card).join("") +
+    ((nd.blocked_downstream&&nd.blocked_downstream.length)?
+      '<div class="anomaly-card blocked"><span class="state">受阻下游</span><div class="reason">'+esc((nd.blocked_downstream||[]).join(", "))+'</div></div>'
+    :"") +
+    (nd.next_actions||[]).map((a, i) =>
+      '<div class="copy-row"><code id="na-'+i+'">'+esc(a)+'</code>'+
+      '<button data-copy="na-'+i+'">复制</button></div>'
+    ).join("");
+  wireCopy();
+}
+function wireCopy(){
+  document.querySelectorAll("[data-copy]").forEach(btn=>{
+    const src = $(btn.dataset.copy);
+    if(!src) return;
+    btn.addEventListener("click", async ()=>{
+      try { await navigator.clipboard.writeText(src.textContent); toast("已复制到剪贴板"); }
+      catch(e){ toast("复制失败: "+e.message, true); }
+    });
+  });
+}
+
+/* ---------- 静态信息页 ---------- */
+async function loadStatic(){
+  if(!state.current) return;
+  const wrap=$("static-content");
+  wrap.innerHTML='<p class="empty">加载 config / manifest / 验收清单…</p>';
+  try{
+    const [cfg, acc] = await Promise.all([
+      api("/api/config"),
+      api("/api/plan/acceptance?manifest="+encodeURIComponent(state.current)),
+    ]);
+    const meta = acc._meta||{};
+    const manifestYaml = state.manifests.find(m=>m.path===state.current);
+    wrap.innerHTML =
+      '<h3 class="region-title">config.yaml 摘要</h3>'+
+      '<dl class="kv">'+
+        '<dt>engine</dt><dd>'+esc((cfg.engine||cfg.defaults&&cfg.defaults))+'</dd>'+
+      '</dl>'+
+      '<pre class="contract">'+esc(JSON.stringify(cfg,null,2))+'</pre>'+
+      '<h3 class="region-title" style="margin-top:12px">验收清单</h3>'+
+      (meta.found===false ?
+        '<p class="empty">未找到验收文件: '+esc(meta.acceptance_file||"—")+'</p>'
+        : '<ul class="acceptance">'+((acc.flows||[]).map(f=>"<li><b>"+esc(f.id||"?")+"</b> · "+esc(f.name||"")+"</li>").join("") || '<span class="empty">无</span>')+'</ul>'
+      );
+    wireCopy();
+  }catch(e){
+    wrap.innerHTML='<p class="empty">静态信息加载失败: '+esc(e.message)+'</p>';
+  }
+}
+$("reload-static").addEventListener("click", loadStatic);
+$("tab-static").addEventListener("change", e=>{ if(e.target.checked) loadStatic(); });
+
+/* ---------- 标签页切换 ---------- */
+document.querySelectorAll("footer.tabs input[name=tab]").forEach(r=>{
+  r.addEventListener("change", e=>{
+    document.querySelectorAll(".tab-body").forEach(b=>{
+      b.classList.toggle("active", b.dataset.tab===e.target.id);
+    });
+  });
+});
+
+/* ---------- meta + 启动 ---------- */
+async function init(){
+  try{
+    const meta = await api("/api/meta");
+    state.refresh = meta.refresh||10;
+  }catch(e){ /* 缺 meta 不影响主流程 */ }
+  await loadManifests();
+}
+init();
+})();
+</script>
+</body>
+</html>

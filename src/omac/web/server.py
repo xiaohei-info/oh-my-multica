@@ -67,6 +67,21 @@ HTML_PAGE = """<!doctype html>
 """
 
 
+def _load_static_html() -> str:
+    """优先读取 wheel 随包的 static/index.html;缺则退回内置 HTML_PAGE 提示页。"""
+    try:
+        from importlib import resources
+        candidate = resources.files("omac.web").joinpath("static/index.html")
+        if candidate.is_file():
+            return candidate.read_text(encoding="utf-8")
+    except Exception:
+        pass
+    return HTML_PAGE
+
+
+STATIC_HTML = _load_static_html()
+
+
 def _is_local_host(host: str) -> bool:
     """默认只绑本机视为 local,其余视为对外暴露需 token。"""
     h = host.strip().lower()
@@ -137,7 +152,7 @@ class _JSONResponder:
     def handle(self, method: str, path: str, query: dict[str, list[str]],
                orchestrator_dir: Path) -> None:
         if path in ("/", "/index.html"):
-            return self._send_html(200, HTML_PAGE)
+            return self._send_html(200, STATIC_HTML)
         if path == "/api/meta":
             return self._send_json(200, {"refresh": self.refresh, "version": _version()})
         if path == "/api/manifests":
