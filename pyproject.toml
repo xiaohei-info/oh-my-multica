@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "omac"
-version = "0.1.0"
+version = "1.0.0"
 description = "oh-my-agent-cluster: 确定性 CLI 驱动的多 Agent 并行开发编排(Loop 驱动 Agent)"
 readme = "README.md"
 license = { text = "MIT" }

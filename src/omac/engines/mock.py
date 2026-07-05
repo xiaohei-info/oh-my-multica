@@ -223,7 +223,20 @@ class MockStore(WorkItemStore):
             if item.dag_key in _shared_fail_keys:
                 item.status = WorkItemStatus.FAILED
                 del _shared_assigned_items[item_id]
-            elif getattr(item, "kind", None) == TaskKind.FINAL_ACCEPTANCE:
+                return
+
+            # 真实 work submit 路径:仅在已为当前 dag_key 注册行为时走,否则
+            # 回落到通用 deliverable 路径(plan_create happy path 依赖此后者)。
+            # FINAL_ACCEPTANCE / DECOMPOSE 的特殊分支若找不到注册行为就
+            # 直接 return 会把节点永远卡在 IN_PROGRESS,导致 run_task 轮询 hung。
+            final_acceptance_registered = (
+                getattr(item, "kind", None) == TaskKind.FINAL_ACCEPTANCE
+                and item.dag_key in _accepted_results)
+            decompose_registered = (
+                getattr(item, "kind", None) == TaskKind.DECOMPOSE
+                and item.dag_key in _increments)
+
+            if final_acceptance_registered:
                 # 走真实 work submit 路径:写 acceptance-results 文件,
                 # 调 dispatch.submit(acceptance_results_file=...) 经左移校验。
                 # contract.acceptance_doc 已由 acceptance._dispatch_and_wait 挂载。
@@ -237,14 +250,14 @@ class MockStore(WorkItemStore):
                 finally:
                     _shared_work_items[item.id] = self.get_work_item(item.id)
                     os.unlink(tmp)
-            elif getattr(item, "kind", None) == TaskKind.DECOMPOSE:
+                return
+
+            if decompose_registered:
                 # 走真实 work submit 路径:把增量 Manifest 序列化为 manifest YAML,
                 # 调 dispatch.submit(manifest_file=...) 经结构校验+lint,状态进 IN_REVIEW。
                 # 先移除 auto-complete 标记,防止 dispatch.submit 内 get_work_item 二次触发。
                 del _shared_assigned_items[item_id]
-                increment = _increments.get(item.dag_key)
-                if increment is None:
-                    return
+                increment = _increments[item.dag_key]
                 base = _parse_base_manifest_from_description(item.description)
                 tmp = _write_tmp_manifest(increment)
                 try:
@@ -257,20 +270,21 @@ class MockStore(WorkItemStore):
                 finally:
                     _shared_work_items[item.id] = self.get_work_item(item.id)
                     os.unlink(tmp)
+                return
+
+            item.status = WorkItemStatus.DONE
+            seq = _shared_kind_delivery_sequences.get(item.dag_key)
+            if seq:
+                deliverable = seq.pop(0)
             else:
-                item.status = WorkItemStatus.DONE
-                seq = _shared_kind_delivery_sequences.get(item.dag_key)
-                if seq:
-                    deliverable = seq.pop(0)
-                else:
-                    deliverable = _shared_kind_deliverables.get(
-                        item.dag_key,
-                        {"pr_url": f"https://mock.example.com/pr/{item_id}"})
-                item.artifacts = dict(deliverable)
-                verification = self._mock_verification(item_id)
-                if verification is not None:
-                    item.verification = verification
-                del _shared_assigned_items[item_id]
+                deliverable = _shared_kind_deliverables.get(
+                    item.dag_key,
+                    {"pr_url": f"https://mock.example.com/pr/{item_id}"})
+            item.artifacts = dict(deliverable)
+            verification = self._mock_verification(item_id)
+            if verification is not None:
+                item.verification = verification
+            del _shared_assigned_items[item_id]
         elif item.status == WorkItemStatus.IN_REVIEW:
             if _shared_review_rejects_remaining > 0:
                 item.review_verdict = "reject"
@@ -290,8 +304,12 @@ class MockStore(WorkItemStore):
             del _shared_assigned_items[item_id]
 
     def _mock_verification(self, item_id: str) -> Optional[Dict[str, Any]]:
+        from ..core.manifest import Contract as _Contract
+
         contract = _shared_contracts_by_item_id.get(item_id)
-        if contract is None:
+        if contract is None or not isinstance(contract, _Contract):
+            # 非 develop 节点(final-acceptance/decompose)的 contract 是 dict,
+            # 不产生 verification 证据(该节点类型本身不经 worker 证据门)。
             return None
         return {
             "commands": [
@@ -323,8 +341,10 @@ class MockStore(WorkItemStore):
         }
 
     def _mock_review_report(self, item_id: str) -> Optional[Dict[str, Any]]:
+        from ..core.manifest import Contract as _Contract
+
         contract = _shared_contracts_by_item_id.get(item_id)
-        if contract is None:
+        if contract is None or not isinstance(contract, _Contract):
             return None
         return {
             "review_goals": ["Mock review goal"],
