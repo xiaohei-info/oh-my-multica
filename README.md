@@ -358,6 +358,19 @@ harvest 口径：
 
 不要把安装步骤、完整方法论、worker/reviewer 长协议放进业务项目 `AGENTS.md`。常驻上下文越短，越不容易稀释注意力。
 
+### Runtime 前置：agent 运行机须装 omac
+
+被 `dag run` 派发的 agent  waking 后，执行侧的第一步就是 `omac work show`（取任务协议）和最后的 `omac work submit`（提交交付物）——这两条命令是零 skill 闭环的执行入口（见 §7.4 / §9）。因此**每台 agent 运行机**上都需要安装 `omac`，与"装 `multica` CLI"是同级别前置：
+
+```bash
+pipx install omac        # 或: pip install omac
+```
+
+- `omac` 不在 PATH 的后果是确定性的：worker 被唤醒后第一步 `omac work show <issue-id>` 即 `command not found`，agent 把错误回报到 issue metadata，编排侧在 `dag run` 的 exit 20 报告里可见（而不是静默挂死）。
+- `omac init --check`（§7.1）在运行机本地做体检：校验配置文件是否存在、multica CLI 是否登录、各角色 agent 是否在工作空间内——部署新机时先跑它，缺什么、怎么补一目了然。
+
+注意分发模型（§9）：omac 是**零 skill** 包，协议知识内生于 CLI（guide / help / 报错文案 / 派发载荷），不依赖任何 skill 安装或 `multica skill import`。装上 `omac` 就够。
+
 ### 前置依赖与测试
 
 - Python >= 3.9。
