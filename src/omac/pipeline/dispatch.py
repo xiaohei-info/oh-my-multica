@@ -16,7 +16,7 @@ import yaml
 
 from omac.core import evidence as evidence_mod
 from omac.core.acceptance import load_acceptance_doc, load_acceptance_doc_file
-from omac.core.lint import lint as lint_manifest
+from omac.core.lint import lint as lint_manifest, lint_increment
 from omac.core.manifest import _load_contract, load_manifest
 from omac.core.taskmeta import TaskKind, TaskPhase
 from omac.engines.models import WorkItem, WorkItemStatus
@@ -436,14 +436,23 @@ def _validate_acceptance_authoring(acceptance_file: str) -> str:
     return _read_text(acceptance_file)
 
 
-def _validate_decompose_authoring(manifest_file: str, pool: Set[str]) -> str:
-    """decompose 交付做基础结构校验 + manifest 过 core/lint。返回文件内容。"""
+def _validate_decompose_authoring(
+    manifest_file: str, pool: Set[str], base_manifest: Any = None,
+) -> str:
+    """decompose 交付做基础结构校验 + manifest 过 lint。返回文件内容。
+
+    base_manifest 提供时(增量 decompose),用 lint_increment 校验(允许引用既有节点);
+    否则 standalone lint(整图必须自洽)。
+    """
     content = _read_text(manifest_file)
     try:
         manifest = load_manifest(manifest_file)
     except (ValueError, OSError) as exc:
         raise ValidationError(f"manifest 解析失败: {exc}")
-    errors = lint_manifest(manifest, pool)
+    if base_manifest is not None:
+        errors = lint_increment(manifest, base_manifest, pool)
+    else:
+        errors = lint_manifest(manifest, pool)
     if errors:
         raise ValidationError("manifest lint 失败:\n  - " + "\n  - ".join(errors))
     return content
@@ -558,12 +567,16 @@ def submit(
     report_file: Optional[str] = None,
     acceptance_results_file: Optional[str] = None,
     agent_pool: Optional[Set[str]] = None,
+    base_manifest: Optional[Any] = None,
 ) -> SubmitResult:
     """work submit 的核心入口。
 
     按 kind×phase 校验参数 → 左移证据校验 → 原子写 metadata + 阶段推进。
     任何校验失败统一 raise ValidationError(调用方转 exit 5),不做任何
     metadata 写入(原子性)。
+
+    base_manifest: decompose 增量模式时既有 manifest 基线。提供时,decompose 用
+    lint_increment(含对既有+增量全集的依赖引用校验)替代 standalone lint。
     """
 
     item = store.get_work_item(issue_id)
@@ -638,7 +651,8 @@ def submit(
 
     # ---------- decompose × authoring ----------
     if kind == TaskKind.DECOMPOSE and phase == TaskPhase.AUTHORING:
-        content = _validate_decompose_authoring(manifest_file, pool)
+        content = _validate_decompose_authoring(
+            manifest_file, pool, base_manifest=base_manifest)
         store.update_work_item_metadata(
             issue_id, deliverable=content, phase=TaskPhase.REVIEW,
         )

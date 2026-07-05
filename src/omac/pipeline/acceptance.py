@@ -34,7 +34,7 @@ from ..core.config import (
 )
 from ..core.evidence import validate_acceptance_results
 from ..core.lint import lint_increment
-from ..core.manifest import Manifest, merge_increment, save_manifest
+from ..core.manifest import Manifest, Node, merge_increment, save_manifest
 from ..core.taskmeta import TaskKind
 from ..engines.models import WorkItemStatus
 from ..engines.store import WorkItemStore
@@ -229,7 +229,12 @@ def _dispatch_and_wait(
     poll: Callable[[], None],
     max_ticks: int = 10000,
 ) -> str:
-    """派发一个非 develop 任务(kind×authoring),等终态,返回 item_id。"""
+    """派发一个非 develop 任务(kind×authoring),等终态,返回 item_id。
+
+    final-acceptance:创建后把验收文档挂到 contract.acceptance_doc 上,供
+    work submit 路径的左移校验(_validate_final_acceptance_authoring)读取。
+    decompose:作者提交后状态落在 IN_REVIEW(待审),一并视为终态。
+    """
     store = engine.store
     runtime = engine.runtime
     description = yaml.dump(payload, allow_unicode=True, sort_keys=False)
@@ -242,14 +247,19 @@ def _dispatch_and_wait(
         kind=kind,
     )
     item_id = item.id
+    acceptance_doc_raw = payload.get("acceptance_doc")
+    if acceptance_doc_raw is not None:
+        store.set_node_contract(item_id, {"acceptance_doc": acceptance_doc_raw})
     store.mark_in_progress(item_id)
     store.assign_work_item(item_id, assignee, "worker")
     runtime.wake(item_id, assignee, "worker")
 
-    for _ in range(min(max_ticks, 5)):
+    # decompose 作者提交后落在 IN_REVIEW(待审),视为终态一并退出
+    terminal = (WorkItemStatus.DONE, WorkItemStatus.FAILED,
+                WorkItemStatus.BLOCKED, WorkItemStatus.IN_REVIEW)
+    for _ in range(max_ticks):
         cur = store.get_work_item(item_id)
-        if cur.status in (WorkItemStatus.DONE, WorkItemStatus.FAILED,
-                           WorkItemStatus.BLOCKED):
+        if cur.status in terminal:
             break
         poll()
     return item_id
@@ -305,7 +315,11 @@ def _acceptance_doc_raw(doc: AcceptanceDoc) -> Dict[str, Any]:
 
 
 def _read_acceptance_results(store: WorkItemStore, item_id: str) -> List[Dict[str, Any]]:
-    """读回 final-acceptance 任务的 acceptance_results(item.deliverable)。"""
+    """读回 final-acceptance 任务的 acceptance_results。
+
+    真实 work submit 路径把 acceptance-results 文件文本写到 item.deliverable,
+    这里解析 JSON/YAML 文本还原为结果列表(兼容旧 mock 直接挂 list/dict)。
+    """
     item = store.get_work_item(item_id)
     deliverable = getattr(item, "deliverable", None)
     if isinstance(deliverable, list):
@@ -316,18 +330,61 @@ def _read_acceptance_results(store: WorkItemStore, item_id: str) -> List[Dict[st
             return results
         if "id" in deliverable and "status" in deliverable:
             return [deliverable]
+        return []
+    if isinstance(deliverable, str):
+        try:
+            data = yaml.safe_load(deliverable)
+        except yaml.YAMLError:
+            return []
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            results = data.get("results")
+            if isinstance(results, list):
+                return results
+            if "id" in data and "status" in data:
+                return [data]
     return []
 
 
 def _read_increment(store: WorkItemStore, item_id: str) -> Optional[Manifest]:
-    """读回 decompose 增量任务的 Manifest(item.artifacts.increment)。"""
+    """读回 decompose 增量任务的 Manifest。
+
+    真实 work submit 路径对 DECOMPOSE authoring 把 manifest 文本写到
+    item.deliverable(状态进 IN_REVIEW),这里解析该文本为 Manifest(YAML)。
+    """
     item = store.get_work_item(item_id)
-    artifacts = getattr(item, "artifacts", None)
-    if isinstance(artifacts, dict):
-        inc = artifacts.get("increment")
-        if isinstance(inc, Manifest):
-            return inc
-    return None
+    deliverable = getattr(item, "deliverable", None)
+    if not deliverable or not isinstance(deliverable, str):
+        return None
+    try:
+        raw = yaml.safe_load(deliverable)
+    except yaml.YAMLError:
+        return None
+    if not isinstance(raw, dict):
+        return None
+    nodes_raw = raw.get("nodes")
+    if not isinstance(nodes_raw, list) or not nodes_raw:
+        return None
+    nodes = {}
+    for n in nodes_raw:
+        if not isinstance(n, dict):
+            continue
+        n_id = n.get("id")
+        n_worker = n.get("worker")
+        if not isinstance(n_id, str) or not n_id:
+            continue
+        if not isinstance(n_worker, str) or not n_worker:
+            continue
+        nodes[n_id] = Node(
+            id=n_id, worker=n_worker,
+            blocked_by=list(n.get("blocked_by", []) or []),
+            status=n.get("status", "todo"),
+            work_item_id=n.get("work_item_id"),
+        )
+    if not nodes:
+        return None
+    return Manifest(meta=raw.get("meta") or {}, nodes=nodes)
 
 
 def _dump_manifest(manifest: Manifest) -> str:
