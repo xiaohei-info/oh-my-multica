@@ -10,6 +10,10 @@
   - plan 阶段 planner 把计划正文落在 artifacts["plan"];
   - acceptance 阶段 planner 把验收文档正文落在 artifacts["acceptance"];
   - decompose 阶段 orchestrator 把 manifest 正文落在 artifacts["manifest"]。
+
+上游产物通过 payload["source_of_truth"](dict[标签 -> 文本正文])传入,
+run_task 把它以 issue body「上游产物(只读上下文)」段落到 issue description,
+使真实 planner/orchestrator 在 `omac work show`/issue body 中能取得上游输入。
 """
 from __future__ import annotations
 
@@ -126,6 +130,8 @@ def plan_create(
     reviewers = [] if ctx.no_review else ctx.reviewers
     poll_cb = poll if poll is not None else ctx.poll()
 
+    acceptance_text: Optional[str] = None
+
     # ── phase 1:制定计划(跳过如果有 --doc) ──
     if doc_path is not None:
         plan_text = _read_file(doc_path)
@@ -147,7 +153,8 @@ def plan_create(
         res = run_task(
             ctx.engine,
             TaskKind.ACCEPTANCE,
-            {"title": f"{name} 验收文档"},
+            {"title": f"{name} 验收文档",
+             "source_of_truth": {"plan": plan_text}},
             ctx.planner,
             reviewers=reviewers,
             max_revisions=ctx.max_revisions,
@@ -160,11 +167,15 @@ def plan_create(
             fh.write(acceptance_text)
 
     # ── phase 3:拆解(经 lint 机器门 ≤ max_revisions 轮 + 内置 review) ──
+    decompose_inputs = {"plan": plan_text}
+    if acceptance_text is not None:
+        decompose_inputs["acceptance"] = acceptance_text
     guard = _compose_guard(ctx.members, acceptance_doc=acceptance_doc)
     res = run_task(
         ctx.engine,
         TaskKind.DECOMPOSE,
-        {"title": f"{name} 拆解"},
+        {"title": f"{name} 拆解",
+         "source_of_truth": decompose_inputs},
         ctx.orchestrator,
         reviewers=reviewers,
         max_revisions=ctx.max_revisions,

@@ -325,6 +325,7 @@ nodes:
 
 def _configure_create_mock(tmp_path, monkeypatch):
     """完整 mock 配置:planner/orchestrator/workers/reviewers 角色齐全。"""
+    from omac.core.taskmeta import TaskKind
     monkeypatch.chdir(tmp_path)
     assert main(["config", "set", "engine", "mock"]) == exit_codes.OK
     assert main(["config", "set", "workspace", "mock-workspace"]) == exit_codes.OK
@@ -348,37 +349,58 @@ def _configure_create_mock(tmp_path, monkeypatch):
     return engine
 
 
+def _first_item_of_kind(engine, kind):
+    """取该 kind 的首个 work item(按创建顺序)。"""
+    from omac.core.taskmeta import TaskKind
+    items = [i for i in engine.store.list_work_items(engine.store.config.workspace_id)
+             if i.kind == kind]
+    return items[0] if items else None
+
+
 def test_create_default_combination(tmp_path, monkeypatch):
-    _configure_create_mock(tmp_path, monkeypatch)
+    engine = _configure_create_mock(tmp_path, monkeypatch)
     assert main(["plan", "create", "--name", "demo-create"]) == exit_codes.OK
     assert (tmp_path / ".orchestrator" / "demo-create.yaml").exists()
     assert (tmp_path / ".orchestrator" / "demo-create.acceptance.yaml").exists()
+    # 验证上游产物已流入 acceptance / decompose 的 issue body
+    from omac.core.taskmeta import TaskKind
+    acc_item = _first_item_of_kind(engine, TaskKind.ACCEPTANCE)
+    assert acc_item is not None, "应创建 acceptance work item"
+    assert "演示计划" in acc_item.description, "acceptance issue body 应含定稿计划"
+    dec_item = _first_item_of_kind(engine, TaskKind.DECOMPOSE)
+    assert dec_item is not None, "应创建 decompose work item"
+    assert "演示计划" in dec_item.description, "decompose issue body 应含定稿计划"
+    assert "登录流程" in dec_item.description, "decompose issue body 应含验收文档(flow)"
 
 
 def test_create_with_doc_skips_plan(tmp_path, monkeypatch):
-    _configure_create_mock(tmp_path, monkeypatch)
+    """给了 --doc 时,不应创建 plan 阶段的 work item。"""
+    from omac.core.taskmeta import TaskKind
+    engine = _configure_create_mock(tmp_path, monkeypatch)
     doc = tmp_path / "design.md"
     doc.write_text(PLAN_TEXT)
-    # 不给 plan 交付也能跑(有 --doc 就不调 plan 阶段)
-    MockStore.set_kind_delivery("plan", {"plan": "should-not-be-used"})
     assert main(["plan", "create", "--name", "demo-doc", "--doc", str(doc)]) == exit_codes.OK
     assert (tmp_path / ".orchestrator" / "demo-doc.yaml").exists()
+    plan_item = _first_item_of_kind(engine, TaskKind.PLAN)
+    assert plan_item is None, "带 --doc 时不应创建 plan 阶段 work item"
 
 
 def test_create_no_review_skips_review_stages(tmp_path, monkeypatch):
     _configure_create_mock(tmp_path, monkeypatch)
     # 即便注入 reject,--no-review 应跳过 review 仍 exit 0
-
     assert main(["plan", "create", "--name", "demo-noreview",
                  "--no-review"]) == exit_codes.OK
 
 
 def test_create_no_acceptance_skips_acceptance_phase(tmp_path, monkeypatch):
-    _configure_create_mock(tmp_path, monkeypatch)
+    from omac.core.taskmeta import TaskKind
+    engine = _configure_create_mock(tmp_path, monkeypatch)
     assert main(["plan", "create", "--name", "demo-noacc",
                  "--no-acceptance"]) == exit_codes.OK
     assert (tmp_path / ".orchestrator" / "demo-noacc.yaml").exists()
     assert not (tmp_path / ".orchestrator" / "demo-noacc.acceptance.yaml").exists()
+    acc_item = _first_item_of_kind(engine, TaskKind.ACCEPTANCE)
+    assert acc_item is None, "带 --no-acceptance 时不应创建 acceptance work item"
 
 
 def test_create_lint_reject_revises_then_passes(tmp_path, monkeypatch):
