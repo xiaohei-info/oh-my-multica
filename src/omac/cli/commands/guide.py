@@ -6,7 +6,7 @@ from .. import exit_codes
 
 NAME = "guide"
 SUMMARY = "工作流指南(workflow/manifest/roles/worker/reviewer/recovery)"
-DESCRIPTION = """按需阅读的工作流知识——原 skill 内容的迁移目的地。
+DESCRIPTION = """按需阅读的工作流知识(随包分发,omac guide)。
 
   omac guide             列出全部 topic
   omac guide workflow    整体工作流:init → plan → dag run → 异常处理闭环
