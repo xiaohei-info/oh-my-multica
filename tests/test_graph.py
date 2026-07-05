@@ -1,5 +1,5 @@
 """core.graph:就绪节点、失败下游、终态判定。"""
-from omac.core.graph import all_terminal, downstream_of, ready_nodes
+from omac.core.graph import all_terminal, downstream_of, node_waves, ready_nodes
 
 
 def _issues(**kw):
@@ -35,3 +35,18 @@ def test_ready_nodes_abandoned_satisfies_dep():
 def test_downstream_of_excludes_independent():
     issues = _issues(a=("todo", []), b=("todo", ["a"]), c=("todo", []))
     assert downstream_of(issues, {"a"}) == {"b"}
+
+
+class _N:
+    def __init__(self, blocked_by):
+        self.blocked_by = blocked_by
+
+
+def test_node_waves_roots_are_zero():
+    nodes = {"a": _N([]), "b": _N([]), "c": _N(["a", "b"])}
+    assert node_waves(nodes) == {"a": 0, "b": 0, "c": 1}
+
+
+def test_node_waves_chain():
+    nodes = {"a": _N([]), "b": _N(["a"]), "c": _N(["b"])}
+    assert node_waves(nodes) == {"a": 0, "b": 1, "c": 2}
