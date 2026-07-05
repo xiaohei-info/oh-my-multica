@@ -184,6 +184,10 @@ def collect_results(
                 if node.reviewer:
                     pending_review.append((key, node.work_item_id, node.reviewer))
                 else:
+                    # 无 reviewer 时 CI 绿即可直接 done;同步把平台工单置 DONE,
+                    # 避免 advance_delivery 把工单倒回 IN_PROGRESS 后,
+                    # reconcile 下轮把节点从 done 拉回 in_progress 形成永久循环。
+                    store.update_status(node.work_item_id, WorkItemStatus.DONE)
                     set_node(manifest, key, status="done")
             elif item.status == WorkItemStatus.FAILED:
                 store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
@@ -261,9 +265,13 @@ def collect_results(
     # ---- reviewer 阶段过渡(遍历后执行,避免改 manifest 影响遍历)----
     for key, item_id, reviewer in pending_review:
         nd = manifest.nodes[key]
+        # 先把工单标 IN_REVIEW 再派发 reviewer,否则 mock 下 assign 内
+        # get_work_item 触发的 auto_complete 会先在 IN_PROGRESS(刚从
+        # CI 回落)走 deliverable 路径把 assigned 槽位清空,后续
+        # wake 的 auto_complete 找不到已派发项而无法置评审判定。
+        store.update_status(item_id, WorkItemStatus.IN_REVIEW)
         store.add_comment(item_id, render_review_rollout_comment(nd, nd.contract, None, item_id=item_id))
         store.assign_work_item(item_id, reviewer, "reviewer")
-        store.update_status(item_id, WorkItemStatus.IN_REVIEW)
         set_node(manifest, key, status="in_review")
         try:
             runtime.wake(item_id, reviewer, "reviewer")
