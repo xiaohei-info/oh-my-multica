@@ -219,6 +219,23 @@ def test_set_node_contract_visible_in_show():
 
 
 
+
+def test_develop_authoring_protocol_is_three_step_pr_closure():
+    """验收:develop x authoring 协议必须明确「推分支 -> 开 PR(worker 自建,omac 不代建)
+    -> omac work submit --pr-url」三步,而非只列 --pr-url 参数。
+
+    避免无状态 worker 交了代码却不知要开 PR;PR 由 worker 自建,omac 只登记 pr_url。
+    """
+    store = _store()
+    item = _make_item(store, TaskKind.DEVELOP, TaskPhase.AUTHORING)
+    out = build_show_output(item, f"worker:{item.worker}")
+    protocol = out["protocol"]
+    # 三步都必须出现:推分支/开 PR / worker 自建(omac 不代建)/submit --pr-url
+    assert "推分支" in protocol or "git push" in protocol, protocol
+    assert "开 PR" in protocol or "PR" in protocol, protocol
+    assert "自建" in protocol or "不代建" in protocol, protocol
+    assert "submit --pr-url" in protocol or "--pr-url" in protocol, protocol
+
 def test_show_unknown_issue_id(tmp_path, monkeypatch, capsys):
     """issue_id 不存在时给出教学性报错,exit 5。"""
     monkeypatch.chdir(tmp_path)
@@ -614,6 +631,26 @@ class TestCliExitCodes:
 
 
 # ==================== mock e2e:submit → loop 收割必过 ===========================
+
+class TestSubmitMissingCli:
+    """CLI 层:e2e 派发 develop + work submit 缺 pr_url -> exit 5,报错精确。"""
+
+    def test_develop_authoring_missing_pr_url_exits_five(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.chdir(tmp_path)
+        main(["config", "set", "engine", "mock"])
+        main(["config", "set", "workspace", "mock-workspace"])
+        capsys.readouterr()
+
+        store = _store()
+        item = _make_item(store, TaskKind.DEVELOP, TaskPhase.AUTHORING)
+        # 故意只给 verification_file,缺 pr_url
+        vfile = tmp_path / "v.yaml"
+        vfile.write_text("commands: []")
+        rc = main(["work", "submit", item.id, "--verification-file", str(vfile)])
+        assert rc == exit_codes.VALIDATION, capsys.readouterr()
+        err = capsys.readouterr().err
+        assert "pr-url" in err, err
+
 
 class TestSubmitLoopE2E:
     """验证 submit 左移校验与 loop 权威门 schema 同源,submit 过的证据,loop 必过。"""
