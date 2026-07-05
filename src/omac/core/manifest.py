@@ -94,6 +94,9 @@ class Node:
     contract: Contract | None = None
     work_item_id: str | None = None   # 平台返回的 work item id（Phase 2 回填）
     status: str = "todo"           # manifest 携带的节点状态
+    # P4.2:done = 已合入集成分支;记录合入信息(merged: true / 时间)
+    merged: bool = False
+    merged_at: str | None = None
 
     def __post_init__(self):
         if isinstance(self.contract, dict):
@@ -125,6 +128,8 @@ def load_manifest(path: str) -> Manifest:
             contract=_load_contract(n.get("contract")),
             work_item_id=n.get("work_item_id"),
             status=n.get("status", "todo"),
+            merged=bool(n.get("merged", False)),
+            merged_at=n.get("merged_at"),
         )
     return Manifest(meta=raw.get("meta", {}), nodes=nodes)
 
@@ -155,6 +160,9 @@ def save_manifest(manifest: Manifest, path: str):
             node["gate"] = n.gate
         if n.contract is not None:
             node["contract"] = _dump_contract(n.contract)
+        if n.merged:
+            node["merged"] = True
+            node["merged_at"] = n.merged_at
         node_list.append(node)
 
     data = {"meta": manifest.meta, "nodes": node_list}

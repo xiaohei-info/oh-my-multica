@@ -16,9 +16,18 @@ worker 证据过门之后、进评审之前的 CI 门:
 manifest 的 ``Node`` 不携带回退计数(单一事实源)。上界由 ``config.retry.ci``
 (缺省 3)经 ``resolve_retry`` 解析后注入 ``loop.tick`` 的 ``retry_limits``。
 
-纪律(§12.4):CI 走模板命令(subprocess),绝不直接 shell out 平台 CLI;CI 检查
-只在主 loop 配置了 ``config.ci.check_command`` 时启用,未配置则环节整体跳过
-(现行为不变,由未配 ci 的回归保证)。考试点:退出码契约不可破(§5.1),
+本模块还承载 reviewer pass 之后的 P4.2 自动 merge 门(§7.3):
+
+    reviewer pass ─► merging ─ merge.command ─ 成功 ──► done(已合入)
+                                         │
+                                         └ 冲突/失败 ──► 有界转回 worker
+                                                        (merge_bounce+1,
+                                                         ≥ 上界 → blocked)
+
+纪律(§12.4):CI / merge 走模板命令(subprocess),绝不直接 shell out 平台 CLI;
+CI 与 merge 均只在主 loop 配置了 ``config.ci.check_command`` /
+``config.merge.command`` 时启用,未配置则环节整体跳过(现行为不变,
+由未配 ci / merge 的回归保证)。考试点:退出码契约不可破(§5.1),
 术语 §10.2 用「进行中节点」「就绪节点」,禁止 harvest/在飞 等硬译行话。
 """
 from __future__ import annotations
@@ -26,7 +35,9 @@ from __future__ import annotations
 import subprocess
 from dataclasses import dataclass
 
-from ..core.config import DEFAULT_RETRY, get_ci_config
+import time
+
+from ..core.config import DEFAULT_RETRY, get_ci_config, get_merge_config
 from ..engines.models import WorkItemStatus
 from ..engines.runtime import AgentRuntime
 from ..core.manifest import Manifest
@@ -189,6 +200,128 @@ def advance_delivery(
     # 有界转回 worker:改回 in_progress,重新派发 worker 并唤醒,让它修后重走 ci→review。
     node.status = "in_progress"
     store.update_status(item_id, to_platform_status("in_progress"))
+    store.assign_work_item(item_id, node.worker, "worker")
+    runtime.wake(item_id, node.worker, "worker")
+    return "bounce"
+
+
+# ── P4.2 自动 merge 与冲突回退 ──────────────────────────────────────────────
+
+def run_merge_delivery(
+    config: dict,
+    manifest: Manifest,
+    node_key: str,
+    store: object,
+    runtime: AgentRuntime,
+    retry_limits: dict,
+) -> str:
+    """reviewer pass 后、进 done 之前的自动 merge 门(§7.3)。
+
+    - 未配置 merge → 环节整体跳过,返回 ``'pass'``(pass 即 done,现行为不变)。
+    - 配置了 merge 但节点无 pr_url → 防御性 blocked + 报错即教学,返回 ``'blocked'``。
+    - 配置了 merge → 进入 ``merging``(manifest 细分态,平台仍 in_review),执行
+      ``merge.command``:
+        * 成功 → 回到 ``in_progress`` 语义即「已合入」;manifest ``Node`` 记录
+          ``merged: true`` / ``merged_at``;返回 ``'pass'``(loop 随即 ``done``)。
+        * 冲突/失败 → 失败摘要(命令输出尾部) add_comment + reset_review + 转回
+          worker + wake + ``merge_bounce``+1;
+          - ≥ ``retry_limits['merge']`` → blocked,返回 ``'blocked'``
+          - 否则返回 ``'bounce'``(节点已置回 in_progress,loop 本 tick 不动它)。
+
+    回退计数(读/写)经平台 ``WorkItem.bounces.merge``(单一事实源,Store 只存取);
+    manifest Node 不持计数。上界由 ``config.retry.merge``(缺省 3)经
+    ``resolve_retry`` 解析后注入 ``loop.tick`` 的 ``retry_limits``。
+    """
+    node = manifest.nodes[node_key]
+    item_id = node.work_item_id
+    merge = get_merge_config(config)
+    if merge is None:
+        # 未配置 merge → pass 即 done(现行为,回归保证)
+        return "pass"
+
+    item = store.get_work_item(item_id)
+    pr_url = ""
+    if isinstance(item.artifacts, dict):
+        pr_url = item.artifacts.get("pr_url") or item.artifacts.get("pr") or ""
+
+    if not pr_url:
+        # merge 已配置但 reviewer pass 后无 pr_url —— 防御性阻断并教化。
+        store.add_comment(
+            item_id,
+            "⚠️ merge 已配置(command)但节点无 pr_url,无法执行自动合并。\n"
+            "请确认 worker 已用 `omac work submit <id> --pr-url <url> ...` 提交 PR 地址。")
+        node.status = "blocked"
+        store.update_status(item_id, WorkItemStatus.BLOCKED)
+        return "blocked"
+
+    # 进入 merging(manifest 细分态;平台仍 in_review)
+    node.status = "merging"
+    store.update_status(item_id, to_platform_status("merging"))
+
+    command = merge["command"].replace("{pr_url}", pr_url)
+    timeout = max(1, int(merge.get("timeout_minutes", 30))) * 60
+    try:
+        proc = subprocess.run(
+            command, shell=True, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        out = ""
+        for stream in (exc.stdout, exc.stderr):
+            if isinstance(stream, bytes):
+                out += stream.decode("utf-8", errors="replace")
+            elif isinstance(stream, str):
+                out += stream
+        return _bounce_or_block_merge(
+            node, item, store, runtime, retry_limits,
+            failed=True, label="merge 命令超时", output=out)
+
+    output = (proc.stdout or "") + (proc.stderr or "")
+    if proc.returncode == 0:
+        # 合入成功 → done = 已合入集成分支
+        node.status = "in_progress"
+        node.merged = True
+        node.merged_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        store.update_status(item_id, to_platform_status("in_progress"))
+        return "pass"
+
+    # merge 冲突/失败
+    return _bounce_or_block_merge(
+        node, item, store, runtime, retry_limits,
+        failed=True, label=f"merge 命令失败(退出码 {proc.returncode})",
+        output=output)
+
+
+def _bounce_or_block_merge(node, item, store, runtime, retry_limits, *,
+                           failed: bool, label: str, output: str) -> str:
+    """merge 失败后的有界「回到 worker」回退(CI 路径的对称实现)。
+
+    复用与 CI 回退相同的单一事实源与封顶语义:
+    - 失败摘要(输出尾部)评论回 issue 让 worker 知道解什么;
+    - reset_review 使旧评审结论失效,强制重走完整 ci→review→merge 链;
+    - 读/写 WorkItem.bounces.merge,封顶即 blocked,否则转回 worker + wake。
+    """
+    item_id = node.work_item_id
+    tail = _tail(output) or "(无输出)"
+    store.add_comment(
+        item_id,
+        f"⚠️ {label} —— merge 冲突,转回 worker 解决后重新走 ci→review→merge。\n\n"
+        f"--- 命令输出尾部 ---\n{tail}")
+
+    cur_bounce = item.bounces.merge
+    next_bounce = cur_bounce + 1
+    store.update_work_item_metadata(item_id, merge_bounce=next_bounce)
+
+    merge_limit = retry_limits.get("merge", DEFAULT_RETRY["merge"])
+    if merge_limit == 0 or next_bounce >= merge_limit:
+        node.status = "blocked"
+        store.update_status(item_id, WorkItemStatus.BLOCKED)
+        return "blocked"
+
+    # 有界转回 worker:改回 in_progress,清除旧评审判定,重新派发 worker 并唤醒。
+    # reset_review 确保旧 verdict 不会在新一轮被复用——强制 reviewer 重新 pass,
+    # 否则新 PR 会在旧 verdict 下被自动 merge,绕过 reviewer gate。
+    node.status = "in_progress"
+    store.update_status(item_id, to_platform_status("in_progress"))
+    store.reset_review(item_id)
     store.assign_work_item(item_id, node.worker, "worker")
     runtime.wake(item_id, node.worker, "worker")
     return "bounce"

@@ -13,7 +13,7 @@ from ..core import graph
 from ..core.config import DEFAULT_RETRY
 from ..core.evidence import validate_review_evidence, validate_worker_evidence
 from ..core.manifest import Manifest, save_manifest, set_node
-from ..pipeline.delivery import advance_delivery
+from ..pipeline.delivery import advance_delivery, run_merge_delivery
 from ..engines.models import WorkItemStatus
 from ..engines.runtime import AgentRuntime
 from ..engines.store import WorkItemStore
@@ -137,7 +137,7 @@ def collect_results(
       worker DONE + 证据门不过 → blocked,失败原因经 add_comment 回贴
       worker FAILED / BLOCKED → blocked
     in_review 节点:
-      reviewer pass → done;reject → blocked(P4 前先 blocked)
+      reviewer pass → merge(if configured) → done;reject → blocked(P4 前先 blocked)
     """
     failures: Dict[str, str] = {}
     pending_review: List[Tuple[str, str, str]] = []  # (key, item_id, reviewer)
@@ -211,8 +211,16 @@ def collect_results(
 
             gate_errors = validate_review_evidence(node, item)
             if not gate_errors:
-                store.update_status(node.work_item_id, WorkItemStatus.DONE)
-                set_node(manifest, key, status="done")
+                # reviewer pass → P4.2 自动 merge 门(若配置)。未配置 merge 时
+                # run_merge_delivery 返回 'pass',随即 done(现行为,回归保证)。
+                merge_action = run_merge_delivery(
+                    config or {}, manifest, key, store, runtime, limits)
+                if merge_action == "pass":
+                    store.update_status(node.work_item_id, WorkItemStatus.DONE)
+                    set_node(manifest, key, status="done")
+                elif merge_action == "blocked":
+                    failures[key] = "merge 失败,回退上界(retry.merge)已耗尽"
+                # else "bounce": 节点已转回 in_progress,本 tick 不再推进。
             else:
                 # reviewer reject:有界「回到 worker」回退,受 retry_limits["review"] 约束。
                 review_limit = limits.get("review", DEFAULT_RETRY["review"])
