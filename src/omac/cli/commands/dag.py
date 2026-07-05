@@ -1,5 +1,6 @@
 """omac dag — 确定性 loop 执行。"""
 from __future__ import annotations
+from typing import Optional
 
 import os
 
@@ -11,6 +12,9 @@ from ...engines import create_engine
 from ...engines.models import EngineConfig
 from ...errors import NeedsDecision, ValidationError
 from ...pipeline.loop import tick
+from ...pipeline.acceptance import (
+    acceptance_doc_path, run_acceptance_loop,
+)
 from ...pipeline.report import build_status_report, render_table
 
 NAME = "dag"
@@ -97,6 +101,24 @@ def _assemble_engine(args):
     if fail_keys and hasattr(engine.store, "set_fail_keys"):
         engine.store.set_fail_keys({k.strip() for k in fail_keys.split(",") if k.strip()})
 
+    # 测试钩子:OMAC_MOCK_ACCEPTED / OMAC_MOCK_INCREMENTS 驱动总控验收行为(JSON).
+    # OMAC_MOCK_ACCEPTED={"final-acceptance-r1":[{"id":"f1","status":"pass"}]}
+    # OMAC_MOCK_INCREMENTS={"decompose-r1":{"nodes":[{"id":"fix-f1","worker":"alice","blocked_by":["b"]}]}}
+    import json as _json
+    accepted = os.environ.get("OMAC_MOCK_ACCEPTED")
+    increments = os.environ.get("OMAC_MOCK_INCREMENTS")
+    if (accepted or increments) and hasattr(engine.store, "set_acceptance_behaviors"):
+        acc = _json.loads(accepted) if accepted else {}
+        inc_raw = _json.loads(increments) if increments else {}
+        inc = {}
+        for dk, payload in inc_raw.items():
+            from omac.core.manifest import Manifest, Node
+            nodes = {n["id"]: Node(id=n["id"], worker=n["worker"],
+                                     blocked_by=list(n.get("blocked_by", [])))
+                     for n in payload.get("nodes", [])}
+            inc[dk] = Manifest(meta=payload.get("meta", {}), nodes=nodes)
+        engine.store.set_acceptance_behaviors(acc, inc)
+
     return engine, engine_config
 
 
@@ -162,6 +184,33 @@ def _emit(result, manifest, args) -> None:
         sys.stdout.write(fmt.format(*row).rstrip() + "\n")
 
 
+def _maybe_acceptance(args, engine, config, manifest) -> Optional[int]:
+    """内层 loop 收敛后:如有验收文档且未禁用,跑总控验收外层循环。
+
+    返回退出码(0 全 pass / 20 耗尽仍 fail)或 None(无验收/禁用,由调用方 exit 0)。
+    """
+    manifest_path = args.manifest
+    doc_path = acceptance_doc_path(manifest_path)
+    no_acceptance = getattr(args, "no_acceptance", False)
+    if no_acceptance:
+        return None
+    if not os.path.exists(doc_path):
+        return None
+
+    from ...core.acceptance import load_acceptance_doc_file as _load_doc
+    try:
+        doc = _load_doc(doc_path)
+    except (ValueError, OSError) as exc:
+        raise ValidationError(f"验收文档解析失败: {exc}")
+
+    import time as _time
+    outcome = run_acceptance_loop(
+        engine, manifest, manifest_path, doc, config, no_acceptance=False,
+        poll=lambda: _time.sleep(config.get("defaults", {}).get("poll_interval", 0)),
+    )
+    return outcome.exit_code
+
+
 def _loop_or_single(args, single_round: bool) -> int:
     """共享核心:single_round=True → tick 一次退出;否则跑到收敛/需决策。"""
     if not os.path.exists(args.manifest):
@@ -189,6 +238,11 @@ def _loop_or_single(args, single_round: bool) -> int:
         rounds += 1
 
         if last_result.state == "converged":
+            acceptance_exit = _maybe_acceptance(
+                args, engine, config, manifest)
+            if acceptance_exit is not None:
+                _emit(last_result, manifest, args)
+                return acceptance_exit
             _emit(last_result, manifest, args)
             return exit_codes.OK
 

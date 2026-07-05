@@ -6,9 +6,13 @@ assign 后按延迟自动模拟完成/失败/评审通过,
 """
 from __future__ import annotations
 
+import os
+import tempfile
 import time
+import json
 from typing import Any, Dict, List, Optional
 
+import yaml
 from ..core.taskmeta import Bounces, TaskKind, TaskPhase
 from .models import EngineConfig, WorkItem, WorkItemStatus, WorkspaceInfo
 from .runtime import AgentRuntime
@@ -30,6 +34,9 @@ _shared_auto_complete_enabled: bool = True
 _shared_auto_complete_delay: int = 2
 _shared_kind_deliverables: Dict[str, Dict[str, Any]] = {}
 _shared_review_rejects_remaining: int = 0
+# 总控验收/增量拆解的行为注册(final-acceptance / decompose 任务完成时落 deliverable,测试用)
+_accepted_results: dict[str, object] = {}   # dag_key -> acceptance_results dict
+_increments: dict[str, object] = {}        # dag_key -> Manifest(增量 fix 节点)
 _shared_kind_delivery_sequences: Dict[str, list] = {}
 
 
@@ -47,6 +54,64 @@ def _init_default_workspace():
         "mock-workspace": ["alice", "bob", "charlie"],
         "mock-team-b": ["alice", "bob"],
     }
+
+
+def _write_tmp_json(data) -> str:
+    fd, path = tempfile.mkstemp(suffix=".json")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+    return path
+
+
+def _write_tmp_manifest(manifest) -> str:
+    """把增量 Manifest 序列化为符合 manifest schema 的 YAML 临时文件。"""
+    fd, path = tempfile.mkstemp(suffix=".yaml")
+    data = {
+        "meta": dict(manifest.meta or {}),
+        "nodes": [
+            {
+                "id": n.id, "worker": n.worker,
+                "blocked_by": list(n.blocked_by or []),
+                "status": n.status or "todo",
+            }
+            for n in manifest.nodes.values()
+        ],
+    }
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        yaml.safe_dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+    return path
+
+
+def _parse_base_manifest_from_description(description: str):
+    """从 item.description(payload YAML)解析既有 manifest,失败返回 None。"""
+    if not description:
+        return None
+    try:
+        payload = yaml.safe_load(description)
+    except yaml.YAMLError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    manifest_raw = payload.get("manifest")
+    if not manifest_raw:
+        return None
+    try:
+        data = yaml.safe_load(manifest_raw)
+    except yaml.YAMLError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    from ..core.manifest import Manifest, Node
+    nodes = {}
+    for n in data.get("nodes", []):
+        if not isinstance(n, dict) or "id" not in n:
+            continue
+        nodes[n["id"]] = Node(
+            id=n["id"], worker=n.get("worker", ""),
+            blocked_by=list(n.get("blocked_by", []) or []),
+            status=n.get("status", "todo"),
+        )
+    return Manifest(meta=data.get("meta") or {}, nodes=nodes)
 
 
 class MockStore(WorkItemStore):
@@ -92,6 +157,9 @@ class MockStore(WorkItemStore):
         _shared_kind_deliverables = {}
         _shared_kind_delivery_sequences = {}
         _shared_review_rejects_remaining = 0
+        global _accepted_results, _increments
+        _accepted_results = {}
+        _increments = {}
         _init_default_workspace()
 
     @classmethod
@@ -113,6 +181,17 @@ class MockStore(WorkItemStore):
         _shared_review_rejects_remaining = max(0, int(n))
 
     @classmethod
+    def set_acceptance_behaviors(cls, accepted: dict, increments: dict):
+        """注册 final-acceptance / decompose 年完成行为(测试用)。
+
+        accepted: {dag_key -> acceptance_results dict(list of {id,status,notes})}
+        increments: {dag_key -> Manifest(增量 fix 节点)}
+        """
+        global _accepted_results, _increments
+        _accepted_results = dict(accepted or {})
+        _increments = dict(increments or {})
+
+    @classmethod
     def set_kind_delivery_sequence(cls, kind: str, sequence: list):
         """注册 kind 的交付品序列(按次产出,用于测 lint 修订循环「坏→好」)。
 
@@ -120,6 +199,13 @@ class MockStore(WorkItemStore):
         """
         global _shared_kind_delivery_sequences
         _shared_kind_delivery_sequences[kind] = list(sequence)
+
+    @classmethod
+    def set_auto_complete(cls, enabled: bool = True, delay: int = 0):
+        """配置自动完成开关与延迟(测试用)。"""
+        global _shared_auto_complete_enabled, _shared_auto_complete_delay
+        _shared_auto_complete_enabled = bool(enabled)
+        _shared_auto_complete_delay = max(0, int(delay))
 
     # ==================== 模拟执行 ====================
 
@@ -136,6 +222,41 @@ class MockStore(WorkItemStore):
         if item.status == WorkItemStatus.IN_PROGRESS:
             if item.dag_key in _shared_fail_keys:
                 item.status = WorkItemStatus.FAILED
+                del _shared_assigned_items[item_id]
+            elif getattr(item, "kind", None) == TaskKind.FINAL_ACCEPTANCE:
+                # 走真实 work submit 路径:写 acceptance-results 文件,
+                # 调 dispatch.submit(acceptance_results_file=...) 经左移校验。
+                # contract.acceptance_doc 已由 acceptance._dispatch_and_wait 挂载。
+                # 先移除 auto-complete 标记,防止 dispatch.submit 内 get_work_item 二次触发。
+                del _shared_assigned_items[item_id]
+                results = _accepted_results.get(item.dag_key)
+                tmp = _write_tmp_json(results)
+                try:
+                    from ..pipeline.dispatch import submit as dispatch_submit
+                    dispatch_submit(self, item.id, acceptance_results_file=tmp)
+                finally:
+                    _shared_work_items[item.id] = self.get_work_item(item.id)
+                    os.unlink(tmp)
+            elif getattr(item, "kind", None) == TaskKind.DECOMPOSE:
+                # 走真实 work submit 路径:把增量 Manifest 序列化为 manifest YAML,
+                # 调 dispatch.submit(manifest_file=...) 经结构校验+lint,状态进 IN_REVIEW。
+                # 先移除 auto-complete 标记,防止 dispatch.submit 内 get_work_item 二次触发。
+                del _shared_assigned_items[item_id]
+                increment = _increments.get(item.dag_key)
+                if increment is None:
+                    return
+                base = _parse_base_manifest_from_description(item.description)
+                tmp = _write_tmp_manifest(increment)
+                try:
+                    from ..pipeline.dispatch import submit as dispatch_submit
+                    pool = set(self.list_members(self.config.workspace_id))
+                    dispatch_submit(
+                        self, item.id, manifest_file=tmp,
+                        agent_pool=pool, base_manifest=base,
+                    )
+                finally:
+                    _shared_work_items[item.id] = self.get_work_item(item.id)
+                    os.unlink(tmp)
             else:
                 item.status = WorkItemStatus.DONE
                 seq = _shared_kind_delivery_sequences.get(item.dag_key)
@@ -149,7 +270,7 @@ class MockStore(WorkItemStore):
                 verification = self._mock_verification(item_id)
                 if verification is not None:
                     item.verification = verification
-            del _shared_assigned_items[item_id]
+                del _shared_assigned_items[item_id]
         elif item.status == WorkItemStatus.IN_REVIEW:
             if _shared_review_rejects_remaining > 0:
                 item.review_verdict = "reject"
