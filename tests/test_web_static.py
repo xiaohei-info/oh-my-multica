@@ -209,9 +209,9 @@ def test_root_serves_spa_not_bulletin(orch, simple_manifest, monkeypatch):
 
 
 def _static_body_equals_served(body: str) -> bool:
-    """GET / 的 body 与 importlib 读取的 static/index.html 同源。"""
+    """GET / 的响应体必须严格等于 importlib 读取的 static/index.html(同源、未被改写)。"""
     src = _read_index().strip()
-    return src == body.strip() or body.strip().startswith(src[:80])
+    return body.strip() == src
 
 
 def test_index_polls_meta_for_refresh(orch, simple_manifest, monkeypatch):
@@ -232,3 +232,38 @@ def test_static_index_uses_the_manifest_api(orch, simple_manifest, monkeypatch):
     assert "/api/dag/status" in html, "SPA 必须消费 /api/dag/status"
     assert "/api/meta" in html, "SPA 必须消费 /api/meta(轮询间隔)"
     assert "/api/node/" in html, "SPA 必须消费 /api/node/<key>"
+
+
+# ==================== 5. /static/<path> 通配路由(nit 修复:单一入口→静态资源通配) ==================
+
+def test_static_asset_route_serves_index_html_via_static_path(orch, simple_manifest, monkeypatch):
+    """GET /static/index.html 应通过新通配路由同源分发 MIME 正确的文件。"""
+    monkeypatch.chdir(orch.parent)
+    with _Server(orch_subpath=str(orch)) as s:
+        status, body, ctype = s.get("/static/index.html", with_headers=True)
+    assert status == 200, f"expected 200, got {status}: {body[:120]}"
+    assert "text/html" in ctype, f"expected text/html, got {ctype}"
+    src = _read_index().strip()
+    assert body.strip() == src, "/static/index.html 应与 SOURCE index.html 同源"
+
+
+def test_static_asset_route_404_on_missing(orch, simple_manifest, monkeypatch):
+    """GET /static/no-such-asset.js → 404."""
+    monkeypatch.chdir(orch.parent)
+    with _Server(orch_subpath=str(orch)) as s:
+        status, body = s.get("/static/no-such-asset.js")
+    assert status == 404, f"expected 404 for missing asset, got {status}"
+
+
+@pytest.mark.parametrize("bad_path", [
+    "/static/../../../etc/passwd",
+    "/static/..%2f..%2fsecret",
+    "/static/.%2e/.%2e/pyproject.toml",
+    "/static/",
+])
+def test_static_asset_route_blocks_traversal(orch, simple_manifest, monkeypatch, bad_path):
+    """目录穿越防护:含 ".." 或空相对路径的请求应被拒(404/400),不能读到包外。"""
+    monkeypatch.chdir(orch.parent)
+    with _Server(orch_subpath=str(orch)) as s:
+        status, _ = s.get(bad_path)
+    assert status in (400, 404), f"expected 4xx for {bad_path}, got {status}"
