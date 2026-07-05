@@ -109,3 +109,41 @@ def lint(m: Manifest, pool: set, *, acceptance=None) -> list:
     if _has_cycle(m.nodes):
         errs.append("manifest DAG has a cycle")
     return errs
+
+def lint_increment(increment: Manifest, existing: Manifest, pool: set) -> list:
+    """校验增量 fix 节点(§7.6 并入前的 lint 门)。
+
+    检查项:
+    - id 与已有节点冲突(冲突则报错,由调用方决定)
+    - blocked_by 引用有效(对「已有 + 增量」全集) 
+    - worker/reviewer 在 agent 池内
+    - 自身 contract 硬门(复用 _contract_errors)
+    - 并入后整图不引入环
+
+    注意:不重复检查已有节点的 worker/contract(它们已过门);只检查增量节点
+    以及「增量节点依赖的集合」。
+    """
+    errs = []
+    combined_keys = set(existing.nodes) | set(increment.nodes)
+
+    for n in increment.nodes.values():
+        if n.id in existing.nodes:
+            errs.append(f"node {n.id}: id conflicts with existing node")
+        if n.worker not in pool:
+            errs.append(f"node {n.id}: worker {n.worker!r} not in agent pool")
+        for b in n.blocked_by:
+            if b not in combined_keys:
+                errs.append(f"node {n.id}: blocked_by references unknown node {b!r}")
+        if n.reviewer is not None:
+            if n.reviewer == n.worker:
+                errs.append(f"node {n.id}: reviewer must differ from worker")
+            if n.reviewer not in pool:
+                errs.append(f"node {n.id}: reviewer {n.reviewer!r} not in agent pool")
+        errs.extend(_contract_errors(n))
+
+    combined_nodes = dict(existing.nodes)
+    combined_nodes.update(increment.nodes)
+    if _has_cycle(combined_nodes):
+        errs.append("increment introduces a cycle in the manifest DAG")
+
+    return errs
