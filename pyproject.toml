@@ -30,4 +30,5 @@ testpaths = ["tests"]
 addopts = "-q"
 markers = [
     "live: tests that hit a real platform (Multica/GitHub). Skipped by default in CI; run locally with `-m live`.",
+    "e2e: CLI 子进程级端到端验收(mock 引擎)。稳定回归护栏,无 sleep 竞态(mock delay=0)。",
 ]

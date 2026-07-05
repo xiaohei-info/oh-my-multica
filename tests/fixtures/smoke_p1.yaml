@@ -1,0 +1,77 @@
+# P1 e2e 复用/改造自旧 smoke_test_manifest.yaml,添加 contract 以走通集成门。
+# 3 节点线性 DAG: smoke-A → smoke-B → smoke-C。
+meta:
+  workspace_id: mock-workspace
+  title: "P1 e2e smoke manifest"
+  description: "3-node linear DAG reused from old smoke fixture"
+
+nodes:
+  - id: smoke-A
+    title: "Node A - foundation"
+    description: "Lock-step foundation node with no deps."
+    worker: alice
+    blocked_by: []
+    contract:
+      objective: "Foundation works"
+      acceptance: ["foundation passes"]
+      non_goals: ["no scope creep"]
+      verification_commands: ["pytest tests/test_a.py -q"]
+      integration_gates:
+        - name: "gate-a"
+          layer: "L1"
+          delivery_goal: "foundation delivered"
+          source_of_truth: ["docs/a.md"]
+          covers: ["a"]
+          acceptance_refs: ["foundation passes"]
+          commands: ["pytest tests/int_a -q"]
+          required_metrics: {"route_coverage": 100}
+          artifacts: ["coverage.xml"]
+      pr_base: "feature/p1-smoke"
+      coverage_gate: 90
+
+  - id: smoke-B
+    title: "Node B - middle"
+    description: "Mid node, blocked by smoke-A."
+    worker: bob
+    reviewer: charlie
+    blocked_by: [smoke-A]
+    contract:
+      objective: "Middle works"
+      acceptance: ["middle passes"]
+      non_goals: ["no creep"]
+      verification_commands: ["pytest tests/test_b.py -q"]
+      integration_gates:
+        - name: "gate-b"
+          layer: "L1"
+          delivery_goal: "middle delivered"
+          source_of_truth: ["docs/b.md"]
+          covers: ["b"]
+          acceptance_refs: ["middle passes"]
+          commands: ["pytest tests/int_b -q"]
+          required_metrics: {"route_coverage": 100}
+          artifacts: ["coverage.xml"]
+      pr_base: "feature/p1-smoke"
+      coverage_gate: 90
+
+  - id: smoke-C
+    title: "Node C - final"
+    description: "Final node, blocked by smoke-B."
+    worker: alice
+    blocked_by: [smoke-B]
+    contract:
+      objective: "Final works"
+      acceptance: ["final passes"]
+      non_goals: ["no creep"]
+      verification_commands: ["pytest tests/test_c.py -q"]
+      integration_gates:
+        - name: "gate-c"
+          layer: "L1"
+          delivery_goal: "final delivered"
+          source_of_truth: ["docs/c.md"]
+          covers: ["c"]
+          acceptance_refs: ["final passes"]
+          commands: ["pytest tests/int_c -q"]
+          required_metrics: {"route_coverage": 100}
+          artifacts: ["coverage.xml"]
+      pr_base: "feature/p1-smoke"
+      coverage_gate: 90
