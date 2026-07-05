@@ -67,6 +67,66 @@ HTML_PAGE = """<!doctype html>
 """
 
 
+def _load_static_html() -> str:
+    """优先读取 wheel 随包的 static/index.html;缺则退回内置 HTML_PAGE 提示页。"""
+    try:
+        from importlib import resources
+        candidate = resources.files("omac.web").joinpath("static/index.html")
+        if candidate.is_file():
+            return candidate.read_text(encoding="utf-8")
+    except Exception:
+        pass
+    return HTML_PAGE
+
+
+STATIC_HTML = _load_static_html()
+
+
+# 静态资源 MIME 表(按扩展名):仅列 SPA 手边会用到的最小集合,未知扩展按 octet-stream 兜底。
+_STATIC_MIME = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".ico": "image/x-icon",
+}
+
+
+def _safe_relative(rel: str) -> str | None:
+    """拒绝路径穿越:只允许不含 ".." 且不含绝对/反斜杠的纯相对路径。"""
+    if not rel:
+        return None
+    norm = rel.replace("\\", "/")
+    if norm.startswith("/") or any(seg == ".." for seg in norm.split("/")):
+        return None
+    return norm
+
+
+def _resolve_static(rel: str):
+    """把 a/relative/path 解析为 static 目录下的 importlib.resources 节点;不存在/越界返回 None。"""
+    norm = _safe_relative(rel)
+    if norm is None:
+        return None
+    try:
+        from importlib import resources
+        candidate = resources.files("omac.web").joinpath("static", norm)
+        if candidate.is_file():
+            return candidate
+    except Exception:
+        pass
+    return None
+
+
+def _mime_for(rel: str) -> str:
+    r = rel.lower()
+    for ext, mime in _STATIC_MIME.items():
+        if r.endswith(ext):
+            return mime
+    return "application/octet-stream"
+
+
 def _is_local_host(host: str) -> bool:
     """默认只绑本机视为 local,其余视为对外暴露需 token。"""
     h = host.strip().lower()
@@ -136,8 +196,20 @@ class _JSONResponder:
 
     def handle(self, method: str, path: str, query: dict[str, list[str]],
                orchestrator_dir: Path) -> None:
+        static_match = re.fullmatch(r"/static/(.+)", path)
+        if static_match:
+            rel = static_match.group(1)
+            asset = _resolve_static(rel)
+            if asset is None:
+                return self._fail(404, OmacError(f"未找到静态资源: {path}"))
+            try:
+                data = asset.read_bytes()
+            except Exception as e:
+                return self._fail(500, OmacError(f"读取静态资源失败: {e}"))
+            ctype = _mime_for(rel)
+            return self._send_blob(200, ctype, data)
         if path in ("/", "/index.html"):
-            return self._send_html(200, HTML_PAGE)
+            return self._send_html(200, STATIC_HTML)
         if path == "/api/meta":
             return self._send_json(200, {"refresh": self.refresh, "version": _version()})
         if path == "/api/manifests":
@@ -173,6 +245,14 @@ class _JSONResponder:
                 return self._fail(400, ValidationError("缺少查询参数 manifest"))
             return self._send_json(200, api.get_plan_acceptance(orchestrator_dir, manifest))
         self._fail(404, OmacError(f"未找到端点: {path}"))
+
+    def _send_blob(self, status: int, ctype: str, data: bytes) -> None:
+        self.handler.send_response(status)
+        self.handler.send_header("Content-Type", ctype)
+        self.handler.send_header("Content-Length", str(len(data)))
+        self.handler.send_header("Cache-Control", "no-store")
+        self.handler.end_headers()
+        self.handler.wfile.write(data)
 
     def _send_html(self, status: int, html: str) -> None:
         data = html.encode("utf-8")

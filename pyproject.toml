@@ -24,6 +24,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "omac.guide" = ["*.md"]
+"omac.web.static" = ["*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
