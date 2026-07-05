@@ -351,6 +351,10 @@ class MulticaStore(WorkItemStore):
             "--status", self._status_to_multica(status),
         ], capture=False)
 
+    def cancel_work_item(self, item_id: str) -> None:
+        """Multica 原生 cancelled 态:从活跃列表移除(区别于 blocked)。"""
+        self._run_multica(["issue", "status", item_id, "cancelled"], capture=False)
+
     def reset_review(self, item_id: str):
         self._set_metadata(item_id, "review_verdict", "")
         self._set_metadata(item_id, "review_comment", "")

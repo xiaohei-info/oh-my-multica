@@ -60,8 +60,9 @@ def _workspace_id() -> str:
     return ws
 
 
-# 每次运行的唯一后缀:避免前次 live 运行遗留的 issue 被 Multica 按 title 去重拦截,
-# 保证可重复执行(真实集成测试常见做法 —— 用随机标记区分运行,便于事后扫尾)。
+# 每次运行的唯一后缀:避免前次 live 运行(若扫尾失败)的 issue 被 Multica 按 title
+# 去重拦截,保证可重复执行。注:store fixture 已在 teardown 自动 cancel 本次创建的
+# issue(见上),此后缀只是二次保险,不再依赖手动扫尾。
 _RUN = os.environ.get("OMAC_LIVE_RUN") or f"run-{random.randrange(10**9)}"
 
 
@@ -75,7 +76,29 @@ def _engine(extra: dict | None = None):
 
 @pytest.fixture()
 def store():
-    return _engine().store
+    """真实 Multica store,自带扫尾:记录本用例创建的每个 work item,
+    teardown 时全部 cancel,保证 live 套件跑完不留垃圾(幂等,§12.4 只调 Store 接口)。
+    """
+    real = _engine().store
+    created: list[str] = []
+    orig_create = real.create_work_item
+
+    def _tracking_create(*args, **kwargs):
+        item = orig_create(*args, **kwargs)
+        item_id = getattr(item, "id", None)
+        if item_id:
+            created.append(item_id)
+        return item
+
+    real.create_work_item = _tracking_create
+    try:
+        yield real
+    finally:
+        for item_id in created:
+            try:
+                real.cancel_work_item(item_id)
+            except Exception:
+                pass  # 扫尾尽力而为,不因清理失败让用例红
 
 
 @pytest.fixture()

@@ -174,3 +174,12 @@ class WorkItemStore(ABC):
 
     def mark_blocked(self, item_id: str):
         self.update_status(item_id, WorkItemStatus.BLOCKED)
+
+    def cancel_work_item(self, item_id: str) -> None:
+        """取消/作废工作单元(清理扫尾用)—— 从活跃视图移除。
+
+        数据面清理原语:测试跑完扫尾自身创建的 work item、node abandon 均可复用,
+        保证不留垃圾(幂等)。缺省退化为置 BLOCKED(可移植到无原生 cancelled 的
+        平台);平台有原生「cancelled」态时应覆盖为精确语义。
+        """
+        self.update_status(item_id, WorkItemStatus.BLOCKED)

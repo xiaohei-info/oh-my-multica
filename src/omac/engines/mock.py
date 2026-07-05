@@ -516,6 +516,11 @@ class MockStore(WorkItemStore):
         item = self.get_work_item(item_id)
         item.status = status
 
+    def cancel_work_item(self, item_id: str) -> None:
+        """内存态直接移除,模拟平台侧作废(get 后即不存在)。"""
+        _shared_work_items.pop(item_id, None)
+        _shared_assigned_items.pop(item_id, None)
+
     def reset_review(self, item_id: str):
         item = self.get_work_item(item_id)
         item.review_verdict = None

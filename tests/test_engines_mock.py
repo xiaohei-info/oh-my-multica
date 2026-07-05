@@ -39,6 +39,18 @@ def test_create_and_get_roundtrip():
     assert got.status == WorkItemStatus.TODO
 
 
+def test_cancel_work_item_removes_it():
+    """清理原语:cancel 后 work item 不再存在(扫尾幂等的地基)。"""
+    store = _engine(MOCK_AUTO_COMPLETE="false").store
+    item = store.create_work_item("ws", "t", "d", dag_key="a", worker="alice")
+    assert store.get_work_item(item.id).id == item.id
+    store.cancel_work_item(item.id)
+    with pytest.raises(RuntimeError):
+        store.get_work_item(item.id)
+    # 幂等:重复 cancel 不报错
+    store.cancel_work_item(item.id)
+
+
 def test_metadata_write_then_read():
     store = _engine(MOCK_AUTO_COMPLETE="false").store
     item = store.create_work_item("ws", "t", "d", dag_key="a", worker="alice")
