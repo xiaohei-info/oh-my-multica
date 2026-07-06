@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
 from ..core import acceptance as acceptance_mod
+from ..core.config import CONFIG_DIR
 from ..core.lint import lint
 from ..core.manifest import Manifest, loads_manifest
 from ..core.taskmeta import TaskKind
@@ -124,7 +125,7 @@ def plan_create(
     NeedsDecision(exit 20);正常收敛 → return 0。
     """
     store = ctx.engine.store
-    base_dir = ".orchestrator"
+    base_dir = CONFIG_DIR
     manifest_path = os.path.join(base_dir, f"{name}.yaml")
     acceptance_path = os.path.join(base_dir, f"{name}.acceptance.yaml")
     reviewers = [] if ctx.no_review else ctx.reviewers

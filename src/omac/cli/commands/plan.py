@@ -52,7 +52,7 @@ DESCRIPTION = """计划制定与 DAG 拆解流水线。
 def register(parser):
     sub = parser.add_subparsers(dest="action", metavar="<action>", required=True)
     create = sub.add_parser("create", help="启动计划→验收文档→拆解流水线")
-    create.add_argument("--name", required=True, help="manifest 名(落盘 .orchestrator/<name>.yaml)")
+    create.add_argument("--name", required=True, help="manifest 名(落盘 .omac/<name>.yaml)")
     create.add_argument("--doc", help="已有设计/计划文档路径(给了就跳过 planner 制定环节)")
     create.add_argument("--no-review", action="store_true", help="跳过全部 review 阶段")
     create.add_argument("--no-acceptance", action="store_true", help="跳过验收文档环节")

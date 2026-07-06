@@ -54,7 +54,7 @@ reviewer 强制 ≠ 产出者;acceptor 缺省复用 reviewers 池。
 - ❌ 不要过度设计:架构服务于需求
 - ❌ 不要脱离设计文档:架构评审要对照设计文档
 
-## 配置(`.orchestrator/config.yaml`)
+## 配置(`.omac/config.yaml`)
 
 ```yaml
 engine: multica

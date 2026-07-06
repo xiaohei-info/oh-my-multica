@@ -54,7 +54,7 @@ HTML_PAGE = """<!doctype html>
 <h1>omac web — 本地只读可视化面板</h1>
 <p>本期只读 API(后端只做了「解析参数 → 调命令函数 → 返回 JSON」):</p>
 <ul>
-  <li><code>GET /api/manifests</code> — 扫 <code>.orchestrator/*.yaml</code>(排除 config),带进度摘要</li>
+  <li><code>GET /api/manifests</code> — 扫 <code>.omac/*.yaml</code>(排除 config),带进度摘要</li>
   <li><code>GET /api/config</code> ← <code>config get --output json</code></li>
   <li><code>GET /api/dag/status?manifest=&lt;path&gt;</code> ← <code>dag status --output json</code>(TTL 缓存 = poll_interval)</li>
   <li><code>GET /api/node/&lt;key&gt;?manifest=&lt;path&gt;</code> ← <code>node show --output json</code></li>
@@ -286,7 +286,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     server_version = "omac-web/0.1"
     token: str | None = None
-    orchestrator_dir: Path = Path(".orchestrator")
+    orchestrator_dir: Path = Path(".omac")
     cache: api.StatusCache = api.StatusCache()  # 默认;start() 会覆盖为合适的 poll_interval
     refresh: int = 10
     protocol_version = "HTTP/1.1"

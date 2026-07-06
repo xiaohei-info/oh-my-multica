@@ -302,7 +302,7 @@ class TestDagStatusCLI:
 
     def _write_config(self, tmp_path):
         import yaml
-        cfg_dir = tmp_path / ".orchestrator"
+        cfg_dir = tmp_path / ".omac"
         cfg_dir.mkdir(exist_ok=True)
         with open(cfg_dir / "config.yaml", "w") as f:
             yaml.dump({"engine": "mock", "workspace": "ws"}, f)

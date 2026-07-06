@@ -62,7 +62,7 @@ def test_config_set_get_roundtrip(tmp_path, monkeypatch, capsys):
     assert capsys.readouterr().out.strip() == "8"
 
     assert main(["config", "get", "nope.key"]) == exit_codes.VALIDATION
-    assert os.path.exists(".orchestrator/config.yaml")
+    assert os.path.exists(".omac/config.yaml")
 
 
 def test_config_get_without_file_is_validation_error(tmp_path, monkeypatch, capsys):

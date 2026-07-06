@@ -1,6 +1,6 @@
 # manifest DAG 与 contract
 
-manifest(`.orchestrator/<name>.yaml`)是状态机载体:节点、依赖、contract、
+manifest(`.omac/<name>.yaml`)是状态机载体:节点、依赖、contract、
 work_item_id、status 全部在此,进 git。
 
 ## 节点结构
@@ -130,7 +130,7 @@ omac 命令链:`omac plan create` 产 manifest → `omac dag run` 消费 manifes
 
 ### 阶段 B 收尾:manifest 落盘 + review 门
 
-拆完 DAG 后,manifest 写到 `.orchestrator/<name>.yaml`(固定路径),必须含完整 issue body(每节点的 `description` 是 worker 的上下文来源)。
+拆完 DAG 后,manifest 写到 `.omac/<name>.yaml`(固定路径),必须含完整 issue body(每节点的 `description` 是 worker 的上下文来源)。
 
 ### Manifest 编写规范
 
