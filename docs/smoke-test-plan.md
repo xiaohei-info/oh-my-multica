@@ -221,6 +221,12 @@ multica --workspace-id 00000000-0000-0000-0000-000000000000 issue list --output 
 
 第一次绿了之后,按需逐步加验证面:
 1. **带证据门**:给节点一个宽松 contract(`coverage_gate: 0` + 一条 `verification_commands` + 一个 integration_gate),验证 `omac work submit` 的左移证据校验闭环。
-2. **带 review**:配 `roles.reviewers` + 给节点 `reviewer`(须 ≠ worker,如 claude-ubuntu),验证同一 issue 转派 reviewer 的阶段交接。
+2. **带 review**:配 `roles.reviewers` + 给节点 `reviewer`,验证同一 issue 转派 reviewer 的阶段交接。reviewer **可自由指定**(不再强制 ≠ worker;池内仅产出者时回退自审)——但冒烟建议仍用**不同 agent**(如 claude-ubuntu)以真正验证跨 agent 的转派交接。
 3. **多节点并行 + 依赖**:两个 blocked_by 相连的节点,验证就绪计算与失败隔离。
-4. **agent 作为入口**:把"跑 `omac plan create && omac dag run`"作为一条 issue 派给入口 agent,验证 §1.4 第二形态(见 `omac guide workflow`「入口形态」)。
+4. **从需求出发跑全链路**(§1.4 第二形态,见 `omac guide workflow`「入口形态」):把"跑 `omac plan create --goal <需求> --name <feature> && omac dag run .omac/<feature>.yaml`"作为一条 issue 派给入口 agent,或直接在控制机跑。要点:
+   - **入口是需求**:`--goal "<一句话需求>"` 让 planner 据此制定计划(而非手写 manifest)。
+   - **人机确认门(默认开)★**:计划、验收两个环节产出后会**阻塞**,等你确认「是否满足需求」。放行两种方式任选:
+     - 交互式:在 Multica 把该 plan/验收 issue 流转到 **done**,或另开终端 `omac plan confirm --name <feature>`;omac 识别到后翻回 in_review 继续评审。
+     - 无人值守:`omac plan create ... --no-confirm` 跳过人机门(适合入口 agent 全自动跑)。
+   - **provenance 自动带上**:验收 issue 引用计划 issue、拆解 issue 引用计划+验收 issue,`manifest.meta.source_issues` 记录三个源头 —— 抽查这些引用是否正确,即验证「防跑偏」链路。
+   - 产出 `.omac/<feature>.yaml` 后接 `dag run`,与半链路冒烟同源收口。
