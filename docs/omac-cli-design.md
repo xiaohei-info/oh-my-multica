@@ -178,7 +178,7 @@ omac
 **选型:YAML 文件,不用 SQLite。** 配置与状态都需要 git 化(跨机器接力、人工评审门的基础);SQLite 二进制不可 diff、不可 PR review,且此处无事务/查询需求。
 
 ```
-.orchestrator/
+.omac/
 ├── config.yaml          # omac init 产出,项目级配置,进 git
 └── <name>.yaml          # omac plan 产出的 manifest DAG,进 git,状态机载体
 ```
@@ -238,7 +238,7 @@ flowchart LR
 
 ### 7.1 阶段一:`omac init` — 一次性配置
 
-**参与者**:调用者、omac CLI、引擎层。目标:选定 workspace → 列出全量 agent → 完成角色映射,固化进 `.orchestrator/config.yaml`。
+**参与者**:调用者、omac CLI、引擎层。目标:选定 workspace → 列出全量 agent → 完成角色映射,固化进 `.omac/config.yaml`。
 
 ```mermaid
 sequenceDiagram
@@ -256,7 +256,7 @@ sequenceDiagram
     M-->>C: 工作空间全量 agent 列表
     C-->>U: 请映射角色:planner / orchestrator / workers / reviewers
     U->>C: 从全量列表中逐一挑选,完成映射
-    C->>C: 写入 .orchestrator/config.yaml
+    C->>C: 写入 .omac/config.yaml
     C-->>U: exit 0,配置就绪
 
     Note over U,C: omac init --check(体检模式)
@@ -316,7 +316,7 @@ sequenceDiagram
         M->>R: AgentRuntime 拉起 reviewer
         R->>C: omac work submit --verdict ...(reject 则转回 planner 修订)
     end
-    C->>C: 落盘 .orchestrator/feature-x.acceptance.yaml
+    C->>C: 落盘 .omac/feature-x.acceptance.yaml
 
     C->>M: 建 decompose issue(body 含计划/设计文档 + 验收文档 + manifest schema 要求)并 assign orchestrator
     M->>O: AgentRuntime 拉起 orchestrator
@@ -341,7 +341,7 @@ sequenceDiagram
         end
     end
 
-    C->>C: 落盘 .orchestrator/feature-x.yaml
+    C->>C: 落盘 .omac/feature-x.yaml
     C-->>U: exit 0(manifest 就绪)<br/>任一环节耗尽重试 → exit 20 + 结构化报告
 ```
 
@@ -384,7 +384,7 @@ sequenceDiagram
     participant W as worker agent
     participant R as reviewer agent
 
-    U->>C: omac dag run .orchestrator/feature-x.yaml [--output json]
+    U->>C: omac dag run .omac/feature-x.yaml [--output json]
     C->>C: lint + reconcile(平台状态同步回 manifest)
 
     loop 每轮 tick(内置 sleep,直到收敛或需决策)
@@ -681,7 +681,7 @@ dag run 结果回收 ──► 权威门(编排侧,信任但验证)
 | runtime 机器需装 omac | 与"装 multica CLI"同级前置,`pipx install` 一次 | 失败响亮:worker 第一步 `omac work show` 即 command not found,回报到 issue,编排侧可见;`guide workflow` 写明运维要求 |
 | agent 调用者跑 `dag run` 长阻塞 | CLI 自含 loop 的固有代价 | `--max-rounds/--max-minutes` 有界分段(幂等=续跑);或后台运行 + `dag status --json` 轮询 |
 | plan 流水线 LLM 环节质量 | planner/orchestrator 产物可能反复不过门 | 修订循环有界(≤3 轮),耗尽即 exit 20 移交调用者,不无限烧 token |
-| 向后兼容 | 存量 `.orchestrator/*.yaml` manifest | manifest schema 不变,`dag run` 直接消费;仅驱动方式变化 |
+| 向后兼容 | 存量 `.omac/*.yaml` manifest | manifest schema 不变,`dag run` 直接消费;仅驱动方式变化 |
 
 ---
 
@@ -800,7 +800,7 @@ omac web [--port 8321] [--host 127.0.0.1] [--open] [--refresh 10]
 
 | 页面区域 | 内容 | 数据来源(← 对应 CLI 命令) |
 |---|---|---|
-| **manifest 选择器** | 扫描 `.orchestrator/*.yaml`(排除 config.yaml),显示各自进度摘要,记住上次选择 | `GET /api/manifests` |
+| **manifest 选择器** | 扫描 `.omac/*.yaml`(排除 config.yaml),显示各自进度摘要,记住上次选择 | `GET /api/manifests` |
 | **DAG 总览** | DAG 图可视化,节点按状态着色(todo / in_progress / ci_check / in_review / merging / done / blocked / abandoned),依赖边、进度统计(x/y done)、当前所处循环(内层 tick / 总控验收第 N 轮) | `GET /api/dag/status` ← `dag status --output json` |
 | **节点详情**(点节点展开) | contract 全量(objective / acceptance / non_goals / 验证命令)、证据链(verification、评审 report + 评审目标、env_setup)、PR 链接、平台 issue 链接(跳转看完整时间线)、回退计数 | `GET /api/node/{key}` ← `node show --output json` |
 | **静态信息页** | config.yaml 只读呈现(角色映射、CI/merge 配置)、manifest 原文、验收文档逐条清单 | `GET /api/config` ← `config get --output json`;`GET /api/plan/acceptance` |

@@ -6,15 +6,40 @@ omac 是确定性 CLI 驱动的多 Agent 并行开发编排:Loop 驱动 Agent,LL
 ## 标准路径
 
 1. `omac init` —— 一次性配置:选 workspace → 列全量 agent → 角色映射
-   → 落盘 `.orchestrator/config.yaml`(体检:`omac init --check`)
+   → 落盘 `.omac/config.yaml`(体检:`omac init --check`)
 2. `omac plan create --name <feature> [--doc 设计文档]` —— 计划 → 验收文档 → 拆解,
-   全程内置 review 阶段,产出 `.orchestrator/<feature>.yaml`( + `.acceptance.yaml`)
-3. `omac dag run .orchestrator/<feature>.yaml` —— 确定性 loop:
+   全程内置 review 阶段,产出 `.omac/<feature>.yaml`( + `.acceptance.yaml`)
+3. `omac dag run .omac/<feature>.yaml` —— 确定性 loop:
    回收结果 → 计算就绪节点 → 派发,直到收敛;收敛后进入总控验收外层循环
    - exit 0:验收全部 pass,真正可交付
    - exit 20:无法继续推进,stdout 有结构化报告(含可执行的下一步命令)
 4. exit 20 后:`omac dag status` 看全景 → `omac node show <key>` 看证据链
    → `omac node retry|abandon` 决策 → 重跑 `omac dag run`(重跑即续跑)
+
+## 入口形态(谁来跑 omac)
+
+omac 有三种入口调用者,消费同一套 CLI:**人(终端)/ Agent(Claude Code、Multica agent 等)
+/ Web UI**(设计 §1.4)。控制反转的边界必须分清:
+
+- ✅ **agent 作为入口 = 启动确定性 loop 进程,并跑全流程** —— 不是只 `dag run`,而是
+  `omac init` → `omac plan create`(制定计划 / 拆 DAG)→ `omac dag run`(驱动到收敛)整条链。
+  loop 的决策逻辑在**代码**里跑(sync→decide→dispatch→sleep),agent 只是把进程拉起来,
+  它的上下文**不参与每轮轮询** —— token 成本 ≈ 0,和人在终端敲完命令晾着等一样。
+- ❌ **被否决的反模式** = 让 **agent 的推理上下文本身充当 while 轮询循环**(每轮 LLM 推理 = 一次 tick):
+  太贵(token 随 DAG 时长线性涨)、不可靠(LLM 不擅长当 while 宿主,几轮就退出)。见设计 §1.2。
+
+**判据**:loop 的**决策**在谁手里 —— 在确定性代码 = 对;在 agent 上下文 = 错。谁**启动**进程无所谓。
+
+**承载约束**(对人和 agent 一视同仁):`plan create && dag run` 是长命进程,承载它的机器/会话要稳;
+中断也不丢 —— 状态全在 manifest + 平台、循环幂等,重跑即续跑、支持跨机接力(可用 `--max-minutes` 分段)。
+
+### issue 辨识边界(同一 project / 同一批 agent 混用时)
+
+- **标题带 `[DAG:...]` 前缀** = omac 派发的执行任务 → 被派 agent 走 `omac work show/submit`。
+- **无此前缀** = 普通 issue,按其 body 常规处理;body 若明确要求运行 omac 命令(如让 agent 作为
+  入口跑 `omac plan create` / `omac dag run`),照 body 执行。`work show/submit` 只认前缀,不误伤。
+- 手工建的、不想走 omac 的简单 issue:天然无前缀、无 bootstrap,不会进 omac 流程;
+  想彻底隔离就**别提进 omac 专属 project**(一个 project = 一个 omac 编排实例)。
 
 ## 关键原则
 

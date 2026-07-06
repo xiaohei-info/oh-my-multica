@@ -81,10 +81,10 @@ def test_non_interactive_writes_valid_config(tmp_path, monkeypatch, capsys):
         "--reviewers", "alice,bob",
     ])
     assert code == exit_codes.OK
-    assert (tmp_path / ".orchestrator" / "config.yaml").exists()
+    assert (tmp_path / ".omac" / "config.yaml").exists()
 
     import yaml
-    cfg = yaml.safe_load((tmp_path / ".orchestrator" / "config.yaml").read_text())
+    cfg = yaml.safe_load((tmp_path / ".omac" / "config.yaml").read_text())
     assert cfg["engine"] == "mock"
     assert cfg["workspace"] == "mock-workspace"
     assert cfg["roles"]["planner"] == "alice"
@@ -108,7 +108,7 @@ def test_non_interactive_acceptor_optional(tmp_path, monkeypatch):
     ])
     assert code == exit_codes.OK
     import yaml
-    cfg = yaml.safe_load((tmp_path / ".orchestrator" / "config.yaml").read_text())
+    cfg = yaml.safe_load((tmp_path / ".omac" / "config.yaml").read_text())
     assert cfg["roles"]["acceptor"] == "bob"
 
 
@@ -123,7 +123,7 @@ def test_non_interactive_role_not_in_pool_fails(tmp_path, monkeypatch, capsys):
     assert code == exit_codes.VALIDATION
     err = capsys.readouterr().err
     assert "ghost" in err and "agent 池" in err
-    assert not (tmp_path / ".orchestrator" / "config.yaml").exists()
+    assert not (tmp_path / ".omac" / "config.yaml").exists()
 
 
 # ==================== --check 增强 ====================
@@ -195,6 +195,32 @@ def test_multica_create_work_item_passes_project(monkeypatch):
     assert "proj-42" in seen["create_cmd"]
 
 
+def test_multica_create_project_passes_description(monkeypatch):
+    """create_project 带 description 时,命令含 --description 且值为 omac 编排横幅。"""
+    from omac.engines import multica as m
+    from omac.pipeline.dispatch import OMAC_PROJECT_DESCRIPTION
+
+    seen = {}
+
+    class _R:
+        returncode = 0
+        stderr = ""
+        def __init__(self, out): self.stdout = out
+
+    def fake_run(cmd, capture_output=False, text=False):
+        seen["cmd"] = cmd
+        return _R(json.dumps({"id": "proj-9", "title": "demo"}))
+
+    monkeypatch.setattr(m.subprocess, "run", fake_run)
+    store = m.MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    store.create_project("ws", "demo", ["https://github.com/x/y.git"],
+                         description=OMAC_PROJECT_DESCRIPTION)
+    cmd = seen["cmd"]
+    assert "--description" in cmd
+    assert cmd[cmd.index("--description") + 1] == OMAC_PROJECT_DESCRIPTION
+    assert "--repo" in cmd
+
+
 def test_check_flags_missing_project_for_multica(tmp_path, monkeypatch, capsys):
     """multica 配置缺 project → --check exit 5 并提示。"""
     monkeypatch.chdir(tmp_path)
@@ -249,7 +275,7 @@ def test_interactive_main_path(tmp_path, monkeypatch, capsys):
     ]))
     assert main(["init"]) == exit_codes.OK
     import yaml
-    cfg = yaml.safe_load((tmp_path / ".orchestrator" / "config.yaml").read_text())
+    cfg = yaml.safe_load((tmp_path / ".omac" / "config.yaml").read_text())
     assert cfg["engine"] == "mock"
     assert cfg["roles"]["planner"] == "alice"
     assert cfg["roles"]["workers"] == ["alice"]
@@ -273,7 +299,7 @@ def test_interactive_type_name(tmp_path, monkeypatch, capsys):
     ]))
     assert main(["init"]) == exit_codes.OK
     import yaml
-    cfg = yaml.safe_load((tmp_path / ".orchestrator" / "config.yaml").read_text())
+    cfg = yaml.safe_load((tmp_path / ".omac" / "config.yaml").read_text())
     assert cfg["roles"]["reviewers"] == ["bob", "charlie"]
 
 

@@ -30,8 +30,8 @@ from omac.cli.main import main as cli_main
 
 @pytest.fixture
 def orch(tmp_path):
-    """.orchestrator 工作目录(mock 引擎)。poll_interval=2 方便 TTL 测试过窗口。"""
-    d = tmp_path / ".orchestrator"
+    """.omac 工作目录(mock 引擎)。poll_interval=2 方便 TTL 测试过窗口。"""
+    d = tmp_path / ".omac"
     d.mkdir()
     with open(d / "config.yaml", "w") as f:
         yaml.dump({
@@ -75,7 +75,7 @@ class _Server:
     """在 127.0.0.1:0 启动真实 WebServer 后台线程。"""
 
     def __init__(self, *, token=None, refresh=2, poll_interval=None,
-                 orch_subpath=".orchestrator"):
+                 orch_subpath=".omac"):
         self.token = token
         self.refresh = refresh
         self.poll_interval = poll_interval

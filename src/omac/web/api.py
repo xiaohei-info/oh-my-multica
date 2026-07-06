@@ -104,7 +104,7 @@ def _cli_json(run_fn: Callable, args) -> Any:
 
 
 def get_manifests(orchestrator_dir: Path) -> list[dict]:
-    """GET /api/manifests:扫 .orchestrator/*.yaml(排除 config),带进度摘要。"""
+    """GET /api/manifests:扫 .omac/*.yaml(排除 config),带进度摘要。"""
     if not orchestrator_dir.is_dir():
         return []
     results = []

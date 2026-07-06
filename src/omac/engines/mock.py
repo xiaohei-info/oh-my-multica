@@ -400,6 +400,7 @@ class MockStore(WorkItemStore):
     def create_project(
         self, workspace_id: str, title: str,
         repo_urls: Optional[List[str]] = None,
+        description: Optional[str] = None,
     ) -> ProjectInfo:
         global _shared_next_id
         pid = f"proj-{_shared_next_id}"
