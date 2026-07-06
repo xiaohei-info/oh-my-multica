@@ -719,7 +719,7 @@ def _contract_summary(contract, key, fallback):
     return value if value not in (None, "") else fallback
 
 
-def render_issue_body(node, contract, kind, issue_id):
+def render_issue_body(node, contract, kind, issue_id, source_refs=None):
     """三段式派发模板(设计文档 §7.4)。
 
     第一段 bootstrap:两条命令(work show / work submit 精确模板) +
@@ -793,7 +793,17 @@ def render_issue_body(node, contract, kind, issue_id):
     description = (getattr(node, "description", "") or "").strip()
     detail = f"## 任务详情\n{description}" if description else ""
 
-    return "\n\n".join(p for p in [bootstrap, briefing, detail, hard] if p)
+    # ---- 源头 issue 引用(provenance,防流程跑偏)----
+    # 后续任务(验收/拆解/开发)带上塑造它的上游 issue,分歧时以源头为准。
+    refs = [str(r) for r in (source_refs or []) if str(r).strip()]
+    origin = ""
+    if refs:
+        origin = (
+            "## 源头 issue（防跑偏）\n"
+            "本任务承接以下上游 issue,有分歧以源头 issue 为准,勿平行重定义:\n"
+            + "\n".join(f"- #{r}(omac work show {r} 查看)" for r in refs))
+
+    return "\n\n".join(p for p in [bootstrap, briefing, detail, origin, hard] if p)
 
 
 def render_review_rollout_comment(node, contract, verdict: Optional[str], report=None,

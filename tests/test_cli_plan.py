@@ -415,6 +415,31 @@ def test_create_with_doc_skips_plan(tmp_path, monkeypatch):
     assert plan_item is None, "带 --doc 时不应创建 plan 阶段 work item"
 
 
+def test_create_threads_source_refs_through_chain(tmp_path, monkeypatch):
+    """provenance:验收 body 引用计划 issue;拆解 body 引用计划+验收 issue(防跑偏)。"""
+    from omac.core.taskmeta import TaskKind
+    engine = _configure_create_mock(tmp_path, monkeypatch)
+    assert main(["plan", "create", "--name", "demo-prov"]) == exit_codes.OK
+    plan_item = _first_item_of_kind(engine, TaskKind.PLAN)
+    acc_item = _first_item_of_kind(engine, TaskKind.ACCEPTANCE)
+    dec_item = _first_item_of_kind(engine, TaskKind.DECOMPOSE)
+    assert f"#{plan_item.id}" in acc_item.description
+    assert f"#{plan_item.id}" in dec_item.description
+    assert f"#{acc_item.id}" in dec_item.description
+
+
+def test_create_records_source_issues_in_manifest_meta(tmp_path, monkeypatch):
+    """provenance:manifest meta.source_issues 记录计划/验收/拆解源头 issue。"""
+    import yaml
+    from omac.core.taskmeta import TaskKind
+    engine = _configure_create_mock(tmp_path, monkeypatch)
+    assert main(["plan", "create", "--name", "demo-prov2"]) == exit_codes.OK
+    data = yaml.safe_load((tmp_path / ".omac" / "demo-prov2.yaml").read_text())
+    src = [str(x) for x in (data["meta"].get("source_issues") or [])]
+    dec_item = _first_item_of_kind(engine, TaskKind.DECOMPOSE)
+    assert dec_item.id in src, "manifest meta.source_issues 应含拆解源头 issue"
+
+
 def test_plan_confirm_marks_waiting_issue_done(tmp_path, monkeypatch):
     """omac plan confirm <name>:手动把停在人机门的计划/验收 issue 流转到 DONE。"""
     from omac.core.taskmeta import TaskKind, TaskPhase

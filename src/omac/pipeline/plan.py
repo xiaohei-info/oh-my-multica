@@ -25,7 +25,7 @@ from typing import Any, Callable, Dict, List, Optional
 from ..core import acceptance as acceptance_mod
 from ..core.config import CONFIG_DIR
 from ..core.lint import lint
-from ..core.manifest import Manifest, loads_manifest
+from ..core.manifest import Manifest, loads_manifest, save_manifest
 from ..core.taskmeta import TaskKind
 from ..engines.models import WorkItem
 from ..errors import ValidationError
@@ -133,6 +133,9 @@ def plan_create(
     poll_cb = poll if poll is not None else ctx.poll()
 
     acceptance_text: Optional[str] = None
+    # provenance:各阶段源头 issue,后续阶段带上引用防跑偏(--doc 时无 plan issue)。
+    plan_item_id: Optional[str] = None
+    acceptance_item_id: Optional[str] = None
 
     # ── phase 1:制定计划(跳过如果有 --doc) ──
     if doc_path is not None:
@@ -153,6 +156,7 @@ def plan_create(
             poll=poll_cb,
             confirm=ctx.confirm,
         )
+        plan_item_id = res["item_id"]
         plan_text = _phase_text(res["delivery"], _PLAN_KEY)
 
     # ── phase 2:验收文档(跳过如果 --no-acceptance) ──
@@ -168,7 +172,9 @@ def plan_create(
             max_revisions=ctx.max_revisions,
             poll=poll_cb,
             confirm=ctx.confirm,
+            source_refs=[r for r in [plan_item_id] if r],
         )
+        acceptance_item_id = res["item_id"]
         acceptance_text = _phase_text(res["delivery"], _ACCEPTANCE_KEY)
         acceptance_doc = _validate_acceptance(acceptance_text)
         _write_if_missing(base_dir)
@@ -190,10 +196,18 @@ def plan_create(
         max_revisions=ctx.max_revisions,
         poll=poll_cb,
         guard=guard,
+        source_refs=[r for r in [plan_item_id, acceptance_item_id] if r],
     )
+    decompose_item_id = res["item_id"]
     manifest_text = _phase_text(res["delivery"], _MANIFEST_KEY)
     _write_if_missing(base_dir)
-    with open(manifest_path, "w", encoding="utf-8") as fh:
-        fh.write(manifest_text)
+
+    # provenance:把塑造本 DAG 的源头 issue(计划/验收/拆解)记入 manifest meta,
+    # 让 dag run 派发的 develop issue 也能溯源,防后续执行跑偏。
+    source_issues = [r for r in [plan_item_id, acceptance_item_id, decompose_item_id] if r]
+    manifest = loads_manifest(manifest_text)
+    if source_issues:
+        manifest.meta["source_issues"] = source_issues
+    save_manifest(manifest, manifest_path)
 
     return 0

@@ -103,6 +103,7 @@ def run_task(
     poll: Callable[[], None],
     guard: Optional[Callable[[WorkItem], List[str]]] = None,
     confirm: bool = False,
+    source_refs: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """派任务→等终态→取交付→有界修订循环。
 
@@ -128,7 +129,7 @@ def run_task(
     # body 里 reviewer 留 None:reviewer 在 review 阶段按轮次由 _pick_reviewer 动态选取,
     # 创建时没有「当前 reviewer」的概念,不写死池内第一位以免误导。
     body_node = SimpleNamespace(title=title, reviewer=None, id=item_id)
-    body = render_issue_body(body_node, contract, kind, item_id)
+    body = render_issue_body(body_node, contract, kind, item_id, source_refs=source_refs)
     if source_of_truth:
         body = body + "\n\n" + _render_source_of_truth(source_of_truth)
     store.update_work_item_metadata(item_id, description=body)

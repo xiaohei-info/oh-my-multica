@@ -81,6 +81,17 @@ def test_run_task_consumes_real_submit_deliverable():
     assert item.deliverable == "计划正文-真实路径"
 
 
+def test_run_task_renders_source_refs_in_body():
+    """provenance:后续任务带上源头 issue 引用,渲染进 issue body(防流程跑偏)。"""
+    eng = _engine()
+    MockStore.set_kind_delivery("acceptance", {"acceptance": "验收正文"})
+    res = run_task(eng, TaskKind.ACCEPTANCE, _payload(), "alice",
+                   source_refs=["7", "8"], poll=_poll)
+    item = eng.store.get_work_item(res["item_id"])
+    assert "源头" in item.description
+    assert "7" in item.description and "8" in item.description
+
+
 def test_human_gate_blocks_until_confirmed():
     """confirm=True 且无人工确认时,人机门不放行:产出停在 IN_REVIEW 等 DONE。"""
     eng = _engine()
