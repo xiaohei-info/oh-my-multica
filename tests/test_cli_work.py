@@ -179,7 +179,7 @@ def test_show_cli_json_output(tmp_path, monkeypatch, capsys):
 
 
 def test_show_cli_table_output(tmp_path, monkeypatch, capsys):
-    """CLI 入口:work show 默认 table 输出包含四段标题。"""
+    """CLI 入口:work show 默认 markdown 输出,含相位视图各段。"""
     monkeypatch.chdir(tmp_path)
     main(["config", "set", "engine", "mock"])
     main(["config", "set", "workspace", "mock-workspace"])
@@ -191,10 +191,57 @@ def test_show_cli_table_output(tmp_path, monkeypatch, capsys):
 
     assert main(["work", "show", item.id]) == exit_codes.OK
     out = capsys.readouterr().out
-    for section in ("任务标识", "完整上下文", "执行协议", "submit 模板"):
-        assert section in out
+    # markdown 段头(相位视图):任务头 / 现在做什么 / 完成后交付
+    assert "# 任务" in out
+    assert "## 现在做什么" in out
+    assert "## 完成后交付" in out
     assert "plan" in out
     assert "review" in out
+
+
+def test_show_identity_reflects_role_not_generic_worker(tmp_path, monkeypatch, capsys):
+    """身份按角色如实标注:plan×authoring 是 planner,不再一律标 worker。"""
+    monkeypatch.chdir(tmp_path)
+    main(["config", "set", "engine", "mock"])
+    main(["config", "set", "workspace", "mock-workspace"])
+    capsys.readouterr()
+
+    store = _store()
+    item = _make_item(store, TaskKind.PLAN, TaskPhase.AUTHORING)
+    assert main(["work", "show", item.id]) == exit_codes.OK
+    out = capsys.readouterr().out
+    assert "planner" in out
+    assert "worker:" not in out  # plan 的产出者不是 worker
+
+
+def test_plan_authoring_action_not_role_mixed():
+    """点5:plan×authoring 的「现在做什么」只讲 plan,不掺 acceptance 任务;深度指向 guide。"""
+    store = _store()
+    item = _make_item(store, TaskKind.PLAN, TaskPhase.AUTHORING)
+    out = build_show_output(item, "worker:alice")
+    proto = out["protocol"]
+    # 不再把 acceptance(验收文档)任务塞进 plan 的视图
+    assert "验收文档" not in proto
+    assert "acceptance" not in proto
+    # 静态深度交给 guide(不再内联复制整段协议)
+    assert "omac guide workflow" in proto
+
+
+def test_review_show_surfaces_deliverable_and_env_setup(tmp_path, monkeypatch, capsys):
+    """review 阶段 show 顶出只有此刻才存在的实例数据:评审对象(deliverable)+ env_setup。"""
+    monkeypatch.chdir(tmp_path)
+    main(["config", "set", "engine", "mock"])
+    main(["config", "set", "workspace", "mock-workspace"])
+    capsys.readouterr()
+
+    store = _store()
+    item = _make_item(store, TaskKind.DEVELOP, TaskPhase.REVIEW,
+                      with_deliverable=True, with_verification=True)
+    assert main(["work", "show", item.id]) == exit_codes.OK
+    out = capsys.readouterr().out
+    assert "评审对象" in out
+    assert "docker compose up -d db" in out  # worker 的 env_setup 复跑清单
+    assert "omac guide reviewer" in out
 
 
 def test_set_node_contract_visible_in_show():
@@ -220,21 +267,19 @@ def test_set_node_contract_visible_in_show():
 
 
 
-def test_develop_authoring_protocol_is_three_step_pr_closure():
-    """验收:develop x authoring 协议必须明确「推分支 -> 开 PR(worker 自建,omac 不代建)
-    -> omac work submit --pr-url」三步,而非只列 --pr-url 参数。
-
-    避免无状态 worker 交了代码却不知要开 PR;PR 由 worker 自建,omac 只登记 pr_url。
-    """
+def test_develop_authoring_action_and_submit_cover_pr_flow():
+    """develop x authoring:「现在做什么」点明推分支/开 PR/worker 自建;
+    精确的 --pr-url 交付命令在 submit 段(不再把整条命令塞进协议文本)。"""
     store = _store()
     item = _make_item(store, TaskKind.DEVELOP, TaskPhase.AUTHORING)
     out = build_show_output(item, f"worker:{item.worker}")
     protocol = out["protocol"]
-    # 三步都必须出现:推分支/开 PR / worker 自建(omac 不代建)/submit --pr-url
+    # 动作点明 PR 三步的要害
     assert "推分支" in protocol or "git push" in protocol, protocol
-    assert "开 PR" in protocol or "PR" in protocol, protocol
+    assert "PR" in protocol, protocol
     assert "自建" in protocol or "不代建" in protocol, protocol
-    assert "submit --pr-url" in protocol or "--pr-url" in protocol, protocol
+    # 精确交付命令归 submit 段(相位视图:动作与命令分离)
+    assert "--pr-url" in out["submit"]
 
 def test_show_unknown_issue_id(tmp_path, monkeypatch, capsys):
     """issue_id 不存在时给出教学性报错,exit 5。"""

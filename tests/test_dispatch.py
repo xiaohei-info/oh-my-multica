@@ -134,6 +134,19 @@ class TestRenderIssueBody:
         assert "见 contract" not in body
         assert "- title: 贪吃蛇手游 计划" in body
 
+    def test_bootstrap_orders_guide_first_no_contract_lie(self):
+        """点2:bootstrap 把 guide 抬为第 1 必看(先懂流程再取实例),
+        且不谎称「你的 contract 全量」——plan 天生无 contract。"""
+        n = Node(id="n", worker="alice", title="计划")
+        body = render_issue_body(n, None, TaskKind.PLAN, "ID")
+        # guide 指引出现在 work show 之前
+        assert body.index("omac guide workflow") < body.index("omac work show ID")
+        # 三条入口命令仍在(重排,不删)
+        assert "omac work show ID" in body
+        assert "omac work submit ID" in body
+        # 删掉「contract 全量」这句对 plan 而言的谎
+        assert "contract 全量" not in body
+
     def test_contract_summary_none_returns_fallback(self):
         """_contract_summary 在 contract=None 时应直接返回 fallback,作为占位的根。"""
         from omac.pipeline.dispatch import _contract_summary
