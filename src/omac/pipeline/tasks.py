@@ -16,7 +16,7 @@ from ..core.manifest import Contract, _load_contract
 from ..core.taskmeta import DELIVERY_CONTENT_KEY, TaskKind, TaskPhase
 from ..engines.models import WorkItem, WorkItemStatus
 from ..errors import NeedsDecision
-from .dispatch import render_issue_body
+from .dispatch import render_issue_body, render_review_rollout_comment
 
 
 def _produced(item: WorkItem) -> bool:
@@ -193,6 +193,12 @@ def run_task(
 
         store.mark_in_review(item_id)
         store.assign_work_item(item_id, reviewer, "reviewer")
+        # 转派 reviewer 推送阶段变更评论(与 develop loop 对齐,不押注 agent 自觉跑 work show)。
+        body_node.reviewer = reviewer
+        store.add_comment(
+            item_id,
+            render_review_rollout_comment(
+                body_node, contract, None, item_id=item_id, kind=kind))
         runtime.wake(item_id, reviewer, "reviewer")
         reviewed = _poll_until(
             store, item_id, lambda i: i.review_verdict is not None, poll)
@@ -203,11 +209,14 @@ def run_task(
             return {"item_id": item_id, "delivery": delivery,
                     "rounds": round_index, "verdict": "pass", "kind": kind.value}
 
-        # reject: 意见落 issue, reset_review 清旧判定, 转回产出者修订
+        # reject: 结构化 rollout 评论落 issue(评审目标 + blockers + 按 kind 的重交模板),
+        # reset_review 清旧判定, 转回产出者修订
         last_opinion = reviewed.review_comment
         store.add_comment(
             item_id,
-            f"reviewer {reviewer} 第 {round_index} 轮 reject: {last_opinion}")
+            render_review_rollout_comment(
+                body_node, contract, verdict,
+                report=reviewed.review_report, item_id=item_id, kind=kind))
         store.reset_review(item_id)
         delivered = _produce()
         delivery = _delivery_of(kind, delivered)
