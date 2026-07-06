@@ -13,7 +13,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 import yaml
-from ..core.taskmeta import Bounces, TaskKind, TaskPhase
+from ..core.taskmeta import DELIVERY_CONTENT_KEY, Bounces, TaskKind, TaskPhase
 from .models import EngineConfig, ProjectInfo, WorkItem, WorkItemStatus, WorkspaceInfo
 from .runtime import AgentRuntime
 from .store import WorkItemStore
@@ -39,6 +39,10 @@ _shared_review_rejects_remaining: int = 0
 _accepted_results: dict[str, object] = {}   # dag_key -> acceptance_results dict
 _increments: dict[str, object] = {}        # dag_key -> Manifest(增量 fix 节点)
 _shared_kind_delivery_sequences: Dict[str, list] = {}
+
+# 产出后进入评审阶段(而非直接 DONE)的 kind:与真实 work submit 的产出终态一致。
+# develop 走 pr_url→DONE;final-acceptance 有独立的 _accepted_results 真实 submit 分支。
+_AUTHORING_TO_REVIEW = (TaskKind.PLAN, TaskKind.ACCEPTANCE, TaskKind.DECOMPOSE)
 
 
 def _init_default_workspace():
@@ -274,7 +278,6 @@ class MockStore(WorkItemStore):
                     os.unlink(tmp)
                 return
 
-            item.status = WorkItemStatus.DONE
             seq = _shared_kind_delivery_sequences.get(item.dag_key)
             if seq:
                 deliverable = seq.pop(0)
@@ -282,10 +285,25 @@ class MockStore(WorkItemStore):
                 deliverable = _shared_kind_deliverables.get(
                     item.dag_key,
                     {"pr_url": f"https://mock.example.com/pr/{item_id}"})
-            item.artifacts = dict(deliverable)
-            verification = self._mock_verification(item_id)
-            if verification is not None:
-                item.verification = verification
+
+            if getattr(item, "kind", None) in _AUTHORING_TO_REVIEW:
+                # plan/acceptance/decompose:忠实真实 work submit 的产出终态——
+                # 交付正文落 deliverable、phase 进 REVIEW、状态 IN_REVIEW,评审往返
+                # 交由上层原语(run_task)接管,不在此直接 DONE。
+                key = DELIVERY_CONTENT_KEY[item.kind]
+                content = deliverable.get(key)
+                if content is None:
+                    content = next(iter(deliverable.values()), "")
+                item.deliverable = content
+                item.phase = TaskPhase.REVIEW
+                item.status = WorkItemStatus.IN_REVIEW
+            else:
+                # develop 及未知类型:直接 DONE + artifacts(pr_url 证据通道)。
+                item.status = WorkItemStatus.DONE
+                item.artifacts = dict(deliverable)
+                verification = self._mock_verification(item_id)
+                if verification is not None:
+                    item.verification = verification
             del _shared_assigned_items[item_id]
         elif item.status == WorkItemStatus.IN_REVIEW:
             if _shared_review_rejects_remaining > 0:

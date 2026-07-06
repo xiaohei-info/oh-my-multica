@@ -54,6 +54,15 @@ MERGE_BOUNCE_KEY = "merge_bounce"
 # 通用交付物 key:按 kind 承载 plan/acceptance/manifest/acceptance-results 正文
 DELIVERABLE_KEY = "deliverable"
 
+# run_task 交付 dict 的 key(按 kind 承载交付正文)——单一来源,tasks/plan/mock 共用。
+# decompose 正文是 manifest(≠ kind.value),故不能用 kind.value 直接推。
+DELIVERY_CONTENT_KEY = {
+    TaskKind.PLAN: "plan",
+    TaskKind.ACCEPTANCE: "acceptance",
+    TaskKind.DECOMPOSE: "manifest",
+    TaskKind.FINAL_ACCEPTANCE: "acceptance_results",
+}
+
 
 @dataclass
 class Bounces:
