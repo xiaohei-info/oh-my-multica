@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 from ..core.taskmeta import DELIVERY_CONTENT_KEY, Bounces, TaskKind, TaskPhase
+from ..errors import ValidationError
 from .models import EngineConfig, ProjectInfo, WorkItem, WorkItemStatus, WorkspaceInfo
 from .runtime import AgentRuntime
 from .store import WorkItemStore
@@ -466,6 +467,10 @@ class MockStore(WorkItemStore):
         initial_status: WorkItemStatus = WorkItemStatus.TODO,
         kind: TaskKind = TaskKind.DEVELOP,
     ) -> WorkItem:
+        # parity:真实 multica issue create 拒收空 --description-file,mock 须对等,
+        # 否则 run_task 空壳建 issue 在 mock 上悄悄通过、只在真机炸(见 tasks.py 两段式)。
+        if not description:
+            raise ValidationError("issue create 的 description 不能为空(--description-file 空内容)")
         global _shared_next_id
         item_id = str(_shared_next_id)
         _shared_next_id += 1
@@ -537,6 +542,8 @@ class MockStore(WorkItemStore):
         if deliverable is not None:
             item.deliverable = deliverable
         if description is not None:
+            if not description:
+                raise ValidationError("issue update 的 description 不能为空(--description-file 空内容)")
             item.description = description
         return item
 

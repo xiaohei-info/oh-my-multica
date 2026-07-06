@@ -39,6 +39,24 @@ def test_create_and_get_roundtrip():
     assert got.status == WorkItemStatus.TODO
 
 
+def test_create_rejects_empty_description():
+    """parity:真实 multica issue create 校验 --description-file 非空,mock 须对等。
+
+    否则 run_task 的空壳建 issue(tasks.py 两段式)在 mock 上悄悄通过、真机才炸。
+    """
+    store = _engine().store
+    with pytest.raises(ValidationError):
+        store.create_work_item("ws", "t", "", dag_key="a", worker="alice")
+
+
+def test_update_rejects_empty_description():
+    """parity:issue update --description-file 同样校验非空(create/update 共用一条校验)。"""
+    store = _engine().store
+    item = store.create_work_item("ws", "t", "d", dag_key="a", worker="alice")
+    with pytest.raises(ValidationError):
+        store.update_work_item_metadata(item.id, description="")
+
+
 def test_cancel_work_item_removes_it():
     """清理原语:cancel 后 work item 不再存在(扫尾幂等的地基)。"""
     store = _engine(MOCK_AUTO_COMPLETE="false").store
