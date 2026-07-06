@@ -114,13 +114,17 @@ def test_reviewer_rotation_avoids_producer():
     assert item.reviewer in ("bob", "charlie")
 
 
-def test_review_pool_must_contain_non_producer():
-    """reviewers 池剔除产出者后不可为空,否则抛 ValueError(不允许自审)。"""
-    eng = _engine()
-    MockStore.set_kind_delivery("plan", {"plan_file": "plan.md"})
-    with pytest.raises(ValueError, match="reviewers 池"):
-        run_task(eng, TaskKind.PLAN, _payload(), "alice",
-                 reviewers=["alice"], poll=_poll)
+def test_pick_reviewer_falls_back_to_self_when_only_producer():
+    """池里仅产出者时回退自审(角色可自由指定),不再报错。"""
+    from omac.pipeline.tasks import _pick_reviewer
+    assert _pick_reviewer(["alice"], "alice", 0) == "alice"
+
+
+def test_pick_reviewer_prefers_non_producer_when_available():
+    """有非产出者时仍优先选非产出者(保留独立性)。"""
+    from omac.pipeline.tasks import _pick_reviewer
+    assert _pick_reviewer(["alice", "bob"], "alice", 0) == "bob"
+    assert _pick_reviewer(["alice", "bob"], "alice", 1) == "bob"
 
 
 def test_failure_in_production_short_circuits():
