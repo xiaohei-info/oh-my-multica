@@ -373,6 +373,34 @@ def test_create_default_combination(tmp_path, monkeypatch):
     assert "登录流程" in dec_item.description, "decompose issue body 应含验收文档(flow)"
 
 
+def test_create_with_goal_injects_requirement_into_planner(tmp_path, monkeypatch):
+    """--goal 时:planner 的 PLAN issue body 应含需求(经 source_of_truth 通道)。"""
+    from omac.core.taskmeta import TaskKind
+    engine = _configure_create_mock(tmp_path, monkeypatch)
+    assert main(["plan", "create", "--name", "demo-goal",
+                 "--goal", "实现函数 add(a,b) 返回两数之和"]) == exit_codes.OK
+    plan_item = _first_item_of_kind(engine, TaskKind.PLAN)
+    assert plan_item is not None, "无 --doc 时应创建 plan 阶段 work item"
+    assert "实现函数 add" in plan_item.description, "planner issue body 应含需求"
+
+
+def test_resolve_goal_precedence_and_exclusivity(tmp_path):
+    """_resolve_goal:--goal 直给 / --goal-file 读文件 / 二者互斥报错 / 缺省 None。"""
+    from types import SimpleNamespace
+    from omac.cli.commands.plan import _resolve_goal
+    from omac.errors import ValidationError
+
+    assert _resolve_goal(SimpleNamespace(goal="G", goal_file=None)) == "G"
+    f = tmp_path / "need.md"
+    f.write_text("需求正文")
+    assert _resolve_goal(SimpleNamespace(goal=None, goal_file=str(f))) == "需求正文"
+    assert _resolve_goal(SimpleNamespace(goal=None, goal_file=None)) is None
+    with pytest.raises(ValidationError):
+        _resolve_goal(SimpleNamespace(goal="G", goal_file=str(f)))
+    with pytest.raises(ValidationError):
+        _resolve_goal(SimpleNamespace(goal=None, goal_file="/no/such/file"))
+
+
 def test_create_with_doc_skips_plan(tmp_path, monkeypatch):
     """给了 --doc 时,不应创建 plan 阶段的 work item。"""
     from omac.core.taskmeta import TaskKind

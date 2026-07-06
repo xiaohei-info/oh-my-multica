@@ -117,6 +117,7 @@ def plan_create(
     name: str,
     *,
     doc_path: Optional[str] = None,
+    goal_text: Optional[str] = None,
     poll: Optional[Callable[[], None]] = None,
 ) -> int:
     """omac plan create 的主编排。返回退出码契约约定的状态(0 / 5 / 20)。
@@ -137,10 +138,15 @@ def plan_create(
     if doc_path is not None:
         plan_text = _read_file(doc_path)
     else:
+        plan_payload: Dict[str, Any] = {"title": f"{name} 计划"}
+        if goal_text:
+            # 需求经 source_of_truth 通道进 planner 的 issue body(与 phase 2/3 同源),
+            # 让 planner 据此制定计划,而非凭一个标题空想。
+            plan_payload["source_of_truth"] = {"需求": goal_text}
         res = run_task(
             ctx.engine,
             TaskKind.PLAN,
-            {"title": f"{name} 计划"},
+            plan_payload,
             ctx.planner,
             reviewers=reviewers,
             max_revisions=ctx.max_revisions,
