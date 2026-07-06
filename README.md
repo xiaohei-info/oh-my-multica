@@ -27,7 +27,7 @@ CLI 派发的、有终点的单次任务。
 
 每台参与编排的机器(runtime)需安装:
 
-- **omac CLI**:`pipx install omac`(或开发期 `pip install -e .`)
+- **omac CLI**:从私有仓库源码安装(见下「安装」),runtime 机器统一用 `pipx` 隔离
 - **平台 CLI**:Multica 引擎需 `multica` CLI 已登录(`multica` 在 PATH,认证存 `~/.multica`)
 - **Python** >= 3.10,依赖 `PyYAML`(pipx 自动隔离)
 
@@ -35,21 +35,42 @@ Mock 引擎零外部依赖,仅用于本地演示、CI 与首次试跑。
 
 ## 安装
 
-```bash
-pipx install omac
-```
+omac 未发布到公共 PyPI(项目当前私有,仅内部分发)。控制机与每台 agent 机统一按下面装。
 
-开发期(本仓内):
+**1) 一次性装 pipx**(runtime 多为 externally-managed,用 pipx 隔离绕开 PEP 668):
 
 ```bash
-pip install -e .
+# Linux
+python3 -m pip install --user pipx --break-system-packages && pipx ensurepath
+# macOS
+brew install pipx && pipx ensurepath
 ```
 
-安装后确认:
+装完重开 shell,让 `~/.local/bin` 进 PATH。
+
+**2) clone 仓库并安装:**
 
 ```bash
-omac --version
+git clone git@github.com:xiaohei-info/oh-my-agent-cluster.git
+cd oh-my-agent-cluster
+pipx install .
 ```
+
+**3) 验证(每台都要过):**
+
+```bash
+omac --version          # omac 1.0.0
+omac init --check       # 引擎 / config 体检
+```
+
+**更新到最新:**
+
+```bash
+cd oh-my-agent-cluster && git pull && pipx reinstall omac
+```
+
+> - 某台不方便配 git 认证:改用 wheel 离线分发 —— 在有仓库的机器 `python3 -m build` 产出 `dist/omac-1.0.0-py3-none-any.whl`,拷到目标机 `pipx install omac-1.0.0-py3-none-any.whl`。
+> - 开发调试(在本仓内改代码):可编辑安装 `pip install -e .`(需在 venv 内,或加 `--break-system-packages`)。
 
 ## 快速开始
 
@@ -79,11 +100,14 @@ omac init --check
 
 ### 2. 计划与 DAG 拆解(`omac plan`)
 
-`omac plan create` / `omac plan check`(从零制定计划、校验现成 manifest)仍在
-开发中(规划于 §10.3),当前以 CLI 契约先行:请阅读 `omac plan --help` 与
-`omac guide manifest` 了解字段与流程;待实现后即可按设计文档 §7.2 直接调用。
+`omac plan create` 已实现完整流水线:计划 → 验收文档 → 拆解为 manifest DAG(全程
+内置 review 阶段;`--doc` 跳过 planner 直接用现成设计文档,`--no-review` /
+`--no-acceptance` 按需关阶段)。`omac plan check` 对你自拆的 manifest 走 lint +
+review 门;`omac plan show` 看摘要。字段与流程见 `omac plan --help` 与
+`omac guide manifest`。
 
-仓内自带 `tests/fixtures/smoke_p1.yaml` 作为 contract 示例可先行阅读。
+想跳过 planner 直接体验 Loop?仓内自带 `tests/fixtures/smoke_p1.yaml` 作为现成
+manifest 示例,可直接进下面第 3 步。
 
 ```bash
 cat tests/fixtures/smoke_p1.yaml
