@@ -25,86 +25,6 @@ from omac.errors import ValidationError
 
 
 
-PLANNER_AUTHORING_PROTOCOL = """你是 planner。
-
-plan(制定计划):分析需求,制定实施计划;计划须锚定验收目标、可执行、可验证。
-acceptance(验收文档):基于定稿计划列出业务流程,逐条转换为用户视角、端到端、
-可执行的验收动作;验收文档将作为开发锚点与总控验收目标清单。
-
-交付:omac work submit <issue-id> --plan-file <path>
-     或 omac work submit <issue-id> --acceptance-file <path>
-"""
-
-ORCHESTRATOR_AUTHORING_PROTOCOL = """你是 orchestrator。
-
-decompose:把计划/设计文档拆解为 manifest DAG。每个节点须有明确 contract
-(objective / acceptance / non_goals / verification_commands / pr_base /
-coverage_gate);acceptance 须锚定验收文档条目;DAG 无环;
-worker/reviewer 在 agent 池内。
-
-交付:omac work submit <issue-id> --manifest-file <path>
-"""
-
-WORKER_AUTHORING_PROTOCOL = """你是 worker(develop × authoring)。交付必须走三步闭环,缺一环即断:
-
-1. `omac work show <issue-id>` —— 取 contract 全量(objective/acceptance/
-   non_goals/verification_commands/pr_base/coverage_gate)与本协议;
-2. **推分支 + 开 PR**(PR 由 worker 自建;omac 不代建):`git push` 起 feature 分支,再用 `git`/`gh` 自行开 PR,base 必须指向 contract.pr_base(集成分支),不直接打主干;
-3. `omac work submit <issue-id> --pr-url <PR URL> --verification-file <path>` —— omac 只登记 pr_url 并在权威门校验,不接受"只交代码没开 PR"。
-
-铁律:
-- 契约先行:只消费共享契约,不平行重定义
-- TDD:测试与实现同步;完成必须有证据,不接受自述
-- PR base 指向 contract.pr_base(集成分支),不直接打主干
-- non_goals 是红线,越界即 reject
-
-verification-file 结构(缺什么当场打回):
-  commands:            # 必须覆盖 contract.verification_commands,exit_code 全 0
-    - { cmd: "...", exit_code: 0, summary: "..." }
-  integration_gates:   # 逐项覆盖 contract.integration_gates
-  pr_base: feature/v1  # 必须等于 contract.pr_base
-  coverage: 92         # 必须 ≥ coverage_gate
-  env_setup:           # contract 声明集成门/env 依赖时必填:环境构建步骤,
-    - "docker compose up -d db"       # reviewer 照做即可复跑
-"""
-
-REVIEWER_PROTOCOL = """你是 reviewer。同一 issue 被转派给你(阶段=review)。
-产出者的交付物与讨论都在这条 issue 时间线上。
-
-1. omac work show <issue-id> —— 取评审对象、contract、worker 的 env_setup
-2. 独立复跑:按 env_setup 搭环境,重跑验证命令与集成测试——只读共享态,
-   不信任何自述
-3. omac work submit <issue-id> --verdict pass|pass-with-nits|reject --report-file <path>
-
-report-file 结构:
-  review_goals:            # 必填:评审所依据的目标(验收映射/覆盖率/集成门/设计引用)
-    - "acceptance 全覆盖且逐条可验证"
-  diff_reviewed: true
-  tests_rerun: true
-  integration_tests_rerun: true   # contract 有集成门时必填
-  coverage_checked: true
-  acceptance_mapping:      # 逐条映射 contract.acceptance
-    - { acceptance: "...", evidence: "...", status: pass }
-  integration_gate_mapping: [ ... ]
-  blockers: []             # pass 时必须为空
-  nits: []
-
-reject 时 issue 转回产出者,你的评审目标与意见一并可见——
-让开发者朝目标修,而不是只修列出的问题。
-"""
-
-ACCEPTOR_AUTHORING_PROTOCOL = """你是 acceptor(final-acceptance × authoring)。
-
-DAG 收敛后,以验收文档为目标清单做用户视角的端到端走查:
-1. omac work show <issue-id> —— 取验收文档逐条动作清单 + 各节点 env_setup 汇总
-2. 逐条执行验收动作,记录 pass/fail + 问题
-3. omac work submit <issue-id> --acceptance-results-file <path>
-
-acceptance-results-file 结构(逐项映射验收文档条目,漏项当场打回):
-  results:
-    - { acceptance: "...", status: pass|fail, evidence: "...", issue: "..." }
-"""
-
 
 # 注入到 project description 的常驻横幅(仿 Multica Helper 的防漂移写法:只点角色与
 # 入口,把命令清单交给 CLI/guide 自身,不枚举步骤、不复制 issue 正文)。项目描述会随
@@ -123,22 +43,38 @@ omac CLI 已在你的 PATH 上,是唯一入口与权威清单:
 """
 
 
-def _protocol_for(kind: TaskKind, phase: TaskPhase) -> str:
-    """按(kind × phase)取执行协议文本。"""
+# work show 的「现在做什么」——严格按当前这件任务(kind × phase)收窄,不 role-mix。
+# 静态深度(交付文件 schema、铁律清单)全在 guide,协议不再内联复制;show 只给一句话
+# 动作 + 指向对应 guide topic 的指针。KIND_GUIDE 在文件后段定义,这两个函数调用期解析。
+_AUTHORING_ACTION = {
+    TaskKind.PLAN:
+        "制定实施计划:分析需求,产出锚定验收目标、可执行、可验证的计划。",
+    TaskKind.ACCEPTANCE:
+        "编写验收文档:把定稿计划的业务流程逐条转成用户视角、端到端、可执行的验收动作。",
+    TaskKind.DECOMPOSE:
+        "把计划/验收拆成 manifest DAG:每节点带完整 contract、acceptance 锚定验收文档、DAG 无环。",
+    TaskKind.DEVELOP:
+        "推分支 + 开 PR(base=contract.pr_base,worker 自建、omac 不代建),TDD 同步,产出结构化验证证据。",
+    TaskKind.FINAL_ACCEPTANCE:
+        "以验收文档为清单做用户视角端到端走查,逐条记录 pass/fail + 证据。",
+}
+_REVIEW_ACTION = (
+    "独立复跑:按 env_setup 搭环境,重跑验证命令与集成测试,只读共享态、"
+    "不信自述,按 contract/验收目标给 verdict。")
+
+
+def _guide_ref(kind: TaskKind, phase: TaskPhase) -> str:
+    """当前任务该查哪个 guide topic(review 阶段统一 reviewer)。"""
     if phase == TaskPhase.REVIEW:
-        return REVIEWER_PROTOCOL
-    # authoring
-    if kind == TaskKind.PLAN:
-        return PLANNER_AUTHORING_PROTOCOL
-    if kind == TaskKind.ACCEPTANCE:
-        return PLANNER_AUTHORING_PROTOCOL
-    if kind == TaskKind.DECOMPOSE:
-        return ORCHESTRATOR_AUTHORING_PROTOCOL
-    if kind == TaskKind.DEVELOP:
-        return WORKER_AUTHORING_PROTOCOL
-    if kind == TaskKind.FINAL_ACCEPTANCE:
-        return ACCEPTOR_AUTHORING_PROTOCOL
-    return ""
+        return "reviewer"
+    return KIND_GUIDE.get(kind, "workflow")
+
+
+def _next_action(kind: TaskKind, phase: TaskPhase) -> str:
+    """「现在做什么」:一句话收窄动作 + 指向 guide 的完整清单,不内联复制协议全文。"""
+    action = _REVIEW_ACTION if phase == TaskPhase.REVIEW \
+        else _AUTHORING_ACTION.get(kind, "")
+    return f"{action}\n> 完整清单:`omac guide {_guide_ref(kind, phase)}`"
 
 
 # ==================== submit 参数(单一事实源,防漂移) ====================
@@ -257,7 +193,7 @@ def build_show_output(item: Any, identity: str) -> Dict[str, Any]:
         if env_setup is not None:
             context["env_setup"] = env_setup
 
-    protocol = _protocol_for(kind, phase)
+    protocol = _next_action(kind, phase)
     submit = submit_template_for(kind, phase, item.id)
 
     return {
@@ -736,10 +672,11 @@ def render_issue_body(node, contract, kind, issue_id, source_refs=None):
     base_cmd = f"omac work show {issue_id}"
     submit_cmd = submit_template_for(kind, TaskPhase.AUTHORING, issue_id)
     bootstrap = (
-        f"你被分配了一件 {label} 任务(必须经 omac 交互):\n"
-        f"  1. {base_cmd}  —— 获取完整任务上下文与执行协议（你的 contract 全量）\n"
-        f"  2. {submit_cmd}  —— 完成后交付（show 输出里有本角色精确交付参数）\n"
-        f"遇到不明确的地方:运行 omac guide {guide_topic} 查阅「{role}」角色说明与执行清单。"
+        f"你被分配了一件 {label} 任务（{role}),必须经 omac 交互。按序:\n"
+        f"  1. omac guide {guide_topic}  —— 先搞懂「{role}」这个角色的流程怎么 work（必看)\n"
+        f"  2. {base_cmd}  —— 取你这件任务的当前相位、精确输入与交付方式\n"
+        f"  3. 按下方「任务详情/上游产物」执行\n"
+        f"  4. {submit_cmd}  —— 完成后交付（show 输出里有本角色精确交付参数)"
     )
 
     # ---- 第二段:任务简报(人可读) ----

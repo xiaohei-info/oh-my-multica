@@ -71,41 +71,72 @@ def _resolve_store():
 
 
 def _identity_for(item) -> str:
-    """按 phase 判定当前 assignee 的身份(authoring=worker, review=reviewer)。"""
+    """按 phase × kind 如实标注身份:review=reviewer;authoring 用角色本名
+    (planner/orchestrator/worker/acceptor),不再一律标 worker。"""
     if item.phase.value == "review":
         return f"reviewer:{item.reviewer}"
-    return f"worker:{item.worker}"
+    from ...pipeline.dispatch import KIND_ROLE
+    return f"{KIND_ROLE.get(item.kind, 'worker')}:{item.worker}"
+
+
+def _render_kv(label: str, value) -> None:
+    """列表逐条、标量单行,统一缩进 markdown 子项。"""
+    if isinstance(value, list):
+        if not value:
+            return
+        print(f"- {label}:")
+        for v in value:
+            print(f"  - {v}")
+    else:
+        print(f"- {label}: {value}")
 
 
 def _render_table(output: dict) -> None:
-    """table 给人:分段可读文本。"""
+    """markdown 相位视图:任务头 / 上下文(相位特定)/ 现在做什么 / 完成后交付。
+
+    - authoring:有 contract 才列(develop),无则指回 issue 正文
+    - review:顶出只有此刻才存在的实例数据(评审对象 deliverable + env_setup 复跑清单)
+    """
     task = output["task"]
-    print("=== 任务标识 ===")
-    for key in ("kind", "phase", "dag_key", "issue_id", "title",
-                "worker", "reviewer", "identity"):
-        if task.get(key) is not None:
-            print(f"  {key}: {task[key]}")
-
-    print("\n=== 完整上下文 ===")
     ctx = output["context"]
-    contract = ctx.get("contract")
-    if contract is not None:
-        print("  contract:")
-        for k, v in contract.items():
-            print(f"    {k}: {v}")
-    if "deliverable" in ctx:
-        print(f"  deliverable: {ctx['deliverable']}")
-    env_setup = ctx.get("env_setup")
-    if env_setup:
-        print("  env_setup(复跑清单):")
-        for step in env_setup:
-            print(f"    - {step}")
+    is_review = task["phase"] == "review"
 
-    print("\n=== 执行协议 ===")
+    print(f"# 任务 · {task['kind']} · {task['phase']}")
+    print()
+    print(f"- issue: {task['issue_id']}")
+    print(f"- 身份: {task['identity']}")
+    if task.get("dag_key"):
+        print(f"- dag_key: {task['dag_key']}")
+    if is_review and task.get("worker"):
+        print(f"- 产出者: {task['worker']}")
+
+    contract = ctx.get("contract")
+    if is_review:
+        print("\n## 评审对象")
+        if ctx.get("deliverable") is not None:
+            print(f"- deliverable: {ctx['deliverable']}")
+        env_setup = ctx.get("env_setup")
+        if env_setup:
+            print("- 复跑清单(env_setup):")
+            for step in env_setup:
+                print(f"  - {step}")
+        if contract:
+            print("\n## 评审依据(contract)")
+            for k, v in contract.items():
+                _render_kv(k, v)
+    else:
+        if contract:
+            print("\n## 你的 contract(全量)")
+            for k, v in contract.items():
+                _render_kv(k, v)
+        else:
+            print("\n> 任务详情与需求见本 issue 正文（briefing / 上游产物 段)。")
+
+    print("\n## 现在做什么")
     print(output["protocol"])
 
-    print("\n=== submit 模板 ===")
-    print(f"  {output['submit']}")
+    print("\n## 完成后交付")
+    print(f"    {output['submit']}")
 
 
 
