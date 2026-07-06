@@ -51,10 +51,10 @@ def test_poll_is_required():
 
 def test_one_pass_no_reviewers():
     eng = _engine()
-    MockStore.set_kind_delivery("plan", {"plan_file": "plan.md"})
+    MockStore.set_kind_delivery("plan", {"plan": "计划正文"})
     res = run_task(eng, TaskKind.PLAN, _payload(), "alice", poll=_poll)
     assert res["item_id"]
-    assert res["delivery"] == {"plan_file": "plan.md"}
+    assert res["delivery"] == {"plan": "计划正文"}
     assert res["rounds"] == 0
     assert res["verdict"] == "pass"
     assert res["kind"] == "plan"
@@ -67,14 +67,88 @@ def test_one_pass_no_reviewers():
     assert f"omac work submit {res['item_id']}" in item.description
 
 
+def test_run_task_consumes_real_submit_deliverable():
+    """真实 submit 路径:producer 经 dispatch.submit → IN_REVIEW + deliverable(正文),
+    run_task 应取到 deliverable 并跑完评审到 done(而非依赖 mock 的 artifacts 捷径)。"""
+    eng = _engine()
+    MockStore.set_kind_delivery("plan", {"plan": "计划正文-真实路径"})
+    res = run_task(eng, TaskKind.PLAN, _payload(), "alice", reviewers=["bob"], poll=_poll)
+    assert res["delivery"]["plan"] == "计划正文-真实路径"
+    assert res["verdict"] == "pass"
+    item = eng.store.get_work_item(res["item_id"])
+    assert item.status == WorkItemStatus.DONE
+    # 真实路径:交付正文落 deliverable(不是 artifacts 捷径)
+    assert item.deliverable == "计划正文-真实路径"
+
+
+def test_run_task_renders_source_refs_in_body():
+    """provenance:后续任务带上源头 issue 引用,渲染进 issue body(防流程跑偏)。"""
+    eng = _engine()
+    MockStore.set_kind_delivery("acceptance", {"acceptance": "验收正文"})
+    res = run_task(eng, TaskKind.ACCEPTANCE, _payload(), "alice",
+                   source_refs=["7", "8"], poll=_poll)
+    item = eng.store.get_work_item(res["item_id"])
+    assert "源头" in item.description
+    assert "7" in item.description and "8" in item.description
+
+
+def test_human_gate_blocks_until_confirmed():
+    """confirm=True 且无人工确认时,人机门不放行:产出停在 IN_REVIEW 等 DONE。"""
+    eng = _engine()
+    MockStore.set_kind_delivery("plan", {"plan": "计划正文"})
+    calls = {"n": 0}
+
+    def bounded_poll():
+        calls["n"] += 1
+        if calls["n"] > 5:
+            raise TimeoutError("人机门未通过")
+
+    with pytest.raises(TimeoutError):
+        run_task(eng, TaskKind.PLAN, _payload(), "alice",
+                 reviewers=["bob"], confirm=True, poll=bounded_poll)
+
+
+def test_human_gate_passes_when_confirmed_to_done():
+    """confirm=True:人工把 issue 流转到 DONE(auto_confirm 模拟)→ 翻回评审 → 通过。"""
+    eng = _engine()
+    MockStore.set_auto_confirm(True)
+    MockStore.set_kind_delivery("plan", {"plan": "计划正文"})
+    res = run_task(eng, TaskKind.PLAN, _payload(), "alice",
+                   reviewers=["bob"], confirm=True, poll=_poll)
+    assert res["verdict"] == "pass"
+    item = eng.store.get_work_item(res["item_id"])
+    assert item.status == WorkItemStatus.DONE
+
+
+def test_human_gate_no_reviewers_stops_at_human_done():
+    """confirm=True 且无 reviewer:人工确认(DONE)即终态,不再另跑评审。"""
+    eng = _engine()
+    MockStore.set_auto_confirm(True)
+    MockStore.set_kind_delivery("plan", {"plan": "计划正文"})
+    res = run_task(eng, TaskKind.PLAN, _payload(), "alice",
+                   confirm=True, poll=_poll)
+    assert res["verdict"] == "pass"
+    item = eng.store.get_work_item(res["item_id"])
+    assert item.status == WorkItemStatus.DONE
+
+
+def test_no_confirm_skips_human_gate():
+    """confirm=False(默认):不等人工 DONE,产出后直接进评审。"""
+    eng = _engine()
+    MockStore.set_kind_delivery("plan", {"plan": "计划正文"})
+    res = run_task(eng, TaskKind.PLAN, _payload(), "alice",
+                   reviewers=["bob"], confirm=False, poll=_poll)
+    assert res["verdict"] == "pass"
+
+
 def test_reject_twice_then_pass():
     eng = _engine()
-    MockStore.set_kind_delivery("plan", {"plan_file": "plan.md"})
+    MockStore.set_kind_delivery("plan", {"plan": "计划正文"})
     MockStore.set_review_rejects(2)
     res = run_task(
         eng, TaskKind.PLAN, _payload(), "alice",
         reviewers=["bob"], max_revisions=3, poll=_poll)
-    assert res["delivery"] == {"plan_file": "plan.md"}
+    assert res["delivery"] == {"plan": "计划正文"}
     assert res["rounds"] == 3  # 2 次 reject + 1 次 pass
     assert res["verdict"] == "pass"
     item = eng.store.get_work_item(res["item_id"])
@@ -89,7 +163,7 @@ def test_reject_twice_then_pass():
 
 def test_exhausted_needs_decision():
     eng = _engine()
-    MockStore.set_kind_delivery("plan", {"plan_file": "plan.md"})
+    MockStore.set_kind_delivery("plan", {"plan": "计划正文"})
     MockStore.set_review_rejects(99)  # 永远 reject
     with pytest.raises(NeedsDecision) as exc:
         run_task(eng, TaskKind.PLAN, _payload(), "alice",
@@ -106,7 +180,7 @@ def test_exhausted_needs_decision():
 
 def test_reviewer_rotation_avoids_producer():
     eng = _engine()
-    MockStore.set_kind_delivery("plan", {"plan_file": "plan.md"})
+    MockStore.set_kind_delivery("plan", {"plan": "计划正文"})
     res = run_task(eng, TaskKind.PLAN, _payload(), "alice",
                    reviewers=["alice", "bob", "charlie"], poll=_poll)
     item = eng.store.get_work_item(res["item_id"])
@@ -114,13 +188,17 @@ def test_reviewer_rotation_avoids_producer():
     assert item.reviewer in ("bob", "charlie")
 
 
-def test_review_pool_must_contain_non_producer():
-    """reviewers 池剔除产出者后不可为空,否则抛 ValueError(不允许自审)。"""
-    eng = _engine()
-    MockStore.set_kind_delivery("plan", {"plan_file": "plan.md"})
-    with pytest.raises(ValueError, match="reviewers 池"):
-        run_task(eng, TaskKind.PLAN, _payload(), "alice",
-                 reviewers=["alice"], poll=_poll)
+def test_pick_reviewer_falls_back_to_self_when_only_producer():
+    """池里仅产出者时回退自审(角色可自由指定),不再报错。"""
+    from omac.pipeline.tasks import _pick_reviewer
+    assert _pick_reviewer(["alice"], "alice", 0) == "alice"
+
+
+def test_pick_reviewer_prefers_non_producer_when_available():
+    """有非产出者时仍优先选非产出者(保留独立性)。"""
+    from omac.pipeline.tasks import _pick_reviewer
+    assert _pick_reviewer(["alice", "bob"], "alice", 0) == "bob"
+    assert _pick_reviewer(["alice", "bob"], "alice", 1) == "bob"
 
 
 def test_failure_in_production_short_circuits():

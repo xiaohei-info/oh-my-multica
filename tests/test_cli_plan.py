@@ -343,6 +343,8 @@ def _configure_create_mock(tmp_path, monkeypatch):
         ),
     )
     engine.store.set_review_rejects(0)
+    # 人机门默认开启:模拟人工把计划/验收 issue 流转到 DONE 放行。
+    MockStore.set_auto_confirm(True)
     MockStore.set_kind_delivery("plan", {"plan": PLAN_TEXT})
     MockStore.set_kind_delivery("acceptance", {"acceptance": ACCEPTANCE_YAML})
     MockStore.set_kind_delivery("decompose", {"manifest": GOOD_MANIFEST})
@@ -373,6 +375,34 @@ def test_create_default_combination(tmp_path, monkeypatch):
     assert "登录流程" in dec_item.description, "decompose issue body 应含验收文档(flow)"
 
 
+def test_create_with_goal_injects_requirement_into_planner(tmp_path, monkeypatch):
+    """--goal 时:planner 的 PLAN issue body 应含需求(经 source_of_truth 通道)。"""
+    from omac.core.taskmeta import TaskKind
+    engine = _configure_create_mock(tmp_path, monkeypatch)
+    assert main(["plan", "create", "--name", "demo-goal",
+                 "--goal", "实现函数 add(a,b) 返回两数之和"]) == exit_codes.OK
+    plan_item = _first_item_of_kind(engine, TaskKind.PLAN)
+    assert plan_item is not None, "无 --doc 时应创建 plan 阶段 work item"
+    assert "实现函数 add" in plan_item.description, "planner issue body 应含需求"
+
+
+def test_resolve_goal_precedence_and_exclusivity(tmp_path):
+    """_resolve_goal:--goal 直给 / --goal-file 读文件 / 二者互斥报错 / 缺省 None。"""
+    from types import SimpleNamespace
+    from omac.cli.commands.plan import _resolve_goal
+    from omac.errors import ValidationError
+
+    assert _resolve_goal(SimpleNamespace(goal="G", goal_file=None)) == "G"
+    f = tmp_path / "need.md"
+    f.write_text("需求正文")
+    assert _resolve_goal(SimpleNamespace(goal=None, goal_file=str(f))) == "需求正文"
+    assert _resolve_goal(SimpleNamespace(goal=None, goal_file=None)) is None
+    with pytest.raises(ValidationError):
+        _resolve_goal(SimpleNamespace(goal="G", goal_file=str(f)))
+    with pytest.raises(ValidationError):
+        _resolve_goal(SimpleNamespace(goal=None, goal_file="/no/such/file"))
+
+
 def test_create_with_doc_skips_plan(tmp_path, monkeypatch):
     """给了 --doc 时,不应创建 plan 阶段的 work item。"""
     from omac.core.taskmeta import TaskKind
@@ -383,6 +413,54 @@ def test_create_with_doc_skips_plan(tmp_path, monkeypatch):
     assert (tmp_path / ".omac" / "demo-doc.yaml").exists()
     plan_item = _first_item_of_kind(engine, TaskKind.PLAN)
     assert plan_item is None, "带 --doc 时不应创建 plan 阶段 work item"
+
+
+def test_create_threads_source_refs_through_chain(tmp_path, monkeypatch):
+    """provenance:验收 body 引用计划 issue;拆解 body 引用计划+验收 issue(防跑偏)。"""
+    from omac.core.taskmeta import TaskKind
+    engine = _configure_create_mock(tmp_path, monkeypatch)
+    assert main(["plan", "create", "--name", "demo-prov"]) == exit_codes.OK
+    plan_item = _first_item_of_kind(engine, TaskKind.PLAN)
+    acc_item = _first_item_of_kind(engine, TaskKind.ACCEPTANCE)
+    dec_item = _first_item_of_kind(engine, TaskKind.DECOMPOSE)
+    assert f"#{plan_item.id}" in acc_item.description
+    assert f"#{plan_item.id}" in dec_item.description
+    assert f"#{acc_item.id}" in dec_item.description
+
+
+def test_create_records_source_issues_in_manifest_meta(tmp_path, monkeypatch):
+    """provenance:manifest meta.source_issues 记录计划/验收/拆解源头 issue。"""
+    import yaml
+    from omac.core.taskmeta import TaskKind
+    engine = _configure_create_mock(tmp_path, monkeypatch)
+    assert main(["plan", "create", "--name", "demo-prov2"]) == exit_codes.OK
+    data = yaml.safe_load((tmp_path / ".omac" / "demo-prov2.yaml").read_text())
+    src = [str(x) for x in (data["meta"].get("source_issues") or [])]
+    dec_item = _first_item_of_kind(engine, TaskKind.DECOMPOSE)
+    assert dec_item.id in src, "manifest meta.source_issues 应含拆解源头 issue"
+
+
+def test_plan_confirm_marks_waiting_issue_done(tmp_path, monkeypatch):
+    """omac plan confirm <name>:手动把停在人机门的计划/验收 issue 流转到 DONE。"""
+    from omac.core.taskmeta import TaskKind, TaskPhase
+    from omac.engines.models import WorkItemStatus
+    engine = _configure_create_mock(tmp_path, monkeypatch)
+    MockStore.set_auto_confirm(False)  # 关自动确认,验证手动放行
+    item = engine.store.create_work_item(
+        "mock-workspace", "demo-confirm 计划", "", dag_key="plan",
+        worker="alice", kind=TaskKind.PLAN)
+    engine.store.update_work_item_metadata(
+        item.id, deliverable="计划正文", phase=TaskPhase.REVIEW)
+    engine.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+
+    assert main(["plan", "confirm", "--name", "demo-confirm"]) == exit_codes.OK
+    assert engine.store.get_work_item(item.id).status == WorkItemStatus.DONE
+
+
+def test_plan_confirm_no_waiting_issue_is_validation_error(tmp_path, monkeypatch):
+    """没有待确认的 issue 时 confirm 报校验错(exit 5),提示无可放行对象。"""
+    _configure_create_mock(tmp_path, monkeypatch)
+    assert main(["plan", "confirm", "--name", "nonexistent"]) == exit_codes.VALIDATION
 
 
 def test_create_no_review_skips_review_stages(tmp_path, monkeypatch):
