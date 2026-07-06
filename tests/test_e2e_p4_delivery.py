@@ -2,7 +2,7 @@
 dag run(含假 CI/merge 脚本)→ 总控验收(一轮 fail→增量→pass)→ exit 0。
 
 plan create 的 planner/orchestrator/验收/ reviewer 环节在真实世界跑 LLM;本测
-试把它们的 *产出*(manifest + 验收文档)直接落盘到 .orchestrator/,再对
+试把它们的 *产出*(manifest + 验收文档)直接落盘到 .omac/,再对
 dag run 这条真实主线做端到端验收——这是 P4 交付闭环的可测核心。
 
 5 场景(pytest,标记 e2e):
@@ -107,7 +107,7 @@ def _dag_run_json(cwd: Path, env: Path, manifest: Path):
     return _run(["dag", "run", str(manifest), "--output", "json"], cwd=cwd, env=env)
 
 
-# plan 流水线产出(manifest + 验收文档),直接落盘到 .orchestrator/ —— 等价于
+# plan 流水线产出(manifest + 验收文档),直接落盘到 .omac/ —— 等价于
 # plan create(...)→ planner/orchestrator/reviewer 产出。
 FULL_MANIFEST = """\
 meta:
@@ -205,7 +205,7 @@ flows:
 
 
 def _stage_plan_artifacts(cwd: Path, with_acceptance: bool = True) -> None:
-    d = cwd / ".orchestrator"
+    d = cwd / ".omac"
     d.mkdir(parents=True, exist_ok=True)
     (d / "smoke-full.yaml").write_text(FULL_MANIFEST)
     if with_acceptance:
@@ -220,7 +220,7 @@ class TestReadmeQuickstart:
         env = _env(tmp_path)
         r = _init(tmp_path, env)
         assert r.returncode == exit_codes.OK, r.stderr
-        assert (tmp_path / ".orchestrator" / "config.yaml").exists()
+        assert (tmp_path / ".omac" / "config.yaml").exists()
         r2 = _run(["init", "--check"], cwd=tmp_path, env=env)
         assert r2.returncode == exit_codes.OK, r2.stderr
 
@@ -233,7 +233,7 @@ class TestDagRunConverges:
         _init(tmp_path, env)
         # 不验收文档 → dag run 收敛即 exit 0(验收环节整体跳过)。
         _stage_plan_artifacts(tmp_path, with_acceptance=False)
-        return tmp_path / ".orchestrator" / "smoke-full.yaml"
+        return tmp_path / ".omac" / "smoke-full.yaml"
 
     def test_dag_run_converges_exit_0(self, tmp_path: Path):
         env = _env(tmp_path)
@@ -275,7 +275,7 @@ class TestCiGreen:
         rc_set = _run(["config", "set", "ci.timeout_minutes", "30"],
                       cwd=tmp_path, env=env)
         assert rc_set.returncode == 0
-        m = tmp_path / ".orchestrator" / "smoke-full.yaml"
+        m = tmp_path / ".omac" / "smoke-full.yaml"
         r = _run(["dag", "run", str(m), "--output", "json"], cwd=tmp_path, env=env)
         assert r.returncode == exit_codes.OK, r.stderr + "\n" + r.stdout
         data = _parse_json(r.stdout)
@@ -301,7 +301,7 @@ class TestMergeChain:
                      f"sh {ci} {{pr_url}}"], cwd=tmp_path, env=env).returncode == 0
         assert _run(["config", "set", "merge.command", f"sh {merge} {{pr_url}}"],
                     cwd=tmp_path, env=env).returncode == 0
-        m = tmp_path / ".orchestrator" / "smoke-full.yaml"
+        m = tmp_path / ".omac" / "smoke-full.yaml"
         r = _run(["dag", "run", str(m), "--output", "json"], cwd=tmp_path, env=env)
         assert r.returncode == exit_codes.OK, r.stderr + "\n" + r.stdout
         data = _parse_json(r.stdout)
@@ -316,7 +316,7 @@ class TestMergeChain:
 class TestAcceptanceOuterLoop:
     def _prep(self, tmp_path: Path) -> Path:
         _stage_plan_artifacts(tmp_path, with_acceptance=True)
-        return tmp_path / ".orchestrator" / "smoke-full.yaml"
+        return tmp_path / ".omac" / "smoke-full.yaml"
 
     def test_fail_then_increment_then_pass_exit_0(self, tmp_path: Path):
         """首轮 flow-final fail → 增量 1 fix 节点 → 次轮全 pass → exit 0。"""

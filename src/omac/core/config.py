@@ -1,4 +1,4 @@
-"""omac 项目配置(.orchestrator/config.yaml)。
+"""omac 项目配置(.omac/config.yaml)。
 
 设计文档 §6:配置与状态一律 YAML 进 git,不用 SQLite。
 优先级:config.yaml < 环境变量(OMAC_*)< 命令行参数。
@@ -29,7 +29,7 @@ import yaml
 
 from ..errors import ValidationError
 
-CONFIG_DIR = ".orchestrator"
+CONFIG_DIR = ".omac"
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.yaml")
 
 DEFAULTS = {

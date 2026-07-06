@@ -39,7 +39,7 @@ def _read_index() -> str:
 
 @pytest.fixture
 def orch(tmp_path):
-    d = tmp_path / ".orchestrator"
+    d = tmp_path / ".omac"
     d.mkdir()
     with open(d / "config.yaml", "w") as f:
         yaml.dump({
@@ -71,7 +71,7 @@ class _Server:
     """127.0.0.1:0 启动真实 WebServer 后台线程(复用 test_web_api.py 的模式)。"""
 
     def __init__(self, *, token=None, refresh=2, poll_interval=None,
-                 orch_subpath=".orchestrator"):
+                 orch_subpath=".omac"):
         self.token = token
         self.refresh = refresh
         self.poll_interval = poll_interval

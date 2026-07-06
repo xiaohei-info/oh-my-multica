@@ -62,11 +62,14 @@ class WorkItemStore(ABC):
     def create_project(
         self, workspace_id: str, title: str,
         repo_urls: Optional[List[str]] = None,
+        description: Optional[str] = None,
     ) -> ProjectInfo:
         """新建 project,可同时把目标 repo 作为 github_repo 资源关联上去。
 
         契约:返回带**稳定 id** 的 ProjectInfo;repo_urls 中每个 URL 关联为一条
         github_repo 资源(init 新建项目时默认取当前仓库的 origin)。
+        description 落为 project 描述(平台会随任务上下文注入给 agent),init 用它
+        写入 omac 编排横幅,让被派单 agent 认清入口。
         """
 
     # ==================== 工作单元 CRUD ====================

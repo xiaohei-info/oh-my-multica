@@ -115,7 +115,7 @@ cat tests/fixtures/smoke_p1.yaml
 
 ### 3. 确定性 Loop 执行(`omac dag run`)
 
-把 smoke fixture 复制到 `.orchestrator/` 下(该目录会落库 git,被 DAG 改写状态):
+把 smoke fixture 复制到 `.omac/` 下(该目录会落库 git,被 DAG 改写状态):
 (演示用 `/tmp/` 以免污染本仓)
 
 ```bash

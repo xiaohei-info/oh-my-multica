@@ -360,8 +360,8 @@ def _first_item_of_kind(engine, kind):
 def test_create_default_combination(tmp_path, monkeypatch):
     engine = _configure_create_mock(tmp_path, monkeypatch)
     assert main(["plan", "create", "--name", "demo-create"]) == exit_codes.OK
-    assert (tmp_path / ".orchestrator" / "demo-create.yaml").exists()
-    assert (tmp_path / ".orchestrator" / "demo-create.acceptance.yaml").exists()
+    assert (tmp_path / ".omac" / "demo-create.yaml").exists()
+    assert (tmp_path / ".omac" / "demo-create.acceptance.yaml").exists()
     # 验证上游产物已流入 acceptance / decompose 的 issue body
     from omac.core.taskmeta import TaskKind
     acc_item = _first_item_of_kind(engine, TaskKind.ACCEPTANCE)
@@ -380,7 +380,7 @@ def test_create_with_doc_skips_plan(tmp_path, monkeypatch):
     doc = tmp_path / "design.md"
     doc.write_text(PLAN_TEXT)
     assert main(["plan", "create", "--name", "demo-doc", "--doc", str(doc)]) == exit_codes.OK
-    assert (tmp_path / ".orchestrator" / "demo-doc.yaml").exists()
+    assert (tmp_path / ".omac" / "demo-doc.yaml").exists()
     plan_item = _first_item_of_kind(engine, TaskKind.PLAN)
     assert plan_item is None, "带 --doc 时不应创建 plan 阶段 work item"
 
@@ -397,8 +397,8 @@ def test_create_no_acceptance_skips_acceptance_phase(tmp_path, monkeypatch):
     engine = _configure_create_mock(tmp_path, monkeypatch)
     assert main(["plan", "create", "--name", "demo-noacc",
                  "--no-acceptance"]) == exit_codes.OK
-    assert (tmp_path / ".orchestrator" / "demo-noacc.yaml").exists()
-    assert not (tmp_path / ".orchestrator" / "demo-noacc.acceptance.yaml").exists()
+    assert (tmp_path / ".omac" / "demo-noacc.yaml").exists()
+    assert not (tmp_path / ".omac" / "demo-noacc.acceptance.yaml").exists()
     acc_item = _first_item_of_kind(engine, TaskKind.ACCEPTANCE)
     assert acc_item is None, "带 --no-acceptance 时不应创建 acceptance work item"
 
@@ -410,4 +410,4 @@ def test_create_lint_reject_revises_then_passes(tmp_path, monkeypatch):
         "decompose",
         [{"manifest": BAD_MANIFEST_LINT}, {"manifest": GOOD_MANIFEST}])
     assert main(["plan", "create", "--name", "demo-lint"]) == exit_codes.OK
-    assert (tmp_path / ".orchestrator" / "demo-lint.yaml").exists()
+    assert (tmp_path / ".omac" / "demo-lint.yaml").exists()

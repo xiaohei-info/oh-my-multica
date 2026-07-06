@@ -26,7 +26,7 @@ from .. import exit_codes
 NAME = "init"
 SUMMARY = "交互式配置 / --check 体检"
 DESCRIPTION = """一次性配置:选定 workspace → 列出全量 agent → 完成角色映射,
-固化进 .orchestrator/config.yaml(不引入小队/分组等平台特有概念)。
+固化进 .omac/config.yaml(不引入小队/分组等平台特有概念)。
 
   omac init            交互式生成配置
   omac init --check    体检:multica CLI 是否在 PATH / 配置文件是否存在且含
@@ -110,7 +110,10 @@ def _create_project_interactive(store, workspace: str) -> str:
     if not title:
         raise ValidationError("project 标题必填")
     repo = _prompt("关联的 GitHub repo URL(回车用当前 origin)", origin or "")
-    info = store.create_project(workspace, title, [repo] if repo else [])
+    from ...pipeline.dispatch import OMAC_PROJECT_DESCRIPTION
+    info = store.create_project(
+        workspace, title, [repo] if repo else [],
+        description=OMAC_PROJECT_DESCRIPTION)
     tail = f",关联 repo {', '.join(info.repos)}" if info.repos else "(未关联 repo)"
     print(f"已新建 project:{info.title} ({info.id}){tail}")
     return info.id

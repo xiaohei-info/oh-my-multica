@@ -1,4 +1,4 @@
-"""omac config — 读写 .orchestrator/config.yaml(点分路径)。骨架期即可用。"""
+"""omac config — 读写 .omac/config.yaml(点分路径)。骨架期即可用。"""
 from __future__ import annotations
 
 import yaml
@@ -9,7 +9,7 @@ from .. import exit_codes
 from ..output import add_output_flag, print_json
 
 NAME = "config"
-SUMMARY = "读写项目配置(.orchestrator/config.yaml)"
+SUMMARY = "读写项目配置(.omac/config.yaml)"
 DESCRIPTION = """读写项目配置,键用点分路径。
 
   omac config get                     # 输出整份配置

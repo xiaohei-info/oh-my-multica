@@ -60,7 +60,7 @@ def _acceptance_doc(flows):
 
 
 def _write_doc(tmp_path, doc):
-    doc_path = os.path.join(str(tmp_path), ".orchestrator", "feature-x.acceptance.yaml")
+    doc_path = os.path.join(str(tmp_path), ".omac", "feature-x.acceptance.yaml")
     os.makedirs(os.path.dirname(doc_path), exist_ok=True)
     with open(doc_path, "w") as f:
         yaml.dump({"flows": [
@@ -76,8 +76,8 @@ def _write_doc(tmp_path, doc):
 
 def test_doc_path_and_config():
     assert acceptance_doc_path("feature-x.yaml") == "feature-x.acceptance.yaml"
-    assert acceptance_doc_path(".orchestrator/feature-x.yaml") == \
-        ".orchestrator/feature-x.acceptance.yaml"
+    assert acceptance_doc_path(".omac/feature-x.yaml") == \
+        ".omac/feature-x.acceptance.yaml"
     cfg = resolve_acceptance_config(
         {"acceptance": {"max_rounds": 5}, "roles": {"acceptor": "alice"}})
     assert cfg.max_rounds == 5

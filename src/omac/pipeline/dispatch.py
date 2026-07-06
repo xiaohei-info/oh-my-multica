@@ -106,6 +106,23 @@ acceptance-results-file 结构(逐项映射验收文档条目,漏项当场打回
 """
 
 
+# 注入到 project description 的常驻横幅(仿 Multica Helper 的防漂移写法:只点角色与
+# 入口,把命令清单交给 CLI/guide 自身,不枚举步骤、不复制 issue 正文)。项目描述会随
+# 任务上下文注入到被派单 agent 的工作目录,这是它认清"本项目由 omac 协作"的第一手指引。
+OMAC_PROJECT_DESCRIPTION = """本 project 由 omac 编排。**判据:只有标题带 `[DAG:...]` 前缀的 issue 是 omac 派发的
+执行任务**,需经 omac 处理;无此前缀的 issue 按其 body 常规处理(不要把它当被派发任务、
+不要对它跑 omac work show/submit —— 但若 body 明确要求你运行 omac 命令,照 body 执行)。
+
+被指派到 `[DAG:...]` 任务时(无论你的角色是 planner/orchestrator/worker/reviewer/acceptor),
+omac CLI 已在你的 PATH 上,是唯一入口与权威清单:
+
+  omac work show <该 issue id>   # 取任务上下文、你的角色与精确交付方式
+  omac work submit <issue id> ...  # 按 show 输出里的参数交付
+
+不清楚就跑 `omac guide <topic>` 或 `omac --help` —— 不要编造命令,也不要手改 issue metadata。
+"""
+
+
 def _protocol_for(kind: TaskKind, phase: TaskPhase) -> str:
     """按(kind × phase)取执行协议文本。"""
     if phase == TaskPhase.REVIEW:

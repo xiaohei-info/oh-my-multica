@@ -95,7 +95,7 @@ class TestSingleNodeHappyPath:
     def test_init_non_interactive_writes_config(self, tmp_path: Path):
         r = _init(tmp_path)
         assert r.returncode == exit_codes.OK, r.stderr
-        assert (tmp_path / ".orchestrator" / "config.yaml").exists()
+        assert (tmp_path / ".omac" / "config.yaml").exists()
         combined = r.stdout + r.stderr
         assert "config.yaml" in combined
 

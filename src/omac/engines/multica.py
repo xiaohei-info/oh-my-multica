@@ -231,11 +231,14 @@ class MulticaStore(WorkItemStore):
     def create_project(
         self, workspace_id: str, title: str,
         repo_urls: Optional[List[str]] = None,
+        description: Optional[str] = None,
     ) -> ProjectInfo:
-        """multica project create --title X [--repo url ...]:建 project 并关联 repo。"""
+        """multica project create --title X [--repo url ...] [--description ...]。"""
         args = ["project", "create", "--title", title, "--output", "json"]
         for url in (repo_urls or []):
             args += ["--repo", url]
+        if description:
+            args += ["--description", description]
         result = self._run_multica(args)
         if not isinstance(result, dict) or not result.get("id"):
             raise PlatformError(f"创建 project 失败: {result}")

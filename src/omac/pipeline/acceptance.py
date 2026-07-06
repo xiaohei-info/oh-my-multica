@@ -1,6 +1,6 @@
 """总控验收外层循环 + DAG 增量扩展(不起新 DAG,设计文档 §7.6)。
 
-内层 tick-loop 收敛(全部节点 done)后,若 ``.orchestrator/<name>.acceptance.yaml`` 存在,
+内层 tick-loop 收敛(全部节点 done)后,若 ``.omac/<name>.acceptance.yaml`` 存在,
 进入外层验收循环(``<= acceptance.max_rounds``,缺省 3;无验收文档跳过,收敛即 exit 0):
 
     loop 外层验收循环(≤ max_rounds):
@@ -42,9 +42,6 @@ from ..errors import NeedsDecision
 from ..pipeline import loop as loop_mod
 
 
-CONFIG_DIR = ".orchestrator"
-
-
 @dataclass
 class AcceptanceConfig:
     """总控验收外层循环配置(从 config.yaml 解析)。"""
@@ -65,7 +62,7 @@ class AcceptanceOutcome:
 def acceptance_doc_path(manifest_path: str) -> str:
     """从 manifest 路径派生验收文档路径.
 
-    .orchestrator/feature-x.yaml -> .orchestrator/feature-x.acceptance.yaml
+    .omac/feature-x.yaml -> .omac/feature-x.acceptance.yaml
     """
     base, _ = os.path.splitext(manifest_path)
     return base + ".acceptance.yaml"
