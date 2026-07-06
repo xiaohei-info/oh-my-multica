@@ -82,17 +82,16 @@ omac 有三种入口调用者,消费同一套 CLI:**人(终端)/ Agent(Claude Co
 ### manifest 唯一口径
 
 manifest 文件是全局唯一口径 —— 不依赖 checkpoint、Run 存储、event log 等自造存储。
-节点状态直接写进 manifest 的 `status` 字段,经 git 流转。
+节点状态直接写进 manifest 的 `status` 字段,经 git 流转。每轮 `tick` 落盘后回写(commit + push):
+- manifest 有变更即 commit + push 一次(无变更幂等跳过)
+- push 失败醒目告警但不中断编排(本机推进不阻塞,跨机口径可能滞后)
 
-关键节点 commit + push:
-- 每节点首次建 work item 回填 work_item_id 后 push 一次
-- 节点进终态(done/blocked/failed)后 push 一次
-- 中间 status 只写本地文件不提交
-- push 失败醒目告警但不中断编排
-
-> **git 回写开关(`OMAC_GIT_SYNC`,默认关)**:上述 commit + push 默认关闭 —— 只在本地写 manifest,
-> 不碰 git。真实跨机器协作时 `export OMAC_GIT_SYNC=1` 打开。关闭状态下 manifest 仍以本地文件为口径,
-> 单机断点续跑不受影响。
+> **git 回写开关(`sync_enabled`)**:真实引擎(multica)**默认开** —— 隔离区 agent 只能 clone
+> main、信息源只有远程仓库,`.omac` 状态必须上 main 才能被读到,这是架构刚需,不是可选项。
+> mock 本地跑**默认关**(不碰业务仓库 git)。`OMAC_GIT_SYNC` 可显式覆盖(`=1` 强开 / `=0` 强关)。
+>
+> **派单前门**:`plan create` / `dag run` 开跑前,真实引擎下校验 `.omac/config.yaml` 已 commit
+> 且已 push 到 `main`,否则当场硬报错 + 补救命令 —— 避免 agent 在隔离区里因读不到 config 神秘失败。
 
 ### reconcile(跨机器接力)
 

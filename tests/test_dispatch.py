@@ -110,22 +110,29 @@ class TestRenderIssueBody:
             assert f"omac guide {topic}" in body, f"{kind} 缺 guide {topic}"
             assert label in body, f"{kind} 缺标签 {label}"
 
-    def test_missing_contract_fields_get_human_placeholder(self):
-        """contract=None 时 objective/source_of_truth/acceptance 走「见 contract.X」占位,
-        硬约束不渲染非目标/pr_base/reviewer/coverage 分支;三条 fallback 必须显式区分于正常渲染。"""
+    def test_missing_contract_fields_omit_briefing_lines(self):
+        """contract 字段缺失时,简报省略该行,绝不渲染指向虚空的「见 contract.X」死占位。
+
+        plan/acceptance/decompose 天生无 contract(payload 只有 source_of_truth),
+        「见 contract.objective」是误导——真实需求在「上游产物」段。字段不存在就不印那行。"""
         n = Node(id="n", worker="alice", title="t")  # contract=None
         body = render_issue_body(n, None, TaskKind.DEVELOP, "ID")
-        # 三条占位显式带「见 contract.」前缀(而非静默留空或误渲染真实值)
-        assert "见 contract.objective" in body
-        assert "见 contract.source_of_truth" in body
-        assert "见 contract.acceptance" in body
-        # 缺省时硬约束各分支不出现(与正常渲染可区分)
-        assert "pr_base=" not in body
-        assert "non_goals 是红线" not in body
-        assert "reviewer（" not in body
-        assert "coverage_gate=" not in body
-        # 三段仍然齐全
+        # 不得出现任何指向不存在 contract 的死占位
+        assert "见 contract." not in body
+        # 缺字段的行整条省略(只剩 title)
+        assert "- objective:" not in body
+        assert "- source_of_truth:" not in body
+        assert "- acceptance:" not in body
+        # title 与三段骨架仍在
+        assert "- title: t" in body
         assert "简报" in body and "硬约束" in body and "omac work show ID" in body
+
+    def test_plan_task_briefing_has_no_dead_contract_placeholder(self):
+        """plan 任务(contract=None)的简报不得出现「见 contract.X」——它引用的东西根本不存在。"""
+        n = Node(id="n", worker="alice", title="贪吃蛇手游 计划")
+        body = render_issue_body(n, None, TaskKind.PLAN, "ID")
+        assert "见 contract" not in body
+        assert "- title: 贪吃蛇手游 计划" in body
 
     def test_contract_summary_none_returns_fallback(self):
         """_contract_summary 在 contract=None 时应直接返回 fallback,作为占位的根。"""

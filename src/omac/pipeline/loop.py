@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Set, Tuple
 from ..core import graph
 from ..core.config import DEFAULT_RETRY
 from ..core.evidence import validate_review_evidence, validate_worker_evidence
+from ..core.gitsync import commit_manifest
 from ..core.manifest import Manifest, save_manifest, set_node
 from ..pipeline.delivery import advance_delivery, run_merge_delivery
 from ..engines.models import WorkItemStatus
@@ -447,8 +448,11 @@ def tick(
     # 5. DISPATCH: 派发就绪节点(受 max_parallel 约束)
     dispatched = _dispatch(store, runtime, manifest, manifest_path, ready, max_parallel)
 
-    # 6. 保存 manifest
+    # 6. 保存 manifest（本地落盘 + 真实引擎回写 git,供跨机 resume 读到最新状态）
     save_manifest(manifest, manifest_path)
+    commit_manifest(
+        manifest_path, "chore(omac): manifest sync",
+        engine_type=getattr(store.config, "engine_type", None))
 
     # 7. 构建 TickResult
     done = [k for k, n in manifest.nodes.items() if n.status == "done"]

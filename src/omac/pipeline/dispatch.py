@@ -743,25 +743,20 @@ def render_issue_body(node, contract, kind, issue_id, source_refs=None):
     )
 
     # ---- 第二段:任务简报(人可读) ----
-    objective = _contract_summary(contract, "objective", "见 contract.objective")
-    source_of_truth = _contract_summary(
-        contract, "source_of_truth", "见 contract.source_of_truth")
-    acceptance = _contract_summary(contract, "acceptance", "见 contract.acceptance")
-
+    # 只渲染 contract 真正声明的字段:缺失即省略整行,不印指向不存在 contract 的
+    # 死占位。plan/acceptance/decompose 无 contract,简报只剩 title,真实需求由
+    # 「上游产物」段承载(tasks.py 注入),不在此处伪造引用。
     def _lines(value):
         if isinstance(value, list):
-            if not value:
-                return "（未声明）"
             return "\n".join(f"- {v}" for v in value)
         return str(value)
 
-    briefing = (
-        "## 简报\n"
-        f"- title: {title}\n"
-        f"- objective: {_lines(objective)}\n"
-        f"- source_of_truth: {_lines(source_of_truth)}\n"
-        f"- acceptance: {_lines(acceptance)}"
-    )
+    briefing_lines = [f"- title: {title}"]
+    for field in ("objective", "source_of_truth", "acceptance"):
+        value = _contract_summary(contract, field, None)
+        if value not in (None, "", []):
+            briefing_lines.append(f"- {field}: {_lines(value)}")
+    briefing = "## 简报\n" + "\n".join(briefing_lines)
 
     # ---- 第三段:硬约束(铁律) ----
     non_goals = _contract_summary(contract, "non_goals", None)
