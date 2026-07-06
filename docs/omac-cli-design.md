@@ -188,6 +188,9 @@ omac
 ```yaml
 engine: multica            # multica | mock
 workspace: ws_xxx
+project: proj_xxx          # multica 必填:所有 issue 归入该 project(不裸建于 workspace)
+                           # init 时选已有 project 或新建(新建自动关联当前 repo 为 github_repo 资源)
+                           # 缺失 → dag run / work / plan 报错 exit 5;mock 引擎不需要
 roles:                     # init 时从工作空间全量 agent 列表中挑选,显式落盘
   planner: planning-agent
   orchestrator: arch-agent

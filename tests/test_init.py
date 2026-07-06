@@ -151,6 +151,61 @@ def test_check_flags_workspace_not_exist(tmp_path, monkeypatch, capsys):
     assert "no-such-ws" in capsys.readouterr().err
 
 
+# ==================== project 必填(multica)====================
+
+def test_resolve_engine_settings_multica_requires_project():
+    """multica 缺 project → ValidationError(不 fallback);mock 不要求。"""
+    from omac.core import config as cfg_mod
+    from omac.errors import ValidationError
+
+    with pytest.raises(ValidationError):
+        cfg_mod.resolve_engine_settings({"engine": "multica", "workspace": "ws"})
+    et, ws, pid = cfg_mod.resolve_engine_settings(
+        {"engine": "multica", "workspace": "ws", "project": "p1"})
+    assert (et, ws, pid) == ("multica", "ws", "p1")
+    et, ws, pid = cfg_mod.resolve_engine_settings({"engine": "mock", "workspace": "ws"})
+    assert (et, ws, pid) == ("mock", "ws", None)
+
+
+def test_multica_create_work_item_passes_project(monkeypatch):
+    """config.project_id 有值时,issue create 命令带 --project <id>。"""
+    from omac.engines import multica as m
+
+    seen = {}
+
+    class _R:
+        returncode = 0
+        stderr = ""
+        def __init__(self, out): self.stdout = out
+
+    def fake_run(cmd, capture_output=False, text=False):
+        if "create" in cmd and "issue" in cmd:
+            seen["create_cmd"] = cmd
+            return _R(json.dumps({"id": "issue-1"}))
+        if "get" in cmd and "issue" in cmd:
+            return _R(json.dumps({"id": "issue-1", "title": "[DAG:a] t",
+                                  "status": "todo", "metadata": {"dag_key": "a"}}))
+        return _R("")  # metadata set 等
+
+    monkeypatch.setattr(m.subprocess, "run", fake_run)
+    store = m.MulticaStore(EngineConfig(
+        engine_type="multica", workspace_id="ws", project_id="proj-42"))
+    store.create_work_item("ws", "t", "d", dag_key="a", worker="alice")
+    assert "--project" in seen["create_cmd"]
+    assert "proj-42" in seen["create_cmd"]
+
+
+def test_check_flags_missing_project_for_multica(tmp_path, monkeypatch, capsys):
+    """multica 配置缺 project → --check exit 5 并提示。"""
+    monkeypatch.chdir(tmp_path)
+    main(["config", "set", "engine", "multica"])
+    main(["config", "set", "workspace", "ws"])
+    main(["config", "set", "roles.workers", '["alice"]'])
+    capsys.readouterr()
+    assert main(["init", "--check"]) == exit_codes.VALIDATION
+    assert "project" in capsys.readouterr().err
+
+
 def test_check_degrades_when_multica_unreachable(tmp_path, monkeypatch, capsys):
     """multica 不在 PATH → 降级本地体检+警告,不崩。"""
     monkeypatch.chdir(tmp_path)

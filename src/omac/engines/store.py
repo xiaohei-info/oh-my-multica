@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
 from ..core.taskmeta import Bounces, TaskKind, TaskPhase
-from .models import EngineConfig, WorkItem, WorkItemStatus, WorkspaceInfo
+from .models import EngineConfig, ProjectInfo, WorkItem, WorkItemStatus, WorkspaceInfo
 
 
 class WorkItemStore(ABC):
@@ -46,6 +46,27 @@ class WorkItemStore(ABC):
 
         契约:返回 WorkspaceInfo 列表(至少含 id 与 name),供 init 交互式选择;
         平台不可达时抛 PlatformError/AuthError,调用方据此降级为本地体检+警告。
+        """
+
+    # ==================== 项目发现 / 创建 ====================
+
+    @abstractmethod
+    def list_projects(self, workspace_id: str) -> List[ProjectInfo]:
+        """列出 workspace 下的全部 project(omac init 选择已有项目用)。
+
+        契约:返回 ProjectInfo 列表(至少含 id 与 title);平台不可达时抛
+        PlatformError/AuthError。一个 omac 编排实例绑定其中一个 project。
+        """
+
+    @abstractmethod
+    def create_project(
+        self, workspace_id: str, title: str,
+        repo_urls: Optional[List[str]] = None,
+    ) -> ProjectInfo:
+        """新建 project,可同时把目标 repo 作为 github_repo 资源关联上去。
+
+        契约:返回带**稳定 id** 的 ProjectInfo;repo_urls 中每个 URL 关联为一条
+        github_repo 资源(init 新建项目时默认取当前仓库的 origin)。
         """
 
     # ==================== 工作单元 CRUD ====================

@@ -28,6 +28,15 @@ class WorkspaceInfo:
 
 
 @dataclass
+class ProjectInfo:
+    """项目信息(Multica project:一个 omac 编排实例绑定一个 project,
+    project 关联目标 repo 作为资源,所有 issue 归入其下)。"""
+    id: str
+    title: str
+    repos: List[str] = field(default_factory=list)   # 关联的 github_repo 资源 URL
+
+
+@dataclass
 class WorkItem:
     """工作单元 — 纯业务数据,不包含平台技术细节(body/labels/state)。
 
@@ -87,6 +96,7 @@ class EngineConfig:
     """引擎配置。角色映射在 omac 侧(config.yaml),这里只有平台定位与轮询参数。"""
     engine_type: str            # 'multica' | 'mock'
     workspace_id: str
+    project_id: Optional[str] = None   # multica 必填(issue 归入该 project);mock 忽略
     polling_interval: int = 30
     polling_interval_min: int = 10
     polling_interval_max: int = 300

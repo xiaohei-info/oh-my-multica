@@ -43,6 +43,7 @@ def register(parser):
     parser.add_argument("--check", action="store_true", help="体检模式,不写任何文件")
     parser.add_argument("--engine", choices=list(ENGINE_TYPES), help="引擎类型(multica|mock)")
     parser.add_argument("--workspace", help="工作空间 id")
+    parser.add_argument("--project", help="项目 id(multica 必填;交互模式可现场选择或新建)")
     parser.add_argument("--planner", help="planner agent 名")
     parser.add_argument("--orchestrator", help="orchestrator agent 名")
     parser.add_argument("--workers", help="worker agent 名,逗号分隔")
@@ -85,6 +86,61 @@ def _select_engine(args) -> str:
         return args.engine
     print("\n可选引擎:", ", ".join(ENGINE_TYPES))
     return _prompt("选择引擎", "mock") or "mock"
+
+
+def _git_origin_url() -> Optional[str]:
+    """当前目录的 git origin URL(新建 project 时默认关联的 repo);取不到返回 None。"""
+    import subprocess
+    try:
+        out = subprocess.run(["git", "remote", "get-url", "origin"],
+                             capture_output=True, text=True)
+    except FileNotFoundError:
+        return None
+    return out.stdout.strip() if out.returncode == 0 and out.stdout.strip() else None
+
+
+def _repo_name_from_url(url: str) -> str:
+    base = url.rstrip("/").rsplit("/", 1)[-1]
+    return base[:-4] if base.endswith(".git") else base
+
+
+def _create_project_interactive(store, workspace: str) -> str:
+    origin = _git_origin_url()
+    title = _prompt("新 project 标题", _repo_name_from_url(origin) if origin else None)
+    if not title:
+        raise ValidationError("project 标题必填")
+    repo = _prompt("关联的 GitHub repo URL(回车用当前 origin)", origin or "")
+    info = store.create_project(workspace, title, [repo] if repo else [])
+    tail = f",关联 repo {', '.join(info.repos)}" if info.repos else "(未关联 repo)"
+    print(f"已新建 project:{info.title} ({info.id}){tail}")
+    return info.id
+
+
+def _select_project(args, store, workspace: str, engine: str) -> Optional[str]:
+    """multica 必须绑定一个 project(issue 归入其下,不裸建);mock 不需要,返回 None。"""
+    if engine != "multica":
+        return None
+    if args.project:
+        return args.project
+    try:
+        projects = store.list_projects(workspace)
+    except OmacError as e:
+        raise ValidationError(f"无法获取 project 列表 —— {e}\n用 --project <id> 显式指定")
+    print("\n可用 project:")
+    for i, p in enumerate(projects, 1):
+        repo = f" [{', '.join(p.repos)}]" if p.repos else ""
+        print(f"  {i}. {p.title} ({p.id}){repo}")
+    print("  n. 新建 project(默认关联当前 repo)")
+    raw = _prompt("选择 project(序号 / id / n 新建)", "n" if not projects else None)
+    if raw.lower() == "n":
+        return _create_project_interactive(store, workspace)
+    if raw.isdigit():
+        idx = int(raw) - 1
+        if 0 <= idx < len(projects):
+            return projects[idx].id
+    if any(p.id == raw for p in projects):
+        return raw
+    raise ValidationError(f"project '{raw}' 不在列表内 —— 选序号/id,或输入 n 新建")
 
 
 def _select_workspace(args, store) -> str:
@@ -165,7 +221,8 @@ def _select_acceptor(args_val: Optional[str], members: List[str]) -> Optional[st
     return _resolve_member(raw, members, "acceptor")
 
 
-def _build_config(engine: str, workspace: str, planner: str, orchestrator: str,
+def _build_config(engine: str, workspace: str, project: Optional[str],
+                  planner: str, orchestrator: str,
                   workers: List[str], reviewers: List[str],
                   acceptor: Optional[str]) -> dict:
     roles = {
@@ -176,22 +233,28 @@ def _build_config(engine: str, workspace: str, planner: str, orchestrator: str,
     }
     if acceptor:
         roles["acceptor"] = acceptor
-    return {
+    cfg = {
         "engine": engine,
         "workspace": workspace,
+    }
+    if project:
+        cfg["project"] = project
+    cfg.update({
         "roles": roles,
         "defaults": dict(config_mod.DEFAULTS),
         "retry": dict(config_mod.DEFAULT_RETRY),
         "acceptance": {"max_rounds": config_mod.DEFAULT_MAX_ROUNDS},
-    }
+    })
+    return cfg
 
 
 # ==================== 主流程 ====================
 
 def _write_config(config: dict) -> int:
     config_mod.save_config(config)
+    proj = f", project={config['project']}" if config.get("project") else ""
     print(f"已写入 {config_mod.CONFIG_PATH}(engine={config['engine']}, "
-          f"workspace={config['workspace']})")
+          f"workspace={config['workspace']}{proj})")
     print("下一步:omac init --check 体检 / omac plan create 开始拆解")
     return exit_codes.OK
 
@@ -200,7 +263,8 @@ def _run_setup(args) -> int:
     engine = _select_engine(args)
     discovery = _build_store(engine)                      # 无 workspace,跑 list_workspaces
     workspace = _select_workspace(args, discovery)
-    store = _build_store(engine, workspace)               # 带 workspace,跑 list_members
+    store = _build_store(engine, workspace)               # 带 workspace,跑 list_members / list_projects
+    project = _select_project(args, store, workspace, engine)  # multica 必选/必建;mock 返回 None
     members = store.list_members(workspace)
     if not members:
         raise ValidationError(
@@ -220,7 +284,7 @@ def _run_setup(args) -> int:
     else:
         acceptor = _select_acceptor(args.acceptor, members)
     return _write_config(_build_config(
-        engine, workspace, planner, orchestrator, workers, reviewers, acceptor))
+        engine, workspace, project, planner, orchestrator, workers, reviewers, acceptor))
 
 
 # ==================== 体检 ====================
@@ -232,8 +296,9 @@ def _report(problems: List[str]) -> int:
             print(f"  - {p}", file=sys.stderr)
         return exit_codes.VALIDATION
     cfg = config_mod.load_config()
+    proj = f", project={cfg.get('project')}" if cfg.get("project") else ""
     print(f"体检通过:{config_mod.CONFIG_PATH} 就绪(engine={cfg.get('engine')}, "
-          f"workspace={cfg.get('workspace')})")
+          f"workspace={cfg.get('workspace')}{proj})")
     return exit_codes.OK
 
 
@@ -248,7 +313,13 @@ def _check() -> int:
             problems.append(f"配置缺少 `{key}` 字段(见 omac guide roles)")
     engine_type = cfg.get("engine")
     workspace = cfg.get("workspace") or ""
+    project = cfg.get("project") or ""
     roles = cfg.get("roles") or {}
+
+    if engine_type == "multica" and not project:
+        problems.append(
+            "multica 引擎缺少 `project` 字段(issue 必须归入一个 project)—— "
+            "运行 `omac init` 选择或新建一个 project")
 
     if engine_type == "multica" and shutil.which("multica") is None:
         problems.append("multica CLI 不在 PATH —— 安装并登录后重试: "
@@ -264,6 +335,12 @@ def _check() -> int:
                     f"workspace '{workspace}' 不在引擎返回的工作空间列表"
                     f"({', '.join(ws_ids) or '空'}) —— 运行 `omac init` 重选")
             members_store = _build_store(engine_type, workspace)
+            if engine_type == "multica" and project:
+                proj_ids = [p.id for p in members_store.list_projects(workspace)]
+                if project not in proj_ids:
+                    problems.append(
+                        f"project '{project}' 不在 workspace 的 project 列表"
+                        f"({', '.join(proj_ids) or '空'}) —— 运行 `omac init` 重选")
             members = members_store.list_members(workspace) if workspace else []
             for role_name, val in roles.items():
                 for agent in _as_list(val):

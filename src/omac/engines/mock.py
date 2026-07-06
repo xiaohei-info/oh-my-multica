@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 from ..core.taskmeta import Bounces, TaskKind, TaskPhase
-from .models import EngineConfig, WorkItem, WorkItemStatus, WorkspaceInfo
+from .models import EngineConfig, ProjectInfo, WorkItem, WorkItemStatus, WorkspaceInfo
 from .runtime import AgentRuntime
 from .store import WorkItemStore
 
@@ -29,6 +29,7 @@ _shared_contracts_by_item_id: Dict[str, Any] = {}
 _shared_assigned_items: Dict[str, float] = {}
 _shared_fail_keys: set = set()
 _shared_assign_log: list = []
+_shared_projects: Dict[str, ProjectInfo] = {}
 # 默认行为(可在实例创建时覆盖)
 _shared_auto_complete_enabled: bool = True
 _shared_auto_complete_delay: int = 2
@@ -157,9 +158,10 @@ class MockStore(WorkItemStore):
         _shared_kind_deliverables = {}
         _shared_kind_delivery_sequences = {}
         _shared_review_rejects_remaining = 0
-        global _accepted_results, _increments
+        global _accepted_results, _increments, _shared_projects
         _accepted_results = {}
         _increments = {}
+        _shared_projects = {}
         _init_default_workspace()
 
     @classmethod
@@ -389,6 +391,22 @@ class MockStore(WorkItemStore):
     def list_workspaces(self) -> List[WorkspaceInfo]:
         """mock 固定值:返回已注册的工作空间(默认含配置 workspace_id 那一个)。"""
         return list(_shared_workspaces.values())
+
+    # ==================== 项目发现 / 创建 ====================
+
+    def list_projects(self, workspace_id: str) -> List[ProjectInfo]:
+        return list(_shared_projects.values())
+
+    def create_project(
+        self, workspace_id: str, title: str,
+        repo_urls: Optional[List[str]] = None,
+    ) -> ProjectInfo:
+        global _shared_next_id
+        pid = f"proj-{_shared_next_id}"
+        _shared_next_id += 1
+        info = ProjectInfo(id=pid, title=title, repos=list(repo_urls or []))
+        _shared_projects[pid] = info
+        return info
 
     # ==================== 工作单元 CRUD ====================
 
