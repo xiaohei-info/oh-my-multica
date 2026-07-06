@@ -8,6 +8,7 @@ from .. import exit_codes
 from ..output import add_output_flag, print_json
 from ...core.config import ENV_ENGINE, ENV_WORKSPACE, load_config, resolve_engine_settings, DEFAULTS, CONFIG_PATH
 from ...core.manifest import load_manifest
+from ...core.gitsync import assert_config_pushed, sync_enabled
 from ...engines import create_engine
 from ...engines.models import EngineConfig
 from ...errors import NeedsDecision, ValidationError
@@ -222,6 +223,9 @@ def _loop_or_single(args, single_round: bool) -> int:
     import time as _time
 
     engine, _ = _assemble_engine(args)
+    # 派单前门:真实引擎下 config 必须已 push 到 main,否则隔离区 agent clone 后读不到。
+    if sync_enabled(engine.store.config.engine_type):
+        assert_config_pushed(CONFIG_PATH, branch="main")
     config = load_config(CONFIG_PATH)
     manifest = load_manifest(args.manifest)
     max_parallel = _default_max_parallel(args)
