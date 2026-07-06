@@ -102,8 +102,7 @@ def _compose_guard(
     """
 
     def guard(item: WorkItem) -> List[str]:
-        artifacts = item.artifacts or {}
-        text = artifacts.get(_MANIFEST_KEY)
+        text = getattr(item, "deliverable", None)
         if not text:
             return [f"交付缺少 '{_MANIFEST_KEY}' —— orchestrator 未产出 manifest"]
         manifest = loads_manifest(text)

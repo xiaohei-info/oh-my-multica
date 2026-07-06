@@ -13,14 +13,28 @@ from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional
 
 from ..core.manifest import Contract, _load_contract
-from ..core.taskmeta import TaskKind
+from ..core.taskmeta import DELIVERY_CONTENT_KEY, TaskKind, TaskPhase
 from ..engines.models import WorkItem, WorkItemStatus
 from ..errors import NeedsDecision
 from .dispatch import render_issue_body
 
 
-# 产出阶段终态(不含 IN_REVIEW:review 分支由本原语接管)
-_AUTHORING_TERMINAL = (WorkItemStatus.DONE, WorkItemStatus.FAILED)
+def _produced(item: WorkItem) -> bool:
+    """产出阶段收敛判据:产出者交付后 issue 进入 REVIEW 阶段(plan/acceptance/
+    decompose 经 work submit → IN_REVIEW+phase=REVIEW+deliverable),或直接终态
+    (DONE/FAILED)。评审往返由本原语接管,故 IN_REVIEW 本身不算「未完」。"""
+    return item.phase == TaskPhase.REVIEW or item.status in (
+        WorkItemStatus.DONE, WorkItemStatus.FAILED)
+
+
+def _delivery_of(kind: TaskKind, item: WorkItem) -> Dict[str, Any]:
+    """把产出者交付正文(item.deliverable)按 kind 包成 delivery dict。
+
+    交付正文落 issue metadata 的 deliverable 字段(与真实 work submit 同源),
+    而非 artifacts —— 后者是 develop 节点的 pr_url 证据,两条通道不混用。
+    """
+    key = DELIVERY_CONTENT_KEY.get(kind, kind.value)
+    return {key: item.deliverable}
 
 
 def _payload_contract(raw: Any) -> Any:
@@ -122,8 +136,7 @@ def run_task(
         store.mark_in_progress(item_id)
         store.assign_work_item(item_id, assignee, "worker")
         runtime.wake(item_id, assignee, "worker")
-        produced = _poll_until(
-            store, item_id, lambda i: i.status in _AUTHORING_TERMINAL, poll)
+        produced = _poll_until(store, item_id, _produced, poll)
         if produced.status == WorkItemStatus.FAILED:
             raise NeedsDecision(
                 f"{kind.value} 产出阶段失败(item {item_id})",
@@ -136,7 +149,7 @@ def run_task(
         return produced
 
     delivered = _produce()
-    delivery = delivered.artifacts
+    delivery = _delivery_of(kind, delivered)
 
     # 机器门(零 token):通过即止,耗尽转 NeedsDecision
     if guard is not None:
@@ -146,7 +159,7 @@ def run_task(
                 break
             store.reset_review(item_id)
             delivered = _produce(hint=guard_errors)
-            delivery = delivered.artifacts
+            delivery = _delivery_of(kind, delivered)
         else:
             raise NeedsDecision(
                 f"{kind.value} 任务经 {max_revisions} 轮 machine-gate 仍未通过",
@@ -155,6 +168,8 @@ def run_task(
                         "last_opinion": "\n".join(guard_errors)})
 
     if not reviewers:
+        # 产出者交付后停在 IN_REVIEW(work submit 语义);无 reviewer 时由本原语收口终态。
+        store.mark_done(item_id)
         return {"item_id": item_id, "delivery": delivery,
                 "rounds": 0, "verdict": "pass", "kind": kind.value}
 
@@ -182,7 +197,7 @@ def run_task(
             f"reviewer {reviewer} 第 {round_index} 轮 reject: {last_opinion}")
         store.reset_review(item_id)
         delivered = _produce()
-        delivery = delivered.artifacts
+        delivery = _delivery_of(kind, delivered)
 
     raise NeedsDecision(
         f"{kind.value} 任务在 {max_revisions} 轮修订后仍未通过评审",
