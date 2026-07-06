@@ -51,6 +51,16 @@ def test_cancel_work_item_removes_it():
     store.cancel_work_item(item.id)
 
 
+def test_create_and_list_projects():
+    """project 发现/创建原语:create 落库,list 可见,repos 保留。"""
+    MockStore.reset()
+    store = _engine().store
+    p = store.create_project("ws", "demo", ["https://github.com/x/y.git"])
+    assert p.id and p.title == "demo"
+    assert p.repos == ["https://github.com/x/y.git"]
+    assert p.id in [x.id for x in store.list_projects("ws")]
+
+
 def test_metadata_write_then_read():
     store = _engine(MOCK_AUTO_COMPLETE="false").store
     item = store.create_work_item("ws", "t", "d", dag_key="a", worker="alice")

@@ -64,8 +64,9 @@ def register(parser):
 def _resolve_store():
     """按 config < env < 命令行 解析引擎配置,返回 Store 实例。"""
     cfg = config_mod.load_config()
-    engine_type, workspace_id = config_mod.resolve_engine_settings(cfg)
-    config = EngineConfig(engine_type=engine_type, workspace_id=workspace_id)
+    engine_type, workspace_id, project_id = config_mod.resolve_engine_settings(cfg)
+    config = EngineConfig(
+        engine_type=engine_type, workspace_id=workspace_id, project_id=project_id)
     return create_engine(engine_type, config).store
 
 
