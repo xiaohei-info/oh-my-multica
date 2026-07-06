@@ -72,13 +72,15 @@ def register(parser):
 def _resolve_engine(args):
     """按 config.yaml < 环境变量 < 命令行 解析引擎配置;缺失时报错即教学。"""
     cfg = config_mod.load_config()
-    engine_type, workspace_id = config_mod.resolve_engine_settings(
-        cfg, engine=getattr(args, "engine", None), workspace=getattr(args, "workspace", None))
+    engine_type, workspace_id, project_id = config_mod.resolve_engine_settings(
+        cfg, engine=getattr(args, "engine", None), workspace=getattr(args, "workspace", None),
+        project=getattr(args, "project", None))
     extra = dict(cfg.get("engine_extra") or {})
     extra.update(getattr(args, "engine_extra", None) or {})
     return create_engine(
         engine_type,
-        EngineConfig(engine_type=engine_type, workspace_id=workspace_id, extra=extra))
+        EngineConfig(engine_type=engine_type, workspace_id=workspace_id,
+                     project_id=project_id, extra=extra))
 
 
 def _check(args) -> int:

@@ -74,9 +74,10 @@ def _assemble_engine(args):
     返回 (engine, engine_config)。报错即教学(§2)。
     """
     config = load_config(CONFIG_PATH)
-    engine_type, workspace_id = resolve_engine_settings(
+    engine_type, workspace_id, project_id = resolve_engine_settings(
         config, engine=getattr(args, "engine", None),
-        workspace=getattr(args, "workspace", None))
+        workspace=getattr(args, "workspace", None),
+        project=getattr(args, "project", None))
 
     poll_interval = config.get("defaults", {}).get(
         "poll_interval", DEFAULTS["poll_interval"])
@@ -90,6 +91,7 @@ def _assemble_engine(args):
     engine_config = EngineConfig(
         engine_type=engine_type,
         workspace_id=workspace_id,
+        project_id=project_id,
         polling_interval=poll_interval,
         extra=extra,
     )

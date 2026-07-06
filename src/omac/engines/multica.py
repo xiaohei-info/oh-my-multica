@@ -20,7 +20,7 @@ from ..core.taskmeta import (
     parse_bounces, parse_kind, parse_phase,
 )
 from ..errors import AuthError, PlatformError
-from .models import EngineConfig, WorkItem, WorkItemStatus, WorkspaceInfo
+from .models import EngineConfig, ProjectInfo, WorkItem, WorkItemStatus, WorkspaceInfo
 from .runtime import AgentRuntime
 from .store import WorkItemStore
 
@@ -194,6 +194,59 @@ class MulticaStore(WorkItemStore):
             ))
         return infos
 
+    # ==================== 项目发现 / 创建 ====================
+
+    @staticmethod
+    def _project_to_info(p: Dict) -> Optional[ProjectInfo]:
+        pid = p.get("id")
+        if not pid:
+            return None
+        repos: List[str] = []
+        for r in (p.get("resources") or []):
+            if not isinstance(r, dict) or r.get("type") not in (None, "github_repo"):
+                continue
+            ref = r.get("resource_ref") if isinstance(r.get("resource_ref"), dict) else {}
+            url = r.get("url") or ref.get("url")
+            if url:
+                repos.append(url)
+        return ProjectInfo(id=str(pid), title=p.get("title") or str(pid), repos=repos)
+
+    def list_projects(self, workspace_id: str) -> List[ProjectInfo]:
+        """multica project list --output json → ProjectInfo 列表。"""
+        result = self._run_multica(["project", "list", "--output", "json"])
+        if isinstance(result, dict):
+            items = result.get("projects") or result.get("data") or []
+        elif isinstance(result, list):
+            items = result
+        else:
+            items = []
+        infos: List[ProjectInfo] = []
+        for p in items:
+            if isinstance(p, dict):
+                info = self._project_to_info(p)
+                if info:
+                    infos.append(info)
+        return infos
+
+    def create_project(
+        self, workspace_id: str, title: str,
+        repo_urls: Optional[List[str]] = None,
+    ) -> ProjectInfo:
+        """multica project create --title X [--repo url ...]:建 project 并关联 repo。"""
+        args = ["project", "create", "--title", title, "--output", "json"]
+        for url in (repo_urls or []):
+            args += ["--repo", url]
+        result = self._run_multica(args)
+        if not isinstance(result, dict) or not result.get("id"):
+            raise PlatformError(f"创建 project 失败: {result}")
+        info = self._project_to_info(result)
+        if info is None:
+            raise PlatformError(f"创建 project 返回缺少 id: {result}")
+        # create 返回可能不含 resources,回填请求的 repo_urls 便于展示
+        if repo_urls and not info.repos:
+            info.repos = list(repo_urls)
+        return info
+
     # ==================== 工作单元 CRUD ====================
 
     def create_work_item(
@@ -209,12 +262,16 @@ class MulticaStore(WorkItemStore):
         initial_status: WorkItemStatus = WorkItemStatus.TODO,
         kind: TaskKind = TaskKind.DEVELOP,
     ) -> WorkItem:
-        result = self._run_multica_with_text_file([
+        create_args = [
             "issue", "create",
             "--title", f"[DAG:{dag_key}] {title}",
             "--status", self._status_to_multica(initial_status),
             "--output", "json",
-        ], "--description-file", description)
+        ]
+        if self.config.project_id:
+            create_args += ["--project", self.config.project_id]
+        result = self._run_multica_with_text_file(
+            create_args, "--description-file", description)
 
         if not isinstance(result, dict) or "id" not in result:
             raise PlatformError(f"创建 issue 失败: {result}")

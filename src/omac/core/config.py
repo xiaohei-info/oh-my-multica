@@ -6,6 +6,7 @@
 结构(全部键可选,init 交互式生成):
     engine: multica | mock
     workspace: <id>
+    project: <id>                # multica 必填:issue 归入的 project(关联目标 repo)
     roles:
       planner / orchestrator: <agent>
       workers / reviewers: [<agent>, ...]
@@ -51,6 +52,7 @@ DEFAULT_MAX_ROUNDS = 3
 # 环境变量回退(设计文档 §5:全局 flag 带 env 回退)
 ENV_ENGINE = "OMAC_ENGINE"
 ENV_WORKSPACE = "OMAC_WORKSPACE_ID"
+ENV_PROJECT = "OMAC_PROJECT_ID"
 
 
 def load_config(path: str = CONFIG_PATH) -> dict:
@@ -119,14 +121,20 @@ def resolve_retry(config: dict) -> dict:
     return resolved
 
 
-def resolve_engine_settings(config: dict, *, engine: str | None = None,
-                            workspace: str | None = None) -> tuple[str, str]:
-    """按「config.yaml < env < 命令行参数」解析 (engine_type, workspace_id)。
+def resolve_engine_settings(
+    config: dict, *, engine: str | None = None,
+    workspace: str | None = None, project: str | None = None,
+) -> tuple[str, str, str | None]:
+    """按「config.yaml < env < 命令行参数」解析 (engine_type, workspace_id, project_id)。
 
-    两者最终都必须有值,否则 ValidationError(报错即教学:告知三种给法)。
+    engine / workspace 必须有值,否则 ValidationError(报错即教学:告知三种给法)。
+    project 是 **multica 引擎的必填项**(issue 必须归入一个 project,不 fallback 到
+    workspace 裸建):multica 下缺 project 即 ValidationError → exit 5;
+    mock 引擎不要求 project(返回 None)。
     """
     engine_type = engine or os.environ.get(ENV_ENGINE) or config.get("engine")
     workspace_id = workspace or os.environ.get(ENV_WORKSPACE) or config.get("workspace")
+    project_id = project or os.environ.get(ENV_PROJECT) or config.get("project")
     if not engine_type:
         raise ValidationError(
             "未指定引擎类型 —— 三种给法任选:config.yaml 的 engine 字段 / "
@@ -135,7 +143,13 @@ def resolve_engine_settings(config: dict, *, engine: str | None = None,
         raise ValidationError(
             "未指定 workspace —— 三种给法任选:config.yaml 的 workspace 字段 / "
             f"环境变量 {ENV_WORKSPACE} / 命令行 --workspace")
-    return engine_type, workspace_id
+    if engine_type == "multica" and not project_id:
+        raise ValidationError(
+            "multica 引擎必须指定 project(issue 归入该 project,不裸建于 workspace)"
+            " —— 三种给法任选:config.yaml 的 project 字段 / "
+            f"环境变量 {ENV_PROJECT} / 命令行 --project;"
+            "或运行 `omac init` 选择已有 project / 新建一个(自动关联当前 repo)")
+    return engine_type, workspace_id, project_id
 
 
 def get_ci_config(config: dict) -> dict | None:

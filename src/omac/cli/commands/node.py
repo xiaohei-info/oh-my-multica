@@ -92,7 +92,7 @@ def _contract_to_dict(contract):
 def _build_engine(config: dict):
     """按 config + 环境变量装配引擎;失败返回 None(show 退化为 contract-only)。"""
     try:
-        engine_type, workspace_id = resolve_engine_settings(config)
+        engine_type, workspace_id, project_id = resolve_engine_settings(config)
     except ValidationError:
         return None
     extra = {}
@@ -102,6 +102,7 @@ def _build_engine(config: dict):
     cfg = EngineConfig(
         engine_type=engine_type,
         workspace_id=workspace_id,
+        project_id=project_id,
         extra=extra or {"MOCK_AUTO_COMPLETE": "false"},
     )
     return create_engine(engine_type, cfg)
