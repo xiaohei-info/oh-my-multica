@@ -119,11 +119,17 @@ meta:
   title: "omac 冒烟:单节点 worker-only"
 nodes:
   - id: smoke-A
-    title: "冒烟任务:在仓库根新增 hello_omac.txt(单行内容 omac smoke ok),提交并对 base=main 开 PR。本节点无 contract,证据门只校验 pr_url;omac work submit 的 --verification-file 传一个内容为 {} 的最小文件即可"
+    title: "冒烟:新增 hello_omac.txt 并开 PR"
+    description: |
+      在仓库根新增文件 hello_omac.txt,单行内容:omac smoke ok。
+      提交改动,并对 base=main 开一个 PR。
+      本节点无 contract,证据门只校验 pr_url;omac work submit 的
+      --verification-file 传一个内容为 {} 的最小文件即可。
     worker: codex-ubuntu
     blocked_by: []
 ```
-> 说明:manifest 节点的 `description` 会被派发模板覆盖,**任务只能写在 `title`**(worker 从 `omac work show` 的简报里读到它),所以此处 title 写得很详细——这是有意为之。
+> 说明:任务详情写在节点 `description`,派发时会作为 issue body 的「## 任务详情」段送达 worker
+> (worker 从 `omac work show` 读到)。无 contract 节点尤其依赖它承载任务。
 
 ```bash
 git add .omac/config.yaml .omac/smoke.yaml && git commit -m "chore: omac 冒烟配置与单节点 manifest" && git push

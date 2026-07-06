@@ -787,7 +787,13 @@ def render_issue_body(node, contract, kind, issue_id):
     rules.append("平台状态由 loop 推进,不手动改 issue 状态/assignee")
     hard = "## 硬约束（铁律）\n" + "\n".join(f"- {r}" for r in rules)
 
-    return "\n\n".join([bootstrap, briefing, hard])
+    # ---- 任务详情:node.description 是 worker 的上下文来源(manifest §7.4),
+    # 非空则单列一段进 body。无 contract 的节点尤其依赖它承载任务(否则简报只有
+    # title + contract 占位,worker 无从下手)。空则不渲染,向后兼容既有派发。
+    description = (getattr(node, "description", "") or "").strip()
+    detail = f"## 任务详情\n{description}" if description else ""
+
+    return "\n\n".join(p for p in [bootstrap, briefing, detail, hard] if p)
 
 
 def render_review_rollout_comment(node, contract, verdict: Optional[str], report=None,

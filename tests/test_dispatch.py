@@ -151,6 +151,21 @@ class TestRenderIssueBody:
         assert "coverage_gate=90" in body
         assert "reviewer（bob）" in body
 
+    def test_node_description_renders_as_task_detail(self):
+        """node.description 非空时进 body 的「任务详情」段(worker 上下文来源);
+        无 contract 节点尤其依赖它承载任务。"""
+        n = Node(id="n", worker="alice", title="t",
+                 description="新增 hello_omac.txt,内容 omac smoke ok,开 PR 到 main")
+        body = render_issue_body(n, None, TaskKind.DEVELOP, "ID")
+        assert "## 任务详情" in body
+        assert "新增 hello_omac.txt" in body
+
+    def test_empty_description_omits_task_detail(self):
+        """description 为空则不渲染「任务详情」段(向后兼容既有派发)。"""
+        n = Node(id="n", worker="alice", title="t", contract=_full_contract())
+        body = render_issue_body(n, n.contract, TaskKind.DEVELOP, "ID")
+        assert "## 任务详情" not in body
+
 
 # ==================== render_review_rollout_comment ====================
 
