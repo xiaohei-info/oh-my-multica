@@ -7,8 +7,17 @@ omac 是确定性 CLI 驱动的多 Agent 并行开发编排:Loop 驱动 Agent,LL
 
 1. `omac init` —— 一次性配置:选 workspace → 列全量 agent → 角色映射
    → 落盘 `.omac/config.yaml`(体检:`omac init --check`)
-2. `omac plan create --name <feature> [--doc 设计文档]` —— 计划 → 验收文档 → 拆解,
-   全程内置 review 阶段,产出 `.omac/<feature>.yaml`( + `.acceptance.yaml`)
+2. `omac plan create --name <feature> [--goal 需求 | --doc 设计文档]` —— 计划 → 验收文档
+   → 拆解,**三个环节全程内置 reviewer 评审**(配了 reviewers 且未 --no-review),
+   产出 `.omac/<feature>.yaml`( + `.acceptance.yaml`)
+   - `--goal <需求>`:planner 据此制定计划(从需求出发的正道入口)
+   - `--doc <设计文档>`:已有计划,跳过 planner 制定环节
+   - **人机确认门(默认开)**:计划、验收两个环节产出后,先由你确认「是否满足需求」
+     再进 reviewer 评审。通过标准 = 把该 issue 流转到 **done**(omac 识别到后翻回
+     in_review 继续评审)。手动放行:`omac plan confirm --name <feature>`;
+     无人值守入口用 `--no-confirm` 关闭。
+   - **provenance**:验收 issue 引用计划 issue、拆解 issue 引用计划+验收 issue,
+     manifest `meta.source_issues` 记录三个源头 —— 后续任务有分歧以源头 issue 为准。
 3. `omac dag run .omac/<feature>.yaml` —— 确定性 loop:
    回收结果 → 计算就绪节点 → 派发,直到收敛;收敛后进入总控验收外层循环
    - exit 0:验收全部 pass,真正可交付

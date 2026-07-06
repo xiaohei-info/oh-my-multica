@@ -25,7 +25,7 @@ from typing import Any, Callable, Dict, List, Optional
 from ..core import acceptance as acceptance_mod
 from ..core.config import CONFIG_DIR
 from ..core.lint import lint
-from ..core.manifest import Manifest, loads_manifest
+from ..core.manifest import Manifest, loads_manifest, save_manifest
 from ..core.taskmeta import TaskKind
 from ..engines.models import WorkItem
 from ..errors import ValidationError
@@ -48,6 +48,7 @@ class PlanContext:
     no_review: bool
     no_acceptance: bool
     members: set
+    confirm: bool = True
 
     def poll(self, interval: Optional[float] = None) -> Callable[[], None]:
         """构造一个阻塞轮询闭包(真实场景用,测试注入 no-op)。"""
@@ -102,8 +103,7 @@ def _compose_guard(
     """
 
     def guard(item: WorkItem) -> List[str]:
-        artifacts = item.artifacts or {}
-        text = artifacts.get(_MANIFEST_KEY)
+        text = getattr(item, "deliverable", None)
         if not text:
             return [f"交付缺少 '{_MANIFEST_KEY}' —— orchestrator 未产出 manifest"]
         manifest = loads_manifest(text)
@@ -117,6 +117,7 @@ def plan_create(
     name: str,
     *,
     doc_path: Optional[str] = None,
+    goal_text: Optional[str] = None,
     poll: Optional[Callable[[], None]] = None,
 ) -> int:
     """omac plan create 的主编排。返回退出码契约约定的状态(0 / 5 / 20)。
@@ -132,20 +133,30 @@ def plan_create(
     poll_cb = poll if poll is not None else ctx.poll()
 
     acceptance_text: Optional[str] = None
+    # provenance:各阶段源头 issue,后续阶段带上引用防跑偏(--doc 时无 plan issue)。
+    plan_item_id: Optional[str] = None
+    acceptance_item_id: Optional[str] = None
 
     # ── phase 1:制定计划(跳过如果有 --doc) ──
     if doc_path is not None:
         plan_text = _read_file(doc_path)
     else:
+        plan_payload: Dict[str, Any] = {"title": f"{name} 计划"}
+        if goal_text:
+            # 需求经 source_of_truth 通道进 planner 的 issue body(与 phase 2/3 同源),
+            # 让 planner 据此制定计划,而非凭一个标题空想。
+            plan_payload["source_of_truth"] = {"需求": goal_text}
         res = run_task(
             ctx.engine,
             TaskKind.PLAN,
-            {"title": f"{name} 计划"},
+            plan_payload,
             ctx.planner,
             reviewers=reviewers,
             max_revisions=ctx.max_revisions,
             poll=poll_cb,
+            confirm=ctx.confirm,
         )
+        plan_item_id = res["item_id"]
         plan_text = _phase_text(res["delivery"], _PLAN_KEY)
 
     # ── phase 2:验收文档(跳过如果 --no-acceptance) ──
@@ -160,7 +171,10 @@ def plan_create(
             reviewers=reviewers,
             max_revisions=ctx.max_revisions,
             poll=poll_cb,
+            confirm=ctx.confirm,
+            source_refs=[r for r in [plan_item_id] if r],
         )
+        acceptance_item_id = res["item_id"]
         acceptance_text = _phase_text(res["delivery"], _ACCEPTANCE_KEY)
         acceptance_doc = _validate_acceptance(acceptance_text)
         _write_if_missing(base_dir)
@@ -182,10 +196,18 @@ def plan_create(
         max_revisions=ctx.max_revisions,
         poll=poll_cb,
         guard=guard,
+        source_refs=[r for r in [plan_item_id, acceptance_item_id] if r],
     )
+    decompose_item_id = res["item_id"]
     manifest_text = _phase_text(res["delivery"], _MANIFEST_KEY)
     _write_if_missing(base_dir)
-    with open(manifest_path, "w", encoding="utf-8") as fh:
-        fh.write(manifest_text)
+
+    # provenance:把塑造本 DAG 的源头 issue(计划/验收/拆解)记入 manifest meta,
+    # 让 dag run 派发的 develop issue 也能溯源,防后续执行跑偏。
+    source_issues = [r for r in [plan_item_id, acceptance_item_id, decompose_item_id] if r]
+    manifest = loads_manifest(manifest_text)
+    if source_issues:
+        manifest.meta["source_issues"] = source_issues
+    save_manifest(manifest, manifest_path)
 
     return 0

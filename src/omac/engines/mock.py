@@ -13,7 +13,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 import yaml
-from ..core.taskmeta import Bounces, TaskKind, TaskPhase
+from ..core.taskmeta import DELIVERY_CONTENT_KEY, Bounces, TaskKind, TaskPhase
 from .models import EngineConfig, ProjectInfo, WorkItem, WorkItemStatus, WorkspaceInfo
 from .runtime import AgentRuntime
 from .store import WorkItemStore
@@ -39,6 +39,14 @@ _shared_review_rejects_remaining: int = 0
 _accepted_results: dict[str, object] = {}   # dag_key -> acceptance_results dict
 _increments: dict[str, object] = {}        # dag_key -> Manifest(增量 fix 节点)
 _shared_kind_delivery_sequences: Dict[str, list] = {}
+# 人机门自动确认开关(测试模拟人工把产出 issue 流转到 DONE);默认关。
+_shared_auto_confirm: bool = False
+# 已自动确认过的 item(人工只确认一次,避免评审阶段翻回 IN_REVIEW 时被误重复确认)。
+_shared_human_confirmed: set = set()
+
+# 产出后进入评审阶段(而非直接 DONE)的 kind:与真实 work submit 的产出终态一致。
+# develop 走 pr_url→DONE;final-acceptance 有独立的 _accepted_results 真实 submit 分支。
+_AUTHORING_TO_REVIEW = (TaskKind.PLAN, TaskKind.ACCEPTANCE, TaskKind.DECOMPOSE)
 
 
 def _init_default_workspace():
@@ -158,6 +166,9 @@ class MockStore(WorkItemStore):
         _shared_kind_deliverables = {}
         _shared_kind_delivery_sequences = {}
         _shared_review_rejects_remaining = 0
+        global _shared_auto_confirm, _shared_human_confirmed
+        _shared_auto_confirm = False
+        _shared_human_confirmed = set()
         global _accepted_results, _increments, _shared_projects
         _accepted_results = {}
         _increments = {}
@@ -209,14 +220,31 @@ class MockStore(WorkItemStore):
         _shared_auto_complete_enabled = bool(enabled)
         _shared_auto_complete_delay = max(0, int(delay))
 
+    @classmethod
+    def set_auto_confirm(cls, enabled: bool = True):
+        """配置人机门自动确认(测试模拟人工确认:把等待中的产出流转到 DONE)。"""
+        global _shared_auto_confirm
+        _shared_auto_confirm = bool(enabled)
+
     # ==================== 模拟执行 ====================
 
     def _auto_complete_check(self, item_id: str):
         global _shared_review_rejects_remaining
-        if not _shared_auto_complete_enabled or item_id not in _shared_assigned_items:
-            return
         item = _shared_work_items.get(item_id)
         if not item:
+            return
+        # 人机门自动确认(测试模拟人工):停在评审阶段、尚未指派 reviewer 的产出
+        # → 人工把它流转到 DONE(approval 信号)。与 auto_complete 独立开关。
+        # 每个 item 只确认一次:翻回 IN_REVIEW 进评审时不再被误重复确认(否则会
+        # 在 reviewer 指派前又置 DONE,导致评审轮询死等)。
+        if (_shared_auto_confirm and item_id not in _shared_assigned_items
+                and item_id not in _shared_human_confirmed
+                and item.status == WorkItemStatus.IN_REVIEW
+                and item.phase == TaskPhase.REVIEW):
+            item.status = WorkItemStatus.DONE
+            _shared_human_confirmed.add(item_id)
+            return
+        if not _shared_auto_complete_enabled or item_id not in _shared_assigned_items:
             return
         if time.time() - _shared_assigned_items[item_id] < _shared_auto_complete_delay:
             return
@@ -274,7 +302,6 @@ class MockStore(WorkItemStore):
                     os.unlink(tmp)
                 return
 
-            item.status = WorkItemStatus.DONE
             seq = _shared_kind_delivery_sequences.get(item.dag_key)
             if seq:
                 deliverable = seq.pop(0)
@@ -282,10 +309,25 @@ class MockStore(WorkItemStore):
                 deliverable = _shared_kind_deliverables.get(
                     item.dag_key,
                     {"pr_url": f"https://mock.example.com/pr/{item_id}"})
-            item.artifacts = dict(deliverable)
-            verification = self._mock_verification(item_id)
-            if verification is not None:
-                item.verification = verification
+
+            if getattr(item, "kind", None) in _AUTHORING_TO_REVIEW:
+                # plan/acceptance/decompose:忠实真实 work submit 的产出终态——
+                # 交付正文落 deliverable、phase 进 REVIEW、状态 IN_REVIEW,评审往返
+                # 交由上层原语(run_task)接管,不在此直接 DONE。
+                key = DELIVERY_CONTENT_KEY[item.kind]
+                content = deliverable.get(key)
+                if content is None:
+                    content = next(iter(deliverable.values()), "")
+                item.deliverable = content
+                item.phase = TaskPhase.REVIEW
+                item.status = WorkItemStatus.IN_REVIEW
+            else:
+                # develop 及未知类型:直接 DONE + artifacts(pr_url 证据通道)。
+                item.status = WorkItemStatus.DONE
+                item.artifacts = dict(deliverable)
+                verification = self._mock_verification(item_id)
+                if verification is not None:
+                    item.verification = verification
             del _shared_assigned_items[item_id]
         elif item.status == WorkItemStatus.IN_REVIEW:
             if _shared_review_rejects_remaining > 0:

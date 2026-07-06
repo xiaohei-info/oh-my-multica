@@ -13,14 +13,28 @@ from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional
 
 from ..core.manifest import Contract, _load_contract
-from ..core.taskmeta import TaskKind
+from ..core.taskmeta import DELIVERY_CONTENT_KEY, TaskKind, TaskPhase
 from ..engines.models import WorkItem, WorkItemStatus
 from ..errors import NeedsDecision
 from .dispatch import render_issue_body
 
 
-# 产出阶段终态(不含 IN_REVIEW:review 分支由本原语接管)
-_AUTHORING_TERMINAL = (WorkItemStatus.DONE, WorkItemStatus.FAILED)
+def _produced(item: WorkItem) -> bool:
+    """产出阶段收敛判据:产出者交付后 issue 进入 REVIEW 阶段(plan/acceptance/
+    decompose 经 work submit → IN_REVIEW+phase=REVIEW+deliverable),或直接终态
+    (DONE/FAILED)。评审往返由本原语接管,故 IN_REVIEW 本身不算「未完」。"""
+    return item.phase == TaskPhase.REVIEW or item.status in (
+        WorkItemStatus.DONE, WorkItemStatus.FAILED)
+
+
+def _delivery_of(kind: TaskKind, item: WorkItem) -> Dict[str, Any]:
+    """把产出者交付正文(item.deliverable)按 kind 包成 delivery dict。
+
+    交付正文落 issue metadata 的 deliverable 字段(与真实 work submit 同源),
+    而非 artifacts —— 后者是 develop 节点的 pr_url 证据,两条通道不混用。
+    """
+    key = DELIVERY_CONTENT_KEY.get(kind, kind.value)
+    return {key: item.deliverable}
 
 
 def _payload_contract(raw: Any) -> Any:
@@ -35,17 +49,13 @@ def _payload_contract(raw: Any) -> Any:
 
 
 def _pick_reviewer(reviewers: List[str], producer: str, round_index: int) -> str:
-    """reviewers 池轮转,且 ≠ 产出者。
+    """reviewers 池轮转,优先非产出者;池内仅产出者时回退自审。
 
-    池内必须至少有一名非产出者 agent,否则等于「自己审自己」,在工程上无意义。
-    这里显式报错(报错即教学),而不是静默 fallback 回产出者。
+    角色可自由指定(不强制 reviewer ≠ producer):有非产出者时优先选它以保留
+    评审独立性;池里只剩产出者时回退到产出者自审(自审只是自检,真正的把关交给
+    human gate)。不再报错。
     """
-    candidates = [r for r in reviewers if r != producer]
-    if not candidates:
-        raise ValueError(
-            f"reviewers 池 {reviewers!r} 剔除产出者 '{producer}' 后为空"
-            " —— 至少需要一名非产出者 agent 担任 reviewer。"
-            " 请扩大 reviewers 池,或指定 assignee 不在池中。")
+    candidates = [r for r in reviewers if r != producer] or list(reviewers)
     return candidates[round_index % len(candidates)]
 
 
@@ -92,6 +102,8 @@ def run_task(
     max_revisions: int = 3,
     poll: Callable[[], None],
     guard: Optional[Callable[[WorkItem], List[str]]] = None,
+    confirm: bool = False,
+    source_refs: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """派任务→等终态→取交付→有界修订循环。
 
@@ -117,7 +129,7 @@ def run_task(
     # body 里 reviewer 留 None:reviewer 在 review 阶段按轮次由 _pick_reviewer 动态选取,
     # 创建时没有「当前 reviewer」的概念,不写死池内第一位以免误导。
     body_node = SimpleNamespace(title=title, reviewer=None, id=item_id)
-    body = render_issue_body(body_node, contract, kind, item_id)
+    body = render_issue_body(body_node, contract, kind, item_id, source_refs=source_refs)
     if source_of_truth:
         body = body + "\n\n" + _render_source_of_truth(source_of_truth)
     store.update_work_item_metadata(item_id, description=body)
@@ -126,8 +138,7 @@ def run_task(
         store.mark_in_progress(item_id)
         store.assign_work_item(item_id, assignee, "worker")
         runtime.wake(item_id, assignee, "worker")
-        produced = _poll_until(
-            store, item_id, lambda i: i.status in _AUTHORING_TERMINAL, poll)
+        produced = _poll_until(store, item_id, _produced, poll)
         if produced.status == WorkItemStatus.FAILED:
             raise NeedsDecision(
                 f"{kind.value} 产出阶段失败(item {item_id})",
@@ -140,7 +151,7 @@ def run_task(
         return produced
 
     delivered = _produce()
-    delivery = delivered.artifacts
+    delivery = _delivery_of(kind, delivered)
 
     # 机器门(零 token):通过即止,耗尽转 NeedsDecision
     if guard is not None:
@@ -150,7 +161,7 @@ def run_task(
                 break
             store.reset_review(item_id)
             delivered = _produce(hint=guard_errors)
-            delivery = delivered.artifacts
+            delivery = _delivery_of(kind, delivered)
         else:
             raise NeedsDecision(
                 f"{kind.value} 任务经 {max_revisions} 轮 machine-gate 仍未通过",
@@ -158,7 +169,20 @@ def run_task(
                         "rounds": max_revisions, "phase": "guard",
                         "last_opinion": "\n".join(guard_errors)})
 
+    # ── 人机门(human in the loop,可选) ──
+    # 通过标准:人工把 issue 流转到 DONE(易于自动化识别),或 `omac plan confirm`。
+    # 识别到 DONE 后:有 reviewer 则翻回 IN_REVIEW 继续评审;无 reviewer 则人工确认即终态。
+    if confirm:
+        _poll_until(
+            store, item_id, lambda i: i.status == WorkItemStatus.DONE, poll)
+        if not reviewers:
+            return {"item_id": item_id, "delivery": delivery,
+                    "rounds": 0, "verdict": "pass", "kind": kind.value}
+        store.mark_in_review(item_id)
+
     if not reviewers:
+        # 产出者交付后停在 IN_REVIEW(work submit 语义);无 reviewer 时由本原语收口终态。
+        store.mark_done(item_id)
         return {"item_id": item_id, "delivery": delivery,
                 "rounds": 0, "verdict": "pass", "kind": kind.value}
 
@@ -186,7 +210,7 @@ def run_task(
             f"reviewer {reviewer} 第 {round_index} 轮 reject: {last_opinion}")
         store.reset_review(item_id)
         delivered = _produce()
-        delivery = delivered.artifacts
+        delivery = _delivery_of(kind, delivered)
 
     raise NeedsDecision(
         f"{kind.value} 任务在 {max_revisions} 轮修订后仍未通过评审",
