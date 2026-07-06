@@ -81,6 +81,55 @@ def test_run_task_consumes_real_submit_deliverable():
     assert item.deliverable == "计划正文-真实路径"
 
 
+def test_human_gate_blocks_until_confirmed():
+    """confirm=True 且无人工确认时,人机门不放行:产出停在 IN_REVIEW 等 DONE。"""
+    eng = _engine()
+    MockStore.set_kind_delivery("plan", {"plan": "计划正文"})
+    calls = {"n": 0}
+
+    def bounded_poll():
+        calls["n"] += 1
+        if calls["n"] > 5:
+            raise TimeoutError("人机门未通过")
+
+    with pytest.raises(TimeoutError):
+        run_task(eng, TaskKind.PLAN, _payload(), "alice",
+                 reviewers=["bob"], confirm=True, poll=bounded_poll)
+
+
+def test_human_gate_passes_when_confirmed_to_done():
+    """confirm=True:人工把 issue 流转到 DONE(auto_confirm 模拟)→ 翻回评审 → 通过。"""
+    eng = _engine()
+    MockStore.set_auto_confirm(True)
+    MockStore.set_kind_delivery("plan", {"plan": "计划正文"})
+    res = run_task(eng, TaskKind.PLAN, _payload(), "alice",
+                   reviewers=["bob"], confirm=True, poll=_poll)
+    assert res["verdict"] == "pass"
+    item = eng.store.get_work_item(res["item_id"])
+    assert item.status == WorkItemStatus.DONE
+
+
+def test_human_gate_no_reviewers_stops_at_human_done():
+    """confirm=True 且无 reviewer:人工确认(DONE)即终态,不再另跑评审。"""
+    eng = _engine()
+    MockStore.set_auto_confirm(True)
+    MockStore.set_kind_delivery("plan", {"plan": "计划正文"})
+    res = run_task(eng, TaskKind.PLAN, _payload(), "alice",
+                   confirm=True, poll=_poll)
+    assert res["verdict"] == "pass"
+    item = eng.store.get_work_item(res["item_id"])
+    assert item.status == WorkItemStatus.DONE
+
+
+def test_no_confirm_skips_human_gate():
+    """confirm=False(默认):不等人工 DONE,产出后直接进评审。"""
+    eng = _engine()
+    MockStore.set_kind_delivery("plan", {"plan": "计划正文"})
+    res = run_task(eng, TaskKind.PLAN, _payload(), "alice",
+                   reviewers=["bob"], confirm=False, poll=_poll)
+    assert res["verdict"] == "pass"
+
+
 def test_reject_twice_then_pass():
     eng = _engine()
     MockStore.set_kind_delivery("plan", {"plan": "计划正文"})

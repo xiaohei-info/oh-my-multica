@@ -102,6 +102,7 @@ def run_task(
     max_revisions: int = 3,
     poll: Callable[[], None],
     guard: Optional[Callable[[WorkItem], List[str]]] = None,
+    confirm: bool = False,
 ) -> Dict[str, Any]:
     """派任务→等终态→取交付→有界修订循环。
 
@@ -166,6 +167,17 @@ def run_task(
                 report={"item_id": item_id, "kind": kind.value,
                         "rounds": max_revisions, "phase": "guard",
                         "last_opinion": "\n".join(guard_errors)})
+
+    # ── 人机门(human in the loop,可选) ──
+    # 通过标准:人工把 issue 流转到 DONE(易于自动化识别),或 `omac plan confirm`。
+    # 识别到 DONE 后:有 reviewer 则翻回 IN_REVIEW 继续评审;无 reviewer 则人工确认即终态。
+    if confirm:
+        _poll_until(
+            store, item_id, lambda i: i.status == WorkItemStatus.DONE, poll)
+        if not reviewers:
+            return {"item_id": item_id, "delivery": delivery,
+                    "rounds": 0, "verdict": "pass", "kind": kind.value}
+        store.mark_in_review(item_id)
 
     if not reviewers:
         # 产出者交付后停在 IN_REVIEW(work submit 语义);无 reviewer 时由本原语收口终态。

@@ -48,6 +48,7 @@ class PlanContext:
     no_review: bool
     no_acceptance: bool
     members: set
+    confirm: bool = True
 
     def poll(self, interval: Optional[float] = None) -> Callable[[], None]:
         """构造一个阻塞轮询闭包(真实场景用,测试注入 no-op)。"""
@@ -150,6 +151,7 @@ def plan_create(
             reviewers=reviewers,
             max_revisions=ctx.max_revisions,
             poll=poll_cb,
+            confirm=ctx.confirm,
         )
         plan_text = _phase_text(res["delivery"], _PLAN_KEY)
 
@@ -165,6 +167,7 @@ def plan_create(
             reviewers=reviewers,
             max_revisions=ctx.max_revisions,
             poll=poll_cb,
+            confirm=ctx.confirm,
         )
         acceptance_text = _phase_text(res["delivery"], _ACCEPTANCE_KEY)
         acceptance_doc = _validate_acceptance(acceptance_text)

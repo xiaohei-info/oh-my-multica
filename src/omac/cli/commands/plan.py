@@ -59,6 +59,15 @@ def register(parser):
     create.add_argument("--doc", help="已有设计/计划文档路径(给了就跳过 planner 制定环节)")
     create.add_argument("--no-review", action="store_true", help="跳过全部 review 阶段")
     create.add_argument("--no-acceptance", action="store_true", help="跳过验收文档环节")
+    create.add_argument(
+        "--no-confirm", action="store_true",
+        help="跳过计划/验收的人机确认门(无人值守入口用;默认开启,需人工把 issue 流转到 DONE 放行)")
+
+    confirm = sub.add_parser(
+        "confirm", help="人机门手动放行:把 <name> 待确认的计划/验收 issue 流转到 DONE")
+    confirm.add_argument("--name", required=True, help="计划名(plan create --name 用的同一名字)")
+    confirm.add_argument("--engine", help="引擎类型,缺省按 config.yaml / 环境变量")
+    confirm.add_argument("--workspace", help="工作空间 id,缺省按 config.yaml / 环境变量")
 
     check = sub.add_parser("check", help="lint + review 一份现成 manifest(调用者自拆模式)")
     check.add_argument("manifest", help="manifest 文件路径")
@@ -262,13 +271,50 @@ def _create(args) -> int:
         no_review=args.no_review,
         no_acceptance=args.no_acceptance,
         members=members,
+        confirm=not args.no_confirm,
     )
     return plan_create(ctx, args.name, doc_path=doc_path, goal_text=goal_text)
+
+
+def _confirm(args) -> int:
+    """omac plan confirm:人机门手动放行(方案3,防自动识别失效)。
+
+    找 <name> 下停在人机门的产出 issue(IN_REVIEW + phase=REVIEW + 尚未指派
+    reviewer),流转到 DONE。omac 的编排轮询识别到 DONE 后翻回评审流程。
+    """
+    from ...core.taskmeta import TaskKind, TaskPhase
+    from ...engines.models import WorkItemStatus
+
+    engine = _resolve_engine(args)
+    workspace_id = engine.store.config.workspace_id
+    name = args.name
+
+    # 待确认 = 计划/验收产出停在人机门:IN_REVIEW + phase=REVIEW + 尚未指派 reviewer。
+    # 标题含 [DAG:...] 前缀,故按 name 子串匹配(create 用 `{name} 计划/验收文档`)。
+    waiting = [
+        it for it in engine.store.list_work_items(workspace_id)
+        if it.kind in (TaskKind.PLAN, TaskKind.ACCEPTANCE)
+        and it.status == WorkItemStatus.IN_REVIEW
+        and it.phase == TaskPhase.REVIEW
+        and not it.reviewer
+        and name in (it.title or "")
+    ]
+    if not waiting:
+        raise ValidationError(
+            f"未找到 {name} 待确认的计划/验收 issue —— "
+            "可能已确认、尚未产出,或 --name 不匹配。")
+
+    it = waiting[0]
+    engine.store.mark_done(it.id)
+    print(f"已确认:{it.title}(issue {it.id})→ DONE,omac 将继续评审流程")
+    return exit_codes.OK
 
 
 def run(args) -> int:
     if args.action == "create":
         return _create(args)
+    if args.action == "confirm":
+        return _confirm(args)
     if args.action == "check":
         return _check(args)
     if args.action == "show":
