@@ -807,19 +807,22 @@ def render_issue_body(node, contract, kind, issue_id, source_refs=None):
 
 
 def render_review_rollout_comment(node, contract, verdict: Optional[str], report=None,
-                                  item_id=None):
+                                  item_id=None, kind: TaskKind = TaskKind.DEVELOP):
     """review 转派评论模板(设计文档 §7.4 阶段交接)。
 
     包含:阶段变更说明 + 评审对象定位。三种语境:
-      - verdict=None:worker 交付完毕,转派 reviewer 接手(进入 review);
+      - verdict=None:产出者交付完毕,转派 reviewer 接手(进入 review);
       - pass / pass-with-nits:reviewer 给出通过结论(含 nits);
-      - reject:转回 worker 返工,附 review_goals + blockers + nits,
-        让开发者朝目标修。
+      - reject:转回产出者返工,附 review_goals + blockers + nits,让其朝目标修。
     report 缺省视为空结构;item_id 用于定位评审对象(缺省用节点 id)。
+    kind 决定 submit 模板:develop→--pr-url;plan/acceptance/decompose→--plan-file 等
+    (与 work show 同源,不写死,避免给产出者发错重交命令)。
     """
     report = report or {}
     reviewer = getattr(node, "reviewer", "reviewer")
     location = item_id if item_id is not None else getattr(node, "id", "issue")
+    review_submit = submit_template_for(kind, TaskPhase.REVIEW, location)
+    author_submit = submit_template_for(kind, TaskPhase.AUTHORING, location)
 
     def _bul(label, items):
         if not items:
@@ -827,12 +830,11 @@ def render_review_rollout_comment(node, contract, verdict: Optional[str], report
         return label + "\n" + "\n".join(f"  - {x}" for x in items)
 
     if verdict is None:
-        heading = "阶段变更:worker 交付完毕,转派 reviewer 进入 review"
+        heading = "阶段变更:产出者交付完毕,转派 reviewer 进入 review"
         body = (
-            f"评审对象(本 issue={location}):交付物 / contract / worker env_setup "
-            f"(reviewer={reviewer})。\n"
-            f"请 reviewer 独立复跑(env_setup + verification_commands)后 "
-            f"omac work submit {location} --verdict ... --report-file ..."
+            f"评审对象(本 issue={location}):交付物 / contract / 复跑清单(如有) "
+            f"(reviewer={reviewer})。先 omac work show {location} 取权威上下文,\n"
+            f"独立复跑后 {review_submit}"
         )
         return f"## {heading}\n{body}"
 
@@ -846,21 +848,18 @@ def render_review_rollout_comment(node, contract, verdict: Optional[str], report
         body_lines.append("由 loop 推进下一步(节点完成 / 后续节点解锁)。")
         return "## {}\n{}".format(heading, "\n".join(body_lines))
 
-    # reject → 回转 worker
-    heading = "verdict=reject: 转回 worker 返工(朝评审目标修,不只是列出的问题)"
+    # reject → 回转产出者
+    heading = "verdict=reject: 转回产出者返工(朝评审目标修,不只是列出的问题)"
     goals = report.get("review_goals") or ["独立复跑验证 + 验收映射 + 契约遵守"]
     blockers = report.get("blockers") or []
     nits = report.get("nits") or []
     body_lines = [
-        f"评审对象(issue={location})未通过(reviewer={reviewer}),回转 worker 返工。"
+        f"评审对象(issue={location})未通过(reviewer={reviewer}),回转产出者返工。"
     ]
     body_lines.append(_bul("评审目标(review_goals):", goals))
     if blockers:
         body_lines.append(_bul("阻塞项(blockers):", blockers))
     if nits:
         body_lines.append(_bul("建议项(nits):", nits))
-    body_lines.append(
-        f"请按评审目标修完后重新 "
-        f"omac work submit {location} --pr-url ... --verification-file ..."
-    )
+    body_lines.append(f"请按评审目标修完后重新 {author_submit}")
     return "## {}\n{}".format(heading, "\n".join(body_lines))

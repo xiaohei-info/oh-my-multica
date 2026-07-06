@@ -92,6 +92,29 @@ def test_run_task_renders_source_refs_in_body():
     assert "7" in item.description and "8" in item.description
 
 
+def test_run_task_pushes_rollout_comment_on_handoff_to_reviewer():
+    """转派 reviewer 时推送阶段变更评论(与 develop loop 对齐,不押注 agent 自觉)。"""
+    eng = _engine()
+    MockStore.set_kind_delivery("plan", {"plan": "计划正文"})
+    res = run_task(eng, TaskKind.PLAN, _payload(), "alice",
+                   reviewers=["bob"], poll=_poll)
+    comments = eng.store.get_comments(res["item_id"])
+    # 一次过也应有「转派 reviewer」的推送评论(含 reviewer + work submit 指引)
+    assert any("reviewer" in c and "omac work submit" in c for c in comments)
+
+
+def test_run_task_reject_rollout_uses_kind_correct_submit_template():
+    """reject 推送评论给产出者的重交模板按 kind 正确:plan → --plan-file(非 --pr-url)。"""
+    eng = _engine()
+    MockStore.set_kind_delivery("plan", {"plan": "计划正文"})
+    MockStore.set_review_rejects(1)
+    res = run_task(eng, TaskKind.PLAN, _payload(), "alice",
+                   reviewers=["bob"], max_revisions=3, poll=_poll)
+    joined = "\n".join(eng.store.get_comments(res["item_id"]))
+    assert "--plan-file" in joined       # planner 重交用 --plan-file
+    assert "--pr-url" not in joined      # 不是 develop 的 --pr-url
+
+
 def test_human_gate_blocks_until_confirmed():
     """confirm=True 且无人工确认时,人机门不放行:产出停在 IN_REVIEW 等 DONE。"""
     eng = _engine()
@@ -156,9 +179,9 @@ def test_reject_twice_then_pass():
     # 全程同一 issue id,未新建评审 issue
     assert len(eng.store.list_work_items("ws")) == 1
     assert item.id == res["item_id"]
-    # 两次 reject 意见都落在同一 issue 上
+    # 两次 reject 的结构化 rollout 评论都落在同一 issue 上(每轮另有转派 reviewer 的推送)
     comments = eng.store.get_comments(res["item_id"])
-    assert len(comments) == 2
+    assert sum("verdict=reject" in c for c in comments) == 2
 
 
 def test_exhausted_needs_decision():
