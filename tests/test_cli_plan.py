@@ -447,7 +447,7 @@ def test_plan_confirm_marks_waiting_issue_done(tmp_path, monkeypatch):
     engine = _configure_create_mock(tmp_path, monkeypatch)
     MockStore.set_auto_confirm(False)  # 关自动确认,验证手动放行
     item = engine.store.create_work_item(
-        "mock-workspace", "demo-confirm 计划", "", dag_key="plan",
+        "mock-workspace", "demo-confirm 计划", "demo-confirm 计划", dag_key="plan",
         worker="alice", kind=TaskKind.PLAN)
     engine.store.update_work_item_metadata(
         item.id, deliverable="计划正文", phase=TaskPhase.REVIEW)

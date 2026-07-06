@@ -122,8 +122,10 @@ def run_task(
     source_of_truth = payload.get("source_of_truth") or {}
 
     # ── 建 issue(先占位 id,再用真实 id 渲染 body) ──
+    # 建时用 title 作非空占位正文:真实 body 要嵌 issue id、只能建后回填,而真机
+    # multica 拒收空 --description-file,故不能传空串(见 test_engines_mock parity)。
     item = store.create_work_item(
-        workspace_id, title, "", dag_key=kind.value, worker=assignee, kind=kind,
+        workspace_id, title, title, dag_key=kind.value, worker=assignee, kind=kind,
     )
     item_id = item.id
     # body 里 reviewer 留 None:reviewer 在 review 阶段按轮次由 _pick_reviewer 动态选取,
