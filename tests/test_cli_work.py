@@ -559,6 +559,7 @@ class TestSubmitPerKindPhase:
             "nodes": [{"id": "b", "worker": sorted(members)[0],
                        "contract": {
                            "objective": "x", "acceptance": ["y"], "non_goals": ["z"],
+                           "source_of_truth": ["docs/b.md"],
                            "verification_commands": ["pytest -q"],
                            "integration_gates": [{
                                "name": "g", "layer": "L1", "delivery_goal": "d",

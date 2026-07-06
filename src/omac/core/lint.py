@@ -55,6 +55,8 @@ def _contract_errors(node) -> list:
         errs.append(f"{prefix}.objective is required")
     if not contract.acceptance:
         errs.append(f"{prefix}.acceptance must be non-empty")
+    if not contract.source_of_truth:
+        errs.append(f"{prefix}.source_of_truth must be non-empty")
     if not contract.non_goals:
         errs.append(f"{prefix}.non_goals must be non-empty")
     if not contract.verification_commands:

@@ -162,6 +162,18 @@ class TestRenderIssueBody:
         assert "non_goals 是红线" not in body
         assert "reviewer（" not in body
 
+    def test_scope_paths_rendered_as_boundary_when_present(self):
+        """contract.scope_paths 有值→渲染为代码范围红线;无值→不渲染(可选字段)。"""
+        c = Contract(objective="o", acceptance=["a"], scope_paths=["src/auth/**"])
+        n = Node(id="n", worker="alice", title="t", contract=c)
+        body = render_issue_body(n, c, TaskKind.DEVELOP, "ID")
+        assert "src/auth/**" in body
+        assert "代码范围" in body
+        # 无 scope_paths:不渲染该约束(新项目可留空,直接放行)
+        c2 = Contract(objective="o", acceptance=["a"])
+        n2 = Node(id="n", worker="alice", title="t", contract=c2)
+        assert "代码范围" not in render_issue_body(n2, c2, TaskKind.DEVELOP, "ID")
+
     def test_optional_fields_render_when_present(self):
         n = Node(id="n", worker="alice", title="t", reviewer="bob",
                  contract=_full_contract())

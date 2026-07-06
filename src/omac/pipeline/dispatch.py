@@ -706,6 +706,11 @@ def render_issue_body(node, contract, kind, issue_id, source_refs=None):
         rules.append(
             "non_goals 是红线,越界即 reject:\n"
             + "\n".join(f"  - {g}" for g in non_goals))
+    scope_paths = _contract_summary(contract, "scope_paths", None)
+    if scope_paths:
+        rules.append(
+            "代码范围限定在以下路径,越界改动即 reject:\n"
+            + "\n".join(f"  - {p}" for p in scope_paths))
     rules.append("完成必须有结构化证据（verification/report）,不接受自述")
     if pr_base:
         rules.append(f"PR base 必须指向集成分支（pr_base={pr_base}）,不合主干")

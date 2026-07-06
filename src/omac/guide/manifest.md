@@ -14,9 +14,10 @@ nodes:
     blocked_by: [shared-contracts] # 依赖
     contract:                      # 硬合同,lint 强制
       objective: 一句话目标
-      source_of_truth: [docs/design.md#user-api]
+      source_of_truth: [docs/design.md#user-api]  # 必填:worker 照着实现的设计指针(只放指针,不放正文)
       acceptance: [ ... ]          # 须锚定验收文档条目
       non_goals: [ ... ]
+      scope_paths: [src/auth/**]   # 可选:本节点限定改动的路径,圈定工程边界防并行冲突;新项目结构未定可留空
       verification_commands: [ ... ]
       integration_gates: [ ... ]   # 每个 gate 须有 source_of_truth/delivery_goal/covers/acceptance_refs/commands
       pr_base: feature/v1          # PR 基线,防打错分支
@@ -25,9 +26,13 @@ nodes:
 
 ## lint 口径
 
-objective/acceptance/non_goals/verification_commands/integration_gates/pr_base
+objective/source_of_truth/acceptance/non_goals/verification_commands/integration_gates/pr_base
 必填且非空;coverage_gate 0-100;required_contracts 路径必须存在;
 reviewer ≠ worker;DAG 无环;worker/reviewer 在 agent 池内。
+
+> **source_of_truth 必填**:每个节点必须带实现层设计指针(设计文档 + 节号),否则 worker 只能脑补设计。
+> **scope_paths 可选**:有项目结构就填(圈定 worker 只能碰的路径,把并行冲突从散文约束变成可扫描的工程边界);
+> 新项目结构还没定,可留空放行——有则最好,无也可过。
 
 字段支持 `${ENV_VAR:-默认值}` 展开,id 类值不必硬写进文件。
 

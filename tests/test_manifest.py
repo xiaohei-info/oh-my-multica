@@ -56,6 +56,17 @@ def test_roundtrip_preserves_state(tmp_path):
     assert m2.nodes["b"].contract.pr_base == "feature/v1"
 
 
+def test_scope_paths_optional_roundtrip():
+    """scope_paths 可选:填了则往返保留,没填则 dump 不出现(适配无结构的新项目)。"""
+    from omac.core.manifest import Contract, _dump_contract, _load_contract
+    c = Contract(objective="o", scope_paths=["src/auth/**", "tests/auth/**"])
+    dumped = _dump_contract(c)
+    assert dumped["scope_paths"] == ["src/auth/**", "tests/auth/**"]
+    assert _load_contract(dumped).scope_paths == ["src/auth/**", "tests/auth/**"]
+    # 没填时 dump 里不出现该键(向后兼容,不硬塞空字段)
+    assert "scope_paths" not in _dump_contract(Contract(objective="o"))
+
+
 def test_env_expansion(tmp_path, monkeypatch):
     content = "meta:\n  ws: \"${OMAC_TEST_WS:-fallback}\"\nnodes: []\n"
     path = _write(tmp_path, content)

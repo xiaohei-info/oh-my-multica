@@ -44,5 +44,35 @@ def test_contract_hard_gates():
     errs = lint(_manifest(_node("a", contract=contract)), POOL)
     joined = "\n".join(errs)
     for needle in ("objective", "acceptance", "non_goals",
-                   "verification_commands", "integration_gates", "pr_base"):
+                   "verification_commands", "integration_gates", "pr_base",
+                   "source_of_truth"):
         assert needle in joined
+
+
+def _valid_contract(**over):
+    """过 lint 的最小合法契约(每个硬门都满足)。"""
+    base = dict(
+        objective="实现 X", acceptance=["A 工作"], non_goals=["不做 Y"],
+        source_of_truth=["docs/design.md#x"],
+        verification_commands=["pytest -q"],
+        integration_gates=[{
+            "name": "g1", "layer": "L1", "delivery_goal": "d",
+            "source_of_truth": ["docs/design.md#x"], "covers": ["route"],
+            "acceptance_refs": ["A 工作"], "commands": ["pytest tests/int"],
+        }],
+        pr_base="feature/v1")
+    base.update(over)
+    return Contract(**base)
+
+
+def test_source_of_truth_required_for_contract():
+    """契约必须带实现层设计指针(source_of_truth),否则 worker 只能脑补设计。"""
+    contract = _valid_contract(source_of_truth=[])
+    errs = lint(_manifest(_node("a", contract=contract)), POOL)
+    assert any("source_of_truth" in e for e in errs)
+
+
+def test_valid_contract_passes_all_gates():
+    """回归:补全 source_of_truth 的完整契约应零报错(硬门不误伤合法节点)。"""
+    errs = lint(_manifest(_node("a", contract=_valid_contract())), POOL)
+    assert errs == []

@@ -42,6 +42,9 @@ class Contract:
     pr_base: str | None = None
     coverage_gate: int | float = 90
     acceptance_doc: dict | list | None = None
+    # 代码范围归属(可选):本节点限定改动的路径/glob。有项目结构就填、圈定
+    # worker 的工程边界防并行冲突;新项目结构未定可留空,不上 lint 硬门。
+    scope_paths: list = field(default_factory=list)
 
 
 def _load_contract(raw):
@@ -58,6 +61,7 @@ def _load_contract(raw):
         pr_base=raw.get("pr_base"),
         coverage_gate=raw.get("coverage_gate", 90),
         acceptance_doc=raw.get("acceptance_doc"),
+        scope_paths=list(raw.get("scope_paths", [])),
     )
 
 
@@ -76,6 +80,8 @@ def _dump_contract(contract):
         data["source_of_truth"] = list(contract.source_of_truth)
     if contract.required_contracts:
         data["required_contracts"] = list(contract.required_contracts)
+    if contract.scope_paths:
+        data["scope_paths"] = list(contract.scope_paths)
     if contract.coverage_gate != 90:
         data["coverage_gate"] = contract.coverage_gate
     return data

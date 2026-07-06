@@ -28,6 +28,7 @@ nodes:
     contract:
       objective: 实现 a
       acceptance: ["a 可运行"]
+      source_of_truth: ["docs/a.md"]
       non_goals: ["不碰 b"]
       verification_commands: ["pytest tests/a"]
       integration_gates:
@@ -46,6 +47,7 @@ nodes:
     contract:
       objective: 实现 b
       acceptance: ["b 可运行"]
+      source_of_truth: ["docs/b.md"]
       non_goals: ["不碰 a"]
       verification_commands: ["pytest tests/b"]
       integration_gates:
@@ -275,6 +277,7 @@ nodes:
       objective: 实现登录
       acceptance:
         - flow-login
+      source_of_truth: ["docs/login.md"]
       non_goals: ["不改 dashboard"]
       verification_commands: ["pytest tests/login"]
       integration_gates:
@@ -293,6 +296,7 @@ nodes:
       objective: 实现仪表盘
       acceptance:
         - flow-dashboard
+      source_of_truth: ["docs/dash.md"]
       non_goals: ["不改 login"]
       verification_commands: ["pytest tests/dash"]
       integration_gates:
