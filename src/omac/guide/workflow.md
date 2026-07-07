@@ -79,6 +79,23 @@ omac 有三种入口调用者,消费同一套 CLI:**人(终端)/ Agent(Claude Co
   - 无 work_item_id 的节点:首次建 work item 并回填
 - 失败处理与中断续跑是同一条路径:改完 manifest 重跑即可
 
+### 观测(给编排者)
+
+进度事件走 **stderr**(永不污染 stdout 数据线)。一批事件、两种形态:
+
+| 场景 | 命令 | 事件形态 |
+|---|---|---|
+| 人看(交互终端) | `omac dag run` | 人类文本,默认 |
+| 机器/CI/上层解析 | `omac dag run --json-logs` 或 `OMAC_LOG_FORMAT=json` | JSON-lines |
+
+事件清单(每次状态跃迁里程碑,不刷 poll):
+`dispatch`(派单) / `review_dispatch`(转 reviewer) / `verdict`(判决) /
+`revision`(回退,带 `gate`: worker/ci/review/guard) / `node_done` / `node_failed` /
+`human_gate_wait`(confirm 门干等人挪 issue —— 无此事件会看着像卡死) /
+`cascade_blocked`(失败连坐) / `unblock`(上游修复解封) / `converged` / `needs_decision`。
+
+上层编排器(Multica 跑 omac、CI)接管时 `2> events.jsonl` 重定向 stderr 即可获得可解析流。
+
 ### manifest 唯一口径
 
 manifest 文件是全局唯一口径 —— 不依赖 checkpoint、Run 存储、event log 等自造存储。

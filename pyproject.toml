@@ -11,6 +11,7 @@ license = { text = "MIT" }
 requires-python = ">=3.10"
 dependencies = [
     "PyYAML>=6.0",
+    "structlog>=24",
 ]
 
 [project.urls]

@@ -10,6 +10,7 @@ import argparse
 import sys
 
 from .. import __version__
+from ..core.logsetup import configure_logging, resolve_log_format
 from ..errors import NeedsDecision, OmacError
 from . import exit_codes
 from .commands import COMMAND_GROUPS
@@ -39,6 +40,14 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--version", action="version", version=f"{PROG} {__version__}")
+    # 进度事件流(走 stderr,不污染 stdout 数据线):默认人类文本,机器/CI 用 json。
+    # 优先级:--log-format > --json-logs > OMAC_LOG_FORMAT 环境变量 > 默认 text。
+    parser.add_argument(
+        "--log-format", choices=("text", "json"), default=None,
+        help="进度事件格式:text 给人看(默认)/ json 给机器/CI 解析(等价 OMAC_LOG_FORMAT)")
+    parser.add_argument(
+        "--json-logs", dest="log_format", action="store_const", const="json",
+        help="--log-format json 的简写:进度事件出 JSON-lines(stderr)")
 
     subparsers = parser.add_subparsers(dest="command", metavar="<command>")
     for _, commands in COMMAND_GROUPS:
@@ -54,6 +63,9 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    # 进度事件流一次性配置(事件走 stderr);须在任何命令产出事件前完成。
+    configure_logging(resolve_log_format(getattr(args, "log_format", None)))
 
     if not getattr(args, "command", None):
         parser.print_help()
