@@ -228,12 +228,40 @@ class MulticaStore(WorkItemStore):
                     infos.append(info)
         return infos
 
+    @staticmethod
+    def _repo_url(entry: Any) -> Optional[str]:
+        if isinstance(entry, str):
+            return entry
+        if not isinstance(entry, dict):
+            return None
+        ref = entry.get("resource_ref") if isinstance(entry.get("resource_ref"), dict) else {}
+        return entry.get("url") or ref.get("url")
+
+    def _workspace_repo_urls(self) -> set[str]:
+        result = self._run_multica(["repo", "list", "--output", "json"])
+        if isinstance(result, dict):
+            items = result.get("repos") or result.get("repositories") or result.get("data") or []
+        elif isinstance(result, list):
+            items = result
+        else:
+            items = []
+        return {url for url in (self._repo_url(item) for item in items) if url}
+
+    def _ensure_workspace_repos(self, repo_urls: Optional[List[str]]) -> None:
+        urls = [url for url in (repo_urls or []) if url]
+        if not urls:
+            return
+        existing = self._workspace_repo_urls()
+        missing = [url for url in urls if url not in existing]
+        if missing:
+            self._run_multica(["repo", "add", *missing, "--output", "json"])
+
     def create_project(
         self, workspace_id: str, title: str,
         repo_urls: Optional[List[str]] = None,
         description: Optional[str] = None,
     ) -> ProjectInfo:
-        """multica project create --title X [--repo url ...] [--description ...]。"""
+        """multica project create --repo + workspace repo registry ensure。"""
         args = ["project", "create", "--title", title, "--output", "json"]
         for url in (repo_urls or []):
             args += ["--repo", url]
@@ -245,8 +273,8 @@ class MulticaStore(WorkItemStore):
         info = self._project_to_info(result)
         if info is None:
             raise PlatformError(f"创建 project 返回缺少 id: {result}")
-        # create 返回可能不含 resources,回填请求的 repo_urls 便于展示
-        if repo_urls and not info.repos:
+        self._ensure_workspace_repos(repo_urls)
+        if repo_urls:
             info.repos = list(repo_urls)
         return info
 

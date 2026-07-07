@@ -166,6 +166,28 @@ def test_e2e_all_pass_first_round(tmp_path):
     assert outcome.rounds == 1
 
 
+def test_acceptance_loop_uses_manifest_plan_id_in_dag_key(tmp_path):
+    path = str(tmp_path / "fx.yaml")
+    manifest = _done_manifest(path)
+    manifest.meta["plan_id"] = "p-1234abcd"
+    doc = _acceptance_doc([("f1", "F1", 1)])
+    _write_doc(tmp_path, doc)
+
+    engine = _engine()
+    MockStore.set_acceptance_behaviors({
+        "final-acceptance-p-1234abcd-r1": [
+            {"id": "f1", "status": "pass"},
+        ],
+    }, {})
+
+    config = {
+        "defaults": {"max_parallel": 4, "poll_interval": 0},
+        "roles": {"reviewers": REVIEWERS, "orchestrator": ORCHESTRATOR},
+    }
+    outcome = run_acceptance_loop(engine, manifest, path, doc, config)
+    assert outcome.exit_code == 0
+
+
 # ── max_rounds exhausted -> exit 20 ────────────────────────────────
 
 def test_max_rounds_exhausted(tmp_path):

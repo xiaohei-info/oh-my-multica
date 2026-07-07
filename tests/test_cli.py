@@ -29,6 +29,19 @@ def test_unknown_command_teaches(capsys):
     assert "Error" in err and "<command>" in err  # 报错即教学:带 usage/help
 
 
+def test_dag_accepts_trailing_log_flags(capsys):
+    # 文档承诺的用户路径:日志 flag 放在 dag 子命令参数之后也应被接受。
+    assert main(["dag", "run", "nope.yaml", "--json-logs"]) == exit_codes.VALIDATION
+    err = capsys.readouterr().err
+    assert "manifest 文件不存在" in err
+    assert "unrecognized arguments" not in err
+
+    assert main(["dag", "run", "nope.yaml", "--log-format", "json"]) == exit_codes.VALIDATION
+    err = capsys.readouterr().err
+    assert "manifest 文件不存在" in err
+    assert "unrecognized arguments" not in err
+
+
 def test_stub_commands_exit_generic(capsys):
     # dag run 已在 P1 实现(omac dag run),不再是 stub
     # `omac web` 在 P5.1 实现,不再是 stub(默认启动本地服务)。

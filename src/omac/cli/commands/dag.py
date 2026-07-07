@@ -2,6 +2,7 @@
 from __future__ import annotations
 from typing import Optional
 
+import argparse
 import os
 
 from .. import exit_codes
@@ -49,6 +50,17 @@ DESCRIPTION = """确定性编排循环:sync(回收结果)→ decide(就绪节点
 """
 
 
+def _add_log_flags(parser):
+    """允许 dag 子动作尾随日志 flag,同时不覆盖顶层同名 flag。"""
+    parser.add_argument(
+        "--log-format", choices=("text", "json"), default=argparse.SUPPRESS,
+        help="进度事件格式:text 给人看(默认)/ json 给机器/CI 解析")
+    parser.add_argument(
+        "--json-logs", dest="log_format", action="store_const", const="json",
+        default=argparse.SUPPRESS,
+        help="--log-format json 的简写:进度事件出 JSON-lines(stderr)")
+
+
 def register(parser):
     sub = parser.add_subparsers(dest="action", metavar="<action>", required=True)
 
@@ -60,18 +72,21 @@ def register(parser):
     run_p.add_argument("--max-rounds", type=int, help="最多跑 N 轮后退出(分段跑)")
     run_p.add_argument("--max-minutes", type=int, help="最多跑 N 分钟后退出(分段跑)")
     add_output_flag(run_p)
+    _add_log_flags(run_p)
 
     status = sub.add_parser("status", help="查看快照,不推进(退出码恒 0)")
     status.add_argument("manifest", help="manifest 文件路径")
     status.add_argument("--engine", help="引擎类型覆盖(缺省读 config/env)")
     status.add_argument("--workspace", help="workspace 覆盖(缺省读 config/env)")
     add_output_flag(status)
+    _add_log_flags(status)
 
     tick = sub.add_parser("tick", help="单轮推进后退出(exit 0/10/20)")
     tick.add_argument("manifest", help="manifest 文件路径")
     tick.add_argument("--engine", help="引擎类型覆盖(缺省读 config/env)")
     tick.add_argument("--workspace", help="workspace 覆盖(缺省读 config/env)")
     add_output_flag(tick)
+    _add_log_flags(tick)
 
 
 def _assemble_engine(args):

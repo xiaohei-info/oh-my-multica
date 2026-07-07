@@ -67,6 +67,21 @@ def test_one_pass_no_reviewers():
     assert f"omac work submit {res['item_id']}" in item.description
 
 
+def test_run_task_auto_generates_unique_dag_key_when_missing():
+    eng = _engine()
+    MockStore.set_kind_delivery("plan", {"plan": "计划正文"})
+    first = run_task(eng, TaskKind.PLAN, _payload(title="重复计划"), "alice", poll=_poll)
+    second = run_task(eng, TaskKind.PLAN, _payload(title="重复计划"), "alice", poll=_poll)
+
+    first_key = eng.store.get_work_item(first["item_id"]).dag_key
+    second_key = eng.store.get_work_item(second["item_id"]).dag_key
+    assert first_key.startswith("plan-")
+    assert second_key.startswith("plan-")
+    assert first_key != "plan"
+    assert second_key != "plan"
+    assert first_key != second_key
+
+
 def test_run_task_consumes_real_submit_deliverable():
     """真实 submit 路径:producer 经 dispatch.submit → IN_REVIEW + deliverable(正文),
     run_task 应取到 deliverable 并跑完评审到 done(而非依赖 mock 的 artifacts 捷径)。"""
@@ -226,9 +241,10 @@ def test_pick_reviewer_prefers_non_producer_when_available():
 
 def test_failure_in_production_short_circuits():
     eng = _engine()
-    # dag_key == kind == "plan",注入失败
+    # 失败注入按 dag_key 命中;显式 key 覆盖自动生成路径。
     MockStore.set_fail_keys({"plan"})
     with pytest.raises(NeedsDecision) as exc:
-        run_task(eng, TaskKind.PLAN, _payload(), "alice", poll=_poll)
+        run_task(eng, TaskKind.PLAN, _payload(), "alice",
+                 poll=_poll, dag_key="plan")
     assert exc.value.report["rounds"] == 0
     assert "producer failed" in exc.value.report["last_opinion"]

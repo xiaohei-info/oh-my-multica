@@ -89,7 +89,7 @@ def _select_engine(args) -> str:
 
 
 def _git_origin_url() -> Optional[str]:
-    """当前目录的 git origin URL(新建 project 时默认关联的 repo);取不到返回 None。"""
+    """当前目录的 git origin URL(新建 project 时默认登记到 workspace);取不到返回 None。"""
     import subprocess
     try:
         out = subprocess.run(["git", "remote", "get-url", "origin"],
@@ -133,7 +133,7 @@ def _select_project(args, store, workspace: str, engine: str) -> Optional[str]:
     for i, p in enumerate(projects, 1):
         repo = f" [{', '.join(p.repos)}]" if p.repos else ""
         print(f"  {i}. {p.title} ({p.id}){repo}")
-    print("  n. 新建 project(默认关联当前 repo)")
+    print("  n. 新建 project(默认把当前 repo 登记到 workspace)")
     raw = _prompt("选择 project(序号 / id / n 新建)", "n" if not projects else None)
     if raw.lower() == "n":
         return _create_project_interactive(store, workspace)

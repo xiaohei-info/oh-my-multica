@@ -195,12 +195,12 @@ def test_multica_create_work_item_passes_project(monkeypatch):
     assert "proj-42" in seen["create_cmd"]
 
 
-def test_multica_create_project_passes_description(monkeypatch):
-    """create_project 带 description 时,命令含 --description 且值为 omac 编排横幅。"""
+def test_multica_create_project_registers_project_and_workspace_repos(monkeypatch):
+    """repo 同时挂 project resource 与 workspace registry;workspace 侧跳过已有 URL。"""
     from omac.engines import multica as m
     from omac.pipeline.dispatch import OMAC_PROJECT_DESCRIPTION
 
-    seen = {}
+    calls = []
 
     class _R:
         returncode = 0
@@ -208,17 +208,37 @@ def test_multica_create_project_passes_description(monkeypatch):
         def __init__(self, out): self.stdout = out
 
     def fake_run(cmd, capture_output=False, text=False):
-        seen["cmd"] = cmd
-        return _R(json.dumps({"id": "proj-9", "title": "demo"}))
+        calls.append(cmd)
+        if "project" in cmd and "create" in cmd:
+            return _R(json.dumps({"id": "proj-9", "title": "demo"}))
+        if "repo" in cmd and "list" in cmd:
+            return _R(json.dumps([{"url": "https://github.com/x/existing.git"}]))
+        if "repo" in cmd and "add" in cmd:
+            return _R(json.dumps([{"url": "https://github.com/x/new.git"}]))
+        raise AssertionError(f"unexpected command: {cmd}")
 
     monkeypatch.setattr(m.subprocess, "run", fake_run)
     store = m.MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
-    store.create_project("ws", "demo", ["https://github.com/x/y.git"],
-                         description=OMAC_PROJECT_DESCRIPTION)
-    cmd = seen["cmd"]
-    assert "--description" in cmd
-    assert cmd[cmd.index("--description") + 1] == OMAC_PROJECT_DESCRIPTION
-    assert "--repo" in cmd
+    info = store.create_project(
+        "ws", "demo",
+        ["https://github.com/x/existing.git", "https://github.com/x/new.git"],
+        description=OMAC_PROJECT_DESCRIPTION,
+    )
+
+    create_cmd = calls[0]
+    assert "project" in create_cmd and "create" in create_cmd
+    assert "--description" in create_cmd
+    assert create_cmd[create_cmd.index("--description") + 1] == OMAC_PROJECT_DESCRIPTION
+    assert create_cmd.count("--repo") == 2
+    assert "https://github.com/x/existing.git" in create_cmd
+    assert "https://github.com/x/new.git" in create_cmd
+
+    add_cmds = [c for c in calls if "repo" in c and "add" in c]
+    assert len(add_cmds) == 1
+    assert "https://github.com/x/new.git" in add_cmds[0]
+    assert "https://github.com/x/existing.git" not in add_cmds[0]
+    assert info.repos == ["https://github.com/x/existing.git", "https://github.com/x/new.git"]
+
 
 
 def test_check_flags_missing_project_for_multica(tmp_path, monkeypatch, capsys):

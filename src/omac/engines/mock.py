@@ -303,13 +303,17 @@ class MockStore(WorkItemStore):
                     os.unlink(tmp)
                 return
 
-            seq = _shared_kind_delivery_sequences.get(item.dag_key)
+            kind_key = getattr(item.kind, "value", item.dag_key)
+            seq = _shared_kind_delivery_sequences.get(
+                item.dag_key) or _shared_kind_delivery_sequences.get(kind_key)
             if seq:
                 deliverable = seq.pop(0)
             else:
                 deliverable = _shared_kind_deliverables.get(
                     item.dag_key,
-                    {"pr_url": f"https://mock.example.com/pr/{item_id}"})
+                    _shared_kind_deliverables.get(
+                        kind_key,
+                        {"pr_url": f"https://mock.example.com/pr/{item_id}"}))
 
             if getattr(item, "kind", None) in _AUTHORING_TO_REVIEW:
                 # plan/acceptance/decompose:忠实真实 work submit 的产出终态——

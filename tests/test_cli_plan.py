@@ -364,19 +364,47 @@ def _first_item_of_kind(engine, kind):
 
 
 def test_create_default_combination(tmp_path, monkeypatch):
+    import yaml
     engine = _configure_create_mock(tmp_path, monkeypatch)
     assert main(["plan", "create", "--name", "demo-create"]) == exit_codes.OK
     assert (tmp_path / ".omac" / "demo-create.yaml").exists()
     assert (tmp_path / ".omac" / "demo-create.acceptance.yaml").exists()
+    data = yaml.safe_load((tmp_path / ".omac" / "demo-create.yaml").read_text())
+    plan_id = data["meta"]["plan_id"]
     # 验证上游产物已流入 acceptance / decompose 的 issue body
     from omac.core.taskmeta import TaskKind
+    plan_item = _first_item_of_kind(engine, TaskKind.PLAN)
     acc_item = _first_item_of_kind(engine, TaskKind.ACCEPTANCE)
-    assert acc_item is not None, "应创建 acceptance work item"
-    assert "演示计划" in acc_item.description, "acceptance issue body 应含定稿计划"
     dec_item = _first_item_of_kind(engine, TaskKind.DECOMPOSE)
+    assert plan_item is not None, "应创建 plan work item"
+    assert acc_item is not None, "应创建 acceptance work item"
     assert dec_item is not None, "应创建 decompose work item"
+    assert plan_item.dag_key == f"plan-{plan_id}"
+    assert acc_item.dag_key == f"acceptance-{plan_id}"
+    assert dec_item.dag_key == f"decompose-{plan_id}"
+    assert "演示计划" in acc_item.description, "acceptance issue body 应含定稿计划"
     assert "演示计划" in dec_item.description, "decompose issue body 应含定稿计划"
     assert "登录流程" in dec_item.description, "decompose issue body 应含验收文档(flow)"
+
+
+def test_create_chinese_name_uses_generated_plan_id_for_dag_keys(tmp_path, monkeypatch):
+    import re
+    import yaml
+    from omac.core.taskmeta import TaskKind
+
+    engine = _configure_create_mock(tmp_path, monkeypatch)
+    assert main(["plan", "create", "--name", "支付流程重构"]) == exit_codes.OK
+    data = yaml.safe_load((tmp_path / ".omac" / "支付流程重构.yaml").read_text())
+    plan_id = data["meta"].get("plan_id")
+    assert re.fullmatch(r"p-[0-9a-f]{8}", plan_id)
+
+    plan_item = _first_item_of_kind(engine, TaskKind.PLAN)
+    acc_item = _first_item_of_kind(engine, TaskKind.ACCEPTANCE)
+    dec_item = _first_item_of_kind(engine, TaskKind.DECOMPOSE)
+    assert plan_item.dag_key == f"plan-{plan_id}"
+    assert acc_item.dag_key == f"acceptance-{plan_id}"
+    assert dec_item.dag_key == f"decompose-{plan_id}"
+    assert all("-task" not in i.dag_key for i in (plan_item, acc_item, dec_item))
 
 
 def test_create_with_goal_injects_requirement_into_planner(tmp_path, monkeypatch):

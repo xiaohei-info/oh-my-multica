@@ -41,11 +41,14 @@ SMOKE_MANIFEST = FIXTURES / "smoke_p1.yaml"
 def _env(**extra) -> dict:
     """子进程环境变量:强制 mock 引擎 + delay=0。"""
     env = os.environ.copy()
+    src = str(Path(__file__).resolve().parent.parent / "src")
+    old_pythonpath = env.get("PYTHONPATH")
     env.update({
         "OMAC_ENGINE": "mock",
         "OMAC_WORKSPACE_ID": "mock-workspace",
         "MOCK_AUTO_COMPLETE": "true",
         "MOCK_AUTO_COMPLETE_DELAY": "0",
+        "PYTHONPATH": src if not old_pythonpath else src + os.pathsep + old_pythonpath,
     })
     env.update(extra)
     return env

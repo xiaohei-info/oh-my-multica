@@ -30,10 +30,10 @@ class WorkspaceInfo:
 @dataclass
 class ProjectInfo:
     """项目信息(Multica project:一个 omac 编排实例绑定一个 project,
-    project 关联目标 repo 作为资源,所有 issue 归入其下)。"""
+    repo 同时挂 project resource 与 workspace registry,所有 issue 归入 project 下)。"""
     id: str
     title: str
-    repos: List[str] = field(default_factory=list)   # 关联的 github_repo 资源 URL
+    repos: List[str] = field(default_factory=list)   # 目标 repo URL
 
 
 @dataclass

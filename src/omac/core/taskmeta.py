@@ -14,6 +14,8 @@ pipeline 经 WorkItemStore.update_work_item_metadata 写入,Store 只存取。
 """
 from __future__ import annotations
 
+import re
+import secrets
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Optional
@@ -41,6 +43,29 @@ DEFAULT_PHASE = TaskPhase.AUTHORING
 
 # 回退有界上限(设计文档 §7.3:缺省 3 次,耗尽 → blocked)
 DEFAULT_MAX_BOUNCES = 3
+
+
+def slug(value: str) -> str:
+    """dag_key 片段归一化:只保留 ASCII 小写字母/数字,空值回退 task。"""
+    text = re.sub(r"[^a-z0-9]+", "-", str(value or "").lower()).strip("-")
+    return text or "task"
+
+
+def make_dag_key(
+    kind: TaskKind,
+    *,
+    scope: Optional[str] = None,
+    title: Optional[str] = None,
+    unique: bool = False,
+) -> str:
+    """统一 dag_key 生成规则:<kind>-<scope/title>[-随机后缀]。"""
+    base = f"{kind.value}-{slug(scope if scope is not None else title or 'task')}"
+    return f"{base}-{secrets.token_hex(4)}" if unique else base
+
+
+def make_plan_id() -> str:
+    """plan create 的机器实例 ID;不从 --name 派生,避免中文/重名冲突。"""
+    return f"p-{secrets.token_hex(4)}"
 
 
 # ==================== metadata key 约定 ====================

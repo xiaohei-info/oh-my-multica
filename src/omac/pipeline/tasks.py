@@ -14,7 +14,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from ..core import logsetup
 from ..core.manifest import Contract, _load_contract
-from ..core.taskmeta import DELIVERY_CONTENT_KEY, TaskKind, TaskPhase
+from ..core.taskmeta import DELIVERY_CONTENT_KEY, TaskKind, TaskPhase, make_dag_key
 from ..engines.models import WorkItem, WorkItemStatus
 from ..errors import NeedsDecision
 from .dispatch import render_issue_body, render_review_rollout_comment
@@ -107,6 +107,7 @@ def run_task(
     guard: Optional[Callable[[WorkItem], List[str]]] = None,
     confirm: bool = False,
     source_refs: Optional[List[str]] = None,
+    dag_key: Optional[str] = None,
 ) -> Dict[str, Any]:
     """派任务→等终态→取交付→有界修订循环。
 
@@ -121,6 +122,7 @@ def run_task(
     workspace_id = store.config.workspace_id
 
     title = payload.get("title") or f"{kind.value} task"
+    task_key = dag_key or make_dag_key(kind, title=title, unique=True)
     contract = _payload_contract(payload.get("contract"))
     source_of_truth = payload.get("source_of_truth") or {}
 
@@ -128,7 +130,7 @@ def run_task(
     # 建时用 title 作非空占位正文:真实 body 要嵌 issue id、只能建后回填,而真机
     # multica 拒收空 --description-file,故不能传空串(见 test_engines_mock parity)。
     item = store.create_work_item(
-        workspace_id, title, title, dag_key=kind.value, worker=assignee, kind=kind,
+        workspace_id, title, title, dag_key=task_key, worker=assignee, kind=kind,
     )
     item_id = item.id
     # body 里 reviewer 留 None:reviewer 在 review 阶段按轮次由 _pick_reviewer 动态选取,

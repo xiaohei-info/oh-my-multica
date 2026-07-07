@@ -6,7 +6,7 @@
 结构(全部键可选,init 交互式生成):
     engine: multica | mock
     workspace: <id>
-    project: <id>                # multica 必填:issue 归入的 project(关联目标 repo)
+    project: <id>                # multica 必填:issue 归入的 project(repo 在 workspace registry)
     roles:
       planner / orchestrator: <agent>
       workers / reviewers: [<agent>, ...]
@@ -148,7 +148,7 @@ def resolve_engine_settings(
             "multica 引擎必须指定 project(issue 归入该 project,不裸建于 workspace)"
             " —— 三种给法任选:config.yaml 的 project 字段 / "
             f"环境变量 {ENV_PROJECT} / 命令行 --project;"
-            "或运行 `omac init` 选择已有 project / 新建一个(自动关联当前 repo)")
+            "或运行 `omac init` 选择已有 project / 新建一个(自动登记当前 repo 到 workspace)")
     return engine_type, workspace_id, project_id
 
 

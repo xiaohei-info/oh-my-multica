@@ -59,7 +59,7 @@ reviewer 强制 ≠ 产出者;acceptor 缺省复用 reviewers 池。
 ```yaml
 engine: multica
 workspace: ws_xxx
-project: proj_xxx          # multica 必填:issue 归入该 project(关联目标 repo);mock 不需要
+project: proj_xxx          # multica 必填:issue 归入该 project(repo 在 workspace registry);mock 不需要
 roles:
   planner: planning-agent
   orchestrator: arch-agent

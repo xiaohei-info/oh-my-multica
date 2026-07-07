@@ -27,7 +27,7 @@ from ..core.config import CONFIG_DIR, CONFIG_PATH
 from ..core.gitsync import ensure_config_synced
 from ..core.lint import lint
 from ..core.manifest import Manifest, loads_manifest, save_manifest
-from ..core.taskmeta import TaskKind
+from ..core.taskmeta import TaskKind, make_dag_key, make_plan_id
 from ..engines.models import WorkItem
 from ..errors import ValidationError
 from .tasks import run_task
@@ -134,6 +134,7 @@ def plan_create(
     acceptance_path = os.path.join(base_dir, f"{name}.acceptance.yaml")
     reviewers = [] if ctx.no_review else ctx.reviewers
     poll_cb = poll if poll is not None else ctx.poll()
+    plan_id = make_plan_id()
 
     acceptance_text: Optional[str] = None
     # provenance:各阶段源头 issue,后续阶段带上引用防跑偏(--doc 时无 plan issue)。
@@ -158,6 +159,7 @@ def plan_create(
             max_revisions=ctx.max_revisions,
             poll=poll_cb,
             confirm=ctx.confirm,
+            dag_key=make_dag_key(TaskKind.PLAN, scope=plan_id),
         )
         plan_item_id = res["item_id"]
         plan_text = _phase_text(res["delivery"], _PLAN_KEY)
@@ -176,6 +178,7 @@ def plan_create(
             poll=poll_cb,
             confirm=ctx.confirm,
             source_refs=[r for r in [plan_item_id] if r],
+            dag_key=make_dag_key(TaskKind.ACCEPTANCE, scope=plan_id),
         )
         acceptance_item_id = res["item_id"]
         acceptance_text = _phase_text(res["delivery"], _ACCEPTANCE_KEY)
@@ -200,6 +203,7 @@ def plan_create(
         poll=poll_cb,
         guard=guard,
         source_refs=[r for r in [plan_item_id, acceptance_item_id] if r],
+        dag_key=make_dag_key(TaskKind.DECOMPOSE, scope=plan_id),
     )
     decompose_item_id = res["item_id"]
     manifest_text = _phase_text(res["delivery"], _MANIFEST_KEY)
@@ -209,6 +213,8 @@ def plan_create(
     # 让 dag run 派发的 develop issue 也能溯源,防后续执行跑偏。
     source_issues = [r for r in [plan_item_id, acceptance_item_id, decompose_item_id] if r]
     manifest = loads_manifest(manifest_text)
+    manifest.meta["plan_id"] = plan_id
+    manifest.meta.setdefault("name", name)
     if source_issues:
         manifest.meta["source_issues"] = source_issues
     save_manifest(manifest, manifest_path)

@@ -64,12 +64,13 @@ class WorkItemStore(ABC):
         repo_urls: Optional[List[str]] = None,
         description: Optional[str] = None,
     ) -> ProjectInfo:
-        """新建 project,可同时把目标 repo 作为 github_repo 资源关联上去。
+        """新建 project,并把目标 repo 同时挂到 project 与 workspace registry。
 
-        契约:返回带**稳定 id** 的 ProjectInfo;repo_urls 中每个 URL 关联为一条
-        github_repo 资源(init 新建项目时默认取当前仓库的 origin)。
-        description 落为 project 描述(平台会随任务上下文注入给 agent),init 用它
-        写入 omac 编排横幅,让被派单 agent 认清入口。
+        契约:返回带**稳定 id** 的 ProjectInfo;repo_urls 中每个 URL 应作为
+        project resource 存在,并在 workspace 级仓库注册表中存在(init 新建项目
+        时默认取当前仓库的 origin),workspace 侧已存在的 URL 不重复登记。
+        description 落为 project 描述,init 用它写入 omac 编排横幅,让被派单
+        agent 认清入口。
         """
 
     # ==================== 工作单元 CRUD ====================

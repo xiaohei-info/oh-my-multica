@@ -39,6 +39,18 @@ def test_parse_phase_and_bounce_tolerant():
     assert b == Bounces(ci=2, review=0, merge=0)
 
 
+def test_make_dag_key_is_single_generation_rule():
+    assert taskmeta.make_dag_key(TaskKind.PLAN, scope="Demo Feature") == "plan-demo-feature"
+    assert taskmeta.make_dag_key(TaskKind.FINAL_ACCEPTANCE, scope="r1") == "final-acceptance-r1"
+    assert taskmeta.make_dag_key(TaskKind.PLAN, title="中文计划").startswith("plan-task")
+    a = taskmeta.make_dag_key(TaskKind.PLAN, title="Same", unique=True)
+    b = taskmeta.make_dag_key(TaskKind.PLAN, title="Same", unique=True)
+    assert a.startswith("plan-same-")
+    assert b.startswith("plan-same-")
+    assert a != b
+    assert taskmeta.make_plan_id().startswith("p-")
+
+
 # ==================== Mock 写后读回 ====================
 
 def test_mock_create_carries_kind():

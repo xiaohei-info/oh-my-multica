@@ -35,7 +35,7 @@ from ..core.config import (
 from ..core.evidence import validate_acceptance_results
 from ..core.lint import lint_increment
 from ..core.manifest import Manifest, Node, merge_increment, save_manifest
-from ..core.taskmeta import TaskKind
+from ..core.taskmeta import TaskKind, make_dag_key
 from ..engines.models import WorkItemStatus
 from ..engines.store import WorkItemStore
 from ..errors import NeedsDecision
@@ -116,6 +116,7 @@ def run_acceptance_loop(
     acceptor_cfg = acceptance_cfg.acceptor
 
     operation_branch = manifest.meta.get("pr_base")
+    plan_id = manifest.meta.get("plan_id")
     resolve_retry(config)  # 校验 retry 配置合法性(副作用)
 
     workspace_id = engine.store.config.workspace_id
@@ -136,7 +137,10 @@ def run_acceptance_loop(
 
         acceptance_item_id = _dispatch_and_wait(
             engine, workspace_id, TaskKind.FINAL_ACCEPTANCE, acceptor,
-            f"final-acceptance-r{round_num}",
+            make_dag_key(
+                TaskKind.FINAL_ACCEPTANCE,
+                scope=f"{plan_id}-r{round_num}" if plan_id else f"r{round_num}",
+            ),
             {
                 "acceptance_doc": _acceptance_doc_raw(acceptance_doc),
                 "pr_base": operation_branch,
@@ -174,7 +178,10 @@ def run_acceptance_loop(
 
         decompose_item_id = _dispatch_and_wait(
             engine, workspace_id, TaskKind.DECOMPOSE, orchestrator,
-            f"decompose-r{round_num}",
+            make_dag_key(
+                TaskKind.DECOMPOSE,
+                scope=f"{plan_id}-r{round_num}" if plan_id else f"r{round_num}",
+            ),
             {
                 "manifest": _dump_manifest(manifest),
                 "failed_items": failed_items,
