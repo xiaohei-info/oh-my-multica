@@ -90,8 +90,10 @@ manifest 文件是全局唯一口径 —— 不依赖 checkpoint、Run 存储、
 > main、信息源只有远程仓库,`.omac` 状态必须上 main 才能被读到,这是架构刚需,不是可选项。
 > mock 本地跑**默认关**(不碰业务仓库 git)。`OMAC_GIT_SYNC` 可显式覆盖(`=1` 强开 / `=0` 强关)。
 >
-> **派单前门**:`plan create` / `dag run` 开跑前,真实引擎下校验 `.omac/config.yaml` 已 commit
-> 且已 push 到 `main`,否则当场硬报错 + 补救命令 —— 避免 agent 在隔离区里因读不到 config 神秘失败。
+> **派单前自动同步**:`plan create` / `dag run` 开跑前,真实引擎下自动把 `.omac/config.yaml`
+> 同步到 `main`(脏就 commit+push,已提交没推就补推,幂等静默)—— config 是 omac 自有状态,
+> 无需用户手动操作。只有两种无法自动修复时才硬报错:config 不存在(引导 `omac init`)、
+> push 被远程拒(分叉,引导手动 `git pull --rebase`)。避免 agent 在隔离区里因读不到 config 神秘失败。
 
 ### reconcile(跨机器接力)
 

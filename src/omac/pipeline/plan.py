@@ -24,7 +24,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from ..core import acceptance as acceptance_mod
 from ..core.config import CONFIG_DIR, CONFIG_PATH
-from ..core.gitsync import assert_config_pushed, sync_enabled
+from ..core.gitsync import ensure_config_synced
 from ..core.lint import lint
 from ..core.manifest import Manifest, loads_manifest, save_manifest
 from ..core.taskmeta import TaskKind
@@ -127,9 +127,8 @@ def plan_create(
     NeedsDecision(exit 20);正常收敛 → return 0。
     """
     store = ctx.engine.store
-    # 派单前门:真实引擎下 config 必须已 push 到 main,否则隔离区 agent clone 后读不到。
-    if sync_enabled(store.config.engine_type):
-        assert_config_pushed(CONFIG_PATH, branch="main")
+    # 派单前:真实引擎下自动把 config 同步到 main,否则隔离区 agent clone 后读不到。
+    ensure_config_synced(CONFIG_PATH, branch="main", engine_type=store.config.engine_type)
     base_dir = CONFIG_DIR
     manifest_path = os.path.join(base_dir, f"{name}.yaml")
     acceptance_path = os.path.join(base_dir, f"{name}.acceptance.yaml")

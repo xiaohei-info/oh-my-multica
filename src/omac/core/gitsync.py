@@ -1,7 +1,7 @@
 """`.omac` 状态回写 git —— 隔离区 agent 与跨机编排的同步地基。
 
 架构:agent 在隔离工作区只能 clone main,信息来源只有远程仓库。于是:
-- config.yaml 必须已 push 到 main,否则 agent 读不到 → 派单前硬门(assert_config_pushed)
+- config.yaml 必须已 push 到 main,否则 agent 读不到 → 派单前自动同步(ensure_config_synced)
 - manifest 是编排器状态,跨机 resume 靠它 → tick 后回写(commit_manifest)
 
 开关:真实引擎(multica)默认开(架构要求);mock 本地跑默认关(不碰业务仓库);
@@ -35,36 +35,40 @@ def _run(repo_root, *args):
                           capture_output=True, text=True)
 
 
-def assert_config_pushed(config_path: str, branch: str = "main",
-                         repo_root: str = ".") -> None:
-    """派单前门:config 必须 tracked、无未提交改动、且已 push 到 origin/<branch>。
+def ensure_config_synced(config_path: str, branch: str = "main",
+                         repo_root: str = ".", engine_type=None) -> None:
+    """派单前把 config 同步到 origin/<branch>:脏就自动 commit+push。
 
-    隔离区 agent clone main 后靠这份 config 连平台;本地未推送即 agent 读不到,
-    与其让它在隔离区里神秘失败,不如派单前当场硬报错 + 给补救命令。
+    config 是 omac 自有状态,不该让用户手动 commit+push——脏就当场提交,已提交没推就
+    补推,幂等静默。只在两种「omac 无法自动修复」时才硬报错:
+    - config 不存在 → 引导 `omac init`
+    - push 被远程拒(分叉/无 upstream)→ 引导用户手动 pull/rebase 后重试
+
+    sync 关闭(mock 本地跑)时完全 no-op,不碰业务仓库 git。
     """
+    if not sync_enabled(engine_type):
+        return
+
     abs_path = config_path if config_path.startswith("/") else f"{repo_root}/{config_path}"
     if not os.path.exists(abs_path):
         raise ValidationError(
             f"config 不存在: {config_path} —— 先运行 `omac init` 生成配置")
 
-    # 未提交/未跟踪:git status --porcelain 有输出即脏
-    st = _run(repo_root, "status", "--porcelain", "--", config_path)
-    if st.stdout.strip():
-        raise ValidationError(
-            f"{config_path} 有未提交改动 —— 隔离区 agent clone {branch} 读到的会是旧版。\n"
-            f"  先提交并推送:git add {config_path} && git commit -m 'chore: omac config' "
-            f"&& git push origin {branch}")
+    # 有未提交改动就自动提交(隔离区 agent clone 到的必须是最新 config)
+    if _run(repo_root, "status", "--porcelain", "--", config_path).stdout.strip():
+        _run(repo_root, "add", config_path)
+        r = _run(repo_root, "commit", "-m", f"chore(omac): sync {config_path}")
+        if r.returncode != 0:
+            raise ValidationError(f"config 自动提交失败: {r.stderr.strip()}")
 
-    # 已提交但未推送:@{upstream}..HEAD 里有触及 config 的提交
-    rev = _run(repo_root, "rev-list", "@{upstream}..HEAD", "--", config_path)
-    if rev.returncode != 0:
+    # 补推(覆盖「已提交未推送」;已同步时 Everything up-to-date 幂等)
+    r = _run(repo_root, "push", "origin", branch)
+    if r.returncode != 0:
         raise ValidationError(
-            f"当前分支无 upstream(无法确认 {config_path} 是否已推送)。\n"
-            f"  先推送并设 upstream:git push -u origin {branch}")
-    if rev.stdout.strip():
-        raise ValidationError(
-            f"{config_path} 已提交但未推送到 origin/{branch} —— 隔离区 agent 读不到最新版。\n"
-            f"  推送:git push origin {branch}")
+            f"config push 到 origin/{branch} 失败 —— 隔离区 agent 会 clone 到旧版。\n"
+            f"  {r.stderr.strip()}\n"
+            f"  远程可能已分叉,先 `git pull --rebase origin {branch}` 再重试")
+    print(f"已同步 {config_path} → origin/{branch}")
 
 
 def commit_manifest(path: str, message: str, repo_root: str = ".",
