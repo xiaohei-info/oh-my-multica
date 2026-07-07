@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Set, Tuple
 
-from ..core import graph
+from ..core import graph, logsetup
 from ..core.config import DEFAULT_RETRY
 from ..core.evidence import validate_review_evidence, validate_worker_evidence
 from ..core.gitsync import commit_manifest
@@ -21,6 +21,11 @@ from ..engines.store import WorkItemStore
 from ..errors import PlatformError
 from ..pipeline.dispatch import (render_issue_body, render_review_rollout_comment)
 from ..core.taskmeta import TaskKind
+
+log = logsetup.get_logger(__name__)
+
+# dag 节点统一 kind(事件字段;与 run_task 的 plan/decompose/acceptance 区分)
+_DAG_KIND = "develop"
 
 # manifest status 字符串常量
 RUNNING_STATUSES = {"in_progress", "ci_check", "in_review"}
@@ -168,6 +173,8 @@ def collect_results(
                     store.add_comment(node.work_item_id, f"证据门未通过: {reason}")
                     set_node(manifest, key, status="blocked")
                     failures[key] = f"worker 证据门未通过: {reason}"
+                    log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
+                             id=node.work_item_id, reason=f"worker 证据门: {reason}")
                     continue
                 # worker 证据已过门 → CI 门(§7.3)。配置 ci 时运行 CI,绿才进评审;
                 # 失败/超时 → 有界「回到 worker」(retry_limits["ci"])。
@@ -177,9 +184,13 @@ def collect_results(
                     config or {}, manifest, key, store, runtime, limits)
                 if ci_action == "bounce":
                     failures[key] = "CI 未通过,已转回 worker(上界未耗尽,待重交)"
+                    log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=key,
+                             id=node.work_item_id, gate="ci")
                     continue
                 if ci_action == "blocked":
                     failures[key] = "CI 检查未通过,回退上界(retry.ci)已耗尽"
+                    log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
+                             id=node.work_item_id, reason="CI 回退上界已耗尽")
                     continue
                 # CI 绿(或未配置 ci 整体跳过):原路径 —— 有 reviewer 进评审,否则 done。
                 if node.reviewer:
@@ -190,14 +201,20 @@ def collect_results(
                     # reconcile 下轮把节点从 done 拉回 in_progress 形成永久循环。
                     store.update_status(node.work_item_id, WorkItemStatus.DONE)
                     set_node(manifest, key, status="done")
+                    log.info(logsetup.EVT_NODE_DONE, kind=_DAG_KIND, node=key,
+                             id=node.work_item_id)
             elif item.status == WorkItemStatus.FAILED:
                 store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
                 store.add_comment(node.work_item_id, "worker 执行失败")
                 set_node(manifest, key, status="blocked")
                 failures[key] = "worker 执行失败"
+                log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
+                         id=node.work_item_id, reason="worker 执行失败")
             elif item.status == WorkItemStatus.BLOCKED:
                 set_node(manifest, key, status="blocked")
                 failures[key] = "worker 平台状态 blocked"
+                log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
+                         id=node.work_item_id, reason="worker 平台 blocked")
 
         # ---- in_review: reviewer 阶段回收 ----
         elif node.status == "in_review":
@@ -212,8 +229,12 @@ def collect_results(
                     )
                     set_node(manifest, key, status="blocked")
                     failures[key] = "reviewer 缺 review_verdict"
+                    log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
+                             id=node.work_item_id, reason="reviewer 缺 review_verdict")
                 continue
 
+            log.info(logsetup.EVT_VERDICT, kind=_DAG_KIND, node=key,
+                     id=node.work_item_id, verdict=verdict)
             gate_errors = validate_review_evidence(node, item)
             if not gate_errors:
                 # reviewer pass → P4.2 自动 merge 门(若配置)。未配置 merge 时
@@ -223,8 +244,12 @@ def collect_results(
                 if merge_action == "pass":
                     store.update_status(node.work_item_id, WorkItemStatus.DONE)
                     set_node(manifest, key, status="done")
+                    log.info(logsetup.EVT_NODE_DONE, kind=_DAG_KIND, node=key,
+                             id=node.work_item_id)
                 elif merge_action == "blocked":
                     failures[key] = "merge 失败,回退上界(retry.merge)已耗尽"
+                    log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
+                             id=node.work_item_id, reason="merge 回退上界已耗尽")
                 # else "bounce": 节点已转回 in_progress,本 tick 不再推进。
             else:
                 # reviewer reject:有界「回到 worker」回退,受 retry_limits["review"] 约束。
@@ -236,6 +261,9 @@ def collect_results(
                     store.add_comment(node.work_item_id, f"评审证据门上界({review_limit})已耗尽: {reason}")
                     set_node(manifest, key, status="blocked")
                     failures[key] = f"评审证据门未通过(回退上界 {review_limit} 已耗尽): {reason}"
+                    log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
+                             id=node.work_item_id,
+                             reason=f"评审回退上界({review_limit})已耗尽")
                 else:
                     # 有界「回到 worker」:先记回退计数并清除旧评审判定,再重新派发 worker。
                     # 派发失败时回滚回退计数并把节点标 blocked,避免卡在「已清判定/未派发」中间态。
@@ -253,6 +281,9 @@ def collect_results(
                         store.assign_work_item(node.work_item_id, node.worker, "worker")
                         store.update_status(node.work_item_id, WorkItemStatus.IN_PROGRESS)
                         set_node(manifest, key, status="in_progress")
+                        log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=key,
+                                 id=node.work_item_id, gate="review",
+                                 round=cur_bounce + 1, max=review_limit)
                         runtime.wake(node.work_item_id, node.worker, "worker")
                     except PlatformError as exc:
                         store.update_work_item_metadata(node.work_item_id, review_bounce=cur_bounce)
@@ -274,6 +305,8 @@ def collect_results(
         store.add_comment(item_id, render_review_rollout_comment(nd, nd.contract, None, item_id=item_id))
         store.assign_work_item(item_id, reviewer, "reviewer")
         set_node(manifest, key, status="in_review")
+        log.info(logsetup.EVT_REVIEW_DISPATCH, kind=_DAG_KIND, node=key,
+                 id=item_id, reviewer=reviewer)
         try:
             runtime.wake(item_id, reviewer, "reviewer")
         except PlatformError as exc:
@@ -281,6 +314,8 @@ def collect_results(
             store.add_comment(item_id, f"唤醒 reviewer {reviewer} 失败: {exc}")
             set_node(manifest, key, status="blocked")
             failures[key] = f"唤醒 reviewer {reviewer} 失败"
+            log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
+                     id=item_id, reason=f"唤醒 reviewer {reviewer} 失败")
 
     if failures or pending_review:
         save_manifest(manifest, manifest_path)
@@ -303,6 +338,8 @@ def _mark_downstream_blocked(
             newly_blocked.add(key)
     if newly_blocked:
         save_manifest(manifest, manifest_path)
+        log.info(logsetup.EVT_CASCADE_BLOCKED, kind=_DAG_KIND,
+                 ids=sorted(newly_blocked), cause=sorted(failed))
     return newly_blocked
 
 
@@ -362,8 +399,12 @@ def _dispatch(
             store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
             store.add_comment(node.work_item_id, f"唤醒 worker {worker} 失败: {exc}")
             set_node(manifest, key, status="blocked")
+            log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
+                     id=node.work_item_id, reason=f"唤醒 worker {worker} 失败")
             continue
 
+        log.info(logsetup.EVT_DISPATCH, kind=_DAG_KIND, node=key,
+                 id=node.work_item_id, worker=worker)
         dispatched.append(key)
 
     if dispatched:
@@ -385,6 +426,7 @@ def _maybe_unblock(manifest: Manifest, manifest_path: str) -> bool:
     捍卫 §2.4「重试是显式决策,废除自动重试」的红线。
     """
     changed = False
+    newly_unblocked: List[str] = []
     for key, node in list(manifest.nodes.items()):
         if node.status != "blocked" or node.work_item_id:
             continue
@@ -396,9 +438,11 @@ def _maybe_unblock(manifest: Manifest, manifest_path: str) -> bool:
             for b in deps
         ):
             set_node(manifest, key, work_item_id=None, status="todo")
+            newly_unblocked.append(key)
             changed = True
     if changed:
         save_manifest(manifest, manifest_path)
+        log.info(logsetup.EVT_UNBLOCK, kind=_DAG_KIND, ids=sorted(newly_unblocked))
     return changed
 
 
@@ -465,8 +509,13 @@ def tick(
         state = "running"
     elif failed_keys:
         state = "needs_decision"
+        log.info(logsetup.EVT_NEEDS_DECISION, kind=_DAG_KIND,
+                 failed=sorted(failed_keys), done=len(done),
+                 total=len(manifest.nodes))
     else:
         state = "converged"
+        log.info(logsetup.EVT_CONVERGED, kind=_DAG_KIND,
+                 done=len(done), total=len(manifest.nodes))
 
     # 报告(仅 needs_decision 时使用与 /status 共享的 needs_decision schema)
     report: Dict[str, Any] = {}

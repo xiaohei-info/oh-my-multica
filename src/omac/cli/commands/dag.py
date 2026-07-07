@@ -5,7 +5,7 @@ from typing import Optional
 import os
 
 from .. import exit_codes
-from ..output import add_output_flag, print_json
+from ..output import add_output_flag, print_json, print_table
 from ...core.config import ENV_ENGINE, ENV_WORKSPACE, load_config, resolve_engine_settings, DEFAULTS, CONFIG_PATH
 from ...core.manifest import load_manifest
 from ...core.gitsync import ensure_config_synced
@@ -33,6 +33,11 @@ DESCRIPTION = """确定性编排循环:sync(回收结果)→ decide(就绪节点
   tick     单轮推进后立即退出:exit 0 收敛 / 10 推进中 / 20 需决策(调试用)
 
 有界运行:--max-rounds N / --max-minutes N(给不想长阻塞的 agent 调用者分段跑)
+进度事件(走 stderr,不污染 stdout 数据线):默认人类文本,--json-logs /
+--log-format json 出 JSON-lines 供上层机器/CI 解析(也可设 OMAC_LOG_FORMAT 环境变量)。
+事件清单:dispatch / review_dispatch / verdict / revision(gate:worker|ci|review|guard)
+/ node_done / node_failed / human_gate_wait / cascade_blocked / unblock / converged
+/ needs_decision。
 
 硬约束:
   - 前台阻塞监督铁律:run 是前台进程,必须在本轮跑到它返回才算"在监督";
@@ -170,20 +175,12 @@ def _emit(result, manifest, args) -> None:
         print_json(payload)
         return
 
-    import sys
     headers = ("KEY", "STATUS", "WORKER", "WORK_ITEM_ID")
-    rows = []
-    for key in manifest.nodes:
-        n = manifest.nodes[key]
-        rows.append((key, n.status, n.worker or "-", n.work_item_id or "-"))
-    widths = [len(h) for h in headers]
-    for row in rows:
-        for i, cell in enumerate(row):
-            widths[i] = max(widths[i], len(str(cell)))
-    fmt = "  ".join(f"{{:<{w}}}" for w in widths)
-    sys.stdout.write(fmt.format(*headers).rstrip() + "\n")
-    for row in rows:
-        sys.stdout.write(fmt.format(*row).rstrip() + "\n")
+    rows = [
+        (key, n.status, n.worker or "-", n.work_item_id or "-")
+        for key, n in manifest.nodes.items()
+    ]
+    print_table(headers, rows)
 
 
 def _maybe_acceptance(args, engine, config, manifest) -> Optional[int]:

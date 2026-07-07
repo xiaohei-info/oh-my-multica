@@ -293,10 +293,11 @@ class MulticaStore(WorkItemStore):
         return self.get_work_item(issue_id)
 
     def _set_metadata(self, item_id: str, key: str, value: str):
+        # capture 默认开:吃掉 multica 的确认表格,不漏进编排者终端(进度靠事件流)。
         self._run_multica([
             "issue", "metadata", "set", item_id,
             "--key", key, "--value", value,
-        ], capture=False)
+        ])
 
     def get_work_item(self, item_id: str) -> WorkItem:
         result = self._run_multica(["issue", "get", item_id, "--output", "json"])
@@ -401,7 +402,7 @@ class MulticaStore(WorkItemStore):
     def add_comment(self, item_id: str, comment: str):
         self._run_multica_with_text_file(
             ["issue", "comment", "add", item_id],
-            "--content-file", comment, capture=False)
+            "--content-file", comment)
 
     # ==================== 状态和分配 ====================
 
@@ -409,11 +410,11 @@ class MulticaStore(WorkItemStore):
         self._run_multica([
             "issue", "update", item_id,
             "--status", self._status_to_multica(status),
-        ], capture=False)
+        ])
 
     def cancel_work_item(self, item_id: str) -> None:
         """Multica 原生 cancelled 态:从活跃列表移除(区别于 blocked)。"""
-        self._run_multica(["issue", "status", item_id, "cancelled"], capture=False)
+        self._run_multica(["issue", "status", item_id, "cancelled"])
 
     def reset_review(self, item_id: str):
         self._set_metadata(item_id, "review_verdict", "")
@@ -423,7 +424,7 @@ class MulticaStore(WorkItemStore):
 
     def assign_work_item(self, item_id: str, assignee: str, role: str):
         agent_id = self._resolve_agent_id(assignee)
-        self._run_multica(["issue", "assign", item_id, "--to", agent_id], capture=False)
+        self._run_multica(["issue", "assign", item_id, "--to", agent_id])
         if role == "worker":
             self.update_work_item_metadata(item_id, worker=assignee)
         elif role == "reviewer":

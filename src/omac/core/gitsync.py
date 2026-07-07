@@ -10,7 +10,10 @@ OMAC_GIT_SYNC 显式覆盖(truthy 强开 / falsy 强关)。
 import os
 import subprocess
 
+from . import logsetup
 from ..errors import ValidationError
+
+log = logsetup.get_logger(__name__)
 
 _TRUTHY = {"1", "true", "yes", "on"}
 _FALSY = {"0", "false", "no", "off"}
@@ -68,7 +71,7 @@ def ensure_config_synced(config_path: str, branch: str = "main",
             f"config push 到 origin/{branch} 失败 —— 隔离区 agent 会 clone 到旧版。\n"
             f"  {r.stderr.strip()}\n"
             f"  远程可能已分叉,先 `git pull --rebase origin {branch}` 再重试")
-    print(f"已同步 {config_path} → origin/{branch}")
+    log.info(logsetup.EVT_CONFIG_SYNCED, path=config_path, branch=branch)
 
 
 def commit_manifest(path: str, message: str, repo_root: str = ".",
@@ -82,16 +85,16 @@ def commit_manifest(path: str, message: str, repo_root: str = ".",
         return False
     r = _run(repo_root, "add", path)
     if r.returncode != 0:
-        print(f"git add 失败: {r.stderr.strip()}")
+        log.warning("manifest_sync_failed", step="add", error=r.stderr.strip())
         return False
     if _run(repo_root, "diff", "--cached", "--quiet", "--", path).returncode == 0:
         return False  # 无变更,幂等跳过
     r = _run(repo_root, "commit", "-m", message)
     if r.returncode != 0:
-        print(f"git commit 失败: {r.stderr.strip()}")
+        log.warning("manifest_sync_failed", step="commit", error=r.stderr.strip())
         return False
     r = _run(repo_root, "push")
     if r.returncode != 0:
-        print(f"git push 失败: {r.stderr.strip()}")
-        print("  manifest 已本地 commit 但未 push——跨机器口径可能滞后!")
+        log.warning("manifest_sync_failed", step="push", error=r.stderr.strip(),
+                    hint="manifest 已本地 commit 但未 push,跨机口径可能滞后")
     return True

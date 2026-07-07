@@ -12,11 +12,14 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional
 
+from ..core import logsetup
 from ..core.manifest import Contract, _load_contract
 from ..core.taskmeta import DELIVERY_CONTENT_KEY, TaskKind, TaskPhase
 from ..engines.models import WorkItem, WorkItemStatus
 from ..errors import NeedsDecision
 from .dispatch import render_issue_body, render_review_rollout_comment
+
+log = logsetup.get_logger(__name__)
 
 
 def _produced(item: WorkItem) -> bool:
@@ -142,6 +145,8 @@ def run_task(
         runtime.wake(item_id, assignee, "worker")
         produced = _poll_until(store, item_id, _produced, poll)
         if produced.status == WorkItemStatus.FAILED:
+            log.info(logsetup.EVT_NODE_FAILED, kind=kind.value, id=item_id,
+                     reason="producer failed")
             raise NeedsDecision(
                 f"{kind.value} 产出阶段失败(item {item_id})",
                 report={"item_id": item_id, "kind": kind.value, "rounds": 0,
@@ -152,6 +157,7 @@ def run_task(
                 "产出修订(错误原文回贴):\n" + "\n".join(f"- {e}" for e in hint))
         return produced
 
+    log.info(logsetup.EVT_DISPATCH, kind=kind.value, id=item_id, worker=assignee)
     delivered = _produce()
     delivery = _delivery_of(kind, delivered)
 
@@ -161,10 +167,14 @@ def run_task(
             guard_errors: List[str] = guard(delivered)
             if not guard_errors:
                 break
+            log.info(logsetup.EVT_REVISION, kind=kind.value, id=item_id,
+                     gate="guard", round=guard_round, max=max_revisions)
             store.reset_review(item_id)
             delivered = _produce(hint=guard_errors)
             delivery = _delivery_of(kind, delivered)
         else:
+            log.info(logsetup.EVT_NEEDS_DECISION, kind=kind.value, id=item_id,
+                     gate="guard", rounds=max_revisions)
             raise NeedsDecision(
                 f"{kind.value} 任务经 {max_revisions} 轮 machine-gate 仍未通过",
                 report={"item_id": item_id, "kind": kind.value,
@@ -175,9 +185,12 @@ def run_task(
     # 通过标准:人工把 issue 流转到 DONE(易于自动化识别),或 `omac plan confirm`。
     # 识别到 DONE 后:有 reviewer 则翻回 IN_REVIEW 继续评审;无 reviewer 则人工确认即终态。
     if confirm:
+        # 干等人把 issue 挪到 DONE:发事件,否则操作者看着像卡死。
+        log.info(logsetup.EVT_HUMAN_GATE_WAIT, kind=kind.value, id=item_id)
         _poll_until(
             store, item_id, lambda i: i.status == WorkItemStatus.DONE, poll)
         if not reviewers:
+            log.info(logsetup.EVT_NODE_DONE, kind=kind.value, id=item_id)
             return {"item_id": item_id, "delivery": delivery,
                     "rounds": 0, "verdict": "pass", "kind": kind.value}
         store.mark_in_review(item_id)
@@ -185,6 +198,7 @@ def run_task(
     if not reviewers:
         # 产出者交付后停在 IN_REVIEW(work submit 语义);无 reviewer 时由本原语收口终态。
         store.mark_done(item_id)
+        log.info(logsetup.EVT_NODE_DONE, kind=kind.value, id=item_id)
         return {"item_id": item_id, "delivery": delivery,
                 "rounds": 0, "verdict": "pass", "kind": kind.value}
 
@@ -201,13 +215,18 @@ def run_task(
             item_id,
             render_review_rollout_comment(
                 body_node, contract, None, item_id=item_id, kind=kind))
+        log.info(logsetup.EVT_REVIEW_DISPATCH, kind=kind.value, id=item_id,
+                 reviewer=reviewer)
         runtime.wake(item_id, reviewer, "reviewer")
         reviewed = _poll_until(
             store, item_id, lambda i: i.review_verdict is not None, poll)
 
         verdict = reviewed.review_verdict
+        log.info(logsetup.EVT_VERDICT, kind=kind.value, id=item_id,
+                 verdict=verdict, round=round_index)
         if verdict == "pass":
             store.mark_done(item_id)
+            log.info(logsetup.EVT_NODE_DONE, kind=kind.value, id=item_id)
             return {"item_id": item_id, "delivery": delivery,
                     "rounds": round_index, "verdict": "pass", "kind": kind.value}
 
@@ -219,10 +238,14 @@ def run_task(
             render_review_rollout_comment(
                 body_node, contract, verdict,
                 report=reviewed.review_report, item_id=item_id, kind=kind))
+        log.info(logsetup.EVT_REVISION, kind=kind.value, id=item_id,
+                 gate="review", round=round_index, max=max_revisions)
         store.reset_review(item_id)
         delivered = _produce()
         delivery = _delivery_of(kind, delivered)
 
+    log.info(logsetup.EVT_NEEDS_DECISION, kind=kind.value, id=item_id,
+             gate="review", rounds=max_revisions)
     raise NeedsDecision(
         f"{kind.value} 任务在 {max_revisions} 轮修订后仍未通过评审",
         report={"item_id": item_id, "kind": kind.value,
