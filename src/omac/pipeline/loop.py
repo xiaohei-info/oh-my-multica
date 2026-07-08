@@ -20,7 +20,7 @@ from ..engines.runtime import AgentRuntime
 from ..engines.store import WorkItemStore
 from ..errors import PlatformError
 from ..pipeline.dispatch import (render_issue_body, render_review_rollout_comment)
-from ..core.taskmeta import TaskKind
+from ..core.taskmeta import TaskKind, TaskPhase
 
 log = logsetup.get_logger(__name__)
 
@@ -236,6 +236,16 @@ def collect_results(
             log.info(logsetup.EVT_VERDICT, kind=_DAG_KIND, node=key,
                      id=node.work_item_id, verdict=verdict)
             if verdict == "pass-with-nits":
+                store.update_work_item_metadata(
+                    node.work_item_id,
+                    decision_required={
+                        "kind": item.kind.value,
+                        "phase": TaskPhase.REVIEW.value,
+                        "verdict": verdict,
+                        "review_report": item.review_report,
+                    },
+                    phase=TaskPhase.REVIEW,
+                )
                 store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
                 store.add_comment(
                     node.work_item_id,
@@ -311,7 +321,6 @@ def collect_results(
         # CI 回落)走 deliverable 路径把 assigned 槽位清空,后续
         # wake 的 auto_complete 找不到已派发项而无法置评审判定。
         store.update_status(item_id, WorkItemStatus.IN_REVIEW)
-        store.add_comment(item_id, render_review_rollout_comment(nd, nd.contract, None, item_id=item_id))
         store.assign_work_item(item_id, reviewer, "reviewer")
         set_node(manifest, key, status="in_review")
         log.info(logsetup.EVT_REVIEW_DISPATCH, kind=_DAG_KIND, node=key,

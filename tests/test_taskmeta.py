@@ -162,6 +162,11 @@ class _FakeMulticaProc:
                             k = next(it)
                         elif tok == "--value":
                             v = next(it)
+                            if isinstance(v, str) and v[:1] in ("{", "["):
+                                try:
+                                    v = json.loads(v)
+                                except json.JSONDecodeError:
+                                    pass
                             kv[k] = v
                     self.metadata.setdefault(issue_id, {}).update(kv)
             elif action == "comment":
@@ -176,9 +181,11 @@ class _FakeMulticaProc:
                             content = pathlib.Path(next(it)).read_text(encoding="utf-8")
                         elif tok == "--attachment":
                             path = next(it)
+                            attachment_path = pathlib.Path(path)
                             attachments.append({
                                 "id": f"att-{len(attachments) + 1}",
-                                "filename": pathlib.Path(path).name,
+                                "filename": attachment_path.name,
+                                "content": attachment_path.read_text(encoding="utf-8"),
                             })
                         elif tok == "--output":
                             next(it)
@@ -192,6 +199,26 @@ class _FakeMulticaProc:
                 elif caction == "list":
                     issue_id = args[3]
                     r.stdout = json.dumps(self.comments.get(issue_id, []))
+        elif sub == "attachment":
+            action = args[1]
+            if action == "download":
+                attachment_id = args[2]
+                output_dir = pathlib.Path(".")
+                it = iter(args[3:])
+                for tok in it:
+                    if tok in ("-o", "--output-dir"):
+                        output_dir = pathlib.Path(next(it))
+                for comments in self.comments.values():
+                    for comment in comments:
+                        for attachment in comment.get("attachments", []):
+                            if attachment.get("id") == attachment_id:
+                                output_dir.mkdir(parents=True, exist_ok=True)
+                                path = output_dir / attachment["filename"]
+                                path.write_text(attachment["content"], encoding="utf-8")
+                                r.stdout = str(path)
+                                return r
+                r.returncode = 1
+                r.stderr = f"attachment not found: {attachment_id}"
         elif sub == "agent":
             r.stdout = json.dumps([])  # list_members 不在本测试路径
 
@@ -236,10 +263,12 @@ def test_multica_update_phase_and_bounces_roundtrip():
     assert md["review_bounce"] == "2"
     assert md["merge_bounce"] == "3"
     assert "deliverable" not in md
-    ref = json.loads(md["deliverable_ref"])
+    ref = md["deliverable_ref"]
     assert ref["sha256"]
     assert ref["comment_id"] == "c-1"
+    assert ref["attachment_id"] == "att-1"
     assert fake.comments[item.id][0]["attachments"]
+    assert "<!-- omac-deliverable-begin -->" not in fake.comments[item.id][0]["content"]
 
 
 def test_multica_review_report_uses_ref_not_nested_json_string():
@@ -253,9 +282,8 @@ def test_multica_review_report_uses_ref_not_nested_json_string():
         got = store.get_work_item(item.id)
     assert got.review_report == report
     md = fake.metadata[item.id]
-    assert "review_report" not in md
-    ref = json.loads(md["review_report_ref"])
-    assert ref["comment_id"] == "c-1"
+    assert md["review_report"] == report
+    assert "review_report_ref" not in md
 
 
 def test_multica_old_issue_without_kind_reads_develop():

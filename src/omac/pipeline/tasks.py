@@ -226,12 +226,7 @@ def run_task(
 
         store.mark_in_review(item_id)
         store.assign_work_item(item_id, reviewer, "reviewer")
-        # 转派 reviewer 推送阶段变更评论(与 develop loop 对齐,不押注 agent 自觉跑 work show)。
         body_node.reviewer = reviewer
-        store.add_comment(
-            item_id,
-            render_review_rollout_comment(
-                body_node, contract, None, item_id=item_id, kind=kind))
         log.info(logsetup.EVT_REVIEW_DISPATCH, kind=kind.value, id=item_id,
                  reviewer=reviewer)
         runtime.wake(item_id, reviewer, "reviewer")
@@ -248,6 +243,19 @@ def run_task(
                     "rounds": round_index, "verdict": "pass", "kind": kind.value}
 
         if verdict == "pass-with-nits":
+            decision_required = {
+                "kind": kind.value,
+                "phase": TaskPhase.REVIEW.value,
+                "verdict": verdict,
+                "round": round_index,
+                "review_report": reviewed.review_report,
+            }
+            store.update_work_item_metadata(
+                item_id,
+                decision_required=decision_required,
+                phase=TaskPhase.REVIEW,
+            )
+            store.mark_blocked(item_id)
             raise NeedsDecision(
                 f"{kind.value} review 返回 pass-with-nits,需要调用者确认是否接受建议项",
                 report={

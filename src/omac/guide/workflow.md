@@ -23,7 +23,7 @@ omac 是确定性 CLI 驱动的多 Agent 并行开发编排:Loop 驱动 Agent,LL
    - exit 0:验收全部 pass,真正可交付
    - exit 20:无法继续推进,stdout 有结构化报告(含可执行的下一步命令)
 4. exit 20 后:`omac dag status` 看全景 → `omac node show <key>` 看证据链
-   → `omac node retry|abandon` 决策 → 重跑 `omac dag run`(重跑即续跑)
+   → `omac node retry|accept|abandon` 决策 → 重跑 `omac dag run`(重跑即续跑)
 
 ## 入口形态(谁来跑 omac)
 

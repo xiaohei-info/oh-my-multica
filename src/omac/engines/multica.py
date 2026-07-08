@@ -16,7 +16,7 @@ import tempfile
 from typing import Any, Dict, List, Optional
 
 from ..core.taskmeta import (
-    CI_BOUNCE_KEY, DELIVERABLE_KEY, DELIVERABLE_REF_KEY, KIND_KEY,
+    CI_BOUNCE_KEY, DECISION_REQUIRED_KEY, DELIVERABLE_KEY, DELIVERABLE_REF_KEY, KIND_KEY,
     MERGE_BOUNCE_KEY, PHASE_KEY, REVIEW_BOUNCE_KEY, REVIEW_REPORT_REF_KEY,
     TaskKind, TaskPhase,
     parse_bounces, parse_kind, parse_phase,
@@ -112,25 +112,24 @@ class MulticaStore(WorkItemStore):
     def _publish_payload_comment(
         self, item_id: str, key: str, content: str, suffix: str,
     ) -> Dict[str, Any]:
-        """发布较长/结构化产物:comment 可读 + attachment 存档,metadata 只存 ref。"""
+        """发布较长文档:comment 只做附件索引,正文由 attachment 承载。"""
         body = content or ""
         sha = hashlib.sha256(body.encode("utf-8")).hexdigest()
-        begin, end = self._payload_markers(key)
         filename = f"omac-{key}-{sha[:12]}{suffix}"
         comment = (
             f"## omac {key}\n"
             f"- sha256: {sha}\n"
             f"- bytes: {len(body.encode('utf-8'))}\n"
             f"- attachment: {filename}\n\n"
-            f"{begin}\n{body.rstrip()}\n{end}\n"
+            "交付文档已作为附件上传；程序化引用见 issue metadata。\n"
         )
 
-        cfd, comment_path = tempfile.mkstemp(prefix="omac-comment-", suffix=".md", text=True)
-        afd, attachment_path = tempfile.mkstemp(prefix="omac-", suffix=suffix, text=True)
-        try:
-            with os.fdopen(cfd, "w", encoding="utf-8") as f:
+        with tempfile.TemporaryDirectory(prefix="omac-payload-") as td:
+            comment_path = os.path.join(td, f"comment-{key}.md")
+            attachment_path = os.path.join(td, filename)
+            with open(comment_path, "w", encoding="utf-8") as f:
                 f.write(comment)
-            with os.fdopen(afd, "w", encoding="utf-8") as f:
+            with open(attachment_path, "w", encoding="utf-8") as f:
                 f.write(body)
             result = self._run_multica([
                 "issue", "comment", "add", item_id,
@@ -138,19 +137,16 @@ class MulticaStore(WorkItemStore):
                 "--attachment", attachment_path,
                 "--output", "json",
             ])
-        finally:
-            for path in (comment_path, attachment_path):
-                try:
-                    os.unlink(path)
-                except FileNotFoundError:
-                    pass
 
         comment_id = result.get("id") if isinstance(result, dict) else None
+        attachments = result.get("attachments") if isinstance(result, dict) else None
+        attachment = attachments[0] if attachments else {}
         return {
             "comment_id": comment_id,
+            "attachment_id": attachment.get("id"),
             "sha256": sha,
             "bytes": len(body.encode("utf-8")),
-            "filename": filename,
+            "filename": attachment.get("filename") or filename,
         }
 
     def _load_payload_comment(self, item_id: str, key: str, ref: Optional[Dict[str, Any]]) -> Optional[str]:
@@ -168,12 +164,35 @@ class MulticaStore(WorkItemStore):
         if not isinstance(comments, list):
             return None
         begin, end = self._payload_markers(key)
+        attachment_id = ref.get("attachment_id")
         for comment in comments:
             if comment.get("id") != comment_id:
                 continue
             content = comment.get("content") or ""
             if begin in content and end in content:
                 return content.split(begin, 1)[1].split(end, 1)[0].strip("\n")
+            if not attachment_id:
+                filename = ref.get("filename")
+                for attachment in comment.get("attachments") or []:
+                    if not filename or attachment.get("filename") == filename:
+                        attachment_id = attachment.get("id")
+                        break
+        if not attachment_id:
+            return None
+        with tempfile.TemporaryDirectory(prefix="omac-attachment-") as td:
+            self._run_multica([
+                "attachment", "download", attachment_id,
+                "--output-dir", td,
+            ], capture=True)
+            filename = ref.get("filename")
+            candidates = []
+            if filename:
+                candidates.append(os.path.join(td, filename))
+            candidates.extend(os.path.join(td, p) for p in os.listdir(td))
+            for path in candidates:
+                if os.path.isfile(path):
+                    with open(path, "r", encoding="utf-8") as f:
+                        return f.read()
         return None
 
     def _issue_to_work_item(self, issue_data: Dict, workspace_id: str) -> WorkItem:
@@ -225,6 +244,7 @@ class MulticaStore(WorkItemStore):
             review_comment=metadata.get("review_comment"),
             review_report=review_report,
             review_report_ref=review_report_ref if isinstance(review_report_ref, dict) else None,
+            decision_required=self._json_metadata(metadata, DECISION_REQUIRED_KEY),
             contract=self._json_metadata(metadata, "contract"),
             kind=parse_kind(metadata.get(KIND_KEY)),
             phase=parse_phase(metadata.get(PHASE_KEY)),
@@ -404,17 +424,18 @@ class MulticaStore(WorkItemStore):
         if reviewer:
             self._set_metadata(issue_id, "reviewer", reviewer)
         if blocked_by:
-            self._set_metadata(issue_id, "blocked_by", json.dumps(blocked_by))
+            self._set_metadata(issue_id, "blocked_by", blocked_by)
         if wave is not None:
             self._set_metadata(issue_id, "wave", str(wave))
 
         return self.get_work_item(issue_id)
 
-    def _set_metadata(self, item_id: str, key: str, value: str):
+    def _set_metadata(self, item_id: str, key: str, value: Any):
         # capture 默认开:吃掉 multica 的确认表格,不漏进编排者终端(进度靠事件流)。
+        encoded = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
         self._run_multica([
             "issue", "metadata", "set", item_id,
-            "--key", key, "--value", value,
+            "--key", key, "--value", encoded,
         ])
 
     def get_work_item(self, item_id: str) -> WorkItem:
@@ -434,6 +455,7 @@ class MulticaStore(WorkItemStore):
         review_comment: Optional[str] = None,
         verification: Optional[Dict[str, Any]] = None,
         review_report: Optional[Dict[str, Any]] = None,
+        decision_required: Optional[Dict[str, Any]] = None,
         phase: Optional[TaskPhase] = None,
         ci_bounce: Optional[int] = None,
         review_bounce: Optional[int] = None,
@@ -446,19 +468,19 @@ class MulticaStore(WorkItemStore):
         if reviewer is not None:
             self._set_metadata(item_id, "reviewer", reviewer)
         if blocked_by is not None:
-            self._set_metadata(item_id, "blocked_by", json.dumps(blocked_by))
+            self._set_metadata(item_id, "blocked_by", blocked_by)
         if artifacts is not None:
-            self._set_metadata(item_id, "artifacts", json.dumps(artifacts))
+            self._set_metadata(item_id, "artifacts", artifacts)
         if review_verdict is not None:
             self._set_metadata(item_id, "review_verdict", review_verdict)
         if review_comment is not None:
             self._set_metadata(item_id, "review_comment", review_comment)
         if verification is not None:
-            self._set_metadata(item_id, "verification", json.dumps(verification))
+            self._set_metadata(item_id, "verification", verification)
         if review_report is not None:
-            content = json.dumps(review_report, ensure_ascii=False, indent=2)
-            ref = self._publish_payload_comment(item_id, "review-report", content, ".json")
-            self._set_metadata(item_id, REVIEW_REPORT_REF_KEY, json.dumps(ref))
+            self._set_metadata(item_id, "review_report", review_report)
+        if decision_required is not None:
+            self._set_metadata(item_id, DECISION_REQUIRED_KEY, decision_required)
         if ci_bounce is not None:
             self._set_metadata(item_id, CI_BOUNCE_KEY, str(ci_bounce))
         if review_bounce is not None:
@@ -467,7 +489,7 @@ class MulticaStore(WorkItemStore):
             self._set_metadata(item_id, MERGE_BOUNCE_KEY, str(merge_bounce))
         if deliverable is not None:
             ref = self._publish_payload_comment(item_id, "deliverable", deliverable, ".md")
-            self._set_metadata(item_id, DELIVERABLE_REF_KEY, json.dumps(ref))
+            self._set_metadata(item_id, DELIVERABLE_REF_KEY, ref)
         if phase is not None:
             self._set_metadata(item_id, PHASE_KEY, phase.value)
         if description is not None:
@@ -478,7 +500,7 @@ class MulticaStore(WorkItemStore):
     def set_node_contract(self, item_id: str, contract: Any):
         from dataclasses import asdict, is_dataclass
         payload = asdict(contract) if is_dataclass(contract) else contract
-        self._set_metadata(item_id, "contract", json.dumps(payload))
+        self._set_metadata(item_id, "contract", payload)
 
     # multica issue list 服务端单页上限 100;更大的 --limit 会被静默截断。
     _LIST_PAGE_SIZE = 100
@@ -541,6 +563,7 @@ class MulticaStore(WorkItemStore):
         self._set_metadata(item_id, "review_verdict", "")
         self._set_metadata(item_id, "review_comment", "")
         self._set_metadata(item_id, "review_report", "{}")
+        self._set_metadata(item_id, DECISION_REQUIRED_KEY, "{}")
         self._set_metadata(item_id, PHASE_KEY, TaskPhase.AUTHORING.value)
 
     def assign_work_item(self, item_id: str, assignee: str, role: str):

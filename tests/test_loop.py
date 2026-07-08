@@ -15,7 +15,7 @@ import pytest
 from omac.core.manifest import Contract, Manifest, Node, load_manifest, save_manifest
 from omac.engines import create_engine
 from omac.engines.mock import MockRuntime, MockStore
-from omac.engines.models import EngineConfig
+from omac.engines.models import EngineConfig, WorkItemStatus
 from omac.pipeline.loop import TickResult, tick
 
 
@@ -722,6 +722,9 @@ class TestReviewerRejectBoundedFallback:
         assert result.state == "needs_decision"
         assert manifest.nodes["a"].status == "blocked"
         assert "a" in result.failed
+        got = eng.store.get_work_item(item.id)
+        assert got.status == WorkItemStatus.BLOCKED
+        assert got.decision_required["verdict"] == "pass-with-nits"
 
     def test_retry_review_one_allows_single_fallback(self, tmp_path):
         """retry.review=1 → 第 1 次 reject 回退 worker(bounce→1),第 2 次 reject 耗尽 → blocked。"""

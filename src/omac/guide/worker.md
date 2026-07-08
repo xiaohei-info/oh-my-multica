@@ -117,10 +117,10 @@ git push origin <branch-name>
 - 证据不全 → 当场被证据门拦截、exit 5、打印缺项,**不写入、不转状态**;补齐再来
 - 通过 → 写证据并把 work item 标 done,交引擎回收(有 reviewer 则指派 reviewer 并转 in_review)
 
-### 8. 写 comment(叙述,不承载证据)
+### 8. 收尾回复(叙述,不承载证据)
 
-`omac work submit` 已写结构化证据并标 done。这里只补一条 prose comment 汇总
-(PR 链接、验证结果、手工验证路径、已知限制)。
+`omac work submit` 已写结构化证据并标 done。不要再为同一份证据补发 issue comment,
+避免评论触发重复 run。最终回复只写结论摘要,不要引用 `.hermes/...` 等隔离工作区本地路径。
 
 状态转换交给引擎:worker 标 done 即可,指派 reviewer + 转 in_review 是引擎回收的职责。
 

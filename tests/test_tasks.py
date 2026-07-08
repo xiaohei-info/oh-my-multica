@@ -107,15 +107,14 @@ def test_run_task_renders_source_refs_in_body():
     assert "7" in item.description and "8" in item.description
 
 
-def test_run_task_pushes_rollout_comment_on_handoff_to_reviewer():
-    """转派 reviewer 时推送阶段变更评论(与 develop loop 对齐,不押注 agent 自觉)。"""
+def test_run_task_handoff_to_reviewer_does_not_post_trigger_comment():
+    """正常转派 reviewer 只靠 assign + metadata 交接,不发评论触发第二次 run。"""
     eng = _engine()
     MockStore.set_kind_delivery("plan", {"plan": "计划正文"})
     res = run_task(eng, TaskKind.PLAN, _payload(), "alice",
                    reviewers=["bob"], poll=_poll)
     comments = eng.store.get_comments(res["item_id"])
-    # 一次过也应有「转派 reviewer」的推送评论(含 reviewer + work submit 指引)
-    assert any("reviewer" in c and "omac work submit" in c for c in comments)
+    assert not any("阶段变更" in c and "omac work submit" in c for c in comments)
 
 
 def test_run_task_pass_with_nits_needs_human_decision():
@@ -128,6 +127,9 @@ def test_run_task_pass_with_nits_needs_human_decision():
                  reviewers=["bob"], poll=_poll)
     assert "pass-with-nits" in str(exc.value)
     assert exc.value.report["verdict"] == "pass-with-nits"
+    item = eng.store.get_work_item(exc.value.report["item_id"])
+    assert item.status == WorkItemStatus.BLOCKED
+    assert item.decision_required["verdict"] == "pass-with-nits"
 
 
 def test_run_task_reject_rollout_uses_kind_correct_submit_template():
@@ -206,7 +208,7 @@ def test_reject_twice_then_pass():
     # 全程同一 issue id,未新建评审 issue
     assert len(eng.store.list_work_items("ws")) == 1
     assert item.id == res["item_id"]
-    # 两次 reject 的结构化 rollout 评论都落在同一 issue 上(每轮另有转派 reviewer 的推送)
+    # 两次 reject 的结构化 rollout 评论都落在同一 issue 上;正常转派不再发评论。
     comments = eng.store.get_comments(res["item_id"])
     assert sum("verdict=reject" in c for c in comments) == 2
 

@@ -125,6 +125,42 @@ def test_retry_resets_to_todo_and_keeps_work_item_id(tmp_path, capsys, monkeypat
     assert m.nodes["b"].worker == "bob"        # 未改派
 
 
+def test_accept_marks_done_and_updates_platform_status(tmp_path, capsys, monkeypatch):
+    """接受 pass-with-nits 后,节点视为 done,下次 dag run 可继续推进。"""
+    import json
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OMAC_ENGINE", "mock")
+    monkeypatch.setenv("OMAC_WORKSPACE_ID", "ws-1")
+
+    from omac.engines import EngineConfig, create_engine
+    from omac.engines.models import WorkItemStatus
+    engine = create_engine("mock", EngineConfig("mock", "ws-1",
+                                                extra={"MOCK_AUTO_COMPLETE": "false"}))
+    item = engine.store.create_work_item("ws-1", "t", "d", "b", "bob")
+    engine.store.update_work_item_metadata(
+        item.id,
+        review_verdict="pass-with-nits",
+        decision_required={"verdict": "pass-with-nits"},
+    )
+    engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
+
+    import omac.cli.commands.node as node_mod
+    monkeypatch.setattr(node_mod, "create_engine", lambda *a, **kw: engine)
+
+    path = _write_manifest(tmp_path, [
+        {"id": "b", "worker": "bob", "status": "blocked",
+         "work_item_id": item.id},
+        {"id": "c", "worker": "charlie", "blocked_by": ["b"], "status": "todo"},
+    ])
+
+    assert main(["node", "accept", path, "b"]) == exit_codes.OK
+    payload = json.loads(capsys.readouterr().out)
+    m = load_manifest(path)
+    assert payload["status"] == "done"
+    assert m.nodes["b"].status == "done"
+    assert engine.store.get_work_item(item.id).status == WorkItemStatus.DONE
+
+
 def test_retry_reassign_worker_validated_against_config(tmp_path, capsys, monkeypatch):
     monkeypatch.chdir(tmp_path)
     # config.roles.workers 提供 agent 池

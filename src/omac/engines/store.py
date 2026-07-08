@@ -121,6 +121,7 @@ class WorkItemStore(ABC):
         review_comment: Optional[str] = None,
         verification: Optional[Dict[str, Any]] = None,
         review_report: Optional[Dict[str, Any]] = None,
+        decision_required: Optional[Dict[str, Any]] = None,
         phase: Optional[TaskPhase] = None,
         ci_bounce: Optional[int] = None,
         review_bounce: Optional[int] = None,

@@ -520,6 +520,7 @@ class MockStore(WorkItemStore):
         review_comment: Optional[str] = None,
         verification: Optional[Dict[str, Any]] = None,
         review_report: Optional[Dict[str, Any]] = None,
+        decision_required: Optional[Dict[str, Any]] = None,
         phase: Optional[TaskPhase] = None,
         ci_bounce: Optional[int] = None,
         review_bounce: Optional[int] = None,
@@ -544,6 +545,8 @@ class MockStore(WorkItemStore):
             item.verification = verification
         if review_report is not None:
             item.review_report = review_report
+        if decision_required is not None:
+            item.decision_required = decision_required
         if phase is not None:
             item.phase = phase
         if ci_bounce is not None:
@@ -607,6 +610,7 @@ class MockStore(WorkItemStore):
         item.review_verdict = None
         item.review_comment = None
         item.review_report = None
+        item.decision_required = None
         item.phase = TaskPhase.AUTHORING
 
     def assign_work_item(self, item_id: str, assignee: str, role: str):

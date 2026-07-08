@@ -276,8 +276,8 @@ class TestDispatchLoopIntegration:
         assert f"omac work show {item.id}" in item.description
         assert "硬约束" in item.description
 
-    def test_worker_submit_triggers_reviewer_handoff_comment(self):
-        """worker 完成交付(loop 回收)后往 issue 派发 rollout 评论。"""
+    def test_worker_submit_assigns_reviewer_without_handoff_comment(self):
+        """worker 完成交付后靠 assign + metadata 交接,不发评论触发第二次 run。"""
         eng = _engine()
         manifest = Manifest(meta={"workspace_id": "ws"}, nodes={
             "a": Node(id="a", worker="alice", reviewer="bob",
@@ -289,8 +289,9 @@ class TestDispatchLoopIntegration:
         eng.store.update_status(item_id, WorkItemStatus.DONE)
         tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
         assert eng.store.get_work_item(item_id).status == WorkItemStatus.IN_REVIEW
+        assert eng.store.get_work_item(item_id).reviewer == "bob"
         comments = eng.store.get_comments(item_id)
-        assert any("reviewer" in c for c in comments)
+        assert not any("阶段变更" in c and "reviewer" in c for c in comments)
 
     def test_e2e_worker_to_reviewer_to_done_manual_submit(self):
         """零 skill 闭环:关闭自动完成,手动扮演 worker+reviewer 走完 develop→review→done。"""
@@ -346,10 +347,10 @@ class TestDispatchLoopIntegration:
         tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
         assert eng.store.get_work_item(item_id).status == WorkItemStatus.IN_REVIEW
 
-        # reviewer 接手评论应含评审目标(空报告时给默认目标)
-        reviewer_comments = [c for c in eng.store.get_comments(item_id)
-                             if "reviewer" in c]
-        assert reviewer_comments
+        # reviewer 接手靠 assign + metadata,正常路径不发阶段变更评论。
+        handoff = eng.store.get_work_item(item_id)
+        assert handoff.reviewer == "bob"
+        assert not any("阶段变更" in c for c in eng.store.get_comments(item_id))
 
         # 3) 手动扮演 reviewer:提交 pass verdict 与结构化报告
         eng.store.update_work_item_metadata(
