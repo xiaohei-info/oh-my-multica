@@ -59,6 +59,7 @@ class WorkItem:
     # 执行产物(由 worker 写入)
     artifacts: Optional[Dict[str, Any]] = None
     verification: Optional[Dict[str, Any]] = None
+    verification_ref: Optional[Dict[str, Any]] = None
 
     # 审核信息(由 reviewer 写入)
     review_verdict: Optional[str] = None

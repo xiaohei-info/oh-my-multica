@@ -519,7 +519,9 @@ class MockStore(WorkItemStore):
         review_verdict: Optional[str] = None,
         review_comment: Optional[str] = None,
         verification: Optional[Dict[str, Any]] = None,
+        verification_source: Optional[str] = None,
         review_report: Optional[Dict[str, Any]] = None,
+        review_report_source: Optional[str] = None,
         decision_required: Optional[Dict[str, Any]] = None,
         phase: Optional[TaskPhase] = None,
         ci_bounce: Optional[int] = None,
@@ -543,8 +545,18 @@ class MockStore(WorkItemStore):
             item.review_comment = review_comment
         if verification is not None:
             item.verification = verification
+        if verification_source is not None:
+            item.verification_ref = {
+                "filename": "omac-verification.yaml",
+                "bytes": len(verification_source.encode("utf-8")),
+            }
         if review_report is not None:
             item.review_report = review_report
+        if review_report_source is not None:
+            item.review_report_ref = {
+                "filename": "omac-review-report.yaml",
+                "bytes": len(review_report_source.encode("utf-8")),
+            }
         if decision_required is not None:
             item.decision_required = decision_required
         if phase is not None:

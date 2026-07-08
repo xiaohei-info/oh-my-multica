@@ -427,6 +427,7 @@ class TestSubmitPerKindPhase:
         got = eng.store.get_work_item(item.id)
         assert got.artifacts == {"pr_url": "https://x/pr/1"}
         assert got.verification["pr_base"] == "feature/v1"
+        assert got.verification_ref["filename"] == "omac-verification.yaml"
         assert got.status == WorkItemStatus.DONE
 
     def test_develop_authoring_content_rejected_atomic(self, tmp_path):
@@ -470,6 +471,7 @@ class TestSubmitPerKindPhase:
         got = eng.store.get_work_item(item.id)
         assert got.review_verdict == "pass"
         assert got.review_report["acceptance_mapping"][0]["acceptance"] == "works"
+        assert got.review_report_ref["filename"] == "omac-review-report.yaml"
 
     def test_review_reject_verdict_forbidden(self, tmp_path):
         eng = _engine()

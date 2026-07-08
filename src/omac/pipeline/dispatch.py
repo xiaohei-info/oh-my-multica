@@ -565,6 +565,7 @@ def submit(
             issue_id,
             artifacts={"pr_url": pr_url},
             verification=verification,
+            verification_source=_read_text(verification_file),
         )
         store.update_status(issue_id, WorkItemStatus.DONE)
         return SubmitResult(kind, phase, "verification", WorkItemStatus.DONE)
@@ -576,6 +577,7 @@ def submit(
             issue_id,
             review_verdict=verdict,
             review_report=report,
+            review_report_source=_read_text(report_file),
             phase=TaskPhase.REVIEW,
         )
         # 状态保持 IN_REVIEW,由 loop / plan 流水线收割判定 done / blocked。

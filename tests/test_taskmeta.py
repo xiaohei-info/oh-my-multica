@@ -272,18 +272,45 @@ def test_multica_update_phase_and_bounces_roundtrip():
 
 
 def test_multica_review_report_uses_ref_not_nested_json_string():
-    """review_report 是结构化证据,不应以嵌套 JSON 字符串塞进 metadata。"""
+    """review_report 是结构化证据,同时原始 --report-file 作为附件交接。"""
     store = _multica_store()
     fake = _FakeMulticaProc()
     report = {"review_goals": ["g"], "blockers": [], "nits": ["nit"]}
     with patch("subprocess.run", side_effect=fake.run):
         item = store.create_work_item("ws", "t", "d", dag_key="a", worker="alice", kind=TaskKind.PLAN)
-        store.update_work_item_metadata(item.id, review_report=report)
+        store.update_work_item_metadata(
+            item.id,
+            review_report=report,
+            review_report_source="review_goals:\n- g\nblockers: []\nnits:\n- nit\n",
+        )
         got = store.get_work_item(item.id)
     assert got.review_report == report
     md = fake.metadata[item.id]
     assert md["review_report"] == report
-    assert "review_report_ref" not in md
+    assert md["review_report_ref"]["sha256"]
+    assert md["review_report_ref"]["attachment_id"] == "att-1"
+    assert fake.comments[item.id][0]["attachments"][0]["filename"].startswith("omac-review-report-")
+
+
+def test_multica_verification_file_is_attached_and_referenced():
+    """develop 的 --verification-file 也必须有系统评论附件,供后续 reviewer 追溯原文。"""
+    store = _multica_store()
+    fake = _FakeMulticaProc()
+    verification = {"commands": [{"cmd": "pytest", "exit_code": 0}]}
+    with patch("subprocess.run", side_effect=fake.run):
+        item = store.create_work_item("ws", "t", "d", dag_key="a", worker="alice", kind=TaskKind.DEVELOP)
+        store.update_work_item_metadata(
+            item.id,
+            verification=verification,
+            verification_source="commands:\n- cmd: pytest\n  exit_code: 0\n",
+        )
+        got = store.get_work_item(item.id)
+    assert got.verification == verification
+    md = fake.metadata[item.id]
+    assert md["verification"] == verification
+    assert md["verification_ref"]["sha256"]
+    assert md["verification_ref"]["attachment_id"] == "att-1"
+    assert fake.comments[item.id][0]["attachments"][0]["filename"].startswith("omac-verification-")
 
 
 def test_multica_old_issue_without_kind_reads_develop():

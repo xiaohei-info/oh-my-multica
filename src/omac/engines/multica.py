@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional
 from ..core.taskmeta import (
     CI_BOUNCE_KEY, DECISION_REQUIRED_KEY, DELIVERABLE_KEY, DELIVERABLE_REF_KEY, KIND_KEY,
     MERGE_BOUNCE_KEY, PHASE_KEY, REVIEW_BOUNCE_KEY, REVIEW_REPORT_REF_KEY,
-    TaskKind, TaskPhase,
+    TaskKind, TaskPhase, VERIFICATION_REF_KEY,
     parse_bounces, parse_kind, parse_phase,
 )
 from ..errors import AuthError, PlatformError
@@ -116,13 +116,8 @@ class MulticaStore(WorkItemStore):
         body = content or ""
         sha = hashlib.sha256(body.encode("utf-8")).hexdigest()
         filename = f"omac-{key}-{sha[:12]}{suffix}"
-        comment = (
-            f"## omac {key}\n"
-            f"- sha256: {sha}\n"
-            f"- bytes: {len(body.encode('utf-8'))}\n"
-            f"- attachment: {filename}\n\n"
-            "交付文档已作为附件上传；程序化引用见 issue metadata。\n"
-        )
+        size = len(body.encode("utf-8"))
+        comment = self._payload_comment(key, sha, size, filename)
 
         with tempfile.TemporaryDirectory(prefix="omac-payload-") as td:
             comment_path = os.path.join(td, f"comment-{key}.md")
@@ -145,9 +140,31 @@ class MulticaStore(WorkItemStore):
             "comment_id": comment_id,
             "attachment_id": attachment.get("id"),
             "sha256": sha,
-            "bytes": len(body.encode("utf-8")),
+            "bytes": size,
             "filename": attachment.get("filename") or filename,
         }
+
+    @staticmethod
+    def _payload_comment(key: str, sha: str, size: int, filename: str) -> str:
+        title = {
+            "deliverable": "阶段交付文件",
+            "verification": "验证证据文件",
+            "review-report": "评审报告文件",
+        }.get(key, "交接文件")
+        ref_key = {
+            "deliverable": DELIVERABLE_REF_KEY,
+            "verification": VERIFICATION_REF_KEY,
+            "review-report": REVIEW_REPORT_REF_KEY,
+        }.get(key, f"{key}_ref")
+        return (
+            f"## omac {key}\n"
+            f"{title}已作为附件上传。\n\n"
+            f"- attachment: {filename}\n"
+            f"- sha256: {sha}\n"
+            f"- bytes: {size}\n"
+            f"- metadata: `{ref_key}`\n\n"
+            "后续 agent 应通过 `omac work show` 读取交接上下文；程序化引用见 issue metadata。\n"
+        )
 
     def _load_payload_comment(self, item_id: str, key: str, ref: Optional[Dict[str, Any]]) -> Optional[str]:
         if not ref:
@@ -217,6 +234,7 @@ class MulticaStore(WorkItemStore):
         if not deliverable and isinstance(deliverable_ref, dict):
             deliverable = self._load_payload_comment(issue_data["id"], "deliverable", deliverable_ref)
 
+        verification_ref = self._json_metadata(metadata, VERIFICATION_REF_KEY)
         review_report_ref = self._json_metadata(metadata, REVIEW_REPORT_REF_KEY)
         review_report = self._json_metadata(metadata, "review_report")
         if review_report is None and isinstance(review_report_ref, dict):
@@ -240,6 +258,7 @@ class MulticaStore(WorkItemStore):
             wave=wave,
             artifacts=self._json_metadata(metadata, "artifacts"),
             verification=self._json_metadata(metadata, "verification"),
+            verification_ref=verification_ref if isinstance(verification_ref, dict) else None,
             review_verdict=metadata.get("review_verdict"),
             review_comment=metadata.get("review_comment"),
             review_report=review_report,
@@ -454,7 +473,9 @@ class MulticaStore(WorkItemStore):
         review_verdict: Optional[str] = None,
         review_comment: Optional[str] = None,
         verification: Optional[Dict[str, Any]] = None,
+        verification_source: Optional[str] = None,
         review_report: Optional[Dict[str, Any]] = None,
+        review_report_source: Optional[str] = None,
         decision_required: Optional[Dict[str, Any]] = None,
         phase: Optional[TaskPhase] = None,
         ci_bounce: Optional[int] = None,
@@ -477,8 +498,16 @@ class MulticaStore(WorkItemStore):
             self._set_metadata(item_id, "review_comment", review_comment)
         if verification is not None:
             self._set_metadata(item_id, "verification", verification)
+        if verification_source is not None:
+            ref = self._publish_payload_comment(
+                item_id, "verification", verification_source, ".yaml")
+            self._set_metadata(item_id, VERIFICATION_REF_KEY, ref)
         if review_report is not None:
             self._set_metadata(item_id, "review_report", review_report)
+        if review_report_source is not None:
+            ref = self._publish_payload_comment(
+                item_id, "review-report", review_report_source, ".yaml")
+            self._set_metadata(item_id, REVIEW_REPORT_REF_KEY, ref)
         if decision_required is not None:
             self._set_metadata(item_id, DECISION_REQUIRED_KEY, decision_required)
         if ci_bounce is not None:
