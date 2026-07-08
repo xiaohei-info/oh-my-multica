@@ -5,15 +5,17 @@ omac 是确定性 CLI 驱动的多 Agent 并行开发编排:Loop 驱动 Agent,LL
 
 ## 标准路径
 
-1. `omac init` —— 一次性配置:选 workspace → 列全量 agent → 角色映射
-   → 落盘 `.omac/config.yaml`(体检:`omac init --check`)
+1. 一次性配置:
+   - 人类入口:`omac init` 交互式选择 workspace、角色映射与 workflow 默认策略
+   - agent/CI 入口:用 `omac config set ...` 写 `.omac/config.yaml`,然后只跑
+     `omac init --check`;不要运行裸 `omac init`,它是人类交互式向导
 2. `omac plan create --name <feature> [--goal 需求 | --doc 设计方案文档]` —— 设计方案 → 验收文档
-   → 拆解,**三个环节全程内置 reviewer 评审**(配了 reviewers 且未 --no-review),
+   → 拆解,默认行为读 `config.workflow`,
    产出 `.omac/<feature>.yaml`( + `.acceptance.yaml`)
    - `--goal <需求>`:planner 据此编写设计方案(从需求出发的正道入口)
    - `--doc <设计方案文档>`:已有方案,跳过 planner 设计环节
    - **人机确认门(默认开)**:设计方案、验收两个环节产出后,先由你确认「是否满足需求」
-     再进 reviewer 评审。通过标准 = 把该 issue 流转到 **done**(omac 识别到后翻回
+     再进 reviewer 评审。可用 `workflow.human_in_loop=false` 关闭。通过标准 = 把该 issue 流转到 **done**(omac 识别到后翻回
      in_review 继续评审)。手动放行:`omac plan confirm --name <feature>`;
      无人值守入口用 `--no-confirm` 关闭。
    - **provenance**:验收 issue 引用计划 issue、拆解 issue 引用计划+验收 issue,
@@ -29,7 +31,7 @@ omac 是确定性 CLI 驱动的多 Agent 并行开发编排:Loop 驱动 Agent,LL
 
 | 阶段 | 主责 agent | 真实入口 | 成功交付 | 下一跳 |
 |---|---|---|---|---|
-| 初始化 | 人 / 入口 agent | `omac init --check` | `.omac/config.yaml` 中 workspace、project、roles 可用 | `omac plan create` |
+| 初始化 | 人 / 入口 agent | 人:`omac init`;agent:`omac config set ...` → `omac init --check` | `.omac/config.yaml` 中 workspace、project、roles、workflow 可用 | `omac plan create` |
 | 方案设计 | planner | `omac plan create --name <feature> --goal <需求>` | 设计方案 issue done,必要时经 `omac plan confirm` 放行 | reviewer 评审方案 |
 | 验收定义 | planner | 同一条 `omac plan create` 流程 | 验收文档 issue done,端到端验收点明确 | reviewer 评审验收 |
 | DAG 拆解 | orchestrator | `omac plan create` 内置拆解段或 `--doc <设计方案文档>` | `.omac/<feature>.yaml`,每节点 contract 可执行 | reviewer 评审 manifest |
@@ -48,7 +50,8 @@ omac 有三种入口调用者,消费同一套 CLI:**人(终端)/ Agent(Claude Co
 / Web UI**(设计 §1.4)。控制反转的边界必须分清:
 
 - ✅ **agent 作为入口 = 启动确定性 loop 进程,并跑全流程** —— 不是只 `dag run`,而是
-  `omac init` → `omac plan create`(设计方案 / 拆 DAG)→ `omac dag run`(驱动到收敛)整条链。
+  `omac config set ...` → `omac init --check` → `omac plan create`(设计方案 / 拆 DAG)
+  → `omac dag run`(驱动到收敛)整条链。
   loop 的决策逻辑在**代码**里跑(sync→decide→dispatch→sleep),agent 只是把进程拉起来,
   它的上下文**不参与每轮轮询** —— token 成本 ≈ 0,和人在终端敲完命令晾着等一样。
 - ❌ **被否决的反模式** = 让 **agent 的推理上下文本身充当 while 轮询循环**(每轮 LLM 推理 = 一次 tick):
@@ -58,6 +61,28 @@ omac 有三种入口调用者,消费同一套 CLI:**人(终端)/ Agent(Claude Co
 
 **承载约束**(对人和 agent 一视同仁):`plan create && dag run` 是长命进程,承载它的机器/会话要稳;
 中断也不丢 —— 状态全在 manifest + 平台、循环幂等,重跑即续跑、支持跨机接力(可用 `--max-minutes` 分段)。
+
+### agent 初始化协议
+
+裸 `omac init` 是人类交互式向导。agent/CI 的 stdin 通常不是 TTY,运行裸 `omac init`
+会 exit 5 并打印 `omac config set` 示例;正确路径是声明式写配置后体检:
+
+```bash
+omac config set engine mock
+omac config set workspace mock-workspace
+omac config set roles.planner alice
+omac config set roles.orchestrator bob
+omac config set roles.workers '["alice"]'
+omac config set roles.reviewers '["charlie"]'
+omac config set workflow.human_in_loop false
+omac config set workflow.acceptance_doc true
+omac config set workflow.goal_required true
+omac init --check
+```
+
+`workflow.review`、`workflow.acceptance_doc`、`workflow.human_in_loop` 与
+`workflow.goal_required` 是项目默认策略;`plan create/resume` 的现有 `--no-*`
+参数只做单次临时关闭。
 
 ### issue 辨识边界(同一 project / 同一批 agent 混用时)
 

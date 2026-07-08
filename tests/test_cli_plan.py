@@ -448,6 +448,32 @@ def test_create_with_goal_injects_requirement_into_planner(tmp_path, monkeypatch
     assert "实现函数 add" in plan_item.description, "planner issue body 应含需求"
 
 
+def test_create_goal_required_rejects_empty_goal(tmp_path, monkeypatch, capsys):
+    _configure_create_mock(tmp_path, monkeypatch)
+    assert main(["config", "set", "workflow.goal_required", "true"]) == exit_codes.OK
+    capsys.readouterr()
+
+    code = main(["plan", "create", "--name", "demo-need-goal"])
+
+    assert code == exit_codes.VALIDATION
+    err = capsys.readouterr().err
+    assert "workflow.goal_required" in err
+    assert "--goal" in err
+
+
+def test_create_workflow_human_in_loop_false_skips_confirm_gate(tmp_path, monkeypatch):
+    from omac.core.taskmeta import TaskKind
+    engine = _configure_create_mock(tmp_path, monkeypatch)
+    assert main(["config", "set", "workflow.human_in_loop", "false"]) == exit_codes.OK
+    MockStore.set_auto_confirm(False)
+
+    assert main(["plan", "create", "--name", "demo-agent-flow"]) == exit_codes.OK
+
+    plan_item = _first_item_of_kind(engine, TaskKind.PLAN)
+    assert plan_item is not None
+    assert plan_item.status.value == "done"
+
+
 def test_resolve_goal_precedence_and_exclusivity(tmp_path):
     """_resolve_goal:--goal 直给 / --goal-file 读文件 / 二者互斥报错 / 缺省 None。"""
     from types import SimpleNamespace

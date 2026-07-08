@@ -52,6 +52,32 @@ def test_resolve_retry_ignores_unknown_subkey():
     assert config_mod.resolve_retry(cfg) == {"ci": 3, "review": 2, "merge": 3}
 
 
+# ==================== workflow 默认策略 ====================
+
+def test_resolve_workflow_defaults_when_missing():
+    assert config_mod.resolve_workflow({}) == {
+        "human_in_loop": True,
+        "review": True,
+        "acceptance_doc": True,
+        "goal_required": False,
+    }
+
+
+def test_resolve_workflow_merges_partial_override():
+    cfg = {"workflow": {"human_in_loop": False, "goal_required": True}}
+    assert config_mod.resolve_workflow(cfg) == {
+        "human_in_loop": False,
+        "review": True,
+        "acceptance_doc": True,
+        "goal_required": True,
+    }
+
+
+def test_resolve_workflow_rejects_non_bool():
+    with pytest.raises(ValidationError):
+        config_mod.resolve_workflow({"workflow": {"acceptance_doc": "yes"}})
+
+
 # ==================== init 生成含 retry 块 ====================
 
 def test_init_writes_retry_block(tmp_path, monkeypatch):
@@ -67,6 +93,7 @@ def test_init_writes_retry_block(tmp_path, monkeypatch):
     # DEFAULT_MAX_ROUNDS 与 acceptance.max_rounds 同源,无重复 authority(Nit 6)
     assert cfg["acceptance"] == {"max_rounds": config_mod.DEFAULT_MAX_ROUNDS}
     assert cfg["acceptance"]["max_rounds"] == 3
+    assert cfg["workflow"] == config_mod.DEFAULT_WORKFLOW
 
 
 # ==================== config get/set 可读写 retry ====================

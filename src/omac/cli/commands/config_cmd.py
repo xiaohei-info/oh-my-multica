@@ -64,14 +64,22 @@ def run(args) -> int:
 
 
 def _validate_set_value(key: str, value):
-    """写入前校验:retry.* 必须为整数且 ≥ 0(负数 → ValidationError ≡ exit 5)。"""
-    if not key.startswith("retry."):
+    """写入前校验:把明显非法配置挡在 config set 阶段。"""
+    if key.startswith("retry."):
+        sub = key.split(".", 1)[1]
+        if sub not in config_mod.DEFAULT_RETRY:
+            return
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValidationError(
+                f"{key} 必须为整数,got {type(value).__name__}({value!r})")
+        if value < 0:
+            raise ValidationError(f"{key} 不能为负数(非法值 {value});需 ≥ 0")
         return
-    sub = key.split(".", 1)[1]
-    if sub not in config_mod.DEFAULT_RETRY:
-        return
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ValidationError(
-            f"{key} 必须为整数,got {type(value).__name__}({value!r})")
-    if value < 0:
-        raise ValidationError(f"{key} 不能为负数(非法值 {value});需 ≥ 0")
+
+    if key.startswith("workflow."):
+        sub = key.split(".", 1)[1]
+        if sub not in config_mod.DEFAULT_WORKFLOW:
+            return
+        if not isinstance(value, bool):
+            raise ValidationError(
+                f"{key} 必须为布尔值 true/false,got {type(value).__name__}({value!r})")

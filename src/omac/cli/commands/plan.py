@@ -110,6 +110,7 @@ def _resolve_goal(args) -> str | None:
 def _build_context(cfg: dict, engine, args) -> PlanContext:
     workspace_id = engine.store.config.workspace_id
     roles = cfg.get("roles") or {}
+    workflow = config_mod.resolve_workflow(cfg)
 
     workers = roles.get("workers") or []
     if isinstance(workers, str):
@@ -133,10 +134,10 @@ def _build_context(cfg: dict, engine, args) -> PlanContext:
         orchestrator=orchestrator,
         reviewers=reviewers,
         max_revisions=resolve_review_rounds(cfg),
-        no_review=args.no_review,
-        no_acceptance=args.no_acceptance,
+        no_review=(not workflow["review"]) or args.no_review,
+        no_acceptance=(not workflow["acceptance_doc"]) or args.no_acceptance,
         members=members,
-        confirm=not args.no_confirm,
+        confirm=workflow["human_in_loop"] and not args.no_confirm,
     )
 
 
@@ -149,6 +150,11 @@ def _create(args) -> int:
     doc_path = getattr(args, "doc", None)
     if goal_text and doc_path:
         hint("同时给了 --doc 与 --goal:--doc 会跳过 planner 设计环节,--goal 被忽略")
+    if not doc_path and not goal_text and config_mod.resolve_workflow(cfg)["goal_required"]:
+        raise ValidationError(
+            "workflow.goal_required=true:无 --doc 时必须提供需求。"
+            "请使用 `omac plan create --name <name> --goal <需求>` "
+            "或 `--goal-file <path>`;已有设计方案则用 `--doc <path>`。")
 
     ctx = _build_context(cfg, engine, args)
     return plan_create(ctx, args.name, doc_path=doc_path, goal_text=goal_text)

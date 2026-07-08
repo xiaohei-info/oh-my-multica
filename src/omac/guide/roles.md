@@ -1,6 +1,7 @@
 # 角色模型与配置
 
-全部角色都是工作空间里的 agent,`omac init` 从全量 agent 列表挑选映射,
+全部角色都是工作空间里的 agent。人类入口用 `omac init` 从全量 agent 列表挑选映射;
+agent/CI 入口用 `omac config set roles.* ...` 写同一份配置,再运行 `omac init --check`。
 不使用小队/分组等平台特有概念。
 
 | 角色 | 职责 | 产出 |
@@ -79,6 +80,7 @@ roles:
   workers: [backend-agent, fe-agent]
   reviewers: [review-agent-a, review-agent-b]
 defaults: { max_parallel: 4, poll_interval: 30, coverage_gate: 90 }
+workflow: { human_in_loop: true, review: true, acceptance_doc: true, goal_required: false }
 ci:    { check_command: "gh pr checks {pr_url}" }   # 可选
 merge: { command: "gh pr merge {pr_url} --squash" } # 可选
 acceptance: { max_rounds: 3 }

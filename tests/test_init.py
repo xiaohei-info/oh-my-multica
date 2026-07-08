@@ -1,6 +1,7 @@
 """omac init:非交互直出、交互主路径、--check 引擎校验、引擎发现接口。"""
 import builtins
 import json
+import sys
 
 import pytest
 
@@ -68,6 +69,23 @@ def test_multica_list_workspaces_surfaces_auth_error(monkeypatch):
 
 
 # ==================== 非交互模式 ====================
+
+def test_bare_init_rejects_non_tty_with_config_set_guidance(tmp_path, monkeypatch, capsys):
+    class _NonTty:
+        def isatty(self):
+            return False
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "stdin", _NonTty())
+
+    code = main(["init"])
+
+    assert code == exit_codes.VALIDATION
+    err = capsys.readouterr().err
+    assert "omac init 是人类交互式向导" in err
+    assert "omac config set engine" in err
+    assert "omac init --check" in err
+
 
 def test_non_interactive_writes_valid_config(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
@@ -279,9 +297,15 @@ def _answers(seq):
     return _fake
 
 
+class _Tty:
+    def isatty(self):
+        return True
+
+
 def test_interactive_main_path(tmp_path, monkeypatch, capsys):
     """交互式:回车用缺省,主路径生成 config 且 --check 通过。"""
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "stdin", _Tty())
     # 回答顺序:engine(回车=mock)→ workspace(回车=第一个)→ planner(回车=1)
     # → orchestrator(回车=1)→ workers(回车=1)→ reviewers(回车=1)→ acceptor(回车跳过)
     monkeypatch.setattr(builtins, "input", _answers([
@@ -300,6 +324,12 @@ def test_interactive_main_path(tmp_path, monkeypatch, capsys):
     assert cfg["roles"]["planner"] == "alice"
     assert cfg["roles"]["workers"] == ["alice"]
     assert "acceptor" not in cfg["roles"]
+    assert cfg["workflow"] == {
+        "human_in_loop": True,
+        "review": True,
+        "acceptance_doc": True,
+        "goal_required": False,
+    }
 
     capsys.readouterr()
     assert main(["init", "--check"]) == exit_codes.OK
@@ -308,6 +338,7 @@ def test_interactive_main_path(tmp_path, monkeypatch, capsys):
 def test_interactive_type_name(tmp_path, monkeypatch, capsys):
     """交互式输入 agent 名(非序号)也能映射。"""
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "stdin", _Tty())
     monkeypatch.setattr(builtins, "input", _answers([
         "mock",            # engine
         "mock-workspace",  # workspace by id
@@ -321,10 +352,12 @@ def test_interactive_type_name(tmp_path, monkeypatch, capsys):
     import yaml
     cfg = yaml.safe_load((tmp_path / ".omac" / "config.yaml").read_text())
     assert cfg["roles"]["reviewers"] == ["bob", "charlie"]
+    assert cfg["workflow"]["human_in_loop"] is True
 
 
 def test_interactive_bad_role_rejected(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "stdin", _Tty())
     monkeypatch.setattr(builtins, "input", _answers([
         "mock", "mock-workspace", "ghost",  # planner 不在池
     ]))

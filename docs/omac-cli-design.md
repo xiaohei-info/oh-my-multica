@@ -200,6 +200,11 @@ defaults:
   max_parallel: 4
   poll_interval: 30
   coverage_gate: 90
+workflow:
+  human_in_loop: true                    # plan 设计/验收产出后是否默认等人确认
+  review: true                           # plan/decompose 是否默认走 reviewer 门
+  acceptance_doc: true                   # plan create 是否默认生成验收文档
+  goal_required: false                   # 无 --doc 时是否强制 --goal/--goal-file
 ci:                                      # 可选;缺省跳过 CI 环节
   check_command: "gh pr checks {pr_url}" # 模板命令,退出码即结论
   timeout_minutes: 30
@@ -213,7 +218,9 @@ acceptance:
   max_rounds: 3                          # 总控验收 → 增量修复的外层循环上限(与 retry 正交)
 ```
 
-`roles` 下可选 `acceptor: <agent>`(总控验收人,缺省复用 reviewers 池)。CI 与 merge 走**模板命令**而非平台内建——代码托管(GitHub 等)与协作引擎(Multica)是两个平台,模板命令天然解耦,且对任何 CI/托管组合通用。
+`roles` 下可选 `acceptor: <agent>`(总控验收人,缺省复用 reviewers 池)。
+`workflow` 是项目级默认流程策略,命令行现有 `--no-review` / `--no-acceptance` /
+`--no-confirm` 只做单次临时关闭。CI 与 merge 走**模板命令**而非平台内建——代码托管(GitHub 等)与协作引擎(Multica)是两个平台,模板命令天然解耦,且对任何 CI/托管组合通用。
 
 ---
 
@@ -238,7 +245,7 @@ flowchart LR
 
 ### 7.1 阶段一:`omac init` — 一次性配置
 
-**参与者**:调用者、omac CLI、引擎层。目标:选定 workspace → 列出全量 agent → 完成角色映射,固化进 `.omac/config.yaml`。
+**参与者**:调用者、omac CLI、引擎层。目标:选定 workspace → 列出全量 agent → 完成角色映射与 workflow 默认策略,固化进 `.omac/config.yaml`。裸 `omac init` 是人类交互式向导;agent/CI 用 `omac config set ...` 写配置后只运行 `omac init --check`,非 TTY 下裸 `omac init` 直接 exit 5 并给出 config set 示例。
 
 ```mermaid
 sequenceDiagram
@@ -247,7 +254,7 @@ sequenceDiagram
     participant C as omac CLI
     participant M as 引擎层(Store + Runtime)
 
-    U->>C: omac init
+    U->>C: omac init(人类交互式)
     C->>M: multica workspace list
     M-->>C: 工作空间列表
     C-->>U: 请选择 workspace
@@ -256,6 +263,7 @@ sequenceDiagram
     M-->>C: 工作空间全量 agent 列表
     C-->>U: 请映射角色:planner / orchestrator / workers / reviewers
     U->>C: 从全量列表中逐一挑选,完成映射
+    C-->>U: 请选择 workflow 默认策略(human/acceptance/goal)
     C->>C: 写入 .omac/config.yaml
     C-->>U: exit 0,配置就绪
 

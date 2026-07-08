@@ -13,6 +13,11 @@
       acceptor: <agent>          # 可选,缺省复用 reviewers 池
     defaults:
       max_parallel / poll_interval / coverage_gate
+    workflow:
+      human_in_loop: true       # plan 设计/验收产出后是否默认等人确认
+      review: true              # plan/decompose 是否默认走 reviewer 门
+      acceptance_doc: true      # plan create 是否默认生成验收文档
+      goal_required: false      # 无 --doc 时是否强制 --goal/--goal-file
     ci:    { check_command, timeout_minutes }   # 可选,缺省跳过 CI 环节
     merge: { command }                           # 可选,缺省不自动合并
     acceptance: { max_rounds }                   # 总控验收外层循环上限(与 retry 正交)
@@ -36,6 +41,13 @@ DEFAULTS = {
     "max_parallel": 4,
     "poll_interval": 30,
     "coverage_gate": 90,
+}
+
+DEFAULT_WORKFLOW = {
+    "human_in_loop": True,
+    "review": True,
+    "acceptance_doc": True,
+    "goal_required": False,
 }
 
 # 三类「回到 worker」回退次数上限(设计文档 §6 / §7.3;缺省 3,0 = 该类失败即 blocked)
@@ -117,6 +129,26 @@ def resolve_retry(config: dict) -> dict:
                 f"retry.{key} 必须为整数,got {type(val).__name__}({val!r})")
         if val < 0:
             raise ValidationError(f"retry.{key} 不能为负数(非法值 {val});需 ≥ 0")
+        resolved[key] = val
+    return resolved
+
+
+def resolve_workflow(config: dict) -> dict:
+    """解析 workflow 块:项目级流程策略,缺省保持历史行为。"""
+    raw = get_value(config, "workflow")
+    if raw is None:
+        return dict(DEFAULT_WORKFLOW)
+    if not isinstance(raw, dict):
+        raise ValidationError(
+            f"workflow 配置应为 YAML 映射,got {type(raw).__name__}")
+    resolved = dict(DEFAULT_WORKFLOW)
+    for key in DEFAULT_WORKFLOW:
+        if key not in raw:
+            continue
+        val = raw[key]
+        if not isinstance(val, bool):
+            raise ValidationError(
+                f"workflow.{key} 必须为布尔值 true/false,got {type(val).__name__}({val!r})")
         resolved[key] = val
     return resolved
 

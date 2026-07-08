@@ -77,21 +77,24 @@ cd oh-my-agent-cluster && git pull && pipx reinstall omac
 以下命令均可在本仓根目录实测运行(Mock 引擎)。Mock 成员池预设
 `alice`、`bob`、`charlie`,下文以这三者为例配置角色。
 
-### 1. 一次性配置(`omac init`)
+### 1. 一次性配置(`omac init` / `omac config set`)
 
 ```bash
-# 体检:检查配置文件与角色映射是否就绪
-omac init --check
+# 人类首次配置:运行交互式向导
+omac init
 
-# 写入最小配置(Mock 引擎,使用 mock 成员池内的 agent 名)
+# agent/CI 首次配置:不要运行裸 omac init,直接声明式写 config
 omac config set engine mock
 omac config set workspace mock-workspace
 omac config set roles.planner alice
 omac config set roles.orchestrator bob
 omac config set roles.workers '["alice"]'
 omac config set roles.reviewers '["charlie"]'
+omac config set workflow.human_in_loop false
+omac config set workflow.acceptance_doc true
+omac config set workflow.goal_required true
 
-# 再次体检,应输出「体检通过」
+# 体检:检查配置文件与角色映射是否就绪
 omac init --check
 ```
 
@@ -100,9 +103,10 @@ omac init --check
 
 ### 2. 计划与 DAG 拆解(`omac plan`)
 
-`omac plan create` 已实现完整流水线:计划 → 验收文档 → 拆解为 manifest DAG(全程
-内置 review 阶段;`--doc` 跳过 planner 直接用现成设计文档,`--no-review` /
-`--no-acceptance` 按需关阶段)。`omac plan check` 对你自拆的 manifest 走 lint +
+`omac plan create` 已实现完整流水线:计划 → 验收文档 → 拆解为 manifest DAG。默认行为
+读 `.omac/config.yaml` 的 `workflow` 块;`--doc` 跳过 planner 直接用现成设计文档,
+`--no-review` / `--no-acceptance` / `--no-confirm` 仍可按单次命令临时关阶段。
+`omac plan check` 对你自拆的 manifest 走 lint +
 review 门;`omac plan show` 看摘要。字段与流程见 `omac plan --help` 与
 `omac guide manifest`。
 

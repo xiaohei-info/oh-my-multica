@@ -4,7 +4,7 @@
   omac init            交互式:引擎 → workspace → 全量 agent → 角色映射 → 落盘 config.yaml
   omac init --check    体检:本地 + 引擎可达时校验 workspace 存在、各角色 agent 在池内
 
-非交互模式(全参数直出):
+兼容路径(全参数直出):
   omac init --engine mock --workspace ws --planner a --orchestrator b \\
             --workers c,d --reviewers e,f [--acceptor g]
 
@@ -32,7 +32,11 @@ DESCRIPTION = """一次性配置:选定 workspace → 列出全量 agent → 完
   omac init --check    体检:multica CLI 是否在 PATH / 配置文件是否存在且含
                        engine·workspace·roles / 各角色 agent 是否在工作空间内
 
-非交互模式(全参数零交互直出,适合 agent/脚本):
+agent/脚本入口:
+  用 omac config set 写入配置后,只运行 omac init --check 做体检。
+  裸 omac init 是人类交互式向导,非 TTY 下会直接报错并给出 config set 示例。
+
+兼容路径(全参数零交互直出):
   omac init --engine mock --workspace ws \\
             --planner alice --orchestrator bob \\
             --workers carol,dave --reviewers eve,frank [--acceptor grace]
@@ -79,6 +83,15 @@ def _prompt(message: str, default: Optional[str] = None) -> str:
     suffix = f" [{default}]" if default else ""
     raw = input(f"{message}{suffix}: ").strip()
     return raw or (default or "")
+
+
+def _prompt_bool(message: str, default: bool) -> bool:
+    raw = _prompt(message, "Y" if default else "n").lower()
+    if raw in ("y", "yes", "true", "1", "是"):
+        return True
+    if raw in ("n", "no", "false", "0", "否"):
+        return False
+    raise ValidationError(f"{message} 只接受 yes/no")
 
 
 def _select_engine(args) -> str:
@@ -224,10 +237,24 @@ def _select_acceptor(args_val: Optional[str], members: List[str]) -> Optional[st
     return _resolve_member(raw, members, "acceptor")
 
 
+def _select_workflow(interactive: bool) -> dict:
+    workflow = dict(config_mod.DEFAULT_WORKFLOW)
+    if not interactive:
+        return workflow
+    print("\n工作流默认策略:")
+    workflow["human_in_loop"] = _prompt_bool(
+        "默认需要 human in the loop 确认设计/验收吗", True)
+    workflow["acceptance_doc"] = _prompt_bool(
+        "默认生成验收文档并在 dag run 收敛后总控验收吗", True)
+    workflow["goal_required"] = _prompt_bool(
+        "默认要求 plan create 从 --goal/--goal-file 需求出发吗", False)
+    return workflow
+
+
 def _build_config(engine: str, workspace: str, project: Optional[str],
                   planner: str, orchestrator: str,
                   workers: List[str], reviewers: List[str],
-                  acceptor: Optional[str]) -> dict:
+                  acceptor: Optional[str], workflow: Optional[dict] = None) -> dict:
     roles = {
         "planner": planner,
         "orchestrator": orchestrator,
@@ -245,6 +272,7 @@ def _build_config(engine: str, workspace: str, project: Optional[str],
     cfg.update({
         "roles": roles,
         "defaults": dict(config_mod.DEFAULTS),
+        "workflow": dict(workflow or config_mod.DEFAULT_WORKFLOW),
         "retry": dict(config_mod.DEFAULT_RETRY),
         "acceptance": {"max_rounds": config_mod.DEFAULT_MAX_ROUNDS},
     })
@@ -263,6 +291,26 @@ def _write_config(config: dict) -> int:
 
 
 def _run_setup(args) -> int:
+    supplied = [
+        args.engine, args.workspace, args.planner, args.orchestrator,
+        args.workers is not None, args.reviewers is not None,
+    ]
+    non_interactive = all(supplied)
+    if not non_interactive and not sys.stdin.isatty():
+        raise ValidationError(
+            "omac init 是人类交互式向导,当前 stdin 非交互。\n"
+            "agent/CI 请使用 `omac config set` 写入声明式配置,然后运行 `omac init --check`。\n"
+            "最小示例:\n"
+            "  omac config set engine mock\n"
+            "  omac config set workspace mock-workspace\n"
+            "  omac config set roles.planner alice\n"
+            "  omac config set roles.orchestrator bob\n"
+            "  omac config set roles.workers '[\"alice\"]'\n"
+            "  omac config set roles.reviewers '[\"charlie\"]'\n"
+            "  omac config set workflow.human_in_loop false\n"
+            "  omac config set workflow.acceptance_doc true\n"
+            "  omac config set workflow.goal_required true\n"
+            "  omac init --check")
     engine = _select_engine(args)
     discovery = _build_store(engine)                      # 无 workspace,跑 list_workspaces
     workspace = _select_workspace(args, discovery)
@@ -277,17 +325,16 @@ def _run_setup(args) -> int:
     workers = _select_members(args.workers, members, "workers", default_first=True)
     reviewers = _select_members(args.reviewers, members, "reviewers", default_first=True)
     # 全参数非交互:acceptor 未给则缺省跳过,不弹 prompt
-    non_interactive = all([
-        args.engine, args.workspace, args.planner, args.orchestrator,
-        args.workers is not None, args.reviewers is not None])
     if non_interactive:
         acceptor = None
         if args.acceptor and args.acceptor.strip():
             acceptor = _resolve_member(args.acceptor, members, "acceptor")
     else:
         acceptor = _select_acceptor(args.acceptor, members)
+    workflow = _select_workflow(interactive=not non_interactive)
     return _write_config(_build_config(
-        engine, workspace, project, planner, orchestrator, workers, reviewers, acceptor))
+        engine, workspace, project, planner, orchestrator, workers, reviewers,
+        acceptor, workflow))
 
 
 # ==================== 体检 ====================
