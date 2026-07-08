@@ -119,11 +119,11 @@ def test_run_task_renders_bootstrap_commands_as_markdown_code_blocks():
     res = run_task(eng, TaskKind.DECOMPOSE, _payload(), "alice", poll=_poll)
     item = eng.store.get_work_item(res["item_id"])
 
-    assert "```bash\nomac guide manifest\n```" in item.description
+    assert "```bash\nomac guide role orchestrator\n```" in item.description
     assert f"```bash\nOMAC_ENGINE=mock OMAC_WORKSPACE_ID=ws omac work show {res['item_id']}\n```" in item.description
     assert "```bash" in item.description
     assert f"OMAC_ENGINE=mock OMAC_WORKSPACE_ID=ws omac work submit {res['item_id']} --manifest-file <manifest_file>" in item.description
-    assert "1. omac guide manifest" not in item.description
+    assert "1. omac guide role orchestrator" not in item.description
 
 
 def test_run_task_renders_markdown_source_of_truth_as_collapsible_markdown():

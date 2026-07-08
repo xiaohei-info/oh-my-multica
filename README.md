@@ -108,7 +108,7 @@ omac init --check
 `--no-review` / `--no-acceptance` / `--no-confirm` 仍可按单次命令临时关阶段。
 `omac plan check` 对你自拆的 manifest 走 lint +
 review 门;`omac plan show` 看摘要。字段与流程见 `omac plan --help` 与
-`omac guide manifest`。
+`omac guide artifact manifest`。
 
 想跳过 planner 直接体验 Loop?仓内自带 `tests/fixtures/smoke_p1.yaml` 作为现成
 manifest 示例,可直接进下面第 3 步。
@@ -142,10 +142,12 @@ omac dag tick /tmp/smoke.yaml
 ```bash
 omac guide                   # 列出全部 topic
 omac guide workflow          # 整体工作流:init → plan → dag run → 异常处理闭环
-omac guide manifest          # manifest DAG 拆解方法论与 contract 字段
-omac guide roles             # 角色模型与配置
-omac guide worker            # worker 执行协议(TDD·证据·env_setup)
-omac guide reviewer          # reviewer 评审协议(独立复跑·评审目标)
+omac guide roles             # 生命周期角色索引与职责边界
+omac guide role planner      # 设计方案 + 验收文档协议
+omac guide role worker       # develop 执行协议(TDD·证据·env_setup)
+omac guide role reviewer     # review 阶段协议(独立复跑·评审目标)
+omac guide artifact manifest # manifest DAG 与 contract 字段
+omac guide artifact evidence # verification / review / acceptance-results 证据格式
 omac guide recovery          # exit 20 之后的恢复手册
 ```
 
@@ -163,7 +165,7 @@ omac
     init     交互式配置 / --check 体检
     config   get | set
   GUIDE
-    guide    workflow | manifest | roles | worker | reviewer | recovery
+    guide    workflow | roles | role <name> | artifact <name> | recovery
   WEB
     web      本地只读可视化面板(选 manifest、看进度与证据链)
 ```
@@ -187,7 +189,8 @@ omac
 ## 设计文档与 Guide
 
 - 完整设计:`docs/omac-cli-design.md`(背景、取舍、架构、角色、流程、引擎接口、平台可移植性)
-- 工作流知识(随包分发):`omac guide <topic>`(workflow / manifest / roles / worker / reviewer / recovery)
+- 工作流知识(随包分发):`omac guide workflow`, `omac guide role <name>`,
+  `omac guide artifact <name>`, `omac guide recovery`
 - 命令契约与协议细节:`omac <command> --help`
 
 ## 测试

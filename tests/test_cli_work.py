@@ -249,7 +249,7 @@ def test_plan_authoring_action_not_role_mixed():
     assert "验收文档" not in proto
     assert "acceptance" not in proto
     # 静态深度交给 guide(不再内联复制整段协议)
-    assert "omac guide workflow" in proto
+    assert "omac guide role planner" in proto
 
 
 def test_review_show_surfaces_deliverable_and_env_setup(tmp_path, monkeypatch, capsys):
@@ -266,7 +266,7 @@ def test_review_show_surfaces_deliverable_and_env_setup(tmp_path, monkeypatch, c
     out = capsys.readouterr().out
     assert "评审对象" in out
     assert "docker compose up -d db" in out  # worker 的 env_setup 复跑清单
-    assert "omac guide reviewer" in out
+    assert "omac guide role reviewer" in out
 
 
 def test_set_node_contract_visible_in_show():

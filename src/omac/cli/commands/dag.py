@@ -232,7 +232,7 @@ def _review_body(manifest, path: str) -> str:
         f"  1. 审查 manifest 文件:{path}\n"
         f"  2. 审查通过后 omac work submit <id> --verdict pass --report-file ..."
         "  拒绝请用 --verdict reject,附 blockers。\n"
-        "遇到不明确的地方:运行 omac guide reviewer 查阅 reviewer 角色说明。\n\n"
+        "遇到不明确的地方:运行 omac guide role reviewer 查阅 reviewer 角色说明。\n\n"
         "## 简报\n"
         f"- 节点数:{len(manifest.nodes)}\n"
         f"- meta:{manifest.meta}\n\n"

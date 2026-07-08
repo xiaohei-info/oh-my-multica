@@ -24,7 +24,7 @@ omac = "omac.cli.main:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"omac.guide" = ["*.md"]
+"omac.guide" = ["*.md", "roles/*.md", "artifacts/*.md"]
 "omac.web.static" = ["*"]
 
 [tool.pytest.ini_options]

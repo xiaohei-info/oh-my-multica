@@ -85,8 +85,8 @@ class TestRenderIssueBody:
         assert "omac work submit ISSUE-9" in body
         assert "简报" in body
         assert "硬约束" in body
-        # bootstrap 指引 guide(worker)
-        assert "omac guide worker" in body
+        # bootstrap 指引 role worker guide
+        assert "omac guide role worker" in body
 
     def test_bootstrap_commands_are_copy_pasteable(self):
         """work show/submit 命令里嵌入真实 id(不含通用占位),可直接复制执行。"""
@@ -153,7 +153,7 @@ class TestRenderIssueBody:
         n = Node(id="n", worker="alice", title="计划")
         body = render_issue_body(n, None, TaskKind.PLAN, "ID")
         # guide 指引出现在 work show 之前
-        assert body.index("omac guide workflow") < body.index("omac work show ID")
+        assert body.index("omac guide role planner") < body.index("omac work show ID")
         # 三条入口命令仍在(重排,不删)
         assert "omac work show ID" in body
         assert "omac work submit ID" in body
