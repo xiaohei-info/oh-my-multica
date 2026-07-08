@@ -39,7 +39,7 @@ omac CLI 已在你的 PATH 上,是唯一入口与权威清单:
   omac work show <该 issue id>   # 取任务上下文、你的角色与精确交付方式
   omac work submit <issue id> ...  # 按 show 输出里的参数交付
 
-不清楚就跑 `omac guide <topic>` 或 `omac --help` —— 不要编造命令,也不要手改 issue metadata。
+不清楚就跑 `omac guide` 查看 role/artifact 索引,或运行 `omac --help` —— 不要编造命令,也不要手改 issue metadata。
 """
 
 
@@ -66,7 +66,7 @@ _REVIEW_ACTION = (
 def _guide_ref(kind: TaskKind, phase: TaskPhase) -> str:
     """当前任务该查哪个 guide topic(review 阶段统一 reviewer)。"""
     if phase == TaskPhase.REVIEW:
-        return "reviewer"
+        return "role reviewer"
     return KIND_GUIDE.get(kind, "workflow")
 
 
@@ -662,12 +662,12 @@ KIND_ROLE = {
 }
 
 KIND_GUIDE = {
-    # 各 issue 类型指向对应的 guide topic;模板与 guide 同源、不重复
-    TaskKind.PLAN: "workflow",
-    TaskKind.ACCEPTANCE: "workflow",
-    TaskKind.DECOMPOSE: "manifest",
-    TaskKind.DEVELOP: "worker",
-    TaskKind.FINAL_ACCEPTANCE: "roles",
+    # 各 issue 类型指向对应的角色 guide topic;模板与 guide 同源、不重复
+    TaskKind.PLAN: "role planner",
+    TaskKind.ACCEPTANCE: "role planner",
+    TaskKind.DECOMPOSE: "role orchestrator",
+    TaskKind.DEVELOP: "role worker",
+    TaskKind.FINAL_ACCEPTANCE: "role acceptor",
 }
 
 KIND_LABEL = {
@@ -704,7 +704,7 @@ def render_issue_body(node, contract, kind, issue_id, source_refs=None, engine_e
     """三段式派发模板(设计文档 §7.4)。
 
     第一段 bootstrap:两条命令(work show / work submit 精确模板) +
-    omac guide <topic> 指引 + 必须经 omac 交互;第二段简报(title/objective/
+    omac guide role/artifact 指引 + 必须经 omac 交互;第二段简报(title/objective/
     source_of_truth/acceptance 摘要);第三段硬约束(non_goals/pr_base/reviewer 独立
     复跑等铁律)。模板文本与 guide 同源,不复制。
     """

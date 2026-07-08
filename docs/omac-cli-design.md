@@ -148,7 +148,7 @@ omac
     init     交互式配置 / --check 体检
     config   get | set
   GUIDE
-    guide    workflow | manifest | roles | worker | reviewer | recovery
+    guide    workflow | roles | role <name> | artifact <name> | recovery
   WEB
     web      启动本地只读可视化面板(选 manifest、看进度与证据链,§13)
 ```
@@ -505,7 +505,7 @@ sequenceDiagram
 你被分配了一个 <类型> 任务。本项目使用 omac CLI 协作,必须通过它交互:
   1. omac work show <id>     —— 获取完整任务上下文与执行协议
   2. 完成后 omac work submit <id> ...(show 的输出里有你这个类型的精确交付参数)
-遇到不明确的地方:omac guide <角色>
+遇到不明确的地方:omac guide role <角色> 或 omac guide artifact <产物>
 
 [第二段:任务简报](人浏览 issue 列表时可读)
 title / objective / source_of_truth / acceptance 摘要
@@ -628,7 +628,7 @@ dag run 结果回收 ──► 权威门(编排侧,信任但验证)
 
 | 通道 | 承载内容(原出处) |
 |---|---|
-| `omac guide <topic>` | 工作流总览、manifest 方法论、角色说明、恢复手册(原 orchestration SKILL.md);worker/reviewer 协议(原 executor SKILL.md) |
+| `omac guide workflow/roles/role/artifact/recovery` | 工作流总览、生命周期角色协议、设计/验收/manifest/证据格式、恢复手册(原 skill 内容按语义分层迁入 CLI) |
 | 各命令 Long help | 该环节的协议细节(如 `plan create --help` 讲两种模式与 review 门) |
 | exit 20 / exit 5 报告 | 现场发牌的"下一步动作",精确到完整命令行 |
 | 派发 issue body | bootstrap 指令 + 任务简报 + 硬约束(随任务送达,版本永远正确) |

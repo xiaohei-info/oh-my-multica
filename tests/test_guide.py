@@ -1,14 +1,19 @@
-"""guide 六 topic 走查:可加载、非空、无 skill 残留、omac 命令口径。"""
+"""guide 分层 topic 走查:可加载、非空、无 skill 残留、omac 命令口径。"""
 from __future__ import annotations
 
 import pytest
 
-from omac.cli import exit_codes
-from omac.cli.main import main
 from omac.cli.commands.dag import DESCRIPTION as DAG_DESC
-from omac.cli.commands.work import DESCRIPTION as WORK_DESC
 from omac.cli.commands.node import DESCRIPTION as NODE_DESC
-from omac.guide import TOPICS, load_topic
+from omac.cli.commands.work import DESCRIPTION as WORK_DESC
+from omac.guide import (
+    ARTIFACT_TOPICS,
+    ROLE_TOPICS,
+    TOPICS,
+    load_artifact_topic,
+    load_role_topic,
+    load_topic,
+)
 
 
 # skill 时代残留表述(出现 = 迁移不完整)
@@ -32,50 +37,100 @@ def _assert_no_residue(text: str, label: str) -> None:
         assert needle not in text.lower(), f"{label} contains skill residue: {needle}"
 
 
-@pytest.mark.parametrize("topic", sorted(TOPICS))
-def test_topic_loadable_and_nonempty(topic: str) -> None:
-    content = load_topic(topic)
-    assert content.strip(), f"topic {topic} is empty"
-    assert "#" in content, f"topic {topic} has no markdown headers"
+def _all_topics():
+    for topic in TOPICS:
+        yield f"guide/{topic}.md", load_topic(topic)
+    for topic in ROLE_TOPICS:
+        yield f"guide/roles/{topic}.md", load_role_topic(topic)
+    for topic in ARTIFACT_TOPICS:
+        yield f"guide/artifacts/{topic}.md", load_artifact_topic(topic)
 
 
-@pytest.mark.parametrize("topic", sorted(TOPICS))
-def test_topic_no_skill_residue(topic: str) -> None:
-    _assert_no_residue(load_topic(topic), f"guide/{topic}.md")
+@pytest.mark.parametrize("label,content", list(_all_topics()))
+def test_topic_loadable_and_nonempty(label: str, content: str) -> None:
+    assert content.strip(), f"{label} is empty"
+    assert "#" in content, f"{label} has no markdown headers"
 
 
-@pytest.mark.parametrize("topic", sorted(TOPICS))
-def test_topic_uses_omac_commands(topic: str) -> None:
-    content = load_topic(topic)
-    # 至少出现一次 omac 命令引用
-    assert "omac " in content, f"topic {topic} never references omac commands"
+@pytest.mark.parametrize("label,content", list(_all_topics()))
+def test_topic_no_skill_residue(label: str, content: str) -> None:
+    _assert_no_residue(content, label)
 
 
-def test_guide_role_alias_is_soft_context_command(capsys) -> None:
-    """角色名误作 guide topic 是高概率 agent 误用,应教学降级而非返回非 0 污染 run。"""
-    assert main(["guide", "planner"]) == exit_codes.OK
-    out = capsys.readouterr().out
-    assert "planner 是角色别名" in out
-    assert "已打开 workflow" in out
-    assert "# omac 整体工作流" in out
+@pytest.mark.parametrize("label,content", list(_all_topics()))
+def test_topic_uses_omac_commands(label: str, content: str) -> None:
+    assert "omac " in content, f"{label} never references omac commands"
 
 
-def test_manifest_topic_has_methodology() -> None:
-    content = load_topic("manifest")
-    for heading in ["核心信念", "防跑偏", "七道防跑偏闸", "两级拆解", "依赖三原则"]:
-        assert heading in content, f"manifest missing methodology section: {heading}"
+def test_workflow_topic_is_mechanism_only() -> None:
+    content = load_topic("workflow")
+    for item in ["omac init", "omac plan create", "omac dag run", "exit 20", "omac guide role planner"]:
+        assert item in content, f"workflow missing lifecycle reference: {item}"
+    assert "Worker 派发" not in content
+    assert "Reviewer 派发" not in content
 
 
-def test_worker_topic_has_checklist() -> None:
-    content = load_topic("worker")
-    for item in ["契约先行", "TDD", "verification", "env_setup"]:
-        assert item in content, f"worker missing: {item}"
+def test_roles_topic_is_index_not_protocol_dump() -> None:
+    content = load_topic("roles")
+    for role in ["planner", "orchestrator", "reviewer", "worker", "acceptor"]:
+        assert role in content, f"roles missing role: {role}"
+    assert "architect 不是第六个机制角色" in content
+    assert "omac guide role planner" in content
+    assert "完整执行清单" not in content
 
 
-def test_reviewer_topic_has_verdict() -> None:
-    content = load_topic("reviewer")
-    for item in ["收活铁律", "pass", "report", "blockers"]:
-        assert item in content, f"reviewer missing: {item}"
+def test_planner_role_has_design_and_acceptance_protocol() -> None:
+    content = load_role_topic("planner")
+    for item in ["设计方案", "验收文档", "核心数据", "模块边界", "跨模块契约", "验收映射"]:
+        assert item in content, f"planner missing design protocol: {item}"
+
+
+def test_orchestrator_role_has_wave_decomposition() -> None:
+    content = load_role_topic("orchestrator")
+    for item in ["Wave 0", "Wave 1", "Wave 2", "blocked_by", "contract"]:
+        assert item in content, f"orchestrator missing decomposition anchor: {item}"
+
+
+def test_worker_role_has_tdd_and_evidence() -> None:
+    content = load_role_topic("worker")
+    for item in ["TDD", "contract.source_of_truth", "verification", "pr_base", "non_goals"]:
+        assert item in content, f"worker missing execution anchor: {item}"
+
+
+def test_reviewer_role_has_verdict_and_independent_checks() -> None:
+    content = load_role_topic("reviewer")
+    for item in ["独立复跑", "pass", "reject", "review_goals", "coverage"]:
+        assert item in content, f"reviewer missing review anchor: {item}"
+
+
+def test_acceptor_role_has_final_acceptance_protocol() -> None:
+    content = load_role_topic("acceptor")
+    for item in ["final-acceptance", "acceptance-results", "pass/fail", "notes"]:
+        assert item in content, f"acceptor missing final acceptance anchor: {item}"
+
+
+def test_design_artifact_defines_markdown_frontmatter_schema() -> None:
+    content = load_artifact_topic("design")
+    for item in ["schema: omac.design/v1", "Markdown", "核心数据", "模块边界", "风险与兼容性"]:
+        assert item in content, f"design artifact missing schema anchor: {item}"
+
+
+def test_acceptance_artifact_defines_flow_action_schema() -> None:
+    content = load_artifact_topic("acceptance")
+    for item in ["schema: omac.acceptance/v1", "flows", "actions", "step", "how", "expected"]:
+        assert item in content, f"acceptance artifact missing schema anchor: {item}"
+
+
+def test_manifest_artifact_connects_contract_to_runtime() -> None:
+    content = load_artifact_topic("manifest")
+    for item in ["source_of_truth", "acceptance", "non_goals", "verification_commands", "integration_gates", "pr_base"]:
+        assert item in content, f"manifest artifact missing contract anchor: {item}"
+
+
+def test_evidence_artifact_defines_all_evidence_shapes() -> None:
+    content = load_artifact_topic("evidence")
+    for item in ["worker verification", "reviewer report", "final acceptance results", "acceptance_mapping"]:
+        assert item in content, f"evidence artifact missing evidence anchor: {item}"
 
 
 def test_recovery_topic_has_decision_flow() -> None:
@@ -100,141 +155,3 @@ def test_node_help_has_hard_constraints() -> None:
     _assert_no_residue(NODE_DESC, "node --help")
     for item in ["重试显式", "失败隔离", "防假收尾"]:
         assert item in NODE_DESC, f"node help missing hard constraint: {item}"
-
-
-def test_workflow_topic_has_lifecycle() -> None:
-    content = load_topic("workflow")
-    for item in ["omac init", "omac plan", "omac dag run", "exit 20"]:
-        assert item in content, f"workflow missing lifecycle reference: {item}"
-
-
-def test_roles_topic_has_all_roles() -> None:
-    content = load_topic("roles")
-    for role in ["planner", "orchestrator", "reviewer", "worker", "acceptor"]:
-        assert role in content, f"roles missing role: {role}"
-
-
-def test_workflow_guides_real_stage_handoffs() -> None:
-    content = load_topic("workflow")
-    for item in [
-        "planner",
-        "orchestrator",
-        "worker",
-        "reviewer",
-        "acceptor",
-        "omac plan confirm",
-        "collect_results",
-        "review_dispatch",
-        "human_gate_wait",
-        "acceptance.max_rounds",
-    ]:
-        assert item in content, f"workflow missing stage handoff anchor: {item}"
-
-
-def test_roles_topic_maps_agents_to_commands_and_outputs() -> None:
-    content = load_topic("roles")
-    for item in [
-        "omac plan create",
-        "omac dag run",
-        "omac work show",
-        "omac work submit",
-        "设计方案",
-        "验收文档",
-        "manifest DAG",
-        "PR + 证据",
-        "pass-with-nits",
-        "总控验收",
-    ]:
-        assert item in content, f"roles missing command/output anchor: {item}"
-
-
-def test_manifest_topic_connects_contract_to_agent_runtime() -> None:
-    content = load_topic("manifest")
-    for item in [
-        "contract.source_of_truth",
-        "contract.acceptance",
-        "contract.non_goals",
-        "contract.verification_commands",
-        "contract.integration_gates",
-        "contract.pr_base",
-        "contract.coverage_gate",
-        "omac work show",
-        "omac work submit",
-    ]:
-        assert item in content, f"manifest missing runtime contract anchor: {item}"
-
-
-def test_recovery_topic_guides_every_exit20_decision() -> None:
-    content = load_topic("recovery")
-    for item in [
-        "needs_decision",
-        "pass-with-nits",
-        "reviewer reject",
-        "CI",
-        "merge",
-        "acceptance.max_rounds",
-        "omac node retry",
-        "omac node accept",
-        "omac node abandon",
-    ]:
-        assert item in content, f"recovery missing exit20 decision anchor: {item}"
-
-
-# --- P3.2 迁移补齐的额外守卫(reader blocker fix) ---
-
-
-def test_worker_has_when_to_use() -> None:
-    """何时用 / 不用 必须出现在 worker 协议中。"""
-    content = load_topic("worker")
-    for item in ["何时用", "不适用", "适用场景", "判断标准"]:
-        assert item in content, f"worker missing when-to-use section: {item}"
-
-
-def test_reviewer_has_when_to_use() -> None:
-    content = load_topic("reviewer")
-    for item in ["何时用", "不适用", "适用场景"]:
-        assert item in content, f"reviewer missing when-to-use section: {item}"
-
-
-def test_worker_has_issue_body_识别表() -> None:
-    """issue body / 派发载荷完整结构表必须出现在 worker 协议中。"""
-    content = load_topic("worker")
-    for item in ["定位表", "必消费契约", "红线", "验收", "测试落点", "执行协议"]:
-        assert item in content, f"worker missing issue body field: {item}"
-
-
-def test_reviewer_has_issue_body_识别表() -> None:
-    content = load_topic("reviewer")
-    for item in ["定位表", "必消费契约", "红线", "验收", "测试落点", "唯一口径"]:
-        assert item in content, f"reviewer missing issue body field: {item}"
-
-
-def test_worker_has_env_assumptions() -> None:
-    content = load_topic("worker")
-    for item in ["环境假设", "集成分支", "Python", "Git"]:
-        assert item in content, f"worker missing env assumption: {item}"
-
-
-def test_reviewer_has_env_assumptions() -> None:
-    content = load_topic("reviewer")
-    for item in ["环境假设", "集成分支", "env_setup", "只读"]:
-        assert item in content, f"reviewer missing env assumption: {item}"
-
-
-def test_workflow_has_dispatch_template() -> None:
-    """dispatch body 模板必须出现在 workflow guide 中(P2.3 同源锚点)。"""
-    content = load_topic("workflow")
-    for item in ["派发 body 模板", "dispatch", "Worker 派发", "Reviewer 派发", "Architect 派发"]:
-        assert item in content, f"workflow missing dispatch template: {item}"
-
-
-def test_dispatch_template_uses_omac_commands() -> None:
-    """dispatch 模板必须使用 omac 命令口径(不能残留 agent_cli)。"""
-    content = load_topic("workflow")
-    dispatch_area = content[content.index("派发 body 模板"):]
-    assert "agent_cli" not in dispatch_area, "dispatch template still references agent_cli(wrong tool)"
-    assert "omac work submit" in dispatch_area, "dispatch template missing omac work submit"
-
-
-def test_dispatch_no_skill_residue() -> None:
-    _assert_no_residue(load_topic("workflow"), "guide/workflow.md")

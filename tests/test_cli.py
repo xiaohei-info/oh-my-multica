@@ -55,14 +55,37 @@ def test_web_nonlocal_without_token_exits_validation(capsys):
     assert "token" in capsys.readouterr().err
 
 
-def test_guide_lists_and_reads_topics(capsys):
+def test_guide_lists_grouped_topics(capsys):
     assert main(["guide"]) == exit_codes.OK
     out = capsys.readouterr().out
-    assert "workflow" in out and "recovery" in out
+    assert "omac guide workflow" in out
+    assert "omac guide role planner" in out
+    assert "omac guide artifact design" in out
+    assert "omac guide worker" not in out
 
     assert main(["guide", "workflow"]) == exit_codes.OK
     out = capsys.readouterr().out
     assert "omac init" in out and "dag run" in out
+
+
+def test_guide_reads_role_and_artifact_topics(capsys):
+    assert main(["guide", "role", "planner"]) == exit_codes.OK
+    out = capsys.readouterr().out
+    assert "planner" in out
+    assert "设计方案" in out
+    assert "验收文档" in out
+
+    assert main(["guide", "artifact", "design"]) == exit_codes.OK
+    out = capsys.readouterr().out
+    assert "schema: omac.design/v1" in out
+    assert "Markdown" in out
+
+
+def test_guide_rejects_old_flat_role_topics(capsys):
+    assert main(["guide", "worker"]) == exit_codes.GENERIC
+    err = capsys.readouterr().err
+    assert "未知 guide topic" in err
+    assert "omac guide role worker" in err
 
 
 def test_config_set_get_roundtrip(tmp_path, monkeypatch, capsys):
