@@ -97,18 +97,37 @@ def test_run_task_consumes_real_submit_deliverable():
 
 
 def test_run_task_renders_source_refs_in_body():
-    """provenance:后续任务带上源头 issue 引用,渲染进 issue body(防流程跑偏)。"""
+    """provenance:源头 issue 引用要用可读 Markdown,命令不能挤在同一行。"""
     eng = _engine()
     MockStore.set_kind_delivery("acceptance", {"acceptance": "验收正文"})
     res = run_task(eng, TaskKind.ACCEPTANCE, _payload(), "alice",
                    source_refs=["7", "8"], poll=_poll)
     item = eng.store.get_work_item(res["item_id"])
-    assert "源头" in item.description
-    assert "7" in item.description and "8" in item.description
+
+    assert "## 源头 issue（防跑偏）" in item.description
+    assert "- `#7`" in item.description
+    assert "```bash\nOMAC_ENGINE=mock OMAC_WORKSPACE_ID=ws omac work show 7\n```" in item.description
+    assert "- `#8`" in item.description
+    assert "```bash\nOMAC_ENGINE=mock OMAC_WORKSPACE_ID=ws omac work show 8\n```" in item.description
+    assert "#7(omac work show 7 查看)" not in item.description
 
 
-def test_run_task_renders_markdown_source_of_truth_without_breaking_fences():
-    """上游 Markdown 自带代码块时,issue body 外层 fence 不能被提前闭合。"""
+def test_run_task_renders_bootstrap_commands_as_markdown_code_blocks():
+    """bootstrap 命令使用 shell code block,避免长命令和 <manifest_file> 破坏正文渲染。"""
+    eng = _engine()
+    MockStore.set_kind_delivery("decompose", {"manifest": "nodes: []"})
+    res = run_task(eng, TaskKind.DECOMPOSE, _payload(), "alice", poll=_poll)
+    item = eng.store.get_work_item(res["item_id"])
+
+    assert "```bash\nomac guide manifest\n```" in item.description
+    assert f"```bash\nOMAC_ENGINE=mock OMAC_WORKSPACE_ID=ws omac work show {res['item_id']}\n```" in item.description
+    assert "```bash" in item.description
+    assert f"OMAC_ENGINE=mock OMAC_WORKSPACE_ID=ws omac work submit {res['item_id']} --manifest-file <manifest_file>" in item.description
+    assert "1. omac guide manifest" not in item.description
+
+
+def test_run_task_renders_markdown_source_of_truth_as_collapsible_markdown():
+    """上游 Markdown 保持原生渲染,不用外层代码块包住整份文档。"""
     eng = _engine()
     MockStore.set_kind_delivery("acceptance", {"acceptance": "验收正文"})
     upstream_plan = "# 设计方案\n\n```ts\nexport const ok = true\n```\n\n## 下一节"
@@ -122,9 +141,13 @@ def test_run_task_renders_markdown_source_of_truth_without_breaking_fences():
     )
 
     item = eng.store.get_work_item(res["item_id"])
-    assert "### plan\n````\n# 设计方案" in item.description
+    assert "### plan" in item.description
+    assert "<details open>" in item.description
+    assert "<summary>查看 plan 上游产物</summary>" in item.description
+    assert "# 设计方案" in item.description
     assert "```ts\nexport const ok = true\n```" in item.description
-    assert "\n## 下一节\n````" in item.description
+    assert "## 下一节" in item.description
+    assert "### plan\n````" not in item.description
 
 
 def test_run_task_handoff_to_reviewer_does_not_post_trigger_comment():
