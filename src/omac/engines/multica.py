@@ -106,6 +106,14 @@ class MulticaStore(WorkItemStore):
         return value
 
     @staticmethod
+    def _optional_text_metadata(metadata: Dict, key: str) -> Optional[str]:
+        value = metadata.get(key)
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+    @staticmethod
     def _payload_markers(key: str) -> tuple[str, str]:
         return (f"<!-- omac-{key}-begin -->", f"<!-- omac-{key}-end -->")
 
@@ -259,8 +267,8 @@ class MulticaStore(WorkItemStore):
             artifacts=self._json_metadata(metadata, "artifacts"),
             verification=self._json_metadata(metadata, "verification"),
             verification_ref=verification_ref if isinstance(verification_ref, dict) else None,
-            review_verdict=metadata.get("review_verdict"),
-            review_comment=metadata.get("review_comment"),
+            review_verdict=self._optional_text_metadata(metadata, "review_verdict"),
+            review_comment=self._optional_text_metadata(metadata, "review_comment"),
             review_report=review_report,
             review_report_ref=review_report_ref if isinstance(review_report_ref, dict) else None,
             decision_required=self._json_metadata(metadata, DECISION_REQUIRED_KEY),

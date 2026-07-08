@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from omac.core.manifest import Contract
-from omac.core.taskmeta import TaskKind
+from omac.core.taskmeta import TaskKind, TaskPhase
 from omac.engines import create_engine
 from omac.engines.mock import MockStore
 from omac.engines.models import EngineConfig, WorkItemStatus
@@ -142,6 +142,35 @@ def test_run_task_reject_rollout_uses_kind_correct_submit_template():
     joined = "\n".join(eng.store.get_comments(res["item_id"]))
     assert "--plan-file" in joined       # planner 重交用 --plan-file
     assert "--pr-url" not in joined      # 不是 develop 的 --pr-url
+
+
+def test_run_task_ignores_blank_review_verdict_while_waiting():
+    """空 review_verdict 是 reset 后的未决态,不能当成 reject 触发返工。"""
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = eng.store.create_work_item(
+        "ws", "feature-x", "feature-x", dag_key="plan-p1",
+        worker="alice", kind=TaskKind.PLAN)
+    eng.store.update_work_item_metadata(
+        item.id, deliverable="计划正文", phase=TaskPhase.REVIEW,
+        review_verdict="")
+    eng.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+    calls = {"n": 0}
+
+    def poll_until_valid_verdict():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            eng.store.update_work_item_metadata(item.id, review_verdict="pass")
+        if calls["n"] > 3:
+            raise TimeoutError("blank verdict was treated as terminal")
+
+    res = run_task(
+        eng, TaskKind.PLAN, _payload(), "alice",
+        reviewers=["bob"], poll=poll_until_valid_verdict,
+        resume_item_id=item.id,
+    )
+
+    assert res["verdict"] == "pass"
+    assert "verdict=reject" not in "\n".join(eng.store.get_comments(item.id))
 
 
 def test_human_gate_blocks_until_confirmed():

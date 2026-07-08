@@ -21,6 +21,8 @@ from .dispatch import render_issue_body, render_review_rollout_comment
 
 log = logsetup.get_logger(__name__)
 
+_REVIEW_VERDICTS = {"pass", "pass-with-nits", "reject"}
+
 
 def _produced(item: WorkItem) -> bool:
     """产出阶段收敛判据:产出者交付后 issue 进入 REVIEW 阶段(plan/acceptance/
@@ -38,6 +40,10 @@ def _delivery_of(kind: TaskKind, item: WorkItem) -> Dict[str, Any]:
     """
     key = DELIVERY_CONTENT_KEY.get(kind, kind.value)
     return {key: item.deliverable}
+
+
+def _has_review_verdict(item: WorkItem) -> bool:
+    return item.review_verdict in _REVIEW_VERDICTS
 
 
 def _payload_contract(raw: Any) -> Any:
@@ -260,7 +266,7 @@ def run_task(
                  reviewer=reviewer)
         runtime.wake(item_id, reviewer, "reviewer")
         reviewed = _poll_until(
-            store, item_id, lambda i: i.review_verdict is not None, poll)
+            store, item_id, _has_review_verdict, poll)
 
         verdict = reviewed.review_verdict
         log.info(logsetup.EVT_VERDICT, kind=kind.value, id=item_id,
