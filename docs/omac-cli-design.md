@@ -32,7 +32,7 @@
 把"Agent 驱动 Loop"反转为"**Loop 驱动 Agent**":
 
 - 确定性 CLI 程序承载整个编排循环(本质就是把一个 DAG 图循环跑完);
-- LLM 降级为被 CLI 派活的专家:planner(制定计划 + 验收文档)、orchestrator(拆 DAG + 增量扩展)、reviewer(评审)、worker(开发)、acceptor(总控验收)——每个都是**有终点的单次任务**,正是 LLM 擅长的形状;
+- LLM 降级为被 CLI 派活的专家:planner(设计方案 + 验收文档)、orchestrator(拆 DAG + 增量扩展)、reviewer(评审)、worker(开发)、acceptor(总控验收)——每个都是**有终点的单次任务**,正是 LLM 擅长的形状;
 - 处理异常的智能交还给**调用者**——人看报告自己处理,agent 收到结构化退出信息自己处理;
 - CLI 内部不藏任何需要 LLM 的环节,不依赖任何外部定时机制(cron/autopilot)。
 
@@ -108,7 +108,7 @@
          ┌─────────┬─────────┴──┬──────────┬──────────┐
          ▼         ▼            ▼          ▼          ▼
       planner  orchestrator  reviewer   worker    acceptor
-     (计划+验收 (拆DAG+增量  (评审+评审 (开发+环境 (总控验收)
+     (方案+验收 (拆DAG+增量  (评审+评审 (开发+环境 (总控验收)
        文档)     扩展)        目标)      步骤)
 ```
 
@@ -121,9 +121,9 @@
 | 角色 | 职责 | 由谁触发 | 产出物 |
 |---|---|---|---|
 | **调用者**(人/Agent) | 发起 init/plan/dag run;exit 20 后决策 | — | 决策(retry/abandon/改 manifest) |
-| **planner** | 从零制定计划文档;计划定稿后产出**验收文档**(用户视角端到端验收点) | `plan create` | 计划文档 + 验收文档 |
-| **orchestrator** | 把计划/设计文档拆解为 manifest DAG;总控验收发现问题后**增量扩展** DAG | `plan create` / 总控验收 fail 后 | manifest YAML(全量或增量节点) |
-| **reviewer** | 评审计划文档、验收文档、manifest、代码 PR | **同一 issue 转派**(plan 流水线 / dag run 的 review 阶段) | 结构化 verdict + report(**含评审目标**) |
+| **planner** | 从零编写设计方案文档;方案定稿后产出**验收文档**(用户视角端到端验收点) | `plan create` | 设计方案文档 + 验收文档 |
+| **orchestrator** | 把设计方案/验收文档拆解为 manifest DAG;总控验收发现问题后**增量扩展** DAG | `plan create` / 总控验收 fail 后 | manifest YAML(全量或增量节点) |
+| **reviewer** | 评审设计方案、验收文档、manifest、代码 PR | **同一 issue 转派**(plan 流水线 / dag run 的 review 阶段) | 结构化 verdict + report(**含评审目标**) |
 | **worker** | 按 contract TDD 开发,交 PR + 证据;修复 CI 失败与 merge 冲突 | `dag run` 派发 / CI·merge 回退 | PR + artifacts + verification(**含环境构建步骤**) |
 | **acceptor(总控验收)** | DAG 收敛后按验收文档端到端走查,逐项记录 pass/fail | `dag run` 内层收敛后自动派发 | 结构化验收结果 |
 
@@ -139,8 +139,8 @@
 ```
 omac
   CORE(调用者/驱动侧)
-    plan     create | check | show         计划制定 + DAG 拆解流水线(全程内置 review 阶段)
-    dag      run | status | tick           确定性 loop 执行
+    plan     create | confirm              设计方案 + DAG 拆解流水线(全程内置 review 阶段)
+    dag      check | show | run | status | tick  manifest DAG 的检查、摘要与执行
     node     show | retry | abandon        exit 20 后的决策工具
   WORK(被派发 agent 侧)
     work     show | submit                 统一执行接口(5 类 issue × 产出/评审阶段)
@@ -161,7 +161,7 @@ omac
 | `1` | 通用错误 | 所有命令 |
 | `2` | 平台/网络错误 | 所有命令 |
 | `3` | 认证错误(multica CLI 未登录等) | 所有命令 |
-| `5` | 校验失败(lint / 证据 schema) | plan check、work submit 等 |
+| `5` | 校验失败(lint / 证据 schema) | dag check、work submit 等 |
 | `10` | 推进中(仅单轮 tick 模式) | `dag tick` |
 | `20` | **需要调用者决策**(附结构化报告) | `plan create`、`dag run` |
 
@@ -267,15 +267,15 @@ sequenceDiagram
 
 ---
 
-### 7.2 阶段二:`omac plan create` — 计划制定与 DAG 拆解流水线
+### 7.2 阶段二:`omac plan create` — 设计方案与 DAG 拆解流水线
 
 **参与者**:调用者、omac CLI、引擎层、planner、reviewer、orchestrator。
 
-两种模式一条流水线:带 `--doc` 跳过 planner 制定计划环节;不带则 planner 先制定计划。计划定稿后(含评审通过),planner 再产出**验收文档**——先列出计划涉及的业务流程,再把每条流程转换为用户视角、端到端、可执行的验收动作(如 web 产品从前端页面走通全功能)。验收文档的双重作用:①需求目标的锚定点(orchestrator 拆解时 contract.acceptance 须锚定其条目,开发不跑偏);②总控验收阶段的验收目标清单(§7.6)。
+两种模式一条流水线:带 `--doc` 跳过 planner 设计环节;不带则 planner 先编写设计方案。方案定稿后(含评审通过),planner 再产出**验收文档**——先列出方案涉及的业务流程,再把每条流程转换为用户视角、端到端、可执行的验收动作(如 web 产品从前端页面走通全功能)。验收文档的双重作用:①需求目标的锚定点(orchestrator 拆解时 contract.acceptance 须锚定其条目,开发不跑偏);②总控验收阶段的验收目标清单(§7.6)。
 
 **全部 review 门内部衔接,不暴露评审参数**,开关只有 `--no-review`(一刀切跳过所有 review 门)与 `--no-acceptance`(跳过验收文档环节)。每个 LLM 环节的修订循环有界(评审轮次读 `config.retry.review`,缺省 ≤3),耗尽则 exit 20 移交调用者。
 
-**issue 的范围 = 一个完整阶段**:制定计划、产验收文档、拆解各对应一条 issue,产出 → 评审 → 回退修订的全部往返都发生在**同一条 issue** 上。评审不是新建 issue,而是把该 issue **转派(assign)给 reviewer**,评审目标与意见以评论落在同一时间线——上下文连贯不断。交接方式由 AgentRuntime 实现决定:Multica 的任务主通道就是「assign 即唤醒」(转派即再次唤醒新 assignee,所有权与状态清晰),故 Multica 选 **assign 交接**;评论 @mention 也能触发 agent,留作不支持转派语义平台的备选。
+**issue 的范围 = 一个完整阶段**:设计方案、产验收文档、拆解各对应一条 issue,产出 → 评审 → 回退修订的全部往返都发生在**同一条 issue** 上。评审不是新建 issue,而是把该 issue **转派(assign)给 reviewer**,评审目标与意见以评论落在同一时间线——上下文连贯不断。交接方式由 AgentRuntime 实现决定:Multica 的任务主通道就是「assign 即唤醒」(转派即再次唤醒新 assignee,所有权与状态清晰),故 Multica 选 **assign 交接**;评论 @mention 也能触发 agent,留作不支持转派语义平台的备选。
 
 ```mermaid
 sequenceDiagram
@@ -289,12 +289,12 @@ sequenceDiagram
 
     U->>C: omac plan create --name feature-x [--doc design.md]
 
-    alt 未提供 --doc(模式 B:从零制定计划)
+    alt 未提供 --doc(模式 B:从零编写设计方案)
         C->>M: 建 planning issue(body 含 bootstrap 指令 + 需求上下文)并 assign planner
         M->>P: AgentRuntime 拉起 planner(issue body 即 prompt)
         P->>C: omac work show {id}(取任务协议)
         P->>C: omac work submit {id} --plan-file plan.md
-        C->>M: 计划文档写入 issue metadata
+        C->>M: 设计方案文档写入 issue metadata
         loop review 阶段(同一 issue 上 assign 交接,≤3 轮修订)
             C->>M: 该 issue 转派 reviewer(阶段标 review)
             M->>R: AgentRuntime 拉起 reviewer(计划全文与讨论同在一条时间线)
@@ -345,8 +345,8 @@ sequenceDiagram
     C-->>U: exit 0(manifest 就绪)<br/>任一环节耗尽重试 → exit 20 + 结构化报告
 ```
 
-> `omac plan check <file>`:调用者自己拆好了 manifest 时,只走 lint 门 + manifest review 阶段。
-> `omac plan show`:查看已注册 manifest 的摘要。
+> `omac dag check <file>`:调用者自己拆好了 manifest 时,只走 lint 门 + manifest review 阶段。
+> `omac dag show`:查看已注册 manifest 的摘要。
 
 ---
 
@@ -456,7 +456,7 @@ sequenceDiagram
 
 | issue 类型 | 覆盖阶段(同一 issue 内) | 产出阶段 submit | review 阶段 submit |
 |---|---|---|---|
-| `plan` | planner 制定计划 → review | `--plan-file` | `--verdict --report-file`(必含评审目标) |
+| `plan` | planner 编写设计方案 → review | `--plan-file` | `--verdict --report-file`(必含评审目标) |
 | `acceptance` | planner 产验收文档 → review | `--acceptance-file`(业务流程 → 逐条验收动作) | 同上 |
 | `decompose` | orchestrator 拆解/增量扩展 → lint → review | `--manifest-file`(增量模式只含新增节点) | 同上 |
 | `develop` | worker 开发 → CI → review → merge | `--pr-url --verification-file`(env 依赖时须含 env_setup) | 同上 |
@@ -475,7 +475,7 @@ sequenceDiagram
     C->>P: 读 issue metadata(任务类型 + contract 全量字段)
     C-->>A: issue 类型 + 当前阶段 + 完整上下文 + 对应执行协议<br/>(产出阶段:TDD·证据格式 / review 阶段:独立复跑·验收映射)
 
-    A->>A: 执行(开发 / 评审 / 制定计划 / 拆 DAG)
+    A->>A: 执行(开发 / 评审 / 编写设计方案 / 拆 DAG)
 
     A->>C: omac work submit {issue-id} + 按类型×阶段的交付参数
     Note over A,C: 产出阶段—— worker: --pr-url + --verification-file(含 env_setup)<br/>planner: --plan-file / --acceptance-file · orchestrator: --manifest-file<br/>acceptor: --acceptance-results-file<br/>review 阶段(各类型统一)—— --verdict + --report-file(含评审目标)
@@ -536,7 +536,7 @@ sequenceDiagram
         U->>C: omac node abandon feature-x.yaml user-api
         C->>C: 节点标 abandoned·不硬依赖它的下游解锁
     else 决策:改契约/拆任务
-        U->>U: 直接编辑 manifest(或重跑 omac plan check 走门禁)
+        U->>U: 直接编辑 manifest(或重跑 omac dag check 走门禁)
     end
 
     U->>C: omac dag run feature-x.yaml(重跑即续跑)

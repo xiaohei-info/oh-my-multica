@@ -5,9 +5,9 @@
 
 | 角色 | 职责 | 产出 |
 |---|---|---|
-| planner | 制定计划;计划定稿后产出验收文档(用户视角端到端验收点) | 计划 + 验收文档 |
+| planner | 编写设计方案;方案定稿后产出验收文档(用户视角端到端验收点) | 设计方案 + 验收文档 |
 | orchestrator | 拆解 manifest DAG;总控验收 fail 后增量扩展 | manifest(全量/增量) |
-| reviewer | 评审计划/验收文档/manifest/代码 PR(同一 issue 转派) | verdict + report(含评审目标) |
+| reviewer | 评审设计方案/验收文档/manifest/代码 PR(同一 issue 转派) | verdict + report(含评审目标) |
 | worker | 按 contract TDD 开发;修 CI 失败与 merge 冲突 | PR + 证据(含 env_setup) |
 | acceptor | DAG 收敛后按验收文档端到端走查 | 逐项 pass/fail 结果 |
 

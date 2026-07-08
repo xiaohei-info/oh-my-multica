@@ -7,12 +7,12 @@ omac 是确定性 CLI 驱动的多 Agent 并行开发编排:Loop 驱动 Agent,LL
 
 1. `omac init` —— 一次性配置:选 workspace → 列全量 agent → 角色映射
    → 落盘 `.omac/config.yaml`(体检:`omac init --check`)
-2. `omac plan create --name <feature> [--goal 需求 | --doc 设计文档]` —— 计划 → 验收文档
+2. `omac plan create --name <feature> [--goal 需求 | --doc 设计方案文档]` —— 设计方案 → 验收文档
    → 拆解,**三个环节全程内置 reviewer 评审**(配了 reviewers 且未 --no-review),
    产出 `.omac/<feature>.yaml`( + `.acceptance.yaml`)
-   - `--goal <需求>`:planner 据此制定计划(从需求出发的正道入口)
-   - `--doc <设计文档>`:已有计划,跳过 planner 制定环节
-   - **人机确认门(默认开)**:计划、验收两个环节产出后,先由你确认「是否满足需求」
+   - `--goal <需求>`:planner 据此编写设计方案(从需求出发的正道入口)
+   - `--doc <设计方案文档>`:已有方案,跳过 planner 设计环节
+   - **人机确认门(默认开)**:设计方案、验收两个环节产出后,先由你确认「是否满足需求」
      再进 reviewer 评审。通过标准 = 把该 issue 流转到 **done**(omac 识别到后翻回
      in_review 继续评审)。手动放行:`omac plan confirm --name <feature>`;
      无人值守入口用 `--no-confirm` 关闭。
@@ -31,7 +31,7 @@ omac 有三种入口调用者,消费同一套 CLI:**人(终端)/ Agent(Claude Co
 / Web UI**(设计 §1.4)。控制反转的边界必须分清:
 
 - ✅ **agent 作为入口 = 启动确定性 loop 进程,并跑全流程** —— 不是只 `dag run`,而是
-  `omac init` → `omac plan create`(制定计划 / 拆 DAG)→ `omac dag run`(驱动到收敛)整条链。
+  `omac init` → `omac plan create`(设计方案 / 拆 DAG)→ `omac dag run`(驱动到收敛)整条链。
   loop 的决策逻辑在**代码**里跑(sync→decide→dispatch→sleep),agent 只是把进程拉起来,
   它的上下文**不参与每轮轮询** —— token 成本 ≈ 0,和人在终端敲完命令晾着等一样。
 - ❌ **被否决的反模式** = 让 **agent 的推理上下文本身充当 while 轮询循环**(每轮 LLM 推理 = 一次 tick):

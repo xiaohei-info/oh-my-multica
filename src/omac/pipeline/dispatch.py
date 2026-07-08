@@ -48,11 +48,11 @@ omac CLI 已在你的 PATH 上,是唯一入口与权威清单:
 # 动作 + 指向对应 guide topic 的指针。KIND_GUIDE 在文件后段定义,这两个函数调用期解析。
 _AUTHORING_ACTION = {
     TaskKind.PLAN:
-        "制定实施计划:分析需求,产出锚定验收目标、可执行、可验证的计划。",
+        "编写设计方案:分析需求,产出锚定验收目标、可执行、可验证的方案文档。",
     TaskKind.ACCEPTANCE:
-        "编写验收文档:把定稿计划的业务流程逐条转成用户视角、端到端、可执行的验收动作。",
+        "编写验收文档:把定稿设计方案的业务流程逐条转成用户视角、端到端、可执行的验收动作。",
     TaskKind.DECOMPOSE:
-        "把计划/验收拆成 manifest DAG:每节点带完整 contract、acceptance 锚定验收文档、DAG 无环。",
+        "把设计方案/验收拆成 manifest DAG:每节点带完整 contract、acceptance 锚定验收文档、DAG 无环。",
     TaskKind.DEVELOP:
         "推分支 + 开 PR(base=contract.pr_base,worker 自建、omac 不代建),TDD 同步,产出结构化验证证据。",
     TaskKind.FINAL_ACCEPTANCE:

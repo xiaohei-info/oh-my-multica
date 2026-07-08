@@ -103,16 +103,46 @@ def _configure_mock(tmp_path, monkeypatch, *, reviewers=("alice",)):
     return engine
 
 
-# ── plan check ────────────────────────────────────────────────────────────
+# ── help / command taxonomy ───────────────────────────────────────────────
+
+def test_plan_help_focuses_on_design_solution(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["plan", "-h"])
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "设计方案" in out
+    assert "计划制定" not in out
+    assert "check     lint" not in out
+    assert "show      查看 manifest" not in out
+
+
+def test_dag_help_owns_manifest_check_and_show(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["dag", "-h"])
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "check" in out and "manifest" in out
+    assert "show" in out and "manifest" in out
+
+
+# ── dag check ─────────────────────────────────────────────────────────────
+
+def test_plan_rejects_manifest_subcommands(capsys):
+    for action in ("check", "show"):
+        with pytest.raises(SystemExit) as exc:
+            main(["plan", action, "m.yaml"])
+        assert exc.value.code == exit_codes.GENERIC
+    err = capsys.readouterr().err
+    assert "invalid choice" in err
 
 def test_check_missing_file_is_validation_error(tmp_path):
-    assert main(["plan", "check", str(tmp_path / "nope.yaml")]) == exit_codes.VALIDATION
+    assert main(["dag", "check", str(tmp_path / "nope.yaml")]) == exit_codes.VALIDATION
 
 
 def test_check_requires_engine_config(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     path = _write(tmp_path, CLEAN_MANIFEST)
-    assert main(["plan", "check", path]) == exit_codes.VALIDATION
+    assert main(["dag", "check", path]) == exit_codes.VALIDATION
     err = capsys.readouterr().err
     assert "引擎" in err or "engine" in err.lower()
 
@@ -121,7 +151,7 @@ def test_check_clean_manifest_passes(tmp_path, monkeypatch, capsys):
     engine = _configure_mock(tmp_path, monkeypatch)
     engine.store.set_review_rejects(0)
     path = _write(tmp_path, CLEAN_MANIFEST)
-    assert main(["plan", "check", path]) == exit_codes.OK
+    assert main(["dag", "check", path]) == exit_codes.OK
     out = capsys.readouterr().out
     assert "lint 通过" in out
     assert "review 通过" in out
@@ -132,7 +162,7 @@ def test_check_clean_manifest_json_output(tmp_path, monkeypatch, capsys):
     engine.store.set_review_rejects(0)
     capsys.readouterr()  # 清空 config set 输出
     path = _write(tmp_path, CLEAN_MANIFEST)
-    assert main(["plan", "check", path, "--output", "json"]) == exit_codes.OK
+    assert main(["dag", "check", path, "--output", "json"]) == exit_codes.OK
     data = json.loads(capsys.readouterr().out)
     assert data["ok"] is True
     assert data["lint_errors"] == 0
@@ -141,7 +171,7 @@ def test_check_clean_manifest_json_output(tmp_path, monkeypatch, capsys):
 def test_check_bad_manifest_exit_5_with_full_error_list(tmp_path, monkeypatch, capsys):
     _configure_mock(tmp_path, monkeypatch)
     path = _write(tmp_path, BAD_MANIFEST)
-    assert main(["plan", "check", path, "--no-review"]) == exit_codes.VALIDATION
+    assert main(["dag", "check", path, "--no-review"]) == exit_codes.VALIDATION
     out = capsys.readouterr().out
     # 错误清单应覆盖:worker 不在池、未知依赖、contract 必填字段
     for needle in ("ghost", "missing", "objective", "acceptance", "pr_base"):
@@ -152,7 +182,7 @@ def test_check_bad_manifest_json_error_list(tmp_path, monkeypatch, capsys):
     _configure_mock(tmp_path, monkeypatch)
     capsys.readouterr()  # 清空 config set 输出
     path = _write(tmp_path, BAD_MANIFEST)
-    assert main(["plan", "check", path, "--no-review", "--output", "json"]) == exit_codes.VALIDATION
+    assert main(["dag", "check", path, "--no-review", "--output", "json"]) == exit_codes.VALIDATION
     data = json.loads(capsys.readouterr().out)
     assert data["ok"] is False
     assert len(data["errors"]) >= 1
@@ -162,7 +192,7 @@ def test_check_review_reject_exit_20(tmp_path, monkeypatch, capsys):
     engine = _configure_mock(tmp_path, monkeypatch)
     engine.store.set_review_rejects(1)  # 首轮评审自动 reject
     path = _write(tmp_path, CLEAN_MANIFEST)
-    assert main(["plan", "check", path]) == exit_codes.NEEDS_DECISION
+    assert main(["dag", "check", path]) == exit_codes.NEEDS_DECISION
 
 
 def test_check_no_review_skips_review_stage(tmp_path, monkeypatch, capsys):
@@ -170,20 +200,20 @@ def test_check_no_review_skips_review_stage(tmp_path, monkeypatch, capsys):
     engine.store.set_review_rejects(1)  # 即便注入 reject
     path = _write(tmp_path, CLEAN_MANIFEST)
     # --no-review 应跳过 review,exit 0
-    assert main(["plan", "check", path, "--no-review"]) == exit_codes.OK
+    assert main(["dag", "check", path, "--no-review"]) == exit_codes.OK
     out = capsys.readouterr().out
     assert "lint 通过" in out
 
 
-# ── plan show ─────────────────────────────────────────────────────────────
+# ── dag show ──────────────────────────────────────────────────────────────
 
 def test_show_missing_file_is_validation_error(tmp_path):
-    assert main(["plan", "show", str(tmp_path / "nope.yaml")]) == exit_codes.VALIDATION
+    assert main(["dag", "show", str(tmp_path / "nope.yaml")]) == exit_codes.VALIDATION
 
 
 def test_show_table_summary(tmp_path, capsys):
     path = _write(tmp_path, CLEAN_MANIFEST)
-    assert main(["plan", "show", path]) == exit_codes.OK
+    assert main(["dag", "show", path]) == exit_codes.OK
     out = capsys.readouterr().out
     assert "节点:2" in out
     assert "契约覆盖:2/2" in out
@@ -193,7 +223,7 @@ def test_show_table_summary(tmp_path, capsys):
 
 def test_show_json_structure(tmp_path, capsys):
     path = _write(tmp_path, CLEAN_MANIFEST)
-    assert main(["plan", "show", path, "--output", "json"]) == exit_codes.OK
+    assert main(["dag", "show", path, "--output", "json"]) == exit_codes.OK
     data = json.loads(capsys.readouterr().out)
     assert data["nodes"]["total"] == 2
     assert data["nodes"]["with_contract"] == 2
@@ -230,7 +260,7 @@ nodes:
     blocked_by: [a]
 """
     path = _write(tmp_path, partial)
-    assert main(["plan", "show", path, "--output", "json"]) == exit_codes.OK
+    assert main(["dag", "show", path, "--output", "json"]) == exit_codes.OK
     data = json.loads(capsys.readouterr().out)
     assert data["nodes"]["total"] == 2
     assert data["nodes"]["with_contract"] == 1
@@ -240,7 +270,7 @@ nodes:
 # ── plan create(P3.3) ──────────────────────────────────────────────────────
 
 PLAN_TEXT = """\
-# 演示计划
+# 演示设计方案
 
 目标:实现 demo 特性,包含 login 与 dashboard 两个节点。
 步骤:
@@ -347,7 +377,7 @@ def _configure_create_mock(tmp_path, monkeypatch):
         ),
     )
     engine.store.set_review_rejects(0)
-    # 人机门默认开启:模拟人工把计划/验收 issue 流转到 DONE 放行。
+    # 人机门默认开启:模拟人工把设计/验收 issue 流转到 DONE 放行。
     MockStore.set_auto_confirm(True)
     MockStore.set_kind_delivery("plan", {"plan": PLAN_TEXT})
     MockStore.set_kind_delivery("acceptance", {"acceptance": ACCEPTANCE_YAML})
@@ -382,8 +412,8 @@ def test_create_default_combination(tmp_path, monkeypatch):
     assert plan_item.dag_key == f"plan-{plan_id}"
     assert acc_item.dag_key == f"acceptance-{plan_id}"
     assert dec_item.dag_key == f"decompose-{plan_id}"
-    assert "演示计划" in acc_item.description, "acceptance issue body 应含定稿计划"
-    assert "演示计划" in dec_item.description, "decompose issue body 应含定稿计划"
+    assert "演示设计方案" in acc_item.description, "acceptance issue body 应含定稿设计方案"
+    assert "演示设计方案" in dec_item.description, "decompose issue body 应含定稿设计方案"
     assert "登录流程" in dec_item.description, "decompose issue body 应含验收文档(flow)"
 
 
@@ -461,7 +491,7 @@ def test_create_threads_source_refs_through_chain(tmp_path, monkeypatch):
 
 
 def test_create_records_source_issues_in_manifest_meta(tmp_path, monkeypatch):
-    """provenance:manifest meta.source_issues 记录计划/验收/拆解源头 issue。"""
+    """provenance:manifest meta.source_issues 记录设计/验收/拆解源头 issue。"""
     import yaml
     from omac.core.taskmeta import TaskKind
     engine = _configure_create_mock(tmp_path, monkeypatch)
@@ -473,16 +503,16 @@ def test_create_records_source_issues_in_manifest_meta(tmp_path, monkeypatch):
 
 
 def test_plan_confirm_marks_waiting_issue_done(tmp_path, monkeypatch):
-    """omac plan confirm <name>:手动把停在人机门的计划/验收 issue 流转到 DONE。"""
+    """omac plan confirm <name>:手动把停在人机门的设计/验收 issue 流转到 DONE。"""
     from omac.core.taskmeta import TaskKind, TaskPhase
     from omac.engines.models import WorkItemStatus
     engine = _configure_create_mock(tmp_path, monkeypatch)
     MockStore.set_auto_confirm(False)  # 关自动确认,验证手动放行
     item = engine.store.create_work_item(
-        "mock-workspace", "demo-confirm 计划", "demo-confirm 计划", dag_key="plan",
+        "mock-workspace", "demo-confirm 设计方案", "demo-confirm 设计方案", dag_key="plan",
         worker="alice", kind=TaskKind.PLAN)
     engine.store.update_work_item_metadata(
-        item.id, deliverable="计划正文", phase=TaskPhase.REVIEW)
+        item.id, deliverable="设计方案正文", phase=TaskPhase.REVIEW)
     engine.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
 
     assert main(["plan", "confirm", "--name", "demo-confirm"]) == exit_codes.OK

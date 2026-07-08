@@ -4,26 +4,34 @@ from typing import Optional
 
 import argparse
 import os
+import time
 
 from .. import exit_codes
-from ..output import add_output_flag, print_json, print_table
+from ..output import add_output_flag, hint, print_json, print_table
 from ...core.config import ENV_ENGINE, ENV_WORKSPACE, load_config, resolve_engine_settings, DEFAULTS, CONFIG_PATH
+from ...core.graph import node_waves
+from ...core.lint import lint
 from ...core.manifest import load_manifest
 from ...core.gitsync import ensure_config_synced
 from ...engines import create_engine
 from ...engines.models import EngineConfig
 from ...errors import NeedsDecision, ValidationError
 from ...pipeline.loop import tick
+from ...pipeline.review import run_review
 from ...pipeline.acceptance import (
     acceptance_doc_path, run_acceptance_loop,
 )
 from ...pipeline.report import build_status_report, render_table
 
 NAME = "dag"
-SUMMARY = "确定性 loop 执行(run/status/tick)"
-DESCRIPTION = """确定性编排循环:sync(回收结果)→ decide(就绪节点)→ dispatch(派发)。
+SUMMARY = "manifest DAG 的检查、摘要与执行(check/show/run/status/tick)"
+DESCRIPTION = """manifest DAG 的检查、摘要与确定性执行。
 
 子命令:
+  check    对现成 manifest 运行 lint 机器门;配置 reviewers 且未 --no-review 时,
+           追加 manifest review 阶段。exit 0 通过 / 5 lint 失败 / 20 review 拒绝。
+  show     查看 manifest 摘要:meta、节点统计、按 wave/依赖的拓扑、契约覆盖率;
+           支持 --output json。
   run      前台循环直到收敛或需决策。exit 0 = 全部节点 done 且总控验收 pass;
            exit 20 = 无法继续推进,stdout 输出结构化报告(失败节点、证据摘要、
            受阻下游、可执行的下一步动作命令)。
@@ -63,6 +71,17 @@ def _add_log_flags(parser):
 
 def register(parser):
     sub = parser.add_subparsers(dest="action", metavar="<action>", required=True)
+
+    check = sub.add_parser("check", help="lint + review 一份现成 manifest")
+    check.add_argument("manifest", help="manifest 文件路径")
+    check.add_argument("--no-review", action="store_true", help="跳过 manifest review 阶段(仅 lint)")
+    check.add_argument("--engine", help="引擎类型(multica|mock),缺省按 config.yaml / 环境变量 OMAC_ENGINE")
+    check.add_argument("--workspace", help="工作空间 id,缺省按 config.yaml / 环境变量 OMAC_WORKSPACE_ID")
+    add_output_flag(check)
+
+    show = sub.add_parser("show", help="查看 manifest 摘要")
+    show.add_argument("manifest", help="manifest 文件路径")
+    add_output_flag(show)
 
     run_p = sub.add_parser("run", help="前台 loop 直到收敛或 exit 20")
     run_p.add_argument("manifest", help="manifest 文件路径")
@@ -151,6 +170,135 @@ def _default_max_parallel(args) -> int:
         return override
     return load_config(CONFIG_PATH).get("defaults", {}).get(
         "max_parallel", DEFAULTS["max_parallel"])
+
+
+def check(args) -> int:
+    path = args.manifest
+    if not os.path.exists(path):
+        raise ValidationError(
+            f"manifest 文件不存在: {path} —— 请确认路径或先 `omac plan create`")
+
+    manifest = load_manifest(path)
+    name = manifest.meta.get("name") or os.path.basename(path)
+
+    engine, _ = _assemble_engine(args)
+    pool = set(engine.store.list_members(engine.store.config.workspace_id))
+    errs = lint(manifest, pool)
+
+    if errs:
+        if args.output == "json":
+            print_json({"ok": False, "errors": errs})
+        else:
+            print(f"lint 失败({len(errs)} 项):", flush=True)
+            for e in errs:
+                print(f"  - {e}")
+            hint("修订后重跑 `omac dag check <file>` 重新过门")
+        return exit_codes.VALIDATION
+
+    reviewers = (load_config(CONFIG_PATH).get("roles") or {}).get("reviewers") or []
+    reviewed = False
+    if reviewers and not args.no_review:
+        reviewer = reviewers[0]
+        run_review(
+            engine, engine.store.config.workspace_id,
+            title=f"[dag-check] {name}",
+            body=_review_body(manifest, path),
+            reviewer=reviewer,
+            poll=lambda: time.sleep(1),
+        )
+        reviewed = True
+
+    if args.output == "json":
+        print_json({
+            "ok": True,
+            "lint_errors": 0,
+            "review": "pass" if reviewed else "skipped",
+        })
+    else:
+        print(f"lint 通过({len(manifest.nodes)} 节点)")
+        if reviewed:
+            print(f"review 通过(reviewer={reviewers[0]})")
+        else:
+            hint("未配置 reviewers 或已 --no-review,跳过 manifest review 阶段")
+        hint("下一步:`omac dag run` 开始执行")
+    return exit_codes.OK
+
+
+def _review_body(manifest, path: str) -> str:
+    """渲染 manifest review 的 issue body(三段式 §7.4 的简报变体)。"""
+    import yaml
+    return (
+        "你被分配了一件 manifest review 任务(必须经 omac 交互):\n"
+        f"  1. 审查 manifest 文件:{path}\n"
+        f"  2. 审查通过后 omac work submit <id> --verdict pass --report-file ..."
+        "  拒绝请用 --verdict reject,附 blockers。\n"
+        "遇到不明确的地方:运行 omac guide reviewer 查阅 reviewer 角色说明。\n\n"
+        "## 简报\n"
+        f"- 节点数:{len(manifest.nodes)}\n"
+        f"- meta:{manifest.meta}\n\n"
+        "## 硬约束\n"
+        " reviewer 独立复跑验证命令与 manifest 门(lint/contract/成员池),不信自述。"
+        "\n 契约与 DAG 门禁不过即 reject。\n"
+        + yaml.dump(
+            {"manifest": manifest.meta,
+             "nodes": {k: {"worker": n.worker, "blocked_by": n.blocked_by}
+                       for k, n in manifest.nodes.items()}},
+            default_flow_style=False, allow_unicode=True, sort_keys=False)
+    )
+
+
+def show(args) -> int:
+    path = args.manifest
+    if not os.path.exists(path):
+        raise ValidationError(f"manifest 文件不存在: {path} —— 请确认路径")
+
+    manifest = load_manifest(path)
+    nodes = manifest.nodes
+    total = len(nodes)
+    with_contract = sum(
+        1 for n in nodes.values() if n.contract and n.contract.acceptance)
+    waves = node_waves(nodes)
+
+    by_wave: dict[int, list[str]] = {}
+    for key, wave in sorted(waves.items(), key=lambda kv: (kv[1], kv[0])):
+        by_wave.setdefault(wave, []).append(key)
+
+    by_status: dict[str, int] = {}
+    for n in nodes.values():
+        by_status[n.status] = by_status.get(n.status, 0) + 1
+
+    edges = [[b, key] for key, n in nodes.items()
+             for b in n.blocked_by if b in nodes]
+
+    if args.output == "json":
+        print_json({
+            "meta": manifest.meta,
+            "nodes": {
+                "total": total,
+                "with_contract": with_contract,
+                "contract_coverage": f"{with_contract}/{total}",
+                "by_status": by_status,
+            },
+            "topology": {
+                "waves": {str(w): ks for w, ks in by_wave.items()},
+                "edges": edges,
+            },
+        })
+        return exit_codes.OK
+
+    print(f"manifest: {os.path.basename(path)}")
+    print(
+        f"节点:{total}  契约覆盖:{with_contract}/{total}  "
+        f"状态:{', '.join(f'{k}={v}' for k, v in sorted(by_status.items()))}")
+    print_table(
+        ["wave", "nodes"],
+        [(str(w), ", ".join(ks)) for w, ks in sorted(by_wave.items())])
+    dep_rows = [(b, "->", k) for b, k in edges]
+    if dep_rows:
+        print_table(["from", "", "to"], dep_rows)
+    else:
+        hint("无依赖边(全部为根节点)")
+    return exit_codes.OK
 
 
 def status(args) -> int:
@@ -294,6 +442,10 @@ def run(args) -> int:
     幂等:全部状态在 manifest + 平台,任意中断重跑即续跑,done 节点复用。
     有界:--max-rounds / --max-minutes 支持分段跑。
     """
+    if args.action == "check":
+        return check(args)
+    if args.action == "show":
+        return show(args)
     if args.action == "status":
         return status(args)
     if args.action == "tick":

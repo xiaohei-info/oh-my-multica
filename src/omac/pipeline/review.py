@@ -1,11 +1,11 @@
-"""plan check 的 review-only 门(P3.4),与 P3.1 pipeline/tasks.py::run_task 互补。
+"""dag check 的 review-only 门(P3.4),与 P3.1 pipeline/tasks.py::run_task 互补。
 
 语义差异(因此独立成原语,不是重复):
 - run_task = 产出 → 评审→修订 循环(产出者Agent 被派活、产出、评审拒收时由同一
   产出者修订,有界 ≤ config.retry.review 轮);
 - run_review = 对调用者「已拆好的 manifest」做单次评审门(lint 之后)。
   调用者自拆 manifest,不存在「产出者 Agent 修订」这一环 —— reviewer 拒收即
-  NeedsDecision(exit 20),交调用者改文件后重跑 omac plan check。
+  NeedsDecision(exit 20),交调用者改文件后重跑 omac dag check。
 
 两者共享 Store/Runtime 原语与 verdict 轮询结构(设计文档 §12.4 红线:本层只调
 WorkItemStore/AgentRuntime 接口,绝不直接 shell 平台 CLI)。

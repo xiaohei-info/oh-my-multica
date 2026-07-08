@@ -40,7 +40,7 @@ def all_terminal(issues: dict) -> bool:
 def node_waves(nodes: dict) -> dict:
     """每个节点的拓扑层级(wave):根节点(无 blocked_by)wave=0,其余 = max(前置 wave)+1。
 
-    用于 plan show 的按 wave 拓扑摘要。含环保护(环上节点回落到 0)。
+    用于 dag show 的按 wave 拓扑摘要。含环保护(环上节点回落到 0)。
     """
     waves, visiting = {}, set()
 

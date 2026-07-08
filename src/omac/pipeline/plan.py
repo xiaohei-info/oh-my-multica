@@ -1,8 +1,8 @@
-"""plan create 流水线编排(§7.2):计划→验收文档→拆解,三阶段全部经 tasks.run_task。
+"""plan create 流水线编排(§7.2):设计方案→验收文档→拆解,三阶段全部经 tasks.run_task。
 
 双模式一条流水线:
-  --doc 给了 → 跳过 planner 制定计划环节,直接进验收文档 + 拆解
-  没给     → planner 从零制定计划,评审通过后继续全程内置 review 门(--no-review 一刀切跳过,--no-acceptance 跳过验收文档);
+  --doc 给了 → 跳过 planner 设计环节,直接进验收文档 + 拆解
+  没给     → planner 从零编写设计方案,评审通过后继续全程内置 review 门(--no-review 一刀切跳过,--no-acceptance 跳过验收文档);
 每个 LLM 环节修订有界(读 config.retry.review,缺省 ≤3),耗尽 → NeedsDecision(exit 20)。
 每个 phase 一条 issue,产出 → (lint 机器门)→ 评审 → 回退修订都在同一条 issue 上。
 
@@ -143,14 +143,14 @@ def plan_create(
     plan_item_id: Optional[str] = None
     acceptance_item_id: Optional[str] = None
 
-    # ── phase 1:制定计划(跳过如果有 --doc) ──
+    # ── phase 1:设计方案(跳过如果有 --doc) ──
     if doc_path is not None:
         plan_text = _read_file(doc_path)
     else:
-        plan_payload: Dict[str, Any] = {"title": f"{name} 计划"}
+        plan_payload: Dict[str, Any] = {"title": f"{name} 设计方案"}
         if goal_text:
             # 需求经 source_of_truth 通道进 planner 的 issue body(与 phase 2/3 同源),
-            # 让 planner 据此制定计划,而非凭一个标题空想。
+            # 让 planner 据此编写设计方案,而非凭一个标题空想。
             plan_payload["source_of_truth"] = {"需求": goal_text}
         res = run_task(
             ctx.engine,
@@ -211,7 +211,7 @@ def plan_create(
     manifest_text = _phase_text(res["delivery"], _MANIFEST_KEY)
     _write_if_missing(base_dir)
 
-    # provenance:把塑造本 DAG 的源头 issue(计划/验收/拆解)记入 manifest meta,
+    # provenance:把塑造本 DAG 的源头 issue(设计/验收/拆解)记入 manifest meta,
     # 让 dag run 派发的 develop issue 也能溯源,防后续执行跑偏。
     source_issues = [r for r in [plan_item_id, acceptance_item_id, decompose_item_id] if r]
     manifest = loads_manifest(manifest_text)
