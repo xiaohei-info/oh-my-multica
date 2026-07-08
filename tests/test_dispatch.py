@@ -96,6 +96,19 @@ class TestRenderIssueBody:
         assert "omac work submit REAL-100" in body
         assert "<id>" not in body and "<issue>" not in body
 
+    def test_bootstrap_can_include_engine_env_for_no_checkout_runtime(self):
+        """隔离 runtime 尚未 checkout repo 时也能直接跑 omac:命令内带 engine/workspace/project。"""
+        n = Node(id="n", worker="alice", contract=_full_contract())
+        env = {
+            "OMAC_ENGINE": "multica",
+            "OMAC_WORKSPACE_ID": "ws-1",
+            "OMAC_PROJECT_ID": "proj-1",
+        }
+        body = render_issue_body(n, n.contract, TaskKind.DEVELOP, "REAL-100", engine_env=env)
+        prefix = "OMAC_ENGINE=multica OMAC_WORKSPACE_ID=ws-1 OMAC_PROJECT_ID=proj-1"
+        assert f"{prefix} omac work show REAL-100" in body
+        assert f"{prefix} omac work submit REAL-100" in body
+
     def test_kind_role_and_guide_mapping(self):
         """每种 issue 类型映射到对应角色与 guide topic(同源、不复制)。"""
         n = Node(id="n", worker="alice", title="t",

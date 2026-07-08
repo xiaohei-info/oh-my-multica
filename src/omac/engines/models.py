@@ -64,6 +64,7 @@ class WorkItem:
     review_verdict: Optional[str] = None
     review_comment: Optional[str] = None
     review_report: Optional[Dict[str, Any]] = None
+    review_report_ref: Optional[Dict[str, Any]] = None
 
     # 验收契约(编排器 dispatch 时下发):worker 读回后用同一套 validator 自校验
     contract: Optional[Dict[str, Any]] = None
@@ -77,6 +78,7 @@ class WorkItem:
     bounces: Bounces = field(default_factory=Bounces)
     # 通用交付物:按 kind 承载 plan/acceptance/manifest/acceptance-results 正文
     deliverable: Optional[str] = None
+    deliverable_ref: Optional[Dict[str, Any]] = None
 
     def is_completed(self) -> bool:
         return self.status == WorkItemStatus.DONE

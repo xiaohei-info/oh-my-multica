@@ -697,6 +697,32 @@ class TestReviewerRejectBoundedFallback:
         assert any("上界" in c for c in eng.store.get_comments(item.id))
         assert result.state == "needs_decision"
 
+    def test_pass_with_nits_needs_human_decision(self, tmp_path):
+        """pass-with-nits 不是自动 done:进入 needs_decision,交给人工确认。"""
+        from omac.engines import create_engine
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        eng.store.update_work_item_metadata(
+            item.id,
+            review_verdict="pass-with-nits",
+            review_report={
+                "review_goals": ["确认建议项"],
+                "diff_reviewed": True,
+                "tests_rerun": True,
+                "coverage_checked": True,
+                "acceptance_mapping": [{"acceptance": "works", "status": "pass"}],
+                "blockers": [],
+                "nits": ["建议后续优化"],
+            },
+        )
+
+        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+
+        assert result.state == "needs_decision"
+        assert manifest.nodes["a"].status == "blocked"
+        assert "a" in result.failed
+
     def test_retry_review_one_allows_single_fallback(self, tmp_path):
         """retry.review=1 → 第 1 次 reject 回退 worker(bounce→1),第 2 次 reject 耗尽 → blocked。"""
         from omac.engines import create_engine

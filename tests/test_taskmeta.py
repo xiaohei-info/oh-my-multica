@@ -6,6 +6,7 @@
 - 未带 kind 的旧 issue 读回缺省 develop(兼容)
 """
 import json
+import pathlib
 import subprocess
 from unittest.mock import patch
 
@@ -102,6 +103,7 @@ class _FakeMulticaProc:
     def __init__(self):
         self.issues = {}          # id -> issue dict(含 metadata)
         self.metadata = {}        # id -> {key: value}
+        self.comments = {}        # id -> [comment dict]
         self._next = 1
         self.calls = []           # 记录调用,供断言
 
@@ -163,7 +165,33 @@ class _FakeMulticaProc:
                             kv[k] = v
                     self.metadata.setdefault(issue_id, {}).update(kv)
             elif action == "comment":
-                pass  # add_comment 走 --content-file,本测试不触发
+                caction = args[2]
+                if caction == "add":
+                    issue_id = args[3]
+                    content = ""
+                    attachments = []
+                    it = iter(args[4:])
+                    for tok in it:
+                        if tok == "--content-file":
+                            content = pathlib.Path(next(it)).read_text(encoding="utf-8")
+                        elif tok == "--attachment":
+                            path = next(it)
+                            attachments.append({
+                                "id": f"att-{len(attachments) + 1}",
+                                "filename": pathlib.Path(path).name,
+                            })
+                        elif tok == "--output":
+                            next(it)
+                    comment = {
+                        "id": f"c-{len(self.comments.get(issue_id, [])) + 1}",
+                        "content": content,
+                        "attachments": attachments,
+                    }
+                    self.comments.setdefault(issue_id, []).append(comment)
+                    r.stdout = json.dumps(comment)
+                elif caction == "list":
+                    issue_id = args[3]
+                    r.stdout = json.dumps(self.comments.get(issue_id, []))
         elif sub == "agent":
             r.stdout = json.dumps([])  # list_members 不在本测试路径
 
@@ -207,7 +235,27 @@ def test_multica_update_phase_and_bounces_roundtrip():
     assert md["ci_bounce"] == "1"
     assert md["review_bounce"] == "2"
     assert md["merge_bounce"] == "3"
-    assert md["deliverable"] == "acceptance: ..."
+    assert "deliverable" not in md
+    ref = json.loads(md["deliverable_ref"])
+    assert ref["sha256"]
+    assert ref["comment_id"] == "c-1"
+    assert fake.comments[item.id][0]["attachments"]
+
+
+def test_multica_review_report_uses_ref_not_nested_json_string():
+    """review_report 是结构化证据,不应以嵌套 JSON 字符串塞进 metadata。"""
+    store = _multica_store()
+    fake = _FakeMulticaProc()
+    report = {"review_goals": ["g"], "blockers": [], "nits": ["nit"]}
+    with patch("subprocess.run", side_effect=fake.run):
+        item = store.create_work_item("ws", "t", "d", dag_key="a", worker="alice", kind=TaskKind.PLAN)
+        store.update_work_item_metadata(item.id, review_report=report)
+        got = store.get_work_item(item.id)
+    assert got.review_report == report
+    md = fake.metadata[item.id]
+    assert "review_report" not in md
+    ref = json.loads(md["review_report_ref"])
+    assert ref["comment_id"] == "c-1"
 
 
 def test_multica_old_issue_without_kind_reads_develop():

@@ -235,6 +235,15 @@ def collect_results(
 
             log.info(logsetup.EVT_VERDICT, kind=_DAG_KIND, node=key,
                      id=node.work_item_id, verdict=verdict)
+            if verdict == "pass-with-nits":
+                store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
+                store.add_comment(
+                    node.work_item_id,
+                    "reviewer 返回 pass-with-nits:需要调用者确认是否接受建议项后再继续。",
+                )
+                set_node(manifest, key, status="blocked")
+                failures[key] = "reviewer pass-with-nits,需要人工确认"
+                continue
             gate_errors = validate_review_evidence(node, item)
             if not gate_errors:
                 # reviewer pass → P4.2 自动 merge 门(若配置)。未配置 merge 时

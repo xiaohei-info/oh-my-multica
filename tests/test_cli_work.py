@@ -487,6 +487,24 @@ class TestSubmitPerKindPhase:
             )
         assert "reject" in str(exc.value)
 
+    def test_plan_review_without_deliverable_rejected(self, tmp_path):
+        """review 相位没有评审对象时,不得允许 reviewer 写 verdict 掩盖半提交状态。"""
+        eng = _engine()
+        item = eng.store.create_work_item(
+            "mock-workspace", "t", "d", dag_key="a", worker="alice", reviewer="bob",
+            kind=dispatch_mod.TaskKind.PLAN,
+            initial_status=WorkItemStatus.IN_REVIEW,
+        )
+        eng.store.update_work_item_metadata(item.id, phase=dispatch_mod.TaskPhase.REVIEW)
+        rfile = tmp_path / "report.yaml"
+        rfile.write_text(yaml.safe_dump(_make_review_report()))
+
+        with pytest.raises(ValidationError) as exc:
+            dispatch_mod.submit(
+                eng.store, item.id, verdict="pass", report_file=str(rfile),
+            )
+        assert "评审对象缺失" in str(exc.value)
+
     # ---------- plan ----------
 
     def test_plan_authoring_success(self, tmp_path):
@@ -501,6 +519,28 @@ class TestSubmitPerKindPhase:
         got = eng.store.get_work_item(item.id)
         assert got.deliverable.startswith("# Plan")
         assert got.status == WorkItemStatus.IN_REVIEW
+
+    def test_plan_authoring_cli_tells_producer_to_stop(self, tmp_path, monkeypatch, capsys):
+        """产出提交成功后的 CLI 文案不能诱导 planner 继续执行 reviewer 协议。"""
+        monkeypatch.chdir(tmp_path)
+        main(["config", "set", "engine", "mock"])
+        main(["config", "set", "workspace", "mock-workspace"])
+        capsys.readouterr()
+
+        store = _store()
+        item = store.create_work_item(
+            "mock-workspace", "t", "d", dag_key="a", worker="alice",
+            kind=dispatch_mod.TaskKind.PLAN,
+        )
+        pfile = tmp_path / "plan.md"
+        pfile.write_text("# Plan\n")
+
+        rc = main(["work", "submit", item.id, "--plan-file", str(pfile)])
+        assert rc == exit_codes.OK
+        out = capsys.readouterr().out
+        assert "产出阶段已结束" in out
+        assert "不要提交 verdict" in out
+        assert "等待 omac loop" in out
 
     def test_plan_authoring_empty_rejected(self, tmp_path):
         eng = _engine()
