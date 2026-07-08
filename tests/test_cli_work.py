@@ -498,6 +498,35 @@ class TestSubmitPerKindPhase:
         assert got.review_report["acceptance_mapping"][0]["acceptance"] == "works"
         assert got.review_report_ref["filename"] == "omac-review-report.yaml"
 
+    def test_review_submit_cli_tells_reviewer_not_to_change_status(
+            self, tmp_path, monkeypatch, capsys):
+        """review submit 只提交 verdict,CLI 不应诱导 reviewer 手动保持 in_review。"""
+        monkeypatch.chdir(tmp_path)
+        main(["config", "set", "engine", "mock"])
+        main(["config", "set", "workspace", "mock-workspace"])
+        capsys.readouterr()
+
+        store = _store()
+        item = store.create_work_item(
+            "mock-workspace", "t", "d", dag_key="a", worker="alice", reviewer="bob",
+            kind=dispatch_mod.TaskKind.DEVELOP,
+            initial_status=WorkItemStatus.IN_REVIEW,
+        )
+        item.phase = dispatch_mod.TaskPhase.REVIEW
+        store.set_node_contract(item.id, CONTRACT)
+        rfile = tmp_path / "report.yaml"
+        rfile.write_text(yaml.safe_dump(_make_review_report()))
+
+        rc = main(["work", "submit", item.id, "--verdict", "pass",
+                   "--report-file", str(rfile)])
+
+        assert rc == exit_codes.OK
+        out = capsys.readouterr().out
+        assert "状态推进: in_review" not in out
+        assert "verdict 已提交: pass" in out
+        assert "平台终态由 omac loop 收口" in out
+        assert "不要手动修改 issue 状态" in out
+
     def test_review_reject_verdict_is_structured_verdict(self, tmp_path):
         """reviewer reject 必须能经 work submit 写入结构化 verdict/report。
 

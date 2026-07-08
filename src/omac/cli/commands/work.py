@@ -170,9 +170,15 @@ def _submit(args) -> int:
     )
     message = (
         f"交付物已提交 —— {result.kind.value} × {result.phase.value}\n"
-        f"deliverable: {result.deliverable_key}\n"
-        f"状态推进: {target}"
+        f"deliverable: {result.deliverable_key}"
     )
+    if result.phase.value == "review":
+        message += (
+            f"\nverdict 已提交: {args.verdict}"
+            "\n平台终态由 omac loop 收口；不要手动修改 issue 状态/assignee。"
+        )
+    else:
+        message += f"\n状态推进: {target}"
     if getattr(result, "message", None):
         message += f"\n{result.message}"
     print(message)
