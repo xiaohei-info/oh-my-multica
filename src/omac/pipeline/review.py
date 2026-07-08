@@ -61,6 +61,15 @@ def run_review(
         cur = store.get_work_item(item.id)
         if cur.review_verdict == "pass":
             return cur.review_report or {}
+        if cur.review_verdict == "pass-with-nits":
+            raise NeedsDecision(
+                f"manifest review 返回 pass-with-nits,需要调用者确认是否接受建议项",
+                report={
+                    "item_id": cur.id,
+                    "reviewer": reviewer,
+                    "verdict": "pass-with-nits",
+                    "nits": (cur.review_report or {}).get("nits", []),
+                })
         if cur.review_verdict == "reject":
             raise NeedsDecision(
                 f"manifest review 被 reviewer '{reviewer}' 拒绝",

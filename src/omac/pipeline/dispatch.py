@@ -430,6 +430,11 @@ def _validate_review(
     kind: TaskKind, verdict: str, report_file: str, item: WorkItem
 ) -> Dict[str, Any]:
     """review 阶段(各 kind 共用)左移校验:复用 P2.2 validate_review_evidence。"""
+    if kind in (TaskKind.PLAN, TaskKind.ACCEPTANCE, TaskKind.DECOMPOSE) and not item.deliverable:
+        raise ValidationError(
+            "评审对象缺失:产出正文未提交或提交失败,不能写 review verdict。"
+            "请让产出者重新执行 omac work submit。"
+        )
     report = _parse_structured(report_file)
     if verdict not in evidence_mod.REVIEW_APPROVE:
         raise ValidationError(
@@ -500,11 +505,13 @@ class SubmitResult:
         phase: TaskPhase,
         deliverable_key: str,
         advanced_to: WorkItemStatus,
+        message: Optional[str] = None,
     ):
         self.kind = kind
         self.phase = phase
         self.deliverable_key = deliverable_key
         self.advanced_to = advanced_to
+        self.message = message
 
 
 def submit(
@@ -591,7 +598,10 @@ def submit(
             issue_id, deliverable=content, phase=TaskPhase.REVIEW,
         )
         store.update_status(issue_id, WorkItemStatus.IN_REVIEW)
-        return SubmitResult(kind, TaskPhase.REVIEW, "plan", WorkItemStatus.IN_REVIEW)
+        return SubmitResult(
+            kind, TaskPhase.REVIEW, "plan", WorkItemStatus.IN_REVIEW,
+            message="产出阶段已结束；不要提交 verdict，不要执行 reviewer 协议。等待 omac loop 转派 reviewer 或人工确认。",
+        )
 
     # ---------- acceptance × authoring ----------
     if kind == TaskKind.ACCEPTANCE and phase == TaskPhase.AUTHORING:
@@ -600,7 +610,10 @@ def submit(
             issue_id, deliverable=content, phase=TaskPhase.REVIEW,
         )
         store.update_status(issue_id, WorkItemStatus.IN_REVIEW)
-        return SubmitResult(kind, TaskPhase.REVIEW, "acceptance", WorkItemStatus.IN_REVIEW)
+        return SubmitResult(
+            kind, TaskPhase.REVIEW, "acceptance", WorkItemStatus.IN_REVIEW,
+            message="产出阶段已结束；不要提交 verdict，不要执行 reviewer 协议。等待 omac loop 转派 reviewer 或人工确认。",
+        )
 
     # ---------- decompose × authoring ----------
     if kind == TaskKind.DECOMPOSE and phase == TaskPhase.AUTHORING:
@@ -610,7 +623,10 @@ def submit(
             issue_id, deliverable=content, phase=TaskPhase.REVIEW,
         )
         store.update_status(issue_id, WorkItemStatus.IN_REVIEW)
-        return SubmitResult(kind, TaskPhase.REVIEW, "manifest", WorkItemStatus.IN_REVIEW)
+        return SubmitResult(
+            kind, TaskPhase.REVIEW, "manifest", WorkItemStatus.IN_REVIEW,
+            message="产出阶段已结束；不要提交 verdict，不要执行 reviewer 协议。等待 omac loop 转派 reviewer 或人工确认。",
+        )
 
     raise ValidationError(f"未支持的交付组合: {kind.value} × {phase.value}")
 
@@ -655,7 +671,18 @@ def _contract_summary(contract, key, fallback):
     return value if value not in (None, "") else fallback
 
 
-def render_issue_body(node, contract, kind, issue_id, source_refs=None):
+def _command_env_prefix(engine_env: Optional[Dict[str, str]] = None) -> str:
+    if not engine_env:
+        return ""
+    parts = []
+    for key in ("OMAC_ENGINE", "OMAC_WORKSPACE_ID", "OMAC_PROJECT_ID"):
+        value = engine_env.get(key)
+        if value:
+            parts.append(f"{key}={value}")
+    return (" ".join(parts) + " ") if parts else ""
+
+
+def render_issue_body(node, contract, kind, issue_id, source_refs=None, engine_env=None):
     """三段式派发模板(设计文档 §7.4)。
 
     第一段 bootstrap:两条命令(work show / work submit 精确模板) +
@@ -669,8 +696,9 @@ def render_issue_body(node, contract, kind, issue_id, source_refs=None):
 
     # ---- 第一段:bootstrap ----
     title = getattr(node, "title", None) or getattr(node, "id", issue_id)
-    base_cmd = f"omac work show {issue_id}"
-    submit_cmd = submit_template_for(kind, TaskPhase.AUTHORING, issue_id)
+    env_prefix = _command_env_prefix(engine_env)
+    base_cmd = f"{env_prefix}omac work show {issue_id}"
+    submit_cmd = env_prefix + submit_template_for(kind, TaskPhase.AUTHORING, issue_id)
     bootstrap = (
         f"你被分配了一件 {label} 任务（{role}),必须经 omac 交互。按序:\n"
         f"  1. omac guide {guide_topic}  —— 先搞懂「{role}」这个角色的流程怎么 work（必看)\n"

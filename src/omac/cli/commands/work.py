@@ -163,11 +163,14 @@ def _submit(args) -> int:
         if hasattr(result.advanced_to, "value")
         else result.advanced_to
     )
-    print(
+    message = (
         f"交付物已提交 —— {result.kind.value} × {result.phase.value}\n"
         f"deliverable: {result.deliverable_key}\n"
-        f"状态推进: {target}",
+        f"状态推进: {target}"
     )
+    if getattr(result, "message", None):
+        message += f"\n{result.message}"
+    print(message)
     return exit_codes.OK
 
 

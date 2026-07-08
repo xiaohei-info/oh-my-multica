@@ -95,6 +95,17 @@ def _render_source_of_truth(source_of_truth: dict) -> str:
     return "\n\n".join(sections)
 
 
+def _engine_env(engine) -> Dict[str, str]:
+    config = engine.store.config
+    env = {
+        "OMAC_ENGINE": config.engine_type,
+        "OMAC_WORKSPACE_ID": config.workspace_id,
+    }
+    if config.project_id:
+        env["OMAC_PROJECT_ID"] = config.project_id
+    return env
+
+
 def run_task(
     engine,
     kind: TaskKind,
@@ -136,7 +147,11 @@ def run_task(
     # body 里 reviewer 留 None:reviewer 在 review 阶段按轮次由 _pick_reviewer 动态选取,
     # 创建时没有「当前 reviewer」的概念,不写死池内第一位以免误导。
     body_node = SimpleNamespace(title=title, reviewer=None, id=item_id)
-    body = render_issue_body(body_node, contract, kind, item_id, source_refs=source_refs)
+    body = render_issue_body(
+        body_node, contract, kind, item_id,
+        source_refs=source_refs,
+        engine_env=_engine_env(engine),
+    )
     if source_of_truth:
         body = body + "\n\n" + _render_source_of_truth(source_of_truth)
     store.update_work_item_metadata(item_id, description=body)
@@ -231,6 +246,18 @@ def run_task(
             log.info(logsetup.EVT_NODE_DONE, kind=kind.value, id=item_id)
             return {"item_id": item_id, "delivery": delivery,
                     "rounds": round_index, "verdict": "pass", "kind": kind.value}
+
+        if verdict == "pass-with-nits":
+            raise NeedsDecision(
+                f"{kind.value} review 返回 pass-with-nits,需要调用者确认是否接受建议项",
+                report={
+                    "item_id": item_id,
+                    "kind": kind.value,
+                    "rounds": round_index,
+                    "verdict": verdict,
+                    "review_report": reviewed.review_report,
+                },
+            )
 
         # reject: 结构化 rollout 评论落 issue(评审目标 + blockers + 按 kind 的重交模板),
         # reset_review 清旧判定, 转回产出者修订

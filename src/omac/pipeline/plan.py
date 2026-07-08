@@ -6,10 +6,12 @@
 每个 LLM 环节修订有界(读 config.retry.review,缺省 ≤3),耗尽 → NeedsDecision(exit 20)。
 每个 phase 一条 issue,产出 → (lint 机器门)→ 评审 → 回退修订都在同一条 issue 上。
 
-经 run_task 的 artifacts 在 issue metadata 的交付约定:
-  - plan 阶段 planner 把计划正文落在 artifacts["plan"];
-  - acceptance 阶段 planner 把验收文档正文落在 artifacts["acceptance"];
-  - decompose 阶段 orchestrator 把 manifest 正文落在 artifacts["manifest"]。
+经 run_task 的 delivery 交付约定:
+  - plan 阶段 planner 交付 delivery["plan"];
+  - acceptance 阶段 planner 交付 delivery["acceptance"];
+  - decompose 阶段 orchestrator 交付 delivery["manifest"]。
+真实 multica 写侧可用 comment/attachment 承载正文,metadata 只存引用;
+读侧仍还原为 WorkItem.deliverable,让 pipeline 不关心平台存储细节。
 
 上游产物通过 payload["source_of_truth"](dict[标签 -> 文本正文])传入,
 run_task 把它以 issue body「上游产物(只读上下文)」段落到 issue description,

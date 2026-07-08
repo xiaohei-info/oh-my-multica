@@ -118,6 +118,18 @@ def test_run_task_pushes_rollout_comment_on_handoff_to_reviewer():
     assert any("reviewer" in c and "omac work submit" in c for c in comments)
 
 
+def test_run_task_pass_with_nits_needs_human_decision():
+    """pass-with-nits 不自动通过也不自动返工,而是移交人工确认。"""
+    eng = _engine()
+    MockStore.set_kind_delivery("plan", {"plan": "计划正文"})
+    MockStore.set_review_verdict("pass-with-nits")
+    with pytest.raises(NeedsDecision) as exc:
+        run_task(eng, TaskKind.PLAN, _payload(), "alice",
+                 reviewers=["bob"], poll=_poll)
+    assert "pass-with-nits" in str(exc.value)
+    assert exc.value.report["verdict"] == "pass-with-nits"
+
+
 def test_run_task_reject_rollout_uses_kind_correct_submit_template():
     """reject 推送评论给产出者的重交模板按 kind 正确:plan → --plan-file(非 --pr-url)。"""
     eng = _engine()

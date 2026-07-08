@@ -227,7 +227,7 @@ Reviewer 侧对应铁律:只读共享态、不动主树。两边一起守,并发
 **判决输出**:
 - `pass`: 无 blocker → done
 - `reject`: 有 blocker → 转回 worker,comment 详细问题
-- `pass-with-nits`: 可合并但有建议 → review_report.nits
+- `pass-with-nits`: 无 blocker 但有建议 → needs_decision,等待人工确认
 
 **执行协议**:
 参照 `omac guide reviewer` 的完整执行清单
