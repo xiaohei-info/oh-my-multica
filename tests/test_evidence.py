@@ -135,9 +135,25 @@ def test_worker_evidence_env_setup_not_required_without_integration_gates():
 
 # ---------- review evidence ----------
 
-def test_review_evidence_rejects_bad_verdict():
-    errs = validate_review_evidence(NODE, Item(review_verdict="reject"))
-    assert errs and "not approvable" in errs[0]
+def test_review_evidence_reject_requires_blockers():
+    report = _good_report()
+    report["acceptance_mapping"][0]["status"] = "fail"
+    errs = validate_review_evidence(NODE, Item(review_verdict="reject", review_report=report))
+    assert any("blockers must be non-empty" in e for e in errs)
+
+
+def test_review_evidence_reject_passes_with_blockers():
+    report = _good_report()
+    report["blockers"] = ["验收不满足"]
+    report["acceptance_mapping"][0]["status"] = "fail"
+    assert validate_review_evidence(
+        NODE, Item(review_verdict="reject", review_report=report)
+    ) == []
+
+
+def test_review_evidence_rejects_unknown_verdict():
+    errs = validate_review_evidence(NODE, Item(review_verdict="maybe"))
+    assert errs and "unknown" in errs[0]
 
 
 def test_review_evidence_requires_acceptance_mapping():

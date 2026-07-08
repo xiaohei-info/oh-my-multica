@@ -473,7 +473,12 @@ class TestSubmitPerKindPhase:
         assert got.review_report["acceptance_mapping"][0]["acceptance"] == "works"
         assert got.review_report_ref["filename"] == "omac-review-report.yaml"
 
-    def test_review_reject_verdict_forbidden(self, tmp_path):
+    def test_review_reject_verdict_is_structured_verdict(self, tmp_path):
+        """reviewer reject 必须能经 work submit 写入结构化 verdict/report。
+
+        guide/help/run_task 都把 reject 作为合法评审结论;这里防止 submit
+        左移校验把“不通过”挡在 metadata 外,导致编排永远等不到 review_verdict。
+        """
         eng = _engine()
         item = eng.store.create_work_item(
             "mock-workspace", "t", "d", dag_key="a", worker="alice",
@@ -482,12 +487,20 @@ class TestSubmitPerKindPhase:
         )
         item.phase = dispatch_mod.TaskPhase.REVIEW
         rfile = tmp_path / "report.yaml"
-        rfile.write_text(yaml.safe_dump(_make_review_report()))
-        with pytest.raises(ValidationError) as exc:
-            dispatch_mod.submit(
-                eng.store, item.id, verdict="reject", report_file=str(rfile),
-            )
-        assert "reject" in str(exc.value)
+        report = _make_review_report()
+        report["blockers"] = ["验收映射不满足"]
+        report["acceptance_mapping"][0]["status"] = "fail"
+        rfile.write_text(yaml.safe_dump(report))
+
+        result = dispatch_mod.submit(
+            eng.store, item.id, verdict="reject", report_file=str(rfile),
+        )
+
+        got = eng.store.get_work_item(item.id)
+        assert result.advanced_to == WorkItemStatus.IN_REVIEW
+        assert got.review_verdict == "reject"
+        assert got.review_report["blockers"] == ["验收映射不满足"]
+        assert got.review_report_ref["filename"] == "omac-review-report.yaml"
 
     def test_plan_review_without_deliverable_rejected(self, tmp_path):
         """review 相位没有评审对象时,不得允许 reviewer 写 verdict 掩盖半提交状态。"""

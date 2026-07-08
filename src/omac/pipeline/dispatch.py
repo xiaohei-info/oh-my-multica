@@ -436,11 +436,6 @@ def _validate_review(
             "请让产出者重新执行 omac work submit。"
         )
     report = _parse_structured(report_file)
-    if verdict not in evidence_mod.REVIEW_APPROVE:
-        raise ValidationError(
-            f"verdict={verdict!r} 不可用于通过 —— review 通过需 pass 或 "
-            "pass-with-nits;如需回退请走平台的驳回/重派流程(参见 §7.4)"
-        )
     node = _Node(_contract_from_item(item))
     probe = _Item(review_verdict=verdict, review_report=report)
     errors = evidence_mod.validate_review_evidence(node, probe)

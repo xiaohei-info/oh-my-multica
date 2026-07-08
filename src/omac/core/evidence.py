@@ -9,6 +9,7 @@
 from .acceptance import AcceptanceDoc, load_acceptance_doc
 
 REVIEW_APPROVE = {"pass", "pass-with-nits"}
+REVIEW_VERDICTS = REVIEW_APPROVE | {"reject"}
 
 ACCEPTANCE_STATUS = {"pass", "fail"}
 
@@ -183,14 +184,14 @@ def validate_review_evidence(node, item) -> list:
     report = getattr(item, "review_report", None)
     contract = getattr(node, "contract", None)
 
-    if verdict not in REVIEW_APPROVE:
-        return [f"review_verdict {verdict!r} is not approvable"]
-
-    if contract is None:
-        return []
+    if verdict not in REVIEW_VERDICTS:
+        return [f"review_verdict {verdict!r} is unknown"]
 
     if not isinstance(report, dict):
         return ["review_report is required"]
+
+    if contract is None:
+        return []
 
     review_goals = report.get("review_goals")
     if not isinstance(review_goals, list) or not review_goals:
@@ -209,18 +210,21 @@ def validate_review_evidence(node, item) -> list:
             errors.append(f"review_report.{flag} must be true")
 
     blockers = report.get("blockers", [])
-    if blockers:
+    if verdict in REVIEW_APPROVE and blockers:
         errors.append("review_report.blockers must be empty for pass verdicts")
+    if verdict == "reject" and not blockers:
+        errors.append("review_report.blockers must be non-empty for reject verdicts")
 
     mappings = report.get("acceptance_mapping")
     if not isinstance(mappings, list) or not mappings:
         errors.append("review_report.acceptance_mapping must be non-empty")
         return errors
 
+    required_statuses = {"pass"} if verdict in REVIEW_APPROVE else {"pass", "fail"}
     mapped_acceptance = {
         mapping.get("acceptance")
         for mapping in mappings
-        if isinstance(mapping, dict) and mapping.get("status") == "pass"
+        if isinstance(mapping, dict) and mapping.get("status") in required_statuses
     }
     if contract is not None:
         for acceptance in contract.acceptance:
