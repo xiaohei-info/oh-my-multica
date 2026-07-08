@@ -160,6 +160,14 @@ class TestRenderIssueBody:
         # 删掉「contract 全量」这句对 plan 而言的谎
         assert "contract 全量" not in body
 
+    def test_bootstrap_marks_guide_as_soft_and_submit_as_hard(self):
+        """中期 agent 指令:guide 是软上下文,submit 是硬交付入口,不能全局吞错。"""
+        n = Node(id="n", worker="alice", title="计划")
+        body = render_issue_body(n, None, TaskKind.PLAN, "ID")
+        assert "guide 是软上下文" in body
+        assert "失败时先运行 `omac guide` 列 topic" in body
+        assert "`omac work submit` 是硬交付入口" in body
+
     def test_contract_summary_none_returns_fallback(self):
         """_contract_summary 在 contract=None 时应直接返回 fallback,作为占位的根。"""
         from omac.pipeline.dispatch import _contract_summary

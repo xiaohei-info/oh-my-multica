@@ -703,10 +703,11 @@ def render_issue_body(node, contract, kind, issue_id, source_refs=None, engine_e
     submit_cmd = env_prefix + submit_template_for(kind, TaskPhase.AUTHORING, issue_id)
     bootstrap = (
         f"你被分配了一件 {label} 任务（{role}),必须经 omac 交互。按序:\n"
-        f"  1. omac guide {guide_topic}  —— 先搞懂「{role}」这个角色的流程怎么 work（必看)\n"
+        f"  1. omac guide {guide_topic}  —— guide 是软上下文;先搞懂「{role}」这个角色的流程,"
+        "失败时先运行 `omac guide` 列 topic,不要让 guide 阻断交付\n"
         f"  2. {base_cmd}  —— 取你这件任务的当前相位、精确输入与交付方式\n"
         f"  3. 按下方「任务详情/上游产物」执行\n"
-        f"  4. {submit_cmd}  —— 完成后交付（show 输出里有本角色精确交付参数)"
+        f"  4. {submit_cmd}  —— `omac work submit` 是硬交付入口;完成后交付,失败必须修正（show 输出里有本角色精确交付参数)"
     )
 
     # ---- 第二段:任务简报(人可读) ----
