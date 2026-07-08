@@ -356,7 +356,21 @@ def _check() -> int:
     problems: List[str] = []
     cfg = config_mod.load_config()
     if not cfg:
-        problems.append(f"配置文件不存在: {config_mod.CONFIG_PATH} —— 运行 `omac init` 生成")
+        problems.append(
+            f"配置文件不存在: {config_mod.CONFIG_PATH}。\n"
+            "人类首次配置请运行 `omac init` 交互式向导。\n"
+            "agent/CI 请使用 `omac config set` 写入声明式配置,然后运行 `omac init --check`。\n"
+            "最小示例:\n"
+            "  omac config set engine mock\n"
+            "  omac config set workspace mock-workspace\n"
+            "  omac config set roles.planner alice\n"
+            "  omac config set roles.orchestrator bob\n"
+            "  omac config set roles.workers '[\"alice\"]'\n"
+            "  omac config set roles.reviewers '[\"charlie\"]'\n"
+            "  omac config set workflow.human_in_loop false\n"
+            "  omac config set workflow.acceptance_doc true\n"
+            "  omac config set workflow.goal_required true\n"
+            "  omac init --check")
         return _report(problems)
     for key in ("engine", "workspace", "roles"):
         if not cfg.get(key):

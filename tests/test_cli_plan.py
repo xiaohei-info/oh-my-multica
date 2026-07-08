@@ -474,6 +474,27 @@ def test_create_workflow_human_in_loop_false_skips_confirm_gate(tmp_path, monkey
     assert plan_item.status.value == "done"
 
 
+def test_create_workflow_review_false_skips_review_stages(tmp_path, monkeypatch):
+    engine = _configure_create_mock(tmp_path, monkeypatch)
+    assert main(["config", "set", "workflow.review", "false"]) == exit_codes.OK
+    engine.store.set_review_verdict("reject")
+
+    assert main(["plan", "create", "--name", "demo-workflow-noreview"]) == exit_codes.OK
+
+
+def test_create_workflow_acceptance_doc_false_skips_acceptance_phase(tmp_path, monkeypatch):
+    from omac.core.taskmeta import TaskKind
+    engine = _configure_create_mock(tmp_path, monkeypatch)
+    assert main(["config", "set", "workflow.acceptance_doc", "false"]) == exit_codes.OK
+
+    assert main(["plan", "create", "--name", "demo-workflow-noacc"]) == exit_codes.OK
+
+    assert (tmp_path / ".omac" / "demo-workflow-noacc.yaml").exists()
+    assert not (tmp_path / ".omac" / "demo-workflow-noacc.acceptance.yaml").exists()
+    acc_item = _first_item_of_kind(engine, TaskKind.ACCEPTANCE)
+    assert acc_item is None, "workflow.acceptance_doc=false 时不应创建 acceptance work item"
+
+
 def test_resolve_goal_precedence_and_exclusivity(tmp_path):
     """_resolve_goal:--goal 直给 / --goal-file 读文件 / 二者互斥报错 / 缺省 None。"""
     from types import SimpleNamespace

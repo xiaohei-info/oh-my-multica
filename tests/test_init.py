@@ -146,6 +146,17 @@ def test_non_interactive_role_not_in_pool_fails(tmp_path, monkeypatch, capsys):
 
 # ==================== --check 增强 ====================
 
+def test_check_missing_config_guides_agent_ci_to_config_set(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["init", "--check"]) == exit_codes.VALIDATION
+
+    err = capsys.readouterr().err
+    assert "配置文件不存在" in err
+    assert "omac config set engine" in err
+    assert "omac init --check" in err
+
+
 def test_check_flags_role_not_in_pool(tmp_path, monkeypatch, capsys):
     """角色不在 agent 池 → exit 5 并指出缺谁(验收标准)。"""
     monkeypatch.chdir(tmp_path)
