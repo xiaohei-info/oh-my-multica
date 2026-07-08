@@ -119,6 +119,7 @@ def run_task(
     confirm: bool = False,
     source_refs: Optional[List[str]] = None,
     dag_key: Optional[str] = None,
+    resume_item_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """派任务→等终态→取交付→有界修订循环。
 
@@ -137,26 +138,35 @@ def run_task(
     contract = _payload_contract(payload.get("contract"))
     source_of_truth = payload.get("source_of_truth") or {}
 
-    # ── 建 issue(先占位 id,再用真实 id 渲染 body) ──
-    # 建时用 title 作非空占位正文:真实 body 要嵌 issue id、只能建后回填,而真机
-    # multica 拒收空 --description-file,故不能传空串(见 test_engines_mock parity)。
-    item = store.create_work_item(
-        workspace_id, title, title, dag_key=task_key, worker=assignee, kind=kind,
-    )
-    item_id = item.id
-    # body 里 reviewer 留 None:reviewer 在 review 阶段按轮次由 _pick_reviewer 动态选取,
-    # 创建时没有「当前 reviewer」的概念,不写死池内第一位以免误导。
-    body_node = SimpleNamespace(title=title, reviewer=None, id=item_id)
-    body = render_issue_body(
-        body_node, contract, kind, item_id,
-        source_refs=source_refs,
-        engine_env=_engine_env(engine),
-    )
-    if source_of_truth:
-        body = body + "\n\n" + _render_source_of_truth(source_of_truth)
-    store.update_work_item_metadata(item_id, description=body)
+    if resume_item_id is not None:
+        item = store.get_work_item(resume_item_id)
+        item_id = item.id
+        body_node = SimpleNamespace(
+            title=item.title or title, reviewer=item.reviewer, id=item_id)
+    else:
+        # ── 建 issue(先占位 id,再用真实 id 渲染 body) ──
+        # 建时用 title 作非空占位正文:真实 body 要嵌 issue id、只能建后回填,而真机
+        # multica 拒收空 --description-file,故不能传空串(见 test_engines_mock parity)。
+        item = store.create_work_item(
+            workspace_id, title, title, dag_key=task_key, worker=assignee, kind=kind,
+        )
+        item_id = item.id
+        # body 里 reviewer 留 None:reviewer 在 review 阶段按轮次由 _pick_reviewer 动态选取,
+        # 创建时没有「当前 reviewer」的概念,不写死池内第一位以免误导。
+        body_node = SimpleNamespace(title=title, reviewer=None, id=item_id)
+        body = render_issue_body(
+            body_node, contract, kind, item_id,
+            source_refs=source_refs,
+            engine_env=_engine_env(engine),
+        )
+        if source_of_truth:
+            body = body + "\n\n" + _render_source_of_truth(source_of_truth)
+        store.update_work_item_metadata(item_id, description=body)
 
     def _produce(hint: Optional[List[str]] = None) -> WorkItem:
+        current = store.get_work_item(item_id)
+        if hint is None and _produced(current) and current.status != WorkItemStatus.FAILED:
+            return current
         store.mark_in_progress(item_id)
         store.assign_work_item(item_id, assignee, "worker")
         runtime.wake(item_id, assignee, "worker")
@@ -177,6 +187,11 @@ def run_task(
     log.info(logsetup.EVT_DISPATCH, kind=kind.value, id=item_id, worker=assignee)
     delivered = _produce()
     delivery = _delivery_of(kind, delivered)
+
+    if delivered.status == WorkItemStatus.DONE and delivered.review_verdict == "pass":
+        log.info(logsetup.EVT_NODE_DONE, kind=kind.value, id=item_id)
+        return {"item_id": item_id, "delivery": delivery,
+                "rounds": 0, "verdict": "pass", "kind": kind.value}
 
     # 机器门(零 token):通过即止,耗尽转 NeedsDecision
     if guard is not None:
@@ -201,11 +216,25 @@ def run_task(
     # ── 人机门(human in the loop,可选) ──
     # 通过标准:人工把 issue 流转到 DONE(易于自动化识别),或 `omac plan confirm`。
     # 识别到 DONE 后:有 reviewer 则翻回 IN_REVIEW 继续评审;无 reviewer 则人工确认即终态。
-    if confirm:
-        # 干等人把 issue 挪到 DONE:发事件,否则操作者看着像卡死。
+    should_emit_human_gate = (
+        confirm
+        and not delivered.reviewer
+        and delivered.review_verdict is None
+    )
+    waiting_for_human = (
+        should_emit_human_gate
+        and delivered.status != WorkItemStatus.DONE
+    )
+    if should_emit_human_gate:
+        # 发事件,否则操作者看着像卡死;mock 自动确认过快时也保留该轨迹。
         log.info(logsetup.EVT_HUMAN_GATE_WAIT, kind=kind.value, id=item_id)
-        _poll_until(
+    if waiting_for_human:
+        # 干等人把 issue 挪到 DONE。
+        delivered = _poll_until(
             store, item_id, lambda i: i.status == WorkItemStatus.DONE, poll)
+        delivery = _delivery_of(kind, delivered)
+
+    if confirm and delivered.status == WorkItemStatus.DONE and delivered.review_verdict is None:
         if not reviewers:
             log.info(logsetup.EVT_NODE_DONE, kind=kind.value, id=item_id)
             return {"item_id": item_id, "delivery": delivery,

@@ -9,7 +9,7 @@ from ...engines.models import EngineConfig
 from ...errors import ValidationError
 from .. import exit_codes
 from ..output import hint
-from ...pipeline.plan import PlanContext, plan_create
+from ...pipeline.plan import PlanContext, plan_create, plan_dag_key_from_id, plan_resume
 
 def resolve_review_rounds(cfg: dict | None = None) -> int:
     """plan 流水线评审修订轮次上界,与 dag run 节点评审共用 config.retry.review。
@@ -57,10 +57,24 @@ def register(parser):
         help="跳过设计/验收的人机确认门(无人值守入口用;默认开启,需人工把 issue 流转到 DONE 放行)")
 
     confirm = sub.add_parser(
-        "confirm", help="人机门手动放行:把 <name> 待确认的设计/验收 issue 流转到 DONE")
-    confirm.add_argument("--name", required=True, help="方案名(plan create --name 用的同一名字)")
+        "confirm", help="人机门手动放行:把待确认的设计/验收 issue 流转到 DONE")
+    confirm.add_argument("--name", help="方案名(plan create --name 用的同一名字;兼容入口,重名时请用唯一 ID)")
+    confirm.add_argument("--dag-key", help="精确定位某个阶段 issue,如 plan-p-xxxx / acceptance-p-xxxx")
+    confirm.add_argument("--plan-id", help="精确定位一条 plan 流水线,如 p-xxxx")
     confirm.add_argument("--engine", help="引擎类型,缺省按 config.yaml / 环境变量")
     confirm.add_argument("--workspace", help="工作空间 id,缺省按 config.yaml / 环境变量")
+
+    resume = sub.add_parser("resume", help="按唯一 plan_id/dag_key 衔接已创建的 plan 流水线")
+    resume.add_argument("--dag-key", help="plan create 创建的阶段 dag_key,如 plan-p-xxxx")
+    resume.add_argument("--plan-id", help="plan 流水线唯一 ID,如 p-xxxx")
+    resume.add_argument("--name", help="manifest 名;缺省从设计方案 issue 标题反推")
+    resume.add_argument("--no-review", action="store_true", help="跳过全部 review 阶段")
+    resume.add_argument("--no-acceptance", action="store_true", help="跳过验收文档环节")
+    resume.add_argument(
+        "--no-confirm", action="store_true",
+        help="跳过设计/验收的人机确认门(默认开启,需人工把 issue 流转到 DONE 放行)")
+    resume.add_argument("--engine", help="引擎类型,缺省按 config.yaml / 环境变量")
+    resume.add_argument("--workspace", help="工作空间 id,缺省按 config.yaml / 环境变量")
 
 
 def _resolve_engine(args):
@@ -93,10 +107,7 @@ def _resolve_goal(args) -> str | None:
     return None
 
 
-def _create(args) -> int:
-    """mac plan create:装配 PlanContext + 调 plan_create 编排三阶段。"""
-    cfg = config_mod.load_config()
-    engine = _resolve_engine(args)
+def _build_context(cfg: dict, engine, args) -> PlanContext:
     workspace_id = engine.store.config.workspace_id
     roles = cfg.get("roles") or {}
 
@@ -114,13 +125,8 @@ def _create(args) -> int:
             "缺少 planner 角色 —— 请 `omac config set roles.planner <agent>`,"
             "或设置 roles.workers(取首位作为 planner)")
 
-    goal_text = _resolve_goal(args)
-    doc_path = getattr(args, "doc", None)
-    if goal_text and doc_path:
-        hint("同时给了 --doc 与 --goal:--doc 会跳过 planner 设计环节,--goal 被忽略")
-
     members = set(engine.store.list_members(workspace_id))
-    ctx = PlanContext(
+    return PlanContext(
         engine=engine,
         workspace_id=workspace_id,
         planner=planner,
@@ -132,7 +138,37 @@ def _create(args) -> int:
         members=members,
         confirm=not args.no_confirm,
     )
+
+
+def _create(args) -> int:
+    """mac plan create:装配 PlanContext + 调 plan_create 编排三阶段。"""
+    cfg = config_mod.load_config()
+    engine = _resolve_engine(args)
+
+    goal_text = _resolve_goal(args)
+    doc_path = getattr(args, "doc", None)
+    if goal_text and doc_path:
+        hint("同时给了 --doc 与 --goal:--doc 会跳过 planner 设计环节,--goal 被忽略")
+
+    ctx = _build_context(cfg, engine, args)
     return plan_create(ctx, args.name, doc_path=doc_path, goal_text=goal_text)
+
+
+def _selector(args) -> tuple[str, set[str] | None]:
+    """返回用户选择器标签与可匹配 dag_key 集合;None 表示走 legacy name 子串。"""
+    provided = [v for v in (args.name, args.dag_key, args.plan_id) if v]
+    if not provided:
+        raise ValidationError("plan confirm 需要 --dag-key / --plan-id / --name 之一")
+    if args.dag_key:
+        return f"dag_key={args.dag_key}", {args.dag_key}
+    if args.plan_id:
+        plan_key = plan_dag_key_from_id(args.plan_id)
+        plan_id = plan_key[len("plan-"):]
+        return (
+            f"plan_id={plan_id}",
+            {f"plan-{plan_id}", f"acceptance-{plan_id}"},
+        )
+    return f"name={args.name}", None
 
 
 def _confirm(args) -> int:
@@ -146,22 +182,29 @@ def _confirm(args) -> int:
 
     engine = _resolve_engine(args)
     workspace_id = engine.store.config.workspace_id
-    name = args.name
+    label, dag_keys = _selector(args)
 
     # 待确认 = 设计/验收产出停在人机门:IN_REVIEW + phase=REVIEW + 尚未指派 reviewer。
-    # 标题含 [DAG:...] 前缀,故按 name 子串匹配(create 用 `{name} 设计方案/验收文档`)。
+    # 新入口按 dag_key 精确匹配;--name 仅保留兼容,重名时要求调用方换唯一 ID。
     waiting = [
         it for it in engine.store.list_work_items(workspace_id)
         if it.kind in (TaskKind.PLAN, TaskKind.ACCEPTANCE)
         and it.status == WorkItemStatus.IN_REVIEW
         and it.phase == TaskPhase.REVIEW
         and not it.reviewer
-        and name in (it.title or "")
+        and (
+            (dag_keys is not None and it.dag_key in dag_keys)
+            or (dag_keys is None and args.name in (it.title or ""))
+        )
     ]
     if not waiting:
         raise ValidationError(
-            f"未找到 {name} 待确认的设计/验收 issue —— "
-            "可能已确认、尚未产出,或 --name 不匹配。")
+            f"未找到 {label} 待确认的设计/验收 issue —— "
+            "可能已确认、尚未产出,或 selector 不匹配。")
+    if len(waiting) > 1:
+        raise ValidationError(
+            f"{label} 匹配到多条待确认 issue —— name 可能重复;"
+            "请改用 --dag-key plan-p-xxxx / acceptance-p-xxxx 精确定位。")
 
     it = waiting[0]
     engine.store.mark_done(it.id)
@@ -169,9 +212,23 @@ def _confirm(args) -> int:
     return exit_codes.OK
 
 
+def _resume(args) -> int:
+    cfg = config_mod.load_config()
+    engine = _resolve_engine(args)
+    ctx = _build_context(cfg, engine, args)
+    return plan_resume(
+        ctx,
+        dag_key=args.dag_key,
+        plan_id=args.plan_id,
+        name=args.name,
+    )
+
+
 def run(args) -> int:
     if args.action == "create":
         return _create(args)
     if args.action == "confirm":
         return _confirm(args)
+    if args.action == "resume":
+        return _resume(args)
     raise ValidationError(f"未知 plan 子命令:{args.action}")

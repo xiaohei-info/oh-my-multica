@@ -20,6 +20,7 @@ run_task 把它以 issue body「上游产物(只读上下文)」段落到 issue 
 from __future__ import annotations
 
 import os
+import re
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
@@ -66,6 +67,29 @@ _ACCEPTANCE_KEY = "acceptance"
 _MANIFEST_KEY = "manifest"
 
 
+def plan_id_from_dag_key(dag_key: str) -> str:
+    """从 plan 流水线任一阶段 dag_key 取出同一个 plan_id。"""
+    value = (dag_key or "").strip()
+    for prefix in ("plan-", "acceptance-", "decompose-"):
+        if value.startswith(prefix):
+            plan_id = value[len(prefix):]
+            if plan_id:
+                return plan_id
+    raise ValidationError(
+        f"无法从 dag_key 解析 plan_id:{dag_key} —— 期望形如 plan-p-xxxx")
+
+
+def plan_dag_key_from_id(plan_id: str) -> str:
+    value = (plan_id or "").strip()
+    if not value:
+        raise ValidationError("--plan-id 不能为空")
+    if value.startswith("plan-"):
+        return value
+    if value.startswith(("acceptance-", "decompose-")):
+        value = plan_id_from_dag_key(value)
+    return make_dag_key(TaskKind.PLAN, scope=value)
+
+
 def _phase_text(delivery: Dict[str, Any], key: str) -> str:
     """从 run_task 返回的 delivery 取某 key 的文本交付。"""
     value = delivery.get(key)
@@ -92,6 +116,34 @@ def _validate_acceptance(text: str) -> acceptance_mod.AcceptanceDoc:
 
     raw = yaml.safe_load(text)
     return acceptance_mod.load_acceptance_doc(raw)
+
+
+def _find_by_dag_key(ctx: PlanContext, kind: TaskKind, dag_key: str) -> Optional[WorkItem]:
+    matches = [
+        item for item in ctx.engine.store.list_work_items(ctx.workspace_id)
+        if item.kind == kind and item.dag_key == dag_key
+    ]
+    if len(matches) > 1:
+        raise ValidationError(
+            f"dag_key 不唯一:{dag_key} —— 平台数据异常,请先人工处理重复 issue。")
+    return matches[0] if matches else None
+
+
+def _require_by_dag_key(ctx: PlanContext, kind: TaskKind, dag_key: str) -> WorkItem:
+    item = _find_by_dag_key(ctx, kind, dag_key)
+    if item is None:
+        raise ValidationError(
+            f"未找到 {dag_key} 对应的 {kind.value} issue —— "
+            "请确认使用的是 plan create 输出/issue 标题里的 DAG 标识。")
+    return item
+
+
+def _name_from_plan_issue(item: WorkItem) -> str:
+    title = re.sub(r"^(\[DAG:[^\]]+\]\s*)+", "", item.title or "").strip()
+    suffix = " 设计方案"
+    if title.endswith(suffix):
+        title = title[:-len(suffix)].strip()
+    return title or plan_id_from_dag_key(item.dag_key)
 
 
 def _compose_guard(
@@ -217,6 +269,114 @@ def plan_create(
     manifest = loads_manifest(manifest_text)
     manifest.meta["plan_id"] = plan_id
     manifest.meta.setdefault("name", name)
+    if source_issues:
+        manifest.meta["source_issues"] = source_issues
+    save_manifest(manifest, manifest_path)
+
+    return 0
+
+
+def plan_resume(
+    ctx: PlanContext,
+    *,
+    dag_key: Optional[str] = None,
+    plan_id: Optional[str] = None,
+    name: Optional[str] = None,
+    poll: Optional[Callable[[], None]] = None,
+) -> int:
+    """按唯一 plan_id/dag_key 恢复 plan create 流水线。
+
+    续跑锚点是机器生成的 plan_id,不是人类可重复的 name。任一阶段存在已建
+    issue 时复用原 issue,避免中断后创建第二条设计/验收/拆解 issue。
+    """
+    if dag_key:
+        plan_id_value = plan_id_from_dag_key(dag_key)
+    elif plan_id:
+        plan_id_value = plan_id_from_dag_key(plan_id) if plan_id.startswith("plan-") else plan_id
+    else:
+        raise ValidationError("plan resume 需要 --dag-key 或 --plan-id")
+
+    store = ctx.engine.store
+    ensure_config_synced(CONFIG_PATH, branch="main", engine_type=store.config.engine_type)
+    base_dir = CONFIG_DIR
+    reviewers = [] if ctx.no_review else ctx.reviewers
+    poll_cb = poll if poll is not None else ctx.poll()
+
+    plan_key = make_dag_key(TaskKind.PLAN, scope=plan_id_value)
+    plan_item = _require_by_dag_key(ctx, TaskKind.PLAN, plan_key)
+    resolved_name = name or _name_from_plan_issue(plan_item)
+    manifest_path = os.path.join(base_dir, f"{resolved_name}.yaml")
+    acceptance_path = os.path.join(base_dir, f"{resolved_name}.acceptance.yaml")
+
+    res = run_task(
+        ctx.engine,
+        TaskKind.PLAN,
+        {"title": f"{resolved_name} 设计方案"},
+        ctx.planner,
+        reviewers=reviewers,
+        max_revisions=ctx.max_revisions,
+        poll=poll_cb,
+        confirm=ctx.confirm,
+        dag_key=plan_key,
+        resume_item_id=plan_item.id,
+    )
+    plan_item_id = res["item_id"]
+    plan_text = _phase_text(res["delivery"], _PLAN_KEY)
+
+    acceptance_text: Optional[str] = None
+    acceptance_doc: Optional[acceptance_mod.AcceptanceDoc] = None
+    acceptance_item_id: Optional[str] = None
+    if not ctx.no_acceptance:
+        acceptance_key = make_dag_key(TaskKind.ACCEPTANCE, scope=plan_id_value)
+        acceptance_item = _find_by_dag_key(ctx, TaskKind.ACCEPTANCE, acceptance_key)
+        res = run_task(
+            ctx.engine,
+            TaskKind.ACCEPTANCE,
+            {"title": f"{resolved_name} 验收文档",
+             "source_of_truth": {"plan": plan_text}},
+            ctx.planner,
+            reviewers=reviewers,
+            max_revisions=ctx.max_revisions,
+            poll=poll_cb,
+            confirm=ctx.confirm,
+            source_refs=[plan_item_id],
+            dag_key=acceptance_key,
+            resume_item_id=acceptance_item.id if acceptance_item else None,
+        )
+        acceptance_item_id = res["item_id"]
+        acceptance_text = _phase_text(res["delivery"], _ACCEPTANCE_KEY)
+        acceptance_doc = _validate_acceptance(acceptance_text)
+        _write_if_missing(base_dir)
+        with open(acceptance_path, "w", encoding="utf-8") as fh:
+            fh.write(acceptance_text)
+
+    decompose_inputs = {"plan": plan_text}
+    if acceptance_text is not None:
+        decompose_inputs["acceptance"] = acceptance_text
+    decompose_key = make_dag_key(TaskKind.DECOMPOSE, scope=plan_id_value)
+    decompose_item = _find_by_dag_key(ctx, TaskKind.DECOMPOSE, decompose_key)
+    res = run_task(
+        ctx.engine,
+        TaskKind.DECOMPOSE,
+        {"title": f"{resolved_name} 拆解",
+         "source_of_truth": decompose_inputs},
+        ctx.orchestrator,
+        reviewers=reviewers,
+        max_revisions=ctx.max_revisions,
+        poll=poll_cb,
+        guard=_compose_guard(ctx.members, acceptance_doc=acceptance_doc),
+        source_refs=[r for r in [plan_item_id, acceptance_item_id] if r],
+        dag_key=decompose_key,
+        resume_item_id=decompose_item.id if decompose_item else None,
+    )
+    decompose_item_id = res["item_id"]
+    manifest_text = _phase_text(res["delivery"], _MANIFEST_KEY)
+    _write_if_missing(base_dir)
+
+    source_issues = [r for r in [plan_item_id, acceptance_item_id, decompose_item_id] if r]
+    manifest = loads_manifest(manifest_text)
+    manifest.meta["plan_id"] = plan_id_value
+    manifest.meta.setdefault("name", resolved_name)
     if source_issues:
         manifest.meta["source_issues"] = source_issues
     save_manifest(manifest, manifest_path)

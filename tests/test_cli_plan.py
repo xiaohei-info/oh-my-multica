@@ -519,6 +519,53 @@ def test_plan_confirm_marks_waiting_issue_done(tmp_path, monkeypatch):
     assert engine.store.get_work_item(item.id).status == WorkItemStatus.DONE
 
 
+def test_plan_confirm_dag_key_exactly_selects_waiting_issue(tmp_path, monkeypatch):
+    """name 会重复;人工门确认必须支持用 dag_key 精确定位同一条 plan 流水线。"""
+    from omac.core.taskmeta import TaskKind, TaskPhase
+    from omac.engines.models import WorkItemStatus
+
+    engine = _configure_create_mock(tmp_path, monkeypatch)
+    MockStore.set_auto_confirm(False)
+    first = engine.store.create_work_item(
+        "mock-workspace", "重复名 设计方案", "重复名 设计方案",
+        dag_key="plan-p-first111", worker="alice", kind=TaskKind.PLAN)
+    second = engine.store.create_work_item(
+        "mock-workspace", "重复名 设计方案", "重复名 设计方案",
+        dag_key="plan-p-second22", worker="alice", kind=TaskKind.PLAN)
+    for item in (first, second):
+        engine.store.update_work_item_metadata(
+            item.id, deliverable="设计方案正文", phase=TaskPhase.REVIEW)
+        engine.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+
+    assert main(["plan", "confirm", "--dag-key", "plan-p-second22"]) == exit_codes.OK
+    assert engine.store.get_work_item(first.id).status == WorkItemStatus.IN_REVIEW
+    assert engine.store.get_work_item(second.id).status == WorkItemStatus.DONE
+
+
+def test_plan_resume_reuses_existing_plan_issue_by_dag_key(tmp_path, monkeypatch):
+    """中断后续跑以 dag_key 为锚点,不能按 name 新建第二个 plan issue。"""
+    from omac.core.taskmeta import TaskKind, TaskPhase
+    from omac.engines.models import WorkItemStatus
+
+    engine = _configure_create_mock(tmp_path, monkeypatch)
+    plan_item = engine.store.create_work_item(
+        "mock-workspace", "[DAG:plan-p-resume01] 重复名 设计方案",
+        "重复名 设计方案", dag_key="plan-p-resume01",
+        worker="alice", kind=TaskKind.PLAN)
+    engine.store.update_work_item_metadata(
+        plan_item.id, deliverable=PLAN_TEXT, phase=TaskPhase.REVIEW)
+    engine.store.update_status(plan_item.id, WorkItemStatus.DONE)
+
+    assert main(["plan", "resume", "--dag-key", "plan-p-resume01"]) == exit_codes.OK
+
+    plan_items = [
+        item for item in engine.store.list_work_items("mock-workspace")
+        if item.kind == TaskKind.PLAN and item.dag_key == "plan-p-resume01"
+    ]
+    assert [item.id for item in plan_items] == [plan_item.id]
+    assert (tmp_path / ".omac" / "重复名.yaml").exists()
+
+
 def test_plan_confirm_no_waiting_issue_is_validation_error(tmp_path, monkeypatch):
     """没有待确认的 issue 时 confirm 报校验错(exit 5),提示无可放行对象。"""
     _configure_create_mock(tmp_path, monkeypatch)
