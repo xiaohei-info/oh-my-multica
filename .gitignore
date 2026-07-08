@@ -15,6 +15,7 @@ venv/
 # 引擎运行时状态与本地配置
 .env
 .multica_state/
+.serena/
 
 # 编排产物（用户项目里的 manifest 落点，不应进本仓）
 .orchestrator/
