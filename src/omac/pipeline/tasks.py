@@ -93,19 +93,23 @@ def _poll_until(
 
 
 def _render_source_of_truth(source_of_truth: dict) -> str:
-    """把上游产物(dict[标签 -> 文本])渲染成 issue body 的一个只读上下文段。
+    """把上游产物(dict[标签 -> 文本])渲染成 issue body 的只读上下文段。
 
-    与 contract.source_of_truth(引用路径列表)不同,这里是上游阶段产出的
-    完整文本正文,直接落到 issue description,供真实 planner/orchestrator 在
-    `omac work show`/issue body 中读取而不依赖产物注入。
+    上游产物本身通常是 Markdown。不要再外包一层代码块,否则平台 Markdown
+    对四反引号支持不完整时会破坏渲染,也会让人工审阅很难读。
     """
     sections = ["## 上游产物(只读上下文)"]
     for label, text in source_of_truth.items():
         if not text:
             continue
         content = text.rstrip()
-        fence = _markdown_fence_for(content)
-        sections.append(f"### {label}\n{fence}\n{content}\n{fence}")
+        sections.append(
+            f"### {label}\n\n"
+            "<details open>\n"
+            f"<summary>查看 {label} 上游产物</summary>\n\n"
+            f"{content}\n\n"
+            "</details>"
+        )
     return "\n\n".join(sections)
 
 

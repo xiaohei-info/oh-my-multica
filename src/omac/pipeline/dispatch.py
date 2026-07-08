@@ -715,15 +715,18 @@ def render_issue_body(node, contract, kind, issue_id, source_refs=None, engine_e
     # ---- 第一段:bootstrap ----
     title = getattr(node, "title", None) or getattr(node, "id", issue_id)
     env_prefix = _command_env_prefix(engine_env)
+    guide_cmd = f"omac guide {guide_topic}"
     base_cmd = f"{env_prefix}omac work show {issue_id}"
     submit_cmd = env_prefix + submit_template_for(kind, TaskPhase.AUTHORING, issue_id)
     bootstrap = (
-        f"你被分配了一件 {label} 任务（{role}),必须经 omac 交互。按序:\n"
-        f"  1. omac guide {guide_topic}  —— guide 是软上下文;先搞懂「{role}」这个角色的流程,"
-        "失败时先运行 `omac guide` 列 topic,不要让 guide 阻断交付\n"
-        f"  2. {base_cmd}  —— 取你这件任务的当前相位、精确输入与交付方式\n"
-        f"  3. 按下方「任务详情/上游产物」执行\n"
-        f"  4. {submit_cmd}  —— `omac work submit` 是硬交付入口;完成后交付,失败必须修正（show 输出里有本角色精确交付参数)"
+        f"你被分配了一件 {label} 任务（{role}),必须经 omac 交互。按序:\n\n"
+        f"1. 读取 `{role}` 角色流程 guide。guide 是软上下文;失败时先运行 `omac guide` 列 topic,不要让 guide 阻断交付。\n\n"
+        f"```bash\n{guide_cmd}\n```\n\n"
+        "2. 读取当前任务相位、精确输入与交付方式。\n\n"
+        f"```bash\n{base_cmd}\n```\n\n"
+        "3. 按下方「任务详情/上游产物」执行。\n\n"
+        "4. `omac work submit` 是硬交付入口;失败必须修正,以 `work show` 输出中的本角色参数为准。\n\n"
+        f"```bash\n{submit_cmd}\n```"
     )
 
     # ---- 第二段:任务简报(人可读) ----
@@ -782,10 +785,16 @@ def render_issue_body(node, contract, kind, issue_id, source_refs=None, engine_e
     refs = [str(r) for r in (source_refs or []) if str(r).strip()]
     origin = ""
     if refs:
+        ref_lines = []
+        for ref in refs:
+            ref_lines.append(
+                f"- `#{ref}`\n\n"
+                f"```bash\n{env_prefix}omac work show {ref}\n```"
+            )
         origin = (
             "## 源头 issue（防跑偏）\n"
             "本任务承接以下上游 issue,有分歧以源头 issue 为准,勿平行重定义:\n"
-            + "\n".join(f"- #{r}(omac work show {r} 查看)" for r in refs))
+            + "\n".join(ref_lines))
 
     return "\n\n".join(p for p in [bootstrap, briefing, detail, origin, hard] if p)
 
