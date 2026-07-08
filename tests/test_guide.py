@@ -103,6 +103,72 @@ def test_roles_topic_has_all_roles() -> None:
         assert role in content, f"roles missing role: {role}"
 
 
+def test_workflow_guides_real_stage_handoffs() -> None:
+    content = load_topic("workflow")
+    for item in [
+        "planner",
+        "orchestrator",
+        "worker",
+        "reviewer",
+        "acceptor",
+        "omac plan confirm",
+        "collect_results",
+        "review_dispatch",
+        "human_gate_wait",
+        "acceptance.max_rounds",
+    ]:
+        assert item in content, f"workflow missing stage handoff anchor: {item}"
+
+
+def test_roles_topic_maps_agents_to_commands_and_outputs() -> None:
+    content = load_topic("roles")
+    for item in [
+        "omac plan create",
+        "omac dag run",
+        "omac work show",
+        "omac work submit",
+        "设计方案",
+        "验收文档",
+        "manifest DAG",
+        "PR + 证据",
+        "pass-with-nits",
+        "总控验收",
+    ]:
+        assert item in content, f"roles missing command/output anchor: {item}"
+
+
+def test_manifest_topic_connects_contract_to_agent_runtime() -> None:
+    content = load_topic("manifest")
+    for item in [
+        "contract.source_of_truth",
+        "contract.acceptance",
+        "contract.non_goals",
+        "contract.verification_commands",
+        "contract.integration_gates",
+        "contract.pr_base",
+        "contract.coverage_gate",
+        "omac work show",
+        "omac work submit",
+    ]:
+        assert item in content, f"manifest missing runtime contract anchor: {item}"
+
+
+def test_recovery_topic_guides_every_exit20_decision() -> None:
+    content = load_topic("recovery")
+    for item in [
+        "needs_decision",
+        "pass-with-nits",
+        "reviewer reject",
+        "CI",
+        "merge",
+        "acceptance.max_rounds",
+        "omac node retry",
+        "omac node accept",
+        "omac node abandon",
+    ]:
+        assert item in content, f"recovery missing exit20 decision anchor: {item}"
+
+
 # --- P3.2 迁移补齐的额外守卫(reader blocker fix) ---
 
 

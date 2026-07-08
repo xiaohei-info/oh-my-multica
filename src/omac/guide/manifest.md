@@ -38,6 +38,29 @@ reviewer ≠ worker;DAG 无环;worker/reviewer 在 agent 池内。
 
 omac 命令链:`omac plan create` 产 manifest → `omac dag run` 消费 manifest 推进 DAG。
 
+## contract 如何进入 agent 真实工作
+
+manifest 不是静态文档。`omac dag run` 派发节点时,节点 contract 会进入 issue body
+和 `omac work show <issue-id>` 输出;worker/reviewer 都以同一份 contract 为准。
+
+| contract 字段 | worker / reviewer 怎么用 |
+|---|---|
+| `contract.source_of_truth` | worker 必须全文读取对应设计锚点;reviewer 对照它查语义漂移 |
+| `contract.acceptance` | worker 逐条实现并留证据;reviewer 产出 acceptance_mapping |
+| `contract.non_goals` | worker 不越界;reviewer 发现越界即 blocker |
+| `contract.verification_commands` | worker 在 `verification.commands` 逐条记录;reviewer 独立复跑 |
+| `contract.integration_gates` | worker 逐 gate 写 metrics/artifacts/source_of_truth/delivery_goal;reviewer 独立复核 |
+| `contract.pr_base` | worker PR base 必须指向它;reviewer 与 submit 校验同口径 |
+| `contract.coverage_gate` | worker 跑 diff-cover 自测;reviewer 复跑,低于阈值判 reject |
+
+真实执行链:
+1. worker 先跑 `omac work show <issue-id>`,从 contract 取目标、边界、验证命令与 PR base。
+2. worker 只按 contract 做卡内范围,完成后跑
+   `omac work submit <issue-id> --pr-url <PR> --verification-file ev.yaml`。
+3. reviewer 再跑 `omac work show <issue-id>`,读取同一份 contract 和 worker 写入的 verification/report 输入。
+4. reviewer 用 `omac work submit <issue-id> --verdict pass|pass-with-nits|reject --report-file r.yaml`
+   写回判决。
+
 ## 拆解方法论(道)
 
 > 本节回答「为什么这样拆、怎样防跑偏」—— 遇到拿不准的拆图判据,回这里查。

@@ -29,8 +29,21 @@
 
 ## 常见退出原因
 
-- 证据不达标 / reviewer reject / pass-with-nits 待决 / CI·merge 回退耗尽(≤3 次)→ 节点 blocked
+- 证据不达标 / reviewer reject / pass-with-nits 待决 / CI / merge 回退耗尽(≤3 次)→ 节点 blocked 或 needs_decision
 - 总控验收外层循环耗尽(acceptance.max_rounds)仍有 fail → 未通过项清单在报告里
+
+## exit 20 决策表
+
+| 报告信号 | 含义 | 先看什么 | 推荐动作 |
+|---|---|---|---|
+| `needs_decision` + `pass-with-nits` | reviewer 无 blocker,但有建议项需要人确认 | `omac node show <manifest> <key>` 的 report.nits | 接受建议外放:`omac node accept`;要修就 `omac node retry` |
+| `reviewer reject` | reviewer 找到 blocker | report.blockers、PR diff、失败命令 | 修复同一节点:`omac node retry <manifest> <key>` |
+| `CI` 失败 | worker 证据过门后 CI 未过 | CI 日志、verification.commands | 修 CI 后 retry;若不是卡内问题,拆新节点或改 contract |
+| `merge` 回退耗尽 | PR 无法自动合并或冲突反复出现 | PR base、冲突文件、集成分支状态 | 换 worker retry 或手工解冲突后重跑 |
+| `acceptance.max_rounds` 耗尽 | 总控验收多轮增量修复仍 fail | 验收 fail 清单、增量 manifest | 降范围、补新节点,或明确部分放弃 |
+
+`accept` 只用于显式接受已知风险或 pass-with-nits;不是跳过失败验证。
+`retry` 会把节点重新放回 todo;`abandon` 会让下游不再等待该节点交付物。
 
 ## 失败处理(编排器视角)
 

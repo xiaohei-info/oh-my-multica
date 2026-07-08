@@ -25,6 +25,23 @@ omac 是确定性 CLI 驱动的多 Agent 并行开发编排:Loop 驱动 Agent,LL
 4. exit 20 后:`omac dag status` 看全景 → `omac node show <key>` 看证据链
    → `omac node retry|accept|abandon` 决策 → 重跑 `omac dag run`(重跑即续跑)
 
+## 阶段 × Agent 工作导航
+
+| 阶段 | 主责 agent | 真实入口 | 成功交付 | 下一跳 |
+|---|---|---|---|---|
+| 初始化 | 人 / 入口 agent | `omac init --check` | `.omac/config.yaml` 中 workspace、project、roles 可用 | `omac plan create` |
+| 方案设计 | planner | `omac plan create --name <feature> --goal <需求>` | 设计方案 issue done,必要时经 `omac plan confirm` 放行 | reviewer 评审方案 |
+| 验收定义 | planner | 同一条 `omac plan create` 流程 | 验收文档 issue done,端到端验收点明确 | reviewer 评审验收 |
+| DAG 拆解 | orchestrator | `omac plan create` 内置拆解段或 `--doc <设计方案文档>` | `.omac/<feature>.yaml`,每节点 contract 可执行 | reviewer 评审 manifest |
+| 派发执行 | 引擎 | `omac dag run <manifest>` | 就绪节点变为 work item,派给 worker | worker 读 `omac guide worker` |
+| 结果回收 | 引擎 | `collect_results` | 证据过门、CI/merge/review 状态推进 | `review_dispatch` 或 `node_done` |
+| 独立评审 | reviewer | `omac work show <issue-id>` → `omac work submit --verdict ...` | `pass` / `reject` / `pass-with-nits` report | done / 返工 / `needs_decision` |
+| 总控验收 | acceptor | DAG 全 done 后由引擎触发验收外层循环 | 验收文档逐项 pass/fail | 通过 exit 0,失败可增量扩展 |
+| 人工决策 | 人 / 入口 agent | `omac dag status` → `omac node show` → `omac node retry|accept|abandon` | blocked/failed/needs_decision 被显式处理 | 重跑 `omac dag run` |
+
+`acceptance.max_rounds` 控制总控验收最多增量修复轮数;耗尽后返回 exit 20,
+由上表「人工决策」处理。不要让 agent 猜下一步:每个阶段先看本表,再进入对应 guide。
+
 ## 入口形态(谁来跑 omac)
 
 omac 有三种入口调用者,消费同一套 CLI:**人(终端)/ Agent(Claude Code、Multica agent 等)
