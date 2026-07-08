@@ -2,13 +2,14 @@
 
 plan 流水线(§7.2)与总控验收(§7.6)共用的确定性原语:建 issue → assign+wake
 → 轮询终态 → 取交付;reviewers 非空时进入 review 阶段(同一 issue 转派 reviewer),
-reject 意见落 issue 后转回产出者修订,有界(默认 ≤3 轮),耗尽 → NeedsDecision。
+reject 只清旧评审判定并转回产出者修订,有界(默认 ≤3 轮),耗尽 → NeedsDecision。
 
 issue body 取自 dispatch.render_issue_body(三段式 §7.4 模板),与 work show/submit
 同源,不自行拼接。
 """
 from __future__ import annotations
 
+import re
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional
 
@@ -22,6 +23,11 @@ from .dispatch import render_issue_body
 log = logsetup.get_logger(__name__)
 
 _REVIEW_VERDICTS = {"pass", "pass-with-nits", "reject"}
+
+
+def _markdown_fence_for(text: str) -> str:
+    longest = max((len(m.group(0)) for m in re.finditer(r"`{3,}", text)), default=3)
+    return "`" * max(4, longest + 1)
 
 
 def _produced(item: WorkItem) -> bool:
@@ -97,7 +103,9 @@ def _render_source_of_truth(source_of_truth: dict) -> str:
     for label, text in source_of_truth.items():
         if not text:
             continue
-        sections.append(f"### {label}\n```\n{text.rstrip()}\n```")
+        content = text.rstrip()
+        fence = _markdown_fence_for(content)
+        sections.append(f"### {label}\n{fence}\n{content}\n{fence}")
     return "\n\n".join(sections)
 
 

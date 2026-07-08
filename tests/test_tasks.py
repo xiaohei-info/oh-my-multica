@@ -107,6 +107,26 @@ def test_run_task_renders_source_refs_in_body():
     assert "7" in item.description and "8" in item.description
 
 
+def test_run_task_renders_markdown_source_of_truth_without_breaking_fences():
+    """上游 Markdown 自带代码块时,issue body 外层 fence 不能被提前闭合。"""
+    eng = _engine()
+    MockStore.set_kind_delivery("acceptance", {"acceptance": "验收正文"})
+    upstream_plan = "# 设计方案\n\n```ts\nexport const ok = true\n```\n\n## 下一节"
+
+    res = run_task(
+        eng,
+        TaskKind.ACCEPTANCE,
+        _payload(source_of_truth={"plan": upstream_plan}),
+        "alice",
+        poll=_poll,
+    )
+
+    item = eng.store.get_work_item(res["item_id"])
+    assert "### plan\n````\n# 设计方案" in item.description
+    assert "```ts\nexport const ok = true\n```" in item.description
+    assert "\n## 下一节\n````" in item.description
+
+
 def test_run_task_handoff_to_reviewer_does_not_post_trigger_comment():
     """正常转派 reviewer 只靠 assign + metadata 交接,不发评论触发第二次 run。"""
     eng = _engine()
