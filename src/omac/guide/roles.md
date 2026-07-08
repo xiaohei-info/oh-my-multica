@@ -14,6 +14,19 @@
 约束:planner 与 orchestrator 是独立角色(可配同一 agent);
 reviewer 强制 ≠ 产出者;acceptor 缺省复用 reviewers 池。
 
+## 角色运行手册
+
+| 角色 | 什么时候出现 | 必跑命令 | 必交付 | 不该做什么 |
+|---|---|---|---|---|
+| planner | `omac plan create` 的设计方案与验收文档阶段 | 由入口命令驱动,必要时等 `omac plan confirm` | 设计方案、验收文档 | 不拆实现任务、不替 worker 写代码 |
+| orchestrator | 方案与验收过门后拆 manifest DAG | `omac plan create --name <feature> --doc <设计方案文档>` 或内置拆解段 | manifest DAG,每节点 contract 完整 | 不实现业务、不手改 issue metadata |
+| worker | `omac dag run` 派发 develop issue 后 | `omac work show <issue-id>`;完成后 `omac work submit <issue-id> --pr-url <PR> --verification-file ev.yaml` | PR + 证据,包含验证命令、coverage、env_setup、integration_gates | 不自审自放行、不绕过 contract.pr_base |
+| reviewer | `review_dispatch` 把同一 issue 转入 in_review 后 | `omac work show <issue-id>`;判决后 `omac work submit <issue-id> --verdict pass|pass-with-nits|reject --report-file r.yaml` | report,含 blockers/nits/acceptance_mapping | 不只信 worker 自述、不替 worker 改代码 |
+| acceptor | DAG 全 done 后的总控验收 | 由 `omac dag run` 外层验收循环驱动 | 总控验收逐项 pass/fail,失败项进入增量修复 | 不绕过验收文档、不把未验证项说成通过 |
+
+判决语义统一:reviewer `pass` 才能继续自动推进;`reject` 回到 worker 修;
+`pass-with-nits` 进入人工 `needs_decision`,由 `omac node accept` 或 retry 类命令处理。
+
 ## Architect 特殊角色
 
 当 agent 池中有 `role: architect` 的 agent 时:
