@@ -17,7 +17,7 @@ from ..core.manifest import Contract, _load_contract
 from ..core.taskmeta import DELIVERY_CONTENT_KEY, TaskKind, TaskPhase, make_dag_key
 from ..engines.models import WorkItem, WorkItemStatus
 from ..errors import NeedsDecision
-from .dispatch import render_issue_body, render_review_rollout_comment
+from .dispatch import render_issue_body
 
 log = logsetup.get_logger(__name__)
 
@@ -132,7 +132,7 @@ def run_task(
     1. 建 issue(issue body 用 dispatch.render_issue_body 三段式模板),assign+wake;
     2. 轮询产出终态 → 取交付物(artifacts);
     3. reviewers 非空时进入 review 阶段:同一 issue 转派 reviewer → verdict;
-       reject → 意见落 issue、reset_review 后转回产出者(计数) → 重取交付;
+       reject → reset_review 后转回产出者(计数),上轮评审由 work show 从 metadata 暴露 → 重取交付;
        耗尽 → NeedsDecision(报告含轮次与最后意见)。
     """
     store = engine.store
@@ -302,14 +302,9 @@ def run_task(
                 },
             )
 
-        # reject: 结构化 rollout 评论落 issue(评审目标 + blockers + 按 kind 的重交模板),
-        # reset_review 清旧判定, 转回产出者修订
+        # reject:评审 report 已在 metadata,reset_review 只清当前判定并转回产出者。
+        # 返工上下文由下一轮 agent 通过 work show 读取,不写评论以免触发额外 run。
         last_opinion = reviewed.review_comment
-        store.add_comment(
-            item_id,
-            render_review_rollout_comment(
-                body_node, contract, verdict,
-                report=reviewed.review_report, item_id=item_id, kind=kind))
         log.info(logsetup.EVT_REVISION, kind=kind.value, id=item_id,
                  gate="review", round=round_index, max=max_revisions)
         store.reset_review(item_id)

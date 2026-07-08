@@ -621,7 +621,6 @@ class MockStore(WorkItemStore):
         item = self.get_work_item(item_id)
         item.review_verdict = None
         item.review_comment = None
-        item.review_report = None
         item.decision_required = None
         item.phase = TaskPhase.AUTHORING
 

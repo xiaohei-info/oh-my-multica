@@ -19,7 +19,7 @@ from ..engines.models import WorkItemStatus
 from ..engines.runtime import AgentRuntime
 from ..engines.store import WorkItemStore
 from ..errors import PlatformError
-from ..pipeline.dispatch import (render_issue_body, render_review_rollout_comment)
+from ..pipeline.dispatch import render_issue_body
 from ..core.taskmeta import TaskKind, TaskPhase
 
 log = logsetup.get_logger(__name__)
@@ -286,13 +286,8 @@ def collect_results(
                 else:
                     # 有界「回到 worker」:先记回退计数并清除旧评审判定,再重新派发 worker。
                     # 派发失败时回滚回退计数并把节点标 blocked,避免卡在「已清判定/未派发」中间态。
-                    report = item.review_report
                     store.update_work_item_metadata(node.work_item_id, review_bounce=cur_bounce + 1)
                     store.reset_review(node.work_item_id)
-                    rollout = render_review_rollout_comment(
-                        node, node.contract, verdict, report=report,
-                        item_id=node.work_item_id)
-                    store.add_comment(node.work_item_id, rollout)
                     # 派发失败时回滚 review_bounce,避免把「未成功的回退」计为消耗;
                     # 这与 CI 回退路径(delivery.advance_delivery)的语义对称 ——
                     # 两者都是「计数只在派发成功时才真正消耗」。
