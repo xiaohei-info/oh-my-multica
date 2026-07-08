@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import pytest
 
+from omac.cli import exit_codes
+from omac.cli.main import main
 from omac.cli.commands.dag import DESCRIPTION as DAG_DESC
 from omac.cli.commands.work import DESCRIPTION as WORK_DESC
 from omac.cli.commands.node import DESCRIPTION as NODE_DESC
@@ -47,6 +49,15 @@ def test_topic_uses_omac_commands(topic: str) -> None:
     content = load_topic(topic)
     # 至少出现一次 omac 命令引用
     assert "omac " in content, f"topic {topic} never references omac commands"
+
+
+def test_guide_role_alias_is_soft_context_command(capsys) -> None:
+    """角色名误作 guide topic 是高概率 agent 误用,应教学降级而非返回非 0 污染 run。"""
+    assert main(["guide", "planner"]) == exit_codes.OK
+    out = capsys.readouterr().out
+    assert "planner 是角色别名" in out
+    assert "已打开 workflow" in out
+    assert "# omac 整体工作流" in out
 
 
 def test_manifest_topic_has_methodology() -> None:
