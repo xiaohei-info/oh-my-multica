@@ -134,6 +134,31 @@ def test_show_output_structure(kind, phase):
         assert out["context"]["env_setup"] == ["docker compose up -d db"]
 
 
+def test_authoring_show_includes_previous_review_report():
+    """reject reset 后,下一轮 authoring 通过 work show 读取上轮评审上下文。"""
+    store = _store()
+    item = _make_item(store, TaskKind.PLAN, TaskPhase.AUTHORING, with_contract=True)
+    report = {
+        "verdict": "reject",
+        "blockers": ["缺少积分体系的持久化方案"],
+        "nits": ["补充排行榜刷新策略"],
+    }
+    store.update_work_item_metadata(
+        item.id,
+        phase=TaskPhase.REVIEW,
+        review_verdict="reject",
+        review_report=report,
+        review_report_source="/tmp/omac-review-report.yaml",
+    )
+    store.reset_review(item.id)
+
+    out = build_show_output(store.get_work_item(item.id), "worker:alice")
+
+    assert out["context"]["previous_review"]["verdict"] == "reject"
+    assert out["context"]["previous_review"]["report"] == report
+    assert out["context"]["previous_review"]["report_ref"]["filename"] == "omac-review-report.yaml"
+
+
 @pytest.mark.parametrize("kind,phase", COMBINATIONS, ids=[
     f"{k.value}-{p.value}" for k, p in COMBINATIONS])
 def test_submit_template_matches_registered_params(kind, phase):

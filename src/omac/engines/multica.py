@@ -599,7 +599,6 @@ class MulticaStore(WorkItemStore):
     def reset_review(self, item_id: str):
         self._set_metadata(item_id, "review_verdict", "")
         self._set_metadata(item_id, "review_comment", "")
-        self._set_metadata(item_id, "review_report", "{}")
         self._set_metadata(item_id, DECISION_REQUIRED_KEY, "{}")
         self._set_metadata(item_id, PHASE_KEY, TaskPhase.AUTHORING.value)
 

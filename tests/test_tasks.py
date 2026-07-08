@@ -132,16 +132,17 @@ def test_run_task_pass_with_nits_needs_human_decision():
     assert item.decision_required["verdict"] == "pass-with-nits"
 
 
-def test_run_task_reject_rollout_uses_kind_correct_submit_template():
-    """reject 推送评论给产出者的重交模板按 kind 正确:plan → --plan-file(非 --pr-url)。"""
+def test_run_task_reject_handoff_uses_metadata_not_comment():
+    """reject 转回产出者只更新 metadata/status/assignee,不再用评论触发交接。"""
     eng = _engine()
     MockStore.set_kind_delivery("plan", {"plan": "计划正文"})
     MockStore.set_review_rejects(1)
     res = run_task(eng, TaskKind.PLAN, _payload(), "alice",
                    reviewers=["bob"], max_revisions=3, poll=_poll)
-    joined = "\n".join(eng.store.get_comments(res["item_id"]))
-    assert "--plan-file" in joined       # planner 重交用 --plan-file
-    assert "--pr-url" not in joined      # 不是 develop 的 --pr-url
+
+    assert res["verdict"] == "pass"
+    assert res["rounds"] == 2
+    assert eng.store.get_comments(res["item_id"]) == []
 
 
 def test_run_task_ignores_blank_review_verdict_while_waiting():
@@ -237,9 +238,8 @@ def test_reject_twice_then_pass():
     # 全程同一 issue id,未新建评审 issue
     assert len(eng.store.list_work_items("ws")) == 1
     assert item.id == res["item_id"]
-    # 两次 reject 的结构化 rollout 评论都落在同一 issue 上;正常转派不再发评论。
-    comments = eng.store.get_comments(res["item_id"])
-    assert sum("verdict=reject" in c for c in comments) == 2
+    # reject 返工不再通过评论交接,避免评论本身再次触发 agent run。
+    assert eng.store.get_comments(res["item_id"]) == []
 
 
 def test_exhausted_needs_decision():

@@ -131,6 +131,11 @@ def _render_table(output: dict) -> None:
                 _render_kv(k, v)
         else:
             print("\n> 任务详情与需求见本 issue 正文（briefing / 上游产物 段)。")
+        previous_review = ctx.get("previous_review")
+        if previous_review:
+            print("\n## 上轮评审")
+            for k, v in previous_review.items():
+                _render_kv(k, v)
 
     print("\n## 现在做什么")
     print(output["protocol"])

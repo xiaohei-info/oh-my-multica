@@ -139,6 +139,24 @@ def _env_setup_checklist(item: Any) -> Optional[List[str]]:
     return list(env_setup)
 
 
+def _previous_review_context(item: Any) -> Optional[Dict[str, Any]]:
+    report = getattr(item, "review_report", None)
+    report_ref = getattr(item, "review_report_ref", None)
+    if not report and not report_ref:
+        return None
+
+    previous: Dict[str, Any] = {}
+    verdict = getattr(item, "review_verdict", None)
+    if not verdict and isinstance(report, dict):
+        verdict = report.get("verdict")
+    if verdict:
+        previous["verdict"] = verdict
+    if report:
+        previous["report"] = report
+    if report_ref:
+        previous["report_ref"] = report_ref
+    return previous
+
 def build_show_output(item: Any, identity: str) -> Dict[str, Any]:
     """构建 work show 的完整输出结构(四段)。
 
@@ -183,6 +201,9 @@ def build_show_output(item: Any, identity: str) -> Dict[str, Any]:
         context: Dict[str, Any] = {
             "contract": contract_payload,
         }
+        previous_review = _previous_review_context(item)
+        if previous_review is not None:
+            context["previous_review"] = previous_review
     else:
         # review 阶段:评审对象(deliverable) + contract + worker 的 env_setup
         context = {
