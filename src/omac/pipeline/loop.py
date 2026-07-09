@@ -192,8 +192,21 @@ def collect_results(
                     log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
                              id=node.work_item_id, reason="CI 回退上界已耗尽")
                     continue
-                # CI 绿(或未配置 ci 整体跳过):原路径 —— 有 reviewer 进评审,否则 done。
-                if node.reviewer:
+                # CI 绿(或未配置 ci 整体跳过):nits follow-up 已经由上一轮 reviewer 接受,
+                # worker 修完后直接进入 merge/done,不再浪费第二轮 reviewer。
+                if item.review_verdict == "pass-with-nits":
+                    merge_action = run_merge_delivery(
+                        config or {}, manifest, key, store, runtime, limits)
+                    if merge_action == "pass":
+                        store.update_status(node.work_item_id, WorkItemStatus.DONE)
+                        set_node(manifest, key, status="done")
+                        log.info(logsetup.EVT_NODE_DONE, kind=_DAG_KIND, node=key,
+                                 id=node.work_item_id)
+                    elif merge_action == "blocked":
+                        failures[key] = "merge 失败,回退上界(retry.merge)已耗尽"
+                        log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
+                                 id=node.work_item_id, reason="merge 回退上界已耗尽")
+                elif node.reviewer:
                     pending_review.append((key, node.work_item_id, node.reviewer))
                 else:
                     # 无 reviewer 时 CI 绿即可直接 done;同步把平台工单置 DONE,
@@ -236,7 +249,9 @@ def collect_results(
             log.info(logsetup.EVT_VERDICT, kind=_DAG_KIND, node=key,
                      id=node.work_item_id, verdict=verdict)
             if verdict == "pass-with-nits":
-                store.reset_review(node.work_item_id)
+                store.update_work_item_metadata(
+                    node.work_item_id, phase=TaskPhase.AUTHORING,
+                    review_comment="")
                 try:
                     store.assign_work_item(node.work_item_id, node.worker, "worker")
                     store.update_status(node.work_item_id, WorkItemStatus.IN_PROGRESS)

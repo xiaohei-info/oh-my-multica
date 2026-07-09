@@ -81,6 +81,25 @@ def test_guide_reads_role_and_artifact_topics(capsys):
     assert "Markdown" in out
 
 
+def test_orchestrator_guide_requires_max_parallel_minimal_pr_units(capsys):
+    assert main(["guide", "role", "orchestrator"]) == exit_codes.OK
+    out = capsys.readouterr().out
+    assert "最大化并行开发" in out
+    assert "最小独立 PR 单元" in out
+    assert "独立开发、独立验证、独立提交 PR、独立 review" in out
+    assert "还能拆出另一个独立 PR/test/review" in out
+
+    assert main(["guide", "artifact", "manifest"]) == exit_codes.OK
+    out = capsys.readouterr().out
+    assert "每个节点是最小独立 PR/test/review 单元" in out
+    assert "不能继续独立拆分" in out
+
+    assert main(["guide", "role", "reviewer"]) == exit_codes.OK
+    out = capsys.readouterr().out
+    assert "decompose review" in out
+    assert "还能拆出独立 PR/test/review 单元" in out
+
+
 def test_guide_rejects_old_flat_role_topics(capsys):
     assert main(["guide", "worker"]) == exit_codes.GENERIC
     err = capsys.readouterr().err

@@ -697,8 +697,8 @@ class TestReviewerRejectBoundedFallback:
         assert any("上界" in c for c in eng.store.get_comments(item.id))
         assert result.state == "needs_decision"
 
-    def test_pass_with_nits_returns_to_worker_without_review_bounce(self, tmp_path):
-        """pass-with-nits 转回 worker 处理建议项,不消耗 review_bounce。"""
+    def test_pass_with_nits_accepts_worker_followup_without_second_review(self, tmp_path):
+        """pass-with-nits 只回 worker 修一次;worker 重交后直接 done,不再派 reviewer。"""
         from omac.engines import create_engine
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
         path = str(tmp_path / "m.yaml")
@@ -718,15 +718,39 @@ class TestReviewerRejectBoundedFallback:
             },
         )
 
-        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        first = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
 
-        assert result.state == "running"
+        assert first.state == "running"
         assert manifest.nodes["a"].status == "in_progress"
-        assert "a" not in result.failed
         got = eng.store.get_work_item(item.id)
         assert got.status == WorkItemStatus.IN_PROGRESS
-        assert got.review_verdict is None
+        assert got.review_verdict == "pass-with-nits"
         assert got.decision_required is None
+        assert got.bounces.review == 0
+
+        reviewer_dispatches_before_followup = len([
+            entry for entry in eng.store.assign_log if entry[2] == "reviewer"])
+        eng.store.update_work_item_metadata(
+            item.id,
+            artifacts={"pr_url": f"https://mock.example.com/pr/{item.id}"},
+            verification={
+                "commands": [{"cmd": "pytest -q", "exit_code": 0}],
+                "integration_gates": [{"name": "nits-smoke", "commands": []}],
+                "pr_base": "main",
+                "coverage": 90,
+            },
+        )
+        eng.store.update_status(item.id, WorkItemStatus.DONE)
+        second = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+
+        assert second.state == "converged"
+        assert manifest.nodes["a"].status == "done"
+        assert "a" not in second.failed
+        reviewer_dispatches_after_followup = len([
+            entry for entry in eng.store.assign_log if entry[2] == "reviewer"])
+        assert reviewer_dispatches_after_followup == reviewer_dispatches_before_followup
+        got = eng.store.get_work_item(item.id)
+        assert got.status == WorkItemStatus.DONE
         assert got.bounces.review == 0
 
     def test_retry_review_one_allows_single_fallback(self, tmp_path):
