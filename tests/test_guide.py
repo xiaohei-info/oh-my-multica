@@ -129,6 +129,19 @@ def test_manifest_artifact_connects_contract_to_runtime() -> None:
         assert item in content, f"manifest artifact missing contract anchor: {item}"
 
 
+def test_authoring_guides_address_low_reasoning_budget_workers() -> None:
+    topics = [
+        load_role_topic("planner"),
+        load_role_topic("orchestrator"),
+        load_artifact_topic("design"),
+        load_artifact_topic("acceptance"),
+        load_artifact_topic("manifest"),
+    ]
+    for content in topics:
+        for item in ["低推理预算", "隐含上下文", "边界条件"]:
+            assert item in content, f"guide missing low-reasoning-budget guidance: {item}"
+
+
 def test_evidence_artifact_defines_all_evidence_shapes() -> None:
     content = load_artifact_topic("evidence")
     for item in ["worker verification", "reviewer report", "final acceptance results", "acceptance_mapping"]:

@@ -56,4 +56,15 @@ nodes:
 - 并行优先:用稳定 contract/API 切开任务,减少 `blocked_by`;只有真正运行前置才写硬依赖。
 - CI 抓接口/边界漂移,reviewer 抓语义漂移。
 
+## 执行可读性
+
+后续 worker 可能是低推理预算模型。每个节点 contract 必须能独立指导开发,
+不能依赖执行者自行补全隐含上下文。
+
+- `objective` 必须描述可交付结果。
+- `source_of_truth` 必须指到包含数据结构、边界条件和模块边界的章节。
+- `non_goals` 必须列出相邻但不该做的范围。
+- `verification_commands` 必须能直接复制运行。
+- `integration_gates` 必须说明交付目标、验收映射和命令。
+
 orchestrator 通过 `omac work submit <issue-id> --manifest-file <file>` 交付 manifest。
