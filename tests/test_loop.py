@@ -697,8 +697,8 @@ class TestReviewerRejectBoundedFallback:
         assert any("上界" in c for c in eng.store.get_comments(item.id))
         assert result.state == "needs_decision"
 
-    def test_pass_with_nits_needs_human_decision(self, tmp_path):
-        """pass-with-nits 不是自动 done:进入 needs_decision,交给人工确认。"""
+    def test_pass_with_nits_returns_to_worker_without_review_bounce(self, tmp_path):
+        """pass-with-nits 转回 worker 处理建议项,不消耗 review_bounce。"""
         from omac.engines import create_engine
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
         path = str(tmp_path / "m.yaml")
@@ -720,15 +720,14 @@ class TestReviewerRejectBoundedFallback:
 
         result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
 
-        assert result.state == "needs_decision"
-        assert manifest.nodes["a"].status == "blocked"
-        assert "a" in result.failed
+        assert result.state == "running"
+        assert manifest.nodes["a"].status == "in_progress"
+        assert "a" not in result.failed
         got = eng.store.get_work_item(item.id)
-        assert got.status == WorkItemStatus.BLOCKED
-        assert got.decision_required["verdict"] == "pass-with-nits"
-        assert "review_report" not in got.decision_required
-        assert got.decision_required["nits"] == ["建议后续优化"]
-        assert got.decision_required["blockers"] == []
+        assert got.status == WorkItemStatus.IN_PROGRESS
+        assert got.review_verdict is None
+        assert got.decision_required is None
+        assert got.bounces.review == 0
 
     def test_retry_review_one_allows_single_fallback(self, tmp_path):
         """retry.review=1 → 第 1 次 reject 回退 worker(bounce→1),第 2 次 reject 耗尽 → blocked。"""

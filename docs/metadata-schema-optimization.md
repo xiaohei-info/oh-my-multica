@@ -241,14 +241,31 @@ Required change:
 - When `review_report_ref` exists, load and parse the attached YAML/JSON to
   populate `WorkItem.review_report`.
 
-### Pass With Nits / Human Decision
+### Pass With Nits
 
 Writers:
 
 - `pipeline.tasks.run_task`
 - `pipeline.loop.collect_results`
 
-Allowed `decision_required` shape:
+Default behavior:
+
+- `pass-with-nits` is not a failure gate.
+- The pipeline returns the issue to the worker so the producer can address the
+  non-blocking review suggestions.
+- This does not increment `review_bounce`.
+- This does not write `decision_required`.
+
+Allowed metadata during the handoff:
+
+- clear `review_verdict`;
+- clear `review_comment`;
+- clear/empty `decision_required`;
+- set `phase=authoring`;
+- keep `review_report_ref` so `work show` can surface the previous review.
+
+If a future human decision gate needs to represent pass-with-nits, the allowed
+shape is counts plus refs only:
 
 ```json
 {
@@ -272,10 +289,7 @@ Forbidden `decision_required` fields:
 - `evidence`
 - `summary`
 
-Required change:
-
-- Update `review_decision_required()` to store counts and refs only.
-- If a UI or CLI needs nit details, it must load `review_report_ref`.
+If a UI or CLI needs nit details, it must load `review_report_ref`.
 
 ### Retry / Reset Review
 
@@ -395,7 +409,7 @@ Required assertions:
 
 ### Decision Metadata Tests
 
-Extend current pass-with-nits tests:
+If a path writes `decision_required`, test that:
 
 - `decision_required` contains `nit_count` and `blocker_count`.
 - `decision_required` does not contain `nits`, `blockers`, `issue`, `fix`,
@@ -423,7 +437,8 @@ An implementation is acceptable when:
 
 - no new Multica metadata write stores full `review_report`;
 - no new Multica metadata write stores full `verification`;
-- `decision_required` stores counts and refs only;
+- pass-with-nits returns to worker without writing natural-language decision metadata;
+- any future `decision_required` stores counts and refs only;
 - `deliverable` remains ref-based;
 - existing issues with inline legacy metadata still read correctly;
 - `omac work show`, `dag status`, `plan resume`, and `node accept` continue to
@@ -448,8 +463,7 @@ An implementation is acceptable when:
 1. Add metadata policy helpers and tests.
 2. Stop writing inline `review_report`; load from `review_report_ref`.
 3. Stop writing inline `verification`; load from `verification_ref`.
-4. Compact `decision_required` to counts plus refs.
+4. Ensure pass-with-nits handoff writes no natural-language decision metadata.
 5. Add regression tests for forbidden natural-language metadata fields.
 6. Run the full test suite.
 7. Validate with one live Multica issue.
-
