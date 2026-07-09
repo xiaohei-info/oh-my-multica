@@ -121,6 +121,9 @@ def _engine_env(engine) -> Dict[str, str]:
     }
     if config.project_id:
         env["OMAC_PROJECT_ID"] = config.project_id
+    workspace_slug = (config.extra or {}).get("workspace_slug") or (config.extra or {}).get("OMAC_WORKSPACE_SLUG")
+    if workspace_slug:
+        env["OMAC_WORKSPACE_SLUG"] = workspace_slug
     return env
 
 
@@ -172,17 +175,19 @@ def run_task(
         # body 里 reviewer 留 None:reviewer 在 review 阶段按轮次由 _pick_reviewer 动态选取,
         # 创建时没有「当前 reviewer」的概念,不写死池内第一位以免误导。
         body_node = SimpleNamespace(title=title, reviewer=None, id=item_id)
+        env = _engine_env(engine)
+        normalized_source_refs = normalize_source_refs(source_refs, engine_env=env)
         body = render_issue_body(
             body_node, contract, kind, item_id,
-            source_refs=source_refs,
-            engine_env=_engine_env(engine),
+            source_refs=normalized_source_refs,
+            engine_env=env,
         )
         if source_of_truth:
             body = body + "\n\n" + _render_source_of_truth(source_of_truth)
         store.update_work_item_metadata(
             item_id,
             description=body,
-            source_refs=normalize_source_refs(source_refs),
+            source_refs=normalized_source_refs,
         )
 
     def _produce(hint: Optional[List[str]] = None) -> WorkItem:

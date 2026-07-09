@@ -146,6 +146,22 @@ class TestRenderIssueBody:
             "omac work show plan-1"
         ) in body
 
+    def test_source_refs_generate_multica_links_from_engine_env(self):
+        n = Node(id="n", worker="alice", contract=_full_contract())
+        env = {
+            "OMAC_ENGINE": "multica",
+            "OMAC_WORKSPACE_ID": "ws-1",
+            "OMAC_WORKSPACE_SLUG": "guantik-aiteam",
+        }
+
+        body = render_issue_body(
+            n, n.contract, TaskKind.DEVELOP, "REAL-100",
+            source_refs=[{"label": "设计方案", "issue_id": "plan-1"}],
+            engine_env=env,
+        )
+
+        assert "- 设计方案: [plan-1](mention://issue/plan-1)" in body
+
     def test_kind_role_and_guide_mapping(self):
         """每种 issue 类型映射到对应角色与 guide topic(同源、不复制)。"""
         n = Node(id="n", worker="alice", title="t",
