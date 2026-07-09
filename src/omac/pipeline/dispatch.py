@@ -896,6 +896,9 @@ def render_issue_body(node, contract, kind, issue_id, source_refs=None, engine_e
         rules.append(f"PR base 必须指向集成分支（pr_base={pr_base}）,不合主干")
     if kind == TaskKind.DEVELOP:
         rules.append("GitHub PR 必须 ready for review,不能是 draft;work submit 会左移检查")
+        rules.append(
+            "reviewer reject / pass-with-nits 返工时默认复用原 PR 分支和 PR URL;"
+            "只有原 PR 已关闭、base 不可修复或权限无法 push 时才新建替代 PR,并在新 PR 正文说明替代关系")
     if reviewer:
         rules.append(
             f"reviewer（{reviewer}）独立复跑验证命令与集成测试,"

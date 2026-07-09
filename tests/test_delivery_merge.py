@@ -15,7 +15,7 @@ config.retry.merge + reset_review)门,本模块补 reviewer pass 后的自动 me
     + reset_review(旧 verdict 失效,强制重走 ci→review→merge);
   - 冲突回退后不手动清空旧 verdict:tick 不会在旧 verdict 下自动 merge(reviewer gate);
   - 自定义/0 值 retry.merge 上界 + 封顶 → blocked + 失败隔离;
-  - 未配置 merge:reviewer pass 直接 done(现行为不变,回归保证);
+  - 未配置 merge:默认执行 gh pr merge {pr_url} --squash --delete-branch;
   - merge 已配置但无 pr_url → blocked + 报错即教学。
 """
 from __future__ import annotations
@@ -25,7 +25,13 @@ import stat
 
 import pytest
 
-from omac.core.config import DEFAULT_RETRY, get_merge_config, resolve_retry
+from omac.core.config import (
+    DEFAULT_GITHUB_MERGE_COMMAND,
+    DEFAULT_MOCK_MERGE_COMMAND,
+    DEFAULT_RETRY,
+    get_merge_config,
+    resolve_retry,
+)
 from omac.core.manifest import Manifest, Node
 from omac.engines.mock import MockRuntime, MockStore
 from omac.engines.models import EngineConfig, WorkItem, WorkItemStatus
@@ -86,10 +92,17 @@ def _review_passed_item(store, reviewer="bob"):
 # ── get_merge_config / resolve_retry 契约 ──────────────────────────────────
 
 class TestMergeConfig:
-    def test_get_merge_config_requires_command(self):
-        assert get_merge_config({}) is None
-        assert get_merge_config({"merge": {}}) is None
-        assert get_merge_config({"merge": {"command": ""}}) is None
+    def test_get_merge_config_defaults_to_github_merge(self):
+        expected = {"command": DEFAULT_GITHUB_MERGE_COMMAND, "timeout_minutes": 30}
+        assert get_merge_config({}) == expected
+        assert get_merge_config({"merge": {}}) == expected
+        assert get_merge_config({"merge": {"command": ""}}) == expected
+
+    def test_get_merge_config_defaults_to_local_success_for_mock_engine(self):
+        assert get_merge_config({"engine": "mock"}) == {
+            "command": DEFAULT_MOCK_MERGE_COMMAND,
+            "timeout_minutes": 30,
+        }
 
     def test_get_merge_config_present(self):
         cfg = {"merge": {"command": "gh pr merge {pr_url} --squash"}}
@@ -106,28 +119,59 @@ class TestMergeConfig:
 # ── run_merge_delivery 单元测试 ────────────────────────────────────────────
 
 class TestRunMergeDeliveryUnit:
-    def test_skip_merge_when_unconfigured(self, tmp_path):
+    def test_default_merge_command_runs_when_unconfigured(self, monkeypatch):
         store = _store()
         item = _review_passed_item(store)
         manifest = Manifest(meta={}, nodes={"a": _node()})
         manifest.nodes["a"].work_item_id = item.id
         manifest.nodes["a"].status = "in_review"
+
+        seen = {}
+
+        def fake_run(command, **kwargs):
+            seen["command"] = command
+            seen["kwargs"] = kwargs
+
+            class Proc:
+                returncode = 0
+                stdout = "merged"
+                stderr = ""
+
+            return Proc()
+
+        monkeypatch.setattr("omac.pipeline.delivery.subprocess.run", fake_run)
+
         assert run_merge_delivery({}, manifest, "a", store, _runtime(store),
                                   dict(DEFAULT_RETRY)) == "pass"
-        # 无任何评论 / 状态不变(仍 in_review,由 loop 标 done)
+        assert seen["command"] == (
+            "gh pr merge https://example.com/pr/1 --squash --delete-branch")
+        assert seen["kwargs"]["shell"] is True
+        assert manifest.nodes["a"].merged is True
+        # 无任何评论 / 成功后节点语义回到 in_progress(即将 done)
         assert store.get_comments(item.id) == []
-        assert manifest.nodes["a"].status == "in_review"
+        assert manifest.nodes["a"].status == "in_progress"
 
-    def test_merge_block_missing_means_pass(self, tmp_path):
+    def test_merge_block_missing_command_uses_default(self, monkeypatch):
         store = _store()
         item = _review_passed_item(store)
         manifest = Manifest(meta={}, nodes={"a": _node()})
         manifest.nodes["a"].work_item_id = item.id
         manifest.nodes["a"].status = "in_review"
-        # merge 块存在但缺 command → get_merge_config 返回 None → 跳过
+
+        def fake_run(command, **kwargs):  # noqa: ARG001
+            class Proc:
+                returncode = 0
+                stdout = "merged"
+                stderr = ""
+
+            return Proc()
+
+        monkeypatch.setattr("omac.pipeline.delivery.subprocess.run", fake_run)
+
         assert run_merge_delivery(
             {"merge": {"timeout_minutes": 30}}, manifest, "a", store,
             _runtime(store), dict(DEFAULT_RETRY)) == "pass"
+        assert manifest.nodes["a"].merged is True
 
     def test_merge_passes_returns_pass_and_records_merge_info(self, tmp_path):
         store = _store()
@@ -257,19 +301,29 @@ class TestCollectResultsMerge:
                       work_item_id=item.id, status="in_review")})
         return manifest, item
 
-    def test_no_merge_config_pass_is_done(self, tmp_path):
+    def test_default_merge_pass_is_done(self, tmp_path, monkeypatch):
         store = _store()
         rt = _runtime(store)
         manifest, item = self._advance_to_review_passed(store)
         path = str(tmp_path / "m.yaml")
         import omac.core.manifest as mmod
         mmod.save_manifest(manifest, path)
+
+        def fake_run(command, **kwargs):  # noqa: ARG001
+            class Proc:
+                returncode = 0
+                stdout = "merged"
+                stderr = ""
+
+            return Proc()
+
+        monkeypatch.setattr("omac.pipeline.delivery.subprocess.run", fake_run)
+
         loop.collect_results(store, rt, manifest, path, retry_limits=dict(DEFAULT_RETRY),
                             config={})
         assert manifest.nodes["a"].status == "done"
-        # 未走 merge,merged 为 False
-        assert manifest.nodes["a"].merged is False
-        assert manifest.nodes["a"].merged_at is None
+        assert manifest.nodes["a"].merged is True
+        assert manifest.nodes["a"].merged_at is not None
 
     def test_merge_passes_goes_done_with_merge_info(self, tmp_path):
         store = _store()

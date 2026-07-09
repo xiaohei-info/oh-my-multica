@@ -31,6 +31,25 @@ from omac.pipeline.loop import tick
 
 # ==================== helpers ====================
 
+@pytest.fixture(autouse=True)
+def _default_gh_merge_succeeds_in_dispatch_tests(monkeypatch):
+    import subprocess
+
+    real_run = subprocess.run
+
+    def fake_run(command, *args, **kwargs):
+        if isinstance(command, str) and command.startswith("gh pr merge "):
+            class Proc:
+                returncode = 0
+                stdout = "merged"
+                stderr = ""
+
+            return Proc()
+        return real_run(command, *args, **kwargs)
+
+    monkeypatch.setattr("omac.pipeline.delivery.subprocess.run", fake_run)
+
+
 def _config(**extra):
     base = {"MOCK_AUTO_COMPLETE": "true", "MOCK_AUTO_COMPLETE_DELAY": "0"}
     base.update(extra)

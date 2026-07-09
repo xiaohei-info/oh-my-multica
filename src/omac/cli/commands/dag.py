@@ -56,7 +56,7 @@ DESCRIPTION = """manifest DAG 的检查、摘要与确定性执行。
     禁止放后台、禁止寄望"未来某轮再看"、禁止在无活跃 run 时声称"持续监督中"。
   - 重试显式:节点不会自动重试,必须经 `omac node retry` 显式决策。
   - 失败隔离:某节点 failed → 其下游自动 blocked,不再派发;不可绕过。
-  - 默认不自动 merge:未配置 merge.command 时 pass 即 done;配置后才执行合并门。
+  - reviewer pass 后默认执行 PR merge;merge.command 可覆盖默认 gh pr merge 命令。
   - manifest 唯一口径:全局状态只在 manifest + 平台,不依赖 checkpoint / event log。
 """
 

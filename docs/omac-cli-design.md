@@ -208,7 +208,7 @@ workflow:
 ci:                                      # 可选;缺省跳过 CI 环节
   check_command: "gh pr checks {pr_url}" # 模板命令,退出码即结论
   timeout_minutes: 30
-merge:                                   # 可选;缺省不自动合并(人工合)
+merge:                                   # 可选;缺省使用 gh pr merge 自动合并
   command: "gh pr merge {pr_url} --squash"
 retry:                                    # 三类回退「回到 worker」的次数上限(缺省 3;0 = 该类失败即 blocked,不回退)
   ci: 3                                   # CI 失败 → worker 重修

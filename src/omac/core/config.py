@@ -19,7 +19,7 @@
       acceptance_doc: true      # plan create 是否默认生成验收文档
       goal_required: false      # 无 --doc 时是否强制 --goal/--goal-file
     ci:    { check_command, timeout_minutes }   # 可选;未显式配置时检测 .github/workflows
-    merge: { command }                           # 可选,缺省不自动合并
+    merge: { command }                           # 可选;未显式配置时默认 gh pr merge
     acceptance: { max_rounds }                   # 总控验收外层循环上限(与 retry 正交)
     retry:                                     # 三类「回到 worker」回退次数上限
       ci: 3                                    # CI 失败 → worker 重修(0 = 立即 blocked,不回退)
@@ -62,6 +62,8 @@ DEFAULT_RETRY = {
 DEFAULT_MAX_ROUNDS = 3
 
 DEFAULT_GITHUB_CHECK_COMMAND = "gh pr checks {pr_url} --watch --fail-fast"
+DEFAULT_GITHUB_MERGE_COMMAND = "gh pr merge {pr_url} --squash --delete-branch"
+DEFAULT_MOCK_MERGE_COMMAND = "true"
 
 
 # 环境变量回退(设计文档 §5:全局 flag 带 env 回退)
@@ -214,8 +216,15 @@ def get_ci_config(config: dict, root: str | os.PathLike = ".") -> dict | None:
 
 
 def get_merge_config(config: dict) -> dict | None:
-    """返回 merge 配置块;未配置或缺少 command 时返回 None(不自动合并)。"""
+    """返回 merge 配置块;未显式配置时默认用 gh pr merge。
+
+    设计文档 §7.3:reviewer pass 后应进入自动合并门。显式 command 最高优先级;
+    未配置或 command 为空时使用 GitHub CLI 默认命令。退出码即结论。
+    """
     merge = config.get("merge")
-    if not isinstance(merge, dict) or not merge.get("command"):
-        return None
-    return merge
+    if isinstance(merge, dict) and merge.get("command"):
+        return merge
+    timeout = merge.get("timeout_minutes", 30) if isinstance(merge, dict) else 30
+    command = DEFAULT_MOCK_MERGE_COMMAND if config.get("engine") == "mock" \
+        else DEFAULT_GITHUB_MERGE_COMMAND
+    return {"command": command, "timeout_minutes": timeout}

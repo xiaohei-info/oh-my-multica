@@ -22,6 +22,29 @@ from omac.pipeline.loop import TickResult, tick
 
 # ==================== fixtures ====================
 
+@pytest.fixture(autouse=True)
+def _default_gh_merge_succeeds_in_loop_tests(monkeypatch):
+    """loop 单测不依赖外部 GitHub;默认 gh merge 在这里视为成功。
+
+    显式 merge 命令的 subprocess 行为由 tests/test_delivery_merge.py 覆盖。
+    """
+    import subprocess
+
+    real_run = subprocess.run
+
+    def fake_run(command, *args, **kwargs):
+        if isinstance(command, str) and command.startswith("gh pr merge "):
+            class Proc:
+                returncode = 0
+                stdout = "merged"
+                stderr = ""
+
+            return Proc()
+        return real_run(command, *args, **kwargs)
+
+    monkeypatch.setattr("omac.pipeline.delivery.subprocess.run", fake_run)
+
+
 def _config(**extra):
     base = {"MOCK_AUTO_COMPLETE": "true", "MOCK_AUTO_COMPLETE_DELAY": "0"}
     base.update(extra)
@@ -768,6 +791,35 @@ class TestReviewerRejectBoundedFallback:
         assert any("上界" in c for c in eng.store.get_comments(item.id))
         assert result.state == "needs_decision"
 
+    def test_valid_reject_report_still_bounces_worker(self, tmp_path):
+        """结构合法的 reject report 是业务拒绝,不能因为证据合法就把节点置 done。"""
+        from omac.engines import create_engine
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        eng.store.update_work_item_metadata(
+            item.id,
+            review_report={
+                "review_goals": ["复核交付是否满足验收"],
+                "diff_reviewed": True,
+                "tests_rerun": True,
+                "coverage_checked": True,
+                "acceptance_mapping": [
+                    {"acceptance": "works", "status": "fail"},
+                ],
+                "blockers": ["核心验收未满足"],
+            },
+        )
+
+        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+
+        got = eng.store.get_work_item(item.id)
+        assert result.state == "running"
+        assert manifest.nodes["a"].status == "in_progress"
+        assert got.status == WorkItemStatus.IN_PROGRESS
+        assert got.review_verdict is None
+        assert got.bounces.review == 1
+
     def test_pass_with_nits_accepts_worker_followup_without_second_review(self, tmp_path):
         """pass-with-nits 只回 worker 修一次;worker 重交后直接 done,不再派 reviewer。"""
         from omac.engines import create_engine
@@ -842,6 +894,39 @@ class TestReviewerRejectBoundedFallback:
         assert result.state == "converged"
         assert manifest.nodes["a"].status == "done"
         assert got.status == WorkItemStatus.DONE
+
+    def test_done_node_with_reject_verdict_is_recovered_to_worker(self, tmp_path):
+        """旧版本可能把合法 reject 误置 done;resume 应识别并转回 worker。"""
+        from omac.engines import create_engine
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        manifest.nodes["a"].status = "done"
+        eng.store.update_status(item.id, WorkItemStatus.DONE)
+        eng.store.update_work_item_metadata(
+            item.id,
+            review_verdict="reject",
+            review_report={
+                "review_goals": ["复核交付是否满足验收"],
+                "diff_reviewed": True,
+                "tests_rerun": True,
+                "coverage_checked": True,
+                "acceptance_mapping": [
+                    {"acceptance": "works", "status": "fail"},
+                ],
+                "blockers": ["核心验收未满足"],
+            },
+        )
+        save_manifest(manifest, path)
+
+        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+
+        got = eng.store.get_work_item(item.id)
+        assert result.state == "running"
+        assert manifest.nodes["a"].status == "in_progress"
+        assert got.status == WorkItemStatus.IN_PROGRESS
+        assert got.review_verdict is None
+        assert got.bounces.review == 1
 
     def test_authoring_node_repairs_worker_manual_in_review(self, tmp_path):
         """authoring 阶段被 worker 手改成 in_review 时,拉回 in_progress 等合法 submit。"""

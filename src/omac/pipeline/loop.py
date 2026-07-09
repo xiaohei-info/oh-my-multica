@@ -126,6 +126,12 @@ def reconcile(store: WorkItemStore, manifest: Manifest, manifest_path: str) -> b
         # done 是 OMAC 已收口的业务状态。若 worker/平台把投影回退为 in_review/in_progress,
         # 不反向污染 manifest,而是把平台投影修回 done。
         if node.status == "done":
+            # 兼容旧版本坏状态:结构合法的 reject 曾可能被误收口为 done。
+            # reject 是业务未通过,必须回到 review 回收路径处理有界返工。
+            if item.review_verdict == "reject":
+                set_node(manifest, key, status="in_review")
+                changed = True
+                continue
             if item.review_verdict == "pass-with-nits":
                 store.reset_review(node.work_item_id)
             if item.status != WorkItemStatus.DONE:
@@ -315,9 +321,9 @@ def collect_results(
                     failures[key] = f"回退到 worker {node.worker} 处理 nits 失败: {exc}"
                 continue
             gate_errors = validate_review_evidence(node, item)
-            if not gate_errors:
-                # reviewer pass → P4.2 自动 merge 门(若配置)。未配置 merge 时
-                # run_merge_delivery 返回 'pass',随即 done(现行为,回归保证)。
+            if not gate_errors and verdict != "reject":
+                # reviewer pass → P4.2 自动 merge 门。未显式配置 merge.command 时
+                # 使用默认 gh pr merge 命令。
                 merge_action = run_merge_delivery(
                     config or {}, manifest, key, store, runtime, limits)
                 if merge_action == "pass":
@@ -331,11 +337,12 @@ def collect_results(
                              id=node.work_item_id, reason="merge 回退上界已耗尽")
                 # else "bounce": 节点已转回 in_progress,本 tick 不再推进。
             else:
-                # reviewer reject:有界「回到 worker」回退,受 retry_limits["review"] 约束。
+                # reviewer reject 或评审证据不合格:有界「回到 worker」回退,
+                # 受 retry_limits["review"] 约束。
                 review_limit = limits.get("review", DEFAULT_RETRY["review"])
                 cur_bounce = item.bounces.review
+                reason = "; ".join(gate_errors) if gate_errors else "reviewer reject"
                 if review_limit == 0 or cur_bounce >= review_limit:
-                    reason = "; ".join(gate_errors)
                     store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
                     store.add_comment(node.work_item_id, f"评审证据门上界({review_limit})已耗尽: {reason}")
                     set_node(manifest, key, status="blocked")

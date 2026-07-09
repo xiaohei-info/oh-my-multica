@@ -28,6 +28,12 @@ worker 负责 `develop` issue:按 contract TDD 开发,交 PR 与结构化 verifi
 7. 开 PR,base 指向 `contract.pr_base`;GitHub PR 必须 ready for review,不能是 draft。
 8. 提交 verification 文件。
 
+## 返工规则
+
+reviewer reject / pass-with-nits 回到 worker 时,先读取 `work show` 的 `previous_review`。
+默认在原 PR 分支上继续提交并复用原 PR URL;不要为同一个 DAG 节点另开平行 PR。
+只有原 PR 已关闭、base 不可修复或权限无法 push 时才新建替代 PR,并在新 PR 正文说明替代关系。
+
 ## verification
 
 详见 `omac guide artifact evidence`。证据必须覆盖 verification commands、integration gates、
