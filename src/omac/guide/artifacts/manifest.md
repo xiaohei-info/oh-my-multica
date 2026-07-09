@@ -2,6 +2,21 @@
 
 manifest 是 `.omac/<name>.yaml`,承载 DAG 节点、依赖、contract、work_item_id 和 status。
 
+## 拆分粒度
+
+每个节点是最小独立 PR/test/review 单元:一个 worker 能独立开发,能独立运行
+`verification_commands`,能独立提交 PR,reviewer 能只看该节点交付物与 contract 判定
+pass/reject。
+
+拆分目标是最大化并行开发。节点必须拆到不能继续独立拆分为止:如果一个节点还能拆出
+另一个有独立 contract、独立测试命令、独立 PR 和明确下游能力的任务,就继续拆。
+
+停止拆分的边界:
+
+- 再拆只剩纯文件搬运、纯类型补丁、单个样式微调等无独立验收价值的微任务。
+- 再拆会把同一事务一致性边界拆散,导致两个 PR 都无法独立验证。
+- 再拆会制造明显 merge 冲突,且无法通过先抽 shared contract/API 消除。
+
 ## 节点结构
 
 ```yaml
@@ -38,6 +53,7 @@ nodes:
 
 - 契约即代码:共享类型只 import,不重定义。
 - 单一事实源:description 只放设计文档锚点,不复制正文。
+- 并行优先:用稳定 contract/API 切开任务,减少 `blocked_by`;只有真正运行前置才写硬依赖。
 - CI 抓接口/边界漂移,reviewer 抓语义漂移。
 
 orchestrator 通过 `omac work submit <issue-id> --manifest-file <file>` 交付 manifest。

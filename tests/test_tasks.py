@@ -160,19 +160,19 @@ def test_run_task_handoff_to_reviewer_does_not_post_trigger_comment():
     assert not any("阶段变更" in c and "omac work submit" in c for c in comments)
 
 
-def test_run_task_pass_with_nits_returns_to_worker_without_review_bounce():
-    """pass-with-nits 自动转回产出者处理建议项,不进入人工 blocked。"""
+def test_run_task_pass_with_nits_accepts_worker_followup_without_second_review():
+    """pass-with-nits 转回产出者修完即收口,不再浪费第二轮 reviewer。"""
     eng = _engine()
     MockStore.set_kind_delivery_sequence(
         "plan", [{"plan": "计划正文-v1"}, {"plan": "计划正文-v2"}])
-    MockStore.set_review_verdict_sequence(["pass-with-nits", "pass"])
+    MockStore.set_review_verdict_sequence(["pass-with-nits", "reject"])
 
     res = run_task(eng, TaskKind.PLAN, _payload(), "alice",
                    reviewers=["bob"], poll=_poll)
 
     item = eng.store.get_work_item(res["item_id"])
-    assert res["verdict"] == "pass"
-    assert res["rounds"] == 2
+    assert res["verdict"] == "pass-with-nits"
+    assert res["rounds"] == 1
     assert res["delivery"]["plan"] == "计划正文-v2"
     assert item.status == WorkItemStatus.DONE
     assert item.bounces.review == 0

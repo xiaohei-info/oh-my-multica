@@ -292,10 +292,15 @@ def run_task(
         if verdict == "pass-with-nits":
             log.info(logsetup.EVT_REVISION, kind=kind.value, id=item_id,
                      gate="review-nits", round=round_index, max=max_revisions)
-            store.reset_review(item_id)
+            store.update_work_item_metadata(
+                item_id, phase=TaskPhase.AUTHORING,
+                review_comment="")
             delivered = _produce()
             delivery = _delivery_of(kind, delivered)
-            continue
+            store.mark_done(item_id)
+            log.info(logsetup.EVT_NODE_DONE, kind=kind.value, id=item_id)
+            return {"item_id": item_id, "delivery": delivery,
+                    "rounds": round_index, "verdict": "pass-with-nits", "kind": kind.value}
 
         # reject:评审 report 已在 metadata,reset_review 只清当前判定并转回产出者。
         # 返工上下文由下一轮 agent 通过 work show 读取,不写评论以免触发额外 run。
