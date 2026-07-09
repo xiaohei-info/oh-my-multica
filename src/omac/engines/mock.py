@@ -37,6 +37,7 @@ _shared_auto_complete_delay: int = 2
 _shared_kind_deliverables: Dict[str, Dict[str, Any]] = {}
 _shared_review_rejects_remaining: int = 0
 _shared_review_verdict: str = "pass"
+_shared_review_verdict_sequence: list[str] = []
 # 总控验收/增量拆解的行为注册(final-acceptance / decompose 任务完成时落 deliverable,测试用)
 _accepted_results: dict[str, object] = {}   # dag_key -> acceptance_results dict
 _increments: dict[str, object] = {}        # dag_key -> Manifest(增量 fix 节点)
@@ -154,7 +155,7 @@ class MockStore(WorkItemStore):
         global _shared_assigned_items, _shared_fail_keys, _shared_assign_log
         global _shared_auto_complete_enabled, _shared_auto_complete_delay
         global _shared_kind_deliverables, _shared_review_rejects_remaining
-        global _shared_review_verdict
+        global _shared_review_verdict, _shared_review_verdict_sequence
         _shared_workspaces = {}
         _shared_members = {}
         _shared_work_items = {}
@@ -170,6 +171,7 @@ class MockStore(WorkItemStore):
         _shared_kind_delivery_sequences = {}
         _shared_review_rejects_remaining = 0
         _shared_review_verdict = "pass"
+        _shared_review_verdict_sequence = []
         global _shared_auto_confirm, _shared_human_confirmed
         _shared_auto_confirm = False
         _shared_human_confirmed = set()
@@ -202,6 +204,12 @@ class MockStore(WorkItemStore):
         """注入:无 reject 剩余时 review 自动给出的 verdict(测试用)。"""
         global _shared_review_verdict
         _shared_review_verdict = verdict
+
+    @classmethod
+    def set_review_verdict_sequence(cls, sequence: list[str]):
+        """注册 reviewer verdict 序列(按次评审消耗,测试用)。"""
+        global _shared_review_verdict_sequence
+        _shared_review_verdict_sequence = list(sequence)
 
     @classmethod
     def set_acceptance_behaviors(cls, accepted: dict, increments: dict):
@@ -348,6 +356,9 @@ class MockStore(WorkItemStore):
                 item.review_verdict = "reject"
                 item.review_comment = "Mock: needs revision"
                 _shared_review_rejects_remaining -= 1
+            elif _shared_review_verdict_sequence:
+                item.review_verdict = _shared_review_verdict_sequence.pop(0)
+                item.review_comment = "Mock: LGTM"
             else:
                 item.review_verdict = _shared_review_verdict
                 item.review_comment = "Mock: LGTM"

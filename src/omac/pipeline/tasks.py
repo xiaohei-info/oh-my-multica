@@ -18,7 +18,6 @@ from ..core.manifest import Contract, _load_contract
 from ..core.taskmeta import DELIVERY_CONTENT_KEY, TaskKind, TaskPhase, make_dag_key
 from ..engines.models import WorkItem, WorkItemStatus
 from ..errors import NeedsDecision
-from .decision import review_decision_required
 from .dispatch import render_issue_body
 
 log = logsetup.get_logger(__name__)
@@ -291,29 +290,12 @@ def run_task(
                     "rounds": round_index, "verdict": "pass", "kind": kind.value}
 
         if verdict == "pass-with-nits":
-            decision_required = review_decision_required(
-                kind=kind.value,
-                verdict=verdict,
-                review_report=reviewed.review_report,
-                review_report_ref=reviewed.review_report_ref,
-                round_index=round_index,
-            )
-            store.update_work_item_metadata(
-                item_id,
-                decision_required=decision_required,
-                phase=TaskPhase.REVIEW,
-            )
-            store.mark_blocked(item_id)
-            raise NeedsDecision(
-                f"{kind.value} review 返回 pass-with-nits,需要调用者确认是否接受建议项",
-                report={
-                    "item_id": item_id,
-                    "kind": kind.value,
-                    "rounds": round_index,
-                    "verdict": verdict,
-                    "review_report": reviewed.review_report,
-                },
-            )
+            log.info(logsetup.EVT_REVISION, kind=kind.value, id=item_id,
+                     gate="review-nits", round=round_index, max=max_revisions)
+            store.reset_review(item_id)
+            delivered = _produce()
+            delivery = _delivery_of(kind, delivered)
+            continue
 
         # reject:评审 report 已在 metadata,reset_review 只清当前判定并转回产出者。
         # 返工上下文由下一轮 agent 通过 work show 读取,不写评论以免触发额外 run。

@@ -107,6 +107,7 @@ class _FakeMulticaProc:
         self.comments = {}        # id -> [comment dict]
         self._next = 1
         self._next_attachment = 1
+        self.attachment_download_failures = 0
         self.calls = []           # 记录调用,供断言
 
     def run(self, cmd, capture_output=True, text=True):
@@ -206,6 +207,11 @@ class _FakeMulticaProc:
         elif sub == "attachment":
             action = args[1]
             if action == "download":
+                if self.attachment_download_failures:
+                    self.attachment_download_failures -= 1
+                    r.returncode = 1
+                    r.stderr = "Request timed out: the server did not respond in time."
+                    return r
                 attachment_id = args[2]
                 output_dir = pathlib.Path(".")
                 it = iter(args[3:])
@@ -337,6 +343,24 @@ def test_multica_payload_refs_parse_yaml_and_json():
 
     assert got.verification == {"commands": [{"cmd": "pytest", "exit_code": 0}]}
     assert got.review_report == {"review_goals": ["json"], "blockers": [], "nits": []}
+
+
+def test_multica_payload_download_retries_transient_timeout():
+    store = _multica_store()
+    fake = _FakeMulticaProc()
+    fake.attachment_download_failures = 1
+    with patch("subprocess.run", side_effect=fake.run):
+        item = store.create_work_item("ws", "t", "d", dag_key="a", worker="alice", kind=TaskKind.DEVELOP)
+        store.update_work_item_metadata(
+            item.id,
+            verification={"commands": [{"cmd": "pytest", "exit_code": 0}]},
+        )
+
+    download_calls = [
+        call for call in fake.calls
+        if "attachment" in call and "download" in call
+    ]
+    assert len(download_calls) == 2
 
 
 def test_metadata_policy_rejects_inline_prose_fields():

@@ -126,7 +126,7 @@ def test_retry_resets_to_todo_and_keeps_work_item_id(tmp_path, capsys, monkeypat
 
 
 def test_accept_marks_done_and_updates_platform_status(tmp_path, capsys, monkeypatch):
-    """接受 pass-with-nits 后,节点视为 done,下次 dag run 可继续推进。"""
+    """人工接受已知风险后,节点视为 done,下次 dag run 可继续推进。"""
     import json
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("OMAC_ENGINE", "mock")
