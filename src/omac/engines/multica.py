@@ -23,6 +23,7 @@ from ..core.taskmeta import (
 )
 from ..errors import AuthError, PlatformError
 from .models import EngineConfig, ProjectInfo, WorkItem, WorkItemStatus, WorkspaceInfo
+from .metadata_policy import assert_metadata_write_allowed, parse_payload_text
 from .runtime import AgentRuntime
 from .store import WorkItemStore
 
@@ -205,10 +206,16 @@ class MulticaStore(WorkItemStore):
         if not attachment_id:
             return None
         with tempfile.TemporaryDirectory(prefix="omac-attachment-") as td:
-            self._run_multica([
-                "attachment", "download", attachment_id,
-                "--output-dir", td,
-            ], capture=True)
+            for attempt in range(2):
+                try:
+                    self._run_multica([
+                        "attachment", "download", attachment_id,
+                        "--output-dir", td,
+                    ], capture=True)
+                    break
+                except PlatformError as exc:
+                    if attempt == 1 or "timed out" not in str(exc).lower():
+                        raise
             filename = ref.get("filename")
             candidates = []
             if filename:
@@ -244,14 +251,21 @@ class MulticaStore(WorkItemStore):
 
         verification_ref = self._json_metadata(metadata, VERIFICATION_REF_KEY)
         review_report_ref = self._json_metadata(metadata, REVIEW_REPORT_REF_KEY)
-        review_report = self._json_metadata(metadata, "review_report")
-        if review_report is None and isinstance(review_report_ref, dict):
+        verification = None
+        if isinstance(verification_ref, dict):
+            verification_text = self._load_payload_comment(issue_data["id"], "verification", verification_ref)
+            verification = parse_payload_text(verification_text)
+        if verification is None:
+            legacy_verification = self._json_metadata(metadata, "verification")
+            verification = legacy_verification if isinstance(legacy_verification, dict) else None
+
+        review_report = None
+        if isinstance(review_report_ref, dict):
             report_text = self._load_payload_comment(issue_data["id"], "review-report", review_report_ref)
-            if report_text:
-                try:
-                    review_report = json.loads(report_text)
-                except json.JSONDecodeError:
-                    review_report = {"raw": report_text}
+            review_report = parse_payload_text(report_text)
+        if review_report is None:
+            legacy_report = self._json_metadata(metadata, "review_report")
+            review_report = legacy_report if isinstance(legacy_report, dict) else None
 
         return WorkItem(
             id=issue_data["id"],
@@ -265,7 +279,7 @@ class MulticaStore(WorkItemStore):
             blocked_by=blocked_by if isinstance(blocked_by, list) else [],
             wave=wave,
             artifacts=self._json_metadata(metadata, "artifacts"),
-            verification=self._json_metadata(metadata, "verification"),
+            verification=verification,
             verification_ref=verification_ref if isinstance(verification_ref, dict) else None,
             review_verdict=self._optional_text_metadata(metadata, "review_verdict"),
             review_comment=self._optional_text_metadata(metadata, "review_comment"),
@@ -459,6 +473,7 @@ class MulticaStore(WorkItemStore):
 
     def _set_metadata(self, item_id: str, key: str, value: Any):
         # capture 默认开:吃掉 multica 的确认表格,不漏进编排者终端(进度靠事件流)。
+        assert_metadata_write_allowed(key, value)
         encoded = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
         self._run_multica([
             "issue", "metadata", "set", item_id,
@@ -504,14 +519,14 @@ class MulticaStore(WorkItemStore):
             self._set_metadata(item_id, "review_verdict", review_verdict)
         if review_comment is not None:
             self._set_metadata(item_id, "review_comment", review_comment)
-        if verification is not None:
-            self._set_metadata(item_id, "verification", verification)
+        if verification is not None and verification_source is None:
+            verification_source = json.dumps(verification, ensure_ascii=False, indent=2)
         if verification_source is not None:
             ref = self._publish_payload_comment(
                 item_id, "verification", verification_source, ".yaml")
             self._set_metadata(item_id, VERIFICATION_REF_KEY, ref)
-        if review_report is not None:
-            self._set_metadata(item_id, "review_report", review_report)
+        if review_report is not None and review_report_source is None:
+            review_report_source = json.dumps(review_report, ensure_ascii=False, indent=2)
         if review_report_source is not None:
             ref = self._publish_payload_comment(
                 item_id, "review-report", review_report_source, ".yaml")

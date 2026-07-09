@@ -14,6 +14,7 @@ import pytest
 
 from omac.core import taskmeta
 from omac.core.taskmeta import Bounces, TaskKind, TaskPhase
+from omac.engines.metadata_policy import assert_metadata_write_allowed
 from omac.engines.models import EngineConfig, WorkItemStatus
 from omac.engines.mock import MockStore
 from omac.engines.multica import MulticaStore
@@ -105,6 +106,8 @@ class _FakeMulticaProc:
         self.metadata = {}        # id -> {key: value}
         self.comments = {}        # id -> [comment dict]
         self._next = 1
+        self._next_attachment = 1
+        self.attachment_download_failures = 0
         self.calls = []           # 记录调用,供断言
 
     def run(self, cmd, capture_output=True, text=True):
@@ -182,8 +185,10 @@ class _FakeMulticaProc:
                         elif tok == "--attachment":
                             path = next(it)
                             attachment_path = pathlib.Path(path)
+                            attachment_id = f"att-{self._next_attachment}"
+                            self._next_attachment += 1
                             attachments.append({
-                                "id": f"att-{len(attachments) + 1}",
+                                "id": attachment_id,
                                 "filename": attachment_path.name,
                                 "content": attachment_path.read_text(encoding="utf-8"),
                             })
@@ -202,6 +207,11 @@ class _FakeMulticaProc:
         elif sub == "attachment":
             action = args[1]
             if action == "download":
+                if self.attachment_download_failures:
+                    self.attachment_download_failures -= 1
+                    r.returncode = 1
+                    r.stderr = "Request timed out: the server did not respond in time."
+                    return r
                 attachment_id = args[2]
                 output_dir = pathlib.Path(".")
                 it = iter(args[3:])
@@ -272,7 +282,7 @@ def test_multica_update_phase_and_bounces_roundtrip():
 
 
 def test_multica_review_report_uses_ref_not_nested_json_string():
-    """review_report 是结构化证据,同时原始 --report-file 作为附件交接。"""
+    """review_report 只经附件 ref 交接,不再写入 metadata 正文。"""
     store = _multica_store()
     fake = _FakeMulticaProc()
     report = {"review_goals": ["g"], "blockers": [], "nits": ["nit"]}
@@ -286,14 +296,14 @@ def test_multica_review_report_uses_ref_not_nested_json_string():
         got = store.get_work_item(item.id)
     assert got.review_report == report
     md = fake.metadata[item.id]
-    assert md["review_report"] == report
+    assert "review_report" not in md
     assert md["review_report_ref"]["sha256"]
     assert md["review_report_ref"]["attachment_id"] == "att-1"
     assert fake.comments[item.id][0]["attachments"][0]["filename"].startswith("omac-review-report-")
 
 
 def test_multica_verification_file_is_attached_and_referenced():
-    """develop 的 --verification-file 也必须有系统评论附件,供后续 reviewer 追溯原文。"""
+    """verification 只经附件 ref 交接,不再写入 metadata 正文。"""
     store = _multica_store()
     fake = _FakeMulticaProc()
     verification = {"commands": [{"cmd": "pytest", "exit_code": 0}]}
@@ -307,10 +317,62 @@ def test_multica_verification_file_is_attached_and_referenced():
         got = store.get_work_item(item.id)
     assert got.verification == verification
     md = fake.metadata[item.id]
-    assert md["verification"] == verification
+    assert "verification" not in md
     assert md["verification_ref"]["sha256"]
     assert md["verification_ref"]["attachment_id"] == "att-1"
     assert fake.comments[item.id][0]["attachments"][0]["filename"].startswith("omac-verification-")
+
+
+def test_multica_payload_refs_parse_yaml_and_json():
+    """新 issue 优先从 *_ref 附件读回 YAML/JSON;旧 inline 只作为 fallback。"""
+    store = _multica_store()
+    fake = _FakeMulticaProc()
+    with patch("subprocess.run", side_effect=fake.run):
+        item = store.create_work_item("ws", "t", "d", dag_key="a", worker="alice", kind=TaskKind.DEVELOP)
+        store.update_work_item_metadata(
+            item.id,
+            verification={"inline": "legacy"},
+            verification_source="commands:\n- cmd: pytest\n  exit_code: 0\n",
+            review_report={"inline": "legacy"},
+            review_report_source=json.dumps({"review_goals": ["json"], "blockers": [], "nits": []}),
+        )
+        md = fake.metadata[item.id]
+        md["verification"] = {"inline": "legacy"}
+        md["review_report"] = {"inline": "legacy"}
+        got = store.get_work_item(item.id)
+
+    assert got.verification == {"commands": [{"cmd": "pytest", "exit_code": 0}]}
+    assert got.review_report == {"review_goals": ["json"], "blockers": [], "nits": []}
+
+
+def test_multica_payload_download_retries_transient_timeout():
+    store = _multica_store()
+    fake = _FakeMulticaProc()
+    fake.attachment_download_failures = 1
+    with patch("subprocess.run", side_effect=fake.run):
+        item = store.create_work_item("ws", "t", "d", dag_key="a", worker="alice", kind=TaskKind.DEVELOP)
+        store.update_work_item_metadata(
+            item.id,
+            verification={"commands": [{"cmd": "pytest", "exit_code": 0}]},
+        )
+
+    download_calls = [
+        call for call in fake.calls
+        if "attachment" in call and "download" in call
+    ]
+    assert len(download_calls) == 2
+
+
+def test_metadata_policy_rejects_inline_prose_fields():
+    with pytest.raises(ValueError):
+        assert_metadata_write_allowed("review_report", {"summary": "long reviewer prose"})
+    with pytest.raises(ValueError):
+        assert_metadata_write_allowed("verification", {"commands": []})
+    with pytest.raises(ValueError):
+        assert_metadata_write_allowed(
+            "decision_required",
+            {"verdict": "pass-with-nits", "nits": [{"issue": "rename", "fix": "use x"}]},
+        )
 
 
 def test_multica_old_issue_without_kind_reads_develop():
