@@ -215,6 +215,10 @@ def build_show_output(item: Any, identity: str) -> Dict[str, Any]:
         if env_setup is not None:
             context["env_setup"] = env_setup
 
+    source_refs = normalize_source_refs(getattr(item, "source_refs", None))
+    if source_refs:
+        context["source_issues"] = source_refs
+
     protocol = _next_action(kind, phase)
     submit = submit_template_for(kind, phase, item.id)
 
@@ -743,6 +747,65 @@ def _command_env_prefix(engine_env: Optional[Dict[str, str]] = None) -> str:
     return (" ".join(parts) + " ") if parts else ""
 
 
+def normalize_source_refs(source_refs=None) -> List[Dict[str, str]]:
+    """把上游 issue 引用规整成稳定小对象;只存引用,不存上游正文。"""
+    refs: List[Dict[str, str]] = []
+    for raw in source_refs or []:
+        if isinstance(raw, dict):
+            issue_id = str(raw.get("issue_id") or raw.get("id") or raw.get("ref") or "").strip()
+            if not issue_id:
+                continue
+            ref: Dict[str, str] = {"issue_id": issue_id}
+            for key in ("label", "kind", "url"):
+                value = raw.get(key)
+                if value:
+                    ref[key] = str(value)
+            refs.append(ref)
+        else:
+            issue_id = str(raw).strip()
+            if issue_id:
+                refs.append({"issue_id": issue_id})
+    return refs
+
+
+def _source_ref_label(ref: Dict[str, str]) -> str:
+    return ref.get("label") or ref.get("kind") or "source"
+
+
+def _source_ref_link(ref: Dict[str, str]) -> str:
+    issue_id = ref["issue_id"]
+    if ref.get("url"):
+        return f"[{issue_id}]({ref['url']})"
+    if issue_id.startswith("#"):
+        return f"`{issue_id}`"
+    if issue_id.isdigit():
+        return f"`#{issue_id}`"
+    return f"`{issue_id}`"
+
+
+def render_source_refs_section(
+    source_refs=None,
+    *,
+    engine_env: Optional[Dict[str, str]] = None,
+) -> str:
+    """渲染上游 issue 链接与 work show 命令,供 issue body / work show 共用。"""
+    refs = normalize_source_refs(source_refs)
+    if not refs:
+        return ""
+    env_prefix = _command_env_prefix(engine_env)
+    lines = ["## 上游 issue（防跑偏）", "本任务承接以下上游 issue,有分歧以源头 issue 为准:"]
+    for ref in refs:
+        label = _source_ref_label(ref)
+        issue_id = ref["issue_id"]
+        link = _source_ref_link(ref)
+        prefix = f"- {label}: " if label != "source" else "- "
+        lines.append(
+            f"{prefix}{link}\n\n"
+            f"```bash\n{env_prefix}omac work show {issue_id}\n```"
+        )
+    return "\n".join(lines)
+
+
 def render_issue_body(node, contract, kind, issue_id, source_refs=None, engine_env=None):
     """三段式派发模板(设计文档 §7.4)。
 
@@ -776,16 +839,16 @@ def render_issue_body(node, contract, kind, issue_id, source_refs=None, engine_e
     # 只渲染 contract 真正声明的字段:缺失即省略整行,不印指向不存在 contract 的
     # 死占位。plan/acceptance/decompose 无 contract,简报只剩 title,真实需求由
     # 「上游产物」段承载(tasks.py 注入),不在此处伪造引用。
-    def _lines(value):
+    def _briefing_line(field, value):
         if isinstance(value, list):
-            return "\n".join(f"- {v}" for v in value)
-        return str(value)
+            return "\n".join([f"- {field}:"] + [f"  - {v}" for v in value])
+        return f"- {field}: {value}"
 
     briefing_lines = [f"- title: {title}"]
     for field in ("objective", "source_of_truth", "acceptance"):
         value = _contract_summary(contract, field, None)
         if value not in (None, "", []):
-            briefing_lines.append(f"- {field}: {_lines(value)}")
+            briefing_lines.append(_briefing_line(field, value))
     briefing = "## 简报\n" + "\n".join(briefing_lines)
 
     # ---- 第三段:硬约束(铁律) ----
@@ -827,19 +890,7 @@ def render_issue_body(node, contract, kind, issue_id, source_refs=None, engine_e
 
     # ---- 源头 issue 引用(provenance,防流程跑偏)----
     # 后续任务(验收/拆解/开发)带上塑造它的上游 issue,分歧时以源头为准。
-    refs = [str(r) for r in (source_refs or []) if str(r).strip()]
-    origin = ""
-    if refs:
-        ref_lines = []
-        for ref in refs:
-            ref_lines.append(
-                f"- `#{ref}`\n\n"
-                f"```bash\n{env_prefix}omac work show {ref}\n```"
-            )
-        origin = (
-            "## 源头 issue（防跑偏）\n"
-            "本任务承接以下上游 issue,有分歧以源头 issue 为准,勿平行重定义:\n"
-            + "\n".join(ref_lines))
+    origin = render_source_refs_section(source_refs, engine_env=engine_env)
 
     return "\n\n".join(p for p in [bootstrap, briefing, detail, origin, hard] if p)
 

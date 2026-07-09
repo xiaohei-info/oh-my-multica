@@ -7,9 +7,19 @@ worker 负责 `develop` issue:按 contract TDD 开发,交 PR 与结构化 verifi
 1. `omac work show <issue-id>` 读取 contract。
 2. 完成后 `omac work submit <issue-id> --pr-url <PR> --verification-file ev.yaml`。
 
+## 上游 issue 链
+
+`work show` 可能包含「上游 issue」段。先按段内命令逐个运行
+`omac work show <上游 issue id>`，再读取对应 issue 的 deliverable/ref/附件内容。
+`contract.source_of_truth` 里的 `plan#...`、`acceptance#...` 是章节锚点；先找到
+上游 plan / acceptance issue，再在其交付文档中定位这些章节。
+
+不要通过猜附件文件名或全 workspace 搜索来找设计方案。找不到上游内容时，先回到
+`work show` 的上游 issue 链和当前 issue body 的 Markdown 链接。
+
 ## 执行清单
 
-1. 读全 `contract.source_of_truth` 指向的设计章节。
+1. 沿「上游 issue」链读全 `contract.source_of_truth` 指向的设计/验收章节。
 2. 确认 `blocked_by` 已完成。
 3. 从 `contract.pr_base` 切分支,不要从主干乱切。
 4. 先写或定位测试,再实现。

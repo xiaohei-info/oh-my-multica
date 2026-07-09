@@ -95,7 +95,7 @@ def test_orchestrator_role_has_wave_decomposition() -> None:
 
 def test_worker_role_has_tdd_and_evidence() -> None:
     content = load_role_topic("worker")
-    for item in ["TDD", "contract.source_of_truth", "verification", "pr_base", "non_goals"]:
+    for item in ["TDD", "contract.source_of_truth", "上游 issue", "deliverable/ref", "verification", "pr_base", "non_goals"]:
         assert item in content, f"worker missing execution anchor: {item}"
 
 

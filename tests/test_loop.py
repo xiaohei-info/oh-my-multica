@@ -143,6 +143,33 @@ class TestHappyPath:
         assert sorted(result.dispatched) == ["a", "b", "c"]
         assert sorted(result.running) == ["a", "b", "c"]
 
+    def test_dispatch_inherits_manifest_source_issues(self):
+        """develop issue 派发时继承 manifest.meta.source_issues,供 body/work show 溯源。"""
+        nodes = [_node("a", contract=_contract())]
+        manifest = _manifest(nodes, meta={
+            "workspace_id": "ws",
+            "project_id": "proj-1",
+            "source_issues": [
+                {"label": "设计方案", "issue_id": "plan-1",
+                 "url": "https://multica.ai/workspaces/ws/issues/plan-1"},
+                {"label": "验收文档", "issue_id": "acc-1"},
+            ],
+        })
+        path = _tmp_manifest_path(manifest)
+        eng = _engine()
+
+        tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        item = eng.store.get_work_item(manifest.nodes["a"].work_item_id)
+
+        assert item.source_refs == [
+            {"label": "设计方案", "issue_id": "plan-1",
+             "url": "https://multica.ai/workspaces/ws/issues/plan-1"},
+            {"label": "验收文档", "issue_id": "acc-1"},
+        ]
+        assert "## 上游 issue（防跑偏）" in item.description
+        assert "- 设计方案: [plan-1](https://multica.ai/workspaces/ws/issues/plan-1)" in item.description
+        assert "OMAC_ENGINE=mock OMAC_WORKSPACE_ID=ws omac work show plan-1" in item.description
+
     def test_max_parallel_limits_dispatch(self):
         """max_parallel=1 时首轮只派发 1 个节点。"""
         nodes = [_node("a"), _node("b")]

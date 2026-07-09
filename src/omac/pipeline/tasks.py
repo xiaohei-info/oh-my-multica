@@ -18,7 +18,7 @@ from ..core.manifest import Contract, _load_contract
 from ..core.taskmeta import DELIVERY_CONTENT_KEY, TaskKind, TaskPhase, make_dag_key
 from ..engines.models import WorkItem, WorkItemStatus
 from ..errors import NeedsDecision
-from .dispatch import render_issue_body
+from .dispatch import normalize_source_refs, render_issue_body
 
 log = logsetup.get_logger(__name__)
 
@@ -179,7 +179,11 @@ def run_task(
         )
         if source_of_truth:
             body = body + "\n\n" + _render_source_of_truth(source_of_truth)
-        store.update_work_item_metadata(item_id, description=body)
+        store.update_work_item_metadata(
+            item_id,
+            description=body,
+            source_refs=normalize_source_refs(source_refs),
+        )
 
     def _produce(hint: Optional[List[str]] = None) -> WorkItem:
         current = store.get_work_item(item_id)

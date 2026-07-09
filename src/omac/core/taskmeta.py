@@ -84,6 +84,7 @@ CONTRACT_REF_KEY = "contract_ref"
 VERIFICATION_REF_KEY = "verification_ref"
 REVIEW_REPORT_REF_KEY = "review_report_ref"
 DECISION_REQUIRED_KEY = "decision_required"
+SOURCE_REFS_KEY = "source_refs"
 
 # run_task 交付 dict 的 key(按 kind 承载交付正文)——单一来源,tasks/plan/mock 共用。
 # decompose 正文是 manifest(≠ kind.value),故不能用 kind.value 直接推。

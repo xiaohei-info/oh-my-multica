@@ -104,7 +104,7 @@ def test_run_task_renders_source_refs_in_body():
                    source_refs=["7", "8"], poll=_poll)
     item = eng.store.get_work_item(res["item_id"])
 
-    assert "## 源头 issue（防跑偏）" in item.description
+    assert "## 上游 issue（防跑偏）" in item.description
     assert "- `#7`" in item.description
     assert "```bash\nOMAC_ENGINE=mock OMAC_WORKSPACE_ID=ws omac work show 7\n```" in item.description
     assert "- `#8`" in item.description

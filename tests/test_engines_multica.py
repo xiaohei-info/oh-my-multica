@@ -1,4 +1,5 @@
 from omac.engines.models import EngineConfig
+from omac.engines.models import WorkItemStatus
 from omac.engines.multica import MulticaStore
 
 
@@ -112,6 +113,52 @@ def test_multica_set_node_contract_writes_ref_without_full_contract_metadata(mon
     assert "实现很长的自然语言目标" in published[0][1]
 
 
+def test_multica_source_refs_are_small_structured_metadata(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    writes = []
+    published = []
+
+    monkeypatch.setattr(store, "_set_metadata", lambda item_id, key, value: writes.append((key, value)))
+    monkeypatch.setattr(
+        store,
+        "_publish_payload_comment",
+        lambda item_id, label, source, suffix: published.append((label, source, suffix)),
+    )
+    monkeypatch.setattr(
+        store,
+        "get_work_item",
+        lambda item_id: store._issue_to_work_item(
+            {
+                "id": item_id,
+                "title": "t",
+                "description": "d",
+                "status": "in_progress",
+                "metadata": {
+                    "dag_key": "a",
+                    "kind": "develop",
+                    "source_refs": (
+                        '[{"label":"设计方案","issue_id":"plan-1",'
+                        '"url":"https://multica.ai/i/plan-1"}]'
+                    ),
+                },
+            },
+            "ws",
+        ),
+    )
+
+    item = store.update_work_item_metadata(
+        "issue-1",
+        source_refs=[{"label": "设计方案", "issue_id": "plan-1",
+                      "url": "https://multica.ai/i/plan-1"}],
+    )
+
+    assert writes == [("source_refs", [{"label": "设计方案", "issue_id": "plan-1",
+                                        "url": "https://multica.ai/i/plan-1"}])]
+    assert published == []
+    assert item.source_refs == [{"label": "设计方案", "issue_id": "plan-1",
+                                 "url": "https://multica.ai/i/plan-1"}]
+
+
 def test_multica_reads_contract_from_ref_before_legacy_inline(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
     monkeypatch.setattr(
@@ -138,3 +185,55 @@ def test_multica_reads_contract_from_ref_before_legacy_inline(monkeypatch):
 
     assert item.contract["objective"] == "来自 ref"
     assert item.contract["verification_commands"] == ["pytest -q"]
+
+
+def test_multica_get_work_item_maps_exhausted_failed_runs_to_failed(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+
+    def fake_run(args):
+        if args[:2] == ["issue", "get"]:
+            return {
+                "id": "issue-1",
+                "title": "t",
+                "description": "d",
+                "status": "in_progress",
+                "metadata": {"dag_key": "node-a", "kind": "develop"},
+            }
+        if args[:2] == ["issue", "runs"]:
+            return [
+                {"id": "run-2", "status": "failed", "created_at": "2026-07-09T08:35:58Z"},
+                {"id": "run-1", "status": "failed", "created_at": "2026-07-09T08:35:23Z"},
+            ]
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+
+    item = store.get_work_item("issue-1")
+
+    assert item.status == WorkItemStatus.FAILED
+
+
+def test_multica_get_work_item_keeps_in_progress_when_any_run_active(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+
+    def fake_run(args):
+        if args[:2] == ["issue", "get"]:
+            return {
+                "id": "issue-1",
+                "title": "t",
+                "description": "d",
+                "status": "in_progress",
+                "metadata": {"dag_key": "node-a", "kind": "develop"},
+            }
+        if args[:2] == ["issue", "runs"]:
+            return [
+                {"id": "run-2", "status": "running", "created_at": "2026-07-09T08:35:58Z"},
+                {"id": "run-1", "status": "failed", "created_at": "2026-07-09T08:35:23Z"},
+            ]
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+
+    item = store.get_work_item("issue-1")
+
+    assert item.status == WorkItemStatus.IN_PROGRESS
