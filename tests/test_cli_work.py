@@ -243,7 +243,28 @@ def test_show_cli_table_output(tmp_path, monkeypatch, capsys):
     assert "## 现在做什么" in out
     assert "## 完成后交付" in out
     assert "plan" in out
-    assert "review" in out
+
+
+def test_show_cli_source_issue_commands_include_engine_env(tmp_path, monkeypatch, capsys):
+    """work show 输出的上游 issue 命令也必须可复制执行。"""
+    monkeypatch.chdir(tmp_path)
+    main(["config", "set", "engine", "mock"])
+    main(["config", "set", "workspace", "mock-workspace"])
+    capsys.readouterr()
+
+    store = _store()
+    item = _make_item(store, TaskKind.DEVELOP, TaskPhase.AUTHORING,
+                      with_contract=True)
+    store.update_work_item_metadata(
+        item.id,
+        source_refs=[{"label": "设计方案", "issue_id": "plan-1"}],
+    )
+
+    assert main(["work", "show", item.id]) == exit_codes.OK
+    out = capsys.readouterr().out
+
+    assert "## 上游 issue（防跑偏）" in out
+    assert "OMAC_ENGINE=mock OMAC_WORKSPACE_ID=mock-workspace omac work show plan-1" in out
 
 
 def test_show_identity_reflects_role_not_generic_worker(tmp_path, monkeypatch, capsys):

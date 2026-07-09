@@ -114,7 +114,10 @@ def _render_table(output: dict) -> None:
     source_issues = ctx.get("source_issues")
     if source_issues:
         print()
-        print(render_source_refs_section(source_issues))
+        print(render_source_refs_section(
+            source_issues,
+            engine_env=output.get("engine_env"),
+        ))
 
     contract = ctx.get("contract")
     if is_review:
@@ -216,12 +219,27 @@ def _run_show(args) -> int:
 
     identity = _identity_for(item)
     output = build_show_output(item, identity)
+    output["engine_env"] = _store_env(store)
 
     if args.output == "json":
         print_json(output)
     else:
         _render_table(output)
     return exit_codes.OK
+
+
+def _store_env(store) -> dict:
+    config = store.config
+    env = {
+        "OMAC_ENGINE": config.engine_type,
+        "OMAC_WORKSPACE_ID": config.workspace_id,
+    }
+    if config.project_id:
+        env["OMAC_PROJECT_ID"] = config.project_id
+    workspace_slug = (config.extra or {}).get("workspace_slug") or (config.extra or {}).get("OMAC_WORKSPACE_SLUG")
+    if workspace_slug:
+        env["OMAC_WORKSPACE_SLUG"] = workspace_slug
+    return env
 
 
 def run(args) -> int:

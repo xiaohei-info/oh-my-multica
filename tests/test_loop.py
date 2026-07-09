@@ -150,9 +150,9 @@ class TestHappyPath:
             "workspace_id": "ws",
             "project_id": "proj-1",
             "source_issues": [
-                {"label": "设计方案", "issue_id": "plan-1",
-                 "url": "https://multica.ai/workspaces/ws/issues/plan-1"},
-                {"label": "验收文档", "issue_id": "acc-1"},
+                "plan-1",
+                "acc-1",
+                "dec-1",
             ],
         })
         path = _tmp_manifest_path(manifest)
@@ -162,12 +162,12 @@ class TestHappyPath:
         item = eng.store.get_work_item(manifest.nodes["a"].work_item_id)
 
         assert item.source_refs == [
-            {"label": "设计方案", "issue_id": "plan-1",
-             "url": "https://multica.ai/workspaces/ws/issues/plan-1"},
+            {"label": "设计方案", "issue_id": "plan-1"},
             {"label": "验收文档", "issue_id": "acc-1"},
+            {"label": "任务拆解", "issue_id": "dec-1"},
         ]
         assert "## 上游 issue（防跑偏）" in item.description
-        assert "- 设计方案: [plan-1](https://multica.ai/workspaces/ws/issues/plan-1)" in item.description
+        assert "- 设计方案: `plan-1`" in item.description
         assert "OMAC_ENGINE=mock OMAC_WORKSPACE_ID=ws omac work show plan-1" in item.description
 
     def test_max_parallel_limits_dispatch(self):
@@ -452,6 +452,23 @@ class TestReconcile:
         # reconcile 清空 → todo → ready → dispatch → running
         assert "a" in r.dispatched
         assert r.state == "running"
+
+    def test_reconcile_clears_missing_blocked_work_item(self):
+        """用户删除 blocked issue 后,dag run 应清空旧 id 并重新派发。"""
+        nodes = [_node("a")]
+        manifest = _manifest(nodes)
+        path = _tmp_manifest_path(manifest)
+        eng = _engine()
+
+        manifest.nodes["a"].work_item_id = "deleted-issue"
+        manifest.nodes["a"].status = "blocked"
+        save_manifest(manifest, path)
+
+        r = tick(eng.store, eng.runtime, manifest, path)
+
+        assert "a" in r.dispatched
+        assert r.state == "running"
+        assert manifest.nodes["a"].work_item_id != "deleted-issue"
 
 
 # ==================== 7. contract 验证(证据门) ====================

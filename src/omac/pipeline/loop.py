@@ -58,6 +58,9 @@ def _store_env(store: WorkItemStore) -> dict:
     }
     if store.config.project_id:
         env["OMAC_PROJECT_ID"] = store.config.project_id
+    workspace_slug = (store.config.extra or {}).get("workspace_slug") or (store.config.extra or {}).get("OMAC_WORKSPACE_SLUG")
+    if workspace_slug:
+        env["OMAC_WORKSPACE_SLUG"] = workspace_slug
     return env
 
 
@@ -103,8 +106,10 @@ def reconcile(store: WorkItemStore, manifest: Manifest, manifest_path: str) -> b
         try:
             item = store.get_work_item(node.work_item_id)
         except Exception:
-            # work item 不存在:非终态节点清空走新建,终态节点保持
-            if node.status not in TERMINAL_STATUSES:
+            # work item 不存在:调用者明确接受的终态(done/abandoned)保持;
+            # blocked/failed/cancelled 可能是用户删掉平台 issue 后的恢复路径,
+            # 应清空旧 id 走新建。
+            if node.status not in {"done", "abandoned"}:
                 set_node(manifest, key, work_item_id=None, status="todo")
                 changed = True
             continue
@@ -430,11 +435,16 @@ def _dispatch(
             )
             if node.contract is not None:
                 store.set_node_contract(item.id, node.contract)
-            source_refs = normalize_source_refs(manifest.meta.get("source_issues"))
+            env = _store_env(store)
+            source_refs = normalize_source_refs(
+                manifest.meta.get("source_issues"),
+                labels=["设计方案", "验收文档", "任务拆解"],
+                engine_env=env,
+            )
             body = render_issue_body(
                 node, node.contract, TaskKind.DEVELOP, item.id,
                 source_refs=source_refs,
-                engine_env=_store_env(store),
+                engine_env=env,
             )
             store.update_work_item_metadata(
                 item.id,

@@ -747,10 +747,15 @@ def _command_env_prefix(engine_env: Optional[Dict[str, str]] = None) -> str:
     return (" ".join(parts) + " ") if parts else ""
 
 
-def normalize_source_refs(source_refs=None) -> List[Dict[str, str]]:
+def normalize_source_refs(
+    source_refs=None,
+    *,
+    labels: Optional[List[str]] = None,
+    engine_env: Optional[Dict[str, str]] = None,
+) -> List[Dict[str, str]]:
     """把上游 issue 引用规整成稳定小对象;只存引用,不存上游正文。"""
     refs: List[Dict[str, str]] = []
-    for raw in source_refs or []:
+    for idx, raw in enumerate(source_refs or []):
         if isinstance(raw, dict):
             issue_id = str(raw.get("issue_id") or raw.get("id") or raw.get("ref") or "").strip()
             if not issue_id:
@@ -764,7 +769,14 @@ def normalize_source_refs(source_refs=None) -> List[Dict[str, str]]:
         else:
             issue_id = str(raw).strip()
             if issue_id:
-                refs.append({"issue_id": issue_id})
+                ref = {"issue_id": issue_id}
+                if labels and idx < len(labels):
+                    ref["label"] = labels[idx]
+                refs.append(ref)
+    for ref in refs:
+        if "url" not in ref and engine_env:
+            if engine_env.get("OMAC_ENGINE") == "multica" and engine_env.get("OMAC_WORKSPACE_SLUG"):
+                ref["url"] = f"mention://issue/{ref['issue_id']}"
     return refs
 
 
@@ -789,7 +801,7 @@ def render_source_refs_section(
     engine_env: Optional[Dict[str, str]] = None,
 ) -> str:
     """渲染上游 issue 链接与 work show 命令,供 issue body / work show 共用。"""
-    refs = normalize_source_refs(source_refs)
+    refs = normalize_source_refs(source_refs, engine_env=engine_env)
     if not refs:
         return ""
     env_prefix = _command_env_prefix(engine_env)
