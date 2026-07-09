@@ -160,24 +160,24 @@ def test_run_task_handoff_to_reviewer_does_not_post_trigger_comment():
     assert not any("阶段变更" in c and "omac work submit" in c for c in comments)
 
 
-def test_run_task_pass_with_nits_needs_human_decision():
-    """pass-with-nits 不自动通过也不自动返工,而是移交人工确认。"""
+def test_run_task_pass_with_nits_returns_to_worker_without_review_bounce():
+    """pass-with-nits 自动转回产出者处理建议项,不进入人工 blocked。"""
     eng = _engine()
-    MockStore.set_kind_delivery("plan", {"plan": "计划正文"})
-    MockStore.set_review_verdict("pass-with-nits")
-    with pytest.raises(NeedsDecision) as exc:
-        run_task(eng, TaskKind.PLAN, _payload(), "alice",
-                 reviewers=["bob"], poll=_poll)
-    assert "pass-with-nits" in str(exc.value)
-    assert exc.value.report["verdict"] == "pass-with-nits"
-    item = eng.store.get_work_item(exc.value.report["item_id"])
-    assert item.status == WorkItemStatus.BLOCKED
-    assert item.decision_required["verdict"] == "pass-with-nits"
-    assert "review_report" not in item.decision_required
-    assert "nits" not in item.decision_required
-    assert "blockers" not in item.decision_required
-    assert item.decision_required["nit_count"] == 0
-    assert item.decision_required["blocker_count"] == 0
+    MockStore.set_kind_delivery_sequence(
+        "plan", [{"plan": "计划正文-v1"}, {"plan": "计划正文-v2"}])
+    MockStore.set_review_verdict_sequence(["pass-with-nits", "pass"])
+
+    res = run_task(eng, TaskKind.PLAN, _payload(), "alice",
+                   reviewers=["bob"], poll=_poll)
+
+    item = eng.store.get_work_item(res["item_id"])
+    assert res["verdict"] == "pass"
+    assert res["rounds"] == 2
+    assert res["delivery"]["plan"] == "计划正文-v2"
+    assert item.status == WorkItemStatus.DONE
+    assert item.bounces.review == 0
+    assert item.decision_required is None
+    assert eng.store.get_comments(item.id) == []
 
 
 def test_run_task_reject_handoff_uses_metadata_not_comment():

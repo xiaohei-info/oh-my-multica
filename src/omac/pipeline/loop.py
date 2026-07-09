@@ -19,7 +19,6 @@ from ..engines.models import WorkItemStatus
 from ..engines.runtime import AgentRuntime
 from ..engines.store import WorkItemStore
 from ..errors import PlatformError
-from ..pipeline.decision import review_decision_required
 from ..pipeline.dispatch import render_issue_body
 from ..core.taskmeta import TaskKind, TaskPhase
 
@@ -237,23 +236,21 @@ def collect_results(
             log.info(logsetup.EVT_VERDICT, kind=_DAG_KIND, node=key,
                      id=node.work_item_id, verdict=verdict)
             if verdict == "pass-with-nits":
-                store.update_work_item_metadata(
-                    node.work_item_id,
-                    decision_required=review_decision_required(
-                        kind=item.kind.value,
-                        verdict=verdict,
-                        review_report=item.review_report,
-                        review_report_ref=item.review_report_ref,
-                    ),
-                    phase=TaskPhase.REVIEW,
-                )
-                store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
-                store.add_comment(
-                    node.work_item_id,
-                    "reviewer 返回 pass-with-nits:需要调用者确认是否接受建议项后再继续。",
-                )
-                set_node(manifest, key, status="blocked")
-                failures[key] = "reviewer pass-with-nits,需要人工确认"
+                store.reset_review(node.work_item_id)
+                try:
+                    store.assign_work_item(node.work_item_id, node.worker, "worker")
+                    store.update_status(node.work_item_id, WorkItemStatus.IN_PROGRESS)
+                    set_node(manifest, key, status="in_progress")
+                    log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=key,
+                             id=node.work_item_id, gate="review-nits")
+                    runtime.wake(node.work_item_id, node.worker, "worker")
+                except PlatformError as exc:
+                    store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
+                    store.add_comment(
+                        node.work_item_id,
+                        f"回退到 worker {node.worker} 处理 nits 失败: {exc}")
+                    set_node(manifest, key, status="blocked")
+                    failures[key] = f"回退到 worker {node.worker} 处理 nits 失败: {exc}"
                 continue
             gate_errors = validate_review_evidence(node, item)
             if not gate_errors:

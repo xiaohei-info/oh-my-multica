@@ -206,10 +206,16 @@ class MulticaStore(WorkItemStore):
         if not attachment_id:
             return None
         with tempfile.TemporaryDirectory(prefix="omac-attachment-") as td:
-            self._run_multica([
-                "attachment", "download", attachment_id,
-                "--output-dir", td,
-            ], capture=True)
+            for attempt in range(2):
+                try:
+                    self._run_multica([
+                        "attachment", "download", attachment_id,
+                        "--output-dir", td,
+                    ], capture=True)
+                    break
+                except PlatformError as exc:
+                    if attempt == 1 or "timed out" not in str(exc).lower():
+                        raise
             filename = ref.get("filename")
             candidates = []
             if filename:
