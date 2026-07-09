@@ -183,6 +183,31 @@ class TestHappyPath:
         assert len(result.dispatched) == 1
         assert len(result.running) == 1
 
+    def test_resume_tick_wakes_existing_in_progress_worker(self):
+        """resume 时已处于 in_progress 的节点也要幂等补唤醒执行面。"""
+        nodes = [_node("a")]
+        manifest = _manifest(nodes)
+        path = _tmp_manifest_path(manifest)
+        eng = _engine(MOCK_AUTO_COMPLETE="false")
+
+        tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+        item_id = manifest.nodes["a"].work_item_id
+
+        class RecordingRuntime(MockRuntime):
+            def __init__(self, store):
+                super().__init__(store)
+                self.calls = []
+
+            def wake(self, item_id, agent, role):
+                self.calls.append((item_id, agent, role))
+                super().wake(item_id, agent, role)
+
+        runtime = RecordingRuntime(eng.store)
+        result = tick(eng.store, runtime, manifest, path, max_parallel=1)
+
+        assert result.state == "running"
+        assert runtime.calls == [(item_id, "alice", "worker")]
+
 
 # ==================== 2. 失败注入 → needs_decision ====================
 
