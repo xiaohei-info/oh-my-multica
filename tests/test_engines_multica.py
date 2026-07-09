@@ -303,3 +303,28 @@ def test_multica_runtime_reruns_existing_cancelled_assignment(monkeypatch):
     MulticaRuntime(store).wake("issue-1", "alice", "worker")
 
     assert ["issue", "rerun", "issue-1", "--output", "json"] in calls
+
+
+def test_multica_runtime_reruns_cancelled_direct_even_when_comment_is_newer(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    calls = []
+
+    def fake_run(args):
+        calls.append(args)
+        if args[:2] == ["issue", "runs"]:
+            return [
+                {"id": "comment-1", "status": "cancelled", "kind": "comment",
+                 "created_at": "2026-07-09T09:00:00Z"},
+                {"id": "direct-1", "status": "cancelled", "kind": "direct",
+                 "created_at": "2026-07-09T08:35:23Z"},
+            ]
+        if args[:2] == ["issue", "rerun"]:
+            return {"id": "direct-2", "status": "queued"}
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+
+    from omac.engines.multica import MulticaRuntime
+    MulticaRuntime(store).wake("issue-1", "alice", "worker")
+
+    assert ["issue", "rerun", "issue-1", "--output", "json"] in calls

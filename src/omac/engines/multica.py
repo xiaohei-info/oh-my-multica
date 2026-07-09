@@ -44,6 +44,11 @@ def _latest_run(runs: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     )[1]
 
 
+def _latest_direct_run(runs: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    direct_runs = [run for run in runs if (run.get("kind") or "direct") == "direct"]
+    return _latest_run(direct_runs)
+
+
 class MulticaStore(WorkItemStore):
     """数据面:全部经 multica CLI。"""
 
@@ -701,8 +706,8 @@ class MulticaRuntime(AgentRuntime):
             runs = self._store._run_multica(["issue", "runs", item_id, "--output", "json"])
         except PlatformError:
             return None
-        latest = _latest_run(runs if isinstance(runs, list) else [])
-        if latest and (latest.get("kind") or "direct") == "direct":
+        latest = _latest_direct_run(runs if isinstance(runs, list) else [])
+        if latest:
             status = (latest.get("status") or "").lower()
             if status in {"failed", "cancelled"}:
                 self._store._run_multica(["issue", "rerun", item_id, "--output", "json"])
