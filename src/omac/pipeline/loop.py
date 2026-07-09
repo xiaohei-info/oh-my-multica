@@ -207,6 +207,9 @@ def collect_results(
 
         # ---- in_progress: worker 阶段回收 ----
         if node.status == "in_progress":
+            if item.status == WorkItemStatus.IN_PROGRESS:
+                runtime.wake(node.work_item_id, node.worker, "worker")
+                continue
             if item.status == WorkItemStatus.DONE:
                 gate_errors = validate_worker_evidence(node, item)
                 if gate_errors:
