@@ -151,8 +151,10 @@ def _submit(args) -> int:
         item = _get_item(args.issue_id)
     except ValidationError:
         raise
+    store = _resolve_store_for(item)
+    agent_pool = set(store.list_members(store.config.workspace_id))
     result = submit(
-        _resolve_store_for(item),
+        store,
         args.issue_id,
         plan_file=args.plan_file,
         acceptance_file=args.acceptance_file,
@@ -162,6 +164,7 @@ def _submit(args) -> int:
         verdict=args.verdict,
         report_file=args.report_file,
         acceptance_results_file=args.acceptance_results_file,
+        agent_pool=agent_pool,
     )
     target = (
         result.advanced_to.value

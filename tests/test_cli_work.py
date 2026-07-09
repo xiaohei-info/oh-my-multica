@@ -806,6 +806,62 @@ class TestSubmitMissingCli:
         err = capsys.readouterr().err
         assert "pr-url" in err, err
 
+    def test_decompose_submit_uses_workspace_agent_pool(
+            self, tmp_path, monkeypatch, capsys):
+        """CLI 标准路径应自动用 WorkItemStore 成员池校验 manifest。
+
+        否则 agent 必须手动绕到 Python API 传 agent_pool,真实 work submit 会把
+        合法 workspace 成员全部误判为 not in agent pool。
+        """
+        monkeypatch.chdir(tmp_path)
+        main(["config", "set", "engine", "mock"])
+        main(["config", "set", "workspace", "mock-workspace"])
+        capsys.readouterr()
+
+        store = _store()
+        members = sorted(store.list_members("mock-workspace"))
+        worker, reviewer = members[0], members[1]
+        item = store.create_work_item(
+            "mock-workspace", "decompose", "desc", dag_key="d",
+            worker="alice", kind=dispatch_mod.TaskKind.DECOMPOSE,
+        )
+        mfile = tmp_path / "manifest.yaml"
+        mfile.write_text(yaml.safe_dump({
+            "meta": {},
+            "nodes": [{
+                "id": "foundation",
+                "worker": worker,
+                "reviewer": reviewer,
+                "contract": {
+                    "objective": "x",
+                    "acceptance": ["y"],
+                    "non_goals": ["z"],
+                    "source_of_truth": ["docs/design.md"],
+                    "verification_commands": ["pytest -q"],
+                    "integration_gates": [{
+                        "name": "gate",
+                        "layer": "L1",
+                        "delivery_goal": "d",
+                        "source_of_truth": ["docs/design.md"],
+                        "covers": ["c"],
+                        "acceptance_refs": ["y"],
+                        "commands": ["pytest -q"],
+                        "required_metrics": {},
+                        "artifacts": [],
+                    }],
+                    "pr_base": "feature/v1",
+                    "coverage_gate": 90,
+                },
+            }],
+        }))
+
+        rc = main(["work", "submit", item.id, "--manifest-file", str(mfile)])
+
+        assert rc == exit_codes.OK, capsys.readouterr()
+        got = store.get_work_item(item.id)
+        assert got.status == WorkItemStatus.IN_REVIEW
+        assert got.deliverable is not None
+
 
 class TestSubmitLoopE2E:
     """验证 submit 左移校验与 loop 权威门 schema 同源,submit 过的证据,loop 必过。"""
