@@ -26,7 +26,8 @@ manifest 的 ``Node`` 不携带回退计数(单一事实源)。上界由 ``confi
 
 纪律(§12.4):CI / merge 走模板命令(subprocess),绝不直接 shell out 平台 CLI;
 CI 在显式配置 ``config.ci.check_command`` 或检测到 ``.github/workflows``
-时启用;否则跳过。merge 只在配置了 ``config.merge.command`` 时启用。
+时启用;否则跳过。merge 默认使用 ``gh pr merge``;显式 ``config.merge.command``
+可覆盖。
 考试点:退出码契约不可破(§5.1),
 术语 §10.2 用「进行中节点」「就绪节点」,禁止 harvest/在飞 等硬译行话。
 """
@@ -218,7 +219,7 @@ def run_merge_delivery(
 ) -> str:
     """reviewer pass 后、进 done 之前的自动 merge 门(§7.3)。
 
-    - 未配置 merge → 环节整体跳过,返回 ``'pass'``(pass 即 done,现行为不变)。
+    - 未配置 merge → 默认执行 ``gh pr merge {pr_url} --squash --delete-branch``。
     - 配置了 merge 但节点无 pr_url → 防御性 blocked + 报错即教学,返回 ``'blocked'``。
     - 配置了 merge → 进入 ``merging``(manifest 细分态,平台仍 in_review),执行
       ``merge.command``:
@@ -236,9 +237,6 @@ def run_merge_delivery(
     node = manifest.nodes[node_key]
     item_id = node.work_item_id
     merge = get_merge_config(config)
-    if merge is None:
-        # 未配置 merge → pass 即 done(现行为,回归保证)
-        return "pass"
 
     item = store.get_work_item(item_id)
     pr_url = ""
