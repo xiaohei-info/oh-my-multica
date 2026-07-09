@@ -6,7 +6,7 @@ import sys
 from ._stub import not_implemented
 from ...core import config as config_mod
 from ...engines import create_engine
-from ...engines.models import EngineConfig
+from ...engines.models import EngineConfig, WorkItemStatus
 from ...errors import ValidationError
 from ...pipeline.dispatch import (
     SUBMIT_PARAM_SPECS,
@@ -74,7 +74,7 @@ def _resolve_store():
 def _identity_for(item) -> str:
     """按 phase × kind 如实标注身份:review=reviewer;authoring 用角色本名
     (planner/orchestrator/worker/acceptor),不再一律标 worker。"""
-    if item.phase.value == "review":
+    if item.phase.value == "review" or item.status == WorkItemStatus.IN_REVIEW:
         return f"reviewer:{item.reviewer}"
     from ...pipeline.dispatch import KIND_ROLE
     return f"{KIND_ROLE.get(item.kind, 'worker')}:{item.worker}"

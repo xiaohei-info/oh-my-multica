@@ -15,6 +15,7 @@ import pytest
 from omac.core.manifest import Contract, Manifest, Node, load_manifest, save_manifest
 from omac.engines import create_engine
 from omac.engines.mock import MockRuntime, MockStore
+from omac.core.taskmeta import TaskPhase
 from omac.engines.models import EngineConfig, WorkItemStatus
 from omac.pipeline.loop import TickResult, tick
 
@@ -622,6 +623,7 @@ class TestEvidenceGateRegression:
         # reviewer 已分配
         got = eng.store.get_work_item(item.id)
         assert got.reviewer == "bob"
+        assert got.phase == TaskPhase.REVIEW
         # assign_log 含 reviewer 分配
         assert any(role == "reviewer" for _, _, role, _ in eng.store.assign_log)
 

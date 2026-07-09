@@ -354,6 +354,7 @@ def collect_results(
         # CI 回落)走 deliverable 路径把 assigned 槽位清空,后续
         # wake 的 auto_complete 找不到已派发项而无法置评审判定。
         store.update_status(item_id, WorkItemStatus.IN_REVIEW)
+        store.update_work_item_metadata(item_id, phase=TaskPhase.REVIEW)
         store.assign_work_item(item_id, reviewer, "reviewer")
         set_node(manifest, key, status="in_review")
         log.info(logsetup.EVT_REVIEW_DISPATCH, kind=_DAG_KIND, node=key,

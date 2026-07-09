@@ -172,7 +172,7 @@ def build_show_output(item: Any, identity: str) -> Dict[str, Any]:
         submit: 精确的 submit 命令模板
     """
     kind: TaskKind = item.kind
-    phase: TaskPhase = item.phase
+    phase: TaskPhase = _resolve_phase(item, item.phase)
 
     task = {
         "kind": kind.value,

@@ -365,6 +365,24 @@ def test_develop_show_mentions_issue_key_for_pr_autolink():
     assert "分支名、标题或正文" in out["protocol"]
 
 
+def test_show_treats_in_review_status_as_review_phase():
+    """旧 issue 缺 phase=review 时,平台 in_review 仍应给 reviewer 正确上下文。"""
+    store = _store()
+    item = _make_item(
+        store, TaskKind.DEVELOP, TaskPhase.AUTHORING,
+        with_contract=True, with_verification=True)
+    store.update_work_item_metadata(item.id, artifacts={"pr_url": "https://x/pr/1"})
+    store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+
+    got = store.get_work_item(item.id)
+    out = build_show_output(got, f"reviewer:{got.reviewer}")
+
+    assert out["task"]["phase"] == "review"
+    assert "deliverable" in out["context"]
+    assert "env_setup" in out["context"]
+    assert "--verdict" in out["submit"]
+
+
 def test_show_unknown_issue_id(tmp_path, monkeypatch, capsys):
     """issue_id 不存在时给出教学性报错,exit 5。"""
     monkeypatch.chdir(tmp_path)
