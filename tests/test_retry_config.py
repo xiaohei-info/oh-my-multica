@@ -52,6 +52,42 @@ def test_resolve_retry_ignores_unknown_subkey():
     assert config_mod.resolve_retry(cfg) == {"ci": 3, "review": 2, "merge": 3}
 
 
+# ==================== CI 默认检测 ====================
+
+def test_get_ci_config_skips_when_no_explicit_command_and_no_github_workflow(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    assert config_mod.get_ci_config({}) is None
+    assert config_mod.get_ci_config({"ci": {"timeout_minutes": 12}}) is None
+
+
+def test_get_ci_config_defaults_to_gh_checks_when_github_workflow_exists(tmp_path, monkeypatch):
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "ci.yml").write_text("name: ci\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    assert config_mod.get_ci_config({}) == {
+        "check_command": "gh pr checks {pr_url} --watch --fail-fast",
+        "timeout_minutes": 30,
+    }
+    assert config_mod.get_ci_config({"ci": {"timeout_minutes": 9}}) == {
+        "check_command": "gh pr checks {pr_url} --watch --fail-fast",
+        "timeout_minutes": 9,
+    }
+
+
+def test_get_ci_config_explicit_command_wins_over_github_workflow(tmp_path, monkeypatch):
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "ci.yaml").write_text("name: ci\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    cfg = {"ci": {"check_command": "custom {pr_url}", "timeout_minutes": 5}}
+
+    assert config_mod.get_ci_config(cfg) == cfg["ci"]
+
+
 # ==================== workflow 默认策略 ====================
 
 def test_resolve_workflow_defaults_when_missing():
@@ -122,6 +158,40 @@ def test_config_set_negative_retry_rejected(tmp_path, monkeypatch, capsys):
     assert code == exit_codes.VALIDATION
     err = capsys.readouterr().err
     assert "不能为负数" in err or "负" in err
+
+
+def test_dag_tick_passes_configured_retry_limits(tmp_path, monkeypatch, capsys):
+    """dag run/tick 必须把 config.retry 注入主 tick,否则配置写了不生效。"""
+    import yaml
+    from omac.cli.commands import dag as dag_cmd
+    from omac.pipeline.loop import TickResult
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".omac").mkdir()
+    with open(tmp_path / ".omac" / "config.yaml", "w") as f:
+        yaml.dump({
+            "engine": "mock",
+            "workspace": "ws",
+            "retry": {"ci": 0, "review": 1, "merge": 2},
+        }, f)
+    manifest = tmp_path / ".omac" / "m.yaml"
+    with open(manifest, "w") as f:
+        yaml.dump({
+            "meta": {"name": "m"},
+            "nodes": [{"id": "a", "worker": "alice", "status": "done"}],
+        }, f)
+
+    seen = {}
+
+    def fake_tick(store, runtime, manifest_obj, manifest_path, *,
+                  max_parallel=4, retry_limits=None, config=None):
+        seen["retry_limits"] = retry_limits
+        return TickResult(state="converged", done=["a"])
+
+    monkeypatch.setattr(dag_cmd, "tick", fake_tick)
+
+    assert main(["dag", "tick", str(manifest)]) == exit_codes.OK
+    assert seen["retry_limits"] == {"ci": 0, "review": 1, "merge": 2}
 
 
 # ==================== plan 流水线共用 retry.review ====================

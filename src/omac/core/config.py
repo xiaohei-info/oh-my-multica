@@ -18,7 +18,7 @@
       review: true              # plan/decompose 是否默认走 reviewer 门
       acceptance_doc: true      # plan create 是否默认生成验收文档
       goal_required: false      # 无 --doc 时是否强制 --goal/--goal-file
-    ci:    { check_command, timeout_minutes }   # 可选,缺省跳过 CI 环节
+    ci:    { check_command, timeout_minutes }   # 可选;未显式配置时检测 .github/workflows
     merge: { command }                           # 可选,缺省不自动合并
     acceptance: { max_rounds }                   # 总控验收外层循环上限(与 retry 正交)
     retry:                                     # 三类「回到 worker」回退次数上限
@@ -29,6 +29,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import yaml
 
@@ -59,6 +60,8 @@ DEFAULT_RETRY = {
 
 # 总控验收外层循环上限(设计文档 §6;与 retry 正交)
 DEFAULT_MAX_ROUNDS = 3
+
+DEFAULT_GITHUB_CHECK_COMMAND = "gh pr checks {pr_url} --watch --fail-fast"
 
 
 # 环境变量回退(设计文档 §5:全局 flag 带 env 回退)
@@ -184,16 +187,30 @@ def resolve_engine_settings(
     return engine_type, workspace_id, project_id
 
 
-def get_ci_config(config: dict) -> dict | None:
-    """返回 ci 配置块;未配置或缺少 check_command 时返回 None(环节整体跳过)。
+def _has_github_workflow(root: str | os.PathLike = ".") -> bool:
+    workflows = Path(root) / ".github" / "workflows"
+    if not workflows.is_dir():
+        return False
+    return any(workflows.glob("*.yml")) or any(workflows.glob("*.yaml"))
 
-    设计文档 §6/§7.3:ci 可选,缺省跳过 CI 环节。check_command 是带 {pr_url}
-    占位的模板命令,subprocess 执行,退出码即结论。timeout_minutes 缺省 30。
+
+def get_ci_config(config: dict, root: str | os.PathLike = ".") -> dict | None:
+    """返回 ci 配置块;未显式配置时按 .github/workflows 自动判断。
+
+    设计文档 §6/§7.3:ci 可选。显式 check_command 最高优先级;未配置时,
+    若仓库存在 GitHub Actions workflow,默认用 gh pr checks;否则跳过 CI。
+    check_command 是带 {pr_url} 占位的模板命令,subprocess 执行,退出码即结论。
     """
     ci = config.get("ci")
-    if not isinstance(ci, dict) or not ci.get("check_command"):
+    if isinstance(ci, dict) and ci.get("check_command"):
+        return ci
+    if not _has_github_workflow(root):
         return None
-    return ci
+    timeout = ci.get("timeout_minutes", 30) if isinstance(ci, dict) else 30
+    return {
+        "check_command": DEFAULT_GITHUB_CHECK_COMMAND,
+        "timeout_minutes": timeout,
+    }
 
 
 def get_merge_config(config: dict) -> dict | None:

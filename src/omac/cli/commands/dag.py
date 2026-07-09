@@ -8,7 +8,10 @@ import time
 
 from .. import exit_codes
 from ..output import add_output_flag, hint, print_json, print_table
-from ...core.config import ENV_ENGINE, ENV_WORKSPACE, load_config, resolve_engine_settings, DEFAULTS, CONFIG_PATH
+from ...core.config import (
+    CONFIG_PATH, DEFAULTS, ENV_ENGINE, ENV_WORKSPACE,
+    load_config, resolve_engine_settings, resolve_retry,
+)
 from ...core.graph import node_waves
 from ...core.lint import lint
 from ...core.manifest import load_manifest
@@ -53,7 +56,7 @@ DESCRIPTION = """manifest DAG 的检查、摘要与确定性执行。
     禁止放后台、禁止寄望"未来某轮再看"、禁止在无活跃 run 时声称"持续监督中"。
   - 重试显式:节点不会自动重试,必须经 `omac node retry` 显式决策。
   - 失败隔离:某节点 failed → 其下游自动 blocked,不再派发;不可绕过。
-  - 不自动 merge:合并是外部门控,引擎只推进到 done,不替你合入。
+  - 默认不自动 merge:未配置 merge.command 时 pass 即 done;配置后才执行合并门。
   - manifest 唯一口径:全局状态只在 manifest + 平台,不依赖 checkpoint / event log。
 """
 
@@ -67,6 +70,21 @@ def _add_log_flags(parser):
         "--json-logs", dest="log_format", action="store_const", const="json",
         default=argparse.SUPPRESS,
         help="--log-format json 的简写:进度事件出 JSON-lines(stderr)")
+
+
+def _config_path_for_manifest(manifest_path: str) -> str:
+    """按 manifest 定位同项目 config,缺省回退 cwd 的 .omac/config.yaml。"""
+    abs_path = os.path.abspath(manifest_path)
+    parent = os.path.dirname(abs_path)
+    if os.path.basename(parent) == ".omac":
+        candidate = os.path.join(parent, "config.yaml")
+    else:
+        candidate = os.path.join(parent, CONFIG_PATH)
+    return candidate if os.path.exists(candidate) else CONFIG_PATH
+
+
+def _load_config_for_manifest(manifest_path: str) -> dict:
+    return load_config(_config_path_for_manifest(manifest_path))
 
 
 def register(parser):
@@ -113,7 +131,7 @@ def _assemble_engine(args):
 
     返回 (engine, engine_config)。报错即教学(§2)。
     """
-    config = load_config(CONFIG_PATH)
+    config = _load_config_for_manifest(args.manifest)
     engine_type, workspace_id, project_id = resolve_engine_settings(
         config, engine=getattr(args, "engine", None),
         workspace=getattr(args, "workspace", None),
@@ -168,7 +186,7 @@ def _default_max_parallel(args) -> int:
     override = getattr(args, "max_parallel", None)
     if override is not None:
         return override
-    return load_config(CONFIG_PATH).get("defaults", {}).get(
+    return _load_config_for_manifest(args.manifest).get("defaults", {}).get(
         "max_parallel", DEFAULTS["max_parallel"])
 
 
@@ -195,7 +213,7 @@ def check(args) -> int:
             hint("修订后重跑 `omac dag check <file>` 重新过门")
         return exit_codes.VALIDATION
 
-    reviewers = (load_config(CONFIG_PATH).get("roles") or {}).get("reviewers") or []
+    reviewers = (_load_config_for_manifest(path).get("roles") or {}).get("reviewers") or []
     reviewed = False
     if reviewers and not args.no_review:
         reviewer = reviewers[0]
@@ -308,7 +326,7 @@ def status(args) -> int:
             f"manifest 文件不存在: {args.manifest}\n"
             f"  用 omac plan create --name <name> 生成,或检查路径")
     engine, _ = _assemble_engine(args)
-    config = load_config(CONFIG_PATH)
+    config = _load_config_for_manifest(args.manifest)
     manifest = load_manifest(args.manifest)
     report = build_status_report(manifest, engine.store, args.manifest)
 
@@ -384,9 +402,11 @@ def _loop_or_single(args, single_round: bool) -> int:
 
     engine, _ = _assemble_engine(args)
     # 派单前:真实引擎下自动把 config 同步到 main,否则隔离区 agent clone 后读不到。
-    ensure_config_synced(CONFIG_PATH, branch="main",
+    config_path = _config_path_for_manifest(args.manifest)
+    ensure_config_synced(config_path, branch="main",
                          engine_type=engine.store.config.engine_type)
-    config = load_config(CONFIG_PATH)
+    config = load_config(config_path)
+    retry_limits = resolve_retry(config)
     manifest = load_manifest(args.manifest)
     max_parallel = _default_max_parallel(args)
     max_rounds = getattr(args, "max_rounds", None)
@@ -399,7 +419,7 @@ def _loop_or_single(args, single_round: bool) -> int:
     while True:
         last_result = tick(
             engine.store, engine.runtime, manifest, args.manifest,
-            max_parallel=max_parallel, config=config)
+            max_parallel=max_parallel, retry_limits=retry_limits, config=config)
         rounds += 1
 
         if last_result.state == "converged":
@@ -411,7 +431,7 @@ def _loop_or_single(args, single_round: bool) -> int:
                 # 否则 emit 反映的是验收前的 3 节点,用户看不到增量节点。
                 last_result = tick(
                     engine.store, engine.runtime, manifest, args.manifest,
-                    max_parallel=max_parallel, config=config)
+                    max_parallel=max_parallel, retry_limits=retry_limits, config=config)
                 _emit(last_result, manifest, args)
                 return acceptance_exit
             _emit(last_result, manifest, args)

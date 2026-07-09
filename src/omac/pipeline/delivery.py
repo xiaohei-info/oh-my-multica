@@ -25,9 +25,9 @@ manifest 的 ``Node`` 不携带回退计数(单一事实源)。上界由 ``confi
                                                          ≥ 上界 → blocked)
 
 纪律(§12.4):CI / merge 走模板命令(subprocess),绝不直接 shell out 平台 CLI;
-CI 与 merge 均只在主 loop 配置了 ``config.ci.check_command`` /
-``config.merge.command`` 时启用,未配置则环节整体跳过(现行为不变,
-由未配 ci / merge 的回归保证)。考试点:退出码契约不可破(§5.1),
+CI 在显式配置 ``config.ci.check_command`` 或检测到 ``.github/workflows``
+时启用;否则跳过。merge 只在配置了 ``config.merge.command`` 时启用。
+考试点:退出码契约不可破(§5.1),
 术语 §10.2 用「进行中节点」「就绪节点」,禁止 harvest/在飞 等硬译行话。
 """
 from __future__ import annotations
@@ -131,11 +131,12 @@ def advance_delivery(
     store: object,
     runtime: AgentRuntime,
     retry_limits: dict,
+    project_root: str = ".",
 ) -> str:
     """worker 证据已过门后推进 CI 门(§7.3)。
 
-    - 未配置 ci → 环节整体跳过,返回 ``'pass'``(loop 按原路径转 review/done)。
-    - 配置了 ci → 进入 ``ci_check``(manifest 细分态,平台仍 in_progress),执行
+    - 未配置 ci 且未检测到 GitHub workflow → 环节整体跳过,返回 ``'pass'``。
+    - 配置了 ci 或检测到 GitHub workflow → 进入 ``ci_check``(manifest 细分态,平台仍 in_progress),执行
       ``ci.check_command``:
         * 绿 → 回到 ``in_progress``,返回 ``'pass'``
         * 失败/超时 → 失败摘要(命令输出尾部) add_comment + 转回 worker +
@@ -149,7 +150,7 @@ def advance_delivery(
     """
     node = manifest.nodes[node_key]
     item_id = node.work_item_id
-    ci = get_ci_config(config)
+    ci = get_ci_config(config, root=project_root)
     if ci is None:
         return "pass"
 

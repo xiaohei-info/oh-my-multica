@@ -476,6 +476,61 @@ class TestSubmitPerKindPhase:
         assert got.verification is None
         assert got.status == WorkItemStatus.TODO
 
+    def test_develop_authoring_rejects_github_draft_pr_atomic(self, tmp_path, monkeypatch):
+        eng = _engine()
+        item = eng.store.create_work_item(
+            "mock-workspace", "t", "d", dag_key="a", worker="alice",
+            kind=dispatch_mod.TaskKind.DEVELOP,
+        )
+        eng.store.set_node_contract(item.id, CONTRACT)
+        vfile = tmp_path / "verification.yaml"
+        vfile.write_text(yaml.safe_dump(_make_verification()))
+
+        class _R:
+            returncode = 0
+            stdout = '{"isDraft": true}\n'
+            stderr = ""
+
+        monkeypatch.setattr(dispatch_mod.subprocess, "run", lambda *a, **k: _R())
+
+        with pytest.raises(ValidationError) as exc:
+            dispatch_mod.submit(
+                eng.store, item.id,
+                pr_url="https://github.com/acme/snake/pull/1",
+                verification_file=str(vfile),
+            )
+
+        assert "draft" in str(exc.value).lower()
+        got = eng.store.get_work_item(item.id)
+        assert got.artifacts is None
+        assert got.verification is None
+        assert got.status == WorkItemStatus.TODO
+
+    def test_develop_authoring_accepts_github_ready_pr(self, tmp_path, monkeypatch):
+        eng = _engine()
+        item = eng.store.create_work_item(
+            "mock-workspace", "t", "d", dag_key="a", worker="alice",
+            kind=dispatch_mod.TaskKind.DEVELOP,
+        )
+        eng.store.set_node_contract(item.id, CONTRACT)
+        vfile = tmp_path / "verification.yaml"
+        vfile.write_text(yaml.safe_dump(_make_verification()))
+
+        class _R:
+            returncode = 0
+            stdout = '{"isDraft": false}\n'
+            stderr = ""
+
+        monkeypatch.setattr(dispatch_mod.subprocess, "run", lambda *a, **k: _R())
+
+        result = dispatch_mod.submit(
+            eng.store, item.id,
+            pr_url="https://github.com/acme/snake/pull/1",
+            verification_file=str(vfile),
+        )
+
+        assert result.advanced_to == WorkItemStatus.DONE
+
     # ---------- review ----------
 
     def test_develop_review_success(self, tmp_path):

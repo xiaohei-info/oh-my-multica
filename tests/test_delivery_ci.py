@@ -8,7 +8,7 @@ config.retry)实现评审 reject 回退,因此本模块只补 CI 门(advance_del
 覆盖(对主线的 harvest 顺序 §7.3 worker 证据过门 → ci_check → in_review):
   - 假 CI 脚本(exit 0/1/超时,注入 TimeoutExpired)三路径 across collect_results;
   - 回退计数与封顶断言(item.bounces.ci >= limit → blocked + 失败隔离);
-  - 未配置 ci 的全量回归不变(经真实 collect_results 直转 in_review);
+  - 未配置 ci 且无 .github/workflows 时直转 in_review;有 workflow 时默认跑 gh pr checks;
   - config.retry.ci 自定义上界 + 0 值立即 blocked。
 """
 from __future__ import annotations
@@ -24,6 +24,7 @@ from omac.engines.mock import MockRuntime, MockStore
 from omac.pipeline.delivery import (
     MANIFEST_TO_PLATFORM_STATUS,
     VALID_MANIFEST_STATUSES,
+    CIResult,
     advance_delivery,
     run_ci_check,
     to_platform_status,
@@ -102,7 +103,8 @@ class TestStatusMapping:
 # ── advance_delivery 单元测试(对齐 canonical WorkItem.bounces.ci) ──────────
 
 class TestAdvanceDeliveryUnit:
-    def test_skip_ci_when_unconfigured(self, tmp_path):
+    def test_skip_ci_when_unconfigured(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
         store = _store()
         item = _worker_done_item(store)
         manifest = Manifest(meta={"name": "demo"}, nodes={"a": _node()})
@@ -114,12 +116,13 @@ class TestAdvanceDeliveryUnit:
         assert store.get_comments(item.id) == []
         assert manifest.nodes["a"].status == "in_progress"
 
-    def test_ci_block_missing_means_pass(self, tmp_path):
+    def test_ci_block_missing_means_pass(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
         store = _store()
         item = _worker_done_item(store)
         manifest = Manifest(meta={}, nodes={"a": _node()})
         manifest.nodes["a"].work_item_id = item.id
-        # ci 块存在但缺 check_command → get_ci_config 返回 None → 跳过
+        # ci 块存在但缺 check_command,且无 .github/workflows → 跳过
         assert advance_delivery(
             {"ci": {"timeout_minutes": 30}}, manifest, "a", store, _runtime(store),
             dict(DEFAULT_RETRY)) == "pass"
@@ -284,7 +287,8 @@ class TestCollectResultsCi:
                                                        status="in_progress")})
         return manifest, item
 
-    def test_no_config_skips_to_review(self, tmp_path):
+    def test_no_config_skips_to_review(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
         store = _store()
         rt = _runtime(store)
         manifest, item = self._advance_to_worker_done(store)
@@ -297,6 +301,37 @@ class TestCollectResultsCi:
         assert store.get_work_item(item.id).status is WorkItemStatus.IN_REVIEW
         # reviewer 被转派并唤醒
         assert any(e[2] == "reviewer" for e in store.assign_log)
+
+    def test_github_workflow_defaults_to_ci_before_review(self, tmp_path, monkeypatch):
+        workflows = tmp_path / ".github" / "workflows"
+        workflows.mkdir(parents=True)
+        (workflows / "ci.yml").write_text("name: ci\n", encoding="utf-8")
+        seen = {}
+
+        def fake_ci(command, pr_url, timeout_minutes=30):
+            seen["command"] = command
+            seen["pr_url"] = pr_url
+            seen["timeout_minutes"] = timeout_minutes
+            return CIResult(True, False, 0, "ok", "ok")
+
+        monkeypatch.setattr("omac.pipeline.delivery.run_ci_check", fake_ci)
+        store = _store()
+        rt = _runtime(store)
+        manifest, item = self._advance_to_worker_done(store)
+        path = str(tmp_path / ".omac" / "m.yaml")
+        import omac.core.manifest as mmod
+        (tmp_path / ".omac").mkdir()
+        mmod.save_manifest(manifest, path)
+
+        loop.collect_results(store, rt, manifest, path, retry_limits=dict(DEFAULT_RETRY),
+                            config={})
+
+        assert seen == {
+            "command": "gh pr checks {pr_url} --watch --fail-fast",
+            "pr_url": "https://example.com/pr/1",
+            "timeout_minutes": 30,
+        }
+        assert manifest.nodes["a"].status == "in_review"
 
     def test_ci_passes_goes_in_review(self, tmp_path):
         store = _store()

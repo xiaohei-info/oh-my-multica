@@ -357,6 +357,28 @@ class TestDagStatusCLI:
         data = json.loads(capsys.readouterr().out)
         assert data["progress"]["done"] == 1
 
+    def test_status_reads_config_next_to_absolute_manifest(self, tmp_path, monkeypatch, capsys):
+        """从项目外执行 dag status /abs/project/.omac/m.yaml 也读项目配置。"""
+        project = tmp_path / "project"
+        run_from = tmp_path / "outside"
+        omac_dir = project / ".omac"
+        omac_dir.mkdir(parents=True)
+        run_from.mkdir()
+        self._write_config(project)
+        import yaml
+        manifest_path = omac_dir / "m.yaml"
+        with open(manifest_path, "w") as f:
+            yaml.dump({
+                "meta": {"name": "abs-dag"},
+                "nodes": [{"id": "a", "worker": "alice", "status": "done"}],
+            }, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        monkeypatch.chdir(run_from)
+
+        assert main(["dag", "status", str(manifest_path), "--output", "json"]) == exit_codes.OK
+
+        data = json.loads(capsys.readouterr().out)
+        assert data["progress"]["done"] == 1
+
     def test_status_manifest_not_found(self, tmp_path, monkeypatch, capsys):
         monkeypatch.chdir(tmp_path)
         self._write_config(tmp_path)

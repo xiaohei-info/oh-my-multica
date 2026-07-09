@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Set, Tuple
 
 from ..core import graph, logsetup
@@ -41,6 +42,13 @@ _PLATFORM_TO_MANIFEST: Dict[str, str] = {
     "failed": "failed",
     "blocked": "blocked",
 }
+
+
+def _project_root_from_manifest_path(manifest_path: str) -> str:
+    parent = Path(manifest_path).resolve().parent
+    if parent.name == ".omac":
+        return str(parent.parent)
+    return str(parent)
 
 
 @dataclass
@@ -135,7 +143,8 @@ def collect_results(
 
     retry_limits: config.retry 解析后的 {ci, review, merge} 上界(None = 全缺省 3)。
     reviewer reject 触发的「回到 worker」回退受 retry_limits["review"] 约束(0 = 立即 blocked)。
-    config: 项目配置;用于决定是否启用 ci 门(§7.3)。未配置 ci.check_command 时环节整体跳过。
+    config: 项目配置;用于决定是否启用 ci 门(§7.3)。显式配置 ci.check_command
+    或检测到 .github/workflows 时启用,否则跳过。
 
     in_progress 节点:
       worker DONE + 证据门过 → 有 reviewer: 转 in_review + assign reviewer + wake
@@ -181,7 +190,8 @@ def collect_results(
                 # advance_delivery 已处理节点状态与平台状态切换;返回 'pass' 继续,
                 # 'bounce' 已转回 worker(本 tick 不再推进), 'blocked' 则阻止后续。
                 ci_action = advance_delivery(
-                    config or {}, manifest, key, store, runtime, limits)
+                    config or {}, manifest, key, store, runtime, limits,
+                    project_root=_project_root_from_manifest_path(manifest_path))
                 if ci_action == "bounce":
                     failures[key] = "CI 未通过,已转回 worker(上界未耗尽,待重交)"
                     log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=key,
@@ -192,7 +202,7 @@ def collect_results(
                     log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
                              id=node.work_item_id, reason="CI 回退上界已耗尽")
                     continue
-                # CI 绿(或未配置 ci 整体跳过):nits follow-up 已经由上一轮 reviewer 接受,
+                # CI 绿(或无可用 CI 而跳过):nits follow-up 已经由上一轮 reviewer 接受,
                 # worker 修完后直接进入 merge/done,不再浪费第二轮 reviewer。
                 if item.review_verdict == "pass-with-nits":
                     merge_action = run_merge_delivery(

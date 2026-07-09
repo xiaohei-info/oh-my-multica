@@ -97,6 +97,10 @@ def test_non_interactive_writes_valid_config(tmp_path, monkeypatch, capsys):
         "--orchestrator", "bob",
         "--workers", "charlie",
         "--reviewers", "alice,bob",
+        "--max-parallel", "7",
+        "--retry-ci", "1",
+        "--retry-review", "2",
+        "--retry-merge", "0",
     ])
     assert code == exit_codes.OK
     assert (tmp_path / ".omac" / "config.yaml").exists()
@@ -110,6 +114,8 @@ def test_non_interactive_writes_valid_config(tmp_path, monkeypatch, capsys):
     assert cfg["roles"]["workers"] == ["charlie"]
     assert cfg["roles"]["reviewers"] == ["alice", "bob"]
     assert "acceptor" not in cfg["roles"]  # 可选缺省
+    assert cfg["defaults"]["max_parallel"] == 7
+    assert cfg["retry"] == {"ci": 1, "review": 2, "merge": 0}
 
     # 紧接着 --check 通过
     capsys.readouterr()
@@ -319,6 +325,7 @@ def test_interactive_main_path(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(sys, "stdin", _Tty())
     # 回答顺序:engine(回车=mock)→ workspace(回车=第一个)→ planner(回车=1)
     # → orchestrator(回车=1)→ workers(回车=1)→ reviewers(回车=1)→ acceptor(回车跳过)
+    # → max_parallel(6)→ retry values → workflow defaults
     monkeypatch.setattr(builtins, "input", _answers([
         "",       # engine → mock
         "",       # workspace → 首个(mock-workspace)
@@ -327,6 +334,13 @@ def test_interactive_main_path(tmp_path, monkeypatch, capsys):
         "",       # workers → 序号1=alice
         "",       # reviewers → 序号1=alice
         "",       # acceptor → 跳过
+        "6",      # max_parallel
+        "1",      # retry.ci
+        "2",      # retry.review
+        "0",      # retry.merge
+        "",       # workflow.human_in_loop
+        "",       # workflow.acceptance_doc
+        "",       # workflow.goal_required
     ]))
     assert main(["init"]) == exit_codes.OK
     import yaml
@@ -335,6 +349,8 @@ def test_interactive_main_path(tmp_path, monkeypatch, capsys):
     assert cfg["roles"]["planner"] == "alice"
     assert cfg["roles"]["workers"] == ["alice"]
     assert "acceptor" not in cfg["roles"]
+    assert cfg["defaults"]["max_parallel"] == 6
+    assert cfg["retry"] == {"ci": 1, "review": 2, "merge": 0}
     assert cfg["workflow"] == {
         "human_in_loop": True,
         "review": True,

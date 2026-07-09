@@ -6,7 +6,8 @@
 
 兼容路径(全参数直出):
   omac init --engine mock --workspace ws --planner a --orchestrator b \\
-            --workers c,d --reviewers e,f [--acceptor g]
+            --workers c,d --reviewers e,f [--acceptor g] [--max-parallel 4]
+            [--retry-ci 3 --retry-review 3 --retry-merge 3]
 
 红线:init 只调引擎接口(WorkItemStore.list_workspaces / list_members),
 绝不直接 shell out 平台 CLI(§12.4)。
@@ -39,7 +40,8 @@ agent/脚本入口:
 兼容路径(全参数零交互直出):
   omac init --engine mock --workspace ws \\
             --planner alice --orchestrator bob \\
-            --workers carol,dave --reviewers eve,frank [--acceptor grace]
+            --workers carol,dave --reviewers eve,frank [--acceptor grace] [--max-parallel 4]
+            [--retry-ci 3 --retry-review 3 --retry-merge 3]
 """
 
 
@@ -53,6 +55,14 @@ def register(parser):
     parser.add_argument("--workers", help="worker agent 名,逗号分隔")
     parser.add_argument("--reviewers", help="reviewer agent 名,逗号分隔")
     parser.add_argument("--acceptor", help="acceptor agent 名(可选,缺省复用 reviewers 池)")
+    parser.add_argument("--max-parallel", type=int,
+                        help="DAG run 默认最大并行任务数(defaults.max_parallel)")
+    parser.add_argument("--retry-ci", type=int,
+                        help="CI 失败回到 worker 的次数上限(retry.ci,0=立即 blocked)")
+    parser.add_argument("--retry-review", type=int,
+                        help="reviewer reject 回到 worker 的次数上限(retry.review,0=立即 blocked)")
+    parser.add_argument("--retry-merge", type=int,
+                        help="merge 失败回到 worker 的次数上限(retry.merge,0=立即 blocked)")
 
 
 # ==================== 工具 ====================
@@ -92,6 +102,61 @@ def _prompt_bool(message: str, default: bool) -> bool:
     if raw in ("n", "no", "false", "0", "否"):
         return False
     raise ValidationError(f"{message} 只接受 yes/no")
+
+
+def _validate_max_parallel(value: int) -> int:
+    if isinstance(value, bool) or value < 1:
+        raise ValidationError(
+            f"defaults.max_parallel 必须为正整数,got {value!r}")
+    return value
+
+
+def _select_max_parallel(args_val: Optional[int], interactive: bool) -> int:
+    if args_val is not None:
+        return _validate_max_parallel(args_val)
+    default = config_mod.DEFAULTS["max_parallel"]
+    if not interactive:
+        return default
+    raw = _prompt("默认最大并行任务数(defaults.max_parallel)", str(default))
+    try:
+        return _validate_max_parallel(int(raw))
+    except ValueError:
+        raise ValidationError(
+            f"defaults.max_parallel 必须为正整数,got {raw!r}")
+
+
+def _validate_retry_value(key: str, value: int) -> int:
+    if isinstance(value, bool) or value < 0:
+        raise ValidationError(f"retry.{key} 必须为非负整数,got {value!r}")
+    return value
+
+
+def _select_retry(args, interactive: bool) -> dict:
+    retry = dict(config_mod.DEFAULT_RETRY)
+    arg_map = {
+        "ci": getattr(args, "retry_ci", None),
+        "review": getattr(args, "retry_review", None),
+        "merge": getattr(args, "retry_merge", None),
+    }
+    for key, value in arg_map.items():
+        if value is not None:
+            retry[key] = _validate_retry_value(key, value)
+    if not interactive:
+        return retry
+
+    print("\n执行失败回退上限(0=该类失败立即 blocked):")
+    labels = {
+        "ci": "CI 失败回到 worker 次数(retry.ci)",
+        "review": "reviewer reject 回到 worker 次数(retry.review)",
+        "merge": "merge 失败回到 worker 次数(retry.merge)",
+    }
+    for key in ("ci", "review", "merge"):
+        raw = _prompt(labels[key], str(retry[key]))
+        try:
+            retry[key] = _validate_retry_value(key, int(raw))
+        except ValueError:
+            raise ValidationError(f"retry.{key} 必须为非负整数,got {raw!r}")
+    return retry
 
 
 def _select_engine(args) -> str:
@@ -254,7 +319,9 @@ def _select_workflow(interactive: bool) -> dict:
 def _build_config(engine: str, workspace: str, project: Optional[str],
                   planner: str, orchestrator: str,
                   workers: List[str], reviewers: List[str],
-                  acceptor: Optional[str], workflow: Optional[dict] = None) -> dict:
+                  acceptor: Optional[str], workflow: Optional[dict] = None,
+                  max_parallel: Optional[int] = None,
+                  retry: Optional[dict] = None) -> dict:
     roles = {
         "planner": planner,
         "orchestrator": orchestrator,
@@ -269,11 +336,19 @@ def _build_config(engine: str, workspace: str, project: Optional[str],
     }
     if project:
         cfg["project"] = project
+    defaults = dict(config_mod.DEFAULTS)
+    if max_parallel is not None:
+        defaults["max_parallel"] = _validate_max_parallel(max_parallel)
+    retry_cfg = dict(config_mod.DEFAULT_RETRY)
+    if retry is not None:
+        for key in config_mod.DEFAULT_RETRY:
+            if key in retry:
+                retry_cfg[key] = _validate_retry_value(key, retry[key])
     cfg.update({
         "roles": roles,
-        "defaults": dict(config_mod.DEFAULTS),
+        "defaults": defaults,
         "workflow": dict(workflow or config_mod.DEFAULT_WORKFLOW),
-        "retry": dict(config_mod.DEFAULT_RETRY),
+        "retry": retry_cfg,
         "acceptance": {"max_rounds": config_mod.DEFAULT_MAX_ROUNDS},
     })
     return cfg
@@ -307,6 +382,10 @@ def _run_setup(args) -> int:
             "  omac config set roles.orchestrator bob\n"
             "  omac config set roles.workers '[\"alice\"]'\n"
             "  omac config set roles.reviewers '[\"charlie\"]'\n"
+            "  omac config set defaults.max_parallel 4\n"
+            "  omac config set retry.ci 3\n"
+            "  omac config set retry.review 3\n"
+            "  omac config set retry.merge 3\n"
             "  omac config set workflow.human_in_loop false\n"
             "  omac config set workflow.acceptance_doc true\n"
             "  omac config set workflow.goal_required true\n"
@@ -331,10 +410,12 @@ def _run_setup(args) -> int:
             acceptor = _resolve_member(args.acceptor, members, "acceptor")
     else:
         acceptor = _select_acceptor(args.acceptor, members)
+    max_parallel = _select_max_parallel(args.max_parallel, interactive=not non_interactive)
+    retry = _select_retry(args, interactive=not non_interactive)
     workflow = _select_workflow(interactive=not non_interactive)
     return _write_config(_build_config(
         engine, workspace, project, planner, orchestrator, workers, reviewers,
-        acceptor, workflow))
+        acceptor, workflow, max_parallel, retry))
 
 
 # ==================== 体检 ====================
@@ -367,6 +448,10 @@ def _check() -> int:
             "  omac config set roles.orchestrator bob\n"
             "  omac config set roles.workers '[\"alice\"]'\n"
             "  omac config set roles.reviewers '[\"charlie\"]'\n"
+            "  omac config set defaults.max_parallel 4\n"
+            "  omac config set retry.ci 3\n"
+            "  omac config set retry.review 3\n"
+            "  omac config set retry.merge 3\n"
             "  omac config set workflow.human_in_loop false\n"
             "  omac config set workflow.acceptance_doc true\n"
             "  omac config set workflow.goal_required true\n"
