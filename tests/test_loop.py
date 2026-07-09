@@ -797,7 +797,43 @@ class TestReviewerRejectBoundedFallback:
         assert reviewer_dispatches_after_followup == reviewer_dispatches_before_followup
         got = eng.store.get_work_item(item.id)
         assert got.status == WorkItemStatus.DONE
+        assert got.review_verdict is None
         assert got.bounces.review == 0
+
+    def test_done_node_repairs_worker_status_regression(self, tmp_path):
+        """已完成节点遇到平台状态被 worker 回退为 in_review 时,以 manifest done 为准纠偏。"""
+        from omac.engines import create_engine
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        manifest.nodes["a"].status = "done"
+        eng.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+        eng.store.update_work_item_metadata(item.id, review_verdict="pass-with-nits")
+        save_manifest(manifest, path)
+
+        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+
+        got = eng.store.get_work_item(item.id)
+        assert result.state == "converged"
+        assert manifest.nodes["a"].status == "done"
+        assert got.status == WorkItemStatus.DONE
+
+    def test_authoring_node_repairs_worker_manual_in_review(self, tmp_path):
+        """authoring 阶段被 worker 手改成 in_review 时,拉回 in_progress 等合法 submit。"""
+        from omac.engines import create_engine
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        manifest.nodes["a"].status = "in_progress"
+        eng.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+        save_manifest(manifest, path)
+
+        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+
+        got = eng.store.get_work_item(item.id)
+        assert result.state == "running"
+        assert manifest.nodes["a"].status == "in_progress"
+        assert got.status == WorkItemStatus.IN_PROGRESS
 
     def test_retry_review_one_allows_single_fallback(self, tmp_path):
         """retry.review=1 → 第 1 次 reject 回退 worker(bounce→1),第 2 次 reject 耗尽 → blocked。"""

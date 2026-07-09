@@ -141,11 +141,15 @@ def _assemble_engine(args):
         "poll_interval", DEFAULTS["poll_interval"])
     # OMAC_* 与 MOCK_* env vars 透传给 EngineConfig.extra(对齐 node.py/init_cmd 模式);
     # 让 MOCK_AUTO_COMPLETE / MOCK_AUTO_COMPLETE_DELAY 等 mock 配置可被 e2e 测试携带。
-    extra = {
+    extra = dict(config.get("engine_extra") or {})
+    if config.get("workspace_slug"):
+        extra["workspace_slug"] = config["workspace_slug"]
+    extra.update({
         k: v for k, v in os.environ.items()
         if (k.startswith('OMAC_') or k.startswith('MOCK_'))
         and k not in (ENV_ENGINE, ENV_WORKSPACE)
-    } or None
+    })
+    extra = extra or None
     engine_config = EngineConfig(
         engine_type=engine_type,
         workspace_id=workspace_id,

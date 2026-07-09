@@ -348,8 +348,28 @@ def test_develop_authoring_action_and_submit_cover_pr_flow():
     assert "推分支" in protocol or "git push" in protocol, protocol
     assert "PR" in protocol, protocol
     assert "自建" in protocol or "不代建" in protocol, protocol
+    assert "不要手动改 issue 状态" in protocol
     # 精确交付命令归 submit 段(相位视图:动作与命令分离)
     assert "--pr-url" in out["submit"]
+
+
+def test_work_resolve_store_preserves_workspace_slug_from_config(tmp_path, monkeypatch):
+    """work show 渲染上游 issue 链需要 workspace_slug 才能生成 mention 链接。"""
+    from omac.cli.commands import work as work_cmd
+
+    monkeypatch.chdir(tmp_path)
+    cfg_dir = tmp_path / ".omac"
+    cfg_dir.mkdir()
+    with open(cfg_dir / "config.yaml", "w") as f:
+        yaml.safe_dump({
+            "engine": "mock",
+            "workspace": "mock-workspace",
+            "workspace_slug": "guantik-aiteam",
+        }, f)
+
+    store = work_cmd._resolve_store()
+
+    assert store.config.extra["workspace_slug"] == "guantik-aiteam"
 
 
 def test_develop_show_mentions_issue_key_for_pr_autolink():

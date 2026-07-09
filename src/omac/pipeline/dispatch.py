@@ -55,7 +55,8 @@ _AUTHORING_ACTION = {
     TaskKind.DECOMPOSE:
         "把设计方案/验收拆成 manifest DAG:每节点带完整 contract、acceptance 锚定验收文档、DAG 无环。",
     TaskKind.DEVELOP:
-        "推分支 + 开 PR(base=contract.pr_base,worker 自建、omac 不代建),TDD 同步,产出结构化验证证据。",
+        "推分支 + 开 PR(base=contract.pr_base,worker 自建、omac 不代建),TDD 同步,产出结构化验证证据;"
+        "不要手动改 issue 状态/assignee/rerun/cancel。",
     TaskKind.FINAL_ACCEPTANCE:
         "以验收文档为清单做用户视角端到端走查,逐条记录 pass/fail + 证据。",
 }
@@ -902,7 +903,10 @@ def render_issue_body(node, contract, kind, issue_id, source_refs=None, engine_e
     if contract is not None and getattr(contract, "coverage_gate", None) not in (None,):
         rules.append(
             f"改动分支覆盖 ≥ coverage_gate={contract.coverage_gate}")
-    rules.append("平台状态由 loop 推进,不手动改 issue 状态/assignee")
+    rules.append(
+        "平台状态由 loop 推进,worker 禁止手动执行 "
+        "`multica issue status` / `multica issue assign` / "
+        "`multica issue rerun` / `multica issue cancel-task`;只通过 `omac work submit` 交付")
     hard = "## 硬约束（铁律）\n" + "\n".join(f"- {r}" for r in rules)
 
     # ---- 任务详情:node.description 是 worker 的上下文来源(manifest §7.4),

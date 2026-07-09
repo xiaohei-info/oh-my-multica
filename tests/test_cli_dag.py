@@ -11,6 +11,7 @@ import os
 import pytest
 
 from omac.cli import exit_codes
+from omac.cli.commands.dag import _assemble_engine
 from omac.cli.main import main
 from omac.engines import create_engine
 from omac.engines.models import EngineConfig, WorkItemStatus
@@ -331,6 +332,30 @@ class TestDagStatusCLI:
         assert data["progress"]["done"] == 1
         assert data["progress"]["blocked"] == 1
         assert data["needs_decision"] is not None
+
+    def test_assemble_engine_preserves_workspace_slug_from_config(self, tmp_path):
+        """dag run 的 issue body 需要 workspace_slug 才能渲染 Multica mention 链接。"""
+        import yaml
+        cfg_dir = tmp_path / ".omac"
+        cfg_dir.mkdir(exist_ok=True)
+        with open(cfg_dir / "config.yaml", "w") as f:
+            yaml.dump({
+                "engine": "mock",
+                "workspace": "ws",
+                "workspace_slug": "guantik-aiteam",
+            }, f)
+        path = _manifest_yaml(tmp_path, [
+            {"id": "a", "worker": "alice", "status": "todo"},
+        ])
+
+        engine, _ = _assemble_engine(type("Args", (), {
+            "manifest": path,
+            "engine": None,
+            "workspace": None,
+            "project": None,
+        })())
+
+        assert engine.store.config.extra["workspace_slug"] == "guantik-aiteam"
 
     def test_table_output_default(self, tmp_path, monkeypatch, capsys):
         monkeypatch.chdir(tmp_path)

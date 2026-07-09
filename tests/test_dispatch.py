@@ -230,6 +230,15 @@ class TestRenderIssueBody:
         assert "失败时先运行 `omac guide` 列 topic" in body
         assert "`omac work submit` 是硬交付入口" in body
 
+    def test_worker_body_forbids_manual_platform_state_changes(self):
+        """worker 只能 work submit,不能手动改平台状态/分配/重跑/取消。"""
+        n = Node(id="n", worker="alice", title="开发")
+        body = render_issue_body(n, None, TaskKind.DEVELOP, "ID")
+        assert "multica issue status" in body
+        assert "multica issue assign" in body
+        assert "multica issue rerun" in body
+        assert "multica issue cancel-task" in body
+
     def test_contract_summary_none_returns_fallback(self):
         """_contract_summary 在 contract=None 时应直接返回 fallback,作为占位的根。"""
         from omac.pipeline.dispatch import _contract_summary

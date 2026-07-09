@@ -123,6 +123,15 @@ def reconcile(store: WorkItemStore, manifest: Manifest, manifest_path: str) -> b
         if node.status == "abandoned":
             continue
 
+        # done 是 OMAC 已收口的业务状态。若 worker/平台把投影回退为 in_review/in_progress,
+        # 不反向污染 manifest,而是把平台投影修回 done。
+        if node.status == "done":
+            if item.review_verdict == "pass-with-nits":
+                store.reset_review(node.work_item_id)
+            if item.status != WorkItemStatus.DONE:
+                store.update_status(node.work_item_id, WorkItemStatus.DONE)
+            continue
+
         platform_status = item.status.value if hasattr(item.status, "value") else str(item.status)
         manifest_status = _PLATFORM_TO_MANIFEST.get(platform_status, platform_status)
         if manifest_status != node.status:
@@ -187,6 +196,15 @@ def collect_results(
         except Exception:
             continue
 
+        if (
+            node.status == "in_progress"
+            and item.status == WorkItemStatus.IN_REVIEW
+            and getattr(item, "phase", TaskPhase.AUTHORING) == TaskPhase.AUTHORING
+        ):
+            store.assign_work_item(node.work_item_id, node.worker, "worker")
+            store.update_status(node.work_item_id, WorkItemStatus.IN_PROGRESS)
+            continue
+
         # ---- in_progress: worker 阶段回收 ----
         if node.status == "in_progress":
             if item.status == WorkItemStatus.DONE:
@@ -223,6 +241,7 @@ def collect_results(
                     merge_action = run_merge_delivery(
                         config or {}, manifest, key, store, runtime, limits)
                     if merge_action == "pass":
+                        store.reset_review(node.work_item_id)
                         store.update_status(node.work_item_id, WorkItemStatus.DONE)
                         set_node(manifest, key, status="done")
                         log.info(logsetup.EVT_NODE_DONE, kind=_DAG_KIND, node=key,

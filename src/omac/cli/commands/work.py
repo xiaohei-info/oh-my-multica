@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+import os
 
 from ._stub import not_implemented
 from ...core import config as config_mod
@@ -66,8 +67,16 @@ def _resolve_store():
     """按 config < env < 命令行 解析引擎配置,返回 Store 实例。"""
     cfg = config_mod.load_config()
     engine_type, workspace_id, project_id = config_mod.resolve_engine_settings(cfg)
+    extra = dict(cfg.get("engine_extra") or {})
+    if cfg.get("workspace_slug"):
+        extra["workspace_slug"] = cfg["workspace_slug"]
+    extra.update({
+        k: v for k, v in os.environ.items()
+        if k.startswith("OMAC_") or k.startswith("MOCK_")
+    })
     config = EngineConfig(
-        engine_type=engine_type, workspace_id=workspace_id, project_id=project_id)
+        engine_type=engine_type, workspace_id=workspace_id,
+        project_id=project_id, extra=extra)
     return create_engine(engine_type, config).store
 
 
