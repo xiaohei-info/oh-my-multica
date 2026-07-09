@@ -66,6 +66,8 @@ def test_workflow_topic_is_mechanism_only() -> None:
     content = load_topic("workflow")
     for item in ["omac init", "omac plan create", "omac dag run", "exit 20", "omac guide role planner"]:
         assert item in content, f"workflow missing lifecycle reference: {item}"
+    for item in ["plan create/resume exit 0", "manifest:", "下一步: omac dag run"]:
+        assert item in content, f"workflow missing plan-to-dag handoff guidance: {item}"
     assert "Worker 派发" not in content
     assert "Reviewer 派发" not in content
 
