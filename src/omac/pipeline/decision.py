@@ -20,12 +20,14 @@ def review_decision_required(
     人工判断需要的短字段,避免把大报告复制进 metadata。
     """
     report = review_report if isinstance(review_report, dict) else {}
+    blockers = report.get("blockers") if isinstance(report.get("blockers"), list) else []
+    nits = report.get("nits") if isinstance(report.get("nits"), list) else []
     decision: Dict[str, Any] = {
         "kind": kind,
         "phase": TaskPhase.REVIEW.value,
         "verdict": verdict,
-        "blockers": report.get("blockers") or [],
-        "nits": report.get("nits") or [],
+        "blocker_count": len(blockers),
+        "nit_count": len(nits),
     }
     if round_index is not None:
         decision["round"] = round_index

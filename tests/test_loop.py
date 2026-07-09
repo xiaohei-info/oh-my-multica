@@ -727,8 +727,10 @@ class TestReviewerRejectBoundedFallback:
         assert got.status == WorkItemStatus.BLOCKED
         assert got.decision_required["verdict"] == "pass-with-nits"
         assert "review_report" not in got.decision_required
-        assert got.decision_required["nits"] == ["建议后续优化"]
-        assert got.decision_required["blockers"] == []
+        assert "nits" not in got.decision_required
+        assert "blockers" not in got.decision_required
+        assert got.decision_required["nit_count"] == 1
+        assert got.decision_required["blocker_count"] == 0
 
     def test_retry_review_one_allows_single_fallback(self, tmp_path):
         """retry.review=1 → 第 1 次 reject 回退 worker(bounce→1),第 2 次 reject 耗尽 → blocked。"""

@@ -174,8 +174,10 @@ def test_run_task_pass_with_nits_needs_human_decision():
     assert item.status == WorkItemStatus.BLOCKED
     assert item.decision_required["verdict"] == "pass-with-nits"
     assert "review_report" not in item.decision_required
-    assert item.decision_required["nits"] == []
-    assert item.decision_required["blockers"] == []
+    assert "nits" not in item.decision_required
+    assert "blockers" not in item.decision_required
+    assert item.decision_required["nit_count"] == 0
+    assert item.decision_required["blocker_count"] == 0
 
 
 def test_run_task_reject_handoff_uses_metadata_not_comment():
