@@ -18,6 +18,7 @@ from ..core.manifest import Contract, _load_contract
 from ..core.taskmeta import DELIVERY_CONTENT_KEY, TaskKind, TaskPhase, make_dag_key
 from ..engines.models import WorkItem, WorkItemStatus
 from ..errors import NeedsDecision
+from .decision import review_decision_required
 from .dispatch import render_issue_body
 
 log = logsetup.get_logger(__name__)
@@ -290,13 +291,13 @@ def run_task(
                     "rounds": round_index, "verdict": "pass", "kind": kind.value}
 
         if verdict == "pass-with-nits":
-            decision_required = {
-                "kind": kind.value,
-                "phase": TaskPhase.REVIEW.value,
-                "verdict": verdict,
-                "round": round_index,
-                "review_report": reviewed.review_report,
-            }
+            decision_required = review_decision_required(
+                kind=kind.value,
+                verdict=verdict,
+                review_report=reviewed.review_report,
+                review_report_ref=reviewed.review_report_ref,
+                round_index=round_index,
+            )
             store.update_work_item_metadata(
                 item_id,
                 decision_required=decision_required,

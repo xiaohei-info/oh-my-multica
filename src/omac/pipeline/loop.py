@@ -19,6 +19,7 @@ from ..engines.models import WorkItemStatus
 from ..engines.runtime import AgentRuntime
 from ..engines.store import WorkItemStore
 from ..errors import PlatformError
+from ..pipeline.decision import review_decision_required
 from ..pipeline.dispatch import render_issue_body
 from ..core.taskmeta import TaskKind, TaskPhase
 
@@ -238,12 +239,12 @@ def collect_results(
             if verdict == "pass-with-nits":
                 store.update_work_item_metadata(
                     node.work_item_id,
-                    decision_required={
-                        "kind": item.kind.value,
-                        "phase": TaskPhase.REVIEW.value,
-                        "verdict": verdict,
-                        "review_report": item.review_report,
-                    },
+                    decision_required=review_decision_required(
+                        kind=item.kind.value,
+                        verdict=verdict,
+                        review_report=item.review_report,
+                        review_report_ref=item.review_report_ref,
+                    ),
                     phase=TaskPhase.REVIEW,
                 )
                 store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)

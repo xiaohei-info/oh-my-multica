@@ -708,6 +708,7 @@ class TestReviewerRejectBoundedFallback:
             review_verdict="pass-with-nits",
             review_report={
                 "review_goals": ["确认建议项"],
+                "summary": "x" * 9000,
                 "diff_reviewed": True,
                 "tests_rerun": True,
                 "coverage_checked": True,
@@ -725,6 +726,9 @@ class TestReviewerRejectBoundedFallback:
         got = eng.store.get_work_item(item.id)
         assert got.status == WorkItemStatus.BLOCKED
         assert got.decision_required["verdict"] == "pass-with-nits"
+        assert "review_report" not in got.decision_required
+        assert got.decision_required["nits"] == ["建议后续优化"]
+        assert got.decision_required["blockers"] == []
 
     def test_retry_review_one_allows_single_fallback(self, tmp_path):
         """retry.review=1 → 第 1 次 reject 回退 worker(bounce→1),第 2 次 reject 耗尽 → blocked。"""

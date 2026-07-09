@@ -173,6 +173,9 @@ def test_run_task_pass_with_nits_needs_human_decision():
     item = eng.store.get_work_item(exc.value.report["item_id"])
     assert item.status == WorkItemStatus.BLOCKED
     assert item.decision_required["verdict"] == "pass-with-nits"
+    assert "review_report" not in item.decision_required
+    assert item.decision_required["nits"] == []
+    assert item.decision_required["blockers"] == []
 
 
 def test_run_task_reject_handoff_uses_metadata_not_comment():
