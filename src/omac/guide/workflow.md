@@ -11,6 +11,12 @@ omac 是确定性 CLI 驱动的多 Agent 并行开发编排。Loop 驱动 Agent,
 4. exit 20 后用 `omac dag status`、`omac node show`、`omac node retry|accept|abandon`
    做显式决策,再重跑 `omac dag run`。
 
+## plan 到 dag run 的衔接
+
+`omac plan create/resume exit 0` 表示设计、验收和拆解已经收敛,manifest 已落盘。
+此时不要猜文件名;读取命令输出里的 `manifest:` 和 `下一步: omac dag run ...`。
+agent 继续主线时直接执行这条下一步命令,让 `dag run` 接管开发、CI、review、merge 和总控验收。
+
 ## 阶段导航
 
 | 阶段 | 角色 guide | 产物 guide |

@@ -393,10 +393,13 @@ def _first_item_of_kind(engine, kind):
     return items[0] if items else None
 
 
-def test_create_default_combination(tmp_path, monkeypatch):
+def test_create_default_combination(tmp_path, monkeypatch, capsys):
     import yaml
     engine = _configure_create_mock(tmp_path, monkeypatch)
     assert main(["plan", "create", "--name", "demo-create"]) == exit_codes.OK
+    out = capsys.readouterr().out
+    assert "manifest: .omac/demo-create.yaml" in out
+    assert "omac dag run .omac/demo-create.yaml" in out
     assert (tmp_path / ".omac" / "demo-create.yaml").exists()
     assert (tmp_path / ".omac" / "demo-create.acceptance.yaml").exists()
     data = yaml.safe_load((tmp_path / ".omac" / "demo-create.yaml").read_text())
@@ -589,7 +592,7 @@ def test_plan_confirm_dag_key_exactly_selects_waiting_issue(tmp_path, monkeypatc
     assert engine.store.get_work_item(second.id).status == WorkItemStatus.DONE
 
 
-def test_plan_resume_reuses_existing_plan_issue_by_dag_key(tmp_path, monkeypatch):
+def test_plan_resume_reuses_existing_plan_issue_by_dag_key(tmp_path, monkeypatch, capsys):
     """中断后续跑以 dag_key 为锚点,不能按 name 新建第二个 plan issue。"""
     from omac.core.taskmeta import TaskKind, TaskPhase
     from omac.engines.models import WorkItemStatus
@@ -604,6 +607,9 @@ def test_plan_resume_reuses_existing_plan_issue_by_dag_key(tmp_path, monkeypatch
     engine.store.update_status(plan_item.id, WorkItemStatus.DONE)
 
     assert main(["plan", "resume", "--dag-key", "plan-p-resume01"]) == exit_codes.OK
+    out = capsys.readouterr().out
+    assert "manifest: .omac/重复名.yaml" in out
+    assert "omac dag run '.omac/重复名.yaml'" in out
 
     plan_items = [
         item for item in engine.store.list_work_items("mock-workspace")

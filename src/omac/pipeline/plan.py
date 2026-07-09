@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
@@ -65,6 +66,15 @@ class PlanContext:
 _PLAN_KEY = "plan"
 _ACCEPTANCE_KEY = "acceptance"
 _MANIFEST_KEY = "manifest"
+
+
+def _emit_plan_next_steps(manifest_path: str, acceptance_path: Optional[str] = None) -> None:
+    """plan 收敛后的 agent 可见衔接契约。"""
+    print("plan 完成")
+    print(f"manifest: {manifest_path}")
+    if acceptance_path and os.path.exists(acceptance_path):
+        print(f"acceptance: {acceptance_path}")
+    print(f"下一步: omac dag run {shlex.quote(manifest_path)}")
 
 
 def plan_id_from_dag_key(dag_key: str) -> str:
@@ -272,6 +282,7 @@ def plan_create(
     if source_issues:
         manifest.meta["source_issues"] = source_issues
     save_manifest(manifest, manifest_path)
+    _emit_plan_next_steps(manifest_path, acceptance_path)
 
     return 0
 
@@ -380,5 +391,6 @@ def plan_resume(
     if source_issues:
         manifest.meta["source_issues"] = source_issues
     save_manifest(manifest, manifest_path)
+    _emit_plan_next_steps(manifest_path, acceptance_path)
 
     return 0
