@@ -539,6 +539,7 @@ class MockStore(WorkItemStore):
         review_bounce: Optional[int] = None,
         merge_bounce: Optional[int] = None,
         deliverable: Optional[str] = None,
+        source_refs: Optional[List[Dict[str, Any]]] = None,
         description: Optional[str] = None,
     ) -> WorkItem:
         item = self.get_work_item(item_id)
@@ -580,6 +581,8 @@ class MockStore(WorkItemStore):
             item.bounces.merge = merge_bounce
         if deliverable is not None:
             item.deliverable = deliverable
+        if source_refs is not None:
+            item.source_refs = source_refs
         if description is not None:
             if not description:
                 raise ValidationError("issue update 的 description 不能为空(--description-file 空内容)")

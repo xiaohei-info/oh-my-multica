@@ -88,6 +88,17 @@ class TestRenderIssueBody:
         # bootstrap 指引 role worker guide
         assert "omac guide role worker" in body
 
+    def test_briefing_lists_render_as_nested_markdown(self):
+        n = Node(id="a", worker="alice", title="Add login", reviewer="bob",
+                 contract=_full_contract())
+
+        body = render_issue_body(n, n.contract, TaskKind.DEVELOP, "ISSUE-9")
+
+        assert "- source_of_truth:\n  - docs/login.md" in body
+        assert "- acceptance:\n  - 移动端可登录\n  - token 10 分钟过期" in body
+        assert "- source_of_truth: - " not in body
+        assert "- acceptance: - " not in body
+
     def test_bootstrap_commands_are_copy_pasteable(self):
         """work show/submit 命令里嵌入真实 id(不含通用占位),可直接复制执行。"""
         n = Node(id="n", worker="alice", contract=_full_contract())
@@ -108,6 +119,32 @@ class TestRenderIssueBody:
         prefix = "OMAC_ENGINE=multica OMAC_WORKSPACE_ID=ws-1 OMAC_PROJECT_ID=proj-1"
         assert f"{prefix} omac work show REAL-100" in body
         assert f"{prefix} omac work submit REAL-100" in body
+
+    def test_source_refs_render_markdown_links_and_work_show_commands(self):
+        n = Node(id="n", worker="alice", contract=_full_contract())
+        env = {
+            "OMAC_ENGINE": "multica",
+            "OMAC_WORKSPACE_ID": "ws-1",
+            "OMAC_PROJECT_ID": "proj-1",
+        }
+
+        body = render_issue_body(
+            n, n.contract, TaskKind.DEVELOP, "REAL-100",
+            source_refs=[
+                {"label": "设计方案", "issue_id": "plan-1",
+                 "url": "https://multica.ai/workspaces/ws-1/issues/plan-1"},
+                {"label": "验收文档", "issue_id": "acc-1"},
+            ],
+            engine_env=env,
+        )
+
+        assert "## 上游 issue（防跑偏）" in body
+        assert "- 设计方案: [plan-1](https://multica.ai/workspaces/ws-1/issues/plan-1)" in body
+        assert "- 验收文档: `acc-1`" in body
+        assert (
+            "OMAC_ENGINE=multica OMAC_WORKSPACE_ID=ws-1 OMAC_PROJECT_ID=proj-1 "
+            "omac work show plan-1"
+        ) in body
 
     def test_kind_role_and_guide_mapping(self):
         """每种 issue 类型映射到对应角色与 guide topic(同源、不复制)。"""

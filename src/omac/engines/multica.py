@@ -20,7 +20,7 @@ import yaml
 from ..core.taskmeta import (
     CI_BOUNCE_KEY, CONTRACT_REF_KEY, DECISION_REQUIRED_KEY, DELIVERABLE_KEY,
     DELIVERABLE_REF_KEY, KIND_KEY, MERGE_BOUNCE_KEY, PHASE_KEY, REVIEW_BOUNCE_KEY, REVIEW_REPORT_REF_KEY,
-    TaskKind, TaskPhase, VERIFICATION_REF_KEY,
+    SOURCE_REFS_KEY, TaskKind, TaskPhase, VERIFICATION_REF_KEY,
     parse_bounces, parse_kind, parse_phase,
 )
 from ..errors import AuthError, PlatformError
@@ -256,6 +256,7 @@ class MulticaStore(WorkItemStore):
         verification_ref = self._json_metadata(metadata, VERIFICATION_REF_KEY)
         review_report_ref = self._json_metadata(metadata, REVIEW_REPORT_REF_KEY)
         contract_ref = self._json_metadata(metadata, CONTRACT_REF_KEY)
+        source_refs = self._json_metadata(metadata, SOURCE_REFS_KEY)
         verification = None
         if isinstance(verification_ref, dict):
             verification_text = self._load_payload_comment(issue_data["id"], "verification", verification_ref)
@@ -301,6 +302,7 @@ class MulticaStore(WorkItemStore):
             decision_required=self._json_metadata(metadata, DECISION_REQUIRED_KEY),
             contract=contract,
             contract_ref=contract_ref if isinstance(contract_ref, dict) else None,
+            source_refs=source_refs if isinstance(source_refs, list) else [],
             kind=parse_kind(metadata.get(KIND_KEY)),
             phase=parse_phase(metadata.get(PHASE_KEY)),
             bounces=parse_bounces(metadata),
@@ -498,7 +500,28 @@ class MulticaStore(WorkItemStore):
         result = self._run_multica(["issue", "get", item_id, "--output", "json"])
         if not isinstance(result, dict):
             raise PlatformError(f"获取 issue {item_id} 失败")
-        return self._issue_to_work_item(result, self.config.workspace_id)
+        item = self._issue_to_work_item(result, self.config.workspace_id)
+        if item.status == WorkItemStatus.IN_PROGRESS and self._agent_runs_exhausted(item_id):
+            item.status = WorkItemStatus.FAILED
+        return item
+
+    def _agent_runs_exhausted(self, item_id: str) -> bool:
+        """Multica task 全部终止但 issue 仍 in_progress 时折叠为 worker failed。
+
+        agent runtime 失败不会总是同步更新 issue status;如果没有任何 active run,
+        且最新可见 run 是 failed/cancelled,编排侧不能无限等待。
+        """
+        try:
+            runs = self._run_multica(["issue", "runs", item_id, "--output", "json"])
+        except PlatformError:
+            return False
+        if not isinstance(runs, list) or not runs:
+            return False
+        active = {"queued", "pending", "running", "dispatching"}
+        if any((run.get("status") or "").lower() in active for run in runs):
+            return False
+        terminal_failures = {"failed", "cancelled"}
+        return any((run.get("status") or "").lower() in terminal_failures for run in runs)
 
     def update_work_item_metadata(
         self,
@@ -519,6 +542,7 @@ class MulticaStore(WorkItemStore):
         review_bounce: Optional[int] = None,
         merge_bounce: Optional[int] = None,
         deliverable: Optional[str] = None,
+        source_refs: Optional[List[Dict[str, Any]]] = None,
         description: Optional[str] = None,
     ) -> WorkItem:
         if worker is not None:
@@ -556,6 +580,8 @@ class MulticaStore(WorkItemStore):
         if deliverable is not None:
             ref = self._publish_payload_comment(item_id, "deliverable", deliverable, ".md")
             self._set_metadata(item_id, DELIVERABLE_REF_KEY, ref)
+        if source_refs is not None:
+            self._set_metadata(item_id, SOURCE_REFS_KEY, source_refs)
         if phase is not None:
             self._set_metadata(item_id, PHASE_KEY, phase.value)
         if description is not None:

@@ -159,6 +159,28 @@ def test_authoring_show_includes_previous_review_report():
     assert out["context"]["previous_review"]["report_ref"]["filename"] == "omac-review-report.yaml"
 
 
+def test_authoring_show_includes_source_issue_refs():
+    """worker 只拿 issue id 时,work show 必须给出上游 issue 链路。"""
+    store = _store()
+    item = _make_item(store, TaskKind.DEVELOP, TaskPhase.AUTHORING, with_contract=True)
+    store.update_work_item_metadata(
+        item.id,
+        source_refs=[
+            {"label": "设计方案", "issue_id": "plan-1",
+             "url": "https://multica.ai/workspaces/ws/issues/plan-1"},
+            {"label": "验收文档", "issue_id": "acc-1"},
+        ],
+    )
+
+    out = build_show_output(store.get_work_item(item.id), "worker:alice")
+
+    assert out["context"]["source_issues"] == [
+        {"label": "设计方案", "issue_id": "plan-1",
+         "url": "https://multica.ai/workspaces/ws/issues/plan-1"},
+        {"label": "验收文档", "issue_id": "acc-1"},
+    ]
+
+
 @pytest.mark.parametrize("kind,phase", COMBINATIONS, ids=[
     f"{k.value}-{p.value}" for k, p in COMBINATIONS])
 def test_submit_template_matches_registered_params(kind, phase):

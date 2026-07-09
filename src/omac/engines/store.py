@@ -129,6 +129,7 @@ class WorkItemStore(ABC):
         review_bounce: Optional[int] = None,
         merge_bounce: Optional[int] = None,
         deliverable: Optional[str] = None,
+        source_refs: Optional[List[Dict[str, Any]]] = None,
         description: Optional[str] = None,
     ) -> WorkItem:
         """更新业务元数据(不改 status)。None 的字段不更新;写后读一致。

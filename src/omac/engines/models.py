@@ -71,6 +71,7 @@ class WorkItem:
     # 验收契约(编排器 dispatch 时下发):worker 读回后用同一套 validator 自校验
     contract: Optional[Dict[str, Any]] = None
     contract_ref: Optional[Dict[str, Any]] = None
+    source_refs: List[Dict[str, Any]] = field(default_factory=list)
 
     # 任务类型×阶段模型(§7.4):issue 自描述——是哪类任务、处于哪个阶段、回退几次。
     # kind 缺省 develop(旧 issue 无 kind 字段时向后兼容);phase 缺省 authoring;

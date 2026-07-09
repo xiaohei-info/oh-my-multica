@@ -12,6 +12,7 @@ from ...pipeline.dispatch import (
     SUBMIT_PARAM_SPECS,
     SubmitResult,
     build_show_output,
+    render_source_refs_section,
     submit,
 )
 from .. import exit_codes
@@ -109,6 +110,11 @@ def _render_table(output: dict) -> None:
         print(f"- dag_key: {task['dag_key']}")
     if is_review and task.get("worker"):
         print(f"- 产出者: {task['worker']}")
+
+    source_issues = ctx.get("source_issues")
+    if source_issues:
+        print()
+        print(render_source_refs_section(source_issues))
 
     contract = ctx.get("contract")
     if is_review:

@@ -20,7 +20,7 @@ from ..engines.models import WorkItemStatus
 from ..engines.runtime import AgentRuntime
 from ..engines.store import WorkItemStore
 from ..errors import PlatformError
-from ..pipeline.dispatch import render_issue_body
+from ..pipeline.dispatch import normalize_source_refs, render_issue_body
 from ..core.taskmeta import TaskKind, TaskPhase
 
 log = logsetup.get_logger(__name__)
@@ -49,6 +49,16 @@ def _project_root_from_manifest_path(manifest_path: str) -> str:
     if parent.name == ".omac":
         return str(parent.parent)
     return str(parent)
+
+
+def _store_env(store: WorkItemStore) -> dict:
+    env = {
+        "OMAC_ENGINE": store.config.engine_type,
+        "OMAC_WORKSPACE_ID": store.config.workspace_id,
+    }
+    if store.config.project_id:
+        env["OMAC_PROJECT_ID"] = store.config.project_id
+    return env
 
 
 @dataclass
@@ -420,8 +430,17 @@ def _dispatch(
             )
             if node.contract is not None:
                 store.set_node_contract(item.id, node.contract)
-            body = render_issue_body(node, node.contract, TaskKind.DEVELOP, item.id)
-            store.update_work_item_metadata(item.id, description=body)
+            source_refs = normalize_source_refs(manifest.meta.get("source_issues"))
+            body = render_issue_body(
+                node, node.contract, TaskKind.DEVELOP, item.id,
+                source_refs=source_refs,
+                engine_env=_store_env(store),
+            )
+            store.update_work_item_metadata(
+                item.id,
+                description=body,
+                source_refs=source_refs,
+            )
             set_node(manifest, key, work_item_id=item.id)
 
         # fire-and-forget: assign worker + 标 in_progress + wake
