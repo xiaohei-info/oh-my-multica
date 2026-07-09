@@ -287,6 +287,7 @@ class MulticaStore(WorkItemStore):
             title=issue_data.get("title", ""),
             description=issue_data.get("description", ""),
             status=self._multica_to_status(issue_data.get("status", "todo")),
+            identifier=issue_data.get("identifier"),
             dag_key=metadata.get("dag_key", ""),
             worker=metadata.get("worker"),
             reviewer=metadata.get("reviewer"),

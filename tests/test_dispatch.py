@@ -107,6 +107,15 @@ class TestRenderIssueBody:
         assert "omac work submit REAL-100" in body
         assert "<id>" not in body and "<issue>" not in body
 
+    def test_develop_body_requires_issue_key_in_github_pr(self):
+        """Multica PR 自动关联靠 issue key,worker body 必须把该约束前置。"""
+        n = Node(id="n", worker="alice", contract=_full_contract())
+        body = render_issue_body(
+            n, n.contract, TaskKind.DEVELOP, "uuid-1", issue_key="AITEAM-762")
+        assert "AITEAM-762" in body
+        assert "分支名、标题或正文" in body
+        assert "自动关联" in body
+
     def test_bootstrap_can_include_engine_env_for_no_checkout_runtime(self):
         """隔离 runtime 尚未 checkout repo 时也能直接跑 omac:命令内带 engine/workspace/project。"""
         n = Node(id="n", worker="alice", contract=_full_contract())

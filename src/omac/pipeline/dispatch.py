@@ -179,6 +179,7 @@ def build_show_output(item: Any, identity: str) -> Dict[str, Any]:
         "phase": phase.value,
         "dag_key": item.dag_key,
         "issue_id": item.id,
+        "issue_key": getattr(item, "identifier", None),
         "title": item.title,
         "worker": item.worker,
         "reviewer": item.reviewer,
@@ -220,6 +221,12 @@ def build_show_output(item: Any, identity: str) -> Dict[str, Any]:
         context["source_issues"] = source_refs
 
     protocol = _next_action(kind, phase)
+    issue_key = getattr(item, "identifier", None)
+    if kind == TaskKind.DEVELOP and phase == TaskPhase.AUTHORING and issue_key:
+        protocol += (
+            f"\n建议让 GitHub PR 分支名、标题或正文包含 `{issue_key}`，"
+            "这样 Multica 可以把 PR 自动关联到本 issue；缺失时仍可交付。"
+        )
     submit = submit_template_for(kind, phase, item.id)
 
     return {
@@ -492,7 +499,6 @@ def _validate_pr_ready_for_handoff(pr_url: str) -> None:
     if state and state != "OPEN":
         raise ValidationError(
             f"GitHub PR 状态不是 OPEN,不能交付: {pr_url} (state={state})")
-
 
 def _validate_review(
     kind: TaskKind, verdict: str, report_file: str, item: WorkItem
@@ -818,7 +824,7 @@ def render_source_refs_section(
     return "\n".join(lines)
 
 
-def render_issue_body(node, contract, kind, issue_id, source_refs=None, engine_env=None):
+def render_issue_body(node, contract, kind, issue_id, source_refs=None, engine_env=None, issue_key=None):
     """三段式派发模板(设计文档 §7.4)。
 
     第一段 bootstrap:两条命令(work show / work submit 精确模板) +
@@ -846,6 +852,11 @@ def render_issue_body(node, contract, kind, issue_id, source_refs=None, engine_e
         "4. `omac work submit` 是硬交付入口;失败必须修正,以 `work show` 输出中的本角色参数为准。\n\n"
         f"```bash\n{submit_cmd}\n```"
     )
+    if kind == TaskKind.DEVELOP and issue_key:
+        bootstrap += (
+            f"\n\n5. 创建 GitHub PR 时,建议让分支名、标题或正文包含 `{issue_key}`。"
+            "这样 Multica 可以把 PR 自动关联到本 issue；缺失时仍可交付。"
+        )
 
     # ---- 第二段:任务简报(人可读) ----
     # 只渲染 contract 真正声明的字段:缺失即省略整行,不印指向不存在 contract 的

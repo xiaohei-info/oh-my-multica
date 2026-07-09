@@ -51,6 +51,7 @@ class WorkItem:
 
     # 核心元数据
     dag_key: str
+    identifier: Optional[str] = None  # 平台短编号,如 AITEAM-762;用于 PR 自动关联
     worker: Optional[str] = None
     reviewer: Optional[str] = None
     blocked_by: List[str] = field(default_factory=list)

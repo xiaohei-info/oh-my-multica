@@ -1,6 +1,8 @@
 """work show 9 种(kind × phase)组合快照 + submit 模板防漂移,加 submit 左移门 + 退出码。"""
 from __future__ import annotations
 
+import json
+
 import pytest
 import yaml
 
@@ -349,6 +351,20 @@ def test_develop_authoring_action_and_submit_cover_pr_flow():
     # 精确交付命令归 submit 段(相位视图:动作与命令分离)
     assert "--pr-url" in out["submit"]
 
+
+def test_develop_show_mentions_issue_key_for_pr_autolink():
+    """有平台 issue key 时,work show 指导 worker 让 PR 自动关联到 Multica issue。"""
+    store = _store()
+    item = _make_item(store, TaskKind.DEVELOP, TaskPhase.AUTHORING)
+    item.identifier = "AITEAM-762"
+
+    out = build_show_output(item, f"worker:{item.worker}")
+
+    assert out["task"]["issue_key"] == "AITEAM-762"
+    assert "AITEAM-762" in out["protocol"]
+    assert "分支名、标题或正文" in out["protocol"]
+
+
 def test_show_unknown_issue_id(tmp_path, monkeypatch, capsys):
     """issue_id 不存在时给出教学性报错,exit 5。"""
     monkeypatch.chdir(tmp_path)
@@ -548,6 +564,38 @@ class TestSubmitPerKindPhase:
         assert got.artifacts is None
         assert got.verification is None
         assert got.status == WorkItemStatus.TODO
+
+    def test_develop_authoring_accepts_ready_pr_without_multica_issue_key(self, tmp_path, monkeypatch):
+        eng = _engine()
+        item = eng.store.create_work_item(
+            "mock-workspace", "t", "d", dag_key="a", worker="alice",
+            kind=dispatch_mod.TaskKind.DEVELOP,
+        )
+        item.identifier = "AITEAM-762"
+        eng.store.set_node_contract(item.id, CONTRACT)
+        vfile = tmp_path / "verification.yaml"
+        vfile.write_text(yaml.safe_dump(_make_verification()))
+
+        class _R:
+            returncode = 0
+            stdout = json.dumps({
+                "isDraft": False,
+                "state": "OPEN",
+                "headRefName": "agent/codex/wave0",
+                "title": "feat: skeleton",
+                "body": "No issue key here.",
+            })
+            stderr = ""
+
+        monkeypatch.setattr(dispatch_mod.subprocess, "run", lambda *a, **k: _R())
+
+        result = dispatch_mod.submit(
+            eng.store, item.id,
+            pr_url="https://github.com/acme/snake/pull/1",
+            verification_file=str(vfile),
+        )
+
+        assert result.advanced_to == WorkItemStatus.DONE
 
     def test_develop_authoring_accepts_github_ready_pr(self, tmp_path, monkeypatch):
         eng = _engine()

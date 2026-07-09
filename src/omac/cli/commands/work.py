@@ -105,6 +105,8 @@ def _render_table(output: dict) -> None:
     print(f"# 任务 · {task['kind']} · {task['phase']}")
     print()
     print(f"- issue: {task['issue_id']}")
+    if task.get("issue_key"):
+        print(f"- issue_key: {task['issue_key']}")
     print(f"- 身份: {task['identity']}")
     if task.get("dag_key"):
         print(f"- dag_key: {task['dag_key']}")

@@ -28,6 +28,24 @@ def test_multica_empty_review_verdict_is_read_as_missing():
     assert item.review_comment is None
 
 
+def test_multica_issue_identifier_is_exposed_on_work_item():
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+
+    item = store._issue_to_work_item(
+        {
+            "id": "issue-1",
+            "identifier": "AITEAM-762",
+            "title": "t",
+            "description": "d",
+            "status": "todo",
+            "metadata": {"dag_key": "node-a", "kind": "develop"},
+        },
+        "ws",
+    )
+
+    assert item.identifier == "AITEAM-762"
+
+
 def test_multica_review_report_source_writes_ref_without_full_report_metadata(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
     writes = []

@@ -445,6 +445,7 @@ def _dispatch(
                 node, node.contract, TaskKind.DEVELOP, item.id,
                 source_refs=source_refs,
                 engine_env=env,
+                issue_key=getattr(item, "identifier", None),
             )
             store.update_work_item_metadata(
                 item.id,
