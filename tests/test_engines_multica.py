@@ -255,3 +255,51 @@ def test_multica_get_work_item_keeps_in_progress_when_any_run_active(monkeypatch
     item = store.get_work_item("issue-1")
 
     assert item.status == WorkItemStatus.IN_PROGRESS
+
+
+def test_multica_get_work_item_does_not_treat_cancelled_run_as_worker_failure(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+
+    def fake_run(args):
+        if args[:2] == ["issue", "get"]:
+            return {
+                "id": "issue-1",
+                "title": "t",
+                "description": "d",
+                "status": "in_progress",
+                "metadata": {"dag_key": "node-a", "kind": "develop"},
+            }
+        if args[:2] == ["issue", "runs"]:
+            return [
+                {"id": "run-1", "status": "cancelled", "created_at": "2026-07-09T08:35:23Z"},
+            ]
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+
+    item = store.get_work_item("issue-1")
+
+    assert item.status == WorkItemStatus.IN_PROGRESS
+
+
+def test_multica_runtime_reruns_existing_cancelled_assignment(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    calls = []
+
+    def fake_run(args):
+        calls.append(args)
+        if args[:2] == ["issue", "runs"]:
+            return [
+                {"id": "run-1", "status": "cancelled", "kind": "direct",
+                 "created_at": "2026-07-09T08:35:23Z"},
+            ]
+        if args[:2] == ["issue", "rerun"]:
+            return {"id": "run-2", "status": "queued"}
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+
+    from omac.engines.multica import MulticaRuntime
+    MulticaRuntime(store).wake("issue-1", "alice", "worker")
+
+    assert ["issue", "rerun", "issue-1", "--output", "json"] in calls

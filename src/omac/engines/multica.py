@@ -30,6 +30,20 @@ from .runtime import AgentRuntime
 from .store import WorkItemStore
 
 
+def _latest_run(runs: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not runs:
+        return None
+    indexed = list(enumerate(runs))
+    return max(
+        indexed,
+        key=lambda pair: (
+            pair[1].get("created_at") or pair[1].get("started_at")
+            or pair[1].get("dispatched_at") or "",
+            -pair[0],
+        ),
+    )[1]
+
+
 class MulticaStore(WorkItemStore):
     """数据面:全部经 multica CLI。"""
 
@@ -518,11 +532,13 @@ class MulticaStore(WorkItemStore):
             return False
         if not isinstance(runs, list) or not runs:
             return False
+        latest = _latest_run(runs)
+        if not latest:
+            return False
         active = {"queued", "pending", "running", "dispatching"}
         if any((run.get("status") or "").lower() in active for run in runs):
             return False
-        terminal_failures = {"failed", "cancelled"}
-        return any((run.get("status") or "").lower() in terminal_failures for run in runs)
+        return (latest.get("status") or "").lower() == "failed"
 
     def update_work_item_metadata(
         self,
@@ -681,7 +697,15 @@ class MulticaRuntime(AgentRuntime):
         self._store = store
 
     def wake(self, item_id: str, agent: str, role: str) -> None:
-        # assign 即唤醒;此处不做额外平台调用,保持幂等。
+        try:
+            runs = self._store._run_multica(["issue", "runs", item_id, "--output", "json"])
+        except PlatformError:
+            return None
+        latest = _latest_run(runs if isinstance(runs, list) else [])
+        if latest and (latest.get("kind") or "direct") == "direct":
+            status = (latest.get("status") or "").lower()
+            if status in {"failed", "cancelled"}:
+                self._store._run_multica(["issue", "rerun", item_id, "--output", "json"])
         return None
 
     def describe(self) -> str:
