@@ -9,7 +9,7 @@ import yaml
 from ..core.taskmeta import DECISION_REQUIRED_KEY
 
 
-_LEGACY_INLINE_PAYLOAD_KEYS = {"review_report", "verification"}
+_LEGACY_INLINE_PAYLOAD_KEYS = {"contract", "review_report", "verification"}
 _FORBIDDEN_DECISION_KEYS = {
     "review_report",
     "blockers",

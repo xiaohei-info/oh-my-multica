@@ -365,6 +365,8 @@ def test_multica_payload_download_retries_transient_timeout():
 
 def test_metadata_policy_rejects_inline_prose_fields():
     with pytest.raises(ValueError):
+        assert_metadata_write_allowed("contract", {"objective": "long contract prose"})
+    with pytest.raises(ValueError):
         assert_metadata_write_allowed("review_report", {"summary": "long reviewer prose"})
     with pytest.raises(ValueError):
         assert_metadata_write_allowed("verification", {"commands": []})

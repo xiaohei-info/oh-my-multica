@@ -72,3 +72,69 @@ def test_multica_review_report_source_writes_ref_without_full_report_metadata(mo
         "bytes": len("summary: large reviewer report\n".encode("utf-8")),
         "filename": "omac-review-report.yaml",
     }) in writes
+
+
+def test_multica_set_node_contract_writes_ref_without_full_contract_metadata(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    writes = []
+    published = []
+
+    monkeypatch.setattr(store, "_set_metadata", lambda item_id, key, value: writes.append((key, value)))
+    monkeypatch.setattr(
+        store,
+        "_publish_payload_comment",
+        lambda item_id, label, source, suffix: (
+            published.append((label, source, suffix)) or {
+                "comment_id": "c1",
+                "attachment_id": "a1",
+                "sha256": "s1",
+                "bytes": len(source.encode("utf-8")),
+                "filename": f"omac-{label}{suffix}",
+            }
+        ),
+    )
+
+    store.set_node_contract("issue-1", {
+        "objective": "实现很长的自然语言目标",
+        "verification_commands": ["pytest -q"],
+    })
+
+    assert "contract" not in [key for key, _ in writes]
+    assert writes == [("contract_ref", {
+        "comment_id": "c1",
+        "attachment_id": "a1",
+        "sha256": "s1",
+        "bytes": published[0][1].encode("utf-8").__len__(),
+        "filename": "omac-contract.yaml",
+    })]
+    assert published[0][0] == "contract"
+    assert published[0][2] == ".yaml"
+    assert "实现很长的自然语言目标" in published[0][1]
+
+
+def test_multica_reads_contract_from_ref_before_legacy_inline(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    monkeypatch.setattr(
+        store,
+        "_load_payload_comment",
+        lambda item_id, key, ref: "objective: 来自 ref\nverification_commands:\n  - pytest -q\n",
+    )
+
+    item = store._issue_to_work_item(
+        {
+            "id": "issue-1",
+            "title": "t",
+            "description": "d",
+            "status": "todo",
+            "metadata": {
+                "dag_key": "node-a",
+                "kind": "develop",
+                "contract_ref": {"comment_id": "c1"},
+                "contract": '{"objective":"旧 inline"}',
+            },
+        },
+        "ws",
+    )
+
+    assert item.contract["objective"] == "来自 ref"
+    assert item.contract["verification_commands"] == ["pytest -q"]

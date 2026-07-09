@@ -80,6 +80,7 @@ MERGE_BOUNCE_KEY = "merge_bounce"
 # 引用,避免长正文或嵌套 JSON 塞进 metadata;读侧仍向后兼容旧 inline key。
 DELIVERABLE_KEY = "deliverable"
 DELIVERABLE_REF_KEY = "deliverable_ref"
+CONTRACT_REF_KEY = "contract_ref"
 VERIFICATION_REF_KEY = "verification_ref"
 REVIEW_REPORT_REF_KEY = "review_report_ref"
 DECISION_REQUIRED_KEY = "decision_required"

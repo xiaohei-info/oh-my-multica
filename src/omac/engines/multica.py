@@ -15,9 +15,11 @@ import subprocess
 import tempfile
 from typing import Any, Dict, List, Optional
 
+import yaml
+
 from ..core.taskmeta import (
-    CI_BOUNCE_KEY, DECISION_REQUIRED_KEY, DELIVERABLE_KEY, DELIVERABLE_REF_KEY, KIND_KEY,
-    MERGE_BOUNCE_KEY, PHASE_KEY, REVIEW_BOUNCE_KEY, REVIEW_REPORT_REF_KEY,
+    CI_BOUNCE_KEY, CONTRACT_REF_KEY, DECISION_REQUIRED_KEY, DELIVERABLE_KEY,
+    DELIVERABLE_REF_KEY, KIND_KEY, MERGE_BOUNCE_KEY, PHASE_KEY, REVIEW_BOUNCE_KEY, REVIEW_REPORT_REF_KEY,
     TaskKind, TaskPhase, VERIFICATION_REF_KEY,
     parse_bounces, parse_kind, parse_phase,
 )
@@ -156,11 +158,13 @@ class MulticaStore(WorkItemStore):
     @staticmethod
     def _payload_comment(key: str, sha: str, size: int, filename: str) -> str:
         title = {
+            "contract": "节点 contract 文件",
             "deliverable": "阶段交付文件",
             "verification": "验证证据文件",
             "review-report": "评审报告文件",
         }.get(key, "交接文件")
         ref_key = {
+            "contract": CONTRACT_REF_KEY,
             "deliverable": DELIVERABLE_REF_KEY,
             "verification": VERIFICATION_REF_KEY,
             "review-report": REVIEW_REPORT_REF_KEY,
@@ -251,6 +255,7 @@ class MulticaStore(WorkItemStore):
 
         verification_ref = self._json_metadata(metadata, VERIFICATION_REF_KEY)
         review_report_ref = self._json_metadata(metadata, REVIEW_REPORT_REF_KEY)
+        contract_ref = self._json_metadata(metadata, CONTRACT_REF_KEY)
         verification = None
         if isinstance(verification_ref, dict):
             verification_text = self._load_payload_comment(issue_data["id"], "verification", verification_ref)
@@ -266,6 +271,14 @@ class MulticaStore(WorkItemStore):
         if review_report is None:
             legacy_report = self._json_metadata(metadata, "review_report")
             review_report = legacy_report if isinstance(legacy_report, dict) else None
+
+        contract = None
+        if isinstance(contract_ref, dict):
+            contract_text = self._load_payload_comment(issue_data["id"], "contract", contract_ref)
+            contract = parse_payload_text(contract_text)
+        if contract is None:
+            legacy_contract = self._json_metadata(metadata, "contract")
+            contract = legacy_contract if isinstance(legacy_contract, dict) else None
 
         return WorkItem(
             id=issue_data["id"],
@@ -286,7 +299,8 @@ class MulticaStore(WorkItemStore):
             review_report=review_report,
             review_report_ref=review_report_ref if isinstance(review_report_ref, dict) else None,
             decision_required=self._json_metadata(metadata, DECISION_REQUIRED_KEY),
-            contract=self._json_metadata(metadata, "contract"),
+            contract=contract,
+            contract_ref=contract_ref if isinstance(contract_ref, dict) else None,
             kind=parse_kind(metadata.get(KIND_KEY)),
             phase=parse_phase(metadata.get(PHASE_KEY)),
             bounces=parse_bounces(metadata),
@@ -552,7 +566,9 @@ class MulticaStore(WorkItemStore):
     def set_node_contract(self, item_id: str, contract: Any):
         from dataclasses import asdict, is_dataclass
         payload = asdict(contract) if is_dataclass(contract) else contract
-        self._set_metadata(item_id, "contract", payload)
+        source = yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
+        ref = self._publish_payload_comment(item_id, "contract", source, ".yaml")
+        self._set_metadata(item_id, CONTRACT_REF_KEY, ref)
 
     # multica issue list 服务端单页上限 100;更大的 --limit 会被静默截断。
     _LIST_PAGE_SIZE = 100
