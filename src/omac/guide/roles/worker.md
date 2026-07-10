@@ -24,9 +24,11 @@ worker 负责 `develop` issue:按 contract TDD 开发,交 PR 与结构化 verifi
 3. 从 `contract.pr_base` 切分支,不要从主干乱切。
 4. 先写或定位测试,再实现。
 5. 只做 contract 范围内的事,守住 `non_goals`。
-6. 跑全量测试、覆盖率和 integration gates。
-7. 开 PR,base 指向 `contract.pr_base`;GitHub PR 必须 ready for review,不能是 draft。
-8. 提交 verification 文件。
+6. `scope_paths` 是主要代码归属范围,不是穷举文件白名单。完成 contract 必需的
+   必要配套文件可以修改,但必须在 PR 或 verification 中说明原因。
+7. 跑全量测试、覆盖率和 integration gates。
+8. 开 PR,base 指向 `contract.pr_base`;GitHub PR 必须 ready for review,不能是 draft。
+9. 提交 verification 文件。
 
 ## 返工规则
 

@@ -88,16 +88,20 @@ def test_orchestrator_guide_requires_max_parallel_minimal_pr_units(capsys):
     assert "最小独立 PR 单元" in out
     assert "独立开发、独立验证、独立提交 PR、独立 review" in out
     assert "还能拆出另一个独立 PR/test/review" in out
+    assert "主要代码归属范围" in out
+    assert "必要配套文件" in out
 
     assert main(["guide", "artifact", "manifest"]) == exit_codes.OK
     out = capsys.readouterr().out
     assert "每个节点是最小独立 PR/test/review 单元" in out
     assert "不能继续独立拆分" in out
+    assert "不是穷举文件白名单" in out
 
     assert main(["guide", "role", "reviewer"]) == exit_codes.OK
     out = capsys.readouterr().out
     assert "decompose review" in out
     assert "还能拆出独立 PR/test/review 单元" in out
+    assert "不因必要配套文件" in out
 
 
 def test_guide_rejects_old_flat_role_topics(capsys):

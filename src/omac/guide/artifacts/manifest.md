@@ -68,3 +68,13 @@ nodes:
 - `integration_gates` 必须说明交付目标、验收映射和命令。
 
 orchestrator 通过 `omac work submit <issue-id> --manifest-file <file>` 交付 manifest。
+
+## scope_paths 语义
+
+`scope_paths` 是可选的主要代码归属范围,不是穷举文件白名单。它应列稳定的模块路径,
+帮助 worker 和 reviewer 理解节点中心、降低并行冲突;不要求预先列出所有依赖清单、
+锁文件、migration、生成物或构建配置。
+
+完成 contract 所必需的必要配套文件可以修改,worker 必须在 PR 或 verification 中
+说明原因。reviewer 应判断改动是否服务于 contract、是否违反 `non_goals` 或破坏并行
+边界,不能只因文件未出现在 `scope_paths` 中而 reject。
