@@ -16,6 +16,7 @@ venv/
 .env
 .multica_state/
 .serena/
+.worktrees/
 
 # 编排产物（用户项目里的 manifest 落点，不应进本仓）
 .orchestrator/
