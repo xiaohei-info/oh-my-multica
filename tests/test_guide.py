@@ -129,6 +129,22 @@ def test_manifest_artifact_connects_contract_to_runtime() -> None:
         assert item in content, f"manifest artifact missing contract anchor: {item}"
 
 
+def test_scope_paths_are_non_exhaustive_primary_ownership_guidance() -> None:
+    topics = {
+        "orchestrator": load_role_topic("orchestrator"),
+        "worker": load_role_topic("worker"),
+        "reviewer": load_role_topic("reviewer"),
+        "manifest": load_artifact_topic("manifest"),
+    }
+    for name, content in topics.items():
+        assert "主要代码归属范围" in content, f"{name} missing primary scope guidance"
+        assert "必要配套文件" in content, f"{name} missing supporting-file guidance"
+    assert "不穷举" in topics["orchestrator"]
+    assert "不是穷举文件白名单" in topics["manifest"]
+    assert "PR 或 verification" in topics["worker"]
+    assert "不因必要配套文件" in topics["reviewer"]
+
+
 def test_authoring_guides_address_low_reasoning_budget_workers() -> None:
     topics = [
         load_role_topic("planner"),
