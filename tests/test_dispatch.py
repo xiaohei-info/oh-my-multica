@@ -377,6 +377,33 @@ class TestDispatchLoopIntegration:
         assert f"omac work show {item.id}" in item.description
         assert "硬约束" in item.description
 
+    def test_retry_existing_issue_refreshes_body_without_recreating_issue(self):
+        """node retry 复用旧 issue 时同步最新 scope 文案,避免旧硬白名单继续阻塞。"""
+        eng = _engine(MOCK_AUTO_COMPLETE="false")
+        contract = _full_contract()
+        contract.scope_paths = ["src/auth/**"]
+        manifest = Manifest(meta={"workspace_id": "ws"}, nodes={
+            "a": Node(id="a", worker="alice", title="Add login",
+                      reviewer="bob", contract=contract),
+        })
+        path = _tmp_manifest_path(manifest)
+
+        tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        item_id = manifest.nodes["a"].work_item_id
+        first_body = eng.store.get_work_item(item_id).description
+        assert "package.json" not in first_body
+
+        manifest.nodes["a"].contract.scope_paths.append("package.json")
+        manifest.nodes["a"].status = "todo"
+        eng.store.update_status(item_id, WorkItemStatus.BLOCKED)
+        tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+
+        refreshed = eng.store.get_work_item(item_id)
+        assert manifest.nodes["a"].work_item_id == item_id
+        assert "package.json" in refreshed.description
+        assert "主要代码归属范围" in refreshed.description
+        assert refreshed.status == WorkItemStatus.IN_PROGRESS
+
     def test_worker_submit_assigns_reviewer_without_handoff_comment(self):
         """worker 完成交付后靠 assign + metadata 交接,不发评论触发第二次 run。"""
         eng = _engine()
