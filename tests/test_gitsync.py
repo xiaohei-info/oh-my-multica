@@ -9,6 +9,7 @@ import subprocess
 
 import pytest
 
+from omac.core import gitsync
 from omac.core.gitsync import sync_enabled, commit_manifest, ensure_config_synced
 from omac.errors import ValidationError
 
@@ -191,3 +192,341 @@ class TestCommitManifest:
         # 再来一次无改动:幂等跳过
         assert commit_manifest(".omac/m.yaml", "again", repo_root=str(work),
                                engine_type="multica") is False
+
+    def test_remote_advance_rebases_manifest_only_commit_and_pushes(
+            self, tmp_path, monkeypatch):
+        """PR merge 推进远程 main 后,manifest-only 提交自动 rebase 并补推。"""
+        monkeypatch.delenv("OMAC_GIT_SYNC", raising=False)
+        work = _make_repo(tmp_path)
+        manifest = work / ".omac" / "m.yaml"
+        manifest.parent.mkdir()
+        manifest.write_text("nodes:\n  a: todo\n")
+        assert commit_manifest(
+            ".omac/m.yaml", "initial manifest", repo_root=str(work),
+            engine_type="multica") is True
+
+        other = tmp_path / "other"
+        subprocess.run(["git", "clone", str(tmp_path / "remote.git"), str(other)],
+                       check=True, capture_output=True, text=True)
+        _git(other, "config", "user.email", "o@o")
+        _git(other, "config", "user.name", "o")
+        _git(other, "checkout", "main")
+        (other / "README").write_text("merged code")
+        _git(other, "add", "README")
+        _git(other, "commit", "-m", "merge worker pr")
+        _git(other, "push", "origin", "main")
+
+        manifest.write_text("nodes:\n  a: done\n  b: in_progress\n")
+        assert commit_manifest(
+            ".omac/m.yaml", "manifest sync", repo_root=str(work),
+            engine_type="multica") is True
+
+        _git(work, "fetch", "origin", "main")
+        local_head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=str(work),
+            capture_output=True, text=True, check=True).stdout.strip()
+        remote_head = subprocess.run(
+            ["git", "rev-parse", "origin/main"], cwd=str(work),
+            capture_output=True, text=True, check=True).stdout.strip()
+        assert local_head == remote_head
+        remote_manifest = subprocess.run(
+            ["git", "show", "origin/main:.omac/m.yaml"], cwd=str(work),
+            capture_output=True, text=True, check=True).stdout
+        assert remote_manifest == "nodes:\n  a: done\n  b: in_progress\n"
+        assert (work / "README").read_text() == "merged code"
+
+    def test_committed_unpushed_manifest_recovers_without_new_change(
+            self, tmp_path, monkeypatch):
+        """上轮 push 失败后即使 manifest 未再变化,下一 tick 也会自动补推。"""
+        monkeypatch.delenv("OMAC_GIT_SYNC", raising=False)
+        work = _make_repo(tmp_path)
+        manifest = work / ".omac" / "m.yaml"
+        manifest.parent.mkdir()
+        manifest.write_text("state: initial\n")
+        assert commit_manifest(
+            ".omac/m.yaml", "initial manifest", repo_root=str(work),
+            engine_type="multica") is True
+
+        other = tmp_path / "other"
+        subprocess.run(["git", "clone", str(tmp_path / "remote.git"), str(other)],
+                       check=True, capture_output=True, text=True)
+        _git(other, "config", "user.email", "o@o")
+        _git(other, "config", "user.name", "o")
+        _git(other, "checkout", "main")
+        (other / "README").write_text("merged")
+        _git(other, "add", "README")
+        _git(other, "commit", "-m", "remote advance")
+        _git(other, "push", "origin", "main")
+
+        manifest.write_text("state: running\n")
+        _git(work, "add", ".omac/m.yaml")
+        _git(work, "commit", "-m", "manifest sync")
+
+        assert commit_manifest(
+            ".omac/m.yaml", "manifest sync", repo_root=str(work),
+            engine_type="multica") is True
+        _git(work, "fetch", "origin", "main")
+        assert subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=str(work),
+            capture_output=True, text=True, check=True).stdout == subprocess.run(
+            ["git", "rev-parse", "origin/main"], cwd=str(work),
+            capture_output=True, text=True, check=True).stdout
+
+    def test_unicode_manifest_path_is_compared_without_git_quoting(
+            self, tmp_path, monkeypatch):
+        """中文 manifest 路径不能因 core.quotePath 转义而触发 safety 误报。"""
+        monkeypatch.delenv("OMAC_GIT_SYNC", raising=False)
+        work = _make_repo(tmp_path)
+        manifest_path = ".omac/贪吃蛇手游.yaml"
+        manifest = work / manifest_path
+        manifest.parent.mkdir()
+        manifest.write_text("state: initial\n")
+        assert commit_manifest(
+            manifest_path, "initial manifest", repo_root=str(work),
+            engine_type="multica") is True
+
+        other = tmp_path / "other"
+        subprocess.run(["git", "clone", str(tmp_path / "remote.git"), str(other)],
+                       check=True, capture_output=True, text=True)
+        _git(other, "config", "user.email", "o@o")
+        _git(other, "config", "user.name", "o")
+        _git(other, "checkout", "main")
+        (other / "README").write_text("merged")
+        _git(other, "add", "README")
+        _git(other, "commit", "-m", "remote advance")
+        _git(other, "push", "origin", "main")
+
+        manifest.write_text("state: running\n")
+        _git(work, "add", manifest_path)
+        _git(work, "commit", "-m", "manifest sync")
+
+        assert commit_manifest(
+            manifest_path, "manifest sync", repo_root=str(work),
+            engine_type="multica") is True
+        _git(work, "fetch", "origin", "main")
+        assert subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=str(work),
+            capture_output=True, text=True, check=True).stdout == subprocess.run(
+            ["git", "rev-parse", "origin/main"], cwd=str(work),
+            capture_output=True, text=True, check=True).stdout
+
+    def test_remote_advance_does_not_rebase_unrelated_local_commit(
+            self, tmp_path, monkeypatch):
+        """本地含业务提交时不自动 rebase,避免 OMAC 改写用户历史。"""
+        monkeypatch.delenv("OMAC_GIT_SYNC", raising=False)
+        work = _make_repo(tmp_path)
+        manifest = work / ".omac" / "m.yaml"
+        manifest.parent.mkdir()
+        manifest.write_text("nodes: {}\n")
+        assert commit_manifest(
+            ".omac/m.yaml", "initial manifest", repo_root=str(work),
+            engine_type="multica") is True
+
+        other = tmp_path / "other"
+        subprocess.run(["git", "clone", str(tmp_path / "remote.git"), str(other)],
+                       check=True, capture_output=True, text=True)
+        _git(other, "config", "user.email", "o@o")
+        _git(other, "config", "user.name", "o")
+        _git(other, "checkout", "main")
+        (other / "README").write_text("remote")
+        _git(other, "add", "README")
+        _git(other, "commit", "-m", "remote advance")
+        _git(other, "push", "origin", "main")
+
+        (work / "LOCAL").write_text("user work")
+        _git(work, "add", "LOCAL")
+        _git(work, "commit", "-m", "user commit")
+        manifest.write_text("nodes:\n  a: done\n")
+
+        warnings = []
+        monkeypatch.setattr(
+            "omac.core.gitsync.log.warning",
+            lambda event, **kwargs: warnings.append((event, kwargs)),
+        )
+        assert commit_manifest(
+            ".omac/m.yaml", "manifest sync", repo_root=str(work),
+            engine_type="multica") is True
+
+        assert warnings[-1][0] == "manifest_sync_failed"
+        assert warnings[-1][1]["step"] == "safety"
+        assert "LOCAL" in warnings[-1][1]["error"]
+
+    def test_remote_advance_rejects_local_merge_commit(
+            self, tmp_path, monkeypatch):
+        """merge commit 可能携带父提交没有的业务改动,不得自动线性 rebase。"""
+        monkeypatch.delenv("OMAC_GIT_SYNC", raising=False)
+        work = _make_repo(tmp_path)
+        manifest_path = ".omac/m.yaml"
+        manifest = work / manifest_path
+        manifest.parent.mkdir()
+        manifest.write_text("a: 0\nb: 0\nc: 0\nd: 0\ne: 0\n")
+        assert commit_manifest(
+            manifest_path, "initial manifest", repo_root=str(work),
+            engine_type="multica") is True
+
+        other = tmp_path / "other"
+        subprocess.run(["git", "clone", str(tmp_path / "remote.git"), str(other)],
+                       check=True, capture_output=True, text=True)
+        _git(other, "config", "user.email", "o@o")
+        _git(other, "config", "user.name", "o")
+        _git(other, "checkout", "main")
+        (other / "README").write_text("remote")
+        _git(other, "add", "README")
+        _git(other, "commit", "-m", "remote advance")
+        _git(other, "push", "origin", "main")
+
+        _git(work, "checkout", "-b", "side")
+        manifest.write_text("a: 1\nb: 0\nc: 0\nd: 0\ne: 0\n")
+        _git(work, "add", manifest_path)
+        _git(work, "commit", "-m", "side manifest")
+        _git(work, "checkout", "main")
+        manifest.write_text("a: 0\nb: 0\nc: 0\nd: 0\ne: 1\n")
+        _git(work, "add", manifest_path)
+        _git(work, "commit", "-m", "main manifest")
+        _git(work, "merge", "--no-ff", "--no-commit", "side")
+        (work / "BUSINESS").write_text("must survive")
+        _git(work, "add", manifest_path, "BUSINESS")
+        _git(work, "commit", "-m", "local merge resolution")
+
+        warnings = []
+        monkeypatch.setattr(
+            "omac.core.gitsync.log.warning",
+            lambda event, **kwargs: warnings.append((event, kwargs)),
+        )
+        assert commit_manifest(
+            manifest_path, "manifest sync", repo_root=str(work),
+            engine_type="multica") is True
+
+        assert warnings[-1][1]["step"] == "safety"
+        assert "merge commit" in warnings[-1][1]["error"]
+        assert (work / "BUSINESS").read_text() == "must survive"
+
+    def test_head_change_after_safety_check_stops_rebase(
+            self, tmp_path, monkeypatch):
+        """安全检查后 HEAD 被并发推进时必须停止,不能带入未经校验的提交。"""
+        monkeypatch.delenv("OMAC_GIT_SYNC", raising=False)
+        work = _make_repo(tmp_path)
+        manifest_path = ".omac/m.yaml"
+        manifest = work / manifest_path
+        manifest.parent.mkdir()
+        manifest.write_text("state: initial\n")
+        assert commit_manifest(
+            manifest_path, "initial manifest", repo_root=str(work),
+            engine_type="multica") is True
+
+        other = tmp_path / "other"
+        subprocess.run(["git", "clone", str(tmp_path / "remote.git"), str(other)],
+                       check=True, capture_output=True, text=True)
+        _git(other, "config", "user.email", "o@o")
+        _git(other, "config", "user.name", "o")
+        _git(other, "checkout", "main")
+        (other / "README").write_text("remote")
+        _git(other, "add", "README")
+        _git(other, "commit", "-m", "remote advance")
+        _git(other, "push", "origin", "main")
+
+        manifest.write_text("state: running\n")
+        _git(work, "add", manifest_path)
+        _git(work, "commit", "-m", "manifest sync")
+
+        original_check = gitsync._manifest_only_local_commits
+
+        def advance_head(repo_root, upstream, path):
+            result = original_check(repo_root, upstream, path)
+            (work / "BUSINESS").write_text("concurrent")
+            _git(work, "add", "BUSINESS")
+            _git(work, "commit", "-m", "concurrent business commit")
+            return result
+
+        warnings = []
+        monkeypatch.setattr(gitsync, "_manifest_only_local_commits", advance_head)
+        monkeypatch.setattr(
+            "omac.core.gitsync.log.warning",
+            lambda event, **kwargs: warnings.append((event, kwargs)),
+        )
+        assert commit_manifest(
+            manifest_path, "manifest sync", repo_root=str(work),
+            engine_type="multica") is True
+
+        assert warnings[-1][1]["step"] == "safety"
+        assert "HEAD" in warnings[-1][1]["error"]
+
+    def test_remote_manifest_conflict_aborts_rebase_without_overwrite(
+            self, tmp_path, monkeypatch):
+        """两端同时改 manifest 时中止 rebase,保留远程与本地各自状态。"""
+        monkeypatch.delenv("OMAC_GIT_SYNC", raising=False)
+        work = _make_repo(tmp_path)
+        manifest = work / ".omac" / "m.yaml"
+        manifest.parent.mkdir()
+        manifest.write_text("state: initial\n")
+        assert commit_manifest(
+            ".omac/m.yaml", "initial manifest", repo_root=str(work),
+            engine_type="multica") is True
+
+        other = tmp_path / "other"
+        subprocess.run(["git", "clone", str(tmp_path / "remote.git"), str(other)],
+                       check=True, capture_output=True, text=True)
+        _git(other, "config", "user.email", "o@o")
+        _git(other, "config", "user.name", "o")
+        _git(other, "checkout", "main")
+        (other / ".omac" / "m.yaml").write_text("state: remote\n")
+        _git(other, "add", ".omac/m.yaml")
+        _git(other, "commit", "-m", "remote manifest")
+        _git(other, "push", "origin", "main")
+
+        manifest.write_text("state: local\n")
+        warnings = []
+        monkeypatch.setattr(
+            "omac.core.gitsync.log.warning",
+            lambda event, **kwargs: warnings.append((event, kwargs)),
+        )
+        assert commit_manifest(
+            ".omac/m.yaml", "local manifest", repo_root=str(work),
+            engine_type="multica") is True
+
+        assert warnings[-1][1]["step"] == "rebase"
+        assert not (work / ".git" / "rebase-merge").exists()
+        assert not (work / ".git" / "rebase-apply").exists()
+        assert manifest.read_text() == "state: local\n"
+        _git(work, "fetch", "origin", "main")
+        remote_manifest = subprocess.run(
+            ["git", "show", "origin/main:.omac/m.yaml"], cwd=str(work),
+            capture_output=True, text=True, check=True).stdout
+        assert remote_manifest == "state: remote\n"
+
+    def test_rebase_abort_failure_is_reported(self, monkeypatch):
+        """abort 失败时不能误报已恢复,必须暴露人工修复信号。"""
+        responses = {
+            ("fetch", "--quiet"): subprocess.CompletedProcess([], 0, "", ""),
+            ("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"):
+                subprocess.CompletedProcess([], 0, "origin/main\n", ""),
+            ("rev-parse", "HEAD"):
+                subprocess.CompletedProcess([], 0, "abc123\n", ""),
+            ("rebase", "origin/main"):
+                subprocess.CompletedProcess([], 1, "", "conflict"),
+            ("rebase", "--abort"):
+                subprocess.CompletedProcess([], 1, "", "abort failed"),
+        }
+
+        monkeypatch.setattr(
+            gitsync, "_run", lambda _root, *args: responses[args])
+        monkeypatch.setattr(
+            gitsync, "_manifest_only_local_commits",
+            lambda _root, _upstream, _path: (True, {".omac/m.yaml"}),
+        )
+        warnings = []
+        monkeypatch.setattr(
+            "omac.core.gitsync.log.warning",
+            lambda event, **kwargs: warnings.append((event, kwargs)),
+        )
+
+        gitsync._retry_manifest_push(".omac/m.yaml", ".")
+
+        assert warnings == [(
+            "manifest_sync_failed",
+            {
+                "step": "rebase_abort",
+                "error": "abort failed",
+                "hint": "rebase 中止失败,仓库需要人工检查",
+            },
+        )]

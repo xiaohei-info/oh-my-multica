@@ -38,6 +38,110 @@ def _run(repo_root, *args):
                           capture_output=True, text=True)
 
 
+def _is_non_fast_forward(stderr: str) -> bool:
+    text = stderr.lower()
+    return "non-fast-forward" in text or "fetch first" in text
+
+
+def _repo_relative_path(repo_root: str, path: str) -> str:
+    return os.path.normpath(
+        os.path.relpath(path, repo_root) if os.path.isabs(path) else path)
+
+
+def _manifest_only_local_commits(repo_root: str, upstream: str,
+                                 path: str) -> tuple[bool, set[str]]:
+    relative_path = _repo_relative_path(repo_root, path)
+    commits = _run(repo_root, "rev-list", "--parents", f"{upstream}..HEAD")
+    if commits.returncode != 0:
+        return False, set()
+
+    touched: set[str] = set()
+    for line in commits.stdout.splitlines():
+        parts = line.split()
+        if not parts:
+            continue
+        commit = parts[0]
+        if len(parts) > 2:
+            return False, {f"merge commit {commit}"}
+        changed = _run(
+            repo_root, "-c", "core.quotepath=false", "diff-tree",
+            "--no-commit-id", "--name-only", "-r", commit)
+        if changed.returncode != 0:
+            return False, touched
+        touched.update(
+            os.path.normpath(item) for item in changed.stdout.splitlines() if item)
+    return bool(touched) and touched == {relative_path}, touched
+
+
+def _has_unpushed_path(repo_root: str, path: str) -> bool:
+    result = _run(
+        repo_root, "rev-list", "@{upstream}..HEAD", "--",
+        _repo_relative_path(repo_root, path))
+    return result.returncode == 0 and bool(result.stdout.strip())
+
+
+def _retry_manifest_push(path: str, repo_root: str) -> None:
+    fetched = _run(repo_root, "fetch", "--quiet")
+    if fetched.returncode != 0:
+        log.warning("manifest_sync_failed", step="fetch",
+                    error=fetched.stderr.strip())
+        return
+
+    upstream_result = _run(
+        repo_root, "rev-parse", "--abbrev-ref", "--symbolic-full-name",
+        "@{upstream}")
+    if upstream_result.returncode != 0:
+        log.warning("manifest_sync_failed", step="upstream",
+                    error=upstream_result.stderr.strip())
+        return
+    upstream = upstream_result.stdout.strip()
+
+    head_result = _run(repo_root, "rev-parse", "HEAD")
+    if head_result.returncode != 0:
+        log.warning("manifest_sync_failed", step="safety",
+                    error=head_result.stderr.strip())
+        return
+    validated_head = head_result.stdout.strip()
+
+    safe, touched = _manifest_only_local_commits(repo_root, upstream, path)
+    if not safe:
+        paths = ", ".join(sorted(touched)) or "无法确定本地提交范围"
+        log.warning(
+            "manifest_sync_failed", step="safety",
+            error=f"本地未推送提交不只修改 manifest: {paths}",
+            hint="OMAC 不会自动 rebase 用户业务提交")
+        return
+
+    current_head = _run(repo_root, "rev-parse", "HEAD")
+    if current_head.returncode != 0 or current_head.stdout.strip() != validated_head:
+        log.warning(
+            "manifest_sync_failed", step="safety",
+            error="安全检查后 HEAD 已变化,停止自动 rebase",
+            hint="等待当前 git 操作完成后由下一轮 tick 重试")
+        return
+
+    rebased = _run(repo_root, "rebase", upstream)
+    if rebased.returncode != 0:
+        aborted = _run(repo_root, "rebase", "--abort")
+        if aborted.returncode != 0:
+            log.warning(
+                "manifest_sync_failed", step="rebase_abort",
+                error=aborted.stderr.strip(),
+                hint="rebase 中止失败,仓库需要人工检查")
+        else:
+            log.warning(
+                "manifest_sync_failed", step="rebase",
+                error=(rebased.stderr or rebased.stdout).strip(),
+                hint="manifest 与远程状态冲突,已中止 rebase,未覆盖远程")
+        return
+
+    retried = _run(repo_root, "push")
+    if retried.returncode != 0:
+        log.warning("manifest_sync_failed", step="push_retry",
+                    error=retried.stderr.strip(),
+                    hint="manifest 已 rebase 但重试 push 失败")
+
+
 def ensure_config_synced(config_path: str, branch: str = "main",
                          repo_root: str = ".", engine_type=None) -> None:
     """派单前把 config 同步到 origin/<branch>:脏就自动 commit+push。
@@ -87,14 +191,20 @@ def commit_manifest(path: str, message: str, repo_root: str = ".",
     if r.returncode != 0:
         log.warning("manifest_sync_failed", step="add", error=r.stderr.strip())
         return False
-    if _run(repo_root, "diff", "--cached", "--quiet", "--", path).returncode == 0:
-        return False  # 无变更,幂等跳过
-    r = _run(repo_root, "commit", "-m", message)
-    if r.returncode != 0:
-        log.warning("manifest_sync_failed", step="commit", error=r.stderr.strip())
-        return False
+    has_staged_change = (
+        _run(repo_root, "diff", "--cached", "--quiet", "--", path).returncode != 0)
+    if has_staged_change:
+        r = _run(repo_root, "commit", "-m", message)
+        if r.returncode != 0:
+            log.warning("manifest_sync_failed", step="commit", error=r.stderr.strip())
+            return False
+    elif not _has_unpushed_path(repo_root, path):
+        return False  # 无变更且没有历史遗留的未推送 manifest commit
     r = _run(repo_root, "push")
     if r.returncode != 0:
-        log.warning("manifest_sync_failed", step="push", error=r.stderr.strip(),
-                    hint="manifest 已本地 commit 但未 push,跨机口径可能滞后")
+        if _is_non_fast_forward(r.stderr):
+            _retry_manifest_push(path, repo_root)
+        else:
+            log.warning("manifest_sync_failed", step="push", error=r.stderr.strip(),
+                        hint="manifest 已本地 commit 但未 push,跨机口径可能滞后")
     return True

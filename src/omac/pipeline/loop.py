@@ -471,6 +471,25 @@ def _develop_dag_key(manifest: Manifest, node_key: str) -> str:
     return f"{dag_key}/{node_key}" if dag_key else node_key
 
 
+def _develop_source_refs(manifest: Manifest, node, engine_env) -> List[dict]:
+    refs = normalize_source_refs(
+        manifest.meta.get("source_issues"),
+        labels=["设计方案", "验收文档", "任务拆解"],
+        engine_env=engine_env,
+    )
+    dependency_refs = []
+    for dependency_key in node.blocked_by:
+        dependency = manifest.nodes.get(dependency_key)
+        if dependency is None or not dependency.work_item_id:
+            continue
+        dependency_refs.append({
+            "label": f"前置开发任务 · {dependency.title or dependency_key}",
+            "issue_id": dependency.work_item_id,
+        })
+    refs.extend(normalize_source_refs(dependency_refs, engine_env=engine_env))
+    return refs
+
+
 def _dispatch(
     store: WorkItemStore,
     runtime: AgentRuntime,
@@ -511,11 +530,7 @@ def _dispatch(
             if node.contract is not None:
                 store.set_node_contract(item.id, node.contract)
             env = _store_env(store)
-            source_refs = normalize_source_refs(
-                manifest.meta.get("source_issues"),
-                labels=["设计方案", "验收文档", "任务拆解"],
-                engine_env=env,
-            )
+            source_refs = _develop_source_refs(manifest, node, env)
             body = render_issue_body(
                 node, node.contract, TaskKind.DEVELOP, item.id,
                 source_refs=source_refs,

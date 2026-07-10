@@ -194,6 +194,49 @@ class TestHappyPath:
         assert "- 设计方案: `plan-1`" in item.description
         assert "OMAC_ENGINE=mock OMAC_WORKSPACE_ID=ws omac work show plan-1" in item.description
 
+    def test_dispatch_appends_direct_dependency_issue_refs(self):
+        """develop issue 同时链接直接 blocked_by 节点的 Multica issue。"""
+        foundation = _node("foundation", title="Shared contract foundation")
+        foundation.status = "done"
+        foundation.work_item_id = "issue-foundation"
+        data = _node("data", title="Persistence layer")
+        data.status = "done"
+        data.work_item_id = "issue-data"
+        missing = _node("missing", title="Abandoned setup")
+        missing.status = "abandoned"
+        feature = _node(
+            "feature", blocked_by=["foundation", "data", "missing"],
+            contract=_contract())
+        manifest = _manifest([foundation, data, missing, feature], meta={
+            "workspace_id": "ws",
+            "project_id": "proj-1",
+            "source_issues": ["plan-1", "acc-1", "dec-1"],
+        })
+        path = _tmp_manifest_path(manifest)
+        eng = _engine()
+
+        tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        item = eng.store.get_work_item(manifest.nodes["feature"].work_item_id)
+
+        assert item.source_refs[-2:] == [
+            {
+                "label": "前置开发任务 · Shared contract foundation",
+                "issue_id": "issue-foundation",
+            },
+            {
+                "label": "前置开发任务 · Persistence layer",
+                "issue_id": "issue-data",
+            },
+        ]
+        assert item.blocked_by == ["foundation", "data", "missing"]
+        assert (
+            "- 前置开发任务 · Shared contract foundation: `issue-foundation`"
+            in item.description
+        )
+        assert "omac work show issue-foundation" in item.description
+        assert "omac work show issue-data" in item.description
+        assert "Abandoned setup" not in item.description
+
     def test_dispatch_develop_dag_key_includes_manifest_dag_suffix(self):
         """worker issue 的 DAG key 继承 plan/decompose 唯一后缀,避免不同流水线节点重名。"""
         nodes = [_node("foundation-contract-skeleton", worker="alice")]
