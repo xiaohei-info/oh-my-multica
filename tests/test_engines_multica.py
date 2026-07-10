@@ -231,6 +231,37 @@ def test_multica_get_work_item_maps_exhausted_failed_runs_to_failed(monkeypatch)
     assert item.status == WorkItemStatus.FAILED
 
 
+def test_multica_get_work_item_marks_completed_without_submit_for_worker_followup(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+
+    def fake_run(args):
+        if args[:2] == ["issue", "get"]:
+            return {
+                "id": "issue-1",
+                "title": "t",
+                "description": "d",
+                "status": "in_progress",
+                "metadata": {"dag_key": "node-a", "kind": "develop"},
+            }
+        if args[:2] == ["issue", "runs"]:
+            return [
+                {
+                    "id": "run-2",
+                    "status": "completed",
+                    "result": {"pr_url": ""},
+                    "created_at": "2026-07-09T08:35:58Z",
+                },
+            ]
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+
+    item = store.get_work_item("issue-1")
+
+    assert item.status == WorkItemStatus.IN_PROGRESS
+    assert item.agent_run_finished_without_submit is True
+
+
 def test_multica_get_work_item_keeps_in_progress_when_any_run_active(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
 

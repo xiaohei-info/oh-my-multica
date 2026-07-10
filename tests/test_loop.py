@@ -194,6 +194,24 @@ class TestHappyPath:
         assert "- 设计方案: `plan-1`" in item.description
         assert "OMAC_ENGINE=mock OMAC_WORKSPACE_ID=ws omac work show plan-1" in item.description
 
+    def test_dispatch_develop_dag_key_includes_manifest_dag_suffix(self):
+        """worker issue 的 DAG key 继承 plan/decompose 唯一后缀,避免不同流水线节点重名。"""
+        nodes = [_node("foundation-contract-skeleton", worker="alice")]
+        manifest = _manifest(nodes, meta={
+            "workspace_id": "ws",
+            "dag_key": "decompose-p-aaade213",
+        })
+        path = _tmp_manifest_path(manifest)
+        eng = _engine(MOCK_AUTO_COMPLETE="false")
+
+        tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        item = eng.store.get_work_item(
+            manifest.nodes["foundation-contract-skeleton"].work_item_id)
+
+        assert item.dag_key == "decompose-p-aaade213/foundation-contract-skeleton"
+        assert item.title.startswith(
+            "[DAG:decompose-p-aaade213/foundation-contract-skeleton] ")
+
     def test_max_parallel_limits_dispatch(self):
         """max_parallel=1 时首轮只派发 1 个节点。"""
         nodes = [_node("a"), _node("b")]
@@ -230,6 +248,25 @@ class TestHappyPath:
 
         assert result.state == "running"
         assert runtime.calls == [(item_id, "alice", "worker")]
+
+    def test_worker_completed_without_submit_bounces_back_to_worker(self):
+        """agent run 已终止但未 submit 时,同一 issue 转回 worker 继续处理。"""
+        nodes = [_node("a")]
+        manifest = _manifest(nodes)
+        path = _tmp_manifest_path(manifest)
+        eng = _engine(MOCK_AUTO_COMPLETE="false")
+
+        tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+        item_id = manifest.nodes["a"].work_item_id
+        eng.store.get_work_item(item_id).agent_run_finished_without_submit = True
+
+        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+        item = eng.store.get_work_item(item_id)
+
+        assert item.status == WorkItemStatus.IN_PROGRESS
+        assert manifest.nodes["a"].status == "in_progress"
+        assert result.state == "running"
+        assert result.running == ["a"]
 
 
 # ==================== 2. 失败注入 → needs_decision ====================

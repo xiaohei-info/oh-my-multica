@@ -115,7 +115,7 @@ def test_non_interactive_writes_valid_config(tmp_path, monkeypatch, capsys):
     assert cfg["roles"]["reviewers"] == ["alice", "bob"]
     assert "acceptor" not in cfg["roles"]  # 可选缺省
     assert cfg["defaults"]["max_parallel"] == 7
-    assert cfg["retry"] == {"ci": 1, "review": 2, "merge": 0}
+    assert cfg["retry"] == {"worker": 3, "ci": 1, "review": 2, "merge": 0}
 
     # 紧接着 --check 通过
     capsys.readouterr()
@@ -335,6 +335,7 @@ def test_interactive_main_path(tmp_path, monkeypatch, capsys):
         "",       # reviewers → 序号1=alice
         "",       # acceptor → 跳过
         "6",      # max_parallel
+        "3",      # retry.worker
         "1",      # retry.ci
         "2",      # retry.review
         "0",      # retry.merge
@@ -350,7 +351,7 @@ def test_interactive_main_path(tmp_path, monkeypatch, capsys):
     assert cfg["roles"]["workers"] == ["alice"]
     assert "acceptor" not in cfg["roles"]
     assert cfg["defaults"]["max_parallel"] == 6
-    assert cfg["retry"] == {"ci": 1, "review": 2, "merge": 0}
+    assert cfg["retry"] == {"worker": 3, "ci": 1, "review": 2, "merge": 0}
     assert cfg["workflow"] == {
         "human_in_loop": True,
         "review": True,

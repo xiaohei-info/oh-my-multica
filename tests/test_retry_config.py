@@ -1,7 +1,7 @@
-"""config.retry.{ci|review|merge} 可配性 + 校验出口(AITEAM-354)。
+"""config.retry.{worker|ci|review|merge} 可配性 + 校验出口(AITEAM-354)。
 
 验收:
-- init 生成的 config.yaml 含 retry.{ci|review|merge},缺省 3
+- init 生成的 config.yaml 含 retry.{worker|ci|review|merge},缺省 3
 - omac config get/set retry.review 可读可写
 - 负数被校验拒绝(exit 5)
 - resolve_retry 合并缺省 + 校验非法值
@@ -24,17 +24,20 @@ from omac.errors import ValidationError
 # ==================== resolve_retry 合并 + 校验 ====================
 
 def test_resolve_retry_defaults_when_missing():
-    assert config_mod.resolve_retry({"engine": "mock"}) == {"ci": 3, "review": 3, "merge": 3}
+    assert config_mod.resolve_retry({"engine": "mock"}) == {
+        "worker": 3, "ci": 3, "review": 3, "merge": 3}
 
 
 def test_resolve_retry_merges_partial_override():
     cfg = {"retry": {"review": 5}}
-    assert config_mod.resolve_retry(cfg) == {"ci": 3, "review": 5, "merge": 3}
+    assert config_mod.resolve_retry(cfg) == {
+        "worker": 3, "ci": 3, "review": 5, "merge": 3}
 
 
 def test_resolve_retry_zero_is_valid():
-    cfg = {"retry": {"ci": 0, "review": 0, "merge": 0}}
-    assert config_mod.resolve_retry(cfg) == {"ci": 0, "review": 0, "merge": 0}
+    cfg = {"retry": {"worker": 0, "ci": 0, "review": 0, "merge": 0}}
+    assert config_mod.resolve_retry(cfg) == {
+        "worker": 0, "ci": 0, "review": 0, "merge": 0}
 
 
 def test_resolve_retry_rejects_negative():
@@ -49,7 +52,8 @@ def test_resolve_retry_rejects_non_int():
 
 def test_resolve_retry_ignores_unknown_subkey():
     cfg = {"retry": {"review": 2, "bogus": 9}}
-    assert config_mod.resolve_retry(cfg) == {"ci": 3, "review": 2, "merge": 3}
+    assert config_mod.resolve_retry(cfg) == {
+        "worker": 3, "ci": 3, "review": 2, "merge": 3}
 
 
 # ==================== CI 默认检测 ====================
@@ -125,7 +129,7 @@ def test_init_writes_retry_block(tmp_path, monkeypatch):
     ])
     assert code == exit_codes.OK
     cfg = config_mod.load_config()
-    assert cfg["retry"] == {"ci": 3, "review": 3, "merge": 3}
+    assert cfg["retry"] == {"worker": 3, "ci": 3, "review": 3, "merge": 3}
     # DEFAULT_MAX_ROUNDS 与 acceptance.max_rounds 同源,无重复 authority(Nit 6)
     assert cfg["acceptance"] == {"max_rounds": config_mod.DEFAULT_MAX_ROUNDS}
     assert cfg["acceptance"]["max_rounds"] == 3
@@ -172,7 +176,7 @@ def test_dag_tick_passes_configured_retry_limits(tmp_path, monkeypatch, capsys):
         yaml.dump({
             "engine": "mock",
             "workspace": "ws",
-            "retry": {"ci": 0, "review": 1, "merge": 2},
+            "retry": {"worker": 3, "ci": 0, "review": 1, "merge": 2},
         }, f)
     manifest = tmp_path / ".omac" / "m.yaml"
     with open(manifest, "w") as f:
@@ -191,7 +195,7 @@ def test_dag_tick_passes_configured_retry_limits(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(dag_cmd, "tick", fake_tick)
 
     assert main(["dag", "tick", str(manifest)]) == exit_codes.OK
-    assert seen["retry_limits"] == {"ci": 0, "review": 1, "merge": 2}
+    assert seen["retry_limits"] == {"worker": 3, "ci": 0, "review": 1, "merge": 2}
 
 
 # ==================== plan 流水线共用 retry.review ====================

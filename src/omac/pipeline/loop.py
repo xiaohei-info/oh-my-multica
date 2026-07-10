@@ -213,6 +213,49 @@ def collect_results(
 
         # ---- in_progress: worker 阶段回收 ----
         if node.status == "in_progress":
+            if item.agent_run_finished_without_submit:
+                worker_limit = limits.get("worker", DEFAULT_RETRY["worker"])
+                cur_bounce = item.bounces.worker
+                reason = "worker run 已结束但未通过 omac work submit 交付"
+                if worker_limit == 0 or cur_bounce >= worker_limit:
+                    store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
+                    store.add_comment(
+                        node.work_item_id,
+                        f"worker 未交付回退上界({worker_limit})已耗尽: {reason}",
+                    )
+                    set_node(manifest, key, status="blocked")
+                    failures[key] = (
+                        f"worker 未交付(回退上界 {worker_limit} 已耗尽): {reason}"
+                    )
+                    log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
+                             id=node.work_item_id,
+                             reason=f"worker 未交付回退上界({worker_limit})已耗尽")
+                else:
+                    store.update_work_item_metadata(
+                        node.work_item_id,
+                        phase=TaskPhase.AUTHORING,
+                        worker_bounce=cur_bounce + 1,
+                    )
+                    try:
+                        store.assign_work_item(node.work_item_id, node.worker, "worker")
+                        store.update_status(node.work_item_id, WorkItemStatus.IN_PROGRESS)
+                        set_node(manifest, key, status="in_progress")
+                        log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=key,
+                                 id=node.work_item_id, gate="worker",
+                                 round=cur_bounce + 1, max=worker_limit)
+                        runtime.wake(node.work_item_id, node.worker, "worker")
+                    except PlatformError as exc:
+                        store.update_work_item_metadata(
+                            node.work_item_id, worker_bounce=cur_bounce)
+                        store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
+                        store.add_comment(
+                            node.work_item_id,
+                            f"回退到 worker {node.worker} 继续交付失败"
+                            f"(已回滚回退计数): {exc}",
+                        )
+                        set_node(manifest, key, status="blocked")
+                        failures[key] = f"回退到 worker {node.worker} 继续交付失败: {exc}"
+                continue
             if item.status == WorkItemStatus.IN_PROGRESS:
                 runtime.wake(node.work_item_id, node.worker, "worker")
                 continue
@@ -426,6 +469,12 @@ def _mark_downstream_blocked(
 
 # ==================== DISPATCH ====================
 
+def _develop_dag_key(manifest: Manifest, node_key: str) -> str:
+    """开发节点 dag_key 带 manifest 实例 key,避免不同 plan 流水线节点重名。"""
+    dag_key = (manifest.meta.get("dag_key") or "").strip()
+    return f"{dag_key}/{node_key}" if dag_key else node_key
+
+
 def _dispatch(
     store: WorkItemStore,
     runtime: AgentRuntime,
@@ -458,7 +507,7 @@ def _dispatch(
                 workspace_id=workspace_id,
                 title=node.title or key,
                 description=node.description or f"Task {key}",
-                dag_key=key,
+                dag_key=_develop_dag_key(manifest, key),
                 worker=worker,
                 reviewer=node.reviewer,
                 blocked_by=list(node.blocked_by),

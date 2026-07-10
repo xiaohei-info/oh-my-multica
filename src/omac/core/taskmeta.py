@@ -76,6 +76,7 @@ PHASE_KEY = "phase"
 CI_BOUNCE_KEY = "ci_bounce"
 REVIEW_BOUNCE_KEY = "review_bounce"
 MERGE_BOUNCE_KEY = "merge_bounce"
+WORKER_BOUNCE_KEY = "worker_bounce"
 # 旧 inline 交付物 key + 新引用 key。真实平台优先用 *_ref 承载 comment/attachment
 # 引用,避免长正文或嵌套 JSON 塞进 metadata;读侧仍向后兼容旧 inline key。
 DELIVERABLE_KEY = "deliverable"
@@ -98,20 +99,22 @@ DELIVERY_CONTENT_KEY = {
 
 @dataclass
 class Bounces:
-    """三类回退计数(CI 失败 / 评审 reject / merge 冲突),各回退到 worker。"""
+    """回退计数:worker 未交付 / CI 失败 / 评审 reject / merge 冲突。"""
+    worker: int = 0
     ci: int = 0
     review: int = 0
     merge: int = 0
 
     def as_dict(self) -> dict:
         return {
+            WORKER_BOUNCE_KEY: self.worker,
             CI_BOUNCE_KEY: self.ci,
             REVIEW_BOUNCE_KEY: self.review,
             MERGE_BOUNCE_KEY: self.merge,
         }
 
     def total(self) -> int:
-        return self.ci + self.review + self.merge
+        return self.worker + self.ci + self.review + self.merge
 
 
 # ==================== 解析(容错:旧数据缺字段走缺省) ====================
@@ -150,8 +153,9 @@ def parse_bounce(value: Any) -> int:
 
 
 def parse_bounces(metadata: dict) -> Bounces:
-    """从 metadata dict 解出三类回退计数。"""
+    """从 metadata dict 解出回退计数。"""
     return Bounces(
+        worker=parse_bounce(metadata.get(WORKER_BOUNCE_KEY)),
         ci=parse_bounce(metadata.get(CI_BOUNCE_KEY)),
         review=parse_bounce(metadata.get(REVIEW_BOUNCE_KEY)),
         merge=parse_bounce(metadata.get(MERGE_BOUNCE_KEY)),
