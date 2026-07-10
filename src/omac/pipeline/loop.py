@@ -516,7 +516,9 @@ def _dispatch(
         node = manifest.nodes[key]
         worker = node.worker
 
-        # 建工单(若无)
+        # 建工单(若无)。显式 node retry 会保留 work_item_id;这种复用路径也必须
+        # 刷新 body/source refs,否则 manifest 已修订而平台 issue 仍携带旧约束。
+        is_new_item = not node.work_item_id
         if not node.work_item_id:
             item = store.create_work_item(
                 workspace_id=workspace_id,
@@ -527,22 +529,29 @@ def _dispatch(
                 reviewer=node.reviewer,
                 blocked_by=list(node.blocked_by),
             )
+            set_node(manifest, key, work_item_id=item.id)
+        else:
+            item = store.get_work_item(node.work_item_id)
+
+        # contract 附件只在首次建单时发布,避免 retry 追加系统评论触发平行 run。
+        # retry 的 scope/说明变化通过静默刷新 issue body 生效。
+        if is_new_item:
             if node.contract is not None:
                 store.set_node_contract(item.id, node.contract)
-            env = _store_env(store)
-            source_refs = _develop_source_refs(manifest, node, env)
-            body = render_issue_body(
-                node, node.contract, TaskKind.DEVELOP, item.id,
-                source_refs=source_refs,
-                engine_env=env,
-                issue_key=getattr(item, "identifier", None),
-            )
-            store.update_work_item_metadata(
-                item.id,
-                description=body,
-                source_refs=source_refs,
-            )
-            set_node(manifest, key, work_item_id=item.id)
+
+        env = _store_env(store)
+        source_refs = _develop_source_refs(manifest, node, env)
+        body = render_issue_body(
+            node, node.contract, TaskKind.DEVELOP, item.id,
+            source_refs=source_refs,
+            engine_env=env,
+            issue_key=getattr(item, "identifier", None),
+        )
+        store.update_work_item_metadata(
+            item.id,
+            description=body,
+            source_refs=source_refs,
+        )
 
         # fire-and-forget: assign worker + 标 in_progress + wake
         store.assign_work_item(node.work_item_id, worker, "worker")
