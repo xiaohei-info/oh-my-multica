@@ -889,8 +889,10 @@ def render_issue_body(node, contract, kind, issue_id, source_refs=None, engine_e
     scope_paths = _contract_summary(contract, "scope_paths", None)
     if scope_paths:
         rules.append(
-            "代码范围限定在以下路径,越界改动即 reject:\n"
-            + "\n".join(f"  - {p}" for p in scope_paths))
+            "主要代码归属范围如下（不是穷举文件白名单）:\n"
+            + "\n".join(f"  - {p}" for p in scope_paths)
+            + "\n完成 contract 所必需的依赖清单、锁文件、migration、生成物或构建配置等"
+              "必要配套文件可以修改；超出主要范围时必须在 PR 或 verification 中说明原因。")
     rules.append("完成必须有结构化证据（verification/report）,不接受自述")
     if pr_base:
         rules.append(f"PR base 必须指向集成分支（pr_base={pr_base}）,不合主干")

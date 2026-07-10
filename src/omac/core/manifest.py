@@ -42,8 +42,8 @@ class Contract:
     pr_base: str | None = None
     coverage_gate: int | float = 90
     acceptance_doc: dict | list | None = None
-    # 代码范围归属(可选):本节点限定改动的路径/glob。有项目结构就填、圈定
-    # worker 的工程边界防并行冲突;新项目结构未定可留空,不上 lint 硬门。
+    # 主要代码归属范围(可选、非穷举白名单):用于表达节点稳定的模块边界、降低
+    # 并行冲突。完成 contract 必需的配套文件可扩展,但需在 PR/verification 说明。
     scope_paths: list = field(default_factory=list)
 
 
