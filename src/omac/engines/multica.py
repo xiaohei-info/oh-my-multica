@@ -717,7 +717,7 @@ class MulticaRuntime(AgentRuntime):
         latest = _latest_direct_run(runs if isinstance(runs, list) else [])
         if latest:
             status = (latest.get("status") or "").lower()
-            if status in {"failed", "cancelled"}:
+            if status in {"failed", "cancelled", "completed"}:
                 self._store._run_multica(["issue", "rerun", item_id, "--output", "json"])
         return None
 

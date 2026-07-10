@@ -359,3 +359,27 @@ def test_multica_runtime_reruns_cancelled_direct_even_when_comment_is_newer(monk
     MulticaRuntime(store).wake("issue-1", "alice", "worker")
 
     assert ["issue", "rerun", "issue-1", "--output", "json"] in calls
+
+
+def test_multica_runtime_reruns_completed_direct_without_submit(monkeypatch):
+    """direct run completed 但 issue 仍 in_progress 时,wake 应 rerun 原 issue。"""
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    calls = []
+
+    def fake_run(args):
+        calls.append(args)
+        if args[:2] == ["issue", "runs"]:
+            return [
+                {"id": "direct-1", "status": "completed", "kind": "direct",
+                 "created_at": "2026-07-10T01:00:00Z"},
+            ]
+        if args[:2] == ["issue", "rerun"]:
+            return {"id": "direct-2", "status": "queued"}
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+
+    from omac.engines.multica import MulticaRuntime
+    MulticaRuntime(store).wake("issue-1", "alice", "worker")
+
+    assert ["issue", "rerun", "issue-1", "--output", "json"] in calls

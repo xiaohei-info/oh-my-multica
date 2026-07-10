@@ -268,6 +268,26 @@ class TestHappyPath:
         assert result.state == "running"
         assert result.running == ["a"]
 
+    def test_worker_completed_without_submit_exhaustion_does_not_comment(self):
+        """worker 未交付耗尽时不发平台评论,避免评论再次触发 agent run。"""
+        nodes = [_node("a")]
+        manifest = _manifest(nodes)
+        path = _tmp_manifest_path(manifest)
+        eng = _engine(MOCK_AUTO_COMPLETE="false")
+
+        tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+        item_id = manifest.nodes["a"].work_item_id
+        eng.store.get_work_item(item_id).agent_run_finished_without_submit = True
+
+        result = tick(
+            eng.store, eng.runtime, manifest, path,
+            max_parallel=1, retry_limits={"worker": 0},
+        )
+
+        assert result.state == "needs_decision"
+        assert manifest.nodes["a"].status == "blocked"
+        assert eng.store.get_comments(item_id) == []
+
 
 # ==================== 2. 失败注入 → needs_decision ====================
 

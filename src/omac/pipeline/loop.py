@@ -219,10 +219,6 @@ def collect_results(
                 reason = "worker run 已结束但未通过 omac work submit 交付"
                 if worker_limit == 0 or cur_bounce >= worker_limit:
                     store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
-                    store.add_comment(
-                        node.work_item_id,
-                        f"worker 未交付回退上界({worker_limit})已耗尽: {reason}",
-                    )
                     set_node(manifest, key, status="blocked")
                     failures[key] = (
                         f"worker 未交付(回退上界 {worker_limit} 已耗尽): {reason}"
