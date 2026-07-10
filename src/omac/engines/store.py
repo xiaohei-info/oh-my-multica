@@ -125,6 +125,7 @@ class WorkItemStore(ABC):
         review_report_source: Optional[str] = None,
         decision_required: Optional[Dict[str, Any]] = None,
         phase: Optional[TaskPhase] = None,
+        worker_bounce: Optional[int] = None,
         ci_bounce: Optional[int] = None,
         review_bounce: Optional[int] = None,
         merge_bounce: Optional[int] = None,
@@ -136,7 +137,7 @@ class WorkItemStore(ABC):
 
         phase 流转与回退计数递增由 pipeline 经此方法写入(§7.4):
         - phase:产出(authoring)↔ 评审(review)的阶段切换;
-        - ci_bounce/review_bounce/merge_bounce:三类回退的绝对值
+        - worker_bounce/ci_bounce/review_bounce/merge_bounce:回退的绝对值
           (pipeline 读当前值、+1、写回;Store 只存取不做状态机);
         - deliverable:按 kind 承载 plan/acceptance/manifest 等交付正文。
         - description:回填 issue 正文(派发模板在三段 bootstrap 中嵌入真实 id)。

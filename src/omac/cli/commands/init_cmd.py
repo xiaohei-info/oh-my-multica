@@ -57,6 +57,8 @@ def register(parser):
     parser.add_argument("--acceptor", help="acceptor agent 名(可选,缺省复用 reviewers 池)")
     parser.add_argument("--max-parallel", type=int,
                         help="DAG run 默认最大并行任务数(defaults.max_parallel)")
+    parser.add_argument("--retry-worker", type=int,
+                        help="worker run 未 submit 回到 worker 的次数上限(retry.worker,0=立即 blocked)")
     parser.add_argument("--retry-ci", type=int,
                         help="CI 失败回到 worker 的次数上限(retry.ci,0=立即 blocked)")
     parser.add_argument("--retry-review", type=int,
@@ -134,6 +136,7 @@ def _validate_retry_value(key: str, value: int) -> int:
 def _select_retry(args, interactive: bool) -> dict:
     retry = dict(config_mod.DEFAULT_RETRY)
     arg_map = {
+        "worker": getattr(args, "retry_worker", None),
         "ci": getattr(args, "retry_ci", None),
         "review": getattr(args, "retry_review", None),
         "merge": getattr(args, "retry_merge", None),
@@ -146,11 +149,12 @@ def _select_retry(args, interactive: bool) -> dict:
 
     print("\n执行失败回退上限(0=该类失败立即 blocked):")
     labels = {
+        "worker": "worker run 未 submit 回到 worker 次数(retry.worker)",
         "ci": "CI 失败回到 worker 次数(retry.ci)",
         "review": "reviewer reject 回到 worker 次数(retry.review)",
         "merge": "merge 失败回到 worker 次数(retry.merge)",
     }
-    for key in ("ci", "review", "merge"):
+    for key in ("worker", "ci", "review", "merge"):
         raw = _prompt(labels[key], str(retry[key]))
         try:
             retry[key] = _validate_retry_value(key, int(raw))
@@ -383,6 +387,7 @@ def _run_setup(args) -> int:
             "  omac config set roles.workers '[\"alice\"]'\n"
             "  omac config set roles.reviewers '[\"charlie\"]'\n"
             "  omac config set defaults.max_parallel 4\n"
+            "  omac config set retry.worker 3\n"
             "  omac config set retry.ci 3\n"
             "  omac config set retry.review 3\n"
             "  omac config set retry.merge 3\n"
@@ -449,6 +454,7 @@ def _check() -> int:
             "  omac config set roles.workers '[\"alice\"]'\n"
             "  omac config set roles.reviewers '[\"charlie\"]'\n"
             "  omac config set defaults.max_parallel 4\n"
+            "  omac config set retry.worker 3\n"
             "  omac config set retry.ci 3\n"
             "  omac config set retry.review 3\n"
             "  omac config set retry.merge 3\n"

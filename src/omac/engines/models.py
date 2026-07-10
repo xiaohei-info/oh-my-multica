@@ -84,6 +84,8 @@ class WorkItem:
     # 通用交付物:按 kind 承载 plan/acceptance/manifest/acceptance-results 正文
     deliverable: Optional[str] = None
     deliverable_ref: Optional[Dict[str, Any]] = None
+    # 执行面信号:agent run 已终止但未通过 omac work submit 推进 issue。
+    agent_run_finished_without_submit: bool = False
 
     def is_completed(self) -> bool:
         return self.status == WorkItemStatus.DONE

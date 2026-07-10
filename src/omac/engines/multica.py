@@ -20,7 +20,7 @@ import yaml
 from ..core.taskmeta import (
     CI_BOUNCE_KEY, CONTRACT_REF_KEY, DECISION_REQUIRED_KEY, DELIVERABLE_KEY,
     DELIVERABLE_REF_KEY, KIND_KEY, MERGE_BOUNCE_KEY, PHASE_KEY, REVIEW_BOUNCE_KEY, REVIEW_REPORT_REF_KEY,
-    SOURCE_REFS_KEY, TaskKind, TaskPhase, VERIFICATION_REF_KEY,
+    SOURCE_REFS_KEY, TaskKind, TaskPhase, VERIFICATION_REF_KEY, WORKER_BOUNCE_KEY,
     parse_bounces, parse_kind, parse_phase,
 )
 from ..errors import AuthError, PlatformError
@@ -521,29 +521,34 @@ class MulticaStore(WorkItemStore):
         if not isinstance(result, dict):
             raise PlatformError(f"获取 issue {item_id} 失败")
         item = self._issue_to_work_item(result, self.config.workspace_id)
-        if item.status == WorkItemStatus.IN_PROGRESS and self._agent_runs_exhausted(item_id):
-            item.status = WorkItemStatus.FAILED
+        if item.status == WorkItemStatus.IN_PROGRESS:
+            latest_run_status = self._inactive_latest_run_status(item_id)
+            if latest_run_status == "failed":
+                item.status = WorkItemStatus.FAILED
+            elif latest_run_status == "completed":
+                item.agent_run_finished_without_submit = True
         return item
 
-    def _agent_runs_exhausted(self, item_id: str) -> bool:
-        """Multica task 全部终止但 issue 仍 in_progress 时折叠为 worker failed。
+    def _inactive_latest_run_status(self, item_id: str) -> Optional[str]:
+        """没有 active run 时返回最新 run 状态;查询失败/仍在跑返回 None。
 
         agent runtime 失败不会总是同步更新 issue status;如果没有任何 active run,
-        且最新可见 run 是 failed/cancelled,编排侧不能无限等待。
+        且最新可见 run 是 failed,编排侧不能无限等待。completed 但 issue 仍
+        in_progress 则表示 worker 没有 submit,由上层回退到 worker 继续处理。
         """
         try:
             runs = self._run_multica(["issue", "runs", item_id, "--output", "json"])
         except PlatformError:
-            return False
+            return None
         if not isinstance(runs, list) or not runs:
-            return False
+            return None
         latest = _latest_run(runs)
         if not latest:
-            return False
+            return None
         active = {"queued", "pending", "running", "dispatching"}
         if any((run.get("status") or "").lower() in active for run in runs):
-            return False
-        return (latest.get("status") or "").lower() == "failed"
+            return None
+        return (latest.get("status") or "").lower() or None
 
     def update_work_item_metadata(
         self,
@@ -560,6 +565,7 @@ class MulticaStore(WorkItemStore):
         review_report_source: Optional[str] = None,
         decision_required: Optional[Dict[str, Any]] = None,
         phase: Optional[TaskPhase] = None,
+        worker_bounce: Optional[int] = None,
         ci_bounce: Optional[int] = None,
         review_bounce: Optional[int] = None,
         merge_bounce: Optional[int] = None,
@@ -593,6 +599,8 @@ class MulticaStore(WorkItemStore):
             self._set_metadata(item_id, REVIEW_REPORT_REF_KEY, ref)
         if decision_required is not None:
             self._set_metadata(item_id, DECISION_REQUIRED_KEY, decision_required)
+        if worker_bounce is not None:
+            self._set_metadata(item_id, WORKER_BOUNCE_KEY, str(worker_bounce))
         if ci_bounce is not None:
             self._set_metadata(item_id, CI_BOUNCE_KEY, str(ci_bounce))
         if review_bounce is not None:

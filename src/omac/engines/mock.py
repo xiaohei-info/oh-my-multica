@@ -535,6 +535,7 @@ class MockStore(WorkItemStore):
         review_report_source: Optional[str] = None,
         decision_required: Optional[Dict[str, Any]] = None,
         phase: Optional[TaskPhase] = None,
+        worker_bounce: Optional[int] = None,
         ci_bounce: Optional[int] = None,
         review_bounce: Optional[int] = None,
         merge_bounce: Optional[int] = None,
@@ -573,6 +574,8 @@ class MockStore(WorkItemStore):
             item.decision_required = decision_required
         if phase is not None:
             item.phase = phase
+        if worker_bounce is not None:
+            item.bounces.worker = worker_bounce
         if ci_bounce is not None:
             item.bounces.ci = ci_bounce
         if review_bounce is not None:

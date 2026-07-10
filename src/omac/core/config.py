@@ -21,7 +21,8 @@
     ci:    { check_command, timeout_minutes }   # 可选;未显式配置时检测 .github/workflows
     merge: { command }                           # 可选;未显式配置时默认 gh pr merge
     acceptance: { max_rounds }                   # 总控验收外层循环上限(与 retry 正交)
-    retry:                                     # 三类「回到 worker」回退次数上限
+    retry:                                     # 各类「回到 worker」回退次数上限
+      worker: 3                                # worker run 结束但未 submit → worker 继续处理
       ci: 3                                    # CI 失败 → worker 重修(0 = 立即 blocked,不回退)
       review: 3                                # reviewer reject → worker 重修(节点开发与 plan 流水线共用)
       merge: 3                                 # 合并冲突 → worker 重解
@@ -51,8 +52,9 @@ DEFAULT_WORKFLOW = {
     "goal_required": False,
 }
 
-# 三类「回到 worker」回退次数上限(设计文档 §6 / §7.3;缺省 3,0 = 该类失败即 blocked)
+# 各类「回到 worker」回退次数上限(设计文档 §6 / §7.3;缺省 3,0 = 该类失败即 blocked)
 DEFAULT_RETRY = {
+    "worker": 3,
     "ci": 3,
     "review": 3,
     "merge": 3,
@@ -115,7 +117,7 @@ def set_value(data: dict, dotted_key: str, value):
 def resolve_retry(config: dict) -> dict:
     """解析 retry 块:以 DEFAULT_RETRY 为缺省,合并 config.retry,并校验。
 
-    校验规则(设计文档 §6):retry.{ci|review|merge} 必须为整数且 ≥ 0;
+    校验规则(设计文档 §6):retry.{worker|ci|review|merge} 必须为整数且 ≥ 0;
     负数在「校验期」报错(ValidationError → exit 5)。
     """
     raw = get_value(config, "retry")
