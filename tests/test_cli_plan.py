@@ -403,6 +403,8 @@ def test_create_default_combination(tmp_path, monkeypatch, capsys):
     assert (tmp_path / ".omac" / "demo-create.yaml").exists()
     assert (tmp_path / ".omac" / "demo-create.acceptance.yaml").exists()
     data = yaml.safe_load((tmp_path / ".omac" / "demo-create.yaml").read_text())
+    assert data["meta"]["acceptance_required"] is True
+    assert data["meta"]["acceptance_file"] == "demo-create.acceptance.yaml"
     plan_id = data["meta"]["plan_id"]
     # 验证上游产物已流入 acceptance / decompose 的 issue body
     from omac.core.taskmeta import TaskKind
@@ -639,8 +641,31 @@ def test_create_no_acceptance_skips_acceptance_phase(tmp_path, monkeypatch):
                  "--no-acceptance"]) == exit_codes.OK
     assert (tmp_path / ".omac" / "demo-noacc.yaml").exists()
     assert not (tmp_path / ".omac" / "demo-noacc.acceptance.yaml").exists()
+    import yaml
+    data = yaml.safe_load((tmp_path / ".omac" / "demo-noacc.yaml").read_text())
+    assert data["meta"]["acceptance_required"] is False
     acc_item = _first_item_of_kind(engine, TaskKind.ACCEPTANCE)
     assert acc_item is None, "带 --no-acceptance 时不应创建 acceptance work item"
+
+
+def test_create_syncs_manifest_and_acceptance_as_one_plan_output(
+        tmp_path, monkeypatch):
+    import omac.pipeline.plan as plan_mod
+
+    _configure_create_mock(tmp_path, monkeypatch)
+    calls = []
+    monkeypatch.setattr(
+        plan_mod,
+        "commit_files",
+        lambda paths, message, **kwargs: calls.append((list(paths), message)) or True,
+    )
+
+    assert main(["plan", "create", "--name", "demo-sync"]) == exit_codes.OK
+
+    assert calls == [
+        ([".omac/demo-sync.yaml", ".omac/demo-sync.acceptance.yaml"],
+         "chore(omac): sync plan outputs"),
+    ]
 
 
 def test_create_lint_reject_revises_then_passes(tmp_path, monkeypatch):

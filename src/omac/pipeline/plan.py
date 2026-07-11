@@ -28,7 +28,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from ..core import acceptance as acceptance_mod
 from ..core.config import CONFIG_DIR, CONFIG_PATH
-from ..core.gitsync import ensure_config_synced
+from ..core.gitsync import commit_files, ensure_config_synced
 from ..core.lint import lint
 from ..core.manifest import Manifest, loads_manifest, save_manifest
 from ..core.taskmeta import TaskKind, make_dag_key, make_plan_id
@@ -279,9 +279,20 @@ def plan_create(
     manifest = loads_manifest(manifest_text)
     manifest.meta["plan_id"] = plan_id
     manifest.meta.setdefault("name", name)
+    manifest.meta["acceptance_required"] = not ctx.no_acceptance
+    if not ctx.no_acceptance:
+        manifest.meta["acceptance_file"] = os.path.basename(acceptance_path)
+    else:
+        manifest.meta.pop("acceptance_file", None)
     if source_issues:
         manifest.meta["source_issues"] = source_issues
     save_manifest(manifest, manifest_path)
+    output_paths = [manifest_path]
+    if not ctx.no_acceptance:
+        output_paths.append(acceptance_path)
+    commit_files(
+        output_paths, "chore(omac): sync plan outputs",
+        engine_type=store.config.engine_type)
     _emit_plan_next_steps(manifest_path, acceptance_path)
 
     return 0
@@ -388,9 +399,20 @@ def plan_resume(
     manifest = loads_manifest(manifest_text)
     manifest.meta["plan_id"] = plan_id_value
     manifest.meta.setdefault("name", resolved_name)
+    manifest.meta["acceptance_required"] = not ctx.no_acceptance
+    if not ctx.no_acceptance:
+        manifest.meta["acceptance_file"] = os.path.basename(acceptance_path)
+    else:
+        manifest.meta.pop("acceptance_file", None)
     if source_issues:
         manifest.meta["source_issues"] = source_issues
     save_manifest(manifest, manifest_path)
+    output_paths = [manifest_path]
+    if not ctx.no_acceptance:
+        output_paths.append(acceptance_path)
+    commit_files(
+        output_paths, "chore(omac): sync plan outputs",
+        engine_type=store.config.engine_type)
     _emit_plan_next_steps(manifest_path, acceptance_path)
 
     return 0

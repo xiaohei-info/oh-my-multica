@@ -1,7 +1,16 @@
 """core.manifest:load/save 往返、env 展开、set_node、contract 解析。"""
 import os
 
-from omac.core.manifest import load_manifest, save_manifest, set_node
+import pytest
+
+from omac.core import manifest as manifest_mod
+from omac.core.manifest import (
+    load_manifest,
+    manifest_write_lock,
+    save_manifest,
+    set_node,
+)
+from omac.errors import ValidationError
 
 BASIC = """\
 meta:
@@ -54,6 +63,33 @@ def test_roundtrip_preserves_state(tmp_path):
     assert m2.nodes["a"].work_item_id == "42"
     assert m2.nodes["a"].status == "done"
     assert m2.nodes["b"].contract.pr_base == "feature/v1"
+
+
+def test_save_manifest_failure_preserves_previous_file(tmp_path, monkeypatch):
+    path = _write(tmp_path, BASIC)
+    original = open(path, encoding="utf-8").read()
+    manifest = load_manifest(path)
+    manifest.nodes["a"].status = "done"
+
+    def fail_after_partial_write(data, stream, **kwargs):
+        stream.write("meta:\n  name: truncated\nnodes:\n")
+        raise OSError("simulated interrupted dump")
+
+    monkeypatch.setattr(manifest_mod.yaml, "dump", fail_after_partial_write)
+
+    with pytest.raises(OSError, match="interrupted dump"):
+        save_manifest(manifest, path)
+
+    assert open(path, encoding="utf-8").read() == original
+
+
+def test_manifest_write_lock_rejects_second_writer(tmp_path):
+    path = _write(tmp_path, BASIC)
+
+    with manifest_write_lock(path):
+        with pytest.raises(ValidationError, match="已有另一个 omac dag"):
+            with manifest_write_lock(path):
+                pass
 
 
 def test_scope_paths_optional_roundtrip():

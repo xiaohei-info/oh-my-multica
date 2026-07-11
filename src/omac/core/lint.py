@@ -86,6 +86,10 @@ def lint(m: Manifest, pool: set, *, acceptance=None) -> list:
     条目须为验收文档 flow.id 之一(锚定,否则提示未锚定)。缺省 None = 不做锚定校验。
     """
     errs = []
+    closeout_node = m.meta.get("closeout_node")
+    if closeout_node and closeout_node not in m.nodes:
+        errs.append(
+            f"manifest meta.closeout_node references unknown node '{closeout_node}'")
     for n in m.nodes.values():
         if n.worker not in pool:
             errs.append(f"node {n.id}: worker '{n.worker}' not in agent pool")

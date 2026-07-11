@@ -38,6 +38,15 @@ def test_cycle_detected():
     assert any("cycle" in e for e in errs)
 
 
+def test_declared_closeout_node_must_exist():
+    manifest = _manifest(_node("a"))
+    manifest.meta["closeout_node"] = "closeout"
+
+    errs = lint(manifest, POOL)
+
+    assert any("closeout_node" in e and "closeout" in e for e in errs)
+
+
 def test_contract_hard_gates():
     contract = Contract(objective=None, acceptance=[], non_goals=[],
                         verification_commands=[], integration_gates=[], pr_base=None)

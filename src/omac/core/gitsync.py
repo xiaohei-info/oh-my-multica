@@ -48,9 +48,18 @@ def _repo_relative_path(repo_root: str, path: str) -> str:
         os.path.relpath(path, repo_root) if os.path.isabs(path) else path)
 
 
+def _repo_relative_paths(repo_root: str, paths) -> list[str]:
+    return list(dict.fromkeys(_repo_relative_path(repo_root, path) for path in paths))
+
+
 def _manifest_only_local_commits(repo_root: str, upstream: str,
                                  path: str) -> tuple[bool, set[str]]:
-    relative_path = _repo_relative_path(repo_root, path)
+    return _files_only_local_commits(repo_root, upstream, [path])
+
+
+def _files_only_local_commits(repo_root: str, upstream: str,
+                              paths) -> tuple[bool, set[str]]:
+    allowed = set(_repo_relative_paths(repo_root, paths))
     commits = _run(repo_root, "rev-list", "--parents", f"{upstream}..HEAD")
     if commits.returncode != 0:
         return False, set()
@@ -70,17 +79,25 @@ def _manifest_only_local_commits(repo_root: str, upstream: str,
             return False, touched
         touched.update(
             os.path.normpath(item) for item in changed.stdout.splitlines() if item)
-    return bool(touched) and touched == {relative_path}, touched
+    return bool(touched) and touched == allowed, touched
 
 
 def _has_unpushed_path(repo_root: str, path: str) -> bool:
+    return _has_unpushed_files(repo_root, [path])
+
+
+def _has_unpushed_files(repo_root: str, paths) -> bool:
     result = _run(
         repo_root, "rev-list", "@{upstream}..HEAD", "--",
-        _repo_relative_path(repo_root, path))
+        *_repo_relative_paths(repo_root, paths))
     return result.returncode == 0 and bool(result.stdout.strip())
 
 
 def _retry_manifest_push(path: str, repo_root: str) -> None:
+    _retry_files_push([path], repo_root)
+
+
+def _retry_files_push(paths, repo_root: str) -> None:
     fetched = _run(repo_root, "fetch", "--quiet")
     if fetched.returncode != 0:
         log.warning("manifest_sync_failed", step="fetch",
@@ -103,7 +120,13 @@ def _retry_manifest_push(path: str, repo_root: str) -> None:
         return
     validated_head = head_result.stdout.strip()
 
-    safe, touched = _manifest_only_local_commits(repo_root, upstream, path)
+    relative_paths = _repo_relative_paths(repo_root, paths)
+    if len(relative_paths) == 1:
+        safe, touched = _manifest_only_local_commits(
+            repo_root, upstream, relative_paths[0])
+    else:
+        safe, touched = _files_only_local_commits(
+            repo_root, upstream, relative_paths)
     if not safe:
         paths = ", ".join(sorted(touched)) or "无法确定本地提交范围"
         log.warning(
@@ -178,33 +201,43 @@ def ensure_config_synced(config_path: str, branch: str = "main",
     log.info(logsetup.EVT_CONFIG_SYNCED, path=config_path, branch=branch)
 
 
-def commit_manifest(path: str, message: str, repo_root: str = ".",
-                    engine_type=None) -> bool:
-    """git add <path> + commit + push。sync 关闭(gating)或无变更时跳过,返回 False。
-
-    push 失败醒目告警但不中断编排(跨机口径可能滞后,但不阻塞本机推进);
-    不自动 merge —— PR 评审是外部门控。
-    """
+def commit_files(paths, message: str, repo_root: str = ".",
+                 engine_type=None) -> bool:
+    """把一组 OMAC 状态文件作为一个提交同步到远程。"""
     if not sync_enabled(engine_type):
         return False
-    r = _run(repo_root, "add", path)
+    relative_paths = _repo_relative_paths(repo_root, paths)
+    if not relative_paths:
+        return False
+    r = _run(repo_root, "add", "--", *relative_paths)
     if r.returncode != 0:
         log.warning("manifest_sync_failed", step="add", error=r.stderr.strip())
         return False
     has_staged_change = (
-        _run(repo_root, "diff", "--cached", "--quiet", "--", path).returncode != 0)
+        _run(repo_root, "diff", "--cached", "--quiet", "--", *relative_paths).returncode != 0)
     if has_staged_change:
-        r = _run(repo_root, "commit", "-m", message)
+        r = _run(repo_root, "commit", "-m", message, "--", *relative_paths)
         if r.returncode != 0:
             log.warning("manifest_sync_failed", step="commit", error=r.stderr.strip())
             return False
-    elif not _has_unpushed_path(repo_root, path):
-        return False  # 无变更且没有历史遗留的未推送 manifest commit
+    elif not _has_unpushed_files(repo_root, relative_paths):
+        return False
     r = _run(repo_root, "push")
     if r.returncode != 0:
         if _is_non_fast_forward(r.stderr):
-            _retry_manifest_push(path, repo_root)
+            _retry_files_push(relative_paths, repo_root)
         else:
             log.warning("manifest_sync_failed", step="push", error=r.stderr.strip(),
-                        hint="manifest 已本地 commit 但未 push,跨机口径可能滞后")
+                        hint="OMAC 状态已本地 commit 但未 push,跨机口径可能滞后")
     return True
+
+
+def commit_manifest(path: str, message: str, repo_root: str = ".",
+                    engine_type=None) -> bool:
+    """git add manifest + commit + push。sync 关闭或无变更时返回 False。
+
+    push 失败醒目告警但不中断编排(跨机口径可能滞后,但不阻塞本机推进);
+    不自动 merge —— PR 评审是外部门控。
+    """
+    return commit_files(
+        [path], message, repo_root=repo_root, engine_type=engine_type)

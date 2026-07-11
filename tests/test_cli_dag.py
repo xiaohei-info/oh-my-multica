@@ -50,6 +50,47 @@ def _manifest_yaml(tmp_path, nodes):
     return str(path)
 
 
+def test_dag_run_rejects_missing_declared_closeout_node(
+        tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    path = _manifest_yaml(tmp_path, [
+        {"id": "a", "worker": "alice", "status": "todo"},
+    ])
+    import yaml
+    raw = yaml.safe_load(open(path, encoding="utf-8"))
+    raw["meta"]["closeout_node"] = "closeout"
+    open(path, "w", encoding="utf-8").write(
+        yaml.safe_dump(raw, allow_unicode=True, sort_keys=False))
+    monkeypatch.setenv("OMAC_ENGINE", "mock")
+    monkeypatch.setenv("OMAC_WORKSPACE_ID", "ws")
+
+    code = main(["dag", "tick", path, "--output", "json"])
+
+    assert code == exit_codes.VALIDATION
+    assert "closeout_node" in capsys.readouterr().err
+
+
+def test_dag_run_rejects_missing_required_acceptance_file(
+        tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    path = _manifest_yaml(tmp_path, [
+        {"id": "a", "worker": "alice", "status": "todo"},
+    ])
+    import yaml
+    raw = yaml.safe_load(open(path, encoding="utf-8"))
+    raw["meta"]["acceptance_required"] = True
+    raw["meta"]["acceptance_file"] = "dag.acceptance.yaml"
+    open(path, "w", encoding="utf-8").write(
+        yaml.safe_dump(raw, allow_unicode=True, sort_keys=False))
+    monkeypatch.setenv("OMAC_ENGINE", "mock")
+    monkeypatch.setenv("OMAC_WORKSPACE_ID", "ws")
+
+    code = main(["dag", "tick", path, "--output", "json"])
+
+    assert code == exit_codes.VALIDATION
+    assert "验收文档" in capsys.readouterr().err
+
+
 def _mixed_manifest(tmp_path):
     """Manifest with nodes in various states; work_item_ids use 1,2,3 (mock order)."""
     return _manifest_yaml(tmp_path, [

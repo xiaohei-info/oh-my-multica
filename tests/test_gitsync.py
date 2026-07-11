@@ -10,7 +10,12 @@ import subprocess
 import pytest
 
 from omac.core import gitsync
-from omac.core.gitsync import sync_enabled, commit_manifest, ensure_config_synced
+from omac.core.gitsync import (
+    commit_files,
+    commit_manifest,
+    ensure_config_synced,
+    sync_enabled,
+)
 from omac.errors import ValidationError
 
 
@@ -162,6 +167,25 @@ class TestEnsureConfigSynced:
 # ==================== commit_manifest 回写 ====================
 
 class TestCommitManifest:
+    def test_commit_files_pushes_manifest_and_acceptance_together(
+            self, tmp_path, monkeypatch):
+        monkeypatch.delenv("OMAC_GIT_SYNC", raising=False)
+        work = _make_repo(tmp_path)
+        omac_dir = work / ".omac"
+        omac_dir.mkdir()
+        (omac_dir / "m.yaml").write_text("meta: {}\nnodes: []\n")
+        (omac_dir / "m.acceptance.yaml").write_text("flows: []\n")
+
+        assert commit_files(
+            [".omac/m.yaml", ".omac/m.acceptance.yaml"],
+            "plan outputs", repo_root=str(work), engine_type="multica") is True
+
+        remote_files = subprocess.run(
+            ["git", "ls-tree", "-r", "--name-only", "origin/main"],
+            cwd=str(work), capture_output=True, text=True, check=True).stdout.splitlines()
+        assert ".omac/m.yaml" in remote_files
+        assert ".omac/m.acceptance.yaml" in remote_files
+
     def test_disabled_engine_skips(self, tmp_path, monkeypatch):
         monkeypatch.delenv("OMAC_GIT_SYNC", raising=False)
         work = _make_repo(tmp_path)

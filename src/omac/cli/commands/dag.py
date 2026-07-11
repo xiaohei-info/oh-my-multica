@@ -14,7 +14,7 @@ from ...core.config import (
 )
 from ...core.graph import node_waves
 from ...core.lint import lint
-from ...core.manifest import load_manifest
+from ...core.manifest import load_manifest, manifest_write_lock
 from ...core.gitsync import ensure_config_synced
 from ...engines import create_engine
 from ...engines.models import EngineConfig
@@ -374,11 +374,16 @@ def _maybe_acceptance(args, engine, config, manifest) -> Optional[int]:
     返回退出码(0 全 pass / 20 耗尽仍 fail)或 None(无验收/禁用,由调用方 exit 0)。
     """
     manifest_path = args.manifest
-    doc_path = acceptance_doc_path(manifest_path)
+    doc_path = _configured_acceptance_path(manifest, manifest_path)
     no_acceptance = getattr(args, "no_acceptance", False)
     if no_acceptance:
         return None
     if not os.path.exists(doc_path):
+        if manifest.meta.get("acceptance_required"):
+            raise ValidationError(
+                f"验收文档缺失: {doc_path}\n"
+                "提示:重新运行 `omac plan resume --plan-id <id>` 恢复计划产物,"
+                "或从已评审 acceptance issue 附件恢复该文件。")
         return None
 
     from ...core.acceptance import load_acceptance_doc_file as _load_doc
@@ -395,7 +400,34 @@ def _maybe_acceptance(args, engine, config, manifest) -> Optional[int]:
     return outcome.exit_code
 
 
+def _configured_acceptance_path(manifest, manifest_path: str) -> str:
+    configured = manifest.meta.get("acceptance_file")
+    return (
+        os.path.join(os.path.dirname(manifest_path), configured)
+        if configured else acceptance_doc_path(manifest_path))
+
+
+def _validate_execution_invariants(manifest, manifest_path: str) -> None:
+    closeout_node = manifest.meta.get("closeout_node")
+    if closeout_node and closeout_node not in manifest.nodes:
+        raise ValidationError(
+            f"manifest meta.closeout_node 引用不存在的节点: {closeout_node}\n"
+            "提示:从已评审的 decompose 交付物恢复完整 manifest 后再运行。")
+    if manifest.meta.get("acceptance_required"):
+        doc_path = _configured_acceptance_path(manifest, manifest_path)
+        if not os.path.exists(doc_path):
+            raise ValidationError(
+                f"验收文档缺失: {doc_path}\n"
+                "提示:重新运行 `omac plan resume --plan-id <id>` 恢复计划产物,"
+                "或从已评审 acceptance issue 附件恢复该文件。")
+
+
 def _loop_or_single(args, single_round: bool) -> int:
+    with manifest_write_lock(args.manifest):
+        return _loop_or_single_locked(args, single_round)
+
+
+def _loop_or_single_locked(args, single_round: bool) -> int:
     """共享核心:single_round=True → tick 一次退出;否则跑到收敛/需决策。"""
     if not os.path.exists(args.manifest):
         raise ValidationError(
@@ -412,6 +444,7 @@ def _loop_or_single(args, single_round: bool) -> int:
     config = load_config(config_path)
     retry_limits = resolve_retry(config)
     manifest = load_manifest(args.manifest)
+    _validate_execution_invariants(manifest, args.manifest)
     max_parallel = _default_max_parallel(args)
     max_rounds = getattr(args, "max_rounds", None)
     max_minutes = getattr(args, "max_minutes", None)

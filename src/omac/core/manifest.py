@@ -1,8 +1,15 @@
 # manifest.py
 from dataclasses import dataclass, field
+from contextlib import contextmanager
+import fcntl
+import hashlib
 import os
 import re
+import stat
+import tempfile
 import yaml
+
+from ..errors import ValidationError
 
 _UNSET = object()  # sentinel: 参数未传（区别于 None=显式清空）
 
@@ -152,9 +159,11 @@ def loads_manifest(text: str) -> Manifest:
     return Manifest(meta=raw.get("meta", {}), nodes=_build_nodes(raw))
 
 def save_manifest(manifest: Manifest, path: str):
-    """把 manifest 序列化回 YAML，原地覆盖。
+    """把 manifest 原子序列化回 YAML。
 
-    用显式 schema dump，保证 work_item_id/status 等字段齐全、可读。
+    临时文件与目标文件放在同一目录,完整 flush+fsync 后用 os.replace 替换。
+    进程被终止或 dump 失败时,旧 manifest 保持完整,不会留下可被 YAML 当成
+    合法短文件读取的半截状态。
     """
     node_list = []
     for key in manifest.nodes:  # 保留 YAML 里的声明顺序
@@ -184,8 +193,52 @@ def save_manifest(manifest: Manifest, path: str):
         node_list.append(node)
 
     data = {"meta": manifest.meta, "nodes": node_list}
-    with open(path, "w") as f:
-        yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+    target = os.path.abspath(path)
+    directory = os.path.dirname(target) or "."
+    os.makedirs(directory, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(
+        prefix=f".{os.path.basename(target)}.", suffix=".tmp", dir=directory)
+    try:
+        if os.path.exists(target):
+            os.chmod(temporary, stat.S_IMODE(os.stat(target).st_mode))
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            yaml.dump(
+                data, f, default_flow_style=False,
+                allow_unicode=True, sort_keys=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temporary, target)
+    except BaseException:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+@contextmanager
+def manifest_write_lock(path: str):
+    """同一台机器只允许一个 dag run/tick 修改指定 manifest。"""
+    key = hashlib.sha256(os.path.abspath(path).encode("utf-8")).hexdigest()[:24]
+    lock_path = os.path.join(tempfile.gettempdir(), f"omac-manifest-{key}.lock")
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise ValidationError(
+                f"已有另一个 omac dag run/tick 正在修改 manifest: {path}\n"
+                "提示:等待现有进程退出,或确认旧进程已停止后再重试。") from exc
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
 
 def set_node(manifest: Manifest, key: str, *, work_item_id=_UNSET, status: str | None = None):
     """仅改传入字段，其余不动。
