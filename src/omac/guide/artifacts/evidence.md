@@ -32,7 +32,15 @@ integration_tests_rerun: true
 coverage_checked: true
 acceptance_mapping:
   - { acceptance: "flow-login", evidence: "tests/e2e/test_login.py", status: pass }
-integration_gate_mapping: []
+integration_gate_mapping:
+  - gate: auth-e2e
+    status: pass
+    source_of_truth: [docs/design.md#auth-flow]
+    delivery_goal: 登录主链路可用
+    commands:
+      - { cmd: "python3 -m pytest tests/e2e/test_login.py", exit_code: 0 }
+    metrics: {}
+    artifacts: []
 blockers: []
 nits: []
 ```

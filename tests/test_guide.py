@@ -1,11 +1,16 @@
 """guide 分层 topic 走查:可加载、非空、无 skill 残留、omac 命令口径。"""
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
+import yaml
 
 from omac.cli.commands.dag import DESCRIPTION as DAG_DESC
 from omac.cli.commands.node import DESCRIPTION as NODE_DESC
 from omac.cli.commands.work import DESCRIPTION as WORK_DESC
+from omac.core.evidence import validate_review_evidence
+from omac.core.manifest import Contract, Node
 from omac.guide import (
     ARTIFACT_TOPICS,
     ROLE_TOPICS,
@@ -162,6 +167,28 @@ def test_evidence_artifact_defines_all_evidence_shapes() -> None:
     content = load_artifact_topic("evidence")
     for item in ["worker verification", "reviewer report", "final acceptance results", "acceptance_mapping"]:
         assert item in content, f"evidence artifact missing evidence anchor: {item}"
+
+
+def test_evidence_reviewer_example_passes_actual_validator() -> None:
+    content = load_artifact_topic("evidence")
+    reviewer_section = content.split("## reviewer report", 1)[1]
+    report_yaml = reviewer_section.split("```yaml", 1)[1].split("```", 1)[0]
+    report = yaml.safe_load(report_yaml)
+    contract = Contract(
+        acceptance=["flow-login"],
+        integration_gates=[{
+            "name": "auth-e2e",
+            "source_of_truth": ["docs/design.md#auth-flow"],
+            "delivery_goal": "登录主链路可用",
+            "commands": ["python3 -m pytest tests/e2e/test_login.py"],
+            "required_metrics": {},
+            "artifacts": [],
+        }],
+    )
+    node = Node(id="auth", worker="alice", contract=contract)
+    item = SimpleNamespace(review_verdict="pass", review_report=report)
+
+    assert validate_review_evidence(node, item) == []
 
 
 def test_recovery_topic_has_decision_flow() -> None:
