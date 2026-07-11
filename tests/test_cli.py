@@ -1,4 +1,5 @@
 """cli:退出码契约、help、guide、config get/set、stub 行为。"""
+import json
 import os
 
 import pytest
@@ -45,6 +46,159 @@ def test_unknown_command_teaches(capsys):
     assert e.value.code == exit_codes.GENERIC
     err = capsys.readouterr().err
     assert "Error" in err and "<command>" in err  # 报错即教学:带 usage/help
+
+
+@pytest.mark.parametrize(
+    "argv, expected_message",
+    [
+        (
+            ["work", "submit", "issue-1", "--verdict", "not-a-verdict"],
+            "invalid choice",
+        ),
+        (
+            ["work", "submit", "issue-1", "--unknown-option"],
+            "unrecognized arguments",
+        ),
+    ],
+)
+def test_work_parse_errors_default_to_agent_json(capsys, argv, expected_message):
+    with pytest.raises(SystemExit) as exc:
+        main(argv)
+
+    assert exc.value.code == exit_codes.GENERIC
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    payload = json.loads(captured.err)
+    assert payload["ok"] is False
+    assert payload["action"] == "submit"
+    assert payload["issue_id"] == "issue-1"
+    assert payload["error"]["type"] == "ArgumentError"
+    assert payload["error"]["exit_code"] == exit_codes.GENERIC
+    assert expected_message in payload["error"]["message"]
+    assert "usage: omac work submit" in payload["help"]
+
+
+@pytest.mark.parametrize(
+    "invalid_args, expected_message",
+    [
+        (["--verdict", "not-a-verdict"], "invalid choice"),
+        (["--unknown-option"], "unrecognized arguments"),
+    ],
+)
+def test_work_parse_error_table_mode_keeps_human_help(
+    capsys, invalid_args, expected_message
+):
+    with pytest.raises(SystemExit) as exc:
+        main(["work", "submit", "issue-1", "--output", "table", *invalid_args])
+
+    assert exc.value.code == exit_codes.GENERIC
+    err = capsys.readouterr().err
+    assert err.startswith("Error:")
+    assert expected_message in err
+    assert "usage: omac work submit" in err
+    assert "CORE COMMANDS" not in err
+    assert "--verdict" in err and "--report-file" in err
+
+
+@pytest.mark.parametrize("value", ["work", "show", "submit"])
+def test_global_parse_error_does_not_route_argument_value_to_work(capsys, value):
+    with pytest.raises(SystemExit) as exc:
+        main(["--log-format", value])
+
+    assert exc.value.code == exit_codes.GENERIC
+    err = capsys.readouterr().err
+    assert err.startswith("Error: argument --log-format: invalid choice")
+    assert not err.lstrip().startswith("{")
+    assert "usage: omac " in err
+
+
+@pytest.mark.parametrize("later_token", ["show", "submit"])
+def test_invalid_work_action_does_not_route_later_token_as_action(
+    capsys, later_token
+):
+    with pytest.raises(SystemExit) as exc:
+        main(["work", "nope", later_token])
+
+    assert exc.value.code == exit_codes.GENERIC
+    payload = json.loads(capsys.readouterr().err)
+    assert payload["action"] is None
+    assert payload["issue_id"] is None
+    assert "usage: omac work " in payload["help"]
+    assert "usage: omac work show" not in payload["help"]
+
+
+@pytest.mark.parametrize(
+    "outputs, expect_json",
+    [
+        (["--output", "table", "--output", "json"], True),
+        (["--output", "json", "--output", "table"], False),
+    ],
+)
+def test_work_parse_error_uses_last_output_value(capsys, outputs, expect_json):
+    with pytest.raises(SystemExit) as exc:
+        main(["work", "submit", "issue-1", *outputs, "--unknown-option"])
+
+    assert exc.value.code == exit_codes.GENERIC
+    err = capsys.readouterr().err
+    if expect_json:
+        assert json.loads(err)["error"]["type"] == "ArgumentError"
+    else:
+        assert err.startswith("Error: unrecognized arguments")
+        assert "usage: omac work submit" in err
+
+
+def test_work_show_unknown_argument_uses_show_json_help(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["work", "show", "issue-1", "--unknown-option", "--output", "json"])
+
+    assert exc.value.code == exit_codes.GENERIC
+    payload = json.loads(capsys.readouterr().err)
+    assert payload["action"] == "show"
+    assert payload["issue_id"] == "issue-1"
+    assert "usage: omac work show" in payload["help"]
+
+
+def test_work_parse_error_uses_parsed_issue_id_when_options_come_first(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["work", "show", "--output", "json", "issue-1", "--bad"])
+
+    assert exc.value.code == exit_codes.GENERIC
+    payload = json.loads(capsys.readouterr().err)
+    assert payload["action"] == "show"
+    assert payload["issue_id"] == "issue-1"
+
+
+def test_work_parse_error_ignores_output_tokens_after_double_dash(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["work", "show", "issue-1", "--", "--output", "table"])
+
+    assert exc.value.code == exit_codes.GENERIC
+    payload = json.loads(capsys.readouterr().err)
+    assert payload["action"] == "show"
+    assert payload["issue_id"] == "issue-1"
+
+
+def test_work_parse_error_stops_at_first_invalid_output_value(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main([
+            "work", "show", "issue-1",
+            "--output", "xml", "--output", "table",
+        ])
+
+    assert exc.value.code == exit_codes.GENERIC
+    payload = json.loads(capsys.readouterr().err)
+    assert payload["error"]["type"] == "ArgumentError"
+    assert "invalid choice: 'xml'" in payload["error"]["message"]
+
+
+def test_work_parse_error_supports_equals_output_syntax(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["work", "show", "issue-1", "--output=table", "--bad"])
+
+    assert exc.value.code == exit_codes.GENERIC
+    err = capsys.readouterr().err
+    assert err.startswith("Error: unrecognized arguments")
+    assert "usage: omac work show" in err
 
 
 def test_dag_accepts_trailing_log_flags(capsys):

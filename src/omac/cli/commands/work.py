@@ -41,17 +41,40 @@ issue 类型与交付参数:
 
 
 def register(parser):
+    parser._parse_error_renderer = _render_parse_error
     sub = parser.add_subparsers(dest="action", metavar="<action>", required=True)
     show = sub.add_parser("show", help="给 Agent 返回当前任务的完整实例事实包(默认 JSON)")
+    show._work_action = "show"
+    show._parse_error_renderer = _render_parse_error
     show.add_argument("issue_id")
     add_output_flag(show, default="json")
 
     submit = sub.add_parser("submit", help="给 Agent 提交交付物并返回结构化结果(默认 JSON)")
+    submit._work_action = "submit"
+    submit._parse_error_renderer = _render_parse_error
     submit.add_argument("issue_id")
     add_output_flag(submit, default="json")
     # submit 参数由 dispatch 单一事实源注册,与 show 模板共享防漂移
     for flag, kwargs in SUBMIT_PARAM_SPECS.items():
         submit.add_argument(flag, **kwargs)
+
+
+def _render_parse_error(parser, message: str, namespace) -> bool:
+    """argparse 失败发生在 run() 之前,在这里闭合 work 的 JSON 错误契约。"""
+    if getattr(namespace, "output", "json") == "table":
+        return False
+    print_json({
+        "ok": False,
+        "action": getattr(parser, "_work_action", None),
+        "issue_id": getattr(namespace, "issue_id", None),
+        "error": {
+            "type": "ArgumentError",
+            "message": message,
+            "exit_code": exit_codes.GENERIC,
+        },
+        "help": parser.format_help(),
+    }, stream=sys.stderr)
+    return True
 
 
 def _resolve_store():
