@@ -10,6 +10,7 @@ issue body 取自 dispatch.render_issue_body(三段式 §7.4 模板),与 work sh
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional
 
@@ -23,6 +24,20 @@ from .dispatch import normalize_source_refs, render_issue_body
 log = logsetup.get_logger(__name__)
 
 _REVIEW_VERDICTS = {"pass", "pass-with-nits", "reject"}
+
+
+@dataclass
+class AuthoringTaskSpec:
+    """创建 authoring issue 所需的稳定输入。"""
+
+    kind: TaskKind
+    title: str
+    dag_key: str
+    assignee: str
+    description: str = ""
+    contract: Any = None
+    source_refs: List[Any] = field(default_factory=list)
+    source_of_truth: Dict[str, str] = field(default_factory=dict)
 
 
 def _markdown_fence_for(text: str) -> str:
@@ -127,6 +142,45 @@ def _engine_env(engine) -> Dict[str, str]:
     return env
 
 
+def create_authoring_task(engine, spec: AuthoringTaskSpec) -> WorkItem:
+    """创建并填充一个可直接执行的 authoring issue。"""
+    store = engine.store
+    item = store.create_work_item(
+        workspace_id=store.config.workspace_id,
+        title=spec.title,
+        description=spec.title,
+        dag_key=spec.dag_key,
+        worker=spec.assignee,
+        kind=spec.kind,
+    )
+    env = _engine_env(engine)
+    refs = normalize_source_refs(spec.source_refs, engine_env=env)
+    body_node = SimpleNamespace(
+        title=spec.title,
+        description=spec.description,
+        reviewer=None,
+        id=item.id,
+    )
+    body = render_issue_body(
+        body_node,
+        spec.contract,
+        spec.kind,
+        item.id,
+        source_refs=refs,
+        engine_env=env,
+        issue_key=getattr(item, "identifier", None),
+    )
+    if spec.source_of_truth:
+        body += "\n\n" + _render_source_of_truth(spec.source_of_truth)
+    if spec.contract is not None:
+        store.set_node_contract(item.id, spec.contract)
+    return store.update_work_item_metadata(
+        item.id,
+        description=body,
+        source_refs=refs,
+    )
+
+
 def run_task(
     engine,
     kind: TaskKind,
@@ -138,7 +192,7 @@ def run_task(
     poll: Callable[[], None],
     guard: Optional[Callable[[WorkItem], List[str]]] = None,
     confirm: bool = False,
-    source_refs: Optional[List[str]] = None,
+    source_refs: Optional[List[Any]] = None,
     dag_key: Optional[str] = None,
     resume_item_id: Optional[str] = None,
 ) -> Dict[str, Any]:
@@ -162,33 +216,21 @@ def run_task(
     if resume_item_id is not None:
         item = store.get_work_item(resume_item_id)
         item_id = item.id
-        body_node = SimpleNamespace(
-            title=item.title or title, reviewer=item.reviewer, id=item_id)
     else:
-        # ── 建 issue(先占位 id,再用真实 id 渲染 body) ──
-        # 建时用 title 作非空占位正文:真实 body 要嵌 issue id、只能建后回填,而真机
-        # multica 拒收空 --description-file,故不能传空串(见 test_engines_mock parity)。
-        item = store.create_work_item(
-            workspace_id, title, title, dag_key=task_key, worker=assignee, kind=kind,
+        item = create_authoring_task(
+            engine,
+            AuthoringTaskSpec(
+                kind=kind,
+                title=title,
+                dag_key=task_key,
+                assignee=assignee,
+                description=payload.get("description") or "",
+                contract=contract,
+                source_refs=list(source_refs or []),
+                source_of_truth=source_of_truth,
+            ),
         )
         item_id = item.id
-        # body 里 reviewer 留 None:reviewer 在 review 阶段按轮次由 _pick_reviewer 动态选取,
-        # 创建时没有「当前 reviewer」的概念,不写死池内第一位以免误导。
-        body_node = SimpleNamespace(title=title, reviewer=None, id=item_id)
-        env = _engine_env(engine)
-        normalized_source_refs = normalize_source_refs(source_refs, engine_env=env)
-        body = render_issue_body(
-            body_node, contract, kind, item_id,
-            source_refs=normalized_source_refs,
-            engine_env=env,
-        )
-        if source_of_truth:
-            body = body + "\n\n" + _render_source_of_truth(source_of_truth)
-        store.update_work_item_metadata(
-            item_id,
-            description=body,
-            source_refs=normalized_source_refs,
-        )
 
     def _produce(hint: Optional[List[str]] = None) -> WorkItem:
         current = store.get_work_item(item_id)
@@ -282,7 +324,6 @@ def run_task(
 
         store.mark_in_review(item_id)
         store.assign_work_item(item_id, reviewer, "reviewer")
-        body_node.reviewer = reviewer
         log.info(logsetup.EVT_REVIEW_DISPATCH, kind=kind.value, id=item_id,
                  reviewer=reviewer)
         runtime.wake(item_id, reviewer, "reviewer")
