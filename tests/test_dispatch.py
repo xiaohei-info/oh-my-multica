@@ -12,6 +12,7 @@
 """
 import os
 import tempfile
+from types import SimpleNamespace
 
 import pytest
 
@@ -88,6 +89,38 @@ def _tmp_manifest_path(manifest):
     os.close(fd)
     save_manifest(manifest, path)
     return path
+
+
+def test_final_acceptance_body_reads_mapping_contract_and_repositories():
+    node = SimpleNamespace(
+        id="fa",
+        title="最终验收 · Demo · 第 1 轮",
+        description="按验收文档逐项走查。",
+        reviewer=None,
+    )
+    contract = {
+        "acceptance_doc": {"flows": []},
+        "acceptance": ["ACC-001"],
+        "pr_base": "main",
+        "repo_urls": ["git@github.com:owner/demo.git"],
+    }
+
+    body = render_issue_body(
+        node,
+        contract,
+        TaskKind.FINAL_ACCEPTANCE,
+        "fa-1",
+        engine_env={
+            "OMAC_ENGINE": "multica",
+            "OMAC_WORKSPACE_ID": "ws-1",
+            "OMAC_PROJECT_ID": "project-1",
+        },
+    )
+
+    assert "- acceptance:\n  - ACC-001" in body
+    assert "pr_base=main" in body
+    assert "## 目标仓库" in body
+    assert "git@github.com:owner/demo.git" in body
 
 
 # ==================== render_issue_body 快照 ====================

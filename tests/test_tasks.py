@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import pytest
 
+import omac.pipeline.tasks as tasks_module
 from omac.core.manifest import Contract
 from omac.core.taskmeta import TaskKind, TaskPhase
 from omac.engines import create_engine
 from omac.engines.mock import MockStore
 from omac.engines.models import EngineConfig, WorkItemStatus
 from omac.errors import NeedsDecision
-from omac.pipeline.tasks import run_task
+from omac.pipeline.tasks import AuthoringTaskSpec, create_authoring_task, run_task
 
 
 def _engine(**extra):
@@ -40,6 +41,58 @@ def _payload(**over):
 def _poll():
     """测试用 no-op poll(配合 MOCK_AUTO_COMPLETE_DELAY=0 立即收敛)。"""
     pass
+
+
+def test_create_authoring_task_renders_body_contract_and_source_refs():
+    eng = _engine()
+    project = eng.store.create_project(
+        "ws", "demo", repo_urls=["git@github.com:owner/demo.git"])
+    eng.store.config.project_id = project.id
+    spec = AuthoringTaskSpec(
+        kind=TaskKind.FINAL_ACCEPTANCE,
+        title="最终验收 · Demo · 第 1 轮",
+        dag_key="final-acceptance-p-demo-r1",
+        assignee="alice",
+        description="按 ACC-001 逐项走查。",
+        contract={
+            "acceptance_doc": {"flows": []},
+            "acceptance": ["ACC-001"],
+            "pr_base": "main",
+            "repo_urls": ["git@github.com:owner/demo.git"],
+        },
+        source_refs=[{"label": "最终开发交付", "issue_id": "closeout-1"}],
+    )
+
+    item = create_authoring_task(eng, spec)
+
+    assert "OMAC_ENGINE=mock OMAC_WORKSPACE_ID=ws" in item.description
+    assert f"omac work show {item.id}" in item.description
+    assert "pr_base=main" in item.description
+    assert "git@github.com:owner/demo.git" in item.description
+    assert item.contract["acceptance_doc"] == {"flows": []}
+    assert item.source_refs == [
+        {"label": "最终开发交付", "issue_id": "closeout-1"}
+    ]
+
+
+def test_run_task_delegates_new_issue_creation_to_shared_primitive(monkeypatch):
+    eng = _engine()
+    MockStore.set_kind_delivery("plan", {"plan": "计划正文"})
+    original = tasks_module.create_authoring_task
+    calls = []
+
+    def tracking_create_authoring_task(engine, spec):
+        calls.append(spec)
+        return original(engine, spec)
+
+    monkeypatch.setattr(tasks_module, "create_authoring_task", tracking_create_authoring_task)
+
+    result = run_task(eng, TaskKind.PLAN, _payload(), "alice", poll=_poll)
+
+    assert result["verdict"] == "pass"
+    assert len(calls) == 1
+    assert calls[0].kind == TaskKind.PLAN
+    assert calls[0].assignee == "alice"
 
 
 def test_poll_is_required():
