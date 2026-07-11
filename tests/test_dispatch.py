@@ -1,14 +1,14 @@
-"""P2.5 派发模板(dispatch.render_issue_body / render_review_rollout_comment)
+"""派发内容(dispatch.render_issue_body / render_review_rollout_comment)
 与 loop 集成。
 
 验收标准:
-- render_issue_body 三段齐全 + 命令可直接复制执行(嵌入真实 issue id)
-- issue 类型→角色→guide topic 同源映射;字段缺失有人可读占位;
-  可选字段(pr_base/reviewer/non_goals)缺省时相应段落省略
+- render_issue_body 是 Human-first 内容，顶部只有一个可执行 JSON bootstrap
+- issue 类型→角色映射稳定；字段缺失时省略，不引用不存在的 contract
+- 可选字段(pr_base/non_goals/scope_paths)缺省时相应段落省略
 - render_review_rollout_comment 覆盖 pass / pass-with-nits / reject:
   阶段说明 + 定位 + reject 时含 review_goals/blockers/nits
 - mock e2e:关闭 auto-complete,手动扮演 worker(review 提交)→ reviewer(pass)
-  驱动一个节点走完 develop→review→done,证明零 skill 闭环在接口层成立
+  驱动一个节点走完 develop→review→done,证明 Agent-first 闭环在接口层成立
 """
 import os
 import tempfile
@@ -117,8 +117,8 @@ def test_final_acceptance_body_reads_mapping_contract_and_repositories():
         },
     )
 
-    assert "- acceptance:\n  - ACC-001" in body
-    assert "pr_base=main" in body
+    assert "## 完成标准\n- ACC-001" in body
+    assert "- PR 基线: `main`" in body
     assert "## 目标仓库" in body
     assert "git@github.com:owner/demo.git" in body
 
@@ -127,18 +127,20 @@ def test_final_acceptance_body_reads_mapping_contract_and_repositories():
 
 class TestRenderIssueBody:
 
-    def test_three_paragraphs_present(self):
+    def test_issue_body_is_human_first_with_one_agent_entry(self):
         n = Node(id="a", worker="alice", title="Add login", reviewer="bob",
                  contract=_full_contract())
         body = render_issue_body(n, n.contract, TaskKind.DEVELOP, "ISSUE-9")
-        # 三条命令/briefing/硬约束
         assert "ISSUE-9" in body
-        assert "omac work show ISSUE-9" in body
-        assert "omac work submit ISSUE-9" in body
-        assert "简报" in body
-        assert "硬约束" in body
-        # bootstrap 指引 role worker guide
-        assert "omac guide role worker" in body
+        assert "Agent 入口" in body
+        assert "omac work show ISSUE-9 --output json" in body
+        assert "omac work submit ISSUE-9" not in body
+        assert "omac guide role worker" not in body
+        assert "## 任务摘要" in body
+        assert "类型: 开发实现" in body
+        assert "执行角色: 开发执行者" in body
+        assert "## 完成标准" in body
+        assert "硬约束" not in body
 
     def test_briefing_lists_render_as_nested_markdown(self):
         n = Node(id="a", worker="alice", title="Add login", reviewer="bob",
@@ -146,17 +148,17 @@ class TestRenderIssueBody:
 
         body = render_issue_body(n, n.contract, TaskKind.DEVELOP, "ISSUE-9")
 
-        assert "- source_of_truth:\n  - docs/login.md" in body
-        assert "- acceptance:\n  - 移动端可登录\n  - token 10 分钟过期" in body
-        assert "- source_of_truth: - " not in body
-        assert "- acceptance: - " not in body
+        assert "- 依据: `docs/login.md`" in body
+        assert "## 完成标准\n- 移动端可登录\n- token 10 分钟过期" in body
+        assert "source_of_truth" not in body
+        assert "acceptance:" not in body
 
-    def test_bootstrap_commands_are_copy_pasteable(self):
-        """work show/submit 命令里嵌入真实 id(不含通用占位),可直接复制执行。"""
+    def test_bootstrap_command_is_copy_pasteable(self):
+        """Agent 入口嵌入真实 id,且只引导读取权威 JSON 上下文。"""
         n = Node(id="n", worker="alice", contract=_full_contract())
         body = render_issue_body(n, n.contract, TaskKind.DEVELOP, "REAL-100")
-        assert "omac work show REAL-100" in body
-        assert "omac work submit REAL-100" in body
+        assert "omac work show REAL-100 --output json" in body
+        assert "omac work submit REAL-100" not in body
         assert "<id>" not in body and "<issue>" not in body
 
     def test_develop_body_requires_issue_key_in_github_pr(self):
@@ -165,8 +167,7 @@ class TestRenderIssueBody:
         body = render_issue_body(
             n, n.contract, TaskKind.DEVELOP, "uuid-1", issue_key="AITEAM-762")
         assert "AITEAM-762" in body
-        assert "分支名、标题或正文" in body
-        assert "自动关联" in body
+        assert "PR 关联标识" in body
 
     def test_bootstrap_can_include_engine_env_for_no_checkout_runtime(self):
         """隔离 runtime 尚未 checkout repo 时也能直接跑 omac:命令内带 engine/workspace/project。"""
@@ -178,10 +179,10 @@ class TestRenderIssueBody:
         }
         body = render_issue_body(n, n.contract, TaskKind.DEVELOP, "REAL-100", engine_env=env)
         prefix = "OMAC_ENGINE=multica OMAC_WORKSPACE_ID=ws-1 OMAC_PROJECT_ID=proj-1"
-        assert f"{prefix} omac work show REAL-100" in body
-        assert f"{prefix} omac work submit REAL-100" in body
+        assert f"{prefix} omac work show REAL-100 --output json" in body
+        assert f"{prefix} omac work submit REAL-100" not in body
 
-    def test_source_refs_render_markdown_links_and_work_show_commands(self):
+    def test_source_refs_render_human_links_without_agent_commands(self):
         n = Node(id="n", worker="alice", contract=_full_contract())
         env = {
             "OMAC_ENGINE": "multica",
@@ -202,10 +203,7 @@ class TestRenderIssueBody:
         assert "## 上游 issue（防跑偏）" in body
         assert "- 设计方案: [plan-1](https://multica.ai/workspaces/ws-1/issues/plan-1)" in body
         assert "- 验收文档: `acc-1`" in body
-        assert (
-            "OMAC_ENGINE=multica OMAC_WORKSPACE_ID=ws-1 OMAC_PROJECT_ID=proj-1 "
-            "omac work show plan-1"
-        ) in body
+        assert "omac work show plan-1" not in body
 
     def test_source_refs_generate_multica_links_from_engine_env(self):
         n = Node(id="n", worker="alice", contract=_full_contract())
@@ -223,18 +221,17 @@ class TestRenderIssueBody:
 
         assert "- 设计方案: [plan-1](mention://issue/plan-1)" in body
 
-    def test_kind_role_and_guide_mapping(self):
-        """每种 issue 类型映射到对应角色与 guide topic(同源、不复制)。"""
+    def test_kind_role_mapping_is_human_readable_without_guide_dump(self):
+        """issue 保留角色/类型供 Human 识别,不复制 Agent guide。"""
         n = Node(id="n", worker="alice", title="t",
                  contract=Contract(objective="o", acceptance=["a"]))
         # 全部五种 kind 都有确定映射
         for kind in TaskKind:
             body = render_issue_body(n, n.contract, kind, "ID")
             role = KIND_ROLE[kind]
-            topic = KIND_GUIDE[kind]
             label = KIND_LABEL[kind]
             assert role in body, f"{kind} 缺角色 {role}"
-            assert f"omac guide {topic}" in body, f"{kind} 缺 guide {topic}"
+            assert "omac guide" not in body
             assert label in body, f"{kind} 缺标签 {label}"
 
     def test_missing_contract_fields_omit_briefing_lines(self):
@@ -246,50 +243,41 @@ class TestRenderIssueBody:
         body = render_issue_body(n, None, TaskKind.DEVELOP, "ID")
         # 不得出现任何指向不存在 contract 的死占位
         assert "见 contract." not in body
-        # 缺字段的行整条省略(只剩 title)
-        assert "- objective:" not in body
-        assert "- source_of_truth:" not in body
-        assert "- acceptance:" not in body
-        # title 与三段骨架仍在
-        assert "- title: t" in body
-        assert "简报" in body and "硬约束" in body and "omac work show ID" in body
+        assert "- 目标:" not in body
+        assert "- 依据:" not in body
+        assert "## 完成标准" not in body
+        assert "# t" in body
+        assert "## 任务摘要" in body and "omac work show ID --output json" in body
 
     def test_plan_task_briefing_has_no_dead_contract_placeholder(self):
         """plan 任务(contract=None)的简报不得出现「见 contract.X」——它引用的东西根本不存在。"""
         n = Node(id="n", worker="alice", title="贪吃蛇手游 计划")
         body = render_issue_body(n, None, TaskKind.PLAN, "ID")
         assert "见 contract" not in body
-        assert "- title: 贪吃蛇手游 计划" in body
+        assert "# 贪吃蛇手游 计划" in body
 
-    def test_bootstrap_orders_guide_first_no_contract_lie(self):
-        """点2:bootstrap 把 guide 抬为第 1 必看(先懂流程再取实例),
-        且不谎称「你的 contract 全量」——plan 天生无 contract。"""
+    def test_bootstrap_orders_work_show_first(self):
+        """实例事实优先:issue 只给 work show,不要求先读静态 guide。"""
         n = Node(id="n", worker="alice", title="计划")
         body = render_issue_body(n, None, TaskKind.PLAN, "ID")
-        # guide 指引出现在 work show 之前
-        assert body.index("omac guide role planner") < body.index("omac work show ID")
-        # 三条入口命令仍在(重排,不删)
-        assert "omac work show ID" in body
-        assert "omac work submit ID" in body
-        # 删掉「contract 全量」这句对 plan 而言的谎
-        assert "contract 全量" not in body
+        assert "omac work show ID --output json" in body
+        assert "omac guide" not in body
+        assert "omac work submit" not in body
 
-    def test_bootstrap_marks_guide_as_soft_and_submit_as_hard(self):
-        """中期 agent 指令:guide 是软上下文,submit 是硬交付入口,不能全局吞错。"""
+    def test_issue_body_does_not_duplicate_agent_protocol(self):
         n = Node(id="n", worker="alice", title="计划")
         body = render_issue_body(n, None, TaskKind.PLAN, "ID")
-        assert "guide 是软上下文" in body
-        assert "失败时先运行 `omac guide` 列 topic" in body
-        assert "`omac work submit` 是硬交付入口" in body
+        assert "guide 是软上下文" not in body
+        assert "左移校验" not in body
+        assert "不信任何自述" not in body
 
-    def test_worker_body_forbids_manual_platform_state_changes(self):
-        """worker 只能 work submit,不能手动改平台状态/分配/重跑/取消。"""
+    def test_worker_platform_rules_live_outside_human_issue(self):
         n = Node(id="n", worker="alice", title="开发")
         body = render_issue_body(n, None, TaskKind.DEVELOP, "ID")
-        assert "multica issue status" in body
-        assert "multica issue assign" in body
-        assert "multica issue rerun" in body
-        assert "multica issue cancel-task" in body
+        assert "multica issue status" not in body
+        assert "multica issue assign" not in body
+        assert "multica issue rerun" not in body
+        assert "multica issue cancel-task" not in body
 
     def test_contract_summary_none_returns_fallback(self):
         """_contract_summary 在 contract=None 时应直接返回 fallback,作为占位的根。"""
@@ -303,7 +291,7 @@ class TestRenderIssueBody:
         n = Node(id="n", worker="alice", title="t", contract=c)  # 无 reviewer
         body = render_issue_body(n, c, TaskKind.DEVELOP, "ID")
         assert "pr_base" not in body
-        assert "non_goals 是红线" not in body
+        assert "## 非目标" not in body
         assert "reviewer（" not in body
 
     def test_scope_paths_rendered_as_primary_scope_when_present(self):
@@ -313,9 +301,6 @@ class TestRenderIssueBody:
         body = render_issue_body(n, c, TaskKind.DEVELOP, "ID")
         assert "src/auth/**" in body
         assert "主要代码归属范围" in body
-        assert "必要配套文件" in body
-        assert "PR 或 verification" in body
-        assert "越界改动即 reject" not in body
         # 无 scope_paths:不渲染该约束(新项目可留空,直接放行)
         c2 = Contract(objective="o", acceptance=["a"])
         n2 = Node(id="n", worker="alice", title="t", contract=c2)
@@ -325,10 +310,10 @@ class TestRenderIssueBody:
         n = Node(id="n", worker="alice", title="t", reviewer="bob",
                  contract=_full_contract())
         body = render_issue_body(n, n.contract, TaskKind.DEVELOP, "ID")
-        assert "pr_base=feature/v1" in body
+        assert "PR 基线: `feature/v1`" in body
         assert "不接第三方 OAuth" in body
-        assert "coverage_gate=90" in body
-        assert "reviewer（bob）" in body
+        assert "改动分支覆盖率: `≥ 90%`" in body
+        assert "reviewer（bob）" not in body
 
     def test_node_description_renders_as_task_detail(self):
         """node.description 非空时进 body 的「任务详情」段(worker 上下文来源);
@@ -407,8 +392,9 @@ class TestDispatchLoopIntegration:
         tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
         item = eng.store.get_work_item(manifest.nodes["a"].work_item_id)
         assert item.id in item.description
-        assert f"omac work show {item.id}" in item.description
-        assert "硬约束" in item.description
+        assert f"omac work show {item.id} --output json" in item.description
+        assert "## 任务摘要" in item.description
+        assert "硬约束" not in item.description
 
     def test_retry_existing_issue_refreshes_body_without_recreating_issue(self):
         """node retry 复用旧 issue 时同步最新 scope 文案,避免旧硬白名单继续阻塞。"""
@@ -481,7 +467,7 @@ class TestDispatchLoopIntegration:
         item_id = manifest.nodes["a"].work_item_id
         item = eng.store.get_work_item(item_id)
         assert item.status == WorkItemStatus.IN_PROGRESS
-        assert f"omac work show {item_id}" in item.description
+        assert f"omac work show {item_id} --output json" in item.description
 
         # 2) 手动扮演 worker:写入可通过证据门的 verification
         eng.store.update_work_item_metadata(

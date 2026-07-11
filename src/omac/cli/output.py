@@ -14,11 +14,11 @@ TABLE = "table"
 OUTPUT_CHOICES = (TABLE, JSON)
 
 
-def add_output_flag(parser):
+def add_output_flag(parser, *, default=TABLE):
     """给子命令挂统一的 --output flag。"""
     parser.add_argument(
-        "--output", choices=OUTPUT_CHOICES, default=TABLE,
-        help="输出格式:table 给人看(默认),json 给 agent/Web",
+        "--output", choices=OUTPUT_CHOICES, default=default,
+        help=f"输出格式:json 给 Agent/Web,table 给人类调试(默认:{default})",
     )
     return parser
 

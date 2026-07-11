@@ -12,8 +12,9 @@ WorkItemStore/AgentRuntime 接口,绝不直接 shell 平台 CLI)。
 """
 from __future__ import annotations
 
-from typing import Callable
+from typing import Callable, Optional
 
+from ..core.taskmeta import TaskKind
 from ..engines.models import WorkItemStatus
 from ..errors import NeedsDecision
 
@@ -22,14 +23,15 @@ def run_review(
     engine,
     workspace_id: str,
     title: str,
-    body: str,
+    body: str | Callable[[str], str],
     reviewer: str,
     *,
+    deliverable: Optional[str] = None,
     poll: Callable[[], None],
 ) -> dict:
     """对一件已存在的交付物做单次 reviewer 评审,返回 review_report(pass)。
 
-    建 work item(issue body 由调用方按 §7.4 三段式模板渲染后传入)→ mark_in_review
+    建 work item(issue body 由调用方按 Human-first 模板渲染后传入)→ mark_in_review
     → assign reviewer → wake → 轮询 verdict。
     pass 时返回 review_report;reject 时抛 NeedsDecision(exit 20,结构化报告)。
 
@@ -50,8 +52,22 @@ def run_review(
             "`omac config set roles.reviewers` 配置后重跑",
             report={"reviewer": reviewer, "verdict": "reviewer-not-in-pool"})
 
+    initial_body = title if callable(body) else body
     item = store.create_work_item(
-        workspace_id, title, body, dag_key="plan-check", worker=reviewer)
+        workspace_id,
+        title,
+        initial_body,
+        dag_key="plan-check",
+        worker=reviewer,
+        kind=TaskKind.DECOMPOSE,
+    )
+    metadata = {}
+    if callable(body):
+        metadata["description"] = body(item.id)
+    if deliverable is not None:
+        metadata["deliverable"] = deliverable
+    if metadata:
+        store.update_work_item_metadata(item.id, **metadata)
 
     store.mark_in_review(item.id)
     store.assign_work_item(item.id, reviewer, "reviewer")

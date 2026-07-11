@@ -1,35 +1,35 @@
-# 角色索引
+# Agent 角色索引
 
-本页只说明生命周期角色与职责边界。具体行为协议见 `omac guide role <name>`。
+本页只用于选择角色 guide，不包含各角色的完整协议。具体任务仍以
+`omac work show <issue-id> --output json` 返回的实例事实、身份和 `guide_refs` 为准。
 
-| 机制角色 | 何时出现 | 产出 |
-|---|---|---|
-| planner | `plan create` 的 plan / acceptance 阶段 | 设计方案、验收文档 |
-| orchestrator | 方案和验收过门后;总控验收 fail 后 | manifest DAG、增量 fix 节点 |
-| worker | `dag run` 派发 develop issue 后 | PR、verification 证据 |
-| reviewer | issue 进入 review 阶段后 | verdict、review report |
-| acceptor | DAG 内层收敛后 | final acceptance results |
+| 机制角色 | 何时出现 | 主要产出 | 读取命令 |
+|---|---|---|---|
+| planner | plan / acceptance 产出阶段 | 设计方案、验收文档 | `omac guide role planner` |
+| orchestrator | 方案与验收过门后；总控验收 fail 后 | manifest DAG、增量 fix 节点 | `omac guide role orchestrator` |
+| worker | develop 产出阶段 | PR、verification | `omac guide role worker` |
+| reviewer | plan / acceptance / decompose / develop 的 review 阶段 | verdict、review report | `omac guide role reviewer` |
+| acceptor | DAG 内层收敛后 | final acceptance results | `omac guide role acceptor` |
 
-## 角色 guide
+## 选择规则
 
-- `omac guide role planner`
-- `omac guide role orchestrator`
-- `omac guide role worker`
-- `omac guide role reviewer`
-- `omac guide role acceptor`
+1. 先读 `work show.task.identity` 与 `work show.task.phase`。
+2. 再执行 `work show.guide_refs` 中列出的命令。
+3. role guide 与实例上下文冲突时，以实例事实和 contract 为准。
 
 ## 职责边界
 
-- planner 写设计方案和验收文档,不拆 DAG,不写代码。
-- orchestrator 拆 manifest,不实现业务。
-- worker 按 contract 做开发,不自审自放行。
-- reviewer 独立复核,不替 worker 改代码。
-- acceptor 按验收文档端到端走查,不绕过未验证项。
+- planner 写设计方案和验收文档，不拆 DAG，不写业务代码。
+- orchestrator 拆 manifest，不实现业务。
+- worker 按 contract 开发，不自审自放行。
+- reviewer 独立复核，不替产出者修改交付物。
+- acceptor 按验收文档做端到端走查，不绕过未验证项。
 
 ## architect 能力画像
 
-architect 不是第六个机制角色。它是 agent 能力画像,适合配置为 planner、orchestrator 或架构 reviewer。
-当 architect agent 承担 planner 时,遵循 `omac guide role planner`;当承担 orchestrator 时,遵循
+architect 不是第六个机制角色。它是 Agent 能力画像，适合配置为 planner、orchestrator
+或架构 reviewer。承担 planner 时遵循 `omac guide role planner`；承担 orchestrator 时遵循
 `omac guide role orchestrator`。
 
-architect 重点关注模块边界、数据流向、依赖方向、跨模块契约、ADR 和架构漂移。
+architect 重点关注模块边界、数据流向、依赖方向、跨模块契约、ADR 和架构漂移，
+但仍受当前 issue 的实例事实与角色边界约束。

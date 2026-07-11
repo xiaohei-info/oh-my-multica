@@ -28,26 +28,26 @@ from omac.errors import ValidationError
 
 
 
-# 注入到 project description 的常驻横幅(仿 Multica Helper 的防漂移写法:只点角色与
-# 入口,把命令清单交给 CLI/guide 自身,不枚举步骤、不复制 issue 正文)。项目描述会随
-# 任务上下文注入到被派单 agent 的工作目录,这是它认清"本项目由 omac 协作"的第一手指引。
+# 注入到 project description 的常驻 Agent 路由。这里只说明入口和权威顺序，
+# 不复制具体角色协议；当前任务的动态事实由 work show 生成。
 OMAC_PROJECT_DESCRIPTION = """本 project 由 omac 编排。**判据:只有标题带 `[DAG:...]` 前缀的 issue 是 omac 派发的
 执行任务**,需经 omac 处理;无此前缀的 issue 按其 body 常规处理(不要把它当被派发任务、
 不要对它跑 omac work show/submit —— 但若 body 明确要求你运行 omac 命令,照 body 执行)。
 
 被指派到 `[DAG:...]` 任务时(无论你的角色是 planner/orchestrator/worker/reviewer/acceptor),
-omac CLI 已在你的 PATH 上,是唯一入口与权威清单:
+omac CLI 已在 PATH 上。第一步只运行:
 
-  omac work show <该 issue id>   # 取任务上下文、你的角色与精确交付方式
-  omac work submit <issue id> ...  # 按 show 输出里的参数交付
+  omac work show <该 issue id> --output json
 
-不清楚就跑 `omac guide` 查看 role/artifact 索引,或运行 `omac --help` —— 不要编造命令,也不要手改 issue metadata。
+把返回的 task/context/protocol/authority 当作当前实例事实;按 guide_refs 只读取本任务需要的
+静态 guide,静态 guide 不得覆盖实例事实。完成后执行返回的精确 submit 命令。
+不要编造参数,也不要手改 issue metadata 或平台状态。
 """
 
 
 # work show 的「现在做什么」——严格按当前这件任务(kind × phase)收窄,不 role-mix。
 # 静态深度(交付文件 schema、铁律清单)全在 guide,协议不再内联复制;show 只给一句话
-# 动作 + 指向对应 guide topic 的指针。KIND_GUIDE 在文件后段定义,这两个函数调用期解析。
+# 动作。对应 guide topic 通过独立的 guide_refs 字段返回,避免把命令混进动作语义。
 _AUTHORING_ACTION = {
     TaskKind.PLAN:
         "编写设计方案:分析需求,产出锚定验收目标、可执行、可验证的方案文档。",
@@ -66,18 +66,10 @@ _REVIEW_ACTION = (
     "不信自述,按 contract/验收目标给 verdict。")
 
 
-def _guide_ref(kind: TaskKind, phase: TaskPhase) -> str:
-    """当前任务该查哪个 guide topic(review 阶段统一 reviewer)。"""
-    if phase == TaskPhase.REVIEW:
-        return "role reviewer"
-    return KIND_GUIDE.get(kind, "workflow")
-
-
 def _next_action(kind: TaskKind, phase: TaskPhase) -> str:
-    """「现在做什么」:一句话收窄动作 + 指向 guide 的完整清单,不内联复制协议全文。"""
-    action = _REVIEW_ACTION if phase == TaskPhase.REVIEW \
+    """「现在做什么」:只陈述当前动作,不混入静态 guide 命令。"""
+    return _REVIEW_ACTION if phase == TaskPhase.REVIEW \
         else _AUTHORING_ACTION.get(kind, "")
-    return f"{action}\n> 完整清单:`omac guide {_guide_ref(kind, phase)}`"
 
 
 # ==================== submit 参数(单一事实源,防漂移) ====================
@@ -106,6 +98,47 @@ SUBMIT_PARAMS_BY_KIND_PHASE: Dict[Tuple[TaskKind, TaskPhase], List[str]] = {
     (TaskKind.DEVELOP, TaskPhase.REVIEW): ["--verdict", "--report-file"],
     (TaskKind.FINAL_ACCEPTANCE, TaskPhase.AUTHORING): ["--acceptance-results-file"],
 }
+
+
+# Agent 消费内容的权威顺序。越靠前越具体、越接近当前实例。
+AUTHORITY_ORDER = [
+    "work show 当前实例事实",
+    "contract / previous_review",
+    "role guide",
+    "artifact guide",
+    "workflow 总览",
+]
+
+
+# 当前 kind × phase 所需的最小静态知识集合。保持命令完整,Agent 可直接执行。
+GUIDE_REFS_BY_KIND_PHASE: Dict[Tuple[TaskKind, TaskPhase], List[str]] = {
+    (TaskKind.PLAN, TaskPhase.AUTHORING): [
+        "omac guide role planner", "omac guide artifact design"],
+    (TaskKind.PLAN, TaskPhase.REVIEW): [
+        "omac guide role reviewer", "omac guide artifact design"],
+    (TaskKind.ACCEPTANCE, TaskPhase.AUTHORING): [
+        "omac guide role planner", "omac guide artifact acceptance"],
+    (TaskKind.ACCEPTANCE, TaskPhase.REVIEW): [
+        "omac guide role reviewer", "omac guide artifact acceptance"],
+    (TaskKind.DECOMPOSE, TaskPhase.AUTHORING): [
+        "omac guide role orchestrator", "omac guide artifact manifest"],
+    (TaskKind.DECOMPOSE, TaskPhase.REVIEW): [
+        "omac guide role reviewer", "omac guide artifact manifest"],
+    (TaskKind.DEVELOP, TaskPhase.AUTHORING): [
+        "omac guide role worker", "omac guide artifact evidence"],
+    (TaskKind.DEVELOP, TaskPhase.REVIEW): [
+        "omac guide role reviewer", "omac guide artifact evidence"],
+    (TaskKind.FINAL_ACCEPTANCE, TaskPhase.AUTHORING): [
+        "omac guide role acceptor",
+        "omac guide artifact acceptance",
+        "omac guide artifact evidence",
+    ],
+}
+
+
+def guide_refs_for(kind: TaskKind, phase: TaskPhase) -> List[str]:
+    """返回当前任务所需 guide 命令的副本,防止调用方修改单一事实源。"""
+    return list(GUIDE_REFS_BY_KIND_PHASE.get((kind, phase), []))
 
 
 def submit_params_for(kind: TaskKind, phase: TaskPhase) -> List[str]:
@@ -161,17 +194,19 @@ def _previous_review_context(item: Any) -> Optional[Dict[str, Any]]:
     return previous
 
 def build_show_output(item: Any, identity: str) -> Dict[str, Any]:
-    """构建 work show 的完整输出结构(四段)。
+    """构建 work show 的 Agent-first 完整事实包。
 
     参数:
         item: WorkItem(来自 store.get_work_item)
         identity: 当前 agent 的身份描述(如 "worker:alice" 或 "reviewer:bob")
 
-    返回 dict,四段:
-        task: 任务标识(kind/phase/dag_key/issue_id/title/worker/reviewer)
+    返回 dict:
+        task: 任务标识(kind/phase/status/dag_key/issue_id/title/worker/reviewer)
         context: 完整上下文(contract 全量 or 评审对象 + env_setup)
         protocol: 该 kind×phase 的执行协议
         submit: 精确的 submit 命令模板
+        authority: 冲突时的内容权威顺序
+        guide_refs: 当前任务所需的最小静态知识集合
     """
     kind: TaskKind = item.kind
     phase: TaskPhase = _resolve_phase(item, item.phase)
@@ -179,6 +214,11 @@ def build_show_output(item: Any, identity: str) -> Dict[str, Any]:
     task = {
         "kind": kind.value,
         "phase": phase.value,
+        "status": (
+            item.status.value
+            if hasattr(item.status, "value")
+            else str(item.status)
+        ),
         "dag_key": item.dag_key,
         "issue_id": item.id,
         "issue_key": getattr(item, "identifier", None),
@@ -186,6 +226,13 @@ def build_show_output(item: Any, identity: str) -> Dict[str, Any]:
         "worker": item.worker,
         "reviewer": item.reviewer,
         "identity": identity,
+        "blocked_by": list(getattr(item, "blocked_by", None) or []),
+        "wave": getattr(item, "wave", None),
+        "bounces": (
+            item.bounces.as_dict()
+            if hasattr(getattr(item, "bounces", None), "as_dict")
+            else {}
+        ),
     }
 
     # 完整上下文:authoring 给 contract 全量;review 给评审对象 + env_setup
@@ -201,19 +248,33 @@ def build_show_output(item: Any, identity: str) -> Dict[str, Any]:
     else:
         contract_payload = None
 
+    context: Dict[str, Any] = {
+        "issue_description": getattr(item, "description", ""),
+        "contract": contract_payload,
+    }
+    contract_ref = getattr(item, "contract_ref", None)
+    if contract_ref is not None:
+        context["contract_ref"] = contract_ref
+    decision_required = getattr(item, "decision_required", None)
+    if decision_required is not None:
+        context["decision_required"] = decision_required
+
     if phase == TaskPhase.AUTHORING:
-        context: Dict[str, Any] = {
-            "contract": contract_payload,
-        }
         previous_review = _previous_review_context(item)
         if previous_review is not None:
             context["previous_review"] = previous_review
     else:
         # review 阶段:评审对象(deliverable) + contract + worker 的 env_setup
-        context = {
-            "deliverable": item.deliverable,
-            "contract": contract_payload,
-        }
+        context["deliverable"] = item.deliverable
+        for key in (
+            "deliverable_ref",
+            "artifacts",
+            "verification",
+            "verification_ref",
+        ):
+            value = getattr(item, key, None)
+            if value is not None:
+                context[key] = value
         env_setup = _env_setup_checklist(item)
         if env_setup is not None:
             context["env_setup"] = env_setup
@@ -236,6 +297,8 @@ def build_show_output(item: Any, identity: str) -> Dict[str, Any]:
         "context": context,
         "protocol": protocol,
         "submit": submit,
+        "authority": list(AUTHORITY_ORDER),
+        "guide_refs": guide_refs_for(kind, phase),
     }
 
 
@@ -568,7 +631,7 @@ def _resolve_phase(item: WorkItem, declared: TaskPhase) -> TaskPhase:
 
 
 class SubmitResult:
-    """submit 成功后的结果(用于 cli 层展示)。"""
+    """submit 成功结果；phase 是本次提交阶段，next_phase 是推进后的阶段。"""
 
     def __init__(
         self,
@@ -576,12 +639,14 @@ class SubmitResult:
         phase: TaskPhase,
         deliverable_key: str,
         advanced_to: WorkItemStatus,
+        next_phase: Optional[TaskPhase] = None,
         message: Optional[str] = None,
     ):
         self.kind = kind
         self.phase = phase
         self.deliverable_key = deliverable_key
         self.advanced_to = advanced_to
+        self.next_phase = next_phase
         self.message = message
 
 
@@ -672,7 +737,8 @@ def submit(
         )
         store.update_status(issue_id, WorkItemStatus.IN_REVIEW)
         return SubmitResult(
-            kind, TaskPhase.REVIEW, "plan", WorkItemStatus.IN_REVIEW,
+            kind, phase, "plan", WorkItemStatus.IN_REVIEW,
+            next_phase=TaskPhase.REVIEW,
             message="产出阶段已结束；不要提交 verdict，不要执行 reviewer 协议。等待 omac loop 转派 reviewer 或人工确认。",
         )
 
@@ -684,7 +750,8 @@ def submit(
         )
         store.update_status(issue_id, WorkItemStatus.IN_REVIEW)
         return SubmitResult(
-            kind, TaskPhase.REVIEW, "acceptance", WorkItemStatus.IN_REVIEW,
+            kind, phase, "acceptance", WorkItemStatus.IN_REVIEW,
+            next_phase=TaskPhase.REVIEW,
             message="产出阶段已结束；不要提交 verdict，不要执行 reviewer 协议。等待 omac loop 转派 reviewer 或人工确认。",
         )
 
@@ -697,14 +764,15 @@ def submit(
         )
         store.update_status(issue_id, WorkItemStatus.IN_REVIEW)
         return SubmitResult(
-            kind, TaskPhase.REVIEW, "manifest", WorkItemStatus.IN_REVIEW,
+            kind, phase, "manifest", WorkItemStatus.IN_REVIEW,
+            next_phase=TaskPhase.REVIEW,
             message="产出阶段已结束；不要提交 verdict，不要执行 reviewer 协议。等待 omac loop 转派 reviewer 或人工确认。",
         )
 
     raise ValidationError(f"未支持的交付组合: {kind.value} × {phase.value}")
 
 
-# ==================== 派发 issue body 三段式模板(§7.4) ====================
+# ==================== Human-first 派发 issue body ====================
 
 
 # 任务类型 → 角色 / 角色说明文本(同源 guide;模板只引用 guide 不复制其内容)
@@ -731,6 +799,22 @@ KIND_LABEL = {
     TaskKind.DECOMPOSE: "decompose",
     TaskKind.DEVELOP: "develop",
     TaskKind.FINAL_ACCEPTANCE: "final-acceptance",
+}
+
+KIND_HUMAN_LABEL = {
+    TaskKind.PLAN: "设计方案",
+    TaskKind.ACCEPTANCE: "验收定义",
+    TaskKind.DECOMPOSE: "任务拆解",
+    TaskKind.DEVELOP: "开发实现",
+    TaskKind.FINAL_ACCEPTANCE: "最终验收",
+}
+
+ROLE_HUMAN_LABEL = {
+    "planner": "方案规划者",
+    "orchestrator": "任务编排者",
+    "worker": "开发执行者",
+    "reviewer": "独立评审者",
+    "acceptor": "最终验收者",
 }
 
 
@@ -807,120 +891,89 @@ def render_source_refs_section(
     source_refs=None,
     *,
     engine_env: Optional[Dict[str, str]] = None,
+    include_commands: bool = True,
 ) -> str:
-    """渲染上游 issue 链接与 work show 命令,供 issue body / work show 共用。"""
+    """渲染上游 issue 链接;Agent 视图可附带可复制的 work show 命令。"""
     refs = normalize_source_refs(source_refs, engine_env=engine_env)
     if not refs:
         return ""
     env_prefix = _command_env_prefix(engine_env)
-    lines = ["## 上游 issue（防跑偏）", "本任务承接以下上游 issue,有分歧以源头 issue 为准:"]
+    lines = [
+        "## 上游 issue（防跑偏）",
+        "本任务承接以下上游 issue，用于追溯需求与决策；若与当前 contract 冲突，先请求确认：",
+    ]
     for ref in refs:
         label = _source_ref_label(ref)
         issue_id = ref["issue_id"]
         link = _source_ref_link(ref)
         prefix = f"- {label}: " if label != "source" else "- "
-        lines.append(
-            f"{prefix}{link}\n\n"
-            f"```bash\n{env_prefix}omac work show {issue_id}\n```"
-        )
+        lines.append(f"{prefix}{link}")
+        if include_commands:
+            lines.append(
+                f"```bash\n{env_prefix}omac work show {issue_id} --output json\n```"
+            )
     return "\n".join(lines)
 
 
 def render_issue_body(node, contract, kind, issue_id, source_refs=None, engine_env=None, issue_key=None):
-    """三段式派发模板(设计文档 §7.4)。
-
-    第一段 bootstrap:两条命令(work show / work submit 精确模板) +
-    omac guide role/artifact 指引 + 必须经 omac 交互;第二段简报(title/objective/
-    source_of_truth/acceptance 摘要);第三段硬约束(non_goals/pr_base/reviewer 独立
-    复跑等铁律)。模板文本与 guide 同源,不复制。
-    """
+    """渲染 Human-first issue body,顶部仅保留一个 Agent JSON 入口。"""
     role = KIND_ROLE.get(kind, "worker")
     label = KIND_LABEL.get(kind, kind.value)
-    guide_topic = KIND_GUIDE.get(kind, "workflow")
-
-    # ---- 第一段:bootstrap ----
     title = getattr(node, "title", None) or getattr(node, "id", issue_id)
     env_prefix = _command_env_prefix(engine_env)
-    guide_cmd = f"omac guide {guide_topic}"
-    base_cmd = f"{env_prefix}omac work show {issue_id}"
-    submit_cmd = env_prefix + submit_template_for(kind, TaskPhase.AUTHORING, issue_id)
+
     bootstrap = (
-        f"你被分配了一件 {label} 任务（{role}),必须经 omac 交互。按序:\n\n"
-        f"1. 读取 `{role}` 角色流程 guide。guide 是软上下文;失败时先运行 `omac guide` 列 topic,不要让 guide 阻断交付。\n\n"
-        f"```bash\n{guide_cmd}\n```\n\n"
-        "2. 读取当前任务相位、精确输入与交付方式。\n\n"
-        f"```bash\n{base_cmd}\n```\n\n"
-        "3. 按下方「任务详情/上游产物」执行。\n\n"
-        "4. `omac work submit` 是硬交付入口;失败必须修正,以 `work show` 输出中的本角色参数为准。\n\n"
-        f"```bash\n{submit_cmd}\n```"
+        "> **Agent 入口:** 先读取当前任务的权威 JSON 上下文。\n\n"
+        f"```bash\n{env_prefix}omac work show {issue_id} --output json\n```"
     )
-    if kind == TaskKind.DEVELOP and issue_key:
-        bootstrap += (
-            f"\n\n5. 创建 GitHub PR 时,建议让分支名、标题或正文包含 `{issue_key}`。"
-            "这样 Multica 可以把 PR 自动关联到本 issue；缺失时仍可交付。"
-        )
 
-    # ---- 第二段:任务简报(人可读) ----
-    # 只渲染 contract 真正声明的字段:缺失即省略整行,不印指向不存在 contract 的
-    # 死占位。plan/acceptance/decompose 无 contract,简报只剩 title,真实需求由
-    # 「上游产物」段承载(tasks.py 注入),不在此处伪造引用。
-    def _briefing_line(field, value):
-        if isinstance(value, list):
-            return "\n".join([f"- {field}:"] + [f"  - {v}" for v in value])
-        return f"- {field}: {value}"
+    summary_lines = [
+        f"- 类型: {KIND_HUMAN_LABEL.get(kind, label)}（`{label}`）",
+        f"- 执行角色: {ROLE_HUMAN_LABEL.get(role, role)}（`{role}`）",
+    ]
+    objective = _contract_summary(contract, "objective", None)
+    if objective:
+        summary_lines.append(f"- 目标: {objective}")
+    source_of_truth = _contract_summary(contract, "source_of_truth", None)
+    if source_of_truth:
+        values = source_of_truth if isinstance(source_of_truth, list) else [source_of_truth]
+        summary_lines.extend(f"- 依据: `{value}`" for value in values)
+    summary = f"# {title}\n\n## 任务摘要\n" + "\n".join(summary_lines)
 
-    briefing_lines = [f"- title: {title}"]
-    for field in ("objective", "source_of_truth", "acceptance"):
-        value = _contract_summary(contract, field, None)
-        if value not in (None, "", []):
-            briefing_lines.append(_briefing_line(field, value))
-    briefing = "## 简报\n" + "\n".join(briefing_lines)
+    acceptance = _contract_summary(contract, "acceptance", None)
+    completion = ""
+    if acceptance:
+        values = acceptance if isinstance(acceptance, list) else [acceptance]
+        completion = "## 完成标准\n" + "\n".join(f"- {value}" for value in values)
 
-    # ---- 第三段:硬约束(铁律) ----
-    non_goals = _contract_summary(contract, "non_goals", None)
-    pr_base = _contract_summary(contract, "pr_base", None)
-    reviewer = getattr(node, "reviewer", None)
-
-    rules = []
-    rules.append("契约先行:只消费同源 contract,不平行重定义（TDD 同步）")
-    if non_goals:
-        rules.append(
-            "non_goals 是红线,越界即 reject:\n"
-            + "\n".join(f"  - {g}" for g in non_goals))
-    scope_paths = _contract_summary(contract, "scope_paths", None)
-    if scope_paths:
-        rules.append(
-            "主要代码归属范围如下（不是穷举文件白名单）:\n"
-            + "\n".join(f"  - {p}" for p in scope_paths)
-            + "\n完成 contract 所必需的依赖清单、锁文件、migration、生成物或构建配置等"
-              "必要配套文件可以修改；超出主要范围时必须在 PR 或 verification 中说明原因。")
-    rules.append("完成必须有结构化证据（verification/report）,不接受自述")
-    if pr_base:
-        rules.append(f"PR base 必须指向集成分支（pr_base={pr_base}）,不合主干")
-    if kind == TaskKind.DEVELOP:
-        rules.append("GitHub PR 必须 ready for review,不能是 draft;work submit 会左移检查")
-        rules.append(
-            "reviewer reject / pass-with-nits 返工时默认复用原 PR 分支和 PR URL;"
-            "只有原 PR 已关闭、base 不可修复或权限无法 push 时才新建替代 PR,并在新 PR 正文说明替代关系")
-    if reviewer:
-        rules.append(
-            f"reviewer（{reviewer}）独立复跑验证命令与集成测试,"
-            "按 env_setup 重建环境、不信任何自述")
-    coverage_gate = _contract_summary(contract, "coverage_gate", None)
-    if coverage_gate is not None:
-        rules.append(
-            f"改动分支覆盖 ≥ coverage_gate={coverage_gate}")
-    rules.append(
-        "平台状态由 loop 推进,worker 禁止手动执行 "
-        "`multica issue status` / `multica issue assign` / "
-        "`multica issue rerun` / `multica issue cancel-task`;只通过 `omac work submit` 交付")
-    hard = "## 硬约束（铁律）\n" + "\n".join(f"- {r}" for r in rules)
-
-    # ---- 任务详情:node.description 是 worker 的上下文来源(manifest §7.4),
-    # 非空则单列一段进 body。无 contract 的节点尤其依赖它承载任务(否则简报只有
-    # title + contract 占位,worker 无从下手)。空则不渲染,向后兼容既有派发。
     description = (getattr(node, "description", "") or "").strip()
     detail = f"## 任务详情\n{description}" if description else ""
+
+    non_goals = _contract_summary(contract, "non_goals", None)
+    exclusions = ""
+    if non_goals:
+        values = non_goals if isinstance(non_goals, list) else [non_goals]
+        exclusions = "## 非目标\n" + "\n".join(f"- {value}" for value in values)
+
+    scope_paths = _contract_summary(contract, "scope_paths", None)
+    scope = ""
+    if scope_paths:
+        values = scope_paths if isinstance(scope_paths, list) else [scope_paths]
+        scope = "## 主要代码归属范围\n" + "\n".join(
+            f"- `{value}`" for value in values)
+
+    constraints = []
+    pr_base = _contract_summary(contract, "pr_base", None)
+    if pr_base:
+        constraints.append(f"- PR 基线: `{pr_base}`")
+    coverage_gate = _contract_summary(contract, "coverage_gate", None)
+    if kind == TaskKind.DEVELOP and coverage_gate is not None:
+        constraints.append(f"- 改动分支覆盖率: `≥ {coverage_gate}%`")
+    if kind == TaskKind.DEVELOP and issue_key:
+        constraints.append(f"- PR 关联标识: `{issue_key}`")
+    delivery_constraints = ""
+    if constraints:
+        delivery_constraints = "## 交付约束\n" + "\n".join(constraints)
 
     repo_urls = _contract_summary(contract, "repo_urls", None)
     repositories = ""
@@ -928,12 +981,21 @@ def render_issue_body(node, contract, kind, issue_id, source_refs=None, engine_e
         repositories = "## 目标仓库\n" + "\n".join(
             f"- `{url}`" for url in repo_urls)
 
-    # ---- 源头 issue 引用(provenance,防流程跑偏)----
-    # 后续任务(验收/拆解/开发)带上塑造它的上游 issue,分歧时以源头为准。
-    origin = render_source_refs_section(source_refs, engine_env=engine_env)
+    origin = render_source_refs_section(
+        source_refs, engine_env=engine_env, include_commands=False)
 
     return "\n\n".join(
-        p for p in [bootstrap, briefing, detail, repositories, origin, hard] if p)
+        p for p in [
+            bootstrap,
+            summary,
+            completion,
+            detail,
+            exclusions,
+            scope,
+            delivery_constraints,
+            repositories,
+            origin,
+        ] if p)
 
 
 def render_review_rollout_comment(node, contract, verdict: Optional[str], report=None,
@@ -963,7 +1025,7 @@ def render_review_rollout_comment(node, contract, verdict: Optional[str], report
         heading = "阶段变更:产出者交付完毕,转派 reviewer 进入 review"
         body = (
             f"评审对象(本 issue={location}):交付物 / contract / 复跑清单(如有) "
-            f"(reviewer={reviewer})。先 omac work show {location} 取权威上下文,\n"
+            f"(reviewer={reviewer})。先 omac work show {location} --output json 取权威上下文,\n"
             f"独立复跑后 {review_submit}"
         )
         return f"## {heading}\n{body}"

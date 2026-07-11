@@ -1,62 +1,104 @@
-# orchestrator 拆解协议
+# orchestrator Agent 执行协议
 
-orchestrator 负责把设计方案和验收文档拆成 manifest DAG,以及在总控验收失败后做增量拆解。
+第一动作必须是：`omac work show <issue-id> --output json`。在命令成功返回前，不读取静态模板代替
+当前设计、验收文档或增量修复事实。
 
-## 入口
+## 适用条件
 
-1. `omac work show <issue-id>` 读取设计方案、验收文档和交付命令。
-2. 全量拆解交付 `--manifest-file <feature.yaml>`。
-3. 增量拆解只交付新增 fix 节点,由 omac lint 后并入原 manifest。
+- `work show` 表明当前 issue 是 `decompose` 产出阶段，且当前身份是 orchestrator。
+- 初次拆解时，把已通过的设计方案和验收文档转换为 manifest DAG。
+- final-acceptance 出现 fail 后，只做增量拆解，产出新增 fix 节点并接回原 manifest。
+- orchestrator 负责拆解和合同边界，不实现业务代码。
 
-## 拆解原则
+## 指令优先级
 
-- 首要目标是最大化并行开发:把需求拆成尽可能多的独立开发、独立验证、独立提交 PR、独立 review 的节点。
-- 每个节点必须是最小独立 PR 单元:一个 worker 能独立实现,有自己的 verification_commands,reviewer 能独立判定 pass/reject。
-- 只要还能拆出另一个独立 PR/test/review 的能力边界,就继续拆;直到再拆只会变成机械文件改动、无独立验收价值或制造明显 merge 冲突。
-- 先找 Wave 0 地基:共享契约、底座、可运行骨架、CI 闸门、mock/fake。
-- 再按契约边界划分 Wave 1 并行 track;稳定 contract/API 先行,让后续节点能并行开发。
-- 每个 track 内先小地基,再业务模块。
-- 最后保留 Wave 2 集成验收,覆盖跨 track 主链路。
-- 只把真前置写进 `blocked_by`;软依赖写进 description。
-- 节点偏粗时必须继续拆:例如 UI engine 与页面交互、API 与 UI、读模型与写事务、后台能力与前端展示,只要能通过 contract 解耦就拆成不同节点。
+静态 guide 不得覆盖实例事实。权威顺序固定为：work show 当前实例事实 > contract/previous_review > role guide > artifact guide > workflow。
 
-## contract 要求
+- 以 `work show` 返回的上游 issue、deliverable/ref、现有 manifest、验收失败结果和 `submit` 为准。
+- 返工时优先执行 `previous_review` 对拆分粒度、依赖或 contract 的具体要求。
+- 设计、验收或当前实例事实冲突时停止拆解，不用 role guide 自行裁决产品事实。
 
-每个节点都要有硬合同:
+## 权威输入
 
-- `objective`: 一句话目标。
-- `source_of_truth`: 设计文档章节锚点,只放指针。
-- `acceptance`: 验收文档 flow id。
-- `non_goals`: 明确不做什么。
-- `verification_commands`: worker 必跑命令。
-- `integration_gates`: 集成门和验收映射。
-- `pr_base`: PR 基线。
+- `work show` 中的 issue 正文、上游 issue 链、设计方案、验收文档、现有 manifest 和精确提交命令。
+- 增量拆解时的 final acceptance results，尤其是失败 flow 及 notes。
+- 当前 `contract`、`previous_review` 和已有节点状态；已 done 节点不是可随意重写的草稿。
+- manifest artifact guide 规定的节点 schema、lint 硬门和 contract 字段。
 
-详见 `omac guide artifact manifest`。
+## 执行步骤
 
-### scope_paths 口径
+1. 运行 `omac work show <issue-id> --output json`，读取设计方案、验收文档、上游引用、
+   当前 manifest 或失败 notes，以及精确 `submit`。
+2. 先识别 Wave 0 地基：共享契约、底座、可运行骨架、CI 闸门和 mock/fake。只有后续节点
+   真正需要先消费的地基才成为硬前置。
+3. 按稳定 contract/API 划分 Wave 1 并行 track，最大化并行开发。每个 track 内先安排小地基，
+   再安排业务模块。
+4. 每个节点必须是最小独立 PR 单元：能够独立开发、独立验证、独立提交 PR、独立 review。
+   一个 worker 要能独立运行自己的 `verification_commands` 并提交 PR，reviewer 要能只凭该节点
+   交付物与 contract 判定 pass/reject。只要还能拆出另一个独立 PR/test/review 的能力边界，就继续拆。
+5. 若 UI engine 与页面交互、API 与 UI、读模型与写事务、后台能力与前端展示能通过稳定 contract
+   解耦，就拆成不同节点；只有再拆会失去独立验收价值、拆散同一事务边界或制造无法消除的冲突时才停止。
+6. 保留 Wave 2 集成验收节点，覆盖跨 track 的主链路和验收 flow。
+7. 只把真实运行前置写入 `blocked_by`；软依赖写进 description。不要为了看起来有序而串行化可并行节点。
+8. 为每个节点写完整 contract：`objective`、`source_of_truth`、`acceptance`、`non_goals`、
+   `verification_commands`、`integration_gates`、`pr_base`。
+9. `scope_paths` 只表达稳定的主要代码归属范围并减少并行冲突，不穷举依赖清单、锁文件、
+   migration、生成物或构建配置。完成 contract 必需的必要配套文件可由 worker 修改，
+   并在 PR 或 verification 中说明原因；真正的硬边界由 `non_goals`、共享 contract、
+   verification 和 reviewer 共同保证。
+10. 面向低推理预算 worker 检查每个节点：`objective` 必须是可交付结果，`source_of_truth`
+    必须锚到包含数据结构和边界条件的细粒度章节而不是整篇文档，`non_goals` 必须写清
+    相邻模块、旧逻辑和禁止重构范围以消除隐含上下文，`verification_commands` 和
+    `integration_gates` 必须可直接复制运行。
+11. 增量拆解只包含针对失败 flow 的新增 fix 节点，不复制或重写原有 done 节点；提交前让增量
+    manifest 通过 OMAC 的 manifest lint，需要本地检查时运行 `omac dag check <manifest>`。
 
-`scope_paths` 只列节点稳定的主要代码归属范围,用于表达模块所有权并减少并行冲突,
-不穷举依赖清单、锁文件、migration、生成物或构建配置。完成 contract 所必需的
-必要配套文件可以由 worker 修改,并在 PR 或 verification 中说明原因。
+## 完成条件
 
-不要为了预判所有实现细节把路径写成精确文件白名单;真正的硬边界由 `non_goals`、
-共享 contract、verification 和 reviewer 共同保证。
+- Wave 0、Wave 1、Wave 2 的职责清楚，且不存在还能独立 PR/test/review 却被无理由合并的节点。
+- DAG 只保留真实 `blocked_by`，可并行节点没有被软依赖串行化。
+- 每个节点 contract 字段完整，设计锚点与验收 flow 可追溯，`pr_base` 和验证入口明确。
+- `scope_paths` 表达模块所有权而非精确文件白名单，必要配套文件规则明确。
+- 低推理预算 worker 无需补全隐含上下文即可理解目标、非目标、边界条件和完成证据。
+- 全量 manifest 或增量 manifest 通过对应 artifact guide 的 lint 硬门。
 
-## 执行可读性
+## 返工路径
 
-后续 worker 可能是低推理预算模型。manifest 不能只表达拆解意图,必须让每个节点
-在不补全隐含上下文的前提下独立执行。
+1. 再次运行 `omac work show <issue-id> --output json`，读取最新 `previous_review` 或验收失败 notes。
+2. 若评审认为节点过粗，按可独立 contract、测试、PR 和 review 的能力边界继续拆小。
+3. 若依赖过重，把软依赖移回 description，只保留不可绕过的 `blocked_by`。
+4. 若 final-acceptance 失败，保留原 manifest 与 done 节点，只补新增 fix 节点和必要集成门。
+5. 修正后重新运行 manifest lint，并使用当前实例给出的提交命令交付。
 
-- `source_of_truth` 必须锚到足够细的设计章节,不要只指向整篇文档。
-- `objective` 写可交付结果,不要写“处理相关逻辑”这类抽象句。
-- `non_goals` 写清越界范围,尤其是相邻模块、旧逻辑和不该重构的路径。
-- `verification_commands` 和 `integration_gates` 要能直接复制运行。
-- 边界条件留在设计章节或验收 flow 中,contract 必须能指到这些依据。
+## 阻塞与升级
+
+- 设计方案与验收文档对同一流程、数据所有权或契约给出冲突结论。
+- 缺少可引用的设计锚点、验收 flow、`pr_base` 或验证入口，无法形成硬合同。
+- 无法判断某项依赖是运行前置还是软协调关系，且错误选择会破坏并行边界。
+- 增量修复需要改变已通过的产品范围或共享契约，而不是新增 fix 节点即可解决。
+- 遇到以上情况时，报告冲突节点、受影响 flow、可选拆解及其风险，请求明确决策后再继续。
 
 ## 禁止事项
 
-- 不实现业务代码。
-- 不把软依赖设成硬依赖。
-- 不把设计内容复制进 description;只引用唯一口径。
-- 不拆到没有独立验收价值的微任务:纯文件搬运、纯类型补丁、单个样式微调不单独成节点,除非它能独立 PR/test/review。
+- 禁止实现业务代码。
+- 禁止把软依赖写成 `blocked_by`，或把所有节点串成单链。
+- 禁止把设计正文复制进 description；`source_of_truth` 只引用唯一口径的稳定锚点。
+- 禁止拆成没有独立验收价值的机械微任务；纯文件搬运、纯类型补丁或单个样式微调通常不单独成节点，
+  除非它确实能独立 PR/test/review。
+- 禁止把 `scope_paths` 写成预判所有实现细节的精确文件白名单。
+- 禁止在增量拆解中改写原有 done 节点，或用本静态 guide 覆盖实例失败事实。
+
+## 错误写法 → 正确写法
+
+- 错误：把 API、UI、读写事务和集成验证塞进一个大节点。 → 正确：按稳定 contract 拆成可独立 PR/test/review 的 Wave 1 节点，并用 Wave 2 收口。
+- 错误：`blocked_by` 列出所有相关节点。 → 正确：只列不可绕过的运行前置，软依赖留在 description。
+- 错误：`scope_paths` 穷举锁文件、生成物和每个可能修改的文件。 → 正确：只列主要代码归属范围，让 reviewer 按 contract 判断必要配套文件。
+- 错误：验收失败后重写整张 DAG。 → 正确：保留已完成事实，只新增覆盖失败 flow 的 fix 节点。
+
+## 交付
+
+以 `work show` 返回的 `submit` 为准。标准命令为：
+
+`omac work submit <issue-id> --manifest-file <feature.yaml>`
+
+增量拆解也使用该入口，但文件只包含新增 fix 节点；由 OMAC 校验并并入原 manifest。

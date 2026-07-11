@@ -6,7 +6,7 @@
 
 活的 Multica 引擎(MulticaStore):
   - 真实成员池可读
-  - 三段式 bootstrap body 模板(bootstrap/简报/硬约束)可生成 —— 零 skill 协议层 OK
+  - Human-first issue body + 单一 Agent JSON 入口可生成
   - 真实 issue 创建 -> 写后读一致性(metadata 全字段)
   - contract 下发后 work item 可回读
   - 状态推进 todo -> in_progress -> done
@@ -132,28 +132,28 @@ def test_member_pool_readable(store):
     assert len(members) > 0, "工作空间成员池为空 —— multica CLI 登录 / workspace 成员不足"
 
 
-# ==================== 2. 三段式 bootstrap body 模板 ====================
+# ==================== 2. Human-first issue body ====================
 
 class TestBootstrapBody:
-    def test_three_paragraphs_present_and_copy_pasteable(self, sample_contract):
+    def test_human_sections_and_single_agent_entry(self, sample_contract):
         node = Node(id="live-proto", worker="alice", reviewer="bob",
                     title="Proto node", contract=sample_contract)
         body = render_issue_body(node, sample_contract, TaskKind.DEVELOP,
                                  "ISSUE-REAL-1000")
-        assert "omac work show ISSUE-REAL-1000" in body
-        assert "omac work submit ISSUE-REAL-1000" in body
-        assert "omac guide" in body
-        assert "简报" in body
-        assert "objective" in body
-        assert "硬约束" in body
-        assert "non_goals" in body
+        assert "omac work show ISSUE-REAL-1000 --output json" in body
+        assert "omac work submit ISSUE-REAL-1000" not in body
+        assert "omac guide" not in body
+        assert "## 任务摘要" in body
+        assert "## 完成标准" in body
+        assert "## 非目标" in body
+        assert "## 硬约束" not in body
 
-    def test_pr_base_and_reviewer_mentions(self, sample_contract):
+    def test_pr_base_is_human_readable_without_reviewer_protocol(self, sample_contract):
         node = Node(id="live-proto-2", worker="alice", reviewer="carol",
                     title="Proto 2", contract=sample_contract)
         body = render_issue_body(node, sample_contract, TaskKind.DEVELOP, "ID")
-        assert "feature/live-smoke" in body
-        assert "carol" in body
+        assert "PR 基线: `feature/live-smoke`" in body
+        assert "carol" not in body
 
 
 # ==================== 3. 真实 issue 创建 -> 写后读一致性 ====================

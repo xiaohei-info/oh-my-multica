@@ -221,11 +221,16 @@ def check(args) -> int:
     reviewed = False
     if reviewers and not args.no_review:
         reviewer = reviewers[0]
+        env_prefix = _work_env_prefix(engine)
+        with open(path, encoding="utf-8") as manifest_file:
+            manifest_source = manifest_file.read()
         run_review(
             engine, engine.store.config.workspace_id,
             title=f"[dag-check] {name}",
-            body=_review_body(manifest, path),
+            body=lambda issue_id: _review_body(
+                manifest, path, issue_id, env_prefix),
             reviewer=reviewer,
+            deliverable=manifest_source,
             poll=lambda: time.sleep(1),
         )
         reviewed = True
@@ -246,26 +251,40 @@ def check(args) -> int:
     return exit_codes.OK
 
 
-def _review_body(manifest, path: str) -> str:
-    """渲染 manifest review 的 issue body(三段式 §7.4 的简报变体)。"""
-    import yaml
+def _work_env_prefix(engine) -> str:
+    config = engine.store.config
+    values = [
+        ("OMAC_ENGINE", config.engine_type),
+        ("OMAC_WORKSPACE_ID", config.workspace_id),
+        ("OMAC_PROJECT_ID", config.project_id),
+    ]
+    return " ".join(f"{key}={value}" for key, value in values if value)
+
+
+def _review_body(manifest, path: str, issue_id: str, env_prefix: str) -> str:
+    """渲染 Human-first manifest review issue，顶部保留 Agent JSON 入口。"""
+    node_lines = []
+    for key, node in manifest.nodes.items():
+        dependencies = ", ".join(node.blocked_by) if node.blocked_by else "无"
+        node_lines.append(
+            f"- `{key}`：worker=`{node.worker}`，blocked_by={dependencies}"
+        )
     return (
-        "你被分配了一件 manifest review 任务(必须经 omac 交互):\n"
-        f"  1. 审查 manifest 文件:{path}\n"
-        f"  2. 审查通过后 omac work submit <id> --verdict pass --report-file ..."
-        "  拒绝请用 --verdict reject,附 blockers。\n"
-        "遇到不明确的地方:运行 omac guide role reviewer 查阅 reviewer 角色说明。\n\n"
-        "## 简报\n"
-        f"- 节点数:{len(manifest.nodes)}\n"
-        f"- meta:{manifest.meta}\n\n"
-        "## 硬约束\n"
-        " reviewer 独立复跑验证命令与 manifest 门(lint/contract/成员池),不信自述。"
-        "\n 契约与 DAG 门禁不过即 reject。\n"
-        + yaml.dump(
-            {"manifest": manifest.meta,
-             "nodes": {k: {"worker": n.worker, "blocked_by": n.blocked_by}
-                       for k, n in manifest.nodes.items()}},
-            default_flow_style=False, allow_unicode=True, sort_keys=False)
+        "> **Agent 入口:** 先读取当前评审任务的权威 JSON 上下文。\n\n"
+        f"```bash\n{env_prefix} omac work show {issue_id} --output json\n```\n\n"
+        "# Manifest 评审\n\n"
+        "## 任务摘要\n"
+        "- 类型: 任务拆解评审（`decompose review`）\n"
+        "- 执行角色: 独立评审者（`reviewer`）\n"
+        f"- Manifest: `{path}`\n"
+        f"- 节点数: `{len(manifest.nodes)}`\n\n"
+        "## 完成标准\n"
+        "- DAG 无环，硬依赖只表达真实运行前置。\n"
+        "- 每个节点 contract 完整，并能独立开发、验证、提交和评审。\n"
+        "- worker/reviewer 成员有效，验收引用与集成门可执行。\n"
+        "- 评审结论包含明确 verdict；reject 时列出 blockers。\n\n"
+        "## 节点概览\n"
+        + "\n".join(node_lines)
     )
 
 

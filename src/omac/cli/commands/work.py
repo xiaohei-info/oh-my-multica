@@ -1,17 +1,16 @@
 """omac work — 被派发 agent 的统一执行接口(5 类 issue × 产出/评审阶段)。"""
 from __future__ import annotations
 
-import sys
 import os
+import sys
 
 from ._stub import not_implemented
 from ...core import config as config_mod
 from ...engines import create_engine
 from ...engines.models import EngineConfig, WorkItemStatus
-from ...errors import ValidationError
+from ...errors import OmacError, ValidationError
 from ...pipeline.dispatch import (
     SUBMIT_PARAM_SPECS,
-    SubmitResult,
     build_show_output,
     render_source_refs_section,
     submit,
@@ -20,14 +19,14 @@ from .. import exit_codes
 from ..output import add_output_flag, print_json
 
 NAME = "work"
-SUMMARY = "统一执行接口(5 类 issue × 产出/评审阶段)"
-DESCRIPTION = """被派活的 agent 永远只需要两个命令。
+SUMMARY = "Agent 执行接口:读取实例事实并提交结构化交付"
+DESCRIPTION = """Agent 处理 omac 任务时使用的唯一执行接口。
 
-issue 的范围是一个完整阶段:产出、评审、回退往返都在同一条 issue 时间线上;
-当前阶段与承担者由 issue metadata + assignee 表达,交接 = 转派(assign)。
+先运行 show 读取当前实例事实、权威顺序、角色/产物 guide 和精确 submit 命令;
+完成后只通过 submit 交付。show 与 submit 默认输出 JSON,成功与错误都可被 Agent 稳定解析。
 
-  show     按(issue 类型 × 当前阶段 × 你的身份)输出任务上下文与执行协议
-  submit   按同一维度校验并提交交付物(左移校验:缺什么当场打回,exit 5)
+  show     输出任务事实包(task/context/protocol/authority/guide_refs/submit)
+  submit   校验并提交交付物,返回 submitted_phase/next_phase/advanced_to
 
 issue 类型与交付参数:
   plan              产出: --plan-file           review: --verdict --report-file
@@ -37,30 +36,45 @@ issue 类型与交付参数:
                                                  review: 同上(report 必含评审目标)
   final-acceptance  产出: --acceptance-results-file(逐项 pass/fail,无 review 阶段)
 
-硬约束:
-  - 唯一写入口:交付物只经 `work submit` 写入,禁止手搓 metadata set(会冒出 dotted key /
-    prose / JSON 三套口径,引擎读不到就误判 blocked、甚至失败隔离整条 DAG)。
-  - 证据门:submit 时左移校验,verification 必须覆盖 contract.verification_commands 与
-    contract.integration_gates,缺什么当场 exit 5 并精确告知;不写入、不转状态。
-  - 改动分支覆盖硬门槛(缺省 90%):`diff-cover` 退出码非 0 = 不达标,不得转 in_review;
-    不接受"先合后补"。
-  - 收活铁律(reviewer):先 `git diff` 看真实改动,再独立复跑测试,绝不只凭 worker 自述;
-    改动分支覆盖 < gate 阈值 = Blocker。
-  - 只读共享态:reviewer 用 `git diff`/`git show` 审阅,绝不在共享主工作树 reset/checkout/merge。
+具体执行规则不要从 help 猜测,以 `work show` 返回的实例事实和 guide_refs 为准。
 """
 
 
 def register(parser):
+    parser._parse_error_renderer = _render_parse_error
     sub = parser.add_subparsers(dest="action", metavar="<action>", required=True)
-    show = sub.add_parser("show", help="取任务上下文与该类型×阶段的执行协议")
+    show = sub.add_parser("show", help="给 Agent 返回当前任务的完整实例事实包(默认 JSON)")
+    show._work_action = "show"
+    show._parse_error_renderer = _render_parse_error
     show.add_argument("issue_id")
-    add_output_flag(show)
+    add_output_flag(show, default="json")
 
-    submit = sub.add_parser("submit", help="提交交付物(左移校验)")
+    submit = sub.add_parser("submit", help="给 Agent 提交交付物并返回结构化结果(默认 JSON)")
+    submit._work_action = "submit"
+    submit._parse_error_renderer = _render_parse_error
     submit.add_argument("issue_id")
+    add_output_flag(submit, default="json")
     # submit 参数由 dispatch 单一事实源注册,与 show 模板共享防漂移
     for flag, kwargs in SUBMIT_PARAM_SPECS.items():
         submit.add_argument(flag, **kwargs)
+
+
+def _render_parse_error(parser, message: str, namespace) -> bool:
+    """argparse 失败发生在 run() 之前,在这里闭合 work 的 JSON 错误契约。"""
+    if getattr(namespace, "output", "json") == "table":
+        return False
+    print_json({
+        "ok": False,
+        "action": getattr(parser, "_work_action", None),
+        "issue_id": getattr(namespace, "issue_id", None),
+        "error": {
+            "type": "ArgumentError",
+            "message": message,
+            "exit_code": exit_codes.GENERIC,
+        },
+        "help": parser.format_help(),
+    }, stream=sys.stderr)
+    return True
 
 
 def _resolve_store():
@@ -114,13 +128,25 @@ def _render_table(output: dict) -> None:
     print(f"# 任务 · {task['kind']} · {task['phase']}")
     print()
     print(f"- issue: {task['issue_id']}")
+    print(f"- 标题: {task['title']}")
+    print(f"- 状态: {task['status']}")
     if task.get("issue_key"):
         print(f"- issue_key: {task['issue_key']}")
     print(f"- 身份: {task['identity']}")
     if task.get("dag_key"):
         print(f"- dag_key: {task['dag_key']}")
+    if task.get("wave") is not None:
+        print(f"- wave: {task['wave']}")
+    if task.get("blocked_by"):
+        _render_kv("blocked_by", task["blocked_by"])
+    if task.get("bounces"):
+        print(f"- 回退计数: {task['bounces']}")
     if is_review and task.get("worker"):
         print(f"- 产出者: {task['worker']}")
+
+    if ctx.get("issue_description"):
+        print("\n## Issue 上下文")
+        print(ctx["issue_description"])
 
     source_issues = ctx.get("source_issues")
     if source_issues:
@@ -135,6 +161,9 @@ def _render_table(output: dict) -> None:
         print("\n## 评审对象")
         if ctx.get("deliverable") is not None:
             print(f"- deliverable: {ctx['deliverable']}")
+        for key in ("deliverable_ref", "artifacts", "verification", "verification_ref"):
+            if ctx.get(key) is not None:
+                _render_kv(key, ctx[key])
         env_setup = ctx.get("env_setup")
         if env_setup:
             print("- 复跑清单(env_setup):")
@@ -159,6 +188,14 @@ def _render_table(output: dict) -> None:
 
     print("\n## 现在做什么")
     print(output["protocol"])
+
+    print("\n## 权威顺序")
+    for index, source in enumerate(output.get("authority", []), start=1):
+        print(f"{index}. {source}")
+
+    print("\n## 需要读取的 Guide")
+    for command in output.get("guide_refs", []):
+        print(f"- `{command}`")
 
     print("\n## 完成后交付")
     print(f"    {output['submit']}")
@@ -191,6 +228,11 @@ def _submit(args) -> int:
         if hasattr(result.advanced_to, "value")
         else result.advanced_to
     )
+    next_phase = (
+        result.next_phase.value
+        if hasattr(result.next_phase, "value")
+        else result.next_phase
+    )
     message = (
         f"交付物已提交 —— {result.kind.value} × {result.phase.value}\n"
         f"deliverable: {result.deliverable_key}"
@@ -204,7 +246,22 @@ def _submit(args) -> int:
         message += f"\n状态推进: {target}"
     if getattr(result, "message", None):
         message += f"\n{result.message}"
-    print(message)
+    if getattr(args, "output", "json") == "json":
+        payload = {
+            "ok": True,
+            "issue_id": args.issue_id,
+            "kind": result.kind.value,
+            "submitted_phase": result.phase.value,
+            "next_phase": next_phase,
+            "deliverable_key": result.deliverable_key,
+            "advanced_to": target,
+            "message": result.message,
+        }
+        if result.phase.value == "review":
+            payload["verdict"] = args.verdict
+        print_json(payload)
+    else:
+        print(message)
     return exit_codes.OK
 
 
@@ -232,7 +289,7 @@ def _run_show(args) -> int:
     output = build_show_output(item, identity)
     output["engine_env"] = _store_env(store)
 
-    if args.output == "json":
+    if getattr(args, "output", "json") == "json":
         print_json(output)
     else:
         _render_table(output)
@@ -253,13 +310,30 @@ def _store_env(store) -> dict:
     return env
 
 
+def _render_error(args, error: OmacError) -> int:
+    """work 是 Agent-first 接口；JSON 模式下错误也保持结构化。"""
+    if getattr(args, "output", "json") == "json":
+        print_json({
+            "ok": False,
+            "action": args.action,
+            "issue_id": getattr(args, "issue_id", None),
+            "error": {
+                "type": error.__class__.__name__,
+                "message": str(error),
+                "exit_code": error.exit_code,
+            },
+        }, stream=sys.stderr)
+    else:
+        print(f"Error: {error}", file=sys.stderr)
+    return error.exit_code
+
+
 def run(args) -> int:
-    if args.action == "show":
-        return _run_show(args)
-    if args.action == "submit":
-        try:
+    try:
+        if args.action == "show":
+            return _run_show(args)
+        if args.action == "submit":
             return _submit(args)
-        except ValidationError as e:
-            print(str(e), file=sys.stderr)
-            return exit_codes.VALIDATION
-    return not_implemented(f"work {args.action}", "P2")
+        return not_implemented(f"work {args.action}", "P2")
+    except OmacError as error:
+        return _render_error(args, error)

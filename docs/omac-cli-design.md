@@ -16,7 +16,7 @@
 前身用一个 9 方法的引擎抽象兼容 GitHub / Multica / Mock。实践证明 GitHub Issues 作为协作引擎数据面太弱——状态靠 label 模拟、结构化 metadata 靠往 issue body 里藏 YAML,近 450 行适配代码都在为最弱的平台迁就接口。而 Multica 的本质区别在于它不只是 issue 平台,而是 **issue 平台 + agent 运行时**:「assign 即唤醒 agent」的执行面能力是 GitHub / Linear / Jira 都不具备的,恰好接住编排器 fire-and-forget 派发的需求。因此引擎收敛为 Multica + mock(mock 撑起全部测试与 CI),同时接口按 `WorkItemStore` + `AgentRuntime` 拆分(§12),数据面保持对 Linear / Jira 的可移植性。
 
 **取舍二:放弃「插件」路线,也放弃 skill 形态,知识全部下沉进 CLI。**
-曾评估以插件方式深度集成 Multica(类比 OpenCode 与 oh-my-opencode 的关系)。翻其源码确认:Multica **没有插件机制**——事件总线是 Go 进程内同步 pub/sub,全部集成(Slack/Lark/GitHub)都是编译期注册,不存在动态加载外部代码的入口。它的原生扩展模型是 Skill 注入 + CLI 消费。但 skill 形态有自身的分发困境:按 agent 物化导致跨 skill 引用失效(前身被迫维护双份脚本拷贝 + parity 测试)、每个 agent 都要手动导入绑定、版本漂移不可控。最终方案是**零 skill**:知识内生于 CLI 的四条通道(guide / 命令 help / 报错文案 / 派发载荷),派发 issue 的 body 自带 bootstrap 指令——协作平台本来就把 issue 内容作为 prompt 喂给被派发的 agent,这条通道让协议**随任务送达、版本永远正确**。分发困境被消灭,而非绕过。
+曾评估以插件方式深度集成 Multica(类比 OpenCode 与 oh-my-opencode 的关系)。翻其源码确认:Multica **没有插件机制**——事件总线是 Go 进程内同步 pub/sub,全部集成(Slack/Lark/GitHub)都是编译期注册,不存在动态加载外部代码的入口。它的原生扩展模型是 Skill 注入 + CLI 消费。但 skill 形态有自身的分发困境:按 agent 物化导致跨 skill 引用失效(前身被迫维护双份脚本拷贝 + parity 测试)、每个 agent 都要手动导入绑定、版本漂移不可控。最终方案是**零 skill**:知识内生于 CLI 的四条通道(动态 `work show` / guide / 命令 help 与报错 / 派发载荷)。派发 issue 只保留一个 JSON bootstrap,当前协议和交付方式由 `work show` 动态生成,稳定方法论由 guide 提供；既避免版本漂移,也不把整套 Agent 协议复制进给 Human 阅读的 issue。
 
 **取舍三:放弃 agent 驱动编排,控制反转为 Loop 驱动**——即 §1.2 的两个实测痛点,也是本设计的直接动因。
 
@@ -167,7 +167,8 @@ omac
 
 ### 5.2 输出约定
 
-- 所有命令支持 `--output json|table`(默认 table,给人看;json 给 agent/Web);
+- 面向 Human 的查询命令默认 table；Agent 执行面 `work show/submit` 默认 JSON，
+  Human 调试时可显式 `--output table`；Web 与 Agent 共用同一结构化事实；
 - exit 20 时结构化报告打到 stdout:失败节点、失败证据摘要(verification/verdict/PR 链接)、被牵连阻塞的下游、**可执行的下一步动作清单**(精确到完整命令行);
 - "下一步提示"类引导走 stderr,不污染 stdout 数据流。
 
@@ -300,7 +301,7 @@ sequenceDiagram
     alt 未提供 --doc(模式 B:从零编写设计方案)
         C->>M: 建 planning issue(body 含 bootstrap 指令 + 需求上下文)并 assign planner
         M->>P: AgentRuntime 拉起 planner(issue body 即 prompt)
-        P->>C: omac work show {id}(取任务协议)
+        P->>C: omac work show {id} --output json(取实例事实与任务协议)
         P->>C: omac work submit {id} --plan-file plan.md
         C->>M: 设计方案文档写入 issue metadata
         loop review 阶段(同一 issue 上 assign 交接,≤3 轮修订)
@@ -328,7 +329,7 @@ sequenceDiagram
 
     C->>M: 建 decompose issue(body 含计划/设计文档 + 验收文档 + manifest schema 要求)并 assign orchestrator
     M->>O: AgentRuntime 拉起 orchestrator
-    O->>C: omac work show {id}
+    O->>C: omac work show {id} --output json
     O->>C: omac work submit {id} --manifest-file feature-x.yaml
 
     loop lint 机器门(零 token,≤3 轮修订)
@@ -412,7 +413,7 @@ sequenceDiagram
         alt CI 通过(或未配置)且节点配有 reviewer
             C->>M: 节点 issue 转派 reviewer(标 in_review,开发上下文与评审同线)
             M->>R: AgentRuntime 拉起 reviewer(可见 bootstrap + worker 的环境构建步骤)
-            R->>C: omac work show {id}(取 diff·测试·验收映射协议·env_setup)
+            R->>C: omac work show {id} --output json(取 diff·测试·验收映射协议·env_setup)
             R->>C: omac work submit {id} --verdict pass --report-file r.yaml(含评审目标)
         else 证据不达标 / reviewer reject / 回退耗尽
             C->>C: 节点标 blocked,失败隔离(下游标 blocked)
@@ -432,9 +433,9 @@ sequenceDiagram
         C->>C: 就绪节点 = 依赖全部 done 且自身未失败的节点
 
         Note over C,M: ── DISPATCH:fire-and-forget(受 max_parallel 约束)──
-        C->>M: create_work_item(body=bootstrap+契约简报) + assign worker + 标 in_progress
+        C->>M: create_work_item(body=单一 JSON bootstrap + Human 任务摘要) + assign worker + 标 in_progress
         M->>W: AgentRuntime 拉起 worker
-        W->>C: omac work show {id}(contract·acceptance·验证命令·non_goals·协议)
+        W->>C: omac work show {id} --output json(contract·acceptance·验证命令·non_goals·协议)
         W->>W: TDD 实现 + 本地跑验证命令
         W->>C: omac work submit {id} --pr-url ... --verification-file ev.yaml
         C->>C: 左移校验:证据 schema 当场验,缺项立即打回并告知缺什么
@@ -478,10 +479,10 @@ sequenceDiagram
     participant C as omac CLI
     participant P as WorkItemStore(数据面)
 
-    M->>A: 拉起 agent,issue body 作为 prompt<br/>(第一段即 bootstrap:「用 omac work show {id} 开始」)
-    A->>C: omac work show {issue-id}
+    M->>A: 拉起 agent,issue body 作为 prompt<br/>(顶部只有 JSON bootstrap,其余为 Human-first 摘要)
+    A->>C: omac work show {issue-id} --output json
     C->>P: 读 issue metadata(任务类型 + contract 全量字段)
-    C-->>A: issue 类型 + 当前阶段 + 完整上下文 + 对应执行协议<br/>(产出阶段:TDD·证据格式 / review 阶段:独立复跑·验收映射)
+    C-->>A: task + context + protocol + authority + guide_refs + submit
 
     A->>A: 执行(开发 / 评审 / 编写设计方案 / 拆 DAG)
 
@@ -494,25 +495,23 @@ sequenceDiagram
         A->>A: 补齐后重新 submit
     else 校验通过
         C->>P: 交付物写入 issue metadata,更新状态
-        C-->>A: exit 0,任务交付完成
+        C-->>A: exit 0,返回 submitted_phase / next_phase / advanced_to
     end
 ```
 
-**派发 issue body 固定模板**(CLI 生成,即"提示词注入",不依赖系统提示词与预装 skill):
+**派发 issue body 固定模板**(CLI 生成,Human-first,不依赖系统提示词与预装 skill):
 
 ```
-[第一段:bootstrap]
-你被分配了一个 <类型> 任务。本项目使用 omac CLI 协作,必须通过它交互:
-  1. omac work show <id>     —— 获取完整任务上下文与执行协议
-  2. 完成后 omac work submit <id> ...(show 的输出里有你这个类型的精确交付参数)
-遇到不明确的地方:omac guide role <角色> 或 omac guide artifact <产物>
+[顶部:唯一 Agent 入口]
+omac work show <id> --output json
 
-[第二段:任务简报](人浏览 issue 列表时可读)
-title / objective / source_of_truth / acceptance 摘要
-
-[第三段:硬约束提醒]
-non_goals / pr_base 指向集成分支 / reviewer 独立复跑不信自述 等三五条铁律
+[Human 任务说明]
+标题 / 类型 / 执行角色 / 目标 / 完成标准 / 任务详情 / 非目标 /
+主要代码归属范围 / 交付约束 / 目标仓库 / 上游 issue 链接
 ```
+
+issue 不复制 `work submit`、guide 清单或角色硬协议。Agent 从 `work show.submit` 获取精确
+交付命令,从 `guide_refs` 按需加载静态知识；冲突时实例事实和 contract 优先。
 
 ---
 
@@ -570,7 +569,7 @@ sequenceDiagram
     loop 外层验收循环(≤ acceptance.max_rounds,缺省 3)
         C->>M: 建 final-acceptance issue(需求文档 + 设计文档 + 验收文档 + 集成分支)并 assign acceptor
         M->>A: AgentRuntime 拉起 acceptor
-        A->>C: omac work show {id}(验收文档逐条动作清单 + 各节点 env_setup 汇总)
+        A->>C: omac work show {id} --output json(验收文档逐条动作清单 + 各节点 env_setup 汇总)
         A->>A: 用户视角端到端走查<br/>(如 web 产品从前端页面走通全部业务流程)
         A->>C: omac work submit {id} --acceptance-results-file results.yaml
         C->>C: 左移校验:结果必须逐项覆盖验收文档条目
@@ -624,16 +623,19 @@ dag run 结果回收 ──► 权威门(编排侧,信任但验证)
 
 ## 9. 知识分发:零 skill
 
-原两个 skill 的内容全部迁入 CLI 四个内生通道,按 agent 接触顺序:
+原两个 skill 的内容全部迁入 CLI 四个内生通道,按职责分层:
 
 | 通道 | 承载内容(原出处) |
 |---|---|
-| `omac guide workflow/roles/role/artifact/recovery` | 工作流总览、生命周期角色协议、设计/验收/manifest/证据格式、恢复手册(原 skill 内容按语义分层迁入 CLI) |
-| 各命令 Long help | 该环节的协议细节(如 `plan create --help` 讲两种模式与 review 门) |
+| `omac work show` | 当前实例状态/依赖/回退计数、contract/previous_review、真实交付与证据、动作、权威顺序、最小 guide_refs 和精确 submit 命令 |
+| `omac guide workflow/roles/role/artifact/recovery` | Agent 的稳定方法、角色协议、产物 schema 与恢复手册；不得覆盖实例事实 |
+| 各命令 Long help | 命令发现与入口路由,不复制整套角色协议 |
 | exit 20 / exit 5 报告 | 现场发牌的"下一步动作",精确到完整命令行 |
-| 派发 issue body | bootstrap 指令 + 任务简报 + 硬约束(随任务送达,版本永远正确) |
+| 派发 issue body | Human-first 任务说明 + 一个 `work show --output json` Agent 入口 |
 
-**分发闭环**:人主动看 help;人指挥的 agent 被一句话告知"用 omac";内部角色 agent 由派发载荷现场注入。无 AGENTS.md 依赖、无薄 skill、无 `multica skill import`/`agent skills add` 运维步骤。
+**分发闭环**:Human 从 issue 读清目标与完成标准；Agent 先取动态实例事实,再按
+`guide_refs` 加载稳定知识并通过 `work submit` 交付。无 AGENTS.md 依赖、无薄 skill、
+无额外 skill 导入运维步骤。
 
 ---
 
@@ -686,7 +688,7 @@ dag run 结果回收 ──► 权威门(编排侧,信任但验证)
 
 | 项 | 说明 | 缓解 |
 |---|---|---|
-| runtime 机器需装 omac | 与"装 multica CLI"同级前置,`pipx install` 一次 | 失败响亮:worker 第一步 `omac work show` 即 command not found,回报到 issue,编排侧可见;`guide workflow` 写明运维要求 |
+| runtime 机器需装 omac | 与"装 multica CLI"同级前置,`pipx install` 一次 | 失败响亮:Agent 第一步 `omac work show --output json` 即 command not found,回报到 issue,编排侧可见;`guide workflow` 写明运维要求 |
 | agent 调用者跑 `dag run` 长阻塞 | CLI 自含 loop 的固有代价 | `--max-rounds/--max-minutes` 有界分段(幂等=续跑);或后台运行 + `dag status --json` 轮询 |
 | plan 流水线 LLM 环节质量 | planner/orchestrator 产物可能反复不过门 | 修订循环有界(≤3 轮),耗尽即 exit 20 移交调用者,不无限烧 token |
 | 向后兼容 | 存量 `.omac/*.yaml` manifest | manifest schema 不变,`dag run` 直接消费;仅驱动方式变化 |

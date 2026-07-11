@@ -145,7 +145,9 @@ def test_final_acceptance_issue_has_complete_authoring_context(tmp_path):
     )
     env = f"OMAC_ENGINE=mock OMAC_WORKSPACE_ID=ws OMAC_PROJECT_ID={project.id}"
     assert env in item.description
-    assert "pr_base=main" in item.description
+    assert "PR 基线: `main`" in item.description
+    assert f"omac work show {item.id} --output json" in item.description
+    assert "omac work submit" not in item.description
     assert "git@github.com:owner/demo.git" in item.description
     assert "最终开发交付" in item.description
     assert item.contract["acceptance_doc"]["flows"][0]["id"] == "ACC-001"

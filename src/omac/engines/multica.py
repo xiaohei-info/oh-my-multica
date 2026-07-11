@@ -195,7 +195,8 @@ class MulticaStore(WorkItemStore):
             f"- sha256: {sha}\n"
             f"- bytes: {size}\n"
             f"- metadata: `{ref_key}`\n\n"
-            "后续 agent 应通过 `omac work show` 读取交接上下文；程序化引用见 issue metadata。\n"
+            "后续 Agent 应通过 `omac work show <issue-id> --output json` 读取交接上下文；"
+            "程序化引用见 issue metadata。\n"
         )
 
     def _load_payload_comment(self, item_id: str, key: str, ref: Optional[Dict[str, Any]]) -> Optional[str]:

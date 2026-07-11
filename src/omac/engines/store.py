@@ -140,7 +140,7 @@ class WorkItemStore(ABC):
         - worker_bounce/ci_bounce/review_bounce/merge_bounce:回退的绝对值
           (pipeline 读当前值、+1、写回;Store 只存取不做状态机);
         - deliverable:按 kind 承载 plan/acceptance/manifest 等交付正文。
-        - description:回填 issue 正文(派发模板在三段 bootstrap 中嵌入真实 id)。
+        - description:回填 Human-first issue 正文(顶部单一 bootstrap 嵌入真实 id)。
         """
 
     @abstractmethod

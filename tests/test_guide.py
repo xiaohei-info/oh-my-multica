@@ -163,6 +163,32 @@ def test_authoring_guides_address_low_reasoning_budget_workers() -> None:
             assert item in content, f"guide missing low-reasoning-budget guidance: {item}"
 
 
+def test_every_role_guide_is_an_executable_agent_protocol() -> None:
+    required = [
+        "适用条件", "指令优先级", "权威输入", "执行步骤", "完成条件",
+        "返工路径", "阻塞与升级", "禁止事项", "错误写法", "交付",
+    ]
+    for topic in ROLE_TOPICS:
+        content = load_role_topic(topic)
+        for heading in required:
+            assert heading in content, f"role {topic} missing protocol section: {heading}"
+
+
+def test_every_artifact_guide_is_a_validator_oriented_contract() -> None:
+    required = ["使用场景", "最小合法示例", "字段语义", "校验硬门", "常见错误", "提交"]
+    for topic in ARTIFACT_TOPICS:
+        content = load_artifact_topic(topic)
+        for heading in required:
+            assert heading in content, f"artifact {topic} missing contract section: {heading}"
+
+
+def test_all_guides_pin_instance_first_instruction_precedence() -> None:
+    for label, content in _all_topics():
+        assert "work show" in content, f"{label} must point to instance facts"
+        assert "实例事实" in content or "实例上下文" in content, (
+            f"{label} must say static guide cannot override task instance")
+
+
 def test_evidence_artifact_defines_all_evidence_shapes() -> None:
     content = load_artifact_topic("evidence")
     for item in ["worker verification", "reviewer report", "final acceptance results", "acceptance_mapping"]:
@@ -203,10 +229,11 @@ def test_dag_help_has_hard_constraints() -> None:
         assert item in DAG_DESC, f"dag help missing hard constraint: {item}"
 
 
-def test_work_help_has_hard_constraints() -> None:
+def test_work_help_is_agent_first_router_not_protocol_dump() -> None:
     _assert_no_residue(WORK_DESC, "work --help")
-    for item in ["唯一写入口", "证据门", "收活铁律", "只读共享态"]:
-        assert item in WORK_DESC, f"work help missing hard constraint: {item}"
+    for item in ["Agent", "实例事实", "guide_refs", "默认输出 JSON"]:
+        assert item in WORK_DESC, f"work help missing Agent-first contract: {item}"
+    assert "只读共享态" not in WORK_DESC
 
 
 def test_node_help_has_hard_constraints() -> None:

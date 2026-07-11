@@ -192,7 +192,7 @@ class TestHappyPath:
         ]
         assert "## 上游 issue（防跑偏）" in item.description
         assert "- 设计方案: `plan-1`" in item.description
-        assert "OMAC_ENGINE=mock OMAC_WORKSPACE_ID=ws omac work show plan-1" in item.description
+        assert "omac work show plan-1" not in item.description
 
     def test_dispatch_appends_direct_dependency_issue_refs(self):
         """develop issue 同时链接直接 blocked_by 节点的 Multica issue。"""
@@ -233,8 +233,8 @@ class TestHappyPath:
             "- 前置开发任务 · Shared contract foundation: `issue-foundation`"
             in item.description
         )
-        assert "omac work show issue-foundation" in item.description
-        assert "omac work show issue-data" in item.description
+        assert "omac work show issue-foundation" not in item.description
+        assert "omac work show issue-data" not in item.description
         assert "Abandoned setup" not in item.description
 
     def test_dispatch_develop_dag_key_includes_manifest_dag_suffix(self):

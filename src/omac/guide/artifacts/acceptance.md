@@ -1,55 +1,83 @@
-# 验收文档格式
+# acceptance 产物合同
 
-验收文档可以使用 Markdown 正文 + YAML frontmatter。frontmatter 保留机器可校验 schema,
-正文写给人和 agent 阅读。
+## 使用场景
 
-```md
+本合同用于 `acceptance` 产出或评审阶段，把用户视角行为写成可由 worker、reviewer 和最终验收者
+逐项执行的权威 flow。
+
+第一步必须运行：
+
+```bash
+omac work show <issue-id> --output json
+```
+
+以返回的 task、context、authority、guide_refs 和 submit 为当前实例事实。本文是静态 guide，
+不得覆盖实例事实、contract、上轮评审或精确提交命令。
+
+## 最小合法示例
+
+提交文件保持为一个可直接解析的单一 YAML mapping；其中的结构化字段是权威事实：
+
+```yaml
 ---
 schema: omac.acceptance/v1
 flows:
   - id: flow-login
-    name: 登录流程
+    name: 用户使用有效凭证登录
     actions:
-      - step: 打开登录页
+      - step: 打开登录入口
         how: 访问 /login
-        expected: 显示登录表单
----
-
-# 验收文档
-
-## flow-login · 登录流程
-
-用户输入有效账号后进入主界面。
-
-### 步骤
-
-1. 打开 `/login`
-2. 输入有效账号密码
-3. 点击登录
-
-### 预期结果
-
-进入 dashboard,页面展示当前用户信息。
+        expected: 显示账号和密码输入框
+      - step: 提交有效凭证
+        how: 输入测试账号并点击登录
+        expected: 进入 dashboard，展示当前用户信息
 ```
 
-## schema 要求
+## 字段语义
 
-- `flows` 非空。
-- `flow.id` 唯一且稳定,供 manifest `contract.acceptance` 引用。
-- `flow.name` 非空。
-- `actions` 非空。
-- 每个 action 必须有 `step/how/expected`。
+| 字段 | 语义 |
+|---|---|
+| `schema` | 固定为 `omac.acceptance/v1`。 |
+| `flows` | 非空 flow 列表；每个 flow 是一个可独立验收的端到端路径。 |
+| `flow.id` | 唯一、稳定的标识，供 manifest `contract.acceptance` 和最终验收结果引用。 |
+| `flow.name` | 非空的人类可读名称，说明被验收的用户结果。 |
+| `actions` | 非空动作列表，按执行顺序描述 flow。 |
+| `step` | 用户或系统正在执行的动作。 |
+| `how` | 可复制的入口、命令、页面、参数或测试数据。 |
+| `expected` | 可观察结果以及据此判断失败的标准。 |
 
-## 执行可读性
+结构化 YAML 是唯一权威；说明性正文不能成为第二套事实源。当前 submit validator 直接把
+提交文件解析为 YAML mapping，因此不要在 YAML 文档后追加无法解析的 Markdown 正文。
 
-后续执行者可能是低推理预算模型。验收文档必须把用户视角行为写到可执行,
-不能依赖执行者自行补全隐含上下文。
+后续执行者可能是低推理预算模型。每个 action 必须自包含，不能依赖隐含上下文。
+边界条件应写成独立 action 或独立 flow，例如无效输入、重复提交、权限不足、超时和回滚结果。
 
-- `step` 写用户或系统正在做的动作。
-- `how` 写具体入口、命令、页面、参数或测试数据。
-- `expected` 写可观察结果和失败判据。
-- 边界条件必须有独立 action 或独立 flow,不要藏在正文描述里。
+## 校验硬门
 
-正文不能成为第二套事实源。若正文与 frontmatter 冲突,以 frontmatter 为准。
+1. 顶层必须是 mapping，`flows` 必须是非空列表。
+2. 每个 flow 必须是 object；`id` 和 `name` 必须是非空字符串，且 `id` 不得重复。
+3. 每个 flow 的 `actions` 必须是非空列表。
+4. 每个 action 必须是 object，且 `step`、`how`、`expected` 都是非空字符串。
+5. `flow.id` 必须稳定，并与 design 的 flows、manifest 的 `contract.acceptance` 保持一致。
+6. 只写在说明性正文中的成功条件或边界条件不计入可校验验收事实。
 
-planner 在 acceptance 阶段通过 `omac work submit <issue-id> --acceptance-file <file>` 交付本文档。
+## 常见错误 → 修正
+
+| 常见错误 | 修正 |
+|---|---|
+| `flows` 为空或写成 object | 改成至少包含一个 flow 的列表。 |
+| 多个 flow 复用同一个 `id` | 使用稳定且唯一的 id，并同步所有引用。 |
+| `how` 写“正常操作” | 写明页面、命令、参数和测试数据，使步骤可复现。 |
+| `expected` 写“成功” | 写可观察结果和失败判据。 |
+| 把权限不足等情况藏在正文 | 为每个边界条件增加独立 action 或 flow。 |
+| 另附正文并描述不同结果 | 删除重复事实或修正结构化 YAML；权威值只保留一份。 |
+
+## 提交
+
+提交前重新读取 `work show`，使用其返回的精确 submit 命令。`acceptance` 产出的常见形状是：
+
+```bash
+omac work submit <issue-id> --acceptance-file <file>
+```
+
+提交文件必须能被 YAML parser 直接读取；不要在产出阶段提交 verdict。
