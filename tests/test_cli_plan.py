@@ -157,6 +157,40 @@ def test_check_clean_manifest_passes(tmp_path, monkeypatch, capsys):
     assert "review 通过" in out
 
 
+def test_check_review_issue_is_human_first_with_agent_json_entry(
+        tmp_path, monkeypatch, capsys):
+    engine = _configure_mock(tmp_path, monkeypatch)
+    engine.store.set_review_rejects(0)
+    assert main(["config", "set", "project", "project-42"]) == exit_codes.OK
+    path = _write(tmp_path, CLEAN_MANIFEST)
+
+    assert main(["dag", "check", path]) == exit_codes.OK
+    capsys.readouterr()
+    items = engine.store.list_work_items("mock-workspace")
+    review_item = items[-1]
+
+    assert review_item.kind.value == "decompose"
+    assert (
+        "OMAC_ENGINE=mock OMAC_WORKSPACE_ID=mock-workspace "
+        "OMAC_PROJECT_ID=project-42 "
+        f"omac work show {review_item.id} --output json"
+        in review_item.description
+    )
+    assert "## 任务摘要" in review_item.description
+    assert "objective: 实现 a" not in review_item.description
+    assert "objective: 实现 a" in review_item.deliverable
+    assert "omac work submit" not in review_item.description
+
+    assert main(["work", "show", review_item.id]) == exit_codes.OK
+    agent_view = json.loads(capsys.readouterr().out)
+    assert "objective: 实现 a" in agent_view["context"]["deliverable"]
+    assert agent_view["guide_refs"] == [
+        "omac guide role reviewer",
+        "omac guide artifact manifest",
+    ]
+    assert "## 硬约束" not in review_item.description
+
+
 def test_check_clean_manifest_json_output(tmp_path, monkeypatch, capsys):
     engine = _configure_mock(tmp_path, monkeypatch)
     engine.store.set_review_rejects(0)

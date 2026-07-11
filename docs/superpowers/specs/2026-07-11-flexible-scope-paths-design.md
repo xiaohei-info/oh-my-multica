@@ -1,5 +1,10 @@
 # Flexible DAG Scope Paths Design
 
+> Status note (2026-07-11): `scope_paths` semantics remain current, but the proposal to
+> repeat worker/reviewer protocol in develop issue bodies is superseded by
+> `2026-07-11-agent-first-content-architecture-design.md`. Human-first issues now show
+> the primary scope only; detailed supporting-file rules live in Agent guides.
+
 ## Problem
 
 `contract.scope_paths` is optional manifest metadata intended to describe the primary

@@ -3,7 +3,7 @@
 验收标准:
 - mock:一次过 / reject 2 次后过 / 耗尽 NeedsDecision 三条路径单测
 - 全程同一 issue id(不新建评审 issue)
-- issue body 取自 dispatch.render_issue_body(三段式 §7.4 模板)
+- issue body 取自 dispatch.render_issue_body(Human-first + 单一 Agent 入口模板)
 """
 from __future__ import annotations
 
@@ -67,7 +67,7 @@ def test_create_authoring_task_renders_body_contract_and_source_refs():
 
     assert "OMAC_ENGINE=mock OMAC_WORKSPACE_ID=ws" in item.description
     assert f"omac work show {item.id}" in item.description
-    assert "pr_base=main" in item.description
+    assert "PR 基线: `main`" in item.description
     assert "git@github.com:owner/demo.git" in item.description
     assert item.contract["acceptance_doc"] == {"flows": []}
     assert item.source_refs == [
@@ -115,9 +115,9 @@ def test_one_pass_no_reviewers():
     assert item.status == WorkItemStatus.DONE
     # 全程只建了一条 issue
     assert len(eng.store.list_work_items("ws")) == 1
-    # body 取自 dispatch 三段式模板(含 work show/submit 命令 + issue id)
+    # Human-first body 只保留一个 Agent work-show 入口。
     assert f"omac work show {res['item_id']}" in item.description
-    assert f"omac work submit {res['item_id']}" in item.description
+    assert f"omac work submit {res['item_id']}" not in item.description
 
 
 def test_run_task_auto_generates_unique_dag_key_when_missing():
@@ -150,7 +150,7 @@ def test_run_task_consumes_real_submit_deliverable():
 
 
 def test_run_task_renders_source_refs_in_body():
-    """provenance:源头 issue 引用要用可读 Markdown,命令不能挤在同一行。"""
+    """Human issue 只展示上游链接,Agent 命令由 work show 返回。"""
     eng = _engine()
     MockStore.set_kind_delivery("acceptance", {"acceptance": "验收正文"})
     res = run_task(eng, TaskKind.ACCEPTANCE, _payload(), "alice",
@@ -159,24 +159,25 @@ def test_run_task_renders_source_refs_in_body():
 
     assert "## 上游 issue（防跑偏）" in item.description
     assert "- `#7`" in item.description
-    assert "```bash\nOMAC_ENGINE=mock OMAC_WORKSPACE_ID=ws omac work show 7\n```" in item.description
     assert "- `#8`" in item.description
-    assert "```bash\nOMAC_ENGINE=mock OMAC_WORKSPACE_ID=ws omac work show 8\n```" in item.description
+    assert "omac work show 7" not in item.description
+    assert "omac work show 8" not in item.description
     assert "#7(omac work show 7 查看)" not in item.description
 
 
-def test_run_task_renders_bootstrap_commands_as_markdown_code_blocks():
-    """bootstrap 命令使用 shell code block,避免长命令和 <manifest_file> 破坏正文渲染。"""
+def test_run_task_renders_single_agent_bootstrap_as_code_block():
+    """issue 只提供一个 JSON work-show 入口,不复制 guide/submit 协议。"""
     eng = _engine()
     MockStore.set_kind_delivery("decompose", {"manifest": "nodes: []"})
     res = run_task(eng, TaskKind.DECOMPOSE, _payload(), "alice", poll=_poll)
     item = eng.store.get_work_item(res["item_id"])
 
-    assert "```bash\nomac guide role orchestrator\n```" in item.description
-    assert f"```bash\nOMAC_ENGINE=mock OMAC_WORKSPACE_ID=ws omac work show {res['item_id']}\n```" in item.description
-    assert "```bash" in item.description
-    assert f"OMAC_ENGINE=mock OMAC_WORKSPACE_ID=ws omac work submit {res['item_id']} --manifest-file <manifest_file>" in item.description
-    assert "1. omac guide role orchestrator" not in item.description
+    assert (
+        f"```bash\nOMAC_ENGINE=mock OMAC_WORKSPACE_ID=ws "
+        f"omac work show {res['item_id']} --output json\n```"
+    ) in item.description
+    assert "omac guide role orchestrator" not in item.description
+    assert "omac work submit" not in item.description
 
 
 def test_run_task_renders_markdown_source_of_truth_as_collapsible_markdown():
@@ -195,7 +196,8 @@ def test_run_task_renders_markdown_source_of_truth_as_collapsible_markdown():
 
     item = eng.store.get_work_item(res["item_id"])
     assert "### plan" in item.description
-    assert "<details open>" in item.description
+    assert "<details>" in item.description
+    assert "<details open>" not in item.description
     assert "<summary>查看 plan 上游产物</summary>" in item.description
     assert "# 设计方案" in item.description
     assert "```ts\nexport const ok = true\n```" in item.description

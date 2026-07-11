@@ -1,5 +1,10 @@
 # Unified Authoring Task Context Design
 
+> 状态说明（2026-07-11）：统一 authoring 创建路径、环境定位和上游引用仍然有效；
+> “在 issue body 内提供完整 Agent 命令/协议”的展示方案已被
+> `2026-07-11-agent-first-content-architecture-design.md` 取代。当前 issue 为 Human-first，
+> 顶部只保留 `work show --output json`，其余动态命令由 `work show` 返回。
+
 ## 核心判断
 
 当前问题值得修复。`final-acceptance` 和验收失败后的增量 `decompose` 直接把

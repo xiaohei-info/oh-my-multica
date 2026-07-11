@@ -21,9 +21,30 @@ PROG = "omac"
 class _HelpOnErrorParser(argparse.ArgumentParser):
     """参数错误时打印错误 + 完整 help(报错即教学),exit 1。"""
 
+    _active_parser = None
+    _active_namespace = None
+
+    def parse_args(self, args=None, namespace=None):
+        invocation = list(sys.argv[1:] if args is None else args)
+        type(self)._active_parser = self
+        type(self)._active_namespace = namespace
+        return super().parse_args(invocation, namespace)
+
+    def _parse_known_args(self, arg_strings, namespace, *extra):
+        """记录 argparse 的实际 parser 与已解析 Namespace,不重复解释 argv。"""
+        type(self)._active_parser = self
+        type(self)._active_namespace = namespace
+        return super()._parse_known_args(arg_strings, namespace, *extra)
+
     def error(self, message):
+        target = type(self)._active_parser or self
+        renderer = getattr(target, "_parse_error_renderer", None)
+        if renderer is not None and renderer(
+            target, message, type(self)._active_namespace
+        ):
+            raise SystemExit(exit_codes.GENERIC)
         print(f"Error: {message}\n", file=sys.stderr)
-        self.print_help(sys.stderr)
+        (target if renderer is not None else self).print_help(sys.stderr)
         raise SystemExit(exit_codes.GENERIC)
 
 

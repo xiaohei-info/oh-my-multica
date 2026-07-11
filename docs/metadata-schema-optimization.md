@@ -141,8 +141,8 @@ Allowed metadata:
 
 Review:
 
-- `description` is not metadata. It is issue body content and may contain
-  Markdown instructions, bootstrap commands, and upstream context.
+- `description` is not metadata. It is Human-first issue body content and may contain
+  one Agent `work show --output json` bootstrap, Markdown task context, and upstream links.
 - `contract` is currently fixed-schema and programmatic. It can remain metadata
   for now.
 - If contract begins to carry large upstream prose, introduce `contract_ref`

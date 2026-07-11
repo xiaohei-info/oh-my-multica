@@ -1,4 +1,4 @@
-"""work show 9 种(kind × phase)组合快照 + submit 模板防漂移,加 submit 左移门 + 退出码。"""
+"""work show 9 种(kind × phase)Agent 事实包 + submit 模板/左移门/退出码。"""
 from __future__ import annotations
 
 import json
@@ -71,6 +71,7 @@ def _make_item(store, kind: TaskKind, phase: TaskPhase, dag_key: str = "a",
     if with_verification:
         store.update_work_item_metadata(
             item.id, phase=phase,
+            artifacts={"pr_url": "https://example.test/pr/42"},
             verification={
                 "commands": [{"cmd": "pytest -q", "exit_code": 0,
                               "summary": "ok"}],
@@ -94,11 +95,33 @@ COMBINATIONS = [
     (TaskKind.FINAL_ACCEPTANCE, TaskPhase.AUTHORING),
 ]
 
+EXPECTED_GUIDE_REFS = {
+    (TaskKind.PLAN, TaskPhase.AUTHORING): [
+        "omac guide role planner", "omac guide artifact design"],
+    (TaskKind.PLAN, TaskPhase.REVIEW): [
+        "omac guide role reviewer", "omac guide artifact design"],
+    (TaskKind.ACCEPTANCE, TaskPhase.AUTHORING): [
+        "omac guide role planner", "omac guide artifact acceptance"],
+    (TaskKind.ACCEPTANCE, TaskPhase.REVIEW): [
+        "omac guide role reviewer", "omac guide artifact acceptance"],
+    (TaskKind.DECOMPOSE, TaskPhase.AUTHORING): [
+        "omac guide role orchestrator", "omac guide artifact manifest"],
+    (TaskKind.DECOMPOSE, TaskPhase.REVIEW): [
+        "omac guide role reviewer", "omac guide artifact manifest"],
+    (TaskKind.DEVELOP, TaskPhase.AUTHORING): [
+        "omac guide role worker", "omac guide artifact evidence"],
+    (TaskKind.DEVELOP, TaskPhase.REVIEW): [
+        "omac guide role reviewer", "omac guide artifact evidence"],
+    (TaskKind.FINAL_ACCEPTANCE, TaskPhase.AUTHORING): [
+        "omac guide role acceptor", "omac guide artifact acceptance",
+        "omac guide artifact evidence"],
+}
+
 
 @pytest.mark.parametrize("kind,phase", COMBINATIONS, ids=[
     f"{k.value}-{p.value}" for k, p in COMBINATIONS])
 def test_show_output_structure(kind, phase):
-    """每种组合输出都包含四段:task/context/protocol/submit。"""
+    """每种组合都输出完整任务、上下文、协议、权威顺序、guide 与 submit。"""
     store = _store()
     with_contract = (phase == TaskPhase.AUTHORING)
     item = _make_item(store, kind, phase, with_contract=with_contract,
@@ -119,6 +142,19 @@ def test_show_output_structure(kind, phase):
     assert out["task"]["phase"] == phase.value
     assert out["task"]["dag_key"] == "a"
     assert out["task"]["identity"] == identity
+    assert out["task"]["status"] == item.status.value
+    assert out["task"]["blocked_by"] == item.blocked_by
+    assert out["task"]["wave"] == item.wave
+    assert out["task"]["bounces"] == item.bounces.as_dict()
+    assert out["context"]["issue_description"] == item.description
+    assert out["authority"] == [
+        "work show 当前实例事实",
+        "contract / previous_review",
+        "role guide",
+        "artifact guide",
+        "workflow 总览",
+    ]
+    assert out["guide_refs"] == EXPECTED_GUIDE_REFS[(kind, phase)]
 
     # 协议非空
     assert out["protocol"].strip() != ""
@@ -134,6 +170,9 @@ def test_show_output_structure(kind, phase):
     if kind == TaskKind.DEVELOP and phase == TaskPhase.REVIEW:
         assert "env_setup" in out["context"]
         assert out["context"]["env_setup"] == ["docker compose up -d db"]
+        assert out["context"]["artifacts"] == {
+            "pr_url": "https://example.test/pr/42"}
+        assert out["context"]["verification"]["coverage"] == 92
 
 
 def test_authoring_show_includes_previous_review_report():
@@ -227,8 +266,24 @@ def test_show_cli_json_output(tmp_path, monkeypatch, capsys):
     assert data["submit"].startswith(f"omac work submit {item.id}")
 
 
+def test_show_cli_defaults_to_agent_json(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    main(["config", "set", "engine", "mock"])
+    main(["config", "set", "workspace", "mock-workspace"])
+    capsys.readouterr()
+
+    store = _store()
+    item = _make_item(store, TaskKind.PLAN, TaskPhase.AUTHORING)
+
+    assert main(["work", "show", item.id]) == exit_codes.OK
+    data = json.loads(capsys.readouterr().out)
+    assert data["task"]["title"] == item.title
+    assert data["guide_refs"] == EXPECTED_GUIDE_REFS[
+        (TaskKind.PLAN, TaskPhase.AUTHORING)]
+
+
 def test_show_cli_table_output(tmp_path, monkeypatch, capsys):
-    """CLI 入口:work show 默认 markdown 输出,含相位视图各段。"""
+    """人类调试可显式请求 markdown 相位视图。"""
     monkeypatch.chdir(tmp_path)
     main(["config", "set", "engine", "mock"])
     main(["config", "set", "workspace", "mock-workspace"])
@@ -238,7 +293,7 @@ def test_show_cli_table_output(tmp_path, monkeypatch, capsys):
     item = _make_item(store, TaskKind.PLAN, TaskPhase.REVIEW,
                       with_deliverable=True)
 
-    assert main(["work", "show", item.id]) == exit_codes.OK
+    assert main(["work", "show", item.id, "--output", "table"]) == exit_codes.OK
     out = capsys.readouterr().out
     # markdown 段头(相位视图):任务头 / 现在做什么 / 完成后交付
     assert "# 任务" in out
@@ -262,11 +317,11 @@ def test_show_cli_source_issue_commands_include_engine_env(tmp_path, monkeypatch
         source_refs=[{"label": "设计方案", "issue_id": "plan-1"}],
     )
 
-    assert main(["work", "show", item.id]) == exit_codes.OK
+    assert main(["work", "show", item.id, "--output", "table"]) == exit_codes.OK
     out = capsys.readouterr().out
 
     assert "## 上游 issue（防跑偏）" in out
-    assert "OMAC_ENGINE=mock OMAC_WORKSPACE_ID=mock-workspace omac work show plan-1" in out
+    assert "OMAC_ENGINE=mock OMAC_WORKSPACE_ID=mock-workspace omac work show plan-1 --output json" in out
 
 
 def test_show_identity_reflects_role_not_generic_worker(tmp_path, monkeypatch, capsys):
@@ -278,7 +333,7 @@ def test_show_identity_reflects_role_not_generic_worker(tmp_path, monkeypatch, c
 
     store = _store()
     item = _make_item(store, TaskKind.PLAN, TaskPhase.AUTHORING)
-    assert main(["work", "show", item.id]) == exit_codes.OK
+    assert main(["work", "show", item.id, "--output", "table"]) == exit_codes.OK
     out = capsys.readouterr().out
     assert "planner" in out
     assert "worker:" not in out  # plan 的产出者不是 worker
@@ -293,8 +348,9 @@ def test_plan_authoring_action_not_role_mixed():
     # 不再把 acceptance(验收文档)任务塞进 plan 的视图
     assert "验收文档" not in proto
     assert "acceptance" not in proto
-    # 静态深度交给 guide(不再内联复制整段协议)
-    assert "omac guide role planner" in proto
+    assert out["guide_refs"] == [
+        "omac guide role planner", "omac guide artifact design"]
+    assert "omac guide" not in proto
 
 
 def test_review_show_surfaces_deliverable_and_env_setup(tmp_path, monkeypatch, capsys):
@@ -307,7 +363,7 @@ def test_review_show_surfaces_deliverable_and_env_setup(tmp_path, monkeypatch, c
     store = _store()
     item = _make_item(store, TaskKind.DEVELOP, TaskPhase.REVIEW,
                       with_deliverable=True, with_verification=True)
-    assert main(["work", "show", item.id]) == exit_codes.OK
+    assert main(["work", "show", item.id, "--output", "table"]) == exit_codes.OK
     out = capsys.readouterr().out
     assert "评审对象" in out
     assert "docker compose up -d db" in out  # worker 的 env_setup 复跑清单
@@ -411,8 +467,10 @@ def test_show_unknown_issue_id(tmp_path, monkeypatch, capsys):
     capsys.readouterr()
 
     assert main(["work", "show", "99999"]) == exit_codes.VALIDATION
-    err = capsys.readouterr().err
-    assert "99999" in err
+    err = json.loads(capsys.readouterr().err)
+    assert err["ok"] is False
+    assert err["error"]["exit_code"] == exit_codes.VALIDATION
+    assert "99999" in err["error"]["message"]
 
 
 
@@ -705,11 +763,13 @@ class TestSubmitPerKindPhase:
                    "--report-file", str(rfile)])
 
         assert rc == exit_codes.OK
-        out = capsys.readouterr().out
-        assert "状态推进: in_review" not in out
-        assert "verdict 已提交: pass" in out
-        assert "平台终态由 omac loop 收口" in out
-        assert "不要手动修改 issue 状态" in out
+        out = json.loads(capsys.readouterr().out)
+        assert out["ok"] is True
+        assert out["submitted_phase"] == "review"
+        assert out["next_phase"] is None
+        assert out["deliverable_key"] == "review_report"
+        assert out["advanced_to"] == "in_review"
+        assert out["verdict"] == "pass"
 
     def test_review_reject_verdict_is_structured_verdict(self, tmp_path):
         """reviewer reject 必须能经 work submit 写入结构化 verdict/report。
@@ -770,6 +830,8 @@ class TestSubmitPerKindPhase:
         pfile.write_text("# Plan\n\n## Summary\nsteps")
         result = dispatch_mod.submit(eng.store, item.id, plan_file=str(pfile))
         got = eng.store.get_work_item(item.id)
+        assert result.phase == TaskPhase.AUTHORING
+        assert result.next_phase == TaskPhase.REVIEW
         assert got.deliverable.startswith("# Plan")
         assert got.status == WorkItemStatus.IN_REVIEW
 
@@ -790,10 +852,13 @@ class TestSubmitPerKindPhase:
 
         rc = main(["work", "submit", item.id, "--plan-file", str(pfile)])
         assert rc == exit_codes.OK
-        out = capsys.readouterr().out
-        assert "产出阶段已结束" in out
-        assert "不要提交 verdict" in out
-        assert "等待 omac loop" in out
+        out = json.loads(capsys.readouterr().out)
+        assert out["submitted_phase"] == "authoring"
+        assert out["next_phase"] == "review"
+        assert "verdict" not in out
+        assert "产出阶段已结束" in out["message"]
+        assert "不要提交 verdict" in out["message"]
+        assert "等待 omac loop" in out["message"]
 
     def test_plan_authoring_empty_rejected(self, tmp_path):
         eng = _engine()
@@ -821,8 +886,11 @@ class TestSubmitPerKindPhase:
                 {"step": "open", "how": "GET /login", "expected": "表单"},
             ]}],
         }))
-        dispatch_mod.submit(eng.store, item.id, acceptance_file=str(afile))
+        result = dispatch_mod.submit(
+            eng.store, item.id, acceptance_file=str(afile))
         got = eng.store.get_work_item(item.id)
+        assert result.phase == TaskPhase.AUTHORING
+        assert result.next_phase == TaskPhase.REVIEW
         assert "flows" in got.deliverable
         assert got.status == WorkItemStatus.IN_REVIEW
 
@@ -863,9 +931,11 @@ class TestSubmitPerKindPhase:
                            "pr_base": "feature/v1", "coverage_gate": 90,
                        }}],
         }))
-        dispatch_mod.submit(eng.store, item.id, manifest_file=str(mfile),
-                            agent_pool=members)
+        result = dispatch_mod.submit(
+            eng.store, item.id, manifest_file=str(mfile), agent_pool=members)
         got = eng.store.get_work_item(item.id)
+        assert result.phase == TaskPhase.AUTHORING
+        assert result.next_phase == TaskPhase.REVIEW
         assert got.deliverable is not None
         assert got.status == WorkItemStatus.IN_REVIEW
 
@@ -966,7 +1036,10 @@ class TestCliExitCodes:
         """
         rc = main(["work", "submit", "1", "--plan-file", "p.md"])
         assert rc == exit_codes.VALIDATION
-        assert "config.yaml" in capsys.readouterr().err
+        err = json.loads(capsys.readouterr().err)
+        assert err["ok"] is False
+        assert err["action"] == "submit"
+        assert "config.yaml" in err["error"]["message"]
 
 
 # ==================== mock e2e:submit → loop 收割必过 ===========================
@@ -987,8 +1060,10 @@ class TestSubmitMissingCli:
         vfile.write_text("commands: []")
         rc = main(["work", "submit", item.id, "--verification-file", str(vfile)])
         assert rc == exit_codes.VALIDATION, capsys.readouterr()
-        err = capsys.readouterr().err
-        assert "pr-url" in err, err
+        err = json.loads(capsys.readouterr().err)
+        assert err["ok"] is False
+        assert err["issue_id"] == item.id
+        assert "pr-url" in err["error"]["message"], err
 
     def test_decompose_submit_uses_workspace_agent_pool(
             self, tmp_path, monkeypatch, capsys):
@@ -1112,7 +1187,8 @@ class TestPhaseResolution:
         pfile = tmp_path / "plan.md"
         pfile.write_text("# Plan")
         r1 = dispatch_mod.submit(eng.store, item.id, plan_file=str(pfile))
-        assert r1.phase == dispatch_mod.TaskPhase.REVIEW
+        assert r1.phase == dispatch_mod.TaskPhase.AUTHORING
+        assert r1.next_phase == dispatch_mod.TaskPhase.REVIEW
         assert eng.store.get_work_item(item.id).status == WorkItemStatus.IN_REVIEW
 
         # 模拟 loop 只改 status 未改 phase 的旧行为:把 phase 滞回 AUTHORING

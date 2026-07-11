@@ -275,6 +275,15 @@ def test_multica_create_project_registers_project_and_workspace_repos(monkeypatc
     assert info.repos == ["https://github.com/x/existing.git", "https://github.com/x/new.git"]
 
 
+def test_project_description_routes_agent_to_json_instance_facts():
+    from omac.pipeline.dispatch import OMAC_PROJECT_DESCRIPTION
+
+    assert "omac work show <该 issue id> --output json" in OMAC_PROJECT_DESCRIPTION
+    assert "实例事实" in OMAC_PROJECT_DESCRIPTION
+    assert "guide_refs" in OMAC_PROJECT_DESCRIPTION
+    assert "静态 guide" in OMAC_PROJECT_DESCRIPTION
+
+
 
 def test_check_flags_missing_project_for_multica(tmp_path, monkeypatch, capsys):
     """multica 配置缺 project → --check exit 5 并提示。"""
