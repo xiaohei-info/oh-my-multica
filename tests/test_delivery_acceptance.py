@@ -11,13 +11,14 @@ import yaml
 import pytest
 
 from omac.core.acceptance import load_acceptance_doc
-from omac.core.manifest import Manifest, Node, load_manifest, save_manifest
+from omac.core.manifest import Contract, Manifest, Node, load_manifest, save_manifest
 from omac.engines import create_engine
 from omac.engines.mock import MockStore
 from omac.engines.models import EngineConfig
+from omac.errors import NeedsDecision
 from omac.pipeline.acceptance import (
     acceptance_doc_path, resolve_acceptance_config, AcceptanceOutcome,
-    run_acceptance_loop,
+    run_acceptance_loop, _resolve_operation_branch,
 )
 
 
@@ -82,6 +83,119 @@ def test_doc_path_and_config():
         {"acceptance": {"max_rounds": 5}, "roles": {"acceptor": "alice"}})
     assert cfg.max_rounds == 5
     assert cfg.acceptor == "alice"
+
+
+def test_resolve_operation_branch_from_node_contracts():
+    manifest = Manifest(meta={}, nodes={
+        "a": Node(id="a", worker="alice", contract=Contract(pr_base="main")),
+        "b": Node(id="b", worker="bob", contract=Contract(pr_base="main")),
+    })
+
+    assert _resolve_operation_branch(manifest) == "main"
+
+
+def test_resolve_operation_branch_rejects_missing_or_conflicting_values():
+    missing = Manifest(meta={}, nodes={"a": Node(id="a", worker="alice")})
+    with pytest.raises(NeedsDecision, match="pr_base"):
+        _resolve_operation_branch(missing)
+
+    conflicting = Manifest(meta={}, nodes={
+        "a": Node(id="a", worker="alice", contract=Contract(pr_base="main")),
+        "b": Node(id="b", worker="bob", contract=Contract(pr_base="release")),
+    })
+    with pytest.raises(NeedsDecision, match="多个 pr_base"):
+        _resolve_operation_branch(conflicting)
+
+
+def test_final_acceptance_issue_has_complete_authoring_context(tmp_path):
+    path = str(tmp_path / "fx.yaml")
+    manifest = Manifest(meta={
+        "name": "Demo",
+        "plan_id": "p-demo",
+        "source_issues": ["plan-issue", "acceptance-issue", "decompose-issue"],
+        "closeout_node": "closeout",
+    }, nodes={
+        "build": Node(
+            id="build", worker="alice", status="done",
+            contract=Contract(pr_base="main"), work_item_id="build-issue"),
+        "closeout": Node(
+            id="closeout", worker="bob", status="done", blocked_by=["build"],
+            contract=Contract(pr_base="main"), work_item_id="closeout-issue"),
+    })
+    save_manifest(manifest, path)
+    doc = _acceptance_doc([("ACC-001", "Login", 1)])
+    engine = _engine()
+    project = engine.store.create_project(
+        "ws", "demo", repo_urls=["git@github.com:owner/demo.git"])
+    engine.store.config.project_id = project.id
+    MockStore.set_acceptance_behaviors({
+        "final-acceptance-p-demo-r1": [
+            {"id": "ACC-001", "status": "pass", "evidence": "ok"},
+        ],
+    }, {})
+
+    outcome = run_acceptance_loop(engine, manifest, path, doc, {
+        "roles": {"reviewers": REVIEWERS, "orchestrator": ORCHESTRATOR},
+    })
+
+    assert outcome.exit_code == 0
+    item = next(
+        item for item in engine.store.list_work_items("ws")
+        if item.kind == TaskKind.FINAL_ACCEPTANCE
+    )
+    env = f"OMAC_ENGINE=mock OMAC_WORKSPACE_ID=ws OMAC_PROJECT_ID={project.id}"
+    assert env in item.description
+    assert "pr_base=main" in item.description
+    assert "git@github.com:owner/demo.git" in item.description
+    assert "最终开发交付" in item.description
+    assert item.contract["acceptance_doc"]["flows"][0]["id"] == "ACC-001"
+    assert item.contract["repo_urls"] == ["git@github.com:owner/demo.git"]
+    assert item.source_refs[-1]["issue_id"] == "closeout-issue"
+    assert "acceptance_doc:" not in item.description
+
+
+def test_incremental_decompose_issue_has_failed_flow_and_manifest_context(tmp_path):
+    path = str(tmp_path / "fx.yaml")
+    manifest = Manifest(meta={
+        "name": "Demo",
+        "source_issues": ["plan-issue", "acceptance-issue", "decompose-issue"],
+    }, nodes={
+        "a": Node(
+            id="a", worker="alice", status="done",
+            contract=Contract(pr_base="main"), work_item_id="work-a"),
+    })
+    save_manifest(manifest, path)
+    doc = _acceptance_doc([("ACC-001", "Login", 1)])
+    engine = _engine()
+    MockStore.set_acceptance_behaviors({
+        "final-acceptance-r1": [
+            {"id": "ACC-001", "status": "fail", "notes": "broken"},
+        ],
+        "final-acceptance-r2": [
+            {"id": "ACC-001", "status": "pass", "evidence": "ok"},
+        ],
+    }, {
+        "decompose-r1": Manifest(meta={}, nodes={
+            "fix-login": Node(id="fix-login", worker="alice", blocked_by=["a"]),
+        }),
+    })
+
+    outcome = run_acceptance_loop(engine, manifest, path, doc, {
+        "roles": {"reviewers": REVIEWERS, "orchestrator": ORCHESTRATOR},
+        "acceptance": {"max_rounds": 2},
+    })
+
+    assert outcome.exit_code == 0
+    item = next(
+        item for item in engine.store.list_work_items("ws")
+        if item.kind == TaskKind.DECOMPOSE
+    )
+    assert item.contract["mode"] == "incremental"
+    assert item.contract["failed_items"] == ["ACC-001"]
+    assert isinstance(item.contract["manifest"], dict)
+    assert item.source_refs[-1]["label"] == "触发验收 · 第 1 轮"
+    assert "ACC-001" in item.description
+    assert "当前 Manifest" not in item.description
 
 
 # ── e2e: mock e2e 2 fails -> 2 fixes -> all pass -> exit 0 ─────────

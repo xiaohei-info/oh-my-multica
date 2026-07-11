@@ -94,23 +94,26 @@ def _write_tmp_manifest(manifest) -> str:
     return path
 
 
-def _parse_base_manifest_from_description(description: str):
-    """从 item.description(payload YAML)解析既有 manifest,失败返回 None。"""
-    if not description:
-        return None
-    try:
-        payload = yaml.safe_load(description)
-    except yaml.YAMLError:
-        return None
-    if not isinstance(payload, dict):
-        return None
-    manifest_raw = payload.get("manifest")
+def _parse_base_manifest(item):
+    """优先从结构化 contract 解析既有 manifest，兼容旧正文 YAML。"""
+    contract = getattr(item, "contract", None)
+    manifest_raw = contract.get("manifest") if isinstance(contract, dict) else None
+    if manifest_raw is None and item.description:
+        try:
+            payload = yaml.safe_load(item.description)
+        except yaml.YAMLError:
+            payload = None
+        if isinstance(payload, dict):
+            manifest_raw = payload.get("manifest")
     if not manifest_raw:
         return None
-    try:
-        data = yaml.safe_load(manifest_raw)
-    except yaml.YAMLError:
-        return None
+    if isinstance(manifest_raw, str):
+        try:
+            data = yaml.safe_load(manifest_raw)
+        except yaml.YAMLError:
+            return None
+    else:
+        data = manifest_raw
     if not isinstance(data, dict):
         return None
     from ..core.manifest import Manifest, Node
@@ -306,7 +309,7 @@ class MockStore(WorkItemStore):
                 # 先移除 auto-complete 标记,防止 dispatch.submit 内 get_work_item 二次触发。
                 del _shared_assigned_items[item_id]
                 increment = _increments[item.dag_key]
-                base = _parse_base_manifest_from_description(item.description)
+                base = _parse_base_manifest(item)
                 tmp = _write_tmp_manifest(increment)
                 try:
                     from ..pipeline.dispatch import submit as dispatch_submit

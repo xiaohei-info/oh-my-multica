@@ -21,7 +21,6 @@
 """
 from __future__ import annotations
 
-import io
 import os
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
@@ -34,12 +33,13 @@ from ..core.config import (
 )
 from ..core.evidence import validate_acceptance_results
 from ..core.lint import lint_increment
-from ..core.manifest import Manifest, Node, merge_increment, save_manifest
+from ..core.manifest import Manifest, Node, _dump_contract, merge_increment, save_manifest
 from ..core.taskmeta import TaskKind, make_dag_key
 from ..engines.models import WorkItemStatus
 from ..engines.store import WorkItemStore
 from ..errors import NeedsDecision
 from ..pipeline import loop as loop_mod
+from .tasks import AuthoringTaskSpec, create_authoring_task
 
 
 @dataclass
@@ -92,6 +92,61 @@ def _poll_no_op() -> None:
     pass
 
 
+def _resolve_operation_branch(manifest: Manifest) -> str:
+    """解析整个 DAG 唯一的集成分支，禁止最终验收猜测目标分支。"""
+    explicit = str(manifest.meta.get("pr_base") or "").strip()
+    if explicit:
+        return explicit
+    values = {
+        str(node.contract.pr_base).strip()
+        for node in manifest.nodes.values()
+        if node.contract is not None and node.contract.pr_base
+    }
+    if len(values) == 1:
+        return next(iter(values))
+    if not values:
+        raise NeedsDecision(
+            "最终验收缺少 pr_base —— 请修复 Manifest 的 meta.pr_base 或 "
+            "node.contract.pr_base 后重新运行 `omac dag run`")
+    raise NeedsDecision(
+        f"最终验收发现多个 pr_base: {sorted(values)} —— "
+        "请统一 Manifest 后重新运行 `omac dag run`")
+
+
+def _project_repo_urls(store: WorkItemStore) -> List[str]:
+    project_id = store.config.project_id
+    if not project_id:
+        return []
+    for project in store.list_projects(store.config.workspace_id):
+        if project.id == project_id:
+            return list(project.repos)
+    return []
+
+
+def _acceptance_source_refs(manifest: Manifest) -> List[Dict[str, str]]:
+    labels = ["设计方案", "验收文档", "任务拆解"]
+    refs: List[Dict[str, str]] = []
+    for index, raw in enumerate(manifest.meta.get("source_issues") or []):
+        if isinstance(raw, dict):
+            ref = dict(raw)
+            if index < len(labels):
+                ref.setdefault("label", labels[index])
+        else:
+            ref = {"issue_id": str(raw)}
+            if index < len(labels):
+                ref["label"] = labels[index]
+        refs.append(ref)
+
+    closeout_key = manifest.meta.get("closeout_node")
+    closeout = manifest.nodes.get(closeout_key) if closeout_key else None
+    if closeout is not None and closeout.work_item_id:
+        refs.append({
+            "label": "最终开发交付",
+            "issue_id": closeout.work_item_id,
+        })
+    return refs
+
+
 def run_acceptance_loop(
     engine,
     manifest: Manifest,
@@ -115,12 +170,19 @@ def run_acceptance_loop(
         reviewers = _collect_workers(manifest)
     acceptor_cfg = acceptance_cfg.acceptor
 
-    operation_branch = manifest.meta.get("pr_base")
+    operation_branch = _resolve_operation_branch(manifest)
     plan_id = manifest.meta.get("plan_id")
     resolve_retry(config)  # 校验 retry 配置合法性(副作用)
 
-    workspace_id = engine.store.config.workspace_id
     orchestrator = get_value(config, "roles.orchestrator") or _first_worker(manifest)
+    repo_urls = _project_repo_urls(engine.store)
+    source_refs = _acceptance_source_refs(manifest)
+    project_name = (
+        manifest.meta.get("title")
+        or manifest.meta.get("name")
+        or plan_id
+        or "当前项目"
+    )
 
     reports: List[Dict[str, Any]] = []
     failed_items: List[str] = []
@@ -135,17 +197,36 @@ def run_acceptance_loop(
             raise NeedsDecision(
                 "无法确定验收人——请配置 roles.acceptors 或 roles.reviewers")
 
+        acceptance_description = (
+            f"执行第 {round_num} 轮最终验收，按验收文档逐项走查: "
+            + "、".join(acceptance_doc.flow_ids)
+            + "。每项必须提交 pass/fail 与可复核证据。"
+        )
+        if not repo_urls:
+            acceptance_description += (
+                "\n\n当前 Project 未登记仓库；先运行 `omac init --check` 修复项目资源，"
+                "再按上游 issue 定位代码。"
+            )
         acceptance_item_id = _dispatch_and_wait(
-            engine, workspace_id, TaskKind.FINAL_ACCEPTANCE, acceptor,
-            make_dag_key(
-                TaskKind.FINAL_ACCEPTANCE,
-                scope=f"{plan_id}-r{round_num}" if plan_id else f"r{round_num}",
-            ),
-            {
+            engine,
+            AuthoringTaskSpec(
+                kind=TaskKind.FINAL_ACCEPTANCE,
+                title=f"最终验收 · {project_name} · 第 {round_num} 轮",
+                dag_key=make_dag_key(
+                    TaskKind.FINAL_ACCEPTANCE,
+                    scope=f"{plan_id}-r{round_num}" if plan_id else f"r{round_num}",
+                ),
+                assignee=acceptor,
+                description=acceptance_description,
+                contract={
                 "acceptance_doc": _acceptance_doc_raw(acceptance_doc),
+                "acceptance": acceptance_doc.flow_ids,
                 "pr_base": operation_branch,
                 "flows": acceptance_doc.flow_ids,
-            },
+                    "repo_urls": repo_urls,
+                },
+                source_refs=source_refs,
+            ),
             poll=poll,
         )
 
@@ -176,18 +257,35 @@ def run_acceptance_loop(
                 "无法派发增量拆解:配置/角色缺 orchestrator",
                 report={"round": round_num})
 
+        decompose_refs = list(source_refs) + [{
+            "label": f"触发验收 · 第 {round_num} 轮",
+            "issue_id": acceptance_item_id,
+        }]
         decompose_item_id = _dispatch_and_wait(
-            engine, workspace_id, TaskKind.DECOMPOSE, orchestrator,
-            make_dag_key(
-                TaskKind.DECOMPOSE,
-                scope=f"{plan_id}-r{round_num}" if plan_id else f"r{round_num}",
+            engine,
+            AuthoringTaskSpec(
+                kind=TaskKind.DECOMPOSE,
+                title=f"增量拆解 · {project_name} · 第 {round_num} 轮",
+                dag_key=make_dag_key(
+                    TaskKind.DECOMPOSE,
+                    scope=f"{plan_id}-r{round_num}" if plan_id else f"r{round_num}",
+                ),
+                assignee=orchestrator,
+                description=(
+                    "仅为以下未通过验收项补充最小增量节点: "
+                    + "、".join(failed_items)
+                    + "。不要重写既有节点。"
+                ),
+                contract={
+                    "manifest": _dump_manifest(manifest),
+                    "failed_items": failed_items,
+                    "acceptance": failed_items,
+                    "pr_base": operation_branch,
+                    "repo_urls": repo_urls,
+                    "mode": "incremental",
+                },
+                source_refs=decompose_refs,
             ),
-            {
-                "manifest": _dump_manifest(manifest),
-                "failed_items": failed_items,
-                "pr_base": operation_branch,
-                "mode": "incremental",
-            },
             poll=poll,
         )
 
@@ -225,11 +323,7 @@ def run_acceptance_loop(
 
 def _dispatch_and_wait(
     engine,
-    workspace_id: str,
-    kind: TaskKind,
-    assignee: str,
-    dag_key: str,
-    payload: Dict[str, Any],
+    spec: AuthoringTaskSpec,
     *,
     poll: Callable[[], None],
     max_ticks: int = 10000,
@@ -242,22 +336,11 @@ def _dispatch_and_wait(
     """
     store = engine.store
     runtime = engine.runtime
-    description = yaml.dump(payload, allow_unicode=True, sort_keys=False)
-    item = store.create_work_item(
-        workspace_id=workspace_id,
-        title=f"{kind.value} {dag_key}",
-        description=description,
-        dag_key=dag_key,
-        worker=assignee,
-        kind=kind,
-    )
+    item = create_authoring_task(engine, spec)
     item_id = item.id
-    acceptance_doc_raw = payload.get("acceptance_doc")
-    if acceptance_doc_raw is not None:
-        store.set_node_contract(item_id, {"acceptance_doc": acceptance_doc_raw})
     store.mark_in_progress(item_id)
-    store.assign_work_item(item_id, assignee, "worker")
-    runtime.wake(item_id, assignee, "worker")
+    store.assign_work_item(item_id, spec.assignee, "worker")
+    runtime.wake(item_id, spec.assignee, "worker")
 
     # decompose 作者提交后落在 IN_REVIEW(待审),视为终态一并退出
     terminal = (WorkItemStatus.DONE, WorkItemStatus.FAILED,
@@ -410,10 +493,9 @@ def _read_increment(store: WorkItemStore, item_id: str) -> Optional[Manifest]:
     return Manifest(meta=raw.get("meta") or {}, nodes=nodes)
 
 
-def _dump_manifest(manifest: Manifest) -> str:
-    """把 manifest 序列化为 YAML 文本(作 decompose 任务的 payload)。"""
-    buf = io.StringIO()
-    data = {
+def _dump_manifest(manifest: Manifest) -> Dict[str, Any]:
+    """把当前 Manifest 转成稳定结构化对象，供 contract 附件承载。"""
+    return {
         "meta": manifest.meta,
         "nodes": [
             {
@@ -422,10 +504,15 @@ def _dump_manifest(manifest: Manifest) -> str:
                 "blocked_by": list(n.blocked_by),
                 "status": n.status,
                 "work_item_id": n.work_item_id,
+                "title": n.title,
+                "description": n.description,
                 "reviewer": n.reviewer,
+                "risk": n.risk,
+                "gate": n.gate,
+                "contract": _dump_contract(n.contract),
+                "merged": n.merged,
+                "merged_at": n.merged_at,
             }
             for n in manifest.nodes.values()
         ],
     }
-    yaml.dump(data, buf, default_flow_style=False, allow_unicode=True, sort_keys=False)
-    return buf.getvalue()
