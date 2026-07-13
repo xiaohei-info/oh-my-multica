@@ -1,6 +1,6 @@
 # AGENTS.md — 本仓开发约定
 
-本文件是 `oh-my-agent-cluster`(omac CLI)本仓的开发护栏。跨项目通用工程纪律不在这里重复,
+本文件是 `oh-my-multica`(omac CLI)本仓的开发护栏。跨项目通用工程纪律不在这里重复,
 只放与本仓实现直接相关的硬约束。
 
 ## 红线

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "omac"
 version = "1.0.0"
-description = "oh-my-agent-cluster: 确定性 CLI 驱动的多 Agent 并行开发编排(Loop 驱动 Agent)"
+description = "oh-my-multica: 确定性 CLI 驱动的多 Agent 并行开发编排(Loop 驱动 Agent)"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/xiaohei-info/oh-my-agent-cluster"
+Homepage = "https://github.com/xiaohei-info/oh-my-multica"
 
 [project.scripts]
 omac = "omac.cli.main:main"

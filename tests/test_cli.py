@@ -16,6 +16,11 @@ def test_no_args_prints_help_exit_ok(capsys):
         assert group in out
 
 
+def test_top_level_help_uses_current_project_name(capsys):
+    assert main([]) == exit_codes.OK
+    assert "oh-my-multica" in capsys.readouterr().out
+
+
 def test_parser_internal_hook_accepts_python_patch_version_arguments():
     parser = build_parser()
     parameters = inspect.signature(parser._parse_known_args).parameters.values()
