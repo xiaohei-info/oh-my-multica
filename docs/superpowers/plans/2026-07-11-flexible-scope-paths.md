@@ -138,7 +138,7 @@ Expected: no stale hard-allowlist guidance.
 
 - [ ] **Step 3: Refresh the pipx editable installation**
 
-Run: `pipx install --force --editable /home/ubuntu/code/oh-my-agent-cluster`
+Run: `pipx install --force --editable /home/ubuntu/code/oh-my-multica`
 
 Expected: `omac` installed successfully.
 

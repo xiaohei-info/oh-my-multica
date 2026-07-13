@@ -56,7 +56,7 @@ def build_parser() -> argparse.ArgumentParser:
             epilog_lines.append(f"  {mod.NAME:<9}{mod.SUMMARY}")
     parser = _HelpOnErrorParser(
         prog=PROG,
-        description="oh-my-agent-cluster — 确定性 CLI 驱动的多 Agent 并行开发编排",
+        description="oh-my-multica — 确定性 CLI 驱动的多 Agent 并行开发编排",
         epilog="\n".join(epilog_lines),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

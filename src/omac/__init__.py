@@ -1,4 +1,4 @@
-"""omac — oh-my-agent-cluster 的确定性编排 CLI。
+"""omac — oh-my-multica 的确定性编排 CLI。
 
 架构分层(docs/omac-cli-design.md §3):
     cli/       命令树 / help / 退出码 / 输出层

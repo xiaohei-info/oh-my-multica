@@ -1,9 +1,10 @@
-# omac
+# oh-my-multica
 
-[![CI](https://github.com/xiaohei-info/oh-my-agent-cluster/actions/workflows/ci.yml/badge.svg)](https://github.com/xiaohei-info/oh-my-agent-cluster/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-1.0.0-blue)](https://github.com/xiaohei-info/oh-my-agent-cluster)
+[![CI](https://github.com/xiaohei-info/oh-my-multica/actions/workflows/ci.yml/badge.svg)](https://github.com/xiaohei-info/oh-my-multica/actions/workflows/ci.yml)
+[![Version](https://img.shields.io/badge/version-1.0.0-blue)](https://github.com/xiaohei-info/oh-my-multica)
 
-**omac** 是确定性 CLI 驱动的多 Agent 并行开发编排。它把复杂软件开发从「一个
+**oh-my-multica** 是确定性 CLI 驱动的多 Agent 并行开发编排，CLI 命令与 Python 包名仍为
+`omac`。它把复杂软件开发从「一个
 agent 靠长上下文硬扛」变成「契约先行 + manifest DAG + 多 Agent 并行执行 +
 结构化证据 + reviewer 独立验收」的可收敛工程流程。
 
@@ -72,8 +73,8 @@ brew install pipx && pipx ensurepath
 **2) clone 仓库并安装:**
 
 ```bash
-git clone git@github.com:xiaohei-info/oh-my-agent-cluster.git
-cd oh-my-agent-cluster
+git clone git@github.com:xiaohei-info/oh-my-multica.git
+cd oh-my-multica
 pipx install .
 ```
 
@@ -87,7 +88,7 @@ omac init --check       # 引擎 / config 体检
 **更新到最新:**
 
 ```bash
-cd oh-my-agent-cluster && git pull && pipx reinstall omac
+cd oh-my-multica && git pull && pipx reinstall omac
 ```
 
 > - 某台不方便配 git 认证:改用 wheel 离线分发 —— 在有仓库的机器 `python3 -m build` 产出 `dist/omac-1.0.0-py3-none-any.whl`,拷到目标机 `pipx install omac-1.0.0-py3-none-any.whl`。
