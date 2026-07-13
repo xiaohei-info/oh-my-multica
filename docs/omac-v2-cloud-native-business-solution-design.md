@@ -183,19 +183,19 @@ OMAC V2 交付后，用户安装或连接集群即可获得一个完整的自主
 
 ### 6.2 建议成功指标
 
-| 指标 | 目标 |
-|---|---|
-| 外部任务引擎依赖 | 任务分发和状态流转不依赖任何外部 Issue 系统 |
-| 开箱即用 | 支持环境中，Compact 模式从安装开始到 Web 可用不超过 15 分钟 |
-| 首次交付 | 安装完成后，用户可在 30 分钟内启动首个示例 Delivery |
-| 状态可见性 | 所有 Delivery、Task、AgentRun、Evidence、GateResult 和 Decision 均可在 Web 查询 |
-| 故障恢复 | 控制组件重启不丢失任务，未完成 Delivery 可继续推进 |
-| 调度扩展 | AgentRun 不存在固定单机绑定，容量随集群可调度资源增加 |
-| 成本治理 | 每次 AgentRun 记录模型、Token、金额、时长和预算结果 |
-| 质量闭环 | Delivery 只有在必需质量门和生产验收通过后才能成功 |
-| 状态一致性 | 重复事件和重复提交不得产生重复终态、重复账本或重复发布 |
-| 可替换性 | 替换 Agent Runtime 或模型供应商不改变 Delivery 领域模型 |
-| 可恢复性 | 任何非终态 Delivery 均可解释下一步、阻塞原因和恢复动作 |
+| 指标             | 目标                                                                            |
+| ---------------- | ------------------------------------------------------------------------------- |
+| 外部任务引擎依赖 | 任务分发和状态流转不依赖任何外部 Issue 系统                                     |
+| 开箱即用         | 支持环境中，Compact 模式从安装开始到 Web 可用不超过 15 分钟                     |
+| 首次交付         | 安装完成后，用户可在 30 分钟内启动首个示例 Delivery                             |
+| 状态可见性       | 所有 Delivery、Task、AgentRun、Evidence、GateResult 和 Decision 均可在 Web 查询 |
+| 故障恢复         | 控制组件重启不丢失任务，未完成 Delivery 可继续推进                              |
+| 调度扩展         | AgentRun 不存在固定单机绑定，容量随集群可调度资源增加                           |
+| 成本治理         | 每次 AgentRun 记录模型、Token、金额、时长和预算结果                             |
+| 质量闭环         | Delivery 只有在必需质量门和生产验收通过后才能成功                               |
+| 状态一致性       | 重复事件和重复提交不得产生重复终态、重复账本或重复发布                          |
+| 可替换性         | 替换 Agent Runtime 或模型供应商不改变 Delivery 领域模型                         |
+| 可恢复性         | 任何非终态 Delivery 均可解释下一步、阻塞原因和恢复动作                          |
 
 ### 6.3 产品价值指标
 
@@ -251,15 +251,15 @@ OMAC 的长期价值指标不是 Agent 数量，而是：
 
 ### 8.1 用户角色
 
-| 角色 | 主要职责 |
-|---|---|
-| 平台管理员 | 安装 OMAC、接入集群、配置全局资源、安全和 Runtime 策略 |
-| 项目负责人 | 创建项目、配置仓库、环境、Delivery 策略和生产授权边界 |
-| Delivery 发起人 | 提交目标、确认需求、启动交付、查看结果 |
-| 决策处理人 | 处理范围冲突、高风险失败、预算超限、验收不通过和生产授权 |
-| 审计/观察者 | 查看任务历史、Token 使用、操作记录、部署和验收证据 |
-| OMAC 控制平面 | 维护 Delivery 状态、计算就绪任务、匹配 Agent、创建运行并执行状态转换 |
-| Agent | 接收一次 AgentRun，读取授权上下文，执行任务并提交结构化结果 |
+| 角色            | 主要职责                                                             |
+| --------------- | -------------------------------------------------------------------- |
+| 平台管理员      | 安装 OMAC、接入集群、配置全局资源、安全和 Runtime 策略               |
+| 项目负责人      | 创建项目、配置仓库、环境、Delivery 策略和生产授权边界                |
+| Delivery 发起人 | 提交目标、确认需求、启动交付、查看结果                               |
+| 决策处理人      | 处理范围冲突、高风险失败、预算超限、验收不通过和生产授权             |
+| 审计/观察者     | 查看任务历史、Token 使用、操作记录、部署和验收证据                   |
+| OMAC 控制平面   | 维护 Delivery 状态、计算就绪任务、匹配 Agent、创建运行并执行状态转换 |
+| Agent           | 接收一次 AgentRun，读取授权上下文，执行任务并提交结构化结果          |
 
 单组织不等于无权限。首版仍需区分平台管理、项目管理、操作、生产授权和只读权限。
 
@@ -304,19 +304,29 @@ Agent Team 的角色不固化为独立服务，而通过 AgentProfile.capabiliti
 
 没有必要否定这些产品的成熟能力。OMAC 应主动借鉴其已验证设计，并把研发资源集中到仍未被完整解决的软件交付控制问题。
 
-### 9.2 主要对标产品
+### 9.2 主要对标产品与 OMAC 相对优势
 
-| 产品 | 已验证能力 | OMAC 借鉴点 | OMAC 差异化 |
-|---|---|---|---|
-| Factory Software Factory | 从信号到规划、执行、验证、发布和监控的完整 SDLC；模型无关；支持 SaaS、混合、私有和隔离部署 | 全生命周期产品叙事、质量门、结果指标、持续自动化 | 核心控制面开源；用户自有 K3s/K8s；开放数据模型；确定性 Delivery 状态机 |
-| GitLab Duo Agent Platform | 多个 Agent/Flow 进入计划、开发、评审和安全；天然连接 Issue、仓库、MR 和 CI/CD | 生命周期上下文统一、复合身份、Agent/Flow Catalog、开发过程可视化 | 不绑定单一 DevOps 平台；以 OMAC Delivery 为事实源；可接任意 Git 与 CI/CD |
-| Devin Managed Devins | 协调者拆解任务、启动多个隔离 VM、监控成本、解决冲突并汇总结果 | 子任务并行、隔离执行、协调者视图、每个子运行预算 | 异构 Agent Team；显式任务图；独立质量门；生产验收和开放部署 |
-| AgentTeams | Kubernetes 原生 Worker、Team、Human、Manager 资源；声明式团队、协作审计和人工介入 | CRD + Reconcile、团队拓扑、Worker 生命周期、人类介入、开放协议 | 不以聊天 Room 作为运行事实；Delivery 状态机和软件工程证据是核心 |
-| OpenAI Symphony | 持续领取工作、独立工作区、并发限制、重试、重新协调和权威调度状态 | 单一调度所有者、工作区生命周期、重试队列、运行恢复、配置热更新 | 不依赖外部 Issue；支持项目级 Delivery、多角色任务图和生产交付 |
-| kagent | Kubernetes 原生 Agent CRD、多 Agent、开放协议、可观测性、AgentHarness | 声明式 Agent、BYO Agent、A2A/MCP、Runtime 生命周期、开放社区模式 | OMAC 不做通用 Agent 平台；专注软件交付领域控制面 |
-| Kubernetes Agent Sandbox | Kubernetes 上隔离 Agent 环境和工作区生命周期 | Sandbox 声明式资源、隔离、暂停恢复、预热池 | 作为可选执行原语，不成为 OMAC 领域模型 |
-| OpenHands | 开源、模型无关的 Coding Agent 平台；远程 Agent Server；私有部署和 Kubernetes 安装 | 成熟 Coding Agent Runtime、远程隔离工作区、SDK/API | OMAC 负责 Agent Team、任务依赖、质量门、预算和最终交付 |
-| MetaGPT | 一行需求、产品经理/架构师/工程师等角色和软件公司 SOP | 角色化工程流程、需求到设计的用户理解方式 | 云原生持久运行、真实仓库集成、确定性质量门和生产验收 |
+以下“未形成”是基于截至 2026-07-13 的官方公开资料作出的产品边界判断，表示没有看到相应能力被定义为可验证、可依赖的正式产品闭环，不代表厂商内部绝对不存在相关实现。
+
+| 产品                      | 已验证能力                                                                                                                                  | 官方公开能力中未形成的部分                                                                                                                                           | OMAC 相对优势                                                                                                                                        | 复用而非重复建设                                                                                                       |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Factory Software Factory  | 从信号、规划、执行、验证到发布、监控和持续自动化的完整 SDLC；模型无关；支持 SaaS、混合、私有和隔离部署                                      | 控制平面、生命周期状态机和质量判断逻辑属于厂商专有产品；公开资料未提供用户可审查、扩展和自行维护的 Kubernetes 原生 Delivery 资源模型                                 | OMAC 核心控制面开源，直接运行在用户自己的 K3s/K8s；Delivery 状态、证据合同、预算和质量门可审查、可扩展、可迁移，不把软件交付治理变成厂商黑盒         | 借鉴完整生命周期叙事、Mission Control、质量门和结果指标；不重新训练 Coding Agent，也不复制其模型路由能力               |
+| GitLab Duo Agent Platform | 将多个 Agent 和 Flow 嵌入规划、开发、评审、安全和 CI/CD；能够复用 GitLab 的 Issue、仓库、MR、权限和流水线上下文；支持 GitLab Self-Managed   | Agent Platform 以 GitLab 项目、Issue、MR 和 CI/CD 为主要边界；公开资料未形成跨 Git/CI/CD/部署平台的独立 Delivery 根对象，也未形成从模糊需求到生产验收的统一项目终态  | OMAC 不绑定单一 DevOps 平台，以 Delivery 统一连接任意 Git、CI/CD 和部署系统；即使外部平台被替换，任务图、证据、预算和生产验收历史仍由 OMAC 保持      | 将 GitLab 作为代码、MR、CI/CD 和身份适配对象；不复制代码托管、Review、流水线和制品能力                                 |
+| Devin Managed Devins      | Coordinator 可以拆解大型任务，启动多个隔离 VM 中的 Managed Devins，监控成本、发送指令、处理冲突并汇总结果                                   | 团队成员主要是同构 Devin Session，运行和协调逻辑属于专有平台；公开资料未形成用户自有 Kubernetes 控制面、开放 Delivery 状态机、职责隔离质量门和通用生产验收模型       | OMAC 可组织不同厂商、模型和能力的异构 Agent Team；任务依赖、角色隔离、Evidence、GateResult、预算和生产验收均为显式领域资源，并可部署在用户自己的集群 | 借鉴隔离执行、协调者视图、并行工作包和单运行预算；不重复建设通用 Coding Agent                                          |
+| AgentTeams                | Kubernetes 原生 Worker、Team、Human、Manager 资源；通过 Controller Reconcile 管理团队和运行生命周期；提供 Matrix 通信、网关和集中式文件存储 | 核心模型解决通用 Agent 团队、通信和基础设施收敛，官方公开模型未形成需求基线、软件交付 Task 图、独立 Evidence/Gate、发布、回滚和生产验收状态机                        | OMAC 以 Delivery 而不是聊天 Room 或 Manager 上下文作为事实根；不强制 Matrix 和 MinIO；将软件工程合同、质量证据、返工和最终交付作为核心领域           | 直接借鉴 CRD、Controller、团队拓扑、Worker 生命周期、身份和人工介入；不复制聊天、网关和文件协作基础设施                |
+| OpenAI Symphony           | 持续轮询 Issue Tracker；维护单一权威调度状态；为每个 Issue 创建隔离工作区；支持有限并发、重试、退避和重新协调                               | 规范明确聚焦 Issue 到 Agent 的 scheduler/runner；任务事实依赖外部 Issue，基本执行单元是单 Issue/单 Agent，未覆盖需求澄清、项目级动态任务图、多角色质量治理和生产交付 | OMAC 自己拥有任务事实源，以一个 Delivery 管理多个角色和动态 Task；从需求、设计一直推进到部署和生产验收，同时保留 Symphony 式确定性调度和恢复         | 借鉴单一调度所有者、工作区生命周期、重试队列、Reconcile 和配置容错；不复制其外部 Issue 适配假设                        |
+| kagent                    | Kubernetes 原生 Agent CRD、多 Agent、开放协议、可观测性和 AgentHarness；能够承载长运行 Coding Agent 环境                                    | 产品定位是通用 Agent 平台和 Runtime 生命周期，官方公开模型未提供软件项目 Delivery、需求追踪、工程 Task 图、独立质量门、发布和生产验收                                | OMAC 在 kagent 之上补齐软件交付领域控制面；可以把 AgentHarness 当成 Runtime，而不把通用 Agent 管理再次实现一遍                                       | 复用或适配 AgentHarness、Agent CRD、A2A/MCP、可观测和 BYO Agent；OMAC 只建设 Delivery、Task、Evidence、Gate 和预算治理 |
+| Kubernetes Agent Sandbox  | 提供 Sandbox、SandboxTemplate、SandboxClaim 和 SandboxWarmPool 等 Kubernetes 原语，用于隔离、有状态工作区和预热                             | 它只负责安全执行环境和生命周期，不定义 Agent、Team、Task、交付质量、成本预算或软件工程状态                                                                           | OMAC 将 AgentRun、权限、预算和 Task 合同映射到 Sandbox，在成熟隔离原语之上形成完整 Agent Team，而不是自行开发 Sandbox 内核                           | 直接作为可选执行原语；OMAC 不重建隔离、预热池、工作区暂停恢复和底层 Pod 生命周期                                       |
+| OpenHands                 | 提供开源 Software Agent SDK、Agent Server、专用子 Agent、工具系统、Sandbox 和 Kubernetes 私有部署能力                                       | 产品重点是 Coding Agent Runtime 和 Agent 应用开发；官方公开模型未形成跨多个 AgentRun 的项目级 Delivery、关键路径、独立质量制度、硬预算决策和生产验收终态             | OMAC 可以直接采用 OpenHands 作为一个高质量 Runtime，同时在其上提供 Agent Team 编排、任务依赖、不可变运行历史、质量门和生产交付                       | 复用 Coding Agent、Agent Server、工具、Sandbox 和模型适配；不重复建设文件编辑、Shell、浏览器和通用 Agent 循环          |
+| MetaGPT                   | 从一行需求生成用户故事、需求、数据结构、API 和代码；使用产品经理、架构师、项目经理和工程师等软件公司角色与 SOP                              | 主要是 Python 多 Agent 框架和角色化 SOP；官方公开能力未形成 Kubernetes 原生控制面、跨进程持久调度、真实集群资源治理、不可变执行证据和生产发布验收                    | OMAC 将“AI 软件公司”从角色模拟提升为可运行、可恢复、可审计的云原生产品；角色是能力配置，Delivery 状态由确定性 Controller 而不是对话历史掌握        | 借鉴软件公司角色、需求到设计的流程和 SOP 思想；不复制其本地 Agent 框架和对话编排                                       |
+
+由此可以看出，OMAC 不是把现有产品重新实现一遍，而是在三个明确空缺之间建立连接：
+
+1. 相比 Factory 和 GitLab，OMAC 提供开源、用户可拥有、平台无关的软件交付控制权。
+2. 相比 Devin、OpenHands 和 MetaGPT，OMAC 提供项目级 Delivery 状态机、异构 Agent Team、独立质量门和生产验收。
+3. 相比 AgentTeams、kagent、Agent Sandbox 和 Symphony，OMAC 提供完整的软件工程领域模型，并主动复用其成熟的云原生运行原语。
+
+OMAC 的价值不在于每个单点能力都是首次出现，而在于将“开放云原生底座”和“可验证生产交付”组合成一个完整产品。
 
 ### 9.3 独创性判断
 
@@ -335,11 +345,11 @@ OMAC 可以建立独特竞争力的组合是：
 
 ### 9.4 产品路线比较
 
-| 路线 | 优点 | 问题 | 判断 |
-|---|---|---|---|
-| 建设通用 Agent Cluster 平台 | 市场范围大，可承载多种 Agent 场景 | 与 kagent、AgentTeams、云平台正面竞争，范围巨大，软件交付差异弱 | 不采用 |
-| 从调度、Sandbox、Runtime 到 CI/CD 全部自研 | 控制力最强 | 重复建设成熟基础设施，无法快速验证核心价值 | 不采用 |
-| 建设自主软件交付控制面，复用开放运行底座 | 聚焦生产交付差异，可组合最强 Coding Agent，可持续替换底层能力 | 需要自行建立完整 Delivery 领域状态机和质量制度 | 采用 |
+| 路线                                       | 优点                                                          | 问题                                                            | 判断   |
+| ------------------------------------------ | ------------------------------------------------------------- | --------------------------------------------------------------- | ------ |
+| 建设通用 Agent Cluster 平台                | 市场范围大，可承载多种 Agent 场景                             | 与 kagent、AgentTeams、云平台正面竞争，范围巨大，软件交付差异弱 | 不采用 |
+| 从调度、Sandbox、Runtime 到 CI/CD 全部自研 | 控制力最强                                                    | 重复建设成熟基础设施，无法快速验证核心价值                      | 不采用 |
+| 建设自主软件交付控制面，复用开放运行底座   | 聚焦生产交付差异，可组合最强 Coding Agent，可持续替换底层能力 | 需要自行建立完整 Delivery 领域状态机和质量制度                  | 采用   |
 
 ### 9.5 差异化原则
 
@@ -355,15 +365,15 @@ OMAC 可以建立独特竞争力的组合是：
 
 ### 10.1 复用分层
 
-| 层次 | 参考方案 | 复用内容 | OMAC 不重复实现 |
-|---|---|---|---|
-| 集群与资源调度 | Kubernetes / K3s | Pod/Job 调度、requests/limits、亲和性、优先级、配额、故障重建 | 节点调度器、容器生命周期 |
-| Agent 隔离工作区 | Kubernetes Agent Sandbox 或等价实现 | 隔离环境、工作区生命周期、暂停恢复、预热 | Sandbox 内核、虚拟化隔离 |
-| Agent Runtime | OpenHands、kagent AgentHarness、Codex、Claude、自定义容器 | Coding Agent、工具调用、远程执行、会话协议 | 通用 Coding Agent 能力 |
-| 资源准入与队列 | Kubernetes 原生配额，必要时 Kueue | 高负载时的准入、队列、公平共享 | 自研批调度器 |
-| 代码与协作 | Git 平台 | 仓库、分支、提交、PR、Review 原始事实 | 代码托管和版本控制 |
-| 构建与发布 | 用户现有 CI/CD | 构建、测试、签名、镜像、部署流水线 | 通用 CI/CD |
-| 可观测性 | Kubernetes 日志与开放可观测体系 | 运行日志、指标、事件和告警 | 自研长期日志平台 |
+| 层次             | 参考方案                                                  | 复用内容                                                      | OMAC 不重复实现          |
+| ---------------- | --------------------------------------------------------- | ------------------------------------------------------------- | ------------------------ |
+| 集群与资源调度   | Kubernetes / K3s                                          | Pod/Job 调度、requests/limits、亲和性、优先级、配额、故障重建 | 节点调度器、容器生命周期 |
+| Agent 隔离工作区 | Kubernetes Agent Sandbox 或等价实现                       | 隔离环境、工作区生命周期、暂停恢复、预热                      | Sandbox 内核、虚拟化隔离 |
+| Agent Runtime    | OpenHands、kagent AgentHarness、Codex、Claude、自定义容器 | Coding Agent、工具调用、远程执行、会话协议                    | 通用 Coding Agent 能力   |
+| 资源准入与队列   | Kubernetes 原生配额，必要时 Kueue                         | 高负载时的准入、队列、公平共享                                | 自研批调度器             |
+| 代码与协作       | Git 平台                                                  | 仓库、分支、提交、PR、Review 原始事实                         | 代码托管和版本控制       |
+| 构建与发布       | 用户现有 CI/CD                                            | 构建、测试、签名、镜像、部署流水线                            | 通用 CI/CD               |
+| 可观测性         | Kubernetes 日志与开放可观测体系                           | 运行日志、指标、事件和告警                                    | 自研长期日志平台         |
 
 ### 10.2 借鉴 AgentTeams
 
@@ -444,7 +454,7 @@ OMAC 首版不将其设为强制内核，原因是：
 
 ### 11.1 从需求到生产的主流程
 
-~~~mermaid
+```mermaid
 flowchart LR
     U[Delivery 发起人] --> A[提交初始需求]
     A --> B[需求澄清与决策]
@@ -466,7 +476,7 @@ flowchart LR
     E -.预算或权限阻塞.-> N
     K -.生产风险.-> N
     N -->|批准、调整或终止| B
-~~~
+```
 
 ### 11.2 业务交接规则
 
@@ -499,7 +509,7 @@ RequirementRevision 至少包含：
 
 ## 12. 业务解决方案架构
 
-~~~mermaid
+```mermaid
 flowchart LR
     subgraph ENTRY[用户操作与治理入口]
         WEB[OMAC Web]
@@ -542,7 +552,7 @@ flowchart LR
     DELIVERY <--> STATE
     QUALITY <--> STATE
     RELEASE <--> GIT
-~~~
+```
 
 ### 12.1 架构叙事
 
@@ -569,19 +579,19 @@ flowchart LR
 
 ### 13.1 子域划分
 
-| 子域 | 类型 | 核心职责 |
-|---|---|---|
-| Delivery 管理域 | 核心域 | 需求、设计、任务图、交付阶段和最终状态 |
-| 质量与验收域 | 核心域 | 合同、证据、质量门、返工和生产验收 |
-| Agent Team 域 | 核心域 | Agent 能力、职责隔离、执行选择和团队协作 |
-| 运行执行域 | 支撑域 | AgentRun 生命周期、工作区和 Runtime Adapter |
-| 资源与预算域 | 支撑域 | 并发、资源、Token、金额、限额和停止决策 |
-| 平台治理域 | 支撑域 | 用户、权限、审计、通知和人工决策 |
-| 外部集成域 | 通用域 | Git、CI/CD、部署、模型、工具和身份适配 |
+| 子域            | 类型   | 核心职责                                    |
+| --------------- | ------ | ------------------------------------------- |
+| Delivery 管理域 | 核心域 | 需求、设计、任务图、交付阶段和最终状态      |
+| 质量与验收域    | 核心域 | 合同、证据、质量门、返工和生产验收          |
+| Agent Team 域   | 核心域 | Agent 能力、职责隔离、执行选择和团队协作    |
+| 运行执行域      | 支撑域 | AgentRun 生命周期、工作区和 Runtime Adapter |
+| 资源与预算域    | 支撑域 | 并发、资源、Token、金额、限额和停止决策     |
+| 平台治理域      | 支撑域 | 用户、权限、审计、通知和人工决策            |
+| 外部集成域      | 通用域 | Git、CI/CD、部署、模型、工具和身份适配      |
 
 ### 13.2 上下文关系
 
-~~~mermaid
+```mermaid
 flowchart LR
     D[Delivery 管理域] -->|任务合同与阶段要求| T[Agent Team 域]
     T -->|创建执行请求| R[运行执行域]
@@ -592,13 +602,13 @@ flowchart LR
     G[平台治理域] -.权限、决策和审计.-> D
     I[外部集成域] -->|标准化外部事实| R
     I -->|构建、部署和运行证据| Q
-~~~
+```
 
 外部 Git、CI/CD、部署系统和模型供应商使用防腐层适配，不允许其原生状态直接侵入 Delivery 领域状态机。
 
 ### 13.3 核心领域对象
 
-~~~mermaid
+```mermaid
 classDiagram
     class Project {
       项目边界
@@ -691,7 +701,7 @@ classDiagram
     AgentRun "*" --> "1" AgentProfile
     AgentRun "1" --> "*" Evidence
     AgentRun "1" --> "*" UsageRecord
-~~~
+```
 
 ### 13.4 最小必要模型
 
@@ -722,7 +732,7 @@ Review、Verification、SecurityScan、Deployment 和 Acceptance 不再分别建
 
 ### 14.1 Delivery 状态
 
-~~~mermaid
+```mermaid
 stateDiagram-v2
     [*] --> Draft
     Draft --> Clarifying: 开始需求澄清
@@ -760,11 +770,11 @@ stateDiagram-v2
     SucceededWithRisk --> [*]
     Abandoned --> [*]
     Failed --> [*]
-~~~
+```
 
 ### 14.2 Task 状态
 
-~~~mermaid
+```mermaid
 stateDiagram-v2
     [*] --> Pending
     Pending --> Ready: 依赖和准入满足
@@ -781,7 +791,7 @@ stateDiagram-v2
     Succeeded --> [*]
     SucceededWithRisk --> [*]
     Abandoned --> [*]
-~~~
+```
 
 ### 14.3 有界自主返工
 
@@ -875,16 +885,16 @@ Kubernetes 决定该 AgentRun 运行在哪台机器。
 
 ### 16.1 数据所有权
 
-| 数据 | 权威来源 | 说明 |
-|---|---|---|
-| Delivery/Task 活跃期望和控制状态 | OMAC 集群资源 | 支撑 Controller 收敛和实时观察 |
-| AgentRun 活跃执行状态 | OMAC 集群资源 | 与实际运行工作负载关联 |
-| 需求、合同、证据、质量门、决策和历史事件 | OMAC 业务数据库 | 支撑查询、审计、报表和长期历史 |
-| Token、金额、时长和预算记录 | OMAC 业务数据库 | 独立幂等账本 |
-| 源代码、提交、分支和 PR | Git 平台 | OMAC 保存引用和校验信息 |
-| 构建、测试和部署原始结果 | 外部 CI/CD 或部署系统 | OMAC 保存结构化结果与原始链接 |
-| 实时运行日志 | 标准日志输出 | 可由用户接入长期日志平台 |
-| 大型截图、视频和二进制结果 | 可选外部存储 | 非 Compact 模式强制依赖 |
+| 数据                                     | 权威来源              | 说明                           |
+| ---------------------------------------- | --------------------- | ------------------------------ |
+| Delivery/Task 活跃期望和控制状态         | OMAC 集群资源         | 支撑 Controller 收敛和实时观察 |
+| AgentRun 活跃执行状态                    | OMAC 集群资源         | 与实际运行工作负载关联         |
+| 需求、合同、证据、质量门、决策和历史事件 | OMAC 业务数据库       | 支撑查询、审计、报表和长期历史 |
+| Token、金额、时长和预算记录              | OMAC 业务数据库       | 独立幂等账本                   |
+| 源代码、提交、分支和 PR                  | Git 平台              | OMAC 保存引用和校验信息        |
+| 构建、测试和部署原始结果                 | 外部 CI/CD 或部署系统 | OMAC 保存结构化结果与原始链接  |
+| 实时运行日志                             | 标准日志输出          | 可由用户接入长期日志平台       |
+| 大型截图、视频和二进制结果               | 可选外部存储          | 非 Compact 模式强制依赖        |
 
 ### 16.2 单一控制事实
 
@@ -902,14 +912,14 @@ Kubernetes 活跃资源和 PostgreSQL 历史数据不能分别独立决定下一
 
 ### 16.3 并发与写入所有权
 
-| 写入内容 | 唯一写入者 | 规则 |
-|---|---|---|
-| Delivery/Task 目标、暂停、取消和人工决策 | OMAC API | Web 与 CLI 只能提交命令 |
-| Delivery/Task 当前状态和 Conditions | OMAC Controller | 用户和 Agent 只读 |
-| AgentRun 创建、停止和调度关联 | OMAC Controller | Agent 不得创建其他运行 |
-| AgentRun 心跳、结果和证据 | 对应 Agent 身份经 OMAC API | 校验 run_id、版本和幂等键 |
-| GateResult | 质量门服务或受控 Controller | 必须引用证据和规则版本 |
-| 用量账本 | 用量接收服务 | 使用供应商请求 ID 幂等写入 |
+| 写入内容                                 | 唯一写入者                  | 规则                       |
+| ---------------------------------------- | --------------------------- | -------------------------- |
+| Delivery/Task 目标、暂停、取消和人工决策 | OMAC API                    | Web 与 CLI 只能提交命令    |
+| Delivery/Task 当前状态和 Conditions      | OMAC Controller             | 用户和 Agent 只读          |
+| AgentRun 创建、停止和调度关联            | OMAC Controller             | Agent 不得创建其他运行     |
+| AgentRun 心跳、结果和证据                | 对应 Agent 身份经 OMAC API  | 校验 run_id、版本和幂等键  |
+| GateResult                               | 质量门服务或受控 Controller | 必须引用证据和规则版本     |
+| 用量账本                                 | 用量接收服务                | 使用供应商请求 ID 幂等写入 |
 
 ---
 
@@ -1074,12 +1084,12 @@ Web 是 OMAC 的主要产品面，必须以 Delivery 为中心，而不是以 Po
 
 OMAC 通过项目策略控制自主边界：
 
-| 等级 | 能力 |
-|---|---|
-| L0 计划 | 只生成需求、设计、验收和任务图，不执行代码变更 |
-| L1 开发 | 可修改代码、运行测试和创建 PR，合并由人工批准 |
-| L2 预发布 | 可完成集成并部署到预发布环境，生产发布由人工批准 |
-| L3 受控生产 | 通过质量门后请求一次生产授权，获批后自动部署和验收 |
+| 等级        | 能力                                                       |
+| ----------- | ---------------------------------------------------------- |
+| L0 计划     | 只生成需求、设计、验收和任务图，不执行代码变更             |
+| L1 开发     | 可修改代码、运行测试和创建 PR，合并由人工批准              |
+| L2 预发布   | 可完成集成并部署到预发布环境，生产发布由人工批准           |
+| L3 受控生产 | 通过质量门后请求一次生产授权，获批后自动部署和验收         |
 | L4 策略生产 | 在预设风险策略和预算内自动部署生产，异常自动回滚或请求决策 |
 
 默认建议：
@@ -1093,15 +1103,15 @@ OMAC 通过项目策略控制自主边界：
 
 ## 21. 外部依赖与降级策略
 
-| 外部依赖 | 定位 | 异常处理 |
-|---|---|---|
-| 模型供应商 | 核心但不可靠 | 有界重试、限流感知、模型降级、预算保护、任务隔离 |
-| Git 平台 | 代码事实源 | 幂等操作、状态重新读取、延迟重试、人工接管 |
-| CI/CD | 构建和发布能力 | 保存外部运行引用、超时进入阻塞、允许替换适配器 |
-| 部署目标 | 生产结果载体 | 发布授权、健康检查、自动回滚、失败进入 Decision |
-| Agent Runtime | 可替换执行者 | 心跳、超时、强制终止、切换 Profile、创建新 AgentRun |
-| 通知系统 | 非核心 | 失败不阻塞 Delivery，保留 Web 待办 |
-| Kubernetes/K3s | 产品运行底座 | Compact 提供备份恢复，External 依赖企业集群 SLA |
+| 外部依赖       | 定位           | 异常处理                                            |
+| -------------- | -------------- | --------------------------------------------------- |
+| 模型供应商     | 核心但不可靠   | 有界重试、限流感知、模型降级、预算保护、任务隔离    |
+| Git 平台       | 代码事实源     | 幂等操作、状态重新读取、延迟重试、人工接管          |
+| CI/CD          | 构建和发布能力 | 保存外部运行引用、超时进入阻塞、允许替换适配器      |
+| 部署目标       | 生产结果载体   | 发布授权、健康检查、自动回滚、失败进入 Decision     |
+| Agent Runtime  | 可替换执行者   | 心跳、超时、强制终止、切换 Profile、创建新 AgentRun |
+| 通知系统       | 非核心         | 失败不阻塞 Delivery，保留 Web 待办                  |
+| Kubernetes/K3s | 产品运行底座   | Compact 提供备份恢复，External 依赖企业集群 SLA     |
 
 外部系统只能提供能力和原始事实，不能成为 OMAC Delivery 或 Task 状态的唯一所有者。
 
@@ -1159,27 +1169,27 @@ OMAC 通过项目策略控制自主边界：
 
 ## 23. 主要风险与治理策略
 
-| 风险 | 影响 | 治理策略 |
-|---|---|---|
-| 只完成代码、不完成生产交付 | 产品退化为并行 Coding Agent | Delivery 完成定义绑定部署与生产验收 |
-| 通用 Agent 平台范围膨胀 | 无法形成差异，交付延期 | 首版只建设软件交付控制面 |
-| CRD 与数据库成为双事实源 | 状态冲突、恢复错误 | 单一控制写入者、幂等事件、查询投影与控制状态分离 |
-| Agent 自报完成 | 质量不可相信 | Evidence + GateResult + 独立评审与验收 |
-| Agent 无限返工 | 成本失控 | 最大轮次、硬预算、范围和风险决策 |
-| 同一 Agent 自产自验 | 结论偏置 | 能力和职责隔离策略 |
-| Kubernetes 重建导致重复执行 | 重复提交和重复结算 | AgentRun 幂等、唯一终态、外部请求幂等键 |
-| Runtime 或模型供应商锁定 | 成本和能力受制于单一厂商 | Runtime Adapter、模型策略和开放协议 |
-| Compact 安装过重 | 开箱即用失败 | 默认最小组件、Job 执行、可选 Sandbox 和外部存储 |
-| Agent 执行不受信任代码 | 主机和凭证风险 | 隔离工作区、最小权限、NetworkPolicy 和高风险授权 |
-| 自动生产发布风险 | 数据或服务事故 | 自主等级、发布授权、健康门和回滚 |
-| 仓库不适合 Agent 执行 | 成功率低、探索成本高 | Agent-ready 项目检查、环境引导和可复制验证命令 |
-| Clean Slate 降低升级意愿 | V1 用户需要重新部署 | 明确产品分界，提供示例和迁移指南，不建设兼容代码 |
+| 风险                        | 影响                        | 治理策略                                         |
+| --------------------------- | --------------------------- | ------------------------------------------------ |
+| 只完成代码、不完成生产交付  | 产品退化为并行 Coding Agent | Delivery 完成定义绑定部署与生产验收              |
+| 通用 Agent 平台范围膨胀     | 无法形成差异，交付延期      | 首版只建设软件交付控制面                         |
+| CRD 与数据库成为双事实源    | 状态冲突、恢复错误          | 单一控制写入者、幂等事件、查询投影与控制状态分离 |
+| Agent 自报完成              | 质量不可相信                | Evidence + GateResult + 独立评审与验收           |
+| Agent 无限返工              | 成本失控                    | 最大轮次、硬预算、范围和风险决策                 |
+| 同一 Agent 自产自验         | 结论偏置                    | 能力和职责隔离策略                               |
+| Kubernetes 重建导致重复执行 | 重复提交和重复结算          | AgentRun 幂等、唯一终态、外部请求幂等键          |
+| Runtime 或模型供应商锁定    | 成本和能力受制于单一厂商    | Runtime Adapter、模型策略和开放协议              |
+| Compact 安装过重            | 开箱即用失败                | 默认最小组件、Job 执行、可选 Sandbox 和外部存储  |
+| Agent 执行不受信任代码      | 主机和凭证风险              | 隔离工作区、最小权限、NetworkPolicy 和高风险授权 |
+| 自动生产发布风险            | 数据或服务事故              | 自主等级、发布授权、健康门和回滚                 |
+| 仓库不适合 Agent 执行       | 成功率低、探索成本高        | Agent-ready 项目检查、环境引导和可复制验证命令   |
+| Clean Slate 降低升级意愿    | V1 用户需要重新部署         | 明确产品分界，提供示例和迁移指南，不建设兼容代码 |
 
 ---
 
 ## 24. 建议实施里程碑
 
-~~~mermaid
+```mermaid
 gantt
     title OMAC V2 业务方案实施里程碑
     dateFormat  YYYY-MM-DD
@@ -1202,20 +1212,20 @@ gantt
     External Kubernetes安装        :m8, after m4, 28d
     安全、预算与故障演练           :m9, after m6, 28d
     端到端基准与公开案例           :m10, after m9, 21d
-~~~
+```
 
-| 里程碑 | 交付内容 | 完成判据 |
-|---|---|---|
-| M1 | Delivery、Task、AgentRun、Evidence、GateResult、Decision 模型 | 领域测试证明主状态闭环 |
-| M2 | 需求澄清、设计、开发、评审、测试和返工 | 一个仓库任务可独立收敛 |
-| M3 | Kubernetes Controller 和基础 Job Runtime | 控制器重启后任务继续推进 |
-| M4 | 至少两种 Agent Runtime Adapter | 同一 Delivery 可更换 Runtime 执行 |
-| M5 | Delivery 中心 Web、任务图、运行、证据、预算和决策 | 用户无需外部 Issue 完成全流程 |
-| M6 | 发布候选、部署、部署后验证、回滚和生产验收 | done 不再等于 merge |
-| M7 | Compact K3s 安装、备份、恢复和诊断 | 支持环境 15 分钟内 Web 可用 |
-| M8 | External Cluster 安装和企业依赖接入 | 与 Compact 使用同一业务验收 |
-| M9 | 安全、预算、故障恢复和容量演练 | 核心风险场景可复现并恢复 |
-| M10 | 公开端到端案例和竞争基准 | 可量化证明 Agent Team 的交付价值 |
+| 里程碑 | 交付内容                                                      | 完成判据                          |
+| ------ | ------------------------------------------------------------- | --------------------------------- |
+| M1     | Delivery、Task、AgentRun、Evidence、GateResult、Decision 模型 | 领域测试证明主状态闭环            |
+| M2     | 需求澄清、设计、开发、评审、测试和返工                        | 一个仓库任务可独立收敛            |
+| M3     | Kubernetes Controller 和基础 Job Runtime                      | 控制器重启后任务继续推进          |
+| M4     | 至少两种 Agent Runtime Adapter                                | 同一 Delivery 可更换 Runtime 执行 |
+| M5     | Delivery 中心 Web、任务图、运行、证据、预算和决策             | 用户无需外部 Issue 完成全流程     |
+| M6     | 发布候选、部署、部署后验证、回滚和生产验收                    | done 不再等于 merge               |
+| M7     | Compact K3s 安装、备份、恢复和诊断                            | 支持环境 15 分钟内 Web 可用       |
+| M8     | External Cluster 安装和企业依赖接入                           | 与 Compact 使用同一业务验收       |
+| M9     | 安全、预算、故障恢复和容量演练                                | 核心风险场景可复现并恢复          |
+| M10    | 公开端到端案例和竞争基准                                      | 可量化证明 Agent Team 的交付价值  |
 
 ---
 
@@ -1391,9 +1401,9 @@ OMAC 不能只通过功能列表证明竞争力，必须建立公开端到端基
 
 ### A.4 现有 OMAC 设计依据
 
-- [OMAC README](../../../README.md)
-- [OMAC Planner Agent 执行协议](../../../src/omac/guide/roles/planner.md)
-- [OMAC Orchestrator Agent 执行协议](../../../src/omac/guide/roles/orchestrator.md)
-- [OMAC Reviewer Agent 执行协议](../../../src/omac/guide/roles/reviewer.md)
-- [OMAC Acceptor Agent 执行协议](../../../src/omac/guide/roles/acceptor.md)
-- [OMAC 恢复协议](../../../src/omac/guide/recovery.md)
+- [OMAC README](../README.md)
+- [OMAC Planner Agent 执行协议](../src/omac/guide/roles/planner.md)
+- [OMAC Orchestrator Agent 执行协议](../src/omac/guide/roles/orchestrator.md)
+- [OMAC Reviewer Agent 执行协议](../src/omac/guide/roles/reviewer.md)
+- [OMAC Acceptor Agent 执行协议](../src/omac/guide/roles/acceptor.md)
+- [OMAC 恢复协议](../src/omac/guide/recovery.md)
