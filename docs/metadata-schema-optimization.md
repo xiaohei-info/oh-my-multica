@@ -1,5 +1,7 @@
 # OMAC Metadata Schema Optimization
 
+[English](metadata-schema-optimization.md) | [简体中文](zh-CN/metadata-schema-optimization.md)
+
 ## Background
 
 OMAC uses platform issue metadata as the durable coordination layer between

@@ -110,7 +110,7 @@ def test_plan_help_focuses_on_design_solution(capsys):
         main(["plan", "-h"])
     assert exc.value.code == 0
     out = capsys.readouterr().out
-    assert "设计方案" in out
+    assert "design-to-manifest" in out
     assert "计划制定" not in out
     assert "check     lint" not in out
     assert "show      查看 manifest" not in out
@@ -153,8 +153,8 @@ def test_check_clean_manifest_passes(tmp_path, monkeypatch, capsys):
     path = _write(tmp_path, CLEAN_MANIFEST)
     assert main(["dag", "check", path]) == exit_codes.OK
     out = capsys.readouterr().out
-    assert "lint 通过" in out
-    assert "review 通过" in out
+    assert "Lint passed" in out
+    assert "Review passed" in out
 
 
 def test_check_review_issue_is_human_first_with_agent_json_entry(
@@ -176,7 +176,7 @@ def test_check_review_issue_is_human_first_with_agent_json_entry(
         f"omac work show {review_item.id} --output json"
         in review_item.description
     )
-    assert "## 任务摘要" in review_item.description
+    assert "## Task summary" in review_item.description
     assert "objective: 实现 a" not in review_item.description
     assert "objective: 实现 a" in review_item.deliverable
     assert "omac work submit" not in review_item.description
@@ -236,7 +236,7 @@ def test_check_no_review_skips_review_stage(tmp_path, monkeypatch, capsys):
     # --no-review 应跳过 review,exit 0
     assert main(["dag", "check", path, "--no-review"]) == exit_codes.OK
     out = capsys.readouterr().out
-    assert "lint 通过" in out
+    assert "Lint passed" in out
 
 
 # ── dag show ──────────────────────────────────────────────────────────────
@@ -249,8 +249,8 @@ def test_show_table_summary(tmp_path, capsys):
     path = _write(tmp_path, CLEAN_MANIFEST)
     assert main(["dag", "show", path]) == exit_codes.OK
     out = capsys.readouterr().out
-    assert "节点:2" in out
-    assert "契约覆盖:2/2" in out
+    assert "Nodes: 2" in out
+    assert "Contract coverage: 2/2" in out
     assert "wave" in out
     assert "a" in out and "b" in out
 

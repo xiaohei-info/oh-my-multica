@@ -142,6 +142,17 @@ class TestRenderIssueBody:
         assert "## 完成标准" in body
         assert "硬约束" not in body
 
+    def test_issue_body_supports_english_project_language(self):
+        n = Node(id="a", worker="alice", title="Add login", reviewer="bob")
+
+        body = render_issue_body(
+            n, None, TaskKind.DEVELOP, "ISSUE-9", language="en")
+
+        assert "Agent entry" in body
+        assert "## Task summary" in body
+        assert "Execution role" in body
+        assert "任务摘要" not in body
+
     def test_briefing_lists_render_as_nested_markdown(self):
         n = Node(id="a", worker="alice", title="Add login", reviewer="bob",
                  contract=_full_contract())
@@ -393,7 +404,7 @@ class TestDispatchLoopIntegration:
         item = eng.store.get_work_item(manifest.nodes["a"].work_item_id)
         assert item.id in item.description
         assert f"omac work show {item.id} --output json" in item.description
-        assert "## 任务摘要" in item.description
+        assert "## Task summary" in item.description
         assert "硬约束" not in item.description
 
     def test_retry_existing_issue_refreshes_body_without_recreating_issue(self):
@@ -420,7 +431,7 @@ class TestDispatchLoopIntegration:
         refreshed = eng.store.get_work_item(item_id)
         assert manifest.nodes["a"].work_item_id == item_id
         assert "package.json" in refreshed.description
-        assert "主要代码归属范围" in refreshed.description
+        assert "Primary code ownership" in refreshed.description
         assert refreshed.status == WorkItemStatus.IN_PROGRESS
 
     def test_worker_submit_assigns_reviewer_without_handoff_comment(self):

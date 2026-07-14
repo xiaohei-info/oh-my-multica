@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ..errors import ValidationError
+from ..i18n import ui
 from .models import (
     AgentInfo, AgentProvisionSpec, EngineConfig, RuntimeTarget, SkillPackage,
     WorkItem, WorkItemStatus, WorkspaceInfo,
@@ -39,8 +40,9 @@ def create_engine(engine_type: str, config: EngineConfig) -> Engine:
         from .multica import MulticaRuntime, MulticaStore
         store = MulticaStore(config)
         return Engine(store=store, runtime=MulticaRuntime(store))
-    raise ValidationError(
-        f"未知引擎类型 '{engine_type}',可选: {', '.join(ENGINE_TYPES)}")
+    raise ValidationError(ui(
+        f"Unknown engine type '{engine_type}'. Available: {', '.join(ENGINE_TYPES)}",
+        f"未知引擎类型 '{engine_type}',可选: {', '.join(ENGINE_TYPES)}"))
 
 
 __all__ = [

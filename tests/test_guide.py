@@ -77,6 +77,17 @@ def test_workflow_topic_is_mechanism_only() -> None:
     assert "Reviewer 派发" not in content
 
 
+def test_guide_loader_selects_a_complete_english_mirror() -> None:
+    english = load_topic("workflow", language="en")
+    chinese = load_topic("workflow", language="cn")
+
+    assert "# OMAC workflow" in english
+    assert "# omac 工作流" in chinese
+    for command in ["omac init", "omac plan create", "omac dag run", "exit 20"]:
+        assert command in english
+        assert command in chinese
+
+
 def test_roles_topic_is_index_not_protocol_dump() -> None:
     content = load_topic("roles")
     for role in ["planner", "orchestrator", "reviewer", "worker", "acceptor"]:

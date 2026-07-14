@@ -128,6 +128,9 @@ def test_static_index_has_doctype_and_utf8():
     html = _read_index()
     assert re.search(r"<!doctype\s+html>", html, re.IGNORECASE), "必须 <!doctype html>"
     assert "charset=\"utf-8\"" in html.replace(" ", ""), "必须声明 utf-8"
+    assert "<html lang=\"en\">" in html
+    assert "const COPY" in html
+    assert "language: \"en\"" in html
 
 
 # ==================== 2. CSP 自检 ==================
@@ -225,12 +228,14 @@ def test_index_polls_meta_for_refresh(orch, simple_manifest, monkeypatch):
 
 
 def test_static_index_uses_the_manifest_api(orch, simple_manifest, monkeypatch):
-    """SPA 源码引用了 /api/manifests 与 /api/dag/status(前端消费真实端点)。"""
+    """SPA 通过命令一致的 API 读取运行状态与项目配置。"""
     monkeypatch.chdir(orch.parent)
     html = _read_index()
     assert "/api/manifests" in html, "SPA 必须消费 /api/manifests"
     assert "/api/dag/status" in html, "SPA 必须消费 /api/dag/status"
     assert "/api/meta" in html, "SPA 必须消费 /api/meta(轮询间隔)"
+    assert 'const config = await api("/api/config");' in html
+    assert 'applyLanguage(config.language||"en");' in html
     assert "/api/node/" in html, "SPA 必须消费 /api/node/<key>"
 
 

@@ -67,7 +67,7 @@ def test_create_authoring_task_renders_body_contract_and_source_refs():
 
     assert "OMAC_ENGINE=mock OMAC_WORKSPACE_ID=ws" in item.description
     assert f"omac work show {item.id}" in item.description
-    assert "PR 基线: `main`" in item.description
+    assert "PR base: `main`" in item.description
     assert "git@github.com:owner/demo.git" in item.description
     assert item.contract["acceptance_doc"] == {"flows": []}
     assert item.source_refs == [
@@ -157,7 +157,7 @@ def test_run_task_renders_source_refs_in_body():
                    source_refs=["7", "8"], poll=_poll)
     item = eng.store.get_work_item(res["item_id"])
 
-    assert "## 上游 issue（防跑偏）" in item.description
+    assert "## Upstream issues (stay on target)" in item.description
     assert "- `#7`" in item.description
     assert "- `#8`" in item.description
     assert "omac work show 7" not in item.description
@@ -198,7 +198,7 @@ def test_run_task_renders_markdown_source_of_truth_as_collapsible_markdown():
     assert "### plan" in item.description
     assert "<details>" in item.description
     assert "<details open>" not in item.description
-    assert "<summary>查看 plan 上游产物</summary>" in item.description
+    assert "<summary>View upstream artifact: plan</summary>" in item.description
     assert "# 设计方案" in item.description
     assert "```ts\nexport const ok = true\n```" in item.description
     assert "## 下一节" in item.description

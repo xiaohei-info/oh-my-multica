@@ -38,6 +38,7 @@ from ..core.taskmeta import TaskKind, make_dag_key
 from ..engines.models import WorkItemStatus
 from ..engines.store import WorkItemStore
 from ..errors import NeedsDecision
+from ..i18n import resolve_language, ui
 from ..pipeline import loop as loop_mod
 from .tasks import AuthoringTaskSpec, create_authoring_task
 
@@ -105,12 +106,16 @@ def _resolve_operation_branch(manifest: Manifest) -> str:
     if len(values) == 1:
         return next(iter(values))
     if not values:
-        raise NeedsDecision(
+        raise NeedsDecision(ui(
+            "Final acceptance is missing pr_base. Fix Manifest meta.pr_base or "
+            "node.contract.pr_base, then rerun `omac dag run`.",
             "最终验收缺少 pr_base —— 请修复 Manifest 的 meta.pr_base 或 "
-            "node.contract.pr_base 后重新运行 `omac dag run`")
-    raise NeedsDecision(
+            "node.contract.pr_base 后重新运行 `omac dag run`"))
+    raise NeedsDecision(ui(
+        f"Final acceptance found multiple pr_base values: {sorted(values)}. "
+        "Make the Manifest consistent, then rerun `omac dag run`.",
         f"最终验收发现多个 pr_base: {sorted(values)} —— "
-        "请统一 Manifest 后重新运行 `omac dag run`")
+        "请统一 Manifest 后重新运行 `omac dag run`"))
 
 
 def _project_repo_urls(store: WorkItemStore) -> List[str]:
@@ -123,8 +128,12 @@ def _project_repo_urls(store: WorkItemStore) -> List[str]:
     return []
 
 
-def _acceptance_source_refs(manifest: Manifest) -> List[Dict[str, str]]:
-    labels = ["设计方案", "验收文档", "任务拆解"]
+def _acceptance_source_refs(manifest: Manifest, language: str) -> List[Dict[str, str]]:
+    labels = [
+        ui("Design", "设计方案", language=language),
+        ui("Acceptance document", "验收文档", language=language),
+        ui("Task decomposition", "任务拆解", language=language),
+    ]
     refs: List[Dict[str, str]] = []
     for index, raw in enumerate(manifest.meta.get("source_issues") or []):
         if isinstance(raw, dict):
@@ -141,7 +150,7 @@ def _acceptance_source_refs(manifest: Manifest) -> List[Dict[str, str]]:
     closeout = manifest.nodes.get(closeout_key) if closeout_key else None
     if closeout is not None and closeout.work_item_id:
         refs.append({
-            "label": "最终开发交付",
+            "label": ui("Final implementation delivery", "最终开发交付", language=language),
             "issue_id": closeout.work_item_id,
         })
     return refs
@@ -163,6 +172,7 @@ def run_acceptance_loop(
     返回 AcceptanceOutcome(exit_code=0 全 pass / =20 耗尽仍 fail)。
     """
     acceptance_cfg = resolve_acceptance_config(config)
+    language = resolve_language(config)
     if no_acceptance or acceptance_cfg.no_acceptance:
         return AcceptanceOutcome(exit_code=0)
     reviewers = _reviewers(config)
@@ -176,12 +186,12 @@ def run_acceptance_loop(
 
     orchestrator = get_value(config, "roles.orchestrator") or _first_worker(manifest)
     repo_urls = _project_repo_urls(engine.store)
-    source_refs = _acceptance_source_refs(manifest)
+    source_refs = _acceptance_source_refs(manifest, language)
     project_name = (
         manifest.meta.get("title")
         or manifest.meta.get("name")
         or plan_id
-        or "当前项目"
+        or ui("Current project", "当前项目", language=language)
     )
 
     reports: List[Dict[str, Any]] = []
@@ -194,24 +204,38 @@ def run_acceptance_loop(
         else:
             acceptor = reviewers[(round_num - 1) % len(reviewers)] if reviewers else None
         if not acceptor:
-            raise NeedsDecision(
-                "无法确定验收人——请配置 roles.acceptors 或 roles.reviewers")
+            raise NeedsDecision(ui(
+                "No acceptor can be selected. Configure roles.acceptor or roles.reviewers.",
+                "无法确定验收人——请配置 roles.acceptors 或 roles.reviewers",
+                language=language))
 
-        acceptance_description = (
+        acceptance_description = ui(
+            f"Run final acceptance round {round_num}. Execute every acceptance "
+            f"flow: {', '.join(acceptance_doc.flow_ids)}. Submit pass/fail and "
+            "reproducible evidence for each item.",
             f"执行第 {round_num} 轮最终验收，按验收文档逐项走查: "
             + "、".join(acceptance_doc.flow_ids)
-            + "。每项必须提交 pass/fail 与可复核证据。"
+            + "。每项必须提交 pass/fail 与可复核证据。",
+            language=language,
         )
         if not repo_urls:
-            acceptance_description += (
+            acceptance_description += ui(
+                "\n\nThe current project has no registered repository. Run "
+                "`omac init --check`, repair the project resources, then use "
+                "the upstream issues to locate the code.",
                 "\n\n当前 Project 未登记仓库；先运行 `omac init --check` 修复项目资源，"
-                "再按上游 issue 定位代码。"
+                "再按上游 issue 定位代码。",
+                language=language,
             )
         acceptance_item_id = _dispatch_and_wait(
             engine,
             AuthoringTaskSpec(
                 kind=TaskKind.FINAL_ACCEPTANCE,
-                title=f"最终验收 · {project_name} · 第 {round_num} 轮",
+                title=ui(
+                    f"Final acceptance · {project_name} · Round {round_num}",
+                    f"最终验收 · {project_name} · 第 {round_num} 轮",
+                    language=language,
+                ),
                 dag_key=make_dag_key(
                     TaskKind.FINAL_ACCEPTANCE,
                     scope=f"{plan_id}-r{round_num}" if plan_id else f"r{round_num}",
@@ -236,7 +260,10 @@ def run_acceptance_loop(
         validation_errors = validate_acceptance_results(acceptance_doc, results)
         if validation_errors:
             raise NeedsDecision(
-                "acceptance_results 校验失败:\\n  - " + "\\n  - ".join(validation_errors),
+                ui(
+                    "acceptance_results validation failed:\n  - " + "\n  - ".join(validation_errors),
+                    "acceptance_results 校验失败:\\n  - " + "\\n  - ".join(validation_errors),
+                    language=language),
                 report={"round": round_num, "errors": validation_errors})
 
         failed_items = [r["id"] for r in results if r.get("status") == "fail"]
@@ -254,27 +281,42 @@ def run_acceptance_loop(
         # ── 步骤 4:有 fail -> 派发 decompose 增量任务 ──
         if not orchestrator:
             raise NeedsDecision(
-                "无法派发增量拆解:配置/角色缺 orchestrator",
+                ui(
+                    "Cannot dispatch incremental decomposition: orchestrator is not configured.",
+                    "无法派发增量拆解:配置/角色缺 orchestrator",
+                    language=language),
                 report={"round": round_num})
 
         decompose_refs = list(source_refs) + [{
-            "label": f"触发验收 · 第 {round_num} 轮",
+            "label": ui(
+                f"Acceptance trigger · Round {round_num}",
+                f"触发验收 · 第 {round_num} 轮",
+                language=language,
+            ),
             "issue_id": acceptance_item_id,
         }]
         decompose_item_id = _dispatch_and_wait(
             engine,
             AuthoringTaskSpec(
                 kind=TaskKind.DECOMPOSE,
-                title=f"增量拆解 · {project_name} · 第 {round_num} 轮",
+                title=ui(
+                    f"Incremental decomposition · {project_name} · Round {round_num}",
+                    f"增量拆解 · {project_name} · 第 {round_num} 轮",
+                    language=language,
+                ),
                 dag_key=make_dag_key(
                     TaskKind.DECOMPOSE,
                     scope=f"{plan_id}-r{round_num}" if plan_id else f"r{round_num}",
                 ),
                 assignee=orchestrator,
-                description=(
+                description=ui(
+                    "Add only the smallest incremental nodes required for these "
+                    f"failed acceptance items: {', '.join(failed_items)}. Do not "
+                    "rewrite existing nodes.",
                     "仅为以下未通过验收项补充最小增量节点: "
                     + "、".join(failed_items)
-                    + "。不要重写既有节点。"
+                    + "。不要重写既有节点。",
+                    language=language,
                 ),
                 contract={
                     "manifest": _dump_manifest(manifest),
@@ -301,7 +343,10 @@ def run_acceptance_loop(
         lint_errors = lint_increment(increment, manifest, pool)
         if lint_errors:
             raise NeedsDecision(
-                "incremental manifest lint 失败:\\n  - " + "\\n  - ".join(lint_errors),
+                ui(
+                    "Incremental manifest lint failed:\n  - " + "\n  - ".join(lint_errors),
+                    "incremental manifest lint 失败:\\n  - " + "\\n  - ".join(lint_errors),
+                    language=language),
                 report={"round": round_num, "lint_errors": lint_errors,
                         "failed_items": failed_items})
 
@@ -381,14 +426,18 @@ def _run_inner_loop(
             return
         if result.state == "needs_decision":
             raise NeedsDecision(
-                f"内层 loop 需决策:节点 {result.failed} 失败/受阻,无法继续推进",
+                ui(
+                    f"The inner loop requires a decision: nodes {result.failed} failed or are blocked.",
+                    f"内层 loop 需决策:节点 {result.failed} 失败/受阻,无法继续推进"),
                 report=result.report)
         poll()
 
     # 安全上限耗尽仍不收敛 → 需决策而非静默放行
     snapshot = {k: n.status for k, n in manifest.nodes.items()}
     raise NeedsDecision(
-        f"内层 loop {max_ticks} tick 仍未收敛,节点状态={snapshot}",
+        ui(
+            f"The inner loop did not converge after {max_ticks} ticks; node status={snapshot}",
+            f"内层 loop {max_ticks} tick 仍未收敛,节点状态={snapshot}"),
         report={"state": "running", "nodes": snapshot})
 
 

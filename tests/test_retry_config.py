@@ -161,7 +161,7 @@ def test_config_set_negative_retry_rejected(tmp_path, monkeypatch, capsys):
     code = main(["config", "set", "retry.merge", "-2"])
     assert code == exit_codes.VALIDATION
     err = capsys.readouterr().err
-    assert "不能为负数" in err or "负" in err
+    assert "cannot be negative" in err
 
 
 def test_dag_tick_passes_configured_retry_limits(tmp_path, monkeypatch, capsys):

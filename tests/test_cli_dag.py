@@ -88,7 +88,7 @@ def test_dag_run_rejects_missing_required_acceptance_file(
     code = main(["dag", "tick", path, "--output", "json"])
 
     assert code == exit_codes.VALIDATION
-    assert "验收文档" in capsys.readouterr().err
+    assert "Acceptance document" in capsys.readouterr().err
 
 
 def _mixed_manifest(tmp_path):

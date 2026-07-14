@@ -34,6 +34,7 @@ from ..core.manifest import Manifest, loads_manifest, save_manifest
 from ..core.taskmeta import TaskKind, make_dag_key, make_plan_id
 from ..engines.models import WorkItem
 from ..errors import ValidationError
+from ..i18n import CN, ui
 from .tasks import run_task
 
 
@@ -54,6 +55,7 @@ class PlanContext:
     no_acceptance: bool
     members: set
     confirm: bool = True
+    language: str = CN
 
     def poll(self, interval: Optional[float] = None) -> Callable[[], None]:
         """构造一个阻塞轮询闭包(真实场景用,测试注入 no-op)。"""
@@ -68,13 +70,18 @@ _ACCEPTANCE_KEY = "acceptance"
 _MANIFEST_KEY = "manifest"
 
 
-def _emit_plan_next_steps(manifest_path: str, acceptance_path: Optional[str] = None) -> None:
+def _emit_plan_next_steps(manifest_path: str, acceptance_path: Optional[str] = None,
+                          language: str = CN) -> None:
     """plan 收敛后的 agent 可见衔接契约。"""
-    print("plan 完成")
+    print(ui("Plan complete", "plan 完成", language=language))
     print(f"manifest: {manifest_path}")
     if acceptance_path and os.path.exists(acceptance_path):
         print(f"acceptance: {acceptance_path}")
-    print(f"下一步: omac dag run {shlex.quote(manifest_path)}")
+    print(ui(
+        f"Next: omac dag run {shlex.quote(manifest_path)}",
+        f"下一步: omac dag run {shlex.quote(manifest_path)}",
+        language=language,
+    ))
 
 
 def plan_id_from_dag_key(dag_key: str) -> str:
@@ -85,14 +92,15 @@ def plan_id_from_dag_key(dag_key: str) -> str:
             plan_id = value[len(prefix):]
             if plan_id:
                 return plan_id
-    raise ValidationError(
-        f"无法从 dag_key 解析 plan_id:{dag_key} —— 期望形如 plan-p-xxxx")
+    raise ValidationError(ui(
+        f"Could not parse plan_id from dag_key {dag_key}; expected plan-p-xxxx",
+        f"无法从 dag_key 解析 plan_id:{dag_key} —— 期望形如 plan-p-xxxx"))
 
 
 def plan_dag_key_from_id(plan_id: str) -> str:
     value = (plan_id or "").strip()
     if not value:
-        raise ValidationError("--plan-id 不能为空")
+        raise ValidationError(ui("--plan-id cannot be empty", "--plan-id 不能为空"))
     if value.startswith("plan-"):
         return value
     if value.startswith(("acceptance-", "decompose-")):
@@ -104,14 +112,17 @@ def _phase_text(delivery: Dict[str, Any], key: str) -> str:
     """从 run_task 返回的 delivery 取某 key 的文本交付。"""
     value = delivery.get(key)
     if not value:
-        raise ValidationError(
-            f"阶段交付缺少 '{key}' —— 产出者未在 artifacts 中交付;请检查交付契约。")
+        raise ValidationError(ui(
+            f"Stage delivery is missing '{key}'. Check the delivery contract and submitted artifacts.",
+            f"阶段交付缺少 '{key}' —— 产出者未在 artifacts 中交付;请检查交付契约。"))
     return str(value)
 
 
 def _read_file(path: str) -> str:
     if not os.path.exists(path):
-        raise ValidationError(f"文件不存在: {path} —— 请确认 --doc 路径")
+        raise ValidationError(ui(
+            f"File not found: {path}. Check the --doc path.",
+            f"文件不存在: {path} —— 请确认 --doc 路径"))
     with open(path, encoding="utf-8") as fh:
         return fh.read()
 
@@ -134,25 +145,29 @@ def _find_by_dag_key(ctx: PlanContext, kind: TaskKind, dag_key: str) -> Optional
         if item.kind == kind and item.dag_key == dag_key
     ]
     if len(matches) > 1:
-        raise ValidationError(
-            f"dag_key 不唯一:{dag_key} —— 平台数据异常,请先人工处理重复 issue。")
+        raise ValidationError(ui(
+            f"dag_key is not unique: {dag_key}. Resolve duplicate platform issues first.",
+            f"dag_key 不唯一:{dag_key} —— 平台数据异常,请先人工处理重复 issue。"))
     return matches[0] if matches else None
 
 
 def _require_by_dag_key(ctx: PlanContext, kind: TaskKind, dag_key: str) -> WorkItem:
     item = _find_by_dag_key(ctx, kind, dag_key)
     if item is None:
-        raise ValidationError(
+        raise ValidationError(ui(
+            f"No {kind.value} issue matches {dag_key}. Use the DAG key printed by "
+            "plan create or shown in the issue title.",
             f"未找到 {dag_key} 对应的 {kind.value} issue —— "
-            "请确认使用的是 plan create 输出/issue 标题里的 DAG 标识。")
+            "请确认使用的是 plan create 输出/issue 标题里的 DAG 标识。"))
     return item
 
 
 def _name_from_plan_issue(item: WorkItem) -> str:
     title = re.sub(r"^(\[DAG:[^\]]+\]\s*)+", "", item.title or "").strip()
-    suffix = " 设计方案"
-    if title.endswith(suffix):
-        title = title[:-len(suffix)].strip()
+    for suffix in (" design", " 设计方案"):
+        if title.endswith(suffix):
+            title = title[:-len(suffix)].strip()
+            break
     return title or plan_id_from_dag_key(item.dag_key)
 
 
@@ -170,7 +185,9 @@ def _compose_guard(
     def guard(item: WorkItem) -> List[str]:
         text = getattr(item, "deliverable", None)
         if not text:
-            return [f"交付缺少 '{_MANIFEST_KEY}' —— orchestrator 未产出 manifest"]
+            return [ui(
+                f"Delivery is missing '{_MANIFEST_KEY}'; the orchestrator did not submit a manifest.",
+                f"交付缺少 '{_MANIFEST_KEY}' —— orchestrator 未产出 manifest")]
         manifest = loads_manifest(text)
         return lint(manifest, members, acceptance=acceptance_doc)
 
@@ -209,11 +226,13 @@ def plan_create(
     if doc_path is not None:
         plan_text = _read_file(doc_path)
     else:
-        plan_payload: Dict[str, Any] = {"title": f"{name} 设计方案"}
+        plan_payload: Dict[str, Any] = {"title": ui(
+            f"{name} design", f"{name} 设计方案", language=ctx.language)}
         if goal_text:
             # 需求经 source_of_truth 通道进 planner 的 issue body(与 phase 2/3 同源),
             # 让 planner 据此编写设计方案,而非凭一个标题空想。
-            plan_payload["source_of_truth"] = {"需求": goal_text}
+            plan_payload["source_of_truth"] = {
+                ui("Request", "需求", language=ctx.language): goal_text}
         res = run_task(
             ctx.engine,
             TaskKind.PLAN,
@@ -234,7 +253,9 @@ def plan_create(
         res = run_task(
             ctx.engine,
             TaskKind.ACCEPTANCE,
-            {"title": f"{name} 验收文档",
+            {"title": ui(
+                f"{name} acceptance document", f"{name} 验收文档",
+                language=ctx.language),
              "source_of_truth": {"plan": plan_text}},
             ctx.planner,
             reviewers=reviewers,
@@ -259,7 +280,8 @@ def plan_create(
     res = run_task(
         ctx.engine,
         TaskKind.DECOMPOSE,
-        {"title": f"{name} 拆解",
+        {"title": ui(
+            f"{name} decomposition", f"{name} 拆解", language=ctx.language),
          "source_of_truth": decompose_inputs},
         ctx.orchestrator,
         reviewers=reviewers,
@@ -293,7 +315,7 @@ def plan_create(
     commit_files(
         output_paths, "chore(omac): sync plan outputs",
         engine_type=store.config.engine_type)
-    _emit_plan_next_steps(manifest_path, acceptance_path)
+    _emit_plan_next_steps(manifest_path, acceptance_path, ctx.language)
 
     return 0
 
@@ -316,7 +338,9 @@ def plan_resume(
     elif plan_id:
         plan_id_value = plan_id_from_dag_key(plan_id) if plan_id.startswith("plan-") else plan_id
     else:
-        raise ValidationError("plan resume 需要 --dag-key 或 --plan-id")
+        raise ValidationError(ui(
+            "plan resume requires --dag-key or --plan-id",
+            "plan resume 需要 --dag-key 或 --plan-id"))
 
     store = ctx.engine.store
     ensure_config_synced(CONFIG_PATH, branch="main", engine_type=store.config.engine_type)
@@ -333,7 +357,9 @@ def plan_resume(
     res = run_task(
         ctx.engine,
         TaskKind.PLAN,
-        {"title": f"{resolved_name} 设计方案"},
+        {"title": ui(
+            f"{resolved_name} design", f"{resolved_name} 设计方案",
+            language=ctx.language)},
         ctx.planner,
         reviewers=reviewers,
         max_revisions=ctx.max_revisions,
@@ -354,7 +380,9 @@ def plan_resume(
         res = run_task(
             ctx.engine,
             TaskKind.ACCEPTANCE,
-            {"title": f"{resolved_name} 验收文档",
+            {"title": ui(
+                f"{resolved_name} acceptance document", f"{resolved_name} 验收文档",
+                language=ctx.language),
              "source_of_truth": {"plan": plan_text}},
             ctx.planner,
             reviewers=reviewers,
@@ -380,7 +408,9 @@ def plan_resume(
     res = run_task(
         ctx.engine,
         TaskKind.DECOMPOSE,
-        {"title": f"{resolved_name} 拆解",
+        {"title": ui(
+            f"{resolved_name} decomposition", f"{resolved_name} 拆解",
+            language=ctx.language),
          "source_of_truth": decompose_inputs},
         ctx.orchestrator,
         reviewers=reviewers,
@@ -413,6 +443,6 @@ def plan_resume(
     commit_files(
         output_paths, "chore(omac): sync plan outputs",
         engine_type=store.config.engine_type)
-    _emit_plan_next_steps(manifest_path, acceptance_path)
+    _emit_plan_next_steps(manifest_path, acceptance_path, ctx.language)
 
     return 0
