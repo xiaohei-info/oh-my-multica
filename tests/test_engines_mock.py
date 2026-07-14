@@ -3,7 +3,7 @@ import pytest
 
 from omac.core.manifest import Contract
 from omac.engines import Engine, create_engine
-from omac.engines.models import EngineConfig, WorkItemStatus
+from omac.engines.models import AgentProvisionSpec, EngineConfig, WorkItemStatus
 from omac.engines.mock import MockRuntime, MockStore
 from omac.errors import ValidationError
 
@@ -136,6 +136,23 @@ def test_runtime_wake_is_idempotent():
     item = eng.store.create_work_item("ws", "t", "d", dag_key="a", worker="alice")
     eng.runtime.wake(item.id, "alice", "worker")
     eng.runtime.wake(item.id, "alice", "worker")  # 幂等,无副作用
+
+
+def test_runtime_can_provision_agent_and_add_it_to_member_pool():
+    eng = _engine()
+    targets = eng.runtime.list_targets()
+    assert targets and targets[0].status == "online"
+
+    created = eng.runtime.provision_agent(AgentProvisionSpec(
+        name="template-worker",
+        description="worker template",
+        instructions="rules",
+        runtime_id=targets[0].id,
+        skills=[],
+    ))
+
+    assert created.name == "template-worker"
+    assert "template-worker" in eng.store.list_members("ws")
 
 
 def test_list_members_and_comments():

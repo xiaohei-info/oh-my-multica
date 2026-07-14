@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..core.taskmeta import Bounces, TaskKind, TaskPhase
 
@@ -34,6 +35,40 @@ class ProjectInfo:
     id: str
     title: str
     repos: List[str] = field(default_factory=list)   # 目标 repo URL
+
+
+@dataclass(frozen=True)
+class RuntimeTarget:
+    """可承载 Agent 的运行时目标。"""
+    id: str
+    name: str
+    type: str
+    status: str
+
+
+@dataclass(frozen=True)
+class SkillPackage:
+    """待上传 Skill 的完整目录。"""
+    name: str
+    description: str
+    path: Path
+    files: Tuple[Path, ...]
+
+
+@dataclass(frozen=True)
+class AgentProvisionSpec:
+    """创建 Agent 所需的 Harness 中立输入。"""
+    name: str
+    description: str
+    instructions: str
+    runtime_id: str
+    skills: List[SkillPackage] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class AgentInfo:
+    id: str
+    name: str
 
 
 @dataclass

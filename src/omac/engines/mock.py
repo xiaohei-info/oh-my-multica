@@ -15,7 +15,10 @@ from typing import Any, Dict, List, Optional
 import yaml
 from ..core.taskmeta import DELIVERY_CONTENT_KEY, Bounces, TaskKind, TaskPhase
 from ..errors import ValidationError
-from .models import EngineConfig, ProjectInfo, WorkItem, WorkItemStatus, WorkspaceInfo
+from .models import (
+    AgentInfo, AgentProvisionSpec, EngineConfig, ProjectInfo, RuntimeTarget,
+    WorkItem, WorkItemStatus, WorkspaceInfo,
+)
 from .runtime import AgentRuntime
 from .store import WorkItemStore
 
@@ -31,6 +34,7 @@ _shared_assigned_items: Dict[str, float] = {}
 _shared_fail_keys: set = set()
 _shared_assign_log: list = []
 _shared_projects: Dict[str, ProjectInfo] = {}
+_shared_provisioned_members: Dict[str, List[str]] = {}
 # 默认行为(可在实例创建时覆盖)
 _shared_auto_complete_enabled: bool = True
 _shared_auto_complete_delay: int = 2
@@ -66,6 +70,11 @@ def _init_default_workspace():
         "mock-workspace": ["alice", "bob", "charlie"],
         "mock-team-b": ["alice", "bob"],
     }
+    for workspace_id, members in _shared_provisioned_members.items():
+        pool = _shared_members.setdefault(workspace_id, ["alice", "bob", "charlie"])
+        for member in members:
+            if member not in pool:
+                pool.append(member)
 
 
 def _write_tmp_json(data) -> str:
@@ -143,6 +152,7 @@ class MockStore(WorkItemStore):
         # 此时沿用模块默认值(与 EngineConfig.extra 默认 factory 一致)。
         cfg_extra = config.extra or {}
         global _shared_auto_complete_enabled, _shared_auto_complete_delay
+        global _shared_provisioned_members
         _shared_auto_complete_enabled = str(
             cfg_extra.get("MOCK_AUTO_COMPLETE", "true")).lower() == "true"
         _shared_auto_complete_delay = int(
@@ -159,6 +169,7 @@ class MockStore(WorkItemStore):
         global _shared_auto_complete_enabled, _shared_auto_complete_delay
         global _shared_kind_deliverables, _shared_review_rejects_remaining
         global _shared_review_verdict, _shared_review_verdict_sequence
+        global _shared_provisioned_members
         _shared_workspaces = {}
         _shared_members = {}
         _shared_work_items = {}
@@ -170,6 +181,7 @@ class MockStore(WorkItemStore):
         _shared_assign_log = []
         _shared_auto_complete_enabled = True
         _shared_auto_complete_delay = 2
+        _shared_provisioned_members = {}
         _shared_kind_deliverables = {}
         _shared_kind_delivery_sequences = {}
         _shared_review_rejects_remaining = 0
@@ -667,6 +679,26 @@ class MockRuntime(AgentRuntime):
     def wake(self, item_id: str, agent: str, role: str) -> None:
         # MockStore.assign_work_item 已启动自动完成计时,这里只确认 item 存在。
         self._store.get_work_item(item_id)
+
+    def list_targets(self) -> List[RuntimeTarget]:
+        return [RuntimeTarget(
+            id="mock-runtime", name="Mock Runtime", type="mock", status="online")]
+
+    def provision_agent(self, spec: AgentProvisionSpec) -> AgentInfo:
+        if not spec.name.strip():
+            raise ValidationError("Agent 名称不能为空")
+        workspace_id = self._store.config.workspace_id
+        members = self._store.list_members(workspace_id)
+        if spec.name in members:
+            raise ValidationError(
+                f"Agent '{spec.name}' 已存在 —— 请选择已有 Agent 或换一个名称")
+        if spec.runtime_id != "mock-runtime":
+            raise ValidationError(
+                f"Runtime '{spec.runtime_id}' 不存在,可选:mock-runtime")
+        global _shared_provisioned_members, _shared_members
+        _shared_provisioned_members.setdefault(workspace_id, []).append(spec.name)
+        _shared_members.setdefault(workspace_id, members).append(spec.name)
+        return AgentInfo(id=f"mock-agent-{spec.name}", name=spec.name)
 
     def describe(self) -> str:
         return "mock: assign 即启动自动完成模拟,wake 为确认性 no-op"

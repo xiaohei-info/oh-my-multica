@@ -120,6 +120,23 @@ omac config set workflow.goal_required true
 omac init --check
 ```
 
+交互式 `omac init` 会先列出工作空间现有 Agent，并允许从仓库内置模板创建新 Agent。
+模板位于 [`agents/`](./agents)，包含完整 Instructions 和当前 Multica 配置所使用的
+Skill 文件。创建时由用户选择 Runtime 和 Agent 名称；创建完成后，新旧 Agent 进入同一
+候选池，再由用户自由映射到 planner、orchestrator、workers、reviewers、acceptor。
+
+内置模板包括：
+
+```text
+planner  orchestrator  worker  reviewer  acceptor
+architect  backend  frontend  pm
+```
+
+使用已有 Agent 时，OMAC 不修改其 Instructions 或 Skills。通过模板创建时，OMAC 会复用
+workspace 中同名 Skill、上传缺失 Skill 的完整目录，然后创建 Agent、注入 Instructions
+并绑定模板对应的 Skill。模板创建是可选增强，OMAC 的运行正确性仍由 `work show/submit`、
+内置 guide、contract 和证据校验保证。
+
 > exit 5 提示"角色不在工作空间 agent 池内"?一定用的是 `alice`/`bob`/`charlie`
 > 三者之一,mock 池不接受其他名字。
 

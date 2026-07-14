@@ -332,12 +332,13 @@ def test_interactive_main_path(tmp_path, monkeypatch, capsys):
     """交互式:回车用缺省,主路径生成 config 且 --check 通过。"""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "stdin", _Tty())
-    # 回答顺序:engine(回车=mock)→ workspace(回车=第一个)→ planner(回车=1)
+    # 回答顺序:engine(回车=mock)→ workspace(回车=第一个)→ 不创建模板 Agent → planner(回车=1)
     # → orchestrator(回车=1)→ workers(回车=1)→ reviewers(回车=1)→ acceptor(回车跳过)
     # → max_parallel(6)→ retry values → workflow defaults
     monkeypatch.setattr(builtins, "input", _answers([
         "",       # engine → mock
         "",       # workspace → 首个(mock-workspace)
+        "",       # 不通过模板创建 Agent
         "",       # planner → 序号1=alice
         "",       # orchestrator → 序号1=alice
         "",       # workers → 序号1=alice
@@ -379,6 +380,7 @@ def test_interactive_type_name(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(builtins, "input", _answers([
         "mock",            # engine
         "mock-workspace",  # workspace by id
+        "",                # 不通过模板创建 Agent
         "alice",           # planner by name
         "bob",             # orchestrator
         "charlie",         # workers
@@ -396,7 +398,36 @@ def test_interactive_bad_role_rejected(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "stdin", _Tty())
     monkeypatch.setattr(builtins, "input", _answers([
-        "mock", "mock-workspace", "ghost",  # planner 不在池
+        "mock", "mock-workspace", "", "ghost",  # 不创建模板;planner 不在池
     ]))
     assert main(["init"]) == exit_codes.VALIDATION
     assert "ghost" in capsys.readouterr().err
+
+
+def test_interactive_can_create_template_agent_then_map_it_as_worker(
+    tmp_path, monkeypatch, capsys,
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "stdin", _Tty())
+    monkeypatch.setattr(builtins, "input", _answers([
+        "mock",            # engine
+        "mock-workspace",  # workspace
+        "y",               # 通过模板创建 Agent
+        "worker",          # 模板
+        "template-worker", # Agent 名称
+        "",                # Runtime → 第一个
+        "",                # 是否继续创建 → 否
+        "alice",           # planner
+        "bob",             # orchestrator
+        "template-worker", # workers
+        "charlie",         # reviewers
+        "",                # acceptor
+    ]))
+
+    assert main(["init"]) == exit_codes.OK
+    import yaml
+    cfg = yaml.safe_load((tmp_path / ".omac" / "config.yaml").read_text())
+    assert cfg["roles"]["workers"] == ["template-worker"]
+    output = capsys.readouterr().out
+    assert "当前已有 Agent" in output
+    assert "已创建 Agent:template-worker" in output

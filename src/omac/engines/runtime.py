@@ -7,6 +7,9 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import List
+
+from .models import AgentInfo, AgentProvisionSpec, RuntimeTarget
 
 
 class AgentRuntime(ABC):
@@ -23,6 +26,14 @@ class AgentRuntime(ABC):
           不同 assignee 必须可行。
         - 无法达成唤醒时抛 PlatformError,编排层据此把节点标 blocked。
         """
+
+    @abstractmethod
+    def list_targets(self) -> List[RuntimeTarget]:
+        """列出用户创建 Agent 时可选择的运行时目标。"""
+
+    @abstractmethod
+    def provision_agent(self, spec: AgentProvisionSpec) -> AgentInfo:
+        """上传缺失 Skill、创建 Agent 并绑定 Skill；不得覆盖同名 Agent。"""
 
     @abstractmethod
     def describe(self) -> str:

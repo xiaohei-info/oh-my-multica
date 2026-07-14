@@ -13,6 +13,7 @@ import json
 import os
 import subprocess
 import tempfile
+import zipfile
 from typing import Any, Dict, List, Optional
 
 import yaml
@@ -23,8 +24,11 @@ from ..core.taskmeta import (
     SOURCE_REFS_KEY, TaskKind, TaskPhase, VERIFICATION_REF_KEY, WORKER_BOUNCE_KEY,
     parse_bounces, parse_kind, parse_phase,
 )
-from ..errors import AuthError, PlatformError
-from .models import EngineConfig, ProjectInfo, WorkItem, WorkItemStatus, WorkspaceInfo
+from ..errors import AuthError, PlatformError, ValidationError
+from .models import (
+    AgentInfo, AgentProvisionSpec, EngineConfig, ProjectInfo, RuntimeTarget,
+    SkillPackage, WorkItem, WorkItemStatus, WorkspaceInfo,
+)
 from .metadata_policy import assert_metadata_write_allowed, parse_payload_text
 from .runtime import AgentRuntime
 from .store import WorkItemStore
@@ -721,6 +725,110 @@ class MulticaRuntime(AgentRuntime):
             if status in {"failed", "cancelled", "completed"}:
                 self._store._run_multica(["issue", "rerun", item_id, "--output", "json"])
         return None
+
+    @staticmethod
+    def _items(payload, key: str) -> List[Dict[str, Any]]:
+        if isinstance(payload, list):
+            return [item for item in payload if isinstance(item, dict)]
+        if isinstance(payload, dict):
+            items = payload.get(key) or payload.get("data") or []
+            if isinstance(items, list):
+                return [item for item in items if isinstance(item, dict)]
+        return []
+
+    def list_targets(self) -> List[RuntimeTarget]:
+        payload = self._store._run_multica(["runtime", "list", "--output", "json"])
+        targets = []
+        for item in self._items(payload, "runtimes"):
+            runtime_id = item.get("id")
+            if not runtime_id:
+                continue
+            targets.append(RuntimeTarget(
+                id=str(runtime_id),
+                name=str(item.get("name") or runtime_id),
+                type=str(
+                    item.get("runtime_type") or item.get("type")
+                    or item.get("provider") or item.get("runtime_mode") or ""),
+                status=str(item.get("status") or "unknown"),
+            ))
+        return targets
+
+    @staticmethod
+    def _write_skill_archive(skill: SkillPackage, destination: str) -> None:
+        with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for path in skill.files:
+                archive.write(path, path.relative_to(skill.path).as_posix())
+
+    def _ensure_skill_ids(self, skills: List[SkillPackage]) -> List[str]:
+        payload = self._store._run_multica(["skill", "list", "--output", "json"])
+        current = {
+            str(item.get("name")): str(item.get("id"))
+            for item in self._items(payload, "skills")
+            if item.get("name") and item.get("id")
+        }
+        for skill in skills:
+            if skill.name in current:
+                continue
+            fd, archive_path = tempfile.mkstemp(prefix=f"omac-{skill.name}-", suffix=".zip")
+            os.close(fd)
+            try:
+                self._write_skill_archive(skill, archive_path)
+                result = self._store._run_multica([
+                    "skill", "import", "--file", archive_path,
+                    "--on-conflict", "skip", "--output", "json",
+                ])
+            finally:
+                try:
+                    os.unlink(archive_path)
+                except FileNotFoundError:
+                    pass
+            if isinstance(result, dict) and result.get("id"):
+                current[skill.name] = str(result["id"])
+
+        missing = [skill.name for skill in skills if skill.name not in current]
+        if missing:
+            payload = self._store._run_multica(["skill", "list", "--output", "json"])
+            current.update({
+                str(item.get("name")): str(item.get("id"))
+                for item in self._items(payload, "skills")
+                if item.get("name") and item.get("id")
+            })
+            missing = [name for name in missing if name not in current]
+        if missing:
+            raise PlatformError(
+                f"Skill 上传后仍无法解析 ID:{', '.join(missing)} —— 运行 `multica skill list` 检查")
+        return [current[skill.name] for skill in skills]
+
+    def provision_agent(self, spec: AgentProvisionSpec) -> AgentInfo:
+        if not spec.name.strip():
+            raise ValidationError("Agent 名称不能为空")
+        agents = self._items(
+            self._store._run_multica(["agent", "list", "--output", "json"]), "agents")
+        if any(item.get("name") == spec.name for item in agents):
+            raise ValidationError(
+                f"Agent '{spec.name}' 已存在 —— 请选择已有 Agent 或换一个名称")
+
+        skill_ids = self._ensure_skill_ids(spec.skills)
+        result = self._store._run_multica([
+            "agent", "create",
+            "--name", spec.name,
+            "--description", spec.description,
+            "--instructions", spec.instructions,
+            "--runtime-id", spec.runtime_id,
+            "--visibility", "workspace",
+            "--output", "json",
+        ])
+        if not isinstance(result, dict) or not result.get("id"):
+            raise PlatformError(
+                "Agent 创建成功响应缺少 id —— 运行 `multica agent list --output json` 检查")
+        agent = AgentInfo(id=str(result["id"]), name=str(result.get("name") or spec.name))
+        if skill_ids:
+            self._store._run_multica([
+                "agent", "skills", "set", agent.id,
+                "--skill-ids", ",".join(skill_ids),
+                "--output", "json",
+            ])
+        return agent
 
     def describe(self) -> str:
         return "multica: assign 即唤醒(daemon 认领并拉起 agent CLI),wake 为确认性 no-op"

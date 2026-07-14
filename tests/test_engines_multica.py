@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from omac.engines.models import EngineConfig
 from omac.engines.models import WorkItemStatus
 from omac.engines.multica import MulticaStore
@@ -383,3 +385,84 @@ def test_multica_runtime_reruns_completed_direct_without_submit(monkeypatch):
     MulticaRuntime(store).wake("issue-1", "alice", "worker")
 
     assert ["issue", "rerun", "issue-1", "--output", "json"] in calls
+
+
+def test_multica_runtime_provisions_missing_skill_then_creates_agent(tmp_path, monkeypatch):
+    from omac.agent_templates import SkillTemplate
+    from omac.engines.models import AgentProvisionSpec
+    from omac.engines.multica import MulticaRuntime
+
+    skill_root = tmp_path / "quality"
+    (skill_root / "references").mkdir(parents=True)
+    (skill_root / "SKILL.md").write_text(
+        "---\nname: quality\ndescription: quality rules\n---\n\n# Quality\n",
+        encoding="utf-8",
+    )
+    (skill_root / "references" / "guide.md").write_text("guide", encoding="utf-8")
+    skill = SkillTemplate(
+        name="quality",
+        description="quality rules",
+        path=skill_root,
+        files=tuple(sorted(p for p in skill_root.rglob("*") if p.is_file())),
+    )
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    runtime = MulticaRuntime(store)
+    calls = []
+    imported = False
+
+    def fake_run(args, capture=True):
+        nonlocal imported
+        calls.append(args)
+        if args[:2] == ["agent", "list"]:
+            return []
+        if args[:2] == ["skill", "list"]:
+            return ([{"id": "skill-1", "name": "quality"}] if imported else [])
+        if args[:2] == ["skill", "import"]:
+            archive = Path(args[args.index("--file") + 1])
+            assert archive.exists()
+            import zipfile
+            with zipfile.ZipFile(archive) as zf:
+                assert sorted(zf.namelist()) == ["SKILL.md", "references/guide.md"]
+            imported = True
+            return {"id": "skill-1", "name": "quality"}
+        if args[:2] == ["agent", "create"]:
+            assert args[args.index("--runtime-id") + 1] == "runtime-1"
+            assert args[args.index("--instructions") + 1] == "rules"
+            return {"id": "agent-1", "name": "template-worker"}
+        if args[:3] == ["agent", "skills", "set"]:
+            assert args[3] == "agent-1"
+            assert args[args.index("--skill-ids") + 1] == "skill-1"
+            return {"ok": True}
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+
+    created = runtime.provision_agent(AgentProvisionSpec(
+        name="template-worker",
+        description="worker template",
+        instructions="rules",
+        runtime_id="runtime-1",
+        skills=[skill],
+    ))
+
+    assert created.id == "agent-1"
+    assert any(call[:2] == ["skill", "import"] for call in calls)
+    assert any(call[:3] == ["agent", "skills", "set"] for call in calls)
+
+
+def test_multica_runtime_lists_actual_runtime_shape(monkeypatch):
+    from omac.engines.multica import MulticaRuntime
+
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    monkeypatch.setattr(store, "_run_multica", lambda args: [{
+        "id": "runtime-1",
+        "name": "Codex Runtime",
+        "provider": "codex",
+        "runtime_mode": "app-server",
+        "status": "online",
+    }])
+
+    targets = MulticaRuntime(store).list_targets()
+
+    assert len(targets) == 1
+    assert targets[0].type == "codex"
