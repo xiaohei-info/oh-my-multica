@@ -357,6 +357,8 @@ class MockStore(WorkItemStore):
                 if content is None:
                     content = next(iter(deliverable.values()), "")
                 item.deliverable = content
+                if item.kind == TaskKind.PLAN:
+                    item.project_rules = deliverable.get("project_rules")
                 item.phase = TaskPhase.REVIEW
                 item.status = WorkItemStatus.IN_REVIEW
             else:
@@ -560,6 +562,7 @@ class MockStore(WorkItemStore):
         review_bounce: Optional[int] = None,
         merge_bounce: Optional[int] = None,
         deliverable: Optional[str] = None,
+        project_rules: Optional[str] = None,
         source_refs: Optional[List[Dict[str, Any]]] = None,
         description: Optional[str] = None,
     ) -> WorkItem:
@@ -604,6 +607,8 @@ class MockStore(WorkItemStore):
             item.bounces.merge = merge_bounce
         if deliverable is not None:
             item.deliverable = deliverable
+        if project_rules is not None:
+            item.project_rules = project_rules
         if source_refs is not None:
             item.source_refs = source_refs
         if description is not None:

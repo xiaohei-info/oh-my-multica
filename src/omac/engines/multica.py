@@ -20,7 +20,9 @@ import yaml
 
 from ..core.taskmeta import (
     CI_BOUNCE_KEY, CONTRACT_REF_KEY, DECISION_REQUIRED_KEY, DELIVERABLE_KEY,
-    DELIVERABLE_REF_KEY, KIND_KEY, MERGE_BOUNCE_KEY, PHASE_KEY, REVIEW_BOUNCE_KEY, REVIEW_REPORT_REF_KEY,
+    DELIVERABLE_REF_KEY, KIND_KEY, MERGE_BOUNCE_KEY, PHASE_KEY,
+    PROJECT_RULES_KEY, PROJECT_RULES_REF_KEY, REVIEW_BOUNCE_KEY,
+    REVIEW_REPORT_REF_KEY,
     SOURCE_REFS_KEY, TaskKind, TaskPhase, VERIFICATION_REF_KEY, WORKER_BOUNCE_KEY,
     parse_bounces, parse_kind, parse_phase,
 )
@@ -190,12 +192,14 @@ class MulticaStore(WorkItemStore):
         title = {
             "contract": ui("Node contract file", "节点 contract 文件"),
             "deliverable": ui("Stage delivery file", "阶段交付文件"),
+            "project-rules": ui("Project rules file", "项目级开发规范文件"),
             "verification": ui("Verification evidence file", "验证证据文件"),
             "review-report": ui("Review report file", "评审报告文件"),
         }.get(key, ui("Handoff file", "交接文件"))
         ref_key = {
             "contract": CONTRACT_REF_KEY,
             "deliverable": DELIVERABLE_REF_KEY,
+            "project-rules": PROJECT_RULES_REF_KEY,
             "verification": VERIFICATION_REF_KEY,
             "review-report": REVIEW_REPORT_REF_KEY,
         }.get(key, f"{key}_ref")
@@ -291,6 +295,12 @@ class MulticaStore(WorkItemStore):
         if not deliverable and isinstance(deliverable_ref, dict):
             deliverable = self._load_payload_comment(issue_data["id"], "deliverable", deliverable_ref)
 
+        project_rules_ref = self._json_metadata(metadata, PROJECT_RULES_REF_KEY)
+        project_rules = metadata.get(PROJECT_RULES_KEY)
+        if not project_rules and isinstance(project_rules_ref, dict):
+            project_rules = self._load_payload_comment(
+                issue_data["id"], "project-rules", project_rules_ref)
+
         verification_ref = self._json_metadata(metadata, VERIFICATION_REF_KEY)
         review_report_ref = self._json_metadata(metadata, REVIEW_REPORT_REF_KEY)
         contract_ref = self._json_metadata(metadata, CONTRACT_REF_KEY)
@@ -347,6 +357,9 @@ class MulticaStore(WorkItemStore):
             bounces=parse_bounces(metadata),
             deliverable=deliverable,
             deliverable_ref=deliverable_ref if isinstance(deliverable_ref, dict) else None,
+            project_rules=project_rules,
+            project_rules_ref=(
+                project_rules_ref if isinstance(project_rules_ref, dict) else None),
         )
 
     def _resolve_agent_id(self, agent_name: str) -> str:
@@ -594,6 +607,7 @@ class MulticaStore(WorkItemStore):
         review_bounce: Optional[int] = None,
         merge_bounce: Optional[int] = None,
         deliverable: Optional[str] = None,
+        project_rules: Optional[str] = None,
         source_refs: Optional[List[Dict[str, Any]]] = None,
         description: Optional[str] = None,
     ) -> WorkItem:
@@ -631,9 +645,21 @@ class MulticaStore(WorkItemStore):
             self._set_metadata(item_id, REVIEW_BOUNCE_KEY, str(review_bounce))
         if merge_bounce is not None:
             self._set_metadata(item_id, MERGE_BOUNCE_KEY, str(merge_bounce))
+        delivery_refs = []
         if deliverable is not None:
-            ref = self._publish_payload_comment(item_id, "deliverable", deliverable, ".md")
-            self._set_metadata(item_id, DELIVERABLE_REF_KEY, ref)
+            delivery_refs.append((
+                DELIVERABLE_REF_KEY,
+                self._publish_payload_comment(
+                    item_id, "deliverable", deliverable, ".md"),
+            ))
+        if project_rules is not None:
+            delivery_refs.append((
+                PROJECT_RULES_REF_KEY,
+                self._publish_payload_comment(
+                    item_id, "project-rules", project_rules, ".md"),
+            ))
+        for key, ref in delivery_refs:
+            self._set_metadata(item_id, key, ref)
         if source_refs is not None:
             self._set_metadata(item_id, SOURCE_REFS_KEY, source_refs)
         if phase is not None:

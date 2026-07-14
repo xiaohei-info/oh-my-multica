@@ -130,6 +130,7 @@ class WorkItemStore(ABC):
         review_bounce: Optional[int] = None,
         merge_bounce: Optional[int] = None,
         deliverable: Optional[str] = None,
+        project_rules: Optional[str] = None,
         source_refs: Optional[List[Dict[str, Any]]] = None,
         description: Optional[str] = None,
     ) -> WorkItem:
@@ -140,6 +141,7 @@ class WorkItemStore(ABC):
         - worker_bounce/ci_bounce/review_bounce/merge_bounce:回退的绝对值
           (pipeline 读当前值、+1、写回;Store 只存取不做状态机);
         - deliverable:按 kind 承载 plan/acceptance/manifest 等交付正文。
+        - project_rules:plan 的项目级开发规范交付正文。
         - description:回填 Human-first issue 正文(顶部单一 bootstrap 嵌入真实 id)。
         """
 

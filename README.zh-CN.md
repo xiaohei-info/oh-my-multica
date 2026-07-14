@@ -148,8 +148,10 @@ workspace 中同名 Skill、上传缺失 Skill 的完整目录，然后创建 Ag
 
 ### 2. 计划与 DAG 拆解(`omac plan`)
 
-`omac plan create` 已实现完整流水线:计划 → 验收文档 → 拆解为 manifest DAG。默认行为
-读 `.omac/config.yaml` 的 `workflow` 块;`--doc` 跳过 planner 直接用现成设计文档,
+`omac plan create` 已实现完整流水线:设计方案 + 项目级开发规范 → 验收文档 → 拆解为
+manifest DAG。planner 必须同时提交设计文档与项目规范；流水线收敛后,OMAC 更新项目根目录
+`AGENTS.md` 的管理区。默认行为读 `.omac/config.yaml` 的 `workflow` 块；`--doc` 跳过
+planner、直接使用现成设计文档,同时也跳过 `AGENTS.md` 更新。
 `--no-review` / `--no-acceptance` / `--no-confirm` 仍可按单次命令临时关阶段。
 `omac dag check` 对现成 manifest 走 lint + review 门；`omac dag show` 看摘要。
 字段与流程见 `omac plan --help`、`omac dag --help` 与

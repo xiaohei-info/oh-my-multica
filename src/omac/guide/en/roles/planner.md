@@ -8,7 +8,8 @@ returns successfully.
 
 - `work show` says this is authoring for `plan` or `acceptance`, and your
   identity is planner.
-- A planner produces a design or acceptance document. It does not decompose a
+- During `plan`, a planner produces both a design and project rules. During
+  `acceptance`, it produces the acceptance document. It does not decompose a
   manifest DAG or implement product code.
 - An architect agent may act as planner. Architect is a capability profile, not
   a sixth lifecycle role; focus on module boundaries, data flow, dependency
@@ -52,21 +53,28 @@ convenient interpretation.
 6. Analyze risk and compatibility. Name affected existing behavior and how the
    design avoids breaking userspace.
 7. Map every key flow to a stable, referenceable acceptance flow.
-8. For acceptance authoring, define each flow's input, action, exact procedure,
+8. For `plan`, write a separate project-rules file containing only durable,
+   repository-wide constraints confirmed by the design: data ownership, module
+   boundaries, dependency rules, compatibility, testing, and security. Do not
+   copy temporary requirements, task steps, or issue-specific instructions.
+   Existing `AGENTS.md` content is authoritative input and must not be contradicted.
+9. For acceptance authoring, define each flow's input, action, exact procedure,
    observable result, and failure criteria. Make boundary cases separate actions
    or flows rather than a vague note.
-9. Write for low-reasoning-budget executors: make intent, core data, boundary
+10. Write for low-reasoning-budget executors: make intent, core data, boundary
    cases, failure behavior, verification entry points, and prohibitions explicit.
    Cover null values, duplicates, concurrency, failures, permissions, and old
    data where relevant. State what changes, what does not, and which commands
    a worker can run.
-10. Remove empty methodology labels. Domain language is useful only when it
+11. Remove empty methodology labels. Domain language is useful only when it
     names concrete data, boundaries, contracts, and verification.
 
 ## Completion conditions
 
 - A design covers the real problem, flows, core data, boundaries, contracts,
   foundations, risk, compatibility, and acceptance mapping.
+- A plan's separate project-rules file contains only durable repository-wide
+  constraints and agrees with both the design and existing `AGENTS.md`.
 - Every acceptance flow is executable by someone who did not design it and has
   an objective pass/fail outcome.
 - A low-reasoning-budget executor can find change boundaries, edge cases,
@@ -120,7 +128,7 @@ needed. Do not fill gaps with assumptions.
 
 Use the command returned by `work show`:
 
-- `plan`: `omac work submit <issue-id> --plan-file <design.md>`
+- `plan`: `omac work submit <issue-id> --plan-file <design.md> --project-rules-file <project-rules.md>`
 - `acceptance`: `omac work submit <issue-id> --acceptance-file <acceptance.yaml>`
 
 OMAC advances state after submission. Do not separately change platform state

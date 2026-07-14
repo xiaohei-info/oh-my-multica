@@ -22,6 +22,10 @@ All notable changes to **omac** are documented here. The format follows
 - `omac init` can create Multica agents from nine built-in templates. It injects
   Instructions, uploads missing Skills, and binds them to a new agent; existing
   agents are unchanged and all created agents enter the same role-mapping pool.
+- Planner-authored plans now require a second reviewed `project-rules` artifact.
+  OMAC persists it through the engine, updates only its managed section in the
+  repository-root `AGENTS.md`, and commits it with the manifest and acceptance
+  outputs. `--doc` continues to skip planner authoring and this update.
 
 ## [1.0.0] — 2026-07-05
 

@@ -312,6 +312,13 @@ PLAN_TEXT = """\
 2. 搭 dashboard
 """
 
+PROJECT_RULES_TEXT = """\
+## OMAC 项目级开发规范
+
+- 保持现有登录与权限错误语义向后兼容。
+- 新行为必须先写测试，并运行完整测试集。
+"""
+
 ACCEPTANCE_YAML = """\
 flows:
   - id: flow-login
@@ -413,7 +420,8 @@ def _configure_create_mock(tmp_path, monkeypatch):
     engine.store.set_review_rejects(0)
     # 人机门默认开启:模拟人工把设计/验收 issue 流转到 DONE 放行。
     MockStore.set_auto_confirm(True)
-    MockStore.set_kind_delivery("plan", {"plan": PLAN_TEXT})
+    MockStore.set_kind_delivery(
+        "plan", {"plan": PLAN_TEXT, "project_rules": PROJECT_RULES_TEXT})
     MockStore.set_kind_delivery("acceptance", {"acceptance": ACCEPTANCE_YAML})
     MockStore.set_kind_delivery("decompose", {"manifest": GOOD_MANIFEST})
     return engine
@@ -436,6 +444,10 @@ def test_create_default_combination(tmp_path, monkeypatch, capsys):
     assert "omac dag run .omac/demo-create.yaml" in out
     assert (tmp_path / ".omac" / "demo-create.yaml").exists()
     assert (tmp_path / ".omac" / "demo-create.acceptance.yaml").exists()
+    agents = (tmp_path / "AGENTS.md").read_text()
+    assert "<!-- OMAC:PROJECT_RULES:START -->" in agents
+    assert PROJECT_RULES_TEXT.strip() in agents
+    assert "<!-- OMAC:PROJECT_RULES:END -->" in agents
     data = yaml.safe_load((tmp_path / ".omac" / "demo-create.yaml").read_text())
     assert data["meta"]["acceptance_required"] is True
     assert data["meta"]["acceptance_file"] == "demo-create.acceptance.yaml"
@@ -559,8 +571,28 @@ def test_create_with_doc_skips_plan(tmp_path, monkeypatch):
     doc.write_text(PLAN_TEXT)
     assert main(["plan", "create", "--name", "demo-doc", "--doc", str(doc)]) == exit_codes.OK
     assert (tmp_path / ".omac" / "demo-doc.yaml").exists()
+    assert not (tmp_path / "AGENTS.md").exists()
     plan_item = _first_item_of_kind(engine, TaskKind.PLAN)
     assert plan_item is None, "带 --doc 时不应创建 plan 阶段 work item"
+
+
+def test_create_replaces_only_existing_agents_managed_section(tmp_path, monkeypatch):
+    _configure_create_mock(tmp_path, monkeypatch)
+    agents = tmp_path / "AGENTS.md"
+    agents.write_text(
+        "# User rules\n\nKeep this paragraph.\n\n"
+        "<!-- OMAC:PROJECT_RULES:START -->\n"
+        "old rules\n"
+        "<!-- OMAC:PROJECT_RULES:END -->\n"
+    )
+
+    assert main(["plan", "create", "--name", "demo-agents"]) == exit_codes.OK
+
+    content = agents.read_text()
+    assert "Keep this paragraph." in content
+    assert "old rules" not in content
+    assert content.count("<!-- OMAC:PROJECT_RULES:START -->") == 1
+    assert PROJECT_RULES_TEXT.strip() in content
 
 
 def test_create_threads_source_refs_through_chain(tmp_path, monkeypatch):
@@ -697,7 +729,7 @@ def test_create_syncs_manifest_and_acceptance_as_one_plan_output(
     assert main(["plan", "create", "--name", "demo-sync"]) == exit_codes.OK
 
     assert calls == [
-        ([".omac/demo-sync.yaml", ".omac/demo-sync.acceptance.yaml"],
+        ([".omac/demo-sync.yaml", ".omac/demo-sync.acceptance.yaml", "AGENTS.md"],
          "chore(omac): sync plan outputs"),
     ]
 

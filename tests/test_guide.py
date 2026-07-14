@@ -99,7 +99,10 @@ def test_roles_topic_is_index_not_protocol_dump() -> None:
 
 def test_planner_role_has_design_and_acceptance_protocol() -> None:
     content = load_role_topic("planner")
-    for item in ["设计方案", "验收文档", "核心数据", "模块边界", "跨模块契约", "验收映射"]:
+    for item in [
+        "设计方案", "验收文档", "核心数据", "模块边界", "跨模块契约", "验收映射",
+        "--project-rules-file", "AGENTS.md",
+    ]:
         assert item in content, f"planner missing design protocol: {item}"
 
 
@@ -117,7 +120,9 @@ def test_worker_role_has_tdd_and_evidence() -> None:
 
 def test_reviewer_role_has_verdict_and_independent_checks() -> None:
     content = load_role_topic("reviewer")
-    for item in ["独立复跑", "pass", "reject", "review_goals", "coverage"]:
+    for item in [
+        "独立复跑", "pass", "reject", "review_goals", "coverage", "project_rules",
+    ]:
         assert item in content, f"reviewer missing review anchor: {item}"
 
 
@@ -129,7 +134,10 @@ def test_acceptor_role_has_final_acceptance_protocol() -> None:
 
 def test_design_artifact_defines_markdown_frontmatter_schema() -> None:
     content = load_artifact_topic("design")
-    for item in ["schema: omac.design/v1", "Markdown", "核心数据", "模块边界", "风险与兼容性"]:
+    for item in [
+        "schema: omac.design/v1", "Markdown", "核心数据", "模块边界", "风险与兼容性",
+        "--project-rules-file", "项目级开发规范",
+    ]:
         assert item in content, f"design artifact missing schema anchor: {item}"
 
 

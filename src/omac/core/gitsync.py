@@ -11,7 +11,7 @@ import os
 import subprocess
 
 from . import logsetup
-from ..errors import ValidationError
+from ..errors import NeedsDecision, ValidationError
 from ..i18n import ui
 
 log = logsetup.get_logger(__name__)
@@ -221,6 +221,31 @@ def ensure_config_synced(config_path: str, branch: str = "main",
             f"  {r.stderr.strip()}\n"
             f"  远程可能已分叉,先 `git pull --rebase origin {branch}` 再重试"))
     log.info(logsetup.EVT_CONFIG_SYNCED, path=config_path, branch=branch)
+
+
+def ensure_files_clean(paths, repo_root: str = ".", engine_type=None) -> None:
+    """自动提交业务文件前确保没有用户未提交改动。"""
+    if not sync_enabled(engine_type):
+        return
+    relative_paths = _repo_relative_paths(repo_root, paths)
+    result = _run(repo_root, "status", "--porcelain", "--", *relative_paths)
+    if result.returncode != 0:
+        raise ValidationError(ui(
+            f"Could not inspect Git status for: {', '.join(relative_paths)}\n"
+            f"  {result.stderr.strip()}",
+            f"无法检查这些文件的 Git 状态:{', '.join(relative_paths)}\n"
+            f"  {result.stderr.strip()}"))
+    if not result.stdout.strip():
+        return
+    joined = " ".join(relative_paths)
+    raise NeedsDecision(ui(
+        f"OMAC will not mix existing user changes into its automatic plan-output commit: {joined}\n"
+        f"Commit them first with `git add {joined} && git commit`, or temporarily "
+        f"stash them with `git stash push -- {joined}`, then rerun the plan.",
+        f"OMAC 不会把用户已有改动混入自动 plan 产物提交:{joined}\n"
+        f"请先执行 `git add {joined} && git commit` 提交，或执行 "
+        f"`git stash push -- {joined}` 暂存后重新运行 plan。"),
+        report={"paths": relative_paths, "reason": "user_changes_before_plan"})
 
 
 def commit_files(paths, message: str, repo_root: str = ".",

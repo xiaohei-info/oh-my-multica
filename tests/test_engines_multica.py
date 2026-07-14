@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from omac.engines.models import EngineConfig
 from omac.engines.models import WorkItemStatus
 from omac.engines.multica import MulticaStore
@@ -93,6 +95,96 @@ def test_multica_review_report_source_writes_ref_without_full_report_metadata(mo
         "bytes": len("summary: large reviewer report\n".encode("utf-8")),
         "filename": "omac-review-report.yaml",
     }) in writes
+
+
+def test_multica_project_rules_are_uploaded_and_read_through_ref(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    writes = []
+    rules = "## Project rules\n\n- Preserve compatibility.\n"
+
+    monkeypatch.setattr(
+        store, "_set_metadata",
+        lambda item_id, key, value: writes.append((key, value)),
+    )
+    monkeypatch.setattr(
+        store,
+        "_publish_payload_comment",
+        lambda item_id, label, source, suffix: {
+            "comment_id": "c-rules",
+            "attachment_id": "a-rules",
+            "sha256": "rules-sha",
+            "bytes": len(source.encode("utf-8")),
+            "filename": f"omac-{label}{suffix}",
+        },
+    )
+    monkeypatch.setattr(
+        store,
+        "get_work_item",
+        lambda item_id: store._issue_to_work_item(
+            {
+                "id": item_id,
+                "title": "t",
+                "description": "d",
+                "status": "in_review",
+                "metadata": {
+                    "dag_key": "plan-p1",
+                    "kind": "plan",
+                    "phase": "review",
+                    "project_rules_ref": {
+                        "comment_id": "c-rules",
+                        "attachment_id": "a-rules",
+                    },
+                },
+            },
+            "ws",
+        ),
+    )
+    monkeypatch.setattr(
+        store,
+        "_load_payload_comment",
+        lambda item_id, key, ref: rules if key == "project-rules" else None,
+    )
+
+    item = store.update_work_item_metadata("issue-1", project_rules=rules)
+
+    assert writes == [("project_rules_ref", {
+        "comment_id": "c-rules",
+        "attachment_id": "a-rules",
+        "sha256": "rules-sha",
+        "bytes": len(rules.encode("utf-8")),
+        "filename": "omac-project-rules.md",
+    })]
+    assert item.project_rules == rules
+    assert item.project_rules_ref["attachment_id"] == "a-rules"
+
+
+def test_multica_plan_delivery_does_not_write_refs_when_second_upload_fails(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    writes = []
+    uploads = []
+
+    monkeypatch.setattr(
+        store, "_set_metadata",
+        lambda item_id, key, value: writes.append((key, value)),
+    )
+
+    def publish(item_id, label, source, suffix):
+        uploads.append(label)
+        if label == "project-rules":
+            raise RuntimeError("upload failed")
+        return {"comment_id": "c1", "attachment_id": "a1"}
+
+    monkeypatch.setattr(store, "_publish_payload_comment", publish)
+
+    with pytest.raises(RuntimeError, match="upload failed"):
+        store.update_work_item_metadata(
+            "issue-1",
+            deliverable="# Design\n",
+            project_rules="## Project rules\n",
+        )
+
+    assert uploads == ["deliverable", "project-rules"]
+    assert writes == []
 
 
 def test_multica_set_node_contract_writes_ref_without_full_contract_metadata(monkeypatch):

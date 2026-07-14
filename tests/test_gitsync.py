@@ -16,7 +16,7 @@ from omac.core.gitsync import (
     ensure_config_synced,
     sync_enabled,
 )
-from omac.errors import ValidationError
+from omac.errors import NeedsDecision, ValidationError
 
 
 # ==================== sync_enabled 判定矩阵 ====================
@@ -90,6 +90,23 @@ def _dirty(work, path):
     out = subprocess.run(["git", "status", "--porcelain", "--", path],
                          cwd=str(work), capture_output=True, text=True)
     return bool(out.stdout.strip())
+
+
+def test_ensure_files_clean_rejects_user_changes_before_auto_commit(tmp_path):
+    work = _make_repo(tmp_path)
+    agents = work / "AGENTS.md"
+    agents.write_text("# Initial\n")
+    _git(work, "add", "AGENTS.md")
+    _git(work, "commit", "-m", "add agents")
+    _git(work, "push", "origin", "main")
+    agents.write_text("# User edit\n")
+
+    with pytest.raises(NeedsDecision) as exc:
+        gitsync.ensure_files_clean(
+            ["AGENTS.md"], repo_root=str(work), engine_type="multica")
+
+    assert exc.value.report["paths"] == ["AGENTS.md"]
+    assert agents.read_text() == "# User edit\n"
 
 
 class TestEnsureConfigSynced:

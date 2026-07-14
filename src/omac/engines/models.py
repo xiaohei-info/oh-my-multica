@@ -119,6 +119,9 @@ class WorkItem:
     # 通用交付物:按 kind 承载 plan/acceptance/manifest/acceptance-results 正文
     deliverable: Optional[str] = None
     deliverable_ref: Optional[Dict[str, Any]] = None
+    # plan 的第二份正式交付:经评审的项目级开发规范。
+    project_rules: Optional[str] = None
+    project_rules_ref: Optional[Dict[str, Any]] = None
     # 执行面信号:agent run 已终止但未通过 omac work submit 推进 issue。
     agent_run_finished_without_submit: bool = False
 
