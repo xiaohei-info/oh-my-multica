@@ -166,17 +166,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
-
-    # 进度事件流一次性配置(事件走 stderr);须在任何命令产出事件前完成。
-    configure_logging(resolve_log_format(getattr(args, "log_format", None)))
-
-    if not getattr(args, "command", None):
-        parser.print_help()
-        return exit_codes.OK
-
     try:
+        parser = build_parser()
+        args = parser.parse_args(argv)
+
+        # 进度事件流一次性配置(事件走 stderr);须在任何命令产出事件前完成。
+        configure_logging(resolve_log_format(getattr(args, "log_format", None)))
+
+        if not getattr(args, "command", None):
+            parser.print_help()
+            return exit_codes.OK
+
         code = args._run(args)
         return exit_codes.OK if code is None else code
     except NeedsDecision as e:

@@ -29,6 +29,20 @@ def test_language_rejects_unknown_value():
         resolve_language({"language": "jp"})
 
 
+def test_invalid_persisted_language_returns_validation_exit_code(
+    tmp_path, monkeypatch, capsys,
+):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".omac").mkdir()
+    (tmp_path / ".omac" / "config.yaml").write_text("language: jp\n")
+
+    assert main(["config", "get"]) == exit_codes.VALIDATION
+
+    err = capsys.readouterr().err
+    assert "language must be one of: en, cn" in err
+    assert "Traceback" not in err
+
+
 def test_config_set_language_validates_values(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
