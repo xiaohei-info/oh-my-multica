@@ -574,11 +574,15 @@ document.querySelectorAll("footer.tabs input[name=tab]").forEach(r=>{
 
 /* ---------- meta + 启动 ---------- */
 async function init(){
+  applyLanguage("en");
   try{
     const meta = await api("/api/meta");
     state.refresh = meta.refresh||10;
-    applyLanguage(meta.language||"en");
   }catch(e){ /* 缺 meta 不影响主流程 */ }
+  try{
+    const config = await api("/api/config");
+    applyLanguage(config.language||"en");
+  }catch(e){ /* 配置不可用时保留英文默认值 */ }
   await loadManifests();
 }
 init();

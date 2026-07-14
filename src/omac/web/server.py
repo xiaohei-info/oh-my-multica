@@ -24,7 +24,7 @@ from urllib.parse import parse_qs, urlparse
 from omac.cli import exit_codes
 from omac.core import config as config_mod
 from omac.errors import OmacError, ValidationError
-from omac.i18n import current_language, ui
+from omac.i18n import ui
 
 from . import api
 
@@ -228,7 +228,6 @@ class _JSONResponder:
             return self._send_json(200, {
                 "refresh": self.refresh,
                 "version": _version(),
-                "language": current_language(),
             })
         if path == "/api/manifests":
             return self._send_json(200, api.get_manifests(orchestrator_dir))
