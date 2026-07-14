@@ -61,7 +61,10 @@ def _delivery_of(kind: TaskKind, item: WorkItem) -> Dict[str, Any]:
     而非 artifacts —— 后者是 develop 节点的 pr_url 证据,两条通道不混用。
     """
     key = DELIVERY_CONTENT_KEY.get(kind, kind.value)
-    return {key: item.deliverable}
+    delivery = {key: item.deliverable}
+    if kind == TaskKind.PLAN and item.project_rules is not None:
+        delivery["project_rules"] = item.project_rules
+    return delivery
 
 
 def _has_review_verdict(item: WorkItem) -> bool:

@@ -271,7 +271,7 @@ def test_guide_reads_role_and_artifact_topics(capsys):
     assert main(["guide", "role", "planner"]) == exit_codes.OK
     out = capsys.readouterr().out
     assert "planner" in out
-    assert "A planner produces" in out
+    assert "a planner produces both a design and project rules" in out
     assert "acceptance document" in out
 
     assert main(["guide", "artifact", "design"]) == exit_codes.OK

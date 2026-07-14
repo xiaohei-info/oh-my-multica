@@ -19,7 +19,7 @@
 
 ## 权威输入
 
-- `work show` 返回的任务类型、评审对象、deliverable、contract、env_setup、上游 issue、`submit` 和 `guide_refs`。
+- `work show` 返回的任务类型、评审对象、deliverable、`project_rules`、contract、env_setup、上游 issue、`submit` 和 `guide_refs`。
 - 真实设计/验收/manifest 交付物，或当前 PR diff 与变更后的文件。
 - `source_of_truth`、acceptance flow、`non_goals`、`verification_commands`、
   `integration_gates`、coverage gate 和 `scope_paths`。
@@ -33,6 +33,8 @@
 3. 按 env_setup 建立独立验证环境，独立复跑 verification commands 和 integration gates，记录真实退出码与结果。
 4. 检查需求对齐：该做的已完成，`non_goals` 和相邻范围没有被突破。
 5. 检查设计与契约：实现或产物符合 `source_of_truth`，共享契约只被 import，没有平行定义。
+   `plan review` 必须同时检查 `project_rules`：它与设计及已有 `AGENTS.md` 一致，只包含长期仓库级约束，
+   不混入临时任务步骤或本次 issue 专属要求。
 6. 检查测试质量：主路径、失败路径和边界条件都有有效测试；不能只看测试数量。
 7. 检查集成门：commands、metrics、artifacts、`source_of_truth`、`delivery_goal` 和验收映射彼此一致。
 8. 检查 coverage；改动分支 coverage 低于 gate 一律 reject。

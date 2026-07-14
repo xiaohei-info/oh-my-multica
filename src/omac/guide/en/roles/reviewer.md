@@ -21,7 +21,7 @@ conflict or cannot be reproduced, do not infer pass.
 
 ## Authoritative inputs
 
-- `work show` task, deliverable, contract, env setup, upstream issues, submit
+- `work show` task, deliverable, `project_rules`, contract, env setup, upstream issues, submit
   command, and guide references.
 - The real design, acceptance document, manifest, PR diff, and changed files.
 - Source anchors, acceptance flows, non-goals, verification commands, integration
@@ -39,7 +39,9 @@ conflict or cannot be reproduced, do not infer pass.
 4. Check requested behavior is present and non-goals and adjacent scope are
    respected.
 5. Check source-of-truth alignment and shared contracts; imports are permitted,
-   parallel redefinitions are not.
+   parallel redefinitions are not. In `plan review`, also verify that
+   `project_rules` agrees with the design and existing `AGENTS.md`, contains only
+   durable repository-wide constraints, and excludes temporary task steps.
 6. Check test quality across main paths, failures, and edge cases—not just count.
 7. Check that commands, metrics, artifacts, source anchors, delivery goals, and
    acceptance mappings agree.

@@ -304,7 +304,7 @@ def test_work_show_localizes_omac_prose_without_changing_facts(
     english = json.loads(capsys.readouterr().out)
 
     assert chinese["protocol"] != english["protocol"]
-    assert english["protocol"].startswith("Write the design document:")
+    assert english["protocol"].startswith("Write two required artifacts:")
     assert chinese["authority"] != english["authority"]
     assert english["authority"][0] == "Current facts from work show"
     assert chinese["task"] == english["task"]
@@ -487,6 +487,28 @@ def test_show_treats_in_review_status_as_review_phase():
     assert "deliverable" in out["context"]
     assert "env_setup" in out["context"]
     assert "--verdict" in out["submit"]
+
+
+def test_plan_review_show_surfaces_project_rules(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    main(["config", "set", "engine", "mock"])
+    main(["config", "set", "workspace", "mock-workspace"])
+    capsys.readouterr()
+    store = _store()
+    item = _make_item(
+        store,
+        TaskKind.PLAN,
+        TaskPhase.REVIEW,
+        with_deliverable=True,
+    )
+    store.update_work_item_metadata(
+        item.id,
+        project_rules="## Project rules\n\n- Preserve compatibility.\n",
+    )
+
+    assert main(["work", "show", item.id]) == exit_codes.OK
+    out = json.loads(capsys.readouterr().out)
+    assert out["context"]["project_rules"].startswith("## Project rules")
 
 
 def test_show_unknown_issue_id(tmp_path, monkeypatch, capsys):
@@ -848,6 +870,26 @@ class TestSubmitPerKindPhase:
             )
         assert "Review target is missing" in str(exc.value)
 
+    def test_plan_review_without_project_rules_rejected(self, tmp_path):
+        eng = _engine()
+        item = eng.store.create_work_item(
+            "mock-workspace", "t", "d", dag_key="a", worker="alice", reviewer="bob",
+            kind=dispatch_mod.TaskKind.PLAN,
+            initial_status=WorkItemStatus.IN_REVIEW,
+        )
+        eng.store.update_work_item_metadata(
+            item.id,
+            deliverable="# Design\n",
+            phase=dispatch_mod.TaskPhase.REVIEW,
+        )
+        rfile = tmp_path / "report.yaml"
+        rfile.write_text(yaml.safe_dump(_make_review_report()))
+
+        with pytest.raises(ValidationError, match="project rules"):
+            dispatch_mod.submit(
+                eng.store, item.id, verdict="pass", report_file=str(rfile),
+            )
+
     # ---------- plan ----------
 
     def test_plan_authoring_success(self, tmp_path):
@@ -858,12 +900,63 @@ class TestSubmitPerKindPhase:
         )
         pfile = tmp_path / "plan.md"
         pfile.write_text("# Plan\n\n## Summary\nsteps")
-        result = dispatch_mod.submit(eng.store, item.id, plan_file=str(pfile))
+        rules_file = tmp_path / "project-rules.md"
+        rules_file.write_text("## Project rules\n\n- Keep APIs backward compatible.\n")
+        result = dispatch_mod.submit(
+            eng.store,
+            item.id,
+            plan_file=str(pfile),
+            project_rules_file=str(rules_file),
+        )
         got = eng.store.get_work_item(item.id)
         assert result.phase == TaskPhase.AUTHORING
         assert result.next_phase == TaskPhase.REVIEW
         assert got.deliverable.startswith("# Plan")
+        assert got.project_rules.startswith("## Project rules")
         assert got.status == WorkItemStatus.IN_REVIEW
+
+    def test_plan_authoring_requires_project_rules_atomically(self, tmp_path):
+        eng = _engine()
+        item = eng.store.create_work_item(
+            "mock-workspace", "t", "d", dag_key="a", worker="alice",
+            kind=dispatch_mod.TaskKind.PLAN,
+        )
+        pfile = tmp_path / "plan.md"
+        pfile.write_text("# Plan\n")
+
+        with pytest.raises(ValidationError, match="project-rules"):
+            dispatch_mod.submit(eng.store, item.id, plan_file=str(pfile))
+
+        got = eng.store.get_work_item(item.id)
+        assert got.deliverable is None
+        assert got.project_rules is None
+        assert got.status == WorkItemStatus.TODO
+
+    def test_plan_authoring_rejects_omac_markers_in_project_rules(self, tmp_path):
+        eng = _engine()
+        item = eng.store.create_work_item(
+            "mock-workspace", "t", "d", dag_key="a", worker="alice",
+            kind=dispatch_mod.TaskKind.PLAN,
+        )
+        pfile = tmp_path / "plan.md"
+        pfile.write_text("# Plan\n")
+        rules_file = tmp_path / "project-rules.md"
+        rules_file.write_text(
+            "<!-- OMAC:PROJECT_RULES:START -->\ninvalid\n"
+            "<!-- OMAC:PROJECT_RULES:END -->\n"
+        )
+
+        with pytest.raises(ValidationError, match="must not contain OMAC markers"):
+            dispatch_mod.submit(
+                eng.store,
+                item.id,
+                plan_file=str(pfile),
+                project_rules_file=str(rules_file),
+            )
+
+        got = eng.store.get_work_item(item.id)
+        assert got.deliverable is None
+        assert got.project_rules is None
 
     def test_plan_authoring_cli_tells_producer_to_stop(self, tmp_path, monkeypatch, capsys):
         """产出提交成功后的 CLI 文案不能诱导 planner 继续执行 reviewer 协议。"""
@@ -879,12 +972,19 @@ class TestSubmitPerKindPhase:
         )
         pfile = tmp_path / "plan.md"
         pfile.write_text("# Plan\n")
+        rules_file = tmp_path / "project-rules.md"
+        rules_file.write_text("## Project rules\n\n- Preserve compatibility.\n")
 
-        rc = main(["work", "submit", item.id, "--plan-file", str(pfile)])
+        rc = main([
+            "work", "submit", item.id,
+            "--plan-file", str(pfile),
+            "--project-rules-file", str(rules_file),
+        ])
         assert rc == exit_codes.OK
         out = json.loads(capsys.readouterr().out)
         assert out["submitted_phase"] == "authoring"
         assert out["next_phase"] == "review"
+        assert out["deliverable_keys"] == ["plan", "project_rules"]
         assert "verdict" not in out
         assert "Authoring is complete" in out["message"]
         assert "Do not submit a verdict" in out["message"]
@@ -898,8 +998,14 @@ class TestSubmitPerKindPhase:
         )
         pfile = tmp_path / "plan.md"
         pfile.write_text("   \n")
+        rules_file = tmp_path / "project-rules.md"
+        rules_file.write_text("## Project rules\n")
         with pytest.raises(ValidationError):
-            dispatch_mod.submit(eng.store, item.id, plan_file=str(pfile))
+            dispatch_mod.submit(
+                eng.store, item.id,
+                plan_file=str(pfile),
+                project_rules_file=str(rules_file),
+            )
         assert eng.store.get_work_item(item.id).deliverable is None
 
     # ---------- acceptance ----------
@@ -1216,7 +1322,13 @@ class TestPhaseResolution:
         # authoring submit
         pfile = tmp_path / "plan.md"
         pfile.write_text("# Plan")
-        r1 = dispatch_mod.submit(eng.store, item.id, plan_file=str(pfile))
+        rules_file = tmp_path / "project-rules.md"
+        rules_file.write_text("## Project rules\n")
+        r1 = dispatch_mod.submit(
+            eng.store, item.id,
+            plan_file=str(pfile),
+            project_rules_file=str(rules_file),
+        )
         assert r1.phase == dispatch_mod.TaskPhase.AUTHORING
         assert r1.next_phase == dispatch_mod.TaskPhase.REVIEW
         assert eng.store.get_work_item(item.id).status == WorkItemStatus.IN_REVIEW
@@ -1240,8 +1352,14 @@ class TestPhaseResolution:
         )
         pfile = tmp_path / "plan.md"
         pfile.write_text("   \n")  # empty
+        rules_file = tmp_path / "project-rules.md"
+        rules_file.write_text("## Project rules\n")
         with pytest.raises(ValidationError):
-            dispatch_mod.submit(eng.store, item.id, plan_file=str(pfile))
+            dispatch_mod.submit(
+                eng.store, item.id,
+                plan_file=str(pfile),
+                project_rules_file=str(rules_file),
+            )
         got = eng.store.get_work_item(item.id)
         assert got.deliverable is None
         assert got.status == WorkItemStatus.TODO

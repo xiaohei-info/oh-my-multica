@@ -30,7 +30,8 @@ DESCRIPTION = """Agent 处理 omac 任务时使用的唯一执行接口。
   submit   校验并提交交付物,返回 submitted_phase/next_phase/advanced_to
 
 issue 类型与交付参数:
-  plan              产出: --plan-file           review: --verdict --report-file
+  plan              产出: --plan-file --project-rules-file
+                                                   review: --verdict --report-file
   acceptance        产出: --acceptance-file      review: 同上
   decompose         产出: --manifest-file        review: 同上
   develop           产出: --pr-url --verification-file(env 依赖时须含 env_setup)
@@ -163,7 +164,14 @@ def _render_table(output: dict, language: str) -> None:
         print(f"\n## {t('work.table.review_target', language=language)}")
         if ctx.get("deliverable") is not None:
             print(f"- deliverable: {ctx['deliverable']}")
-        for key in ("deliverable_ref", "artifacts", "verification", "verification_ref"):
+        for key in (
+            "deliverable_ref",
+            "project_rules",
+            "project_rules_ref",
+            "artifacts",
+            "verification",
+            "verification_ref",
+        ):
             if ctx.get(key) is not None:
                 _render_kv(key, ctx[key])
         env_setup = ctx.get("env_setup")
@@ -216,6 +224,7 @@ def _submit(args) -> int:
         store,
         args.issue_id,
         plan_file=args.plan_file,
+        project_rules_file=args.project_rules_file,
         acceptance_file=args.acceptance_file,
         manifest_file=args.manifest_file,
         pr_url=args.pr_url,
@@ -260,6 +269,7 @@ def _submit(args) -> int:
             "submitted_phase": result.phase.value,
             "next_phase": next_phase,
             "deliverable_key": result.deliverable_key,
+            "deliverable_keys": list(result.deliverable_keys),
             "advanced_to": target,
             "message": result.message,
         }

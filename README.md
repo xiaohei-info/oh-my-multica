@@ -18,7 +18,8 @@ Long-running agent work usually fails at the seams: requirements drift, task
 state is inferred from chat, a reviewer trusts an author's summary, or a loop
 stops without anyone noticing. OMAC makes those seams explicit.
 
-- A plan becomes a design document, acceptance document, and manifest DAG.
+- A planner-authored plan becomes a reviewed design, repository-wide project
+  rules in `AGENTS.md`, an acceptance document, and a manifest DAG.
 - Each DAG node has one owner, one reviewer, a bounded contract, verification
   commands, and an integration gate.
 - `omac dag run` advances the graph in the foreground until it converges or
@@ -135,7 +136,9 @@ For the mock engine, use only `alice`, `bob`, and `charlie` in role mappings.
 `omac plan create` runs the plan → acceptance → decomposition pipeline. It uses
 the project `workflow` settings by default. `--doc` starts from an existing
 design document; `--no-review`, `--no-acceptance`, and `--no-confirm` change a
-single invocation only.
+single invocation only. Planner-authored plans must submit both the design and
+project rules; after the pipeline converges, OMAC updates the managed section of
+root `AGENTS.md`. The `--doc` path skips that update.
 
 ```bash
 omac plan create --name login-renewal --goal "Renew an expired login session"

@@ -13,8 +13,9 @@ _MESSAGES = {
     EN: {
         "config.language.prompt": "Language (en/cn)",
         "work.protocol.plan": (
-            "Write the design document: analyze the request and produce an "
-            "executable, verifiable plan anchored in acceptance goals."
+            "Write two required artifacts: an executable, verifiable design "
+            "anchored in acceptance goals, and durable repository-wide project "
+            "rules for AGENTS.md. Submit both files together."
         ),
         "work.protocol.acceptance": (
             "Write the acceptance document: turn each business flow in the "
@@ -133,7 +134,9 @@ _MESSAGES = {
     },
     CN: {
         "config.language.prompt": "语言（en/cn）",
-        "work.protocol.plan": "编写设计方案：分析需求，产出锚定验收目标、可执行、可验证的方案文档。",
+        "work.protocol.plan": (
+            "编写两份必交产物：锚定验收目标、可执行、可验证的设计方案，"
+            "以及写入 AGENTS.md 的长期项目级开发规范；两份文件必须一起提交。"),
         "work.protocol.acceptance": "编写验收文档：把定稿设计方案的业务流程逐条转成用户视角、端到端、可执行的验收动作。",
         "work.protocol.decompose": "把设计方案和验收文档拆成 manifest DAG：每个节点都有完整 contract，acceptance 锚定验收文档，DAG 无环。",
         "work.protocol.develop": "推分支并开 PR（base=contract.pr_base，由 worker 创建，OMAC 不代建）。按 TDD 工作并提交结构化验证证据；不要手动修改 issue 状态、assignee、rerun 或 cancel 状态。",

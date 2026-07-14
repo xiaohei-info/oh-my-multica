@@ -28,11 +28,12 @@ from typing import Any, Callable, Dict, List, Optional
 
 from ..core import acceptance as acceptance_mod
 from ..core.config import CONFIG_DIR, CONFIG_PATH
-from ..core.gitsync import commit_files, ensure_config_synced
+from ..core.gitsync import commit_files, ensure_config_synced, ensure_files_clean
 from ..core.lint import lint
 from ..core.manifest import Manifest, loads_manifest, save_manifest
+from ..core.project_rules import read_agents_snapshot, write_project_rules
 from ..core.taskmeta import TaskKind, make_dag_key, make_plan_id
-from ..engines.models import WorkItem
+from ..engines.models import WorkItem, WorkItemStatus
 from ..errors import ValidationError
 from ..i18n import CN, ui
 from .tasks import run_task
@@ -210,14 +211,18 @@ def plan_create(
     store = ctx.engine.store
     # 派单前:真实引擎下自动把 config 同步到 main,否则隔离区 agent clone 后读不到。
     ensure_config_synced(CONFIG_PATH, branch="main", engine_type=store.config.engine_type)
+    if doc_path is None:
+        ensure_files_clean(["AGENTS.md"], engine_type=store.config.engine_type)
     base_dir = CONFIG_DIR
     manifest_path = os.path.join(base_dir, f"{name}.yaml")
     acceptance_path = os.path.join(base_dir, f"{name}.acceptance.yaml")
     reviewers = [] if ctx.no_review else ctx.reviewers
     poll_cb = poll if poll is not None else ctx.poll()
     plan_id = make_plan_id()
+    agents_snapshot = read_agents_snapshot() if doc_path is None else None
 
     acceptance_text: Optional[str] = None
+    project_rules_text: Optional[str] = None
     # provenance:各阶段源头 issue,后续阶段带上引用防跑偏(--doc 时无 plan issue)。
     plan_item_id: Optional[str] = None
     acceptance_item_id: Optional[str] = None
@@ -226,13 +231,18 @@ def plan_create(
     if doc_path is not None:
         plan_text = _read_file(doc_path)
     else:
-        plan_payload: Dict[str, Any] = {"title": ui(
-            f"{name} design", f"{name} 设计方案", language=ctx.language)}
+        plan_payload: Dict[str, Any] = {
+            "title": ui(
+                f"{name} design", f"{name} 设计方案", language=ctx.language),
+            "source_of_truth": {},
+        }
         if goal_text:
             # 需求经 source_of_truth 通道进 planner 的 issue body(与 phase 2/3 同源),
             # 让 planner 据此编写设计方案,而非凭一个标题空想。
-            plan_payload["source_of_truth"] = {
-                ui("Request", "需求", language=ctx.language): goal_text}
+            plan_payload["source_of_truth"][
+                ui("Request", "需求", language=ctx.language)] = goal_text
+        if agents_snapshot.exists and agents_snapshot.content:
+            plan_payload["source_of_truth"]["AGENTS.md"] = agents_snapshot.content
         res = run_task(
             ctx.engine,
             TaskKind.PLAN,
@@ -246,6 +256,7 @@ def plan_create(
         )
         plan_item_id = res["item_id"]
         plan_text = _phase_text(res["delivery"], _PLAN_KEY)
+        project_rules_text = _phase_text(res["delivery"], "project_rules")
 
     # ── phase 2:验收文档(跳过如果 --no-acceptance) ──
     acceptance_doc: Optional[acceptance_mod.AcceptanceDoc] = None
@@ -312,6 +323,9 @@ def plan_create(
     output_paths = [manifest_path]
     if not ctx.no_acceptance:
         output_paths.append(acceptance_path)
+    if project_rules_text is not None:
+        write_project_rules(project_rules_text, agents_snapshot)
+        output_paths.append("AGENTS.md")
     commit_files(
         output_paths, "chore(omac): sync plan outputs",
         engine_type=store.config.engine_type)
@@ -344,12 +358,20 @@ def plan_resume(
 
     store = ctx.engine.store
     ensure_config_synced(CONFIG_PATH, branch="main", engine_type=store.config.engine_type)
+    ensure_files_clean(["AGENTS.md"], engine_type=store.config.engine_type)
     base_dir = CONFIG_DIR
     reviewers = [] if ctx.no_review else ctx.reviewers
     poll_cb = poll if poll is not None else ctx.poll()
+    agents_snapshot = read_agents_snapshot()
 
     plan_key = make_dag_key(TaskKind.PLAN, scope=plan_id_value)
     plan_item = _require_by_dag_key(ctx, TaskKind.PLAN, plan_key)
+    if not plan_item.project_rules:
+        # 历史 plan 只有设计文档时不能绕过新双交付契约。复用原 issue
+        # 回到 authoring,由 planner 补交两份文件并重新走确认/review。
+        store.reset_review(plan_item.id)
+        store.update_status(plan_item.id, WorkItemStatus.TODO)
+        plan_item = store.get_work_item(plan_item.id)
     resolved_name = name or _name_from_plan_issue(plan_item)
     manifest_path = os.path.join(base_dir, f"{resolved_name}.yaml")
     acceptance_path = os.path.join(base_dir, f"{resolved_name}.acceptance.yaml")
@@ -359,7 +381,10 @@ def plan_resume(
         TaskKind.PLAN,
         {"title": ui(
             f"{resolved_name} design", f"{resolved_name} 设计方案",
-            language=ctx.language)},
+            language=ctx.language),
+         "source_of_truth": (
+             {"AGENTS.md": agents_snapshot.content}
+             if agents_snapshot.exists and agents_snapshot.content else {})},
         ctx.planner,
         reviewers=reviewers,
         max_revisions=ctx.max_revisions,
@@ -370,6 +395,7 @@ def plan_resume(
     )
     plan_item_id = res["item_id"]
     plan_text = _phase_text(res["delivery"], _PLAN_KEY)
+    project_rules_text = _phase_text(res["delivery"], "project_rules")
 
     acceptance_text: Optional[str] = None
     acceptance_doc: Optional[acceptance_mod.AcceptanceDoc] = None
@@ -440,6 +466,8 @@ def plan_resume(
     output_paths = [manifest_path]
     if not ctx.no_acceptance:
         output_paths.append(acceptance_path)
+    write_project_rules(project_rules_text, agents_snapshot)
+    output_paths.append("AGENTS.md")
     commit_files(
         output_paths, "chore(omac): sync plan outputs",
         engine_type=store.config.engine_type)

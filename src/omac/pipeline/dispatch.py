@@ -20,6 +20,7 @@ from omac.core import evidence as evidence_mod
 from omac.core.acceptance import load_acceptance_doc, load_acceptance_doc_file
 from omac.core.lint import lint as lint_manifest, lint_increment
 from omac.core.manifest import _load_contract, load_manifest
+from omac.core.project_rules import END_MARKER, START_MARKER
 from omac.core.taskmeta import TaskKind, TaskPhase
 from omac.engines.models import WorkItem, WorkItemStatus
 from omac.engines.store import WorkItemStore
@@ -86,6 +87,7 @@ def _next_action(kind: TaskKind, phase: TaskPhase, language: str) -> str:
 # 全部 submit 参数名 → argparse 注册 kwargs
 SUBMIT_PARAM_SPECS: Dict[str, Dict[str, Any]] = {
     "--plan-file": {},
+    "--project-rules-file": {},
     "--acceptance-file": {},
     "--manifest-file": {},
     "--pr-url": {},
@@ -97,7 +99,8 @@ SUBMIT_PARAM_SPECS: Dict[str, Dict[str, Any]] = {
 
 # (kind, phase) → 该组合使用的 submit 参数名(有序)
 SUBMIT_PARAMS_BY_KIND_PHASE: Dict[Tuple[TaskKind, TaskPhase], List[str]] = {
-    (TaskKind.PLAN, TaskPhase.AUTHORING): ["--plan-file"],
+    (TaskKind.PLAN, TaskPhase.AUTHORING): [
+        "--plan-file", "--project-rules-file"],
     (TaskKind.PLAN, TaskPhase.REVIEW): ["--verdict", "--report-file"],
     (TaskKind.ACCEPTANCE, TaskPhase.AUTHORING): ["--acceptance-file"],
     (TaskKind.ACCEPTANCE, TaskPhase.REVIEW): ["--verdict", "--report-file"],
@@ -281,6 +284,8 @@ def build_show_output(item: Any, identity: str, *, language: str = EN) -> Dict[s
         context["deliverable"] = item.deliverable
         for key in (
             "deliverable_ref",
+            "project_rules",
+            "project_rules_ref",
             "artifacts",
             "verification",
             "verification_ref",
@@ -317,6 +322,7 @@ def build_show_output(item: Any, identity: str, *, language: str = EN) -> Dict[s
 
 ALL_PARAMS = (
     "plan_file",
+    "project_rules_file",
     "acceptance_file",
     "manifest_file",
     "pr_url",
@@ -329,7 +335,7 @@ ALL_PARAMS = (
 # kind * phase → 该组合合法且必填的参数名。
 SPECS: Dict[TaskKind, Dict[TaskPhase, tuple]] = {
     TaskKind.PLAN: {
-        TaskPhase.AUTHORING: ("plan_file",),
+        TaskPhase.AUTHORING: ("plan_file", "project_rules_file"),
         TaskPhase.REVIEW: ("verdict", "report_file"),
     },
     TaskKind.ACCEPTANCE: {
@@ -481,13 +487,26 @@ class _Item:
         self.review_report = review_report
 
 
-def _validate_plan_authoring(plan_file: str) -> str:
-    """plan 交付做基础结构校验:文件存在且非空。返回文件内容。"""
-    content = _read_text(plan_file)
-    if not content.strip():
+def _validate_plan_authoring(
+    plan_file: str, project_rules_file: str,
+) -> tuple[str, str]:
+    """plan 两份交付原子校验:文件存在且非空。"""
+    plan_content = _read_text(plan_file)
+    if not plan_content.strip():
         raise ValidationError(ui(
             f"Plan file is empty: {plan_file}", f"plan 文件为空: {plan_file}"))
-    return content
+    project_rules = _read_text(project_rules_file)
+    if not project_rules.strip():
+        raise ValidationError(ui(
+            f"Project rules file is empty: {project_rules_file}",
+            f"project-rules 文件为空: {project_rules_file}"))
+    if START_MARKER in project_rules or END_MARKER in project_rules:
+        raise ValidationError(ui(
+            "Project rules must not contain OMAC markers; submit only the Markdown body. "
+            "OMAC adds the managed markers when it updates AGENTS.md.",
+            "project-rules 不得包含 OMAC 标记；只提交 Markdown 正文。"
+            "OMAC 更新 AGENTS.md 时会自行添加管理标记。"))
+    return plan_content, project_rules
 
 
 def _validate_acceptance_authoring(acceptance_file: str) -> str:
@@ -600,6 +619,12 @@ def _validate_review(
             "Ask the author to rerun `omac work submit`.",
             "评审对象缺失:产出正文未提交或提交失败,不能写 review verdict。"
             "请让产出者重新执行 omac work submit。"))
+    if kind == TaskKind.PLAN and not item.project_rules:
+        raise ValidationError(ui(
+            "Plan review target is missing project rules. Ask the planner to submit both "
+            "--plan-file and --project-rules-file before review.",
+            "plan 评审对象缺少项目规范。请让 planner 同时提交 "
+            "--plan-file 与 --project-rules-file 后再评审。"))
     report = _parse_structured(report_file)
     node = _Node(_contract_from_item(item))
     probe = _Item(review_verdict=verdict, review_report=report)
@@ -670,6 +695,7 @@ class SubmitResult:
         advanced_to: WorkItemStatus,
         next_phase: Optional[TaskPhase] = None,
         message: Optional[str] = None,
+        deliverable_keys: Optional[tuple[str, ...]] = None,
     ):
         self.kind = kind
         self.phase = phase
@@ -677,6 +703,7 @@ class SubmitResult:
         self.advanced_to = advanced_to
         self.next_phase = next_phase
         self.message = message
+        self.deliverable_keys = deliverable_keys or (deliverable_key,)
 
 
 def submit(
@@ -684,6 +711,7 @@ def submit(
     issue_id: str,
     *,
     plan_file: Optional[str] = None,
+    project_rules_file: Optional[str] = None,
     acceptance_file: Optional[str] = None,
     manifest_file: Optional[str] = None,
     pr_url: Optional[str] = None,
@@ -711,6 +739,7 @@ def submit(
 
     provided = {
         "plan_file": plan_file,
+        "project_rules_file": project_rules_file,
         "acceptance_file": acceptance_file,
         "manifest_file": manifest_file,
         "pr_url": pr_url,
@@ -760,9 +789,13 @@ def submit(
 
     # ---------- plan × authoring ----------
     if kind == TaskKind.PLAN and phase == TaskPhase.AUTHORING:
-        content = _validate_plan_authoring(plan_file)
+        content, project_rules = _validate_plan_authoring(
+            plan_file, project_rules_file)
         store.update_work_item_metadata(
-            issue_id, deliverable=content, phase=TaskPhase.REVIEW,
+            issue_id,
+            deliverable=content,
+            project_rules=project_rules,
+            phase=TaskPhase.REVIEW,
         )
         store.update_status(issue_id, WorkItemStatus.IN_REVIEW)
         return SubmitResult(
@@ -772,6 +805,7 @@ def submit(
                 "Authoring is complete. Do not submit a verdict or follow the reviewer protocol; "
                 "wait for the OMAC loop to assign a reviewer or for human confirmation.",
                 "产出阶段已结束；不要提交 verdict，不要执行 reviewer 协议。等待 omac loop 转派 reviewer 或人工确认。"),
+            deliverable_keys=("plan", "project_rules"),
         )
 
     # ---------- acceptance × authoring ----------

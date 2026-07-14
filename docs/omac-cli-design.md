@@ -214,8 +214,13 @@ facts without modifying files.
 `omac plan create` produces:
 
 1. A design document.
-2. An executable acceptance document.
-3. A reviewed manifest DAG.
+2. Reviewed repository-wide project rules written to root `AGENTS.md`.
+3. An executable acceptance document.
+4. A reviewed manifest DAG.
+
+Planner-authored plans submit the design and project rules together. Both are
+stored as work-item attachments and reviewed as one decision. `--doc` skips
+planner authoring and does not update `AGENTS.md`.
 
 Human confirmation can pause after design or acceptance. `plan resume` continues
 the same pipeline rather than creating parallel facts.

@@ -110,6 +110,18 @@ or contracts.
    affected existing behavior.
 6. Every edge case has a determined outcome rather than a worker guess.
 
+## Project-rules delivery
+
+Every planner-authored `plan` also delivers a separate Markdown file containing
+the OMAC-managed project rules for root `AGENTS.md`. It is not a design-document
+section and must not include OMAC START/END markers; OMAC owns those markers.
+
+Include only durable repository-wide constraints confirmed by the design, such
+as data ownership, dependency direction, compatibility, testing, security, and
+stable external contracts. Exclude request goals, implementation steps, issue
+IDs, temporary branches, and node-specific instructions. Preserve and do not
+contradict existing `AGENTS.md` content.
+
 ## Common errors → corrections
 
 | Error | Correction |
@@ -125,7 +137,7 @@ or contracts.
 Re-read `work show` and use its exact command. A usual plan shape is:
 
 ```bash
-omac work submit <issue-id> --plan-file <file>
+omac work submit <issue-id> --plan-file <design.md> --project-rules-file <project-rules.md>
 ```
 
 Do not submit a verdict during authoring or manually advance platform state.
