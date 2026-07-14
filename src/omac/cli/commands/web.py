@@ -5,6 +5,7 @@ import sys
 
 from .. import exit_codes
 from ...web.server import WebServer, require_token_if_exposed
+from ...i18n import ui
 
 NAME = "web"
 SUMMARY = "本地只读可视化面板(选 manifest,看进度与证据链)"
@@ -31,7 +32,9 @@ def run(args) -> int:
     require_token_if_exposed(args.host, args.token)
     if args.refresh < 1:
         from ...errors import ValidationError
-        raise ValidationError(f"--refresh 必须 ≥ 1,得到 {args.refresh}")
+        raise ValidationError(ui(
+            f"--refresh must be ≥ 1; got {args.refresh}",
+            f"--refresh 必须 ≥ 1,得到 {args.refresh}"))
     server = WebServer(
         host=args.host, port=args.port,
         token=args.token, refresh=args.refresh,

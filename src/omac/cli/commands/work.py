@@ -9,6 +9,7 @@ from ...core import config as config_mod
 from ...engines import create_engine
 from ...engines.models import EngineConfig, WorkItemStatus
 from ...errors import OmacError, ValidationError
+from ...i18n import resolve_language, t, ui
 from ...pipeline.dispatch import (
     SUBMIT_PARAM_SPECS,
     build_show_output,
@@ -115,7 +116,7 @@ def _render_kv(label: str, value) -> None:
         print(f"- {label}: {value}")
 
 
-def _render_table(output: dict) -> None:
+def _render_table(output: dict, language: str) -> None:
     """markdown 相位视图:任务头 / 上下文(相位特定)/ 现在做什么 / 完成后交付。
 
     - authoring:有 contract 才列(develop),无则指回 issue 正文
@@ -125,14 +126,14 @@ def _render_table(output: dict) -> None:
     ctx = output["context"]
     is_review = task["phase"] == "review"
 
-    print(f"# 任务 · {task['kind']} · {task['phase']}")
+    print(f"# {t('work.table.task', language=language)} · {task['kind']} · {task['phase']}")
     print()
     print(f"- issue: {task['issue_id']}")
-    print(f"- 标题: {task['title']}")
-    print(f"- 状态: {task['status']}")
+    print(f"- {t('work.table.title', language=language)}: {task['title']}")
+    print(f"- {t('work.table.status', language=language)}: {task['status']}")
     if task.get("issue_key"):
         print(f"- issue_key: {task['issue_key']}")
-    print(f"- 身份: {task['identity']}")
+    print(f"- {t('work.table.identity', language=language)}: {task['identity']}")
     if task.get("dag_key"):
         print(f"- dag_key: {task['dag_key']}")
     if task.get("wave") is not None:
@@ -140,12 +141,12 @@ def _render_table(output: dict) -> None:
     if task.get("blocked_by"):
         _render_kv("blocked_by", task["blocked_by"])
     if task.get("bounces"):
-        print(f"- 回退计数: {task['bounces']}")
+        print(f"- {t('work.table.bounces', language=language)}: {task['bounces']}")
     if is_review and task.get("worker"):
-        print(f"- 产出者: {task['worker']}")
+        print(f"- {t('work.table.author', language=language)}: {task['worker']}")
 
     if ctx.get("issue_description"):
-        print("\n## Issue 上下文")
+        print(f"\n## {t('work.table.issue_context', language=language)}")
         print(ctx["issue_description"])
 
     source_issues = ctx.get("source_issues")
@@ -154,11 +155,12 @@ def _render_table(output: dict) -> None:
         print(render_source_refs_section(
             source_issues,
             engine_env=output.get("engine_env"),
+            language=language,
         ))
 
     contract = ctx.get("contract")
     if is_review:
-        print("\n## 评审对象")
+        print(f"\n## {t('work.table.review_target', language=language)}")
         if ctx.get("deliverable") is not None:
             print(f"- deliverable: {ctx['deliverable']}")
         for key in ("deliverable_ref", "artifacts", "verification", "verification_ref"):
@@ -166,38 +168,38 @@ def _render_table(output: dict) -> None:
                 _render_kv(key, ctx[key])
         env_setup = ctx.get("env_setup")
         if env_setup:
-            print("- 复跑清单(env_setup):")
+            print(f"- {t('work.table.rerun_setup', language=language)}:")
             for step in env_setup:
                 print(f"  - {step}")
         if contract:
-            print("\n## 评审依据(contract)")
+            print(f"\n## {t('work.table.review_basis', language=language)}")
             for k, v in contract.items():
                 _render_kv(k, v)
     else:
         if contract:
-            print("\n## 你的 contract(全量)")
+            print(f"\n## {t('work.table.contract', language=language)}")
             for k, v in contract.items():
                 _render_kv(k, v)
         else:
-            print("\n> 任务详情与需求见本 issue 正文（briefing / 上游产物 段)。")
+            print(f"\n> {t('work.table.issue_detail', language=language)}")
         previous_review = ctx.get("previous_review")
         if previous_review:
-            print("\n## 上轮评审")
+            print(f"\n## {t('work.table.previous_review', language=language)}")
             for k, v in previous_review.items():
                 _render_kv(k, v)
 
-    print("\n## 现在做什么")
+    print(f"\n## {t('work.table.now', language=language)}")
     print(output["protocol"])
 
-    print("\n## 权威顺序")
+    print(f"\n## {t('work.table.authority', language=language)}")
     for index, source in enumerate(output.get("authority", []), start=1):
         print(f"{index}. {source}")
 
-    print("\n## 需要读取的 Guide")
+    print(f"\n## {t('work.table.guides', language=language)}")
     for command in output.get("guide_refs", []):
         print(f"- `{command}`")
 
-    print("\n## 完成后交付")
+    print(f"\n## {t('work.table.submit', language=language)}")
     print(f"    {output['submit']}")
 
 
@@ -233,17 +235,21 @@ def _submit(args) -> int:
         if hasattr(result.next_phase, "value")
         else result.next_phase
     )
-    message = (
+    message = ui(
+        f"Deliverable submitted — {result.kind.value} × {result.phase.value}\n"
+        f"deliverable: {result.deliverable_key}",
         f"交付物已提交 —— {result.kind.value} × {result.phase.value}\n"
-        f"deliverable: {result.deliverable_key}"
+        f"deliverable: {result.deliverable_key}",
     )
     if result.phase.value == "review":
-        message += (
+        message += ui(
+            f"\nVerdict submitted: {args.verdict}"
+            "\nThe OMAC loop owns final platform state. Do not edit issue status or assignee manually.",
             f"\nverdict 已提交: {args.verdict}"
-            "\n平台终态由 omac loop 收口；不要手动修改 issue 状态/assignee。"
+            "\n平台终态由 omac loop 收口；不要手动修改 issue 状态/assignee。",
         )
     else:
-        message += f"\n状态推进: {target}"
+        message += ui(f"\nAdvanced to: {target}", f"\n状态推进: {target}")
     if getattr(result, "message", None):
         message += f"\n{result.message}"
     if getattr(args, "output", "json") == "json":
@@ -270,7 +276,9 @@ def _get_item(issue_id: str):
     try:
         return store.get_work_item(issue_id)
     except Exception as e:
-        raise ValidationError(f"无法读取 work item '{issue_id}' —— {e}")
+        raise ValidationError(ui(
+            f"Could not read work item '{issue_id}': {e}",
+            f"无法读取 work item '{issue_id}' —— {e}"))
 
 
 def _resolve_store_for(item) -> object:
@@ -283,16 +291,19 @@ def _run_show(args) -> int:
     try:
         item = store.get_work_item(args.issue_id)
     except Exception as e:
-        raise ValidationError(f"无法读取 work item '{args.issue_id}' —— {e}")
+        raise ValidationError(ui(
+            f"Could not read work item '{args.issue_id}': {e}",
+            f"无法读取 work item '{args.issue_id}' —— {e}"))
 
     identity = _identity_for(item)
-    output = build_show_output(item, identity)
+    language = resolve_language(config_mod.load_config())
+    output = build_show_output(item, identity, language=language)
     output["engine_env"] = _store_env(store)
 
     if getattr(args, "output", "json") == "json":
         print_json(output)
     else:
-        _render_table(output)
+        _render_table(output, language)
     return exit_codes.OK
 
 

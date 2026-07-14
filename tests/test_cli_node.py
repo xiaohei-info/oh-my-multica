@@ -34,7 +34,7 @@ def test_show_missing_manifest_is_validation(tmp_path, capsys, monkeypatch):
     monkeypatch.chdir(tmp_path)
     code = main(["node", "show", "nope.yaml", "a"])
     assert code == exit_codes.VALIDATION
-    assert "manifest 文件不存在" in capsys.readouterr().err
+    assert "Manifest file not found" in capsys.readouterr().err
 
 
 def test_show_unknown_node_is_validation(tmp_path, capsys, monkeypatch):

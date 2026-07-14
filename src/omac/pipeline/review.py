@@ -17,6 +17,7 @@ from typing import Callable, Optional
 from ..core.taskmeta import TaskKind
 from ..engines.models import WorkItemStatus
 from ..errors import NeedsDecision
+from ..i18n import ui
 
 
 def run_review(
@@ -39,8 +40,11 @@ def run_review(
     """
     if not reviewer:
         raise NeedsDecision(
-            "manifest review 未指定 reviewer —— "
-            "请在 config.roles.reviewers 中配置至少一名 reviewer 后重跑",
+            ui(
+                "Manifest review has no reviewer. Configure at least one agent in "
+                "config.roles.reviewers and rerun.",
+                "manifest review 未指定 reviewer —— "
+                "请在 config.roles.reviewers 中配置至少一名 reviewer 后重跑"),
             report={"verdict": "no-reviewer"})
 
     store = engine.store
@@ -48,8 +52,11 @@ def run_review(
 
     if not store.check_member_exists(workspace_id, reviewer):
         raise NeedsDecision(
-            f"reviewer '{reviewer}' 不在工作空间成员池中 —— "
-            "`omac config set roles.reviewers` 配置后重跑",
+            ui(
+                f"Reviewer '{reviewer}' is not in the workspace member pool. "
+                "Update roles.reviewers with `omac config set` and rerun.",
+                f"reviewer '{reviewer}' 不在工作空间成员池中 —— "
+                "`omac config set roles.reviewers` 配置后重跑"),
             report={"reviewer": reviewer, "verdict": "reviewer-not-in-pool"})
 
     initial_body = title if callable(body) else body
@@ -79,7 +86,9 @@ def run_review(
             return cur.review_report or {}
         if cur.review_verdict == "pass-with-nits":
             raise NeedsDecision(
-                f"manifest review 返回 pass-with-nits,需要调用者确认是否接受建议项",
+                ui(
+                    "Manifest review returned pass-with-nits; the caller must decide whether to accept them.",
+                    "manifest review 返回 pass-with-nits,需要调用者确认是否接受建议项"),
                 report={
                     "item_id": cur.id,
                     "reviewer": reviewer,
@@ -88,7 +97,9 @@ def run_review(
                 })
         if cur.review_verdict == "reject":
             raise NeedsDecision(
-                f"manifest review 被 reviewer '{reviewer}' 拒绝",
+                ui(
+                    f"Manifest review was rejected by reviewer '{reviewer}'.",
+                    f"manifest review 被 reviewer '{reviewer}' 拒绝"),
                 report={
                     "item_id": cur.id,
                     "reviewer": reviewer,

@@ -186,12 +186,12 @@ class TestHappyPath:
         item = eng.store.get_work_item(manifest.nodes["a"].work_item_id)
 
         assert item.source_refs == [
-            {"label": "设计方案", "issue_id": "plan-1"},
-            {"label": "验收文档", "issue_id": "acc-1"},
-            {"label": "任务拆解", "issue_id": "dec-1"},
+            {"label": "Design", "issue_id": "plan-1"},
+            {"label": "Acceptance document", "issue_id": "acc-1"},
+            {"label": "Task decomposition", "issue_id": "dec-1"},
         ]
-        assert "## 上游 issue（防跑偏）" in item.description
-        assert "- 设计方案: `plan-1`" in item.description
+        assert "## Upstream issues (stay on target)" in item.description
+        assert "- Design: `plan-1`" in item.description
         assert "omac work show plan-1" not in item.description
 
     def test_dispatch_appends_direct_dependency_issue_refs(self):
@@ -220,17 +220,17 @@ class TestHappyPath:
 
         assert item.source_refs[-2:] == [
             {
-                "label": "前置开发任务 · Shared contract foundation",
+                "label": "Prerequisite implementation · Shared contract foundation",
                 "issue_id": "issue-foundation",
             },
             {
-                "label": "前置开发任务 · Persistence layer",
+                "label": "Prerequisite implementation · Persistence layer",
                 "issue_id": "issue-data",
             },
         ]
         assert item.blocked_by == ["foundation", "data", "missing"]
         assert (
-            "- 前置开发任务 · Shared contract foundation: `issue-foundation`"
+            "- Prerequisite implementation · Shared contract foundation: `issue-foundation`"
             in item.description
         )
         assert "omac work show issue-foundation" not in item.description
@@ -691,7 +691,7 @@ class TestEvidenceGateRegression:
         node_a = next(n for n in result.report["failed_nodes"] if n["key"] == "a")
         assert "pr_url" in node_a["reason"]
         # 失败原因经 add_comment 回贴
-        assert any("证据门" in c for c in eng.store.get_comments(item.id))
+        assert any("Evidence gate" in c for c in eng.store.get_comments(item.id))
 
     def test_invalid_worker_evidence_coverage_gate(self):
         """worker DONE + pr_url 但 coverage 不达标 → 证据门不过 → blocked。"""
@@ -888,7 +888,7 @@ class TestReviewerRejectBoundedFallback:
         got = eng.store.get_work_item(item.id)
         assert manifest.nodes["a"].status == "blocked"
         assert got.bounces.review == 0
-        assert any("上界" in c for c in eng.store.get_comments(item.id))
+        assert any("retry limit" in c for c in eng.store.get_comments(item.id))
         assert result.state == "needs_decision"
 
     def test_valid_reject_report_still_bounces_worker(self, tmp_path):
@@ -1175,4 +1175,4 @@ class TestReviewerRejectFallbackRollback:
         # 节点置 blocked,不再滞留 in_review
         assert manifest.nodes["a"].status == "blocked"
         assert got.status == WorkItemStatus.BLOCKED
-        assert any("回退到 worker" in c for c in eng.store.get_comments(item.id))
+        assert any("return to worker" in c for c in eng.store.get_comments(item.id))

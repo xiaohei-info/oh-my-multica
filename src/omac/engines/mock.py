@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 import yaml
 from ..core.taskmeta import DELIVERY_CONTENT_KEY, Bounces, TaskKind, TaskPhase
 from ..errors import ValidationError
+from ..i18n import ui
 from .models import (
     AgentInfo, AgentProvisionSpec, EngineConfig, ProjectInfo, RuntimeTarget,
     WorkItem, WorkItemStatus, WorkspaceInfo,
@@ -61,10 +62,10 @@ def _init_default_workspace():
     _shared_workspaces = {
         "mock-workspace": WorkspaceInfo(
             id="mock-workspace", name="Mock Workspace",
-            description="测试用工作空间", member_count=3),
+            description=ui("Test workspace", "测试用工作空间"), member_count=3),
         "mock-team-b": WorkspaceInfo(
             id="mock-team-b", name="Mock Team B",
-            description="副工作空间", member_count=2),
+            description=ui("Secondary workspace", "副工作空间"), member_count=2),
     }
     _shared_members = {
         "mock-workspace": ["alice", "bob", "charlie"],
@@ -509,7 +510,9 @@ class MockStore(WorkItemStore):
         # parity:真实 multica issue create 拒收空 --description-file,mock 须对等,
         # 否则 run_task 空壳建 issue 在 mock 上悄悄通过、只在真机炸(见 tasks.py 两段式)。
         if not description:
-            raise ValidationError("issue create 的 description 不能为空(--description-file 空内容)")
+            raise ValidationError(ui(
+                "Issue description cannot be empty (--description-file is empty)",
+                "issue create 的 description 不能为空(--description-file 空内容)"))
         global _shared_next_id
         item_id = str(_shared_next_id)
         _shared_next_id += 1
@@ -531,7 +534,9 @@ class MockStore(WorkItemStore):
 
     def get_work_item(self, item_id: str) -> WorkItem:
         if item_id not in _shared_work_items:
-            raise RuntimeError(f"工作单元不存在: {item_id}")
+            raise RuntimeError(ui(
+                f"Work item not found: {item_id}",
+                f"工作单元不存在: {item_id}"))
         self._auto_complete_check(item_id)
         return _shared_work_items[item_id]
 
@@ -603,7 +608,9 @@ class MockStore(WorkItemStore):
             item.source_refs = source_refs
         if description is not None:
             if not description:
-                raise ValidationError("issue update 的 description 不能为空(--description-file 空内容)")
+                raise ValidationError(ui(
+                    "Issue description cannot be empty (--description-file is empty)",
+                    "issue update 的 description 不能为空(--description-file 空内容)"))
             item.description = description
         return item
 
@@ -686,19 +693,23 @@ class MockRuntime(AgentRuntime):
 
     def provision_agent(self, spec: AgentProvisionSpec) -> AgentInfo:
         if not spec.name.strip():
-            raise ValidationError("Agent 名称不能为空")
+            raise ValidationError(ui("Agent name cannot be empty", "Agent 名称不能为空"))
         workspace_id = self._store.config.workspace_id
         members = self._store.list_members(workspace_id)
         if spec.name in members:
-            raise ValidationError(
-                f"Agent '{spec.name}' 已存在 —— 请选择已有 Agent 或换一个名称")
+            raise ValidationError(ui(
+                f"Agent '{spec.name}' already exists. Choose it or use another name.",
+                f"Agent '{spec.name}' 已存在 —— 请选择已有 Agent 或换一个名称"))
         if spec.runtime_id != "mock-runtime":
-            raise ValidationError(
-                f"Runtime '{spec.runtime_id}' 不存在,可选:mock-runtime")
+            raise ValidationError(ui(
+                f"Runtime '{spec.runtime_id}' does not exist. Available: mock-runtime",
+                f"Runtime '{spec.runtime_id}' 不存在,可选:mock-runtime"))
         global _shared_provisioned_members, _shared_members
         _shared_provisioned_members.setdefault(workspace_id, []).append(spec.name)
         _shared_members.setdefault(workspace_id, members).append(spec.name)
         return AgentInfo(id=f"mock-agent-{spec.name}", name=spec.name)
 
     def describe(self) -> str:
-        return "mock: assign 即启动自动完成模拟,wake 为确认性 no-op"
+        return ui(
+            "mock: assign starts automatic completion; wake is a confirming no-op",
+            "mock: assign 即启动自动完成模拟,wake 为确认性 no-op")

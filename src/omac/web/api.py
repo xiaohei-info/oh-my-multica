@@ -20,6 +20,7 @@ import yaml
 
 from omac.core import config as config_mod
 from omac.errors import OmacError
+from omac.i18n import ui
 
 # 单例 TTL 缓存,整个 web 进程共享,多请求复用 dag status 的 reconcile。
 _status_cache = None
@@ -78,7 +79,9 @@ def _run_cli(run_fn: Callable, args) -> str:
         with contextlib.redirect_stdout(buf):
             rc = run_fn(args)
     except SystemExit as e:
-        raise OmacError(f"命令异常退出: {e}")
+        raise OmacError(ui(
+            f"Command exited unexpectedly: {e}",
+            f"命令异常退出: {e}"))
     if rc not in (_exit_codes().OK, None):
         raise _CommandFailed(int(rc))
     return buf.getvalue()
@@ -88,7 +91,9 @@ class _CommandFailed(OmacError):
     """命令函数返回非零退出码(视为失败)。"""
 
     def __init__(self, rc: int):
-        super().__init__(f"命令返回退出码 {rc}")
+        super().__init__(ui(
+            f"Command returned exit code {rc}",
+            f"命令返回退出码 {rc}"))
         self.rc = rc
 
 
@@ -96,7 +101,7 @@ def _cli_json(run_fn: Callable, args) -> Any:
     """执行命令并解析其 stdout JSON。"""
     text = _run_cli(run_fn, args)
     if not text.strip():
-        raise OmacError("命令未输出数据")
+        raise OmacError(ui("Command produced no output", "命令未输出数据"))
     return json.loads(text)
 
 

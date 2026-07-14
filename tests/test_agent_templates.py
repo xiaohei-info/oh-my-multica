@@ -37,6 +37,23 @@ def test_catalog_combines_shared_and_role_instructions_and_discovers_full_skills
             for p in template.skills[0].files] == ["SKILL.md", "references/guide.md"]
 
 
+def test_catalog_selects_english_or_chinese_instruction_mirror(tmp_path):
+    root = tmp_path / "agents"
+    shared = root / "_shared"
+    role = root / "worker"
+    shared.mkdir(parents=True)
+    role.mkdir()
+    (shared / "instructions.md").write_text("共享规则\n", encoding="utf-8")
+    (shared / "instructions.en.md").write_text("shared rules\n", encoding="utf-8")
+    (role / "instructions.md").write_text("工作规则\n", encoding="utf-8")
+    (role / "instructions.en.md").write_text("worker rules\n", encoding="utf-8")
+
+    assert AgentTemplateCatalog(root, language="en").get("worker").instructions == (
+        "shared rules\n\nworker rules")
+    assert AgentTemplateCatalog(root, language="cn").get("worker").instructions == (
+        "共享规则\n\n工作规则")
+
+
 def test_catalog_rejects_skill_without_skill_md(tmp_path):
     root = tmp_path / "agents"
     (root / "_shared").mkdir(parents=True)
@@ -61,7 +78,7 @@ def test_catalog_rejects_skill_symlink(tmp_path):
     outside.write_text("private\n", encoding="utf-8")
     (role / "skills" / "quality" / "outside.md").symlink_to(outside)
 
-    with pytest.raises(ValidationError, match="符号链接"):
+    with pytest.raises(ValidationError, match="symlinks"):
         AgentTemplateCatalog(root).get("worker")
 
 

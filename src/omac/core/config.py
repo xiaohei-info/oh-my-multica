@@ -35,6 +35,7 @@ from pathlib import Path
 import yaml
 
 from ..errors import ValidationError
+from ..i18n import ui
 
 CONFIG_DIR = ".omac"
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.yaml")
@@ -81,7 +82,9 @@ def load_config(path: str = CONFIG_PATH) -> dict:
     with open(path) as f:
         data = yaml.safe_load(f) or {}
     if not isinstance(data, dict):
-        raise ValidationError(f"配置文件格式错误(应为 YAML 映射): {path}")
+        raise ValidationError(ui(
+            f"Invalid configuration format; expected a YAML mapping: {path}",
+            f"配置文件格式错误(应为 YAML 映射): {path}"))
     return data
 
 
@@ -124,18 +127,22 @@ def resolve_retry(config: dict) -> dict:
     if raw is None:
         return dict(DEFAULT_RETRY)
     if not isinstance(raw, dict):
-        raise ValidationError(
-            f"retry 配置应为 YAML 映射(ci/review/merge),got {type(raw).__name__}")
+        raise ValidationError(ui(
+            f"retry must be a YAML mapping (worker/ci/review/merge); got {type(raw).__name__}",
+            f"retry 配置应为 YAML 映射(ci/review/merge),got {type(raw).__name__}"))
     resolved = dict(DEFAULT_RETRY)
     for key in DEFAULT_RETRY:
         if key not in raw:
             continue
         val = raw[key]
         if isinstance(val, bool) or not isinstance(val, int):
-            raise ValidationError(
-                f"retry.{key} 必须为整数,got {type(val).__name__}({val!r})")
+            raise ValidationError(ui(
+                f"retry.{key} must be an integer; got {type(val).__name__}({val!r})",
+                f"retry.{key} 必须为整数,got {type(val).__name__}({val!r})"))
         if val < 0:
-            raise ValidationError(f"retry.{key} 不能为负数(非法值 {val});需 ≥ 0")
+            raise ValidationError(ui(
+                f"retry.{key} cannot be negative; got {val}, expected ≥ 0",
+                f"retry.{key} 不能为负数(非法值 {val});需 ≥ 0"))
         resolved[key] = val
     return resolved
 
@@ -146,16 +153,18 @@ def resolve_workflow(config: dict) -> dict:
     if raw is None:
         return dict(DEFAULT_WORKFLOW)
     if not isinstance(raw, dict):
-        raise ValidationError(
-            f"workflow 配置应为 YAML 映射,got {type(raw).__name__}")
+        raise ValidationError(ui(
+            f"workflow must be a YAML mapping; got {type(raw).__name__}",
+            f"workflow 配置应为 YAML 映射,got {type(raw).__name__}"))
     resolved = dict(DEFAULT_WORKFLOW)
     for key in DEFAULT_WORKFLOW:
         if key not in raw:
             continue
         val = raw[key]
         if not isinstance(val, bool):
-            raise ValidationError(
-                f"workflow.{key} 必须为布尔值 true/false,got {type(val).__name__}({val!r})")
+            raise ValidationError(ui(
+                f"workflow.{key} must be true or false; got {type(val).__name__}({val!r})",
+                f"workflow.{key} 必须为布尔值 true/false,got {type(val).__name__}({val!r})"))
         resolved[key] = val
     return resolved
 
@@ -175,19 +184,26 @@ def resolve_engine_settings(
     workspace_id = workspace or os.environ.get(ENV_WORKSPACE) or config.get("workspace")
     project_id = project or os.environ.get(ENV_PROJECT) or config.get("project")
     if not engine_type:
-        raise ValidationError(
+        raise ValidationError(ui(
+            "Engine type is missing. Set config.yaml engine, "
+            f"environment variable {ENV_ENGINE}, or --engine.",
             "未指定引擎类型 —— 三种给法任选:config.yaml 的 engine 字段 / "
-            f"环境变量 {ENV_ENGINE} / 命令行 --engine")
+            f"环境变量 {ENV_ENGINE} / 命令行 --engine"))
     if not workspace_id:
-        raise ValidationError(
+        raise ValidationError(ui(
+            "Workspace is missing. Set config.yaml workspace, "
+            f"environment variable {ENV_WORKSPACE}, or --workspace.",
             "未指定 workspace —— 三种给法任选:config.yaml 的 workspace 字段 / "
-            f"环境变量 {ENV_WORKSPACE} / 命令行 --workspace")
+            f"环境变量 {ENV_WORKSPACE} / 命令行 --workspace"))
     if engine_type == "multica" and not project_id:
-        raise ValidationError(
+        raise ValidationError(ui(
+            "The multica engine requires a project. Set config.yaml project, "
+            f"environment variable {ENV_PROJECT}, or --project; or run `omac init` "
+            "to choose or create one.",
             "multica 引擎必须指定 project(issue 归入该 project,不裸建于 workspace)"
             " —— 三种给法任选:config.yaml 的 project 字段 / "
             f"环境变量 {ENV_PROJECT} / 命令行 --project;"
-            "或运行 `omac init` 选择已有 project / 新建一个(自动登记当前 repo 到 workspace)")
+            "或运行 `omac init` 选择已有 project / 新建一个(自动登记当前 repo 到 workspace)"))
     return engine_type, workspace_id, project_id
 
 

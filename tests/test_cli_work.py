@@ -148,11 +148,11 @@ def test_show_output_structure(kind, phase):
     assert out["task"]["bounces"] == item.bounces.as_dict()
     assert out["context"]["issue_description"] == item.description
     assert out["authority"] == [
-        "work show 当前实例事实",
+        "Current facts from work show",
         "contract / previous_review",
         "role guide",
         "artifact guide",
-        "workflow 总览",
+        "workflow overview",
     ]
     assert out["guide_refs"] == EXPECTED_GUIDE_REFS[(kind, phase)]
 
@@ -282,6 +282,37 @@ def test_show_cli_defaults_to_agent_json(tmp_path, monkeypatch, capsys):
         (TaskKind.PLAN, TaskPhase.AUTHORING)]
 
 
+def test_work_show_localizes_omac_prose_without_changing_facts(
+    tmp_path, monkeypatch, capsys,
+):
+    monkeypatch.chdir(tmp_path)
+    main(["config", "set", "engine", "mock"])
+    main(["config", "set", "workspace", "mock-workspace"])
+    main(["config", "set", "language", "cn"])
+    capsys.readouterr()
+
+    store = _store()
+    item = _make_item(store, TaskKind.PLAN, TaskPhase.AUTHORING,
+                      with_contract=True)
+
+    assert main(["work", "show", item.id]) == exit_codes.OK
+    chinese = json.loads(capsys.readouterr().out)
+
+    main(["config", "set", "language", "en"])
+    capsys.readouterr()
+    assert main(["work", "show", item.id]) == exit_codes.OK
+    english = json.loads(capsys.readouterr().out)
+
+    assert chinese["protocol"] != english["protocol"]
+    assert english["protocol"].startswith("Write the design document:")
+    assert chinese["authority"] != english["authority"]
+    assert english["authority"][0] == "Current facts from work show"
+    assert chinese["task"] == english["task"]
+    assert chinese["context"] == english["context"]
+    assert chinese["guide_refs"] == english["guide_refs"]
+    assert chinese["submit"] == english["submit"]
+
+
 def test_show_cli_table_output(tmp_path, monkeypatch, capsys):
     """人类调试可显式请求 markdown 相位视图。"""
     monkeypatch.chdir(tmp_path)
@@ -296,9 +327,9 @@ def test_show_cli_table_output(tmp_path, monkeypatch, capsys):
     assert main(["work", "show", item.id, "--output", "table"]) == exit_codes.OK
     out = capsys.readouterr().out
     # markdown 段头(相位视图):任务头 / 现在做什么 / 完成后交付
-    assert "# 任务" in out
-    assert "## 现在做什么" in out
-    assert "## 完成后交付" in out
+    assert "# Task" in out
+    assert "## What to do now" in out
+    assert "## Submit when finished" in out
     assert "plan" in out
 
 
@@ -320,7 +351,7 @@ def test_show_cli_source_issue_commands_include_engine_env(tmp_path, monkeypatch
     assert main(["work", "show", item.id, "--output", "table"]) == exit_codes.OK
     out = capsys.readouterr().out
 
-    assert "## 上游 issue（防跑偏）" in out
+    assert "## Upstream issues (stay on target)" in out
     assert "OMAC_ENGINE=mock OMAC_WORKSPACE_ID=mock-workspace omac work show plan-1 --output json" in out
 
 
@@ -346,8 +377,7 @@ def test_plan_authoring_action_not_role_mixed():
     out = build_show_output(item, "worker:alice")
     proto = out["protocol"]
     # 不再把 acceptance(验收文档)任务塞进 plan 的视图
-    assert "验收文档" not in proto
-    assert "acceptance" not in proto
+    assert "Write the acceptance document:" not in proto
     assert out["guide_refs"] == [
         "omac guide role planner", "omac guide artifact design"]
     assert "omac guide" not in proto
@@ -365,7 +395,7 @@ def test_review_show_surfaces_deliverable_and_env_setup(tmp_path, monkeypatch, c
                       with_deliverable=True, with_verification=True)
     assert main(["work", "show", item.id, "--output", "table"]) == exit_codes.OK
     out = capsys.readouterr().out
-    assert "评审对象" in out
+    assert "Review target" in out
     assert "docker compose up -d db" in out  # worker 的 env_setup 复跑清单
     assert "omac guide role reviewer" in out
 
@@ -401,10 +431,10 @@ def test_develop_authoring_action_and_submit_cover_pr_flow():
     out = build_show_output(item, f"worker:{item.worker}")
     protocol = out["protocol"]
     # 动作点明 PR 三步的要害
-    assert "推分支" in protocol or "git push" in protocol, protocol
+    assert "Push a branch" in protocol, protocol
     assert "PR" in protocol, protocol
-    assert "自建" in protocol or "不代建" in protocol, protocol
-    assert "不要手动改 issue 状态" in protocol
+    assert "worker creates it" in protocol, protocol
+    assert "do not manually change the issue status" in protocol
     # 精确交付命令归 submit 段(相位视图:动作与命令分离)
     assert "--pr-url" in out["submit"]
 
@@ -438,7 +468,7 @@ def test_develop_show_mentions_issue_key_for_pr_autolink():
 
     assert out["task"]["issue_key"] == "AITEAM-762"
     assert "AITEAM-762" in out["protocol"]
-    assert "分支名、标题或正文" in out["protocol"]
+    assert "branch name, title, or body" in out["protocol"]
 
 
 def test_show_treats_in_review_status_as_review_phase():
@@ -548,7 +578,7 @@ class TestParamValidation:
             )
         msg = str(exc.value)
         assert "verification-file" in msg
-        assert "缺少" in msg
+        assert "Missing parameters" in msg
 
     def test_plan_authoring_extra_param(self):
         with pytest.raises(ValidationError) as exc:
@@ -816,7 +846,7 @@ class TestSubmitPerKindPhase:
             dispatch_mod.submit(
                 eng.store, item.id, verdict="pass", report_file=str(rfile),
             )
-        assert "评审对象缺失" in str(exc.value)
+        assert "Review target is missing" in str(exc.value)
 
     # ---------- plan ----------
 
@@ -856,9 +886,9 @@ class TestSubmitPerKindPhase:
         assert out["submitted_phase"] == "authoring"
         assert out["next_phase"] == "review"
         assert "verdict" not in out
-        assert "产出阶段已结束" in out["message"]
-        assert "不要提交 verdict" in out["message"]
-        assert "等待 omac loop" in out["message"]
+        assert "Authoring is complete" in out["message"]
+        assert "Do not submit a verdict" in out["message"]
+        assert "wait for the OMAC loop" in out["message"]
 
     def test_plan_authoring_empty_rejected(self, tmp_path):
         eng = _engine()
