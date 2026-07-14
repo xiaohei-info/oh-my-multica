@@ -94,7 +94,7 @@ class TestStatusMapping:
     def test_unknown_status_teaches(self):
         with pytest.raises(ValueError) as exc:
             to_platform_status("bogus")
-        assert "合法值" in str(exc.value)
+        assert "Valid values" in str(exc.value)
 
     def test_valid_statuses_complete(self):
         assert VALID_MANIFEST_STATUSES == set(MANIFEST_TO_PLATFORM_STATUS)
@@ -151,7 +151,7 @@ class TestAdvanceDeliveryUnit:
         assert manifest.nodes["a"].status == "in_progress"
         assert store.get_work_item(item.id).bounces.ci == 1
         comments = store.get_comments(item.id)
-        assert any("CI 检查失败" in c for c in comments)
+        assert any("CI check failed" in c for c in comments)
         assert any("boom" in c for c in comments)
 
     def test_ci_timeout_bounces_worker(self, tmp_path, monkeypatch):
@@ -169,7 +169,7 @@ class TestAdvanceDeliveryUnit:
         cfg = _ci_config(_ci_script(tmp_path, "exit 0"))
         assert advance_delivery(cfg, manifest, "a", store, _runtime(store), dict(DEFAULT_RETRY)) == "bounce"
         assert store.get_work_item(item.id).bounces.ci == 1
-        assert any("CI 检查超时" in c for c in store.get_comments(item.id))
+        assert any("CI check timed out" in c for c in store.get_comments(item.id))
 
     def test_ci_bounce_reaches_cap_blocks(self, tmp_path):
         store = _store()
@@ -250,7 +250,7 @@ class TestRunCiCheck:
     def test_fail_tail_output(self, tmp_path):
         script = _ci_script(tmp_path, "exit 2")
         res = run_ci_check(f"sh {script} {{pr_url}}", "https://x")
-        assert "退出码 2" in res.label
+        assert "exit code 2" in res.label
 
     def test_timeout_branch(self, tmp_path, monkeypatch):
         import omac.pipeline.delivery as delivery
@@ -261,7 +261,7 @@ class TestRunCiCheck:
         monkeypatch.setattr(delivery.subprocess, "run", fake_run)
         res = run_ci_check("gh pr checks {pr_url}", "https://x")
         assert res.timed_out is True and res.passed is False and res.exit_code is None
-        assert "CI 检查超时" in res.label
+        assert "CI check timed out" in res.label
 
     def test_timeout_str_decode_branch(self, tmp_path, monkeypatch):
         import omac.pipeline.delivery as delivery

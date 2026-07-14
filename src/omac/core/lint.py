@@ -1,6 +1,7 @@
 # lint.py
 import os
 from .manifest import Manifest
+from ..i18n import ui
 
 def _has_cycle(nodes):
     WHITE, GREY, BLACK = 0, 1, 2
@@ -110,8 +111,9 @@ def lint(m: Manifest, pool: set, *, acceptance=None) -> list:
                 continue
             for a in contract.acceptance:
                 if a not in flow_ids:
-                    errs.append(
-                        f"node {n.id}: contract.acceptance '{a}' 未锚定验收文档 flow")
+                    errs.append(ui(
+                        f"node {n.id}: contract.acceptance '{a}' is not anchored to an acceptance flow",
+                        f"node {n.id}: contract.acceptance '{a}' 未锚定验收文档 flow"))
     if _has_cycle(m.nodes):
         errs.append("manifest DAG has a cycle")
     return errs

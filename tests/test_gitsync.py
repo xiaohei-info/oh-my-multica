@@ -551,6 +551,6 @@ class TestCommitManifest:
             {
                 "step": "rebase_abort",
                 "error": "abort failed",
-                "hint": "rebase 中止失败,仓库需要人工检查",
+                "hint": "Could not abort rebase; inspect the repository manually.",
             },
         )]

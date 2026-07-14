@@ -13,6 +13,7 @@ from ...core.graph import downstream_of
 from ...engines import EngineConfig, create_engine
 from ...engines.models import WorkItemStatus
 from ...errors import OmacError, ValidationError
+from ...i18n import ui
 
 NAME = "node"
 SUMMARY = "exit 20 后的决策工具(show/retry/accept/abandon)"
@@ -71,20 +72,25 @@ def register(parser):
 
 def _load_or_raise(path: str):
     if not os.path.exists(path):
-        raise ValidationError(
+        raise ValidationError(ui(
+            f"Manifest file not found: {path}\n"
+            "Create one with `omac plan create`, then run `omac node`.",
             f"manifest 文件不存在: {path}\n"
-            f"提示:先生成 manifest(omac plan create),再运行 omac node。")
+            f"提示:先生成 manifest(omac plan create),再运行 omac node。"))
     try:
         return load_manifest(path)
     except (OmacError, ValueError, KeyError) as e:
-        raise ValidationError(f"manifest 解析失败: {path}: {e}")
+        raise ValidationError(ui(
+            f"Could not parse manifest {path}: {e}",
+            f"manifest 解析失败: {path}: {e}"))
 
 
 def _require_node(manifest, key):
     if key not in manifest.nodes:
-        avail = ", ".join(manifest.nodes) or "(空)"
-        raise ValidationError(
-            f"节点 '{key}' 不在 manifest 中。可用节点: {avail}")
+        avail = ", ".join(manifest.nodes) or ui("(none)", "(空)")
+        raise ValidationError(ui(
+            f"Node '{key}' is not in the manifest. Available nodes: {avail}",
+            f"节点 '{key}' 不在 manifest 中。可用节点: {avail}"))
     return manifest.nodes[key]
 
 
@@ -146,7 +152,9 @@ def _cmd_show(args) -> int:
             item = engine.store.get_work_item(node.work_item_id)
             evidence = _evidence_from_item(item)
         except Exception as e:  # 平台读失败不阻断 show,降级为 contract-only
-            hint(f"读取工作单元证据失败(work_item_id={node.work_item_id}): {e}")
+            hint(ui(
+                f"Could not read work-item evidence (work_item_id={node.work_item_id}): {e}",
+                f"读取工作单元证据失败(work_item_id={node.work_item_id}): {e}"))
 
     payload = {
         "node_key": node.id,
@@ -159,11 +167,15 @@ def _cmd_show(args) -> int:
         "contract": _contract_to_dict(node.contract),
         "evidence": evidence,
         "rollback_count": _ROLLBACK_COUNT_PLACEHOLDER,
-        "comments": "P4(评论线索留待 P4 落地)",
+        "comments": ui(
+            "P4 comment context is not available yet.",
+            "P4(评论线索留待 P4 落地)"),
     }
 
     print_json(payload)
-    hint("证据链已输出。决策:omac node retry|accept|abandon 后 omac dag run 续跑生效。")
+    hint(ui(
+        "Evidence printed. Choose `omac node retry|accept|abandon`, then rerun `omac dag run`.",
+        "证据链已输出。决策:omac node retry|accept|abandon 后 omac dag run 续跑生效。"))
     return exit_codes.OK
 
 
@@ -180,9 +192,11 @@ def _validate_worker(manifest, node, new_worker: str, config: dict, engine) -> s
         if not effective_ws:
             effective_ws = config.get("workspace")
         if not effective_ws:
-            raise ValidationError(
+            raise ValidationError(ui(
+                "Cannot determine the workspace for agent-pool validation. Set workspace in "
+                "config.yaml, OMAC_WORKSPACE_ID, or --workspace.",
                 "无法确定 workspace 以校验 agent 池 —— 三种给法任选:config.yaml 的 workspace 字段 / "
-                "环境变量 OMAC_WORKSPACE_ID / 命令行 --workspace")
+                "环境变量 OMAC_WORKSPACE_ID / 命令行 --workspace"))
         try:
             pool = set(engine.store.list_members(effective_ws))
         except Exception:
@@ -191,11 +205,13 @@ def _validate_worker(manifest, node, new_worker: str, config: dict, engine) -> s
     # 校验集合不可得时,退化为「与现有 worker 同名即放行 + 非空」,
     # 避免无配置环境把 retry 卡死。
     if not new_worker:
-        raise ValidationError("--worker 不能为空")
+        raise ValidationError(ui("--worker cannot be empty", "--worker 不能为空"))
     if pool and new_worker not in pool:
-        raise ValidationError(
+        raise ValidationError(ui(
+            f"Worker '{new_worker}' is not dispatchable. Available: {', '.join(sorted(pool))}\n"
+            "Add it to roles.workers in config.yaml or verify workspace membership.",
             f"worker '{new_worker}' 不在可派发池内。可选: {', '.join(sorted(pool))}\n"
-            f"提示:在 config.yaml 的 roles.workers 增补,或确认 agent 池成员。")
+            f"提示:在 config.yaml 的 roles.workers 增补,或确认 agent 池成员。"))
     return new_worker
 
 
@@ -221,7 +237,9 @@ def _cmd_retry(args) -> int:
         "worker": node.worker,
         "work_item_id": node.work_item_id,
     })
-    hint(f"节点 {node.id} 已重置为 todo。运行 `omac dag run {args.manifest}` 续跑生效。")
+    hint(ui(
+        f"Node {node.id} reset to todo. Run `omac dag run {args.manifest}` to continue.",
+        f"节点 {node.id} 已重置为 todo。运行 `omac dag run {args.manifest}` 续跑生效。"))
     return exit_codes.OK
 
 
@@ -234,8 +252,10 @@ def _cmd_accept(args) -> int:
     if node.work_item_id:
         engine = _build_engine(load_config())
         if engine is None:
-            raise ValidationError(
-                "节点有 work_item_id,但无法解析引擎配置；为避免 manifest 与平台状态分裂,请先配置 OMAC_ENGINE/OMAC_WORKSPACE_ID 或 .omac/config.yaml")
+            raise ValidationError(ui(
+                "The node has a work_item_id, but engine configuration cannot be resolved. "
+                "Set OMAC_ENGINE and OMAC_WORKSPACE_ID or configure .omac/config.yaml first.",
+                "节点有 work_item_id,但无法解析引擎配置；为避免 manifest 与平台状态分裂,请先配置 OMAC_ENGINE/OMAC_WORKSPACE_ID 或 .omac/config.yaml"))
         engine.store.update_work_item_metadata(
             node.work_item_id,
             decision_required={},
@@ -250,7 +270,9 @@ def _cmd_accept(args) -> int:
         "status": "done",
         "work_item_id": node.work_item_id,
     })
-    hint(f"节点 {node.id} 已接受建议项并标记 done。运行 `omac dag run {args.manifest}` 续跑生效。")
+    hint(ui(
+        f"Node {node.id} accepted and marked done. Run `omac dag run {args.manifest}` to continue.",
+        f"节点 {node.id} 已接受建议项并标记 done。运行 `omac dag run {args.manifest}` 续跑生效。"))
     return exit_codes.OK
 
 
@@ -273,9 +295,11 @@ def _cmd_abandon(args) -> int:
         "status": "abandoned",
         "affected_downstream": affected,
     })
-    hint(
+    hint(ui(
+        f"Node {node.id} abandoned. Its dependency is treated as satisfied and downstream "
+        f"work may continue.\nRun `omac dag run {args.manifest}` to continue.",
         f"节点 {node.id} 已 abandon:上游视同依赖已满足,下游可继续推进。\n"
-        f"运行 `omac dag run {args.manifest}` 续跑生效。")
+        f"运行 `omac dag run {args.manifest}` 续跑生效。"))
     return exit_codes.OK
 
 
@@ -288,4 +312,6 @@ def run(args) -> int:
         return _cmd_accept(args)
     if args.action == "abandon":
         return _cmd_abandon(args)
-    raise ValidationError(f"未知 node 子命令: {args.action}")
+    raise ValidationError(ui(
+        f"Unknown node subcommand: {args.action}",
+        f"未知 node 子命令: {args.action}"))

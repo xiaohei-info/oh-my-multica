@@ -7,6 +7,7 @@ from ...core import config as config_mod
 from ...engines import create_engine
 from ...engines.models import EngineConfig
 from ...errors import ValidationError
+from ...i18n import resolve_language, ui
 from .. import exit_codes
 from ..output import hint
 from ...pipeline.plan import PlanContext, plan_create, plan_dag_key_from_id, plan_resume
@@ -96,12 +97,16 @@ def _resolve_goal(args) -> str | None:
     goal = getattr(args, "goal", None)
     goal_file = getattr(args, "goal_file", None)
     if goal and goal_file:
-        raise ValidationError("--goal 与 --goal-file 互斥,二选一")
+        raise ValidationError(ui(
+            "--goal and --goal-file are mutually exclusive",
+            "--goal 与 --goal-file 互斥,二选一"))
     if goal:
         return goal
     if goal_file:
         if not os.path.exists(goal_file):
-            raise ValidationError(f"--goal-file 不存在: {goal_file}")
+            raise ValidationError(ui(
+                f"--goal-file not found: {goal_file}",
+                f"--goal-file 不存在: {goal_file}"))
         with open(goal_file, encoding="utf-8") as f:
             return f.read()
     return None
@@ -122,9 +127,11 @@ def _build_context(cfg: dict, engine, args) -> PlanContext:
     orchestrator = roles.get("orchestrator") or planner
 
     if not planner:
-        raise ValidationError(
+        raise ValidationError(ui(
+            "Planner role is missing. Run `omac config set roles.planner <agent>`, "
+            "or configure roles.workers so the first worker can be used.",
             "缺少 planner 角色 —— 请 `omac config set roles.planner <agent>`,"
-            "或设置 roles.workers(取首位作为 planner)")
+            "或设置 roles.workers(取首位作为 planner)"))
 
     members = set(engine.store.list_members(workspace_id))
     return PlanContext(
@@ -138,6 +145,7 @@ def _build_context(cfg: dict, engine, args) -> PlanContext:
         no_acceptance=(not workflow["acceptance_doc"]) or args.no_acceptance,
         members=members,
         confirm=workflow["human_in_loop"] and not args.no_confirm,
+        language=resolve_language(cfg),
     )
 
 
@@ -149,12 +157,17 @@ def _create(args) -> int:
     goal_text = _resolve_goal(args)
     doc_path = getattr(args, "doc", None)
     if goal_text and doc_path:
-        hint("同时给了 --doc 与 --goal:--doc 会跳过 planner 设计环节,--goal 被忽略")
+        hint(ui(
+            "Both --doc and --goal were provided. --doc skips planner authoring, so --goal is ignored.",
+            "同时给了 --doc 与 --goal:--doc 会跳过 planner 设计环节,--goal 被忽略"))
     if not doc_path and not goal_text and config_mod.resolve_workflow(cfg)["goal_required"]:
-        raise ValidationError(
+        raise ValidationError(ui(
+            "workflow.goal_required=true requires a request when --doc is absent. "
+            "Use `omac plan create --name <name> --goal <request>`, `--goal-file <path>`, "
+            "or provide an existing design with `--doc <path>`.",
             "workflow.goal_required=true:无 --doc 时必须提供需求。"
             "请使用 `omac plan create --name <name> --goal <需求>` "
-            "或 `--goal-file <path>`;已有设计方案则用 `--doc <path>`。")
+            "或 `--goal-file <path>`;已有设计方案则用 `--doc <path>`。"))
 
     ctx = _build_context(cfg, engine, args)
     return plan_create(ctx, args.name, doc_path=doc_path, goal_text=goal_text)
@@ -164,7 +177,9 @@ def _selector(args) -> tuple[str, set[str] | None]:
     """返回用户选择器标签与可匹配 dag_key 集合;None 表示走 legacy name 子串。"""
     provided = [v for v in (args.name, args.dag_key, args.plan_id) if v]
     if not provided:
-        raise ValidationError("plan confirm 需要 --dag-key / --plan-id / --name 之一")
+        raise ValidationError(ui(
+            "plan confirm requires one of --dag-key, --plan-id, or --name",
+            "plan confirm 需要 --dag-key / --plan-id / --name 之一"))
     if args.dag_key:
         return f"dag_key={args.dag_key}", {args.dag_key}
     if args.plan_id:
@@ -204,17 +219,23 @@ def _confirm(args) -> int:
         )
     ]
     if not waiting:
-        raise ValidationError(
+        raise ValidationError(ui(
+            f"No pending design or acceptance issue matched {label}. It may already be "
+            "confirmed, not yet authored, or selected incorrectly.",
             f"未找到 {label} 待确认的设计/验收 issue —— "
-            "可能已确认、尚未产出,或 selector 不匹配。")
+            "可能已确认、尚未产出,或 selector 不匹配。"))
     if len(waiting) > 1:
-        raise ValidationError(
+        raise ValidationError(ui(
+            f"{label} matched multiple pending issues. Use --dag-key plan-p-xxxx or "
+            "acceptance-p-xxxx for an exact selection.",
             f"{label} 匹配到多条待确认 issue —— name 可能重复;"
-            "请改用 --dag-key plan-p-xxxx / acceptance-p-xxxx 精确定位。")
+            "请改用 --dag-key plan-p-xxxx / acceptance-p-xxxx 精确定位。"))
 
     it = waiting[0]
     engine.store.mark_done(it.id)
-    print(f"已确认:{it.title}(issue {it.id})→ DONE,omac 将继续评审流程")
+    print(ui(
+        f"Confirmed: {it.title} (issue {it.id}) → DONE. OMAC will continue the review flow.",
+        f"已确认:{it.title}(issue {it.id})→ DONE,omac 将继续评审流程"))
     return exit_codes.OK
 
 
@@ -237,4 +258,6 @@ def run(args) -> int:
         return _confirm(args)
     if args.action == "resume":
         return _resume(args)
-    raise ValidationError(f"未知 plan 子命令:{args.action}")
+    raise ValidationError(ui(
+        f"Unknown plan subcommand: {args.action}",
+        f"未知 plan 子命令:{args.action}"))

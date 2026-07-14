@@ -149,6 +149,20 @@ def test_manifests_lists_yaml_and_progress(orch, simple_manifest, monkeypatch):
         assert demo["done"] == 0
 
 
+def test_meta_exposes_configured_language(orch, monkeypatch):
+    monkeypatch.chdir(orch.parent)
+    config = yaml.safe_load((orch / "config.yaml").read_text(encoding="utf-8"))
+    config["language"] = "cn"
+    (orch / "config.yaml").write_text(
+        yaml.safe_dump(config, allow_unicode=True), encoding="utf-8")
+
+    with _Server(orch_subpath=str(orch)) as s:
+        status, body = s.get("/api/meta")
+
+    assert status == 200
+    assert json.loads(body)["language"] == "cn"
+
+
 def test_config_endpoint_equals_cli(orch, monkeypatch):
     monkeypatch.chdir(orch.parent)
     code, cli_data = _cli_json(["config", "get", "--output", "json"], cwd=None)

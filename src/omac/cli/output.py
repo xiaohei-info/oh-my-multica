@@ -9,6 +9,9 @@ from __future__ import annotations
 import json
 import sys
 
+from ..core import config as config_mod
+from ..i18n import resolve_language, t
+
 JSON = "json"
 TABLE = "table"
 OUTPUT_CHOICES = (TABLE, JSON)
@@ -16,9 +19,10 @@ OUTPUT_CHOICES = (TABLE, JSON)
 
 def add_output_flag(parser, *, default=TABLE):
     """给子命令挂统一的 --output flag。"""
+    language = resolve_language(config_mod.load_config())
     parser.add_argument(
         "--output", choices=OUTPUT_CHOICES, default=default,
-        help=f"输出格式:json 给 Agent/Web,table 给人类调试(默认:{default})",
+        help=t("output.help", language=language, default=default),
     )
     return parser
 

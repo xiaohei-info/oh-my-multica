@@ -128,6 +128,9 @@ def test_static_index_has_doctype_and_utf8():
     html = _read_index()
     assert re.search(r"<!doctype\s+html>", html, re.IGNORECASE), "必须 <!doctype html>"
     assert "charset=\"utf-8\"" in html.replace(" ", ""), "必须声明 utf-8"
+    assert "<html lang=\"en\">" in html
+    assert "const COPY" in html
+    assert "language: \"en\"" in html
 
 
 # ==================== 2. CSP 自检 ==================

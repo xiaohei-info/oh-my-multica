@@ -20,6 +20,7 @@ from ..engines.models import WorkItemStatus
 from ..engines.runtime import AgentRuntime
 from ..engines.store import WorkItemStore
 from ..errors import PlatformError
+from ..i18n import current_language, ui
 from ..pipeline.dispatch import normalize_source_refs, render_issue_body
 from ..core.taskmeta import TaskKind, TaskPhase
 
@@ -216,16 +217,20 @@ def collect_results(
             if item.agent_run_finished_without_submit:
                 worker_limit = limits.get("worker", DEFAULT_RETRY["worker"])
                 cur_bounce = item.bounces.worker
-                reason = "worker run 已结束但未通过 omac work submit 交付"
+                reason = ui(
+                    "Worker run ended without delivery through `omac work submit`.",
+                    "worker run 已结束但未通过 omac work submit 交付")
                 if worker_limit == 0 or cur_bounce >= worker_limit:
                     store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
                     set_node(manifest, key, status="blocked")
-                    failures[key] = (
-                        f"worker 未交付(回退上界 {worker_limit} 已耗尽): {reason}"
-                    )
+                    failures[key] = ui(
+                        f"Worker did not deliver; retry limit {worker_limit} exhausted: {reason}",
+                        f"worker 未交付(回退上界 {worker_limit} 已耗尽): {reason}")
                     log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
                              id=node.work_item_id,
-                             reason=f"worker 未交付回退上界({worker_limit})已耗尽")
+                             reason=ui(
+                                 f"Worker delivery retry limit ({worker_limit}) exhausted",
+                                 f"worker 未交付回退上界({worker_limit})已耗尽"))
                 else:
                     store.update_work_item_metadata(
                         node.work_item_id,
@@ -246,11 +251,15 @@ def collect_results(
                         store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
                         store.add_comment(
                             node.work_item_id,
-                            f"回退到 worker {node.worker} 继续交付失败"
-                            f"(已回滚回退计数): {exc}",
+                            ui(
+                                f"Failed to return delivery to worker {node.worker}; retry count rolled back: {exc}",
+                                f"回退到 worker {node.worker} 继续交付失败"
+                                f"(已回滚回退计数): {exc}"),
                         )
                         set_node(manifest, key, status="blocked")
-                        failures[key] = f"回退到 worker {node.worker} 继续交付失败: {exc}"
+                        failures[key] = ui(
+                            f"Failed to return delivery to worker {node.worker}: {exc}",
+                            f"回退到 worker {node.worker} 继续交付失败: {exc}")
                 continue
             if item.status == WorkItemStatus.IN_PROGRESS:
                 runtime.wake(node.work_item_id, node.worker, "worker")
@@ -260,11 +269,16 @@ def collect_results(
                 if gate_errors:
                     reason = "; ".join(gate_errors)
                     store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
-                    store.add_comment(node.work_item_id, f"证据门未通过: {reason}")
+                    store.add_comment(node.work_item_id, ui(
+                        f"Evidence gate failed: {reason}", f"证据门未通过: {reason}"))
                     set_node(manifest, key, status="blocked")
-                    failures[key] = f"worker 证据门未通过: {reason}"
+                    failures[key] = ui(
+                        f"Worker evidence gate failed: {reason}",
+                        f"worker 证据门未通过: {reason}")
                     log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
-                             id=node.work_item_id, reason=f"worker 证据门: {reason}")
+                             id=node.work_item_id, reason=ui(
+                                 f"Worker evidence gate: {reason}",
+                                 f"worker 证据门: {reason}"))
                     continue
                 # worker 证据已过门 → CI 门(§7.3)。配置 ci 时运行 CI,绿才进评审;
                 # 失败/超时 → 有界「回到 worker」(retry_limits["ci"])。
@@ -274,14 +288,19 @@ def collect_results(
                     config or {}, manifest, key, store, runtime, limits,
                     project_root=_project_root_from_manifest_path(manifest_path))
                 if ci_action == "bounce":
-                    failures[key] = "CI 未通过,已转回 worker(上界未耗尽,待重交)"
+                    failures[key] = ui(
+                        "CI failed; returned to the worker for resubmission.",
+                        "CI 未通过,已转回 worker(上界未耗尽,待重交)")
                     log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=key,
                              id=node.work_item_id, gate="ci")
                     continue
                 if ci_action == "blocked":
-                    failures[key] = "CI 检查未通过,回退上界(retry.ci)已耗尽"
+                    failures[key] = ui(
+                        "CI failed and retry.ci is exhausted.",
+                        "CI 检查未通过,回退上界(retry.ci)已耗尽")
                     log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
-                             id=node.work_item_id, reason="CI 回退上界已耗尽")
+                             id=node.work_item_id, reason=ui(
+                                 "CI retry limit exhausted", "CI 回退上界已耗尽"))
                     continue
                 # CI 绿(或无可用 CI 而跳过):nits follow-up 已经由上一轮 reviewer 接受,
                 # worker 修完后直接进入 merge/done,不再浪费第二轮 reviewer。
@@ -295,9 +314,12 @@ def collect_results(
                         log.info(logsetup.EVT_NODE_DONE, kind=_DAG_KIND, node=key,
                                  id=node.work_item_id)
                     elif merge_action == "blocked":
-                        failures[key] = "merge 失败,回退上界(retry.merge)已耗尽"
+                        failures[key] = ui(
+                            "Merge failed and retry.merge is exhausted.",
+                            "merge 失败,回退上界(retry.merge)已耗尽")
                         log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
-                                 id=node.work_item_id, reason="merge 回退上界已耗尽")
+                                 id=node.work_item_id, reason=ui(
+                                     "Merge retry limit exhausted", "merge 回退上界已耗尽"))
                 elif node.reviewer:
                     pending_review.append((key, node.work_item_id, node.reviewer))
                 else:
@@ -310,16 +332,20 @@ def collect_results(
                              id=node.work_item_id)
             elif item.status == WorkItemStatus.FAILED:
                 store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
-                store.add_comment(node.work_item_id, "worker 执行失败")
+                store.add_comment(node.work_item_id, ui(
+                    "Worker execution failed", "worker 执行失败"))
                 set_node(manifest, key, status="blocked")
-                failures[key] = "worker 执行失败"
+                failures[key] = ui("Worker execution failed", "worker 执行失败")
                 log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
-                         id=node.work_item_id, reason="worker 执行失败")
+                         id=node.work_item_id, reason=ui(
+                             "Worker execution failed", "worker 执行失败"))
             elif item.status == WorkItemStatus.BLOCKED:
                 set_node(manifest, key, status="blocked")
-                failures[key] = "worker 平台状态 blocked"
+                failures[key] = ui(
+                    "Worker platform status is blocked", "worker 平台状态 blocked")
                 log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
-                         id=node.work_item_id, reason="worker 平台 blocked")
+                         id=node.work_item_id, reason=ui(
+                             "Worker is blocked on the platform", "worker 平台 blocked"))
 
         # ---- in_review: reviewer 阶段回收 ----
         elif node.status == "in_review":
@@ -330,12 +356,16 @@ def collect_results(
                     store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
                     store.add_comment(
                         node.work_item_id,
-                        f"reviewer 平台 {item.status.value} 但缺 review_verdict 结构化证据",
+                        ui(
+                            f"Reviewer platform status is {item.status.value}, but structured review_verdict evidence is missing.",
+                            f"reviewer 平台 {item.status.value} 但缺 review_verdict 结构化证据"),
                     )
                     set_node(manifest, key, status="blocked")
-                    failures[key] = "reviewer 缺 review_verdict"
+                    failures[key] = ui(
+                        "Reviewer is missing review_verdict", "reviewer 缺 review_verdict")
                     log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
-                             id=node.work_item_id, reason="reviewer 缺 review_verdict")
+                             id=node.work_item_id, reason=ui(
+                                 "Reviewer is missing review_verdict", "reviewer 缺 review_verdict"))
                 continue
 
             log.info(logsetup.EVT_VERDICT, kind=_DAG_KIND, node=key,
@@ -355,9 +385,13 @@ def collect_results(
                     store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
                     store.add_comment(
                         node.work_item_id,
-                        f"回退到 worker {node.worker} 处理 nits 失败: {exc}")
+                        ui(
+                            f"Failed to return nits to worker {node.worker}: {exc}",
+                            f"回退到 worker {node.worker} 处理 nits 失败: {exc}"))
                     set_node(manifest, key, status="blocked")
-                    failures[key] = f"回退到 worker {node.worker} 处理 nits 失败: {exc}"
+                    failures[key] = ui(
+                        f"Failed to return nits to worker {node.worker}: {exc}",
+                        f"回退到 worker {node.worker} 处理 nits 失败: {exc}")
                 continue
             gate_errors = validate_review_evidence(node, item)
             if not gate_errors and verdict != "reject":
@@ -371,9 +405,12 @@ def collect_results(
                     log.info(logsetup.EVT_NODE_DONE, kind=_DAG_KIND, node=key,
                              id=node.work_item_id)
                 elif merge_action == "blocked":
-                    failures[key] = "merge 失败,回退上界(retry.merge)已耗尽"
+                    failures[key] = ui(
+                        "Merge failed and retry.merge is exhausted.",
+                        "merge 失败,回退上界(retry.merge)已耗尽")
                     log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
-                             id=node.work_item_id, reason="merge 回退上界已耗尽")
+                             id=node.work_item_id, reason=ui(
+                                 "Merge retry limit exhausted", "merge 回退上界已耗尽"))
                 # else "bounce": 节点已转回 in_progress,本 tick 不再推进。
             else:
                 # reviewer reject 或评审证据不合格:有界「回到 worker」回退,
@@ -383,12 +420,18 @@ def collect_results(
                 reason = "; ".join(gate_errors) if gate_errors else "reviewer reject"
                 if review_limit == 0 or cur_bounce >= review_limit:
                     store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
-                    store.add_comment(node.work_item_id, f"评审证据门上界({review_limit})已耗尽: {reason}")
+                    store.add_comment(node.work_item_id, ui(
+                        f"Review evidence retry limit ({review_limit}) exhausted: {reason}",
+                        f"评审证据门上界({review_limit})已耗尽: {reason}"))
                     set_node(manifest, key, status="blocked")
-                    failures[key] = f"评审证据门未通过(回退上界 {review_limit} 已耗尽): {reason}"
+                    failures[key] = ui(
+                        f"Review evidence gate failed; retry limit {review_limit} exhausted: {reason}",
+                        f"评审证据门未通过(回退上界 {review_limit} 已耗尽): {reason}")
                     log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
                              id=node.work_item_id,
-                             reason=f"评审回退上界({review_limit})已耗尽")
+                             reason=ui(
+                                 f"Review retry limit ({review_limit}) exhausted",
+                                 f"评审回退上界({review_limit})已耗尽"))
                 else:
                     # 有界「回到 worker」:先记回退计数并清除旧评审判定,再重新派发 worker。
                     # 派发失败时回滚回退计数并把节点标 blocked,避免卡在「已清判定/未派发」中间态。
@@ -410,9 +453,13 @@ def collect_results(
                         store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
                         store.add_comment(
                             node.work_item_id,
-                            f"回退到 worker {node.worker} 失败(已回滚回退计数): {exc}")
+                            ui(
+                                f"Failed to return to worker {node.worker}; retry count rolled back: {exc}",
+                                f"回退到 worker {node.worker} 失败(已回滚回退计数): {exc}"))
                         set_node(manifest, key, status="blocked")
-                        failures[key] = f"回退到 worker {node.worker} 失败: {exc}"
+                        failures[key] = ui(
+                            f"Failed to return to worker {node.worker}: {exc}",
+                            f"回退到 worker {node.worker} 失败: {exc}")
 
     # ---- reviewer 阶段过渡(遍历后执行,避免改 manifest 影响遍历)----
     for key, item_id, reviewer in pending_review:
@@ -431,11 +478,15 @@ def collect_results(
             runtime.wake(item_id, reviewer, "reviewer")
         except PlatformError as exc:
             store.update_status(item_id, WorkItemStatus.BLOCKED)
-            store.add_comment(item_id, f"唤醒 reviewer {reviewer} 失败: {exc}")
+            store.add_comment(item_id, ui(
+                f"Failed to wake reviewer {reviewer}: {exc}",
+                f"唤醒 reviewer {reviewer} 失败: {exc}"))
             set_node(manifest, key, status="blocked")
-            failures[key] = f"唤醒 reviewer {reviewer} 失败"
+            failures[key] = ui(
+                f"Failed to wake reviewer {reviewer}", f"唤醒 reviewer {reviewer} 失败")
             log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
-                     id=item_id, reason=f"唤醒 reviewer {reviewer} 失败")
+                     id=item_id, reason=ui(
+                         f"Failed to wake reviewer {reviewer}", f"唤醒 reviewer {reviewer} 失败"))
 
     if failures or pending_review:
         save_manifest(manifest, manifest_path)
@@ -474,7 +525,11 @@ def _develop_dag_key(manifest: Manifest, node_key: str) -> str:
 def _develop_source_refs(manifest: Manifest, node, engine_env) -> List[dict]:
     refs = normalize_source_refs(
         manifest.meta.get("source_issues"),
-        labels=["设计方案", "验收文档", "任务拆解"],
+        labels=[
+            ui("Design", "设计方案"),
+            ui("Acceptance document", "验收文档"),
+            ui("Task decomposition", "任务拆解"),
+        ],
         engine_env=engine_env,
     )
     dependency_refs = []
@@ -483,7 +538,9 @@ def _develop_source_refs(manifest: Manifest, node, engine_env) -> List[dict]:
         if dependency is None or not dependency.work_item_id:
             continue
         dependency_refs.append({
-            "label": f"前置开发任务 · {dependency.title or dependency_key}",
+            "label": ui(
+                f"Prerequisite implementation · {dependency.title or dependency_key}",
+                f"前置开发任务 · {dependency.title or dependency_key}"),
             "issue_id": dependency.work_item_id,
         })
     refs.extend(normalize_source_refs(dependency_refs, engine_env=engine_env))
@@ -546,6 +603,7 @@ def _dispatch(
             source_refs=source_refs,
             engine_env=env,
             issue_key=getattr(item, "identifier", None),
+            language=current_language(),
         )
         store.update_work_item_metadata(
             item.id,
@@ -562,10 +620,13 @@ def _dispatch(
             runtime.wake(node.work_item_id, worker, "worker")
         except PlatformError as exc:
             store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
-            store.add_comment(node.work_item_id, f"唤醒 worker {worker} 失败: {exc}")
+            store.add_comment(node.work_item_id, ui(
+                f"Failed to wake worker {worker}: {exc}",
+                f"唤醒 worker {worker} 失败: {exc}"))
             set_node(manifest, key, status="blocked")
             log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
-                     id=node.work_item_id, reason=f"唤醒 worker {worker} 失败")
+                     id=node.work_item_id, reason=ui(
+                         f"Failed to wake worker {worker}", f"唤醒 worker {worker} 失败"))
             continue
 
         log.info(logsetup.EVT_DISPATCH, kind=_DAG_KIND, node=key,

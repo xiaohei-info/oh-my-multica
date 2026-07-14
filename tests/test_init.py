@@ -82,7 +82,7 @@ def test_bare_init_rejects_non_tty_with_config_set_guidance(tmp_path, monkeypatc
 
     assert code == exit_codes.VALIDATION
     err = capsys.readouterr().err
-    assert "omac init 是人类交互式向导" in err
+    assert "omac init is an interactive setup wizard" in err
     assert "omac config set engine" in err
     assert "omac init --check" in err
 
@@ -146,7 +146,7 @@ def test_non_interactive_role_not_in_pool_fails(tmp_path, monkeypatch, capsys):
     ])
     assert code == exit_codes.VALIDATION
     err = capsys.readouterr().err
-    assert "ghost" in err and "agent 池" in err
+    assert "ghost" in err and "agent pool" in err
     assert not (tmp_path / ".omac" / "config.yaml").exists()
 
 
@@ -158,7 +158,7 @@ def test_check_missing_config_guides_agent_ci_to_config_set(tmp_path, monkeypatc
     assert main(["init", "--check"]) == exit_codes.VALIDATION
 
     err = capsys.readouterr().err
-    assert "配置文件不存在" in err
+    assert "Configuration file not found" in err
     assert "omac config set engine" in err
     assert "omac init --check" in err
 
@@ -173,7 +173,7 @@ def test_check_flags_role_not_in_pool(tmp_path, monkeypatch, capsys):
     capsys.readouterr()
     assert main(["init", "--check"]) == exit_codes.VALIDATION
     err = capsys.readouterr().err
-    assert "zoe" in err and "agent 池" in err
+    assert "zoe" in err and "workspace pool" in err
 
 
 def test_check_flags_workspace_not_exist(tmp_path, monkeypatch, capsys):
@@ -306,7 +306,7 @@ def test_check_degrades_when_multica_unreachable(tmp_path, monkeypatch, capsys):
     capsys.readouterr()
     assert main(["init", "--check"]) == exit_codes.VALIDATION
     err = capsys.readouterr().err
-    assert "multica CLI 不在 PATH" in err
+    assert "multica CLI is not on PATH" in err
 
 
 # ==================== 交互模式(monkeypatch stdin)====================
@@ -332,10 +332,11 @@ def test_interactive_main_path(tmp_path, monkeypatch, capsys):
     """交互式:回车用缺省,主路径生成 config 且 --check 通过。"""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "stdin", _Tty())
-    # 回答顺序:engine(回车=mock)→ workspace(回车=第一个)→ 不创建模板 Agent → planner(回车=1)
+    # 回答顺序:language(回车=en)→ engine(回车=mock)→ workspace(回车=第一个)→ 不创建模板 Agent → planner(回车=1)
     # → orchestrator(回车=1)→ workers(回车=1)→ reviewers(回车=1)→ acceptor(回车跳过)
     # → max_parallel(6)→ retry values → workflow defaults
     monkeypatch.setattr(builtins, "input", _answers([
+        "",       # language → en
         "",       # engine → mock
         "",       # workspace → 首个(mock-workspace)
         "",       # 不通过模板创建 Agent
@@ -357,6 +358,7 @@ def test_interactive_main_path(tmp_path, monkeypatch, capsys):
     import yaml
     cfg = yaml.safe_load((tmp_path / ".omac" / "config.yaml").read_text())
     assert cfg["engine"] == "mock"
+    assert cfg["language"] == "en"
     assert cfg["roles"]["planner"] == "alice"
     assert cfg["roles"]["workers"] == ["alice"]
     assert "acceptor" not in cfg["roles"]
@@ -378,6 +380,7 @@ def test_interactive_type_name(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "stdin", _Tty())
     monkeypatch.setattr(builtins, "input", _answers([
+        "en",              # language
         "mock",            # engine
         "mock-workspace",  # workspace by id
         "",                # 不通过模板创建 Agent
@@ -398,7 +401,7 @@ def test_interactive_bad_role_rejected(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "stdin", _Tty())
     monkeypatch.setattr(builtins, "input", _answers([
-        "mock", "mock-workspace", "", "ghost",  # 不创建模板;planner 不在池
+        "en", "mock", "mock-workspace", "", "ghost",  # 不创建模板;planner 不在池
     ]))
     assert main(["init"]) == exit_codes.VALIDATION
     assert "ghost" in capsys.readouterr().err
@@ -410,6 +413,7 @@ def test_interactive_can_create_template_agent_then_map_it_as_worker(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "stdin", _Tty())
     monkeypatch.setattr(builtins, "input", _answers([
+        "en",              # language
         "mock",            # engine
         "mock-workspace",  # workspace
         "y",               # 通过模板创建 Agent
@@ -429,5 +433,5 @@ def test_interactive_can_create_template_agent_then_map_it_as_worker(
     cfg = yaml.safe_load((tmp_path / ".omac" / "config.yaml").read_text())
     assert cfg["roles"]["workers"] == ["template-worker"]
     output = capsys.readouterr().out
-    assert "当前已有 Agent" in output
-    assert "已创建 Agent:template-worker" in output
+    assert "Existing Agents" in output
+    assert "Agent created: template-worker" in output

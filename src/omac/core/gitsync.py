@@ -12,6 +12,7 @@ import subprocess
 
 from . import logsetup
 from ..errors import ValidationError
+from ..i18n import ui
 
 log = logsetup.get_logger(__name__)
 
@@ -128,19 +129,28 @@ def _retry_files_push(paths, repo_root: str) -> None:
         safe, touched = _files_only_local_commits(
             repo_root, upstream, relative_paths)
     if not safe:
-        paths = ", ".join(sorted(touched)) or "无法确定本地提交范围"
+        paths = ", ".join(sorted(touched)) or ui(
+            "unable to determine local commit scope", "无法确定本地提交范围")
         log.warning(
             "manifest_sync_failed", step="safety",
-            error=f"本地未推送提交不只修改 manifest: {paths}",
-            hint="OMAC 不会自动 rebase 用户业务提交")
+            error=ui(
+                f"Unpushed local commits modify more than the manifest: {paths}",
+                f"本地未推送提交不只修改 manifest: {paths}"),
+            hint=ui(
+                "OMAC will not rebase user business commits automatically.",
+                "OMAC 不会自动 rebase 用户业务提交"))
         return
 
     current_head = _run(repo_root, "rev-parse", "HEAD")
     if current_head.returncode != 0 or current_head.stdout.strip() != validated_head:
         log.warning(
             "manifest_sync_failed", step="safety",
-            error="安全检查后 HEAD 已变化,停止自动 rebase",
-            hint="等待当前 git 操作完成后由下一轮 tick 重试")
+            error=ui(
+                "HEAD changed after the safety check; automatic rebase stopped.",
+                "安全检查后 HEAD 已变化,停止自动 rebase"),
+            hint=ui(
+                "Wait for the current git operation; the next tick will retry.",
+                "等待当前 git 操作完成后由下一轮 tick 重试"))
         return
 
     rebased = _run(repo_root, "rebase", upstream)
@@ -150,19 +160,25 @@ def _retry_files_push(paths, repo_root: str) -> None:
             log.warning(
                 "manifest_sync_failed", step="rebase_abort",
                 error=aborted.stderr.strip(),
-                hint="rebase 中止失败,仓库需要人工检查")
+                hint=ui(
+                    "Could not abort rebase; inspect the repository manually.",
+                    "rebase 中止失败,仓库需要人工检查"))
         else:
             log.warning(
                 "manifest_sync_failed", step="rebase",
                 error=(rebased.stderr or rebased.stdout).strip(),
-                hint="manifest 与远程状态冲突,已中止 rebase,未覆盖远程")
+                hint=ui(
+                    "The manifest conflicts with remote state. Rebase was aborted and remote state was not overwritten.",
+                    "manifest 与远程状态冲突,已中止 rebase,未覆盖远程"))
         return
 
     retried = _run(repo_root, "push")
     if retried.returncode != 0:
         log.warning("manifest_sync_failed", step="push_retry",
                     error=retried.stderr.strip(),
-                    hint="manifest 已 rebase 但重试 push 失败")
+                    hint=ui(
+                        "Manifest rebased, but the retry push failed.",
+                        "manifest 已 rebase 但重试 push 失败"))
 
 
 def ensure_config_synced(config_path: str, branch: str = "main",
@@ -181,23 +197,29 @@ def ensure_config_synced(config_path: str, branch: str = "main",
 
     abs_path = config_path if config_path.startswith("/") else f"{repo_root}/{config_path}"
     if not os.path.exists(abs_path):
-        raise ValidationError(
-            f"config 不存在: {config_path} —— 先运行 `omac init` 生成配置")
+        raise ValidationError(ui(
+            f"Configuration not found: {config_path}. Run `omac init` first.",
+            f"config 不存在: {config_path} —— 先运行 `omac init` 生成配置"))
 
     # 有未提交改动就自动提交(隔离区 agent clone 到的必须是最新 config)
     if _run(repo_root, "status", "--porcelain", "--", config_path).stdout.strip():
         _run(repo_root, "add", config_path)
         r = _run(repo_root, "commit", "-m", f"chore(omac): sync {config_path}")
         if r.returncode != 0:
-            raise ValidationError(f"config 自动提交失败: {r.stderr.strip()}")
+            raise ValidationError(ui(
+                f"Automatic configuration commit failed: {r.stderr.strip()}",
+                f"config 自动提交失败: {r.stderr.strip()}"))
 
     # 补推(覆盖「已提交未推送」;已同步时 Everything up-to-date 幂等)
     r = _run(repo_root, "push", "origin", branch)
     if r.returncode != 0:
-        raise ValidationError(
+        raise ValidationError(ui(
+            f"Could not push configuration to origin/{branch}; isolated agents would clone stale state.\n"
+            f"  {r.stderr.strip()}\n"
+            f"  The remote may have diverged. Run `git pull --rebase origin {branch}` and retry.",
             f"config push 到 origin/{branch} 失败 —— 隔离区 agent 会 clone 到旧版。\n"
             f"  {r.stderr.strip()}\n"
-            f"  远程可能已分叉,先 `git pull --rebase origin {branch}` 再重试")
+            f"  远程可能已分叉,先 `git pull --rebase origin {branch}` 再重试"))
     log.info(logsetup.EVT_CONFIG_SYNCED, path=config_path, branch=branch)
 
 

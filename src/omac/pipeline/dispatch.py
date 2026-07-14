@@ -24,6 +24,7 @@ from omac.core.taskmeta import TaskKind, TaskPhase
 from omac.engines.models import WorkItem, WorkItemStatus
 from omac.engines.store import WorkItemStore
 from omac.errors import ValidationError
+from omac.i18n import CN, EN, t, ui
 
 
 
@@ -45,31 +46,39 @@ omac CLI 已在 PATH 上。第一步只运行:
 """
 
 
+def project_description(language: str = EN) -> str:
+    return ui(
+        """This project is orchestrated by OMAC. Only issues whose titles start with `[DAG:...]` are OMAC-dispatched tasks. Handle other issues normally unless their body explicitly asks you to run an OMAC command.
+
+When assigned a `[DAG:...]` task, first run:
+
+  omac work show <issue-id> --output json
+
+Treat the returned task, context, protocol, and authority as current instance facts. Load only the topics listed in guide_refs; static guides never override instance facts. Finish with the exact submit command returned by work show. Do not invent arguments or edit issue metadata, assignees, or platform status manually.
+""",
+        OMAC_PROJECT_DESCRIPTION,
+        language=language,
+    )
+
+
 # work show 的「现在做什么」——严格按当前这件任务(kind × phase)收窄,不 role-mix。
 # 静态深度(交付文件 schema、铁律清单)全在 guide,协议不再内联复制;show 只给一句话
 # 动作。对应 guide topic 通过独立的 guide_refs 字段返回,避免把命令混进动作语义。
-_AUTHORING_ACTION = {
-    TaskKind.PLAN:
-        "编写设计方案:分析需求,产出锚定验收目标、可执行、可验证的方案文档。",
-    TaskKind.ACCEPTANCE:
-        "编写验收文档:把定稿设计方案的业务流程逐条转成用户视角、端到端、可执行的验收动作。",
-    TaskKind.DECOMPOSE:
-        "把设计方案/验收拆成 manifest DAG:每节点带完整 contract、acceptance 锚定验收文档、DAG 无环。",
-    TaskKind.DEVELOP:
-        "推分支 + 开 PR(base=contract.pr_base,worker 自建、omac 不代建),TDD 同步,产出结构化验证证据;"
-        "不要手动改 issue 状态/assignee/rerun/cancel。",
-    TaskKind.FINAL_ACCEPTANCE:
-        "以验收文档为清单做用户视角端到端走查,逐条记录 pass/fail + 证据。",
+_AUTHORING_ACTION_KEYS = {
+    TaskKind.PLAN: "work.protocol.plan",
+    TaskKind.ACCEPTANCE: "work.protocol.acceptance",
+    TaskKind.DECOMPOSE: "work.protocol.decompose",
+    TaskKind.DEVELOP: "work.protocol.develop",
+    TaskKind.FINAL_ACCEPTANCE: "work.protocol.final_acceptance",
 }
-_REVIEW_ACTION = (
-    "独立复跑:按 env_setup 搭环境,重跑验证命令与集成测试,只读共享态、"
-    "不信自述,按 contract/验收目标给 verdict。")
 
 
-def _next_action(kind: TaskKind, phase: TaskPhase) -> str:
+def _next_action(kind: TaskKind, phase: TaskPhase, language: str) -> str:
     """「现在做什么」:只陈述当前动作,不混入静态 guide 命令。"""
-    return _REVIEW_ACTION if phase == TaskPhase.REVIEW \
-        else _AUTHORING_ACTION.get(kind, "")
+    if phase == TaskPhase.REVIEW:
+        return t("work.protocol.review", language=language)
+    key = _AUTHORING_ACTION_KEYS.get(kind)
+    return t(key, language=language) if key else ""
 
 
 # ==================== submit 参数(单一事实源,防漂移) ====================
@@ -101,13 +110,17 @@ SUBMIT_PARAMS_BY_KIND_PHASE: Dict[Tuple[TaskKind, TaskPhase], List[str]] = {
 
 
 # Agent 消费内容的权威顺序。越靠前越具体、越接近当前实例。
-AUTHORITY_ORDER = [
-    "work show 当前实例事实",
-    "contract / previous_review",
-    "role guide",
-    "artifact guide",
-    "workflow 总览",
-]
+_AUTHORITY_KEYS = (
+    "work.authority.current",
+    "work.authority.contract",
+    "work.authority.role",
+    "work.authority.artifact",
+    "work.authority.workflow",
+)
+
+
+def authority_order(language: str = EN) -> List[str]:
+    return [t(key, language=language) for key in _AUTHORITY_KEYS]
 
 
 # 当前 kind × phase 所需的最小静态知识集合。保持命令完整,Agent 可直接执行。
@@ -193,7 +206,7 @@ def _previous_review_context(item: Any) -> Optional[Dict[str, Any]]:
         previous["report_ref"] = report_ref
     return previous
 
-def build_show_output(item: Any, identity: str) -> Dict[str, Any]:
+def build_show_output(item: Any, identity: str, *, language: str = EN) -> Dict[str, Any]:
     """构建 work show 的 Agent-first 完整事实包。
 
     参数:
@@ -283,13 +296,11 @@ def build_show_output(item: Any, identity: str) -> Dict[str, Any]:
     if source_refs:
         context["source_issues"] = source_refs
 
-    protocol = _next_action(kind, phase)
+    protocol = _next_action(kind, phase, language)
     issue_key = getattr(item, "identifier", None)
     if kind == TaskKind.DEVELOP and phase == TaskPhase.AUTHORING and issue_key:
-        protocol += (
-            f"\n建议让 GitHub PR 分支名、标题或正文包含 `{issue_key}`，"
-            "这样 Multica 可以把 PR 自动关联到本 issue；缺失时仍可交付。"
-        )
+        protocol += "\n" + t(
+            "work.protocol.pr_link", language=language, issue_key=issue_key)
     submit = submit_template_for(kind, phase, item.id)
 
     return {
@@ -297,7 +308,7 @@ def build_show_output(item: Any, identity: str) -> Dict[str, Any]:
         "context": context,
         "protocol": protocol,
         "submit": submit,
-        "authority": list(AUTHORITY_ORDER),
+        "authority": authority_order(language),
         "guide_refs": guide_refs_for(kind, phase),
     }
 
@@ -345,10 +356,9 @@ def _kind(value: Any) -> TaskKind:
     try:
         return TaskKind(str(value))
     except ValueError:
-        raise ValidationError(
-            f"未知的任务类型 {value!r} —— 应为: "
-            f"{', '.join(k.value for k in TaskKind)}"
-        )
+        raise ValidationError(ui(
+            f"Unknown task type {value!r}. Expected: {', '.join(k.value for k in TaskKind)}",
+            f"未知的任务类型 {value!r} —— 应为: {', '.join(k.value for k in TaskKind)}"))
 
 
 def _phase(value: Any) -> TaskPhase:
@@ -357,10 +367,9 @@ def _phase(value: Any) -> TaskPhase:
     try:
         return TaskPhase(str(value))
     except ValueError:
-        raise ValidationError(
-            f"未知的阶段 {value!r} —— 应为: "
-            f"{', '.join(p.value for p in TaskPhase)}"
-        )
+        raise ValidationError(ui(
+            f"Unknown phase {value!r}. Expected: {', '.join(p.value for p in TaskPhase)}",
+            f"未知的阶段 {value!r} —— 应为: {', '.join(p.value for p in TaskPhase)}"))
 
 
 def _param_cli_name(param: str) -> str:
@@ -371,11 +380,10 @@ def validate_params(kind: TaskKind, phase: TaskPhase, provided: Dict[str, Any]) 
     """参数按 kind×phase 校验:缺 / 多 / 错 → raise ValidationError(报错即教学)。"""
 
     if kind not in SPECS or phase not in SPECS[kind]:
-        available = ", ".join(p.value for p in SPECS.get(kind, {})) or "无"
-        raise ValidationError(
-            f"{kind.value} 没有 {phase.value} 阶段的交付 —— "
-            f"该 kind 可用的阶段为: {available}"
-        )
+        available = ", ".join(p.value for p in SPECS.get(kind, {})) or ui("none", "无")
+        raise ValidationError(ui(
+            f"{kind.value} has no {phase.value} delivery. Available phases: {available}",
+            f"{kind.value} 没有 {phase.value} 阶段的交付 —— 该 kind 可用的阶段为: {available}"))
 
     expected = set(SPECS[kind][phase])
     given = {name for name, value in provided.items() if value is not None}
@@ -389,16 +397,18 @@ def validate_params(kind: TaskKind, phase: TaskPhase, provided: Dict[str, Any]) 
     spec_human = " + ".join(_param_cli_name(p) for p in sorted(expected))
     lines = []
     if missing:
-        lines.append(
-            f"缺少参数({kind.value} × {phase.value} 需要): "
-            + ", ".join(_param_cli_name(m) for m in missing)
-        )
+        lines.append(ui(
+            f"Missing parameters required by {kind.value} × {phase.value}: ",
+            f"缺少参数({kind.value} × {phase.value} 需要): ")
+            + ", ".join(_param_cli_name(m) for m in missing))
     if extra:
-        lines.append(
-            f"多余参数({kind.value} × {phase.value} 不需要): "
-            + ", ".join(_param_cli_name(e) for e in extra)
-        )
-    lines.append(f"正确用法: omac work submit <issue-id> {spec_human}")
+        lines.append(ui(
+            f"Unexpected parameters for {kind.value} × {phase.value}: ",
+            f"多余参数({kind.value} × {phase.value} 不需要): ")
+            + ", ".join(_param_cli_name(e) for e in extra))
+    lines.append(ui(
+        f"Usage: omac work submit <issue-id> {spec_human}",
+        f"正确用法: omac work submit <issue-id> {spec_human}"))
     raise ValidationError("\n".join(lines))
 
 
@@ -407,9 +417,10 @@ def _read_text(path: str) -> str:
         with open(path, encoding="utf-8") as fh:
             return fh.read()
     except FileNotFoundError:
-        raise ValidationError(f"文件不存在: {path}")
+        raise ValidationError(ui(f"File not found: {path}", f"文件不存在: {path}"))
     except OSError as exc:
-        raise ValidationError(f"无法读取文件 {path}: {exc}")
+        raise ValidationError(ui(
+            f"Could not read file {path}: {exc}", f"无法读取文件 {path}: {exc}"))
 
 
 def _parse_structured(path: str) -> Any:
@@ -421,17 +432,17 @@ def _parse_structured(path: str) -> Any:
         pass
     else:
         if data is None:
-            raise ValidationError(f"{path} 内容为空(null)")
+            raise ValidationError(ui(
+                f"{path} is empty (null)", f"{path} 内容为空(null)"))
         return data
     try:
         data = yaml.safe_load(text)
     except yaml.YAMLError as exc:
-        raise ValidationError(
-            f"{path} 既不是合法 JSON 也不是合法 YAML: {exc}\n"
-            "请修正文件内容后重试"
-        )
+        raise ValidationError(ui(
+            f"{path} is neither valid JSON nor valid YAML: {exc}\nFix the file and retry.",
+            f"{path} 既不是合法 JSON 也不是合法 YAML: {exc}\n请修正文件内容后重试"))
     if data is None:
-        raise ValidationError(f"{path} 内容为空")
+        raise ValidationError(ui(f"{path} is empty", f"{path} 内容为空"))
     return data
 
 
@@ -474,7 +485,8 @@ def _validate_plan_authoring(plan_file: str) -> str:
     """plan 交付做基础结构校验:文件存在且非空。返回文件内容。"""
     content = _read_text(plan_file)
     if not content.strip():
-        raise ValidationError(f"plan 文件为空: {plan_file}")
+        raise ValidationError(ui(
+            f"Plan file is empty: {plan_file}", f"plan 文件为空: {plan_file}"))
     return content
 
 
@@ -483,7 +495,9 @@ def _validate_acceptance_authoring(acceptance_file: str) -> str:
     try:
         load_acceptance_doc_file(acceptance_file)
     except (ValueError, OSError) as exc:
-        raise ValidationError(f"acceptance 文件校验失败: {exc}")
+        raise ValidationError(ui(
+            f"Acceptance file validation failed: {exc}",
+            f"acceptance 文件校验失败: {exc}"))
     return _read_text(acceptance_file)
 
 
@@ -499,13 +513,16 @@ def _validate_decompose_authoring(
     try:
         manifest = load_manifest(manifest_file)
     except (ValueError, OSError) as exc:
-        raise ValidationError(f"manifest 解析失败: {exc}")
+        raise ValidationError(ui(
+            f"Could not parse manifest: {exc}", f"manifest 解析失败: {exc}"))
     if base_manifest is not None:
         errors = lint_increment(manifest, base_manifest, pool)
     else:
         errors = lint_manifest(manifest, pool)
     if errors:
-        raise ValidationError("manifest lint 失败:\n  - " + "\n  - ".join(errors))
+        raise ValidationError(ui(
+            "Manifest lint failed:\n  - " + "\n  - ".join(errors),
+            "manifest lint 失败:\n  - " + "\n  - ".join(errors)))
     return content
 
 
@@ -519,9 +536,9 @@ def _validate_develop_authoring(
     probe = _Item(artifacts={"pr_url": pr_url}, verification=verification)
     errors = evidence_mod.validate_worker_evidence(node, probe)
     if errors:
-        raise ValidationError(
-            "verification 证据校验失败:\n  - " + "\n  - ".join(errors)
-        )
+        raise ValidationError(ui(
+            "Verification evidence validation failed:\n  - " + "\n  - ".join(errors),
+            "verification 证据校验失败:\n  - " + "\n  - ".join(errors)))
     return verification
 
 
@@ -541,47 +558,56 @@ def _validate_pr_ready_for_handoff(pr_url: str) -> None:
             timeout=30,
         )
     except FileNotFoundError:
-        raise ValidationError(
+        raise ValidationError(ui(
+            "GitHub PR readiness checks require gh CLI. Install it, sign in, and retry: "
+            "brew install gh && gh auth login",
             "GitHub PR ready 检查需要 gh CLI。请安装并登录后重试: "
-            "brew install gh && gh auth login")
+            "brew install gh && gh auth login"))
     except subprocess.TimeoutExpired:
-        raise ValidationError(
-            f"GitHub PR ready 检查超时: {pr_url}。请确认网络/GitHub 可达后重试。")
+        raise ValidationError(ui(
+            f"GitHub PR readiness check timed out: {pr_url}. Verify network and GitHub access.",
+            f"GitHub PR ready 检查超时: {pr_url}。请确认网络/GitHub 可达后重试。"))
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout or "").strip()
-        raise ValidationError(
-            f"GitHub PR ready 检查失败: {pr_url}\n{detail}")
+        raise ValidationError(ui(
+            f"GitHub PR readiness check failed: {pr_url}\n{detail}",
+            f"GitHub PR ready 检查失败: {pr_url}\n{detail}"))
     try:
         payload = json.loads(proc.stdout or "{}")
     except json.JSONDecodeError:
-        raise ValidationError(
-            f"GitHub PR ready 检查返回非 JSON: {pr_url}\n{(proc.stdout or '').strip()}")
+        raise ValidationError(ui(
+            f"GitHub PR readiness check returned non-JSON output: {pr_url}\n{(proc.stdout or '').strip()}",
+            f"GitHub PR ready 检查返回非 JSON: {pr_url}\n{(proc.stdout or '').strip()}"))
     if payload.get("isDraft") is True:
-        raise ValidationError(
+        raise ValidationError(ui(
+            f"GitHub PR is still a draft and cannot enter CI/review/merge: {pr_url}\n"
+            "Run `gh pr ready <pr-url>` or mark it ready for review on GitHub.",
             f"GitHub PR 仍是 draft,不能交付给下游 CI/review/merge: {pr_url}\n"
-            "请先执行 `gh pr ready <pr-url>` 或在 GitHub 页面 Mark ready for review。")
+            "请先执行 `gh pr ready <pr-url>` 或在 GitHub 页面 Mark ready for review。"))
     state = payload.get("state")
     if state and state != "OPEN":
-        raise ValidationError(
-            f"GitHub PR 状态不是 OPEN,不能交付: {pr_url} (state={state})")
+        raise ValidationError(ui(
+            f"GitHub PR is not OPEN and cannot be delivered: {pr_url} (state={state})",
+            f"GitHub PR 状态不是 OPEN,不能交付: {pr_url} (state={state})"))
 
 def _validate_review(
     kind: TaskKind, verdict: str, report_file: str, item: WorkItem
 ) -> Dict[str, Any]:
     """review 阶段(各 kind 共用)左移校验:复用 P2.2 validate_review_evidence。"""
     if kind in (TaskKind.PLAN, TaskKind.ACCEPTANCE, TaskKind.DECOMPOSE) and not item.deliverable:
-        raise ValidationError(
+        raise ValidationError(ui(
+            "Review target is missing because authoring was not submitted successfully. "
+            "Ask the author to rerun `omac work submit`.",
             "评审对象缺失:产出正文未提交或提交失败,不能写 review verdict。"
-            "请让产出者重新执行 omac work submit。"
-        )
+            "请让产出者重新执行 omac work submit。"))
     report = _parse_structured(report_file)
     node = _Node(_contract_from_item(item))
     probe = _Item(review_verdict=verdict, review_report=report)
     errors = evidence_mod.validate_review_evidence(node, probe)
     if errors:
-        raise ValidationError(
-            "review report 校验失败:\n  - " + "\n  - ".join(errors)
-        )
+        raise ValidationError(ui(
+            "Review report validation failed:\n  - " + "\n  - ".join(errors),
+            "review report 校验失败:\n  - " + "\n  - ".join(errors)))
     return report
 
 
@@ -599,21 +625,24 @@ def _validate_final_acceptance_authoring(
         raw_doc = getattr(contract, "acceptance_doc", None)
 
     if raw_doc is None:
-        raise ValidationError(
+        raise ValidationError(ui(
+            "final-acceptance is missing acceptance_doc. Attach it at "
+            "contract.acceptance_doc before submitting.",
             "final-acceptance 缺少关联的 acceptance_doc —— "
-            "需先在 contract.acceptance_doc 中挂载验收文档(参见 §8)"
-        )
+            "需先在 contract.acceptance_doc 中挂载验收文档(参见 §8)"))
 
     try:
         acceptance_doc = load_acceptance_doc(raw_doc) if isinstance(raw_doc, dict) else raw_doc
     except ValueError as exc:
-        raise ValidationError(f"关联的 acceptance_doc 不合法: {exc}")
+        raise ValidationError(ui(
+            f"Linked acceptance_doc is invalid: {exc}",
+            f"关联的 acceptance_doc 不合法: {exc}"))
 
     errors = evidence_mod.validate_acceptance_results(acceptance_doc, results)
     if errors:
-        raise ValidationError(
-            "acceptance-results 校验失败:\n  - " + "\n  - ".join(errors)
-        )
+        raise ValidationError(ui(
+            "Acceptance results validation failed:\n  - " + "\n  - ".join(errors),
+            "acceptance-results 校验失败:\n  - " + "\n  - ".join(errors)))
     return results
 
 
@@ -739,7 +768,10 @@ def submit(
         return SubmitResult(
             kind, phase, "plan", WorkItemStatus.IN_REVIEW,
             next_phase=TaskPhase.REVIEW,
-            message="产出阶段已结束；不要提交 verdict，不要执行 reviewer 协议。等待 omac loop 转派 reviewer 或人工确认。",
+            message=ui(
+                "Authoring is complete. Do not submit a verdict or follow the reviewer protocol; "
+                "wait for the OMAC loop to assign a reviewer or for human confirmation.",
+                "产出阶段已结束；不要提交 verdict，不要执行 reviewer 协议。等待 omac loop 转派 reviewer 或人工确认。"),
         )
 
     # ---------- acceptance × authoring ----------
@@ -752,7 +784,10 @@ def submit(
         return SubmitResult(
             kind, phase, "acceptance", WorkItemStatus.IN_REVIEW,
             next_phase=TaskPhase.REVIEW,
-            message="产出阶段已结束；不要提交 verdict，不要执行 reviewer 协议。等待 omac loop 转派 reviewer 或人工确认。",
+            message=ui(
+                "Authoring is complete. Do not submit a verdict or follow the reviewer protocol; "
+                "wait for the OMAC loop to assign a reviewer or for human confirmation.",
+                "产出阶段已结束；不要提交 verdict，不要执行 reviewer 协议。等待 omac loop 转派 reviewer 或人工确认。"),
         )
 
     # ---------- decompose × authoring ----------
@@ -766,10 +801,15 @@ def submit(
         return SubmitResult(
             kind, phase, "manifest", WorkItemStatus.IN_REVIEW,
             next_phase=TaskPhase.REVIEW,
-            message="产出阶段已结束；不要提交 verdict，不要执行 reviewer 协议。等待 omac loop 转派 reviewer 或人工确认。",
+            message=ui(
+                "Authoring is complete. Do not submit a verdict or follow the reviewer protocol; "
+                "wait for the OMAC loop to assign a reviewer or for human confirmation.",
+                "产出阶段已结束；不要提交 verdict，不要执行 reviewer 协议。等待 omac loop 转派 reviewer 或人工确认。"),
         )
 
-    raise ValidationError(f"未支持的交付组合: {kind.value} × {phase.value}")
+    raise ValidationError(ui(
+        f"Unsupported delivery combination: {kind.value} × {phase.value}",
+        f"未支持的交付组合: {kind.value} × {phase.value}"))
 
 
 # ==================== Human-first 派发 issue body ====================
@@ -815,6 +855,22 @@ ROLE_HUMAN_LABEL = {
     "worker": "开发执行者",
     "reviewer": "独立评审者",
     "acceptor": "最终验收者",
+}
+
+KIND_HUMAN_LABEL_EN = {
+    TaskKind.PLAN: "Design",
+    TaskKind.ACCEPTANCE: "Acceptance definition",
+    TaskKind.DECOMPOSE: "Task decomposition",
+    TaskKind.DEVELOP: "Implementation",
+    TaskKind.FINAL_ACCEPTANCE: "Final acceptance",
+}
+
+ROLE_HUMAN_LABEL_EN = {
+    "planner": "Planner",
+    "orchestrator": "Orchestrator",
+    "worker": "Implementer",
+    "reviewer": "Independent reviewer",
+    "acceptor": "Final acceptor",
 }
 
 
@@ -892,6 +948,7 @@ def render_source_refs_section(
     *,
     engine_env: Optional[Dict[str, str]] = None,
     include_commands: bool = True,
+    language: str = CN,
 ) -> str:
     """渲染上游 issue 链接;Agent 视图可附带可复制的 work show 命令。"""
     refs = normalize_source_refs(source_refs, engine_env=engine_env)
@@ -899,8 +956,8 @@ def render_source_refs_section(
         return ""
     env_prefix = _command_env_prefix(engine_env)
     lines = [
-        "## 上游 issue（防跑偏）",
-        "本任务承接以下上游 issue，用于追溯需求与决策；若与当前 contract 冲突，先请求确认：",
+        f"## {t('work.source.title', language=language)}",
+        t("work.source.body", language=language),
     ]
     for ref in refs:
         label = _source_ref_label(ref)
@@ -915,7 +972,8 @@ def render_source_refs_section(
     return "\n".join(lines)
 
 
-def render_issue_body(node, contract, kind, issue_id, source_refs=None, engine_env=None, issue_key=None):
+def render_issue_body(node, contract, kind, issue_id, source_refs=None, engine_env=None,
+                      issue_key=None, language: str = CN):
     """渲染 Human-first issue body,顶部仅保留一个 Agent JSON 入口。"""
     role = KIND_ROLE.get(kind, "worker")
     label = KIND_LABEL.get(kind, kind.value)
@@ -923,66 +981,91 @@ def render_issue_body(node, contract, kind, issue_id, source_refs=None, engine_e
     env_prefix = _command_env_prefix(engine_env)
 
     bootstrap = (
-        "> **Agent 入口:** 先读取当前任务的权威 JSON 上下文。\n\n"
-        f"```bash\n{env_prefix}omac work show {issue_id} --output json\n```"
+        ui(
+            "> **Agent entry:** Read the authoritative JSON context for this task first.\n\n",
+            "> **Agent 入口:** 先读取当前任务的权威 JSON 上下文。\n\n",
+            language=language,
+        )
+        + f"```bash\n{env_prefix}omac work show {issue_id} --output json\n```"
     )
 
+    kind_names = KIND_HUMAN_LABEL_EN if language == EN else KIND_HUMAN_LABEL
+    role_names = ROLE_HUMAN_LABEL_EN if language == EN else ROLE_HUMAN_LABEL
     summary_lines = [
-        f"- 类型: {KIND_HUMAN_LABEL.get(kind, label)}（`{label}`）",
-        f"- 执行角色: {ROLE_HUMAN_LABEL.get(role, role)}（`{role}`）",
+        ui(
+            f"- Type: {kind_names.get(kind, label)} (`{label}`)",
+            f"- 类型: {kind_names.get(kind, label)}（`{label}`）",
+            language=language,
+        ),
+        ui(
+            f"- Execution role: {role_names.get(role, role)} (`{role}`)",
+            f"- 执行角色: {role_names.get(role, role)}（`{role}`）",
+            language=language,
+        ),
     ]
     objective = _contract_summary(contract, "objective", None)
     if objective:
-        summary_lines.append(f"- 目标: {objective}")
+        summary_lines.append(ui(
+            f"- Objective: {objective}", f"- 目标: {objective}", language=language))
     source_of_truth = _contract_summary(contract, "source_of_truth", None)
     if source_of_truth:
         values = source_of_truth if isinstance(source_of_truth, list) else [source_of_truth]
-        summary_lines.extend(f"- 依据: `{value}`" for value in values)
-    summary = f"# {title}\n\n## 任务摘要\n" + "\n".join(summary_lines)
+        summary_lines.extend(ui(
+            f"- Source of truth: `{value}`", f"- 依据: `{value}`", language=language)
+            for value in values)
+    summary = f"# {title}\n\n## {ui('Task summary', '任务摘要', language=language)}\n" + "\n".join(summary_lines)
 
     acceptance = _contract_summary(contract, "acceptance", None)
     completion = ""
     if acceptance:
         values = acceptance if isinstance(acceptance, list) else [acceptance]
-        completion = "## 完成标准\n" + "\n".join(f"- {value}" for value in values)
+        completion = f"## {ui('Completion criteria', '完成标准', language=language)}\n" + "\n".join(f"- {value}" for value in values)
 
     description = (getattr(node, "description", "") or "").strip()
-    detail = f"## 任务详情\n{description}" if description else ""
+    detail = f"## {ui('Task details', '任务详情', language=language)}\n{description}" if description else ""
 
     non_goals = _contract_summary(contract, "non_goals", None)
     exclusions = ""
     if non_goals:
         values = non_goals if isinstance(non_goals, list) else [non_goals]
-        exclusions = "## 非目标\n" + "\n".join(f"- {value}" for value in values)
+        exclusions = f"## {ui('Non-goals', '非目标', language=language)}\n" + "\n".join(f"- {value}" for value in values)
 
     scope_paths = _contract_summary(contract, "scope_paths", None)
     scope = ""
     if scope_paths:
         values = scope_paths if isinstance(scope_paths, list) else [scope_paths]
-        scope = "## 主要代码归属范围\n" + "\n".join(
+        scope = f"## {ui('Primary code ownership', '主要代码归属范围', language=language)}\n" + "\n".join(
             f"- `{value}`" for value in values)
 
     constraints = []
     pr_base = _contract_summary(contract, "pr_base", None)
     if pr_base:
-        constraints.append(f"- PR 基线: `{pr_base}`")
+        constraints.append(ui(
+            f"- PR base: `{pr_base}`", f"- PR 基线: `{pr_base}`", language=language))
     coverage_gate = _contract_summary(contract, "coverage_gate", None)
     if kind == TaskKind.DEVELOP and coverage_gate is not None:
-        constraints.append(f"- 改动分支覆盖率: `≥ {coverage_gate}%`")
+        constraints.append(ui(
+            f"- Changed-branch coverage: `≥ {coverage_gate}%`",
+            f"- 改动分支覆盖率: `≥ {coverage_gate}%`",
+            language=language,
+        ))
     if kind == TaskKind.DEVELOP and issue_key:
-        constraints.append(f"- PR 关联标识: `{issue_key}`")
+        constraints.append(ui(
+            f"- PR link key: `{issue_key}`", f"- PR 关联标识: `{issue_key}`",
+            language=language))
     delivery_constraints = ""
     if constraints:
-        delivery_constraints = "## 交付约束\n" + "\n".join(constraints)
+        delivery_constraints = f"## {ui('Delivery constraints', '交付约束', language=language)}\n" + "\n".join(constraints)
 
     repo_urls = _contract_summary(contract, "repo_urls", None)
     repositories = ""
     if repo_urls:
-        repositories = "## 目标仓库\n" + "\n".join(
+        repositories = f"## {ui('Target repositories', '目标仓库', language=language)}\n" + "\n".join(
             f"- `{url}`" for url in repo_urls)
 
     origin = render_source_refs_section(
-        source_refs, engine_env=engine_env, include_commands=False)
+        source_refs, engine_env=engine_env, include_commands=False,
+        language=language)
 
     return "\n\n".join(
         p for p in [

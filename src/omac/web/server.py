@@ -24,11 +24,17 @@ from urllib.parse import parse_qs, urlparse
 from omac.cli import exit_codes
 from omac.core import config as config_mod
 from omac.errors import OmacError, ValidationError
+from omac.i18n import current_language, ui
 
 from . import api
 
 # 一期 Bearer token 未携带 / 不匹配时的教学式提示(报错即教学)。
 _UNAUTHORIZED_HINT = (
+    "Include a Bearer token in the request header. Example:\n"
+    "  GET /api/dag/status?manifest=...\n"
+    "  Authorization: Bearer <token>"
+)
+_UNAUTHORIZED_HINT_CN = (
     "需在请求头中携带 Bearer token。示例:\n"
     "  GET /api/dag/status?manifest=...\n"
     "  Authorization: Bearer <token>"
@@ -136,10 +142,14 @@ def _is_local_host(host: str) -> bool:
 def require_token_if_exposed(host: str, token: str | None) -> None:
     """--host 非本机却未给 --token → 调用方应在启动前拦截(exit 5)。"""
     if not _is_local_host(host) and not token:
-        raise ValidationError(
+        raise ValidationError(ui(
+            f"--host {host!r} requires --token when exposed beyond localhost.\n"
+            "  Use a Bearer token to prevent unauthorized access.\n"
+            "  Example: omac web --host 0.0.0.0 --token <secret>",
             f"--host {host!r} 对外暴露时必须配合 --token。\n"
             "  内网主机可信赖,对外暴露则应校验 Bearer token 防未授权访问。\n"
-            "  启动示例: omac web --host 0.0.0.0 --token <secret>")
+            "  启动示例: omac web --host 0.0.0.0 --token <secret>",
+        ))
 
 
 def _error_response(status: int, message: str, hint: str | None = None) -> dict:
@@ -201,17 +211,25 @@ class _JSONResponder:
             rel = static_match.group(1)
             asset = _resolve_static(rel)
             if asset is None:
-                return self._fail(404, OmacError(f"未找到静态资源: {path}"))
+                return self._fail(404, OmacError(ui(
+                    f"Static resource not found: {path}",
+                    f"未找到静态资源: {path}")))
             try:
                 data = asset.read_bytes()
             except Exception as e:
-                return self._fail(500, OmacError(f"读取静态资源失败: {e}"))
+                return self._fail(500, OmacError(ui(
+                    f"Could not read static resource: {e}",
+                    f"读取静态资源失败: {e}")))
             ctype = _mime_for(rel)
             return self._send_blob(200, ctype, data)
         if path in ("/", "/index.html"):
             return self._send_html(200, STATIC_HTML)
         if path == "/api/meta":
-            return self._send_json(200, {"refresh": self.refresh, "version": _version()})
+            return self._send_json(200, {
+                "refresh": self.refresh,
+                "version": _version(),
+                "language": current_language(),
+            })
         if path == "/api/manifests":
             return self._send_json(200, api.get_manifests(orchestrator_dir))
         if path == "/api/config":
@@ -222,7 +240,8 @@ class _JSONResponder:
         if path == "/api/dag/status":
             manifest = _first(query.get("manifest"))
             if not manifest:
-                return self._fail(400, ValidationError("缺少查询参数 manifest"))
+                return self._fail(400, ValidationError(ui(
+                    "Missing query parameter: manifest", "缺少查询参数 manifest")))
             try:
                 value, _hit = self.cache.get_or_compute(
                     manifest, lambda: api.dag_status(manifest))
@@ -234,7 +253,8 @@ class _JSONResponder:
             node_key = node_match.group(1)
             manifest = _first(query.get("manifest"))
             if not manifest:
-                return self._fail(400, ValidationError("缺少查询参数 manifest"))
+                return self._fail(400, ValidationError(ui(
+                    "Missing query parameter: manifest", "缺少查询参数 manifest")))
             try:
                 return self._send_json(200, api.node_show(manifest, node_key))
             except BaseException as e:
@@ -242,9 +262,11 @@ class _JSONResponder:
         if path == "/api/plan/acceptance":
             manifest = _first(query.get("manifest"))
             if not manifest:
-                return self._fail(400, ValidationError("缺少查询参数 manifest"))
+                return self._fail(400, ValidationError(ui(
+                    "Missing query parameter: manifest", "缺少查询参数 manifest")))
             return self._send_json(200, api.get_plan_acceptance(orchestrator_dir, manifest))
-        self._fail(404, OmacError(f"未找到端点: {path}"))
+        self._fail(404, OmacError(ui(
+            f"Endpoint not found: {path}", f"未找到端点: {path}")))
 
     def _send_blob(self, status: int, ctype: str, data: bytes) -> None:
         self.handler.send_response(status)
@@ -304,7 +326,7 @@ class _Handler(BaseHTTPRequestHandler):
         if not auth.startswith("Bearer ") or not _constant_time_eq(auth[7:], self.token):
             responder = _JSONResponder(self, self.cache, self.refresh)
             responder._send_json(401, _error_response(
-                401, "Unauthorized", _UNAUTHORIZED_HINT))
+                401, "Unauthorized", ui(_UNAUTHORIZED_HINT, _UNAUTHORIZED_HINT_CN)))
             return False
         return True
 
@@ -319,7 +341,8 @@ class _Handler(BaseHTTPRequestHandler):
                 "GET", parsed.path, parse_qs(parsed.query), self.orchestrator_dir)
         except Exception as e:
             # 兜底:任何未被捕获异常 → 500(不应发生,各 endpoint 已 try)。
-            data = _error_response(500, f"内部错误: {e}")
+            data = _error_response(500, ui(
+                f"Internal error: {e}", f"内部错误: {e}"))
             raw = json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
             self.send_response(500)
             self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -337,8 +360,9 @@ class _Handler(BaseHTTPRequestHandler):
         return self._method_not_allowed()
 
     def _method_not_allowed(self):
-        data = _error_response(405, "Method Not Allowed",
-                               "一期只读,仅支持 GET。")
+        data = _error_response(405, "Method Not Allowed", ui(
+            "This dashboard is read-only and supports GET only.",
+            "一期只读,仅支持 GET。"))
         raw = json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
         self.send_response(405)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -394,16 +418,21 @@ class WebServer:
                 webbrowser.open(f"http://{host}:{port}/")
             except Exception:
                 pass
-        print(
-            f"omac web 已启动 → http://{host}:{port}/  "
+        print(ui(
+            f"omac web started → http://{host}:{port}/  "
             f"(token={'on' if self.token else 'off'}, refresh={self.refresh}s, "
             f"cache_ttl={self.poll_interval}s)",
+            f"omac web 已启动 → http://{host}:{port}/  "
+            f"(token={'on' if self.token else 'off'}, refresh={self.refresh}s, "
+            f"cache_ttl={self.poll_interval}s)"),
             file=sys.stderr,
         )
         try:
             self._server.serve_forever()
         except KeyboardInterrupt:
-            print("\n已中断,停服务。", file=sys.stderr)
+            print(ui(
+                "\nInterrupted; stopping the server.",
+                "\n已中断,停服务。"), file=sys.stderr)
         finally:
             self._server.server_close()
         return exit_codes.OK
