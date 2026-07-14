@@ -103,7 +103,7 @@ def test_resolve_operation_branch_rejects_missing_or_conflicting_values():
         "a": Node(id="a", worker="alice", contract=Contract(pr_base="main")),
         "b": Node(id="b", worker="bob", contract=Contract(pr_base="release")),
     })
-    with pytest.raises(NeedsDecision, match="多个 pr_base"):
+    with pytest.raises(NeedsDecision, match="multiple pr_base"):
         _resolve_operation_branch(conflicting)
 
 
@@ -145,11 +145,11 @@ def test_final_acceptance_issue_has_complete_authoring_context(tmp_path):
     )
     env = f"OMAC_ENGINE=mock OMAC_WORKSPACE_ID=ws OMAC_PROJECT_ID={project.id}"
     assert env in item.description
-    assert "PR 基线: `main`" in item.description
+    assert "PR base: `main`" in item.description
     assert f"omac work show {item.id} --output json" in item.description
     assert "omac work submit" not in item.description
     assert "git@github.com:owner/demo.git" in item.description
-    assert "最终开发交付" in item.description
+    assert "Final implementation delivery" in item.description
     assert item.contract["acceptance_doc"]["flows"][0]["id"] == "ACC-001"
     assert item.contract["repo_urls"] == ["git@github.com:owner/demo.git"]
     assert item.source_refs[-1]["issue_id"] == "closeout-issue"
@@ -195,7 +195,7 @@ def test_incremental_decompose_issue_has_failed_flow_and_manifest_context(tmp_pa
     assert item.contract["mode"] == "incremental"
     assert item.contract["failed_items"] == ["ACC-001"]
     assert isinstance(item.contract["manifest"], dict)
-    assert item.source_refs[-1]["label"] == "触发验收 · 第 1 轮"
+    assert item.source_refs[-1]["label"] == "Acceptance trigger · Round 1"
     assert "ACC-001" in item.description
     assert "当前 Manifest" not in item.description
 

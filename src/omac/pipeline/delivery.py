@@ -42,6 +42,7 @@ from ..core.config import DEFAULT_RETRY, get_ci_config, get_merge_config
 from ..engines.models import WorkItemStatus
 from ..engines.runtime import AgentRuntime
 from ..core.manifest import Manifest
+from ..i18n import ui
 
 # ── manifest 侧细分态 ↔ 平台 WorkItemStatus 映射表 ──────────────────────────
 # ci_check 是 manifest 侧细分态;平台侧仍映射到 in_progress,保证平台状态机不被
@@ -62,10 +63,11 @@ VALID_MANIFEST_STATUSES = set(MANIFEST_TO_PLATFORM_STATUS)
 def to_platform_status(manifest_status: str) -> WorkItemStatus:
     """manifest 侧状态 → 平台 WorkItemStatus。未知状态报错即教学。"""
     if manifest_status not in MANIFEST_TO_PLATFORM_STATUS:
-        raise ValueError(
+        raise ValueError(ui(
+            f"Unknown manifest node status {manifest_status!r}. Valid values: "
+            f"{sorted(VALID_MANIFEST_STATUSES)}",
             f"未知的 manifest 节点状态 {manifest_status!r} —— 合法值: "
-            f"{sorted(VALID_MANIFEST_STATUSES)}"
-        )
+            f"{sorted(VALID_MANIFEST_STATUSES)}"))
     return MANIFEST_TO_PLATFORM_STATUS[manifest_status]
 
 
@@ -85,8 +87,10 @@ class CIResult:
     @property
     def label(self) -> str:
         if self.timed_out:
-            return "CI 检查超时"
-        return f"CI 检查失败(退出码 {self.exit_code})"
+            return ui("CI check timed out", "CI 检查超时")
+        return ui(
+            f"CI check failed (exit code {self.exit_code})",
+            f"CI 检查失败(退出码 {self.exit_code})")
 
 
 def _tail(text: str, n: int = 2000) -> str:
@@ -116,11 +120,11 @@ def run_ci_check(check_command: str, pr_url: str, timeout_minutes: int = 30) -> 
             elif isinstance(stream, str):
                 out += stream
         return CIResult(passed=False, timed_out=True, exit_code=None,
-                        output=out, summary=_tail(out) or "(无输出)")
+                        output=out, summary=_tail(out) or ui("(no output)", "(无输出)"))
     output = (proc.stdout or "") + (proc.stderr or "")
     return CIResult(passed=proc.returncode == 0, timed_out=False,
                     exit_code=proc.returncode, output=output,
-                    summary=_tail(output) or "(无输出)")
+                    summary=_tail(output) or ui("(no output)", "(无输出)"))
 
 
 # ── worker 证据过门后的 CI 门推进 ─────────────────────────────────────────────
@@ -162,11 +166,12 @@ def advance_delivery(
 
     if not pr_url:
         # CI 已配置但 worker 未提交 pr_url —— 证据门本应挡住,此处防御性阻断并教化。
-        store.add_comment(
-            item_id,
+        store.add_comment(item_id, ui(
+            "⚠️ CI is configured, but the worker did not submit pr_url, so the CI check cannot run.\n"
+            "Resubmit with `omac work submit <id> --pr-url <url> --verification-file <ev.yaml>`.",
             "⚠️ CI 已配置(check_command)但 worker 未提交 pr_url,无法运行 CI 检查。\\n"
             "请用 `omac work submit <id> --pr-url <url> --verification-file <ev.yaml>` "
-            "补交 PR 地址后重新提交。")
+            "补交 PR 地址后重新提交。"))
         node.status = "blocked"
         store.update_status(item_id, WorkItemStatus.BLOCKED)
         return "blocked"
@@ -183,7 +188,9 @@ def advance_delivery(
         return "pass"
 
     # CI 失败/超时:先贴失败摘要(让 worker 知道修什么)。
-    comment = (
+    comment = ui(
+        f"⚠️ {result.label}. Returning to the worker for repair and resubmission.\n\n"
+        f"--- Command output tail ---\n{result.summary}",
         f"⚠️ {result.label} —— CI 未通过,转回 worker 修复后重新提交。\\n\\n"
         f"--- 命令输出尾部 ---\\n{result.summary}")
     store.add_comment(item_id, comment)
@@ -245,10 +252,11 @@ def run_merge_delivery(
 
     if not pr_url:
         # merge 已配置但 reviewer pass 后无 pr_url —— 防御性阻断并教化。
-        store.add_comment(
-            item_id,
+        store.add_comment(item_id, ui(
+            "⚠️ Merge is configured, but the node has no pr_url, so automatic merge cannot run.\n"
+            "Confirm the worker submitted a PR URL with `omac work submit <id> --pr-url <url> ...`.",
             "⚠️ merge 已配置(command)但节点无 pr_url,无法执行自动合并。\n"
-            "请确认 worker 已用 `omac work submit <id> --pr-url <url> ...` 提交 PR 地址。")
+            "请确认 worker 已用 `omac work submit <id> --pr-url <url> ...` 提交 PR 地址。"))
         node.status = "blocked"
         store.update_status(item_id, WorkItemStatus.BLOCKED)
         return "blocked"
@@ -271,7 +279,7 @@ def run_merge_delivery(
                 out += stream
         return _bounce_or_block_merge(
             node, item, store, runtime, retry_limits,
-            failed=True, label="merge 命令超时", output=out)
+            failed=True, label=ui("Merge command timed out", "merge 命令超时"), output=out)
 
     output = (proc.stdout or "") + (proc.stderr or "")
     if proc.returncode == 0:
@@ -285,7 +293,9 @@ def run_merge_delivery(
     # merge 冲突/失败
     return _bounce_or_block_merge(
         node, item, store, runtime, retry_limits,
-        failed=True, label=f"merge 命令失败(退出码 {proc.returncode})",
+        failed=True, label=ui(
+            f"Merge command failed (exit code {proc.returncode})",
+            f"merge 命令失败(退出码 {proc.returncode})"),
         output=output)
 
 
@@ -299,11 +309,12 @@ def _bounce_or_block_merge(node, item, store, runtime, retry_limits, *,
     - 读/写 WorkItem.bounces.merge,封顶即 blocked,否则转回 worker + wake。
     """
     item_id = node.work_item_id
-    tail = _tail(output) or "(无输出)"
-    store.add_comment(
-        item_id,
+    tail = _tail(output) or ui("(no output)", "(无输出)")
+    store.add_comment(item_id, ui(
+        f"⚠️ {label}. Returning to the worker to resolve the merge and rerun ci→review→merge.\n\n"
+        f"--- Command output tail ---\n{tail}",
         f"⚠️ {label} —— merge 冲突,转回 worker 解决后重新走 ci→review→merge。\n\n"
-        f"--- 命令输出尾部 ---\n{tail}")
+        f"--- 命令输出尾部 ---\n{tail}"))
 
     cur_bounce = item.bounces.merge
     next_bounce = cur_bounce + 1

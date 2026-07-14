@@ -25,6 +25,7 @@ from ..core.taskmeta import (
     parse_bounces, parse_kind, parse_phase,
 )
 from ..errors import AuthError, PlatformError, ValidationError
+from ..i18n import ui
 from .models import (
     AgentInfo, AgentProvisionSpec, EngineConfig, ProjectInfo, RuntimeTarget,
     SkillPackage, WorkItem, WorkItemStatus, WorkspaceInfo,
@@ -71,13 +72,19 @@ class MulticaStore(WorkItemStore):
         try:
             result = subprocess.run(cmd, capture_output=capture, text=True)
         except FileNotFoundError:
-            raise AuthError(
-                "multica CLI 不在 PATH —— 先安装并登录:brew install multica-ai/tap/multica && multica login")
+            raise AuthError(ui(
+                "multica CLI is not on PATH. Install it and sign in: "
+                "brew install multica-ai/tap/multica && multica login",
+                "multica CLI 不在 PATH —— 先安装并登录:brew install multica-ai/tap/multica && multica login"))
         if result.returncode != 0:
             stderr = (result.stderr or "").strip()
             if result.returncode == 3 or "auth" in stderr.lower() or "login" in stderr.lower():
-                raise AuthError(f"multica 认证失败(先 multica login): {stderr}")
-            raise PlatformError(f"multica 调用失败: {' '.join(cmd)}\n{stderr}")
+                raise AuthError(ui(
+                    f"multica authentication failed; run `multica login`: {stderr}",
+                    f"multica 认证失败(先 multica login): {stderr}"))
+            raise PlatformError(ui(
+                f"multica command failed: {' '.join(cmd)}\n{stderr}",
+                f"multica 调用失败: {' '.join(cmd)}\n{stderr}"))
         if capture and result.stdout.strip():
             try:
                 return json.loads(result.stdout)
@@ -181,18 +188,26 @@ class MulticaStore(WorkItemStore):
     @staticmethod
     def _payload_comment(key: str, sha: str, size: int, filename: str) -> str:
         title = {
-            "contract": "节点 contract 文件",
-            "deliverable": "阶段交付文件",
-            "verification": "验证证据文件",
-            "review-report": "评审报告文件",
-        }.get(key, "交接文件")
+            "contract": ui("Node contract file", "节点 contract 文件"),
+            "deliverable": ui("Stage delivery file", "阶段交付文件"),
+            "verification": ui("Verification evidence file", "验证证据文件"),
+            "review-report": ui("Review report file", "评审报告文件"),
+        }.get(key, ui("Handoff file", "交接文件"))
         ref_key = {
             "contract": CONTRACT_REF_KEY,
             "deliverable": DELIVERABLE_REF_KEY,
             "verification": VERIFICATION_REF_KEY,
             "review-report": REVIEW_REPORT_REF_KEY,
         }.get(key, f"{key}_ref")
-        return (
+        return ui(
+            f"## omac {key}\n"
+            f"{title} was uploaded as an attachment.\n\n"
+            f"- attachment: {filename}\n"
+            f"- sha256: {sha}\n"
+            f"- bytes: {size}\n"
+            f"- metadata: `{ref_key}`\n\n"
+            "Later Agents should read handoff context through `omac work show <issue-id> --output json`; "
+            "programmatic references are stored in issue metadata.\n",
             f"## omac {key}\n"
             f"{title}已作为附件上传。\n\n"
             f"- attachment: {filename}\n"
@@ -200,8 +215,7 @@ class MulticaStore(WorkItemStore):
             f"- bytes: {size}\n"
             f"- metadata: `{ref_key}`\n\n"
             "后续 Agent 应通过 `omac work show <issue-id> --output json` 读取交接上下文；"
-            "程序化引用见 issue metadata。\n"
-        )
+            "程序化引用见 issue metadata。\n")
 
     def _load_payload_comment(self, item_id: str, key: str, ref: Optional[Dict[str, Any]]) -> Optional[str]:
         if not ref:
@@ -461,10 +475,13 @@ class MulticaStore(WorkItemStore):
             args += ["--description", description]
         result = self._run_multica(args)
         if not isinstance(result, dict) or not result.get("id"):
-            raise PlatformError(f"创建 project 失败: {result}")
+            raise PlatformError(ui(
+                f"Could not create project: {result}", f"创建 project 失败: {result}"))
         info = self._project_to_info(result)
         if info is None:
-            raise PlatformError(f"创建 project 返回缺少 id: {result}")
+            raise PlatformError(ui(
+                f"Project creation response is missing id: {result}",
+                f"创建 project 返回缺少 id: {result}"))
         self._ensure_workspace_repos(repo_urls)
         if repo_urls:
             info.repos = list(repo_urls)
@@ -497,7 +514,8 @@ class MulticaStore(WorkItemStore):
             create_args, "--description-file", description)
 
         if not isinstance(result, dict) or "id" not in result:
-            raise PlatformError(f"创建 issue 失败: {result}")
+            raise PlatformError(ui(
+                f"Could not create issue: {result}", f"创建 issue 失败: {result}"))
         issue_id = result["id"]
 
         self._set_metadata(issue_id, "dag_key", dag_key)
@@ -524,7 +542,8 @@ class MulticaStore(WorkItemStore):
     def get_work_item(self, item_id: str) -> WorkItem:
         result = self._run_multica(["issue", "get", item_id, "--output", "json"])
         if not isinstance(result, dict):
-            raise PlatformError(f"获取 issue {item_id} 失败")
+            raise PlatformError(ui(
+                f"Could not get issue {item_id}", f"获取 issue {item_id} 失败"))
         item = self._issue_to_work_item(result, self.config.workspace_id)
         if item.status == WorkItemStatus.IN_PROGRESS:
             latest_run_status = self._inactive_latest_run_status(item_id)
@@ -795,18 +814,21 @@ class MulticaRuntime(AgentRuntime):
             })
             missing = [name for name in missing if name not in current]
         if missing:
-            raise PlatformError(
-                f"Skill 上传后仍无法解析 ID:{', '.join(missing)} —— 运行 `multica skill list` 检查")
+            raise PlatformError(ui(
+                f"Could not resolve Skill IDs after upload: {', '.join(missing)}. "
+                "Run `multica skill list` to inspect them.",
+                f"Skill 上传后仍无法解析 ID:{', '.join(missing)} —— 运行 `multica skill list` 检查"))
         return [current[skill.name] for skill in skills]
 
     def provision_agent(self, spec: AgentProvisionSpec) -> AgentInfo:
         if not spec.name.strip():
-            raise ValidationError("Agent 名称不能为空")
+            raise ValidationError(ui("Agent name cannot be empty", "Agent 名称不能为空"))
         agents = self._items(
             self._store._run_multica(["agent", "list", "--output", "json"]), "agents")
         if any(item.get("name") == spec.name for item in agents):
-            raise ValidationError(
-                f"Agent '{spec.name}' 已存在 —— 请选择已有 Agent 或换一个名称")
+            raise ValidationError(ui(
+                f"Agent '{spec.name}' already exists. Choose it or use another name.",
+                f"Agent '{spec.name}' 已存在 —— 请选择已有 Agent 或换一个名称"))
 
         skill_ids = self._ensure_skill_ids(spec.skills)
         result = self._store._run_multica([
@@ -819,8 +841,9 @@ class MulticaRuntime(AgentRuntime):
             "--output", "json",
         ])
         if not isinstance(result, dict) or not result.get("id"):
-            raise PlatformError(
-                "Agent 创建成功响应缺少 id —— 运行 `multica agent list --output json` 检查")
+            raise PlatformError(ui(
+                "Agent creation response is missing id. Run `multica agent list --output json`.",
+                "Agent 创建成功响应缺少 id —— 运行 `multica agent list --output json` 检查"))
         agent = AgentInfo(id=str(result["id"]), name=str(result.get("name") or spec.name))
         if skill_ids:
             self._store._run_multica([
@@ -831,4 +854,6 @@ class MulticaRuntime(AgentRuntime):
         return agent
 
     def describe(self) -> str:
-        return "multica: assign 即唤醒(daemon 认领并拉起 agent CLI),wake 为确认性 no-op"
+        return ui(
+            "multica: assign wakes the daemon-managed agent CLI; wake is a confirming no-op",
+            "multica: assign 即唤醒(daemon 认领并拉起 agent CLI),wake 为确认性 no-op")

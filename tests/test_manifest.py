@@ -87,7 +87,7 @@ def test_manifest_write_lock_rejects_second_writer(tmp_path):
     path = _write(tmp_path, BASIC)
 
     with manifest_write_lock(path):
-        with pytest.raises(ValidationError, match="已有另一个 omac dag"):
+        with pytest.raises(ValidationError, match="Another `omac dag run`"):
             with manifest_write_lock(path):
                 pass
 

@@ -19,6 +19,7 @@ from ..core.manifest import Contract, _load_contract
 from ..core.taskmeta import DELIVERY_CONTENT_KEY, TaskKind, TaskPhase, make_dag_key
 from ..engines.models import WorkItem, WorkItemStatus
 from ..errors import NeedsDecision
+from ..i18n import current_language, ui
 from .dispatch import normalize_source_refs, render_issue_body
 
 log = logsetup.get_logger(__name__)
@@ -107,13 +108,14 @@ def _poll_until(
         poll()
 
 
-def _render_source_of_truth(source_of_truth: dict) -> str:
+def _render_source_of_truth(source_of_truth: dict, language: str | None = None) -> str:
     """把上游产物(dict[标签 -> 文本])渲染成 issue body 的只读上下文段。
 
     上游产物本身通常是 Markdown。不要再外包一层代码块,否则平台 Markdown
     对四反引号支持不完整时会破坏渲染,也会让人工审阅很难读。
     """
-    sections = ["## 上游产物(只读上下文)"]
+    language = language or current_language()
+    sections = [f"## {ui('Upstream artifacts (read-only context)', '上游产物(只读上下文)', language=language)}"]
     for label, text in source_of_truth.items():
         if not text:
             continue
@@ -121,7 +123,7 @@ def _render_source_of_truth(source_of_truth: dict) -> str:
         sections.append(
             f"### {label}\n\n"
             "<details>\n"
-            f"<summary>查看 {label} 上游产物</summary>\n\n"
+            f"<summary>{ui(f'View upstream artifact: {label}', f'查看 {label} 上游产物', language=language)}</summary>\n\n"
             f"{content}\n\n"
             "</details>"
         )
@@ -169,9 +171,11 @@ def create_authoring_task(engine, spec: AuthoringTaskSpec) -> WorkItem:
         source_refs=refs,
         engine_env=env,
         issue_key=getattr(item, "identifier", None),
+        language=current_language(),
     )
     if spec.source_of_truth:
-        body += "\n\n" + _render_source_of_truth(spec.source_of_truth)
+        body += "\n\n" + _render_source_of_truth(
+            spec.source_of_truth, current_language())
     if spec.contract is not None:
         store.set_node_contract(item.id, spec.contract)
     return store.update_work_item_metadata(
@@ -244,13 +248,15 @@ def run_task(
             log.info(logsetup.EVT_NODE_FAILED, kind=kind.value, id=item_id,
                      reason="producer failed")
             raise NeedsDecision(
-                f"{kind.value} 产出阶段失败(item {item_id})",
+                ui(
+                    f"{kind.value} authoring failed (item {item_id})",
+                    f"{kind.value} 产出阶段失败(item {item_id})"),
                 report={"item_id": item_id, "kind": kind.value, "rounds": 0,
                         "last_opinion": "producer failed"})
         if hint:
-            store.add_comment(
-                item_id,
-                "产出修订(错误原文回贴):\n" + "\n".join(f"- {e}" for e in hint))
+            store.add_comment(item_id, ui(
+                "Authoring revision (original errors):\n" + "\n".join(f"- {e}" for e in hint),
+                "产出修订(错误原文回贴):\n" + "\n".join(f"- {e}" for e in hint)))
         return produced
 
     log.info(logsetup.EVT_DISPATCH, kind=kind.value, id=item_id, worker=assignee)
@@ -277,7 +283,9 @@ def run_task(
             log.info(logsetup.EVT_NEEDS_DECISION, kind=kind.value, id=item_id,
                      gate="guard", rounds=max_revisions)
             raise NeedsDecision(
-                f"{kind.value} 任务经 {max_revisions} 轮 machine-gate 仍未通过",
+                ui(
+                    f"{kind.value} did not pass the machine gate after {max_revisions} revisions",
+                    f"{kind.value} 任务经 {max_revisions} 轮 machine-gate 仍未通过"),
                 report={"item_id": item_id, "kind": kind.value,
                         "rounds": max_revisions, "phase": "guard",
                         "last_opinion": "\n".join(guard_errors)})
@@ -364,6 +372,8 @@ def run_task(
     log.info(logsetup.EVT_NEEDS_DECISION, kind=kind.value, id=item_id,
              gate="review", rounds=max_revisions)
     raise NeedsDecision(
-        f"{kind.value} 任务在 {max_revisions} 轮修订后仍未通过评审",
+        ui(
+            f"{kind.value} did not pass review after {max_revisions} revisions",
+            f"{kind.value} 任务在 {max_revisions} 轮修订后仍未通过评审"),
         report={"item_id": item_id, "kind": kind.value,
                 "rounds": max_revisions, "last_opinion": last_opinion})

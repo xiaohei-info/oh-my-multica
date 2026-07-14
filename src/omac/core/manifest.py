@@ -10,6 +10,7 @@ import tempfile
 import yaml
 
 from ..errors import ValidationError
+from ..i18n import ui
 
 _UNSET = object()  # sentinel: 参数未传（区别于 None=显式清空）
 
@@ -230,9 +231,11 @@ def manifest_write_lock(path: str):
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
-            raise ValidationError(
+            raise ValidationError(ui(
+                f"Another `omac dag run` or `tick` is already modifying manifest: {path}\n"
+                "Wait for it to exit, or confirm the stale process has stopped before retrying.",
                 f"已有另一个 omac dag run/tick 正在修改 manifest: {path}\n"
-                "提示:等待现有进程退出,或确认旧进程已停止后再重试。") from exc
+                "提示:等待现有进程退出,或确认旧进程已停止后再重试。")) from exc
         yield
     finally:
         try:

@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'self'; form-action 'self'" />
-<title>omac web — DAG 可视化面板</title>
+<title>omac web — DAG dashboard</title>
 <style>
 :root{
   --bg:#0f172a; --panel:#1e293b; --panel-2:#334155;
@@ -101,53 +101,53 @@ a.ext:hover{text-decoration:underline}
 <header class="topbar">
   <h1>omac web</h1>
   <label class="field">manifest
-    <select id="manifest-selector" title="选择要查看的 manifest"><option value="">— 选择 —</option></select>
+    <select id="manifest-selector" data-i18n-title="manifest_title" title="Choose a manifest"><option value="">— Choose —</option></select>
   </label>
   <span class="badge" id="progress-badge" style="display:none"></span>
   <span class="spacer"></span>
-  <span class="badge" id="poll-state" title="最后状态刷新时间"><span class="pulse"></span><span id="poll-ts">—</span></span>
-  <label class="field">主题
+  <span class="badge" id="poll-state" data-i18n-title="last_refresh" title="Last status refresh"><span class="pulse"></span><span id="poll-ts">—</span></span>
+  <label class="field"><span data-i18n="theme">Theme</span>
     <select id="theme-select">
-      <option value="auto">跟随系统</option>
-      <option value="dark">深色</option>
-      <option value="light">浅色</option>
+      <option value="auto" data-i18n="theme_auto">System</option>
+      <option value="dark" data-i18n="theme_dark">Dark</option>
+      <option value="light" data-i18n="theme_light">Light</option>
     </select>
   </label>
 </header>
 
 <main>
-  <section class="dag-wrap" aria-label="DAG 总览">
+  <section class="dag-wrap" aria-label="DAG overview" data-i18n-aria="dag_overview">
     <div class="toolbar" id="dag-toolbar">
-      <span class="region-title" style="margin:0">DAG 总览</span>
+      <span class="region-title" style="margin:0" data-i18n="dag_overview">DAG overview</span>
       <span class="spacer" style="flex:1"></span>
-      <button id="fit-btn" title="回到全图视野">全图</button>
+      <button id="fit-btn" data-i18n="fit" data-i18n-title="fit_title" title="Fit the full graph">Fit</button>
       <div class="legend" id="dag-legend"></div>
     </div>
-    <svg id="dag-canvas" xmlns="http://www.w3.org/2000/svg" aria-label="DAG 可视化" role="img"></svg>
+    <svg id="dag-canvas" xmlns="http://www.w3.org/2000/svg" aria-label="DAG visualization" data-i18n-aria="dag_visualization" role="img"></svg>
   </section>
 
-  <aside class="detail" id="node-detail" aria-label="节点详情">
-    <p class="empty" id="detail-empty">点击 DAG 中的一个节点查看 contract / 证据 / 链接。</p>
+  <aside class="detail" id="node-detail" aria-label="Node details" data-i18n-aria="node_details">
+    <p class="empty" id="detail-empty" data-i18n="select_node">Select a DAG node to inspect its contract, evidence, and links.</p>
     <div id="detail-content"></div>
   </aside>
 </main>
 
 <footer class="tabs">
   <input type="radio" name="tab" id="tab-anomaly" checked/>
-  <label for="tab-anomaly">异常面板</label>
+  <label for="tab-anomaly" data-i18n="anomalies">Anomalies</label>
   <input type="radio" name="tab" id="tab-static"/>
-  <label for="tab-static">静态信息页</label>
+  <label for="tab-static" data-i18n="static_info">Static information</label>
   <div style="flex:1"></div>
   <span class="badge" id="tick-state" style="align-self:center;margin-right:8px">—</span>
 
   <div class="tab-body-wrap" style="position:absolute">
   <div class="tab-body active" id="anomaly-panel" data-tab="tab-anomaly">
-    <p class="empty" id="anomaly-empty">当前无异常(无 failed / blocked 节点)——所有节点收敛或推进中。</p>
+    <p class="empty" id="anomaly-empty" data-i18n="no_anomalies">No failed or blocked nodes. The DAG is converged or still progressing.</p>
     <div id="anomaly-content"></div>
   </div>
   <div class="tab-body" id="static-info" data-tab="tab-static">
-    <button class="primary" id="reload-static" style="margin-bottom:10px">刷新</button>
-    <div id="static-content"><p class="empty">选择一个 manifest 后加载 config / manifest 原文 / 验收清单。</p></div>
+    <button class="primary" id="reload-static" style="margin-bottom:10px" data-i18n="refresh">Refresh</button>
+    <div id="static-content"><p class="empty" data-i18n="static_intro">Choose a manifest to load configuration, source manifest, and acceptance checks.</p></div>
   </div>
   </div>
 </footer>
@@ -160,11 +160,62 @@ a.ext:hover{text-decoration:underline}
 
 /* ---------- 状态 → 着色 ---------- */
 const STATES = ["todo","in_progress","ci_check","in_review","merging","done","blocked","abandoned"];
-const STATE_LABEL = {
-  todo:"待开始", in_progress:"进行中", ci_check:"CI 校验",
-  in_review:"评审中", merging:"合并中", done:"完成",
-  blocked:"受阻", abandoned:"已放弃"
+const COPY = {
+  en: {
+    choose:"Choose", manifest_title:"Choose a manifest", last_refresh:"Last status refresh",
+    theme:"Theme", theme_auto:"System", theme_dark:"Dark", theme_light:"Light",
+    dag_overview:"DAG overview", dag_visualization:"DAG visualization", fit:"Fit",
+    fit_title:"Fit the full graph", node_details:"Node details",
+    select_node:"Select a DAG node to inspect its contract, evidence, and links.",
+    anomalies:"Anomalies", static_info:"Static information",
+    no_anomalies:"No failed or blocked nodes. The DAG is converged or still progressing.",
+    refresh:"Refresh", static_intro:"Choose a manifest to load configuration, source manifest, and acceptance checks.",
+    progress:"Progress", refresh_failed:"Refresh failed", no_selected:"No node is selected.",
+    none:"None", node:"Node", status:"Status", dependencies:"Dependencies",
+    loading_evidence:"Loading contract and evidence…", evidence_chain:"Evidence",
+    no_evidence:"No evidence has been collected for this node yet.", bounce_count:"Bounce count",
+    copy_retry:"Copy retry", copy_abandon:"Copy abandon", detail_failed:"Failed to load node details",
+    reason:"Reason", blocked_downstream:"Blocked downstream", copy:"Copy",
+    copied:"Copied to clipboard", copy_failed:"Copy failed", loading_static:"Loading configuration and acceptance checks…",
+    config_summary:"config.yaml summary", acceptance_checks:"Acceptance checks",
+    acceptance_missing:"Acceptance file not found", static_failed:"Failed to load static information",
+    state_todo:"Todo", state_in_progress:"In progress", state_ci_check:"CI check",
+    state_in_review:"In review", state_merging:"Merging", state_done:"Done",
+    state_blocked:"Blocked", state_abandoned:"Abandoned"
+  },
+  cn: {
+    choose:"选择", manifest_title:"选择要查看的 manifest", last_refresh:"最后状态刷新时间",
+    theme:"主题", theme_auto:"跟随系统", theme_dark:"深色", theme_light:"浅色",
+    dag_overview:"DAG 总览", dag_visualization:"DAG 可视化", fit:"全图",
+    fit_title:"回到全图视野", node_details:"节点详情",
+    select_node:"点击 DAG 中的一个节点查看 contract、证据和链接。",
+    anomalies:"异常面板", static_info:"静态信息页",
+    no_anomalies:"当前无 failed 或 blocked 节点，所有节点已收敛或仍在推进。",
+    refresh:"刷新", static_intro:"选择一个 manifest 后加载配置、manifest 原文和验收清单。",
+    progress:"进度", refresh_failed:"刷新失败", no_selected:"当前无选中节点。",
+    none:"无", node:"节点", status:"状态", dependencies:"依赖",
+    loading_evidence:"正在加载 contract 和证据…", evidence_chain:"证据链",
+    no_evidence:"该节点暂无已收集证据。", bounce_count:"回退计数",
+    copy_retry:"复制 retry", copy_abandon:"复制 abandon", detail_failed:"节点详情加载失败",
+    reason:"原因", blocked_downstream:"受阻下游", copy:"复制",
+    copied:"已复制到剪贴板", copy_failed:"复制失败", loading_static:"正在加载配置和验收清单…",
+    config_summary:"config.yaml 摘要", acceptance_checks:"验收清单",
+    acceptance_missing:"未找到验收文件", static_failed:"静态信息加载失败",
+    state_todo:"待开始", state_in_progress:"进行中", state_ci_check:"CI 校验",
+    state_in_review:"评审中", state_merging:"合并中", state_done:"完成",
+    state_blocked:"受阻", state_abandoned:"已放弃"
+  }
 };
+function copy(key){ return (COPY[state.language]||COPY.en)[key] || COPY.en[key] || key; }
+function stateLabel(value){ return copy("state_"+value) || value; }
+function applyLanguage(language){
+  state.language = language === "cn" ? "cn" : "en";
+  document.documentElement.lang = state.language === "cn" ? "zh-CN" : "en";
+  document.title = state.language === "cn" ? "omac web — DAG 可视化面板" : "omac web — DAG dashboard";
+  document.querySelectorAll("[data-i18n]").forEach(el => el.textContent=copy(el.dataset.i18n));
+  document.querySelectorAll("[data-i18n-title]").forEach(el => el.title=copy(el.dataset.i18nTitle));
+  document.querySelectorAll("[data-i18n-aria]").forEach(el => el.setAttribute("aria-label",copy(el.dataset.i18nAria)));
+}
 function stateColor(s, root){
   return getComputedStyle(root||document.documentElement).getPropertyValue("--"+s).trim() || "#888";
 }
@@ -178,6 +229,7 @@ const state = {
   nodes: {},
   selected: null,
   pollTimer: null,
+  language: "en",
 };
 
 /* ---------- 工具 ---------- */
@@ -223,7 +275,7 @@ window.matchMedia("(prefers-color-scheme:dark)").addEventListener("change", ()=>
 async function loadManifests(){
   state.manifests = await api("/api/manifests");
   const sel = $("manifest-selector");
-  sel.innerHTML = '<option value="">— 选择 —</option>' +
+  sel.innerHTML = '<option value="">— '+copy("choose")+' —</option>' +
     state.manifests.map(m => '<option value="'+esc(m.path)+'">'+esc(m.name)+' ('+m.done+'/'+m.total+')</option>').join("");
   // 记住上次选择
   const last = localStorage.getItem("omac-last-manifest");
@@ -254,9 +306,9 @@ async function fetchStatus(){
     renderAnomaly(s);
     const pb = $("progress-badge");
     pb.style.display="";
-    pb.textContent = "进度 "+(s.progress?s.progress.done+"/"+s.progress.total:"?");
+    pb.textContent = copy("progress")+" "+(s.progress?s.progress.done+"/"+s.progress.total:"?");
     $("poll-ts").textContent = new Date().toLocaleTimeString();
-  }catch(e){ toast("刷新失败: "+e.message, true); }
+  }catch(e){ toast(copy("refresh_failed")+": "+e.message, true); }
 }
 function startPoll(){
   cancelPoll();
@@ -348,7 +400,7 @@ function renderDAG(s){
     g.appendChild(t1);
     const t2=document.createElementNS(ns,"text");
     t2.setAttribute("x",p.x+10); t2.setAttribute("y",p.y+40);
-    t2.setAttribute("class","ns"); t2.textContent=STATE_LABEL[n.status]||n.status;
+    t2.setAttribute("class","ns"); t2.textContent=stateLabel(n.status);
     g.appendChild(t2);
     g.addEventListener("click", ()=> selectNode(n.key));
     nodesG.appendChild(g);
@@ -357,7 +409,7 @@ function renderDAG(s){
   // legend
   const lg = $("dag-legend");
   lg.innerHTML = STATES.filter(st => (s.nodes||[]).some(n=>n.status===st))
-    .map(st=> '<span><i style="background:'+stateColor(st, document.documentElement)+'"></i>'+STATE_LABEL[st]+'</span>').join("");
+    .map(st=> '<span><i style="background:'+stateColor(st, document.documentElement)+'"></i>'+stateLabel(st)+'</span>').join("");
 }
 
 function dimForSelected(){
@@ -399,19 +451,19 @@ async function renderDetail(key){
   const n = state.nodes[key];
   const dc = $("detail-content");
   $("detail-empty").style.display="none";
-  if(!n){ dc.innerHTML='<p class="empty">当前无选中节点。</p>'; return; }
-  const sub = (arr)=> (Array.isArray(arr)&&arr.length)?"<ul class='acceptance'>"+arr.map(x=>"<li>"+esc(x)+"</li>")+"</ul>" : '<span class="empty">无</span>';
+  if(!n){ dc.innerHTML='<p class="empty">'+copy("no_selected")+'</p>'; return; }
+  const sub = (arr)=> (Array.isArray(arr)&&arr.length)?"<ul class='acceptance'>"+arr.map(x=>"<li>"+esc(x)+"</li>")+"</ul>" : '<span class="empty">'+copy("none")+'</span>';
   dc.innerHTML =
-    '<h3 class="region-title">节点 '+esc(key)+'</h3>'+
+    '<h3 class="region-title">'+copy("node")+' '+esc(key)+'</h3>'+
     '<dl class="kv">'+
-      '<dt>状态</dt><dd class="hl-'+esc(n.status)+'">'+(STATE_LABEL[n.status]||n.status)+'</dd>'+
+      '<dt>'+copy("status")+'</dt><dd class="hl-'+esc(n.status)+'">'+stateLabel(n.status)+'</dd>'+
       '<dt>worker</dt><dd>'+esc(n.worker||"—")+'</dd>'+
       '<dt>reviewer</dt><dd>'+esc(n.reviewer||"—")+'</dd>'+
       '<dt>work_item_id</dt><dd>'+esc(n.work_item_id||"—")+'</dd>'+
       '<dt>pr_url</dt><dd>'+(n.pr_url?'<a class="ext" href="'+esc(n.pr_url)+'" target="_blank" rel="noopener">'+esc(n.pr_url)+'</a>':"—")+'</dd>'+
-      '<dt>依赖</dt><dd>'+((n.blocked_by||[]).join(", ")||"无")+'</dd>'+
+      '<dt>'+copy("dependencies")+'</dt><dd>'+((n.blocked_by||[]).join(", ")||copy("none"))+'</dd>'+
     '</dl>'+
-    '<p class="empty" id="detail-extra">加载合约/证据中…</p>';
+    '<p class="empty" id="detail-extra">'+copy("loading_evidence")+'</p>';
   try{
     const full = await api("/api/node/"+encodeURIComponent(key)+"?manifest="+encodeURIComponent(state.current));
     const c = full.contract||{};
@@ -426,7 +478,7 @@ async function renderDetail(key){
         '<dt>verification_commands</dt><dd>'+sub(c.verification_commands)+'</dd>'+
         '<dt>integration_gates</dt><dd>'+sub(c.integration_gates)+'</dd>'+
       '</dl>'+
-      '<h3 class="region-title" style="margin-top:12px">证据链</h3>'+
+      '<h3 class="region-title" style="margin-top:12px">'+copy("evidence_chain")+'</h3>'+
       (ev ? '<dl class="kv">'+
         '<dt>work_item_id</dt><dd>'+esc(ev.work_item_id||"—")+'</dd>'+
         '<dt>platform_status</dt><dd>'+esc(ev.platform_status||"—")+'</dd>'+
@@ -434,13 +486,13 @@ async function renderDetail(key){
         '<dt>review_comment</dt><dd>'+esc(ev.review_comment||"—")+'</dd>'+
         '<dt>has verification</dt><dd>'+(ev.verification? "✓":"—")+'</dd>'+
         '<dt>artifacts</dt><dd><pre class="contract">'+esc(JSON.stringify(ev.artifacts||{},null,2))+'</pre></dd>'+
-      '</dl>' : '<p class="empty">该节点暂无收集的证据(work_item_id 为空或尚未 emit)。</p>')+
-      '<p style="font-size:11px;color:var(--muted);margin-top:8px">回退计数: '+(full.rollback_count!=null?full.rollback_count:"—")+' · '+esc(full.comments||"")+'</p>'+
-      '<div style="margin-top:10px" class="copy-row"><code id="retry-cmd">omac node retry '+esc(state.current)+' '+esc(key)+'</code><button data-copy="retry-cmd">复制 retry</button></div>'+
-      '<div class="copy-row"><code id="abandon-cmd">omac node abandon '+esc(state.current)+' '+esc(key)+'</code><button data-copy="abandon-cmd">复制 abandon</button></div>';
+      '</dl>' : '<p class="empty">'+copy("no_evidence")+'</p>')+
+      '<p style="font-size:11px;color:var(--muted);margin-top:8px">'+copy("bounce_count")+': '+(full.rollback_count!=null?full.rollback_count:"—")+' · '+esc(full.comments||"")+'</p>'+
+      '<div style="margin-top:10px" class="copy-row"><code id="retry-cmd">omac node retry '+esc(state.current)+' '+esc(key)+'</code><button data-copy="retry-cmd">'+copy("copy_retry")+'</button></div>'+
+      '<div class="copy-row"><code id="abandon-cmd">omac node abandon '+esc(state.current)+' '+esc(key)+'</code><button data-copy="abandon-cmd">'+copy("copy_abandon")+'</button></div>';
     wireCopy();
   }catch(e){
-    $("detail-extra").outerHTML = '<p class="empty">节点详情加载失败: '+esc(e.message)+'</p>';
+    $("detail-extra").outerHTML = '<p class="empty">'+copy("detail_failed")+': '+esc(e.message)+'</p>';
   }
 }
 
@@ -452,8 +504,8 @@ function renderAnomaly(s){
   if(!nd){ wrap.innerHTML=""; return; }
   const card = (n) =>
     '<div class="anomaly-card '+(n.status==="blocked"?"blocked":"")+'">'+
-      '<span class="state hl-'+esc(n.status)+'">'+(STATE_LABEL[n.status]||n.status)+' · '+esc(n.key)+'</span>'+
-      '<div class="reason">原因: '+esc(n.reason||"—")+'</div>'+
+      '<span class="state hl-'+esc(n.status)+'">'+stateLabel(n.status)+' · '+esc(n.key)+'</span>'+
+      '<div class="reason">'+copy("reason")+': '+esc(n.reason||"—")+'</div>'+
       (n.pr_url?'<div style="font-size:11px">PR: <a class="ext" href="'+esc(n.pr_url)+'" target="_blank" rel="noopener">'+esc(n.pr_url)+'</a></div>':"")+
       (n.work_item_id?'<div style="font-size:11px;color:var(--muted)">work_item_id: '+esc(n.work_item_id)+'</div>':"")+
       (n.evidence_summary?'<div style="font-size:11px;color:var(--muted)">review_verdict: '+esc(n.evidence_summary.review_verdict||"—")+'</div>':"")+
@@ -461,11 +513,11 @@ function renderAnomaly(s){
   wrap.innerHTML =
     (nd.failed_nodes||[]).map(card).join("") +
     ((nd.blocked_downstream&&nd.blocked_downstream.length)?
-      '<div class="anomaly-card blocked"><span class="state">受阻下游</span><div class="reason">'+esc((nd.blocked_downstream||[]).join(", "))+'</div></div>'
+      '<div class="anomaly-card blocked"><span class="state">'+copy("blocked_downstream")+'</span><div class="reason">'+esc((nd.blocked_downstream||[]).join(", "))+'</div></div>'
     :"") +
     (nd.next_actions||[]).map((a, i) =>
       '<div class="copy-row"><code id="na-'+i+'">'+esc(a)+'</code>'+
-      '<button data-copy="na-'+i+'">复制</button></div>'
+      '<button data-copy="na-'+i+'">'+copy("copy")+'</button></div>'
     ).join("");
   wireCopy();
 }
@@ -474,8 +526,8 @@ function wireCopy(){
     const src = $(btn.dataset.copy);
     if(!src) return;
     btn.addEventListener("click", async ()=>{
-      try { await navigator.clipboard.writeText(src.textContent); toast("已复制到剪贴板"); }
-      catch(e){ toast("复制失败: "+e.message, true); }
+      try { await navigator.clipboard.writeText(src.textContent); toast(copy("copied")); }
+      catch(e){ toast(copy("copy_failed")+": "+e.message, true); }
     });
   });
 }
@@ -484,7 +536,7 @@ function wireCopy(){
 async function loadStatic(){
   if(!state.current) return;
   const wrap=$("static-content");
-  wrap.innerHTML='<p class="empty">加载 config / manifest / 验收清单…</p>';
+  wrap.innerHTML='<p class="empty">'+copy("loading_static")+'</p>';
   try{
     const [cfg, acc] = await Promise.all([
       api("/api/config"),
@@ -493,19 +545,19 @@ async function loadStatic(){
     const meta = acc._meta||{};
     const manifestYaml = state.manifests.find(m=>m.path===state.current);
     wrap.innerHTML =
-      '<h3 class="region-title">config.yaml 摘要</h3>'+
+      '<h3 class="region-title">'+copy("config_summary")+'</h3>'+
       '<dl class="kv">'+
         '<dt>engine</dt><dd>'+esc((cfg.engine||cfg.defaults&&cfg.defaults))+'</dd>'+
       '</dl>'+
       '<pre class="contract">'+esc(JSON.stringify(cfg,null,2))+'</pre>'+
-      '<h3 class="region-title" style="margin-top:12px">验收清单</h3>'+
+      '<h3 class="region-title" style="margin-top:12px">'+copy("acceptance_checks")+'</h3>'+
       (meta.found===false ?
-        '<p class="empty">未找到验收文件: '+esc(meta.acceptance_file||"—")+'</p>'
-        : '<ul class="acceptance">'+((acc.flows||[]).map(f=>"<li><b>"+esc(f.id||"?")+"</b> · "+esc(f.name||"")+"</li>").join("") || '<span class="empty">无</span>')+'</ul>'
+        '<p class="empty">'+copy("acceptance_missing")+': '+esc(meta.acceptance_file||"—")+'</p>'
+        : '<ul class="acceptance">'+((acc.flows||[]).map(f=>"<li><b>"+esc(f.id||"?")+"</b> · "+esc(f.name||"")+"</li>").join("") || '<span class="empty">'+copy("none")+'</span>')+'</ul>'
       );
     wireCopy();
   }catch(e){
-    wrap.innerHTML='<p class="empty">静态信息加载失败: '+esc(e.message)+'</p>';
+    wrap.innerHTML='<p class="empty">'+copy("static_failed")+': '+esc(e.message)+'</p>';
   }
 }
 $("reload-static").addEventListener("click", loadStatic);
@@ -522,10 +574,15 @@ document.querySelectorAll("footer.tabs input[name=tab]").forEach(r=>{
 
 /* ---------- meta + 启动 ---------- */
 async function init(){
+  applyLanguage("en");
   try{
     const meta = await api("/api/meta");
     state.refresh = meta.refresh||10;
   }catch(e){ /* 缺 meta 不影响主流程 */ }
+  try{
+    const config = await api("/api/config");
+    applyLanguage(config.language||"en");
+  }catch(e){ /* 配置不可用时保留英文默认值 */ }
   await loadManifests();
 }
 init();

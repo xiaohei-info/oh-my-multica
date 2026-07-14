@@ -33,7 +33,7 @@ def test_work_and_guide_help_have_explicit_agent_audience(capsys):
     assert work_exit.value.code == 0
     work_help = capsys.readouterr().out
     assert "Agent" in work_help
-    assert "默认 JSON" in work_help
+    assert "default to JSON" in work_help
     assert build_parser().parse_args(["work", "show", "issue-1"]).output == "json"
 
     with pytest.raises(SystemExit) as guide_exit:
@@ -41,7 +41,7 @@ def test_work_and_guide_help_have_explicit_agent_audience(capsys):
     assert guide_exit.value.code == 0
     guide_help = capsys.readouterr().out
     assert "Agent" in guide_help
-    assert "实例事实" in guide_help
+    assert "current task facts" in guide_help
     assert "omac work show" in guide_help
 
 
@@ -217,12 +217,12 @@ def test_dag_accepts_trailing_log_flags(capsys):
     # 文档承诺的用户路径:日志 flag 放在 dag 子命令参数之后也应被接受。
     assert main(["dag", "run", "nope.yaml", "--json-logs"]) == exit_codes.VALIDATION
     err = capsys.readouterr().err
-    assert "manifest 文件不存在" in err
+    assert "Manifest file not found" in err
     assert "unrecognized arguments" not in err
 
     assert main(["dag", "run", "nope.yaml", "--log-format", "json"]) == exit_codes.VALIDATION
     err = capsys.readouterr().err
-    assert "manifest 文件不存在" in err
+    assert "Manifest file not found" in err
     assert "unrecognized arguments" not in err
 
 
@@ -244,7 +244,7 @@ def test_guide_lists_grouped_topics(capsys):
     out = capsys.readouterr().out
     assert "Agent" in out
     assert "omac work show" in out
-    assert "实例事实" in out
+    assert "instance facts" in out
     assert "omac guide workflow" in out
     assert "omac guide role planner" in out
     assert "omac guide artifact design" in out
@@ -255,12 +255,24 @@ def test_guide_lists_grouped_topics(capsys):
     assert "omac init" in out and "dag run" in out
 
 
+def test_guide_index_uses_the_configured_language(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["guide"]) == exit_codes.OK
+    assert "Agent Guide index" in capsys.readouterr().out
+
+    assert main(["config", "set", "language", "cn"]) == exit_codes.OK
+    capsys.readouterr()
+    assert main(["guide"]) == exit_codes.OK
+    assert "Agent Guide 索引" in capsys.readouterr().out
+
+
 def test_guide_reads_role_and_artifact_topics(capsys):
     assert main(["guide", "role", "planner"]) == exit_codes.OK
     out = capsys.readouterr().out
     assert "planner" in out
-    assert "设计方案" in out
-    assert "验收文档" in out
+    assert "A planner produces" in out
+    assert "acceptance document" in out
 
     assert main(["guide", "artifact", "design"]) == exit_codes.OK
     out = capsys.readouterr().out
@@ -271,30 +283,29 @@ def test_guide_reads_role_and_artifact_topics(capsys):
 def test_orchestrator_guide_requires_max_parallel_minimal_pr_units(capsys):
     assert main(["guide", "role", "orchestrator"]) == exit_codes.OK
     out = capsys.readouterr().out
-    assert "最大化并行开发" in out
-    assert "最小独立 PR 单元" in out
-    assert "独立开发、独立验证、独立提交 PR、独立 review" in out
-    assert "还能拆出另一个独立 PR/test/review" in out
-    assert "主要代码归属范围" in out
-    assert "必要配套文件" in out
+    assert "maximize parallel" in out
+    assert "smallest independently" in out
+    assert "independently developable, testable, PR-able" in out
+    assert "primary code ownership" in out
+    assert "supporting files" in out
 
     assert main(["guide", "artifact", "manifest"]) == exit_codes.OK
     out = capsys.readouterr().out
-    assert "每个节点是最小独立 PR/test/review 单元" in out
-    assert "不能继续独立拆分" in out
-    assert "不是穷举文件白名单" in out
+    assert "smallest independently PR/test/reviewable unit" in out
+    assert "Keep splitting" in out
+    assert "not an exhaustive file whitelist" in out
 
     assert main(["guide", "role", "reviewer"]) == exit_codes.OK
     out = capsys.readouterr().out
     assert "decompose review" in out
-    assert "还能拆出独立 PR/test/review 单元" in out
-    assert "不因必要配套文件" in out
+    assert "independently PR/test/reviewable work" in out
+    assert "Required supporting files" in out
 
 
 def test_guide_rejects_old_flat_role_topics(capsys):
     assert main(["guide", "worker"]) == exit_codes.GENERIC
     err = capsys.readouterr().err
-    assert "未知 guide topic" in err
+    assert "Unknown guide topic" in err
     assert "omac guide role worker" in err
 
 
@@ -328,4 +339,4 @@ def test_init_check_reports_problems(tmp_path, monkeypatch, capsys):
     main(["config", "set", "roles.workers", '["alice"]'])
     capsys.readouterr()
     assert main(["init", "--check"]) == exit_codes.OK
-    assert "体检通过" in capsys.readouterr().out
+    assert "Health check passed" in capsys.readouterr().out

@@ -19,6 +19,7 @@ from ...core.gitsync import ensure_config_synced
 from ...engines import create_engine
 from ...engines.models import EngineConfig
 from ...errors import NeedsDecision, ValidationError
+from ...i18n import current_language, ui
 from ...pipeline.loop import tick
 from ...pipeline.review import run_review
 from ...pipeline.acceptance import (
@@ -197,8 +198,9 @@ def _default_max_parallel(args) -> int:
 def check(args) -> int:
     path = args.manifest
     if not os.path.exists(path):
-        raise ValidationError(
-            f"manifest 文件不存在: {path} —— 请确认路径或先 `omac plan create`")
+        raise ValidationError(ui(
+            f"Manifest file not found: {path}. Check the path or run `omac plan create` first.",
+            f"manifest 文件不存在: {path} —— 请确认路径或先 `omac plan create`"))
 
     manifest = load_manifest(path)
     name = manifest.meta.get("name") or os.path.basename(path)
@@ -211,10 +213,14 @@ def check(args) -> int:
         if args.output == "json":
             print_json({"ok": False, "errors": errs})
         else:
-            print(f"lint 失败({len(errs)} 项):", flush=True)
+            print(ui(
+                f"Lint failed ({len(errs)} issues):",
+                f"lint 失败({len(errs)} 项):"), flush=True)
             for e in errs:
                 print(f"  - {e}")
-            hint("修订后重跑 `omac dag check <file>` 重新过门")
+            hint(ui(
+                "Fix the issues, then rerun `omac dag check <file>`.",
+                "修订后重跑 `omac dag check <file>` 重新过门"))
         return exit_codes.VALIDATION
 
     reviewers = (_load_config_for_manifest(path).get("roles") or {}).get("reviewers") or []
@@ -228,7 +234,7 @@ def check(args) -> int:
             engine, engine.store.config.workspace_id,
             title=f"[dag-check] {name}",
             body=lambda issue_id: _review_body(
-                manifest, path, issue_id, env_prefix),
+                manifest, path, issue_id, env_prefix, current_language()),
             reviewer=reviewer,
             deliverable=manifest_source,
             poll=lambda: time.sleep(1),
@@ -242,12 +248,20 @@ def check(args) -> int:
             "review": "pass" if reviewed else "skipped",
         })
     else:
-        print(f"lint 通过({len(manifest.nodes)} 节点)")
+        print(ui(
+            f"Lint passed ({len(manifest.nodes)} nodes)",
+            f"lint 通过({len(manifest.nodes)} 节点)"))
         if reviewed:
-            print(f"review 通过(reviewer={reviewers[0]})")
+            print(ui(
+                f"Review passed (reviewer={reviewers[0]})",
+                f"review 通过(reviewer={reviewers[0]})"))
         else:
-            hint("未配置 reviewers 或已 --no-review,跳过 manifest review 阶段")
-        hint("下一步:`omac dag run` 开始执行")
+            hint(ui(
+                "No reviewers are configured, or --no-review was used; skipping manifest review.",
+                "未配置 reviewers 或已 --no-review,跳过 manifest review 阶段"))
+        hint(ui(
+            "Next: run `omac dag run`.",
+            "下一步:`omac dag run` 开始执行"))
     return exit_codes.OK
 
 
@@ -261,15 +275,31 @@ def _work_env_prefix(engine) -> str:
     return " ".join(f"{key}={value}" for key, value in values if value)
 
 
-def _review_body(manifest, path: str, issue_id: str, env_prefix: str) -> str:
+def _review_body(manifest, path: str, issue_id: str, env_prefix: str,
+                 language: str = "cn") -> str:
     """渲染 Human-first manifest review issue，顶部保留 Agent JSON 入口。"""
     node_lines = []
     for key, node in manifest.nodes.items():
-        dependencies = ", ".join(node.blocked_by) if node.blocked_by else "无"
+        dependencies = ", ".join(node.blocked_by) if node.blocked_by else ui(
+            "None", "无", language=language)
         node_lines.append(
-            f"- `{key}`：worker=`{node.worker}`，blocked_by={dependencies}"
+            f"- `{key}`: worker=`{node.worker}`, blocked_by={dependencies}"
         )
-    return (
+    return ui(
+        "> **Agent entry:** Read the authoritative JSON context for this review first.\n\n"
+        f"```bash\n{env_prefix} omac work show {issue_id} --output json\n```\n\n"
+        "# Manifest review\n\n"
+        "## Task summary\n"
+        "- Type: task-decomposition review (`decompose review`)\n"
+        "- Execution role: independent reviewer (`reviewer`)\n"
+        f"- Manifest: `{path}`\n"
+        f"- Nodes: `{len(manifest.nodes)}`\n\n"
+        "## Completion criteria\n"
+        "- The DAG is acyclic and hard dependencies represent real runtime prerequisites.\n"
+        "- Every node has a complete contract and can be implemented, verified, submitted, and reviewed independently.\n"
+        "- Worker and reviewer assignments are valid; acceptance references and integration gates are executable.\n"
+        "- The review contains an explicit verdict and lists blockers when rejecting.\n\n"
+        "## Node overview\n" + "\n".join(node_lines),
         "> **Agent 入口:** 先读取当前评审任务的权威 JSON 上下文。\n\n"
         f"```bash\n{env_prefix} omac work show {issue_id} --output json\n```\n\n"
         "# Manifest 评审\n\n"
@@ -284,14 +314,17 @@ def _review_body(manifest, path: str, issue_id: str, env_prefix: str) -> str:
         "- worker/reviewer 成员有效，验收引用与集成门可执行。\n"
         "- 评审结论包含明确 verdict；reject 时列出 blockers。\n\n"
         "## 节点概览\n"
-        + "\n".join(node_lines)
+        + "\n".join(node_lines),
+        language=language,
     )
 
 
 def show(args) -> int:
     path = args.manifest
     if not os.path.exists(path):
-        raise ValidationError(f"manifest 文件不存在: {path} —— 请确认路径")
+        raise ValidationError(ui(
+            f"Manifest file not found: {path}. Check the path.",
+            f"manifest 文件不存在: {path} —— 请确认路径"))
 
     manifest = load_manifest(path)
     nodes = manifest.nodes
@@ -329,8 +362,11 @@ def show(args) -> int:
 
     print(f"manifest: {os.path.basename(path)}")
     print(
-        f"节点:{total}  契约覆盖:{with_contract}/{total}  "
-        f"状态:{', '.join(f'{k}={v}' for k, v in sorted(by_status.items()))}")
+        ui(
+            f"Nodes: {total}  Contract coverage: {with_contract}/{total}  "
+            f"Status: {', '.join(f'{k}={v}' for k, v in sorted(by_status.items()))}",
+            f"节点:{total}  契约覆盖:{with_contract}/{total}  "
+            f"状态:{', '.join(f'{k}={v}' for k, v in sorted(by_status.items()))}"))
     print_table(
         ["wave", "nodes"],
         [(str(w), ", ".join(ks)) for w, ks in sorted(by_wave.items())])
@@ -338,16 +374,20 @@ def show(args) -> int:
     if dep_rows:
         print_table(["from", "", "to"], dep_rows)
     else:
-        hint("无依赖边(全部为根节点)")
+        hint(ui(
+            "No dependency edges; every node is a root.",
+            "无依赖边(全部为根节点)"))
     return exit_codes.OK
 
 
 def status(args) -> int:
     """reconcile + 快照,不推进;退出码恒 0(设计文档 §7.3)。"""
     if not os.path.exists(args.manifest):
-        raise ValidationError(
+        raise ValidationError(ui(
+            f"Manifest file not found: {args.manifest}\n"
+            "  Generate it with `omac plan create --name <name>` or check the path.",
             f"manifest 文件不存在: {args.manifest}\n"
-            f"  用 omac plan create --name <name> 生成,或检查路径")
+            f"  用 omac plan create --name <name> 生成,或检查路径"))
     engine, _ = _assemble_engine(args)
     config = _load_config_for_manifest(args.manifest)
     manifest = load_manifest(args.manifest)
@@ -399,17 +439,22 @@ def _maybe_acceptance(args, engine, config, manifest) -> Optional[int]:
         return None
     if not os.path.exists(doc_path):
         if manifest.meta.get("acceptance_required"):
-            raise ValidationError(
+            raise ValidationError(ui(
+                f"Acceptance document not found: {doc_path}\n"
+                "Run `omac plan resume --plan-id <id>` to restore plan artifacts, "
+                "or recover the file from the reviewed acceptance issue attachment.",
                 f"验收文档缺失: {doc_path}\n"
                 "提示:重新运行 `omac plan resume --plan-id <id>` 恢复计划产物,"
-                "或从已评审 acceptance issue 附件恢复该文件。")
+                "或从已评审 acceptance issue 附件恢复该文件。"))
         return None
 
     from ...core.acceptance import load_acceptance_doc_file as _load_doc
     try:
         doc = _load_doc(doc_path)
     except (ValueError, OSError) as exc:
-        raise ValidationError(f"验收文档解析失败: {exc}")
+        raise ValidationError(ui(
+            f"Could not parse the acceptance document: {exc}",
+            f"验收文档解析失败: {exc}"))
 
     import time as _time
     outcome = run_acceptance_loop(
@@ -429,16 +474,21 @@ def _configured_acceptance_path(manifest, manifest_path: str) -> str:
 def _validate_execution_invariants(manifest, manifest_path: str) -> None:
     closeout_node = manifest.meta.get("closeout_node")
     if closeout_node and closeout_node not in manifest.nodes:
-        raise ValidationError(
+        raise ValidationError(ui(
+            f"manifest meta.closeout_node references a missing node: {closeout_node}\n"
+            "Restore the complete manifest from the reviewed decomposition deliverable, then rerun.",
             f"manifest meta.closeout_node 引用不存在的节点: {closeout_node}\n"
-            "提示:从已评审的 decompose 交付物恢复完整 manifest 后再运行。")
+            "提示:从已评审的 decompose 交付物恢复完整 manifest 后再运行。"))
     if manifest.meta.get("acceptance_required"):
         doc_path = _configured_acceptance_path(manifest, manifest_path)
         if not os.path.exists(doc_path):
-            raise ValidationError(
+            raise ValidationError(ui(
+                f"Acceptance document not found: {doc_path}\n"
+                "Run `omac plan resume --plan-id <id>` to restore plan artifacts, "
+                "or recover the file from the reviewed acceptance issue attachment.",
                 f"验收文档缺失: {doc_path}\n"
                 "提示:重新运行 `omac plan resume --plan-id <id>` 恢复计划产物,"
-                "或从已评审 acceptance issue 附件恢复该文件。")
+                "或从已评审 acceptance issue 附件恢复该文件。"))
 
 
 def _loop_or_single(args, single_round: bool) -> int:
@@ -449,9 +499,11 @@ def _loop_or_single(args, single_round: bool) -> int:
 def _loop_or_single_locked(args, single_round: bool) -> int:
     """共享核心:single_round=True → tick 一次退出;否则跑到收敛/需决策。"""
     if not os.path.exists(args.manifest):
-        raise ValidationError(
+        raise ValidationError(ui(
+            f"Manifest file not found: {args.manifest}\n"
+            "  Generate it with `omac plan create --name <name>` or check the path.",
             f"manifest 文件不存在: {args.manifest}\n"
-            f"  用 omac plan create --name <name> 生成,或检查路径")
+            f"  用 omac plan create --name <name> 生成,或检查路径"))
 
     import time as _time
 
@@ -496,7 +548,10 @@ def _loop_or_single_locked(args, single_round: bool) -> int:
         if last_result.state == "needs_decision":
             _emit(last_result, manifest, args)
             raise NeedsDecision(
-                f"需调用者决策:节点 {last_result.failed} 失败/受阻,重跑/重试/abandon 后继续。",
+                ui(
+                    f"Caller decision required: nodes {last_result.failed} failed or are blocked. "
+                    "Rerun, retry, or abandon before continuing.",
+                    f"需调用者决策:节点 {last_result.failed} 失败/受阻,重跑/重试/abandon 后继续。"),
                 report=last_result.report,
             )
 
