@@ -6,6 +6,13 @@
 [Keep a Changelog]: https://keepachangelog.com/zh-CN/1.0.0/
 [语义化版本]: https://semver.org/lang/zh-CN/
 
+## [Unreleased]
+
+### 新增
+
+- `omac init` 支持从九个内置 Agent 模板创建 Multica Agent，自动注入 Instructions、
+  上传缺失 Skill 并绑定到新 Agent；已有 Agent 保持不变，创建后统一进入角色映射池。
+
 ## [1.0.0] — 2026-07-05
 
 第一个正式发布版本。omac 从「一个 agent 靠长上下文硬扛」进化为

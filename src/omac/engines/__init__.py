@@ -12,7 +12,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ..errors import ValidationError
-from .models import EngineConfig, WorkItem, WorkItemStatus, WorkspaceInfo
+from .models import (
+    AgentInfo, AgentProvisionSpec, EngineConfig, RuntimeTarget, SkillPackage,
+    WorkItem, WorkItemStatus, WorkspaceInfo,
+)
 from .runtime import AgentRuntime
 from .store import WorkItemStore
 
@@ -43,5 +46,6 @@ def create_engine(engine_type: str, config: EngineConfig) -> Engine:
 __all__ = [
     "Engine", "create_engine", "ENGINE_TYPES",
     "WorkItemStore", "AgentRuntime",
+    "AgentInfo", "AgentProvisionSpec", "RuntimeTarget", "SkillPackage",
     "EngineConfig", "WorkItem", "WorkItemStatus", "WorkspaceInfo",
 ]

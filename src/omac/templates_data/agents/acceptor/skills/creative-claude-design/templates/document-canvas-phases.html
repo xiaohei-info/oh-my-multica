@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{TITLE}}</title>
+<style>
+  :root {
+    --bg: #0a0e17;
+    --surface: #111827;
+    --surface-hover: #1a2332;
+    --card: #151e2d;
+    --border: #1e2d3d;
+    --border-light: #2a3a4a;
+    --text: #e2e8f0;
+    --text-muted: #8899aa;
+    --text-dim: #5a6a7a;
+    --phase1: #3b82f6;
+    --phase1-bg: rgba(59,130,246,0.08);
+    --phase2: #8b5cf6;
+    --phase2-bg: rgba(139,92,246,0.08);
+    --phase3: #f59e0b;
+    --phase3-bg: rgba(245,158,11,0.08);
+    --phase4: #10b981;
+    --phase4-bg: rgba(16,185,129,0.08);
+    --radius: 12px;
+    --radius-sm: 8px;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: -apple-system, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+  }
+
+  /* Hero */
+  .hero { padding: 80px 24px 60px; text-align: center; position: relative; }
+  .hero h1 {
+    font-size: clamp(28px, 5vw, 48px); font-weight: 800; letter-spacing: -0.02em;
+    background: linear-gradient(135deg, #e2e8f0, #94a3b8);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+  }
+  .hero .subtitle { color: var(--text-muted); font-size: 16px; margin-top: 12px; }
+
+  /* Timeline Nav */
+  .timeline-nav {
+    max-width: 800px; margin: 0 auto 48px; padding: 0 24px;
+    display: flex; justify-content: space-between; position: relative;
+  }
+  .timeline-nav::before {
+    content: ''; position: absolute; top: 24px; left: 60px; right: 60px;
+    height: 2px; background: var(--border);
+  }
+  .tl-node {
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    cursor: pointer; position: relative; z-index: 1; transition: transform 0.2s;
+  }
+  .tl-node:hover { transform: translateY(-2px); }
+  .tl-dot {
+    width: 48px; height: 48px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; font-weight: 700;
+    border: 2px solid var(--border); background: var(--surface); transition: all 0.3s;
+  }
+  .tl-node.active .tl-dot {
+    border-color: var(--node-color);
+    box-shadow: 0 0 20px var(--node-glow);
+    background: var(--node-bg);
+  }
+  .tl-label { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+  .tl-node.active .tl-label { color: var(--text); font-weight: 600; }
+
+  .container { max-width: 960px; margin: 0 auto; padding: 0 24px 80px; }
+
+  /* Phase Section */
+  .phase-section { display: none; animation: fadeSlide 0.4s ease-out; }
+  .phase-section.active { display: block; }
+  @keyframes fadeSlide { from { opacity:0; transform:translateY(16px); } to { opacity:1; transform:translateY(0); } }
+
+  .phase-header { margin-bottom: 32px; padding-bottom: 20px; border-bottom: 1px solid var(--border); }
+  .phase-tag {
+    display: inline-block; font-size: 12px; font-weight: 600;
+    letter-spacing: 0.08em; padding: 4px 12px; border-radius: 20px; margin-bottom: 12px;
+  }
+  .phase-header h2 { font-size: 28px; font-weight: 700; margin-bottom: 16px; }
+  .phase-meta { display: flex; flex-wrap: wrap; gap: 16px; }
+  .meta-item { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+  .meta-icon {
+    width: 28px; height: 28px; border-radius: 6px;
+    display: flex; align-items: center; justify-content: center; font-size: 13px; flex-shrink: 0;
+  }
+  .meta-label { color: var(--text-muted); }
+  .meta-value { color: var(--text); font-weight: 500; }
+
+  /* Narrative */
+  .narrative {
+    background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 20px 24px; margin-bottom: 28px; font-size: 14px; line-height: 1.8;
+    color: var(--text-muted); position: relative;
+  }
+  .narrative::before { content: '"'; position: absolute; top: 12px; left: 16px; font-size: 32px; opacity: 0.15; }
+  .narrative strong { color: var(--text); }
+
+  /* Role Card */
+  .role-grid { display: grid; gap: 16px; margin-bottom: 28px; }
+  .role-card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow: hidden; transition: border-color 0.2s;
+  }
+  .role-card:hover { border-color: var(--border-light); }
+  .role-card-header {
+    padding: 14px 20px; display: flex; align-items: center; gap: 12px;
+    cursor: pointer; user-select: none;
+  }
+  .role-card-header:hover { background: var(--surface-hover); }
+  .role-badge { padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; flex-shrink: 0; }
+  .role-stage { font-size: 13px; color: var(--text-muted); flex: 1; }
+  .role-toggle {
+    width: 20px; height: 20px; display: flex; align-items: center; justify-content: center;
+    color: var(--text-dim); transition: transform 0.3s; font-size: 12px;
+  }
+  .role-card.open .role-toggle { transform: rotate(180deg); }
+  .role-card-body { max-height: 0; overflow: hidden; transition: max-height 0.4s cubic-bezier(0.4,0,0.2,1); }
+  .role-card.open .role-card-body { max-height: 800px; }
+  .role-card-inner { padding: 0 20px 16px; }
+
+  /* Q&A */
+  .qa-item { padding: 12px 0; border-top: 1px solid var(--border); }
+  .qa-item:first-child { border-top: none; }
+  .qa-q { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; color: var(--text-muted); margin-bottom: 6px; }
+  .q-tag { flex-shrink: 0; font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 4px; margin-top: 2px; }
+  .qa-a { font-size: 13px; color: var(--text-dim); padding-left: 32px; font-style: italic; }
+
+  /* Deliverable */
+  .deliverable {
+    background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 16px 20px; display: flex; align-items: center; gap: 12px; margin-bottom: 28px;
+  }
+  .deliverable-icon { font-size: 20px; flex-shrink: 0; }
+  .deliverable-text { font-size: 13px; color: var(--text-muted); }
+  .deliverable-text strong { color: var(--text); }
+
+  /* Checklist */
+  .checklist-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; margin-bottom: 28px; }
+  .checklist-item {
+    background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-sm);
+    padding: 14px 16px; display: flex; align-items: flex-start; gap: 10px;
+    font-size: 13px; cursor: pointer; transition: all 0.2s;
+  }
+  .checklist-item:hover { border-color: var(--border-light); background: var(--surface-hover); }
+  .check-box {
+    width: 18px; height: 18px; border: 2px solid var(--border-light); border-radius: 4px;
+    flex-shrink: 0; margin-top: 1px; display: flex; align-items: center; justify-content: center;
+    transition: all 0.2s; color: transparent; font-size: 11px;
+  }
+  .checklist-item.checked .check-box { border-color: var(--phase4); background: var(--phase4); color: #fff; }
+  .checklist-item.checked .check-text { text-decoration: line-through; color: var(--text-dim); }
+  .check-text { color: var(--text-muted); flex: 1; }
+
+  /* Section Label */
+  .section-label { font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-dim); margin-bottom: 12px; }
+
+  /* Scroll to top */
+  .scroll-top {
+    position: fixed; bottom: 24px; right: 24px; width: 40px; height: 40px;
+    border-radius: 50%; background: var(--surface); border: 1px solid var(--border);
+    color: var(--text-muted); display: flex; align-items: center; justify-content: center;
+    cursor: pointer; opacity: 0; transform: translateY(8px); transition: all 0.3s; font-size: 16px; z-index: 100;
+  }
+  .scroll-top.visible { opacity: 1; transform: translateY(0); }
+  .scroll-top:hover { background: var(--card); color: var(--text); }
+
+  @media (max-width: 640px) {
+    .hero { padding: 48px 16px 36px; }
+    .tl-dot { width: 36px; height: 36px; font-size: 14px; }
+    .tl-label { font-size: 10px; }
+    .phase-header h2 { font-size: 22px; }
+    .checklist-grid { grid-template-columns: 1fr; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  }
+</style>
+</head>
+<body>
+  <div class="hero">
+    <h1>{{TITLE}}</h1>
+    <p class="subtitle">{{SUBTITLE}}</p>
+  </div>
+
+  <nav class="timeline-nav" id="timelineNav">
+    <!-- Generate one .tl-node per phase -->
+  </nav>
+
+  <div class="container">
+    <!-- Generate one .phase-section per phase, with class="active" on first -->
+  </div>
+
+  <button class="scroll-top" id="scrollTop" onclick="window.scrollTo({top:0,behavior:'smooth'})">↑</button>
+
+<script>
+function switchPhase(n) {
+  document.querySelectorAll('.tl-node').forEach(node => {
+    node.classList.toggle('active', parseInt(node.dataset.phase) === n);
+  });
+  document.querySelectorAll('.phase-section').forEach(sec => sec.classList.remove('active'));
+  const target = document.getElementById('phase' + n);
+  if (target) target.classList.add('active');
+  const progress = ((n - 1) / (document.querySelectorAll('.tl-node').length - 1)) * 100;
+  document.getElementById('timelineNav').style.setProperty('--progress', progress + '%');
+  document.querySelector('.container').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+function toggleCard(card) { card.classList.toggle('open'); }
+function toggleCheck(item) { item.classList.toggle('checked'); }
+window.addEventListener('scroll', () => {
+  document.getElementById('scrollTop').classList.toggle('visible', window.scrollY > 400);
+});
+document.addEventListener('keydown', (e) => {
+  const phases = [...document.querySelectorAll('.tl-node')].map(n => parseInt(n.dataset.phase));
+  const current = document.querySelector('.tl-node.active');
+  const idx = current ? phases.indexOf(parseInt(current.dataset.phase)) : 0;
+  if (e.key === 'ArrowRight' && idx < phases.length - 1) switchPhase(phases[idx + 1]);
+  else if (e.key === 'ArrowLeft' && idx > 0) switchPhase(phases[idx - 1]);
+});
+</script>
+</body>
+</html>
+

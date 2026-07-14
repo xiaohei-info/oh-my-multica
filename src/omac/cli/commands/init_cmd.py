@@ -1,7 +1,7 @@
 """omac init — 交互式配置 / --check 体检(设计文档 §7.1)。
 
 两种模式:
-  omac init            交互式:引擎 → workspace → 全量 agent → 角色映射 → 落盘 config.yaml
+  omac init            交互式:引擎 → workspace → 可选模板 agent → 角色映射 → 落盘 config.yaml
   omac init --check    体检:本地 + 引擎可达时校验 workspace 存在、各角色 agent 在池内
 
 兼容路径(全参数直出):
@@ -9,7 +9,7 @@
             --workers c,d --reviewers e,f [--acceptor g] [--max-parallel 4]
             [--retry-ci 3 --retry-review 3 --retry-merge 3]
 
-红线:init 只调引擎接口(WorkItemStore.list_workspaces / list_members),
+红线:init 只调引擎接口(WorkItemStore / AgentRuntime),
 绝不直接 shell out 平台 CLI(§12.4)。
 """
 from __future__ import annotations
@@ -18,18 +18,21 @@ import shutil
 import sys
 from typing import List, Optional
 
+from ...agent_templates import AgentTemplateCatalog
 from ...core import config as config_mod
 from ...engines import ENGINE_TYPES, create_engine
-from ...engines.models import EngineConfig, WorkspaceInfo
+from ...engines.models import AgentProvisionSpec, EngineConfig, RuntimeTarget, WorkspaceInfo
 from ...errors import OmacError, ValidationError
 from .. import exit_codes
 
 NAME = "init"
 SUMMARY = "交互式配置 / --check 体检"
-DESCRIPTION = """一次性配置:选定 workspace → 列出全量 agent → 完成角色映射,
+DESCRIPTION = """一次性配置:选定 workspace → 可选地从内置模板创建 agent → 完成角色映射,
 固化进 .omac/config.yaml(不引入小队/分组等平台特有概念)。
 
-  omac init            交互式生成配置
+  omac init            交互式生成配置;可选择使用已有 agent,或从 planner /
+                       orchestrator / worker / reviewer / acceptor / architect /
+                       backend / frontend / pm 模板创建
   omac init --check    体检:multica CLI 是否在 PATH / 配置文件是否存在且含
                        engine·workspace·roles / 各角色 agent 是否在工作空间内
 
@@ -89,6 +92,11 @@ def _build_store(engine_type: str, workspace_id: str = ""):
     """按引擎类型构造一个 Store(init 只用 list_workspaces / list_members)。"""
     config = EngineConfig(engine_type=engine_type, workspace_id=workspace_id)
     return create_engine(engine_type, config).store
+
+
+def _build_engine(engine_type: str, workspace_id: str = ""):
+    config = EngineConfig(engine_type=engine_type, workspace_id=workspace_id)
+    return create_engine(engine_type, config)
 
 
 def _prompt(message: str, default: Optional[str] = None) -> str:
@@ -320,6 +328,70 @@ def _select_workflow(interactive: bool) -> dict:
     return workflow
 
 
+def _select_template(catalog: AgentTemplateCatalog) -> str:
+    template_ids = catalog.list_ids()
+    print("\n可用 Agent 模板:")
+    for i, template_id in enumerate(template_ids, 1):
+        print(f"  {i}. {template_id}")
+    raw = _prompt("选择 Agent 模板(序号或名称)", template_ids[0] if template_ids else None)
+    if raw.isdigit():
+        idx = int(raw) - 1
+        if 0 <= idx < len(template_ids):
+            return template_ids[idx]
+    if raw in template_ids:
+        return raw
+    raise ValidationError(
+        f"Agent 模板 '{raw}' 不存在,可选:{', '.join(template_ids) or '(空)'}")
+
+
+def _select_runtime_target(targets: List[RuntimeTarget]) -> RuntimeTarget:
+    available = [target for target in targets if target.status.lower() != "offline"]
+    if not available:
+        raise ValidationError(
+            "没有在线 Agent Runtime —— 先运行 `multica runtime list`,"
+            "在目标机器启动 Multica daemon 后重试")
+    print("\n可用 Agent Runtime:")
+    for i, target in enumerate(available, 1):
+        kind = f" [{target.type}]" if target.type else ""
+        print(f"  {i}. {target.name}{kind} ({target.id}, {target.status})")
+    raw = _prompt("选择 Runtime(序号或 id)", "1")
+    if raw.isdigit():
+        idx = int(raw) - 1
+        if 0 <= idx < len(available):
+            return available[idx]
+    for target in available:
+        if target.id == raw:
+            return target
+    raise ValidationError(
+        f"Runtime '{raw}' 不在可用列表,可选:{', '.join(t.id for t in available)}")
+
+
+def _maybe_provision_template_agents(runtime) -> None:
+    if not _prompt_bool("是否通过内置模板创建 Agent", False):
+        return
+    catalog = AgentTemplateCatalog()
+    targets = runtime.list_targets()
+    while True:
+        template_id = _select_template(catalog)
+        template = catalog.get(template_id)
+        name = _prompt("新 Agent 名称", f"omac-{template_id}")
+        if not name:
+            raise ValidationError("Agent 名称不能为空")
+        target = _select_runtime_target(targets)
+        created = runtime.provision_agent(AgentProvisionSpec(
+            name=name,
+            description=f"由 OMAC {template_id} 模板创建",
+            instructions=template.instructions,
+            runtime_id=target.id,
+            skills=template.skills,
+        ))
+        print(
+            f"已创建 Agent:{created.name} ({created.id}),"
+            f"Runtime={target.name},Skills={len(template.skills)}")
+        if not _prompt_bool("是否继续通过模板创建 Agent", False):
+            return
+
+
 def _build_config(engine: str, workspace: str, project: Optional[str],
                   planner: str, orchestrator: str,
                   workers: List[str], reviewers: List[str],
@@ -398,9 +470,19 @@ def _run_setup(args) -> int:
     engine = _select_engine(args)
     discovery = _build_store(engine)                      # 无 workspace,跑 list_workspaces
     workspace = _select_workspace(args, discovery)
-    store = _build_store(engine, workspace)               # 带 workspace,跑 list_members / list_projects
+    engine_instance = _build_engine(engine, workspace)
+    store = engine_instance.store                         # 带 workspace,跑 list_members / list_projects
     project = _select_project(args, store, workspace, engine)  # multica 必选/必建;mock 返回 None
-    members = store.list_members(workspace)
+    existing_members = store.list_members(workspace)
+    if not non_interactive:
+        print("\n当前已有 Agent:")
+        if existing_members:
+            for member in existing_members:
+                print(f"  - {member}")
+        else:
+            print("  (无)")
+        _maybe_provision_template_agents(engine_instance.runtime)
+    members = store.list_members(workspace) if not non_interactive else existing_members
     if not members:
         raise ValidationError(
             f"工作空间 '{workspace}' 无可用 agent —— 先在平台添加 agent 后重试")
