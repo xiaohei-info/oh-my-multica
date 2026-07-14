@@ -230,7 +230,7 @@ omac
 
 ## 变更日志
 
-详见 [CHANGELOG.zh-CN.md](./CHANGELOG.zh-CN.md)。
+详见英文版 [CHANGELOG.md](./CHANGELOG.md)。
 
 ## 设计文档与 Guide
 

@@ -1,7 +1,5 @@
 # Changelog
 
-[English](CHANGELOG.md) | [简体中文](CHANGELOG.zh-CN.md)
-
 All notable changes to **omac** are documented here. The format follows
 [Keep a Changelog] and version numbers follow [Semantic Versioning].
 
