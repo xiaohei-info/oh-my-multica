@@ -82,6 +82,12 @@ def test_catalog_rejects_skill_symlink(tmp_path):
         AgentTemplateCatalog(root).get("worker")
 
 
+def test_repo_catalog_uses_agents_directory_directly_under_omac_package():
+    catalog = AgentTemplateCatalog()
+
+    assert catalog.root == Path(__file__).resolve().parents[1] / "src" / "omac" / "agents"
+
+
 def test_repo_catalog_contains_nine_templates_with_multica_skill_counts():
     catalog = AgentTemplateCatalog()
 

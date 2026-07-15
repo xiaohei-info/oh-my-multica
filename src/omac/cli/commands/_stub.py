@@ -8,7 +8,7 @@ from .. import exit_codes
 
 def not_implemented(command: str, phase: str) -> int:
     print(
-        f"`omac {command}` 尚未实现 —— 规划于 {phase}(见 docs/omac-cli-design.md §10.3)。\n"
+        f"`omac {command}` 尚未实现 —— 规划于 {phase}。\n"
         f"命令契约与流程说明:omac {command.split()[0]} --help / omac guide workflow",
         file=sys.stderr,
     )

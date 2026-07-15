@@ -24,7 +24,7 @@ class AgentTemplate:
 
 
 def _default_root() -> Path:
-    return Path(__file__).resolve().parent / "templates_data" / "agents"
+    return Path(__file__).resolve().parent / "agents"
 
 
 def _read_frontmatter(path: Path, language: str = EN) -> dict:

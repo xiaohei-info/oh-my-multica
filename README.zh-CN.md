@@ -127,7 +127,7 @@ omac init --check
 ```
 
 交互式 `omac init` 会先列出工作空间现有 Agent，并允许从仓库内置模板创建新 Agent。
-模板位于 [`agents/`](./agents)，包含完整 Instructions 和当前 Multica 配置所使用的
+模板位于 [`src/omac/agents/`](./src/omac/agents)，包含完整 Instructions 和当前 Multica 配置所使用的
 Skill 文件。创建时由用户选择 Runtime 和 Agent 名称；创建完成后，新旧 Agent 进入同一
 候选池，再由用户自由映射到 planner、orchestrator、workers、reviewers、acceptor。
 
@@ -234,9 +234,8 @@ omac
 
 详见英文版 [CHANGELOG.md](./CHANGELOG.md)。
 
-## 设计文档与 Guide
+## Guide
 
-- 完整设计:`docs/zh-CN/omac-cli-design.md`(英文主文档为 `docs/omac-cli-design.md`)
 - 工作流知识(随包分发):`omac guide workflow`, `omac guide role <name>`,
   `omac guide artifact <name>`, `omac guide recovery`
 - 命令契约与协议细节:`omac <command> --help`
