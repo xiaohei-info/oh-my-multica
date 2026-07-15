@@ -8,9 +8,11 @@ agent name, and role mapping during setup.
 ## Directory contract
 
 - `_shared/instructions.md` holds engineering rules and the OMAC collaboration
-  protocol shared by every template.
-- `<template>/instructions.md` defines the role-specific working method,
-  boundaries, and output contract.
+  protocol shared by every template. `_shared/instructions.en.md` is its full
+  English counterpart.
+- `<template>/instructions.md` contains the complete Chinese role instructions.
+  `<template>/instructions.en.md` is a complete English translation, not a
+  fallback or shortened summary.
 - `<template>/skills/<skill>/` is a complete skill directory, including its
   `SKILL.md` and every referenced file.
 - Templates do not contain nested `AGENTS.md`, `CLAUDE.md`, or `SOUL.md` files.
@@ -20,18 +22,24 @@ agent name, and role mapping during setup.
 
 ## What belongs in a template
 
-Each `instructions.md` is the matching profile's role overlay with local
-paths, gateway operations, credentials, and runtime-specific dispatch policy
-removed. It is the canonical instruction file for both language selections so
-the role contract cannot drift between localized copies. OMAC lifecycle roles
-such as planner, worker, and acceptor remain workflow assignments; they are
-not templates.
+Each instruction pair follows the matching source profile section by section,
+including its complete general rules, risk boundaries, collaboration
+preferences, and output discipline. `_shared` adds repository-wide engineering
+rules and the OMAC protocol; it does not replace any part of the role file. The
+English files preserve the same structure and level of detail as the Chinese
+files. They are not compressed rewrites.
 
-They deliberately exclude machine-specific details: absolute paths, profile or
-agent instance names, model and provider settings, credentials, personal
-workspace conventions, harness launch commands, and tool locations. The OMAC
-`work show` / `work submit` protocol stays, because these templates are meant
-for OMAC collaboration without tying an agent to a particular runtime.
+Source-only packaging language is removed, including role-overlay labels,
+profile migration notes, and instructions to load a particular local runtime
+mechanism. OMAC lifecycle roles such as planner, worker, and acceptor remain
+workflow assignments; they are not templates.
+
+The templates deliberately exclude machine-specific details: absolute paths,
+local service names, gateway commands, model and provider settings,
+credentials, personal workspace conventions, harness launch commands, and
+local tool locations. Portable role rules remain intact. The OMAC `work show`
+/ `work submit` protocol stays because these templates are designed for OMAC
+collaboration without tying an agent to a particular runtime.
 
 ## Templates and skills
 

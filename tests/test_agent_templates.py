@@ -1,4 +1,5 @@
 """Agent 模板目录发现与内容校验。"""
+import re
 from pathlib import Path
 
 import pytest
@@ -111,8 +112,8 @@ def test_repo_catalog_contains_native_profile_templates_with_skill_counts():
         assert not (template.path / "AGENTS.md").exists()
 
 
-def test_repo_templates_embed_their_profile_role_overlay_without_local_runtime_rules():
-    expected_overlays = {
+def test_repo_templates_keep_full_generic_profile_rules_without_runtime_bindings():
+    expected_roles = {
         "architect": "Architect",
         "backend-eng": "Backend Engineer",
         "data-rd": "Data RD",
@@ -122,11 +123,53 @@ def test_repo_templates_embed_their_profile_role_overlay_without_local_runtime_r
         "reviewer": "Reviewer",
     }
 
+    forbidden_runtime_text = (
+        "角色叠加层",
+        "本 SOUL",
+        "Hermes",
+        "/home/ubuntu/",
+        "oh-my-openagent",
+        "Codex ACP",
+        "ACP coding agent",
+        "当前加载的 orchestration skill",
+    )
+
+    chinese_catalog = AgentTemplateCatalog(language="cn")
+    english_catalog = AgentTemplateCatalog(language="en")
+    for template_id, role_name in expected_roles.items():
+        template_path = chinese_catalog.get(template_id).path
+        assert (template_path / "instructions.md").is_file()
+        assert (template_path / "instructions.en.md").is_file()
+
+        chinese_role = (template_path / "instructions.md").read_text(encoding="utf-8")
+        english_role = (template_path / "instructions.en.md").read_text(encoding="utf-8")
+        assert not re.search(r"[\u3400-\u9fff]", english_role)
+        assert len(english_role.splitlines()) >= len(chinese_role.splitlines()) * 0.9
+
+        chinese = chinese_catalog.get(template_id).instructions
+        assert f"# {role_name}" in chinese
+        assert "# 通用规约" in chinese
+        assert "# 风险边界" in chinese
+        assert "# 工具与协作偏好" in chinese
+        assert "# 输出纪律" in chinese
+
+        english = english_catalog.get(template_id).instructions
+        assert f"# {role_name}" in english
+        assert "# General rules" in english
+        assert "# Risk boundaries" in english
+        assert "# Tool and collaboration preferences" in english
+        assert "# Output discipline" in english
+
+        for instructions in (chinese, english):
+            for forbidden in forbidden_runtime_text:
+                assert forbidden not in instructions
+
+
+def test_orchestrator_template_is_standalone_and_has_no_profile_migration_notes():
     for language in ("cn", "en"):
-        catalog = AgentTemplateCatalog(language=language)
-        for template_id, role_name in expected_overlays.items():
-            instructions = catalog.get(template_id).instructions
-            assert f"# 角色叠加层 — {role_name}" in instructions
-            assert "/home/ubuntu/" not in instructions
-            assert "Hermes Kanban" not in instructions
-            assert "Codex ACP" not in instructions
+        instructions = AgentTemplateCatalog(language=language).get("orchestrator").instructions
+        assert "v3.0" not in instructions
+        assert "看板编排员" not in instructions
+        assert "kanban-dev-orchestration" not in instructions
+        assert "parallel-dev-orchestration-multica" not in instructions
+        assert "execution mechanism is provided by" not in instructions.lower()
