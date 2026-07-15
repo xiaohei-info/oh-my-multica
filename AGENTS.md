@@ -45,12 +45,18 @@ documents. Avoid ad hoc translated jargon.
 
 ## TDD
 
-1. **Write tests before implementation.** New behavior needs new verification;
-   changed behavior needs regression coverage. Cover at least the main path,
-   boundaries, and known risks.
-2. **Delivery = code + tests + necessary documentation.** A green
-   `python3 -m pytest tests/` run is required for completion.
-3. **Verify independently before completion.** Writing code is not completion.
+1. **Write tests before implementation.** New or changed executable behavior
+   needs regression coverage. Cover at least the main path, boundaries, and
+   known risks.
+2. **Delivery = code + tests + necessary documentation.** Changes to source
+   code, tests, build/package configuration, schemas, or executable behavior
+   require a green `python3 -m pytest tests/` run for completion.
+3. **Use proportional verification for documentation-only changes.** A diff
+   containing only Markdown or static diagram assets does not require the full
+   pytest suite. Run `git diff --check`, verify local links and assets, and
+   parse or render changed formats when tooling is available. If documentation
+   is packaged or machine-consumed, run its relevant targeted tests.
+4. **Verify independently before completion.** Writing code is not completion.
    Completion requires objective evidence from tests, builds, or actual command
    output.
 
@@ -67,6 +73,8 @@ A change is complete only when all of the following are true:
 - [ ] It stays within the planned scope.
 - [ ] It consumes only `WorkItemStore` and `AgentRuntime` interfaces; it does
   not shell out to platform CLIs directly.
-- [ ] New or regression verification exists and passes, including
-  `python3 -m pytest tests/`.
+- [ ] Verification is proportional to the change: full
+  `python3 -m pytest tests/` for code/configuration/behavior changes; targeted
+  document checks (and relevant document tests when applicable) for
+  documentation-only changes.
 - [ ] Documentation and guides are updated when necessary.

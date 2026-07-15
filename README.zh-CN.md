@@ -2,254 +2,349 @@
 
 [![CI](https://github.com/xiaohei-info/oh-my-multica/actions/workflows/ci.yml/badge.svg)](https://github.com/xiaohei-info/oh-my-multica/actions/workflows/ci.yml)
 [![Version](https://img.shields.io/badge/version-1.0.0-blue)](https://github.com/xiaohei-info/oh-my-multica)
+[![License](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-**oh-my-multica** 是确定性 CLI 驱动的多 Agent 并行开发编排，CLI 命令与 Python 包名仍为
-`omac`。它把复杂软件开发从「一个
-agent 靠长上下文硬扛」变成「契约先行 + manifest DAG + 多 Agent 并行执行 +
-结构化证据 + reviewer 独立验收」的可收敛工程流程。
+**构建在 [Multica](https://github.com/multica-ai/multica) 之上的生产级 AI 软件交付系统。**
 
-核心理念是**控制反转**:LLM 从「驱动者」降级为「被调用者」——确定性 CLI 程序
-承载整个编排循环,planner / orchestrator / reviewer / worker / acceptor 全部是
-CLI 派发的、有终点的单次任务。
+[Multica](https://github.com/multica-ai/multica) 把 Claude Code、Codex 等 Coding Agent 统一接入
+工作空间、issue、任务队列和本地 runtime。Agent 可以像团队成员一样接受任务、报告进度和阻塞，
+团队也可以统一管理运行机器与可复用 Skill。它为多 Agent 协作解决了任务分配、生命周期、运行时
+调度和状态追踪等基础问题。
 
-## 受众矩阵
+Multica 更多关注的是 Agent 的执行与协作，但不会替软件项目定义完整的工程交付过程，例如需求怎样进入设计、
+如何形成可执行验收标准、多个开发任务如何按依赖并行、什么证据足以证明实现正确、谁来独立评审，
+以及何时允许合并和如何从失败中恢复。
 
-| 入口 | 首要受众 | 使用契约 |
-|---|---|---|
-| 平台 issue | Human-first | issue 顶部只保留一个 Agent bootstrap:`omac work show <id> --output json` |
-| `omac work show` / `omac work submit` | Agent-first | 两者默认 JSON;先 show 取得实例事实和精确 submit 命令,Human 调试显式使用 `--output table` |
-| 全部 `omac guide ...` | Agent-first | Guide 是稳定静态知识;只按 `work show` 返回的 `guide_refs` 最小加载,冲突时实例事实优先 |
+oh-my-multica 基于 Multica 优秀的机制设计，在其之上实现了更加完整的软件工程交付控制层，
+把一个需求推进为经过设计、开发、验证、评审、合并和最终验收的软件变更。
 
-JSON-first 用法:
+**Multica 作为一套完整的 Agent Runtime 任务平台管理 Agent 如何工作，
+而 oh-my-multica 在其之上管理软件如何完成交付。**
+
+oh-my-multica 要解决的核心问题是：**如何让多个 Coding Agent 在尽量少的人工介入下，
+把一个需求完整地设计、实现并交付为生产级软件系统，而不是停留在代码生成、原型或 Demo，并很认真的告诉你已经完成所有功能可以交付。**
+
+> **oh-my-multica 把生产级复杂软件交付的组织门槛降到最低。** 当目标和验收标准明确后，
+> 设计、拆解、开发、验证、评审和验收都可以交给可扩展的 Agent Team。影响交付吞吐量的主要资源
+> 变成两项：机器数量决定 Agent 的开发并发度，Token 预算决定可以投入多少推理、实现、复测和返工。
+
+## 为什么需要 oh-my-multica
+
+Coding Agent 已经很会写代码。困难通常出现在代码之外：需求在长对话中逐渐漂移，多个 Agent
+修改了相互冲突的部分，测试结果只存在于一段自述中，评审者相信作者的总结，或者一个运行数小时
+的循环悄悄停止，却没有留下可继续执行的状态。
+
+增加 Agent 数量不会自动解决这些问题。生产级交付需要一个独立于 LLM 的控制系统，负责保存事实、
+约束边界、验证结果、推进状态，并在无法自动判断时把决定交还给人。
+
+### 与多 Agent 协作开发产品有什么不同
+
+| 方案 | 协作方式 | 主要解决的问题 | 应用场景 |
+|---|---|---|---|
+| 单个 Coding Agent | 一个 Agent 在单次会话或工作区中完成任务 | 提高单项编码任务的完成速度 | 小型 Bug、局部重构、脚本、原型和边界清晰的功能修改 |
+| [Codex App](https://openai.com/index/introducing-the-codex-app/) / [Claude Code Agent Teams](https://code.claude.com/docs/en/agent-teams) | 人类或 lead Agent 协调多个独立 session、thread 或 worktree | 并行开发、上下文隔离和交互式任务分工 | 任务已经拆清楚，开发者愿意持续监督、协调和整合多个 Agent 的结果 |
+| [Factory Missions](https://docs.factory.ai/features/missions/overview) / [OpenAI Symphony](https://openai.com/index/open-source-codex-orchestration-symphony/) | 以 Mission 或 issue tracker 为控制面，持续向 Coding Agent 分配任务 | 长时间运行、批量任务编排和持续推进 backlog | 需求已经进入任务系统，仓库已有成熟 harness，适合处理大量相对独立的开发任务 |
+| [MetaGPT / MGX](https://github.com/FoundationAgents/MetaGPT) | 产品经理、架构师、工程师等角色按照 SOP 协作生成软件 | 把自然语言需求转换为用户故事、设计、文档和代码 | 绿地项目、快速原型，以及从零生成一套结构化软件产物 |
+| **oh-my-multica** | 基于 contract 的 manifest DAG 协调 planner、orchestrator、worker、reviewer 和 acceptor | **在尽量少的人工介入下完成设计、开发、验证、评审、合并和最终验收** | **复杂功能、多模块系统和生产级软件服务；要求过程可验证、可恢复，并能明确判断是否真正完成** |
+
+选择标准很直接：如果目标只是让 Agent 更快地写代码或并行处理任务，前面的方案已经足够；如果目标是
+在减少人工接力的同时，把需求推进为经过完整工程过程和最终验收的生产级软件交付，oh-my-multica
+提供的是一套可以直接执行的交付控制协议。
+
+## 适合谁
+
+- 已经重度使用 AI Coding，希望从亲自盯住每一次对话，转向管理目标、约束和结果的开发者。
+- 希望用尽量少的人工接力，持续产出可部署、可维护软件服务的个人、创业团队和工程团队。
+- 编程经验有限，但愿意把目标和验收结果说清楚，希望 Agent 按完整架构设计与实施流程完成项目的人。
+- 需要同时使用多个 Agent 或多台运行机器，又不希望任务状态散落在终端、聊天记录和个人记忆中的团队。
+
+oh-my-multica 不适合一次性的代码片段生成，也不会替代业务决策。它最有价值的场景，是任务足够复杂、
+交付质量值得被明确验证，并且你希望把重复监督交给系统。
+
+## 如何开始
+
+### For Human
+
+人类只需要关注三件事：配置可用的 Agent 团队、描述目标、处理系统无法替你决定的问题。
 
 ```bash
-# Agent bootstrap(JSON 默认值也可省略)
-omac work show "$ISSUE_ID" --output json
-
-# Human 调试
-omac work show "$ISSUE_ID" --output table
+omac init
+omac plan create --name <feature> --goal "<你希望交付的结果>"
 ```
 
-`work submit` 同样默认 JSON，校验失败也会在 stderr 返回结构化错误；使用 `work show`
-返回的精确 `submit` 命令，不要从静态 Guide 猜参数。
+`plan create` 会推进设计方案、验收文档和 manifest DAG。流程完成后，直接执行输出中给出的
+“下一步”命令，让确定性 Loop 接管开发与交付。你可以通过平台 issue 或 `omac web` 查看进度；
+只有命令返回 exit 20 时，才需要根据结构化报告选择重试、接受或放弃。
 
-## 机制优势
+### For Agent
 
-| 维度 | 机制 | 效果 |
-|---|---|---|
-| 成本 | 编排循环是纯确定性程序 | 监督 token 从「全周期」降为 **0**;LLM 只花在计划、拆解、开发、评审、验收等真实智力工作上 |
-| 可靠性 | loop 是代码不是提示词 | 不存在「监控几轮后自行退出」;终态只有收敛(exit 0)或带结构化报告移交(exit 20) |
-| 不跑偏 | 验收文档锚定 + contract 硬合同 + 双门禁证据闭环 | 需求 → 拆解 → 开发 → 验收全程有机器可校验的锚点 |
-| 可恢复 | 状态全在 manifest + 平台,循环幂等 | 任意中断重跑即续跑,支持跨机器接力 |
-| 可交付 | CI / merge / 总控验收内置,done = 已合入集成分支 | 「DAG 跑完」=「按验收文档全 pass、真正可交付」,而非「代码写完了」 |
-| 分发 | 单 pipx 包,零外部知识依赖 | 人 / agent / Web 同一入口;内部角色的协议随派发载荷现场注入 |
-| 演进 | Store / Runtime 双接口 | 接 Linear / Jira 只增适配器,不动 pipeline |
+Agent 收到标题带 `[DAG:...]` 的任务后，唯一固定入口是：
 
-## 前置条件
+```bash
+omac work show <issue-id> --output json
+```
 
-每台参与编排的机器(runtime)需安装:
+然后按返回结果工作：
 
-- **omac CLI**:从私有仓库源码安装(见下「安装」),runtime 机器统一用 `pipx` 隔离
-- **平台 CLI**:Multica 引擎需 `multica` CLI 已登录(`multica` 在 PATH,认证存 `~/.multica`)
-- **Python** >= 3.10,依赖 `PyYAML`(pipx 自动隔离)
+1. 以 `task`、`context`、`contract` 和 `authority` 为当前任务事实。
+2. 只加载 `guide_refs` 列出的最小知识，不预读整套协议。
+3. 完成后执行返回结果中的精确 `submit` 命令，不猜参数，不手动推进 issue 状态。
 
-Mock 引擎零外部依赖,仅用于本地演示、CI 与首次试跑。
+具体命令合同属于执行协议，不在 README 重复维护。需要时运行 `omac <command> --help` 或
+对应的 `omac guide ...`。
+
+## Agent Team 配置最佳实践
+
+oh-my-multica 在 [`src/omac/agents/`](./src/omac/agents) 中提供了 planner、orchestrator、worker、
+reviewer、acceptor，以及 architect、backend、frontend、pm 等内置模板。你可以直接使用这些模板，
+也可以借鉴其中的 Instructions、职责边界和 Skill 配置来组建自己的 Agent Team。
+
+不需要给所有角色都使用最昂贵的模型。更合理的做法是按照决策影响、任务风险和 Token 消耗分配模型：
+
+| 任务类型 | 典型角色 | 推荐模型 | 配置理由 |
+|---|---|---|---|
+| 设计与规划 | planner、architect、orchestrator | GPT、Claude 的旗舰模型，或性能相当的其他第一梯队模型 | 调用次数相对少，但设计和拆解错误会被所有下游任务放大 |
+| 评审与验收 | reviewer、acceptor | GPT、Claude 的次级旗舰模型，或性能相当的其他第二梯队模型 | 保持独立判断和评审质量，同时控制复跑与验收成本 |
+| 开发与测试 | worker、backend、frontend 等执行角色 | 高性价比商业模型、成熟开源模型或其他第三梯队模型 | 任务数量、并发度和 Token 消耗最大，清晰 contract 与验证门可以约束执行结果 |
+
+推荐从 1 个 planner、1 个 orchestrator、多个 worker、1 至 2 个 reviewer 和 1 个 acceptor 开始配置。
+Worker 与 Reviewer 应尽量使用不同 Agent，避免产出者自我评审。安全、交易、权限、数据迁移、核心架构
+等高风险节点可以临时升级到更强模型。先把 contract、验证命令和质量门配置稳定，再通过增加运行机器、
+worker 数量和 Token 预算扩大并发；否则只是让错误更快地产生。
+
+## 核心设计：Loop Engineering × Harness Engineering
+
+oh-my-multica 的设计建立在两个互补的工程方向上。
+
+### Loop Engineering：让程序驱动 Agent
+
+传统 Agent 工作流通常由人不断读取输出、补充提示词、决定下一步。oh-my-multica 把这部分改成确定性程序：
+
+```text
+result collection（`collect_results`）→ 校验证据 → 同步状态 → 计算 ready nodes → 派发任务 → 判断是否收敛
+```
+
+LLM 只承担需要推理的有限任务，例如设计、拆解、编码、评审和验收。长期运行、重入、并行调度、
+失败收口和停止条件由 CLI 负责。Loop 不靠某个 Agent “记得继续”，也不会因为上下文重置而失忆。
+
+### Harness Engineering：把工程判断编码进环境
+
+仅有循环还不够。一个错误目标可以被循环执行得又快又稳定。Harness Engineering 关注模型之外的
+整个工作环境：知识如何提供、架构如何约束、结果如何验证、错误如何反馈、状态如何保存。
+
+oh-my-multica 把这些约束落成版本化、可检查的工程资产：
+
+- 设计文档记录核心数据、模块边界、跨模块契约、风险和兼容性。
+- 验收文档把目标变成用户视角、端到端、可执行的 flow。
+- manifest 为每个节点声明 owner、依赖、contract、验证命令和集成门。
+- `AGENTS.md` 保存经过设计确认、长期约束整个仓库的项目规则。
+- worker、reviewer 和 acceptor 提交结构化证据，而不是一句“已经完成”。
+- `guide_refs` 按任务逐步披露知识，避免一份巨型提示词挤占上下文。
+
+这一思路与 [OpenAI 的 Harness Engineering 实践](https://openai.com/index/harness-engineering/)、
+[Martin Fowler 网站上的 Harness Engineering 讨论](https://martinfowler.com/articles/harness-engineering.html)
+以及 [Loop Engineering 的近期实践总结](https://addyosmani.com/blog/loop-engineering/)方向一致，
+但 oh-my-multica 将它们落实为围绕生产软件交付的 CLI 协议、状态机和证据模型。
+
+## oh-my-multica 在 Multica 之上增加了什么
+
+| 机制             | oh-my-multica 的做法                                                         | 解决的问题                           |
+| ---------------- | ---------------------------------------------------------------------------- | ------------------------------------ |
+| 确定性控制反转   | CLI 持有主循环，Agent 是有终点的单次执行者                                   | 防止监督 Agent 跑偏、遗忘或提前退出  |
+| 契约化计划流水线 | 设计方案 → 验收文档 → manifest DAG，阶段之间有 machine gate 和 review gate | 防止需求、设计、拆解和实现各说各话   |
+| 可验证 DAG       | 每个节点都有依赖、owner、reviewer、acceptance、验证命令和集成门              | 让并行建立在边界上，而不是碰运气     |
+| 独立质量裁决     | worker 不自审自放行；reviewer 独立复跑；acceptor 按 flow 做最终验收          | 避免把作者自述当成事实               |
+| 结构化证据       | verification、review report、acceptance results 都有 schema 和提交门         | 让“通过”可以被程序检查和后续追溯   |
+| 交付收口         | 可配置 CI、PR 合并和总控验收；失败回到有界返工                               | 避免把“代码写完”误认为“已经交付” |
+| 持久化与恢复     | 状态保存在 manifest 与平台；重跑先 reconcile；失败返回 exit 20               | 中断后继续，而不是重新提示一遍       |
+| 平台适配边界     | pipeline 只依赖`WorkItemStore` 与 `AgentRuntime`                         | 后续接入其他任务平台时不改交付流程   |
+
+## 整体架构
+
+oh-my-multica 不替代 Multica，也不替代 Coding Agent。它位于调用者与执行平台之间，负责把软件工程事实
+转换成可执行状态，再通过统一接口使用 Multica 的任务与运行时能力。
+
+```mermaid
+flowchart TB
+    subgraph ENTRY[调用入口]
+        H[Human]
+        C[Controller Agent / CI]
+        W[只读 Web]
+    end
+
+    subgraph OH_MY_MULTICA[oh-my-multica · 生产级交付控制层]
+        PLAN[计划流水线<br/>设计 · 验收 · DAG 拆解]
+        LOOP[确定性 Loop<br/>collect_results · ready_nodes · dispatch]
+        STATE[工程事实<br/>contract · manifest · AGENTS.md]
+        GATE[质量与交付门<br/>evidence · CI · review · merge · acceptance]
+        RECOVERY[恢复与决策<br/>reconcile · exit 20 · retry/accept/abandon]
+
+        PLAN --> STATE
+        STATE --> LOOP
+        LOOP --> GATE
+        GATE --> LOOP
+        LOOP --> RECOVERY
+    end
+
+    subgraph PORTS[平台中立接口]
+        STORE[WorkItemStore]
+        RUNTIME[AgentRuntime]
+    end
+
+    subgraph PLATFORM[执行与协作底座]
+        MULTICA[Multica<br/>workspace · issue · agent · skill · runtime]
+        AGENTS[Coding Agent Runtimes<br/>Claude Code · Codex · ...]
+        REPO[Git Repository / PR]
+        CI[CI / Tests]
+    end
+
+    H --> PLAN
+    C --> PLAN
+    C --> LOOP
+    W --> LOOP
+    LOOP --> STORE
+    LOOP --> RUNTIME
+    STORE --> MULTICA
+    RUNTIME --> MULTICA
+    MULTICA --> AGENTS
+    AGENTS --> REPO
+    REPO --> CI
+    CI --> GATE
+```
+
+可编辑源文件：[整体架构图](docs/diagrams/omac-architecture.drawio)。
+
+### 架构边界
+
+- pipeline 与 CLI 只能调用 `WorkItemStore` 和 `AgentRuntime`，不能直接执行平台 CLI。
+- Multica、GitHub 及未来其他平台的差异封装在 engine adapter 内。
+- Web 层只解析参数、调用同一 command function，并原样返回 JSON；Human、Agent 和 Web
+  看到的是同一套事实。
+
+## 从需求到交付
+
+下面的泳道展示标准路径。设计、验收、拆解和开发都可以发生有界返工；系统只有在证据满足合同后
+才推进状态。无法自动处理的失败不会被吞掉，而是以 exit 20 和下一步命令交还调用者。
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Human as Human / Controller
+    participant CONTROL as oh-my-multica Loop
+    participant PO as Planner / Orchestrator
+    participant Worker as Worker
+    participant Reviewer as Reviewer
+    participant Platform as Multica / Git / CI
+    participant Acceptor as Acceptor
+
+    Human->>CONTROL: 提交目标或设计文档
+    CONTROL->>PO: 生成设计方案与项目规则
+    PO-->>CONTROL: 提交结构化产物
+    CONTROL->>Reviewer: 独立评审设计
+    alt 评审拒绝且未耗尽
+        Reviewer-->>PO: 返回 blockers
+        PO-->>CONTROL: 修订后重新提交
+    else 设计通过
+        CONTROL->>PO: 生成验收文档并拆解 manifest DAG
+    end
+
+    loop 直到 DAG 收敛
+        CONTROL->>CONTROL: 执行 result collection 并计算 ready nodes
+        par 并行开发 ready nodes
+            CONTROL->>Platform: 创建/分配 work item
+            Platform->>Worker: 唤醒 Agent Runtime
+            Worker->>Platform: 推送 PR 与 verification evidence
+        end
+        Platform-->>CONTROL: 返回任务、PR 与 CI 状态
+        CONTROL->>CONTROL: 校验证据与 CI 门
+        CONTROL->>Reviewer: 转派同一 work item，独立复跑
+        alt review / CI / merge 失败且未耗尽
+            Reviewer-->>Worker: 结构化反馈并返工
+        else 节点通过
+            CONTROL->>Platform: 合并并将节点收口为 done
+        else 无法自动决定
+            CONTROL-->>Human: exit 20 + 结构化报告 + 可复制命令
+        end
+    end
+
+    CONTROL->>Acceptor: 按 acceptance flows 做最终端到端验收
+    alt 全部 flow 通过
+        Acceptor-->>CONTROL: acceptance results = pass
+        CONTROL-->>Human: exit 0 · 交付完成
+    else 发现缺口
+        Acceptor-->>PO: 失败 flow 与证据
+        PO-->>CONTROL: 追加增量修复节点，重新进入 DAG Loop
+    end
+```
+
+可编辑源文件：[执行泳道图](docs/diagrams/omac-execution-flow.drawio)。
+
+## “面向生产级”具体意味着什么
+
+oh-my-multica 不承诺任何 Agent 生成的代码天然可以上线。生产质量取决于需求是否正确、合同是否完整、
+验证命令是否有效、CI 是否配置，以及 reviewer 和 acceptor 是否具备足够能力。
+
+oh-my-multica 提供的保证更务实：这些关键条件会成为流程中的显式事实和检查点，而不是藏在人脑或聊天记录里。
+
+| 生产交付要求           | oh-my-multica 中的落点                                                 |
+| ---------------------- | ---------------------------------------------------------------------- |
+| 需求不漂移             | design problem / non-goals / flows 与 acceptance flow id               |
+| 架构可维护             | 核心数据所有权、模块边界、跨模块契约、项目级`AGENTS.md`              |
+| 改动不破坏既有行为     | contract 的 source of truth、non-goals、integration gates 与兼容性要求 |
+| 结果可以复现           | verification commands、env setup、结构化 evidence                      |
+| 作者不能自证正确       | worker 与 reviewer 分离，最终由 acceptor 按用户旅程验收                |
+| 代码真正进入交付链     | PR、CI、merge 与 final acceptance 可纳入完成条件                       |
+| 长任务可以中断续跑     | manifest / work item 持久化、幂等 tick、reconcile                      |
+| 自动化不能越权替人决定 | 有界返工；超出边界统一 exit 20                                         |
 
 ## 安装
 
-omac 未发布到公共 PyPI(项目当前私有,仅内部分发)。控制机与每台 agent 机统一按下面装。
+前置条件：
 
-**1) 一次性装 pipx**(runtime 多为 externally-managed,用 pipx 隔离绕开 PEP 668):
-
-```bash
-# Linux
-python3 -m pip install --user pipx --break-system-packages && pipx ensurepath
-# macOS
-brew install pipx && pipx ensurepath
-```
-
-装完重开 shell,让 `~/.local/bin` 进 PATH。
-
-**2) clone 仓库并安装:**
+- Python 3.10 或更高版本。
+- 使用 `pipx` 隔离安装 oh-my-multica 的 `omac` CLI。
+- 使用 Multica engine 时，[安装 Multica CLI](https://github.com/multica-ai/multica/blob/main/CLI_INSTALL.md)
+  并完成 `multica login`。
 
 ```bash
-git clone git@github.com:xiaohei-info/oh-my-multica.git
+git clone https://github.com/xiaohei-info/oh-my-multica.git
 cd oh-my-multica
 pipx install .
+
+omac --version
 ```
 
-**3) 验证(每台都要过):**
+仓库内置 mock engine，不依赖外部平台，适合本地验证、CI 和首次试跑。
 
-```bash
-omac --version          # omac 1.0.0
-omac init --check       # 引擎 / config 体检
-```
+## 文档入口
 
-**更新到最新:**
+- `omac guide workflow`：从计划到交付的稳定工作流。
+- `omac guide role <name>`：planner、orchestrator、worker、reviewer、acceptor 的职责边界。
+- `omac guide artifact <name>`：design、acceptance、manifest、evidence 的产物合同。
+- `omac guide recovery`：exit 20 后的恢复协议。
+- `omac <command> --help`：当前版本的命令合同与完整参数。
+- [CHANGELOG.md](./CHANGELOG.md)：用户可见的版本变化。
 
-```bash
-cd oh-my-multica && git pull && pipx reinstall omac
-```
+README 负责解释项目是什么、为什么存在以及如何开始。执行中的精确事实永远以
+`omac work show`、Guide 和命令帮助为准。
 
-> - 某台不方便配 git 认证:改用 wheel 离线分发 —— 在有仓库的机器 `python3 -m build` 产出 `dist/omac-1.0.0-py3-none-any.whl`,拷到目标机 `pipx install omac-1.0.0-py3-none-any.whl`。
-> - 开发调试(在本仓内改代码):可编辑安装 `pip install -e .`(需在 venv 内,或加 `--break-system-packages`)。
-
-## 快速开始
-
-以下命令均可在本仓根目录实测运行(Mock 引擎)。Mock 成员池预设
-`alice`、`bob`、`charlie`,下文以这三者为例配置角色。
-
-### 1. 一次性配置(`omac init` / `omac config set`)
-
-首次运行 `omac init` 时，第一项选择输出语言：默认 `en`，也可选 `cn`。选择会保存到
-`.omac/config.yaml` 的 `language` 字段；后续 CLI、Guide 和 Web 文案都使用该设置。
-
-```bash
-# 人类首次配置:运行交互式向导
-omac init
-
-# agent/CI 首次配置:不要运行裸 omac init,直接声明式写 config
-omac config set language cn
-omac config set engine mock
-omac config set workspace mock-workspace
-omac config set roles.planner alice
-omac config set roles.orchestrator bob
-omac config set roles.workers '["alice"]'
-omac config set roles.reviewers '["charlie"]'
-omac config set workflow.human_in_loop false
-omac config set workflow.acceptance_doc true
-omac config set workflow.goal_required true
-
-# 体检:检查配置文件与角色映射是否就绪
-omac init --check
-```
-
-交互式 `omac init` 会先列出工作空间现有 Agent，并允许从仓库内置模板创建新 Agent。
-模板位于 [`src/omac/agents/`](./src/omac/agents)，对应真实的 Multica Agent profile，包含
-可移植的 Instructions 和精选 Skill 文件。创建时由用户选择 Runtime 和 Agent 名称；创建完成后，
-新旧 Agent 进入同一候选池，再由用户自由映射到 planner、orchestrator、workers、reviewers、acceptor。
-
-内置模板包括：
-
-```text
-architect  backend-eng  data-rd  frontend-eng
-orchestrator  pm  reviewer
-```
-
-使用已有 Agent 时，OMAC 不修改其 Instructions 或 Skills。通过模板创建时，OMAC 会复用
-workspace 中同名 Skill、上传缺失 Skill 的完整目录，然后创建 Agent、注入 Instructions
-并绑定模板对应的 Skill。模板创建是可选增强，OMAC 的运行正确性仍由 `work show/submit`、
-内置 guide、contract 和证据校验保证。
-
-> exit 5 提示"角色不在工作空间 agent 池内"?一定用的是 `alice`/`bob`/`charlie`
-> 三者之一,mock 池不接受其他名字。
-
-### 2. 计划与 DAG 拆解(`omac plan`)
-
-`omac plan create` 已实现完整流水线:设计方案 + 项目级开发规范 → 验收文档 → 拆解为
-manifest DAG。planner 必须同时提交设计文档与项目规范；流水线收敛后,OMAC 更新项目根目录
-`AGENTS.md` 的管理区。默认行为读 `.omac/config.yaml` 的 `workflow` 块；`--doc` 跳过
-planner、直接使用现成设计文档,同时也跳过 `AGENTS.md` 更新。
-`--no-review` / `--no-acceptance` / `--no-confirm` 仍可按单次命令临时关阶段。
-`omac dag check` 对现成 manifest 走 lint + review 门；`omac dag show` 看摘要。
-字段与流程见 `omac plan --help`、`omac dag --help` 与
-`omac guide artifact manifest`。
-
-想跳过 planner 直接体验 Loop?仓内自带 `tests/fixtures/smoke_p1.yaml` 作为现成
-manifest 示例,可直接进下面第 3 步。
-
-```bash
-cat tests/fixtures/smoke_p1.yaml
-```
-
-### 3. 确定性 Loop 执行(`omac dag run`)
-
-把 smoke fixture 复制到 `.omac/` 下(该目录会落库 git,被 DAG 改写状态):
-(演示用 `/tmp/` 以免污染本仓)
-
-```bash
-cp tests/fixtures/smoke_p1.yaml /tmp/smoke.yaml
-
-# 前台循环,	mock 引擎自动完成所有节点,收敛后 exit 0
-omac dag run /tmp/smoke.yaml
-
-# 随时查看快照(不推进)
-omac dag status /tmp/smoke.yaml
-
-# 单轮推进后退出(exit 0 收敛 / 10 推进中 / 20 需决策)
-omac dag tick /tmp/smoke.yaml
-```
-
-### 4. Agent 按需知识(`omac guide`)
-
-全部 guide topic 面向 Agent。先运行 `omac work show <id> --output json` 读取当前
-实例事实与 `guide_refs`,再只加载列出的 topic;Guide 不能覆盖当前实例事实。
-
-```bash
-omac guide                   # 列出全部 topic
-omac guide workflow          # 整体工作流:init → plan → dag run → 异常处理闭环
-omac guide roles             # 生命周期角色索引与职责边界
-omac guide role planner      # 设计方案 + 验收文档协议
-omac guide role worker       # develop 执行协议(TDD·证据·env_setup)
-omac guide role reviewer     # review 阶段协议(独立复跑·评审目标)
-omac guide artifact manifest # manifest DAG 与 contract 字段
-omac guide artifact evidence # verification / review / acceptance-results 证据格式
-omac guide recovery          # exit 20 之后的恢复手册
-```
-
-## 命令面一览
-
-```
-omac
-  CORE(调用者/驱动侧)
-    plan     create | confirm | resume      设计、验收与 DAG 拆解流水线
-    dag      check | show | run | status | tick
-    node     show | retry | accept | abandon
-  WORK(Agent-first)
-    work     show | submit                 当前实例事实 + 结构化交付(默认 JSON)
-  SETUP
-    init     交互式配置 / --check 体检
-    config   get | set
-  GUIDE(Agent-first)
-    guide    workflow | roles | role <name> | artifact <name> | recovery(按 guide_refs 最小加载)
-  WEB
-    web      本地只读可视化面板(选 manifest、看进度与证据链)
-```
-
-### 退出码契约
-
-| 码 | 含义 |
-|---|---|
-| `0` | 成功 / DAG 收敛全部 done |
-| `1` | 通用错误 |
-| `2` | 平台/网络错误 |
-| `3` | 认证错误(平台 CLI 未登录等) |
-| `5` | 校验失败(lint / 证据 schema) |
-| `10` | 推进中(仅单轮 tick 模式) |
-| `20` | 需要调用者决策(附结构化报告) |
-
-## 变更日志
-
-详见英文版 [CHANGELOG.md](./CHANGELOG.md)。
-
-## Guide
-
-- 工作流知识(随包分发):`omac guide workflow`, `omac guide role <name>`,
-  `omac guide artifact <name>`, `omac guide recovery`
-- 命令契约与协议细节:`omac <command> --help`
-
-## 测试
-
-macOS / Linux 开发期建议用 editable 安装,让 `omac` 进入 PATH 才能跑 e2e:
+## 开发与验证
 
 ```bash
 pip install -e .
 pip install pytest
-python3 -m pytest tests/ -q -m "not live"   # 全量 e2e(含 CLI 子进程级测试)
-python3 -m pytest tests/ -q -m live        # live 测试需已登录 multica
+python3 -m pytest tests/
 ```
+
+`live` 测试需要已经登录的 Multica 环境。项目变更只有在代码、测试和必要文档同时完成，且完整
+测试通过后才算交付。
+
+## 参与贡献
+
+欢迎通过 issue 讨论问题和设计，通过 Pull Request 提交改进。涉及行为变化的提交需要同时提供
+回归测试，并保持退出码、术语、engine 接口和 Web 数据边界向后兼容。提交前请运行完整测试。
 
 ## License
 
