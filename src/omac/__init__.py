@@ -1,6 +1,6 @@
 """omac — oh-my-multica 的确定性编排 CLI。
 
-架构分层(docs/omac-cli-design.md §3):
+架构分层:
     cli/       命令树 / help / 退出码 / 输出层
     pipeline/  plan 流水线 / dag loop / 派发·回收
     core/      manifest · lint · graph · evidence · config

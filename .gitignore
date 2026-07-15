@@ -21,6 +21,9 @@ venv/
 # 编排产物（用户项目里的 manifest 落点，不应进本仓）
 .orchestrator/
 
+# 本地开发过程文档；docs/ 仅保留面向开源用户的材料。
+/docs/dev/
+
 # 日志与临时
 *.log
 test_output/

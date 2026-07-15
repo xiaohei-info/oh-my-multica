@@ -26,7 +26,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 "omac.guide" = ["*.md", "roles/*.md", "artifacts/*.md", "en/*.md", "en/roles/*.md", "en/artifacts/*.md"]
 "omac.web.static" = ["*"]
-"omac.templates_data" = ["agents/**/*"]
+"omac" = ["agents/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
