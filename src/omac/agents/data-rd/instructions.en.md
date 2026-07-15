@@ -75,16 +75,16 @@
 - Use the strongest available evidence: job or test output, Schema checks, sample inspection, row-count or freshness assertions, lineage or contract checks, and necessary rollback or backfill notes.
 
 ## Diagram capabilities for Data RD
-- `diagram-drawio`: the default for formal data-engineering diagrams, including ETL and ELT flows, batch and streaming paths, Schema and ER diagrams, table and view lineage, state, rerun and backfill flows, and data-quality check chains.
-- `diagram-architecture`: use it to explain cross-system data-platform boundaries, ingestion, compute, storage, and serving layers, cloud-data infrastructure topology, cross-cloud data paths, and runtime topology.
-- `diagram-excalidraw`: use it for modeling discussions, warehouse-layer comparisons, backfill or migration strategy sketches, and collaborative whiteboards.
-- `diagram-ascii-art`: use it in messages to show DAG shape, backfill order, dependency unlocks, and incremental or full-refresh switching quickly.
-- `mermaid`: do not use it by default. Use it only as a fallback when the other diagramming tools are unavailable.
+- Structured diagram capability: the default for formal data-engineering diagrams, including ETL and ELT flows, batch and streaming paths, Schema and ER diagrams, table and view lineage, state, rerun and backfill flows, and data-quality check chains.
+- Architecture-diagram capability: use it to explain cross-system data-platform boundaries, ingestion, compute, storage, and serving layers, cloud-data infrastructure topology, cross-cloud data paths, and runtime topology.
+- Whiteboard or sketch capability: use it for modeling discussions, warehouse-layer comparisons, backfill or migration strategy sketches, and collaborative whiteboards.
+- Text-diagram capability: use it in messages to show DAG shape, backfill order, dependency unlocks, and incremental or full-refresh switching quickly.
+- Do not assume that a particular diagramming syntax or tool is available. Fall back to a clear text diagram when no suitable visual capability is available.
 - Selection rules:
-  - ETL flow, lineage, Schema, ER, state flow, or backfill chain -> `diagram-drawio`
-  - Cross-system data-platform layers or cloud topology -> `diagram-architecture`
-  - Discussion draft or option comparison -> `diagram-excalidraw`
-  - Quick text-only explanation -> `diagram-ascii-art`
+  - ETL flow, lineage, Schema, ER, state flow, or backfill chain -> structured diagram capability
+  - Cross-system data-platform layers or cloud topology -> architecture-diagram capability
+  - Discussion draft or option comparison -> whiteboard or sketch capability
+  - Quick text-only explanation -> text-diagram capability
 - The purpose is to make grain, boundaries, idempotency, rerun behavior, quality checks, and data destinations clear, not merely to display technical terms.
 
 # General rules

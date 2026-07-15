@@ -46,10 +46,10 @@ Use when:
 |      | 需求分析   | 要解决什么问题？解决方式是什么？                                                                                                                                          |                                                                                                                                                                                           |
 |      |        | 有哪些术语定义？                                                                                                                                                  |                                                                                                                                                                                           |
 |      | 设计目标   | 系统建设目标是什么样的、要有哪些功能？                                                                                                                                       |                                                                                                                                                                                           |
-|      |        | 这些功能是如何分层的？                                                                                                                                               | 给出功能架构图，示例如下： ![](../../../../repository/images/软件架构设计的生命周期-1779158567049.png)                                                                                                            |
+|      |        | 这些功能是如何分层的？                                                                                                                                               | 给出功能架构图，并保留可编辑源文件和必要的导出产物。                                                                                                                                                                       |
 |      | 架构设计   | 有哪些设计原则？                                                                                                                                                  | 例如： - 低耦合：按照功能拆分为物理上不同的模块，减少各模块之间的耦合，提升开发效率。 - 无侵入：与常规业务代码校验相比，资金安全平台目标是对业务代码无影响，业务系统无感知。 - 隔离性：可实现多系统，系统间不同规则互不影响。 - 灵活性：简单校验写sql，复杂校验可以自定义函数满足各类业务场景校验需求。 - 易用性：可视化平台，方便用户在线添加、修改个性化需求。 |
 |      |        | 有哪些复杂度需要分析？ <br><br>_架构设计的本质目的是为了解决软件系统的复杂性，在设计架构时首先就要分析系统的复杂性_                                                                                           | 例如：高性能、可靠性、扩展性、安全性                                                                                                                                                                        |
-|      |        | 整体系统架构是什么样的？模块如何协作、边界如何划分？ <br><br>_子系统划分与联动、系统内部的实现方式、与外部系统的依赖关系与交互_ _、各个模块功能、职责与分层明细_ _把协作方的系统也考虑进来，当做不可靠的外部依赖设计_                                       | 系统架构图，示例如下： <br>![](../../../../repository/images/软件架构设计的生命周期-1779158607112.png)                                                                                                          |
+|      |        | 整体系统架构是什么样的？模块如何协作、边界如何划分？ <br><br>_子系统划分与联动、系统内部的实现方式、与外部系统的依赖关系与交互_ _、各个模块功能、职责与分层明细_ _把协作方的系统也考虑进来，当做不可靠的外部依赖设计_                                       | 给出系统架构图，并明确模块职责、边界、依赖关系和关键交互。                                                                                                                                                                    |
 |      | 风险与约束  | 当前系统需要重点解决哪些技术风险与工程约束？例如并发、幂等、超时重试、数据一致性、安全隔离、容量上限、可运维性等                                                                                                  | 风险约束清单                                                                                                                                                                                    |
 
 ## Architect Execution Layer
@@ -134,12 +134,12 @@ Reference: `references/panel-vs-gateway-boundary-from-source.md`
 **后果**: Overview design drifts from reality, creating subsystem boundaries that cannot be implemented because the external system doesn't expose them.
 
 **正确做法**: 
-1. Identify which external systems will be reused (Hermes, LightRAG, SkillHub, AI Relay, etc.)
+1. Identify which external systems will be reused, such as an agent runtime, retrieval service, skill catalog, or AI relay.
 2. Read their actual structure: API endpoints, source code routes, tool registry, config schema
 3. Map real capabilities to AI Team's adaptation layer before defining internal subsystems
 4. Only propose subsystem划分 that can be backed by verified external boundaries
 
-**Example**: Hermes does not have a separate "management subsystem" — management operations (job CRUD) are part of the Gateway API Server's `/api/jobs` endpoints. Subsystem划分 should reflect: Gateway (HTTP interface) + Agent Runtime (toolsets), not management/gateway/agentos.
+**Example**: A reused agent runtime may expose job-management operations through its gateway API instead of a separate management subsystem. The subsystem design must follow the verified external boundary, such as Gateway plus Agent Runtime, rather than inventing unsupported layers.
 
 ## V1 complexity control for overview design
 
@@ -172,4 +172,3 @@ This avoids a common overview-design failure: treating governance refinement as 
 - [ ] External capability boundaries verified (API endpoints, source code, tool registry read before subsystem划分 proposed)
 - [ ] Subsystem names inherit from business solution document's layering structure where applicable
 - [ ] Detailed design is not started on an unstable overview base
-

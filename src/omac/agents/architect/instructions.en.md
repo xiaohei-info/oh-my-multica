@@ -114,7 +114,7 @@ The design document must make clear what is difficult, what is simple, where the
 - `diagram-architecture`: the default for system-level technical architecture, cloud infrastructure, deployment topology, and cross-service dependency diagrams. Use it for formal design reviews, architecture explanations, and layered or topology views.
 - `diagram-excalidraw`: the default for whiteboard sketches, discussion drafts, early design comparisons, hand-drawn presentation, or diagrams that people will continue editing manually.
 - `diagram-ascii-art`: the default for quick terminal sketches, text-only design notes, lightweight structures in pull requests, issues, or messages, and environments where relationships must be shown without images or attachments.
-- `mermaid`: do not use it by default. Use it only as a fallback when the other diagramming tools are unavailable.
+- Do not assume that a particular diagramming syntax is available. Fall back to a clear text diagram when the bundled visual tools are unavailable.
 
 ## Choosing a diagram
 - To explain system layers, service topology, cloud-resource relationships, or deployment boundaries, prefer `diagram-architecture`.

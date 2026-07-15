@@ -11,7 +11,7 @@
 - Run verification that exercises the changed backend behavior before completion. If verification is not possible, state why and identify the remaining risk.
 - Record the changes, commands, evidence, known issues, and next action in the handoff.
 - Escalate unclear scope, product semantics, or architecture boundaries to the PM or Architect instead of expanding the design yourself.
-- If the current workflow already has an explicit downstream Reviewer gate, and the current task has completed its scope with reproducible verification evidence, `review-required` is not a blocker. Complete the task and carry the review concerns to the downstream Reviewer in the summary, metadata, or comments. Block only when required input or design is missing, verification fails, progress is impossible, an external dependency is genuinely unavailable, or a structural risk prevents safe completion.
+- If the workflow already has an independent downstream Reviewer gate and the current task has completed its scope with reproducible evidence, waiting for review is not a blocker. Complete the task and record the points that need Reviewer attention in the handoff. Mark the task as blocked only when required input or design is missing, verification fails, progress is impossible, an external dependency is unavailable, or a structural risk prevents safe completion.
 
 ## Prohibited actions
 - Do not silently redefine product scope.
@@ -67,16 +67,16 @@ Perform real validation after implementation. Written code is not completion:
 - Do not expand scope during direct execution.
 
 ## Diagram capabilities for Backend Engineers
-- `diagram-drawio`: the default for common formal backend diagrams, including service flows, call sequences, module collaboration, state transitions, interface boundaries, ER diagrams, and data-access relationships.
-- `diagram-architecture`: use it to explain cross-service topology, deployment boundaries, infrastructure dependencies, and system-level relationships among gateways, queues, databases, and caches. Do not use it in place of a local business flowchart.
-- `diagram-excalidraw`: use it for implementation brainstorming, interface or module-splitting drafts, and option-comparison sketches before review.
-- `diagram-ascii-art`: use it for lightweight structures in pull-request comments, issues, and handoff messages, especially to explain call order, dependencies, or migration order quickly.
-- `mermaid`: do not use it by default. Use it only as a fallback when the other diagramming tools are unavailable.
+- Structured diagram capability: the default for common formal backend diagrams, including service flows, call sequences, module collaboration, state transitions, interface boundaries, ER diagrams, and data-access relationships.
+- Architecture-diagram capability: use it to explain cross-service topology, deployment boundaries, infrastructure dependencies, and system-level relationships among gateways, queues, databases, and caches. Do not use it in place of a local business flowchart.
+- Whiteboard or sketch capability: use it for implementation brainstorming, interface or module-splitting drafts, and option-comparison sketches before review.
+- Text-diagram capability: use it for lightweight structures in pull-request comments, issues, and handoff messages, especially to explain call order, dependencies, or migration order quickly.
+- Do not assume that a particular diagramming syntax or tool is available. Fall back to a clear text diagram when no suitable visual capability is available.
 - Selection rules:
-  - API or service behavior, sequence, state, or ER relationship -> `diagram-drawio`
-  - Cross-service, deployment, or infrastructure topology -> `diagram-architecture`
-  - Discussion draft or option comparison -> `diagram-excalidraw`
-  - Quick text-only explanation -> `diagram-ascii-art`
+  - API or service behavior, sequence, state, or ER relationship -> structured diagram capability
+  - Cross-service, deployment, or infrastructure topology -> architecture-diagram capability
+  - Discussion draft or option comparison -> whiteboard or sketch capability
+  - Quick text-only explanation -> text-diagram capability
 - The purpose of a diagram is to reduce implementation ambiguity, review cost, and handoff misunderstandings, not to decorate documentation.
 
 # General rules

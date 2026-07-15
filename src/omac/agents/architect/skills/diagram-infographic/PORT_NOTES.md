@@ -8,15 +8,15 @@ Only `SKILL.md` was modified. All 45 reference files are verbatim copies.
 
 ### SKILL.md adaptations
 
-| Change | Upstream | Hermes |
+| Change | Upstream | Generic agent port |
 |--------|----------|--------|
-| Metadata namespace | `openclaw` | `hermes` |
+| Metadata namespace | `openclaw` | Runtime-specific metadata retained for compatibility |
 | Trigger | `/baoyu-infographic` slash command | Natural language skill matching |
-| User config | EXTEND.md file (project/user/XDG paths) | Removed — not part of Hermes infra |
-| User prompts | `AskUserQuestion` (batched) | `clarify` tool (one at a time) |
-| Image generation | baoyu-imagine (Bun/TypeScript) | `image_generate` tool |
+| User config | EXTEND.md file (project/user/XDG paths) | Removed from the portable package |
+| User prompts | `AskUserQuestion` (batched) | Use the interactive prompt capability available in the runtime |
+| Image generation | baoyu-imagine (Bun/TypeScript) | Use the image-generation capability available in the runtime |
 | Platform support | Linux/macOS/Windows/WSL/PowerShell | Linux/macOS only |
-| File operations | Bash commands | Hermes file tools (write_file, read_file) |
+| File operations | Bash commands | Use the file-reading and editing capabilities available in the runtime |
 
 ### What was preserved
 
@@ -40,5 +40,4 @@ curl -sL https://raw.githubusercontent.com/JimLiu/baoyu-skills/main/skills/baoyu
 diff <(curl -sL https://raw.githubusercontent.com/.../references/layouts/bento-grid.md) references/layouts/bento-grid.md
 ```
 
-Reference files can be overwritten directly (they're unchanged from upstream). SKILL.md must be manually merged since it contains Hermes-specific adaptations.
-
+Reference files can be overwritten directly when unchanged from upstream. Merge `SKILL.md` manually because it contains runtime-specific adaptations.

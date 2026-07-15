@@ -52,7 +52,7 @@ Better wording:
 
 Reason:
 - avoids rebuilding a scheduler/orchestrator inside the product control plane
-- matches Hermes-native Kanban/orchestrator semantics better
+- matches generic task-board and Orchestrator semantics better
 
 ### D. Blueprint object vs workflow object
 Bad detailed-design wording:
@@ -80,4 +80,3 @@ Example:
 - Separate entry flow, routing flow, and execution flow
 - Check whether any blueprint/catalog object was accidentally treated as a workflow engine object
 - Prefer product names that make the runtime mapping obvious unless the business domain truly needs a richer abstraction
-

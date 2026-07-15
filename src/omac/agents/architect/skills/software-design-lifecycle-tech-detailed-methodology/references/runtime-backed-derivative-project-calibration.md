@@ -1,68 +1,63 @@
 # Runtime-backed derivative project calibration
 
-Use this reference when a product is implemented as a downstream project built from an upstream web UI / runtime-console base.
+Use this reference when a product is implemented as a downstream project built from an upstream runtime console or web interface.
 
 ## Canonical distinction
 
-- **Upstream source base**: the repo/codebase whose host shell, SSE engine, route organization, or UI framework is being reused.
-- **Downstream implementation carrier**: the real project/repo where the new product is developed and delivered.
+- **Upstream source base**: the codebase whose host shell, event-streaming engine, route organization, or UI framework is reused.
+- **Downstream implementation carrier**: the actual project where the new product is developed and delivered.
 
 Do not blur the two in detailed design.
 
 ## Example pattern
 
-A product may say:
-- upstream source base: `hermes-webui`
-- downstream implementation carrier: `agent-service`
+A product may define:
+
+- upstream source base: `runtime-console`
+- downstream implementation carrier: `product-service`
 - internal module layers inside the downstream project:
-  - `team-panel/`
-  - `agent-gateway/`
-  - inherited host substrate such as `server.py`, `api/*`, `static/*`
+  - `control-panel/`
+  - `runtime-adapter/`
+  - inherited host modules for routing, streaming, configuration, and static assets
 
-## Wording rules for design docs
+## Wording rules for design documents
 
-Prefer wording like:
-- "The implementation target is `agent-service`, which is a secondary-development project based on the Hermes Web UI codebase."
-- "Team Panel and Agent Gateway are internal module layers inside Agent Service V1, not separately deployed services."
-- "V1 shares one host process (`server.py`); `api/routes.py` expands by addition; runtime-adapter logic is extracted from existing host modules."
+Prefer wording that states:
 
-Avoid wording like:
-- "We will build on Hermes Web UI" with no mention of the actual downstream repo.
-- "Gateway" phrased in a way that makes readers assume a separate network service if V1 is same-process.
+- the real implementation target
+- which upstream base it reuses
+- whether modules share one process or deploy independently
+- which host capabilities are extended rather than rewritten
+
+Avoid saying only that the team will "build on the upstream runtime." That wording hides the actual delivery repository and makes internal modules look like separate services when they may share one process.
 
 ## Reuse-anchor checklist
 
-Call out which inherited files remain the substrate, for example:
-- `server.py`
-- `api/routes.py`
-- `api/streaming.py`
-- `api/config.py`
-- `api/profiles.py`
-- `api/models.py`
-- `api/upload.py`
-- `api/workspace.py`
-- `static/index.html`
-- `static/ui.js`
-- `static/messages.js`
-- `static/sessions.js`
-- `static/panels.js`
+Identify which inherited capabilities remain the substrate, such as:
 
-Then separately call out which directories are net-new business logic.
+- server entrypoint
+- route registration
+- event streaming
+- configuration loading
+- model and profile handling
+- upload and workspace handling
+- static UI assets
+
+List new business modules separately.
 
 ## Data-truth calibration
 
-When the inherited host stores sessions in JSON/files but the product needs a real control-plane database:
-- state that host JSON/session storage is **not** the control-plane source of truth
+When the inherited host stores sessions in files but the product needs a control-plane database:
+
+- state that host session storage is not the control-plane source of truth
 - define the dual-track model explicitly:
-  - control-plane truth in relational DB
-  - host/session mirror retained for runtime/workbench compatibility
+  - control-plane truth in a transactional database
+  - host or session mirror retained only for runtime compatibility
 
 ## Review prompts
 
-Ask these before freezing the design:
-1. Did we name the real target repo/path?
+1. Is the real target repository or project named?
 2. Could a reader confuse internal modules with deployed services?
-3. Did we name the concrete inherited files that will remain the substrate?
-4. Did we separate control-plane truth from host/session storage truth?
-5. Did we say whether route growth is additive or a full rewrite?
-
+3. Are the inherited capabilities that remain the substrate explicit?
+4. Is control-plane truth separated from host or session storage?
+5. Is route growth additive, or does the design require a rewrite?

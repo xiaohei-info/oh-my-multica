@@ -21,7 +21,7 @@ The goal is to preserve Claude Design's useful design behavior and taste while r
 
 ## When To Use This Skill vs `popular-web-designs` vs `design-md`
 
-Hermes has three design-related skills under `skills/creative/`. They do different jobs — load the right one (or combine them):
+This package includes three complementary design skills. Load the one that fits the deliverable, or combine them when their responsibilities are distinct:
 
 | Skill | What it gives you | Use when the user wants... |
 |---|---|---|
@@ -754,4 +754,3 @@ You are running in CLI/API mode, not hosted Claude Design. Ignore references to 
 - Do not under-ask for high-fidelity work with no brand context.
 - Do not produce generic SaaS layouts and call them designed.
 - Do not claim browser verification unless it actually happened.
-

@@ -28,9 +28,9 @@ Load this skill whenever the user asks to:
 - review text for AI tells before publishing
 - audit a draft for AI tells without rewriting it yet
 
-Also apply this skill to **your own** output when writing user-facing prose — release notes, PR descriptions, documentation, long-form explanations, summaries. Hermes's baseline voice already strips most of these, but a focused pass catches what slips through.
+Also apply this skill to **your own** output when writing user-facing prose such as release notes, pull-request descriptions, documentation, long-form explanations, and summaries. A focused pass catches patterns that general editing often misses.
 
-## How to use it in Hermes
+## How to use it
 
 The text usually arrives one of three ways:
 1. **Inline** — user pastes the text directly into the message. Work on it in-place, reply with the rewrite.
@@ -647,7 +647,6 @@ Provide:
 
 This skill is ported from [blader/humanizer](https://github.com/blader/humanizer) (MIT licensed), which is itself based on [Wikipedia: Signs of AI writing](https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing), maintained by WikiProject AI Cleanup. The patterns documented there come from observations of thousands of instances of AI-generated text on Wikipedia.
 
-Original author: Siqi Chen ([@blader](https://github.com/blader)). Original repo: https://github.com/blader/humanizer (source version 2.5.1). Ported to Hermes Agent with Hermes-native tool references (`read_file`, `patch`, `write_file`) and later extended in local Hermes usage with audit-only detect mode, severity/context guidance, social-copy cleanup routing, and an explicit default hard fail for emoji-decorated headings and bullets in de-slop mode. The 29 numbered patterns, personality/soul section, and full worked example remain sourced from the upstream humanizer material. Original MIT license preserved in the `LICENSE` file alongside this `SKILL.md`.
+Original author: Siqi Chen ([@blader](https://github.com/blader)). Original repo: https://github.com/blader/humanizer (source version 2.5.1). This port uses generic file-reading and editing actions and adds audit-only mode, severity and context guidance, social-copy cleanup routing, and a default hard fail for emoji-decorated headings and bullets in de-slop mode. The 29 numbered patterns, personality and soul section, and full worked example remain sourced from the upstream material. The original MIT license is preserved in the `LICENSE` file alongside this `SKILL.md`.
 
 Key insight from Wikipedia: "LLMs use statistical algorithms to guess what should come next. The result tends toward the most statistically likely result that applies to the widest variety of cases."
-

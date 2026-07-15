@@ -590,7 +590,7 @@ Tool-specific drawing details are governed by the canonical full reference:
 This umbrella skill adds architect-usage routing on top of that reference:
 - 正式文档、可编辑源文件留存、功能分层清晰、需要长期维护的系统功能架构图场景，使用 Draw.io 一类可编辑独立图资产工具
 - 草图评审、手绘风格、非正式沟通、快速迭代场景，使用 Excalidraw
-- 网页嵌入、交互式功能图、动态高亮、高精度输出场景，使用 SVG / HTML 路线；在当前 Hermes 能力面内，对应 `architecture-diagram` 这类 SVG / HTML 产图 skill
+- 网页嵌入、交互式功能图、动态高亮、高精度输出场景使用 SVG / HTML 路线；当运行环境提供 SVG / HTML 制图能力时，选择对应工具
 - choose the tool that best fits the document/review context, but do not change the underlying visual grammar, spacing discipline, or naming rules
 - when producing a 系统功能架构图 in 概要设计, keep the artifact focused on capability layering and functional boundary clarity rather than expanding into implementation/runtime detail just because the chosen tool makes that easy
 
@@ -606,4 +606,3 @@ This umbrella skill adds architect-usage routing on top of that reference:
 - [ ] Containers are no deeper than 2 levels
 - [ ] Arrows are sparse and meaningful
 - [ ] The diagram is strong enough to guide later system architecture and technical design without prematurely becoming them
-

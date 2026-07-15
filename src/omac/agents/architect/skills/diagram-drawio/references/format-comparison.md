@@ -1,6 +1,6 @@
 # Diagram Format Comparison
 
-When generating architecture diagrams, Hermes has three primary creative skills. Use this reference to pick the right one for the situation.
+When generating architecture diagrams, choose among the available structured, presentation-oriented, and whiteboard-style capabilities. Use this reference to select the right format for the situation.
 
 ## Quick Decision Table
 
@@ -52,4 +52,3 @@ When a user wants to compare styles or see alternatives for the same architectur
 - **draw.io PNG**: Directly embeddable via `![[file.png]]`. Co-locate `.drawio` source alongside for future edits.
 - **architecture-diagram HTML**: Not previewable in Obsidian. Screenshot the browser render and embed the screenshot if Obsidian visibility is needed. The HTML file itself can be opened from the vault via `file://` link or an `app://` obsidian link.
 - **Excalidraw JSON**: Requires the Obsidian Excalidraw community plugin. Without it, the `.excalidraw` file is just raw JSON. Alternative: export from excalidraw.com as SVG/PNG and embed that instead.
-

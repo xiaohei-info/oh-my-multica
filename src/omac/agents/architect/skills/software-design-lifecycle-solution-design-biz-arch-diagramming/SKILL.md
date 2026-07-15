@@ -768,11 +768,9 @@ L3 结果/设施层（最右）：
 ## Provenance
 
 Primary normative sources:
-- `/home/ubuntu/.hermes/cache/documents/doc_b4012a6c95cb_业务解决方案架构图skill.md`
-- `/var/lib/syncthing/Obsidian/Guantik/Inbox/能力全景图/专业技术能力/软件架构设计的生命周期.md`
+- business solution architecture drawing methodology
+- software architecture lifecycle methodology
 
-Companion local references:
+Companion references:
 - `references/source-map.md`
-- `arch-lifecycle-delivery`
-- `architect/SOUL.md`
-
+- `software-design-lifecycle-delivery`

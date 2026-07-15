@@ -41,9 +41,9 @@ Research date: 2026-05-19
 ### ikenga-artifact-builder ⭐2 — `Royalti-io/ikenga-artifact-builder`
 - Claude Code skill: teach agent to output single-file HTML artifacts instead of markdown
 - Install: `npx skills add Royalti-io/ikenga-artifact-builder`
-- Not Hermes-compatible format; concept is portable though
+- Uses a different skill packaging format; the concept is portable
 
-## Recommended Approach for Hermes
+## Recommended approach
 
 When a user wants "MD doc → interactive HTML canvas page":
 
@@ -61,4 +61,3 @@ When a user wants "MD doc → interactive HTML canvas page":
    - Mermaid diagrams for relationships
    - Smooth scroll + reading progress indicator
 4. Output single self-contained HTML per `claude-design` artifact rules
-

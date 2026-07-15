@@ -465,7 +465,7 @@ Prefer labels such as:
 - `Billing API / Connector API`
 
 Avoid labels that are too fuzzy to guide later interface design, such as:
-- `Hermes runtime`
+- `Agent runtime`
 - `RAG 基座`
 - `技能市场接入`
 - `外部系统集成`
@@ -574,7 +574,7 @@ The goal is not protocol-level detail yet, but a clear statement of **what kind 
   - 适配要点：直接使用 C4 扩展（`!include C4_Container.puml`）；将本 Skill 的 HEX 色值映射到 `AddElementTag`；支持所有布局模式。
 
 - **SVG / HTML**
-  - 网页嵌入、交互式架构图、动态高亮、高精度输出场景使用 SVG / HTML；在当前 Hermes 能力面内，对应 `architecture-diagram` 这类 SVG / HTML 产图 skill。
+  - 网页嵌入、交互式架构图、动态高亮、高精度输出场景使用 SVG / HTML；当运行环境提供 SVG / HTML 制图能力时，选择对应工具。
   - 适配要点：以 CSS 变量定义色板；利用 `<g>` 标签分组实现 Boundary；SVG 对任意布局（Mesh/Star/Symmetric）支持最好；可添加 hover 提示。
 
 Architect rule:
@@ -770,4 +770,3 @@ This avoids a recurring overview-design failure where the back-end architecture 
 - [ ] 原始绘图规范中的细节层（图元、颜色、形状、文字、线条、布局、边界、反模式、工具适配、示例映射）已被保留
 - [ ] 主协作链清晰，但没有关系过载
 - [ ] 读者可以据此继续做技术架构、接口设计与部署设计
-

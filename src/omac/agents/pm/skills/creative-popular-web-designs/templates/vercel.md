@@ -1,7 +1,7 @@
 # Design System: Vercel
 
 
-> **Hermes Agent — Implementation Notes**
+> **Implementation Notes**
 >
 > The original site uses proprietary fonts. For self-contained HTML output, use these CDN substitutes:
 > - **Primary:** `Geist` | **Mono:** `Geist Mono`
