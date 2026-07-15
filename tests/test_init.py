@@ -407,7 +407,7 @@ def test_interactive_bad_role_rejected(tmp_path, monkeypatch, capsys):
     assert "ghost" in capsys.readouterr().err
 
 
-def test_interactive_can_create_template_agent_then_map_it_as_worker(
+def test_interactive_can_create_native_profile_agent_then_map_it_as_worker(
     tmp_path, monkeypatch, capsys,
 ):
     monkeypatch.chdir(tmp_path)
@@ -417,13 +417,13 @@ def test_interactive_can_create_template_agent_then_map_it_as_worker(
         "mock",            # engine
         "mock-workspace",  # workspace
         "y",               # 通过模板创建 Agent
-        "worker",          # 模板
-        "template-worker", # Agent 名称
+        "backend-eng",     # 原生 profile 模板
+        "template-backend", # Agent 名称
         "",                # Runtime → 第一个
         "",                # 是否继续创建 → 否
         "alice",           # planner
         "bob",             # orchestrator
-        "template-worker", # workers
+        "template-backend", # workers
         "charlie",         # reviewers
         "",                # acceptor
     ]))
@@ -431,7 +431,7 @@ def test_interactive_can_create_template_agent_then_map_it_as_worker(
     assert main(["init"]) == exit_codes.OK
     import yaml
     cfg = yaml.safe_load((tmp_path / ".omac" / "config.yaml").read_text())
-    assert cfg["roles"]["workers"] == ["template-worker"]
+    assert cfg["roles"]["workers"] == ["template-backend"]
     output = capsys.readouterr().out
     assert "Existing Agents" in output
-    assert "Agent created: template-worker" in output
+    assert "Agent created: template-backend" in output

@@ -88,25 +88,45 @@ def test_repo_catalog_uses_agents_directory_directly_under_omac_package():
     assert catalog.root == Path(__file__).resolve().parents[1] / "src" / "omac" / "agents"
 
 
-def test_repo_catalog_contains_nine_templates_with_multica_skill_counts():
+def test_repo_catalog_contains_native_profile_templates_with_skill_counts():
     catalog = AgentTemplateCatalog()
 
     expected = {
-        "planner": 40,
-        "orchestrator": 0,
-        "worker": 13,
-        "reviewer": 0,
-        "acceptor": 7,
         "architect": 40,
-        "backend": 13,
-        "frontend": 13,
+        "backend-eng": 13,
+        "data-rd": 0,
+        "frontend-eng": 13,
+        "orchestrator": 0,
         "pm": 7,
+        "reviewer": 0,
     }
     assert catalog.list_ids() == sorted(expected)
     assert {template_id: len(catalog.get(template_id).skills)
             for template_id in expected} == expected
+    assert {"acceptor", "backend", "frontend", "planner", "worker"}.isdisjoint(expected)
     for template_id in expected:
         template = catalog.get(template_id)
         assert template.instructions
         assert "OMAC" in template.instructions
         assert not (template.path / "AGENTS.md").exists()
+
+
+def test_repo_templates_embed_their_profile_role_overlay_without_local_runtime_rules():
+    expected_overlays = {
+        "architect": "Architect",
+        "backend-eng": "Backend Engineer",
+        "data-rd": "Data RD",
+        "frontend-eng": "Frontend Engineer",
+        "orchestrator": "Orchestrator",
+        "pm": "PM",
+        "reviewer": "Reviewer",
+    }
+
+    for language in ("cn", "en"):
+        catalog = AgentTemplateCatalog(language=language)
+        for template_id, role_name in expected_overlays.items():
+            instructions = catalog.get(template_id).instructions
+            assert f"# 角色叠加层 — {role_name}" in instructions
+            assert "/home/ubuntu/" not in instructions
+            assert "Hermes Kanban" not in instructions
+            assert "Codex ACP" not in instructions

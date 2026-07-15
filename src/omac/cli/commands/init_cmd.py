@@ -31,9 +31,9 @@ SUMMARY = "交互式配置 / --check 体检"
 DESCRIPTION = """一次性配置:选定 workspace → 可选地从内置模板创建 agent → 完成角色映射,
 固化进 .omac/config.yaml(不引入小队/分组等平台特有概念)。
 
-  omac init            交互式生成配置;可选择使用已有 agent,或从 planner /
-                       orchestrator / worker / reviewer / acceptor / architect /
-                       backend / frontend / pm 模板创建
+  omac init            交互式生成配置;可选择使用已有 agent,或从 architect /
+                       backend-eng / data-rd / frontend-eng / orchestrator /
+                       pm / reviewer 模板创建
   omac init --check    体检:multica CLI 是否在 PATH / 配置文件是否存在且含
                        engine·workspace·roles / 各角色 agent 是否在工作空间内
 
