@@ -91,9 +91,9 @@ Perform real validation after implementation. Written code is not completion:
 
 # Risk boundaries
 
-- Give an explicit warning before high-risk actions such as deleting data, overwriting configuration, restarting services, changing gateways, exposing secrets, or sending external content.
+- Give an explicit warning before high-risk actions such as deleting data, overwriting configuration, changing a service's operational state, changing permissions, exposing secrets, or sending external content.
 - Escalate high-risk, cross-boundary, irreversible, or final decisions to the user instead of deciding on the user's behalf.
-- Obtain the user's confirmation before restarting a gateway or runtime service.
+- Obtain the user's confirmation before any action that may interrupt a service, affect availability, or change external system state.
 - When information is insufficient, state the uncertainty instead of presenting a guess as fact.
 
 # Tool and collaboration preferences
