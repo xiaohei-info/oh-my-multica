@@ -51,7 +51,7 @@ def _produced(item: WorkItem) -> bool:
     decompose 经 work submit → IN_REVIEW+phase=REVIEW+deliverable),或直接终态
     (DONE/FAILED)。评审往返由本原语接管,故 IN_REVIEW 本身不算「未完」。"""
     return item.phase == TaskPhase.REVIEW or item.status in (
-        WorkItemStatus.DONE, WorkItemStatus.FAILED)
+        WorkItemStatus.DONE, WorkItemStatus.FAILED, WorkItemStatus.BLOCKED)
 
 
 def _delivery_of(kind: TaskKind, item: WorkItem) -> Dict[str, Any]:
@@ -239,23 +239,33 @@ def run_task(
         )
         item_id = item.id
 
+    def _raise_if_authoring_stopped(candidate: WorkItem) -> None:
+        if candidate.status not in (WorkItemStatus.FAILED, WorkItemStatus.BLOCKED):
+            return
+        outcome = (
+            "blocked" if candidate.status == WorkItemStatus.BLOCKED
+            else "failed"
+        )
+        log.info(logsetup.EVT_NODE_FAILED, kind=kind.value, id=item_id,
+                 reason=f"producer {outcome}")
+        raise NeedsDecision(
+            ui(
+                f"{kind.value} authoring {outcome} (item {item_id})",
+                f"{kind.value} 产出阶段{'被阻塞' if outcome == 'blocked' else '失败'}"
+                f"(item {item_id})"),
+            report={"item_id": item_id, "kind": kind.value, "rounds": 0,
+                    "last_opinion": f"producer {outcome}"})
+
     def _produce(hint: Optional[List[str]] = None) -> WorkItem:
         current = store.get_work_item(item_id)
-        if hint is None and _produced(current) and current.status != WorkItemStatus.FAILED:
+        _raise_if_authoring_stopped(current)
+        if hint is None and _produced(current):
             return current
         store.mark_in_progress(item_id)
         store.assign_work_item(item_id, assignee, "worker")
         runtime.wake(item_id, assignee, "worker")
         produced = _poll_until(store, item_id, _produced, poll)
-        if produced.status == WorkItemStatus.FAILED:
-            log.info(logsetup.EVT_NODE_FAILED, kind=kind.value, id=item_id,
-                     reason="producer failed")
-            raise NeedsDecision(
-                ui(
-                    f"{kind.value} authoring failed (item {item_id})",
-                    f"{kind.value} 产出阶段失败(item {item_id})"),
-                report={"item_id": item_id, "kind": kind.value, "rounds": 0,
-                        "last_opinion": "producer failed"})
+        _raise_if_authoring_stopped(produced)
         if hint:
             store.add_comment(item_id, ui(
                 "Authoring revision (original errors):\n" + "\n".join(f"- {e}" for e in hint),

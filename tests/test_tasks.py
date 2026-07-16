@@ -394,3 +394,27 @@ def test_failure_in_production_short_circuits():
                  poll=_poll, dag_key="plan")
     assert exc.value.report["rounds"] == 0
     assert "producer failed" in exc.value.report["last_opinion"]
+
+
+def test_blocked_production_short_circuits_on_resume():
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = create_authoring_task(eng, AuthoringTaskSpec(
+        kind=TaskKind.ACCEPTANCE,
+        title="acceptance document",
+        dag_key="acceptance-p1",
+        assignee="alice",
+    ))
+    eng.store.update_status(item.id, WorkItemStatus.BLOCKED)
+
+    with pytest.raises(NeedsDecision) as exc:
+        run_task(
+            eng,
+            TaskKind.ACCEPTANCE,
+            _payload(title="acceptance document"),
+            "alice",
+            poll=lambda: pytest.fail("blocked item must not be polled"),
+            resume_item_id=item.id,
+        )
+
+    assert exc.value.report["rounds"] == 0
+    assert "producer blocked" in exc.value.report["last_opinion"]
