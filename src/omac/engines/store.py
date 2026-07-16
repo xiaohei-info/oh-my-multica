@@ -163,7 +163,11 @@ class WorkItemStore(ABC):
 
     @abstractmethod
     def add_comment(self, item_id: str, comment: str):
-        """追加一条评论(进度报告/回退原因)。失败不应中断编排(编排层会 catch)。"""
+        """追加系统说明(进度报告/回退原因)，不得把它解释为新的 agent 输入。
+
+        平台若会通过评论唤醒当前 assignee，适配器必须先解除分配；真正的执行
+        交接只允许通过 assign_work_item + AgentRuntime.wake 发生。
+        """
 
     # ==================== 状态和分配 ====================
 
