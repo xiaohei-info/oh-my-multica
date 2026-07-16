@@ -88,6 +88,20 @@ def _build_snapshot(manifest: Manifest) -> dict:
     }
 
 
+def _has_unreviewed_worker_revision(node, item) -> bool:
+    """识别评审返工后已重交、但 manifest 仍残留 terminal 状态的节点。"""
+    return bool(
+        node.reviewer
+        and not node.merged
+        and item.status == WorkItemStatus.DONE
+        and item.phase == TaskPhase.AUTHORING
+        and not item.review_verdict
+        and item.review_report
+        and item.artifacts
+        and item.verification
+    )
+
+
 # ==================== reconcile ====================
 
 def reconcile(store: WorkItemStore, manifest: Manifest, manifest_path: str) -> bool:
@@ -113,6 +127,16 @@ def reconcile(store: WorkItemStore, manifest: Manifest, manifest_path: str) -> b
             if node.status not in {"done", "abandoned"}:
                 set_node(manifest, key, work_item_id=None, status="todo")
                 changed = True
+            continue
+
+        # reviewer reject 后，worker 可在 manifest 仍 blocked/done 时通过正式
+        # work submit 写入新交付。此时不能把平台 DONE 直接同步成业务 done，
+        # 必须回到 collect_results 重新过证据门并派发 reviewer。
+        if (
+            node.status in FAILED_STATUSES or node.status == "done"
+        ) and _has_unreviewed_worker_revision(node, item):
+            set_node(manifest, key, status="in_progress")
+            changed = True
             continue
 
         # 运行中节点的终态回收归 collect_results(证据门 + 阶段交接)

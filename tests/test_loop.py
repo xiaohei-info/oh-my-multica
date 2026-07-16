@@ -1028,6 +1028,60 @@ class TestReviewerRejectBoundedFallback:
         assert got.review_verdict is None
         assert got.bounces.review == 1
 
+    @pytest.mark.parametrize("stale_status", ["blocked", "done"])
+    def test_unreviewed_worker_revision_reenters_review_from_stale_terminal_manifest(
+        self, tmp_path, stale_status,
+    ):
+        """worker 返工已 submit 时，旧 blocked/done manifest 不得绕过 reviewer gate。"""
+        from omac.engines import create_engine
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / f"{stale_status}.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        eng.store.update_work_item_metadata(
+            item.id,
+            review_report={
+                "review_goals": ["复核交付是否满足验收"],
+                "diff_reviewed": True,
+                "tests_rerun": True,
+                "coverage_checked": True,
+                "acceptance_mapping": [
+                    {"acceptance": "works", "status": "fail"},
+                ],
+                "blockers": ["需要返工"],
+            },
+        )
+
+        # reviewer reject → worker authoring；保留上一轮 report 作为返工上下文。
+        tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        assert manifest.nodes["a"].status == "in_progress"
+
+        # worker 合法重交，但旧 controller/manifest 留下 terminal 状态。
+        eng.store.update_work_item_metadata(
+            item.id,
+            artifacts={"pr_url": f"https://mock.example.com/pr/{item.id}"},
+            verification={
+                "commands": [{"cmd": "pytest -q", "exit_code": 0}],
+                "integration_gates": [{
+                    "name": "revision-gate",
+                    "commands": [{"cmd": "pytest -q", "exit_code": 0}],
+                }],
+                "pr_base": "main",
+                "coverage": 90,
+            },
+        )
+        eng.store.update_status(item.id, WorkItemStatus.DONE)
+        manifest.nodes["a"].status = stale_status
+        save_manifest(manifest, path)
+
+        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+
+        got = eng.store.get_work_item(item.id)
+        assert result.state == "running"
+        assert manifest.nodes["a"].status == "in_review"
+        assert got.status == WorkItemStatus.IN_REVIEW
+        assert got.phase == TaskPhase.REVIEW
+
     def test_authoring_node_repairs_worker_manual_in_review(self, tmp_path):
         """authoring 阶段被 worker 手改成 in_review 时,拉回 in_progress 等合法 submit。"""
         from omac.engines import create_engine
