@@ -125,6 +125,115 @@ def test_retry_resets_to_todo_and_keeps_work_item_id(tmp_path, capsys, monkeypat
     assert m.nodes["b"].worker == "bob"        # 未改派
 
 
+def test_retry_reassignment_survives_reconcile_and_dispatches_new_worker(
+    tmp_path, capsys, monkeypatch,
+):
+    """显式 retry 必须同步平台 todo，否则 reconcile 会恢复旧 in_progress 并 rerun 旧 assignee。"""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OMAC_ENGINE", "mock")
+    monkeypatch.setenv("OMAC_WORKSPACE_ID", "ws-1")
+
+    from omac.engines import EngineConfig, create_engine
+    from omac.engines.models import WorkItemStatus
+    from omac.pipeline.loop import tick
+
+    engine = create_engine(
+        "mock",
+        EngineConfig("mock", "ws-1", extra={"MOCK_AUTO_COMPLETE": "false"}),
+    )
+    item = engine.store.create_work_item("ws-1", "t", "d", "b", "bob")
+    engine.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
+
+    import omac.cli.commands.node as node_mod
+    monkeypatch.setattr(node_mod, "create_engine", lambda *a, **kw: engine)
+
+    path = _write_manifest(tmp_path, [{
+        "id": "b",
+        "worker": "bob",
+        "status": "blocked",
+        "work_item_id": item.id,
+    }])
+
+    assert main([
+        "node", "retry", path, "b", "--worker", "charlie",
+    ]) == exit_codes.OK
+    capsys.readouterr()
+    assert engine.store.get_work_item(item.id).status == WorkItemStatus.TODO
+
+    manifest = load_manifest(path)
+    result = tick(engine.store, engine.runtime, manifest, path, max_parallel=1)
+
+    assert result.dispatched == ["b"]
+    assert manifest.nodes["b"].status == "in_progress"
+    assert engine.store.get_work_item(item.id).worker == "charlie"
+
+
+def test_retry_platform_failure_keeps_manifest_unchanged(tmp_path, monkeypatch):
+    """平台 todo 写入失败时，不能只保存本地 worker/status 形成分叉事实。"""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OMAC_ENGINE", "mock")
+    monkeypatch.setenv("OMAC_WORKSPACE_ID", "ws-1")
+
+    from omac.engines import EngineConfig, create_engine
+    from omac.errors import PlatformError
+
+    engine = create_engine(
+        "mock",
+        EngineConfig("mock", "ws-1", extra={"MOCK_AUTO_COMPLETE": "false"}),
+    )
+    item = engine.store.create_work_item("ws-1", "t", "d", "b", "bob")
+
+    import omac.cli.commands.node as node_mod
+    monkeypatch.setattr(node_mod, "create_engine", lambda *a, **kw: engine)
+    monkeypatch.setattr(
+        engine.store,
+        "update_status",
+        lambda *args, **kwargs: (_ for _ in ()).throw(PlatformError("offline")),
+    )
+
+    path = _write_manifest(tmp_path, [{
+        "id": "b",
+        "worker": "bob",
+        "status": "blocked",
+        "work_item_id": item.id,
+    }])
+
+    assert main([
+        "node", "retry", path, "b", "--worker", "charlie",
+    ]) == exit_codes.PLATFORM
+    manifest = load_manifest(path)
+    assert manifest.nodes["b"].worker == "bob"
+    assert manifest.nodes["b"].status == "blocked"
+
+
+def test_retry_preserves_stale_mock_work_item_id_for_reconcile(tmp_path, monkeypatch):
+    """跨进程 mock 恢复保留旧 ID，由下一次 dag run 的 reconcile 统一清理。"""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OMAC_ENGINE", "mock")
+    monkeypatch.setenv("OMAC_WORKSPACE_ID", "ws-1")
+
+    from omac.engines import EngineConfig, create_engine
+
+    engine = create_engine(
+        "mock",
+        EngineConfig("mock", "ws-1", extra={"MOCK_AUTO_COMPLETE": "false"}),
+    )
+    import omac.cli.commands.node as node_mod
+    monkeypatch.setattr(node_mod, "create_engine", lambda *a, **kw: engine)
+
+    path = _write_manifest(tmp_path, [{
+        "id": "b",
+        "worker": "bob",
+        "status": "blocked",
+        "work_item_id": "stale-id",
+    }])
+
+    assert main(["node", "retry", path, "b"]) == exit_codes.OK
+    manifest = load_manifest(path)
+    assert manifest.nodes["b"].status == "todo"
+    assert manifest.nodes["b"].work_item_id == "stale-id"
+
+
 def test_accept_marks_done_and_updates_platform_status(tmp_path, capsys, monkeypatch):
     """人工接受已知风险后,节点视为 done,下次 dag run 可继续推进。"""
     import json

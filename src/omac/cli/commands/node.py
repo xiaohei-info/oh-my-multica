@@ -227,6 +227,20 @@ def _cmd_retry(args) -> int:
         node.worker = new_worker
         # 改派同步写 manifest;work_item_id 保留(转派发生在下次 dispatch)。
 
+    # 显式 retry 的 todo 意图必须同时写到平台。否则下一次 reconcile 会用旧的
+    # in_progress 覆盖 manifest todo，runtime.wake 随后只能 rerun 旧 assignee。
+    # 平台先写、本地后写：平台失败时不留下两边分叉的半完成 retry。
+    if node.work_item_id and engine is not None:
+        try:
+            engine.store.update_status(node.work_item_id, WorkItemStatus.TODO)
+        except RuntimeError as exc:
+            # mock 的跨进程恢复没有持久化 store；陈旧 work_item_id 与 reconcile
+            # 的“平台工单不存在”语义相同。retry 仍保留 ID 以兼容输出契约，
+            # 下一次 dag run 再由 reconcile 清空并重新建单。
+            message = str(exc).lower()
+            if "not found" not in message and "不存在" not in message:
+                raise
+
     # 重置为 todo;work_item_id 保留(同一 issue 续用)。
     node.status = "todo"
     save_manifest(manifest, args.manifest)
