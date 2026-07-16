@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="2000" viewBox="0 0 1600 2000" role="img" aria-labelledby="title desc">
+  <title id="title">oh-my-multica LINUX DO 开源推广卡</title>
+  <desc id="desc">介绍 oh-my-multica 如何在 Multica 之上提供动态规划、确定性执行和可验证交付。</desc>
+  <defs>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M40 0H0V40" fill="none" stroke="#2d2926" stroke-opacity="0.08" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <rect width="1600" height="2000" fill="#f2f2f2"/>
+  <rect width="1600" height="2000" fill="url(#grid)"/>
+
+  <text x="90" y="72" fill="#2d2926" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="20" font-weight="700">LAB NOTE · OSS-01 · 2026-07-16</text>
+  <text x="1510" y="72" fill="#2d2926" font-family="Arial, sans-serif" font-size="18" text-anchor="end">MIT · PYTHON · MULTICA</text>
+
+  <rect x="86" y="116" width="520" height="18" fill="#fff200" opacity="0.9" transform="rotate(-1 86 116)"/>
+  <text x="86" y="194" fill="#2d2926" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="76" font-weight="900">oh-my-multica</text>
+  <text x="90" y="248" fill="#2d2926" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="30" font-weight="700">把多 Coding Agent 从“并行写代码”推进到“完整交付”</text>
+
+  <rect x="86" y="304" width="1428" height="230" rx="12" fill="#b8d8be" stroke="#2d2926" stroke-width="3"/>
+  <text x="126" y="358" fill="#2d2926" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="22" font-weight="800">PROBLEM / 真正难的不是多开几个 Agent</text>
+  <text x="126" y="424" fill="#2d2926" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="42" font-weight="900">谁来判断整个软件变更真的完成了？</text>
+  <text x="126" y="474" fill="#2d2926" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="24">需求会漂移，任务会冲突，测试可能只是作者声明，长任务会超时。</text>
+  <text x="126" y="510" fill="#2d2926" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="24">更多 Agent 增加执行能力，却不会自动补齐设计、证据、评审、恢复和完成边界。</text>
+
+  <text x="86" y="604" fill="#2d2926" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="24" font-weight="800">OBSERVED BUILD RECORD / 真实 v1 基础建设记录</text>
+
+  <g font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif">
+    <rect x="86" y="638" width="332" height="224" rx="10" fill="#fff" stroke="#2d2926" stroke-width="2"/>
+    <rect x="104" y="658" width="120" height="14" fill="#fff200"/>
+    <text x="116" y="746" fill="#2d2926" font-size="62" font-weight="900">29 / 29</text>
+    <text x="116" y="800" fill="#2d2926" font-size="24" font-weight="700">工作项完成</text>
+    <text x="116" y="836" fill="#2d2926" font-size="18">7 个交付阶段</text>
+
+    <rect x="450" y="638" width="332" height="224" rx="10" fill="#b8d8be" stroke="#2d2926" stroke-width="2"/>
+    <text x="480" y="746" fill="#2d2926" font-size="68" font-weight="900">168</text>
+    <text x="480" y="800" fill="#2d2926" font-size="24" font-weight="700">次 Agent 执行</text>
+    <text x="480" y="836" fill="#2d2926" font-size="18">3 个开发 Runtime + 1 个 Reviewer</text>
+
+    <rect x="814" y="638" width="332" height="224" rx="10" fill="#fff" stroke="#e91e63" stroke-width="3"/>
+    <text x="844" y="746" fill="#e91e63" font-size="68" font-weight="900">15</text>
+    <text x="844" y="800" fill="#2d2926" font-size="24" font-weight="700">次执行失败</text>
+    <text x="844" y="836" fill="#2d2926" font-size="18">8 次明确重试，失败过程没有被剪掉</text>
+
+    <rect x="1178" y="638" width="336" height="224" rx="10" fill="#2d2926" stroke="#2d2926" stroke-width="2"/>
+    <text x="1208" y="746" fill="#fff200" font-size="68" font-weight="900">27</text>
+    <text x="1208" y="800" fill="#fff" font-size="24" font-weight="700">个关联 Pull Request</text>
+    <text x="1208" y="836" fill="#fff" font-size="18">26 个合并，1 个被后续实现替代</text>
+  </g>
+
+  <rect x="86" y="930" width="680" height="402" rx="12" fill="#fff" stroke="#2d2926" stroke-width="3"/>
+  <text x="124" y="980" fill="#2d2926" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="22" font-weight="800">FOUNDATION / MULTICA 已经提供</text>
+  <line x1="124" y1="1000" x2="728" y2="1000" stroke="#2d2926" stroke-width="2"/>
+  <g fill="#2d2926" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="29" font-weight="700">
+    <text x="128" y="1062">01 · Workspace 与 Project</text>
+    <text x="128" y="1122">02 · 工作项与任务队列</text>
+    <text x="128" y="1182">03 · 多台机器上的 Agent Runtime</text>
+    <text x="128" y="1242">04 · 分配、评论、执行记录与持久状态</text>
+  </g>
+  <rect x="124" y="1274" width="520" height="18" fill="#fff200" opacity="0.8"/>
+  <text x="128" y="1300" fill="#2d2926" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="18">Multica 管理 Agent 如何工作。</text>
+
+  <rect x="834" y="930" width="680" height="402" rx="12" fill="#b8d8be" stroke="#2d2926" stroke-width="3"/>
+  <text x="872" y="980" fill="#2d2926" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="22" font-weight="800">DELIVERY LAYER / oh-my-multica 增加</text>
+  <line x1="872" y1="1000" x2="1476" y2="1000" stroke="#2d2926" stroke-width="2"/>
+  <g fill="#2d2926" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="29" font-weight="700">
+    <text x="876" y="1062">01 · 设计、验收与项目规范</text>
+    <text x="876" y="1122">02 · Agent 动态规划交付 DAG</text>
+    <text x="876" y="1182">03 · 证据门、独立评审与有界返工</text>
+    <text x="876" y="1242">04 · CI、合并、恢复与最终验收</text>
+  </g>
+  <rect x="872" y="1274" width="570" height="18" fill="#e91e63" opacity="0.82"/>
+  <text x="876" y="1300" fill="#2d2926" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="18">oh-my-multica 管理软件如何交付。</text>
+
+  <rect x="86" y="1396" width="1428" height="236" rx="12" fill="#2d2926"/>
+  <text x="126" y="1450" fill="#fff200" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="22" font-weight="800">CORE MECHANISM / 核心机制</text>
+  <text x="126" y="1530" fill="#fff" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="52" font-weight="900">动态规划，确定性执行。</text>
+  <text x="126" y="1582" fill="#fff" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="24">Agent 负责理解需求、设计、拆解、编码、评审和验收；</text>
+  <text x="126" y="1618" fill="#fff" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="24">程序负责依赖、结果收集、证据校验、返工上界、恢复入口和停止条件。</text>
+
+  <rect x="86" y="1696" width="1428" height="188" rx="12" fill="#fff" stroke="#2d2926" stroke-width="3"/>
+  <text x="124" y="1746" fill="#2d2926" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="21" font-weight="800">TRY IT / 如何开始</text>
+  <text x="124" y="1808" fill="#2d2926" font-family="Arial, monospace" font-size="30" font-weight="700">pipx install oh-my-multica</text>
+  <text x="820" y="1808" fill="#2d2926" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="23">前置条件：Python 3.10+，已有 Git 仓库与可推送远程仓库</text>
+  <text x="124" y="1850" fill="#e91e63" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="20" font-weight="700">无需账号的本地 demo 会故意失败一次，再 retry 并收敛。</text>
+
+  <text x="86" y="1940" fill="#2d2926" font-family="Arial, monospace" font-size="22" font-weight="700">github.com/xiaohei-info/oh-my-multica</text>
+  <text x="1514" y="1940" fill="#2d2926" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="18" text-anchor="end">完整开源 · MIT · 感谢 LINUX DO 提供开源项目讨论与推广空间</text>
+  <text x="86" y="1974" fill="#2d2926" opacity="0.62" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="15">本图由 AI 协助整理与排版，按社区规则以截图形式发布；项目事实可在 GitHub 案例与 Pull Request 中核验。</text>
+</svg>
