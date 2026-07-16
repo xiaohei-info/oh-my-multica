@@ -59,6 +59,19 @@ def _latest_direct_run(runs: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
 class MulticaStore(WorkItemStore):
     """数据面:全部经 multica CLI。"""
 
+    def __init__(self, config: EngineConfig):
+        super().__init__(config)
+        self._pending_assignment_wakes: set[str] = set()
+
+    def _mark_assignment_wake_pending(self, item_id: str) -> None:
+        self._pending_assignment_wakes.add(item_id)
+
+    def _consume_assignment_wake_pending(self, item_id: str) -> bool:
+        if item_id not in self._pending_assignment_wakes:
+            return False
+        self._pending_assignment_wakes.remove(item_id)
+        return True
+
     # ==================== 内部工具 ====================
 
     def _run_multica(self, args: List[str], capture=True) -> Any:
@@ -769,6 +782,7 @@ class MulticaStore(WorkItemStore):
             self.update_work_item_metadata(item_id, worker=assignee)
         elif role == "reviewer":
             self.update_work_item_metadata(item_id, reviewer=assignee)
+        self._mark_assignment_wake_pending(item_id)
 
 
 class MulticaRuntime(AgentRuntime):
@@ -783,6 +797,8 @@ class MulticaRuntime(AgentRuntime):
         self._store = store
 
     def wake(self, item_id: str, agent: str, role: str) -> None:
+        if self._store._consume_assignment_wake_pending(item_id):
+            return None
         try:
             runs = self._store._run_multica(["issue", "runs", item_id, "--output", "json"])
         except PlatformError:

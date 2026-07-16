@@ -587,6 +587,50 @@ def test_multica_runtime_reruns_completed_direct_without_submit(monkeypatch):
     assert ["issue", "rerun", "issue-1", "--output", "json"] in calls
 
 
+def test_multica_runtime_does_not_rerun_fresh_failed_assignment(monkeypatch):
+    """assign 已触发的新 run 即使很快失败，紧随其后的 wake 也不能重复 rerun。"""
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    calls = []
+
+    monkeypatch.setattr(store, "_resolve_agent_id", lambda name: "agent-1")
+
+    def fake_run(args, capture=True):
+        calls.append(args)
+        if args[:2] == ["issue", "assign"]:
+            return {"id": "issue-1", "assignee_id": "agent-1"}
+        if args[:3] == ["issue", "metadata", "set"]:
+            return None
+        if args[:2] == ["issue", "get"]:
+            return {
+                "id": "issue-1",
+                "title": "t",
+                "description": "d",
+                "status": "in_review",
+                "metadata": {"dag_key": "node-a", "kind": "develop"},
+            }
+        if args[:2] == ["issue", "runs"]:
+            return [
+                {"id": "direct-2", "status": "failed", "kind": "direct",
+                 "created_at": "2026-07-16T16:20:58Z"},
+            ]
+        if args[:2] == ["issue", "rerun"]:
+            return {"id": "direct-3", "status": "queued"}
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+
+    from omac.engines.multica import MulticaRuntime
+    store.assign_work_item("issue-1", "alice", "reviewer")
+    runtime = MulticaRuntime(store)
+    runtime.wake("issue-1", "alice", "reviewer")
+
+    assert ["issue", "rerun", "issue-1", "--output", "json"] not in calls
+
+    runtime.wake("issue-1", "alice", "reviewer")
+
+    assert calls.count(["issue", "rerun", "issue-1", "--output", "json"]) == 1
+
+
 def test_multica_runtime_provisions_missing_skill_then_creates_agent(tmp_path, monkeypatch):
     from omac.agent_templates import SkillTemplate
     from omac.engines.models import AgentProvisionSpec
