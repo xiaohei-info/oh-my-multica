@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>oh-my-multica · Loop Engineering × Harness Engineering</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      min-height: 100vh;
+      padding: 32px;
+      color: #f8fafc;
+      background: #020617;
+      font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+    }
+    main { max-width: 1560px; margin: 0 auto; }
+    header { margin-bottom: 24px; }
+    .title-row { display: flex; align-items: center; gap: 12px; }
+    .pulse {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #22d3ee;
+      box-shadow: 0 0 18px rgba(34, 211, 238, 0.7);
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse { 50% { opacity: 0.45; transform: scale(0.85); } }
+    h1 { font-size: 24px; letter-spacing: -0.03em; }
+    header p { margin: 8px 0 0 24px; color: #94a3b8; font-size: 13px; }
+    .diagram {
+      padding: 18px;
+      overflow-x: auto;
+      border: 1px solid #1e293b;
+      border-radius: 16px;
+      background: rgba(15, 23, 42, 0.58);
+      box-shadow: 0 18px 50px rgba(0, 0, 0, 0.25);
+    }
+    svg { display: block; width: 100%; min-width: 1100px; height: auto; border-radius: 12px; }
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 20px;
+    }
+    .card { padding: 18px; border: 1px solid #1e293b; border-radius: 12px; background: rgba(15, 23, 42, 0.72); }
+    .card h2 { margin-bottom: 8px; font-size: 13px; }
+    .card p { color: #94a3b8; font-size: 11px; line-height: 1.7; }
+    .cyan { color: #22d3ee; }
+    .amber { color: #fbbf24; }
+    .emerald { color: #34d399; }
+    footer { margin-top: 22px; color: #475569; text-align: center; font-size: 11px; }
+    @media (max-width: 900px) {
+      body { padding: 16px; }
+      .cards { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="title-row">
+      <span class="pulse"></span>
+      <h1>oh-my-multica Delivery Control Architecture</h1>
+    </div>
+    <p>Agent-planned work, Harness-bounded execution, and Loop-controlled delivery.</p>
+  </header>
+
+  <section class="diagram">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 900" role="img" aria-labelledby="diagram-title diagram-desc" font-family="JetBrains Mono, SFMono-Regular, Consolas, monospace">
+      <title id="diagram-title">Loop Engineering and Harness Engineering in oh-my-multica</title>
+      <desc id="diagram-desc">A dashed two-axis Harness Engineering quadrant surrounds bounded Agent work. Computational and inferential guides constrain action, computational and inferential sensors evaluate results, and a deterministic Loop controls delivery state, recovery, completion, and human escalation.</desc>
+      <defs>
+        <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+          <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.6"/>
+        </pattern>
+        <marker id="arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#64748b"/>
+        </marker>
+        <marker id="arrow-amber" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#fbbf24"/>
+        </marker>
+        <marker id="arrow-orange" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#fb923c"/>
+        </marker>
+        <marker id="arrow-rose" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#fb7185"/>
+        </marker>
+      </defs>
+
+      <rect width="1500" height="900" fill="#020617"/>
+      <rect width="1500" height="900" fill="url(#grid)"/>
+
+      <text x="58" y="48" fill="#f8fafc" font-size="22" font-weight="700">Loop Engineering × Harness Engineering</text>
+      <text x="58" y="76" fill="#64748b" font-size="11">Agent-planned work · Harness-bounded execution · Loop-controlled delivery</text>
+
+      <rect x="50" y="110" width="850" height="720" rx="15" fill="rgba(15,23,42,0.42)" stroke="#334155" stroke-width="1.3"/>
+      <text x="70" y="138" fill="#94a3b8" font-size="11" font-weight="700">HARNESS ENGINEERING · EXECUTION &amp; QUALITY ENVELOPE</text>
+      <rect x="950" y="110" width="500" height="720" rx="15" fill="rgba(120,53,15,0.07)" stroke="#fbbf24" stroke-width="1.3"/>
+      <text x="975" y="138" fill="#fbbf24" font-size="11" font-weight="700">LOOP ENGINEERING · DETERMINISTIC DELIVERY CONTROLLER</text>
+
+      <line x1="475" y1="158" x2="475" y2="770" stroke="#475569" stroke-width="1.2" stroke-dasharray="7,6"/>
+      <line x1="90" y1="440" x2="860" y2="440" stroke="#475569" stroke-width="1.2" stroke-dasharray="7,6"/>
+      <text x="278" y="163" fill="#22d3ee" font-size="10" font-weight="700" text-anchor="middle">COMPUTATIONAL</text>
+      <text x="672" y="163" fill="#a78bfa" font-size="10" font-weight="700" text-anchor="middle">INFERENTIAL</text>
+      <text x="78" y="290" fill="#94a3b8" font-size="9" font-weight="700" text-anchor="middle" transform="rotate(-90 78 290)">GUIDE · BEFORE ACTION</text>
+      <text x="78" y="620" fill="#94a3b8" font-size="9" font-weight="700" text-anchor="middle" transform="rotate(-90 78 620)">SENSOR · AFTER ACTION</text>
+
+      <path d="M 350 385 L 395 410" fill="none" stroke="#22d3ee" stroke-width="1.7" marker-end="url(#arrow)"/>
+      <path d="M 600 385 L 555 410" fill="none" stroke="#a78bfa" stroke-width="1.7" marker-end="url(#arrow)"/>
+      <path d="M 405 485 L 350 510" fill="none" stroke="#fb923c" stroke-width="1.7" marker-end="url(#arrow)"/>
+      <path d="M 545 485 L 600 510" fill="none" stroke="#fb7185" stroke-width="1.7" marker-end="url(#arrow)"/>
+      <path d="M 950 220 L 915 220 L 915 440 L 620 440" fill="none" stroke="#fbbf24" stroke-width="1.9" marker-end="url(#arrow-amber)"/>
+      <text x="735" y="428" fill="#fbbf24" font-size="8">dispatch / bounded rework</text>
+      <path d="M 275 725 L 275 785 L 925 785 L 925 330 L 990 330" fill="none" stroke="#fb923c" stroke-width="1.7" marker-end="url(#arrow-orange)"/>
+      <path d="M 845 610 L 940 610 L 940 415 L 990 415" fill="none" stroke="#fb7185" stroke-width="1.7" marker-end="url(#arrow-rose)"/>
+
+      <path d="M 1200 265 L 1200 290" fill="none" stroke="#fbbf24" stroke-width="1.6" marker-end="url(#arrow-amber)"/>
+      <path d="M 1200 370 L 1200 395" fill="none" stroke="#fbbf24" stroke-width="1.6" marker-end="url(#arrow-amber)"/>
+      <path d="M 1200 475 L 1200 500" fill="none" stroke="#fbbf24" stroke-width="1.6" marker-end="url(#arrow-amber)"/>
+      <path d="M 1200 580 L 1200 605" fill="none" stroke="#fbbf24" stroke-width="1.6" marker-end="url(#arrow-amber)"/>
+      <path d="M 1395 642 L 1420 642 L 1420 222 L 1395 222" fill="none" stroke="#64748b" stroke-width="1.3" stroke-dasharray="6,5" marker-end="url(#arrow)"/>
+      <path d="M 1200 685 L 1200 715" fill="none" stroke="#fb7185" stroke-width="1.7" stroke-dasharray="5,4" marker-end="url(#arrow-rose)"/>
+
+      <rect x="105" y="180" width="340" height="205" rx="9" fill="#0f172a"/>
+      <rect x="105" y="180" width="340" height="205" rx="9" fill="rgba(8,51,68,0.55)" stroke="#22d3ee" stroke-width="1.6"/>
+      <text x="128" y="208" fill="#22d3ee" font-size="10" font-weight="700">COMPUTATIONAL GUIDE</text>
+      <text x="128" y="235" fill="#f8fafc" font-size="14" font-weight="700">Deterministic constraints</text>
+      <text x="128" y="269" fill="#cbd5e1" font-size="9">01  Plan validation</text>
+      <text x="143" y="286" fill="#94a3b8" font-size="8">schema + lint reject invalid DAGs</text>
+      <text x="128" y="311" fill="#cbd5e1" font-size="9">02  DAG scheduling</text>
+      <text x="143" y="328" fill="#94a3b8" font-size="8">dependencies bound parallel dispatch</text>
+      <text x="128" y="353" fill="#cbd5e1" font-size="9">03  Task contract · scope, authority, acceptance</text>
+      <text x="128" y="376" fill="#cbd5e1" font-size="9">04  Execution protocol · exact facts and commands</text>
+
+      <rect x="505" y="180" width="340" height="205" rx="9" fill="#0f172a"/>
+      <rect x="505" y="180" width="340" height="205" rx="9" fill="rgba(76,29,149,0.48)" stroke="#a78bfa" stroke-width="1.6"/>
+      <text x="528" y="208" fill="#a78bfa" font-size="10" font-weight="700">INFERENTIAL GUIDE</text>
+      <text x="528" y="235" fill="#f8fafc" font-size="14" font-weight="700">Semantic engineering context</text>
+      <text x="528" y="269" fill="#cbd5e1" font-size="9">01  Design</text>
+      <text x="543" y="286" fill="#94a3b8" font-size="8">architecture boundaries + source of truth</text>
+      <text x="528" y="311" fill="#cbd5e1" font-size="9">02  Acceptance · executable user flows</text>
+      <text x="528" y="336" fill="#cbd5e1" font-size="9">03  Repository rules · durable constraints</text>
+      <text x="528" y="361" fill="#cbd5e1" font-size="9">04  Role context · minimal guides, skills, references</text>
+
+      <rect x="330" y="395" width="290" height="90" rx="10" fill="#0f172a"/>
+      <rect x="330" y="395" width="290" height="90" rx="10" fill="rgba(6,78,59,0.58)" stroke="#34d399" stroke-width="1.8"/>
+      <text x="475" y="423" fill="#34d399" font-size="10" font-weight="700" text-anchor="middle">BOUNDED AGENT TASK</text>
+      <text x="475" y="450" fill="#f8fafc" font-size="14" font-weight="700" text-anchor="middle">Autonomous reasoning and execution</text>
+      <text x="475" y="472" fill="#94a3b8" font-size="8" text-anchor="middle">design · decompose · develop · review · accept</text>
+
+      <rect x="105" y="510" width="340" height="215" rx="9" fill="#0f172a"/>
+      <rect x="105" y="510" width="340" height="215" rx="9" fill="rgba(124,45,18,0.45)" stroke="#fb923c" stroke-width="1.6"/>
+      <text x="128" y="538" fill="#fb923c" font-size="10" font-weight="700">COMPUTATIONAL SENSOR</text>
+      <text x="128" y="565" fill="#f8fafc" font-size="14" font-weight="700">Reproducible delivery facts</text>
+      <text x="128" y="599" fill="#cbd5e1" font-size="9">01  Structured evidence</text>
+      <text x="143" y="616" fill="#94a3b8" font-size="8">commands, results, delivery references</text>
+      <text x="128" y="641" fill="#cbd5e1" font-size="9">02  Automated checks · lint, tests, CI</text>
+      <text x="128" y="666" fill="#cbd5e1" font-size="9">03  Integration state · PR, base branch, merge</text>
+      <text x="128" y="691" fill="#cbd5e1" font-size="9">04  Reconciliation · manifest, platform, Git</text>
+
+      <rect x="505" y="510" width="340" height="215" rx="9" fill="#0f172a"/>
+      <rect x="505" y="510" width="340" height="215" rx="9" fill="rgba(136,19,55,0.48)" stroke="#fb7185" stroke-width="1.6"/>
+      <text x="528" y="538" fill="#fb7185" font-size="10" font-weight="700">INFERENTIAL SENSOR</text>
+      <text x="528" y="565" fill="#f8fafc" font-size="14" font-weight="700">Independent quality judgment</text>
+      <text x="528" y="599" fill="#cbd5e1" font-size="9">01  Plan review · design, acceptance, DAG alignment</text>
+      <text x="528" y="624" fill="#cbd5e1" font-size="9">02  Reviewer · boundaries, risks, compatibility</text>
+      <text x="528" y="649" fill="#cbd5e1" font-size="9">03  Acceptor · final user-flow acceptance</text>
+      <text x="528" y="674" fill="#cbd5e1" font-size="9">04  Feedback verdict · pass, pass-with-nits, reject</text>
+
+      <rect x="990" y="185" width="410" height="80" rx="8" fill="#0f172a" stroke="#fbbf24" stroke-width="1.5"/>
+      <text x="1015" y="214" fill="#fbbf24" font-size="10" font-weight="700">01 · READ FACTS</text>
+      <text x="1015" y="240" fill="#94a3b8" font-size="9">reconcile · result collection</text>
+      <rect x="990" y="290" width="410" height="80" rx="8" fill="#0f172a" stroke="#fb923c" stroke-width="1.5"/>
+      <text x="1015" y="319" fill="#fb923c" font-size="10" font-weight="700">02 · APPLY GATES</text>
+      <text x="1015" y="345" fill="#94a3b8" font-size="9">evidence · CI · review · merge</text>
+      <rect x="990" y="395" width="410" height="80" rx="8" fill="#0f172a" stroke="#34d399" stroke-width="1.5"/>
+      <text x="1015" y="424" fill="#34d399" font-size="10" font-weight="700">03 · DECIDE &amp; DISPATCH</text>
+      <text x="1015" y="450" fill="#94a3b8" font-size="9">ready nodes · max_parallel · assign</text>
+      <rect x="990" y="500" width="410" height="80" rx="8" fill="#0f172a" stroke="#a78bfa" stroke-width="1.5"/>
+      <text x="1015" y="529" fill="#a78bfa" font-size="10" font-weight="700">04 · CONVERGE OR RECOVER</text>
+      <text x="1015" y="555" fill="#94a3b8" font-size="9">bounded rework · explicit recovery</text>
+      <rect x="990" y="605" width="410" height="80" rx="8" fill="#0f172a" stroke="#fb7185" stroke-width="1.5"/>
+      <text x="1015" y="634" fill="#fb7185" font-size="10" font-weight="700">05 · STOP CONDITION</text>
+      <text x="1015" y="660" fill="#94a3b8" font-size="9">exit 0 · exit 20 · final acceptance</text>
+
+      <rect x="1060" y="715" width="280" height="75" rx="8" fill="#0f172a" stroke="#94a3b8" stroke-width="1.4"/>
+      <text x="1200" y="744" fill="#f8fafc" font-size="11" font-weight="700" text-anchor="middle">HUMAN / CONTROLLER AGENT</text>
+      <text x="1200" y="768" fill="#94a3b8" font-size="8" text-anchor="middle">decides only when the Loop returns exit 20</text>
+
+      <circle cx="75" cy="870" r="5" fill="#22d3ee"/><text x="88" y="874" fill="#64748b" font-size="9">Guide</text>
+      <circle cx="155" cy="870" r="5" fill="#34d399"/><text x="168" y="874" fill="#64748b" font-size="9">Agent task</text>
+      <circle cx="270" cy="870" r="5" fill="#fb923c"/><text x="283" y="874" fill="#64748b" font-size="9">Sensor fact</text>
+      <circle cx="390" cy="870" r="5" fill="#fb7185"/><text x="403" y="874" fill="#64748b" font-size="9">Semantic verdict</text>
+      <circle cx="550" cy="870" r="5" fill="#fbbf24"/><text x="563" y="874" fill="#64748b" font-size="9">Deterministic Loop</text>
+    </svg>
+  </section>
+
+  <section class="cards">
+    <article class="card">
+      <h2 class="cyan">Harness Engineering</h2>
+      <p>Guides constrain every action before execution. Sensors turn results into reproducible facts and independent quality judgments.</p>
+    </article>
+    <article class="card">
+      <h2 class="amber">Loop Engineering</h2>
+      <p>The deterministic controller owns delivery state, gates, dispatch, bounded rework, recovery, and stop conditions.</p>
+    </article>
+    <article class="card">
+      <h2 class="emerald">Agent boundary</h2>
+      <p>Agents plan and execute dynamically inside explicit contracts. They cannot redefine evidence or declare the overall delivery complete.</p>
+    </article>
+  </section>
+
+  <footer>oh-my-multica · production software delivery control architecture</footer>
+</main>
+</body>
+</html>
