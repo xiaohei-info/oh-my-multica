@@ -777,12 +777,22 @@ class MulticaStore(WorkItemStore):
 
     def assign_work_item(self, item_id: str, assignee: str, role: str):
         agent_id = self._resolve_agent_id(assignee)
+        current = self._run_multica(["issue", "get", item_id, "--output", "json"])
+        current_assignee_id = (
+            str(current.get("assignee_id"))
+            if isinstance(current, dict) and current.get("assignee_id")
+            else None
+        )
         self._run_multica(["issue", "assign", item_id, "--to", agent_id])
         if role == "worker":
             self.update_work_item_metadata(item_id, worker=assignee)
         elif role == "reviewer":
             self.update_work_item_metadata(item_id, reviewer=assignee)
-        self._mark_assignment_wake_pending(item_id)
+        # 改派到不同 agent 时，Multica assignment 会创建 run，随后的 wake
+        # 只需确认，避免再 rerun 一次。同一 assignee 的 assign 是幂等更新，
+        # 不会创建 run；此时保留 wake 的终态检查，让它对旧 run 执行一次 rerun。
+        if current_assignee_id != agent_id:
+            self._mark_assignment_wake_pending(item_id)
 
 
 class MulticaRuntime(AgentRuntime):

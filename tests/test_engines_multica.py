@@ -603,6 +603,7 @@ def test_multica_runtime_does_not_rerun_fresh_failed_assignment(monkeypatch):
         if args[:2] == ["issue", "get"]:
             return {
                 "id": "issue-1",
+                "assignee_id": "agent-old",
                 "title": "t",
                 "description": "d",
                 "status": "in_review",
@@ -627,6 +628,51 @@ def test_multica_runtime_does_not_rerun_fresh_failed_assignment(monkeypatch):
     assert ["issue", "rerun", "issue-1", "--output", "json"] not in calls
 
     runtime.wake("issue-1", "alice", "reviewer")
+
+    assert calls.count(["issue", "rerun", "issue-1", "--output", "json"]) == 1
+
+
+def test_multica_runtime_reruns_completed_same_assignee_assignment(monkeypatch):
+    """同一 assignee 的 assign 不会启动新 run，wake 必须 rerun 已结束任务。"""
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    calls = []
+
+    monkeypatch.setattr(store, "_resolve_agent_id", lambda name: "agent-1")
+
+    def fake_run(args, capture=True):
+        calls.append(args)
+        if args[:2] == ["issue", "get"]:
+            return {
+                "id": "issue-1",
+                "assignee_id": "agent-1",
+                "title": "t",
+                "description": "d",
+                "status": "in_progress",
+                "metadata": {"dag_key": "node-a", "kind": "develop"},
+            }
+        if args[:2] == ["issue", "assign"]:
+            return {"id": "issue-1", "assignee_id": "agent-1"}
+        if args[:3] == ["issue", "metadata", "set"]:
+            return None
+        if args[:2] == ["issue", "runs"]:
+            return [
+                {
+                    "id": "direct-1",
+                    "status": "completed",
+                    "kind": "direct",
+                    "created_at": "2026-07-16T18:50:47Z",
+                },
+            ]
+        if args[:2] == ["issue", "rerun"]:
+            return {"id": "direct-2", "status": "queued"}
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+
+    from omac.engines.multica import MulticaRuntime
+
+    store.assign_work_item("issue-1", "alice", "worker")
+    MulticaRuntime(store).wake("issue-1", "alice", "worker")
 
     assert calls.count(["issue", "rerun", "issue-1", "--output", "json"]) == 1
 
