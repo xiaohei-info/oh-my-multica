@@ -645,6 +645,48 @@ class TestContractEvidence:
         assert result.state == "converged"
         assert "a" in result.done
 
+    def test_first_unreviewed_delivery_recovers_from_stale_blocked_manifest(self):
+        """首次 worker 合法补交时，旧 blocked manifest 也必须重新进入 reviewer gate。"""
+        nodes = [_node("a", reviewer="bob", contract=_contract())]
+        manifest = _manifest(nodes)
+        path = _tmp_manifest_path(manifest)
+        eng = _engine(MOCK_AUTO_COMPLETE="false")
+
+        item = eng.store.create_work_item(
+            "ws", "a", "d", dag_key="a", worker="alice", reviewer="bob",
+        )
+        eng.store.set_node_contract(item.id, _contract())
+        eng.store.update_work_item_metadata(
+            item.id,
+            artifacts={"pr_url": f"https://mock.example.com/pr/{item.id}"},
+            verification={
+                "commands": [{"cmd": "pytest -q", "exit_code": 0}],
+                "integration_gates": [{
+                    "name": "gate-1",
+                    "commands": [{"cmd": "pytest tests/int", "exit_code": 0}],
+                    "metrics": {"route_coverage": 100},
+                    "artifacts": ["coverage.xml"],
+                    "source_of_truth": ["docs/d.md"],
+                    "delivery_goal": "delivers",
+                }],
+                "env_setup": ["mock: integration env ready"],
+                "pr_base": "feature/v1",
+                "coverage": 90,
+            },
+        )
+        eng.store.update_status(item.id, WorkItemStatus.DONE)
+        manifest.nodes["a"].work_item_id = item.id
+        manifest.nodes["a"].status = "blocked"
+        save_manifest(manifest, path)
+
+        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+
+        got = eng.store.get_work_item(item.id)
+        assert result.state == "running"
+        assert manifest.nodes["a"].status == "in_review"
+        assert got.status == WorkItemStatus.IN_REVIEW
+        assert got.phase == TaskPhase.REVIEW
+
 
 # ==================== 8. 证据门回归测试(reviewer 要求) ====================
 
