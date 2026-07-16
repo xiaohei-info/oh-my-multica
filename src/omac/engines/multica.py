@@ -711,6 +711,8 @@ class MulticaStore(WorkItemStore):
         status: Optional[WorkItemStatus] = None,
     ) -> List[WorkItem]:
         extra_args: List[str] = []
+        if self.config.project_id:
+            extra_args += ["--project", self.config.project_id]
         if status is not None:
             extra_args += ["--status", self._status_to_multica(status)]
         issues = self._list_issues_paginated(extra_args)

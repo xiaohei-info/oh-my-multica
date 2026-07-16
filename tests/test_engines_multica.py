@@ -46,6 +46,25 @@ def test_multica_payload_upload_allows_process_owned_external_files(monkeypatch)
     assert "--allow-external-file" in calls[0]
 
 
+def test_multica_list_work_items_is_scoped_to_configured_project(monkeypatch):
+    store = MulticaStore(EngineConfig(
+        engine_type="multica",
+        workspace_id="ws",
+        project_id="project-1",
+    ))
+    calls = []
+
+    def run(args, capture=True):
+        calls.append(args)
+        return []
+
+    monkeypatch.setattr(store, "_run_multica", run)
+
+    assert store.list_work_items("ws") == []
+    assert "--project" in calls[0]
+    assert calls[0][calls[0].index("--project") + 1] == "project-1"
+
+
 def test_multica_empty_review_verdict_is_read_as_missing():
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
 
