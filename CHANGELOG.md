@@ -8,6 +8,29 @@ All notable changes to **omac** are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.0.0] — 2026-07-16
+
+First public release of oh-my-multica: a software delivery control layer built
+on Multica for turning a requirement into a designed, implemented, verified,
+reviewed, merged, and finally accepted software change.
+
+### Highlights
+
+- Agent-authored design, acceptance criteria, project rules, and dynamic
+  manifest DAGs instead of a fixed task template.
+- Deterministic Loop control for dependency scheduling, result collection,
+  bounded rework, recovery, merge, and completion decisions.
+- Structured verification evidence, independent review, CI gates, and final
+  flow-based acceptance.
+- Parallel execution through Multica workspaces and Coding Agent runtimes,
+  with persistent state that survives process and context interruptions.
+- Human and Controller Agent entry points backed by the same CLI protocol,
+  facts, exit-code contract, and recovery guidance.
+- English-first CLI and Guides with project-local Chinese support, plus aligned
+  English and Simplified Chinese READMEs.
+- Built-in Agent Team templates for planning, orchestration, implementation,
+  review, and acceptance roles.
+
 ### Added
 
 - Project-local language configuration. `omac init` selects `en` or `cn` and
@@ -23,19 +46,10 @@ All notable changes to **omac** are documented here. The format follows
   Instructions, uploads missing Skills, and binds them to a new agent; existing
   agents are unchanged and all created agents enter the same role-mapping pool.
 - Planner-authored plans now require a second reviewed `project-rules` artifact.
-  OMAC persists it through the engine, updates only its managed section in the
-  repository-root `AGENTS.md`, and commits it with the manifest and acceptance
-  outputs. `--doc` continues to skip planner authoring and this update.
-
-## [1.0.0] — 2026-07-05
-
-First stable release. OMAC moved from a single agent carrying a long context to
-a convergent workflow built from contracts, a manifest DAG, parallel agents,
-structured evidence, and independent acceptance. The deterministic CLI owns the
-orchestration loop; LLM work is reserved for planning, decomposition,
-development, review, and acceptance.
-
-### Added
+  oh-my-multica persists it through the engine, updates only its managed section
+  in the repository-root `AGENTS.md`, and commits it with the manifest and
+  acceptance outputs. `--doc` continues to skip planner authoring and this
+  update.
 
 - **Delivery-level end-to-end closure (§7.6 / §10.3):** `plan create` outputs a
   manifest and acceptance document; `dag run` exercises mock CI and merge;

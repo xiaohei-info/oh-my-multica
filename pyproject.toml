@@ -1,14 +1,38 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "omac"
+name = "oh-my-multica"
 version = "1.0.0"
-description = "oh-my-multica: 确定性 CLI 驱动的多 Agent 并行开发编排(Loop 驱动 Agent)"
-readme = "README.md"
-license = { text = "MIT" }
+description = "Production-grade software delivery control for coding-agent teams on Multica"
+readme = { file = "README.md", content-type = "text/markdown" }
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "oh-my-multica contributors" }]
 requires-python = ">=3.10"
+keywords = [
+    "ai-agents",
+    "coding-agents",
+    "harness-engineering",
+    "loop-engineering",
+    "multi-agent",
+    "multica",
+    "software-delivery",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development",
+    "Topic :: Software Development :: Build Tools",
+]
 dependencies = [
     "PyYAML>=6.0",
     "structlog>=24",
@@ -16,6 +40,10 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/xiaohei-info/oh-my-multica"
+Documentation = "https://github.com/xiaohei-info/oh-my-multica#readme"
+Source = "https://github.com/xiaohei-info/oh-my-multica"
+Issues = "https://github.com/xiaohei-info/oh-my-multica/issues"
+Changelog = "https://github.com/xiaohei-info/oh-my-multica/blob/main/CHANGELOG.md"
 
 [project.scripts]
 omac = "omac.cli.main:main"

@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and support
+    url: https://github.com/xiaohei-info/oh-my-multica/discussions/categories/q-a
+    about: Ask how to install, configure, recover, or use oh-my-multica.
+  - name: Share a delivery
+    url: https://github.com/xiaohei-info/oh-my-multica/discussions/categories/show-and-tell
+    about: Show what your Agent Team delivered and what you learned.
+  - name: Security vulnerability
+    url: https://github.com/xiaohei-info/oh-my-multica/security/advisories/new
+    about: Report security issues privately. Do not create a public Issue.

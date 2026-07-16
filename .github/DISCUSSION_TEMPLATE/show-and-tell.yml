@@ -1,0 +1,45 @@
+title: "[Delivery]: "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: Share what your Agent Team delivered with oh-my-multica. Publish only sanitized information that you are allowed to disclose.
+  - type: input
+    id: project
+    attributes:
+      label: Project or delivery
+      description: A short public name or description.
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal and scope
+      description: What production result did you ask the system to deliver?
+    validations:
+      required: true
+  - type: textarea
+    id: team
+    attributes:
+      label: Agent Team and environment
+      description: Which roles, model tiers, runtimes, and machine count did you use?
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Result and evidence
+      description: What converged, which checks passed, and what can others inspect?
+    validations:
+      required: true
+  - type: textarea
+    id: recovery
+    attributes:
+      label: Failures and recovery
+      description: What failed or needed rework, and how did the Loop handle it?
+  - type: textarea
+    id: lessons
+    attributes:
+      label: Lessons for other users
+    validations:
+      required: true

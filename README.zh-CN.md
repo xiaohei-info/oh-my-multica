@@ -116,12 +116,13 @@ oh-my-multica 不适合一次性的代码片段生成，也不会替代业务决
 - 使用 Multica engine 时，[安装 Multica CLI](https://github.com/multica-ai/multica/blob/main/CLI_INSTALL.md) 并完成 `multica login`将电脑/机器上的 Codex、Claude Code 等 Runtime 接入 Multica。
 
 ```bash
-git clone https://github.com/xiaohei-info/oh-my-multica.git
-cd oh-my-multica
-pipx install .
+pipx install oh-my-multica
 
 omac --version
 ```
+
+如需安装尚未发布的最新源码版本，可使用
+`pipx install git+https://github.com/xiaohei-info/oh-my-multica.git`。
 
 接入 Multica 的机器越多、你能够获得的 Agent 执行并行度就越大，装了 Coding Agent Runtime 的机器是这套机制最底层的任务执行地点。
 
@@ -317,8 +318,10 @@ oh-my-multica 提供的保证更务实：这些关键条件会成为流程中的
 
 ## 参与贡献
 
-欢迎通过 issue 讨论问题和设计，通过 Pull Request 提交改进。涉及行为变化的提交需要同时提供
-回归测试，并保持退出码、术语、engine 接口和 Web 数据边界向后兼容。提交前请运行完整测试。
+使用 [GitHub Discussions](https://github.com/xiaohei-info/oh-my-multica/discussions) 提问、交流想法和分享
+交付案例；使用 Issue 报告可复现缺陷或提出边界清晰的功能需求。开发与验证要求见
+[CONTRIBUTING.md](CONTRIBUTING.md)，获取帮助见 [SUPPORT.md](SUPPORT.md)，社区行为规范见
+[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)，私密安全问题报告方式见 [SECURITY.md](SECURITY.md)。
 
 ## License
 

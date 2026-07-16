@@ -1,0 +1,41 @@
+name: Feature request
+description: Propose a focused improvement grounded in a real delivery problem.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Delivery problem
+      description: What real workflow is difficult today, and who encounters it?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe the observable result rather than a preferred implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: current
+    attributes:
+      label: Current workaround
+      description: How do you handle this today?
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility considerations
+      description: Note affected CLI, JSON, exit-code, manifest, engine, or workflow contracts.
+  - type: dropdown
+    id: willingness
+    attributes:
+      label: Would you help validate it?
+      options:
+        - Yes, I can test a proposed change
+        - Yes, I can provide a sanitized example
+        - Not currently
+    validations:
+      required: true

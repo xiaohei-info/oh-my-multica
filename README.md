@@ -133,12 +133,13 @@ Prerequisites:
 - For the Multica engine, [install the Multica CLI](https://github.com/multica-ai/multica/blob/main/CLI_INSTALL.md), complete `multica login`, and connect Codex, Claude Code, or other Runtimes on the machine to Multica.
 
 ```bash
-git clone https://github.com/xiaohei-info/oh-my-multica.git
-cd oh-my-multica
-pipx install .
+pipx install oh-my-multica
 
 omac --version
 ```
+
+To install the latest source revision instead of a released package, use
+`pipx install git+https://github.com/xiaohei-info/oh-my-multica.git`.
 
 The more machines connected to Multica, the greater the Agent execution concurrency available. Machines with a
 Coding Agent Runtime installed are the actual task execution layer at the bottom of this system.
@@ -355,9 +356,11 @@ checkpoints in the process instead of remaining hidden in Human memory or chat h
 
 ## Contributing
 
-Issues are welcome for discussing problems and designs, and Pull Requests are welcome for improvements. Changes
-that affect behavior must include regression tests and preserve backward compatibility for exit codes,
-terminology, engine interfaces, and Web data boundaries. Run the full test suite before submitting.
+Use [GitHub Discussions](https://github.com/xiaohei-info/oh-my-multica/discussions) for questions, ideas, and
+delivery stories. Use Issues for reproducible defects and focused feature requests. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for development and verification rules, [SUPPORT.md](SUPPORT.md) for help,
+[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community expectations, and [SECURITY.md](SECURITY.md) for private
+vulnerability reporting.
 
 ## License
 
