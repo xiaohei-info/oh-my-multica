@@ -1,0 +1,100 @@
+meta:
+  workspace_id: mock-workspace
+  title: "Production delivery loop demo"
+  description: "A small dependency graph with parallel work, review, and integration."
+
+nodes:
+  - id: foundation
+    title: "Define shared contracts"
+    description: "Establish the common API and evidence boundary."
+    worker: alice
+    blocked_by: []
+    contract:
+      objective: "Define the shared contract used by parallel implementation tracks."
+      acceptance: ["contract is explicit", "verification is reproducible"]
+      non_goals: ["do not implement product features"]
+      verification_commands: ["python -m pytest tests/contracts -q"]
+      integration_gates:
+        - name: "contract-gate"
+          layer: "foundation"
+          delivery_goal: "parallel tracks share one contract"
+          source_of_truth: ["docs/contracts.md"]
+          covers: ["contract"]
+          acceptance_refs: ["contract is explicit"]
+          commands: ["python -m pytest tests/contracts -q"]
+          required_metrics: {"contract_coverage": 100}
+          artifacts: ["contract-report.json"]
+      pr_base: "feature/delivery-demo"
+      coverage_gate: 90
+
+  - id: api
+    title: "Implement API track"
+    description: "Build one track against the shared contract."
+    worker: alice
+    reviewer: charlie
+    blocked_by: [foundation]
+    contract:
+      objective: "Deliver the API behavior defined by the shared contract."
+      acceptance: ["API tests pass", "review evidence is complete"]
+      non_goals: ["do not change the web track"]
+      verification_commands: ["python -m pytest tests/api -q"]
+      integration_gates:
+        - name: "api-gate"
+          layer: "service"
+          delivery_goal: "API behavior is ready for integration"
+          source_of_truth: ["docs/contracts.md"]
+          covers: ["api"]
+          acceptance_refs: ["API tests pass"]
+          commands: ["python -m pytest tests/api -q"]
+          required_metrics: {"route_coverage": 100}
+          artifacts: ["api-report.json"]
+      pr_base: "feature/delivery-demo"
+      coverage_gate: 90
+
+  - id: web
+    title: "Implement web track"
+    description: "Build a second track in parallel with the API."
+    worker: bob
+    reviewer: charlie
+    blocked_by: [foundation]
+    contract:
+      objective: "Deliver the web behavior defined by the shared contract."
+      acceptance: ["web tests pass", "review evidence is complete"]
+      non_goals: ["do not change the API track"]
+      verification_commands: ["python -m pytest tests/web -q"]
+      integration_gates:
+        - name: "web-gate"
+          layer: "interface"
+          delivery_goal: "web behavior is ready for integration"
+          source_of_truth: ["docs/contracts.md"]
+          covers: ["web"]
+          acceptance_refs: ["web tests pass"]
+          commands: ["python -m pytest tests/web -q"]
+          required_metrics: {"flow_coverage": 100}
+          artifacts: ["web-report.json"]
+      pr_base: "feature/delivery-demo"
+      coverage_gate: 90
+
+  - id: integration
+    title: "Integrate and verify"
+    description: "Join both tracks and verify the complete flow."
+    worker: alice
+    reviewer: charlie
+    blocked_by: [api, web]
+    contract:
+      objective: "Prove the API and web tracks work together."
+      acceptance: ["integration flow passes", "independent review passes"]
+      non_goals: ["do not add unrelated features"]
+      verification_commands: ["python -m pytest tests/integration -q"]
+      integration_gates:
+        - name: "integration-gate"
+          layer: "system"
+          delivery_goal: "the complete delivery flow is verified"
+          source_of_truth: ["docs/acceptance.md"]
+          covers: ["api", "web", "integration"]
+          acceptance_refs: ["integration flow passes"]
+          commands: ["python -m pytest tests/integration -q"]
+          required_metrics: {"flow_coverage": 100}
+          artifacts: ["integration-report.json"]
+      pr_base: "feature/delivery-demo"
+      coverage_gate: 90

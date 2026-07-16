@@ -1,0 +1,42 @@
+{
+  "case": "oh-my-multica v1 foundation on Multica",
+  "collected_at": "2026-07-16",
+  "execution_window": {
+    "first_agent_run": "2026-07-04T06:03:58Z",
+    "last_agent_completion": "2026-07-09T02:45:32Z",
+    "elapsed": "4 days 20:41:34"
+  },
+  "work_items": {
+    "total": 29,
+    "done": 29,
+    "delivery_stages": 7
+  },
+  "pull_requests": {
+    "linked": 27,
+    "merged": 26,
+    "closed_as_superseded": 1
+  },
+  "agent_team": {
+    "development_runtimes": 3,
+    "independent_reviewer_runtimes": 1
+  },
+  "agent_runs": {
+    "total": 168,
+    "completed": 132,
+    "failed": 15,
+    "cancelled": 21,
+    "retry_attempts": 8,
+    "issues_with_recorded_errors": 11
+  },
+  "token_accounting": {
+    "input_tokens": 89014482,
+    "output_tokens": 7209811,
+    "cache_read_tokens": 727323406,
+    "note": "Raw provider accounting is included for scale, not as a cost or efficiency benchmark."
+  },
+  "evidence": {
+    "public": "GitHub Pull Requests in xiaohei-info/oh-my-multica",
+    "private_sanitized_source": "Multica project, work-item, run, and usage exports",
+    "privacy": "User emails, machine paths, workspace IDs, Agent IDs, and credentials were excluded."
+  }
+}
