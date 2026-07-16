@@ -1016,6 +1016,12 @@ class TestSubmitPerKindPhase:
             "mock-workspace", "t", "d", dag_key="a", worker="alice",
             kind=dispatch_mod.TaskKind.ACCEPTANCE,
         )
+        eng.store.update_work_item_metadata(
+            item.id,
+            review_verdict="reject",
+            review_comment="stale blocker",
+            decision_required={"decision": "revise"},
+        )
         afile = tmp_path / "acceptance.yaml"
         afile.write_text(yaml.safe_dump({
             "flows": [{"id": "login", "name": "登录", "actions": [
@@ -1029,6 +1035,9 @@ class TestSubmitPerKindPhase:
         assert result.next_phase == TaskPhase.REVIEW
         assert "flows" in got.deliverable
         assert got.status == WorkItemStatus.IN_REVIEW
+        assert not got.review_verdict
+        assert not got.review_comment
+        assert got.decision_required == {}
 
     def test_acceptance_authoring_schema_rejected(self, tmp_path):
         eng = _engine()

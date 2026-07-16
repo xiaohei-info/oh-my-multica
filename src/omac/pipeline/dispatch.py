@@ -752,6 +752,17 @@ def submit(
 
     pool = set(agent_pool) if agent_pool is not None else set()
 
+    def advance_authoring_to_review(**metadata: Any) -> None:
+        store.update_work_item_metadata(
+            issue_id,
+            review_verdict="",
+            review_comment="",
+            decision_required={},
+            phase=TaskPhase.REVIEW,
+            **metadata,
+        )
+        store.update_status(issue_id, WorkItemStatus.IN_REVIEW)
+
     # ---------- develop × authoring ----------
     if kind == TaskKind.DEVELOP and phase == TaskPhase.AUTHORING:
         verification = _validate_develop_authoring(pr_url, verification_file, item)
@@ -791,13 +802,10 @@ def submit(
     if kind == TaskKind.PLAN and phase == TaskPhase.AUTHORING:
         content, project_rules = _validate_plan_authoring(
             plan_file, project_rules_file)
-        store.update_work_item_metadata(
-            issue_id,
+        advance_authoring_to_review(
             deliverable=content,
             project_rules=project_rules,
-            phase=TaskPhase.REVIEW,
         )
-        store.update_status(issue_id, WorkItemStatus.IN_REVIEW)
         return SubmitResult(
             kind, phase, "plan", WorkItemStatus.IN_REVIEW,
             next_phase=TaskPhase.REVIEW,
@@ -811,10 +819,7 @@ def submit(
     # ---------- acceptance × authoring ----------
     if kind == TaskKind.ACCEPTANCE and phase == TaskPhase.AUTHORING:
         content = _validate_acceptance_authoring(acceptance_file)
-        store.update_work_item_metadata(
-            issue_id, deliverable=content, phase=TaskPhase.REVIEW,
-        )
-        store.update_status(issue_id, WorkItemStatus.IN_REVIEW)
+        advance_authoring_to_review(deliverable=content)
         return SubmitResult(
             kind, phase, "acceptance", WorkItemStatus.IN_REVIEW,
             next_phase=TaskPhase.REVIEW,
@@ -828,10 +833,7 @@ def submit(
     if kind == TaskKind.DECOMPOSE and phase == TaskPhase.AUTHORING:
         content = _validate_decompose_authoring(
             manifest_file, pool, base_manifest=base_manifest)
-        store.update_work_item_metadata(
-            issue_id, deliverable=content, phase=TaskPhase.REVIEW,
-        )
-        store.update_status(issue_id, WorkItemStatus.IN_REVIEW)
+        advance_authoring_to_review(deliverable=content)
         return SubmitResult(
             kind, phase, "manifest", WorkItemStatus.IN_REVIEW,
             next_phase=TaskPhase.REVIEW,
