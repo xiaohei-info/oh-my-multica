@@ -2,256 +2,363 @@
 
 [![CI](https://github.com/xiaohei-info/oh-my-multica/actions/workflows/ci.yml/badge.svg)](https://github.com/xiaohei-info/oh-my-multica/actions/workflows/ci.yml)
 [![Version](https://img.shields.io/badge/version-1.0.0-blue)](https://github.com/xiaohei-info/oh-my-multica)
-
-**Deterministic orchestration for multi-agent software delivery.**
-
-`oh-my-multica`—the CLI and Python package are named `omac`—turns a software
-change into a contract-backed manifest DAG. Agents plan, build, review, and
-accept work in parallel; OMAC owns the deterministic loop, evidence checks, and
-state transitions.
+[![License](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-## What OMAC does
+**A production-grade AI software delivery system built on [Multica](https://github.com/multica-ai/multica).**
 
-Long-running agent work usually fails at the seams: requirements drift, task
-state is inferred from chat, a reviewer trusts an author's summary, or a loop
-stops without anyone noticing. OMAC makes those seams explicit.
+[Multica](https://github.com/multica-ai/multica) brings Coding Agents such as Claude Code and Codex into
+unified workspaces, issues, task queues, and local runtimes. Agents can receive work, report progress and
+blockers, and operate like team members, while teams centrally manage execution machines and reusable Skills.
+It provides the foundation for task assignment, lifecycle management, runtime scheduling, and state tracking
+in multi-Agent collaboration.
 
-- A planner-authored plan becomes a reviewed design, repository-wide project
-  rules in `AGENTS.md`, an acceptance document, and a manifest DAG.
-- Each DAG node has one owner, one reviewer, a bounded contract, verification
-  commands, and an integration gate.
-- `omac dag run` advances the graph in the foreground until it converges or
-  returns exit 20 with a structured decision report.
-- Workers submit evidence; reviewers reproduce independently; final acceptance
-  records one pass/fail result for every acceptance flow.
-- State lives in the manifest and work platform, so a rerun resumes instead of
-  starting over.
+Multica focuses primarily on Agent execution and collaboration, but it does not define a complete engineering
+delivery process for a software project: how a requirement enters design, how executable acceptance criteria are
+formed, how multiple development tasks run in parallel according to dependencies, what evidence proves an
+implementation is correct, who performs independent review, when a change may be merged, or how failures recover.
 
-OMAC is intentionally not a prompt that asks an LLM to supervise other LLMs.
-The CLI drives the loop; planner, orchestrator, worker, reviewer, and acceptor
-are finite jobs dispatched by that loop.
+oh-my-multica builds on Multica's excellent mechanism design and adds a more complete software engineering
+delivery control layer. It advances a requirement into a software change that has passed design, development,
+verification, review, merge, and final acceptance.
 
-## Who uses which interface?
+**Multica is a complete Agent Runtime task platform that manages how Agents work, while oh-my-multica manages
+how software is delivered on top of it.**
 
-| Interface | Primary user | Contract |
-|---|---|---|
-| Platform issue | Human | The issue has one agent bootstrap command: `omac work show <id> --output json`. |
-| `omac work show` / `omac work submit` | Agent | Both default to JSON. Read current facts from `show`, then use the exact returned `submit` command. |
-| `omac guide ...` | Agent | Static knowledge only. Load the minimal topics listed in `guide_refs`; instance facts win on conflict. |
-| `omac dag ...`, `omac node ...`, `omac web` | Operator | Inspect progress, operate the deterministic loop, and make explicit exit-20 decisions. |
+## Why oh-my-multica
 
-```bash
-# Agent bootstrap: JSON is the default
-omac work show "$ISSUE_ID"
+Coding Agents are already good at writing code. The hard problems usually appear outside the code: requirements
+drift during long conversations, multiple Agents change conflicting areas, test results exist only in a written
+claim, reviewers trust an author's summary, or a loop that has run for hours silently stops without leaving
+recoverable state.
 
-# Human-readable task view
-omac work show "$ISSUE_ID" --output table
+Adding more Agents does not automatically solve these problems. It can make the system more complex and harder
+to control.
+
+The core problem oh-my-multica solves is: **how can multiple Coding Agents, with as little human intervention as
+possible, fully design, implement, and deliver a requirement as a production-grade software system—not stop at
+code generation, a prototype, or a Demo while confidently claiming every feature is complete and ready to ship?**
+
+> **oh-my-multica lowers the organizational barrier to production-grade complex software delivery.** Once the
+> goal and acceptance criteria are clear, design, decomposition, development, verification, review, and acceptance
+> can be delegated to a scalable Agent Team. The main resources that determine throughput become machine count,
+> which controls Agent development concurrency, and Token budget, which controls how much reasoning,
+> implementation, retesting, and rework can be invested.
+
+## What oh-my-multica adds on top of Multica
+
+| Mechanism | How oh-my-multica implements it | Problem solved |
+| --- | --- | --- |
+| Deterministic control flow | The delivery loop owns control; planning, development, review, and acceptance Agents are finite task executors | Prevents a supervising Agent from drifting, forgetting, or stopping early |
+| Planning pipeline | Agents dynamically produce design → acceptance document → manifest DAG, with machine gates and review gates between stages | Keeps requirements, design, decomposition, and implementation aligned |
+| Verifiable DAG | Agents dynamically plan nodes and parallel paths; every node declares dependencies, owner, reviewer, acceptance, verification commands, and integration gates | Makes parallelism depend on explicit boundaries instead of luck |
+| Independent quality judgment | Workers cannot approve their own work; Reviewers reproduce independently, and the Acceptor runs final flow-based acceptance | Prevents author claims from being treated as facts |
+| Structured evidence | Verification, review reports, and acceptance results have schemas and submission gates | Makes every “pass” machine-checkable and traceable |
+| Delivery closure | Configurable CI, Pull Request merge, and controller-level acceptance; failures return to bounded rework | Prevents “code written” from being mistaken for “delivered” |
+| Persistence and recovery | State is stored in the manifest and platform; reruns begin with reconciliation; unresolved failures return exit 20 | Resumes after interruption instead of starting from another prompt |
+
+### How it differs from multi-Agent collaborative development products
+
+| Solution | Collaboration model | Primary problem solved | Best fit |
+| --- | --- | --- | --- |
+| [Codex App](https://openai.com/index/introducing-the-codex-app/) / [Claude Code Agent Teams](https://code.claude.com/docs/en/agent-teams) | A Human or lead Agent decomposes work, coordinates multiple sessions, threads, or worktrees, and continuously decides what happens next | Parallel development, context isolation, and interactive task division | Work is already well decomposed and a developer is willing to supervise, coordinate, and integrate continuously |
+| [Claude Code Dynamic Workflows](https://code.claude.com/docs/en/workflows) | Claude dynamically generates a replayable orchestration script for the current task; the runtime executes its loops, branches, and parallel subagents | Orchestrates large audits, migrations, research, and repeated verification as one executable multi-Agent workflow | A single task needs tens or hundreds of Agents, or the same orchestration needs to be saved and reused |
+| [Factory Missions](https://docs.factory.ai/features/missions/overview) | A Droid and user jointly plan features, milestones, and success criteria; the Agent Orchestrator owns the Mission loop and dynamically schedules, replans, and recovers | Lets Agents autonomously advance large, multi-feature, long-running development Missions | Repositories with strong Agent Readiness and scriptable user QA, where a Human is willing to supervise the Agent Orchestrator like a project manager |
+| [OpenAI Symphony](https://openai.com/index/open-source-codex-orchestration-symphony/) | An issue tracker stores task state; a background service creates an isolated workspace for each issue and continuously schedules or restarts Coding Agents | Removes the burden of manually maintaining many Coding Agent sessions | Teams with a mature backlog, automated tests, and repository Harness that continuously deliver through issues |
+| [MetaGPT](https://github.com/FoundationAgents/MetaGPT) | LLM roles such as product manager, architect, project manager, and engineer exchange software artifacts through an SOP | Turns natural-language requirements into user stories, designs, APIs, documentation, and code repositories | Greenfield generation, multi-Agent workflow research, and projects willing to supply the rest of the delivery chain |
+| **oh-my-multica** | **Planner and Orchestrator Agents dynamically plan the delivery path and generate a contract-driven manifest DAG; a deterministic Loop dispatches by dependency, collects evidence, applies quality gates, and advances through final acceptance** | **Combines dynamic planning with deterministic progression and convergence; safely expands development concurrency with cost-efficient Agents without delegating project-completion judgment to a supervising Agent** | **Complex features, multi-module systems, or production-grade software services that need parallel delivery with limited human intervention** |
+
+The most important difference from other multi-Agent collaboration products is not whether planning, parallel
+development, or automated verification exists. It is **who owns the complete execution loop**. Factory Missions
+also has structured plans, Validator Workers, and retry bounds, but next-step scheduling, replanning, and exception
+recovery are primarily decided by an Agent Orchestrator. Humans observe, pause, and correct the Mission through
+conversation. This gives Missions strong situational adaptability, but it also makes loop outcomes more dependent
+on the Orchestrator's current context, reasoning quality, and Human supervision.
+
+oh-my-multica keeps model uncertainty and freedom where reasoning is actually required: Agents understand
+requirements, design solutions, define acceptance, plan the DAG, and execute nodes. Once planning artifacts pass
+schema validation, lint, and independent review, deterministic software takes ownership of the loop. Node
+dependencies, runtime state, evidence gates, rework limits, merge conditions, recovery entry points, and stop
+conditions are not improvised by a supervising Agent.
+
+As a result, oh-my-multica retains autonomous Agent planning and execution while providing stronger and more
+stable control flow and mechanism guarantees, with lower Token overhead and higher efficiency per Token.
+
+**Dynamic planning, deterministic execution.** The Planner first produces a design and acceptance definition for
+the current project. The Orchestrator then plans the Wave 0 foundation, Wave 1 parallel tracks, and Wave 2
+integration and acceptance around real architecture boundaries. Every node declares its contract, dependencies,
+Worker, Reviewer, verification commands, and integration gates:
+
+```text
+Requirement → Agent-authored design / acceptance / DAG → schema + lint + review → deterministic Loop → development / review / merge / final acceptance
 ```
 
-## Prerequisites
+This division of responsibilities resembles Claude Code Dynamic Workflows: an Agent plans an orchestration for
+the current task, then a runtime executes a deterministic process. The difference is that Claude Code Workflow
+produces an executable orchestration script for a particular task, while oh-my-multica produces a versioned DAG
+for production software delivery. The DAG defines not only “what runs next,” but also what each delivery node may
+do, how it is verified, who reviews it, and what evidence is sufficient to continue.
 
-Every machine that runs OMAC needs:
+Within this structure, high-capability models can focus on design, planning, and quality judgment. Cost-efficient
+models can handle the largest number of development and testing nodes and consume most of the Tokens. Harness
+Engineering provides constraints before action and feedback after action; results that fail their contract,
+verification, review, or final acceptance return to rework and cannot enter the delivery chain.
+
+## Who it is for
+
+- Developers who already use AI Coding heavily and want to move from supervising every conversation to managing goals, constraints, and outcomes.
+- Individuals, startups, and engineering teams that want to continuously produce deployable, maintainable software services with as little manual handoff as possible.
+- People with limited programming experience who can clearly describe goals and acceptance outcomes and want Agents to follow a complete architecture design and implementation process.
+- Teams that need multiple Agents or execution machines without scattering task state across terminals, chat history, and individual memory.
+
+oh-my-multica is not intended for one-off code-snippet generation, and it does not replace business decisions. It
+is most valuable when the work is complex enough to justify explicit delivery verification and you want the
+system to own repetitive supervision.
+
+## Getting started
+
+> Prerequisite: oh-my-multica must run in a project that has already initialized Git and configured a pushable
+> remote repository. Start it from the target repository root. With the Multica engine, configuration and the
+> manifest synchronize through `origin/main` by default, while execution Agents deliver through branches, Pull
+> Requests, and merges.
+
+### Installation
+
+Prerequisites:
 
 - Python 3.10 or later.
-- `pipx` for an isolated CLI installation.
-- For the Multica engine: the `multica` CLI on `PATH` and already authenticated.
-
-The mock engine has no external dependency. Use it for local demos, CI, and a
-first run.
-
-## Install
-
-OMAC is distributed from this repository rather than public PyPI.
+- A target project with Git initialized, at least one commit, and a pushable `origin` remote; the Multica engine synchronizes oh-my-multica state through `origin/main` by default.
+- `pipx` for an isolated installation of the oh-my-multica `omac` CLI.
+- For the Multica engine, [install the Multica CLI](https://github.com/multica-ai/multica/blob/main/CLI_INSTALL.md), complete `multica login`, and connect Codex, Claude Code, or other Runtimes on the machine to Multica.
 
 ```bash
-# Linux
-python3 -m pip install --user pipx --break-system-packages
-pipx ensurepath
-
-# macOS
-brew install pipx
-pipx ensurepath
-```
-
-Open a new shell, then install OMAC:
-
-```bash
-git clone git@github.com:xiaohei-info/oh-my-multica.git
+git clone https://github.com/xiaohei-info/oh-my-multica.git
 cd oh-my-multica
 pipx install .
 
 omac --version
-omac init --check
 ```
 
-To update an existing checkout:
+The more machines connected to Multica, the greater the Agent execution concurrency available. Machines with a
+Coding Agent Runtime installed are the actual task execution layer at the bottom of this system.
 
-```bash
-git pull
-pipx reinstall omac
-```
+### For Human
 
-For an offline runtime, build a wheel on a machine with the repository, copy it
-to the target, then run `pipx install omac-1.0.0-py3-none-any.whl`.
-
-## First run with the mock engine
-
-The following commands run from the repository root. The mock workspace has
-three agents: `alice`, `bob`, and `charlie`.
-
-### 1. Create project configuration
-
-For a human, `omac init` is an interactive wizard. Its first question chooses
-the output language (`en` by default, or `cn`); the choice is saved as
-`language` in `.omac/config.yaml`.
+You only need to focus on three things: configure an available Agent Team, describe the goal, and handle decisions
+the system cannot make for you.
 
 ```bash
 omac init
+omac plan create --name <feature> --goal "<the outcome you want to deliver>"
 ```
 
-For CI or an agent, write the same configuration declaratively, then run the
-health check. Non-interactive setup defaults to English; set `language` to `cn`
-when the project should use Simplified Chinese.
+`plan create` asks the Planner and Orchestrator Agents to produce a design, acceptance document, and dynamically
+planned manifest DAG for the current requirement instead of applying a fixed task template. Once planning passes,
+run the exact “next step” command from the output and let the deterministic Loop take over development and
+delivery. Progress is available through platform issues or `omac web`.
+
+### For Agent
+
+First read the workflow guide:
 
 ```bash
-omac config set language en
-omac config set engine mock
-omac config set workspace mock-workspace
-omac config set roles.planner alice
-omac config set roles.orchestrator bob
-omac config set roles.workers '["alice"]'
-omac config set roles.reviewers '["charlie"]'
-omac config set workflow.human_in_loop false
-omac config set workflow.acceptance_doc true
-omac config set workflow.goal_required true
-omac init --check
-```
-
-For the mock engine, use only `alice`, `bob`, and `charlie` in role mappings.
-
-### 2. Produce a plan and manifest DAG
-
-`omac plan create` runs the plan → acceptance → decomposition pipeline. It uses
-the project `workflow` settings by default. `--doc` starts from an existing
-design document; `--no-review`, `--no-acceptance`, and `--no-confirm` change a
-single invocation only. Planner-authored plans must submit both the design and
-project rules; after the pipeline converges, OMAC updates the managed section of
-root `AGENTS.md`. The `--doc` path skips that update.
-
-```bash
-omac plan create --name login-renewal --goal "Renew an expired login session"
-```
-
-To inspect a ready-made manifest before planning your own work:
-
-```bash
-cat tests/fixtures/smoke_p1.yaml
-```
-
-### 3. Run the deterministic loop
-
-```bash
-cp tests/fixtures/smoke_p1.yaml /tmp/smoke.yaml
-
-# Run in the foreground until convergence (exit 0)
-omac dag run /tmp/smoke.yaml
-
-# Inspect without advancing
-omac dag status /tmp/smoke.yaml
-
-# Advance exactly one round
-# exit 0: converged; exit 10: still advancing; exit 20: caller decision needed
-omac dag tick /tmp/smoke.yaml
-```
-
-Use `node show`, `node retry`, `node accept`, or `node abandon` only after an
-exit-20 report. OMAC never silently retries a failed node.
-
-### 4. Let agents load only the knowledge they need
-
-```bash
-omac guide
 omac guide workflow
-omac guide roles
-omac guide role planner
-omac guide role worker
-omac guide role reviewer
-omac guide artifact manifest
-omac guide artifact evidence
-omac guide recovery
 ```
 
-For a dispatched task, do not pre-read the whole guide set. Run `work show`,
-then load only its `guide_refs`.
+Work from the target project's repository root:
 
-## Command map
+1. Run `omac init --check`. If configuration is missing, follow the error output to complete declarative configuration; do not invoke the Human interactive wizard.
+2. Create a plan from the user's goal, or continue an existing manifest.
+3. Execute the exact “next step” printed by the command. Do not guess the manifest path, command arguments, or current stage.
+4. Keep `dag run` in the foreground until it returns exit 0 or exit 20.
+5. Report delivery complete only when exit 0 is returned and the manifest has converged. On exit 20, load `omac guide recovery`; return decisions that change the goal, scope, or accepted risk to the Human.
+
+## Agent Team configuration best practices
+
+oh-my-multica provides built-in templates for planner, orchestrator, worker, reviewer, acceptor, architect,
+backend, frontend, pm, and other roles in [`src/omac/agents/`](./src/omac/agents). You can use these templates
+directly or borrow their Instructions, responsibility boundaries, and Skill configuration when building your own
+Agent Team.
+
+Not every role needs the most expensive model. A better approach is to allocate models according to decision
+impact, task risk, and Token consumption:
+
+| Task type | Typical roles | Recommended models | Why |
+| --- | --- | --- | --- |
+| Design and planning | planner, architect, orchestrator | Flagship GPT or Claude models, or other first-tier models with comparable performance | Invoked relatively few times, but design and decomposition errors are amplified by every downstream task |
+| Review and acceptance | reviewer, acceptor | Secondary flagship GPT or Claude models, or other second-tier models with comparable performance | Maintains independent judgment and review quality while controlling reproduction and acceptance costs |
+| Development and testing | worker, backend, frontend, and other execution roles | Cost-efficient commercial models, mature open-source models, or other third-tier models | These tasks have the largest volume, concurrency, and Token consumption. Clear contracts and verification gates constrain their results, so **you do not need to worry that lower-capability models will deliver unexpected or out-of-bound results—solving that is exactly the point of this system.** |
+
+## Core design: Loop Engineering × Harness Engineering
+
+**oh-my-multica is an engineering implementation of Loop Engineering and Harness Engineering for production-grade
+software delivery.** The Loop continuously reads facts, consumes feedback, advances work, and determines the next
+step and stop conditions. The Harness encodes the goals, context, tools, constraints, verification, and review that
+every execution round must obey.
+
+### Loop Engineering: connecting feedback, execution, and completion conditions
+
+[Anthropic's “Building Effective Agents”](https://www.anthropic.com/engineering/building-effective-agents)
+describes an Agent as an LLM that repeatedly uses tools based on environmental feedback, reads facts after every
+step, and decides whether to continue, correct itself, request Human judgment, or stop when completion conditions
+are satisfied. Anthropic also distinguishes workflows from agents: workflows follow programmatically predefined
+paths, while agents dynamically decide how to complete a task. In the
+[official Claude Agent SDK practice](https://www.anthropic.com/engineering/building-agents-with-the-claude-agent-sdk),
+this feedback loop is summarized as **gather context → take action → verify work → repeat**.
+
+[OpenAI's Agent Improvement Loop](https://developers.openai.com/cookbook/examples/agents_sdk/agent_improvement_loop)
+connects traces, feedback, evaluations, Harness changes, implementation, and revalidation into an executable
+improvement loop. [OpenAI's Harness Engineering practice](https://openai.com/index/harness-engineering/) further
+decomposes large goals into clearly bounded design, development, review, and testing work units and continuously
+returns feedback to execution until verification and review genuinely pass.
+
+The common idea is not to make an Agent “run a few more times,” but to create a closed loop that continuously
+performs **observe facts → decide the next step → take action → verify the result → consume feedback → determine
+whether to stop**.
+
+Under Anthropic's classification, the outer control plane of oh-my-multica is a deterministic workflow, while
+autonomous agents operate inside DAG nodes. This hybrid design is deliberate: models handle reasoning-intensive
+work such as design, decomposition, coding, review, and acceptance; software persists state, computes dependencies,
+controls concurrency, applies quality gates, and determines whether the complete delivery has converged.
+Deterministic control does not mean applying a fixed workflow template. Agents dynamically plan the DAG from the
+current repository, design, and acceptance definition; software takes over loop control after the plan passes.
 
 ```text
-omac
-  CORE
-    plan     create | confirm | resume
-    dag      check | show | run | status | tick
-    node     show | retry | accept | abandon
-  WORK
-    work     show | submit
-  SETUP
-    init     interactive configuration / --check health check
-    config   get | set
-  GUIDE
-    guide    workflow | roles | role <name> | artifact <name> | recovery
-  WEB
-    web      local read-only dashboard
+reconcile → result collection (collect_results) → evidence and delivery gates → ready nodes → dispatch → converged / exit 20
 ```
 
-Run `omac <command> --help` for the current command contract. Argument errors
-include complete help so that an agent can correct the next invocation without
-guessing.
+| Loop Engineering element | How oh-my-multica implements it |
+| --- | --- |
+| Read facts from the environment | `reconcile` aligns the manifest with platform work items; Git, structured evidence, review reports, and optionally configured Pull Requests and CI are all inspectable facts |
+| Decompose goals into advancing steps | Agents dynamically plan Wave 0 / 1 / 2 and node contracts from the design, acceptance definition, and current repository; software computes ready nodes from actual dependencies and `max_parallel` |
+| Execute autonomously within boundaries | Each Agent receives only the current node's task, context, contract, authority, and minimal `guide_refs`, then decides how to complete that node internally |
+| Correct from feedback | `collect_results` consumes verification, CI, Reviewer, and merge results; failures enter bounded rework, while failures that cannot be handled automatically enter explicit recovery |
+| Continue across sessions | State persists in the manifest, platform, and Git; a new Human or Controller Agent continues from the same facts without depending on previous conversational memory |
+| Explicit stop conditions | Continue while running nodes exist; return exit 20 when a decision is required; return exit 0 only after every node converges and final acceptance passes |
 
-## Exit codes
+OpenAI's Agent Improvement Loop primarily describes the “outer loop” that continuously improves Agents and their
+Harness. oh-my-multica currently implements the “inner loop” of production software delivery: every round turns
+execution results into evidence and feedback, then decides whether to advance, rework, stop, or request a decision.
+The Loop does not depend on a supervising Agent remembering to continue, and context resets do not erase delivery
+state.
 
-| Code | Meaning |
-|---:|---|
-| `0` | Success; every DAG node converged to `done`. |
-| `1` | Generic error. |
-| `2` | Platform or network error. |
-| `3` | Authentication error, such as an unauthenticated platform CLI. |
-| `5` | Validation failure, including lint or evidence-schema failure. |
-| `10` | Work is still advancing; emitted only by one-round tick mode. |
-| `20` | The caller must make a decision; stdout includes a structured report. |
+### Harness Engineering: encoding engineering judgment into the environment
 
-## Architecture boundaries
+A loop alone is not enough. An incorrect goal can be executed quickly and consistently. Harness Engineering
+covers the entire environment outside the model: how knowledge is provided, how architecture is constrained, how
+results are verified, how errors are fed back, and how state is persisted.
+[Anthropic's practice for long-running Agent Harnesses](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents)
+emphasizes incremental progress, persistent engineering artifacts, and recovery across contexts. OpenAI emphasizes
+turning the repository into an Agent-readable system of facts and encoding testing, verification, review, feedback,
+and recovery into the environment instead of relying on prompts or continuous Human supervision.
 
-Pipelines and CLI commands use only the engine `WorkItemStore` and
-`AgentRuntime` interfaces. They never invoke platform CLIs directly. Platform
-adapters own Multica, GitHub, and future Linear or Jira integration.
+[Harness Engineering](https://martinfowler.com/articles/harness-engineering.html) can be understood along two
+dimensions: Guides provide feedforward constraints before an Agent acts, while Sensors provide feedback after an
+action; Computational mechanisms use deterministic software, while Inferential mechanisms use models for semantic
+analysis. A mature Harness normally combines all four quadrants, with a trusted Loop consuming their signals to
+decide whether to continue, rework, stop, or request Human judgment.
 
-The Web layer only parses parameters, calls the matching command function, and
-returns the command's JSON unchanged. Human, agent, and Web callers therefore
-see the same facts.
+![Loop Engineering × Harness Engineering](docs/diagrams/oh-my-multica-harness-engineering.svg)
 
-## Development
+oh-my-multica implements these Loop and Harness principles as a CLI protocol, state machine, and evidence model
+for production software delivery.
 
-For an editable local install:
+The Harness produces feedforward constraints and feedback signals. The deterministic Loop consumes those signals
+and advances state, while Agents perform the reasoning and execution work best suited to models within explicit
+boundaries.
 
-```bash
-pip install -e .
-pip install pytest
-python3 -m pytest tests/ -q -m "not live"
-python3 -m pytest tests/ -q -m live
+## Overall architecture
+
+oh-my-multica does not replace Multica or Coding Agents. It sits between callers and execution platforms, turns
+software engineering facts into executable state, and uses Multica's task and runtime capabilities through
+uniform interfaces.
+
+![oh-my-multica Overall Architecture](docs/diagrams/oh-my-multica-overall-architecture.svg)
+
+## From requirement to delivery
+
+The following swimlane shows the standard path. Design, acceptance, decomposition, and development can all enter
+bounded rework. State advances only after evidence satisfies the contract. Failures that cannot be handled
+automatically are not swallowed; they return to the caller as exit 20 with an exact next-step command.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Human as Human / Controller
+    participant CONTROL as oh-my-multica Loop
+    participant PO as Planner / Orchestrator
+    participant Worker as Worker
+    participant Reviewer as Reviewer
+    participant Platform as Multica / Git / CI
+    participant Acceptor as Acceptor
+
+    Human->>CONTROL: Submit goal or design document
+    CONTROL->>PO: Generate design and project rules
+    PO-->>CONTROL: Submit structured artifacts
+    CONTROL->>Reviewer: Independently review design
+    alt Review rejected and retries remain
+        Reviewer-->>PO: Return blockers
+        PO-->>CONTROL: Revise and resubmit
+    else Design approved
+        CONTROL->>PO: Generate acceptance document and decompose manifest DAG
+    end
+
+    loop Until the DAG converges
+        CONTROL->>CONTROL: Run result collection and compute ready nodes
+        par Develop ready nodes in parallel
+            CONTROL->>Platform: Create / assign work item
+            Platform->>Worker: Wake Agent Runtime
+            Worker->>Platform: Push PR and verification evidence
+        end
+        Platform-->>CONTROL: Return work item, PR, and CI state
+        CONTROL->>CONTROL: Validate evidence and CI gates
+        CONTROL->>Reviewer: Reassign the work item for independent reproduction
+        alt Review / CI / merge failed and retries remain
+            Reviewer-->>Worker: Return structured feedback for rework
+        else Node passed
+            CONTROL->>Platform: Merge and close the node as done
+        else Caller decision required
+            CONTROL-->>Human: exit 20 + structured report + copyable command
+        end
+    end
+
+    CONTROL->>Acceptor: Run final end-to-end acceptance flows
+    alt All flows passed
+        Acceptor-->>CONTROL: acceptance results = pass
+        CONTROL-->>Human: exit 0 · delivery complete
+    else Gap found
+        Acceptor-->>PO: Failed flow and evidence
+        PO-->>CONTROL: Append incremental repair nodes and re-enter the DAG Loop
+    end
 ```
 
-The `live` suite requires an authenticated Multica environment. A change is not
-complete until the full test suite passes.
+## What “production-grade” means
 
-## More information
+oh-my-multica does not promise that code produced by any Agent is inherently ready for production. Production
+quality depends on correct requirements, complete contracts, effective verification commands, configured CI, and
+Reviewers and Acceptors with sufficient capability.
 
-- `CHANGELOG.md` records user-visible changes.
-- `omac guide workflow`, `omac guide role <name>`, and
-  `omac guide artifact <name>` provide packaged runtime guidance.
-- `omac <command> --help` is the authoritative command reference.
+The guarantee provided by oh-my-multica is more practical: these critical conditions become explicit facts and
+checkpoints in the process instead of remaining hidden in Human memory or chat history.
+
+| Production delivery requirement | Where it is enforced in oh-my-multica |
+| --- | --- |
+| Requirements do not drift | Design problem / non-goals / flows and acceptance flow IDs |
+| Architecture remains maintainable | Core data ownership, module boundaries, cross-module contracts, and project-level `AGENTS.md` |
+| Changes preserve existing behavior | Contract source of truth, non-goals, integration gates, and compatibility requirements |
+| Results are reproducible | Verification commands, environment setup, and structured evidence |
+| Authors cannot prove their own correctness | Worker and Reviewer separation, with final user-journey acceptance by the Acceptor |
+| Code enters the actual delivery chain | Pull Requests, CI, merge, and final acceptance can be completion conditions |
+| Long-running work can stop and resume | Manifest / work item persistence, idempotent ticks, and reconciliation |
+| Automation cannot exceed Human authority | Bounded rework; anything outside the boundary returns exit 20 |
+
+## Contributing
+
+Issues are welcome for discussing problems and designs, and Pull Requests are welcome for improvements. Changes
+that affect behavior must include regression tests and preserve backward compatibility for exit codes,
+terminology, engine interfaces, and Web data boundaries. Run the full test suite before submitting.
 
 ## License
 
-[MIT](LICENSE)
+[MIT](./LICENSE)

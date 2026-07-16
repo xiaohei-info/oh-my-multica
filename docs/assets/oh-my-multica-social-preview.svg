@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" role="img" aria-labelledby="title desc" font-family="JetBrains Mono, SFMono-Regular, Consolas, monospace">
+  <title id="title">oh-my-multica Social Preview</title>
+  <desc id="desc">Production-grade software delivery for coding-agent teams on Multica, combining dynamic planning, deterministic execution, and verifiable delivery.</desc>
+  <defs>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.7"/>
+    </pattern>
+    <linearGradient id="title-gradient" x1="0" x2="1">
+      <stop offset="0" stop-color="#f8fafc"/>
+      <stop offset="0.72" stop-color="#cbd5e1"/>
+      <stop offset="1" stop-color="#94a3b8"/>
+    </linearGradient>
+    <marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+      <polygon points="0 0, 10 4, 0 8" fill="#64748b"/>
+    </marker>
+    <filter id="glow-cyan" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1280" height="640" fill="#020617"/>
+  <rect width="1280" height="640" fill="url(#grid)"/>
+  <rect x="1" y="1" width="1278" height="638" rx="24" fill="none" stroke="#1e293b" stroke-width="2"/>
+
+  <!-- Brand mark -->
+  <rect x="72" y="66" width="58" height="58" rx="14" fill="#0f172a" stroke="#22d3ee" stroke-width="2"/>
+  <circle cx="91" cy="95" r="7" fill="#a78bfa"/>
+  <circle cx="111" cy="84" r="7" fill="#34d399"/>
+  <circle cx="111" cy="106" r="7" fill="#fbbf24"/>
+  <path d="M 97 92 L 104 87 M 97 98 L 104 103" fill="none" stroke="#cbd5e1" stroke-width="2"/>
+
+  <text x="150" y="108" fill="url(#title-gradient)" font-size="46" font-weight="700" letter-spacing="-1.5">oh-my-multica</text>
+
+  <rect x="1020" y="73" width="188" height="42" rx="21" fill="#0f172a" stroke="#34d399" stroke-width="1.5"/>
+  <circle cx="1044" cy="94" r="5" fill="#34d399" filter="url(#glow-cyan)"/>
+  <text x="1060" y="99" fill="#34d399" font-size="13" font-weight="700">BUILT ON MULTICA</text>
+
+  <text x="72" y="170" fill="#f8fafc" font-size="25" font-weight="600">Production-grade software delivery for coding-agent teams</text>
+  <text x="72" y="205" fill="#94a3b8" font-size="16">Turn requirements into reviewed, merged, and accepted software changes.</text>
+
+  <!-- Flow arrows behind cards -->
+  <path d="M 407 365 L 452 365" fill="none" stroke="#64748b" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <path d="M 826 365 L 871 365" fill="none" stroke="#64748b" stroke-width="2.5" marker-end="url(#arrow)"/>
+
+  <!-- Dynamic planning -->
+  <rect x="72" y="280" width="335" height="170" rx="18" fill="#0f172a"/>
+  <rect x="72" y="280" width="335" height="170" rx="18" fill="rgba(76,29,149,0.42)" stroke="#a78bfa" stroke-width="2"/>
+  <text x="100" y="318" fill="#a78bfa" font-size="13" font-weight="700">01 · DYNAMIC PLANNING</text>
+  <text x="100" y="359" fill="#f8fafc" font-size="22" font-weight="700">Agent-authored DAG</text>
+  <text x="100" y="394" fill="#cbd5e1" font-size="13">design · acceptance · dependencies</text>
+  <text x="100" y="420" fill="#94a3b8" font-size="12">contracts · owners · reviewers · gates</text>
+
+  <!-- Deterministic execution -->
+  <rect x="452" y="280" width="374" height="170" rx="18" fill="#0f172a"/>
+  <rect x="452" y="280" width="374" height="170" rx="18" fill="rgba(120,53,15,0.38)" stroke="#fbbf24" stroke-width="2"/>
+  <text x="480" y="318" fill="#fbbf24" font-size="13" font-weight="700">02 · DETERMINISTIC EXECUTION</text>
+  <text x="480" y="359" fill="#f8fafc" font-size="22" font-weight="700">Loop-controlled convergence</text>
+  <text x="480" y="394" fill="#cbd5e1" font-size="13">result collection · ready nodes · dispatch</text>
+  <text x="480" y="420" fill="#94a3b8" font-size="12">bounded rework · recovery · stop conditions</text>
+
+  <!-- Verifiable delivery -->
+  <rect x="871" y="280" width="337" height="170" rx="18" fill="#0f172a"/>
+  <rect x="871" y="280" width="337" height="170" rx="18" fill="rgba(6,78,59,0.42)" stroke="#34d399" stroke-width="2"/>
+  <text x="899" y="318" fill="#34d399" font-size="13" font-weight="700">03 · VERIFIABLE DELIVERY</text>
+  <text x="899" y="359" fill="#f8fafc" font-size="22" font-weight="700">Evidence before completion</text>
+  <text x="899" y="394" fill="#cbd5e1" font-size="13">verification · independent review · CI</text>
+  <text x="899" y="420" fill="#94a3b8" font-size="12">merge · final acceptance · exit 0</text>
+
+  <!-- Footer doctrine -->
+  <rect x="72" y="504" width="1136" height="72" rx="14" fill="rgba(15,23,42,0.72)" stroke="#334155" stroke-width="1.5"/>
+  <circle cx="104" cy="540" r="6" fill="#22d3ee"/>
+  <text x="124" y="545" fill="#cbd5e1" font-size="15" font-weight="700">Loop Engineering × Harness Engineering</text>
+  <text x="470" y="545" fill="#64748b" font-size="14">·</text>
+  <text x="494" y="545" fill="#94a3b8" font-size="14">Dynamic planning · Deterministic execution · Verifiable delivery</text>
+</svg>
