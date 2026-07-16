@@ -88,15 +88,14 @@ def _build_snapshot(manifest: Manifest) -> dict:
     }
 
 
-def _has_unreviewed_worker_revision(node, item) -> bool:
-    """识别评审返工后已重交、但 manifest 仍残留 terminal 状态的节点。"""
+def _has_unreviewed_worker_delivery(node, item) -> bool:
+    """识别 worker 已交付、但 manifest 仍残留 terminal 状态的节点。"""
     return bool(
         node.reviewer
         and not node.merged
         and item.status == WorkItemStatus.DONE
         and item.phase == TaskPhase.AUTHORING
         and not item.review_verdict
-        and item.review_report
         and item.artifacts
         and item.verification
     )
@@ -134,7 +133,7 @@ def reconcile(store: WorkItemStore, manifest: Manifest, manifest_path: str) -> b
         # 必须回到 collect_results 重新过证据门并派发 reviewer。
         if (
             node.status in FAILED_STATUSES or node.status == "done"
-        ) and _has_unreviewed_worker_revision(node, item):
+        ) and _has_unreviewed_worker_delivery(node, item):
             set_node(manifest, key, status="in_progress")
             changed = True
             continue
