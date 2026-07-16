@@ -35,7 +35,7 @@ jobs:
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             tag="${GITHUB_REF_NAME}"
           else
-            version="$(python -c 'import pathlib, re; text=pathlib.Path("pyproject.toml").read_text(); print(re.search(r"^version\\s*=\\s*\"([^\"]+)\"", text, re.MULTILINE).group(1))')"
+            version="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
             tag="v${version}"
           fi
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
