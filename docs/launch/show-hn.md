@@ -40,9 +40,14 @@ reasoning is useful, but a supervising Agent does not improvise dependencies,
 retry limits, evidence requirements, or the final completion decision from its
 current context.
 
-The repository includes two ways to inspect it without trusting the pitch:
+The repository includes three ways to inspect it without trusting the pitch:
 
-- A sanitized case study from the Multica project that built the v1 foundation:
+- A real Webhook Inbox delivered from one goal through a dynamically planned
+  five-node DAG and five merged Pull Requests. It finished with 86 tests,
+  97.18% coverage, and 11/11 final-acceptance flows. The first acceptance round
+  passed only 2/11 because of a stale application entry point; the Loop refused
+  completion until the source was fixed and the full document reran.
+- A sanitized case study from the Multica project that built the early v1 foundation:
   29 completed work items, 168 Agent runs, 15 failed runs, 8 retries, and 27
   linked Pull Requests.
 - A local mock demo that deliberately fails one node, returns exit 20, retries

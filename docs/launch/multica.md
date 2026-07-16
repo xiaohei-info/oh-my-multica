@@ -30,6 +30,12 @@ oh-my-multica combines two kinds of control:
 - A deterministic Loop owns dependencies, result collection, evidence gates,
   bounded rework, recovery, merge conditions, and completion.
 
+The latest public demo is a Webhook Inbox delivered through a dynamically
+planned five-node DAG and five merged Pull Requests. It passed 86 tests with
+97.18% coverage. The first final-acceptance round passed only 2/11 flows because
+the acceptance source used a stale entry point; the Loop refused completion,
+the source was corrected, and the second round passed 11/11 with exit 0.
+
 The early v1 foundation itself was developed through a Multica project: 29 work
 items reached done, 168 Agent runs were recorded, and 27 Pull Requests were
 linked. Fifteen runs failed and eight were retried. The case study keeps those
@@ -38,7 +44,9 @@ not orchestrate its own entire history.
 
 Repository: https://github.com/xiaohei-info/oh-my-multica
 
-Case study: https://github.com/xiaohei-info/oh-my-multica/blob/main/docs/case-studies/building-v1-on-multica.md
+Real demo: https://github.com/xiaohei-info/oh-my-multica-demo-webhook-inbox
+
+Case study: https://github.com/xiaohei-info/oh-my-multica/blob/main/docs/case-studies/webhook-inbox-end-to-end.md
 
 Local demo: https://github.com/xiaohei-info/oh-my-multica/blob/main/docs/demo/README.md
 
@@ -56,9 +64,10 @@ oh-my-multica adds Agent-authored design and DAG planning, then uses a
 deterministic Loop for dependency scheduling, evidence gates, independent
 review, bounded rework, merge, recovery, and final acceptance.
 
-There’s a real v1 build record with 29 completed work items, 168 Agent runs, 15
-failed runs, 8 retries, and 27 linked PRs — plus a local mock demo that requires
-no Multica account or Tokens.
+There’s a real Webhook Inbox delivery with a five-node DAG, five merged PRs, 86
+tests, 97.18% coverage, and a final acceptance that failed 2/11 before the Loop
+forced a correction and reran to 11/11. The repository also includes the early
+v1 build record and a local mock demo that requires no Multica account or Tokens.
 
 Repo: https://github.com/xiaohei-info/oh-my-multica
 

@@ -114,6 +114,19 @@ does not claim that the completed controller orchestrated its own entire history
 [Building the v1 foundation on Multica](docs/case-studies/building-v1-on-multica.md), or run the
 [local failure-and-recovery demo](docs/demo/README.md).
 
+### A complete end-to-end delivery
+
+The [Webhook Inbox demo](https://github.com/xiaohei-info/oh-my-multica-demo-webhook-inbox) started from one
+production-constrained goal and converged through a dynamically planned five-node DAG and five merged Pull
+Requests. The integrated result passed 86 tests with 97.18% coverage, CI on Python 3.10 through 3.13, non-root
+container verification, independent review, and final acceptance.
+
+The first final-acceptance round passed only 2 of 11 flows because the reviewed acceptance source still started a
+stale application entry point. The Loop preserved the failure and refused completion. After the source was fixed,
+the complete acceptance document passed 11/11 and the controller returned exit 0. Read the
+[end-to-end case study](docs/case-studies/webhook-inbox-end-to-end.md) for the DAG, role split, public PRs, and
+failure evidence.
+
 ## Who it is for
 
 - Developers who already use AI Coding heavily and want to move from supervising every conversation to managing goals, constraints, and outcomes.

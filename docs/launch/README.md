@@ -12,6 +12,7 @@ first public release. It is operational material, not another product design.
 | PyPI Trusted Publishing workflow | Ready; `pypi` environment requires Human approval |
 | Release Candidate | Built and install-tested on Python 3.10 and 3.12 |
 | Real Multica case study | Ready in English and Simplified Chinese |
+| Real end-to-end Webhook Inbox demo | Public; 5/5 DAG nodes, 5 merged PRs, 11/11 final acceptance |
 | Local failure-and-recovery demo | Ready; script, asciinema cast, and animated SVG |
 | Git Tag / PyPI / GitHub Release | Not published |
 | External posts | Drafted, not published |
@@ -42,6 +43,7 @@ post remain explicit Human actions. All other preparation can be revised safely.
 - [`faq.md`](faq.md)
 - [`metrics/`](metrics/README.md)
 
-The launch is grounded in the
-[real Multica delivery case](../case-studies/building-v1-on-multica.md) and the
-[reproducible local demo](../demo/README.md).
+The launch is grounded in three inspectable records: the
+[real end-to-end Webhook Inbox delivery](../case-studies/webhook-inbox-end-to-end.md), the
+[early v1 Multica delivery record](../case-studies/building-v1-on-multica.md), and the
+[reproducible local mock demo](../demo/README.md).
