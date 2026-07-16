@@ -128,13 +128,13 @@ def test_retry_resets_to_todo_and_keeps_work_item_id(tmp_path, capsys, monkeypat
 def test_retry_reassignment_survives_reconcile_and_dispatches_new_worker(
     tmp_path, capsys, monkeypatch,
 ):
-    """显式 retry 必须同步平台 todo，否则 reconcile 会恢复旧 in_progress 并 rerun 旧 assignee。"""
+    """显式 retry 必须同步平台 authoring + todo，再派发新的 worker。"""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("OMAC_ENGINE", "mock")
     monkeypatch.setenv("OMAC_WORKSPACE_ID", "ws-1")
 
     from omac.engines import EngineConfig, create_engine
-    from omac.engines.models import WorkItemStatus
+    from omac.engines.models import TaskPhase, WorkItemStatus
     from omac.pipeline.loop import tick
 
     engine = create_engine(
@@ -142,6 +142,12 @@ def test_retry_reassignment_survives_reconcile_and_dispatches_new_worker(
         EngineConfig("mock", "ws-1", extra={"MOCK_AUTO_COMPLETE": "false"}),
     )
     item = engine.store.create_work_item("ws-1", "t", "d", "b", "bob")
+    engine.store.update_work_item_metadata(
+        item.id,
+        phase=TaskPhase.REVIEW,
+        review_verdict="reject",
+        review_comment="fix the rejected delivery",
+    )
     engine.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
 
     import omac.cli.commands.node as node_mod
@@ -158,7 +164,10 @@ def test_retry_reassignment_survives_reconcile_and_dispatches_new_worker(
         "node", "retry", path, "b", "--worker", "charlie",
     ]) == exit_codes.OK
     capsys.readouterr()
-    assert engine.store.get_work_item(item.id).status == WorkItemStatus.TODO
+    retried = engine.store.get_work_item(item.id)
+    assert retried.status == WorkItemStatus.TODO
+    assert retried.phase == TaskPhase.AUTHORING
+    assert retried.review_verdict is None
 
     manifest = load_manifest(path)
     result = tick(engine.store, engine.runtime, manifest, path, max_parallel=1)

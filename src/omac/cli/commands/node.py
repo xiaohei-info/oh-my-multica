@@ -227,11 +227,15 @@ def _cmd_retry(args) -> int:
         node.worker = new_worker
         # 改派同步写 manifest;work_item_id 保留(转派发生在下次 dispatch)。
 
-    # 显式 retry 的 todo 意图必须同时写到平台。否则下一次 reconcile 会用旧的
-    # in_progress 覆盖 manifest todo，runtime.wake 随后只能 rerun 旧 assignee。
+    # 显式 retry 的 authoring + todo 意图必须同时写到平台。否则 review 阶段
+    # 被阻塞后重试时，下一次虽然会重新指派 worker，work show / work submit
+    # 仍会按 reviewer 协议解释旧 phase，worker 无法正式交付。
     # 平台先写、本地后写：平台失败时不留下两边分叉的半完成 retry。
     if node.work_item_id and engine is not None:
         try:
+            # 清除旧 reviewer 判定并把 phase 恢复为 authoring；review report
+            # 引用仍保留，worker 可以从 previous_review 获取返工依据。
+            engine.store.reset_review(node.work_item_id)
             engine.store.update_status(node.work_item_id, WorkItemStatus.TODO)
         except RuntimeError as exc:
             # mock 的跨进程恢复没有持久化 store；陈旧 work_item_id 与 reconcile
