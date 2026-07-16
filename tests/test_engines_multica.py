@@ -7,6 +7,45 @@ from omac.engines.models import WorkItemStatus
 from omac.engines.multica import MulticaStore
 
 
+def test_multica_text_file_commands_allow_process_owned_external_file(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    calls = []
+
+    def run(args, capture=True):
+        calls.append(args)
+        path = Path(args[args.index("--description-file") + 1])
+        assert path.read_text() == "request body"
+        return {"id": "issue-1"}
+
+    monkeypatch.setattr(store, "_run_multica", run)
+
+    store._run_multica_with_text_file(
+        ["issue", "create", "--title", "demo"],
+        "--description-file",
+        "request body",
+    )
+
+    assert "--allow-external-file" in calls[0]
+
+
+def test_multica_payload_upload_allows_process_owned_external_files(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    calls = []
+
+    def run(args, capture=True):
+        calls.append(args)
+        return {
+            "id": "comment-1",
+            "attachments": [{"id": "attachment-1", "filename": "payload.md"}],
+        }
+
+    monkeypatch.setattr(store, "_run_multica", run)
+
+    store._publish_payload_comment("issue-1", "deliverable", "payload", ".md")
+
+    assert "--allow-external-file" in calls[0]
+
+
 def test_multica_empty_review_verdict_is_read_as_missing():
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
 

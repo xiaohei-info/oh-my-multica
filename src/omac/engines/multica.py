@@ -100,7 +100,10 @@ class MulticaStore(WorkItemStore):
         try:
             with os.fdopen(fd, "w") as f:
                 f.write(content or "")
-            return self._run_multica(args + [flag, path], capture=capture)
+            return self._run_multica(
+                args + [flag, path, "--allow-external-file"],
+                capture=capture,
+            )
         finally:
             try:
                 os.unlink(path)
@@ -173,6 +176,7 @@ class MulticaStore(WorkItemStore):
                 "issue", "comment", "add", item_id,
                 "--content-file", comment_path,
                 "--attachment", attachment_path,
+                "--allow-external-file",
                 "--output", "json",
             ])
 
