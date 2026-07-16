@@ -235,6 +235,38 @@ def test_run_task_pass_with_nits_accepts_worker_followup_without_second_review()
     assert eng.store.get_comments(item.id) == []
 
 
+def test_run_task_resume_done_pass_with_nits_is_terminal():
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = create_authoring_task(eng, AuthoringTaskSpec(
+        kind=TaskKind.PLAN,
+        title="feature-x",
+        dag_key="plan-p1",
+        assignee="alice",
+    ))
+    eng.store.update_work_item_metadata(
+        item.id,
+        deliverable="计划正文-v2",
+        phase=TaskPhase.REVIEW,
+        review_verdict="pass-with-nits",
+    )
+    eng.store.update_status(item.id, WorkItemStatus.DONE)
+
+    result = run_task(
+        eng,
+        TaskKind.PLAN,
+        _payload(),
+        "alice",
+        reviewers=["bob"],
+        poll=lambda: pytest.fail("completed pass-with-nits item must not be polled"),
+        resume_item_id=item.id,
+    )
+
+    assert result["verdict"] == "pass-with-nits"
+    assert result["rounds"] == 0
+    assert result["delivery"]["plan"] == "计划正文-v2"
+    assert eng.store.get_work_item(item.id).status == WorkItemStatus.DONE
+
+
 def test_run_task_reject_handoff_uses_metadata_not_comment():
     """reject 转回产出者只更新 metadata/status/assignee,不再用评论触发交接。"""
     eng = _engine()

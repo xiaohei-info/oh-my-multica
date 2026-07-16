@@ -276,10 +276,14 @@ def run_task(
     delivered = _produce()
     delivery = _delivery_of(kind, delivered)
 
-    if delivered.status == WorkItemStatus.DONE and delivered.review_verdict == "pass":
+    if (
+        delivered.status == WorkItemStatus.DONE
+        and delivered.review_verdict in {"pass", "pass-with-nits"}
+    ):
         log.info(logsetup.EVT_NODE_DONE, kind=kind.value, id=item_id)
         return {"item_id": item_id, "delivery": delivery,
-                "rounds": 0, "verdict": "pass", "kind": kind.value}
+                "rounds": 0, "verdict": delivered.review_verdict,
+                "kind": kind.value}
 
     # 机器门(零 token):通过即止,耗尽转 NeedsDecision
     if guard is not None:
