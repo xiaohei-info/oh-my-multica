@@ -1070,11 +1070,11 @@ class TestReviewerRejectBoundedFallback:
         assert got.review_verdict is None
         assert got.bounces.review == 1
 
-    @pytest.mark.parametrize("stale_status", ["blocked", "done"])
-    def test_unreviewed_worker_revision_reenters_review_from_stale_terminal_manifest(
+    @pytest.mark.parametrize("stale_status", ["todo", "blocked", "done"])
+    def test_unreviewed_worker_revision_reenters_review_from_stale_manifest(
         self, tmp_path, stale_status,
     ):
-        """worker 返工已 submit 时，旧 blocked/done manifest 不得绕过 reviewer gate。"""
+        """worker 返工已 submit 时，retry/todo 等旧状态不得绕过 reviewer gate。"""
         from omac.engines import create_engine
 
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))

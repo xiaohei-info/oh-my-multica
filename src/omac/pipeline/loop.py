@@ -128,11 +128,12 @@ def reconcile(store: WorkItemStore, manifest: Manifest, manifest_path: str) -> b
                 changed = True
             continue
 
-        # reviewer reject 后，worker 可在 manifest 仍 blocked/done 时通过正式
-        # work submit 写入新交付。此时不能把平台 DONE 直接同步成业务 done，
-        # 必须回到 collect_results 重新过证据门并派发 reviewer。
+        # reviewer reject 后，worker 可在 manifest 仍 todo/blocked/done 时通过正式
+        # work submit 写入新交付。todo 常见于 node retry 后、下一次 tick 前提交。
+        # 此时不能把平台 DONE 直接同步成业务 done，必须回到 collect_results
+        # 重新过证据门并派发 reviewer。
         if (
-            node.status in FAILED_STATUSES or node.status == "done"
+            node.status in FAILED_STATUSES or node.status in {"todo", "done"}
         ) and _has_unreviewed_worker_delivery(node, item):
             set_node(manifest, key, status="in_progress")
             changed = True
