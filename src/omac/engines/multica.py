@@ -155,10 +155,25 @@ class MulticaStore(WorkItemStore):
     def _payload_markers(key: str) -> tuple[str, str]:
         return (f"<!-- omac-{key}-begin -->", f"<!-- omac-{key}-end -->")
 
+    def _unassign_before_system_comment(self, item_id: str) -> None:
+        """让 OMAC 系统评论只写数据，不被 Multica 解释为新的 agent 输入。"""
+        issue = self._run_multica([
+            "issue", "get", item_id, "--output", "json",
+        ])
+        if not isinstance(issue, dict):
+            return
+        if issue.get("assignee_id") or issue.get("assignee"):
+            self._run_multica(["issue", "assign", item_id, "--unassign"])
+
     def _publish_payload_comment(
         self, item_id: str, key: str, content: str, suffix: str,
     ) -> Dict[str, Any]:
-        """发布较长文档:comment 只做附件索引,正文由 attachment 承载。"""
+        """发布较长文档:comment 只做附件索引,正文由 attachment 承载。
+
+        Multica 会把发给已分配 agent 的评论解释为新输入并创建 comment run。
+        payload 是阶段交接数据，不是新的执行指令，因此发布前解除当前分配；
+        后续 worker/reviewer 由 pipeline 的 assign + wake 显式派发。
+        """
         body = content or ""
         sha = hashlib.sha256(body.encode("utf-8")).hexdigest()
         filename = f"omac-{key}-{sha[:12]}{suffix}"
@@ -172,6 +187,7 @@ class MulticaStore(WorkItemStore):
                 f.write(comment)
             with open(attachment_path, "w", encoding="utf-8") as f:
                 f.write(body)
+            self._unassign_before_system_comment(item_id)
             result = self._run_multica([
                 "issue", "comment", "add", item_id,
                 "--content-file", comment_path,
@@ -723,6 +739,7 @@ class MulticaStore(WorkItemStore):
         return work_items
 
     def add_comment(self, item_id: str, comment: str):
+        self._unassign_before_system_comment(item_id)
         self._run_multica_with_text_file(
             ["issue", "comment", "add", item_id],
             "--content-file", comment)

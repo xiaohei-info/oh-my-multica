@@ -34,6 +34,10 @@ def test_multica_payload_upload_allows_process_owned_external_files(monkeypatch)
 
     def run(args, capture=True):
         calls.append(args)
+        if args[:2] == ["issue", "get"]:
+            return {"id": "issue-1", "assignee_id": "agent-1"}
+        if args[:2] == ["issue", "assign"]:
+            return {"id": "issue-1", "assignee_id": None}
         return {
             "id": "comment-1",
             "attachments": [{"id": "attachment-1", "filename": "payload.md"}],
@@ -43,7 +47,53 @@ def test_multica_payload_upload_allows_process_owned_external_files(monkeypatch)
 
     store._publish_payload_comment("issue-1", "deliverable", "payload", ".md")
 
-    assert "--allow-external-file" in calls[0]
+    assert calls[0] == ["issue", "get", "issue-1", "--output", "json"]
+    assert calls[1] == ["issue", "assign", "issue-1", "--unassign"]
+    assert "--allow-external-file" in calls[2]
+
+
+def test_multica_system_comment_unassigns_agent_before_posting(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    calls = []
+
+    def run(args, capture=True):
+        calls.append(args)
+        if args[:2] == ["issue", "get"]:
+            return {"id": "issue-1", "assignee_id": "agent-1"}
+        if args[:2] == ["issue", "assign"]:
+            return {"id": "issue-1", "assignee_id": None}
+        if args[:3] == ["issue", "comment", "add"]:
+            return {"id": "comment-1"}
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", run)
+
+    store.add_comment("issue-1", "failure details")
+
+    assert calls[0] == ["issue", "get", "issue-1", "--output", "json"]
+    assert calls[1] == ["issue", "assign", "issue-1", "--unassign"]
+    assert calls[2][:3] == ["issue", "comment", "add"]
+
+
+def test_multica_system_comment_skips_unassign_when_issue_has_no_assignee(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    calls = []
+
+    def run(args, capture=True):
+        calls.append(args)
+        if args[:2] == ["issue", "get"]:
+            return {"id": "issue-1", "assignee_id": None}
+        if args[:3] == ["issue", "comment", "add"]:
+            return {"id": "comment-1"}
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", run)
+
+    store.add_comment("issue-1", "failure details")
+
+    assert calls[0] == ["issue", "get", "issue-1", "--output", "json"]
+    assert len(calls) == 2
+    assert calls[1][:3] == ["issue", "comment", "add"]
 
 
 def test_multica_list_work_items_is_scoped_to_configured_project(monkeypatch):
