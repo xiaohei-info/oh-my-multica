@@ -27,6 +27,16 @@ is narrower: requirements, contracts, verification, review, merge, and final
 acceptance become explicit gates instead of remaining in chat history or Human
 memory.
 
+## Is there a real end-to-end example?
+
+Yes. The public
+[Webhook Inbox demo](https://github.com/xiaohei-info/oh-my-multica-demo-webhook-inbox)
+was delivered from one goal through a dynamically planned five-node DAG and five
+merged Pull Requests. It passed 86 tests with 97.18% coverage and 11/11 final
+acceptance flows. The first acceptance round passed only 2/11 because of a stale
+entry point; the Loop refused completion until the source was corrected and the
+full document passed.
+
 ## Why can cheaper models perform development nodes?
 
 They are given bounded contracts and are checked by deterministic commands,

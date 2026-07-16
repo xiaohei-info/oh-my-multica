@@ -24,8 +24,8 @@ recovery, and completion on top of Multica.
 
 - Website: https://github.com/xiaohei-info/oh-my-multica
 - Documentation: https://github.com/xiaohei-info/oh-my-multica#readme
-- Demo: https://github.com/xiaohei-info/oh-my-multica/blob/main/docs/demo/README.md
-- Case study: https://github.com/xiaohei-info/oh-my-multica/blob/main/docs/case-studies/building-v1-on-multica.md
+- Demo: https://github.com/xiaohei-info/oh-my-multica-demo-webhook-inbox
+- Case study: https://github.com/xiaohei-info/oh-my-multica/blob/main/docs/case-studies/webhook-inbox-end-to-end.md
 
 **Topics**
 
@@ -52,10 +52,12 @@ decompose, implement, review, and test within each boundary. Software decides
 which node is ready, whether evidence is valid, whether rework remains within
 budget, and whether the entire delivery has converged.
 
-The repository includes a real build record rather than a selected success
-clip. The v1 foundation involved 29 completed work items, 168 Agent runs, 15
-failed runs, 8 retries, and 27 linked Pull Requests. It also includes a local
-mock demo that anyone can run without an account or model Tokens.
+The repository includes a real end-to-end delivery rather than a selected
+success clip. A Webhook Inbox moved through a dynamically planned five-node DAG,
+five merged Pull Requests, 86 tests, 97.18% coverage, and final acceptance. The
+first acceptance round passed only 2/11 flows; the Loop refused completion until
+the stale entry point was corrected and all 11 flows passed. The repository also
+includes the early v1 build record and a local mock demo.
 
 This is the first public release, and I’m most interested in practical feedback:
 installation failures, unclear concepts, repository assumptions that do not

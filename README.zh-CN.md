@@ -97,6 +97,16 @@ Pull Request。其中 15 次执行失败、8 次发生重试；26 个 Pull Reque
 阅读[《在 Multica 上构建 v1 基础》](docs/case-studies/building-v1-on-multica.zh-CN.md)，或运行
 [本地失败与恢复演示](docs/demo/README.md)。
 
+### 一次完整的端到端交付
+
+[Webhook Inbox demo](https://github.com/xiaohei-info/oh-my-multica-demo-webhook-inbox) 从一个带有生产约束的
+目标开始，通过动态规划出的五节点 DAG 和五个合并 PR 完成收敛。集成结果通过 86 个测试，覆盖率
+97.18%，CI 覆盖 Python 3.10 至 3.13，同时通过非 root 容器验证、独立评审和最终验收。
+
+第一轮最终验收只有 2/11 flows 通过，因为经过评审的验收源仍然启动了已经过期的应用入口。Loop
+保留失败证据并拒绝完成；修正验收源后，完整验收 11/11 通过，控制器返回 exit 0。阅读
+[端到端案例](docs/case-studies/webhook-inbox-end-to-end.zh-CN.md)，查看 DAG、角色分工、公开 PR 和失败证据。
+
 ## 适合谁
 
 - 已经重度使用 AI Coding，希望从亲自盯住每一次对话，转向管理目标、约束和结果的开发者。

@@ -26,7 +26,9 @@ Start here:
 
 - README: https://github.com/xiaohei-info/oh-my-multica
 - Chinese README: https://github.com/xiaohei-info/oh-my-multica/blob/main/README.zh-CN.md
-- Real delivery case: https://github.com/xiaohei-info/oh-my-multica/blob/main/docs/case-studies/building-v1-on-multica.md
+- Real end-to-end demo: https://github.com/xiaohei-info/oh-my-multica-demo-webhook-inbox
+- End-to-end case study: https://github.com/xiaohei-info/oh-my-multica/blob/main/docs/case-studies/webhook-inbox-end-to-end.md
+- Early v1 delivery record: https://github.com/xiaohei-info/oh-my-multica/blob/main/docs/case-studies/building-v1-on-multica.md
 - Local mock demo: https://github.com/xiaohei-info/oh-my-multica/blob/main/docs/demo/README.md
 
 Please use:
