@@ -1,5 +1,8 @@
 # Multica community launch
 
+GitHub Show and tell published:
+https://github.com/multica-ai/multica/discussions/5545
+
 Targets checked on July 16, 2026:
 
 - Show and tell: https://github.com/multica-ai/multica/discussions/categories/show-and-tell

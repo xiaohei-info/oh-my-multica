@@ -12,7 +12,9 @@ python3 scripts/collect_launch_metrics.py \
 
 Recommended checkpoints are prelaunch, 24 hours, 72 hours, 7 days, and 30 days.
 The committed prelaunch baseline is
-[`2026-07-16-prelaunch.json`](2026-07-16-prelaunch.json).
+[`2026-07-16-prelaunch.json`](2026-07-16-prelaunch.json). The first checkpoint
+after the GitHub Release and GitHub-hosted community posts is
+[`2026-07-17-github-launch.json`](2026-07-17-github-launch.json).
 
 ## How to read the numbers
 
@@ -22,7 +24,8 @@ The committed prelaunch baseline is
 - Clone counts are heavily inflated by this project's own Agent, CI, and
   worktree activity. Use post-launch deltas, not the absolute total, and do not
   present clones as unique users.
-- Release-asset downloads exclude normal PyPI installs.
+- Release-asset downloads exclude installs directly from a GitHub Tag and any
+  future PyPI installs.
 - PyPI Stats may lag a new package or rate-limit requests; an unavailable value
   should remain unavailable rather than being guessed.
 - The strongest activation signal is still voluntary: a user reports that they

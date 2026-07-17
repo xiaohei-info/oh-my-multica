@@ -1,5 +1,10 @@
 # GitHub Discussions welcome post
 
+Published discussions:
+
+- Welcome: https://github.com/xiaohei-info/oh-my-multica/discussions/62
+- Webhook Inbox Show and tell: https://github.com/xiaohei-info/oh-my-multica/discussions/64
+
 ## Category
 
 Announcements

@@ -1,0 +1,36 @@
+{
+  "collected_at": "2026-07-17T00:20:20Z",
+  "github": {
+    "discussions": 2,
+    "forks": 0,
+    "open_issues_and_prs": 0,
+    "releases": {
+      "count": 1,
+      "latest_published_at": "2026-07-17T00:12:31Z",
+      "latest_tag": "v1.0.0",
+      "total_downloads": 0
+    },
+    "stars": 0,
+    "top_referrers": [
+      {
+        "count": 6,
+        "referrer": "github.com",
+        "uniques": 1
+      }
+    ],
+    "traffic": {
+      "clones": 2244,
+      "clones_unique": 453,
+      "views": 10,
+      "views_unique": 2
+    },
+    "watchers": 0
+  },
+  "pypi": {
+    "package": "oh-my-multica",
+    "reason": "PyPI Stats returned HTTP 429",
+    "status": "unavailable"
+  },
+  "repository": "xiaohei-info/oh-my-multica",
+  "schema_version": 1
+}

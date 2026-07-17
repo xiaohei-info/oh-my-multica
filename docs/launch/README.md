@@ -3,7 +3,7 @@
 This directory contains the copy, evidence, assets, and checkpoints for the
 first public release. It is operational material, not another product design.
 
-## Current state — July 16, 2026
+## Current state — July 17, 2026
 
 | Item | State |
 | --- | --- |
@@ -15,19 +15,28 @@ first public release. It is operational material, not another product design.
 | Real Multica case study | Ready in English and Simplified Chinese |
 | Real end-to-end Webhook Inbox demo | Public; 5/5 DAG nodes, 5 merged PRs, 11/11 final acceptance |
 | Local failure-and-recovery demo | Ready; script, asciinema cast, and animated SVG |
-| External posts | Drafted, not published |
+| GitHub-hosted community posts | Published in this repository and Multica Show and tell |
+| Browser-account posts | Discord, Show HN, Chinese communities, and Product Hunt remain drafted |
 
 ## Recommended order
 
-1. Use the immutable `v1.0.0` GitHub Tag and Release as the stable distribution.
-2. Soft-launch to Multica Show and tell and Discord.
-3. Fix installation or documentation blockers found by the first users.
-4. Publish Show HN and the Chinese community posts on separate days.
-5. Schedule Product Hunt after the Maker account is eligible and the first
+1. Monitor the GitHub and Multica discussions for concrete setup feedback.
+2. Fix installation or documentation blockers found by the first users.
+3. Publish Discord, Show HN, and the Chinese community posts on separate days
+   when the required browser accounts are available.
+4. Schedule Product Hunt after the Maker account is eligible and the first
    external feedback is reflected in the product page.
 
 PyPI remains deferred. Browser-account posts and any later PyPI publication
 remain explicit Human actions; GitHub-hosted materials can be revised safely.
+
+## Published links
+
+- GitHub Release: https://github.com/xiaohei-info/oh-my-multica/releases/tag/v1.0.0
+- Welcome discussion: https://github.com/xiaohei-info/oh-my-multica/discussions/62
+- Webhook Inbox Show and tell: https://github.com/xiaohei-info/oh-my-multica/discussions/64
+- Multica Show and tell: https://github.com/multica-ai/multica/discussions/5545
+- Real demo Release: https://github.com/xiaohei-info/oh-my-multica-demo-webhook-inbox/releases/tag/v1.0.0
 
 ## Materials
 
