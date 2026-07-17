@@ -7,31 +7,27 @@ first public release. It is operational material, not another product design.
 
 | Item | State |
 | --- | --- |
-| GitHub community files and Discussions | Ready and enabled |
+| GitHub community files and Discussions | Enabled; welcome post published |
 | Private vulnerability reporting | Enabled |
-| PyPI Trusted Publishing workflow | Ready; `pypi` environment requires Human approval |
-| Release Candidate | Built and install-tested on Python 3.10 and 3.12 |
+| PyPI Trusted Publishing | Deferred; not required for the current GitHub distribution |
+| GitHub Release v1.0.0 | Published with verified wheel and source distribution |
+| Release installation | GitHub Tag build passed install tests on Python 3.10 and 3.12 |
 | Real Multica case study | Ready in English and Simplified Chinese |
 | Real end-to-end Webhook Inbox demo | Public; 5/5 DAG nodes, 5 merged PRs, 11/11 final acceptance |
 | Local failure-and-recovery demo | Ready; script, asciinema cast, and animated SVG |
-| Git Tag / PyPI / GitHub Release | Not published |
 | External posts | Drafted, not published |
 
 ## Recommended order
 
-1. Configure the pending PyPI Trusted Publisher for package
-   `oh-my-multica`, workflow `release.yml`, environment `pypi`.
-2. Approve and push the immutable `v1.0.0` Tag.
-3. Approve the `pypi` deployment; verify the package and GitHub Release.
-4. Publish the GitHub Discussions welcome post.
-5. Soft-launch to Multica Show and tell and Discord.
-6. Fix installation or documentation blockers found by the first users.
-7. Publish Show HN and the Chinese community posts on separate days.
-8. Schedule Product Hunt after the Maker account is eligible and the first
+1. Use the immutable `v1.0.0` GitHub Tag and Release as the stable distribution.
+2. Soft-launch to Multica Show and tell and Discord.
+3. Fix installation or documentation blockers found by the first users.
+4. Publish Show HN and the Chinese community posts on separate days.
+5. Schedule Product Hunt after the Maker account is eligible and the first
    external feedback is reflected in the product page.
 
-Tag creation, PyPI approval, GitHub Release publication, and every external
-post remain explicit Human actions. All other preparation can be revised safely.
+PyPI remains deferred. Browser-account posts and any later PyPI publication
+remain explicit Human actions; GitHub-hosted materials can be revised safely.
 
 ## Materials
 

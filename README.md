@@ -1,7 +1,7 @@
 # oh-my-multica
 
 [![CI](https://github.com/xiaohei-info/oh-my-multica/actions/workflows/ci.yml/badge.svg)](https://github.com/xiaohei-info/oh-my-multica/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-1.0.0-blue)](https://github.com/xiaohei-info/oh-my-multica)
+[![Version](https://img.shields.io/badge/version-1.0.0-blue)](https://github.com/xiaohei-info/oh-my-multica/releases/tag/v1.0.0)
 [![License](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 
 [English](README.md) | [简体中文](README.zh-CN.md)
@@ -155,13 +155,13 @@ Prerequisites:
 - For the Multica engine, [install the Multica CLI](https://github.com/multica-ai/multica/blob/main/CLI_INSTALL.md), complete `multica login`, and connect Codex, Claude Code, or other Runtimes on the machine to Multica.
 
 ```bash
-pipx install oh-my-multica
+pipx install git+https://github.com/xiaohei-info/oh-my-multica.git@v1.0.0
 
 omac --version
 ```
 
-To install the latest source revision instead of a released package, use
-`pipx install git+https://github.com/xiaohei-info/oh-my-multica.git`.
+The versioned GitHub Tag is the current stable installation source. To install
+the latest development revision instead, replace `@v1.0.0` with `@main`.
 
 The more machines connected to Multica, the greater the Agent execution concurrency available. Machines with a
 Coding Agent Runtime installed are the actual task execution layer at the bottom of this system.

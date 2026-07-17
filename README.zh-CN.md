@@ -1,7 +1,7 @@
 # oh-my-multica
 
 [![CI](https://github.com/xiaohei-info/oh-my-multica/actions/workflows/ci.yml/badge.svg)](https://github.com/xiaohei-info/oh-my-multica/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-1.0.0-blue)](https://github.com/xiaohei-info/oh-my-multica)
+[![Version](https://img.shields.io/badge/version-1.0.0-blue)](https://github.com/xiaohei-info/oh-my-multica/releases/tag/v1.0.0)
 [![License](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 
 [English](README.md) | [简体中文](README.zh-CN.md)
@@ -134,13 +134,13 @@ oh-my-multica 不适合一次性的代码片段生成，也不会替代业务决
 - 使用 Multica engine 时，[安装 Multica CLI](https://github.com/multica-ai/multica/blob/main/CLI_INSTALL.md) 并完成 `multica login`将电脑/机器上的 Codex、Claude Code 等 Runtime 接入 Multica。
 
 ```bash
-pipx install oh-my-multica
+pipx install git+https://github.com/xiaohei-info/oh-my-multica.git@v1.0.0
 
 omac --version
 ```
 
-如需安装尚未发布的最新源码版本，可使用
-`pipx install git+https://github.com/xiaohei-info/oh-my-multica.git`。
+当前稳定安装源是带版本号的 GitHub Tag。如需安装最新开发版本，将命令中的 `@v1.0.0`
+替换为 `@main`。
 
 接入 Multica 的机器越多、你能够获得的 Agent 执行并行度就越大，装了 Coding Agent Runtime 的机器是这套机制最底层的任务执行地点。
 

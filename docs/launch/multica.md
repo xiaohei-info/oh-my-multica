@@ -44,11 +44,19 @@ not orchestrate its own entire history.
 
 Repository: https://github.com/xiaohei-info/oh-my-multica
 
+Release: https://github.com/xiaohei-info/oh-my-multica/releases/tag/v1.0.0
+
 Real demo: https://github.com/xiaohei-info/oh-my-multica-demo-webhook-inbox
 
 Case study: https://github.com/xiaohei-info/oh-my-multica/blob/main/docs/case-studies/webhook-inbox-end-to-end.md
 
 Local demo: https://github.com/xiaohei-info/oh-my-multica/blob/main/docs/demo/README.md
+
+Install the stable GitHub Tag:
+
+```bash
+pipx install git+https://github.com/xiaohei-info/oh-my-multica.git@v1.0.0
+```
 
 I would especially value feedback from people already running several Multica
 Agents: which delivery boundary is still missing, what repository shape breaks
@@ -70,6 +78,8 @@ forced a correction and reran to 11/11. The repository also includes the early
 v1 build record and a local mock demo that requires no Multica account or Tokens.
 
 Repo: https://github.com/xiaohei-info/oh-my-multica
+
+Stable install: `pipx install git+https://github.com/xiaohei-info/oh-my-multica.git@v1.0.0`
 
 I’d love feedback from anyone using Multica for multi-Agent coding work,
 especially around setup friction and real repository constraints.

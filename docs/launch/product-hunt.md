@@ -76,6 +76,6 @@ hold, and real delivery cases where the Loop either helps or gets in the way.
 - Use a personal Maker account with a real name and profile photo. Product Hunt
   currently restricts posting and interaction from company accounts.
 - The personal account must normally be at least one week old before launch.
-- Do not schedule Launch Day until the GitHub Release, PyPI install, and first
-  external-user fixes are complete.
+- Do not schedule Launch Day until the GitHub Release, tagged source install,
+  and first external-user fixes are complete.
 - Do not ask for upvotes. Ask users to try the demo and leave concrete feedback.

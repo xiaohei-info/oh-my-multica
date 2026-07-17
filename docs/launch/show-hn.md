@@ -64,8 +64,9 @@ repository shapes fail. I’ll be around to answer technical questions.
 
 ## Posting checklist
 
-- Confirm `pipx install oh-my-multica` works from a clean machine.
-- Confirm the GitHub Release and local demo are public.
+- Confirm `pipx install git+https://github.com/xiaohei-info/oh-my-multica.git@v1.0.0`
+  works from a clean machine.
+- Confirm the GitHub Release and real Webhook Inbox demo are public.
 - Use the repository as the submission URL, not the case-study article.
 - Be available for several hours after posting.
 - Do not ask anyone to upvote or seed comments.
