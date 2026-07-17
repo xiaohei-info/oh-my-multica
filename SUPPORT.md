@@ -1,12 +1,17 @@
 # Support
 
-- Ask usage and configuration questions in GitHub Discussions under **Q&A**.
-- Share a successful delivery or integration under **Show and tell**.
-- Report reproducible product defects with the Bug report Issue Form.
-- Propose focused improvements with the Feature request Issue Form.
+Choose the channel that matches what you need:
+
+- Use GitHub Discussions under **Q&A** for installation, configuration, and
+  recovery questions.
+- Use **Show and tell** to share a delivery or integration that others can
+  inspect and learn from.
+- Use the Bug report Issue Form for a reproducible product defect.
+- Use the Feature request Issue Form for a focused improvement with a clear use
+  case.
 - Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 
 When asking for help, include the oh-my-multica version, operating system,
-Python version, engine, the command you ran, its exit code, and a sanitized
-error message. Never include Tokens, credentials, private repository content,
-user email addresses, machine paths, workspace IDs, or Agent IDs.
+Python version, engine, command, exit code, and a sanitized error message.
+Remove tokens, credentials, private repository content, email addresses,
+machine paths, workspace IDs, and Agent IDs before posting.

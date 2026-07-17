@@ -1,100 +1,48 @@
 # Changelog
 
-All notable changes to **omac** are documented here. The format follows
-[Keep a Changelog] and version numbers follow [Semantic Versioning].
+This file records public changes to oh-my-multica. The format follows
+[Keep a Changelog], and version numbers follow [Semantic Versioning].
 
 [Keep a Changelog]: https://keepachangelog.com/en/1.0.0/
 [Semantic Versioning]: https://semver.org/
 
 ## [Unreleased]
 
-## [1.0.0] — 2026-07-16
+## [1.0.0] — 2026-07-17
 
-First public release of oh-my-multica: a software delivery control layer built
-on Multica for turning a requirement into a designed, implemented, verified,
-reviewed, merged, and finally accepted software change.
-
-### Highlights
-
-- Agent-authored design, acceptance criteria, project rules, and dynamic
-  manifest DAGs instead of a fixed task template.
-- Deterministic Loop control for dependency scheduling, result collection,
-  bounded rework, recovery, merge, and completion decisions.
-- Structured verification evidence, independent review, CI gates, and final
-  flow-based acceptance.
-- Parallel execution through Multica workspaces and Coding Agent runtimes,
-  with persistent state that survives process and context interruptions.
-- Human and Controller Agent entry points backed by the same CLI protocol,
-  facts, exit-code contract, and recovery guidance.
-- English-first CLI and Guides with project-local Chinese support, plus aligned
-  English and Simplified Chinese READMEs.
-- Built-in Agent Team templates for planning, orchestration, implementation,
-  review, and acceptance roles.
+The first public release turns Multica's workspaces, work items, and Coding
+Agent runtimes into a controlled software delivery process. A requirement can
+move through design, dynamic planning, implementation, verification, review,
+merge, and final acceptance without relying on one Agent to supervise the
+whole delivery.
 
 ### Added
 
-- Project-local language configuration. `omac init` selects `en` or `cn` and
-  writes `language` to `.omac/config.yaml`; projects without the key default to
-  English.
-- Localized `work show` protocol, authority order, table view, Guide loading,
-  and top-level CLI help, while preserving JSON schema, task facts, and
-  executable submit commands.
-- Complete English mirrors for all packaged OMAC Guides. Chinese remains
-  available through the same project setting.
-- English primary README and Simplified Chinese mirror.
-- `omac init` can create Multica agents from nine built-in templates. It injects
-  Instructions, uploads missing Skills, and binds them to a new agent; existing
-  agents are unchanged and all created agents enter the same role-mapping pool.
-- Planner-authored plans now require a second reviewed `project-rules` artifact.
-  oh-my-multica persists it through the engine, updates only its managed section
-  in the repository-root `AGENTS.md`, and commits it with the manifest and
-  acceptance outputs. `--doc` continues to skip planner authoring and this
-  update.
+- A reviewed planning chain for design, acceptance criteria, project rules,
+  and an Agent-authored manifest DAG.
+- Dependency-aware parallel execution through Multica workspaces and runtimes.
+- A deterministic Loop for result collection, ready-node dispatch, evidence
+  gates, bounded rework, recovery, merge conditions, and completion decisions.
+- Structured verification evidence and independent Reviewer verdicts for each
+  delivery node.
+- Optional CI and Pull Request integration, followed by flow-based acceptance
+  on the integrated default branch.
+- Persistent execution state, stable exit codes, and recovery guidance for
+  interrupted deliveries.
+- Human and Controller Agent entry points that use the same CLI protocol and
+  see the same delivery facts.
+- A local read-only web interface for inspecting plans and execution state.
+- Built-in Agent Team templates for planning, orchestration, implementation,
+  review, and acceptance.
+- English and Simplified Chinese documentation, plus project-local language
+  selection for packaged Guides.
 
-- **Delivery-level end-to-end closure (§7.6 / §10.3):** `plan create` outputs a
-  manifest and acceptance document; `dag run` exercises mock CI and merge;
-  final acceptance can fail, add an increment, pass, and return exit 0. The
-  `e2e` suite covers passing CI, merge, the acceptance outer loop, and exit-code
-  paths.
-- **Mock-engine stability:** `_auto_complete_check` uses real `work submit` for
-  registered behavior and a generic DONE-with-deliverable fallback, preventing
-  `plan create` from hanging. Review and verification safely handle dict-shaped
-  acceptance and decomposition contracts.
-- **Release material:** version raised to `1.0.0`, this changelog added, and
-  README commands checked against runnable paths.
+### Public demonstration
 
-### Fixed
+The [Webhook Inbox demo] shows the complete path from one requirement to five
+reviewed Pull Requests and an accepted FastAPI service. Its checked-in evidence
+records 86 passing tests, 97.18% coverage, CI across Python 3.10–3.13, and
+11/11 final acceptance flows.
 
-- **CI node permanently stuck in `in_progress`:** after CI pass,
-  `advance_delivery` returned the work item to `IN_PROGRESS`; the no-reviewer
-  path marked the manifest done without synchronizing the platform work item.
-  The next reconciliation reverted it and the loop never converged.
-- **Mock reviewer decision was lost:** assignment could auto-complete a work
-  item while it was still `IN_PROGRESS`, clearing assignment state before the
-  reviewer wake-up. The item now enters `IN_REVIEW` before assignment.
-- **Mock delay in `conftest`:** `MOCK_AUTO_COMPLETE_DELAY` now defaults to 0 so
-  library-level `main()` tests are fast and match subprocess e2e behavior.
-- **Delayed acceptance emit in `dag.py`:** after acceptance adds fix nodes, an
-  extra idempotent tick runs before emit so JSON reflects the updated done list.
-- **Emit JSON schema:** `--output json` always includes `report` (`null` after
-  convergence), so consumers do not need to guard field access.
-
-### Changed
-
-- `src/omac/__init__.py` and `pyproject.toml` moved from version `0.1.0` to
-  `1.0.0`.
-
-## [0.1.0] — 2026-06
-
-Initial internal release with P1–P4:
-
-- **P1 — Foundation and observability:** command tree, exit-code contract,
-  multi-engine skeleton, mock engine, and `run_task` loop.
-- **P2 — Pipeline and parallelism:** manifest, graph, dispatch,
-  `collect_results`, mock CI, develop authoring, three-step PR closure, Web
-  server, and SPA dashboard.
-- **P3 — Planning and decomposition:** plan create/check/show, reviewer handoff,
-  retry configuration, and README coverage.
-- **P4 — Acceptance and closure:** CI monitoring with bounded fallback,
-  automatic merge, conflict fallback, acceptance increment loop, lint and merge
-  increment, and delivery closure.
+[Webhook Inbox demo]: https://github.com/xiaohei-info/oh-my-multica-demo-webhook-inbox
+[1.0.0]: https://github.com/xiaohei-info/oh-my-multica/releases/tag/v1.0.0
