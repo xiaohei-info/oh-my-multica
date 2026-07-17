@@ -116,6 +116,10 @@ non-root container. See the
 [demo README](https://github.com/xiaohei-info/oh-my-multica-demo-webhook-inbox#readme) for the requirement,
 collaboration details, and delivery evidence.
 
+<p align="center">
+  <img src="docs/assets/oh-my-multica-webhook-inbox-demo.svg" alt="Real Webhook Inbox delivery: a five-node DAG, signed event ingestion, idempotent retry, and final acceptance" width="100%">
+</p>
+
 ## Who it is for
 
 - Developers who already use AI Coding heavily and want to move from supervising every conversation to managing goals, constraints, and outcomes.
