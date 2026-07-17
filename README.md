@@ -107,16 +107,14 @@ verification, review, or final acceptance return to rework and cannot enter the 
 
 ### A real end-to-end delivery
 
-The [Webhook Inbox demo](https://github.com/xiaohei-info/oh-my-multica-demo-webhook-inbox) started from one
-production-constrained goal and converged through a dynamically planned five-node DAG and five merged Pull
-Requests. The integrated result passed 86 tests with 97.18% coverage, CI on Python 3.10 through 3.13, non-root
-container verification, independent review, and final acceptance.
-
-The first final-acceptance round passed only 2 of 11 flows because the reviewed acceptance source still started a
-stale application entry point. The Loop preserved the failure and refused completion. After the source was fixed,
-the complete acceptance document passed 11/11 and the controller returned exit 0. Read the
-[end-to-end case study](docs/case-studies/webhook-inbox-end-to-end.md) for the DAG, role split, public PRs, and
-failure evidence.
+We used oh-my-multica to deliver a production-constrained Webhook Inbox that authenticates, stores, and
+deduplicates third-party webhook events. Planner and Orchestrator Agents planned the DAG, Worker Agents
+implemented its nodes in parallel, and Reviewer and Acceptor Agents verified the integrated result. The
+deterministic Loop controlled scheduling, evidence, merge, and convergence. The result is a runnable FastAPI and
+SQLite service with signature verification, transaction-safe deduplication, event lookup, health checks, and a
+non-root container. See the
+[demo README](https://github.com/xiaohei-info/oh-my-multica-demo-webhook-inbox#readme) for the requirement,
+collaboration details, and delivery evidence.
 
 ## Who it is for
 
