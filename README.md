@@ -105,16 +105,7 @@ models can handle the largest number of development and testing nodes and consum
 Engineering provides constraints before action and feedback after action; results that fail their contract,
 verification, review, or final acceptance return to rework and cannot enter the delivery chain.
 
-### A real build, including the failures
-
-The v1 foundation was developed through a Multica project with 29 completed work items, 168 Agent runs, and 27
-linked Pull Requests. Fifteen runs failed and eight were retried; 26 Pull Requests merged and one superseded
-implementation was closed. The case study separates public GitHub evidence from sanitized Multica run data and
-does not claim that the completed controller orchestrated its own entire history. Read
-[Building the v1 foundation on Multica](docs/case-studies/building-v1-on-multica.md), or run the
-[local failure-and-recovery demo](docs/demo/README.md).
-
-### A complete end-to-end delivery
+### A real end-to-end delivery
 
 The [Webhook Inbox demo](https://github.com/xiaohei-info/oh-my-multica-demo-webhook-inbox) started from one
 production-constrained goal and converged through a dynamically planned five-node DAG and five merged Pull
