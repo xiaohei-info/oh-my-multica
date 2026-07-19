@@ -133,6 +133,18 @@ nodes:
           commands: [pytest tests/int_a -q]
           required_metrics: {route_coverage: 100}
           artifacts: [coverage.xml]
+      quality:
+        required_outcomes:
+          - id: foundation-outcome
+            source_ref: acceptance#flow-foundation.run
+        business_tests:
+          - id: foundation-business
+            outcome_refs: [foundation-outcome]
+            command: pytest tests/int_a -q
+            level: integration
+            real_dependencies: [none]
+            must_fail_on_base: true
+        runtime_data_policy: real-or-error
       pr_base: feature/p4-smoke
       coverage_gate: 90
   - id: middle
@@ -155,6 +167,18 @@ nodes:
           commands: [pytest tests/int_b -q]
           required_metrics: {route_coverage: 100}
           artifacts: [coverage.xml]
+      quality:
+        required_outcomes:
+          - id: middle-outcome
+            source_ref: acceptance#flow-middle.run
+        business_tests:
+          - id: middle-business
+            outcome_refs: [middle-outcome]
+            command: pytest tests/int_b -q
+            level: integration
+            real_dependencies: [none]
+            must_fail_on_base: true
+        runtime_data_policy: real-or-error
       pr_base: feature/p4-smoke
       coverage_gate: 90
   - id: final
@@ -177,6 +201,18 @@ nodes:
           commands: [pytest tests/int_c -q]
           required_metrics: {route_coverage: 100}
           artifacts: [coverage.xml]
+      quality:
+        required_outcomes:
+          - id: final-outcome
+            source_ref: acceptance#flow-final.run
+        business_tests:
+          - id: final-business
+            outcome_refs: [final-outcome]
+            command: pytest tests/int_c -q
+            level: integration
+            real_dependencies: [none]
+            must_fail_on_base: true
+        runtime_data_policy: real-or-error
       pr_base: feature/p4-smoke
       coverage_gate: 90
 """
@@ -186,19 +222,22 @@ flows:
   - id: flow-foundation
     name: foundation 流程
     actions:
-      - step: 走通 foundation
+      - id: run
+        step: 走通 foundation
         how: GET /foundation
         expected: ok
   - id: flow-middle
     name: middle 流程
     actions:
-      - step: 走通 middle
+      - id: run
+        step: 走通 middle
         how: GET /middle
         expected: ok
   - id: flow-final
     name: final 流程
     actions:
-      - step: 走通 final
+      - id: run
+        step: 走通 final
         how: GET /final
         expected: ok
 """

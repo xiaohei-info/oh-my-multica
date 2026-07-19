@@ -34,8 +34,9 @@ guide does not decide product facts.
 
 1. Read `work show`, the design, acceptance document, references, current
    manifest or failure notes, and `submit`.
-2. Identify Wave 0 foundations: shared contracts, infrastructure, a runnable
-   skeleton, CI gates, and mocks/fakes that later nodes genuinely consume.
+2. Identify Wave 0 foundations: shared contracts, real infrastructure adapters,
+   and CI gates. Wave 0 is itself a complete usable delivery; a runnable
+   skeleton, temporary implementation, or mock/fake runtime fallback is not done.
 3. Split Wave 1 into tracks along stable contracts and APIs to maximize parallel
    work. Within a track, schedule only the small foundation needed before the
    business module.
@@ -51,8 +52,9 @@ guide does not decide product facts.
 7. Put only genuine runtime prerequisites in `blocked_by`; put coordination-only
    dependencies in the description.
 8. Give every node a complete contract: `objective`, `source_of_truth`,
-   `acceptance`, `non_goals`, `verification_commands`, `integration_gates`, and
-   `pr_base`.
+   `acceptance`, `non_goals`, `verification_commands`, `integration_gates`,
+   `quality`, and `pr_base`. Map every business outcome to a real acceptance
+   action and integration/e2e business test; runtime data policy is `real-or-error`.
 9. Treat `scope_paths` as primary code ownership, not a file whitelist. Workers
    may change supporting files needed by the contract and explain them in the PR
    or verification. `non_goals`, contracts, verification, and review enforce

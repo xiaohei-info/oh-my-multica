@@ -79,6 +79,17 @@ def _full_contract():
             "required_metrics": {"route_coverage": 100},
             "artifacts": ["coverage.xml"],
         }],
+        quality={
+            "required_outcomes": [{
+                "id": "login-mobile", "source_ref": "acceptance#login.mobile",
+            }],
+            "business_tests": [{
+                "id": "login-business", "outcome_refs": ["login-mobile"],
+                "command": "pytest tests/int_login", "level": "integration",
+                "real_dependencies": ["postgres"], "must_fail_on_base": True,
+            }],
+            "runtime_data_policy": "real-or-error",
+        },
         pr_base="feature/v1",
         coverage_gate=90,
     )
@@ -466,6 +477,17 @@ class TestDispatchLoopIntegration:
                 "required_metrics": {"route_coverage": 100},
                 "artifacts": ["coverage.xml"],
             }],
+            quality={
+                "required_outcomes": [{
+                    "id": "login", "source_ref": "acceptance#login.action",
+                }],
+                "business_tests": [{
+                    "id": "login-business", "outcome_refs": ["login"],
+                    "command": "pytest -q", "level": "integration",
+                    "real_dependencies": ["none"], "must_fail_on_base": True,
+                }],
+                "runtime_data_policy": "real-or-error",
+            },
             pr_base="feature/v1", coverage_gate=90,
         )
         manifest = Manifest(meta={"workspace_id": "ws"}, nodes={
@@ -499,6 +521,19 @@ class TestDispatchLoopIntegration:
                 "pr_base": "feature/v1",
                 "coverage": 95,
                 "env_setup": ["Mock env: login-gate"],
+                "quality": {
+                    "outcome_mapping": [{
+                        "outcome": "login", "implementation": ["src/login.py"],
+                        "tests": ["tests/test_login.py"],
+                    }],
+                    "regression_proof": [{
+                        "test_id": "login-business",
+                        "base_ref": "base-sha", "base_exit_code": 1,
+                        "head_ref": "head-sha", "head_exit_code": 0,
+                    }],
+                    "runtime_fallbacks": [], "known_gaps": [],
+                    "evidence_origin": "real",
+                },
             },
         )
         eng.store.update_status(item_id, WorkItemStatus.DONE)
@@ -515,11 +550,21 @@ class TestDispatchLoopIntegration:
             item_id,
             review_verdict="pass",
             review_report={
+                "reviewed_revision": "head-sha",
                 "review_goals": ["验收映射全覆盖"],
                 "diff_reviewed": True,
                 "tests_rerun": True,
                 "integration_tests_rerun": True,
                 "coverage_checked": True,
+                "review_scope": {
+                    "changed_files": ["src/login.py", "tests/test_login.py"],
+                    "all_changed_files_reviewed": True,
+                    "all_outcomes_reviewed": True,
+                    "all_business_tests_rerun": True,
+                    "runtime_fallback_audit_completed": True,
+                },
+                "findings": [],
+                "outcome_mapping": [{"outcome": "login", "status": "pass"}],
                 "acceptance_mapping": [
                     {"acceptance": "可登录", "evidence": "rerun pass",
                      "status": "pass"},

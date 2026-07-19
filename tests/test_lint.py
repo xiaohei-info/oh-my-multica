@@ -1,5 +1,6 @@
 """core.lint:成员池、依赖引用、reviewer 规则、contract 硬门、环检测。"""
 from omac.core.lint import lint
+from omac.core.acceptance import load_acceptance_doc
 from omac.core.manifest import Contract, Manifest, Node
 
 POOL = {"alice", "bob"}
@@ -49,12 +50,13 @@ def test_declared_closeout_node_must_exist():
 
 def test_contract_hard_gates():
     contract = Contract(objective=None, acceptance=[], non_goals=[],
-                        verification_commands=[], integration_gates=[], pr_base=None)
+                        verification_commands=[], integration_gates=[], pr_base=None,
+                        quality=None)
     errs = lint(_manifest(_node("a", contract=contract)), POOL)
     joined = "\n".join(errs)
     for needle in ("objective", "acceptance", "non_goals",
                    "verification_commands", "integration_gates", "pr_base",
-                   "source_of_truth"):
+                   "source_of_truth", "quality"):
         assert needle in joined
 
 
@@ -69,6 +71,21 @@ def _valid_contract(**over):
             "source_of_truth": ["docs/design.md#x"], "covers": ["route"],
             "acceptance_refs": ["A 工作"], "commands": ["pytest tests/int"],
         }],
+        quality={
+            "required_outcomes": [{
+                "id": "outcome-x",
+                "source_ref": "acceptance#flow-x.action-x",
+            }],
+            "business_tests": [{
+                "id": "business-x",
+                "outcome_refs": ["outcome-x"],
+                "command": "pytest tests/int",
+                "level": "integration",
+                "real_dependencies": ["none"],
+                "must_fail_on_base": True,
+            }],
+            "runtime_data_policy": "real-or-error",
+        },
         pr_base="feature/v1")
     base.update(over)
     return Contract(**base)
@@ -85,3 +102,84 @@ def test_valid_contract_passes_all_gates():
     """回归:补全 source_of_truth 的完整契约应零报错(硬门不误伤合法节点)。"""
     errs = lint(_manifest(_node("a", contract=_valid_contract())), POOL)
     assert errs == []
+
+
+def test_quality_requires_every_outcome_to_have_business_test():
+    quality = _valid_contract().quality
+    quality.required_outcomes.append({
+        "id": "uncovered",
+        "source_ref": "acceptance#flow-x.uncovered",
+    })
+    errs = lint(_manifest(_node("a", contract=_valid_contract(quality=quality))), POOL)
+    assert any("required outcome has no business test: uncovered" in e for e in errs)
+
+
+def test_quality_rejects_unit_only_business_test():
+    quality = _valid_contract().quality
+    quality.business_tests[0]["level"] = "unit"
+    errs = lint(_manifest(_node("a", contract=_valid_contract(quality=quality))), POOL)
+    assert any("level must be integration|e2e" in e for e in errs)
+
+
+def test_quality_business_test_command_must_be_declared_gate_command():
+    quality = _valid_contract().quality
+    quality.business_tests[0]["command"] = "pytest tests/unknown"
+    errs = lint(_manifest(_node("a", contract=_valid_contract(quality=quality))), POOL)
+    assert any("command is not declared" in e for e in errs)
+
+
+def test_quality_source_ref_must_anchor_real_acceptance_action():
+    acceptance = load_acceptance_doc({
+        "flows": [{
+            "id": "flow-x",
+            "name": "X flow",
+            "actions": [{
+                "id": "action-x", "step": "run", "how": "call /x",
+                "expected": "x works",
+            }],
+        }],
+    })
+    assert lint(
+        _manifest(_node("a", contract=_valid_contract(acceptance=["flow-x"]))),
+        POOL,
+        acceptance=acceptance,
+    ) == []
+
+    quality = _valid_contract().quality
+    quality.required_outcomes[0]["source_ref"] = "acceptance#flow-x.missing"
+    errs = lint(
+        _manifest(_node("a", contract=_valid_contract(
+            acceptance=["flow-x"], quality=quality))),
+        POOL,
+        acceptance=acceptance,
+    )
+    assert any("source_ref is not anchored to an acceptance action" in e for e in errs)
+
+
+def test_quality_source_ref_requires_acceptance_anchor_shape():
+    quality = _valid_contract().quality
+    quality.required_outcomes[0]["source_ref"] = "docs/design.md#x"
+    errs = lint(_manifest(_node("a", contract=_valid_contract(quality=quality))), POOL)
+    assert any("source_ref must use acceptance#flow.action" in e for e in errs)
+
+
+def test_quality_source_ref_flow_must_belong_to_node_acceptance():
+    acceptance = load_acceptance_doc({
+        "flows": [
+            {"id": "flow-x", "name": "X", "actions": [
+                {"id": "action-x", "step": "x", "how": "run x", "expected": "x"},
+            ]},
+            {"id": "flow-y", "name": "Y", "actions": [
+                {"id": "action-y", "step": "y", "how": "run y", "expected": "y"},
+            ]},
+        ],
+    })
+    quality = _valid_contract().quality
+    quality.required_outcomes[0]["source_ref"] = "acceptance#flow-y.action-y"
+    errs = lint(
+        _manifest(_node("a", contract=_valid_contract(
+            acceptance=["flow-x"], quality=quality))),
+        POOL,
+        acceptance=acceptance,
+    )
+    assert any("source_ref flow is not declared in contract.acceptance" in e for e in errs)

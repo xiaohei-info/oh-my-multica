@@ -26,6 +26,18 @@ nodes:
           commands: ["pytest tests/int_a -q"]
           required_metrics: {"route_coverage": 100}
           artifacts: ["coverage.xml"]
+      quality:
+        required_outcomes:
+          - id: foundation-outcome
+            source_ref: acceptance#foundation.action
+        business_tests:
+          - id: foundation-business
+            outcome_refs: [foundation-outcome]
+            command: pytest tests/int_a -q
+            level: integration
+            real_dependencies: [none]
+            must_fail_on_base: true
+        runtime_data_policy: real-or-error
       pr_base: "feature/p1-smoke"
       coverage_gate: 90
 
@@ -50,6 +62,18 @@ nodes:
           commands: ["pytest tests/int_b -q"]
           required_metrics: {"route_coverage": 100}
           artifacts: ["coverage.xml"]
+      quality:
+        required_outcomes:
+          - id: middle-outcome
+            source_ref: acceptance#middle.action
+        business_tests:
+          - id: middle-business
+            outcome_refs: [middle-outcome]
+            command: pytest tests/int_b -q
+            level: integration
+            real_dependencies: [none]
+            must_fail_on_base: true
+        runtime_data_policy: real-or-error
       pr_base: "feature/p1-smoke"
       coverage_gate: 90
 
@@ -73,5 +97,17 @@ nodes:
           commands: ["pytest tests/int_c -q"]
           required_metrics: {"route_coverage": 100}
           artifacts: ["coverage.xml"]
+      quality:
+        required_outcomes:
+          - id: final-outcome
+            source_ref: acceptance#final.action
+        business_tests:
+          - id: final-business
+            outcome_refs: [final-outcome]
+            command: pytest tests/int_c -q
+            level: integration
+            real_dependencies: [none]
+            must_fail_on_base: true
+        runtime_data_policy: real-or-error
       pr_base: "feature/p1-smoke"
       coverage_gate: 90

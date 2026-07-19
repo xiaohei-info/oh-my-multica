@@ -69,6 +69,7 @@ def _contract_errors(node) -> list:
             errs.extend(_integration_gate_errors(prefix, gate, index))
     if not contract.pr_base:
         errs.append(f"{prefix}.pr_base is required")
+    errs.extend(_quality_errors(prefix, contract))
 
     coverage_gate = contract.coverage_gate
     if not isinstance(coverage_gate, (int, float)) or isinstance(coverage_gate, bool) or not 0 <= coverage_gate <= 100:
@@ -77,6 +78,88 @@ def _contract_errors(node) -> list:
     for required_path in contract.required_contracts:
         if not os.path.exists(required_path):
             errs.append(f"{prefix}.required_contracts path does not exist: {required_path}")
+    return errs
+
+
+def _quality_errors(prefix: str, contract) -> list:
+    quality = getattr(contract, "quality", None)
+    if quality is None:
+        return [f"{prefix}.quality is required"]
+
+    errs = []
+    outcomes = quality.required_outcomes
+    tests = quality.business_tests
+    if not isinstance(outcomes, list) or not outcomes:
+        errs.append(f"{prefix}.quality.required_outcomes must be non-empty")
+        outcomes = []
+    if not isinstance(tests, list) or not tests:
+        errs.append(f"{prefix}.quality.business_tests must be non-empty")
+        tests = []
+    if quality.runtime_data_policy != "real-or-error":
+        errs.append(f"{prefix}.quality.runtime_data_policy must be real-or-error")
+
+    outcome_ids = set()
+    for index, outcome in enumerate(outcomes):
+        item_prefix = f"{prefix}.quality.required_outcomes[{index}]"
+        if not isinstance(outcome, dict):
+            errs.append(f"{item_prefix} must be an object")
+            continue
+        outcome_id = outcome.get("id")
+        if not isinstance(outcome_id, str) or not outcome_id.strip():
+            errs.append(f"{item_prefix}.id is required")
+        elif outcome_id in outcome_ids:
+            errs.append(f"{prefix}.quality duplicate outcome id: {outcome_id}")
+        else:
+            outcome_ids.add(outcome_id)
+        source_ref = outcome.get("source_ref")
+        if not isinstance(source_ref, str) or not source_ref.strip():
+            errs.append(f"{item_prefix}.source_ref is required")
+        elif not source_ref.startswith("acceptance#") or "." not in source_ref.removeprefix("acceptance#"):
+            errs.append(f"{item_prefix}.source_ref must use acceptance#flow.action")
+
+    declared_commands = set(contract.verification_commands)
+    for gate in contract.integration_gates:
+        if isinstance(gate, dict):
+            declared_commands.update(gate.get("commands", []))
+
+    covered_outcomes = set()
+    test_ids = set()
+    for index, business_test in enumerate(tests):
+        item_prefix = f"{prefix}.quality.business_tests[{index}]"
+        if not isinstance(business_test, dict):
+            errs.append(f"{item_prefix} must be an object")
+            continue
+        test_id = business_test.get("id")
+        if not isinstance(test_id, str) or not test_id.strip():
+            errs.append(f"{item_prefix}.id is required")
+        elif test_id in test_ids:
+            errs.append(f"{prefix}.quality duplicate business test id: {test_id}")
+        else:
+            test_ids.add(test_id)
+        refs = business_test.get("outcome_refs")
+        if not isinstance(refs, list) or not refs:
+            errs.append(f"{item_prefix}.outcome_refs must be non-empty")
+        else:
+            for outcome_ref in refs:
+                if outcome_ref not in outcome_ids:
+                    errs.append(f"{item_prefix} references unknown outcome: {outcome_ref}")
+                else:
+                    covered_outcomes.add(outcome_ref)
+        command = business_test.get("command")
+        if not isinstance(command, str) or not command.strip():
+            errs.append(f"{item_prefix}.command is required")
+        elif command not in declared_commands:
+            errs.append(f"{item_prefix}.command is not declared: {command}")
+        if business_test.get("level") not in {"integration", "e2e"}:
+            errs.append(f"{item_prefix}.level must be integration|e2e")
+        dependencies = business_test.get("real_dependencies")
+        if not isinstance(dependencies, list) or not dependencies:
+            errs.append(f"{item_prefix}.real_dependencies must be non-empty")
+        if not isinstance(business_test.get("must_fail_on_base"), bool):
+            errs.append(f"{item_prefix}.must_fail_on_base must be boolean")
+
+    for outcome_id in sorted(outcome_ids - covered_outcomes):
+        errs.append(f"{prefix}.quality required outcome has no business test: {outcome_id}")
     return errs
 
 
@@ -105,6 +188,7 @@ def lint(m: Manifest, pool: set, *, acceptance=None) -> list:
         errs.extend(_contract_errors(n))
     if acceptance is not None:
         flow_ids = set(getattr(acceptance, "flow_ids", None) or [])
+        action_ids = set(getattr(acceptance, "action_ids", None) or [])
         for n in m.nodes.values():
             contract = getattr(n, "contract", None)
             if not contract:
@@ -114,6 +198,29 @@ def lint(m: Manifest, pool: set, *, acceptance=None) -> list:
                     errs.append(ui(
                         f"node {n.id}: contract.acceptance '{a}' is not anchored to an acceptance flow",
                         f"node {n.id}: contract.acceptance '{a}' 未锚定验收文档 flow"))
+            quality = getattr(contract, "quality", None)
+            if quality is None:
+                continue
+            for outcome in quality.required_outcomes:
+                if not isinstance(outcome, dict):
+                    continue
+                source_ref = outcome.get("source_ref")
+                if not isinstance(source_ref, str) or not source_ref.startswith("acceptance#"):
+                    continue
+                action_ref = source_ref.removeprefix("acceptance#")
+                if action_ref not in action_ids:
+                    errs.append(
+                        f"node {n.id}: quality outcome source_ref is not anchored "
+                        f"to an acceptance action: {source_ref}"
+                    )
+                if not any(
+                    action_ref.startswith(f"{flow_id}.")
+                    for flow_id in contract.acceptance
+                ):
+                    errs.append(
+                        f"node {n.id}: quality outcome source_ref flow is not "
+                        f"declared in contract.acceptance: {source_ref}"
+                    )
     if _has_cycle(m.nodes):
         errs.append("manifest DAG has a cycle")
     return errs

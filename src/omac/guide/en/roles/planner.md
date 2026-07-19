@@ -48,8 +48,9 @@ convenient interpretation.
    states, ownership, and read/write paths.
 4. Define module boundaries and dependency direction. Specify cross-module DTOs,
    events, enums, errors, states, and external interfaces.
-5. Identify Wave 0 foundations: frozen shared contracts, a runnable skeleton,
-   CI gates, and mocks/fakes needed before later decomposition.
+5. Identify Wave 0 foundations: frozen shared contracts, real infrastructure
+   adapters, and CI gates. Explicitly prohibit treating a runnable skeleton,
+   temporary implementation, or mock/fake runtime fallback as final delivery.
 6. Analyze risk and compatibility. Name affected existing behavior and how the
    design avoids breaking userspace.
 7. Map every key flow to a stable, referenceable acceptance flow.

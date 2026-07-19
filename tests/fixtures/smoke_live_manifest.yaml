@@ -24,5 +24,17 @@ nodes:
           commands: ["pytest --version"]
           required_metrics: {"route_coverage": 100}
           artifacts: ["coverage.xml"]
+      quality:
+        required_outcomes:
+          - id: live-data-plane
+            source_ref: acceptance#live.data-plane
+        business_tests:
+          - id: live-business
+            outcome_refs: [live-data-plane]
+            command: pytest --version
+            level: integration
+            real_dependencies: [multica]
+            must_fail_on_base: true
+        runtime_data_policy: real-or-error
       pr_base: "feature/live-smoke"
       coverage_gate: 90

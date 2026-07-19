@@ -53,7 +53,8 @@ def _acceptance_doc(flows):
         flow_objs.append({
             "id": fid, "name": name,
             "actions": [
-                {"step": f"step-{i}", "how": f"how-{i}", "expected": f"exp-{i}"}
+                {"id": f"action-{i}", "step": f"step-{i}",
+                 "how": f"how-{i}", "expected": f"exp-{i}"}
                 for i in range(n)
             ],
         })
@@ -66,7 +67,8 @@ def _write_doc(tmp_path, doc):
     with open(doc_path, "w") as f:
         yaml.dump({"flows": [
             {"id": fl.id, "name": fl.name,
-             "actions": [{"step": a.step, "how": a.how, "expected": a.expected}
+             "actions": [{"id": a.id, "step": a.step,
+                           "how": a.how, "expected": a.expected}
                          for a in fl.actions]}
             for fl in doc.flows
         ]}, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
@@ -476,7 +478,8 @@ def _final_acceptance_store(tmp_path):
     acceptance_doc_raw = {
         "flows": [
             {"id": f.id, "name": f.name,
-             "actions": [{"step": a.step, "how": a.how, "expected": a.expected}
+             "actions": [{"id": a.id, "step": a.step,
+                           "how": a.how, "expected": a.expected}
                          for a in f.actions]}
             for f in doc.flows
         ]

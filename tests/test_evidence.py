@@ -20,6 +20,20 @@ CONTRACT = Contract(
         "acceptance_refs": ["works"], "commands": ["pytest tests/int"],
         "required_metrics": {"route_coverage": 100}, "artifacts": ["coverage.xml"],
     }],
+    quality={
+        "required_outcomes": [{
+            "id": "outcome-works", "source_ref": "acceptance#works.action",
+        }],
+        "business_tests": [{
+            "id": "business-works",
+            "outcome_refs": ["outcome-works"],
+            "command": "pytest tests/int",
+            "level": "integration",
+            "real_dependencies": ["postgres"],
+            "must_fail_on_base": True,
+        }],
+        "runtime_data_policy": "real-or-error",
+    },
     pr_base="feature/v1",
     coverage_gate=90,
 )
@@ -30,6 +44,20 @@ CONTRACT_NO_GATES = Contract(
     acceptance=["works"],
     non_goals=["no creep"],
     verification_commands=["pytest -q"],
+    quality={
+        "required_outcomes": [{
+            "id": "outcome-works", "source_ref": "acceptance#works.action",
+        }],
+        "business_tests": [{
+            "id": "business-works",
+            "outcome_refs": ["outcome-works"],
+            "command": "pytest -q",
+            "level": "integration",
+            "real_dependencies": ["none"],
+            "must_fail_on_base": True,
+        }],
+        "runtime_data_policy": "real-or-error",
+    },
     pr_base="feature/v1",
     coverage_gate=90,
 )
@@ -58,14 +86,43 @@ def _good_verification():
         "env_setup": ["pip install -r requirements.txt", "docker compose up -d db"],
         "pr_base": "feature/v1",
         "coverage": 95,
+        "quality": {
+            "outcome_mapping": [{
+                "outcome": "outcome-works",
+                "implementation": ["src/feature.py"],
+                "tests": ["tests/int/test_feature.py"],
+            }],
+            "regression_proof": [{
+                "test_id": "business-works",
+                "base_ref": "base-sha",
+                "base_exit_code": 1,
+                "head_ref": "head-sha",
+                "head_exit_code": 0,
+            }],
+            "runtime_fallbacks": [],
+            "known_gaps": [],
+            "evidence_origin": "real",
+        },
     }
 
 
 def _good_report():
     return {
+        "reviewed_revision": "head-sha",
         "review_goals": ["验收映射覆盖 contract.acceptance", "集成门 route_coverage 达标"],
         "diff_reviewed": True, "tests_rerun": True, "coverage_checked": True,
-        "integration_tests_rerun": True, "blockers": [],
+        "integration_tests_rerun": True,
+        "review_scope": {
+            "changed_files": ["src/feature.py", "tests/int/test_feature.py"],
+            "all_changed_files_reviewed": True,
+            "all_outcomes_reviewed": True,
+            "all_business_tests_rerun": True,
+            "runtime_fallback_audit_completed": True,
+        },
+        "findings": [],
+        "blockers": [],
+        "nits": [],
+        "outcome_mapping": [{"outcome": "outcome-works", "status": "pass"}],
         "acceptance_mapping": [{"acceptance": "works", "status": "pass"}],
         "integration_gate_mapping": [{
             "gate": "gate-1", "status": "pass",
@@ -128,9 +185,108 @@ def test_worker_evidence_env_setup_not_required_without_integration_gates():
         "commands": [{"cmd": "pytest -q", "exit_code": 0}],
         "pr_base": "feature/v1",
         "coverage": 95,
+        "quality": {
+            "outcome_mapping": [{
+                "outcome": "outcome-works",
+                "implementation": ["src/feature.py"],
+                "tests": ["tests/int/test_feature.py"],
+            }],
+            "regression_proof": [{
+                "test_id": "business-works",
+                "base_ref": "base-sha",
+                "base_exit_code": 1,
+                "head_ref": "head-sha",
+                "head_exit_code": 0,
+            }],
+            "runtime_fallbacks": [],
+            "known_gaps": [],
+            "evidence_origin": "real",
+        },
     }
     errs = validate_worker_evidence(NODE_NO_GATES, Item(artifacts={"pr_url": "u"}, verification=v))
     assert not any("env_setup" in e for e in errs)
+
+
+def test_worker_evidence_requires_all_outcome_mappings():
+    verification = _good_verification()
+    verification["quality"]["outcome_mapping"] = []
+    errs = validate_worker_evidence(
+        NODE, Item(artifacts={"pr_url": "u"}, verification=verification))
+    assert any("missing outcome mapping: outcome-works" in e for e in errs)
+
+
+def test_worker_evidence_requires_base_failure_for_business_test():
+    verification = _good_verification()
+    verification["quality"]["regression_proof"][0]["base_exit_code"] = 0
+    errs = validate_worker_evidence(
+        NODE, Item(artifacts={"pr_url": "u"}, verification=verification))
+    assert any("must fail on base" in e for e in errs)
+
+
+def test_worker_evidence_requires_base_exit_code_for_regression_proof():
+    verification = _good_verification()
+    del verification["quality"]["regression_proof"][0]["base_exit_code"]
+    errs = validate_worker_evidence(
+        NODE, Item(artifacts={"pr_url": "u"}, verification=verification))
+    assert any("base_exit_code must be an integer" in e for e in errs)
+
+
+def test_worker_evidence_requires_head_success_for_business_test():
+    verification = _good_verification()
+    verification["quality"]["regression_proof"][0]["head_exit_code"] = 1
+    errs = validate_worker_evidence(
+        NODE, Item(artifacts={"pr_url": "u"}, verification=verification))
+    assert any("must pass on head" in e for e in errs)
+
+
+def test_worker_evidence_rejects_same_base_and_head_ref():
+    verification = _good_verification()
+    verification["quality"]["regression_proof"][0]["head_ref"] = "base-sha"
+    errs = validate_worker_evidence(
+        NODE, Item(artifacts={"pr_url": "u"}, verification=verification))
+    assert any("base_ref and head_ref must differ" in e for e in errs)
+
+
+def test_worker_evidence_rejects_runtime_fallbacks():
+    verification = _good_verification()
+    verification["quality"]["runtime_fallbacks"] = ["fake user on timeout"]
+    errs = validate_worker_evidence(
+        NODE, Item(artifacts={"pr_url": "u"}, verification=verification))
+    assert any("runtime_fallbacks must be empty" in e for e in errs)
+
+
+def test_worker_evidence_rejects_known_gaps():
+    verification = _good_verification()
+    verification["quality"]["known_gaps"] = ["payment path not implemented"]
+    errs = validate_worker_evidence(
+        NODE, Item(artifacts={"pr_url": "u"}, verification=verification))
+    assert any("known_gaps must be empty" in e for e in errs)
+
+
+def test_worker_evidence_rejects_mock_origin():
+    verification = _good_verification()
+    verification["quality"]["evidence_origin"] = "mock"
+    errs = validate_worker_evidence(
+        NODE, Item(artifacts={"pr_url": "u"}, verification=verification))
+    assert any("evidence_origin must be real" in e for e in errs)
+
+
+def test_mock_engine_mode_accepts_only_explicit_mock_origin():
+    verification = _good_verification()
+    verification["quality"]["evidence_origin"] = "mock"
+    assert validate_worker_evidence(
+        NODE,
+        Item(artifacts={"pr_url": "u"}, verification=verification),
+        allow_mock_evidence=True,
+    ) == []
+
+    del verification["quality"]["evidence_origin"]
+    errs = validate_worker_evidence(
+        NODE,
+        Item(artifacts={"pr_url": "u"}, verification=verification),
+        allow_mock_evidence=True,
+    )
+    assert any("evidence_origin must be real or mock" in e for e in errs)
 
 
 # ---------- review evidence ----------
@@ -138,14 +294,25 @@ def test_worker_evidence_env_setup_not_required_without_integration_gates():
 def test_review_evidence_reject_requires_blockers():
     report = _good_report()
     report["acceptance_mapping"][0]["status"] = "fail"
+    report["outcome_mapping"][0]["status"] = "fail"
     errs = validate_review_evidence(NODE, Item(review_verdict="reject", review_report=report))
-    assert any("blockers must be non-empty" in e for e in errs)
+    assert any("reject requires blocker findings" in e for e in errs)
 
 
 def test_review_evidence_reject_passes_with_blockers():
     report = _good_report()
-    report["blockers"] = ["验收不满足"]
+    report["findings"] = [{
+        "id": "REV-001",
+        "severity": "blocker",
+        "category": "business-behavior",
+        "location": "src/feature.py:10",
+        "evidence": "业务结果不符合验收",
+        "impact": "核心流程失败",
+        "required_fix": "返回验收要求的结果",
+    }]
+    report["blockers"] = ["REV-001"]
     report["acceptance_mapping"][0]["status"] = "fail"
+    report["outcome_mapping"][0]["status"] = "fail"
     assert validate_review_evidence(
         NODE, Item(review_verdict="reject", review_report=report)
     ) == []
@@ -190,6 +357,74 @@ def test_review_evidence_review_goals_blank_entry_rejected():
     assert any("non-empty strings" in e for e in errs)
 
 
+def test_review_evidence_requires_reviewed_revision():
+    report = _good_report()
+    report["reviewed_revision"] = ""
+    errs = validate_review_evidence(NODE, Item(review_verdict="pass", review_report=report))
+    assert any("reviewed_revision is required" in e for e in errs)
+
+
+def test_review_evidence_requires_complete_review_scope():
+    report = _good_report()
+    report["review_scope"]["all_changed_files_reviewed"] = False
+    errs = validate_review_evidence(NODE, Item(review_verdict="pass", review_report=report))
+    assert any("all_changed_files_reviewed must be true" in e for e in errs)
+
+
+def test_review_evidence_requires_all_outcomes():
+    report = _good_report()
+    report["outcome_mapping"] = []
+    errs = validate_review_evidence(NODE, Item(review_verdict="pass", review_report=report))
+    assert any("missing outcome mapping: outcome-works" in e for e in errs)
+
+
+def test_review_evidence_rejects_free_form_blocker_without_finding():
+    report = _good_report()
+    report["blockers"] = ["验收不满足"]
+    errs = validate_review_evidence(NODE, Item(review_verdict="reject", review_report=report))
+    assert any("blockers must match blocker finding ids" in e for e in errs)
+
+
+def test_review_evidence_rejects_non_string_finding_references_without_crashing():
+    report = _good_report()
+    report["blockers"] = [{"id": "REV-001"}]
+    errs = validate_review_evidence(
+        NODE, Item(review_verdict="reject", review_report=report))
+    assert any("blockers must match blocker finding ids" in e for e in errs)
+
+
+def test_review_evidence_rejects_malformed_finding():
+    report = _good_report()
+    report["findings"] = [{"id": "REV-001", "severity": "blocker"}]
+    report["blockers"] = ["REV-001"]
+    errs = validate_review_evidence(NODE, Item(review_verdict="reject", review_report=report))
+    assert any("finding.category is required" in e for e in errs)
+
+
+def test_review_evidence_pass_with_nits_requires_nit_finding():
+    report = _good_report()
+    errs = validate_review_evidence(
+        NODE, Item(review_verdict="pass-with-nits", review_report=report))
+    assert any("pass-with-nits requires nit findings" in e for e in errs)
+
+
+def test_review_evidence_pass_with_nits_accepts_only_nits():
+    report = _good_report()
+    report["findings"] = [{
+        "id": "REV-001",
+        "severity": "nit",
+        "category": "maintainability",
+        "location": "src/feature.py:10",
+        "evidence": "局部命名不清晰",
+        "impact": "增加后续维护成本",
+        "required_fix": "重命名局部变量",
+    }]
+    report["nits"] = ["REV-001"]
+    assert validate_review_evidence(
+        NODE, Item(review_verdict="pass-with-nits", review_report=report)
+    ) == []
+
+
 # ---------- acceptance results ----------
 
 ACCEPTANCE_DOC = load_acceptance_doc({
@@ -198,15 +433,15 @@ ACCEPTANCE_DOC = load_acceptance_doc({
             "id": "login",
             "name": "用户登录",
             "actions": [
-                {"step": "打开登录页", "how": "访问 /login", "expected": "渲染表单"},
-                {"step": "提交凭证", "how": "POST /login", "expected": "跳转首页"},
+                {"id": "open", "step": "打开登录页", "how": "访问 /login", "expected": "渲染表单"},
+                {"id": "submit", "step": "提交凭证", "how": "POST /login", "expected": "跳转首页"},
             ],
         },
         {
             "id": "checkout",
             "name": "下单结算",
             "actions": [
-                {"step": "加入购物车", "how": "点击加入", "expected": "数量+1"},
+                {"id": "add", "step": "加入购物车", "how": "点击加入", "expected": "数量+1"},
             ],
         },
     ],
@@ -307,7 +542,7 @@ def test_acceptance_results_accepts_raw_dict():
     raw_doc = {
         "flows": [
             {"id": "only", "name": "only", "actions": [
-                {"step": "s", "how": "h", "expected": "e"},
+                {"id": "act", "step": "s", "how": "h", "expected": "e"},
             ]},
         ],
     }
@@ -317,14 +552,16 @@ def test_acceptance_results_accepts_raw_dict():
 
 # ---------- acceptance doc schema (load_acceptance_doc) ----------
 
-def _flow(flow_id="f1", name="flow one", step="s"):
+def _flow(flow_id="f1", name="flow one", step="s", action_id="act"):
     return {"id": flow_id, "name": name, "actions": [
-        {"step": step, "how": "h", "expected": "e"},
+        {"id": action_id, "step": step, "how": "h", "expected": "e"},
     ]}
 
 
 def test_load_acceptance_doc_requires_name():
-    raw = {"flows": [{"id": "f1", "actions": [{"step": "s", "how": "h", "expected": "e"}]}]}
+    raw = {"flows": [{"id": "f1", "actions": [
+        {"id": "act", "step": "s", "how": "h", "expected": "e"},
+    ]}]}
     with pytest.raises(ValueError, match="name is required"):
         load_acceptance_doc(raw)
 
@@ -344,3 +581,25 @@ def test_load_acceptance_doc_non_string_name_rejected():
 def test_load_acceptance_doc_name_preserved_when_valid():
     doc = load_acceptance_doc({"flows": [_flow(name="my flow")]})
     assert doc.flows[0].name == "my flow"
+
+
+def test_load_acceptance_doc_requires_action_id():
+    raw = {"flows": [{"id": "f1", "name": "flow", "actions": [
+        {"step": "s", "how": "h", "expected": "e"},
+    ]}]}
+    with pytest.raises(ValueError, match="action.id is required"):
+        load_acceptance_doc(raw)
+
+
+def test_load_acceptance_doc_rejects_duplicate_action_ids_within_flow():
+    raw = {"flows": [{"id": "f1", "name": "flow", "actions": [
+        {"id": "same", "step": "s1", "how": "h", "expected": "e"},
+        {"id": "same", "step": "s2", "how": "h", "expected": "e"},
+    ]}]}
+    with pytest.raises(ValueError, match="duplicate action id in flow f1: same"):
+        load_acceptance_doc(raw)
+
+
+def test_acceptance_doc_exposes_qualified_action_ids():
+    doc = load_acceptance_doc({"flows": [_flow(flow_id="login", action_id="submit")]})
+    assert doc.action_ids == ["login.submit"]

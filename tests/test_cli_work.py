@@ -547,6 +547,20 @@ CONTRACT = Contract(
         "acceptance_refs": ["works"], "commands": ["pytest tests/int"],
         "required_metrics": {"route_coverage": 100}, "artifacts": ["coverage.xml"],
     }],
+    quality={
+        "required_outcomes": [{
+            "id": "outcome-works", "source_ref": "acceptance#works.action",
+        }],
+        "business_tests": [{
+            "id": "business-works",
+            "outcome_refs": ["outcome-works"],
+            "command": "pytest tests/int",
+            "level": "integration",
+            "real_dependencies": ["postgres"],
+            "must_fail_on_base": True,
+        }],
+        "runtime_data_policy": "real-or-error",
+    },
     pr_base="feature/v1",
     coverage_gate=90,
 )
@@ -566,13 +580,40 @@ def _make_verification(pr_base="feature/v1", coverage=95):
         "env_setup": ["pip install -r requirements.txt", "docker compose up -d db"],
         "pr_base": pr_base,
         "coverage": coverage,
+        "quality": {
+            "outcome_mapping": [{
+                "outcome": "outcome-works",
+                "implementation": ["src/feature.py"],
+                "tests": ["tests/int/test_feature.py"],
+            }],
+            "regression_proof": [{
+                "test_id": "business-works",
+                "base_ref": "base-sha",
+                "base_exit_code": 1,
+                "head_ref": "head-sha",
+                "head_exit_code": 0,
+            }],
+            "runtime_fallbacks": [],
+            "known_gaps": [],
+            "evidence_origin": "real",
+        },
     }
 
 
 def _make_review_report(integration_gates=True):
     report = {
+        "reviewed_revision": "head-sha",
         "review_goals": ["验收映射覆盖 contract.acceptance"],
         "diff_reviewed": True, "tests_rerun": True, "coverage_checked": True,
+        "review_scope": {
+            "changed_files": ["src/feature.py", "tests/int/test_feature.py"],
+            "all_changed_files_reviewed": True,
+            "all_outcomes_reviewed": True,
+            "all_business_tests_rerun": True,
+            "runtime_fallback_audit_completed": True,
+        },
+        "findings": [],
+        "outcome_mapping": [{"outcome": "outcome-works", "status": "pass"}],
         "acceptance_mapping": [{"acceptance": "works", "status": "pass"}],
         "blockers": [], "nits": [],
     }
@@ -1025,7 +1066,7 @@ class TestSubmitPerKindPhase:
         afile = tmp_path / "acceptance.yaml"
         afile.write_text(yaml.safe_dump({
             "flows": [{"id": "login", "name": "登录", "actions": [
-                {"step": "open", "how": "GET /login", "expected": "表单"},
+                {"id": "open", "step": "open", "how": "GET /login", "expected": "表单"},
             ]}],
         }))
         result = dispatch_mod.submit(
@@ -1073,6 +1114,17 @@ class TestSubmitPerKindPhase:
                                "acceptance_refs": ["y"], "commands": ["c1"],
                                "required_metrics": {}, "artifacts": [],
                            }],
+                           "quality": {
+                               "required_outcomes": [{
+                                   "id": "outcome-y", "source_ref": "acceptance#y.action",
+                               }],
+                               "business_tests": [{
+                                   "id": "business-y", "outcome_refs": ["outcome-y"],
+                                   "command": "c1", "level": "integration",
+                                   "real_dependencies": ["none"], "must_fail_on_base": True,
+                               }],
+                               "runtime_data_policy": "real-or-error",
+                           },
                            "pr_base": "feature/v1", "coverage_gate": 90,
                        }}],
         }))
@@ -1120,7 +1172,7 @@ class TestSubmitPerKindPhase:
         eng = _engine()
         acceptance_doc = {"flows": [
             {"id": "login", "name": "登录", "actions": [
-                {"step": "open", "how": "GET /login", "expected": "表单"}]}]}
+                {"id": "open", "step": "open", "how": "GET /login", "expected": "表单"}]}]}
         contract = Contract(
             objective="accept", non_goals=["x"], acceptance=["login"],
             verification_commands=["pytest -q"],
@@ -1132,6 +1184,17 @@ class TestSubmitPerKindPhase:
             }],
             pr_base="feature/v1", coverage_gate=90,
             acceptance_doc=acceptance_doc,
+            quality={
+                "required_outcomes": [{
+                    "id": "login-open", "source_ref": "acceptance#login.open",
+                }],
+                "business_tests": [{
+                    "id": "login-business", "outcome_refs": ["login-open"],
+                    "command": "c1", "level": "integration",
+                    "real_dependencies": ["none"], "must_fail_on_base": True,
+                }],
+                "runtime_data_policy": "real-or-error",
+            },
         )
         item = eng.store.create_work_item(
             "mock-workspace", "t", "d", dag_key="a", worker="alice",
@@ -1148,12 +1211,23 @@ class TestSubmitPerKindPhase:
         eng = _engine()
         acceptance_doc = {"flows": [
             {"id": "login", "name": "登录", "actions": [
-                {"step": "open", "how": "GET /login", "expected": "表单"}]}]}
+                {"id": "open", "step": "open", "how": "GET /login", "expected": "表单"}]}]}
         contract = Contract(
             objective="accept", non_goals=["x"], acceptance=["login"],
             verification_commands=["pytest -q"],
             integration_gates=[], pr_base="feature/v1", coverage_gate=90,
             acceptance_doc=acceptance_doc,
+            quality={
+                "required_outcomes": [{
+                    "id": "login-open", "source_ref": "acceptance#login.open",
+                }],
+                "business_tests": [{
+                    "id": "login-business", "outcome_refs": ["login-open"],
+                    "command": "pytest -q", "level": "integration",
+                    "real_dependencies": ["none"], "must_fail_on_base": True,
+                }],
+                "runtime_data_policy": "real-or-error",
+            },
         )
         item = eng.store.create_work_item(
             "mock-workspace", "t", "d", dag_key="a", worker="alice",
@@ -1253,6 +1327,17 @@ class TestSubmitMissingCli:
                         "required_metrics": {},
                         "artifacts": [],
                     }],
+                    "quality": {
+                        "required_outcomes": [{
+                            "id": "outcome-y", "source_ref": "acceptance#y.action",
+                        }],
+                        "business_tests": [{
+                            "id": "business-y", "outcome_refs": ["outcome-y"],
+                            "command": "pytest -q", "level": "integration",
+                            "real_dependencies": ["none"], "must_fail_on_base": True,
+                        }],
+                        "runtime_data_policy": "real-or-error",
+                    },
                     "pr_base": "feature/v1",
                     "coverage_gate": 90,
                 },

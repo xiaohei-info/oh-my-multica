@@ -289,7 +289,11 @@ def collect_results(
                 runtime.wake(node.work_item_id, node.worker, "worker")
                 continue
             if item.status == WorkItemStatus.DONE:
-                gate_errors = validate_worker_evidence(node, item)
+                gate_errors = validate_worker_evidence(
+                    node,
+                    item,
+                    allow_mock_evidence=(store.config.engine_type == "mock"),
+                )
                 if gate_errors:
                     reason = "; ".join(gate_errors)
                     store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
@@ -394,7 +398,8 @@ def collect_results(
 
             log.info(logsetup.EVT_VERDICT, kind=_DAG_KIND, node=key,
                      id=node.work_item_id, verdict=verdict)
-            if verdict == "pass-with-nits":
+            gate_errors = validate_review_evidence(node, item)
+            if verdict == "pass-with-nits" and not gate_errors:
                 store.update_work_item_metadata(
                     node.work_item_id, phase=TaskPhase.AUTHORING,
                     review_comment="")
@@ -417,7 +422,6 @@ def collect_results(
                         f"Failed to return nits to worker {node.worker}: {exc}",
                         f"回退到 worker {node.worker} 处理 nits 失败: {exc}")
                 continue
-            gate_errors = validate_review_evidence(node, item)
             if not gate_errors and verdict != "reject":
                 # reviewer pass → P4.2 自动 merge 门。未显式配置 merge.command 时
                 # 使用默认 gh pr merge 命令。

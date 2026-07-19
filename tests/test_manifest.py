@@ -103,6 +103,43 @@ def test_scope_paths_optional_roundtrip():
     assert "scope_paths" not in _dump_contract(Contract(objective="o"))
 
 
+def test_quality_contract_roundtrip():
+    from omac.core.manifest import Contract, QualityContract, _dump_contract, _load_contract
+
+    quality = QualityContract(
+        required_outcomes=[{"id": "outcome-x", "source_ref": "acceptance#flow.action"}],
+        business_tests=[{
+            "id": "test-x",
+            "outcome_refs": ["outcome-x"],
+            "command": "pytest tests/int",
+            "level": "integration",
+            "real_dependencies": ["postgres"],
+            "must_fail_on_base": True,
+        }],
+        runtime_data_policy="real-or-error",
+    )
+    dumped = _dump_contract(Contract(objective="o", quality=quality))
+    loaded = _load_contract(dumped)
+
+    assert loaded.quality == quality
+    assert dumped["quality"]["runtime_data_policy"] == "real-or-error"
+
+
+@pytest.mark.parametrize(
+    ("raw_quality", "message"),
+    [
+        ("invalid", "contract.quality must be an object"),
+        ({"required_outcomes": None}, "quality.required_outcomes must be a list"),
+        ({"business_tests": None}, "quality.business_tests must be a list"),
+    ],
+)
+def test_quality_contract_rejects_malformed_shape(raw_quality, message):
+    from omac.core.manifest import _load_contract
+
+    with pytest.raises(ValueError, match=message):
+        _load_contract({"quality": raw_quality})
+
+
 def test_env_expansion(tmp_path, monkeypatch):
     content = "meta:\n  ws: \"${OMAC_TEST_WS:-fallback}\"\nnodes: []\n"
     path = _write(tmp_path, content)

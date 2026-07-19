@@ -83,13 +83,21 @@ def _payload_contract(raw: Any) -> Any:
 
 
 def _pick_reviewer(reviewers: List[str], producer: str, round_index: int) -> str:
-    """reviewers 池轮转,优先非产出者;池内仅产出者时回退自审。
-
-    角色可自由指定(不强制 reviewer ≠ producer):有非产出者时优先选它以保留
-    评审独立性;池里只剩产出者时回退到产出者自审(自审只是自检,真正的把关交给
-    human gate)。不再报错。
-    """
-    candidates = [r for r in reviewers if r != producer] or list(reviewers)
+    """从 reviewers 池轮转选择非产出者；没有独立 reviewer 时请求决策。"""
+    candidates = [reviewer for reviewer in reviewers if reviewer != producer]
+    if not candidates:
+        raise NeedsDecision(
+            ui(
+                f"No independent reviewer is available for producer '{producer}'. "
+                "Configure a reviewer different from the producer and retry.",
+                f"产出者 '{producer}' 没有可用的独立 reviewer。"
+                "请配置与产出者不同的 reviewer 后重试。"),
+            report={
+                "producer": producer,
+                "reviewers": list(reviewers),
+                "verdict": "no-independent-reviewer",
+            },
+        )
     return candidates[round_index % len(candidates)]
 
 

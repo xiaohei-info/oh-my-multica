@@ -55,26 +55,129 @@ def _engine(**extra):
     return create_engine("mock", _config(**extra))
 
 
-def _contract(acceptance=None, verification_commands=None, integration_gates=None):
+def _quality(command="pytest tests/int"):
+    return {
+        "required_outcomes": [{
+            "id": "outcome-works", "source_ref": "acceptance#works.action",
+        }],
+        "business_tests": [{
+            "id": "business-works", "outcome_refs": ["outcome-works"],
+            "command": command, "level": "integration",
+            "real_dependencies": ["none"], "must_fail_on_base": True,
+        }],
+        "runtime_data_policy": "real-or-error",
+    }
+
+
+def _contract(
+    acceptance=None,
+    verification_commands=None,
+    integration_gates=None,
+    pr_base="feature/v1",
+    coverage_gate=90,
+):
+    gates = integration_gates or [{
+        "name": "gate-1",
+        "layer": "L1",
+        "delivery_goal": "delivers",
+        "source_of_truth": ["docs/d.md"],
+        "covers": ["route"],
+        "acceptance_refs": ["works"],
+        "commands": ["pytest tests/int"],
+        "required_metrics": {"route_coverage": 100},
+        "artifacts": ["coverage.xml"],
+    }]
+    business_command = gates[0]["commands"][0]
     return Contract(
         objective="do it",
         acceptance=acceptance or ["works"],
         non_goals=["no creep"],
         verification_commands=verification_commands or ["pytest -q"],
-        integration_gates=integration_gates or [{
-            "name": "gate-1",
-            "layer": "L1",
-            "delivery_goal": "delivers",
-            "source_of_truth": ["docs/d.md"],
-            "covers": ["route"],
-            "acceptance_refs": ["works"],
-            "commands": ["pytest tests/int"],
-            "required_metrics": {"route_coverage": 100},
-            "artifacts": ["coverage.xml"],
-        }],
-        pr_base="feature/v1",
-        coverage_gate=90,
+        integration_gates=gates,
+        quality=_quality(business_command),
+        pr_base=pr_base,
+        coverage_gate=coverage_gate,
     )
+
+
+def _verification(
+    *, command="pytest -q", gate_command="pytest tests/int",
+    gate_name="gate-1", pr_base="feature/v1", coverage=95,
+):
+    return {
+        "commands": [{"cmd": command, "exit_code": 0}],
+        "integration_gates": [{
+            "name": gate_name,
+            "commands": [{"cmd": gate_command, "exit_code": 0}],
+            "metrics": {"route_coverage": 100},
+            "artifacts": ["coverage.xml"],
+            "source_of_truth": ["docs/d.md"],
+            "delivery_goal": "delivers",
+        }],
+        "env_setup": ["mock: integration env ready"],
+        "pr_base": pr_base,
+        "coverage": coverage,
+        "quality": {
+            "outcome_mapping": [{
+                "outcome": "outcome-works",
+                "implementation": ["src/feature.py"],
+                "tests": ["tests/int/test_feature.py"],
+            }],
+            "regression_proof": [{
+                "test_id": "business-works",
+                "base_ref": "base-sha", "base_exit_code": 1,
+                "head_ref": "head-sha", "head_exit_code": 0,
+            }],
+            "runtime_fallbacks": [], "known_gaps": [],
+            "evidence_origin": "real",
+        },
+    }
+
+
+def _review_report(verdict="pass"):
+    status = "fail" if verdict == "reject" else "pass"
+    findings = []
+    blockers = []
+    nits = []
+    if verdict == "reject":
+        findings = [{
+            "id": "REV-001", "severity": "blocker",
+            "category": "business-behavior", "location": "src/feature.py:10",
+            "evidence": "核心验收未满足", "impact": "核心流程失败",
+            "required_fix": "修复核心业务行为",
+        }]
+        blockers = ["REV-001"]
+    elif verdict == "pass-with-nits":
+        findings = [{
+            "id": "REV-001", "severity": "nit",
+            "category": "maintainability", "location": "src/feature.py:10",
+            "evidence": "存在低风险建议项", "impact": "增加维护成本",
+            "required_fix": "完成局部整理",
+        }]
+        nits = ["REV-001"]
+    return {
+        "reviewed_revision": "head-sha",
+        "review_goals": ["复核交付是否满足验收"],
+        "diff_reviewed": True, "tests_rerun": True,
+        "integration_tests_rerun": True, "coverage_checked": True,
+        "review_scope": {
+            "changed_files": ["src/feature.py", "tests/int/test_feature.py"],
+            "all_changed_files_reviewed": True,
+            "all_outcomes_reviewed": True,
+            "all_business_tests_rerun": True,
+            "runtime_fallback_audit_completed": True,
+        },
+        "findings": findings,
+        "outcome_mapping": [{"outcome": "outcome-works", "status": status}],
+        "acceptance_mapping": [{"acceptance": "works", "status": status}],
+        "integration_gate_mapping": [{
+            "gate": "gate-1", "status": "pass",
+            "commands": [{"cmd": "pytest -q", "exit_code": 0}],
+            "metrics": {"route_coverage": 100}, "artifacts": ["coverage.xml"],
+            "source_of_truth": ["docs/d.md"], "delivery_goal": "delivers",
+        }],
+        "blockers": blockers, "nits": nits,
+    }
 
 
 def _node(key, worker="alice", blocked_by=None, reviewer=None, contract=None, title=None):
@@ -659,20 +762,7 @@ class TestContractEvidence:
         eng.store.update_work_item_metadata(
             item.id,
             artifacts={"pr_url": f"https://mock.example.com/pr/{item.id}"},
-            verification={
-                "commands": [{"cmd": "pytest -q", "exit_code": 0}],
-                "integration_gates": [{
-                    "name": "gate-1",
-                    "commands": [{"cmd": "pytest tests/int", "exit_code": 0}],
-                    "metrics": {"route_coverage": 100},
-                    "artifacts": ["coverage.xml"],
-                    "source_of_truth": ["docs/d.md"],
-                    "delivery_goal": "delivers",
-                }],
-                "env_setup": ["mock: integration env ready"],
-                "pr_base": "feature/v1",
-                "coverage": 90,
-            },
+            verification=_verification(coverage=90),
         )
         eng.store.update_status(item.id, WorkItemStatus.DONE)
         manifest.nodes["a"].work_item_id = item.id
@@ -746,20 +836,7 @@ class TestEvidenceGateRegression:
         item = self._manual_done_item(
             eng, "a", contract=contract,
             artifacts={"pr_url": "https://x/pr/1"},
-            verification={
-                "commands": [{"cmd": "pytest -q", "exit_code": 0}],
-                "integration_gates": [{
-                    "name": "gate-1",
-                    "commands": [{"cmd": "pytest tests/int", "exit_code": 0}],
-                    "metrics": {"route_coverage": 100},
-                    "artifacts": ["coverage.xml"],
-                    "source_of_truth": ["docs/d.md"],
-                    "delivery_goal": "delivers",
-                }],
-                "pr_base": "feature/v1",
-                "env_setup": ["mock: integration env ready"],
-                "coverage": 50,  # 低于 gate 90
-            },
+            verification=_verification(coverage=50),
         )
 
         manifest.nodes["a"].work_item_id = item.id
@@ -784,21 +861,7 @@ class TestEvidenceGateRegression:
         item = self._manual_done_item(
             eng, "a", reviewer="bob", contract=contract,
             artifacts={"pr_url": "https://x/pr/1"},
-            verification={
-                "commands": [{"cmd": "pytest -q", "exit_code": 0}],
-                "integration_gates": [{
-                    "name": "gate-1",
-                    "commands": [{"cmd": "pytest tests/int", "exit_code": 0}],
-                    "metrics": {"route_coverage": 100},
-                    "artifacts": ["coverage.xml"],
-                    "source_of_truth": ["docs/d.md"],
-                    "delivery_goal": "delivers",
-                }],
-                "env_setup": ["mock: integration env ready"],
-                "pr_base": "feature/v1",
-                "coverage": 95,
-                "env_setup": ["mock: provision integration env for gate-1"],
-            },
+            verification=_verification(),
         )
 
         manifest.nodes["a"].work_item_id = item.id
@@ -828,21 +891,7 @@ class TestEvidenceGateRegression:
         item = self._manual_done_item(
             eng, "a", contract=contract,
             artifacts={"pr_url": "https://x/pr/1"},
-            verification={
-                "commands": [{"cmd": "pytest -q", "exit_code": 0}],
-                "integration_gates": [{
-                    "name": "gate-1",
-                    "commands": [{"cmd": "pytest tests/int", "exit_code": 0}],
-                    "metrics": {"route_coverage": 100},
-                    "artifacts": ["coverage.xml"],
-                    "source_of_truth": ["docs/d.md"],
-                    "delivery_goal": "delivers",
-                }],
-                "env_setup": ["mock: integration env ready"],
-                "pr_base": "feature/v1",
-                "coverage": 95,
-                "env_setup": ["mock: provision integration env for gate-1"],
-            },
+            verification=_verification(),
         )
 
         manifest.nodes["a"].work_item_id = item.id
@@ -869,12 +918,15 @@ class TestReviewerRejectBoundedFallback:
 
     @staticmethod
     def _simple_contract():
-        from omac.core.manifest import Contract
-        return Contract(
-            objective="do it",
-            acceptance=["works"],
-            non_goals=["no creep"],
+        return _contract(
             verification_commands=["pytest -q"],
+            integration_gates=[{
+                "name": "gate-1", "layer": "L1", "delivery_goal": "delivers",
+                "source_of_truth": ["docs/d.md"], "covers": ["route"],
+                "acceptance_refs": ["works"], "commands": ["pytest -q"],
+                "required_metrics": {"route_coverage": 100},
+                "artifacts": ["coverage.xml"],
+            }],
             pr_base="main",
             coverage_gate=0,
         )
@@ -897,11 +949,8 @@ class TestReviewerRejectBoundedFallback:
         eng.store.update_work_item_metadata(
             item.id,
             artifacts={"pr_url": f"https://mock.example.com/pr/{item.id}"},
-            verification={
-                "commands": [{"cmd": "pytest -q", "exit_code": 0}],
-                "pr_base": "main",
-                "coverage": 90,
-            },
+            verification=_verification(
+                gate_command="pytest -q", pr_base="main", coverage=90),
         )
         eng.store.update_status(item.id, __import__("omac").engines.models.WorkItemStatus.DONE)
 
@@ -912,7 +961,11 @@ class TestReviewerRejectBoundedFallback:
         save_manifest(manifest, path)
 
         # 置为 reject 评审结论
-        eng.store.update_work_item_metadata(item.id, review_verdict="reject")
+        eng.store.update_work_item_metadata(
+            item.id,
+            review_verdict="reject",
+            review_report=_review_report("reject"),
+        )
         eng.store.update_status(
             item.id, __import__("omac").engines.models.WorkItemStatus.IN_REVIEW)
         return manifest, eng, item
@@ -941,16 +994,7 @@ class TestReviewerRejectBoundedFallback:
         manifest, eng, item = self._setup_reject_node(eng, path)
         eng.store.update_work_item_metadata(
             item.id,
-            review_report={
-                "review_goals": ["复核交付是否满足验收"],
-                "diff_reviewed": True,
-                "tests_rerun": True,
-                "coverage_checked": True,
-                "acceptance_mapping": [
-                    {"acceptance": "works", "status": "fail"},
-                ],
-                "blockers": ["核心验收未满足"],
-            },
+            review_report=_review_report("reject"),
         )
 
         result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
@@ -971,16 +1015,7 @@ class TestReviewerRejectBoundedFallback:
         eng.store.update_work_item_metadata(
             item.id,
             review_verdict="pass-with-nits",
-            review_report={
-                "review_goals": ["确认建议项"],
-                "summary": "x" * 9000,
-                "diff_reviewed": True,
-                "tests_rerun": True,
-                "coverage_checked": True,
-                "acceptance_mapping": [{"acceptance": "works", "status": "pass"}],
-                "blockers": [],
-                "nits": ["建议后续优化"],
-            },
+            review_report=_review_report("pass-with-nits"),
         )
 
         first = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
@@ -998,12 +1033,8 @@ class TestReviewerRejectBoundedFallback:
         eng.store.update_work_item_metadata(
             item.id,
             artifacts={"pr_url": f"https://mock.example.com/pr/{item.id}"},
-            verification={
-                "commands": [{"cmd": "pytest -q", "exit_code": 0}],
-                "integration_gates": [{"name": "nits-smoke", "commands": []}],
-                "pr_base": "main",
-                "coverage": 90,
-            },
+            verification=_verification(
+                gate_command="pytest -q", pr_base="main", coverage=90),
         )
         eng.store.update_status(item.id, WorkItemStatus.DONE)
         second = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
@@ -1018,6 +1049,30 @@ class TestReviewerRejectBoundedFallback:
         assert got.status == WorkItemStatus.DONE
         assert got.review_verdict is None
         assert got.bounces.review == 0
+
+    def test_invalid_pass_with_nits_report_cannot_skip_reviewer_evidence_gate(self, tmp_path):
+        """pass-with-nits 流程不变，但前提是完整 report 已通过证据门。"""
+        from omac.engines import create_engine
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        report = _review_report("pass-with-nits")
+        report["review_scope"]["all_changed_files_reviewed"] = False
+        eng.store.update_work_item_metadata(
+            item.id,
+            review_verdict="pass-with-nits",
+            review_report=report,
+        )
+
+        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+
+        got = eng.store.get_work_item(item.id)
+        assert result.state == "running"
+        assert manifest.nodes["a"].status == "in_progress"
+        assert got.status == WorkItemStatus.IN_PROGRESS
+        assert got.review_verdict is None
+        assert got.bounces.review == 1
 
     def test_done_node_repairs_worker_status_regression(self, tmp_path):
         """已完成节点遇到平台状态被 worker 回退为 in_review 时,以 manifest done 为准纠偏。"""
@@ -1048,16 +1103,7 @@ class TestReviewerRejectBoundedFallback:
         eng.store.update_work_item_metadata(
             item.id,
             review_verdict="reject",
-            review_report={
-                "review_goals": ["复核交付是否满足验收"],
-                "diff_reviewed": True,
-                "tests_rerun": True,
-                "coverage_checked": True,
-                "acceptance_mapping": [
-                    {"acceptance": "works", "status": "fail"},
-                ],
-                "blockers": ["核心验收未满足"],
-            },
+            review_report=_review_report("reject"),
         )
         save_manifest(manifest, path)
 
@@ -1082,16 +1128,7 @@ class TestReviewerRejectBoundedFallback:
         manifest, eng, item = self._setup_reject_node(eng, path)
         eng.store.update_work_item_metadata(
             item.id,
-            review_report={
-                "review_goals": ["复核交付是否满足验收"],
-                "diff_reviewed": True,
-                "tests_rerun": True,
-                "coverage_checked": True,
-                "acceptance_mapping": [
-                    {"acceptance": "works", "status": "fail"},
-                ],
-                "blockers": ["需要返工"],
-            },
+            review_report=_review_report("reject"),
         )
 
         # reviewer reject → worker authoring；保留上一轮 report 作为返工上下文。
@@ -1102,15 +1139,8 @@ class TestReviewerRejectBoundedFallback:
         eng.store.update_work_item_metadata(
             item.id,
             artifacts={"pr_url": f"https://mock.example.com/pr/{item.id}"},
-            verification={
-                "commands": [{"cmd": "pytest -q", "exit_code": 0}],
-                "integration_gates": [{
-                    "name": "revision-gate",
-                    "commands": [{"cmd": "pytest -q", "exit_code": 0}],
-                }],
-                "pr_base": "main",
-                "coverage": 90,
-            },
+            verification=_verification(
+                gate_command="pytest -q", pr_base="main", coverage=90),
         )
         eng.store.update_status(item.id, WorkItemStatus.DONE)
         manifest.nodes["a"].status = stale_status
@@ -1131,6 +1161,8 @@ class TestReviewerRejectBoundedFallback:
         path = str(tmp_path / "m.yaml")
         manifest, eng, item = self._setup_reject_node(eng, path)
         manifest.nodes["a"].status = "in_progress"
+        eng.store.reset_review(item.id)
+        eng.store.update_work_item_metadata(item.id, phase=TaskPhase.AUTHORING)
         eng.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
         save_manifest(manifest, path)
 
@@ -1164,13 +1196,17 @@ class TestReviewerRejectBoundedFallback:
         eng.store.update_work_item_metadata(
             item.id, review_verdict=None, review_report=None, review_comment=None,
             artifacts={"pr_url": f"https://mock.example.com/pr/{item.id}"},
-            verification={"commands": [{"cmd": "pytest -q", "exit_code": 0}],
-                         "pr_base": "main", "coverage": 90})
+            verification=_verification(
+                gate_command="pytest -q", pr_base="main", coverage=90))
         eng.store.update_status(item.id, WorkItemStatus.DONE)
         tick(eng.store, eng.runtime, manifest, fpath, max_parallel=4)
         set_node(manifest, "a", status="in_review")
         save_manifest(manifest, fpath)
-        eng.store.update_work_item_metadata(item.id, review_verdict="reject")
+        eng.store.update_work_item_metadata(
+            item.id,
+            review_verdict="reject",
+            review_report=_review_report("reject"),
+        )
         eng.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
 
         # 第 2 次 reject:已耗尽 → blocked
@@ -1200,8 +1236,8 @@ class TestReviewerRejectBoundedFallback:
             eng.store.update_work_item_metadata(
                 item.id, review_verdict=None, review_report=None, review_comment=None,
                 artifacts={"pr_url": f"https://mock.example.com/pr/{item.id}"},
-                verification={"commands": [{"cmd": "pytest -q", "exit_code": 0}],
-                             "pr_base": "main", "coverage": 90})
+                verification=_verification(
+                    gate_command="pytest -q", pr_base="main", coverage=90))
             eng.store.update_status(
                 item.id, __import__("omac").engines.models.WorkItemStatus.DONE)
             tick(eng.store, eng.runtime, manifest, fpath, max_parallel=4)
@@ -1215,11 +1251,7 @@ class TestReviewerRejectFallbackRollback:
 
     @staticmethod
     def _simple_contract():
-        from omac.core.manifest import Contract
-        return Contract(
-            objective="do it", acceptance=["works"], non_goals=["no creep"],
-            verification_commands=["pytest -q"], pr_base="main", coverage_gate=0,
-        )
+        return TestReviewerRejectBoundedFallback._simple_contract()
 
     def _setup_reject_node(self, eng, fpath, key="a", worker="alice", reviewer="bob"):
         from omac.core.manifest import Manifest, Node, set_node
@@ -1235,8 +1267,8 @@ class TestReviewerRejectFallbackRollback:
         eng.store.update_work_item_metadata(
             item.id,
             artifacts={"pr_url": f"https://mock.example.com/pr/{item.id}"},
-            verification={"commands": [{"cmd": "pytest -q", "exit_code": 0}],
-                         "pr_base": "main", "coverage": 90})
+            verification=_verification(
+                gate_command="pytest -q", pr_base="main", coverage=90))
         from omac.engines.models import WorkItemStatus
         eng.store.update_status(item.id, WorkItemStatus.DONE)
         tick(eng.store, eng.runtime, manifest, fpath, max_parallel=4)

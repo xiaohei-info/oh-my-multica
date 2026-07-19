@@ -39,6 +39,18 @@ nodes:
           covers: ["route-a"]
           acceptance_refs: ["a 可运行"]
           commands: ["pytest tests/int/a"]
+      quality:
+        required_outcomes:
+          - id: outcome-a
+            source_ref: acceptance#a.run
+        business_tests:
+          - id: business-a
+            outcome_refs: [outcome-a]
+            command: pytest tests/int/a
+            level: integration
+            real_dependencies: [none]
+            must_fail_on_base: true
+        runtime_data_policy: real-or-error
       pr_base: feature/v1
   - id: b
     worker: bob
@@ -58,6 +70,18 @@ nodes:
           covers: ["route-b"]
           acceptance_refs: ["b 可运行"]
           commands: ["pytest tests/int/b"]
+      quality:
+        required_outcomes:
+          - id: outcome-b
+            source_ref: acceptance#b.run
+        business_tests:
+          - id: business-b
+            outcome_refs: [outcome-b]
+            command: pytest tests/int/b
+            level: integration
+            real_dependencies: [none]
+            must_fail_on_base: true
+        runtime_data_policy: real-or-error
       pr_base: feature/v1
 """
 
@@ -324,16 +348,19 @@ flows:
   - id: flow-login
     name: 登录流程
     actions:
-      - step: 打开登录页
+      - id: open
+        step: 打开登录页
         how: GET /login
         expected: 返回 200 与登录表单
-      - step: 提交合法凭证
+      - id: submit
+        step: 提交合法凭证
         how: POST /login {user, pwd}
         expected: 跳转到首页
   - id: flow-dashboard
     name: 仪表盘流程
     actions:
-      - step: 访问仪表盘
+      - id: open
+        step: 访问仪表盘
         how: GET /dash
         expected: 显示数据卡片
 """
@@ -359,6 +386,18 @@ nodes:
           covers: ["route-login"]
           acceptance_refs: ["flow-login"]
           commands: ["pytest tests/int/login"]
+      quality:
+        required_outcomes:
+          - id: login-submit
+            source_ref: acceptance#flow-login.submit
+        business_tests:
+          - id: login-business
+            outcome_refs: [login-submit]
+            command: pytest tests/int/login
+            level: integration
+            real_dependencies: [none]
+            must_fail_on_base: true
+        runtime_data_policy: real-or-error
       pr_base: feature/demo
   - id: dashboard
     worker: bob
@@ -378,6 +417,18 @@ nodes:
           covers: ["route-dash"]
           acceptance_refs: ["flow-dashboard"]
           commands: ["pytest tests/int/dash"]
+      quality:
+        required_outcomes:
+          - id: dashboard-open
+            source_ref: acceptance#flow-dashboard.open
+        business_tests:
+          - id: dashboard-business
+            outcome_refs: [dashboard-open]
+            command: pytest tests/int/dash
+            level: integration
+            real_dependencies: [none]
+            must_fail_on_base: true
+        runtime_data_policy: real-or-error
       pr_base: feature/demo
 """
 

@@ -44,6 +44,13 @@
 - 外部系统、网络、模型、数据库和第三方 API 都是不可靠依赖，必须按任务风险设计失败语义。
 - 子代理或外部 Agent 的结果必须独立检查，不能直接当作最终事实。
 
+## 交付完整性硬门
+
+- 测试必须验证真实业务功能和可观察结果，覆盖主路径、失败路径与关键边界；禁止编写只断言 schema、固定返回值、目标文本或专门迎合 gate 的测试。
+- 一个任务只能在全部设计点、功能点、验收动作和 required outcomes 均已实现时申报完成。基础骨架、临时实现、占位逻辑、TODO、known gap 或“后续补齐”都不是完成。
+- 生产运行路径遇到依赖、网络、模型、数据库、数据或解析错误时，必须暴露真实错误。禁止使用 fake、mock、synthetic 或硬编码成功数据兜底并隐藏故障。
+- mock/fake 只允许用于明确隔离边界的测试替身或 OMAC 自身状态机测试，不能成为生产交付证据或运行时降级结果。
+
 ## 风险边界
 
 - 删除数据、覆盖配置、重启服务、修改权限、暴露密钥、真实交易、资金操作、对外发送内容等高风险或不可逆动作，必须先取得明确授权。
@@ -55,7 +62,7 @@
 
 - 当任务来自 OMAC，第一动作必须是运行 `omac work show <issue-id> --output json`。
 - 权威顺序固定为：`work show` 当前实例事实 > contract/previous_review > role guide > artifact guide > workflow > 本模板。
-- 只执行当前任务类型、阶段、objective、acceptance 和 scope 所授权的工作，守住 non_goals。
+- 只执行当前任务类型、阶段、objective、acceptance、quality required outcomes 和 scope 所授权的工作，守住 non_goals。
 - 交付必须使用 `work show` 返回的精确 `submit` 命令；不得绕过 OMAC 直接修改平台状态、负责人或运行记录。
 - 静态 Instructions 和 Skill 只提供稳定方法，不能覆盖当前实例事实。
 

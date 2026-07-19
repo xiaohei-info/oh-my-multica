@@ -380,7 +380,8 @@ class MockStore(WorkItemStore):
             else:
                 item.review_verdict = _shared_review_verdict
                 item.review_comment = "Mock: LGTM"
-            item.review_report = self._mock_review_report(item_id) or {
+            item.review_report = self._mock_review_report(
+                item_id, item.review_verdict) or {
                 "diff_reviewed": True,
                 "tests_rerun": True,
                 "coverage_checked": True,
@@ -425,20 +426,86 @@ class MockStore(WorkItemStore):
             "env_setup": [
                 f"Mock env: {gate.get('name')}" for gate in contract.integration_gates
             ] if contract.integration_gates else [],
+            "quality": {
+                "outcome_mapping": [
+                    {
+                        "outcome": outcome.get("id"),
+                        "implementation": ["mock://implementation"],
+                        "tests": ["mock://business-test"],
+                    }
+                    for outcome in (contract.quality.required_outcomes if contract.quality else [])
+                ],
+                "regression_proof": [
+                    {
+                        "test_id": business_test.get("id"),
+                        "base_ref": "mock-base",
+                        "base_exit_code": 1,
+                        "head_ref": "mock-head",
+                        "head_exit_code": 0,
+                    }
+                    for business_test in (contract.quality.business_tests if contract.quality else [])
+                ],
+                "runtime_fallbacks": [],
+                "known_gaps": [],
+                "evidence_origin": "mock",
+            },
         }
 
-    def _mock_review_report(self, item_id: str) -> Optional[Dict[str, Any]]:
+    def _mock_review_report(
+        self, item_id: str, verdict: Optional[str]
+    ) -> Optional[Dict[str, Any]]:
         from ..core.manifest import Contract as _Contract
 
         contract = _shared_contracts_by_item_id.get(item_id)
         if contract is None or not isinstance(contract, _Contract):
             return None
+        findings = []
+        blockers = []
+        nits = []
+        mapping_status = "pass"
+        if verdict == "reject":
+            findings = [{
+                "id": "MOCK-001",
+                "severity": "blocker",
+                "category": "mock-review",
+                "location": "mock://deliverable",
+                "evidence": "Mock reviewer requested revision",
+                "impact": "The delivery cannot pass this simulated review round",
+                "required_fix": "Revise and resubmit the delivery",
+            }]
+            blockers = ["MOCK-001"]
+            mapping_status = "fail"
+        elif verdict == "pass-with-nits":
+            findings = [{
+                "id": "MOCK-001",
+                "severity": "nit",
+                "category": "mock-review",
+                "location": "mock://deliverable",
+                "evidence": "Mock reviewer requested a low-risk follow-up",
+                "impact": "Minor simulated maintainability cost",
+                "required_fix": "Apply the narrow follow-up",
+            }]
+            nits = ["MOCK-001"]
+
         return {
+            "reviewed_revision": "mock-head",
             "review_goals": ["Mock review goal"],
             "diff_reviewed": True,
             "tests_rerun": True,
             "integration_tests_rerun": True,
             "coverage_checked": True,
+            "review_scope": {
+                "changed_files": ["mock://deliverable"],
+                "all_changed_files_reviewed": True,
+                "all_outcomes_reviewed": True,
+                "all_business_tests_rerun": True,
+                "runtime_fallback_audit_completed": True,
+            },
+            "findings": findings,
+            "outcome_mapping": [
+                {"outcome": outcome.get("id"), "status": mapping_status}
+                for outcome in (contract.quality.required_outcomes if contract.quality else [])
+            ],
             "integration_gate_mapping": [
                 {
                     "gate": gate.get("name"),
@@ -459,11 +526,11 @@ class MockStore(WorkItemStore):
             "acceptance_mapping": [
                 {"acceptance": acceptance,
                  "evidence": f"Mock auto-review for {acceptance}",
-                 "status": "pass"}
+                 "status": mapping_status}
                 for acceptance in contract.acceptance
             ],
-            "blockers": [],
-            "nits": [],
+            "blockers": blockers,
+            "nits": nits,
         }
 
     # ==================== 成员池 ====================

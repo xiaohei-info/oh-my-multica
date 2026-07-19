@@ -404,10 +404,17 @@ def test_reviewer_rotation_avoids_producer():
     assert item.reviewer in ("bob", "charlie")
 
 
-def test_pick_reviewer_falls_back_to_self_when_only_producer():
-    """池里仅产出者时回退自审(角色可自由指定),不再报错。"""
+def test_pick_reviewer_requires_independent_reviewer():
+    """池里仅产出者时必须请求调用者决策，禁止自审放行。"""
     from omac.pipeline.tasks import _pick_reviewer
-    assert _pick_reviewer(["alice"], "alice", 0) == "alice"
+    with pytest.raises(NeedsDecision) as exc:
+        _pick_reviewer(["alice"], "alice", 0)
+    assert exc.value.exit_code == 20
+    assert exc.value.report == {
+        "producer": "alice",
+        "reviewers": ["alice"],
+        "verdict": "no-independent-reviewer",
+    }
 
 
 def test_pick_reviewer_prefers_non_producer_when_available():

@@ -52,6 +52,20 @@ nodes:
             - python3 -m pytest tests/test_auth_renewal_e2e.py
           required_metrics: {}
           artifacts: []
+      quality:
+        required_outcomes:
+          - id: renewal-replays-once
+            source_ref: acceptance#flow-login-renewal.renew-session
+        business_tests:
+          - id: renewal-e2e
+            outcome_refs:
+              - renewal-replays-once
+            command: python3 -m pytest tests/test_auth_renewal_e2e.py
+            level: e2e
+            real_dependencies:
+              - real auth service test environment
+            must_fail_on_base: true
+        runtime_data_policy: real-or-error
       pr_base: feature/login-renewal
       coverage_gate: 90
       acceptance_doc: null
@@ -105,6 +119,9 @@ nodes:
 | `non_goals` | 相邻但明确禁止扩张的范围。 |
 | `verification_commands` | worker 可直接复制运行的节点验证命令。 |
 | `integration_gates` | 节点交付后必须通过的跨模块或端到端门。 |
+| `quality.required_outcomes` | 必须完整实现的业务结果；每项用稳定 `id` 和 `acceptance#flow.action` 锚定真实验收动作。 |
+| `quality.business_tests` | 证明业务结果的 integration/e2e 测试；声明覆盖结果、精确命令、真实依赖和基线失败要求。 |
+| `quality.runtime_data_policy` | 固定为 `real-or-error`：生产路径只能返回真实结果或暴露真实错误，禁止 fake/mock/synthetic 数据兜底。 |
 | `pr_base` | PR 必须基于的集成分支。 |
 | `coverage_gate` | 0 到 100 的数字，默认 90。 |
 | `acceptance_doc` | 可选的验收文档结构上下文；仅在实例 contract 需要时填充。 |
@@ -117,6 +134,12 @@ object，`artifacts` 若出现必须是列表。worker verification 和 reviewer
 
 后续 worker 可能是低推理预算模型。每个 contract 必须独立可执行，不能依赖隐含上下文；
 边界条件、禁止范围、验证入口和集成结果都要显式写出。
+
+`quality` 是完整交付合同，不是覆盖率装饰：`required_outcomes` 必须覆盖节点承诺的所有业务结果；
+每个 outcome 至少被一个 `business_tests` 条目覆盖；测试命令必须同时出现在
+`verification_commands` 或某个 integration gate 中；`level` 只能是 `integration` 或 `e2e`；
+`real_dependencies` 必须明确测试依赖的真实系统、容器、数据库或确定性的本地实现。
+不得把“可运行骨架”、临时实现、未完成分支或计划以后补齐的功能写成已交付节点。
 
 `scope_paths` 是主要代码归属范围，不是穷举文件白名单。完成 contract 所必需的必要配套文件，
 例如测试、锁文件、migration、生成物或构建配置，可以随节点修改；worker 必须在 PR 或
@@ -131,9 +154,10 @@ verification 中说明原因。reviewer 应判断这些改动是否服务于 con
 4. contract 的 `objective`、`source_of_truth`、`acceptance`、`non_goals`、
    `verification_commands`、`integration_gates`、`pr_base` 必须非空。
 5. 每个 integration gate 的必填标量与列表都必须非空；metrics/artifacts 类型必须正确。
-6. `coverage_gate` 必须是 0 到 100 的数字；`required_contracts` 中的路径必须存在。
-7. 提供验收文档时，每个 `contract.acceptance` 必须锚定真实 flow id。
-8. `meta.closeout_node` 若存在，必须引用 manifest 中的节点。
+6. `quality` 必须存在；outcome/test id 唯一，source_ref 指向真实 action，每个 outcome 被业务测试覆盖，测试命令已声明，且 runtime data policy 为 `real-or-error`。
+7. `coverage_gate` 必须是 0 到 100 的数字；`required_contracts` 中的路径必须存在。
+8. 提供验收文档时，每个 `contract.acceptance` 必须锚定真实 flow id。
+9. `meta.closeout_node` 若存在，必须引用 manifest 中的节点。
 
 ## 常见错误 → 修正
 
@@ -142,6 +166,8 @@ verification 中说明原因。reviewer 应判断这些改动是否服务于 con
 | 一个节点同时包含多个可独立交付能力 | 按稳定 contract/API 拆成独立 PR/test/review 单元。 |
 | 为了表达顺序感而增加 `blocked_by` | 只保留真实运行前置，其余通过合同解耦。 |
 | contract 只写目标，没有验证入口 | 补齐全部必填字段和至少一个完整 integration gate。 |
+| 用单元测试或只断言 schema 的测试充当业务验收 | 增加真实 integration/e2e 测试，并映射到具体 required outcome。 |
+| 节点只交付骨架、临时实现或 fake 数据兜底 | 继续拆分或完成真实业务实现；运行时失败必须真实暴露。 |
 | `acceptance` 使用自然语言摘要 | 改为验收文档中的稳定 flow id。 |
 | 把 `scope_paths` 当拒绝其他文件的依据 | 允许必要配套文件，并要求在 PR 或 verification 中解释。 |
 | 复制整段设计到 `description` | 只保留 `source_of_truth` 锚点，维持单一事实源。 |

@@ -13,6 +13,7 @@ import yaml
 
 @dataclass
 class Action:
+    id: str
     step: str
     how: str
     expected: str
@@ -33,10 +34,21 @@ class AcceptanceDoc:
     def flow_ids(self) -> list:
         return [flow.id for flow in self.flows]
 
+    @property
+    def action_ids(self) -> list:
+        return [
+            f"{flow.id}.{action.id}"
+            for flow in self.flows
+            for action in flow.actions
+        ]
+
 
 def _load_action(raw) -> Action:
     if not isinstance(raw, dict):
         raise ValueError(f"action must be an object, got {type(raw).__name__}")
+    action_id = raw.get("id")
+    if not isinstance(action_id, str) or not action_id.strip():
+        raise ValueError("action.id is required")
     step = raw.get("step")
     if not isinstance(step, str) or not step.strip():
         raise ValueError("action.step is required")
@@ -46,7 +58,7 @@ def _load_action(raw) -> Action:
     expected = raw.get("expected")
     if not isinstance(expected, str) or not expected.strip():
         raise ValueError(f"action {step!r} expected is required")
-    return Action(step=step, how=how, expected=expected)
+    return Action(id=action_id, step=step, how=how, expected=expected)
 
 
 def load_acceptance_doc(raw) -> AcceptanceDoc:
@@ -76,10 +88,19 @@ def load_acceptance_doc(raw) -> AcceptanceDoc:
         actions_raw = f.get("actions")
         if not isinstance(actions_raw, list) or not actions_raw:
             raise ValueError(f"flow {flow_id} actions must be a non-empty list")
+        actions = []
+        seen_action_ids = set()
+        for action_raw in actions_raw:
+            action = _load_action(action_raw)
+            if action.id in seen_action_ids:
+                raise ValueError(
+                    f"duplicate action id in flow {flow_id}: {action.id}")
+            seen_action_ids.add(action.id)
+            actions.append(action)
         flows.append(Flow(
             id=flow_id,
             name=name,
-            actions=[_load_action(a) for a in actions_raw],
+            actions=actions,
         ))
     return AcceptanceDoc(flows=flows)
 

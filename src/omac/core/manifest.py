@@ -39,6 +39,43 @@ def _expand_env(value):
     return value
 
 @dataclass
+class QualityContract:
+    required_outcomes: list = field(default_factory=list)
+    business_tests: list = field(default_factory=list)
+    runtime_data_policy: str | None = None
+
+
+def _load_quality(raw):
+    if raw is None:
+        return None
+    if isinstance(raw, QualityContract):
+        return raw
+    if not isinstance(raw, dict):
+        raise ValueError("contract.quality must be an object")
+    required_outcomes = raw.get("required_outcomes", [])
+    if not isinstance(required_outcomes, list):
+        raise ValueError("quality.required_outcomes must be a list")
+    business_tests = raw.get("business_tests", [])
+    if not isinstance(business_tests, list):
+        raise ValueError("quality.business_tests must be a list")
+    return QualityContract(
+        required_outcomes=list(required_outcomes),
+        business_tests=list(business_tests),
+        runtime_data_policy=raw.get("runtime_data_policy"),
+    )
+
+
+def _dump_quality(quality):
+    if quality is None:
+        return None
+    return {
+        "required_outcomes": list(quality.required_outcomes),
+        "business_tests": list(quality.business_tests),
+        "runtime_data_policy": quality.runtime_data_policy,
+    }
+
+
+@dataclass
 class Contract:
     objective: str | None = None
     source_of_truth: list = field(default_factory=list)
@@ -53,6 +90,11 @@ class Contract:
     # 主要代码归属范围(可选、非穷举白名单):用于表达节点稳定的模块边界、降低
     # 并行冲突。完成 contract 必需的配套文件可扩展,但需在 PR/verification 说明。
     scope_paths: list = field(default_factory=list)
+    quality: QualityContract | None = None
+
+    def __post_init__(self):
+        if isinstance(self.quality, dict):
+            self.quality = _load_quality(self.quality)
 
 
 def _load_contract(raw):
@@ -70,6 +112,7 @@ def _load_contract(raw):
         coverage_gate=raw.get("coverage_gate", 90),
         acceptance_doc=raw.get("acceptance_doc"),
         scope_paths=list(raw.get("scope_paths", [])),
+        quality=_load_quality(raw.get("quality")),
     )
 
 
@@ -92,6 +135,8 @@ def _dump_contract(contract):
         data["scope_paths"] = list(contract.scope_paths)
     if contract.coverage_gate != 90:
         data["coverage_gate"] = contract.coverage_gate
+    if contract.quality is not None:
+        data["quality"] = _dump_quality(contract.quality)
     return data
 
 

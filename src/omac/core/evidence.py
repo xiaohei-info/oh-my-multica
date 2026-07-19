@@ -112,7 +112,229 @@ def _requires_env_setup(contract) -> bool:
     return bool(getattr(contract, "integration_gates", None))
 
 
-def validate_worker_evidence(node, item) -> list:
+def _non_empty_string_list(value) -> bool:
+    return (
+        isinstance(value, list)
+        and bool(value)
+        and all(isinstance(entry, str) and entry.strip() for entry in value)
+    )
+
+
+def _matches_finding_ids(value, expected_ids: set[str]) -> bool:
+    return (
+        isinstance(value, list)
+        and all(isinstance(entry, str) and entry.strip() for entry in value)
+        and len(value) == len(set(value))
+        and set(value) == expected_ids
+    )
+
+
+def _validate_worker_quality(contract, verification, *, allow_mock_evidence=False) -> list:
+    errors = []
+    expected_quality = getattr(contract, "quality", None)
+    actual_quality = verification.get("quality")
+    if expected_quality is None:
+        return ["contract.quality is required"]
+    if not isinstance(actual_quality, dict):
+        return ["verification.quality is required"]
+
+    expected_outcomes = {
+        outcome.get("id")
+        for outcome in expected_quality.required_outcomes
+        if isinstance(outcome, dict) and outcome.get("id")
+    }
+    mappings = actual_quality.get("outcome_mapping")
+    mapping_by_outcome = {}
+    if not isinstance(mappings, list):
+        errors.append("verification.quality.outcome_mapping must be a list")
+        mappings = []
+    for index, mapping in enumerate(mappings):
+        prefix = f"verification.quality.outcome_mapping[{index}]"
+        if not isinstance(mapping, dict):
+            errors.append(f"{prefix} must be an object")
+            continue
+        outcome = mapping.get("outcome")
+        if not isinstance(outcome, str) or not outcome.strip():
+            errors.append(f"{prefix}.outcome is required")
+            continue
+        if outcome in mapping_by_outcome:
+            errors.append(f"verification.quality duplicate outcome mapping: {outcome}")
+        mapping_by_outcome[outcome] = mapping
+        if outcome not in expected_outcomes:
+            errors.append(f"verification.quality unknown outcome mapping: {outcome}")
+        if not _non_empty_string_list(mapping.get("implementation")):
+            errors.append(f"{prefix}.implementation must be non-empty strings")
+        if not _non_empty_string_list(mapping.get("tests")):
+            errors.append(f"{prefix}.tests must be non-empty strings")
+    for outcome_id in sorted(expected_outcomes - set(mapping_by_outcome)):
+        errors.append(f"verification.quality missing outcome mapping: {outcome_id}")
+
+    expected_tests = {
+        business_test.get("id"): business_test
+        for business_test in expected_quality.business_tests
+        if isinstance(business_test, dict) and business_test.get("id")
+    }
+    proofs = actual_quality.get("regression_proof")
+    proof_by_test = {}
+    if not isinstance(proofs, list):
+        errors.append("verification.quality.regression_proof must be a list")
+        proofs = []
+    for index, proof in enumerate(proofs):
+        prefix = f"verification.quality.regression_proof[{index}]"
+        if not isinstance(proof, dict):
+            errors.append(f"{prefix} must be an object")
+            continue
+        test_id = proof.get("test_id")
+        if not isinstance(test_id, str) or not test_id.strip():
+            errors.append(f"{prefix}.test_id is required")
+            continue
+        if test_id in proof_by_test:
+            errors.append(f"verification.quality duplicate regression proof: {test_id}")
+        proof_by_test[test_id] = proof
+        business_test = expected_tests.get(test_id)
+        if business_test is None:
+            errors.append(f"verification.quality unknown regression proof: {test_id}")
+            continue
+        base_ref = proof.get("base_ref")
+        head_ref = proof.get("head_ref")
+        if not isinstance(base_ref, str) or not base_ref.strip():
+            errors.append(f"{prefix}.base_ref is required")
+        if not isinstance(head_ref, str) or not head_ref.strip():
+            errors.append(f"{prefix}.head_ref is required")
+        if base_ref and head_ref and base_ref == head_ref:
+            errors.append(f"{prefix}.base_ref and head_ref must differ")
+        base_exit_code = proof.get("base_exit_code")
+        if not isinstance(base_exit_code, int) or isinstance(base_exit_code, bool):
+            errors.append(f"{prefix}.base_exit_code must be an integer")
+        elif business_test.get("must_fail_on_base") is True and base_exit_code == 0:
+            errors.append(f"{prefix} must fail on base: {test_id}")
+        head_exit_code = proof.get("head_exit_code")
+        if not isinstance(head_exit_code, int) or isinstance(head_exit_code, bool):
+            errors.append(f"{prefix}.head_exit_code must be an integer")
+        elif head_exit_code != 0:
+            errors.append(f"{prefix} must pass on head: {test_id}")
+    for test_id in sorted(set(expected_tests) - set(proof_by_test)):
+        errors.append(f"verification.quality missing regression proof: {test_id}")
+
+    runtime_fallbacks = actual_quality.get("runtime_fallbacks")
+    if runtime_fallbacks != []:
+        errors.append("verification.quality.runtime_fallbacks must be empty")
+    known_gaps = actual_quality.get("known_gaps")
+    if known_gaps != []:
+        errors.append("verification.quality.known_gaps must be empty")
+    allowed_origins = {"real", "mock"} if allow_mock_evidence else {"real"}
+    if actual_quality.get("evidence_origin") not in allowed_origins:
+        expected = "real or mock" if allow_mock_evidence else "real"
+        errors.append(f"verification.quality.evidence_origin must be {expected}")
+    return errors
+
+
+def _validate_review_batch(contract, verdict, report) -> list:
+    errors = []
+    reviewed_revision = report.get("reviewed_revision")
+    if not isinstance(reviewed_revision, str) or not reviewed_revision.strip():
+        errors.append("review_report.reviewed_revision is required")
+
+    scope = report.get("review_scope")
+    if not isinstance(scope, dict):
+        errors.append("review_report.review_scope is required")
+    else:
+        if not _non_empty_string_list(scope.get("changed_files")):
+            errors.append("review_report.review_scope.changed_files must be non-empty strings")
+        for flag in (
+            "all_changed_files_reviewed",
+            "all_outcomes_reviewed",
+            "all_business_tests_rerun",
+            "runtime_fallback_audit_completed",
+        ):
+            if scope.get(flag) is not True:
+                errors.append(f"review_report.review_scope.{flag} must be true")
+
+    findings = report.get("findings")
+    if not isinstance(findings, list):
+        errors.append("review_report.findings must be a list")
+        findings = []
+    finding_ids = set()
+    blocker_ids = set()
+    nit_ids = set()
+    for index, finding in enumerate(findings):
+        prefix = f"review_report.findings[{index}]"
+        if not isinstance(finding, dict):
+            errors.append(f"{prefix} must be an object")
+            continue
+        finding_id = finding.get("id")
+        valid_finding_id = isinstance(finding_id, str) and bool(finding_id.strip())
+        if not valid_finding_id:
+            errors.append(f"{prefix}.finding.id is required")
+        elif finding_id in finding_ids:
+            errors.append(f"review_report duplicate finding id: {finding_id}")
+        else:
+            finding_ids.add(finding_id)
+        severity = finding.get("severity")
+        if severity not in {"blocker", "nit"}:
+            errors.append(f"{prefix}.finding.severity must be blocker|nit")
+        elif valid_finding_id:
+            (blocker_ids if severity == "blocker" else nit_ids).add(finding_id)
+        for field in ("category", "location", "evidence", "impact", "required_fix"):
+            value = finding.get(field)
+            if not isinstance(value, str) or not value.strip():
+                errors.append(f"{prefix}.finding.{field} is required")
+
+    blockers = report.get("blockers")
+    if not _matches_finding_ids(blockers, blocker_ids):
+        errors.append("review_report.blockers must match blocker finding ids")
+    nits = report.get("nits")
+    if not _matches_finding_ids(nits, nit_ids):
+        errors.append("review_report.nits must match nit finding ids")
+
+    if verdict == "pass" and findings:
+        errors.append("pass verdict requires no findings")
+    elif verdict == "pass-with-nits":
+        if blocker_ids:
+            errors.append("pass-with-nits must not contain blocker findings")
+        if not nit_ids:
+            errors.append("pass-with-nits requires nit findings")
+    elif verdict == "reject" and not blocker_ids:
+        errors.append("reject requires blocker findings")
+
+    quality = getattr(contract, "quality", None)
+    if quality is None:
+        errors.append("contract.quality is required")
+        expected_outcomes = set()
+    else:
+        expected_outcomes = {
+            outcome.get("id")
+            for outcome in quality.required_outcomes
+            if isinstance(outcome, dict) and outcome.get("id")
+        }
+    outcome_mappings = report.get("outcome_mapping")
+    mapping_by_outcome = {}
+    if not isinstance(outcome_mappings, list):
+        errors.append("review_report.outcome_mapping must be a list")
+        outcome_mappings = []
+    allowed_statuses = {"pass"} if verdict in REVIEW_APPROVE else {"pass", "fail"}
+    for index, mapping in enumerate(outcome_mappings):
+        prefix = f"review_report.outcome_mapping[{index}]"
+        if not isinstance(mapping, dict):
+            errors.append(f"{prefix} must be an object")
+            continue
+        outcome = mapping.get("outcome")
+        if not isinstance(outcome, str) or not outcome.strip():
+            errors.append(f"{prefix}.outcome is required")
+            continue
+        if outcome in mapping_by_outcome:
+            errors.append(f"review_report duplicate outcome mapping: {outcome}")
+        mapping_by_outcome[outcome] = mapping
+        if outcome not in expected_outcomes:
+            errors.append(f"{prefix} references unknown outcome: {outcome}")
+        if mapping.get("status") not in allowed_statuses:
+            errors.append(f"{prefix}.status is invalid for verdict {verdict}")
+    for outcome_id in sorted(expected_outcomes - set(mapping_by_outcome)):
+        errors.append(f"review_report missing outcome mapping: {outcome_id}")
+    return errors
+
+
+def validate_worker_evidence(node, item, *, allow_mock_evidence: bool = False) -> list:
     """Return gate failure messages for worker artifacts + verification."""
     errors = []
     contract = getattr(node, "contract", None)
@@ -174,6 +396,12 @@ def validate_worker_evidence(node, item) -> list:
             f"verification.coverage {coverage} below gate {contract.coverage_gate}"
         )
 
+    errors.extend(_validate_worker_quality(
+        contract,
+        verification,
+        allow_mock_evidence=allow_mock_evidence,
+    ))
+
     return errors
 
 
@@ -209,11 +437,7 @@ def validate_review_evidence(node, item) -> list:
         if report.get(flag) is not True:
             errors.append(f"review_report.{flag} must be true")
 
-    blockers = report.get("blockers", [])
-    if verdict in REVIEW_APPROVE and blockers:
-        errors.append("review_report.blockers must be empty for pass verdicts")
-    if verdict == "reject" and not blockers:
-        errors.append("review_report.blockers must be non-empty for reject verdicts")
+    errors.extend(_validate_review_batch(contract, verdict, report))
 
     mappings = report.get("acceptance_mapping")
     if not isinstance(mappings, list) or not mappings:

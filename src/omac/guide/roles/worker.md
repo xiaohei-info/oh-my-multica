@@ -23,7 +23,8 @@
 - `context.source_issues` 中的上游 issue id、label 和可选 URL；使用同一 engine 环境查询它们。
 - 上游 plan / acceptance issue 的 deliverable/ref 和附件内容，以及 `contract.source_of_truth` 的章节锚点。
 - `blocked_by`、`pr_base`、`non_goals`、`scope_paths`、`verification_commands`、
-  `integration_gates` 和 coverage gate。
+  `integration_gates`、`quality.required_outcomes`、`quality.business_tests`、
+  `quality.runtime_data_policy` 和 coverage gate。
 - evidence artifact guide 的 verification schema。
 
 ## 执行步骤
@@ -34,19 +35,19 @@
    再读取对应 issue 的 deliverable/ref 和附件。根据 `plan#...`、`acceptance#...` 锚点定位章节。
 3. 不猜附件文件名，也不先全 workspace 搜索设计方案；找不到内容时回到上游 issue 链和当前 issue 正文链接。
 4. 确认 `blocked_by` 已完成；从 `contract.pr_base` 创建或复用工作分支，不从其他基线随意切分支。
-5. 严格执行 TDD：先写或定位测试并确认它因缺少当前行为而失败，再写最小实现使其通过，最后在绿灯下重构。
-6. 只实现 `objective` 和 acceptance 映射要求的行为，守住 `non_goals`，共享契约只 import，禁止平行定义。
+5. 严格执行 TDD：先写或定位真实业务功能测试，确认它因缺少当前业务行为而失败，再写实现使其通过，最后在绿灯下重构。禁止用只断言 schema、固定返回值或目标文本的测试冒充业务验收。
+6. 完整实现 `objective`、acceptance 和所有 `quality.required_outcomes`。禁止提交只有基础骨架、临时实现、占位分支、TODO 或“后续补齐”的半成品；若节点无法完整交付，应在实现前升级合同问题。
 7. `scope_paths` 是主要代码归属范围，不是穷举文件白名单。完成 contract 必需的必要配套文件可以修改，
    但必须在 PR 或 verification 中说明原因。
-8. 运行全部 `verification_commands`、integration gates、相关全量测试和 coverage 检查；记录真实命令、退出码和摘要。
+8. 检查生产运行路径：依赖、网络、数据或解析失败必须暴露真实错误；禁止用 fake、mock、synthetic 或硬编码成功数据兜底。运行全部 `verification_commands`、integration gates、相关全量测试和 coverage 检查；记录真实命令、退出码和摘要。
 9. 创建或更新 PR，base 必须是 `contract.pr_base`。GitHub PR 必须 ready for review，不能是 draft。
-10. 编写 verification 文件，覆盖 commands、integration gates、coverage、`pr_base`，以及需要环境准备时的 `env_setup`。
+10. 编写 verification 文件，覆盖 commands、integration gates、coverage、`pr_base`、`env_setup` 和 `quality`：逐项给出 outcome mapping、基线失败/当前通过的 regression proof；`runtime_fallbacks` 与 `known_gaps` 必须为空，`evidence_origin` 必须为 `real`。
 11. 使用 `work show` 返回的 `submit` 提交原 PR URL 和 verification 文件。
 
 ## 完成条件
 
-- contract 的 objective、source_of_truth 和 acceptance 映射均已实现，`non_goals` 未被突破。
-- 新行为有先失败后通过的测试，主路径、失败路径和已知边界均有验证。
+- contract 的 objective、source_of_truth、acceptance 和 required outcomes 均已完整实现，`non_goals` 未被突破，不存在骨架、临时实现或已知缺口。
+- 新行为有先失败后通过的真实业务功能测试，主路径、失败路径和已知边界均有验证。
 - 所有 verification commands 和 integration gates 实际通过，coverage 达到 gate。
 - PR base 等于 `contract.pr_base`，PR 不是 draft，真实 diff 只包含 contract 所需改动。
 - verification 完整记录命令、集成门、coverage、`pr_base` 和必要的 `env_setup`，能通过 OMAC 证据门。
@@ -72,6 +73,9 @@
 - 禁止自审自放行。
 - 禁止直接调用底层平台命令修改 issue status、assignee、rerun 或 cancel-task；状态流转只由 OMAC loop 推进。
 - 禁止跳过测试、伪造 verification 或把未运行命令写成通过。
+- 禁止为了满足 gate 编写不验证真实业务行为的测试。
+- 禁止把基础骨架、临时实现、占位逻辑、TODO 或未完成设计点申报为完成。
+- 禁止使用 fake/mock/synthetic/硬编码数据隐藏生产路径真实错误；真实错误必须暴露。
 - 禁止重定义共享契约；只能 import 已冻结定义。
 - 禁止顺手重构相邻模块，或把 `scope_paths` 当成扩大范围的理由。
 - 禁止为同一节点并行创建多个 PR，禁止提交 draft PR。
@@ -81,6 +85,8 @@
 
 - 错误：先全仓搜索并猜哪个文件是设计方案。 → 正确：沿上游 issue 命令读取 deliverable/ref，再按 `source_of_truth` 锚点定位。
 - 错误：先写实现，最后补一个会通过的测试。 → 正确：按 TDD 先观察目标测试失败，再写最小实现使其通过。
+- 错误：测试只断言固定文本或 schema，功能仍未打通。 → 正确：从真实业务入口验证可观察结果，并覆盖失败路径和真实依赖。
+- 错误：接口失败时返回 fake 数据让流程继续。 → 正确：返回真实错误并修复根因，不隐藏故障。
 - 错误：返工时新开一个 PR。 → 正确：继续使用原分支和原 PR URL，保留完整评审证据链。
 - 错误：文件不在 `scope_paths` 就拒绝修改，或借此大范围重构。 → 正确：只修改 contract 必需的必要配套文件，并在 PR 或 verification 说明原因。
 

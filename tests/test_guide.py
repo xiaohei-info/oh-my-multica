@@ -114,7 +114,11 @@ def test_orchestrator_role_has_wave_decomposition() -> None:
 
 def test_worker_role_has_tdd_and_evidence() -> None:
     content = load_role_topic("worker")
-    for item in ["TDD", "contract.source_of_truth", "上游 issue", "deliverable/ref", "verification", "pr_base", "non_goals"]:
+    for item in [
+        "TDD", "contract.source_of_truth", "上游 issue", "deliverable/ref",
+        "verification", "pr_base", "non_goals", "真实业务功能测试",
+        "骨架", "临时实现", "fake", "known_gaps", "runtime_fallbacks",
+    ]:
         assert item in content, f"worker missing execution anchor: {item}"
 
 
@@ -122,8 +126,11 @@ def test_reviewer_role_has_verdict_and_independent_checks() -> None:
     content = load_role_topic("reviewer")
     for item in [
         "独立复跑", "pass", "reject", "review_goals", "coverage", "project_rules",
+        "一次性", "完整问题批次", "reviewed_revision", "changed_files",
+        "runtime_fallback_audit_completed",
     ]:
         assert item in content, f"reviewer missing review anchor: {item}"
+    assert "pass-with-nits 只回到 worker 一次，不再进行第二轮 reviewer" in content
 
 
 def test_acceptor_role_has_final_acceptance_protocol() -> None:
@@ -143,13 +150,20 @@ def test_design_artifact_defines_markdown_frontmatter_schema() -> None:
 
 def test_acceptance_artifact_defines_flow_action_schema() -> None:
     content = load_artifact_topic("acceptance")
-    for item in ["schema: omac.acceptance/v1", "flows", "actions", "step", "how", "expected"]:
+    for item in [
+        "schema: omac.acceptance/v1", "flows", "actions", "action.id",
+        "flow-login.open-login", "step", "how", "expected",
+    ]:
         assert item in content, f"acceptance artifact missing schema anchor: {item}"
 
 
 def test_manifest_artifact_connects_contract_to_runtime() -> None:
     content = load_artifact_topic("manifest")
-    for item in ["source_of_truth", "acceptance", "non_goals", "verification_commands", "integration_gates", "pr_base"]:
+    for item in [
+        "source_of_truth", "acceptance", "non_goals", "verification_commands",
+        "integration_gates", "pr_base", "quality", "required_outcomes",
+        "business_tests", "runtime_data_policy", "real-or-error",
+    ]:
         assert item in content, f"manifest artifact missing contract anchor: {item}"
 
 
@@ -210,7 +224,11 @@ def test_all_guides_pin_instance_first_instruction_precedence() -> None:
 
 def test_evidence_artifact_defines_all_evidence_shapes() -> None:
     content = load_artifact_topic("evidence")
-    for item in ["worker verification", "reviewer report", "final acceptance results", "acceptance_mapping"]:
+    for item in [
+        "worker verification", "reviewer report", "final acceptance results",
+        "acceptance_mapping", "outcome_mapping", "regression_proof",
+        "evidence_origin", "reviewed_revision", "review_scope", "findings",
+    ]:
         assert item in content, f"evidence artifact missing evidence anchor: {item}"
 
 
@@ -221,6 +239,21 @@ def test_evidence_reviewer_example_passes_actual_validator() -> None:
     report = yaml.safe_load(report_yaml)
     contract = Contract(
         acceptance=["flow-login"],
+        quality={
+            "required_outcomes": [{
+                "id": "login-succeeds",
+                "source_ref": "acceptance#flow-login.submit-valid-credentials",
+            }],
+            "business_tests": [{
+                "id": "login-e2e",
+                "outcome_refs": ["login-succeeds"],
+                "command": "python3 -m pytest tests/e2e/test_login.py",
+                "level": "e2e",
+                "real_dependencies": ["real auth service test environment"],
+                "must_fail_on_base": True,
+            }],
+            "runtime_data_policy": "real-or-error",
+        },
         integration_gates=[{
             "name": "auth-e2e",
             "source_of_truth": ["docs/design.md#auth-flow"],

@@ -29,7 +29,8 @@ conflicts; do not redefine the contract.
 - Upstream deliverable/ref and attachments, plus the section anchors in
   `contract.source_of_truth`.
 - `blocked_by`, `pr_base`, `non_goals`, `scope_paths`, verification commands,
-  integration gates, and coverage gate.
+  integration gates, `quality.required_outcomes`, `quality.business_tests`,
+  `quality.runtime_data_policy`, and coverage gate.
 - The verification schema in the evidence artifact guide.
 
 ## Steps
@@ -43,26 +44,31 @@ conflicts; do not redefine the contract.
    the upstream chain and issue links when content is missing.
 4. Confirm `blocked_by` is done. Create or reuse a branch from
    `contract.pr_base`, not an arbitrary base.
-5. Follow TDD: make the target test fail because the behavior is missing, write
-   the smallest passing implementation, then refactor only while green.
-6. Implement only the objective and acceptance mapping. Honor non-goals and
-   import frozen shared contracts instead of redefining them.
+5. Follow TDD with real business-function tests: first observe failure because
+   the business behavior is missing, then implement it and refactor while green.
+   Schema-only assertions, fixed-return assertions, or tests written merely to
+   satisfy the target are not business acceptance.
+6. Fully implement the objective, acceptance, and every required outcome. Do
+   not submit a basic skeleton, temporary implementation, placeholder branch,
+   TODO, or promise to finish later. Escalate an unsound contract before coding.
 7. `scope_paths` names primary ownership, not an exhaustive allowlist. Change a
    required supporting file only when needed for the contract and explain why in
    the PR or verification.
-8. Run every verification command, integration gate, relevant full suite, and
-   coverage check. Record the actual command, exit code, and summary.
+8. Audit production runtime paths. Dependency, network, data, or parsing failure
+   exposes the real error; it never returns fake, mock, synthetic, or hard-coded
+   success data. Run every command, gate, relevant full suite, and coverage check.
 9. Create or update a non-draft PR based on `contract.pr_base`.
-10. Write verification covering commands, integration gates, coverage, PR base,
-    and `env_setup` when environment preparation is required.
+10. Write verification covering commands, gates, coverage, PR base, `env_setup`,
+    and `quality`: outcome mappings, base-fail/head-pass regression proof, empty
+    `runtime_fallbacks` and `known_gaps`, and `evidence_origin: real`.
 11. Submit the original PR URL and verification file using the returned command.
 
 ## Completion conditions
 
-- Objective, source anchors, and acceptance mapping are implemented; non-goals
-  remain intact.
-- New behavior has a red-then-green test and coverage for the main path, failure
-  path, and known boundaries.
+- Objective, source anchors, acceptance, and required outcomes are fully
+  implemented; no skeleton, temporary code, or known gap remains.
+- New behavior has a red-then-green real business-function test covering the
+  main path, failure path, and known boundaries.
 - All commands and gates pass and coverage meets the gate.
 - The PR base is `contract.pr_base`, the PR is not a draft, and the diff only
   contains contract-required work.
@@ -92,6 +98,10 @@ platform state yourself.
 - Do not call platform commands to change issue status, assignee, rerun, or
   cancellation; the OMAC loop advances state.
 - Do not skip tests, fabricate verification, or claim unrun commands passed.
+- Do not write target-satisfying tests that avoid real business behavior.
+- Do not report skeletons, temporary implementations, placeholders, TODOs, or
+  unfinished design points as complete.
+- Do not hide real production errors with fake/mock/synthetic/hard-coded data.
 - Do not redefine shared contracts, refactor adjacent modules casually, create
   multiple PRs for one node, or submit a draft PR.
 - Do not let static guidance override the current contract, review, or upstream
@@ -103,6 +113,10 @@ platform state yourself.
   issue commands, read deliverable/ref, then use source-of-truth anchors.
 - Wrong: implement first and add a passing test later. Right: observe the test
   fail first, then make the smallest implementation pass.
+- Wrong: assert a fixed string or schema while the feature is not usable. Right:
+  verify observable behavior through the real business entry point and dependencies.
+- Wrong: return fake data when a dependency fails. Right: expose the real error
+  and repair its cause.
 - Wrong: open a new PR for rework. Right: keep the original branch and PR URL.
 - Wrong: reject required supporting-file changes because they are absent from
   `scope_paths`, or use that field to justify a broad refactor. Right: change

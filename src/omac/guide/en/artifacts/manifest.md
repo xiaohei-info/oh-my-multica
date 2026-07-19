@@ -55,6 +55,20 @@ nodes:
             - python3 -m pytest tests/test_auth_renewal_e2e.py
           required_metrics: {}
           artifacts: []
+      quality:
+        required_outcomes:
+          - id: renewal-replays-once
+            source_ref: acceptance#flow-login-renewal.renew-session
+        business_tests:
+          - id: renewal-e2e
+            outcome_refs:
+              - renewal-replays-once
+            command: python3 -m pytest tests/test_auth_renewal_e2e.py
+            level: e2e
+            real_dependencies:
+              - real auth service test environment
+            must_fail_on_base: true
+        runtime_data_policy: real-or-error
       pr_base: feature/login-renewal
       coverage_gate: 90
       acceptance_doc: null
@@ -111,6 +125,9 @@ must be acyclic.
 | `non_goals` | Adjacent scope explicitly forbidden. |
 | `verification_commands` | Copyable node verification commands. |
 | `integration_gates` | Cross-module or end-to-end gates required after delivery. |
+| `quality.required_outcomes` | Complete business outcomes, each with a stable ID and an `acceptance#flow.action` source. |
+| `quality.business_tests` | Integration/e2e proof for outcomes, including exact command, real dependencies, and base-failure requirement. |
+| `quality.runtime_data_policy` | Exactly `real-or-error`: production returns real results or exposes real errors, never fake/mock/synthetic fallback data. |
 | `pr_base` | Required integration branch for the PR. |
 | `coverage_gate` | Number from 0 to 100; default 90. |
 | `acceptance_doc` | Optional structured acceptance context when the instance contract needs it. |
@@ -129,6 +146,14 @@ lock files, migrations, generated files, or build configuration may change when
 the contract requires them; the worker explains why. Review judges contract fit,
 non-goals, and parallel boundaries, not merely path membership.
 
+`quality` is a completeness contract, not a coverage decoration. Required
+outcomes cover every promised business result, every outcome is covered by a
+business test, and each test command also appears in `verification_commands` or
+an integration gate. Test level is `integration` or `e2e`; `real_dependencies`
+names the real service, container, database, or deterministic local
+implementation used. A runnable skeleton, temporary implementation, unfinished
+branch, or future-work promise is not a delivered node.
+
 ## Validation gates
 
 1. YAML parses; every node has `id` and `worker`.
@@ -139,9 +164,12 @@ non-goals, and parallel boundaries, not merely path membership.
    `verification_commands`, `integration_gates`, and `pr_base` are non-empty.
 5. Every integration gate's required scalars and lists are non-empty; metrics and
    artifacts have correct types.
-6. `coverage_gate` is 0–100 and required-contract paths exist.
-7. With an acceptance document, every `contract.acceptance` references a real flow.
-8. `meta.closeout_node`, when present, references a manifest node.
+6. `quality` exists; outcome/test IDs are unique, sources reference real
+   actions, every outcome has business-test coverage, commands are declared,
+   and runtime data policy is `real-or-error`.
+7. `coverage_gate` is 0–100 and required-contract paths exist.
+8. With an acceptance document, every `contract.acceptance` references a real flow.
+9. `meta.closeout_node`, when present, references a manifest node.
 
 ## Common errors → corrections
 
@@ -150,6 +178,8 @@ non-goals, and parallel boundaries, not merely path membership.
 | One node contains several independently deliverable capabilities | Split at stable contracts/APIs into independent PR/test/review units. |
 | `blocked_by` added just to show order | Keep only real prerequisites; use contracts to decouple the rest. |
 | Contract has an objective but no verification | Fill every required field and at least one complete integration gate. |
+| A unit/schema assertion is presented as business acceptance | Add a real integration/e2e test mapped to a required outcome. |
+| The node delivers only a skeleton, temporary code, or fake-data fallback | Split further or finish the real behavior; expose runtime failure honestly. |
 | `acceptance` is a natural-language summary | Use stable acceptance-document flow IDs. |
 | `scope_paths` rejects every other file | Permit required supporting files and explain them in PR or verification. |
 | Design copied into `description` | Keep source-of-truth anchors only. |

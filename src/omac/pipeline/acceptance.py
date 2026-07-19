@@ -460,7 +460,8 @@ def _acceptance_doc_raw(doc: AcceptanceDoc) -> Dict[str, Any]:
                 "id": flow.id,
                 "name": flow.name,
                 "actions": [
-                    {"step": a.step, "how": a.how, "expected": a.expected}
+                    {"id": a.id, "step": a.step,
+                     "how": a.how, "expected": a.expected}
                     for a in flow.actions
                 ],
             }

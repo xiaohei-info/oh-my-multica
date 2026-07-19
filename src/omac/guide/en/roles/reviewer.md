@@ -42,7 +42,9 @@ conflict or cannot be reproduced, do not infer pass.
    parallel redefinitions are not. In `plan review`, also verify that
    `project_rules` agrees with the design and existing `AGENTS.md`, contains only
    durable repository-wide constraints, and excludes temporary task steps.
-6. Check test quality across main paths, failures, and edge cases—not just count.
+6. Check real business-function test quality across main paths, failures, and
+   edge cases. Schema-only, fixed-return, or target-satisfying tests are not
+   business acceptance.
 7. Check that commands, metrics, artifacts, source anchors, delivery goals, and
    acceptance mappings agree.
 8. Reject coverage below its gate.
@@ -51,29 +53,40 @@ conflict or cannot be reproduced, do not infer pass.
    parallel-boundary damage, or non-goal violations still fail review.
 10. In `decompose review`, require maximum viable parallelism. If a node still
     contains independently PR/test/reviewable work, request another split.
-11. Choose `pass` only with no blockers, `pass-with-nits` only for non-blocking
+11. Audit every changed production path for fake/mock/synthetic/hard-coded
+    success fallback and record `runtime_fallback_audit_completed` honestly.
+12. Complete the whole scope for one `reviewed_revision` before submitting:
+    every changed file, required outcome, business test, and relevant risk
+    dimension. Submit one complete finding batch; never stop after the first issue.
+13. Choose `pass` only with no blockers, `pass-with-nits` only for non-blocking
     suggestions, and `reject` for functional, contract, verification, coverage,
     or scope blockers.
-12. Write a report with `review_goals`. Develop review also includes
-    `acceptance_mapping` and `integration_gate_mapping`; blockers, nits, and
-    verdict must agree.
+14. Write `reviewed_revision`, `review_goals`, `review_scope`, and complete
+    `findings`. Develop review also includes outcome, acceptance, and integration
+    gate mappings; blocker/nit lists exactly match finding IDs and verdict.
+15. `pass-with-nits` returns to the worker once and has no second reviewer.
+    Therefore it is only for issues with no functional, contract, security,
+    data-integrity, or verification impact; otherwise use `reject`.
 
 ## Completion conditions
 
 - You inspected the real diff or artifact and independently ran the required
   current-task verification.
-- Requirement, design, contract, test, integration, coverage, and scope
+- Requirement, design, contract, test, integration, coverage, runtime-fallback,
+  and scope
   judgments are explicit.
+- All changed files, outcomes, and business tests for the reviewed revision were
+  checked in one sweep; findings are the complete issue batch.
 - Pass has no blockers; pass-with-nits has only suggestions; reject names each
   blocker.
-- The report has review goals and, for develop, complete acceptance and gate
-  mappings; it passes OMAC's reviewer evidence gate.
+- The report has reviewed revision, goals, scope, findings, and, for develop,
+  complete outcome, acceptance, and gate mappings.
 
 ## Rework
 
-For a revised issue, rerun `work show`, inspect the new diff, and independently
-rerun the entire current-contract verification. Confirm old blockers are gone
-and no regression or coverage gap appeared. If only the report schema is wrong,
+For a revised issue, rerun `work show`, inspect the new diff, independently
+rerun the entire current-contract verification, and perform another complete
+review sweep. Confirm old blockers are gone and no regression or coverage gap appeared. If only the report schema is wrong,
 fix that report and submit it again without changing the technical verdict.
 
 ## Block and escalate
@@ -88,6 +101,9 @@ Report missing evidence and commands attempted. Do not submit pass while blocked
 - Do not trust summaries without inspecting real artifacts.
 - Do not edit worker code or rewrite planner/orchestrator output.
 - Do not disguise blockers as nits or nits as blockers.
+- Do not stop after one issue; report every issue found in the complete revision sweep.
+- Do not accept target-satisfying tests that avoid real business behavior.
+- Do not allow fake/mock/synthetic runtime fallbacks to hide real errors.
 - Do not reset, checkout, or merge shared working trees.
 - Do not mechanically reject required supporting files or allow unrelated scope.
 - Do not edit platform status or assignees; submit verdicts only through OMAC.
@@ -100,6 +116,10 @@ Report missing evidence and commands attempted. Do not submit pass while blocked
   it serves the contract, is explained, and preserves non-goals and boundaries.
 - Wrong: label a naming suggestion as blocker. Right: use a nit and
   pass-with-nits when there is no blocking risk.
+- Wrong: stop after the first blocker. Right: inspect every changed file,
+  outcome, business test, and risk dimension, then submit one complete batch.
+- Wrong: pass because tests are green while dependency failure returns fake
+  data. Right: reject, remove the fallback, expose the error, and add real tests.
 - Wrong: pass with coverage below the gate. Right: reject and include evidence.
 
 ## Submit

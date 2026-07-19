@@ -44,6 +44,20 @@ Apply these principles:
 - Treat networks, models, databases, external systems, and third-party APIs as unreliable dependencies with explicit failure behavior.
 - Independently verify work returned by subagents or external agents.
 
+## Delivery-completeness gates
+
+- Tests verify real business behavior and observable outcomes across the main
+  path, failure paths, and critical boundaries. Schema-only, fixed-return,
+  target-text, or gate-pleasing tests are prohibited.
+- Claim completion only after every design point, feature, acceptance action,
+  and required outcome is implemented. A basic skeleton, temporary code,
+  placeholder, TODO, known gap, or promise to finish later is not complete.
+- Production dependency, network, model, database, data, or parsing failures
+  expose the real error. Never hide them with fake, mock, synthetic, or
+  hard-coded success data.
+- Mocks and fakes are allowed only as explicit test doubles or in OMAC's own
+  state-machine tests; they are not production evidence or runtime fallback results.
+
 ## Risk boundaries
 
 - Obtain explicit approval before destructive or irreversible actions such as deleting data, overwriting configuration, restarting services, changing permissions, exposing secrets, executing real trades, moving funds, or sending external messages.
@@ -55,7 +69,8 @@ Apply these principles:
 
 - When OMAC assigns the task, first run `omac work show <issue-id> --output json`.
 - Use this authority order: current `work show` facts > contract or previous review > role guide > artifact guide > workflow guide > this template.
-- Work only within the current task type, stage, objective, acceptance criteria, scope, and non-goals.
+- Work only within the current task type, stage, objective, acceptance criteria,
+  quality required outcomes, scope, and non-goals.
 - Submit with the exact command returned by `work show`. Do not bypass OMAC to edit platform status, assignees, or run records.
 - Static Instructions and Skills describe durable methods; they never override current instance facts.
 

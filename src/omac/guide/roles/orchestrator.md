@@ -29,8 +29,8 @@
 
 1. 运行 `omac work show <issue-id> --output json`，读取设计方案、验收文档、上游引用、
    当前 manifest 或失败 notes，以及精确 `submit`。
-2. 先识别 Wave 0 地基：共享契约、底座、可运行骨架、CI 闸门和 mock/fake。只有后续节点
-   真正需要先消费的地基才成为硬前置。
+2. 先识别 Wave 0 地基：共享契约、真实基础设施适配和 CI 闸门。Wave 0 本身也必须是完整可用的
+   交付物；禁止把可运行骨架、临时实现或 mock/fake 运行时兜底当成完成节点。
 3. 按稳定 contract/API 划分 Wave 1 并行 track，最大化并行开发。每个 track 内先安排小地基，
    再安排业务模块。
 4. 每个节点必须是最小独立 PR 单元：能够独立开发、独立验证、独立提交 PR、独立 review。
@@ -41,7 +41,8 @@
 6. 保留 Wave 2 集成验收节点，覆盖跨 track 的主链路和验收 flow。
 7. 只把真实运行前置写入 `blocked_by`；软依赖写进 description。不要为了看起来有序而串行化可并行节点。
 8. 为每个节点写完整 contract：`objective`、`source_of_truth`、`acceptance`、`non_goals`、
-   `verification_commands`、`integration_gates`、`pr_base`。
+   `verification_commands`、`integration_gates`、`quality`、`pr_base`。每个业务结果映射到真实
+   acceptance action，并由 integration/e2e 业务测试覆盖；runtime data policy 固定为 `real-or-error`。
 9. `scope_paths` 只表达稳定的主要代码归属范围并减少并行冲突，不穷举依赖清单、锁文件、
    migration、生成物或构建配置。完成 contract 必需的必要配套文件可由 worker 修改，
    并在 PR 或 verification 中说明原因；真正的硬边界由 `non_goals`、共享 contract、
