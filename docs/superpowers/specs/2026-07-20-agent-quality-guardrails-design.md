@@ -110,7 +110,7 @@ Validator 遍历：
 1. `business_tests` 出现时必须是列表。
 2. 每项必须是 object，且 `acceptance`、`test` 都是非空字符串。
 3. `acceptance` 必须精确存在于当前 `contract.acceptance`。
-4. 承载该映射的命令必须具有 `exit_code: 0`。
+4. 承载该映射的命令必须具有非空 `cmd`，且 `exit_code` 必须是严格的整数 `0`；布尔值、浮点值和缺失值均不合法。
 5. 当前 `contract.acceptance` 的每一项至少被一个合法业务测试覆盖。
 6. 重复映射合法，不增加去重或数量门槛。
 7. 所有错误一次性收集并返回，不在第一个缺失 acceptance 或非法映射处提前返回。

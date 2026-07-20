@@ -84,7 +84,7 @@ nits: []
 | 字段 | 语义 |
 |---|---|
 | `commands` | contract `verification_commands` 的实际运行结果；`cmd` 文本必须精确匹配，`exit_code` 必须为 0。 |
-| `commands[].business_tests` | 当前成功命令实际执行的具体业务测试索引；每项包含 contract 中的 `acceptance` 和稳定的 `test` 标识。supporting command 可以不含该字段。 |
+| `commands[].business_tests` | 当前成功命令实际执行的具体业务测试索引；每项包含 contract 中的 `acceptance` 和稳定的 `test` 标识。承载命令必须有非空 `cmd`，且 `exit_code` 必须是整数 `0`；supporting command 可以不含该字段。 |
 | `integration_gates` | 按 gate 名称记录命令、指标、产物、事实源和交付目标。 |
 | `pr_base` | 必须与 contract `pr_base` 完全一致。 |
 | `coverage` | 数字覆盖率，必须达到 contract `coverage_gate`。 |

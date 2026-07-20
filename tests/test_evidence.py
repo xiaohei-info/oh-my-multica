@@ -210,6 +210,35 @@ def test_worker_evidence_rejects_business_test_on_failed_command():
     assert "verification missing business test for acceptance: works" in errs
 
 
+@pytest.mark.parametrize("cmd", [None, "   "])
+def test_worker_evidence_rejects_business_test_without_real_command(cmd):
+    v = _good_verification()
+    if cmd is None:
+        del v["commands"][0]["cmd"]
+    else:
+        v["commands"][0]["cmd"] = cmd
+
+    errs = validate_worker_evidence(
+        NODE, Item(artifacts={"pr_url": "u"}, verification=v))
+
+    assert "verification business test command must have a non-empty cmd" in errs
+    assert "verification missing business test for acceptance: works" in errs
+
+
+def test_worker_evidence_rejects_boolean_business_test_exit_code():
+    v = _good_verification()
+    v["commands"][0]["exit_code"] = False
+
+    errs = validate_worker_evidence(
+        NODE, Item(artifacts={"pr_url": "u"}, verification=v))
+
+    assert (
+        "verification business test command exit_code must be integer 0: pytest -q"
+        in errs
+    )
+    assert "verification missing business test for acceptance: works" in errs
+
+
 # ---------- review evidence ----------
 
 def test_review_evidence_reject_requires_blockers():

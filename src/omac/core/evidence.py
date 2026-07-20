@@ -53,14 +53,30 @@ def _collect_business_test_coverage(commands, expected_acceptance, *, prefix):
         business_tests = command.get("business_tests")
         if business_tests is None:
             continue
-        command_text = command.get("cmd") or "<unknown>"
+        command_text = command.get("cmd")
+        command_valid = isinstance(command_text, str) and bool(command_text.strip())
+        if not command_valid:
+            errors.append(
+                f"{prefix} business test command must have a non-empty cmd"
+            )
+            command_text = "<unknown>"
+
+        exit_code = command.get("exit_code")
+        command_succeeded = type(exit_code) is int and exit_code == 0
+        if type(exit_code) is not int:
+            errors.append(
+                f"{prefix} business test command exit_code must be integer 0: "
+                f"{command_text}"
+            )
+        elif exit_code != 0:
+            errors.append(f"{prefix} business test command failed: {command_text}")
+
         if not isinstance(business_tests, list):
             errors.append(
                 f"{prefix}.business_tests must be a list for command: {command_text}"
             )
             continue
 
-        failed_command_reported = False
         for business_test in business_tests:
             if not isinstance(business_test, dict):
                 errors.append(
@@ -87,12 +103,13 @@ def _collect_business_test_coverage(commands, expected_acceptance, *, prefix):
                     f"for command: {command_text}"
                 )
 
-            if not acceptance_valid or acceptance not in expected or not test_valid:
-                continue
-            if command.get("exit_code") != 0:
-                if not failed_command_reported:
-                    errors.append(f"{prefix} business test command failed: {command_text}")
-                    failed_command_reported = True
+            if (
+                not command_valid
+                or not command_succeeded
+                or not acceptance_valid
+                or acceptance not in expected
+                or not test_valid
+            ):
                 continue
             covered.add(acceptance)
 

@@ -86,7 +86,7 @@ nits: []
 | Field | Meaning |
 |---|---|
 | `commands` | Actual results for contract `verification_commands`; command text matches exactly and exit code is 0. |
-| `commands[].business_tests` | Concrete business-test indexes executed by this successful command. Each entry contains a contract `acceptance` and stable `test` identifier. Supporting commands may omit it. |
+| `commands[].business_tests` | Concrete business-test indexes executed by this successful command. Each entry contains a contract `acceptance` and stable `test` identifier. The carrying command has a non-empty `cmd` and an integer `exit_code` of `0`; supporting commands may omit the field. |
 | `integration_gates` | Command, metric, artifact, source, and delivery-goal evidence by gate name. |
 | `pr_base` | Exactly matches contract `pr_base`. |
 | `coverage` | Numeric coverage meeting `coverage_gate`. |
