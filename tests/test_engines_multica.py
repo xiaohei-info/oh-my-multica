@@ -908,6 +908,87 @@ def test_multica_ci_network_failure_is_platform_error(monkeypatch):
         )
 
 
+@pytest.mark.parametrize(
+    ("command", "returncode", "stderr", "error_type"),
+    [
+        (
+            "env GH_HOST=github.com gh pr checks {pr_url} --watch --fail-fast",
+            4,
+            "authentication required",
+            AuthError,
+        ),
+        (
+            "env GH_HOST=github.com gh pr checks {pr_url} --watch --fail-fast",
+            1,
+            "HTTP 403: Resource not accessible by integration",
+            AuthError,
+        ),
+        (
+            "gh pr checks {pr_url} --watch --fail-fast",
+            1,
+            "GraphQL: Resource not accessible by personal access token",
+            AuthError,
+        ),
+        (
+            "gh pr checks {pr_url} --watch --fail-fast",
+            1,
+            "HTTP 403: API rate limit exceeded",
+            PlatformError,
+        ),
+        (
+            "missing-gh pr checks {pr_url}",
+            127,
+            "/bin/sh: missing-gh: command not found",
+            PlatformError,
+        ),
+        (
+            "gh pr checks {pr_url} --watch --fail-fast",
+            1,
+            "GraphQL: Something went wrong while executing your query",
+            PlatformError,
+        ),
+    ],
+)
+def test_multica_ci_failures_fail_closed(
+    monkeypatch, command, returncode, stderr, error_type,
+):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+
+    class Result:
+        stdout = ""
+
+    Result.returncode = returncode
+    Result.stderr = stderr
+    monkeypatch.setattr("omac.engines.multica.subprocess.run", lambda *a, **k: Result())
+
+    with pytest.raises(error_type):
+        store.run_ci_check(
+            "https://github.com/acme/project/pull/7",
+            command,
+            30,
+        )
+
+
+def test_multica_known_ci_check_failure_consumes_worker_retry(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+
+    class Result:
+        returncode = 1
+        stdout = "unit-tests\tfail\t1m\thttps://github.com/acme/project/actions/runs/1\n"
+        stderr = ""
+
+    monkeypatch.setattr("omac.engines.multica.subprocess.run", lambda *a, **k: Result())
+
+    result = store.run_ci_check(
+        "https://github.com/acme/project/pull/7",
+        "env GH_HOST=github.com gh pr checks {pr_url} --watch --fail-fast",
+        30,
+    )
+
+    assert result.outcome is DeliveryCommandOutcome.FAILED
+    assert result.exit_code == 1
+
+
 def test_multica_ci_timeout_is_distinct_result(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
     monkeypatch.setattr(
@@ -948,6 +1029,48 @@ def test_multica_merge_command_failure_is_not_platform_error(monkeypatch):
     assert result.outcome is DeliveryCommandOutcome.FAILED
     assert result.exit_code == 1
     assert "merge conflict" in result.output
+
+
+def test_multica_merge_head_mismatch_consumes_worker_retry(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+
+    class Result:
+        returncode = 1
+        stdout = ""
+        stderr = "head commit does not match the expected revision"
+
+    monkeypatch.setattr("omac.engines.multica.subprocess.run", lambda *a, **k: Result())
+
+    result = store.merge_pull_request(
+        "https://github.com/acme/project/pull/7",
+        "abc123",
+        "env GH_HOST=github.com gh pr merge {pr_url} "
+        "--match-head-commit {delivered_revision}",
+        30,
+    )
+
+    assert result.outcome is DeliveryCommandOutcome.FAILED
+    assert result.exit_code == 1
+
+
+def test_multica_unknown_merge_failure_is_platform_error(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+
+    class Result:
+        returncode = 1
+        stdout = ""
+        stderr = "GraphQL: Something went wrong while executing your query"
+
+    monkeypatch.setattr("omac.engines.multica.subprocess.run", lambda *a, **k: Result())
+
+    with pytest.raises(PlatformError):
+        store.merge_pull_request(
+            "https://github.com/acme/project/pull/7",
+            "abc123",
+            "env GH_HOST=github.com gh pr merge {pr_url} "
+            "--match-head-commit {delivered_revision}",
+            30,
+        )
 
 
 def test_multica_runtime_wake_propagates_platform_error(monkeypatch):

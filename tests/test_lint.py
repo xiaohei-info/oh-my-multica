@@ -147,6 +147,30 @@ def test_contract_rejects_duplicate_integration_gate_names():
     assert any("duplicate integration gate name: g1" in error for error in errs)
 
 
+@pytest.mark.parametrize("gate_name", [" g1", "g1 "])
+def test_contract_rejects_integration_gate_name_surrounding_whitespace(gate_name):
+    contract = _valid_contract()
+    contract.integration_gates[0]["name"] = gate_name
+
+    errs = lint(_manifest(_node("a", contract=contract)), POOL)
+
+    assert any(
+        "integration_gates[0].name must not have surrounding whitespace" in error
+        for error in errs
+    )
+
+
+def test_contract_whitespace_variant_cannot_bypass_duplicate_gate_detection():
+    contract = _valid_contract()
+    duplicate = dict(contract.integration_gates[0])
+    duplicate["name"] = "g1 "
+    contract.integration_gates.append(duplicate)
+
+    errs = lint(_manifest(_node("a", contract=contract)), POOL)
+
+    assert any("duplicate integration gate name: g1" in error for error in errs)
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [

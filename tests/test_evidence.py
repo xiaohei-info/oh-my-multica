@@ -174,6 +174,19 @@ def test_worker_evidence_rejects_duplicate_integration_gate_results():
     assert any("integration command failed" in error for error in errors)
 
 
+def test_worker_evidence_whitespace_variant_cannot_bypass_duplicate_gate_detection():
+    verification = _good_verification()
+    duplicate = deepcopy(verification["integration_gates"][0])
+    duplicate["name"] = "gate-1 "
+    verification["integration_gates"].append(duplicate)
+
+    errors = validate_worker_evidence(
+        NODE, Item(artifacts={"pr_url": "https://x/pr/1"}, verification=verification))
+
+    assert any("must not have surrounding whitespace" in error for error in errors)
+    assert any("duplicate integration gate: gate-1" in error for error in errors)
+
+
 def test_worker_evidence_rejects_unknown_integration_gate_result():
     verification = _good_verification()
     unknown = deepcopy(verification["integration_gates"][0])
@@ -655,6 +668,25 @@ def test_review_evidence_rejects_duplicate_integration_gate_mapping():
         ),
     )
 
+    assert any("duplicate integration gate mapping: gate-1" in error for error in errs)
+
+
+def test_review_evidence_whitespace_variant_cannot_bypass_duplicate_gate_mapping():
+    report = _good_report()
+    duplicate = deepcopy(report["integration_gate_mapping"][0])
+    duplicate["gate"] = "gate-1 "
+    report["integration_gate_mapping"].append(duplicate)
+
+    errs = validate_review_evidence(
+        NODE,
+        Item(
+            review_verdict="pass",
+            review_report=report,
+            verification=_good_verification(),
+        ),
+    )
+
+    assert any("must not have surrounding whitespace" in error for error in errs)
     assert any("duplicate integration gate mapping: gate-1" in error for error in errs)
 
 

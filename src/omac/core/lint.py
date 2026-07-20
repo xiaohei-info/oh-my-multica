@@ -37,6 +37,9 @@ def _integration_gate_errors(prefix: str, gate, index: int) -> list:
         value = gate.get(field)
         if not isinstance(value, str) or not value.strip():
             errs.append(f"{gate_prefix}.{field} must be a non-empty string")
+        elif field == "name" and value != value.strip():
+            errs.append(
+                f"{gate_prefix}.name must not have surrounding whitespace")
 
     for field in ("source_of_truth", "covers", "acceptance_refs", "commands"):
         value = gate.get(field)
@@ -77,10 +80,12 @@ def contract_errors(node, *, project_root: str | None = None) -> list:
             gate_name = gate.get("name") if isinstance(gate, dict) else None
             if not isinstance(gate_name, str) or not gate_name.strip():
                 continue
-            if gate_name in gate_names:
-                errs.append(f"{prefix} duplicate integration gate name: {gate_name}")
+            canonical_name = gate_name.strip()
+            if canonical_name in gate_names:
+                errs.append(
+                    f"{prefix} duplicate integration gate name: {canonical_name}")
             else:
-                gate_names.add(gate_name)
+                gate_names.add(canonical_name)
     if not isinstance(contract.pr_base, str) or not contract.pr_base.strip():
         errs.append(f"{prefix}.pr_base must be a non-empty string")
     errs.extend(_quality_errors(prefix, contract))

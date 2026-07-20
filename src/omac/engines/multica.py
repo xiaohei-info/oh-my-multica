@@ -63,20 +63,37 @@ _GH_AUTH_MARKERS = (
     "not logged into",
     "authentication failed",
     "authentication required",
+    "requires authentication",
     "bad credentials",
     "http 401",
     "status 401",
+    "resource not accessible by integration",
+    "resource not accessible by personal access token",
 )
 
-_GH_PLATFORM_MARKERS = (
-    "network unavailable",
-    "could not resolve host",
-    "connection refused",
-    "connection reset",
-    "api.github.com",
-    "rate limit",
-    "http 5",
-    "status 5",
+_GH_CI_FAILURE_SUMMARIES = (
+    "some checks were not successful",
+    "checks failed",
+    "check failed",
+)
+
+_GH_CI_FAILURE_STATES = {
+    "action_required",
+    "cancel",
+    "cancelled",
+    "fail",
+    "failure",
+    "startup_failure",
+    "timed_out",
+}
+
+_GH_MERGE_RETRYABLE_MARKERS = (
+    "merge conflict",
+    "conflicts must be resolved",
+    "head branch was modified",
+    "head commit does not match",
+    "head sha does not match",
+    "head oid does not match",
 )
 
 
@@ -97,8 +114,24 @@ def _timeout_output(exc: subprocess.TimeoutExpired) -> str:
     return output
 
 
-def _is_gh_command(command: str) -> bool:
-    return command.lstrip().startswith("gh ")
+def _is_known_ci_failure(detail: str) -> bool:
+    lowered = detail.lower()
+    if any(marker in lowered for marker in _GH_CI_FAILURE_SUMMARIES):
+        return True
+    for line in detail.splitlines():
+        columns = line.split("\t")
+        if len(columns) > 1 and columns[1].strip().lower() in _GH_CI_FAILURE_STATES:
+            return True
+    return False
+
+
+def _is_known_delivery_failure(operation_kind: str, detail: str) -> bool:
+    if operation_kind == "ci":
+        return _is_known_ci_failure(detail)
+    if operation_kind == "merge":
+        lowered = detail.lower()
+        return any(marker in lowered for marker in _GH_MERGE_RETRYABLE_MARKERS)
+    return False
 
 
 class MulticaStore(WorkItemStore):
@@ -188,6 +221,7 @@ class MulticaStore(WorkItemStore):
         command: str,
         timeout_minutes: int,
         operation: str,
+        operation_kind: str,
     ) -> DeliveryCommandResult:
         try:
             proc = subprocess.run(
@@ -221,27 +255,23 @@ class MulticaStore(WorkItemStore):
             )
 
         lowered = detail.lower()
-        is_gh = _is_gh_command(command)
-        if is_gh and (
+        if (
             proc.returncode == 4
             or any(marker in lowered for marker in _GH_AUTH_MARKERS)
         ):
             raise AuthError(ui(
                 f"{operation} authentication failed; run `gh auth login`: {detail}",
                 f"{operation} 认证失败，请先运行 `gh auth login`: {detail}"))
-        if is_gh and (
-            proc.returncode in {126, 127}
-            or any(marker in lowered for marker in _GH_PLATFORM_MARKERS)
-        ):
-            raise PlatformError(ui(
-                f"{operation} platform call failed: {detail}",
-                f"{operation} 平台调用失败: {detail}"))
-        return DeliveryCommandResult(
-            outcome=DeliveryCommandOutcome.FAILED,
-            exit_code=proc.returncode,
-            output=output,
-            summary=_tail(output) or ui("(no output)", "(无输出)"),
-        )
+        if _is_known_delivery_failure(operation_kind, detail):
+            return DeliveryCommandResult(
+                outcome=DeliveryCommandOutcome.FAILED,
+                exit_code=proc.returncode,
+                output=output,
+                summary=_tail(output) or ui("(no output)", "(无输出)"),
+            )
+        raise PlatformError(ui(
+            f"{operation} platform call failed: {detail}",
+            f"{operation} 平台调用失败: {detail}"))
 
     def run_ci_check(
         self, pr_url: str, command: str, timeout_minutes: int,
@@ -253,7 +283,12 @@ class MulticaStore(WorkItemStore):
                 f"Invalid GitHub PR URL for CI: {exc}",
                 f"CI 使用的 GitHub PR URL 非法: {exc}")) from exc
         rendered = command.replace("{pr_url}", canonical_url)
-        return self._run_pull_request_command(rendered, timeout_minutes, "GitHub CI check")
+        return self._run_pull_request_command(
+            rendered,
+            timeout_minutes,
+            "GitHub CI check",
+            "ci",
+        )
 
     def merge_pull_request(
         self,
@@ -272,7 +307,12 @@ class MulticaStore(WorkItemStore):
             command.replace("{pr_url}", canonical_url)
             .replace("{delivered_revision}", delivered_revision)
         )
-        return self._run_pull_request_command(rendered, timeout_minutes, "GitHub merge")
+        return self._run_pull_request_command(
+            rendered,
+            timeout_minutes,
+            "GitHub merge",
+            "merge",
+        )
 
     # ==================== 内部工具 ====================
 

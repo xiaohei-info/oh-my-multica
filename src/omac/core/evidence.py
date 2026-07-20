@@ -63,12 +63,19 @@ def _gate_by_name(gates, *, expected_names: set[str], prefix: str):
         if not isinstance(name, str) or not name.strip():
             errors.append(f"{item_prefix}.name must be a non-empty string")
             continue
-        if name in result:
-            errors.append(f"duplicate integration gate: {name}")
+        canonical_name = name.strip()
+        has_surrounding_whitespace = name != canonical_name
+        if has_surrounding_whitespace:
+            errors.append(
+                f"{item_prefix}.name must not have surrounding whitespace")
+        if canonical_name in result:
+            errors.append(f"duplicate integration gate: {canonical_name}")
             continue
-        result[name] = gate
-        if name not in expected_names:
-            errors.append(f"unknown integration gate: {name}")
+        if has_surrounding_whitespace:
+            continue
+        result[canonical_name] = gate
+        if canonical_name not in expected_names:
+            errors.append(f"unknown integration gate: {canonical_name}")
     return result, errors
 
 
@@ -89,11 +96,18 @@ def _contract_integration_gates(contract):
             errors.append(
                 "contract integration gate name must be a non-empty string")
             continue
-        if gate_name in gate_names:
+        canonical_name = gate_name.strip()
+        has_surrounding_whitespace = gate_name != canonical_name
+        if has_surrounding_whitespace:
             errors.append(
-                f"contract duplicate integration gate name: {gate_name}")
+                "contract integration gate name must not have surrounding whitespace")
+        if canonical_name in gate_names:
+            errors.append(
+                f"contract duplicate integration gate name: {canonical_name}")
             continue
-        gate_names.add(gate_name)
+        gate_names.add(canonical_name)
+        if has_surrounding_whitespace:
+            continue
         valid_gates.append(gate)
     return valid_gates, gate_names, errors
 
@@ -203,6 +217,7 @@ def _strict_mapping_by_key(
     allowed_statuses: set[str],
     prefix: str,
     label: str,
+    canonicalize_keys: bool = False,
 ):
     errors = []
     mapping_by_key = {}
@@ -215,12 +230,18 @@ def _strict_mapping_by_key(
         if not isinstance(key, str) or not key.strip():
             errors.append(f"{item_prefix}.{key_field} is required")
             continue
-        if key in mapping_by_key:
-            errors.append(f"duplicate {label} mapping: {key}")
+        canonical_key = key.strip() if canonicalize_keys else key
+        has_surrounding_whitespace = key != canonical_key
+        if has_surrounding_whitespace:
+            errors.append(
+                f"{item_prefix}.{key_field} must not have surrounding whitespace")
+        if canonical_key in mapping_by_key:
+            errors.append(f"duplicate {label} mapping: {canonical_key}")
         else:
-            mapping_by_key[key] = mapping
-        if key not in expected_keys:
-            errors.append(f"unknown {label} mapping: {key}")
+            if not has_surrounding_whitespace:
+                mapping_by_key[canonical_key] = mapping
+        if canonical_key not in expected_keys:
+            errors.append(f"unknown {label} mapping: {canonical_key}")
         if mapping.get("status") not in allowed_statuses:
             errors.append(f"{item_prefix}.status is invalid")
     return mapping_by_key, errors
@@ -681,6 +702,7 @@ def validate_review_evidence(
                 allowed_statuses={"pass"},
                 prefix="review_report.integration_gate_mapping",
                 label="integration gate",
+                canonicalize_keys=True,
             )
             errors.extend(gate_mapping_errors)
             for expected_gate in expected_gates:
