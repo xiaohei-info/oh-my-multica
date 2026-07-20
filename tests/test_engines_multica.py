@@ -13,6 +13,37 @@ from omac.engines.multica import MulticaStore
 from omac.errors import AuthError, PlatformError, ValidationError
 
 
+HEAD_REVISION = "a" * 40
+BASE_REVISION = "b" * 40
+
+
+def _pull_request_payload(**overrides):
+    payload = {
+        "url": "https://github.com/acme/project/pull/7",
+        "isDraft": False,
+        "state": "OPEN",
+        "headRefOid": HEAD_REVISION,
+        "baseRefOid": BASE_REVISION,
+        "author": {"login": "worker-login"},
+        "commits": [
+            {
+                "oid": HEAD_REVISION,
+                "authors": [
+                    {"login": "worker-login", "name": "Worker", "email": "w@example.com"},
+                    {"login": "pair-login", "name": "Pair", "email": "p@example.com"},
+                ],
+            },
+        ],
+        "files": [
+            {"path": "src/feature.py"},
+            {"path": "tests/test_feature.py"},
+        ],
+        "changedFiles": 2,
+    }
+    payload.update(overrides)
+    return payload
+
+
 def test_multica_text_file_commands_allow_process_owned_external_file(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
     calls = []
@@ -804,12 +835,7 @@ def test_inspect_pull_request_returns_current_head_revision(monkeypatch):
 
     class Result:
         returncode = 0
-        stdout = json.dumps({
-            "url": "https://github.com/acme/project/pull/7",
-            "isDraft": False,
-            "state": "OPEN",
-            "headRefOid": "abc123",
-        })
+        stdout = json.dumps(_pull_request_payload())
         stderr = ""
 
     monkeypatch.setattr("omac.engines.multica.subprocess.run", lambda *a, **k: Result())
@@ -819,8 +845,99 @@ def test_inspect_pull_request_returns_current_head_revision(monkeypatch):
 
     assert snapshot.is_draft is False
     assert snapshot.state == "OPEN"
-    assert snapshot.head_revision == "abc123"
+    assert snapshot.head_revision == HEAD_REVISION
     assert snapshot.url == "https://github.com/acme/project/pull/7"
+    assert snapshot.author_login == "worker-login"
+    assert snapshot.commit_authors == ("worker-login", "pair-login")
+    assert snapshot.base_revision == BASE_REVISION
+    assert snapshot.changed_files == ("src/feature.py", "tests/test_feature.py")
+
+
+def test_inspect_pull_request_queries_authoritative_review_scope_fields(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    seen = {}
+
+    class Result:
+        returncode = 0
+        stdout = json.dumps(_pull_request_payload())
+        stderr = ""
+
+    def run(args, **kwargs):
+        seen["args"] = args
+        return Result()
+
+    monkeypatch.setattr("omac.engines.multica.subprocess.run", run)
+
+    store.inspect_pull_request("https://github.com/acme/project/pull/7")
+
+    fields = seen["args"][seen["args"].index("--json") + 1].split(",")
+    assert set(fields) >= {
+        "url", "isDraft", "state", "headRefOid", "baseRefOid",
+        "author", "commits", "files", "changedFiles",
+    }
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("isDraft", None),
+        ("isDraft", "false"),
+        ("isDraft", 0),
+        ("state", None),
+        ("state", ""),
+        ("state", "open"),
+        ("state", 1),
+    ],
+)
+def test_inspect_pull_request_rejects_malformed_required_state_fields(
+    monkeypatch, field, value,
+):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    payload = _pull_request_payload()
+    if value is None:
+        payload.pop(field)
+    else:
+        payload[field] = value
+
+    class Result:
+        returncode = 0
+        stdout = json.dumps(payload)
+        stderr = ""
+
+    monkeypatch.setattr("omac.engines.multica.subprocess.run", lambda *a, **k: Result())
+
+    with pytest.raises(PlatformError, match=field):
+        store.inspect_pull_request("https://github.com/acme/project/pull/7")
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("author", {}),
+        ("author", {"login": ""}),
+        ("baseRefOid", "not-a-revision"),
+        ("commits", []),
+        ("commits", [{"oid": HEAD_REVISION, "authors": [{"login": None}]}]),
+        ("files", []),
+        ("files", [{"path": ""}]),
+        ("changedFiles", 1),
+    ],
+)
+def test_inspect_pull_request_rejects_unverifiable_review_scope(
+    monkeypatch, field, value,
+):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    payload = _pull_request_payload(**{field: value})
+
+    class Result:
+        returncode = 0
+        stdout = json.dumps(payload)
+        stderr = ""
+
+    monkeypatch.setattr("omac.engines.multica.subprocess.run", lambda *a, **k: Result())
+
+    with pytest.raises(PlatformError, match=field):
+        store.inspect_pull_request("https://github.com/acme/project/pull/7")
 
 
 @pytest.mark.parametrize("pr_url", [
@@ -1003,6 +1120,114 @@ def test_multica_custom_merge_nonzero_exit_is_delivery_failure(
     assert message in result.output
 
 
+def test_multica_merge_rejects_unsafe_revision_before_execution(tmp_path):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    marker = tmp_path / "injected"
+
+    with pytest.raises(ValidationError, match="revision"):
+        store.merge_pull_request(
+            "https://github.com/acme/project/pull/7",
+            f"abc123; touch {marker}",
+            "sh -c 'exit 0' ignored {pr_url} {delivered_revision}",
+            30,
+        )
+    assert not marker.exists()
+
+
+def test_multica_custom_command_executes_as_argv_without_shell(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    seen = {}
+
+    class Result:
+        returncode = 0
+        stdout = "ok"
+        stderr = ""
+
+    def run(argv, **kwargs):
+        seen["argv"] = argv
+        seen["kwargs"] = kwargs
+        return Result()
+
+    monkeypatch.setattr("omac.engines.multica.subprocess.run", run)
+
+    result = store.merge_pull_request(
+        "https://github.com/acme/project/pull/7",
+        HEAD_REVISION,
+        "custom-merge --url {pr_url} --revision {delivered_revision}",
+        30,
+    )
+
+    assert result.passed
+    assert seen["argv"] == [
+        "custom-merge", "--url", "https://github.com/acme/project/pull/7",
+        "--revision", HEAD_REVISION,
+    ]
+    assert seen["kwargs"].get("shell") is not True
+
+
+def test_multica_custom_env_command_containing_gh_text_is_not_rejected(tmp_path):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    script = tmp_path / "custom-ci.sh"
+    script.write_text('test "$NOTE" = "run gh later"\nexit 1\n', encoding="utf-8")
+
+    result = store.run_ci_check(
+        "https://github.com/acme/project/pull/7",
+        f"env 'NOTE=run gh later' sh {script} {{pr_url}}",
+        30,
+    )
+
+    assert result.failed
+    assert result.exit_code == 1
+
+
+def test_multica_env_unset_wrapper_preserves_github_auth_classification(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+
+    class Result:
+        returncode = 4
+        stdout = ""
+        stderr = "authentication required"
+
+    monkeypatch.setattr("omac.engines.multica.subprocess.run", lambda *a, **k: Result())
+
+    with pytest.raises(AuthError):
+        store.run_ci_check(
+            "https://github.com/acme/project/pull/7",
+            "env -u GH_TOKEN GH_HOST=github.com gh pr checks {pr_url}",
+            30,
+        )
+
+
+def test_multica_leading_assignment_preserved_with_legal_env_wrapper(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    seen = {}
+
+    class Result:
+        returncode = 0
+        stdout = "ok"
+        stderr = ""
+
+    def run(argv, **kwargs):
+        seen["argv"] = argv
+        seen["env"] = kwargs["env"]
+        return Result()
+
+    monkeypatch.setattr("omac.engines.multica.subprocess.run", run)
+
+    result = store.run_ci_check(
+        "https://github.com/acme/project/pull/7",
+        "OUTER=value env -C /tmp custom-ci {pr_url}",
+        30,
+    )
+
+    assert result.passed
+    assert seen["argv"] == [
+        "env", "-C", "/tmp", "custom-ci",
+        "https://github.com/acme/project/pull/7",
+    ]
+    assert seen["env"]["OUTER"] == "value"
+
+
 @pytest.mark.parametrize(
     ("operation_kind", "command"),
     [
@@ -1072,24 +1297,35 @@ def test_multica_supported_gh_wrappers_preserve_auth_classification(
         ),
     ],
 )
-def test_multica_unknown_gh_wrapper_is_rejected_before_execution(
+def test_multica_unknown_gh_wrapper_is_treated_as_custom_command(
     monkeypatch, operation_kind, command,
 ):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
-    monkeypatch.setattr(
-        "omac.engines.multica.subprocess.run",
-        lambda *a, **k: pytest.fail("ambiguous gh command must not execute"),
-    )
+    seen = {}
 
-    with pytest.raises(ValidationError, match="wrapper"):
-        if operation_kind == "ci":
-            store.run_ci_check(
-                "https://github.com/acme/project/pull/7", command, 30,
-            )
-        else:
-            store.merge_pull_request(
-                "https://github.com/acme/project/pull/7", "abc123", command, 30,
-            )
+    class Result:
+        returncode = 4
+        stdout = ""
+        stderr = "custom wrapper failed"
+
+    def run(argv, **kwargs):
+        seen["argv"] = argv
+        return Result()
+
+    monkeypatch.setattr("omac.engines.multica.subprocess.run", run)
+
+    if operation_kind == "ci":
+        result = store.run_ci_check(
+            "https://github.com/acme/project/pull/7", command, 30,
+        )
+    else:
+        result = store.merge_pull_request(
+            "https://github.com/acme/project/pull/7", "abc123", command, 30,
+        )
+
+    assert result.failed
+    assert result.exit_code == 4
+    assert seen["argv"][:2] == ["sudo", "gh"]
 
 
 @pytest.mark.parametrize(

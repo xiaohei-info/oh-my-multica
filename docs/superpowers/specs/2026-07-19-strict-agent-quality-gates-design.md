@@ -319,6 +319,12 @@ and timeout failures do not consume Worker retry budget; only an actual CI or
 merge failure may return to the Worker. A retry limit of `1` permits one Worker
 rework and blocks on the next failure.
 
+Adapters parse delivery command templates into argument vectors and execute
+them without a shell. Placeholder values remain single arguments, and delivery
+revisions are validated before execution. Explicit environment assignments and
+the supported `env`, `command`, and `timeout` wrappers remain available, while
+shell pipelines, redirection, and command substitution are rejected.
+
 GitHub command failures are fail-closed: only explicit failed-check output,
 merge conflicts, or head-revision mismatches are Worker-correctable. Unknown
 GraphQL, platform, wrapper, or command-availability failures remain auth or

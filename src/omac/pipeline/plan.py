@@ -30,7 +30,7 @@ from typing import Any, Callable, Dict, List, Optional
 from ..core import acceptance as acceptance_mod
 from ..core.config import CONFIG_DIR, CONFIG_PATH
 from ..core.gitsync import commit_files, ensure_config_synced, ensure_files_clean
-from ..core.lint import lint
+from ..core.lint import lint, lint_increment
 from ..core.manifest import (
     Manifest,
     loads_manifest,
@@ -183,6 +183,7 @@ def _compose_guard(
     *,
     project_root: str,
     acceptance_doc: Optional[acceptance_mod.AcceptanceDoc] = None,
+    base_manifest: Optional[Manifest] = None,
 ) -> Callable[[WorkItem], List[str]]:
     """造 decompose 的 lint 机器门(零 token,≤ max_revisions 轮)。
 
@@ -206,7 +207,19 @@ def _compose_guard(
                 f"无法解析生成的 manifest YAML 或 schema: {exc}。"
                 "请重新生成顶层为 mapping、且 meta、nodes、contract 字段类型有效的 YAML。",
             )]
-        return lint(manifest, members, acceptance=acceptance_doc)
+        if base_manifest is None:
+            return lint(manifest, members, acceptance=acceptance_doc)
+
+        errors = lint_increment(manifest, base_manifest, members)
+        if acceptance_doc is not None:
+            standalone_errors = set(lint(manifest, members))
+            errors.extend(
+                error
+                for error in lint(
+                    manifest, members, acceptance=acceptance_doc)
+                if error not in standalone_errors
+            )
+        return list(dict.fromkeys(errors))
 
     return guard
 

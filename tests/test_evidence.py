@@ -135,6 +135,21 @@ def _good_report():
     }
 
 
+def _reject_report():
+    report = _good_report()
+    report["findings"] = [{
+        "id": "REV-001",
+        "severity": "blocker",
+        "category": "integration",
+        "location": "tests/int/test_feature.py:1",
+        "evidence": "declared integration command exits non-zero",
+        "impact": "the integration delivery goal is not met",
+        "required_fix": "fix the integration failure and rerun the declared command",
+    }]
+    report["blockers"] = ["REV-001"]
+    return report
+
+
 # ---------- worker evidence ----------
 
 def test_worker_evidence_passes():
@@ -247,6 +262,50 @@ def test_worker_evidence_coverage_gate():
     v["coverage"] = 50
     errs = validate_worker_evidence(NODE, Item(artifacts={"pr_url": "u"}, verification=v))
     assert any("below gate" in e for e in errs)
+
+
+@pytest.mark.parametrize("exit_code", [False, 0.0], ids=["bool", "float-zero"])
+def test_worker_evidence_requires_integer_command_exit_code(exit_code):
+    verification = _good_verification()
+    verification["commands"][0]["exit_code"] = exit_code
+
+    errors = validate_worker_evidence(
+        NODE, Item(artifacts={"pr_url": "u"}, verification=verification))
+
+    assert any("command exit_code must be an integer" in error for error in errors)
+
+
+@pytest.mark.parametrize("exit_code", [False, 0.0], ids=["bool", "float-zero"])
+def test_worker_evidence_requires_integer_integration_command_exit_code(exit_code):
+    verification = _good_verification()
+    verification["integration_gates"][0]["commands"][0]["exit_code"] = exit_code
+
+    errors = validate_worker_evidence(
+        NODE, Item(artifacts={"pr_url": "u"}, verification=verification))
+
+    assert any("command exit_code must be an integer" in error for error in errors)
+
+
+@pytest.mark.parametrize("coverage", [float("nan"), float("inf")], ids=["nan", "inf"])
+def test_worker_evidence_requires_finite_coverage(coverage):
+    verification = _good_verification()
+    verification["coverage"] = coverage
+
+    errors = validate_worker_evidence(
+        NODE, Item(artifacts={"pr_url": "u"}, verification=verification))
+
+    assert any("coverage must be a finite number" in error for error in errors)
+
+
+@pytest.mark.parametrize("metric", [float("nan"), float("inf")], ids=["nan", "inf"])
+def test_worker_evidence_requires_finite_integration_metric(metric):
+    verification = _good_verification()
+    verification["integration_gates"][0]["metrics"]["route_coverage"] = metric
+
+    errors = validate_worker_evidence(
+        NODE, Item(artifacts={"pr_url": "u"}, verification=verification))
+
+    assert any("integration metric must be a finite number" in error for error in errors)
 
 
 def test_worker_evidence_missing_command():
@@ -486,6 +545,126 @@ def test_review_evidence_reject_passes_with_blockers():
     assert validate_review_evidence(
         NODE, Item(review_verdict="reject", review_report=report)
     ) == []
+
+
+@pytest.mark.parametrize(
+    ("exit_code", "route_coverage"),
+    [(1, 100), (0, 92)],
+    ids=["command-failure", "metric-failure"],
+)
+def test_review_evidence_reject_accepts_real_failed_integration_gate(
+    exit_code, route_coverage,
+):
+    report = _reject_report()
+    gate = report["integration_gate_mapping"][0]
+    gate["status"] = "fail"
+    gate["commands"][0]["exit_code"] = exit_code
+    gate["metrics"]["route_coverage"] = route_coverage
+
+    assert validate_review_evidence(
+        NODE, Item(review_verdict="reject", review_report=report)
+    ) == []
+
+
+def test_review_evidence_reject_cannot_falsely_mark_passing_gate_as_failed():
+    report = _reject_report()
+    report["integration_gate_mapping"][0]["status"] = "fail"
+
+    errors = validate_review_evidence(
+        NODE, Item(review_verdict="reject", review_report=report))
+
+    assert any(
+        "status fail requires failing command or metric evidence" in error
+        for error in errors
+    )
+
+
+def test_review_evidence_reject_still_requires_every_declared_integration_gate():
+    contract = deepcopy(CONTRACT)
+    second_gate = deepcopy(contract.integration_gates[0])
+    second_gate["name"] = "gate-2"
+    second_gate["commands"] = ["pytest tests/second"]
+    contract.integration_gates.append(second_gate)
+    node = Node(id="missing-reject-gate", worker="alice", contract=contract)
+    report = _reject_report()
+    report["integration_gate_mapping"][0]["status"] = "fail"
+    report["integration_gate_mapping"][0]["commands"][0]["exit_code"] = 1
+
+    errors = validate_review_evidence(
+        node, Item(review_verdict="reject", review_report=report))
+
+    assert any("missing integration gate: gate-2" in error for error in errors)
+
+
+@pytest.mark.parametrize("verdict", ["pass", "pass-with-nits"])
+def test_review_approve_verdicts_require_integration_gates_to_pass(verdict):
+    report = _good_report()
+    if verdict == "pass-with-nits":
+        report["findings"] = [{
+            "id": "REV-001",
+            "severity": "nit",
+            "category": "maintainability",
+            "location": "src/feature.py:10",
+            "evidence": "local name is unclear",
+            "impact": "increases maintenance cost",
+            "required_fix": "rename the local variable",
+        }]
+        report["nits"] = ["REV-001"]
+    gate = report["integration_gate_mapping"][0]
+    gate["status"] = "fail"
+    gate["commands"][0]["exit_code"] = 1
+
+    errors = validate_review_evidence(
+        NODE, Item(review_verdict=verdict, review_report=report))
+
+    assert any(
+        f"integration_gate_mapping[0].status is invalid" in error
+        for error in errors
+    )
+
+
+@pytest.mark.parametrize("verdict", ["pass", "pass-with-nits"])
+def test_review_approve_verdicts_cannot_hide_failed_command_behind_pass_status(verdict):
+    report = _good_report()
+    if verdict == "pass-with-nits":
+        report["findings"] = [{
+            "id": "REV-001",
+            "severity": "nit",
+            "category": "maintainability",
+            "location": "src/feature.py:10",
+            "evidence": "local name is unclear",
+            "impact": "increases maintenance cost",
+            "required_fix": "rename the local variable",
+        }]
+        report["nits"] = ["REV-001"]
+    report["integration_gate_mapping"][0]["commands"][0]["exit_code"] = 1
+
+    errors = validate_review_evidence(
+        NODE, Item(review_verdict=verdict, review_report=report))
+
+    assert any("integration command failed" in error for error in errors)
+
+
+@pytest.mark.parametrize("exit_code", [False, 0.0], ids=["bool", "float-zero"])
+def test_review_evidence_requires_integer_integration_command_exit_code(exit_code):
+    report = _good_report()
+    report["integration_gate_mapping"][0]["commands"][0]["exit_code"] = exit_code
+
+    errors = validate_review_evidence(
+        NODE, Item(review_verdict="pass", review_report=report))
+
+    assert any("command exit_code must be an integer" in error for error in errors)
+
+
+@pytest.mark.parametrize("metric", [float("nan"), float("inf")], ids=["nan", "inf"])
+def test_review_evidence_requires_finite_integration_metric(metric):
+    report = _good_report()
+    report["integration_gate_mapping"][0]["metrics"]["route_coverage"] = metric
+
+    errors = validate_review_evidence(
+        NODE, Item(review_verdict="pass", review_report=report))
+
+    assert any("integration metric must be a finite number" in error for error in errors)
 
 
 def test_review_evidence_rejects_unknown_verdict():

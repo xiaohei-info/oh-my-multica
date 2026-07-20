@@ -184,6 +184,10 @@ Submit verdict through `--verdict`, not report YAML. Valid values are `pass`,
    default GitHub command uses `--match-head-commit`, so only the current Worker
    delivery accepted by the evidence gate can merge. It equals the Reviewer
    revision for pass and the fresh Worker revision for pass-with-nits follow-up.
+8. CI and merge commands execute as argument vectors without a shell. Template
+   values replace one argument only. Environment assignments and the supported
+   `env`, `command`, and `timeout` wrappers are allowed; pipelines, redirection,
+   command substitution, and other shell operators are not.
 
 ### Final acceptance results
 

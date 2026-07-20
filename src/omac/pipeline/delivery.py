@@ -126,8 +126,8 @@ def advance_delivery(
             DeliveryAction.BLOCKED, DeliveryBlockReason.MISSING_PR)
 
     # 进入 ci_check(manifest 细分态;平台仍 in_progress)
-    node.status = "ci_check"
     store.update_status(item_id, to_platform_status("ci_check"))
+    node.status = "ci_check"
 
     try:
         result = store.run_ci_check(
@@ -141,8 +141,8 @@ def advance_delivery(
             f"CI check timed out for {pr_url}. Retry after platform connectivity recovers.",
             f"CI 检查超时: {pr_url}。请在平台连接恢复后重试。"))
     if result.passed:
-        node.status = "in_progress"
         store.update_status(item_id, to_platform_status("in_progress"))
+        node.status = "in_progress"
         return DeliveryResult(DeliveryAction.PASS)
     if result.outcome is not DeliveryCommandOutcome.FAILED:
         node.status = "in_progress"
@@ -172,9 +172,23 @@ def advance_delivery(
         f"--- Command output tail ---\n{result.summary}",
         f"⚠️ {label} —— CI 未通过,转回 worker 修复后重新提交。\n\n"
         f"--- 命令输出尾部 ---\n{result.summary}"))
-    store.update_work_item_metadata(item_id, ci_bounce=next_bounce)
-    node.status = "in_progress"
-    store.update_status(item_id, to_platform_status("in_progress"))
+    try:
+        store.update_work_item_metadata(item_id, ci_bounce=next_bounce)
+        store.update_status(item_id, to_platform_status("in_progress"))
+        node.status = "in_progress"
+    except (AuthError, PlatformError) as exc:
+        # CI 执行前平台状态本来就是 IN_PROGRESS；回派准备失败只需回滚
+        # retry 计数并恢复 manifest 细分态，下一次 tick 可安全重试。
+        store.update_work_item_metadata(item_id, ci_bounce=cur_bounce)
+        store.update_status(item_id, to_platform_status("in_progress"))
+        node.status = "in_progress"
+        raise type(exc)(ui(
+            f"CI worker handoff preparation failed: {exc}. The CI retry count "
+            "was rolled back. Restore platform access, then rerun the same "
+            "`omac dag tick` or `omac dag run` command.",
+            f"CI 回派 Worker 的准备阶段失败: {exc}。CI 回退计数已回滚。"
+            "请恢复平台访问后重新执行同一条 `omac dag tick` 或 `omac dag run` 命令。",
+        )) from exc
     handoff_failure = _handoff_worker(
         node,
         store,
@@ -261,6 +275,18 @@ def run_merge_delivery(
     if snapshot.state == "MERGED":
         return _recover_merged_delivery(
             node, item, snapshot, delivered_revision, store)
+    if snapshot.head_revision != delivered_revision:
+        raise ValidationError(ui(
+            "Automatic merge refused because the current authoritative PR head no "
+            "longer matches the Worker delivered revision. "
+            f"PR head: {snapshot.head_revision}; delivered_revision: "
+            f"{delivered_revision}. Submit fresh Worker evidence for the current head "
+            "and obtain the required review before retrying merge.",
+            "自动 merge 已拒绝：当前权威 PR head 与 Worker delivered_revision 不一致。"
+            f"PR head: {snapshot.head_revision}；delivered_revision: "
+            f"{delivered_revision}。请针对当前 head 提交新的 Worker 证据，并完成所需评审后"
+            "再重试 merge。",
+        ))
 
     merge_intent = {
         "pr_url": snapshot.url.rstrip("/"),
@@ -268,7 +294,8 @@ def run_merge_delivery(
     }
     # durable intent 必须先于任何外部 merge 副作用落盘。之后即使 merge 成功、
     # 平台状态或 manifest 持久化失败，重启仍有可核验的恢复依据。
-    store.update_work_item_metadata(item_id, merge_intent=merge_intent)
+    item = store.update_work_item_metadata(
+        item_id, merge_intent=merge_intent)
 
     # 进入 merging(manifest 细分态;平台仍 in_review)
     node.status = "merging"
@@ -302,8 +329,30 @@ def run_merge_delivery(
             f"Merge adapter returned unsupported outcome: {result.outcome}",
             f"merge adapter 返回未知结果: {result.outcome}"))
 
-    # adapter 已明确确认 merge 未发生，清除本次 intent 后才允许回退。
-    # 超时/平台异常结果不确定，intent 必须保留供下一轮读取权威 PR 状态恢复。
+    # 非零退出不能证明外部 merge 未发生。先重新读取权威 PR：若平台已经合并且
+    # 与 durable intent/revision 一致，直接恢复完成；读取失败则保留 intent 并
+    # 抛平台错误，禁止把不确定结果回派给 Worker。
+    post_failure_snapshot = inspect_ready_pull_request(
+        store, pr_url, allow_merged=True)
+    if post_failure_snapshot.state == "MERGED":
+        return _recover_merged_delivery(
+            node, item, post_failure_snapshot, delivered_revision, store)
+
+    # OPEN 只证明当前未合并；head 若已变化，旧失败结果不能消费 Worker retry。
+    if post_failure_snapshot.head_revision != delivered_revision:
+        store.update_work_item_metadata(item_id, merge_intent={})
+        node.status = "in_review"
+        raise ValidationError(ui(
+            "Merge returned a non-zero exit code, and the authoritative PR head changed "
+            "before the result could be reconciled. Refusing to bounce the Worker for an "
+            "obsolete revision. Submit fresh evidence and review for "
+            f"{post_failure_snapshot.head_revision} before retrying.",
+            "merge 返回非零退出码，且在结果核对时权威 PR head 已变化。当前拒绝针对"
+            "过期 revision 回派 Worker。请为 "
+            f"{post_failure_snapshot.head_revision} 提交新证据并完成评审后再重试。",
+        ))
+
+    # 权威状态仍为同一 OPEN revision，才可确认本次 merge 未发生并清除 intent。
     store.update_work_item_metadata(item_id, merge_intent={})
     return _bounce_or_block_merge(
         node, item, store, runtime, retry_limits,

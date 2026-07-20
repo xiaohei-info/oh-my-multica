@@ -29,7 +29,10 @@ from ..engines.store import WorkItemStore
 from ..errors import AuthError, PlatformError, ValidationError
 from ..i18n import current_language, ui
 from ..pipeline.dispatch import (
-    inspect_ready_pull_request, normalize_source_refs, render_issue_body,
+    authoritative_review_scope_errors,
+    inspect_ready_pull_request,
+    normalize_source_refs,
+    render_issue_body,
 )
 from ..core.taskmeta import TaskKind, TaskPhase
 
@@ -251,7 +254,20 @@ def reconcile(store: WorkItemStore, manifest: Manifest, manifest_path: str) -> b
             continue
         try:
             item = store.get_work_item(node.work_item_id)
-        except Exception:
+        except (AuthError, PlatformError) as exc:
+            raise type(exc)(ui(
+                f"Could not reconcile work item {node.work_item_id} for node {key}: "
+                f"{exc}. The stored work_item_id was preserved to prevent a duplicate "
+                "work item. Restore platform access, then rerun the same `omac dag tick` "
+                "or `omac dag run` command.",
+                f"无法核对节点 {key} 的工单 {node.work_item_id}: {exc}。为避免重复建单，"
+                "已保留 work_item_id。请恢复平台访问后重新执行同一条 "
+                "`omac dag tick` 或 `omac dag run` 命令。",
+            )) from exc
+        except RuntimeError as exc:
+            message = str(exc).lower()
+            if "not found" not in message and "不存在" not in message:
+                raise
             # abandoned 是调用者显式决策；其他状态必须有平台权威记录。
             if node.status != "abandoned":
                 set_node(manifest, key, work_item_id=None, status="todo")
@@ -382,6 +398,16 @@ def collect_results(
 
     for key, node in manifest.nodes.items():
         if node.status not in RUNNING_STATUSES or not node.work_item_id:
+            continue
+
+        # 运行中下游只能在所有依赖已经权威收敛后产生 CI/review/merge 副作用。
+        # 若上游仍在本轮回收中，保守等待下一 tick；若上游失败，tick 尾部的
+        # 级联阻断会把当前节点隔离。该判断与 manifest 遍历顺序无关。
+        if any(
+            dependency not in manifest.nodes
+            or manifest.nodes[dependency].status not in graph.SATISFIED
+            for dependency in node.blocked_by
+        ):
             continue
 
         try:
@@ -566,6 +592,8 @@ def collect_results(
                     store, artifacts.get("pr_url"))
                 gate_errors = validate_review_evidence(
                     node, item, expected_revision=snapshot.head_revision)
+                gate_errors.extend(authoritative_review_scope_errors(
+                    store, item, item.review_report, snapshot))
             except ValidationError as exc:
                 gate_errors = [str(exc)]
             if verdict == "pass-with-nits" and not gate_errors:
@@ -670,9 +698,27 @@ def collect_results(
         # get_work_item 触发的 auto_complete 会先在 IN_PROGRESS(刚从
         # CI 回落)走 deliverable 路径把 assigned 槽位清空,后续
         # wake 的 auto_complete 找不到已派发项而无法置评审判定。
-        store.update_status(item_id, WorkItemStatus.IN_REVIEW)
-        store.update_work_item_metadata(item_id, phase=TaskPhase.REVIEW)
-        set_node(manifest, key, status="in_review")
+        try:
+            store.update_work_item_metadata(item_id, phase=TaskPhase.REVIEW)
+            store.update_status(item_id, WorkItemStatus.IN_REVIEW)
+            set_node(manifest, key, status="in_review")
+        except (AuthError, PlatformError) as exc:
+            # 阶段准备与 assign/wake 属于同一交接。准备失败时恢复 authoring，
+            # 明确阻断，避免平台 IN_REVIEW 与 metadata authoring 分裂。
+            store.update_work_item_metadata(item_id, phase=TaskPhase.AUTHORING)
+            store.update_status(item_id, WorkItemStatus.BLOCKED)
+            set_node(manifest, key, status="blocked")
+            retry_command = f"omac node retry {manifest_path} {key}"
+            reason = ui(
+                f"Reviewer handoff preparation failed for {reviewer}: {exc}. "
+                "The phase transition was rolled back and the node was blocked. "
+                f"Restore platform access, then run `{retry_command}`.",
+                f"Reviewer {reviewer} 交接准备失败: {exc}。阶段变更已回滚，节点已阻断。"
+                f"请恢复平台访问后运行 `{retry_command}`。",
+            )
+            store.add_comment(item_id, reason)
+            failures[key] = reason
+            continue
         handoff_failure = _handoff_or_block(
             store,
             runtime,
@@ -756,7 +802,7 @@ def _dispatch(
     manifest_path: str,
     ready: List[str],
     max_parallel: int,
-) -> List[str]:
+) -> Tuple[List[str], Dict[str, str]]:
     """派发就绪节点(受 max_parallel - 进行中数约束)。
 
     无 work_item_id → store.create_work_item + set_node_contract;
@@ -771,6 +817,7 @@ def _dispatch(
     to_dispatch = ready[:slots]
 
     dispatched: List[str] = []
+    failures: Dict[str, str] = {}
     for key in to_dispatch:
         node = manifest.nodes[key]
         worker = node.worker
@@ -789,56 +836,67 @@ def _dispatch(
                 blocked_by=list(node.blocked_by),
             )
             set_node(manifest, key, work_item_id=item.id)
+            # create_work_item 已产生外部副作用，必须先把稳定 ID 落盘；后续任一
+            # metadata/assignment/wake 故障重启后都会复用该工单，而不是重复创建。
+            save_manifest(manifest, manifest_path)
         else:
             item = store.get_work_item(node.work_item_id)
 
-        # contract 附件只在首次建单时发布,避免 retry 追加系统评论触发平行 run。
-        # retry 的 scope/说明变化通过静默刷新 issue body 生效。
-        if is_new_item:
-            if node.contract is not None:
+        operation = "publish task metadata"
+        try:
+            # contract 附件只在首次建单时发布,避免 retry 追加系统评论触发平行 run。
+            # retry 的 scope/说明变化通过静默刷新 issue body 生效。
+            if is_new_item and node.contract is not None:
                 store.set_node_contract(item.id, node.contract)
 
-        env = _store_env(store)
-        source_refs = _develop_source_refs(manifest, node, env)
-        body = render_issue_body(
-            node, node.contract, TaskKind.DEVELOP, item.id,
-            source_refs=source_refs,
-            engine_env=env,
-            issue_key=getattr(item, "identifier", None),
-            language=current_language(),
-        )
-        store.update_work_item_metadata(
-            item.id,
-            description=body,
-            source_refs=source_refs,
-        )
+            env = _store_env(store)
+            source_refs = _develop_source_refs(manifest, node, env)
+            body = render_issue_body(
+                node, node.contract, TaskKind.DEVELOP, item.id,
+                source_refs=source_refs,
+                engine_env=env,
+                issue_key=getattr(item, "identifier", None),
+                language=current_language(),
+            )
+            store.update_work_item_metadata(
+                item.id,
+                description=body,
+                source_refs=source_refs,
+            )
 
-        # fire-and-forget: assign worker + 标 in_progress + wake
-        store.assign_work_item(node.work_item_id, worker, "worker")
-        store.update_status(node.work_item_id, WorkItemStatus.IN_PROGRESS)
-        set_node(manifest, key, status="in_progress")
-
-        try:
+            operation = "assign worker"
+            store.assign_work_item(node.work_item_id, worker, "worker")
+            operation = "mark work item in progress"
+            store.update_status(node.work_item_id, WorkItemStatus.IN_PROGRESS)
+            set_node(manifest, key, status="in_progress")
+            operation = "wake worker"
             runtime.wake(node.work_item_id, worker, "worker")
-        except PlatformError as exc:
+        except (AuthError, PlatformError) as exc:
             store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
-            store.add_comment(node.work_item_id, ui(
-                f"Failed to wake worker {worker}: {exc}",
-                f"唤醒 worker {worker} 失败: {exc}"))
             set_node(manifest, key, status="blocked")
+            retry_command = f"omac node retry {manifest_path} {key}"
+            reason = ui(
+                f"Worker handoff failed while trying to {operation}: {exc}. "
+                "The created work item was retained and the node was blocked to "
+                f"prevent duplicate execution. Restore platform access, then run "
+                f"`{retry_command}`.",
+                f"Worker 交接在尝试 {operation} 时失败: {exc}。已保留创建的工单并阻断节点，"
+                f"避免重复执行。请恢复平台访问后运行 `{retry_command}`。",
+            )
+            store.add_comment(node.work_item_id, reason)
+            failures[key] = reason
             log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
-                     id=node.work_item_id, reason=ui(
-                         f"Failed to wake worker {worker}", f"唤醒 worker {worker} 失败"))
+                     id=node.work_item_id, reason=reason)
             continue
 
         log.info(logsetup.EVT_DISPATCH, kind=_DAG_KIND, node=key,
                  id=node.work_item_id, worker=worker)
         dispatched.append(key)
 
-    if dispatched:
+    if dispatched or failures:
         save_manifest(manifest, manifest_path)
 
-    return dispatched
+    return dispatched, failures
 
 
 # ==================== tick(单轮完整推进) ====================
@@ -921,7 +979,12 @@ def tick(
     ready = graph.ready_nodes(snapshot)
 
     # 5. DISPATCH: 派发就绪节点(受 max_parallel 约束)
-    dispatched = _dispatch(store, runtime, manifest, manifest_path, ready, max_parallel)
+    dispatched, dispatch_failures = _dispatch(
+        store, runtime, manifest, manifest_path, ready, max_parallel)
+    if dispatch_failures:
+        new_failures.update(dispatch_failures)
+        _mark_downstream_blocked(
+            manifest, manifest_path, set(dispatch_failures))
 
     # 6. 保存 manifest（本地落盘 + 真实引擎回写 git,供跨机 resume 读到最新状态）
     save_manifest(manifest, manifest_path)

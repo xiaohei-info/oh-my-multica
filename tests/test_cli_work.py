@@ -568,6 +568,26 @@ CONTRACT = Contract(
 )
 
 
+def test_work_show_json_serializes_nested_quality_contract_as_object(
+    tmp_path, monkeypatch, capsys,
+):
+    monkeypatch.chdir(tmp_path)
+    main(["config", "set", "engine", "mock"])
+    main(["config", "set", "workspace", "mock-workspace"])
+    capsys.readouterr()
+    store = _store()
+    item = _make_item(store, TaskKind.DEVELOP, TaskPhase.AUTHORING)
+    store.set_node_contract(item.id, CONTRACT)
+
+    assert main(["work", "show", item.id, "--output", "json"]) == exit_codes.OK
+    output = json.loads(capsys.readouterr().out)
+
+    quality = output["context"]["contract"]["quality"]
+    assert isinstance(quality, dict)
+    assert quality["runtime_data_policy"] == "real-or-error"
+    assert quality["required_outcomes"][0]["id"] == "outcome-works"
+
+
 def _make_verification(pr_base="feature/v1", coverage=95):
     return {
         "commands": [{"cmd": "pytest -q", "exit_code": 0}],

@@ -6,12 +6,26 @@
   3. acceptance_results            final-acceptance 必填,逐项按 id 对齐验收文档条目
 """
 
+import math
+
 from .acceptance import AcceptanceDoc, load_acceptance_doc
 
 REVIEW_APPROVE = {"pass", "pass-with-nits"}
 REVIEW_VERDICTS = REVIEW_APPROVE | {"reject"}
 
 ACCEPTANCE_STATUS = {"pass", "fail"}
+
+
+def _is_integer_exit_code(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _is_finite_number(value) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return True
+    return isinstance(value, float) and math.isfinite(value)
 
 
 def _commands_by_text(commands, *, prefix):
@@ -28,14 +42,24 @@ def _commands_by_text(commands, *, prefix):
         if not isinstance(cmd, str) or not cmd.strip():
             errors.append(f"{item_prefix}.command cmd must be a non-empty string")
             continue
+        if not _is_integer_exit_code(command.get("exit_code")):
+            errors.append(f"{item_prefix}.command exit_code must be an integer")
         if cmd in result:
             errors.append(f"{prefix} duplicate command: {cmd}")
         result[cmd] = command
     return result, errors
 
 
-def _validate_expected_commands(command_by_text, expected_commands, *, missing_prefix, failed_prefix):
+def _validate_expected_commands(
+    command_by_text,
+    expected_commands,
+    *,
+    missing_prefix,
+    failed_prefix,
+    allow_failure=False,
+):
     errors = []
+    has_failure = False
     for expected_cmd in expected_commands:
         if not isinstance(expected_cmd, str) or not expected_cmd.strip():
             errors.append(f"{missing_prefix}: contract command must be a non-empty string")
@@ -44,9 +68,14 @@ def _validate_expected_commands(command_by_text, expected_commands, *, missing_p
         if actual is None:
             errors.append(f"{missing_prefix}: {expected_cmd}")
             continue
-        if actual.get("exit_code") != 0:
+        exit_code = actual.get("exit_code")
+        if not _is_integer_exit_code(exit_code):
+            continue
+        if exit_code != 0:
+            has_failure = True
+        if exit_code != 0 and not allow_failure:
             errors.append(f"{failed_prefix}: {expected_cmd}")
-    return errors
+    return errors, has_failure
 
 
 def _gate_by_name(gates, *, expected_names: set[str], prefix: str):
@@ -119,11 +148,17 @@ def _metric_satisfies(actual, expected) -> bool:
     if isinstance(expected, bool):
         return actual is expected
     if isinstance(expected, (int, float)) and not isinstance(expected, bool):
-        return isinstance(actual, (int, float)) and not isinstance(actual, bool) and actual >= expected
+        return _is_finite_number(actual) and actual >= expected
     return actual == expected
 
 
-def _validate_integration_gate_evidence(expected_gate, actual_gate, *, prefix):
+def _validate_integration_gate_evidence(
+    expected_gate,
+    actual_gate,
+    *,
+    prefix,
+    allow_failure=False,
+):
     errors = []
     if not isinstance(expected_gate, dict):
         return [f"{prefix} contract integration gate must be an object"]
@@ -138,15 +173,16 @@ def _validate_integration_gate_evidence(expected_gate, actual_gate, *, prefix):
     errors.extend(command_errors)
     if command_by_text is None:
         errors.append(f"{prefix} integration gate commands must be non-empty: {gate_name}")
+        command_failed = False
     else:
-        errors.extend(
-            _validate_expected_commands(
-                command_by_text,
-                expected_gate.get("commands", []),
-                missing_prefix=f"{prefix} missing integration command for {gate_name}",
-                failed_prefix=f"{prefix} integration command failed for {gate_name}",
-            )
+        command_errors, command_failed = _validate_expected_commands(
+            command_by_text,
+            expected_gate.get("commands", []),
+            missing_prefix=f"{prefix} missing integration command for {gate_name}",
+            failed_prefix=f"{prefix} integration command failed for {gate_name}",
+            allow_failure=allow_failure,
         )
+        errors.extend(command_errors)
 
     actual_metrics = actual_gate.get("metrics", {})
     if not isinstance(actual_metrics, dict):
@@ -156,11 +192,27 @@ def _validate_integration_gate_evidence(expected_gate, actual_gate, *, prefix):
     if not isinstance(expected_metrics, dict):
         errors.append(f"{prefix} contract integration metrics must be an object: {gate_name}")
         expected_metrics = {}
+    metric_failed = False
     for metric, expected_value in expected_metrics.items():
         if metric not in actual_metrics:
             errors.append(f"{prefix} missing integration metric for {gate_name}: {metric}")
-        elif not _metric_satisfies(actual_metrics.get(metric), expected_value):
-            errors.append(f"{prefix} integration metric below gate for {gate_name}: {metric}")
+            continue
+        actual_value = actual_metrics.get(metric)
+        if (
+            isinstance(expected_value, (int, float))
+            and not isinstance(expected_value, bool)
+            and not _is_finite_number(actual_value)
+        ):
+            errors.append(
+                f"{prefix} integration metric must be a finite number "
+                f"for {gate_name}: {metric}"
+            )
+            continue
+        if not _metric_satisfies(actual_value, expected_value):
+            metric_failed = True
+            if not allow_failure:
+                errors.append(
+                    f"{prefix} integration metric below gate for {gate_name}: {metric}")
 
     expected_artifacts = expected_gate.get("artifacts", [])
     if not isinstance(expected_artifacts, list):
@@ -177,6 +229,12 @@ def _validate_integration_gate_evidence(expected_gate, actual_gate, *, prefix):
     for field in ("source_of_truth", "delivery_goal"):
         if actual_gate.get(field) != expected_gate.get(field):
             errors.append(f"{prefix} integration gate {field} must match contract for {gate_name}")
+
+    if allow_failure and not command_failed and not metric_failed:
+        errors.append(
+            f"{prefix} integration gate status fail requires failing command "
+            f"or metric evidence: {gate_name}"
+        )
 
     return errors
 
@@ -532,14 +590,13 @@ def validate_worker_evidence(
     if command_by_text is None:
         errors.append("verification.commands must be non-empty")
     else:
-        errors.extend(
-            _validate_expected_commands(
-                command_by_text,
-                contract.verification_commands,
-                missing_prefix="verification missing command",
-                failed_prefix="verification command failed",
-            )
+        command_validation_errors, _ = _validate_expected_commands(
+            command_by_text,
+            contract.verification_commands,
+            missing_prefix="verification missing command",
+            failed_prefix="verification command failed",
         )
+        errors.extend(command_validation_errors)
 
     valid_expected_gates, expected_gate_names, contract_gate_errors = (
         _contract_integration_gates(contract)
@@ -577,8 +634,8 @@ def validate_worker_evidence(
         errors.append("verification.pr_base must match contract.pr_base")
 
     coverage = verification.get("coverage")
-    if not isinstance(coverage, (int, float)) or isinstance(coverage, bool):
-        errors.append("verification.coverage must be numeric")
+    if not _is_finite_number(coverage):
+        errors.append("verification.coverage must be a finite number")
     elif coverage < contract.coverage_gate:
         errors.append(
             f"verification.coverage {coverage} below gate {contract.coverage_gate}"
@@ -703,7 +760,9 @@ def validate_review_evidence(
                 integration_mappings,
                 key_field="gate",
                 expected_keys=expected_gate_names,
-                allowed_statuses={"pass"},
+                allowed_statuses=(
+                    {"pass"} if verdict in REVIEW_APPROVE else {"pass", "fail"}
+                ),
                 prefix="review_report.integration_gate_mapping",
                 label="integration gate",
                 canonicalize_keys=True,
@@ -718,6 +777,10 @@ def validate_review_evidence(
                         expected_gate,
                         mapping_by_gate.get(gate_name),
                         prefix="review_report",
+                        allow_failure=(
+                            verdict == "reject"
+                            and mapping_by_gate.get(gate_name, {}).get("status") == "fail"
+                        ),
                     )
                 )
 

@@ -655,31 +655,143 @@ def inspect_ready_pull_request(
             "请使用 `--pr-url <url>` 重新提交。",
         ))
     snapshot = store.inspect_pull_request(pr_url)
-    if not isinstance(snapshot.url, str) or not snapshot.url.strip():
+    snapshot_url = getattr(snapshot, "url", None)
+    if not isinstance(snapshot_url, str) or not snapshot_url.strip():
         raise ValidationError(ui(
             "The platform did not return a canonical PR URL.",
             "平台未返回 canonical PR URL。",
         ))
-    if not isinstance(snapshot.head_revision, str) or not snapshot.head_revision.strip():
+    head_revision = getattr(snapshot, "head_revision", None)
+    if not isinstance(head_revision, str) or not head_revision.strip():
         raise ValidationError(ui(
             "The platform did not return a non-empty PR head revision.",
             "平台未返回非空 PR head revision。",
         ))
-    if snapshot.is_draft:
+    is_draft = getattr(snapshot, "is_draft", None)
+    if type(is_draft) is not bool:
+        raise ValidationError(ui(
+            "The platform returned a malformed PR draft flag; expected true or false. "
+            "Retry after fixing the engine adapter response.",
+            "平台返回了畸形的 PR draft 标志；应为 true 或 false。"
+            "请修复 engine adapter 响应后重试。",
+        ))
+    if is_draft:
         raise ValidationError(ui(
             f"GitHub PR is still a draft and cannot enter CI/review/merge: {pr_url}\n"
             "Run `gh pr ready <pr-url>` or mark it ready for review on GitHub.",
             f"GitHub PR 仍是 draft,不能交付给下游 CI/review/merge: {pr_url}\n"
             "请先执行 `gh pr ready <pr-url>` 或在 GitHub 页面 Mark ready for review。"))
-    state = snapshot.state
+    state = getattr(snapshot, "state", None)
+    if not isinstance(state, str) or not state.strip():
+        raise ValidationError(ui(
+            "The platform did not return a non-empty authoritative PR state. "
+            "Retry after fixing the engine adapter response.",
+            "平台未返回非空的权威 PR state。请修复 engine adapter 响应后重试。",
+        ))
     allowed_states = {"OPEN", "MERGED"} if allow_merged else {"OPEN"}
-    if state and state not in allowed_states:
+    if state not in allowed_states:
         raise ValidationError(ui(
             f"GitHub PR state is not allowed here: {pr_url} (state={state}, "
             f"allowed={sorted(allowed_states)})",
             f"GitHub PR 状态不允许用于当前流程: {pr_url} (state={state}, "
             f"允许={sorted(allowed_states)})"))
     return snapshot
+
+
+def authoritative_review_scope_errors(
+    store: WorkItemStore,
+    item: WorkItem,
+    report: Dict[str, Any] | None,
+    snapshot,
+) -> List[str]:
+    """用 PR 权威事实约束独立 Reviewer 与完整 diff scope。
+
+    Mock adapter 未显式配置权威字段时保持测试适配器语义；真实 engine 或显式
+    提供任一字段时，四组事实必须完整，禁止用 Reviewer 自报内容兜底。
+    """
+    author_login = getattr(snapshot, "author_login", None)
+    commit_authors = getattr(snapshot, "commit_authors", None)
+    base_revision = getattr(snapshot, "base_revision", None)
+    changed_files = getattr(snapshot, "changed_files", None)
+    authority_values = (
+        author_login, commit_authors, base_revision, changed_files,
+    )
+    engine_type = getattr(getattr(store, "config", None), "engine_type", None)
+    if engine_type == "mock" and not any(authority_values):
+        return []
+
+    errors: List[str] = []
+    if not isinstance(author_login, str) or not author_login.strip():
+        errors.append("authoritative PR author_login must be a non-empty string")
+    if not isinstance(commit_authors, (list, tuple)) or not commit_authors or any(
+        not isinstance(author, str) or not author.strip()
+        for author in commit_authors
+    ):
+        errors.append("authoritative PR commit_authors must be a non-empty string list")
+        canonical_authors: Set[str] = set()
+    else:
+        canonical_authors = {author.strip().casefold() for author in commit_authors}
+    if not isinstance(base_revision, str) or not base_revision.strip():
+        errors.append("authoritative PR base_revision must be a non-empty string")
+    if not isinstance(changed_files, (list, tuple)) or not changed_files or any(
+        not isinstance(path, str) or not path.strip()
+        for path in changed_files
+    ):
+        errors.append("authoritative PR changed_files must be a non-empty string list")
+        canonical_changed_files: Set[str] = set()
+    else:
+        canonical_changed_files = {path.strip() for path in changed_files}
+        if len(canonical_changed_files) != len(changed_files):
+            errors.append("authoritative PR changed_files must not contain duplicates")
+
+    reviewer = getattr(item, "reviewer", None)
+    contributors = set(canonical_authors)
+    if isinstance(author_login, str) and author_login.strip():
+        contributors.add(author_login.strip().casefold())
+    if (
+        isinstance(reviewer, str)
+        and reviewer.strip().casefold() in contributors
+    ):
+        errors.append(
+            f"Reviewer {reviewer} is an authoritative PR author/committer and is not independent"
+        )
+
+    verification = getattr(item, "verification", None)
+    quality = verification.get("quality") if isinstance(verification, dict) else None
+    regression_proof = (
+        quality.get("regression_proof") if isinstance(quality, dict) else None
+    )
+    base_refs = {
+        proof.get("base_ref")
+        for proof in regression_proof or []
+        if isinstance(proof, dict)
+        and isinstance(proof.get("base_ref"), str)
+        and proof.get("base_ref").strip()
+    }
+    if len(base_refs) != 1:
+        errors.append(
+            "Worker regression proof must identify exactly one base_ref for authoritative PR base validation"
+        )
+    elif isinstance(base_revision, str) and base_revision.strip() not in base_refs:
+        errors.append(
+            f"authoritative PR base_revision {base_revision} does not match Worker base_ref "
+            f"{next(iter(base_refs))}"
+        )
+
+    review_scope = report.get("review_scope") if isinstance(report, dict) else None
+    reported_files = (
+        review_scope.get("changed_files") if isinstance(review_scope, dict) else None
+    )
+    if not isinstance(reported_files, list) or any(
+        not isinstance(path, str) or not path.strip()
+        for path in reported_files
+    ):
+        errors.append("review_scope.changed_files must be a string list")
+    elif set(reported_files) != canonical_changed_files:
+        errors.append(
+            "review_scope.changed_files must exactly match authoritative PR changed_files"
+        )
+    return errors
 
 def _validate_review(
     store: WorkItemStore,
@@ -711,8 +823,9 @@ def _validate_review(
             raise ValidationError(ui(
                 "Develop review is missing artifacts.pr_url. Ask the Worker to resubmit.",
                 "develop 评审缺少 artifacts.pr_url。请让 Worker 重新提交。"))
-        expected_revision = inspect_ready_pull_request(
-            store, pr_url, allow_merged=False).head_revision
+        snapshot = inspect_ready_pull_request(
+            store, pr_url, allow_merged=False)
+        expected_revision = snapshot.head_revision
     probe = _Item(
         review_verdict=verdict,
         review_report=report,
@@ -720,6 +833,9 @@ def _validate_review(
     )
     errors = evidence_mod.validate_review_evidence(
         node, probe, expected_revision=expected_revision)
+    if kind == TaskKind.DEVELOP:
+        errors.extend(authoritative_review_scope_errors(
+            store, item, report, snapshot))
     if errors:
         raise ValidationError(ui(
             "Review report validation failed:\n  - " + "\n  - ".join(errors),

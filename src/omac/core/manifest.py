@@ -18,6 +18,11 @@ _UNSET = object()  # sentinel: 参数未传（区别于 None=显式清空）
 # 仅匹配 ${VAR} 与 ${VAR:-default}，不碰裸 $VAR（避免误伤 description 里的 $ 文本）
 _ENV_PAT = re.compile(r"\$\{(\w+)(?::-([^}]*))?\}")
 
+_NODE_STATUSES = {
+    "todo", "in_progress", "ci_check", "in_review", "merging",
+    "done", "blocked", "failed", "cancelled", "abandoned",
+}
+
 
 def _expand_env(value):
     """递归把 manifest 里的 ${VAR} / ${VAR:-默认值} 用环境变量展开。
@@ -202,6 +207,7 @@ class Manifest:
     meta: dict
     nodes: dict  # id -> Node
     project_root: str | None = None
+    declared_runtime_fields: list = field(default_factory=list)
 
 
 def project_root_from_manifest_path(manifest_path: str) -> str:
@@ -217,26 +223,86 @@ def _require_manifest_mapping(raw) -> dict:
 
 def _require_manifest_shape(raw) -> dict:
     raw = _require_manifest_mapping(raw)
-    if not isinstance(raw.get("meta", {}), dict):
+    meta = raw.get("meta", {})
+    if not isinstance(meta, dict):
         raise ValueError("manifest.meta must be an object")
+    for field_name in ("closeout_node", "acceptance_file"):
+        value = meta.get(field_name)
+        if value is not None and not isinstance(value, str):
+            raise ValueError(
+                f"manifest.meta.{field_name} must be a string or null")
+    if "acceptance_required" in meta and not isinstance(
+        meta["acceptance_required"], bool
+    ):
+        raise ValueError("manifest.meta.acceptance_required must be boolean")
 
     nodes = raw.get("nodes", [])
     if not isinstance(nodes, list):
         raise ValueError("manifest.nodes must be a list")
+    seen_ids = set()
     for index, node in enumerate(nodes):
         if not isinstance(node, dict):
             raise ValueError(f"manifest.nodes[{index}] must be an object")
+        prefix = f"manifest.nodes[{index}]"
+        node_id = node.get("id")
+        if not isinstance(node_id, str) or not node_id.strip():
+            raise ValueError(f"{prefix}.id must be a non-empty string")
+        if node_id in seen_ids:
+            raise ValueError(f"duplicate node id: {node_id}")
+        seen_ids.add(node_id)
+
+        worker = node.get("worker")
+        if not isinstance(worker, str) or not worker.strip():
+            raise ValueError(f"{prefix}.worker must be a non-empty string")
+
+        blocked_by = node.get("blocked_by", [])
+        if not isinstance(blocked_by, list):
+            raise ValueError(f"{prefix}.blocked_by must be a list")
+        if not all(
+            isinstance(dependency, str) and dependency.strip()
+            for dependency in blocked_by
+        ):
+            raise ValueError(
+                f"{prefix}.blocked_by must contain non-empty strings")
+
+        for field_name in (
+            "title", "description", "reviewer", "risk",
+            "work_item_id", "merged_at",
+        ):
+            value = node.get(field_name)
+            if value is not None and not isinstance(value, str):
+                raise ValueError(
+                    f"{prefix}.{field_name} must be a string or null")
+
+        status = node.get("status", "todo")
+        if not isinstance(status, str) or not status.strip():
+            raise ValueError(f"{prefix}.status must be a non-empty string")
+        if status not in _NODE_STATUSES:
+            raise ValueError(
+                f"{prefix}.status must be one of {sorted(_NODE_STATUSES)}")
+        if "merged" in node and not isinstance(node["merged"], bool):
+            raise ValueError(f"{prefix}.merged must be boolean")
+        if node.get("gate") is not None and not isinstance(node["gate"], dict):
+            raise ValueError(f"{prefix}.gate must be an object or null")
     return raw
+
+
+_RUNTIME_NODE_FIELDS = ("status", "work_item_id", "merged", "merged_at")
+
+
+def _declared_runtime_fields(raw) -> list:
+    return [
+        (node["id"], field_name)
+        for node in raw.get("nodes", [])
+        for field_name in _RUNTIME_NODE_FIELDS
+        if field_name in node
+    ]
 
 
 def _build_nodes(raw) -> dict:
     """从已展开的 raw dict 构造 {id: Node}(共享于文件加载与不落盘文本解析)。"""
     nodes = {}
     for n in raw.get("nodes", []):
-        if "id" not in n:
-            raise ValueError("node missing 'id'")
-        if not n.get("worker"):
-            raise ValueError(f"node {n['id']} missing required 'worker'")
         nodes[n["id"]] = Node(
             id=n["id"],
             worker=n["worker"],
@@ -249,7 +315,7 @@ def _build_nodes(raw) -> dict:
             contract=_load_contract(n.get("contract")),
             work_item_id=n.get("work_item_id"),
             status=n.get("status", "todo"),
-            merged=bool(n.get("merged", False)),
+            merged=n.get("merged", False),
             merged_at=n.get("merged_at"),
         )
     return nodes
@@ -263,6 +329,7 @@ def load_manifest(path: str) -> Manifest:
         meta=raw.get("meta", {}),
         nodes=_build_nodes(raw),
         project_root=project_root_from_manifest_path(path),
+        declared_runtime_fields=_declared_runtime_fields(raw),
     )
 
 
@@ -275,6 +342,7 @@ def loads_manifest(text: str, *, project_root: str | None = None) -> Manifest:
         project_root=(
             str(Path(project_root).resolve()) if project_root is not None else None
         ),
+        declared_runtime_fields=_declared_runtime_fields(raw),
     )
 
 def save_manifest(manifest: Manifest, path: str):

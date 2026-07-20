@@ -234,3 +234,60 @@ def test_missing_worker_rejected(tmp_path):
         assert False, "should raise"
     except ValueError:
         pass
+
+
+def test_duplicate_node_ids_are_rejected_instead_of_overwriting_business_work():
+    content = """\
+meta: {}
+nodes:
+  - id: checkout
+    worker: alice
+  - id: checkout
+    worker: bob
+"""
+
+    with pytest.raises(ValueError, match="duplicate node id: checkout"):
+        loads_manifest(content)
+
+
+@pytest.mark.parametrize(
+    ("field", "yaml_value", "message"),
+    [
+        ("id", "[checkout]", r"manifest\.nodes\[0\]\.id must be a non-empty string"),
+        ("worker", "[alice]", r"manifest\.nodes\[0\]\.worker must be a non-empty string"),
+        ("blocked_by", "checkout", r"manifest\.nodes\[0\]\.blocked_by must be a list"),
+        ("blocked_by", "[checkout, 42]", r"manifest\.nodes\[0\]\.blocked_by must contain non-empty strings"),
+        ("reviewer", "[bob]", r"manifest\.nodes\[0\]\.reviewer must be a string or null"),
+        ("work_item_id", "42", r"manifest\.nodes\[0\]\.work_item_id must be a string or null"),
+        ("status", "[todo]", r"manifest\.nodes\[0\]\.status must be a non-empty string"),
+        ("status", "completed", r"manifest\.nodes\[0\]\.status must be one of"),
+        ("merged", "\"false\"", r"manifest\.nodes\[0\]\.merged must be boolean"),
+        ("merged_at", "[now]", r"manifest\.nodes\[0\]\.merged_at must be a string or null"),
+    ],
+)
+def test_manifest_node_fields_reject_malformed_raw_types(field, yaml_value, message):
+    content = f"""\
+meta: {{}}
+nodes:
+  - id: checkout
+    worker: alice
+    {field}: {yaml_value}
+"""
+
+    with pytest.raises(ValueError, match=message):
+        loads_manifest(content)
+
+
+@pytest.mark.parametrize(
+    ("field", "yaml_value", "message"),
+    [
+        ("closeout_node", "[closeout]", "manifest.meta.closeout_node must be a string or null"),
+        ("acceptance_file", "[acceptance.yaml]", "manifest.meta.acceptance_file must be a string or null"),
+        ("acceptance_required", "\"yes\"", "manifest.meta.acceptance_required must be boolean"),
+    ],
+)
+def test_manifest_meta_fields_reject_malformed_raw_types(field, yaml_value, message):
+    content = f"meta:\n  {field}: {yaml_value}\nnodes: []\n"
+
+    with pytest.raises(ValueError, match=message):
+        loads_manifest(content)

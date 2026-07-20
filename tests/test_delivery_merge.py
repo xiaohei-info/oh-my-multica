@@ -53,7 +53,11 @@ from omac.pipeline import loop
 def _store():
     return MockStore(EngineConfig(
         engine_type="mock", workspace_id="ws",
-        extra={"MOCK_AUTO_COMPLETE": "false", "MOCK_AUTO_COMPLETE_DELAY": "0"}))
+        extra={
+            "MOCK_AUTO_COMPLETE": "false",
+            "MOCK_AUTO_COMPLETE_DELAY": "0",
+            "MOCK_PR_HEAD_REVISION": "delivered-sha",
+        }))
 
 
 def _runtime(store):  # noqa: ARG001 — 保持与 loop 签名对称
@@ -149,6 +153,69 @@ class TestMergeConfig:
 # ── run_merge_delivery 单元测试 ────────────────────────────────────────────
 
 class TestRunMergeDeliveryUnit:
+    def test_open_pr_head_must_match_delivered_revision_before_merge(
+        self, monkeypatch,
+    ):
+        store = _store()
+        store.config.extra["MOCK_PR_HEAD_REVISION"] = "new-unreviewed-sha"
+        item = _review_passed_item(store)
+        manifest = Manifest(meta={"name": "demo"}, nodes={"a": _node()})
+        manifest.nodes["a"].work_item_id = item.id
+        manifest.nodes["a"].status = "in_review"
+        merge_calls = []
+
+        monkeypatch.setattr(
+            store,
+            "merge_pull_request",
+            lambda *args, **kwargs: merge_calls.append(args),
+        )
+
+        with pytest.raises(ValidationError, match="new-unreviewed-sha"):
+            run_merge_delivery(
+                {}, manifest, "a", store, _runtime(store), dict(DEFAULT_RETRY))
+
+        assert merge_calls == []
+        assert store.get_work_item(item.id).merge_intent is None
+        assert manifest.nodes["a"].status == "in_review"
+
+    def test_nonzero_merge_recovers_when_authoritative_pr_is_already_merged(
+        self, monkeypatch,
+    ):
+        store = _store()
+        store.config.extra["MOCK_PR_HEAD_REVISION"] = "delivered-sha"
+        item = _review_passed_item(store)
+        manifest = Manifest(meta={"name": "demo"}, nodes={"a": _node()})
+        manifest.nodes["a"].work_item_id = item.id
+        manifest.nodes["a"].status = "in_review"
+        inspections = 0
+        real_inspect = store.inspect_pull_request
+
+        def inspect_after_failed_command(pr_url):
+            nonlocal inspections
+            inspections += 1
+            if inspections == 2:
+                store.config.extra["MOCK_PR_STATE"] = "MERGED"
+            return real_inspect(pr_url)
+
+        monkeypatch.setattr(store, "inspect_pull_request", inspect_after_failed_command)
+        monkeypatch.setattr(
+            store,
+            "merge_pull_request",
+            lambda *args, **kwargs: _command_result(
+                DeliveryCommandOutcome.FAILED,
+                exit_code=1,
+                output="transport closed after accepting merge",
+            ),
+        )
+
+        result = run_merge_delivery(
+            {}, manifest, "a", store, _runtime(store), dict(DEFAULT_RETRY))
+
+        assert inspections == 2
+        assert result.action is DeliveryAction.PASS
+        assert manifest.nodes["a"].merged is True
+        assert store.get_work_item(item.id).bounces.merge == 0
+
     @pytest.mark.parametrize(
         ("intent", "head_revision"),
         [
@@ -267,7 +334,7 @@ class TestRunMergeDeliveryUnit:
         store.update_work_item_metadata(
             item.id,
             review_verdict="pass-with-nits",
-            verification={"quality": {"delivered_revision": "followup-sha"}},
+            verification={"quality": {"delivered_revision": "head-sha-nits"}},
         )
         manifest = Manifest(meta={}, nodes={"a": _node()})
         manifest.nodes["a"].work_item_id = item.id
@@ -286,7 +353,7 @@ class TestRunMergeDeliveryUnit:
         )
         assert result.action is DeliveryAction.PASS
         assert "--match-head-commit {delivered_revision}" in seen["command"]
-        assert seen["delivered_revision"] == "followup-sha"
+        assert seen["delivered_revision"] == "head-sha-nits"
 
     def test_custom_merge_command_without_revision_placeholder_is_validation_error(
         self, tmp_path, monkeypatch,
@@ -792,6 +859,7 @@ class TestCollectResultsMerge:
             item.id,
             verification={"quality": {"delivered_revision": "delivered-sha-2"}},
         )
+        store.config.extra["MOCK_PR_HEAD_REVISION"] = "delivered-sha-2"
         store.update_status(item.id, WorkItemStatus.DONE)
         manifest.nodes["a"].status = "in_progress"
         mmod.save_manifest(manifest, path)
@@ -828,6 +896,7 @@ class TestCollectResultsMerge:
                 "command": f"sh {merge_fail} {{pr_url}} {{delivered_revision}}"},
         }
         store = _store()
+        store.config.extra["MOCK_PR_HEAD_REVISION"] = "reviewed-sha"
         rt = _runtime(store)
         # worker 证据过门
         item = store.create_work_item(
@@ -877,6 +946,7 @@ class TestCollectResultsMerge:
             artifacts={"pr_url": "https://example.com/pr/2"},
             verification={"quality": {"delivered_revision": "reviewed-sha-2"}},
         )
+        store.config.extra["MOCK_PR_HEAD_REVISION"] = "reviewed-sha-2"
         store.update_status(item.id, WorkItemStatus.DONE)
         manifest.nodes["a"].status = "in_progress"
         mmod.save_manifest(manifest, path)

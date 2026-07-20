@@ -1642,3 +1642,224 @@ class TestReviewerRejectFallbackRollback:
         assert failed_operation in reason
         assert "worker alice" in reason
         assert f"omac node retry {fpath} a" in reason
+
+
+class TestPipelineStateMachineRecoveryWindows:
+    def test_runtime_review_uses_authoritative_changed_files(
+        self, tmp_path,
+    ):
+        """运行时 Reviewer gate 不得只信 review_scope 自报文件列表。"""
+        manifest = _manifest([_node("a", reviewer="bob")])
+        path = str(tmp_path / "manifest.yaml")
+        save_manifest(manifest, path)
+        eng = _engine(
+            MOCK_AUTO_COMPLETE="false",
+            MOCK_PR_AUTHOR="alice",
+            MOCK_PR_COMMIT_AUTHORS='["alice"]',
+            MOCK_PR_BASE_REVISION="base-sha",
+            MOCK_PR_CHANGED_FILES='["src/actual.py"]',
+            MOCK_PR_HEAD_REVISION="head-sha",
+        )
+        item = eng.store.create_work_item(
+            "ws", "a", "Task a", dag_key="a", worker="alice", reviewer="bob",
+        )
+        report = _review_report("pass")
+        report["integration_gate_mapping"][0]["commands"][0]["cmd"] = (
+            "pytest tests/int"
+        )
+        eng.store.update_work_item_metadata(
+            item.id,
+            artifacts={"pr_url": f"https://mock.example.com/pr/{item.id}"},
+            verification=_verification(),
+            review_verdict="pass",
+            review_report=report,
+            phase=TaskPhase.REVIEW,
+        )
+        eng.store.update_status(item.id, WorkItemStatus.DONE)
+        manifest.nodes["a"].work_item_id = item.id
+        manifest.nodes["a"].status = "in_review"
+        save_manifest(manifest, path)
+
+        result = tick(
+            eng.store,
+            eng.runtime,
+            manifest,
+            path,
+            retry_limits={"review": 0},
+        )
+
+        assert result.state == "needs_decision"
+        assert manifest.nodes["a"].status == "blocked"
+        reason = next(
+            node["reason"] for node in result.report["failed_nodes"]
+            if node["key"] == "a"
+        )
+        assert "authoritative PR changed_files" in reason
+
+    def test_downstream_merge_waits_for_dependency_collection_to_settle(
+        self, tmp_path, monkeypatch,
+    ):
+        """同轮上游失败时，下游不得在级联阻断前产生 merge 副作用。"""
+        upstream = _node("a")
+        downstream = _node("b", blocked_by=["a"])
+        manifest = _manifest([downstream, upstream])
+        path = str(tmp_path / "manifest.yaml")
+        save_manifest(manifest, path)
+        eng = _engine(MOCK_AUTO_COMPLETE="false")
+
+        upstream_item = eng.store.create_work_item(
+            "ws", "a", "Task a", dag_key="a", worker="alice", reviewer="bob",
+        )
+        eng.store.update_status(upstream_item.id, WorkItemStatus.FAILED)
+        manifest.nodes["a"].work_item_id = upstream_item.id
+        manifest.nodes["a"].status = "in_progress"
+
+        downstream_item = eng.store.create_work_item(
+            "ws", "b", "Task b", dag_key="b", worker="alice", reviewer="bob",
+        )
+        eng.store.update_work_item_metadata(
+            downstream_item.id,
+            artifacts={"pr_url": "https://mock.example.com/pr/b"},
+            verification=_verification(),
+            review_verdict="pass",
+            review_report=_review_report("pass"),
+            phase=TaskPhase.REVIEW,
+        )
+        eng.store.update_status(downstream_item.id, WorkItemStatus.DONE)
+        manifest.nodes["b"].work_item_id = downstream_item.id
+        manifest.nodes["b"].status = "in_review"
+        save_manifest(manifest, path)
+
+        merge_calls = []
+
+        def record_merge(*args, **kwargs):
+            merge_calls.append("b")
+            return DeliveryResult(DeliveryAction.PASS)
+
+        monkeypatch.setattr(
+            "omac.pipeline.loop.validate_review_evidence",
+            lambda *args, **kwargs: [],
+        )
+        monkeypatch.setattr("omac.pipeline.loop.run_merge_delivery", record_merge)
+
+        result = tick(eng.store, eng.runtime, manifest, path)
+
+        assert merge_calls == []
+        assert result.state == "needs_decision"
+        assert manifest.nodes["a"].status == "blocked"
+        assert manifest.nodes["b"].status == "blocked"
+
+    def test_created_work_item_id_is_durable_before_dispatch_metadata_write(
+        self, tmp_path, monkeypatch,
+    ):
+        """建单成功后的平台故障不得让重启再次创建同一 DAG 工单。"""
+        manifest = _manifest([_node("a")])
+        path = str(tmp_path / "manifest.yaml")
+        save_manifest(manifest, path)
+        eng = _engine(MOCK_AUTO_COMPLETE="false")
+        real_update = eng.store.update_work_item_metadata
+        failed = False
+
+        def fail_first_metadata_write(item_id, **kwargs):
+            nonlocal failed
+            if not failed and "description" in kwargs:
+                failed = True
+                raise PlatformError("issue metadata write failed; retry later")
+            return real_update(item_id, **kwargs)
+
+        monkeypatch.setattr(
+            eng.store, "update_work_item_metadata", fail_first_metadata_write)
+
+        result = tick(eng.store, eng.runtime, manifest, path)
+
+        persisted = load_manifest(path)
+        assert result.state == "needs_decision"
+        assert persisted.nodes["a"].work_item_id is not None
+        assert persisted.nodes["a"].status == "blocked"
+        assert len(eng.store.list_work_items("ws")) == 1
+        reason = next(
+            node["reason"] for node in result.report["failed_nodes"]
+            if node["key"] == "a"
+        )
+        assert "metadata write failed" in reason
+        assert f"omac node retry {path} a" in reason
+
+    def test_reviewer_phase_write_failure_blocks_without_split_state(
+        self, tmp_path, monkeypatch,
+    ):
+        """Reviewer 阶段元数据写入失败时不得留下 IN_REVIEW/authoring 分裂。"""
+        manifest = _manifest([_node("a", reviewer="bob")])
+        path = str(tmp_path / "manifest.yaml")
+        save_manifest(manifest, path)
+        eng = _engine(MOCK_AUTO_COMPLETE="false")
+        item = eng.store.create_work_item(
+            "ws", "a", "Task a", dag_key="a", worker="alice", reviewer="bob",
+        )
+        eng.store.set_node_contract(item.id, manifest.nodes["a"].contract)
+        eng.store.update_work_item_metadata(
+            item.id,
+            artifacts={"pr_url": f"https://mock.example.com/pr/{item.id}"},
+            verification=_verification(),
+        )
+        eng.store.update_status(item.id, WorkItemStatus.DONE)
+        manifest.nodes["a"].work_item_id = item.id
+        manifest.nodes["a"].status = "in_progress"
+        save_manifest(manifest, path)
+
+        real_update = eng.store.update_work_item_metadata
+        failed = False
+
+        def fail_review_phase_once(item_id, **kwargs):
+            nonlocal failed
+            if not failed and kwargs.get("phase") == TaskPhase.REVIEW:
+                failed = True
+                raise PlatformError("review phase persistence failed")
+            return real_update(item_id, **kwargs)
+
+        monkeypatch.setattr(
+            eng.store, "update_work_item_metadata", fail_review_phase_once)
+
+        result = tick(eng.store, eng.runtime, manifest, path)
+
+        got = eng.store.get_work_item(item.id)
+        persisted = load_manifest(path)
+        assert result.state == "needs_decision"
+        assert got.phase == TaskPhase.AUTHORING
+        assert got.status == WorkItemStatus.BLOCKED
+        assert persisted.nodes["a"].status == "blocked"
+        reason = next(
+            node["reason"] for node in result.report["failed_nodes"]
+            if node["key"] == "a"
+        )
+        assert "review phase persistence failed" in reason
+        assert f"omac node retry {path} a" in reason
+
+    def test_reconcile_platform_read_failure_does_not_create_duplicate(
+        self, tmp_path, monkeypatch,
+    ):
+        """平台读取故障不是 not-found；必须保留原 ID 并 fail closed。"""
+        manifest = _manifest([_node("a")])
+        path = str(tmp_path / "manifest.yaml")
+        save_manifest(manifest, path)
+        eng = _engine(MOCK_AUTO_COMPLETE="false")
+        item = eng.store.create_work_item(
+            "ws", "a", "Task a", dag_key="a", worker="alice", reviewer="bob",
+        )
+        manifest.nodes["a"].work_item_id = item.id
+        manifest.nodes["a"].status = "in_progress"
+        save_manifest(manifest, path)
+        real_get = eng.store.get_work_item
+
+        def fail_read(item_id):
+            if item_id == item.id:
+                raise PlatformError("platform read failed; retry after connectivity recovers")
+            return real_get(item_id)
+
+        monkeypatch.setattr(eng.store, "get_work_item", fail_read)
+
+        with pytest.raises(PlatformError, match="platform read failed"):
+            tick(eng.store, eng.runtime, manifest, path)
+
+        persisted = load_manifest(path)
+        assert persisted.nodes["a"].work_item_id == item.id
+        assert len(eng.store.list_work_items("ws")) == 1

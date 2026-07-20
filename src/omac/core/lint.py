@@ -118,17 +118,21 @@ def contract_errors(node, *, project_root: str | None = None) -> list:
 def authoring_runtime_field_errors(manifest: Manifest) -> list:
     """Reject runtime state smuggled into newly authored manifest nodes."""
     errs = []
+    declared = set(getattr(manifest, "declared_runtime_fields", None) or [])
+    for node_id, field_name in sorted(declared):
+        errs.append(
+            f"node {node_id}: runtime field {field_name} is forbidden in authoring")
     for node in manifest.nodes.values():
-        if node.status != "todo":
+        if node.status != "todo" and (node.id, "status") not in declared:
             errs.append(
                 f"node {node.id}: runtime field status must be omitted or todo")
-        if node.work_item_id is not None:
+        if node.work_item_id is not None and (node.id, "work_item_id") not in declared:
             errs.append(
                 f"node {node.id}: runtime field work_item_id is forbidden in authoring")
-        if node.merged:
+        if node.merged and (node.id, "merged") not in declared:
             errs.append(
                 f"node {node.id}: runtime field merged is forbidden in authoring")
-        if node.merged_at is not None:
+        if node.merged_at is not None and (node.id, "merged_at") not in declared:
             errs.append(
                 f"node {node.id}: runtime field merged_at is forbidden in authoring")
     return errs
@@ -224,13 +228,19 @@ def _quality_errors(prefix: str, contract) -> list:
     return errs
 
 
-def lint(m: Manifest, pool: set, *, acceptance=None) -> list:
+def lint(
+    m: Manifest,
+    pool: set,
+    *,
+    acceptance=None,
+    authoring: bool = True,
+) -> list:
     """schema 校验 manifest。
 
     acceptance(AcceptanceDoc|None):有验收文档时,每个节点的 contract.acceptance
     条目须为验收文档 flow.id 之一(锚定,否则提示未锚定)。缺省 None = 不做锚定校验。
     """
-    errs = []
+    errs = authoring_runtime_field_errors(m) if authoring else []
     closeout_node = m.meta.get("closeout_node")
     if closeout_node and closeout_node not in m.nodes:
         errs.append(

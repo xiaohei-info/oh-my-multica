@@ -471,13 +471,7 @@ def _maybe_acceptance(args, engine, config, manifest) -> Optional[int]:
                 "或从已评审 acceptance issue 附件恢复该文件。"))
         return None
 
-    from ...core.acceptance import load_acceptance_doc_file as _load_doc
-    try:
-        doc = _load_doc(doc_path)
-    except (ValueError, OSError) as exc:
-        raise ValidationError(ui(
-            f"Could not parse the acceptance document: {exc}",
-            f"验收文档解析失败: {exc}"))
+    doc = _load_acceptance_doc_for_cli(doc_path, manifest_path)
 
     import time as _time
     outcome = run_acceptance_loop(
@@ -492,6 +486,46 @@ def _configured_acceptance_path(manifest, manifest_path: str) -> str:
     return (
         os.path.join(os.path.dirname(manifest_path), configured)
         if configured else acceptance_doc_path(manifest_path))
+
+
+def _load_acceptance_doc_for_cli(doc_path: str, manifest_path: str):
+    from ...core.acceptance import load_acceptance_doc_file
+
+    try:
+        return load_acceptance_doc_file(doc_path)
+    except (OSError, TypeError, ValueError, yaml.YAMLError) as exc:
+        raise ValidationError(ui(
+            f"Could not parse acceptance document {doc_path}: {exc}. "
+            f"Fix the YAML/schema, then rerun `omac dag run {manifest_path}`.",
+            f"无法解析验收文档 {doc_path}: {exc}。"
+            f"请修复 YAML/schema 后重跑 `omac dag run {manifest_path}`。",
+        )) from exc
+
+
+def _execution_acceptance_doc(manifest, manifest_path: str):
+    doc_path = _configured_acceptance_path(manifest, manifest_path)
+    if not os.path.exists(doc_path):
+        return None
+    return _load_acceptance_doc_for_cli(doc_path, manifest_path)
+
+
+def _validate_manifest_for_execution(manifest, manifest_path: str, pool: set) -> None:
+    errors = lint(
+        manifest,
+        pool,
+        acceptance=_execution_acceptance_doc(manifest, manifest_path),
+        authoring=False,
+    )
+    if not errors:
+        return
+    raise ValidationError(ui(
+        "Manifest execution lint failed:\n  - " + "\n  - ".join(errors)
+        + f"\nFix every issue, run `omac dag check {manifest_path} --no-review`, "
+        f"then rerun `omac dag run {manifest_path}`.",
+        "manifest 执行 lint 失败:\n  - " + "\n  - ".join(errors)
+        + f"\n请修复全部问题，运行 `omac dag check {manifest_path} --no-review`，"
+        f"再重跑 `omac dag run {manifest_path}`。",
+    ))
 
 
 def _validate_execution_invariants(manifest, manifest_path: str) -> None:
@@ -530,15 +564,18 @@ def _loop_or_single_locked(args, single_round: bool) -> int:
 
     import time as _time
 
+    manifest = _load_manifest_for_cli(args.manifest)
+    _validate_execution_invariants(manifest, args.manifest)
     engine, engine_config = _assemble_engine(args)
-    # 派单前:真实引擎下自动把 config 同步到 main,否则隔离区 agent clone 后读不到。
+    pool = set(engine.store.list_members(engine.store.config.workspace_id))
+    _validate_manifest_for_execution(manifest, args.manifest, pool)
+
+    # 所有 manifest/DAG/contract 校验通过后才允许产生配置同步或派单副作用。
     config_path = _config_path_for_manifest(args.manifest)
     ensure_config_synced(config_path, branch="main",
                          engine_type=engine.store.config.engine_type)
     config = _effective_runtime_config(load_config(config_path), engine_config)
     retry_limits = resolve_retry(config)
-    manifest = _load_manifest_for_cli(args.manifest)
-    _validate_execution_invariants(manifest, args.manifest)
     max_parallel = _default_max_parallel(args)
     max_rounds = getattr(args, "max_rounds", None)
     max_minutes = getattr(args, "max_minutes", None)

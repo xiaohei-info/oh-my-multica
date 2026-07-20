@@ -8,6 +8,7 @@
 - dag run loop 与 plan 流水线评审回退受 retry.review 控制(各一条回归)
 """
 import os
+from pathlib import Path
 import sys
 
 import pytest
@@ -179,18 +180,15 @@ def test_dag_tick_passes_configured_retry_limits(tmp_path, monkeypatch, capsys):
             "retry": {"worker": 3, "ci": 0, "review": 1, "merge": 2},
         }, f)
     manifest = tmp_path / ".omac" / "m.yaml"
-    with open(manifest, "w") as f:
-        yaml.dump({
-            "meta": {"name": "m"},
-            "nodes": [{"id": "a", "worker": "alice", "status": "done"}],
-        }, f)
+    manifest.write_text(
+        (Path(__file__).parent / "fixtures" / "smoke_p1.yaml").read_text())
 
     seen = {}
 
     def fake_tick(store, runtime, manifest_obj, manifest_path, *,
                   max_parallel=4, retry_limits=None, config=None):
         seen["retry_limits"] = retry_limits
-        return TickResult(state="converged", done=["a"])
+        return TickResult(state="converged", done=list(manifest_obj.nodes))
 
     monkeypatch.setattr(dag_cmd, "tick", fake_tick)
 

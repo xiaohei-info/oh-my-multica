@@ -165,6 +165,7 @@ verdict 不写入 report YAML，而是通过 submit 的 `--verdict` 提交；合
 5. `pass` 必须零 findings；`pass-with-nits` 只能有 nit findings；`reject` 至少有一个 blocker finding。
 6. `pass-with-nits` 沿用既有流程：只回到 worker 一次，不再进行第二轮 reviewer；Worker 必须提交一个不同于已评审 revision 的新 PR revision 和完整新证据，因此任何功能、契约、数据完整性、安全或验证问题都必须 reject。
 7. merge command 必须同时包含 `{pr_url}` 与 `{delivered_revision}`；默认 GitHub merge 使用 `--match-head-commit`，只允许合并 Worker 证据门确认的当前交付 revision。普通 pass 下它与 Reviewer revision 相同；pass-with-nits 返工下它是 Worker 的新 revision。
+8. CI/merge command 按参数列表执行，不经过 shell。模板值只会替换为单个参数；可使用环境变量赋值以及受支持的 `env`、`command`、`timeout` wrapper，但不得依赖管道、重定向、命令替换或其他 shell 运算符。
 
 ### final acceptance results
 

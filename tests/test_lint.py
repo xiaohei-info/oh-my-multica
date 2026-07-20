@@ -3,7 +3,7 @@ import pytest
 
 from omac.core.lint import lint
 from omac.core.acceptance import load_acceptance_doc
-from omac.core.manifest import Contract, Manifest, Node
+from omac.core.manifest import Contract, Manifest, Node, loads_manifest
 
 POOL = {"alice", "bob"}
 
@@ -56,6 +56,25 @@ def test_declared_closeout_node_must_exist():
     errs = lint(manifest, POOL)
 
     assert any("closeout_node" in e and "closeout" in e for e in errs)
+
+
+def test_authoring_lint_rejects_explicit_runtime_fields_even_at_default_values():
+    manifest = loads_manifest("""\
+meta: {}
+nodes:
+  - id: a
+    worker: alice
+    reviewer: bob
+    status: todo
+    work_item_id: null
+    merged: false
+    merged_at: null
+""")
+
+    errors = lint(manifest, POOL)
+
+    for field in ("status", "work_item_id", "merged", "merged_at"):
+        assert any(f"runtime field {field}" in error for error in errors)
 
 
 def test_contract_hard_gates():

@@ -109,6 +109,52 @@ class TestStatusMapping:
 # ── advance_delivery 单元测试(对齐 canonical WorkItem.bounces.ci) ──────────
 
 class TestAdvanceDeliveryUnit:
+    def test_ci_worker_transition_failure_rolls_back_bounce_and_manifest_state(
+        self, tmp_path, monkeypatch,
+    ):
+        """CI 失败后的状态写入故障不得留下已消费 retry 的半回派状态。"""
+        store = _store()
+        item = _worker_done_item(store)
+        manifest = Manifest(meta={}, nodes={"a": _node()})
+        manifest.nodes["a"].work_item_id = item.id
+        monkeypatch.setattr(
+            store,
+            "run_ci_check",
+            lambda *args, **kwargs: DeliveryCommandResult(
+                outcome=DeliveryCommandOutcome.FAILED,
+                exit_code=1,
+                output="tests failed",
+                summary="tests failed",
+            ),
+        )
+        real_update_status = store.update_status
+        in_progress_writes = 0
+
+        def fail_second_in_progress_write(item_id, status):
+            nonlocal in_progress_writes
+            if status is WorkItemStatus.IN_PROGRESS:
+                in_progress_writes += 1
+                if in_progress_writes == 2:
+                    raise PlatformError("CI worker status transition failed")
+            return real_update_status(item_id, status)
+
+        monkeypatch.setattr(store, "update_status", fail_second_in_progress_write)
+
+        with pytest.raises(PlatformError, match="status transition failed"):
+            advance_delivery(
+                _ci_config(_ci_script(tmp_path, "exit 1")),
+                manifest,
+                "a",
+                store,
+                _runtime(store),
+                dict(DEFAULT_RETRY),
+            )
+
+        got = store.get_work_item(item.id)
+        assert got.bounces.ci == 0
+        assert got.status is WorkItemStatus.IN_PROGRESS
+        assert manifest.nodes["a"].status == "in_progress"
+
     @pytest.mark.parametrize("error", [
         AuthError("assignment auth failed"),
         PlatformError("assignment platform failed"),

@@ -161,3 +161,105 @@ def test_list_members_and_comments():
     item = store.create_work_item("ws", "t", "d", dag_key="a", worker="alice")
     store.add_comment(item.id, "hello")
     assert store.get_comments(item.id) == ["hello"]
+
+
+def test_mock_pull_request_snapshot_uses_explicit_authoritative_scope_config():
+    store = _engine(
+        MOCK_PR_HEAD_REVISION="a" * 40,
+        MOCK_PR_BASE_REVISION="b" * 40,
+        MOCK_PR_AUTHOR="worker-login",
+        MOCK_PR_COMMIT_AUTHORS='["worker-login", "pair-login"]',
+        MOCK_PR_CHANGED_FILES='["src/feature.py", "tests/test_feature.py"]',
+    ).store
+
+    snapshot = store.inspect_pull_request(
+        "https://github.com/acme/project/pull/7")
+
+    assert snapshot.author_login == "worker-login"
+    assert snapshot.commit_authors == ("worker-login", "pair-login")
+    assert snapshot.base_revision == "b" * 40
+    assert snapshot.changed_files == ("src/feature.py", "tests/test_feature.py")
+
+
+def test_mock_pull_request_snapshot_does_not_fabricate_review_scope():
+    snapshot = _engine().store.inspect_pull_request(
+        "https://github.com/acme/project/pull/7")
+
+    assert snapshot.author_login == ""
+    assert snapshot.commit_authors == ()
+    assert snapshot.base_revision == ""
+    assert snapshot.changed_files == ()
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("MOCK_PR_DRAFT", "sometimes"),
+        ("MOCK_PR_STATE", "open"),
+        ("MOCK_PR_COMMIT_AUTHORS", "not-json"),
+        ("MOCK_PR_CHANGED_FILES", '["", "src/a.py"]'),
+    ],
+)
+def test_mock_pull_request_snapshot_rejects_malformed_authority_config(key, value):
+    store = _engine(**{key: value}).store
+
+    with pytest.raises(ValidationError):
+        store.inspect_pull_request("https://github.com/acme/project/pull/7")
+
+
+def test_mock_merge_rejects_command_injection_revision(tmp_path):
+    store = _engine().store
+    marker = tmp_path / "revision-injected"
+
+    with pytest.raises(ValidationError, match="revision"):
+        store.merge_pull_request(
+            "https://github.com/acme/project/pull/7",
+            f"abc123; touch {marker}",
+            "sh -c 'exit 0' ignored {pr_url} {delivered_revision}",
+            30,
+        )
+    assert not marker.exists()
+
+
+def test_mock_delivery_rejects_unsafe_pr_url_before_execution(tmp_path):
+    store = _engine().store
+    marker = tmp_path / "pr-url-injected"
+
+    with pytest.raises(ValidationError, match="PR URL"):
+        store.run_ci_check(
+            f"https://x; touch {marker}",
+            "sh -c 'exit 0' ignored {pr_url}",
+            30,
+        )
+    assert not marker.exists()
+
+
+def test_mock_delivery_command_executes_as_argv_without_shell(monkeypatch):
+    store = _engine().store
+    seen = {}
+
+    class Result:
+        returncode = 0
+        stdout = "ok"
+        stderr = ""
+
+    def run(argv, **kwargs):
+        seen["argv"] = argv
+        seen["kwargs"] = kwargs
+        return Result()
+
+    monkeypatch.setattr("omac.engines.mock.subprocess.run", run)
+
+    result = store.merge_pull_request(
+        "https://github.com/acme/project/pull/7",
+        "a" * 40,
+        "custom-merge --url {pr_url} --revision {delivered_revision}",
+        30,
+    )
+
+    assert result.passed
+    assert seen["argv"] == [
+        "custom-merge", "--url", "https://github.com/acme/project/pull/7",
+        "--revision", "a" * 40,
+    ]
+    assert seen["kwargs"].get("shell") is not True

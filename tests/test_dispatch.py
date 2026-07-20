@@ -19,11 +19,14 @@ import pytest
 from omac.core.manifest import Contract, Manifest, Node, load_manifest, save_manifest
 from omac.core.taskmeta import TaskKind
 from omac.engines import create_engine
-from omac.engines.models import EngineConfig, WorkItemStatus
+from omac.engines.models import EngineConfig, PullRequestSnapshot, WorkItemStatus
+from omac.errors import ValidationError
 from omac.pipeline.dispatch import (
     KIND_GUIDE,
     KIND_LABEL,
     KIND_ROLE,
+    authoritative_review_scope_errors,
+    inspect_ready_pull_request,
     render_issue_body,
     render_review_rollout_comment,
 )
@@ -100,6 +103,100 @@ def _tmp_manifest_path(manifest):
     os.close(fd)
     save_manifest(manifest, path)
     return path
+
+
+@pytest.mark.parametrize(
+    ("is_draft", "state", "expected"),
+    [
+        (False, None, "state"),
+        (False, "", "state"),
+        ("false", "OPEN", "draft"),
+        (0, "OPEN", "draft"),
+    ],
+)
+def test_pr_snapshot_requires_well_typed_authoritative_state(
+    monkeypatch, is_draft, state, expected,
+):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    monkeypatch.setattr(
+        eng.store,
+        "inspect_pull_request",
+        lambda pr_url: PullRequestSnapshot(
+            url=pr_url,
+            is_draft=is_draft,
+            state=state,
+            head_revision="head-sha",
+        ),
+    )
+
+    with pytest.raises(ValidationError, match=expected):
+        inspect_ready_pull_request(eng.store, "https://mock.example.com/pr/1")
+
+
+def test_authoritative_review_scope_accepts_matching_independent_review():
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = SimpleNamespace(
+        reviewer="bob",
+        verification={"quality": {"regression_proof": [
+            {"base_ref": "base-sha"},
+        ]}},
+    )
+    report = {"review_scope": {
+        "changed_files": ["src/feature.py", "tests/test_feature.py"],
+    }}
+    snapshot = PullRequestSnapshot(
+        url="https://github.com/acme/project/pull/1",
+        is_draft=False,
+        state="OPEN",
+        head_revision="head-sha",
+        author_login="alice",
+        commit_authors=("alice", "pair"),
+        base_revision="base-sha",
+        changed_files=("src/feature.py", "tests/test_feature.py"),
+    )
+
+    assert authoritative_review_scope_errors(
+        eng.store, item, report, snapshot) == []
+
+
+@pytest.mark.parametrize(
+    ("reviewer", "base_revision", "reported_files", "expected"),
+    [
+        ("alice", "base-sha", ["src/feature.py"], "not independent"),
+        ("Alice", "base-sha", ["src/feature.py"], "not independent"),
+        ("bob", "other-base", ["src/feature.py"], "base_revision"),
+        ("bob", "base-sha", ["tests/omitted.py"], "exactly match"),
+    ],
+)
+def test_authoritative_review_scope_rejects_self_reported_mismatch(
+    reviewer, base_revision, reported_files, expected,
+):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = SimpleNamespace(
+        reviewer=reviewer,
+        verification={"quality": {"regression_proof": [
+            {"base_ref": "base-sha"},
+        ]}},
+    )
+    snapshot = PullRequestSnapshot(
+        url="https://github.com/acme/project/pull/1",
+        is_draft=False,
+        state="OPEN",
+        head_revision="head-sha",
+        author_login="alice",
+        commit_authors=("alice",),
+        base_revision=base_revision,
+        changed_files=("src/feature.py",),
+    )
+
+    errors = authoritative_review_scope_errors(
+        eng.store,
+        item,
+        {"review_scope": {"changed_files": reported_files}},
+        snapshot,
+    )
+
+    assert any(expected in error for error in errors)
 
 
 def test_final_acceptance_body_reads_mapping_contract_and_repositories():

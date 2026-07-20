@@ -52,6 +52,143 @@ def _manifest_yaml(tmp_path, nodes):
     return str(path)
 
 
+def _valid_node(node_id, *, worker="alice", reviewer="bob", blocked_by=None):
+    command = f"pytest tests/integration/test_{node_id}.py -q"
+    return {
+        "id": node_id,
+        "worker": worker,
+        "reviewer": reviewer,
+        "blocked_by": list(blocked_by or []),
+        "contract": {
+            "objective": f"Deliver {node_id}",
+            "source_of_truth": [f"docs/{node_id}.md#design"],
+            "acceptance": [f"{node_id}-flow"],
+            "non_goals": ["Do not change unrelated business flows"],
+            "verification_commands": [command],
+            "integration_gates": [{
+                "name": f"{node_id}-gate",
+                "layer": "integration",
+                "delivery_goal": f"{node_id} works end to end",
+                "source_of_truth": [f"docs/{node_id}.md#design"],
+                "covers": [node_id],
+                "acceptance_refs": [f"{node_id}-flow"],
+                "commands": [command],
+            }],
+            "quality": {
+                "required_outcomes": [{
+                    "id": f"{node_id}-outcome",
+                    "source_ref": f"acceptance#{node_id}-flow.run",
+                }],
+                "business_tests": [{
+                    "id": f"{node_id}-business-test",
+                    "outcome_refs": [f"{node_id}-outcome"],
+                    "command": command,
+                    "level": "integration",
+                    "real_dependencies": ["repository checkout"],
+                    "must_fail_on_base": True,
+                }],
+                "runtime_data_policy": "real-or-error",
+            },
+            "pr_base": "main",
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    "nodes",
+    [
+        [_valid_node("checkout", blocked_by=["missing-payment-service"])],
+        [
+            _valid_node("checkout", blocked_by=["payment"]),
+            _valid_node("payment", worker="bob", reviewer="alice", blocked_by=["checkout"]),
+        ],
+    ],
+    ids=["unknown-dependency", "cycle"],
+)
+def test_dag_run_rejects_invalid_graph_before_platform_side_effects(
+    nodes, tmp_path, monkeypatch, capsys,
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OMAC_ENGINE", "mock")
+    monkeypatch.setenv("OMAC_WORKSPACE_ID", "mock-workspace")
+    path = _manifest_yaml(tmp_path, nodes)
+    sync_calls = []
+    monkeypatch.setattr(
+        dag_mod,
+        "ensure_config_synced",
+        lambda *args, **kwargs: sync_calls.append((args, kwargs)),
+    )
+
+    code = main(["dag", "run", path, "--output", "json"])
+
+    assert code == exit_codes.VALIDATION
+    error = capsys.readouterr().err
+    assert "omac dag check" in error
+    assert sync_calls == []
+    assert _mock_store().list_work_items("mock-workspace") == []
+
+
+def test_dag_check_rejects_explicit_authoring_runtime_fields(
+    tmp_path, monkeypatch, capsys,
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OMAC_ENGINE", "mock")
+    monkeypatch.setenv("OMAC_WORKSPACE_ID", "mock-workspace")
+    node = _valid_node("checkout")
+    node.update({
+        "status": "todo",
+        "work_item_id": None,
+        "merged": False,
+        "merged_at": None,
+    })
+    path = _manifest_yaml(tmp_path, [node])
+
+    code = main(["dag", "check", path, "--no-review"])
+
+    assert code == exit_codes.VALIDATION
+    output = capsys.readouterr().out
+    for field in ("status", "work_item_id", "merged", "merged_at"):
+        assert f"runtime field {field}" in output
+
+
+def test_dag_tick_maps_malformed_acceptance_yaml_to_actionable_validation_error(
+    tmp_path, monkeypatch, capsys,
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OMAC_ENGINE", "mock")
+    monkeypatch.setenv("OMAC_WORKSPACE_ID", "mock-workspace")
+    path = _manifest_yaml(tmp_path, [])
+    raw = yaml.safe_load(open(path, encoding="utf-8"))
+    raw["meta"].update({
+        "acceptance_required": True,
+        "acceptance_file": "dag.acceptance.yaml",
+    })
+    open(path, "w", encoding="utf-8").write(
+        yaml.safe_dump(raw, allow_unicode=True, sort_keys=False))
+    (tmp_path / "dag.acceptance.yaml").write_text("flows: [\n")
+
+    code = main(["dag", "tick", path, "--output", "json"])
+
+    assert code == exit_codes.VALIDATION
+    error = capsys.readouterr().err
+    assert "acceptance" in error.lower()
+    assert "omac dag" in error
+
+
+def test_dag_check_maps_malformed_manifest_yaml_to_actionable_validation_error(
+    tmp_path, capsys,
+):
+    path = tmp_path / "dag.yaml"
+    path.write_text("nodes: [\n")
+
+    code = main(["dag", "check", str(path), "--no-review"])
+
+    assert code == exit_codes.VALIDATION
+    error = capsys.readouterr().err
+    assert "Could not parse manifest" in error
+    assert "Fix the manifest and retry" in error
+
+
 def test_dag_run_rejects_missing_declared_closeout_node(
         tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)

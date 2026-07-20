@@ -107,12 +107,16 @@ class ProjectInfo:
 
 @dataclass(frozen=True)
 class PullRequestSnapshot:
-    """由 engine adapter 读取的当前 PR 权威状态。"""
+    """由 engine adapter 读取的当前 PR 权威状态与评审范围。"""
 
     url: str
     is_draft: bool
     state: str
     head_revision: str
+    author_login: str = ""                  # PR author.login
+    commit_authors: Tuple[str, ...] = ()    # commits[].authors[].login（去重）
+    base_revision: str = ""                 # baseRefOid
+    changed_files: Tuple[str, ...] = ()     # files[].path（完整 changedFiles）
 
 
 @dataclass(frozen=True)

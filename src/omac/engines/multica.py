@@ -12,7 +12,6 @@ import hashlib
 import json
 import os
 import re
-import shlex
 import subprocess
 import tempfile
 import zipfile
@@ -36,6 +35,7 @@ from .models import (
     DeliveryCommandResult, EngineConfig, ProjectInfo, PullRequestSnapshot,
     RuntimeTarget, SkillPackage, WorkItem, WorkItemStatus, WorkspaceInfo,
 )
+from .delivery_command import prepare_delivery_command, validate_delivery_revision
 from .metadata_policy import assert_metadata_write_allowed, parse_payload_text
 from .runtime import AgentRuntime
 from .store import WorkItemStore
@@ -135,94 +135,124 @@ def _is_known_delivery_failure(operation_kind: str, detail: str) -> bool:
     return False
 
 
-def _is_shell_assignment(token: str) -> bool:
-    name, separator, _ = token.partition("=")
-    return bool(
-        separator
-        and name
-        and (name[0].isalpha() or name[0] == "_")
-        and all(char.isalnum() or char == "_" for char in name[1:])
-    )
+_GIT_OBJECT_ID = re.compile(r"[0-9a-fA-F]{40}(?:[0-9a-fA-F]{24})?\Z")
+_PR_STATES = {"OPEN", "CLOSED", "MERGED"}
 
 
-def _is_gh_executable(token: str) -> bool:
-    return token == "gh" or os.path.basename(token) == "gh"
+def _invalid_pr_payload(pr_url: str, field: str, expectation: str) -> PlatformError:
+    return PlatformError(ui(
+        f"GitHub PR check returned invalid {field} for {pr_url}; expected {expectation}.",
+        f"GitHub PR 检查为 {pr_url} 返回了非法 {field}；期望 {expectation}。",
+    ))
 
 
-def _looks_like_gh_command(tokens: List[str]) -> bool:
-    return any(
-        _is_gh_executable(token)
-        or token.startswith("gh ")
-        or " gh " in token
-        or token.endswith(" gh")
-        for token in tokens
-    )
+def _required_string(payload: Dict[str, Any], field: str, pr_url: str) -> str:
+    value = payload.get(field)
+    if not isinstance(value, str) or not value.strip():
+        raise _invalid_pr_payload(pr_url, field, "a non-empty string")
+    return value.strip()
 
 
-def _unwrap_supported_gh_wrappers(tokens: List[str]) -> List[str]:
-    tokens = list(tokens)
-    while tokens and _is_shell_assignment(tokens[0]):
-        tokens.pop(0)
-
-    while tokens:
-        if tokens[0] == "env":
-            tokens.pop(0)
-            while tokens and tokens[0] in {"-i", "--ignore-environment"}:
-                tokens.pop(0)
-            if tokens[:1] == ["--"]:
-                tokens.pop(0)
-            while tokens and _is_shell_assignment(tokens[0]):
-                tokens.pop(0)
-            continue
-        if tokens[0] == "command":
-            tokens.pop(0)
-            if tokens[:1] == ["--"]:
-                tokens.pop(0)
-            continue
-        if tokens[0] == "timeout":
-            if len(tokens) < 2 or not re.fullmatch(
-                r"\d+(?:\.\d+)?[smhd]?", tokens[1], re.IGNORECASE,
-            ):
-                return tokens
-            tokens = tokens[2:]
-            continue
-        break
-    return tokens
+def _required_object_id(payload: Dict[str, Any], field: str, pr_url: str) -> str:
+    value = _required_string(payload, field, pr_url)
+    if not _GIT_OBJECT_ID.fullmatch(value):
+        raise _invalid_pr_payload(pr_url, field, "a 40- or 64-character Git object ID")
+    return value.lower()
 
 
-def _is_github_cli_delivery_command(command: str, operation_kind: str) -> bool:
+def _parse_pull_request_snapshot(
+    payload: Dict[str, Any], requested_url: str,
+) -> PullRequestSnapshot:
+    raw_url = _required_string(payload, "url", requested_url)
     try:
-        tokens = shlex.split(command)
+        canonical_url = canonical_github_pr_url(raw_url)
     except ValueError as exc:
-        if "gh" in command:
-            raise ValidationError(ui(
-                f"Unsupported GitHub CLI command syntax: {exc}. Use a direct "
-                "`gh pr checks/merge` command or the supported env, command, "
-                "or timeout wrapper.",
-                f"不支持的 GitHub CLI 命令语法: {exc}。请直接使用 "
-                "`gh pr checks/merge`，或使用受支持的 env、command、timeout wrapper。",
-            )) from exc
-        return False
+        raise _invalid_pr_payload(requested_url, "url", "a canonical GitHub PR URL") from exc
+    if canonical_url != requested_url:
+        raise _invalid_pr_payload(
+            requested_url, "url", f"the requested canonical URL {requested_url}")
 
-    unwrapped = _unwrap_supported_gh_wrappers(tokens)
-    subcommand = "checks" if operation_kind == "ci" else "merge"
-    if (
-        len(unwrapped) >= 3
-        and _is_gh_executable(unwrapped[0])
-        and unwrapped[1:3] == ["pr", subcommand]
-        and not any(char in command for char in ";|&<>`\n\r")
-        and "$(" not in command
-    ):
-        return True
-    if _looks_like_gh_command(tokens):
-        raise ValidationError(ui(
-            "Unsupported GitHub CLI wrapper. Use a direct `gh pr checks/merge` "
-            "command, optional NAME=value assignments, or the supported env, "
-            "command, and timeout wrappers.",
-            "不支持的 GitHub CLI wrapper。请直接使用 `gh pr checks/merge`，"
-            "可选 NAME=value 环境变量，或受支持的 env、command、timeout wrapper。",
-        ))
-    return False
+    is_draft = payload.get("isDraft")
+    if type(is_draft) is not bool:
+        raise _invalid_pr_payload(requested_url, "isDraft", "a boolean")
+
+    state = payload.get("state")
+    if not isinstance(state, str) or state not in _PR_STATES:
+        raise _invalid_pr_payload(
+            requested_url, "state", f"one of {sorted(_PR_STATES)}")
+
+    head_revision = _required_object_id(payload, "headRefOid", requested_url)
+    base_revision = _required_object_id(payload, "baseRefOid", requested_url)
+
+    author = payload.get("author")
+    if not isinstance(author, dict):
+        raise _invalid_pr_payload(requested_url, "author", "an object with a login")
+    author_login = author.get("login")
+    if not isinstance(author_login, str) or not author_login.strip():
+        raise _invalid_pr_payload(
+            requested_url, "author.login", "a non-empty string")
+    author_login = author_login.strip()
+
+    commits = payload.get("commits")
+    if not isinstance(commits, list) or not commits:
+        raise _invalid_pr_payload(requested_url, "commits", "a non-empty list")
+    commit_authors: list[str] = []
+    seen_authors: set[str] = set()
+    for index, commit in enumerate(commits):
+        field = f"commits[{index}]"
+        if not isinstance(commit, dict):
+            raise _invalid_pr_payload(requested_url, field, "an object")
+        _required_object_id(commit, "oid", requested_url)
+        authors = commit.get("authors")
+        if not isinstance(authors, list) or not authors:
+            raise _invalid_pr_payload(
+                requested_url, f"{field}.authors", "a non-empty list")
+        for author_index, commit_author in enumerate(authors):
+            author_field = f"{field}.authors[{author_index}]"
+            if not isinstance(commit_author, dict):
+                raise _invalid_pr_payload(requested_url, author_field, "an object")
+            login = commit_author.get("login")
+            if not isinstance(login, str) or not login.strip():
+                raise _invalid_pr_payload(
+                    requested_url, f"{author_field}.login", "a non-empty string")
+            canonical_login = login.strip()
+            if canonical_login not in seen_authors:
+                seen_authors.add(canonical_login)
+                commit_authors.append(canonical_login)
+
+    files = payload.get("files")
+    if not isinstance(files, list) or not files:
+        raise _invalid_pr_payload(requested_url, "files", "a non-empty list")
+    changed_files: list[str] = []
+    seen_files: set[str] = set()
+    for index, changed_file in enumerate(files):
+        field = f"files[{index}]"
+        if not isinstance(changed_file, dict):
+            raise _invalid_pr_payload(requested_url, field, "an object")
+        path = changed_file.get("path")
+        if not isinstance(path, str) or not path.strip():
+            raise _invalid_pr_payload(requested_url, f"{field}.path", "a non-empty string")
+        canonical_path = path.strip()
+        if canonical_path in seen_files:
+            raise _invalid_pr_payload(requested_url, "files", "unique changed-file paths")
+        seen_files.add(canonical_path)
+        changed_files.append(canonical_path)
+
+    changed_file_count = payload.get("changedFiles")
+    if type(changed_file_count) is not int or changed_file_count != len(changed_files):
+        raise _invalid_pr_payload(
+            requested_url, "changedFiles", f"the complete file count {len(changed_files)}")
+
+    return PullRequestSnapshot(
+        url=canonical_url,
+        is_draft=is_draft,
+        state=state,
+        head_revision=head_revision,
+        author_login=author_login,
+        commit_authors=tuple(commit_authors),
+        base_revision=base_revision,
+        changed_files=tuple(changed_files),
+    )
 
 
 class MulticaStore(WorkItemStore):
@@ -253,7 +283,7 @@ class MulticaStore(WorkItemStore):
             proc = subprocess.run(
                 [
                     "gh", "pr", "view", pr_url, "--json",
-                    "url,isDraft,state,headRefOid",
+                    "url,isDraft,state,headRefOid,baseRefOid,author,commits,files,changedFiles",
                 ],
                 capture_output=True,
                 text=True,
@@ -290,38 +320,24 @@ class MulticaStore(WorkItemStore):
             raise PlatformError(ui(
                 f"GitHub PR check must return a JSON object: {pr_url}",
                 f"GitHub PR 检查必须返回 JSON object: {pr_url}"))
-        head_revision = payload.get("headRefOid")
-        if not isinstance(head_revision, str) or not head_revision.strip():
-            raise PlatformError(ui(
-                f"GitHub PR check did not return headRefOid: {pr_url}",
-                f"GitHub PR 检查未返回 headRefOid: {pr_url}"))
-        canonical_url = payload.get("url")
-        if not isinstance(canonical_url, str) or not canonical_url.strip():
-            raise PlatformError(ui(
-                f"GitHub PR check did not return canonical URL: {pr_url}",
-                f"GitHub PR 检查未返回 canonical URL: {pr_url}"))
-        return PullRequestSnapshot(
-            url=canonical_url,
-            is_draft=payload.get("isDraft") is True,
-            state=str(payload.get("state") or ""),
-            head_revision=head_revision,
-        )
+        return _parse_pull_request_snapshot(payload, pr_url)
 
     def _run_pull_request_command(
         self,
-        command: str,
+        argv: List[str],
         timeout_minutes: int,
         operation: str,
         operation_kind: str,
         github_cli: bool,
+        environment: Optional[Dict[str, str]] = None,
     ) -> DeliveryCommandResult:
         try:
             proc = subprocess.run(
-                command,
-                shell=True,
+                argv,
                 capture_output=True,
                 text=True,
                 timeout=max(1, int(timeout_minutes)) * 60,
+                env=environment,
             )
         except FileNotFoundError as exc:
             raise PlatformError(ui(
@@ -387,13 +403,18 @@ class MulticaStore(WorkItemStore):
             raise ValidationError(ui(
                 f"Invalid GitHub PR URL for CI: {exc}",
                 f"CI 使用的 GitHub PR URL 非法: {exc}")) from exc
-        rendered = command.replace("{pr_url}", canonical_url)
+        prepared = prepare_delivery_command(
+            command,
+            {"pr_url": canonical_url},
+            "ci",
+        )
         return self._run_pull_request_command(
-            rendered,
+            list(prepared.argv),
             timeout_minutes,
             "GitHub CI check",
             "ci",
-            _is_github_cli_delivery_command(command, "ci"),
+            prepared.is_github_cli,
+            prepared.environment,
         )
 
     def merge_pull_request(
@@ -409,16 +430,22 @@ class MulticaStore(WorkItemStore):
             raise ValidationError(ui(
                 f"Invalid GitHub PR URL for merge: {exc}",
                 f"merge 使用的 GitHub PR URL 非法: {exc}")) from exc
-        rendered = (
-            command.replace("{pr_url}", canonical_url)
-            .replace("{delivered_revision}", delivered_revision)
+        revision = validate_delivery_revision(delivered_revision)
+        prepared = prepare_delivery_command(
+            command,
+            {
+                "pr_url": canonical_url,
+                "delivered_revision": revision,
+            },
+            "merge",
         )
         return self._run_pull_request_command(
-            rendered,
+            list(prepared.argv),
             timeout_minutes,
             "GitHub merge",
             "merge",
-            _is_github_cli_delivery_command(command, "merge"),
+            prepared.is_github_cli,
+            prepared.environment,
         )
 
     # ==================== 内部工具 ====================

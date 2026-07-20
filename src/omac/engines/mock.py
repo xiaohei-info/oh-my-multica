@@ -14,13 +14,16 @@ import json
 from typing import Any, Dict, List, Optional
 
 import yaml
-from ..core.taskmeta import DELIVERY_CONTENT_KEY, Bounces, TaskKind, TaskPhase
+from ..core.taskmeta import DELIVERY_CONTENT_KEY, TaskKind, TaskPhase
 from ..errors import ValidationError
 from ..i18n import ui
 from .models import (
     AgentInfo, AgentProvisionSpec, DeliveryCommandOutcome,
     DeliveryCommandResult, EngineConfig, ProjectInfo, PullRequestSnapshot,
     RuntimeTarget, WorkItem, WorkItemStatus, WorkspaceInfo,
+)
+from .delivery_command import (
+    prepare_delivery_command, validate_delivery_pr_url, validate_delivery_revision,
 )
 from .runtime import AgentRuntime
 from .store import WorkItemStore
@@ -76,14 +79,64 @@ def _timeout_output(exc: subprocess.TimeoutExpired) -> str:
     return output
 
 
-def _run_delivery_command(command: str, timeout_minutes: int) -> DeliveryCommandResult:
+def _optional_mock_string(extra: Dict[str, Any], key: str) -> str:
+    if key not in extra:
+        return ""
+    value = extra[key]
+    if not isinstance(value, str) or not value.strip():
+        raise ValidationError(ui(
+            f"{key} must be a non-empty string when configured.",
+            f"配置 {key} 时必须提供非空字符串。",
+        ))
+    return value.strip()
+
+
+def _optional_mock_string_list(extra: Dict[str, Any], key: str) -> tuple[str, ...]:
+    if key not in extra:
+        return ()
+    raw = extra[key]
+    if isinstance(raw, str):
+        try:
+            value = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValidationError(ui(
+                f"{key} must be a JSON array of non-empty strings.",
+                f"{key} 必须是由非空字符串组成的 JSON 数组。",
+            )) from exc
+    else:
+        value = raw
+    if (
+        not isinstance(value, list)
+        or not value
+        or any(not isinstance(entry, str) or not entry.strip() for entry in value)
+    ):
+        raise ValidationError(ui(
+            f"{key} must be a non-empty list of non-empty strings.",
+            f"{key} 必须是由非空字符串组成的非空列表。",
+        ))
+    canonical = tuple(entry.strip() for entry in value)
+    if len(set(canonical)) != len(canonical):
+        raise ValidationError(ui(
+            f"{key} entries must be unique.",
+            f"{key} 中的条目不得重复。",
+        ))
+    return canonical
+
+
+def _run_delivery_command(
+    command: str,
+    timeout_minutes: int,
+    values: Dict[str, str],
+    operation_kind: str,
+) -> DeliveryCommandResult:
+    prepared = prepare_delivery_command(command, values, operation_kind)
     try:
         proc = subprocess.run(
-            command,
-            shell=True,
+            list(prepared.argv),
             capture_output=True,
             text=True,
             timeout=max(1, int(timeout_minutes)) * 60,
+            env=prepared.environment,
         )
     except subprocess.TimeoutExpired as exc:
         output = _timeout_output(exc)
@@ -609,18 +662,55 @@ class MockStore(WorkItemStore):
             if item.review_verdict == "pass-with-nits" and item.phase == TaskPhase.AUTHORING:
                 head_revision = "head-sha-nits"
             break
+        raw_draft = extra.get("MOCK_PR_DRAFT", "false")
+        if isinstance(raw_draft, bool):
+            is_draft = raw_draft
+        elif isinstance(raw_draft, str) and raw_draft.strip().lower() in {"true", "false"}:
+            is_draft = raw_draft.strip().lower() == "true"
+        else:
+            raise ValidationError(ui(
+                "MOCK_PR_DRAFT must be true or false.",
+                "MOCK_PR_DRAFT 必须是 true 或 false。",
+            ))
+
+        state = extra.get("MOCK_PR_STATE", "OPEN")
+        if not isinstance(state, str) or state not in {"OPEN", "CLOSED", "MERGED"}:
+            raise ValidationError(ui(
+                "MOCK_PR_STATE must be OPEN, CLOSED, or MERGED.",
+                "MOCK_PR_STATE 必须是 OPEN、CLOSED 或 MERGED。",
+            ))
+
+        author_login = _optional_mock_string(extra, "MOCK_PR_AUTHOR")
+        base_revision = _optional_mock_string(extra, "MOCK_PR_BASE_REVISION")
+        commit_authors = _optional_mock_string_list(extra, "MOCK_PR_COMMIT_AUTHORS")
+        changed_files = _optional_mock_string_list(extra, "MOCK_PR_CHANGED_FILES")
+        authority_values = (
+            author_login, base_revision, commit_authors, changed_files,
+        )
+        if any(authority_values) and not all(authority_values):
+            raise ValidationError(ui(
+                "Mock PR authority requires MOCK_PR_AUTHOR, MOCK_PR_BASE_REVISION, "
+                "MOCK_PR_COMMIT_AUTHORS, and MOCK_PR_CHANGED_FILES together.",
+                "Mock PR 权威事实必须同时配置 MOCK_PR_AUTHOR、MOCK_PR_BASE_REVISION、"
+                "MOCK_PR_COMMIT_AUTHORS 和 MOCK_PR_CHANGED_FILES。",
+            ))
         return PullRequestSnapshot(
             url=pr_url,
-            is_draft=str(extra.get("MOCK_PR_DRAFT", "false")).lower() == "true",
-            state=str(extra.get("MOCK_PR_STATE", "OPEN")),
+            is_draft=is_draft,
+            state=state,
             head_revision=head_revision,
+            author_login=author_login,
+            commit_authors=commit_authors,
+            base_revision=base_revision,
+            changed_files=changed_files,
         )
 
     def run_ci_check(
         self, pr_url: str, command: str, timeout_minutes: int,
     ) -> DeliveryCommandResult:
+        safe_pr_url = validate_delivery_pr_url(pr_url)
         return _run_delivery_command(
-            command.replace("{pr_url}", pr_url), timeout_minutes)
+            command, timeout_minutes, {"pr_url": safe_pr_url}, "ci")
 
     def merge_pull_request(
         self,
@@ -629,11 +719,14 @@ class MockStore(WorkItemStore):
         command: str,
         timeout_minutes: int,
     ) -> DeliveryCommandResult:
-        rendered = (
-            command.replace("{pr_url}", pr_url)
-            .replace("{delivered_revision}", delivered_revision)
+        safe_pr_url = validate_delivery_pr_url(pr_url)
+        revision = validate_delivery_revision(delivered_revision)
+        return _run_delivery_command(
+            command,
+            timeout_minutes,
+            {"pr_url": safe_pr_url, "delivered_revision": revision},
+            "merge",
         )
-        return _run_delivery_command(rendered, timeout_minutes)
 
     # ==================== 工作空间发现 ====================
 

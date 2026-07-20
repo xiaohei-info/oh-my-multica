@@ -1,6 +1,7 @@
 """omac work — 被派发 agent 的统一执行接口(5 类 issue × 产出/评审阶段)。"""
 from __future__ import annotations
 
+from dataclasses import asdict, is_dataclass
 import os
 import sys
 
@@ -311,10 +312,23 @@ def _run_show(args) -> int:
     output["engine_env"] = _store_env(store)
 
     if getattr(args, "output", "json") == "json":
-        print_json(output)
+        print_json(_json_ready(output))
     else:
         _render_table(output, language)
     return exit_codes.OK
+
+
+def _json_ready(value):
+    """Recursively preserve structured dataclass facts at the JSON boundary."""
+    if is_dataclass(value):
+        return _json_ready(asdict(value))
+    if isinstance(value, dict):
+        return {key: _json_ready(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_ready(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_ready(item) for item in value]
+    return value
 
 
 def _store_env(store) -> dict:

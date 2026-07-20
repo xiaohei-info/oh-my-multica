@@ -470,6 +470,123 @@ def _manifest_with_required_contract(path: str) -> str:
     )
 
 
+def _increment_manifest(*, source_ref: str = "acceptance#flow-dashboard.open") -> str:
+    dashboard = GOOD_MANIFEST.split("  - id: dashboard\n", 1)[1].replace(
+        "            source_ref: acceptance#flow-dashboard.open\n",
+        f"            source_ref: {source_ref}\n",
+        1,
+    )
+    return "meta:\n  name: demo-increment\nnodes:\n  - id: dashboard-fix\n" + dashboard
+
+
+def _guard_work_item(deliverable: str):
+    from omac.core.taskmeta import TaskKind
+    from omac.engines.models import WorkItem, WorkItemStatus
+
+    return WorkItem(
+        id="decompose-increment",
+        workspace_id="mock-workspace",
+        title="incremental decomposition",
+        description="repair failed dashboard acceptance",
+        status=WorkItemStatus.IN_REVIEW,
+        dag_key="decompose-p-test-r1",
+        worker="bob",
+        kind=TaskKind.DECOMPOSE,
+        deliverable=deliverable,
+    )
+
+
+def test_increment_guard_allows_dependency_on_base_manifest(tmp_path):
+    import yaml
+
+    from omac.core.acceptance import load_acceptance_doc
+    from omac.core.manifest import loads_manifest
+    from omac.pipeline.plan import _compose_guard
+
+    base_manifest = loads_manifest(
+        GOOD_MANIFEST.split("  - id: dashboard\n", 1)[0],
+        project_root=str(tmp_path),
+    )
+    acceptance_doc = load_acceptance_doc(yaml.safe_load(ACCEPTANCE_YAML))
+    guard = _compose_guard(
+        {"alice", "bob"},
+        project_root=str(tmp_path),
+        acceptance_doc=acceptance_doc,
+        base_manifest=base_manifest,
+    )
+
+    assert guard(_guard_work_item(_increment_manifest())) == []
+
+
+def test_increment_guard_rejects_unknown_acceptance_action(tmp_path):
+    import yaml
+
+    from omac.core.acceptance import load_acceptance_doc
+    from omac.core.manifest import loads_manifest
+    from omac.pipeline.plan import _compose_guard
+
+    base_manifest = loads_manifest(
+        GOOD_MANIFEST.split("  - id: dashboard\n", 1)[0],
+        project_root=str(tmp_path),
+    )
+    acceptance_doc = load_acceptance_doc(yaml.safe_load(ACCEPTANCE_YAML))
+    guard = _compose_guard(
+        {"alice", "bob"},
+        project_root=str(tmp_path),
+        acceptance_doc=acceptance_doc,
+        base_manifest=base_manifest,
+    )
+
+    errors = guard(_guard_work_item(_increment_manifest(
+        source_ref="acceptance#flow-dashboard.missing",
+    )))
+
+    assert any("not anchored to an acceptance action" in error for error in errors)
+
+
+@pytest.mark.parametrize("entrypoint", ["create", "resume"])
+def test_create_and_resume_share_acceptance_action_guard(
+        tmp_path, monkeypatch, entrypoint):
+    from omac.core.taskmeta import TaskKind, TaskPhase
+    from omac.engines.models import WorkItemStatus
+
+    engine = _configure_create_mock(tmp_path, monkeypatch)
+    invalid_manifest = GOOD_MANIFEST.replace(
+        "acceptance#flow-dashboard.open",
+        "acceptance#flow-dashboard.missing",
+        1,
+    )
+    MockStore.set_kind_delivery_sequence(
+        "decompose",
+        [{"manifest": invalid_manifest}, {"manifest": GOOD_MANIFEST}],
+    )
+
+    if entrypoint == "create":
+        args = ["plan", "create", "--name", "demo-action-context"]
+    else:
+        plan_item = engine.store.create_work_item(
+            "mock-workspace",
+            "[DAG:plan-p-action01] demo-action-context 设计方案",
+            "demo-action-context 设计方案",
+            dag_key="plan-p-action01",
+            worker="alice",
+            kind=TaskKind.PLAN,
+        )
+        engine.store.update_work_item_metadata(
+            plan_item.id,
+            deliverable=PLAN_TEXT,
+            project_rules=PROJECT_RULES_TEXT,
+            phase=TaskPhase.REVIEW,
+        )
+        engine.store.update_status(plan_item.id, WorkItemStatus.DONE)
+        args = ["plan", "resume", "--dag-key", "plan-p-action01"]
+
+    assert main(args) == exit_codes.OK
+    decompose_item = _first_item_of_kind(engine, TaskKind.DECOMPOSE)
+    comments = "\n".join(engine.store.get_comments(decompose_item.id))
+    assert "not anchored to an acceptance action" in comments
+
+
 def _configure_create_mock(tmp_path, monkeypatch):
     """完整 mock 配置:planner/orchestrator/workers/reviewers 角色齐全。"""
     from omac.core.taskmeta import TaskKind
