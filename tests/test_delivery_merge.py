@@ -149,6 +149,58 @@ class TestMergeConfig:
 # ── run_merge_delivery 单元测试 ────────────────────────────────────────────
 
 class TestRunMergeDeliveryUnit:
+    @pytest.mark.parametrize(
+        ("intent", "head_revision"),
+        [
+            (None, "delivered-sha"),
+            ({
+                "pr_url": "https://github.com/acme/project/pull/1",
+                "delivered_revision": "other-sha",
+            }, "delivered-sha"),
+            ({
+                "pr_url": "https://github.com/acme/project/pull/999",
+                "delivered_revision": "delivered-sha",
+            }, "delivered-sha"),
+            ({
+                "pr_url": "https://github.com/acme/project/pull/1",
+                "delivered_revision": "delivered-sha",
+            }, "other-sha"),
+        ],
+    )
+    def test_merged_pr_without_matching_durable_intent_is_not_completed(
+        self, monkeypatch, intent, head_revision,
+    ):
+        store = _store()
+        store.config.extra.update({
+            "MOCK_PR_STATE": "MERGED",
+            "MOCK_PR_HEAD_REVISION": head_revision,
+        })
+        item = _review_passed_item(store)
+        if intent is not None:
+            store.update_work_item_metadata(item.id, merge_intent=intent)
+        manifest = Manifest(meta={}, nodes={"a": _node()})
+        manifest.nodes["a"].work_item_id = item.id
+        manifest.nodes["a"].status = "in_review"
+        monkeypatch.setattr(
+            store,
+            "merge_pull_request",
+            lambda *args, **kwargs: pytest.fail(
+                "an already merged PR must never execute merge again"),
+        )
+
+        with pytest.raises(ValidationError) as exc_info:
+            run_merge_delivery(
+                {}, manifest, "a", store, _runtime(store), dict(DEFAULT_RETRY))
+
+        message = str(exc_info.value)
+        assert "cannot prove" in message
+        assert "omac node show <manifest> a" in message
+        assert "omac node accept <manifest> a" in message
+        assert manifest.nodes["a"].status == "in_review"
+        assert manifest.nodes["a"].merged is False
+        assert store.get_work_item(item.id).review_verdict == "pass"
+        assert store.get_work_item(item.id).bounces.review == 0
+
     def test_default_merge_command_runs_when_unconfigured(self, monkeypatch):
         store = _store()
         store.config.engine_type = "multica"
@@ -885,6 +937,88 @@ class TestCollectResultsMerge:
 # ── manifest 持久化:合入信息落盘 ──────────────────────────────────────────
 
 class TestManifestPersistence:
+    def test_restart_converges_when_merge_succeeded_before_status_persistence_failed(
+        self, tmp_path, monkeypatch,
+    ):
+        store = _store()
+        store.config.extra["MOCK_PR_HEAD_REVISION"] = "delivered-sha"
+        item = _review_passed_item(store)
+        store.update_work_item_metadata(
+            item.id,
+            review_report={
+                "reviewed_revision": "delivered-sha",
+                "review_goals": ["check merge recovery"],
+                "diff_reviewed": True,
+                "tests_rerun": True,
+                "coverage_checked": True,
+                "integration_tests_rerun": True,
+                "acceptance_mapping": [
+                    {
+                        "acceptance": "a works",
+                        "evidence": "merge recovery verified",
+                        "status": "pass",
+                    },
+                ],
+                "blockers": [],
+            },
+        )
+        manifest = Manifest(meta={"name": "demo"}, nodes={"a": _node()})
+        manifest.nodes["a"].work_item_id = item.id
+        manifest.nodes["a"].status = "in_review"
+        path = str(tmp_path / "m.yaml")
+        import omac.core.manifest as mmod
+        mmod.save_manifest(manifest, path)
+
+        merge_succeeded = False
+
+        def merge_pull_request(*args, **kwargs):
+            nonlocal merge_succeeded
+            assert store.get_work_item(item.id).merge_intent == {
+                "pr_url": "https://github.com/acme/project/pull/1",
+                "delivered_revision": "delivered-sha",
+            }
+            merge_succeeded = True
+            store.config.extra["MOCK_PR_STATE"] = "MERGED"
+            return _command_result(DeliveryCommandOutcome.PASSED, exit_code=0)
+
+        real_update_status = store.update_status
+
+        def fail_status_persistence_after_merge(item_id, status):
+            if merge_succeeded:
+                raise PlatformError("platform status persistence failed")
+            return real_update_status(item_id, status)
+
+        monkeypatch.setattr(store, "merge_pull_request", merge_pull_request)
+        monkeypatch.setattr(store, "update_status", fail_status_persistence_after_merge)
+
+        with pytest.raises(PlatformError, match="status persistence failed"):
+            run_merge_delivery(
+                {}, manifest, "a", store, _runtime(store), dict(DEFAULT_RETRY))
+
+        assert store.get_work_item(item.id).merge_intent == {
+            "pr_url": "https://github.com/acme/project/pull/1",
+            "delivered_revision": "delivered-sha",
+        }
+
+        # 模拟进程退出：只从 merge 前已经落盘的旧 manifest 恢复。
+        restarted = mmod.load_manifest(path)
+        monkeypatch.setattr(store, "update_status", real_update_status)
+
+        failures = loop.collect_results(
+            store,
+            _runtime(store),
+            restarted,
+            path,
+            retry_limits=dict(DEFAULT_RETRY),
+            config={"engine": "mock"},
+        )
+
+        assert failures == {}
+        assert restarted.nodes["a"].status == "done"
+        assert restarted.nodes["a"].merged is True
+        assert store.get_work_item(item.id).status is WorkItemStatus.DONE
+        assert store.get_work_item(item.id).bounces.review == 0
+
     def test_done_node_manifest_records_merge_info(self, tmp_path):
         script = _merge_script(tmp_path, "exit 0")
         store = _store()

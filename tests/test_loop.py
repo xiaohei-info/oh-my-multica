@@ -23,6 +23,7 @@ from omac.engines.models import (
     EngineConfig,
     WorkItemStatus,
 )
+from omac.errors import AuthError, PlatformError
 from omac.pipeline.loop import TickResult, collect_results, tick
 
 
@@ -747,6 +748,56 @@ class TestReviewerHandoff:
         result = _loop_to_settle(eng.store, eng.runtime, manifest, path)
         assert result.state == "converged"
         assert "a" in result.done
+
+    @pytest.mark.parametrize("error_type", [AuthError, PlatformError])
+    @pytest.mark.parametrize("failed_operation", ["assign", "wake"])
+    def test_reviewer_handoff_failure_blocks_with_compensated_state(
+        self, tmp_path, monkeypatch, error_type, failed_operation,
+    ):
+        """Reviewer assign/wake 失败必须形成可恢复的 blocked 状态。"""
+        manifest = _manifest([_node("a", reviewer="bob")])
+        path = str(tmp_path / "manifest.yaml")
+        save_manifest(manifest, path)
+        eng = _engine(MOCK_AUTO_COMPLETE="false")
+
+        item = eng.store.create_work_item(
+            "ws", "a", "Task a", dag_key="a", worker="alice", reviewer="bob",
+        )
+        eng.store.set_node_contract(item.id, manifest.nodes["a"].contract)
+        eng.store.update_work_item_metadata(
+            item.id,
+            artifacts={"pr_url": f"https://mock.example.com/pr/{item.id}"},
+            verification=_verification(),
+        )
+        eng.store.update_status(item.id, WorkItemStatus.DONE)
+        manifest.nodes["a"].work_item_id = item.id
+        manifest.nodes["a"].status = "in_progress"
+        save_manifest(manifest, path)
+
+        def fail(*args, **kwargs):
+            raise error_type(f"reviewer {failed_operation} failed")
+
+        if failed_operation == "assign":
+            monkeypatch.setattr(eng.store, "assign_work_item", fail)
+        else:
+            monkeypatch.setattr(eng.runtime, "wake", fail)
+
+        result = tick(eng.store, eng.runtime, manifest, path)
+
+        got = eng.store.get_work_item(item.id)
+        persisted = load_manifest(path)
+        assert result.state == "needs_decision"
+        assert manifest.nodes["a"].status == "blocked"
+        assert persisted.nodes["a"].status == "blocked"
+        assert got.status == WorkItemStatus.BLOCKED
+        assert got.phase == TaskPhase.AUTHORING
+        reason = next(
+            node["reason"] for node in result.report["failed_nodes"]
+            if node["key"] == "a"
+        )
+        assert failed_operation in reason
+        assert "reviewer bob" in reason
+        assert f"omac node retry {path} a" in reason
 
 
 # ==================== 5. 无自动重试 ====================
@@ -1541,33 +1592,53 @@ class TestReviewerRejectFallbackRollback:
         tick(eng.store, eng.runtime, manifest, fpath, max_parallel=4)
         set_node(manifest, key, status="in_review")
         save_manifest(manifest, fpath)
-        eng.store.update_work_item_metadata(item.id, review_verdict="reject")
+        eng.store.update_work_item_metadata(
+            item.id,
+            review_verdict="reject",
+            review_comment="核心业务行为未满足",
+            review_report=_review_report("reject"),
+        )
         eng.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
         return manifest, eng, item
 
-    def test_fallback_failure_rolls_back_bounce(self, tmp_path, monkeypatch):
-        """assign/wake worker 抛 PlatformError 时应回滚 review_bounce,节点标 blocked。"""
-        from unittest.mock import patch
+    @pytest.mark.parametrize("error_type", [AuthError, PlatformError])
+    @pytest.mark.parametrize("failed_operation", ["assign", "wake"])
+    def test_fallback_failure_restores_review_state_and_blocks(
+        self, tmp_path, monkeypatch, error_type, failed_operation,
+    ):
+        """Reject 回派的 assign/wake 失败必须回滚并保留可诊断评审状态。"""
         from omac.engines import create_engine
-        from omac.engines.models import WorkItemStatus
-        from omac.core.manifest import set_node
-        from omac.engines.mock import MockRuntime
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
         fpath = str(tmp_path / "m.yaml")
         manifest, eng, item = self._setup_reject_node(eng, fpath)
 
-        def boom(*args, **kwargs):
-            from omac.errors import PlatformError
-            raise PlatformError("wake failed")
+        def fail(*args, **kwargs):
+            raise error_type(f"worker {failed_operation} failed")
 
-        with patch.object(MockRuntime, "wake", boom):
-            tick(eng.store, eng.runtime, manifest, fpath,
-                 max_parallel=4, retry_limits={"review": 3})
+        if failed_operation == "assign":
+            monkeypatch.setattr(eng.store, "assign_work_item", fail)
+        else:
+            monkeypatch.setattr(eng.runtime, "wake", fail)
+
+        result = tick(
+            eng.store, eng.runtime, manifest, fpath,
+            max_parallel=4, retry_limits={"review": 3},
+        )
 
         got = eng.store.get_work_item(item.id)
-        # 回滚:review_bounce 不增长
+        persisted = load_manifest(fpath)
         assert got.bounces.review == 0
-        # 节点置 blocked,不再滞留 in_review
+        assert got.phase == TaskPhase.REVIEW
+        assert got.review_verdict == "reject"
+        assert got.review_comment == "核心业务行为未满足"
         assert manifest.nodes["a"].status == "blocked"
+        assert persisted.nodes["a"].status == "blocked"
         assert got.status == WorkItemStatus.BLOCKED
-        assert any("return to worker" in c for c in eng.store.get_comments(item.id))
+        assert result.state == "needs_decision"
+        reason = next(
+            node["reason"] for node in result.report["failed_nodes"]
+            if node["key"] == "a"
+        )
+        assert failed_operation in reason
+        assert "worker alice" in reason
+        assert f"omac node retry {fpath} a" in reason

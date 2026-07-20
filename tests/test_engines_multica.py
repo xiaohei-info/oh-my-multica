@@ -638,6 +638,42 @@ def test_multica_runtime_does_not_rerun_fresh_failed_assignment(monkeypatch):
     assert calls.count(["issue", "rerun", "issue-1", "--output", "json"]) == 1
 
 
+@pytest.mark.parametrize(
+    ("role", "metadata_key"),
+    [("worker", "worker"), ("reviewer", "reviewer")],
+)
+def test_multica_assign_persists_role_before_external_assignment(
+    monkeypatch, role, metadata_key,
+):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    calls = []
+
+    monkeypatch.setattr(store, "_resolve_agent_id", lambda name: "agent-1")
+
+    def run(args, capture=True):
+        calls.append(args)
+        if args[:2] == ["issue", "get"]:
+            return {"id": "issue-1", "assignee_id": "agent-old"}
+        if args[:3] == ["issue", "metadata", "set"]:
+            raise PlatformError("metadata write failed")
+        if args[:2] == ["issue", "assign"]:
+            return {"id": "issue-1", "assignee_id": "agent-1"}
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", run)
+
+    with pytest.raises(PlatformError, match="metadata write failed"):
+        store.assign_work_item("issue-1", "alice", role)
+
+    assert calls == [
+        ["issue", "get", "issue-1", "--output", "json"],
+        [
+            "issue", "metadata", "set", "issue-1",
+            "--key", metadata_key, "--value", "alice",
+        ],
+    ]
+
+
 def test_multica_runtime_reruns_completed_same_assignee_assignment(monkeypatch):
     """同一 assignee 的 assign 不会启动新 run，wake 必须 rerun 已结束任务。"""
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
@@ -965,6 +1001,95 @@ def test_multica_custom_merge_nonzero_exit_is_delivery_failure(
     assert result.outcome is DeliveryCommandOutcome.FAILED
     assert result.exit_code == exit_code
     assert message in result.output
+
+
+@pytest.mark.parametrize(
+    ("operation_kind", "command"),
+    [
+        (
+            "ci",
+            "GH_HOST=github.com gh pr checks {pr_url} --watch --fail-fast",
+        ),
+        (
+            "ci",
+            "command gh pr checks {pr_url} --watch --fail-fast",
+        ),
+        (
+            "ci",
+            "timeout 60 gh pr checks {pr_url} --watch --fail-fast",
+        ),
+        (
+            "merge",
+            "GH_HOST=github.com gh pr merge {pr_url} "
+            "--match-head-commit {delivered_revision}",
+        ),
+        (
+            "merge",
+            "command gh pr merge {pr_url} "
+            "--match-head-commit {delivered_revision}",
+        ),
+        (
+            "merge",
+            "timeout 60 gh pr merge {pr_url} "
+            "--match-head-commit {delivered_revision}",
+        ),
+    ],
+)
+def test_multica_supported_gh_wrappers_preserve_auth_classification(
+    monkeypatch, operation_kind, command,
+):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+
+    class Result:
+        returncode = 4
+        stdout = ""
+        stderr = "authentication required"
+
+    monkeypatch.setattr("omac.engines.multica.subprocess.run", lambda *a, **k: Result())
+
+    with pytest.raises(AuthError):
+        if operation_kind == "ci":
+            store.run_ci_check(
+                "https://github.com/acme/project/pull/7", command, 30,
+            )
+        else:
+            store.merge_pull_request(
+                "https://github.com/acme/project/pull/7", "abc123", command, 30,
+            )
+
+
+@pytest.mark.parametrize(
+    ("operation_kind", "command"),
+    [
+        (
+            "ci",
+            "sudo gh pr checks {pr_url} --watch --fail-fast",
+        ),
+        (
+            "merge",
+            "sudo gh pr merge {pr_url} "
+            "--match-head-commit {delivered_revision}",
+        ),
+    ],
+)
+def test_multica_unknown_gh_wrapper_is_rejected_before_execution(
+    monkeypatch, operation_kind, command,
+):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    monkeypatch.setattr(
+        "omac.engines.multica.subprocess.run",
+        lambda *a, **k: pytest.fail("ambiguous gh command must not execute"),
+    )
+
+    with pytest.raises(ValidationError, match="wrapper"):
+        if operation_kind == "ci":
+            store.run_ci_check(
+                "https://github.com/acme/project/pull/7", command, 30,
+            )
+        else:
+            store.merge_pull_request(
+                "https://github.com/acme/project/pull/7", "abc123", command, 30,
+            )
 
 
 @pytest.mark.parametrize(

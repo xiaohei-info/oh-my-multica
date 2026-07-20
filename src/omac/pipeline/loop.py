@@ -26,7 +26,7 @@ from ..engines.models import (
 )
 from ..engines.runtime import AgentRuntime
 from ..engines.store import WorkItemStore
-from ..errors import PlatformError, ValidationError
+from ..errors import AuthError, PlatformError, ValidationError
 from ..i18n import current_language, ui
 from ..pipeline.dispatch import (
     inspect_ready_pull_request, normalize_source_refs, render_issue_body,
@@ -79,6 +79,57 @@ def _delivery_block_message(stage: str, result: DeliveryResult) -> str:
             f"{stage} cannot continue because delivered_revision is missing.",
             f"{stage} 无法继续：缺少 delivered_revision")
     raise ValueError(f"Unsupported delivery block reason: {reason}")
+
+
+def _handoff_or_block(
+    store: WorkItemStore,
+    runtime: AgentRuntime,
+    manifest: Manifest,
+    manifest_path: str,
+    key: str,
+    assignee: str,
+    role: str,
+    stage: str,
+    previous_phase: TaskPhase,
+    restore_metadata: Dict[str, Any] | None = None,
+) -> str | None:
+    """把 assign + wake 作为单一边界；失败时补偿并转为可决策 blocked。"""
+    node = manifest.nodes[key]
+    item_id = node.work_item_id
+    operation = "assign"
+    try:
+        store.assign_work_item(item_id, assignee, role)
+        operation = "wake"
+        runtime.wake(item_id, assignee, role)
+        return None
+    except (AuthError, PlatformError) as exc:
+        metadata = {
+            name: value
+            for name, value in (restore_metadata or {}).items()
+            if value is not None
+        }
+        metadata["phase"] = previous_phase
+        store.update_work_item_metadata(item_id, **metadata)
+        store.update_status(item_id, WorkItemStatus.BLOCKED)
+        set_node(manifest, key, status="blocked")
+        retry_command = f"omac node retry {manifest_path} {key}"
+        reason = ui(
+            f"{stage} handoff failed while trying to {operation} {role} "
+            f"{assignee}: {exc}. The transition was rolled back and the node "
+            f"was blocked. Fix platform access, then run `{retry_command}`.",
+            f"{stage} 交接在尝试{('分配' if operation == 'assign' else '唤醒')} "
+            f"{role} {assignee} 时失败: {exc}。状态已补偿并将节点阻断。"
+            f"修复平台访问后运行 `{retry_command}`。",
+        )
+        store.add_comment(item_id, reason)
+        log.info(
+            logsetup.EVT_NODE_FAILED,
+            kind=_DAG_KIND,
+            node=key,
+            id=item_id,
+            reason=reason,
+        )
+        return reason
 
 
 def _store_env(store: WorkItemStore) -> dict:
@@ -518,27 +569,30 @@ def collect_results(
             except ValidationError as exc:
                 gate_errors = [str(exc)]
             if verdict == "pass-with-nits" and not gate_errors:
+                previous_phase = item.phase
+                previous_review_comment = item.review_comment
                 store.update_work_item_metadata(
                     node.work_item_id, phase=TaskPhase.AUTHORING,
                     review_comment="")
-                try:
-                    store.assign_work_item(node.work_item_id, node.worker, "worker")
-                    store.update_status(node.work_item_id, WorkItemStatus.IN_PROGRESS)
-                    set_node(manifest, key, status="in_progress")
+                store.update_status(node.work_item_id, WorkItemStatus.IN_PROGRESS)
+                set_node(manifest, key, status="in_progress")
+                handoff_failure = _handoff_or_block(
+                    store,
+                    runtime,
+                    manifest,
+                    manifest_path,
+                    key,
+                    node.worker,
+                    "worker",
+                    "Review nits",
+                    previous_phase,
+                    {"review_comment": previous_review_comment},
+                )
+                if handoff_failure is None:
                     log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=key,
                              id=node.work_item_id, gate="review-nits")
-                    runtime.wake(node.work_item_id, node.worker, "worker")
-                except PlatformError as exc:
-                    store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
-                    store.add_comment(
-                        node.work_item_id,
-                        ui(
-                            f"Failed to return nits to worker {node.worker}: {exc}",
-                            f"回退到 worker {node.worker} 处理 nits 失败: {exc}"))
-                    set_node(manifest, key, status="blocked")
-                    failures[key] = ui(
-                        f"Failed to return nits to worker {node.worker}: {exc}",
-                        f"回退到 worker {node.worker} 处理 nits 失败: {exc}")
+                else:
+                    failures[key] = handoff_failure
                 continue
             if not gate_errors and verdict != "reject":
                 # reviewer pass → P4.2 自动 merge 门。未显式配置 merge.command 时
@@ -578,31 +632,36 @@ def collect_results(
                 else:
                     # 有界「回到 worker」:先记回退计数并清除旧评审判定,再重新派发 worker。
                     # 派发失败时回滚回退计数并把节点标 blocked,避免卡在「已清判定/未派发」中间态。
+                    previous_phase = item.phase
+                    review_snapshot = {
+                        "review_bounce": cur_bounce,
+                        "review_verdict": item.review_verdict,
+                        "review_comment": item.review_comment,
+                        "review_report": item.review_report,
+                        "decision_required": item.decision_required,
+                    }
                     store.update_work_item_metadata(node.work_item_id, review_bounce=cur_bounce + 1)
                     store.reset_review(node.work_item_id)
-                    # 派发失败时回滚 review_bounce,避免把「未成功的回退」计为消耗;
-                    # 这与 CI 回退路径(delivery.advance_delivery)的语义对称 ——
-                    # 两者都是「计数只在派发成功时才真正消耗」。
-                    try:
-                        store.assign_work_item(node.work_item_id, node.worker, "worker")
-                        store.update_status(node.work_item_id, WorkItemStatus.IN_PROGRESS)
-                        set_node(manifest, key, status="in_progress")
+                    store.update_status(node.work_item_id, WorkItemStatus.IN_PROGRESS)
+                    set_node(manifest, key, status="in_progress")
+                    handoff_failure = _handoff_or_block(
+                        store,
+                        runtime,
+                        manifest,
+                        manifest_path,
+                        key,
+                        node.worker,
+                        "worker",
+                        "Review rejection",
+                        previous_phase,
+                        review_snapshot,
+                    )
+                    if handoff_failure is None:
                         log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=key,
                                  id=node.work_item_id, gate="review",
                                  round=cur_bounce + 1, max=review_limit)
-                        runtime.wake(node.work_item_id, node.worker, "worker")
-                    except PlatformError as exc:
-                        store.update_work_item_metadata(node.work_item_id, review_bounce=cur_bounce)
-                        store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
-                        store.add_comment(
-                            node.work_item_id,
-                            ui(
-                                f"Failed to return to worker {node.worker}; retry count rolled back: {exc}",
-                                f"回退到 worker {node.worker} 失败(已回滚回退计数): {exc}"))
-                        set_node(manifest, key, status="blocked")
-                        failures[key] = ui(
-                            f"Failed to return to worker {node.worker}: {exc}",
-                            f"回退到 worker {node.worker} 失败: {exc}")
+                    else:
+                        failures[key] = handoff_failure
 
     # ---- reviewer 阶段过渡(遍历后执行,避免改 manifest 影响遍历)----
     for key, item_id, reviewer in pending_review:
@@ -613,23 +672,23 @@ def collect_results(
         # wake 的 auto_complete 找不到已派发项而无法置评审判定。
         store.update_status(item_id, WorkItemStatus.IN_REVIEW)
         store.update_work_item_metadata(item_id, phase=TaskPhase.REVIEW)
-        store.assign_work_item(item_id, reviewer, "reviewer")
         set_node(manifest, key, status="in_review")
-        log.info(logsetup.EVT_REVIEW_DISPATCH, kind=_DAG_KIND, node=key,
-                 id=item_id, reviewer=reviewer)
-        try:
-            runtime.wake(item_id, reviewer, "reviewer")
-        except PlatformError as exc:
-            store.update_status(item_id, WorkItemStatus.BLOCKED)
-            store.add_comment(item_id, ui(
-                f"Failed to wake reviewer {reviewer}: {exc}",
-                f"唤醒 reviewer {reviewer} 失败: {exc}"))
-            set_node(manifest, key, status="blocked")
-            failures[key] = ui(
-                f"Failed to wake reviewer {reviewer}", f"唤醒 reviewer {reviewer} 失败")
-            log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
-                     id=item_id, reason=ui(
-                         f"Failed to wake reviewer {reviewer}", f"唤醒 reviewer {reviewer} 失败"))
+        handoff_failure = _handoff_or_block(
+            store,
+            runtime,
+            manifest,
+            manifest_path,
+            key,
+            reviewer,
+            "reviewer",
+            "Reviewer",
+            TaskPhase.AUTHORING,
+        )
+        if handoff_failure is None:
+            log.info(logsetup.EVT_REVIEW_DISPATCH, kind=_DAG_KIND, node=key,
+                     id=item_id, reviewer=reviewer)
+        else:
+            failures[key] = handoff_failure
 
     if failures or pending_review:
         save_manifest(manifest, manifest_path)

@@ -154,6 +154,7 @@ class WorkItemStore(ABC):
         review_report: Optional[Dict[str, Any]] = None,
         review_report_source: Optional[str] = None,
         decision_required: Optional[Dict[str, Any]] = None,
+        merge_intent: Optional[Dict[str, str]] = None,
         phase: Optional[TaskPhase] = None,
         worker_bounce: Optional[int] = None,
         ci_bounce: Optional[int] = None,
@@ -170,6 +171,7 @@ class WorkItemStore(ABC):
         - phase:产出(authoring)↔ 评审(review)的阶段切换;
         - worker_bounce/ci_bounce/review_bounce/merge_bounce:回退的绝对值
           (pipeline 读当前值、+1、写回;Store 只存取不做状态机);
+        - merge_intent:外部 merge 前写入的 PR URL + delivered revision 恢复凭证;
         - deliverable:按 kind 承载 plan/acceptance/manifest 等交付正文。
         - project_rules:plan 的项目级开发规范交付正文。
         - description:回填 Human-first issue 正文(顶部单一 bootstrap 嵌入真实 id)。

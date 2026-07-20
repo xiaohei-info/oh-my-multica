@@ -720,6 +720,7 @@ class MockStore(WorkItemStore):
         review_report: Optional[Dict[str, Any]] = None,
         review_report_source: Optional[str] = None,
         decision_required: Optional[Dict[str, Any]] = None,
+        merge_intent: Optional[Dict[str, str]] = None,
         phase: Optional[TaskPhase] = None,
         worker_bounce: Optional[int] = None,
         ci_bounce: Optional[int] = None,
@@ -759,6 +760,8 @@ class MockStore(WorkItemStore):
             }
         if decision_required is not None:
             item.decision_required = decision_required
+        if merge_intent is not None:
+            item.merge_intent = merge_intent
         if phase is not None:
             item.phase = phase
         if worker_bounce is not None:

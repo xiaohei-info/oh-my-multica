@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shlex
 import subprocess
 import tempfile
@@ -22,7 +23,7 @@ import yaml
 from ..core.github import canonical_github_pr_url
 from ..core.taskmeta import (
     CI_BOUNCE_KEY, CONTRACT_REF_KEY, DECISION_REQUIRED_KEY, DELIVERABLE_KEY,
-    DELIVERABLE_REF_KEY, KIND_KEY, MERGE_BOUNCE_KEY, PHASE_KEY,
+    DELIVERABLE_REF_KEY, KIND_KEY, MERGE_BOUNCE_KEY, MERGE_INTENT_KEY, PHASE_KEY,
     PROJECT_RULES_KEY, PROJECT_RULES_REF_KEY, REVIEW_BOUNCE_KEY,
     REVIEW_REPORT_REF_KEY,
     SOURCE_REFS_KEY, TaskKind, TaskPhase, VERIFICATION_REF_KEY, WORKER_BOUNCE_KEY,
@@ -134,19 +135,94 @@ def _is_known_delivery_failure(operation_kind: str, detail: str) -> bool:
     return False
 
 
+def _is_shell_assignment(token: str) -> bool:
+    name, separator, _ = token.partition("=")
+    return bool(
+        separator
+        and name
+        and (name[0].isalpha() or name[0] == "_")
+        and all(char.isalnum() or char == "_" for char in name[1:])
+    )
+
+
+def _is_gh_executable(token: str) -> bool:
+    return token == "gh" or os.path.basename(token) == "gh"
+
+
+def _looks_like_gh_command(tokens: List[str]) -> bool:
+    return any(
+        _is_gh_executable(token)
+        or token.startswith("gh ")
+        or " gh " in token
+        or token.endswith(" gh")
+        for token in tokens
+    )
+
+
+def _unwrap_supported_gh_wrappers(tokens: List[str]) -> List[str]:
+    tokens = list(tokens)
+    while tokens and _is_shell_assignment(tokens[0]):
+        tokens.pop(0)
+
+    while tokens:
+        if tokens[0] == "env":
+            tokens.pop(0)
+            while tokens and tokens[0] in {"-i", "--ignore-environment"}:
+                tokens.pop(0)
+            if tokens[:1] == ["--"]:
+                tokens.pop(0)
+            while tokens and _is_shell_assignment(tokens[0]):
+                tokens.pop(0)
+            continue
+        if tokens[0] == "command":
+            tokens.pop(0)
+            if tokens[:1] == ["--"]:
+                tokens.pop(0)
+            continue
+        if tokens[0] == "timeout":
+            if len(tokens) < 2 or not re.fullmatch(
+                r"\d+(?:\.\d+)?[smhd]?", tokens[1], re.IGNORECASE,
+            ):
+                return tokens
+            tokens = tokens[2:]
+            continue
+        break
+    return tokens
+
+
 def _is_github_cli_delivery_command(command: str, operation_kind: str) -> bool:
     try:
         tokens = shlex.split(command)
-    except ValueError:
+    except ValueError as exc:
+        if "gh" in command:
+            raise ValidationError(ui(
+                f"Unsupported GitHub CLI command syntax: {exc}. Use a direct "
+                "`gh pr checks/merge` command or the supported env, command, "
+                "or timeout wrapper.",
+                f"不支持的 GitHub CLI 命令语法: {exc}。请直接使用 "
+                "`gh pr checks/merge`，或使用受支持的 env、command、timeout wrapper。",
+            )) from exc
         return False
 
-    if tokens[:1] == ["env"]:
-        tokens = tokens[1:]
-        while tokens and (tokens[0].startswith("-") or "=" in tokens[0]):
-            tokens = tokens[1:]
-
+    unwrapped = _unwrap_supported_gh_wrappers(tokens)
     subcommand = "checks" if operation_kind == "ci" else "merge"
-    return tokens[:3] == ["gh", "pr", subcommand]
+    if (
+        len(unwrapped) >= 3
+        and _is_gh_executable(unwrapped[0])
+        and unwrapped[1:3] == ["pr", subcommand]
+        and not any(char in command for char in ";|&<>`\n\r")
+        and "$(" not in command
+    ):
+        return True
+    if _looks_like_gh_command(tokens):
+        raise ValidationError(ui(
+            "Unsupported GitHub CLI wrapper. Use a direct `gh pr checks/merge` "
+            "command, optional NAME=value assignments, or the supported env, "
+            "command, and timeout wrappers.",
+            "不支持的 GitHub CLI wrapper。请直接使用 `gh pr checks/merge`，"
+            "可选 NAME=value 环境变量，或受支持的 env、command、timeout wrapper。",
+        ))
+    return False
 
 
 class MulticaStore(WorkItemStore):
@@ -655,6 +731,7 @@ class MulticaStore(WorkItemStore):
             review_report=review_report,
             review_report_ref=review_report_ref if isinstance(review_report_ref, dict) else None,
             decision_required=self._json_metadata(metadata, DECISION_REQUIRED_KEY),
+            merge_intent=self._json_metadata(metadata, MERGE_INTENT_KEY),
             contract=contract,
             contract_ref=contract_ref if isinstance(contract_ref, dict) else None,
             source_refs=source_refs if isinstance(source_refs, list) else [],
@@ -907,6 +984,7 @@ class MulticaStore(WorkItemStore):
         review_report: Optional[Dict[str, Any]] = None,
         review_report_source: Optional[str] = None,
         decision_required: Optional[Dict[str, Any]] = None,
+        merge_intent: Optional[Dict[str, str]] = None,
         phase: Optional[TaskPhase] = None,
         worker_bounce: Optional[int] = None,
         ci_bounce: Optional[int] = None,
@@ -943,6 +1021,8 @@ class MulticaStore(WorkItemStore):
             self._set_metadata(item_id, REVIEW_REPORT_REF_KEY, ref)
         if decision_required is not None:
             self._set_metadata(item_id, DECISION_REQUIRED_KEY, decision_required)
+        if merge_intent is not None:
+            self._set_metadata(item_id, MERGE_INTENT_KEY, merge_intent)
         if worker_bounce is not None:
             self._set_metadata(item_id, WORKER_BOUNCE_KEY, str(worker_bounce))
         if ci_bounce is not None:
@@ -1056,11 +1136,11 @@ class MulticaStore(WorkItemStore):
             if isinstance(current, dict) and current.get("assignee_id")
             else None
         )
-        self._run_multica(["issue", "assign", item_id, "--to", agent_id])
         if role == "worker":
-            self.update_work_item_metadata(item_id, worker=assignee)
+            self._set_metadata(item_id, "worker", assignee)
         elif role == "reviewer":
-            self.update_work_item_metadata(item_id, reviewer=assignee)
+            self._set_metadata(item_id, "reviewer", assignee)
+        self._run_multica(["issue", "assign", item_id, "--to", agent_id])
         # 改派到不同 agent 时，Multica assignment 会创建 run，随后的 wake
         # 只需确认，避免再 rerun 一次。同一 assignee 的 assign 是幂等更新，
         # 不会创建 run；此时保留 wake 的终态检查，让它对旧 run 执行一次 rerun。

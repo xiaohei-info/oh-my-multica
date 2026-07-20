@@ -576,7 +576,7 @@ def _validate_develop_authoring(
     store: WorkItemStore, pr_url: str, verification_file: str, item: WorkItem
 ) -> Dict[str, Any]:
     """develop × authoring 左移校验:复用 P2.2 validate_worker_evidence。"""
-    snapshot = inspect_ready_pull_request(store, pr_url)
+    snapshot = inspect_ready_pull_request(store, pr_url, allow_merged=False)
     previous_artifacts = getattr(item, "artifacts", None)
     if isinstance(previous_artifacts, dict) and "pr" in previous_artifacts:
         raise ValidationError(ui(
@@ -638,8 +638,15 @@ def _validate_develop_authoring(
     return verification, snapshot.url
 
 
-def inspect_ready_pull_request(store: WorkItemStore, pr_url: str):
-    """通过 engine adapter 读取 PR 权威状态，pipeline 不直接调用平台 CLI。"""
+def inspect_ready_pull_request(
+    store: WorkItemStore, pr_url: str, *, allow_merged: bool = True,
+):
+    """通过 engine adapter 读取 PR 权威状态，pipeline 不直接调用平台 CLI。
+
+    编排恢复路径需要读取 ``MERGED`` 快照并交给 delivery 的 durable intent
+    校验；Worker/Reviewer 的新提交路径显式传 ``allow_merged=False``，仍只接受
+    OPEN PR，不能把已关闭 PR 当成新交付。
+    """
     if not isinstance(pr_url, str) or not pr_url.strip():
         raise ValidationError(ui(
             "artifacts.pr_url must be a non-empty string. "
@@ -665,10 +672,13 @@ def inspect_ready_pull_request(store: WorkItemStore, pr_url: str):
             f"GitHub PR 仍是 draft,不能交付给下游 CI/review/merge: {pr_url}\n"
             "请先执行 `gh pr ready <pr-url>` 或在 GitHub 页面 Mark ready for review。"))
     state = snapshot.state
-    if state and state != "OPEN":
+    allowed_states = {"OPEN", "MERGED"} if allow_merged else {"OPEN"}
+    if state and state not in allowed_states:
         raise ValidationError(ui(
-            f"GitHub PR is not OPEN and cannot be delivered: {pr_url} (state={state})",
-            f"GitHub PR 状态不是 OPEN,不能交付: {pr_url} (state={state})"))
+            f"GitHub PR state is not allowed here: {pr_url} (state={state}, "
+            f"allowed={sorted(allowed_states)})",
+            f"GitHub PR 状态不允许用于当前流程: {pr_url} (state={state}, "
+            f"允许={sorted(allowed_states)})"))
     return snapshot
 
 def _validate_review(
@@ -702,7 +712,7 @@ def _validate_review(
                 "Develop review is missing artifacts.pr_url. Ask the Worker to resubmit.",
                 "develop 评审缺少 artifacts.pr_url。请让 Worker 重新提交。"))
         expected_revision = inspect_ready_pull_request(
-            store, pr_url).head_revision
+            store, pr_url, allow_merged=False).head_revision
     probe = _Item(
         review_verdict=verdict,
         review_report=report,

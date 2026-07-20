@@ -181,6 +181,9 @@ class WorkItem:
     review_report: Optional[Dict[str, Any]] = None
     review_report_ref: Optional[Dict[str, Any]] = None
     decision_required: Optional[Dict[str, Any]] = None
+    # 外部 merge 前持久化的恢复凭证；只有权威 PR 状态与此目标完全一致时
+    # 才允许在进程重启后收敛 done。
+    merge_intent: Optional[Dict[str, str]] = None
 
     # 验收契约(编排器 dispatch 时下发):worker 读回后用同一套 validator 自校验
     contract: Optional[Dict[str, Any]] = None

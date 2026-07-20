@@ -45,7 +45,7 @@ from ..engines.models import (
 )
 from ..engines.runtime import AgentRuntime
 from ..core.manifest import Manifest
-from ..errors import AuthError, PlatformError
+from ..errors import AuthError, PlatformError, ValidationError
 from ..i18n import ui
 
 # ── manifest 侧细分态 ↔ 平台 WorkItemStatus 映射表 ──────────────────────────
@@ -253,6 +253,23 @@ def run_merge_delivery(
         return DeliveryResult(
             DeliveryAction.BLOCKED, DeliveryBlockReason.MISSING_REVISION)
 
+    # 先读取权威 PR 快照。MERGED 只用于恢复：必须由持久化 intent 证明本次
+    # OMAC merge 的目标 URL 与 delivered revision 完全一致，不能仅凭外部状态
+    # 或 manifest 的 merged 标志收口。
+    from .dispatch import inspect_ready_pull_request
+    snapshot = inspect_ready_pull_request(store, pr_url, allow_merged=True)
+    if snapshot.state == "MERGED":
+        return _recover_merged_delivery(
+            node, item, snapshot, delivered_revision, store)
+
+    merge_intent = {
+        "pr_url": snapshot.url.rstrip("/"),
+        "delivered_revision": delivered_revision,
+    }
+    # durable intent 必须先于任何外部 merge 副作用落盘。之后即使 merge 成功、
+    # 平台状态或 manifest 持久化失败，重启仍有可核验的恢复依据。
+    store.update_work_item_metadata(item_id, merge_intent=merge_intent)
+
     # 进入 merging(manifest 细分态;平台仍 in_review)
     node.status = "merging"
     store.update_status(item_id, to_platform_status("merging"))
@@ -285,12 +302,64 @@ def run_merge_delivery(
             f"Merge adapter returned unsupported outcome: {result.outcome}",
             f"merge adapter 返回未知结果: {result.outcome}"))
 
+    # adapter 已明确确认 merge 未发生，清除本次 intent 后才允许回退。
+    # 超时/平台异常结果不确定，intent 必须保留供下一轮读取权威 PR 状态恢复。
+    store.update_work_item_metadata(item_id, merge_intent={})
     return _bounce_or_block_merge(
         node, item, store, runtime, retry_limits,
         label=ui(
             f"Merge command failed (exit code {result.exit_code})",
             f"merge 命令失败(退出码 {result.exit_code})"),
         summary=result.summary)
+
+
+def _recover_merged_delivery(
+    node,
+    item,
+    snapshot,
+    delivered_revision: str,
+    store,
+) -> DeliveryResult:
+    """仅凭同一 PR + 同一 delivered revision 的 durable intent 恢复 merge。"""
+    intent = getattr(item, "merge_intent", None)
+    intent_url = intent.get("pr_url") if isinstance(intent, dict) else None
+    intent_revision = (
+        intent.get("delivered_revision") if isinstance(intent, dict) else None
+    )
+    canonical_snapshot_url = snapshot.url.rstrip("/")
+    valid_intent = bool(
+        isinstance(intent_url, str)
+        and intent_url.strip()
+        and isinstance(intent_revision, str)
+        and intent_revision.strip()
+        and intent_url.rstrip("/") == canonical_snapshot_url
+        and intent_revision == delivered_revision
+        and snapshot.head_revision == delivered_revision
+    )
+    if not valid_intent:
+        raise ValidationError(ui(
+            "The PR is already MERGED, but OMAC cannot prove that it is the merge "
+            "started for this delivery revision. Refusing to return the node to the "
+            "Worker or mark it done.\n"
+            f"Expected PR/revision: {snapshot.url} @ {delivered_revision}; "
+            f"stored merge_intent: {intent!r}; current PR head: {snapshot.head_revision}.\n"
+            f"Inspect with `omac node show <manifest> {node.id}`. If the merge is "
+            "intentionally accepted, run `omac node accept <manifest> "
+            f"{node.id}`; otherwise repair the stored delivery metadata and rerun.",
+            "PR 已是 MERGED，但 OMAC 无法证明它就是针对当前交付 revision 发起的 "
+            "merge。为避免误完成或把已合并代码退回 Worker，当前拒绝继续。\n"
+            f"期望 PR/revision: {snapshot.url} @ {delivered_revision}；"
+            f"已存 merge_intent: {intent!r}；当前 PR head: {snapshot.head_revision}。\n"
+            f"请先执行 `omac node show <manifest> {node.id}` 检查。若确认接受该 "
+            "merge，执行 `omac node accept <manifest> "
+            f"{node.id}`；否则修复交付元数据后重跑。",
+        ))
+
+    node.status = "in_progress"
+    node.merged = True
+    node.merged_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    store.update_status(node.work_item_id, to_platform_status("in_progress"))
+    return DeliveryResult(DeliveryAction.PASS)
 
 
 def _bounce_or_block_merge(node, item, store, runtime, retry_limits, *,
