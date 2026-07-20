@@ -24,6 +24,13 @@ def test_ui_selects_complete_user_visible_copy():
     assert ui("Ready", "就绪", language="cn") == "就绪"
 
 
+def test_work_protocols_expose_quality_gates_in_both_languages():
+    assert "business test" in t("work.protocol.develop", language="en").lower()
+    assert "业务测试" in t("work.protocol.develop", language="cn")
+    assert "report all issues" in t("work.protocol.review", language="en").lower()
+    assert "一次性报告" in t("work.protocol.review", language="cn")
+
+
 def test_language_rejects_unknown_value():
     with pytest.raises(ValidationError, match="language"):
         resolve_language({"language": "jp"})

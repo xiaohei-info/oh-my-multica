@@ -66,9 +66,14 @@ nodes:
 
 ### DAG granularity
 
-Each node is the smallest independently PR/test/reviewable unit. Its worker can
-develop, run `verification_commands`, and submit a PR independently; its reviewer
-can decide pass/reject from that deliverable and contract.
+Each node is the smallest independently PR/test/reviewable unit, and it must be
+complete, production-usable, and independently acceptable. Its worker can
+develop, run `verification_commands`, and submit a PR independently; its
+reviewer can decide pass/reject from that deliverable and contract. Do not
+declare a directory shell, interface skeleton,
+fixed return value, placeholder, or production synthetic-data fallback complete.
+If a node needs a later patch to acquire the value claimed by its objective,
+redraw the contract boundary.
 
 Maximize parallel development. Keep splitting while another capability can have
 an independent contract, test command, PR, and clear downstream effect. Stop
@@ -120,7 +125,8 @@ Each integration gate has `name`, `layer`, `delivery_goal`, and non-empty
 `source_of_truth`, `covers`, `acceptance_refs`, and `commands`. If present,
 `required_metrics` is an object and `artifacts` is a list. Worker verification
 and reviewer reports repeat gate names, commands, sources, and goals from the
-contract.
+contract. Worker verification also maps every contract acceptance item to a
+concrete business test through `business_tests` on a successful command.
 
 Contracts must be independently executable by low-reasoning-budget workers;
 state edge cases, prohibited scope, verification entry points, and integration
@@ -148,6 +154,7 @@ non-goals, and parallel boundaries, not merely path membership.
 | Error | Correction |
 |---|---|
 | One node contains several independently deliverable capabilities | Split at stable contracts/APIs into independent PR/test/review units. |
+| A node delivers only a skeleton, placeholder, or synthetic-data fallback | Make it a complete runnable and acceptable foundation capability, or merge it with the later work into one complete contract. |
 | `blocked_by` added just to show order | Keep only real prerequisites; use contracts to decouple the rest. |
 | Contract has an objective but no verification | Fill every required field and at least one complete integration gate. |
 | `acceptance` is a natural-language summary | Use stable acceptance-document flow IDs. |

@@ -63,8 +63,10 @@ nodes:
 
 ### DAG 粒度
 
-每个节点是最小独立 PR/test/review 单元：一个 worker 能独立开发、独立运行
-`verification_commands`、独立提交 PR，reviewer 也能只依据该节点交付物与 contract 作出结论。
+每个节点是完整、生产可用、可独立验收的最小 PR/test/review 单元：一个 worker 能独立开发、独立运行
+`verification_commands`、独立提交 PR，reviewer 也能只依据该节点交付物与 contract 作出结论。禁止把目录空壳、
+接口骨架、固定返回值、占位实现或生产假数据兜底声明为节点完成；如果节点必须等待后续补丁才获得 objective
+声称的价值，应重新划分 contract。
 
 拆分目标是最大化并行开发，节点必须拆到不能继续独立拆分为止。只要还能拆出具有独立 contract、
 测试命令、PR 和明确下游能力的任务，就继续拆；以下情况停止：
@@ -113,7 +115,8 @@ nodes:
 每个 `integration_gates` 条目必须给出 `name`、`layer`、`delivery_goal`，以及非空的
 `source_of_truth`、`covers`、`acceptance_refs`、`commands`。`required_metrics` 若出现必须是
 object，`artifacts` 若出现必须是列表。worker verification 和 reviewer report 必须复现 contract
-中的 gate 名称、命令、事实源与交付目标。
+中的 gate 名称、命令、事实源与交付目标。worker verification 还必须通过成功命令下的
+`business_tests` 将每条 contract acceptance 映射到具体业务测试。
 
 后续 worker 可能是低推理预算模型。每个 contract 必须独立可执行，不能依赖隐含上下文；
 边界条件、禁止范围、验证入口和集成结果都要显式写出。
@@ -140,6 +143,7 @@ verification 中说明原因。reviewer 应判断这些改动是否服务于 con
 | 常见错误 | 修正 |
 |---|---|
 | 一个节点同时包含多个可独立交付能力 | 按稳定 contract/API 拆成独立 PR/test/review 单元。 |
+| 节点只交付骨架、占位或假数据兜底 | 将节点改成自身完整、可运行、可验收的真实基础能力；否则与后续实现合并成一个完整 contract。 |
 | 为了表达顺序感而增加 `blocked_by` | 只保留真实运行前置，其余通过合同解耦。 |
 | contract 只写目标，没有验证入口 | 补齐全部必填字段和至少一个完整 integration gate。 |
 | `acceptance` 使用自然语言摘要 | 改为验收文档中的稳定 flow id。 |

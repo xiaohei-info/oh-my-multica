@@ -45,17 +45,30 @@ conflicts; do not redefine the contract.
    `contract.pr_base`, not an arbitrary base.
 5. Follow TDD: make the target test fail because the behavior is missing, write
    the smallest passing implementation, then refactor only while green.
-6. Implement only the objective and acceptance mapping. Honor non-goals and
+6. Tests must prove real business behavior, a user-observable result, an
+   external contract, or explicit failure semantics. Mock calls, symbol
+   existence, fixed return values, or coverage numbers cannot by themselves
+   serve as business-function tests.
+7. Implement only the objective and acceptance mapping. Honor non-goals and
    import frozen shared contracts instead of redefining them.
-7. `scope_paths` names primary ownership, not an exhaustive allowlist. Change a
+   Complete the current contract; do not submit a foundation skeleton, TODO,
+   placeholder branch, temporary return value, disconnected capability, or
+   promise of later completion as finished work.
+8. Fakes, mocks, and stubs are test doubles only at a test boundary for isolating
+   uncontrollable dependencies. Production failures must expose the real error
+   or follow an explicitly designed degradation rule; never hide failure behind
+   synthetic data.
+9. `scope_paths` names primary ownership, not an exhaustive allowlist. Change a
    required supporting file only when needed for the contract and explain why in
    the PR or verification.
-8. Run every verification command, integration gate, relevant full suite, and
-   coverage check. Record the actual command, exit code, and summary.
-9. Create or update a non-draft PR based on `contract.pr_base`.
-10. Write verification covering commands, integration gates, coverage, PR base,
-    and `env_setup` when environment preparation is required.
-11. Submit the original PR URL and verification file using the returned command.
+10. Run every verification command, integration gate, relevant full suite, and
+    coverage check. Record the actual command, exit code, and summary. Every
+    acceptance item must be linked to a concrete test through `business_tests`
+    on a successful command.
+11. Create or update a non-draft PR based on `contract.pr_base`.
+12. Write verification covering commands, integration gates, coverage, PR base,
+    `business_tests`, and `env_setup` when environment preparation is required.
+13. Submit the original PR URL and verification file using the returned command.
 
 ## Completion conditions
 
@@ -63,6 +76,11 @@ conflicts; do not redefine the contract.
   remain intact.
 - New behavior has a red-then-green test and coverage for the main path, failure
   path, and known boundaries.
+- Every acceptance item is covered by concrete `business_tests` attached to a
+  successful command, and those tests verify business outcomes rather than mock
+  calls or coverage numbers.
+- The contract contains no skeleton, placeholder, temporary implementation, or
+  production synthetic-data fallback.
 - All commands and gates pass and coverage meets the gate.
 - The PR base is `contract.pr_base`, the PR is not a draft, and the diff only
   contains contract-required work.
@@ -92,6 +110,8 @@ platform state yourself.
 - Do not call platform commands to change issue status, assignee, rerun, or
   cancellation; the OMAC loop advances state.
 - Do not skip tests, fabricate verification, or claim unrun commands passed.
+- Do not use fake or mock data to make a production flow appear successful, or
+  use test doubles instead of critical business and integration verification.
 - Do not redefine shared contracts, refactor adjacent modules casually, create
   multiple PRs for one node, or submit a draft PR.
 - Do not let static guidance override the current contract, review, or upstream

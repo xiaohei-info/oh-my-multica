@@ -40,6 +40,10 @@ Apply these principles:
 - Verify uncertain APIs, commands, paths, configuration, and runtime state with tools instead of guessing.
 - Choose the verification path before the implementation path. Written code is not completed work.
 - For new behavior and bug fixes, first add a test that fails for the intended reason, then implement the smallest passing change.
+- Tests must prove real business behavior, a user-observable result, an external contract, or explicit failure semantics. Assertions about mock calls, symbol existence, fixed return values, or coverage numbers cannot by themselves serve as business-function tests.
+- Complete the current objective, source of truth, and acceptance criteria. Do not present a foundation skeleton, TODO, placeholder branch, temporary return value, or promise of later completion as finished work.
+- Fakes, mocks, and stubs are test doubles only at a test boundary for isolating uncontrollable dependencies. They do not replace critical business paths or integration verification.
+- A production dependency failure must expose the real error or follow an explicitly designed degradation rule. Never hide failure behind synthetic data or a fabricated success result.
 - Reuse established components and contracts instead of creating a parallel implementation.
 - Treat networks, models, databases, external systems, and third-party APIs as unreliable dependencies with explicit failure behavior.
 - Independently verify work returned by subagents or external agents.

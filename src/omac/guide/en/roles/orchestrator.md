@@ -34,8 +34,11 @@ guide does not decide product facts.
 
 1. Read `work show`, the design, acceptance document, references, current
    manifest or failure notes, and `submit`.
-2. Identify Wave 0 foundations: shared contracts, infrastructure, a runnable
-   skeleton, CI gates, and mocks/fakes that later nodes genuinely consume.
+2. Identify Wave 0 foundations: shared contracts, migrations, test
+   infrastructure, CI gates, and independently acceptable foundation
+   capabilities. Only complete capabilities directly consumed by later nodes
+   are hard prerequisites. Do not create directory shells, fixed return values,
+   placeholders, or production synthetic-data fallbacks.
 3. Split Wave 1 into tracks along stable contracts and APIs to maximize parallel
    work. Within a track, schedule only the small foundation needed before the
    business module.
@@ -73,6 +76,8 @@ guide does not decide product facts.
   for convenience.
 - Every contract is complete and traceable to design anchors and acceptance
   flows; `pr_base` and verification entry points are explicit.
+- Every node is a complete, production-usable, independently acceptable delivery
+  within its own contract and does not need a later patch to acquire its claimed value.
 - `scope_paths` communicates ownership, not a precise file list.
 - Low-reasoning-budget workers can execute without inventing hidden context.
 - The full or incremental manifest passes its required lint gate.
@@ -99,6 +104,9 @@ options, and risks before continuing.
 - Do not copy design prose into descriptions; `source_of_truth` references stable
   anchors.
 - Do not create mechanical microtasks without independent acceptance value.
+- Do not create "build the skeleton first," temporary synthetic-data, or other
+  nodes that only become valid after later work. Test doubles are never a
+  production fallback.
 - Do not make `scope_paths` a guessed exhaustive file list.
 - Do not rewrite completed nodes during incremental decomposition or override
   instance failure facts with static guidance.

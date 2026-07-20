@@ -74,6 +74,12 @@ For a dispatched task, do not pre-read every guide. Read `guide_refs` from
   `contract.acceptance` must reference an acceptance flow.
 - Workers, reviewers, and acceptors submit structured evidence. `omac work
   submit` rejects missing required evidence immediately.
+- Workers map every acceptance item to a concrete business test through
+  `business_tests` on a successful command; Reviewers inspect those tests for
+  real business behavior.
+- Reviewers continue after findings, complete the entire review scope, set
+  `full_review_completed: true`, and report every blocker and nit found in one
+  review pass.
 - State exists in both the manifest and the platform work item. Re-running
   `dag run` reuses completed nodes and continues from current state.
 

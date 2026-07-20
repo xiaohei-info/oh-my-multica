@@ -77,6 +77,17 @@ def _contract(acceptance=None, verification_commands=None, integration_gates=Non
     )
 
 
+def _business_command(cmd="pytest -q", acceptance="works"):
+    return {
+        "cmd": cmd,
+        "exit_code": 0,
+        "business_tests": [{
+            "acceptance": acceptance,
+            "test": "tests/test_feature.py::test_feature_works",
+        }],
+    }
+
+
 def _node(key, worker="alice", blocked_by=None, reviewer=None, contract=None, title=None):
     return Node(
         id=key,
@@ -660,7 +671,7 @@ class TestContractEvidence:
             item.id,
             artifacts={"pr_url": f"https://mock.example.com/pr/{item.id}"},
             verification={
-                "commands": [{"cmd": "pytest -q", "exit_code": 0}],
+                "commands": [_business_command()],
                 "integration_gates": [{
                     "name": "gate-1",
                     "commands": [{"cmd": "pytest tests/int", "exit_code": 0}],
@@ -747,7 +758,7 @@ class TestEvidenceGateRegression:
             eng, "a", contract=contract,
             artifacts={"pr_url": "https://x/pr/1"},
             verification={
-                "commands": [{"cmd": "pytest -q", "exit_code": 0}],
+                "commands": [_business_command()],
                 "integration_gates": [{
                     "name": "gate-1",
                     "commands": [{"cmd": "pytest tests/int", "exit_code": 0}],
@@ -785,7 +796,7 @@ class TestEvidenceGateRegression:
             eng, "a", reviewer="bob", contract=contract,
             artifacts={"pr_url": "https://x/pr/1"},
             verification={
-                "commands": [{"cmd": "pytest -q", "exit_code": 0}],
+                "commands": [_business_command()],
                 "integration_gates": [{
                     "name": "gate-1",
                     "commands": [{"cmd": "pytest tests/int", "exit_code": 0}],
@@ -829,7 +840,7 @@ class TestEvidenceGateRegression:
             eng, "a", contract=contract,
             artifacts={"pr_url": "https://x/pr/1"},
             verification={
-                "commands": [{"cmd": "pytest -q", "exit_code": 0}],
+                "commands": [_business_command()],
                 "integration_gates": [{
                     "name": "gate-1",
                     "commands": [{"cmd": "pytest tests/int", "exit_code": 0}],
@@ -898,7 +909,7 @@ class TestReviewerRejectBoundedFallback:
             item.id,
             artifacts={"pr_url": f"https://mock.example.com/pr/{item.id}"},
             verification={
-                "commands": [{"cmd": "pytest -q", "exit_code": 0}],
+                "commands": [_business_command()],
                 "pr_base": "main",
                 "coverage": 90,
             },
@@ -946,6 +957,7 @@ class TestReviewerRejectBoundedFallback:
                 "diff_reviewed": True,
                 "tests_rerun": True,
                 "coverage_checked": True,
+                "full_review_completed": True,
                 "acceptance_mapping": [
                     {"acceptance": "works", "status": "fail"},
                 ],
@@ -977,6 +989,7 @@ class TestReviewerRejectBoundedFallback:
                 "diff_reviewed": True,
                 "tests_rerun": True,
                 "coverage_checked": True,
+                "full_review_completed": True,
                 "acceptance_mapping": [{"acceptance": "works", "status": "pass"}],
                 "blockers": [],
                 "nits": ["建议后续优化"],
@@ -999,7 +1012,7 @@ class TestReviewerRejectBoundedFallback:
             item.id,
             artifacts={"pr_url": f"https://mock.example.com/pr/{item.id}"},
             verification={
-                "commands": [{"cmd": "pytest -q", "exit_code": 0}],
+                "commands": [_business_command()],
                 "integration_gates": [{"name": "nits-smoke", "commands": []}],
                 "pr_base": "main",
                 "coverage": 90,
@@ -1053,6 +1066,7 @@ class TestReviewerRejectBoundedFallback:
                 "diff_reviewed": True,
                 "tests_rerun": True,
                 "coverage_checked": True,
+                "full_review_completed": True,
                 "acceptance_mapping": [
                     {"acceptance": "works", "status": "fail"},
                 ],
@@ -1087,6 +1101,7 @@ class TestReviewerRejectBoundedFallback:
                 "diff_reviewed": True,
                 "tests_rerun": True,
                 "coverage_checked": True,
+                "full_review_completed": True,
                 "acceptance_mapping": [
                     {"acceptance": "works", "status": "fail"},
                 ],
@@ -1103,10 +1118,10 @@ class TestReviewerRejectBoundedFallback:
             item.id,
             artifacts={"pr_url": f"https://mock.example.com/pr/{item.id}"},
             verification={
-                "commands": [{"cmd": "pytest -q", "exit_code": 0}],
+                "commands": [_business_command()],
                 "integration_gates": [{
                     "name": "revision-gate",
-                    "commands": [{"cmd": "pytest -q", "exit_code": 0}],
+                    "commands": [_business_command()],
                 }],
                 "pr_base": "main",
                 "coverage": 90,
@@ -1164,7 +1179,7 @@ class TestReviewerRejectBoundedFallback:
         eng.store.update_work_item_metadata(
             item.id, review_verdict=None, review_report=None, review_comment=None,
             artifacts={"pr_url": f"https://mock.example.com/pr/{item.id}"},
-            verification={"commands": [{"cmd": "pytest -q", "exit_code": 0}],
+            verification={"commands": [_business_command()],
                          "pr_base": "main", "coverage": 90})
         eng.store.update_status(item.id, WorkItemStatus.DONE)
         tick(eng.store, eng.runtime, manifest, fpath, max_parallel=4)
@@ -1200,7 +1215,7 @@ class TestReviewerRejectBoundedFallback:
             eng.store.update_work_item_metadata(
                 item.id, review_verdict=None, review_report=None, review_comment=None,
                 artifacts={"pr_url": f"https://mock.example.com/pr/{item.id}"},
-                verification={"commands": [{"cmd": "pytest -q", "exit_code": 0}],
+                verification={"commands": [_business_command()],
                              "pr_base": "main", "coverage": 90})
             eng.store.update_status(
                 item.id, __import__("omac").engines.models.WorkItemStatus.DONE)
@@ -1235,7 +1250,7 @@ class TestReviewerRejectFallbackRollback:
         eng.store.update_work_item_metadata(
             item.id,
             artifacts={"pr_url": f"https://mock.example.com/pr/{item.id}"},
-            verification={"commands": [{"cmd": "pytest -q", "exit_code": 0}],
+            verification={"commands": [_business_command()],
                          "pr_base": "main", "coverage": 90})
         from omac.engines.models import WorkItemStatus
         eng.store.update_status(item.id, WorkItemStatus.DONE)

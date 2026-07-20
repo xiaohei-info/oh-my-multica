@@ -80,6 +80,7 @@ def _review_passed_item(store, reviewer="bob"):
         review_report={
             "review_goals": ["check merge path"],
             "diff_reviewed": True, "tests_rerun": True, "coverage_checked": True,
+            "full_review_completed": True,
             "integration_tests_rerun": True,
             "acceptance_mapping": [
                 {"acceptance": "a works", "evidence": "merge ok", "status": "pass"}],
@@ -225,6 +226,7 @@ class TestRunMergeDeliveryUnit:
                 review_report={
                     "review_goals": ["x"], "diff_reviewed": True,
                     "tests_rerun": True, "coverage_checked": True,
+                    "full_review_completed": True,
                     "integration_tests_rerun": True,
                     "acceptance_mapping": [
                         {"acceptance": "a works", "evidence": "ok", "status": "pass"}],
@@ -261,6 +263,7 @@ class TestRunMergeDeliveryUnit:
                 review_report={
                     "review_goals": ["x"], "diff_reviewed": True,
                     "tests_rerun": True, "coverage_checked": True,
+                    "full_review_completed": True,
                     "integration_tests_rerun": True,
                     "acceptance_mapping": [
                         {"acceptance": "a works", "evidence": "ok", "status": "pass"}],
@@ -386,6 +389,7 @@ class TestCollectResultsMerge:
             review_report={
                 "review_goals": ["re-review"], "diff_reviewed": True,
                 "tests_rerun": True, "coverage_checked": True,
+                "full_review_completed": True,
                 "integration_tests_rerun": True,
                 "acceptance_mapping": [
                     {"acceptance": "a works", "evidence": "ok", "status": "pass"}],
@@ -434,6 +438,7 @@ class TestCollectResultsMerge:
             review_report={
                 "review_goals": ["x"], "diff_reviewed": True,
                 "tests_rerun": True, "coverage_checked": True,
+                "full_review_completed": True,
                 "integration_tests_rerun": True,
                 "acceptance_mapping": [
                     {"acceptance": "a works", "evidence": "ok", "status": "pass"}],
@@ -462,6 +467,7 @@ class TestCollectResultsMerge:
             review_report={
                 "review_goals": ["x2"], "diff_reviewed": True,
                 "tests_rerun": True, "coverage_checked": True,
+                "full_review_completed": True,
                 "integration_tests_rerun": True,
                 "acceptance_mapping": [
                     {"acceptance": "a works", "evidence": "ok", "status": "pass"}],
@@ -489,6 +495,7 @@ class TestCollectResultsMerge:
                 review_report={
                     "review_goals": ["x"], "diff_reviewed": True,
                     "tests_rerun": True, "coverage_checked": True,
+                    "full_review_completed": True,
                     "integration_tests_rerun": True,
                     "acceptance_mapping": [
                         {"acceptance": "a works", "evidence": "ok", "status": "pass"}],

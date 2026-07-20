@@ -108,6 +108,10 @@ def test_assign_and_auto_complete_with_contract_evidence():
     assert got.artifacts["pr_url"]
     assert got.verification["pr_base"] == "feature/v1"
     assert got.verification["commands"][0]["cmd"] == "pytest -q"
+    assert got.verification["commands"][0]["business_tests"] == [{
+        "acceptance": "works",
+        "test": "mock://a/acceptance/works",
+    }]
 
 
 def test_fail_injection():
@@ -129,6 +133,7 @@ def test_review_handoff_on_same_item():
     assert got.reviewer == "bob"
     assert got.review_verdict == "pass"  # 自动评审模拟
     assert got.review_report["blockers"] == []
+    assert got.review_report["full_review_completed"] is True
 
 
 def test_runtime_wake_is_idempotent():
