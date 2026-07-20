@@ -578,10 +578,26 @@ def _validate_develop_authoring(
     """develop × authoring 左移校验:复用 P2.2 validate_worker_evidence。"""
     snapshot = inspect_ready_pull_request(store, pr_url)
     previous_artifacts = getattr(item, "artifacts", None)
+    if isinstance(previous_artifacts, dict) and "pr" in previous_artifacts:
+        raise ValidationError(ui(
+            "previous artifacts.pr is forbidden; use the canonical artifacts.pr_url field.",
+            "禁止使用 previous artifacts.pr；请使用 canonical artifacts.pr_url 字段。",
+        ))
     previous_pr_url = (
         previous_artifacts.get("pr_url")
         if isinstance(previous_artifacts, dict) else None
     )
+    has_previous_review = bool(
+        getattr(item, "review_verdict", None)
+        or isinstance(getattr(item, "review_report", None), dict)
+    )
+    if has_previous_review and not (
+        isinstance(previous_artifacts, dict) and "pr_url" in previous_artifacts
+    ):
+        raise ValidationError(ui(
+            "previous artifacts.pr_url is required for rework on the same PR.",
+            "返工必须保留 previous artifacts.pr_url，以确认使用同一个 PR。",
+        ))
     if isinstance(previous_artifacts, dict) and "pr_url" in previous_artifacts:
         if not isinstance(previous_pr_url, str) or not previous_pr_url.strip():
             raise ValidationError(ui(
@@ -619,7 +635,7 @@ def _validate_develop_authoring(
         raise ValidationError(ui(
             "Verification evidence validation failed:\n  - " + "\n  - ".join(errors),
             "verification 证据校验失败:\n  - " + "\n  - ".join(errors)))
-    return verification
+    return verification, snapshot.url
 
 
 def inspect_ready_pull_request(store: WorkItemStore, pr_url: str):
@@ -830,11 +846,11 @@ def submit(
 
     # ---------- develop × authoring ----------
     if kind == TaskKind.DEVELOP and phase == TaskPhase.AUTHORING:
-        verification = _validate_develop_authoring(
+        verification, canonical_pr_url = _validate_develop_authoring(
             store, pr_url, verification_file, item)
         store.update_work_item_metadata(
             issue_id,
-            artifacts={"pr_url": pr_url},
+            artifacts={"pr_url": canonical_pr_url},
             verification=verification,
             verification_source=_read_text(verification_file),
         )

@@ -90,6 +90,7 @@ def _contract(
     business_command = gates[0]["commands"][0]
     return Contract(
         objective="do it",
+        source_of_truth=["docs/d.md#feature"],
         acceptance=acceptance or ["works"],
         non_goals=["no creep"],
         verification_commands=verification_commands or ["pytest -q"],
@@ -570,6 +571,25 @@ class TestIdempotency:
         assert result.state == "running"
         assert result.dispatched == ["forged-item-done"]
         assert manifest.nodes["forged-item-done"].status == "in_progress"
+
+    def test_runtime_blocks_incomplete_contract_without_dag_check(self):
+        contract = _contract()
+        contract.objective = ""
+        contract.source_of_truth = []
+        node = _node("incomplete", contract=contract)
+        manifest = _manifest([node])
+        path = _tmp_manifest_path(manifest)
+        eng = _engine(MOCK_AUTO_COMPLETE="false")
+
+        result = tick(eng.store, eng.runtime, manifest, path)
+
+        assert result.state == "needs_decision"
+        assert manifest.nodes["incomplete"].status == "blocked"
+        reason = next(
+            entry["reason"] for entry in result.report["failed_nodes"]
+            if entry["key"] == "incomplete")
+        assert "objective" in reason
+        assert "source_of_truth" in reason
 
     def test_done_nodes_reused_no_duplicate_issues(self):
         """tick 序列中途重建 loop,done 节点复用 work_item_id,不重复建。"""

@@ -54,7 +54,7 @@ def _integration_gate_errors(prefix: str, gate, index: int) -> list:
     return errs
 
 
-def _contract_errors(node) -> list:
+def contract_errors(node) -> list:
     contract = getattr(node, "contract", None)
     if contract is None:
         return [f"node {node.id}: contract is required"]
@@ -225,7 +225,7 @@ def lint(m: Manifest, pool: set, *, acceptance=None) -> list:
             errs.append(f"node {n.id}: reviewer must differ from worker")
         elif n.reviewer not in pool:
             errs.append(f"node {n.id}: reviewer '{n.reviewer}' not in agent pool")
-        errs.extend(_contract_errors(n))
+        errs.extend(contract_errors(n))
     if acceptance is not None:
         flow_ids = set(getattr(acceptance, "flow_ids", None) or [])
         action_ids = set(getattr(acceptance, "action_ids", None) or [])
@@ -295,7 +295,7 @@ def lint_increment(increment: Manifest, existing: Manifest, pool: set) -> list:
             errs.append(f"node {n.id}: reviewer must differ from worker")
         elif n.reviewer not in pool:
             errs.append(f"node {n.id}: reviewer {n.reviewer!r} not in agent pool")
-        errs.extend(_contract_errors(n))
+        errs.extend(contract_errors(n))
 
     combined_nodes = dict(existing.nodes)
     combined_nodes.update(increment.nodes)

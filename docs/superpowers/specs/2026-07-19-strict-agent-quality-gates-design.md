@@ -58,6 +58,11 @@ in authoring input, including apparently harmless default values. A resumed
 `done` node is trusted only when its platform work item and completed delivery
 evidence agree with the node identity.
 
+`dag run` enforces the same complete contract rules as `dag check`; skipping a
+separate check command cannot admit a partial contract. The engine resolved
+from CLI/environment/config precedence is overlaid onto the invocation config,
+so adapters and delivery commands cannot disagree about the active engine.
+
 ### 2.1 Acceptance action identifiers
 
 Every acceptance action must have a stable non-empty `id`, unique within its
@@ -165,6 +170,10 @@ Validation rules:
 - Rework submits the same platform-canonical PR identity as the previous
   delivery; a URL alias may normalize, but another repository or PR number is
   rejected.
+- Worker integration-gate evidence contains every declared gate exactly once;
+  duplicate, unknown, and malformed gate entries are rejected before lookup.
+- `artifacts.pr_url` is the only PR identity field. Production delivery accepts
+  only `https://github.com/<owner>/<repo>/pull/<number>`; `artifacts.pr` is invalid.
 
 These checks prove traceability and red/green behavior. They do not treat a
 Worker's statement as authoritative proof. Reviewer reproduction remains the
@@ -288,11 +297,17 @@ replacement PR cannot inherit the previous review.
 
 ### 5.3 Revision-locked merge
 
-Automatic merge requires both `{pr_url}` and `{reviewed_revision}` in the merge
+Automatic merge requires both `{pr_url}` and `{delivered_revision}` in the merge
 command template. The default GitHub command passes `--match-head-commit` with
-the reviewed revision. If the PR head changes after review, merge fails and
-returns through the existing bounded merge-rework path instead of merging an
-unreviewed commit.
+the current Worker revision accepted by the evidence gate. For `pass`, that
+revision equals the Reviewer revision; for `pass-with-nits`, it is the fresh
+follow-up revision. A later head change fails merge and returns through the
+bounded merge-rework path.
+
+Merge configuration is validated before node-state mutation. Missing
+`{pr_url}` or `{delivered_revision}` is validation failure (exit 5), not a
+caller-decision state. GitHub authentication failures use exit 3; platform,
+network, CLI availability, timeout, and malformed platform responses use exit 2.
 
 ## 6. Mock and Synthetic Data Boundary
 

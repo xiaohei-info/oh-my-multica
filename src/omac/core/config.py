@@ -19,7 +19,7 @@
       acceptance_doc: true      # plan create 是否默认生成验收文档
       goal_required: false      # 无 --doc 时是否强制 --goal/--goal-file
     ci:    { check_command, timeout_minutes }   # 可选;未显式配置时检测 .github/workflows
-    merge: { command }                           # 可选;必须含 {pr_url}/{reviewed_revision}
+    merge: { command }                           # 可选;必须含 {pr_url}/{delivered_revision}
     acceptance: { max_rounds }                   # 总控验收外层循环上限(与 retry 正交)
     retry:                                     # 各类「回到 worker」回退次数上限
       worker: 3                                # worker run 结束但未 submit → worker 继续处理
@@ -67,9 +67,9 @@ DEFAULT_MAX_ROUNDS = 3
 DEFAULT_GITHUB_CHECK_COMMAND = "gh pr checks {pr_url} --watch --fail-fast"
 DEFAULT_GITHUB_MERGE_COMMAND = (
     "gh pr merge {pr_url} --squash --delete-branch "
-    "--match-head-commit {reviewed_revision}"
+    "--match-head-commit {delivered_revision}"
 )
-DEFAULT_MOCK_MERGE_COMMAND = "true {pr_url} {reviewed_revision}"
+DEFAULT_MOCK_MERGE_COMMAND = "true {pr_url} {delivered_revision}"
 
 
 # 环境变量回退(设计文档 §5:全局 flag 带 env 回退)
@@ -244,8 +244,24 @@ def get_merge_config(config: dict) -> dict | None:
     """
     merge = config.get("merge")
     if isinstance(merge, dict) and merge.get("command"):
-        return merge
-    timeout = merge.get("timeout_minutes", 30) if isinstance(merge, dict) else 30
-    command = DEFAULT_MOCK_MERGE_COMMAND if config.get("engine") == "mock" \
-        else DEFAULT_GITHUB_MERGE_COMMAND
-    return {"command": command, "timeout_minutes": timeout}
+        resolved = merge
+    else:
+        timeout = merge.get("timeout_minutes", 30) if isinstance(merge, dict) else 30
+        command = DEFAULT_MOCK_MERGE_COMMAND if config.get("engine") == "mock" \
+            else DEFAULT_GITHUB_MERGE_COMMAND
+        resolved = {"command": command, "timeout_minutes": timeout}
+    command = resolved.get("command")
+    missing = [
+        placeholder for placeholder in ("{pr_url}", "{delivered_revision}")
+        if not isinstance(command, str) or placeholder not in command
+    ]
+    if missing:
+        raise ValidationError(ui(
+            "merge.command must contain {pr_url} and {delivered_revision}. "
+            "Run `omac config set merge.command 'gh pr merge {pr_url} "
+            "--match-head-commit {delivered_revision}'`.",
+            "merge.command 必须同时包含 {pr_url} 和 {delivered_revision}。"
+            "请运行 `omac config set merge.command 'gh pr merge {pr_url} "
+            "--match-head-commit {delivered_revision}'`。",
+        ))
+    return resolved

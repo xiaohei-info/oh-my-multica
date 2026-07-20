@@ -144,6 +144,10 @@ An authoring manifest declares work and contracts only. It must not contain
 write those fields from authoritative platform facts. Preloading them cannot
 skip dispatch, evidence validation, review, or merge.
 
+`dag run` and `dag check` enforce the same complete contract gate. Running
+directly cannot bypass required objective, source, non-goals, commands,
+integration gates, quality, PR base, or coverage gate fields.
+
 Contracts must be independently executable by low-reasoning-budget workers;
 state edge cases, prohibited scope, verification entry points, and integration
 outcomes. `scope_paths` is not an exhaustive file whitelist. Supporting tests,

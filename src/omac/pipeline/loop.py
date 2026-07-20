@@ -14,6 +14,7 @@ from ..core import graph, logsetup
 from ..core.config import DEFAULT_RETRY
 from ..core.evidence import validate_review_evidence, validate_worker_evidence
 from ..core.gitsync import commit_manifest
+from ..core.lint import contract_errors
 from ..core.manifest import Manifest, save_manifest, set_node
 from ..pipeline.delivery import advance_delivery, run_merge_delivery
 from ..engines.models import WorkItemStatus
@@ -111,13 +112,18 @@ def _block_invalid_develop_nodes(
     """防御性阻断无法进入严格交付链的 develop 节点。"""
     failures: Dict[str, str] = {}
     for key, node in manifest.nodes.items():
-        if node.status in TERMINAL_STATUSES:
+        if node.status == "abandoned":
             continue
         reason = None
-        if node.contract is None:
+        invalid_contract = contract_errors(node)
+        if invalid_contract:
             reason = ui(
-                "Develop node contract is required. Add a complete contract and rerun manifest lint.",
-                "develop 节点必须包含完整 contract。请补齐 contract 并重新运行 manifest lint。",
+                "Develop node contract is invalid:\n  - "
+                + "\n  - ".join(invalid_contract)
+                + "\nRun `omac dag check <manifest>` after fixing the contract.",
+                "develop 节点 contract 不完整:\n  - "
+                + "\n  - ".join(invalid_contract)
+                + "\n修复后请运行 `omac dag check <manifest>`。",
             )
         elif not node.reviewer:
             reason = ui(

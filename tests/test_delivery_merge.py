@@ -15,7 +15,7 @@ config.retry.merge + reset_review)门,本模块补 reviewer pass 后的自动 me
     + reset_review(旧 verdict 失效,强制重走 ci→review→merge);
   - 冲突回退后不手动清空旧 verdict:tick 不会在旧 verdict 下自动 merge(reviewer gate);
   - 自定义/0 值 retry.merge 上界 + 封顶 → blocked + 失败隔离;
-  - 未配置 merge:默认执行带 reviewed revision 锁的 gh pr merge;
+  - 未配置 merge:默认执行带 delivered revision 锁的 gh pr merge;
   - merge 已配置但无 pr_url → blocked + 报错即教学。
 """
 from __future__ import annotations
@@ -35,6 +35,7 @@ from omac.core.config import (
 from omac.core.manifest import Manifest, Node
 from omac.engines.mock import MockRuntime, MockStore
 from omac.engines.models import EngineConfig, WorkItem, WorkItemStatus
+from omac.errors import ValidationError
 from omac.pipeline.delivery import run_merge_delivery
 from omac.pipeline import loop
 
@@ -63,7 +64,7 @@ def _merge_script(tmp_path, body, name="merge.sh"):
 
 
 def _merge_config(script_path, timeout_minutes=30):
-    return {"merge": {"command": f"sh {script_path} {{pr_url}} {{reviewed_revision}}",
+    return {"merge": {"command": f"sh {script_path} {{pr_url}} {{delivered_revision}}",
                       "timeout_minutes": timeout_minutes}}
 
 
@@ -75,7 +76,8 @@ def _review_passed_item(store, reviewer="bob"):
         initial_status=WorkItemStatus.IN_REVIEW)
     store.update_work_item_metadata(
         item.id,
-        artifacts={"pr_url": "https://example.com/pr/1"},
+        artifacts={"pr_url": "https://github.com/acme/project/pull/1"},
+        verification={"quality": {"delivered_revision": "delivered-sha"}},
         review_verdict="pass",
         review_report={
             "reviewed_revision": "reviewed-sha",
@@ -106,8 +108,13 @@ class TestMergeConfig:
         }
 
     def test_get_merge_config_present(self):
-        cfg = {"merge": {"command": "gh pr merge {pr_url} --squash"}}
+        cfg = {"merge": {"command": (
+            "gh pr merge {pr_url} --match-head-commit {delivered_revision}")}}
         assert get_merge_config(cfg) == cfg["merge"]
+
+    def test_get_merge_config_rejects_command_without_delivery_revision(self):
+        with pytest.raises(ValidationError, match="delivered_revision"):
+            get_merge_config({"merge": {"command": "gh pr merge {pr_url}"}})
 
     def test_resolve_retry_merge_default_and_custom(self):
         assert resolve_retry({})["merge"] == DEFAULT_RETRY["merge"]
@@ -122,6 +129,7 @@ class TestMergeConfig:
 class TestRunMergeDeliveryUnit:
     def test_default_merge_command_runs_when_unconfigured(self, monkeypatch):
         store = _store()
+        store.config.engine_type = "multica"
         item = _review_passed_item(store)
         manifest = Manifest(meta={}, nodes={"a": _node()})
         manifest.nodes["a"].work_item_id = item.id
@@ -145,15 +153,15 @@ class TestRunMergeDeliveryUnit:
         assert run_merge_delivery({}, manifest, "a", store, _runtime(store),
                                   dict(DEFAULT_RETRY)) == "pass"
         assert seen["command"] == (
-            "gh pr merge https://example.com/pr/1 --squash --delete-branch "
-            "--match-head-commit reviewed-sha")
+            "gh pr merge https://github.com/acme/project/pull/1 --squash --delete-branch "
+            "--match-head-commit delivered-sha")
         assert seen["kwargs"]["shell"] is True
         assert manifest.nodes["a"].merged is True
         # 无任何评论 / 成功后节点语义回到 in_progress(即将 done)
         assert store.get_comments(item.id) == []
         assert manifest.nodes["a"].status == "in_progress"
 
-    def test_custom_merge_command_receives_reviewed_revision(self, tmp_path, monkeypatch):
+    def test_custom_merge_command_receives_delivered_revision(self, tmp_path, monkeypatch):
         store = _store()
         item = _review_passed_item(store)
         manifest = Manifest(meta={}, nodes={"a": _node()})
@@ -178,9 +186,40 @@ class TestRunMergeDeliveryUnit:
             _merge_config(script), manifest, "a", store, _runtime(store),
             dict(DEFAULT_RETRY),
         ) == "pass"
-        assert "reviewed-sha" in seen["command"]
+        assert "delivered-sha" in seen["command"]
 
-    def test_custom_merge_command_without_revision_placeholder_is_blocked(
+    def test_pass_with_nits_merges_fresh_worker_revision(self, monkeypatch):
+        store = _store()
+        store.config.engine_type = "multica"
+        item = _review_passed_item(store)
+        store.update_work_item_metadata(
+            item.id,
+            review_verdict="pass-with-nits",
+            verification={"quality": {"delivered_revision": "followup-sha"}},
+        )
+        manifest = Manifest(meta={}, nodes={"a": _node()})
+        manifest.nodes["a"].work_item_id = item.id
+        manifest.nodes["a"].status = "in_review"
+        seen = {}
+
+        def fake_run(command, **kwargs):
+            seen["command"] = command
+
+            class Proc:
+                returncode = 0
+                stdout = "merged"
+                stderr = ""
+
+            return Proc()
+
+        monkeypatch.setattr("omac.pipeline.delivery.subprocess.run", fake_run)
+
+        assert run_merge_delivery(
+            {}, manifest, "a", store, _runtime(store), dict(DEFAULT_RETRY),
+        ) == "pass"
+        assert "--match-head-commit followup-sha" in seen["command"]
+
+    def test_custom_merge_command_without_revision_placeholder_is_validation_error(
         self, tmp_path, monkeypatch,
     ):
         store = _store()
@@ -195,20 +234,17 @@ class TestRunMergeDeliveryUnit:
                 "unsafe merge command must not be executed"),
         )
 
-        result = run_merge_delivery(
-            {"merge": {"command": f"sh {script} {{pr_url}}"}},
-            manifest,
-            "a",
-            store,
-            _runtime(store),
-            dict(DEFAULT_RETRY),
-        )
-
-        assert result == "blocked"
-        assert any(
-            "reviewed_revision" in comment
-            for comment in store.get_comments(item.id)
-        )
+        with pytest.raises(ValidationError, match="delivered_revision"):
+            run_merge_delivery(
+                {"merge": {"command": f"sh {script} {{pr_url}}"}},
+                manifest,
+                "a",
+                store,
+                _runtime(store),
+                dict(DEFAULT_RETRY),
+            )
+        assert manifest.nodes["a"].status == "in_review"
+        assert store.get_comments(item.id) == []
 
     def test_merge_block_missing_command_uses_default(self, monkeypatch):
         store = _store()
@@ -433,6 +469,10 @@ class TestCollectResultsMerge:
         assert store.get_work_item(item.id).review_verdict is None  # reset_review
         # worker 修后重交(新 PR),不重新 pass;重启 worker 阶段
         store.update_work_item_metadata(item.id, artifacts={"pr_url": "https://example.com/pr/2"})
+        store.update_work_item_metadata(
+            item.id,
+            verification={"quality": {"delivered_revision": "delivered-sha-2"}},
+        )
         store.update_status(item.id, WorkItemStatus.DONE)
         manifest.nodes["a"].status = "in_progress"
         mmod.save_manifest(manifest, path)
@@ -466,7 +506,7 @@ class TestCollectResultsMerge:
         cfg = {
             "ci": {"check_command": f"sh {ci} {{pr_url}}", "timeout_minutes": 30},
             "merge": {
-                "command": f"sh {merge_fail} {{pr_url}} {{reviewed_revision}}"},
+                "command": f"sh {merge_fail} {{pr_url}} {{delivered_revision}}"},
         }
         store = _store()
         rt = _runtime(store)
@@ -479,7 +519,8 @@ class TestCollectResultsMerge:
             artifacts={"pr_url": "https://example.com/pr/1"},
             verification={"commands": [{"cmd": "pytest -q", "exit_code": 0, "summary": "ok"}],
                           "integration_gates": [], "pr_base": "feature/v1",
-                          "coverage": 95})
+                          "coverage": 95,
+                          "quality": {"delivered_revision": "reviewed-sha"}})
         store.update_status(item.id, WorkItemStatus.DONE)
         manifest = Manifest(meta={}, nodes={
             "a": Node(id="a", worker="alice", reviewer="bob",
@@ -511,8 +552,12 @@ class TestCollectResultsMerge:
         assert store.get_work_item(item.id).review_verdict is None
         # worker 修完冲突:切 merge 为成功 + 新 PR,不重新 pass
         cfg["merge"]["command"] = (
-            f"sh {merge_ok} {{pr_url}} {{reviewed_revision}}")
-        store.update_work_item_metadata(item.id, artifacts={"pr_url": "https://example.com/pr/2"})
+            f"sh {merge_ok} {{pr_url}} {{delivered_revision}}")
+        store.update_work_item_metadata(
+            item.id,
+            artifacts={"pr_url": "https://example.com/pr/2"},
+            verification={"quality": {"delivered_revision": "reviewed-sha-2"}},
+        )
         store.update_status(item.id, WorkItemStatus.DONE)
         manifest.nodes["a"].status = "in_progress"
         mmod.save_manifest(manifest, path)

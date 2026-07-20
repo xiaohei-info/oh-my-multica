@@ -467,7 +467,8 @@ class TestDispatchLoopIntegration:
         # 关闭 auto-complete,由我们手动写入结构化证据(模拟 work submit)
         eng = _engine(MOCK_AUTO_COMPLETE="false")
         contract = Contract(
-            objective="登录", acceptance=["可登录"],
+            objective="登录", source_of_truth=["docs/login.md#flow"],
+            acceptance=["可登录"], non_goals=["不修改相邻认证流程"],
             verification_commands=["pytest -q"],
             integration_gates=[{
                 "name": "login-gate", "layer": "L1",

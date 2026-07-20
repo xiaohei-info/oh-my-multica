@@ -142,6 +142,41 @@ def test_worker_evidence_passes():
     assert validate_worker_evidence(NODE, item) == []
 
 
+def test_worker_evidence_rejects_duplicate_integration_gate_results():
+    verification = _good_verification()
+    failed = deepcopy(verification["integration_gates"][0])
+    failed["commands"][0]["exit_code"] = 1
+    verification["integration_gates"] = [failed, verification["integration_gates"][0]]
+
+    errors = validate_worker_evidence(
+        NODE, Item(artifacts={"pr_url": "https://x/pr/1"}, verification=verification))
+
+    assert any("duplicate integration gate" in error for error in errors)
+    assert any("integration command failed" in error for error in errors)
+
+
+def test_worker_evidence_rejects_unknown_integration_gate_result():
+    verification = _good_verification()
+    unknown = deepcopy(verification["integration_gates"][0])
+    unknown["name"] = "unknown-gate"
+    verification["integration_gates"].append(unknown)
+
+    errors = validate_worker_evidence(
+        NODE, Item(artifacts={"pr_url": "https://x/pr/1"}, verification=verification))
+
+    assert any("unknown integration gate" in error for error in errors)
+
+
+def test_worker_evidence_rejects_malformed_integration_gate_result():
+    verification = _good_verification()
+    verification["integration_gates"].append({"name": ["bad"]})
+
+    errors = validate_worker_evidence(
+        NODE, Item(artifacts={"pr_url": "https://x/pr/1"}, verification=verification))
+
+    assert any("integration_gates[1].name" in error for error in errors)
+
+
 def test_worker_evidence_malformed_contract_gate_name_does_not_crash():
     contract = deepcopy(CONTRACT)
     contract.integration_gates[0]["name"] = ["bad"]

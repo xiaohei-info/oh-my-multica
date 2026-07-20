@@ -42,7 +42,7 @@
 8. 检查生产运行路径：依赖、网络、数据或解析失败必须暴露真实错误；禁止用 fake、mock、synthetic 或硬编码成功数据兜底。运行全部 `verification_commands`、integration gates、相关全量测试和 coverage 检查；记录真实命令、退出码和摘要。
 9. 创建或更新 PR，base 必须是 `contract.pr_base`。GitHub PR 必须 ready for review，不能是 draft。
 10. 编写 verification 文件，覆盖 commands、integration gates、coverage、`pr_base`、`env_setup` 和 `quality`：`quality.delivered_revision` 必须是当前 PR head，每条 regression proof 的 `head_ref` 必须与其一致；逐项给出 outcome mapping 和基线失败/当前通过证据；`runtime_fallbacks` 与 `known_gaps` 必须为空，`evidence_origin` 必须为 `real`。
-11. 使用 `work show` 返回的 `submit` 提交原 PR URL 和 verification 文件。平台解析后的 canonical PR 必须与首次交付一致；URL 别名可以归一化，但不得换成另一个仓库或 PR 编号。
+11. 使用 `work show` 返回的 `submit` 提交完整 canonical GitHub PR URL 和 verification 文件；不得提交 PR 编号、分支名或 `artifacts.pr`。平台解析后的 canonical PR 必须与首次交付一致，不得换成另一个仓库或 PR 编号。
 
 ## 完成条件
 

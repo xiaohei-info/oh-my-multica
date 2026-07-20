@@ -1,11 +1,13 @@
 from pathlib import Path
 import json
+import subprocess
 
 import pytest
 
 from omac.engines.models import EngineConfig
 from omac.engines.models import WorkItemStatus
 from omac.engines.multica import MulticaStore
+from omac.errors import AuthError, PlatformError, ValidationError
 
 
 def test_multica_text_file_commands_allow_process_owned_external_file(monkeypatch):
@@ -782,7 +784,13 @@ def test_inspect_pull_request_returns_current_head_revision(monkeypatch):
     assert snapshot.url == "https://github.com/acme/project/pull/7"
 
 
-@pytest.mark.parametrize("pr_url", [None, "", "   ", {"url": "x"}])
+@pytest.mark.parametrize("pr_url", [
+    None, "", "   ", {"url": "x"}, "7", "feature-branch",
+    "http://github.com/acme/project/pull/7",
+    "https://gitlab.com/acme/project/pull/7",
+    "https://github.com/acme/project/issues/7",
+    "https://github.com/acme/project/pull/7;rm",
+])
 def test_inspect_pull_request_rejects_invalid_url_before_subprocess(monkeypatch, pr_url):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
     monkeypatch.setattr(
@@ -790,5 +798,44 @@ def test_inspect_pull_request_rejects_invalid_url_before_subprocess(monkeypatch,
         lambda *a, **k: pytest.fail("subprocess must not receive an invalid PR URL"),
     )
 
-    with pytest.raises(Exception, match="PR URL"):
+    with pytest.raises(ValidationError, match="PR URL"):
         store.inspect_pull_request(pr_url)
+
+
+def test_inspect_pull_request_maps_auth_failure_to_exit_3(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+
+    class Result:
+        returncode = 1
+        stdout = ""
+        stderr = "not logged into any GitHub hosts; run gh auth login"
+
+    monkeypatch.setattr("omac.engines.multica.subprocess.run", lambda *a, **k: Result())
+
+    with pytest.raises(AuthError):
+        store.inspect_pull_request("https://github.com/acme/project/pull/7")
+
+
+def test_inspect_pull_request_maps_platform_failure_to_exit_2(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+
+    class Result:
+        returncode = 1
+        stdout = ""
+        stderr = "network unavailable"
+
+    monkeypatch.setattr("omac.engines.multica.subprocess.run", lambda *a, **k: Result())
+
+    with pytest.raises(PlatformError):
+        store.inspect_pull_request("https://github.com/acme/project/pull/7")
+
+
+def test_inspect_pull_request_maps_timeout_to_exit_2(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    monkeypatch.setattr(
+        "omac.engines.multica.subprocess.run",
+        lambda *a, **k: (_ for _ in ()).throw(subprocess.TimeoutExpired("gh", 30)),
+    )
+
+    with pytest.raises(PlatformError):
+        store.inspect_pull_request("https://github.com/acme/project/pull/7")

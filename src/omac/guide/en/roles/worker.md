@@ -63,8 +63,9 @@ conflicts; do not redefine the contract.
     regression `head_ref` matches it; include outcome mappings, base-fail/head-pass
     proof, empty `runtime_fallbacks` and `known_gaps`, and `evidence_origin: real`.
 11. Submit the original PR URL and verification file using the returned command.
-    The platform-resolved canonical repository and PR number must match the
-    first delivery; URL aliases may normalize, but another PR is forbidden.
+    Use the full canonical GitHub PR URL, never a PR number, branch name, or
+    `artifacts.pr`. The platform-resolved repository and PR number must match
+    the first delivery; another PR is forbidden.
 
 ## Completion conditions
 

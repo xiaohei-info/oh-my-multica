@@ -79,11 +79,50 @@ def _fix_node(node_id, worker, blocked_by):
     )
 
 
+def _completed_contract(node_id: str, pr_base: str = "main") -> Contract:
+    command = f"pytest tests/int/{node_id}"
+    return Contract(
+        objective=f"Complete {node_id}",
+        source_of_truth=[f"docs/{node_id}.md"],
+        acceptance=[f"{node_id}-works"],
+        non_goals=["no scope creep"],
+        verification_commands=[f"pytest tests/{node_id}"],
+        integration_gates=[{
+            "name": f"{node_id}-gate", "layer": "L1",
+            "delivery_goal": f"{node_id} delivered",
+            "source_of_truth": [f"docs/{node_id}.md"],
+            "covers": [node_id],
+            "acceptance_refs": [f"{node_id}-works"],
+            "commands": [command],
+        }],
+        quality={
+            "required_outcomes": [{
+                "id": f"{node_id}-outcome",
+                "source_ref": f"acceptance#{node_id}.run",
+            }],
+            "business_tests": [{
+                "id": f"{node_id}-business",
+                "outcome_refs": [f"{node_id}-outcome"],
+                "command": command,
+                "level": "integration",
+                "real_dependencies": ["none"],
+                "must_fail_on_base": True,
+            }],
+            "runtime_data_policy": "real-or-error",
+        },
+        pr_base=pr_base,
+    )
+
+
 def _done_manifest(path):
     """2 节点、全部 done 的 manifest(模拟内层 loop 已收敛)."""
     m = Manifest(meta={"name": "feature-x", "pr_base": "feature/v1"}, nodes={
-        "a": Node(id="a", worker="alice", status="done", work_item_id="wi-a"),
-        "b": Node(id="b", worker="bob", blocked_by=["a"], status="done", work_item_id="wi-b"),
+        "a": Node(
+            id="a", worker="alice", reviewer="bob", contract=_completed_contract("a"),
+            status="done", work_item_id="wi-a"),
+        "b": Node(
+            id="b", worker="bob", reviewer="alice", contract=_completed_contract("b"),
+            blocked_by=["a"], status="done", work_item_id="wi-b"),
     })
     save_manifest(m, path)
     return m
@@ -229,8 +268,8 @@ def test_incremental_decompose_issue_has_failed_flow_and_manifest_context(tmp_pa
         "source_issues": ["plan-issue", "acceptance-issue", "decompose-issue"],
     }, nodes={
         "a": Node(
-            id="a", worker="alice", status="done",
-            contract=Contract(pr_base="main"), work_item_id="work-a"),
+            id="a", worker="alice", reviewer="bob", status="done",
+            contract=_completed_contract("a"), work_item_id="work-a"),
     })
     save_manifest(manifest, path)
     doc = _acceptance_doc([("ACC-001", "Login", 1)])

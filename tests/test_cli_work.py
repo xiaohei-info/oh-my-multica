@@ -539,6 +539,7 @@ def _engine(**extra):
 
 CONTRACT = Contract(
     objective="do it",
+    source_of_truth=["docs/d.md#feature"],
     acceptance=["works"],
     non_goals=["no creep"],
     verification_commands=["pytest -q"],
@@ -799,6 +800,7 @@ class TestSubmitPerKindPhase:
         eng.store.update_work_item_metadata(
             item.id,
             phase=dispatch_mod.TaskPhase.AUTHORING,
+            artifacts={"pr_url": "https://x/pr/1"},
             review_verdict="pass-with-nits",
             review_report=_make_review_report(),
         )
@@ -1673,6 +1675,41 @@ def test_followup_rejects_malformed_previous_pr_url_before_adapter(
         )
 
     assert calls == ["https://github.com/acme/project/pull/1"]
+
+
+def test_followup_rejects_legacy_artifacts_pr_alias(tmp_path, monkeypatch):
+    eng = _engine()
+    item = eng.store.create_work_item(
+        "mock-workspace", "t", "d", dag_key="a", worker="alice",
+        reviewer="bob", kind=TaskKind.DEVELOP,
+    )
+    eng.store.set_node_contract(item.id, CONTRACT)
+    eng.store.update_work_item_metadata(
+        item.id,
+        phase=TaskPhase.AUTHORING,
+        artifacts={"pr": "https://github.com/acme/project/pull/1"},
+        review_verdict="pass-with-nits",
+        review_report=_make_review_report(),
+    )
+    verification = _make_verification()
+    verification["quality"]["delivered_revision"] = "head-sha-nits"
+    verification["quality"]["regression_proof"][0]["head_ref"] = "head-sha-nits"
+    vfile = tmp_path / "verification.yaml"
+    vfile.write_text(yaml.safe_dump(verification))
+    monkeypatch.setattr(
+        eng.store,
+        "inspect_pull_request",
+        lambda pr_url: SimpleNamespace(
+            url=pr_url, is_draft=False, state="OPEN",
+            head_revision="head-sha-nits"),
+    )
+
+    with pytest.raises(ValidationError, match="artifacts.pr"):
+        dispatch_mod.submit(
+            eng.store, item.id,
+            pr_url="https://github.com/acme/project/pull/2",
+            verification_file=str(vfile),
+        )
 
 
 def test_develop_review_requires_worker_delivered_revision(tmp_path, monkeypatch):

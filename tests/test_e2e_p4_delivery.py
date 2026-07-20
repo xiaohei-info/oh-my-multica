@@ -165,8 +165,9 @@ nodes:
     reviewer: charlie
     contract:
       objective: foundation
+      source_of_truth: [docs/a.md#foundation]
       acceptance: [flow-foundation]
-      non_goals: []
+      non_goals: [no scope creep]
       verification_commands: [pytest tests/test_a.py -q]
       integration_gates:
         - name: gate-foundation
@@ -199,8 +200,9 @@ nodes:
     blocked_by: [foundation]
     contract:
       objective: middle
+      source_of_truth: [docs/b.md#middle]
       acceptance: [flow-middle]
-      non_goals: []
+      non_goals: [no scope creep]
       verification_commands: [pytest tests/test_b.py -q]
       integration_gates:
         - name: gate-middle
@@ -233,8 +235,9 @@ nodes:
     blocked_by: [middle]
     contract:
       objective: final
+      source_of_truth: [docs/c.md#final]
       acceptance: [flow-final]
-      non_goals: []
+      non_goals: [no scope creep]
       verification_commands: [pytest tests/test_c.py -q]
       integration_gates:
         - name: gate-final
@@ -385,7 +388,7 @@ class TestMergeChain:
                      f"sh {ci} {{pr_url}}"], cwd=tmp_path, env=env).returncode == 0
         assert _run([
             "config", "set", "merge.command",
-            f"sh {merge} {{pr_url}} {{reviewed_revision}}",
+            f"sh {merge} {{pr_url}} {{delivered_revision}}",
         ],
                     cwd=tmp_path, env=env).returncode == 0
         m = tmp_path / ".omac" / "smoke-full.yaml"

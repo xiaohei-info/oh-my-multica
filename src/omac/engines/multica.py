@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
+from ..core.github import canonical_github_pr_url
 from ..core.taskmeta import (
     CI_BOUNCE_KEY, CONTRACT_REF_KEY, DECISION_REQUIRED_KEY, DELIVERABLE_KEY,
     DELIVERABLE_REF_KEY, KIND_KEY, MERGE_BOUNCE_KEY, PHASE_KEY,
@@ -73,11 +74,13 @@ class MulticaStore(WorkItemStore):
         return True
 
     def inspect_pull_request(self, pr_url: str) -> PullRequestSnapshot:
-        if not isinstance(pr_url, str) or not pr_url.strip():
+        try:
+            pr_url = canonical_github_pr_url(pr_url)
+        except ValueError as exc:
             raise ValidationError(ui(
-                "PR URL must be a non-empty string before GitHub inspection.",
-                "调用 GitHub 检查前，PR URL 必须是非空字符串。",
-            ))
+                f"Invalid GitHub PR URL: {exc}",
+                f"GitHub PR URL 非法: {exc}",
+            )) from exc
         try:
             proc = subprocess.run(
                 [
@@ -89,36 +92,43 @@ class MulticaStore(WorkItemStore):
                 timeout=30,
             )
         except FileNotFoundError:
-            raise ValidationError(ui(
+            raise PlatformError(ui(
                 "GitHub PR checks require gh CLI. Install it, sign in, and retry: "
                 "brew install gh && gh auth login",
                 "GitHub PR 检查需要 gh CLI。请安装并登录后重试: "
                 "brew install gh && gh auth login"))
         except subprocess.TimeoutExpired:
-            raise ValidationError(ui(
+            raise PlatformError(ui(
                 f"GitHub PR check timed out: {pr_url}. Verify network and GitHub access.",
                 f"GitHub PR 检查超时: {pr_url}。请确认网络/GitHub 可达后重试。"))
         if proc.returncode != 0:
             detail = (proc.stderr or proc.stdout or "").strip()
-            raise ValidationError(ui(
+            auth_markers = (
+                "gh auth login", "not logged into", "authentication failed",
+                "bad credentials", "http 401", "status 401",
+            )
+            error_type = AuthError if any(
+                marker in detail.lower() for marker in auth_markers
+            ) else PlatformError
+            raise error_type(ui(
                 f"GitHub PR check failed: {pr_url}\n{detail}",
                 f"GitHub PR 检查失败: {pr_url}\n{detail}"))
         try:
             payload = json.loads(proc.stdout or "{}")
         except json.JSONDecodeError:
-            raise ValidationError(ui(
+            raise PlatformError(ui(
                 f"GitHub PR check returned non-JSON output: {pr_url}\n"
                 f"{(proc.stdout or '').strip()}",
                 f"GitHub PR 检查返回非 JSON: {pr_url}\n"
                 f"{(proc.stdout or '').strip()}"))
         head_revision = payload.get("headRefOid")
         if not isinstance(head_revision, str) or not head_revision.strip():
-            raise ValidationError(ui(
+            raise PlatformError(ui(
                 f"GitHub PR check did not return headRefOid: {pr_url}",
                 f"GitHub PR 检查未返回 headRefOid: {pr_url}"))
         canonical_url = payload.get("url")
         if not isinstance(canonical_url, str) or not canonical_url.strip():
-            raise ValidationError(ui(
+            raise PlatformError(ui(
                 f"GitHub PR check did not return canonical URL: {pr_url}",
                 f"GitHub PR 检查未返回 canonical URL: {pr_url}"))
         return PullRequestSnapshot(

@@ -149,7 +149,7 @@ Submit verdict through `--verdict`, not report YAML. Valid values are `pass`,
 
 ### Worker verification
 
-1. Submit a non-empty PR URL and verification file; the GitHub PR is deliverable and not draft. Rework must keep the same canonical PR resolved by the platform; replacing it is forbidden.
+1. Submit a canonical GitHub PR URL (`https://github.com/<owner>/<repo>/pull/<number>`) and verification file; the PR is deliverable and not draft. `artifacts.pr_url` is the only PR field and `artifacts.pr` is forbidden. Rework keeps the same canonical PR.
 2. Commands cover the contract's exact commands and exit 0.
 3. Gate sources and delivery goals exactly match the contract.
 4. Metrics meet thresholds and required artifacts are present.
@@ -157,8 +157,10 @@ Submit verdict through `--verdict`, not report YAML. Valid values are `pass`,
 6. PR base matches and coverage is numeric and at least the gate.
 7. `quality.delivered_revision` matches the current PR head, and every regression
    proof `head_ref` matches that revision.
-8. Outcome mappings and regression proofs are complete; runtime fallbacks and
-   known gaps are empty; evidence origin is `real`.
+8. Outcome mappings, regression proofs, and integration-gate evidence are
+   complete with every ID/name exactly once; duplicate, unknown, or malformed
+   gates are rejected. Runtime fallbacks and known gaps are empty; evidence
+   origin is `real`.
 
 ### Reviewer report
 
@@ -178,9 +180,10 @@ Submit verdict through `--verdict`, not report YAML. Valid values are `pass`,
    reviewer. The Worker must submit a new PR revision, different from the reviewed
    revision, with complete fresh evidence; functional, contract, integrity,
    security, or verification defects must therefore be `reject`.
-7. A merge command contains both `{pr_url}` and `{reviewed_revision}`. The
-   default GitHub command uses `--match-head-commit`, so only the exact reviewed
-   revision can merge.
+7. A merge command contains both `{pr_url}` and `{delivered_revision}`. The
+   default GitHub command uses `--match-head-commit`, so only the current Worker
+   delivery accepted by the evidence gate can merge. It equals the Reviewer
+   revision for pass and the fresh Worker revision for pass-with-nits follow-up.
 
 ### Final acceptance results
 
@@ -199,8 +202,10 @@ Submit verdict through `--verdict`, not report YAML. Valid values are `pass`,
 | Reviewer stops after the first issue | Finish the full revision scope and submit one complete findings batch. |
 | Worker or Reviewer reuses evidence from an old commit | Read the current PR head again; Worker updates `delivered_revision` and regression `head_ref`, and Reviewer reports that same revision only. |
 | Worker changes to another PR during rework | Keep the same canonical PR resolved by the platform; report a blocker if it cannot continue instead of replacing it. |
+| Worker submits a PR number, branch, or `artifacts.pr` | Submit the full canonical GitHub PR URL and use only `artifacts.pr_url`. |
+| Duplicate Worker gate evidence hides a failure | Submit each contract gate once and remove duplicate or unknown gates. |
 | Duplicate or unknown mapping keys pad coverage | Map every contract key exactly once, remove duplicates and unknown keys, and use a legal status. |
-| Merge command contains only the PR URL | Add `{reviewed_revision}` and make the platform reject a changed head. |
+| Merge command contains only the PR URL | Add `{delivered_revision}` and make the platform reject a changed head. |
 | Pass verdict retains blockers | Empty blockers; submit reject if a blocker remains. |
 | Reject has no actionable reason | State failure fact, effect, and repair entry point in blockers. |
 | Final acceptance omits or invents a flow ID | Generate results strictly from the acceptance document. |

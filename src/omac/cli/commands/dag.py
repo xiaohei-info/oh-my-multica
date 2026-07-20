@@ -193,6 +193,16 @@ def _default_max_parallel(args) -> int:
         "max_parallel", DEFAULTS["max_parallel"])
 
 
+def _effective_runtime_config(config: dict, engine_config: EngineConfig) -> dict:
+    """Overlay resolved CLI/env engine settings onto this invocation config."""
+    effective = dict(config)
+    effective["engine"] = engine_config.engine_type
+    effective["workspace"] = engine_config.workspace_id
+    if engine_config.project_id is not None:
+        effective["project"] = engine_config.project_id
+    return effective
+
+
 def check(args) -> int:
     path = args.manifest
     if not os.path.exists(path):
@@ -505,12 +515,12 @@ def _loop_or_single_locked(args, single_round: bool) -> int:
 
     import time as _time
 
-    engine, _ = _assemble_engine(args)
+    engine, engine_config = _assemble_engine(args)
     # 派单前:真实引擎下自动把 config 同步到 main,否则隔离区 agent clone 后读不到。
     config_path = _config_path_for_manifest(args.manifest)
     ensure_config_synced(config_path, branch="main",
                          engine_type=engine.store.config.engine_type)
-    config = load_config(config_path)
+    config = _effective_runtime_config(load_config(config_path), engine_config)
     retry_limits = resolve_retry(config)
     manifest = load_manifest(args.manifest)
     _validate_execution_invariants(manifest, args.manifest)

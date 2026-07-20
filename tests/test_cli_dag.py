@@ -12,12 +12,14 @@ import pytest
 
 from omac.cli import exit_codes
 from omac.cli.commands.dag import _assemble_engine
+from omac.cli.commands import dag as dag_mod
 from omac.cli.main import main
 from omac.engines import create_engine
 from omac.engines.models import EngineConfig, WorkItemStatus
 from omac.engines.mock import MockStore, MockRuntime
 from omac.core.manifest import load_manifest, save_manifest, Node, Manifest
 from omac.pipeline.loop import reconcile
+from omac.pipeline.loop import TickResult
 from omac.pipeline.report import (
     build_status_report,
     render_table,
@@ -89,6 +91,34 @@ def test_dag_run_rejects_missing_required_acceptance_file(
 
     assert code == exit_codes.VALIDATION
     assert "Acceptance document" in capsys.readouterr().err
+
+
+def test_dag_tick_uses_effective_engine_override_for_delivery_config(
+    tmp_path, monkeypatch, capsys,
+):
+    path = _manifest_yaml(tmp_path, [])
+    engine = create_engine("mock", _engine_config())
+    resolved = EngineConfig(engine_type="multica", workspace_id="ws")
+    captured = {}
+
+    monkeypatch.setattr(dag_mod, "_assemble_engine", lambda args: (engine, resolved))
+    monkeypatch.setattr(dag_mod, "ensure_config_synced", lambda *a, **k: None)
+    monkeypatch.setattr(dag_mod, "load_config", lambda path: {"engine": "mock"})
+
+    def fake_tick(*args, **kwargs):
+        captured["config"] = kwargs["config"]
+        return TickResult(
+            state="running", done=[], failed=[], running=[], dispatched=[])
+
+    monkeypatch.setattr(dag_mod, "tick", fake_tick)
+
+    code = main([
+        "dag", "tick", path, "--engine", "multica", "--output", "json",
+    ])
+
+    assert code == exit_codes.IN_PROGRESS
+    assert captured["config"]["engine"] == "multica"
+    capsys.readouterr()
 
 
 def _mixed_manifest(tmp_path):

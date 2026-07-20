@@ -147,14 +147,14 @@ verdict 不写入 report YAML，而是通过 submit 的 `--verdict` 提交；合
 
 ### worker verification
 
-1. submit 必须同时提供非空 PR URL 和 verification 文件；GitHub PR 必须可交付且不是 draft。返工必须继续提交平台解析后的同一个 canonical PR，禁止替换 PR。
+1. submit 必须同时提供 canonical GitHub PR URL（`https://github.com/<owner>/<repo>/pull/<number>`）和 verification 文件；PR 必须可交付且不是 draft。`artifacts.pr_url` 是唯一 PR 字段，禁止 `artifacts.pr`。返工必须继续使用同一个 canonical PR。
 2. `commands` 与每条 integration gate 的 `commands` 必须覆盖 contract 中的精确命令，且退出码为 0。
 3. gate 的 `source_of_truth` 和 `delivery_goal` 必须与 contract 完全一致。
 4. metrics 必须达到 contract 阈值，contract 要求的 artifacts 必须全部出现。
 5. contract 声明 integration gates 时，`env_setup` 必须非空且每项都是非空字符串。
 6. `pr_base` 必须匹配，`coverage` 必须是数字且不低于 coverage gate。
 7. `quality.delivered_revision` 必须等于当前 PR head，且每条 regression proof 的 `head_ref` 必须等于该 revision。
-8. outcome mapping 和 regression proof 必须完整；`runtime_fallbacks`、`known_gaps` 为空，`evidence_origin` 为 `real`。
+8. outcome mapping、regression proof 和 integration gate evidence 必须完整且每个 id/name 只出现一次；重复、未知或畸形 gate 均拒绝。`runtime_fallbacks`、`known_gaps` 为空，`evidence_origin` 为 `real`。
 
 ### reviewer report
 
@@ -164,7 +164,7 @@ verdict 不写入 report YAML，而是通过 submit 的 `--verdict` 提交；合
 4. outcome、acceptance 和 integration gate mapping 必须对 contract 项逐项且仅映射一次；重复项、未知项、非法状态和缺项均拒绝。命令、指标、产物、事实源和交付目标必须通过校验。
 5. `pass` 必须零 findings；`pass-with-nits` 只能有 nit findings；`reject` 至少有一个 blocker finding。
 6. `pass-with-nits` 沿用既有流程：只回到 worker 一次，不再进行第二轮 reviewer；Worker 必须提交一个不同于已评审 revision 的新 PR revision 和完整新证据，因此任何功能、契约、数据完整性、安全或验证问题都必须 reject。
-7. merge command 必须同时包含 `{pr_url}` 与 `{reviewed_revision}`；默认 GitHub merge 使用 `--match-head-commit`，只允许合并 Reviewer 已评审的精确 revision。
+7. merge command 必须同时包含 `{pr_url}` 与 `{delivered_revision}`；默认 GitHub merge 使用 `--match-head-commit`，只允许合并 Worker 证据门确认的当前交付 revision。普通 pass 下它与 Reviewer revision 相同；pass-with-nits 返工下它是 Worker 的新 revision。
 
 ### final acceptance results
 
@@ -183,8 +183,10 @@ verdict 不写入 report YAML，而是通过 submit 的 `--verdict` 提交；合
 | Reviewer 发现一个问题就停止 | 完成本 revision 的全部范围扫描，一次提交完整 findings 批次。 |
 | Worker 或 Reviewer 复用旧 commit 的证据 | 重新读取当前 PR head；Worker 更新 `delivered_revision` 与 regression `head_ref`，Reviewer 仅评审并填写该同一 revision。 |
 | Worker 返工时改用另一个 PR | 继续使用平台解析后的同一个 canonical PR；原 PR 无法继续时报告阻塞，不得替换后绕过已有评审。 |
+| 使用 PR 编号、分支名或 `artifacts.pr` | 提交完整 canonical GitHub PR URL，并只写入 `artifacts.pr_url`。 |
+| Worker gate 同名结果覆盖失败项 | 每个 contract gate 只提交一次，删除重复与未知 gate。 |
 | mapping 用重复或未知 id 凑齐数量 | 每个 contract id 只映射一次，删除重复项和未知项，并使用合法状态。 |
-| merge command 只包含 PR URL | 同时加入 `{reviewed_revision}`，并让平台在 head 已变化时拒绝合并。 |
+| merge command 只包含 PR URL | 同时加入 `{delivered_revision}`，并让平台在 head 已变化时拒绝合并。 |
 | pass verdict 仍保留 blockers | 清空 blockers；若确有阻塞则提交 reject。 |
 | reject 没有可执行阻塞原因 | 在 blockers 写明失败事实、影响和修正入口。 |
 | 最终验收漏掉一个 flow 或额外创造 id | 严格按 acceptance 文档逐项生成结果。 |

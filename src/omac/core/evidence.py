@@ -49,18 +49,27 @@ def _validate_expected_commands(command_by_text, expected_commands, *, missing_p
     return errors
 
 
-def _gate_by_name(gates):
+def _gate_by_name(gates, *, expected_names: set[str], prefix: str):
+    errors = []
     if not isinstance(gates, list) or not gates:
-        return None
-    return {
-        gate.get("name"): gate
-        for gate in gates
-        if (
-            isinstance(gate, dict)
-            and isinstance(gate.get("name"), str)
-            and gate.get("name").strip()
-        )
-    }
+        return None, errors
+    result = {}
+    for index, gate in enumerate(gates):
+        item_prefix = f"{prefix}[{index}]"
+        if not isinstance(gate, dict):
+            errors.append(f"{item_prefix} must be an object")
+            continue
+        name = gate.get("name")
+        if not isinstance(name, str) or not name.strip():
+            errors.append(f"{item_prefix}.name must be a non-empty string")
+            continue
+        if name in result:
+            errors.append(f"duplicate integration gate: {name}")
+            continue
+        result[name] = gate
+        if name not in expected_names:
+            errors.append(f"unknown integration gate: {name}")
+    return result, errors
 
 
 def _metric_satisfies(actual, expected) -> bool:
@@ -132,7 +141,7 @@ def _validate_integration_gate_evidence(expected_gate, actual_gate, *, prefix):
 def _has_pr_url(artifacts) -> bool:
     if not isinstance(artifacts, dict):
         return False
-    pr_url = artifacts.get("pr_url") or artifacts.get("pr")
+    pr_url = artifacts.get("pr_url")
     return isinstance(pr_url, str) and bool(pr_url.strip())
 
 
@@ -481,29 +490,40 @@ def validate_worker_evidence(
             )
         )
 
-    integration_gate_by_name = _gate_by_name(verification.get("integration_gates"))
+    expected_gates = contract.integration_gates
+    if not isinstance(expected_gates, list):
+        errors.append("contract.integration_gates must be a list")
+        expected_gates = []
+    valid_expected_gates = []
+    expected_gate_names = set()
+    for expected_gate in expected_gates:
+        if not isinstance(expected_gate, dict):
+            errors.append("contract integration gate must be an object")
+            continue
+        gate_name = expected_gate.get("name")
+        if not isinstance(gate_name, str) or not gate_name.strip():
+            errors.append("contract integration gate name must be a non-empty string")
+            continue
+        expected_gate_names.add(gate_name)
+        valid_expected_gates.append(expected_gate)
+    integration_gate_by_name, gate_errors = _gate_by_name(
+        verification.get("integration_gates"),
+        expected_names=expected_gate_names,
+        prefix="verification.integration_gates",
+    )
+    errors.extend(gate_errors)
     if integration_gate_by_name is None:
         errors.append("verification.integration_gates must be non-empty")
-    else:
-        expected_gates = contract.integration_gates
-        if not isinstance(expected_gates, list):
-            errors.append("contract.integration_gates must be a list")
-            expected_gates = []
-        for expected_gate in expected_gates:
-            if not isinstance(expected_gate, dict):
-                errors.append("contract integration gate must be an object")
-                continue
-            gate_name = expected_gate.get("name")
-            if not isinstance(gate_name, str) or not gate_name.strip():
-                errors.append("contract integration gate name must be a non-empty string")
-                continue
-            errors.extend(
-                _validate_integration_gate_evidence(
-                    expected_gate,
-                    integration_gate_by_name.get(gate_name),
-                    prefix="verification",
-                )
+        integration_gate_by_name = {}
+    for expected_gate in valid_expected_gates:
+        gate_name = expected_gate["name"]
+        errors.extend(
+            _validate_integration_gate_evidence(
+                expected_gate,
+                integration_gate_by_name.get(gate_name),
+                prefix="verification",
             )
+        )
 
     if _requires_env_setup(contract):
         env_setup = verification.get("env_setup")

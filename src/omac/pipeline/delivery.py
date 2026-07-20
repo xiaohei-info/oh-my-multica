@@ -39,6 +39,8 @@ from dataclasses import dataclass
 import time
 
 from ..core.config import DEFAULT_RETRY, get_ci_config, get_merge_config
+from ..core.evidence import delivered_revision_of
+from ..core.github import canonical_github_pr_url
 from ..engines.models import WorkItemStatus
 from ..engines.runtime import AgentRuntime
 from ..core.manifest import Manifest
@@ -162,7 +164,7 @@ def advance_delivery(
     item = store.get_work_item(item_id)
     pr_url = ""
     if isinstance(item.artifacts, dict):
-        pr_url = item.artifacts.get("pr_url") or item.artifacts.get("pr") or ""
+        pr_url = item.artifacts.get("pr_url") or ""
 
     if not pr_url:
         # CI 已配置但 worker 未提交 pr_url —— 证据门本应挡住,此处防御性阻断并教化。
@@ -226,10 +228,10 @@ def run_merge_delivery(
 ) -> str:
     """reviewer pass 后、进 done 之前的自动 merge 门(§7.3)。
 
-    - 未配置 merge → 默认执行带 ``--match-head-commit {reviewed_revision}`` 的 GitHub merge。
+    - 未配置 merge → 默认执行带 ``--match-head-commit {delivered_revision}`` 的 GitHub merge。
     - 配置了 merge 但节点无 pr_url → 防御性 blocked + 报错即教学,返回 ``'blocked'``。
     - 配置了 merge → command 必须同时包含 ``{pr_url}`` 和
-      ``{reviewed_revision}``;进入 ``merging``(manifest 细分态,平台仍 in_review),执行:
+      ``{delivered_revision}``;进入 ``merging``(manifest 细分态,平台仍 in_review),执行:
         * 成功 → 回到 ``in_progress`` 语义即「已合入」;manifest ``Node`` 记录
           ``merged: true`` / ``merged_at``;返回 ``'pass'``(loop 随即 ``done``)。
         * 冲突/失败 → 失败摘要(命令输出尾部) add_comment + reset_review + 转回
@@ -243,12 +245,16 @@ def run_merge_delivery(
     """
     node = manifest.nodes[node_key]
     item_id = node.work_item_id
-    merge = get_merge_config(config)
+    runtime_config = dict(config or {})
+    engine_type = getattr(getattr(store, "config", None), "engine_type", None)
+    if engine_type:
+        runtime_config["engine"] = engine_type
+    merge = get_merge_config(runtime_config)
 
     item = store.get_work_item(item_id)
     pr_url = ""
     if isinstance(item.artifacts, dict):
-        pr_url = item.artifacts.get("pr_url") or item.artifacts.get("pr") or ""
+        pr_url = item.artifacts.get("pr_url") or ""
 
     if not pr_url:
         # merge 已配置但 reviewer pass 后无 pr_url —— 防御性阻断并教化。
@@ -261,38 +267,28 @@ def run_merge_delivery(
         store.update_status(item_id, WorkItemStatus.BLOCKED)
         return "blocked"
 
-    review_report = item.review_report if isinstance(item.review_report, dict) else {}
-    reviewed_revision = review_report.get("reviewed_revision")
-    if not isinstance(reviewed_revision, str) or not reviewed_revision.strip():
+    delivered_revision = delivered_revision_of(item.verification)
+    if delivered_revision is None:
         store.add_comment(item_id, ui(
-            "⚠️ Merge is blocked because review_report.reviewed_revision is missing. "
-            "Submit a complete review report bound to the PR head.",
-            "⚠️ merge 已阻断：review_report.reviewed_revision 缺失。"
-            "请提交绑定当前 PR head 的完整评审报告。",
+            "⚠️ Merge is blocked because Worker delivered_revision is missing. "
+            "Submit fresh Worker evidence bound to the current PR head.",
+            "⚠️ merge 已阻断：Worker delivered_revision 缺失。"
+            "请提交绑定当前 PR head 的新 Worker 证据。",
         ))
         node.status = "blocked"
         store.update_status(item_id, WorkItemStatus.BLOCKED)
         return "blocked"
 
-    command_template = merge.get("command") if isinstance(merge, dict) else None
-    required_placeholders = ("{pr_url}", "{reviewed_revision}")
-    missing_placeholders = [
-        placeholder for placeholder in required_placeholders
-        if not isinstance(command_template, str)
-        or placeholder not in command_template
-    ]
-    if missing_placeholders:
-        store.add_comment(item_id, ui(
-            "⚠️ Merge command is unsafe because it is missing placeholders: "
-            + ", ".join(missing_placeholders)
-            + ". Configure merge.command with both {pr_url} and {reviewed_revision}.",
-            "⚠️ merge command 缺少安全占位符："
-            + "、".join(missing_placeholders)
-            + "。请同时配置 {pr_url} 和 {reviewed_revision}。",
-        ))
-        node.status = "blocked"
-        store.update_status(item_id, WorkItemStatus.BLOCKED)
-        return "blocked"
+    command_template = merge["command"]
+    if engine_type != "mock":
+        try:
+            pr_url = canonical_github_pr_url(pr_url)
+        except ValueError as exc:
+            from ..errors import ValidationError
+            raise ValidationError(ui(
+                f"Invalid artifacts.pr_url for merge: {exc}",
+                f"merge 使用的 artifacts.pr_url 非法: {exc}",
+            )) from exc
 
     # 进入 merging(manifest 细分态;平台仍 in_review)
     node.status = "merging"
@@ -301,7 +297,7 @@ def run_merge_delivery(
     command = (
         command_template
         .replace("{pr_url}", pr_url)
-        .replace("{reviewed_revision}", reviewed_revision.strip())
+        .replace("{delivered_revision}", delivered_revision)
     )
     timeout = max(1, int(merge.get("timeout_minutes", 30))) * 60
     try:

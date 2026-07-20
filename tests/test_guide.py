@@ -230,7 +230,7 @@ def test_evidence_artifact_defines_all_evidence_shapes() -> None:
         "worker verification", "reviewer report", "final acceptance results",
         "acceptance_mapping", "outcome_mapping", "regression_proof",
         "evidence_origin", "delivered_revision", "reviewed_revision", "review_scope", "findings",
-        "只映射一次", "{reviewed_revision}", "--match-head-commit",
+        "只映射一次", "{delivered_revision}", "--match-head-commit",
     ]:
         assert item in content, f"evidence artifact missing evidence anchor: {item}"
 

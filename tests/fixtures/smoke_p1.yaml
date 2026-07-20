@@ -14,6 +14,7 @@ nodes:
     blocked_by: []
     contract:
       objective: "Foundation works"
+      source_of_truth: ["docs/a.md#foundation"]
       acceptance: ["foundation passes"]
       non_goals: ["no scope creep"]
       verification_commands: ["pytest tests/test_a.py -q"]
@@ -50,6 +51,7 @@ nodes:
     blocked_by: [smoke-A]
     contract:
       objective: "Middle works"
+      source_of_truth: ["docs/b.md#middle"]
       acceptance: ["middle passes"]
       non_goals: ["no creep"]
       verification_commands: ["pytest tests/test_b.py -q"]
@@ -86,6 +88,7 @@ nodes:
     blocked_by: [smoke-B]
     contract:
       objective: "Final works"
+      source_of_truth: ["docs/c.md#final"]
       acceptance: ["final passes"]
       non_goals: ["no creep"]
       verification_commands: ["pytest tests/test_c.py -q"]
