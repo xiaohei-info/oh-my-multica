@@ -46,7 +46,14 @@ class Item:
 
 def _good_verification():
     return {
-        "commands": [{"cmd": "pytest -q", "exit_code": 0}],
+        "commands": [{
+            "cmd": "pytest -q",
+            "exit_code": 0,
+            "business_tests": [{
+                "acceptance": "works",
+                "test": "tests/test_feature.py::test_feature_works",
+            }],
+        }],
         "integration_gates": [{
             "name": "gate-1",
             "commands": [{"cmd": "pytest tests/int", "exit_code": 0}],
@@ -65,7 +72,8 @@ def _good_report():
     return {
         "review_goals": ["验收映射覆盖 contract.acceptance", "集成门 route_coverage 达标"],
         "diff_reviewed": True, "tests_rerun": True, "coverage_checked": True,
-        "integration_tests_rerun": True, "blockers": [],
+        "integration_tests_rerun": True, "full_review_completed": True,
+        "blockers": [],
         "acceptance_mapping": [{"acceptance": "works", "status": "pass"}],
         "integration_gate_mapping": [{
             "gate": "gate-1", "status": "pass",
@@ -102,6 +110,46 @@ def test_worker_evidence_missing_command():
     assert any("missing command" in e for e in errs)
 
 
+@pytest.mark.parametrize("invalid_exit_code", [False, 0.0, None])
+def test_worker_evidence_rejects_non_integer_zero_for_required_command(
+        invalid_exit_code):
+    v = _good_verification()
+    business_tests = v["commands"][0].pop("business_tests")
+    v["commands"].append({
+        "cmd": "pytest tests/business",
+        "exit_code": 0,
+        "business_tests": business_tests,
+    })
+    if invalid_exit_code is None:
+        del v["commands"][0]["exit_code"]
+    else:
+        v["commands"][0]["exit_code"] = invalid_exit_code
+
+    errs = validate_worker_evidence(
+        NODE, Item(artifacts={"pr_url": "u"}, verification=v))
+
+    assert "verification command failed: pytest -q" in errs
+
+
+@pytest.mark.parametrize("invalid_exit_code", [False, 0.0, None])
+def test_worker_evidence_rejects_non_integer_zero_for_integration_command(
+        invalid_exit_code):
+    v = _good_verification()
+    command = v["integration_gates"][0]["commands"][0]
+    if invalid_exit_code is None:
+        del command["exit_code"]
+    else:
+        command["exit_code"] = invalid_exit_code
+
+    errs = validate_worker_evidence(
+        NODE, Item(artifacts={"pr_url": "u"}, verification=v))
+
+    assert (
+        "verification integration command failed for gate-1: pytest tests/int"
+        in errs
+    )
+
+
 def test_worker_evidence_env_setup_required_when_integration_gates():
     v = _good_verification()
     del v["env_setup"]
@@ -125,12 +173,110 @@ def test_worker_evidence_env_setup_blank_entry_rejected():
 
 def test_worker_evidence_env_setup_not_required_without_integration_gates():
     v = {
-        "commands": [{"cmd": "pytest -q", "exit_code": 0}],
+        "commands": [{
+            "cmd": "pytest -q",
+            "exit_code": 0,
+            "business_tests": [{
+                "acceptance": "works",
+                "test": "tests/test_feature.py::test_feature_works",
+            }],
+        }],
         "pr_base": "feature/v1",
         "coverage": 95,
     }
     errs = validate_worker_evidence(NODE_NO_GATES, Item(artifacts={"pr_url": "u"}, verification=v))
     assert not any("env_setup" in e for e in errs)
+
+
+def test_worker_evidence_requires_business_test_for_every_acceptance():
+    v = _good_verification()
+    del v["commands"][0]["business_tests"]
+
+    errs = validate_worker_evidence(
+        NODE, Item(artifacts={"pr_url": "u"}, verification=v))
+
+    assert "verification missing business test for acceptance: works" in errs
+
+
+def test_worker_evidence_accepts_business_test_from_integration_command():
+    v = _good_verification()
+    del v["commands"][0]["business_tests"]
+    v["integration_gates"][0]["commands"][0]["business_tests"] = [{
+        "acceptance": "works",
+        "test": "tests/integration/test_route.py::test_route_delivers",
+    }]
+
+    assert validate_worker_evidence(
+        NODE, Item(artifacts={"pr_url": "u"}, verification=v)) == []
+
+
+def test_worker_evidence_rejects_unknown_business_test_acceptance():
+    v = _good_verification()
+    v["commands"][0]["business_tests"][0]["acceptance"] = "unknown"
+
+    errs = validate_worker_evidence(
+        NODE, Item(artifacts={"pr_url": "u"}, verification=v))
+
+    assert "verification business test references unknown acceptance: unknown" in errs
+    assert "verification missing business test for acceptance: works" in errs
+
+
+def test_worker_evidence_rejects_malformed_business_tests_and_collects_all_errors():
+    v = _good_verification()
+    v["commands"][0]["business_tests"] = [
+        "not-an-object",
+        {"acceptance": "", "test": ""},
+    ]
+    v["integration_gates"][0]["commands"][0]["business_tests"] = "not-a-list"
+
+    errs = validate_worker_evidence(
+        NODE, Item(artifacts={"pr_url": "u"}, verification=v))
+
+    assert "verification.business_tests entries must be objects for command: pytest -q" in errs
+    assert "verification.business_tests acceptance must be a non-empty string for command: pytest -q" in errs
+    assert "verification.business_tests test must be a non-empty string for command: pytest -q" in errs
+    assert "verification.business_tests must be a list for command: pytest tests/int" in errs
+    assert "verification missing business test for acceptance: works" in errs
+
+
+def test_worker_evidence_rejects_business_test_on_failed_command():
+    v = _good_verification()
+    v["commands"][0]["exit_code"] = 1
+
+    errs = validate_worker_evidence(
+        NODE, Item(artifacts={"pr_url": "u"}, verification=v))
+
+    assert "verification business test command failed: pytest -q" in errs
+    assert "verification missing business test for acceptance: works" in errs
+
+
+@pytest.mark.parametrize("cmd", [None, "   "])
+def test_worker_evidence_rejects_business_test_without_real_command(cmd):
+    v = _good_verification()
+    if cmd is None:
+        del v["commands"][0]["cmd"]
+    else:
+        v["commands"][0]["cmd"] = cmd
+
+    errs = validate_worker_evidence(
+        NODE, Item(artifacts={"pr_url": "u"}, verification=v))
+
+    assert "verification business test command must have a non-empty cmd" in errs
+    assert "verification missing business test for acceptance: works" in errs
+
+
+def test_worker_evidence_rejects_boolean_business_test_exit_code():
+    v = _good_verification()
+    v["commands"][0]["exit_code"] = False
+
+    errs = validate_worker_evidence(
+        NODE, Item(artifacts={"pr_url": "u"}, verification=v))
+
+    assert (
+        "verification business test command exit_code must be integer 0: pytest -q"
+        in errs
+    )
+    assert "verification missing business test for acceptance: works" in errs
 
 
 # ---------- review evidence ----------
@@ -188,6 +334,40 @@ def test_review_evidence_review_goals_blank_entry_rejected():
     report["review_goals"] = ["valid goal", ""]
     errs = validate_review_evidence(NODE, Item(review_verdict="pass", review_report=report))
     assert any("non-empty strings" in e for e in errs)
+
+
+def test_review_evidence_requires_full_review_completed():
+    report = _good_report()
+    del report["full_review_completed"]
+
+    errs = validate_review_evidence(
+        NODE, Item(review_verdict="pass", review_report=report))
+
+    assert "review_report.full_review_completed must be true" in errs
+
+
+def test_review_evidence_requires_full_review_completed_without_contract():
+    node = Node(id="plan", worker="alice")
+    report = {"full_review_completed": False}
+
+    errs = validate_review_evidence(
+        node, Item(review_verdict="pass", review_report=report))
+
+    assert errs == ["review_report.full_review_completed must be true"]
+
+
+def test_review_evidence_collects_errors_after_missing_acceptance_mapping():
+    report = _good_report()
+    report["acceptance_mapping"] = []
+    report["full_review_completed"] = False
+    report["coverage_checked"] = False
+
+    errs = validate_review_evidence(
+        NODE, Item(review_verdict="pass", review_report=report))
+
+    assert "review_report.acceptance_mapping must be non-empty" in errs
+    assert "review_report.full_review_completed must be true" in errs
+    assert "review_report.coverage_checked must be true" in errs
 
 
 # ---------- acceptance results ----------

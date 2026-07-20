@@ -554,7 +554,14 @@ CONTRACT = Contract(
 
 def _make_verification(pr_base="feature/v1", coverage=95):
     return {
-        "commands": [{"cmd": "pytest -q", "exit_code": 0}],
+        "commands": [{
+            "cmd": "pytest -q",
+            "exit_code": 0,
+            "business_tests": [{
+                "acceptance": "works",
+                "test": "tests/test_feature.py::test_feature_works",
+            }],
+        }],
         "integration_gates": [{
             "name": "gate-1",
             "commands": [{"cmd": "pytest tests/int", "exit_code": 0}],
@@ -573,6 +580,7 @@ def _make_review_report(integration_gates=True):
     report = {
         "review_goals": ["验收映射覆盖 contract.acceptance"],
         "diff_reviewed": True, "tests_rerun": True, "coverage_checked": True,
+        "full_review_completed": True,
         "acceptance_mapping": [{"acceptance": "works", "status": "pass"}],
         "blockers": [], "nits": [],
     }
@@ -636,6 +644,52 @@ class TestParamValidation:
 # ==================== 每个 kind × phase 成功 + 内容校验打回 ====================
 
 class TestSubmitPerKindPhase:
+
+    def test_develop_authoring_rejects_verification_without_business_tests(
+            self, tmp_path):
+        eng = _engine()
+        item = eng.store.create_work_item(
+            "mock-workspace", "t", "d", dag_key="a", worker="alice",
+            kind=dispatch_mod.TaskKind.DEVELOP,
+        )
+        eng.store.set_node_contract(item.id, CONTRACT)
+        verification = _make_verification()
+        del verification["commands"][0]["business_tests"]
+        vfile = tmp_path / "verification.yaml"
+        vfile.write_text(yaml.safe_dump(verification))
+
+        with pytest.raises(ValidationError, match="missing business test for acceptance"):
+            dispatch_mod.submit(
+                eng.store, item.id,
+                pr_url="https://x/pr/1", verification_file=str(vfile),
+            )
+
+        got = eng.store.get_work_item(item.id)
+        assert got.verification is None
+        assert got.status == WorkItemStatus.TODO
+
+    def test_review_rejects_report_without_full_review_completed(self, tmp_path):
+        eng = _engine()
+        item = eng.store.create_work_item(
+            "mock-workspace", "t", "d", dag_key="a", worker="alice",
+            reviewer="bob", kind=dispatch_mod.TaskKind.DEVELOP,
+            initial_status=WorkItemStatus.IN_REVIEW,
+        )
+        item.phase = dispatch_mod.TaskPhase.REVIEW
+        eng.store.set_node_contract(item.id, CONTRACT)
+        report = _make_review_report()
+        del report["full_review_completed"]
+        rfile = tmp_path / "report.yaml"
+        rfile.write_text(yaml.safe_dump(report))
+
+        with pytest.raises(ValidationError, match="full_review_completed"):
+            dispatch_mod.submit(
+                eng.store, item.id, verdict="pass", report_file=str(rfile),
+            )
+
+        got = eng.store.get_work_item(item.id)
+        assert got.review_report is None
+        assert got.review_verdict is None
 
     # ---------- develop ----------
 

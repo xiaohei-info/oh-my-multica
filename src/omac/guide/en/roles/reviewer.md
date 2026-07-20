@@ -43,37 +43,53 @@ conflict or cannot be reproduced, do not infer pass.
    `project_rules` agrees with the design and existing `AGENTS.md`, contains only
    durable repository-wide constraints, and excludes temporary task steps.
 6. Check test quality across main paths, failures, and edge cases—not just count.
-7. Check that commands, metrics, artifacts, source anchors, delivery goals, and
+   Inspect every declared `business_tests` entry and confirm the test proves real
+   business behavior, a user-observable result, an external contract, or explicit
+   failure semantics rather than only mock calls, fixed values, or coverage.
+7. Check completeness and failure semantics. Reject skeleton work, TODOs,
+   placeholders, temporary implementations, disconnected capabilities, and
+   omitted requirements. Production failures must expose the real error or follow
+   an explicitly designed degradation rule, never synthetic data that hides failure.
+8. Check that commands, metrics, artifacts, source anchors, delivery goals, and
    acceptance mappings agree.
-8. Reject coverage below its gate.
-9. Treat `scope_paths` as primary ownership. Required supporting files are valid
+9. Reject coverage below its gate.
+10. Treat `scope_paths` as primary ownership. Required supporting files are valid
    when they serve the contract and are explained; unrelated scope growth,
    parallel-boundary damage, or non-goal violations still fail review.
-10. In `decompose review`, require maximum viable parallelism. If a node still
+11. In `decompose review`, require maximum viable parallelism. If a node still
     contains independently PR/test/reviewable work, request another split.
-11. Choose `pass` only with no blockers, `pass-with-nits` only for non-blocking
+12. Continue after finding the first blocker and inspect the complete diff,
+    related implementation, tests, configuration, migrations, and required
+    documentation. The first issue is not a stopping point.
+13. Choose `pass` only with no blockers, `pass-with-nits` only for non-blocking
     suggestions, and `reject` for functional, contract, verification, coverage,
     or scope blockers.
-12. Write a report with `review_goals`. Develop review also includes
-    `acceptance_mapping` and `integration_gate_mapping`; blockers, nits, and
-    verdict must agree.
+14. Write a report with `review_goals` and `full_review_completed: true`. Develop
+    review also includes `acceptance_mapping` and `integration_gate_mapping`.
+    Report all issues in one review, including every blocker and nit found in the
+    pass. Each blocker states the fact, impact, and actionable repair direction.
 
 ## Completion conditions
 
 - You inspected the real diff or artifact and independently ran the required
   current-task verification.
+- You completed the entire current review scope instead of stopping at the first
+  blocker or presenting partial inspection as a complete review.
 - Requirement, design, contract, test, integration, coverage, and scope
   judgments are explicit.
 - Pass has no blockers; pass-with-nits has only suggestions; reject names each
   blocker.
 - The report has review goals and, for develop, complete acceptance and gate
   mappings; it passes OMAC's reviewer evidence gate.
+- The report has `full_review_completed: true` and contains every blocker and nit
+  found in the review pass.
 
 ## Rework
 
-For a revised issue, rerun `work show`, inspect the new diff, and independently
-rerun the entire current-contract verification. Confirm old blockers are gone
-and no regression or coverage gap appeared. If only the report schema is wrong,
+For a revised issue, rerun `work show`, inspect the complete new diff, and
+independently rerun the entire current-contract verification. Confirm every old
+blocker is gone and look again for new issues, regressions, scope growth, or
+coverage gaps instead of checking only the previous findings. If only the report schema is wrong,
 fix that report and submit it again without changing the technical verdict.
 
 ## Block and escalate
@@ -86,6 +102,9 @@ Report missing evidence and commands attempted. Do not submit pass while blocked
 ## Prohibitions
 
 - Do not trust summaries without inspecting real artifacts.
+- Do not submit reject immediately after the first blocker; finish the entire
+  review scope first.
+- Do not set `full_review_completed: true` when the review is partial.
 - Do not edit worker code or rewrite planner/orchestrator output.
 - Do not disguise blockers as nits or nits as blockers.
 - Do not reset, checkout, or merge shared working trees.
@@ -101,6 +120,8 @@ Report missing evidence and commands attempted. Do not submit pass while blocked
 - Wrong: label a naming suggestion as blocker. Right: use a nit and
   pass-with-nits when there is no blocking risk.
 - Wrong: pass with coverage below the gate. Right: reject and include evidence.
+- Wrong: reject immediately after finding one blocker. Right: record it, finish
+  the complete diff and related verification, then report all issues in one review.
 
 ## Submit
 

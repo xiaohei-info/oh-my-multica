@@ -486,7 +486,11 @@ class TestDispatchLoopIntegration:
             artifacts={"pr_url": "https://mock.example.com/pr/1"},
             verification={
                 "commands": [{"cmd": "pytest -q", "exit_code": 0,
-                              "summary": "pass"}],
+                              "summary": "pass",
+                              "business_tests": [{
+                                  "acceptance": "可登录",
+                                  "test": "tests/test_login.py::test_user_can_login",
+                              }]}],
                 "integration_gates": [{
                     "name": "login-gate",
                     "commands": [{"cmd": "pytest -q", "exit_code": 0,
@@ -520,6 +524,7 @@ class TestDispatchLoopIntegration:
                 "tests_rerun": True,
                 "integration_tests_rerun": True,
                 "coverage_checked": True,
+                "full_review_completed": True,
                 "acceptance_mapping": [
                     {"acceptance": "可登录", "evidence": "rerun pass",
                      "status": "pass"},

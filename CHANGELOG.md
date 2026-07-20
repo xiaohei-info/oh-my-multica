@@ -8,6 +8,17 @@ This file records public changes to oh-my-multica. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- The evidence schema now requires every contract acceptance item to be mapped
+  through `commands[].business_tests` on a command with a non-empty `cmd` and
+  integer exit code `0`. Reviewer reports must also include
+  `full_review_completed: true` after the entire review scope is complete.
+- This schema upgrade has no legacy mode. Existing Worker verification files
+  must add concrete `{acceptance, test}` entries under successful ordinary or
+  integration-gate commands. Existing Reviewer reports must add
+  `full_review_completed: true` before they can be submitted again.
+
 ## [1.0.0] — 2026-07-17
 
 The first public release turns Multica's workspaces, work items, and Coding

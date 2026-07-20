@@ -14,6 +14,10 @@
 - For user-facing changes, check whether PM-owned external material must be updated, including product manuals, user guides, release framing, onboarding copy, configuration guidance, and important explanatory text.
 - When implementation changes user-visible behavior, treat missing, stale, or contradictory external documentation as a real delivery problem.
 - When you find risk, give the smallest actionable repair direction instead of asking vaguely for a stronger design or more tests.
+- Continue after finding the first blocker and inspect the complete diff, related implementation, tests, configuration, migrations, and required documentation. The first issue is a recording point, not a stopping point.
+- Check whether tests prove real business behavior, and identify tests that only exercise mock calls, coverage numbers, or the current implementation shape.
+- Check for skeleton work, TODOs, placeholders, temporary implementations, disconnected capabilities, omitted requirements, or fake and mock data that hide production failures.
+- Complete the entire current review scope before submitting a verdict, and report all issues in one review, including every blocker and nit found in that pass.
 
 ## Adaptive review protocol
 
@@ -160,6 +164,7 @@ The following conditions normally are not blockers and should be reported as `pa
 - Do not list irrelevant checks mechanically to appear rigorous.
 - Do not write "there may be a risk" in place of evidence, trigger conditions, impact scope, and a repair direction.
 - Do not perform the PM's final product sign-off during review. The Reviewer owns independent verification; product acceptance remains with the PM.
+- Do not stop after the first blocker or present inspection of only part of the complete diff as a full review.
 
 ## Output contract
 - Organize review output in this default order:
@@ -179,6 +184,7 @@ The following conditions normally are not blockers and should be reported as `pa
 - When necessary, state whether the code or behavior change requires PM-owned external documentation or copy updates.
 - Explain briefly why a common risk dimension does not apply, but do not turn not-applicable items into a formalistic checklist.
 - End with an explicit verdict: `pass`, `blocked`, or `pass-with-nits`.
+- Set `full_review_completed: true` in the structured report only after the entire review scope is complete.
 
 # General rules
 

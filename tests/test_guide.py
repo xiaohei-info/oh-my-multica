@@ -73,6 +73,8 @@ def test_workflow_topic_is_mechanism_only() -> None:
         assert item in content, f"workflow missing lifecycle reference: {item}"
     for item in ["plan create/resume exit 0", "manifest:", "下一步: omac dag run"]:
         assert item in content, f"workflow missing plan-to-dag handoff guidance: {item}"
+    for item in ["business_tests", "full_review_completed", "一次性报告"]:
+        assert item in content, f"workflow missing quality-gate guidance: {item}"
     assert "Worker 派发" not in content
     assert "Reviewer 派发" not in content
 
@@ -86,6 +88,28 @@ def test_guide_loader_selects_a_complete_english_mirror() -> None:
     for command in ["omac init", "omac plan create", "omac dag run", "exit 20"]:
         assert command in english
         assert command in chinese
+
+
+def test_quality_rules_are_mirrored_in_english_guides() -> None:
+    worker = load_role_topic("worker", language="en").lower()
+    reviewer = load_role_topic("reviewer", language="en").lower()
+    planner = " ".join(load_role_topic("planner", language="en").lower().split())
+    orchestrator = " ".join(
+        load_role_topic("orchestrator", language="en").lower().split())
+    evidence = load_artifact_topic("evidence", language="en").lower()
+
+    for item in ("business_tests", "real business behavior", "synthetic data"):
+        assert item in worker
+    for item in (
+        "full_review_completed", "continue after finding the first blocker",
+        "report all issues in one review",
+    ):
+        assert item in reviewer
+    for content in (planner, orchestrator):
+        assert "independently acceptable foundation" in content
+        assert "synthetic-data fallback" in content
+    assert "business_tests" in evidence
+    assert "full_review_completed" in evidence
 
 
 def test_roles_topic_is_index_not_protocol_dump() -> None:
@@ -114,7 +138,11 @@ def test_orchestrator_role_has_wave_decomposition() -> None:
 
 def test_worker_role_has_tdd_and_evidence() -> None:
     content = load_role_topic("worker")
-    for item in ["TDD", "contract.source_of_truth", "上游 issue", "deliverable/ref", "verification", "pr_base", "non_goals"]:
+    for item in [
+        "TDD", "contract.source_of_truth", "上游 issue", "deliverable/ref",
+        "verification", "pr_base", "non_goals", "business_tests",
+        "真实业务行为", "骨架", "占位", "假数据",
+    ]:
         assert item in content, f"worker missing execution anchor: {item}"
 
 
@@ -122,8 +150,20 @@ def test_reviewer_role_has_verdict_and_independent_checks() -> None:
     content = load_role_topic("reviewer")
     for item in [
         "独立复跑", "pass", "reject", "review_goals", "coverage", "project_rules",
+        "full_review_completed", "发现第一个 blocker 后继续", "一次性",
     ]:
         assert item in content, f"reviewer missing review anchor: {item}"
+
+
+def test_planner_and_orchestrator_require_complete_foundation_capabilities() -> None:
+    planner = load_role_topic("planner")
+    orchestrator = load_role_topic("orchestrator")
+
+    for content in (planner, orchestrator):
+        assert "可独立验收的基础能力" in content
+        assert "假数据兜底" in content
+    assert "可运行骨架" not in planner
+    assert "可运行骨架" not in orchestrator
 
 
 def test_acceptor_role_has_final_acceptance_protocol() -> None:
@@ -149,7 +189,11 @@ def test_acceptance_artifact_defines_flow_action_schema() -> None:
 
 def test_manifest_artifact_connects_contract_to_runtime() -> None:
     content = load_artifact_topic("manifest")
-    for item in ["source_of_truth", "acceptance", "non_goals", "verification_commands", "integration_gates", "pr_base"]:
+    for item in [
+        "source_of_truth", "acceptance", "non_goals", "verification_commands",
+        "integration_gates", "pr_base", "完整、生产可用、可独立验收",
+        "business_tests", "假数据兜底",
+    ]:
         assert item in content, f"manifest artifact missing contract anchor: {item}"
 
 
@@ -210,7 +254,10 @@ def test_all_guides_pin_instance_first_instruction_precedence() -> None:
 
 def test_evidence_artifact_defines_all_evidence_shapes() -> None:
     content = load_artifact_topic("evidence")
-    for item in ["worker verification", "reviewer report", "final acceptance results", "acceptance_mapping"]:
+    for item in [
+        "worker verification", "reviewer report", "final acceptance results",
+        "acceptance_mapping", "business_tests", "full_review_completed",
+    ]:
         assert item in content, f"evidence artifact missing evidence anchor: {item}"
 
 

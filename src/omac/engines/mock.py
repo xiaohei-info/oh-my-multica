@@ -384,6 +384,7 @@ class MockStore(WorkItemStore):
                 "diff_reviewed": True,
                 "tests_rerun": True,
                 "coverage_checked": True,
+                "full_review_completed": True,
                 "acceptance_mapping": [],
                 "blockers": [],
                 "nits": [],
@@ -398,11 +399,21 @@ class MockStore(WorkItemStore):
             # 非 develop 节点(final-acceptance/decompose)的 contract 是 dict,
             # 不产生 verification 证据(该节点类型本身不经 worker 证据门)。
             return None
+        dag_key = _shared_work_items[item_id].dag_key
+        commands = [
+            {"cmd": cmd, "exit_code": 0, "summary": "Mock: passed"}
+            for cmd in contract.verification_commands
+        ]
+        if commands:
+            commands[0]["business_tests"] = [
+                {
+                    "acceptance": acceptance,
+                    "test": f"mock://{dag_key}/acceptance/{acceptance}",
+                }
+                for acceptance in contract.acceptance
+            ]
         return {
-            "commands": [
-                {"cmd": cmd, "exit_code": 0, "summary": "Mock: passed"}
-                for cmd in contract.verification_commands
-            ],
+            "commands": commands,
             "integration_gates": [
                 {
                     "name": gate.get("name"),
@@ -439,6 +450,7 @@ class MockStore(WorkItemStore):
             "tests_rerun": True,
             "integration_tests_rerun": True,
             "coverage_checked": True,
+            "full_review_completed": True,
             "integration_gate_mapping": [
                 {
                     "gate": gate.get("name"),

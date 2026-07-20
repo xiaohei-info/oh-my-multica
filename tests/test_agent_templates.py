@@ -173,3 +173,30 @@ def test_orchestrator_template_is_standalone_and_has_no_profile_migration_notes(
         assert "kanban-dev-orchestration" not in instructions
         assert "parallel-dev-orchestration-multica" not in instructions
         assert "execution mechanism is provided by" not in instructions.lower()
+
+
+def test_repo_templates_require_complete_delivery_and_real_business_tests():
+    chinese = AgentTemplateCatalog(language="cn")
+    english = AgentTemplateCatalog(language="en")
+
+    for template_id in ("backend-eng", "frontend-eng", "data-rd"):
+        cn = chinese.get(template_id).instructions
+        en = english.get(template_id).instructions
+        for item in ("真实业务行为", "骨架", "占位", "假数据"):
+            assert item in cn, f"{template_id} missing Chinese quality rule: {item}"
+        for item in ("real business behavior", "skeleton", "placeholder", "synthetic data"):
+            assert item in en.lower(), f"{template_id} missing English quality rule: {item}"
+
+
+def test_reviewer_template_requires_one_complete_review_pass():
+    chinese = AgentTemplateCatalog(language="cn").get("reviewer").instructions
+    english = AgentTemplateCatalog(language="en").get("reviewer").instructions.lower()
+
+    for item in ("发现第一个 blocker 后继续", "完整 diff", "一次性报告"):
+        assert item in chinese, f"reviewer missing Chinese complete-review rule: {item}"
+    for item in (
+        "continue after finding the first blocker",
+        "complete diff",
+        "report all issues in one review",
+    ):
+        assert item in english, f"reviewer missing English complete-review rule: {item}"

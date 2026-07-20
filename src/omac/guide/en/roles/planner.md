@@ -48,8 +48,11 @@ convenient interpretation.
    states, ownership, and read/write paths.
 4. Define module boundaries and dependency direction. Specify cross-module DTOs,
    events, enums, errors, states, and external interfaces.
-5. Identify Wave 0 foundations: frozen shared contracts, a runnable skeleton,
-   CI gates, and mocks/fakes needed before later decomposition.
+5. Identify Wave 0 foundations: frozen shared contracts, independently
+   acceptable foundation capabilities, CI gates, and test-double boundaries.
+   Each foundation must itself be complete, runnable, and directly consumed by
+   later nodes. Do not design interface shells, fixed return values, placeholders,
+   or production synthetic-data fallbacks.
 6. Analyze risk and compatibility. Name affected existing behavior and how the
    design avoids breaking userspace.
 7. Map every key flow to a stable, referenceable acceptance flow.
@@ -109,6 +112,9 @@ needed. Do not fill gaps with assumptions.
   document anchors.
 - Do not over-design or use methodology labels in place of design detail.
 - Do not let a later agent guess edge cases.
+- Do not turn a test double into a production degradation strategy or use
+  synthetic-data fallback in place of real failure semantics and critical
+  integration verification.
 - Do not let this static guide override `work show`, `contract`, or
   `previous_review`.
 

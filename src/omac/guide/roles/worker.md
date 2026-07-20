@@ -35,18 +35,22 @@
 3. 不猜附件文件名，也不先全 workspace 搜索设计方案；找不到内容时回到上游 issue 链和当前 issue 正文链接。
 4. 确认 `blocked_by` 已完成；从 `contract.pr_base` 创建或复用工作分支，不从其他基线随意切分支。
 5. 严格执行 TDD：先写或定位测试并确认它因缺少当前行为而失败，再写最小实现使其通过，最后在绿灯下重构。
-6. 只实现 `objective` 和 acceptance 映射要求的行为，守住 `non_goals`，共享契约只 import，禁止平行定义。
-7. `scope_paths` 是主要代码归属范围，不是穷举文件白名单。完成 contract 必需的必要配套文件可以修改，
+6. 测试必须证明真实业务行为、用户可观察结果、对外 contract 或明确失败语义；只验证 mock 调用、函数存在、固定返回值或 coverage 数字，不能单独作为业务功能测试。
+7. 只实现 `objective` 和 acceptance 映射要求的行为，守住 `non_goals`，共享契约只 import，禁止平行定义。当前 contract 必须完整交付，禁止用基础骨架、TODO、占位分支、临时返回值、未接线能力或“后续补充”冒充完成。
+8. fake、mock、stub 只能作为测试边界内的替身来隔离不可控依赖。生产依赖失败必须暴露真实错误，或执行设计明确规定的降级语义；禁止返回假数据掩盖失败。
+9. `scope_paths` 是主要代码归属范围，不是穷举文件白名单。完成 contract 必需的必要配套文件可以修改，
    但必须在 PR 或 verification 中说明原因。
-8. 运行全部 `verification_commands`、integration gates、相关全量测试和 coverage 检查；记录真实命令、退出码和摘要。
-9. 创建或更新 PR，base 必须是 `contract.pr_base`。GitHub PR 必须 ready for review，不能是 draft。
-10. 编写 verification 文件，覆盖 commands、integration gates、coverage、`pr_base`，以及需要环境准备时的 `env_setup`。
-11. 使用 `work show` 返回的 `submit` 提交原 PR URL 和 verification 文件。
+10. 运行全部 `verification_commands`、integration gates、相关全量测试和 coverage 检查；记录真实命令、退出码和摘要。每条 acceptance 必须通过成功命令下的 `business_tests` 指向具体测试标识。
+11. 创建或更新 PR，base 必须是 `contract.pr_base`。GitHub PR 必须 ready for review，不能是 draft。
+12. 编写 verification 文件，覆盖 commands、integration gates、coverage、`pr_base`、`business_tests`，以及需要环境准备时的 `env_setup`。
+13. 使用 `work show` 返回的 `submit` 提交原 PR URL 和 verification 文件。
 
 ## 完成条件
 
 - contract 的 objective、source_of_truth 和 acceptance 映射均已实现，`non_goals` 未被突破。
 - 新行为有先失败后通过的测试，主路径、失败路径和已知边界均有验证。
+- 每条 acceptance 都由成功执行命令中的具体 `business_tests` 覆盖；测试验证真实业务结果，不以 mock 调用或覆盖率数字代替。
+- contract 范围内没有骨架、占位、临时实现或生产假数据兜底。
 - 所有 verification commands 和 integration gates 实际通过，coverage 达到 gate。
 - PR base 等于 `contract.pr_base`，PR 不是 draft，真实 diff 只包含 contract 所需改动。
 - verification 完整记录命令、集成门、coverage、`pr_base` 和必要的 `env_setup`，能通过 OMAC 证据门。
@@ -72,6 +76,7 @@
 - 禁止自审自放行。
 - 禁止直接调用底层平台命令修改 issue status、assignee、rerun 或 cancel-task；状态流转只由 OMAC loop 推进。
 - 禁止跳过测试、伪造 verification 或把未运行命令写成通过。
+- 禁止用 fake/mock 数据让生产流程表面成功，或用测试替身替代关键业务和集成验证。
 - 禁止重定义共享契约；只能 import 已冻结定义。
 - 禁止顺手重构相邻模块，或把 `scope_paths` 当成扩大范围的理由。
 - 禁止为同一节点并行创建多个 PR，禁止提交 draft PR。

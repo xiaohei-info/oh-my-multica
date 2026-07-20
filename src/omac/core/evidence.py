@@ -4,6 +4,10 @@
   1. verification.env_setup        contract 声明 integration_gates 或 env 依赖时必填
   2. review_report.review_goals    review 阶段必填
   3. acceptance_results            final-acceptance 必填,逐项按 id 对齐验收文档条目
+
+质量证据硬门:
+  1. commands[].business_tests     每条 contract acceptance 必须映射到成功命令下的具体测试
+  2. review_report.full_review_completed  reviewer 必须完成整个评审范围后才能提交
 """
 
 from .acceptance import AcceptanceDoc, load_acceptance_doc
@@ -12,6 +16,13 @@ REVIEW_APPROVE = {"pass", "pass-with-nits"}
 REVIEW_VERDICTS = REVIEW_APPROVE | {"reject"}
 
 ACCEPTANCE_STATUS = {"pass", "fail"}
+
+
+def _command_succeeded(command) -> bool:
+    if not isinstance(command, dict):
+        return False
+    exit_code = command.get("exit_code")
+    return type(exit_code) is int and exit_code == 0
 
 
 def _commands_by_text(commands):
@@ -31,9 +42,85 @@ def _validate_expected_commands(command_by_text, expected_commands, *, missing_p
         if actual is None:
             errors.append(f"{missing_prefix}: {expected_cmd}")
             continue
-        if actual.get("exit_code") != 0:
+        if not _command_succeeded(actual):
             errors.append(f"{failed_prefix}: {expected_cmd}")
     return errors
+
+
+def _collect_business_test_coverage(commands, expected_acceptance, *, prefix):
+    errors = []
+    covered = set()
+    if not isinstance(commands, list):
+        return errors, covered
+
+    expected = set(expected_acceptance)
+    for command in commands:
+        if not isinstance(command, dict):
+            continue
+        business_tests = command.get("business_tests")
+        if business_tests is None:
+            continue
+        command_text = command.get("cmd")
+        command_valid = isinstance(command_text, str) and bool(command_text.strip())
+        if not command_valid:
+            errors.append(
+                f"{prefix} business test command must have a non-empty cmd"
+            )
+            command_text = "<unknown>"
+
+        exit_code = command.get("exit_code")
+        command_succeeded = _command_succeeded(command)
+        if type(exit_code) is not int:
+            errors.append(
+                f"{prefix} business test command exit_code must be integer 0: "
+                f"{command_text}"
+            )
+        elif exit_code != 0:
+            errors.append(f"{prefix} business test command failed: {command_text}")
+
+        if not isinstance(business_tests, list):
+            errors.append(
+                f"{prefix}.business_tests must be a list for command: {command_text}"
+            )
+            continue
+
+        for business_test in business_tests:
+            if not isinstance(business_test, dict):
+                errors.append(
+                    f"{prefix}.business_tests entries must be objects for command: {command_text}"
+                )
+                continue
+
+            acceptance = business_test.get("acceptance")
+            test = business_test.get("test")
+            acceptance_valid = isinstance(acceptance, str) and bool(acceptance.strip())
+            test_valid = isinstance(test, str) and bool(test.strip())
+            if not acceptance_valid:
+                errors.append(
+                    f"{prefix}.business_tests acceptance must be a non-empty string "
+                    f"for command: {command_text}"
+                )
+            elif acceptance not in expected:
+                errors.append(
+                    f"{prefix} business test references unknown acceptance: {acceptance}"
+                )
+            if not test_valid:
+                errors.append(
+                    f"{prefix}.business_tests test must be a non-empty string "
+                    f"for command: {command_text}"
+                )
+
+            if (
+                not command_valid
+                or not command_succeeded
+                or not acceptance_valid
+                or acceptance not in expected
+                or not test_valid
+            ):
+                continue
+            covered.add(acceptance)
+
+    return errors, covered
 
 
 def _gate_by_name(gates):
@@ -154,6 +241,23 @@ def validate_worker_evidence(node, item) -> list:
                 )
             )
 
+    business_test_errors, covered_acceptance = _collect_business_test_coverage(
+        verification.get("commands"), contract.acceptance, prefix="verification")
+    errors.extend(business_test_errors)
+    actual_gates = verification.get("integration_gates")
+    if isinstance(actual_gates, list):
+        for actual_gate in actual_gates:
+            if not isinstance(actual_gate, dict):
+                continue
+            gate_errors, gate_coverage = _collect_business_test_coverage(
+                actual_gate.get("commands"), contract.acceptance,
+                prefix="verification")
+            errors.extend(gate_errors)
+            covered_acceptance.update(gate_coverage)
+    for acceptance in contract.acceptance:
+        if acceptance not in covered_acceptance:
+            errors.append(f"verification missing business test for acceptance: {acceptance}")
+
     if _requires_env_setup(contract):
         env_setup = verification.get("env_setup")
         if not isinstance(env_setup, list) or not env_setup:
@@ -190,8 +294,11 @@ def validate_review_evidence(node, item) -> list:
     if not isinstance(report, dict):
         return ["review_report is required"]
 
+    if report.get("full_review_completed") is not True:
+        errors.append("review_report.full_review_completed must be true")
+
     if contract is None:
-        return []
+        return errors
 
     review_goals = report.get("review_goals")
     if not isinstance(review_goals, list) or not review_goals:
@@ -218,15 +325,13 @@ def validate_review_evidence(node, item) -> list:
     mappings = report.get("acceptance_mapping")
     if not isinstance(mappings, list) or not mappings:
         errors.append("review_report.acceptance_mapping must be non-empty")
-        return errors
-
-    required_statuses = {"pass"} if verdict in REVIEW_APPROVE else {"pass", "fail"}
-    mapped_acceptance = {
-        mapping.get("acceptance")
-        for mapping in mappings
-        if isinstance(mapping, dict) and mapping.get("status") in required_statuses
-    }
-    if contract is not None:
+    else:
+        required_statuses = {"pass"} if verdict in REVIEW_APPROVE else {"pass", "fail"}
+        mapped_acceptance = {
+            mapping.get("acceptance")
+            for mapping in mappings
+            if isinstance(mapping, dict) and mapping.get("status") in required_statuses
+        }
         for acceptance in contract.acceptance:
             if acceptance not in mapped_acceptance:
                 errors.append(f"review_report missing acceptance mapping: {acceptance}")

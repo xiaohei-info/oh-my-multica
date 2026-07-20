@@ -267,6 +267,7 @@ class TestLiveWorkItem:
         review_report = {
             "review_goals": ["live goal"], "diff_reviewed": True,
             "tests_rerun": True, "coverage_checked": True,
+            "full_review_completed": True,
             "acceptance_mapping": [], "blockers": [], "nits": [],
         }
         updated = store.update_work_item_metadata(
