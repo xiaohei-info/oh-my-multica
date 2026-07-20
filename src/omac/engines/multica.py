@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shlex
 import subprocess
 import tempfile
 import zipfile
@@ -133,6 +134,21 @@ def _is_known_delivery_failure(operation_kind: str, detail: str) -> bool:
     return False
 
 
+def _is_github_cli_delivery_command(command: str, operation_kind: str) -> bool:
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return False
+
+    if tokens[:1] == ["env"]:
+        tokens = tokens[1:]
+        while tokens and (tokens[0].startswith("-") or "=" in tokens[0]):
+            tokens = tokens[1:]
+
+    subcommand = "checks" if operation_kind == "ci" else "merge"
+    return tokens[:3] == ["gh", "pr", subcommand]
+
+
 class MulticaStore(WorkItemStore):
     """数据面:全部经 multica CLI。"""
 
@@ -221,6 +237,7 @@ class MulticaStore(WorkItemStore):
         timeout_minutes: int,
         operation: str,
         operation_kind: str,
+        github_cli: bool,
     ) -> DeliveryCommandResult:
         try:
             proc = subprocess.run(
@@ -249,6 +266,19 @@ class MulticaStore(WorkItemStore):
             return DeliveryCommandResult(
                 outcome=DeliveryCommandOutcome.PASSED,
                 exit_code=0,
+                output=output,
+                summary=_tail(output) or ui("(no output)", "(无输出)"),
+            )
+
+        if proc.returncode == 127:
+            raise PlatformError(ui(
+                f"{operation} command is unavailable: {detail}",
+                f"{operation} 命令不可用: {detail}"))
+
+        if not github_cli:
+            return DeliveryCommandResult(
+                outcome=DeliveryCommandOutcome.FAILED,
+                exit_code=proc.returncode,
                 output=output,
                 summary=_tail(output) or ui("(no output)", "(无输出)"),
             )
@@ -287,6 +317,7 @@ class MulticaStore(WorkItemStore):
             timeout_minutes,
             "GitHub CI check",
             "ci",
+            _is_github_cli_delivery_command(command, "ci"),
         )
 
     def merge_pull_request(
@@ -311,6 +342,7 @@ class MulticaStore(WorkItemStore):
             timeout_minutes,
             "GitHub merge",
             "merge",
+            _is_github_cli_delivery_command(command, "merge"),
         )
 
     # ==================== 内部工具 ====================

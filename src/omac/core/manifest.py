@@ -214,6 +214,21 @@ def _require_manifest_mapping(raw) -> dict:
         raise ValueError("manifest must be an object")
     return raw
 
+
+def _require_manifest_shape(raw) -> dict:
+    raw = _require_manifest_mapping(raw)
+    if not isinstance(raw.get("meta", {}), dict):
+        raise ValueError("manifest.meta must be an object")
+
+    nodes = raw.get("nodes", [])
+    if not isinstance(nodes, list):
+        raise ValueError("manifest.nodes must be a list")
+    for index, node in enumerate(nodes):
+        if not isinstance(node, dict):
+            raise ValueError(f"manifest.nodes[{index}] must be an object")
+    return raw
+
+
 def _build_nodes(raw) -> dict:
     """从已展开的 raw dict 构造 {id: Node}(共享于文件加载与不落盘文本解析)。"""
     nodes = {}
@@ -243,7 +258,7 @@ def _build_nodes(raw) -> dict:
 def load_manifest(path: str) -> Manifest:
     """从文件路径加载 manifest(环境变量展开 + schema 校验)。"""
     with open(path) as f:
-        raw = _require_manifest_mapping(_expand_env(yaml.safe_load(f)))
+        raw = _require_manifest_shape(_expand_env(yaml.safe_load(f)))
     return Manifest(
         meta=raw.get("meta", {}),
         nodes=_build_nodes(raw),
@@ -253,7 +268,7 @@ def load_manifest(path: str) -> Manifest:
 
 def loads_manifest(text: str, *, project_root: str | None = None) -> Manifest:
     """从 YAML 文本解析 manifest(不落盘,供 pipeline 直接消费 LLM 产出的 manifest)。"""
-    raw = _require_manifest_mapping(_expand_env(yaml.safe_load(text)))
+    raw = _require_manifest_shape(_expand_env(yaml.safe_load(text)))
     return Manifest(
         meta=raw.get("meta", {}),
         nodes=_build_nodes(raw),

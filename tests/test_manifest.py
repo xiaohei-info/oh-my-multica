@@ -6,6 +6,7 @@ import pytest
 from omac.core import manifest as manifest_mod
 from omac.core.manifest import (
     load_manifest,
+    loads_manifest,
     manifest_write_lock,
     save_manifest,
     set_node,
@@ -191,6 +192,22 @@ def test_load_manifest_rejects_non_mapping_top_level(tmp_path, content):
 
     with pytest.raises(ValueError, match="manifest must be an object"):
         load_manifest(path)
+
+
+@pytest.mark.parametrize(
+    ("content", "message"),
+    [
+        ("meta: invalid\nnodes: []\n", "manifest.meta must be an object"),
+        ("meta: {}\nnodes: {id: x}\n", "manifest.nodes must be a list"),
+        (
+            "meta: {}\nnodes:\n  - invalid\n",
+            r"manifest\.nodes\[0\] must be an object",
+        ),
+    ],
+)
+def test_loads_manifest_rejects_malformed_nested_shapes(content, message):
+    with pytest.raises(ValueError, match=message):
+        loads_manifest(content)
 
 
 def test_env_expansion(tmp_path, monkeypatch):

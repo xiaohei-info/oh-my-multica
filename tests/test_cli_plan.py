@@ -270,6 +270,15 @@ def test_show_missing_file_is_validation_error(tmp_path):
     assert main(["dag", "show", str(tmp_path / "nope.yaml")]) == exit_codes.VALIDATION
 
 
+def test_show_malformed_nodes_is_actionable_validation_error(tmp_path, capsys):
+    path = _write(tmp_path, "meta: {}\nnodes: {id: x}\n")
+
+    assert main(["dag", "show", path]) == exit_codes.VALIDATION
+    err = capsys.readouterr().err
+    assert "manifest.nodes must be a list" in err
+    assert "请修复后重试" in err or "Fix the manifest and retry" in err
+
+
 def test_show_table_summary(tmp_path, capsys):
     path = _write(tmp_path, CLEAN_MANIFEST)
     assert main(["dag", "show", path]) == exit_codes.OK

@@ -909,6 +909,65 @@ def test_multica_ci_network_failure_is_platform_error(monkeypatch):
 
 
 @pytest.mark.parametrize(
+    ("exit_code", "message"),
+    [
+        (1, "business assertions failed"),
+        (1, "authentication required"),
+        (4, "business assertions failed"),
+    ],
+)
+def test_multica_custom_ci_nonzero_exit_is_delivery_failure(
+    tmp_path, exit_code, message,
+):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    script = tmp_path / "business-ci.sh"
+    script.write_text(
+        f'echo "{message}" >&2\nexit {exit_code}\n',
+        encoding="utf-8",
+    )
+
+    result = store.run_ci_check(
+        "https://github.com/acme/project/pull/7",
+        f"sh {script} {{pr_url}}",
+        30,
+    )
+
+    assert result.outcome is DeliveryCommandOutcome.FAILED
+    assert result.exit_code == exit_code
+    assert message in result.output
+
+
+@pytest.mark.parametrize(
+    ("exit_code", "message"),
+    [
+        (1, "business assertions failed"),
+        (1, "authentication required"),
+        (4, "business assertions failed"),
+    ],
+)
+def test_multica_custom_merge_nonzero_exit_is_delivery_failure(
+    tmp_path, exit_code, message,
+):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    script = tmp_path / "business-merge.sh"
+    script.write_text(
+        f'echo "{message}" >&2\nexit {exit_code}\n',
+        encoding="utf-8",
+    )
+
+    result = store.merge_pull_request(
+        "https://github.com/acme/project/pull/7",
+        "abc123",
+        f"sh {script} {{pr_url}} {{delivered_revision}}",
+        30,
+    )
+
+    assert result.outcome is DeliveryCommandOutcome.FAILED
+    assert result.exit_code == exit_code
+    assert message in result.output
+
+
+@pytest.mark.parametrize(
     ("command", "returncode", "stderr", "error_type"),
     [
         (

@@ -54,6 +54,7 @@ def _gate_by_name(gates, *, expected_names: set[str], prefix: str):
     if not isinstance(gates, list) or not gates:
         return None, errors
     result = {}
+    seen_canonical_keys = set()
     for index, gate in enumerate(gates):
         item_prefix = f"{prefix}[{index}]"
         if not isinstance(gate, dict):
@@ -68,10 +69,12 @@ def _gate_by_name(gates, *, expected_names: set[str], prefix: str):
         if has_surrounding_whitespace:
             errors.append(
                 f"{item_prefix}.name must not have surrounding whitespace")
-        if canonical_name in result:
+        if canonical_name in seen_canonical_keys:
             errors.append(f"duplicate integration gate: {canonical_name}")
-            continue
+        seen_canonical_keys.add(canonical_name)
         if has_surrounding_whitespace:
+            continue
+        if canonical_name in result:
             continue
         result[canonical_name] = gate
         if canonical_name not in expected_names:
@@ -221,6 +224,7 @@ def _strict_mapping_by_key(
 ):
     errors = []
     mapping_by_key = {}
+    seen_canonical_keys = set()
     for index, mapping in enumerate(mappings):
         item_prefix = f"{prefix}[{index}]"
         if not isinstance(mapping, dict):
@@ -235,11 +239,11 @@ def _strict_mapping_by_key(
         if has_surrounding_whitespace:
             errors.append(
                 f"{item_prefix}.{key_field} must not have surrounding whitespace")
-        if canonical_key in mapping_by_key:
+        if canonical_key in seen_canonical_keys:
             errors.append(f"duplicate {label} mapping: {canonical_key}")
-        else:
-            if not has_surrounding_whitespace:
-                mapping_by_key[canonical_key] = mapping
+        seen_canonical_keys.add(canonical_key)
+        if not has_surrounding_whitespace and canonical_key not in mapping_by_key:
+            mapping_by_key[canonical_key] = mapping
         if canonical_key not in expected_keys:
             errors.append(f"unknown {label} mapping: {canonical_key}")
         if mapping.get("status") not in allowed_statuses:
