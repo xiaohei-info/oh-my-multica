@@ -29,7 +29,7 @@ DESCRIPTION = """设计方案与 DAG 拆解流水线。
 
 子命令:
   create   两种模式一条流水线:
-             --doc <设计方案文档>  跳过 planner 设计环节,直接进验收文档 + 拆解
+             --doc <设计文档文件或目录>  跳过 planner 设计环节,直接进验收文档 + 拆解
              --goal <需求>        把需求注入 planner,由它据此生成设计方案(无 --doc 时;
                               二者互斥,--doc 优先)
            设计方案定稿后 planner 产出验收文档(业务流程 → 用户视角端到端可执行
@@ -50,7 +50,9 @@ def register(parser):
     create.add_argument("--name", required=True, help="manifest 名(落盘 .omac/<name>.yaml)")
     create.add_argument("--goal", help="需求(一句话或多行);无 --doc 时注入 planner,据此生成设计方案")
     create.add_argument("--goal-file", help="需求文档路径(与 --goal 互斥)")
-    create.add_argument("--doc", help="已有设计方案文档路径(给了就跳过 planner 设计环节)")
+    create.add_argument(
+        "--doc",
+        help="已有设计文档文件或目录路径(给了就跳过 planner 设计环节)")
     create.add_argument("--no-review", action="store_true", help="跳过全部 review 阶段")
     create.add_argument("--no-acceptance", action="store_true", help="跳过验收文档环节")
     create.add_argument(
@@ -69,6 +71,18 @@ def register(parser):
     resume.add_argument("--dag-key", help="plan create 创建的阶段 dag_key,如 plan-p-xxxx")
     resume.add_argument("--plan-id", help="plan 流水线唯一 ID,如 p-xxxx")
     resume.add_argument("--name", help="manifest 名;缺省从设计方案 issue 标题反推")
+    resume.add_argument(
+        "--doc",
+        help="原流水线由现有设计文档文件或目录创建时，用它恢复且不创建 plan issue")
+    resume.add_argument(
+        "--restart-active", action="store_true",
+        help="显式取消当前阶段仍活跃的 Agent run，刷新同一 issue 后重新派发")
+    resume.add_argument(
+        "--acceptance-issue-id",
+        help="恢复时精确指定已有 acceptance issue，绕过项目级 issue 列表查询")
+    resume.add_argument(
+        "--decompose-issue-id",
+        help="精确指定已创建但尚未派发的 decompose issue；用于旧巨型正文无法读取时先原地压缩")
     resume.add_argument("--no-review", action="store_true", help="跳过全部 review 阶段")
     resume.add_argument("--no-acceptance", action="store_true", help="跳过验收文档环节")
     resume.add_argument(
@@ -164,10 +178,10 @@ def _create(args) -> int:
         raise ValidationError(ui(
             "workflow.goal_required=true requires a request when --doc is absent. "
             "Use `omac plan create --name <name> --goal <request>`, `--goal-file <path>`, "
-            "or provide an existing design with `--doc <path>`.",
+            "or provide existing design documents with `--doc <file-or-directory>`.",
             "workflow.goal_required=true:无 --doc 时必须提供需求。"
             "请使用 `omac plan create --name <name> --goal <需求>` "
-            "或 `--goal-file <path>`;已有设计方案则用 `--doc <path>`。"))
+            "或 `--goal-file <path>`;已有设计文档则用 `--doc <文件或目录>`。"))
 
     ctx = _build_context(cfg, engine, args)
     return plan_create(ctx, args.name, doc_path=doc_path, goal_text=goal_text)
@@ -205,14 +219,13 @@ def _confirm(args) -> int:
     workspace_id = engine.store.config.workspace_id
     label, dag_keys = _selector(args)
 
-    # 待确认 = 设计/验收产出停在人机门:IN_REVIEW + phase=REVIEW + 尚未指派 reviewer。
+    # 待确认 = Reviewer 已通过后进入的显式 confirmation 阶段。
     # 新入口按 dag_key 精确匹配;--name 仅保留兼容,重名时要求调用方换唯一 ID。
     waiting = [
         it for it in engine.store.list_work_items(workspace_id)
         if it.kind in (TaskKind.PLAN, TaskKind.ACCEPTANCE)
         and it.status == WorkItemStatus.IN_REVIEW
-        and it.phase == TaskPhase.REVIEW
-        and not it.reviewer
+        and it.phase == TaskPhase.CONFIRMATION
         and (
             (dag_keys is not None and it.dag_key in dag_keys)
             or (dag_keys is None and args.name in (it.title or ""))
@@ -248,6 +261,10 @@ def _resume(args) -> int:
         dag_key=args.dag_key,
         plan_id=args.plan_id,
         name=args.name,
+        doc_path=args.doc,
+        restart_active=args.restart_active,
+        acceptance_issue_id=args.acceptance_issue_id,
+        decompose_issue_id=args.decompose_issue_id,
     )
 
 

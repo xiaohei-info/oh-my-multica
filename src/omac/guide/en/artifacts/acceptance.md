@@ -52,6 +52,15 @@ the current submit validator parses the whole file as a YAML mapping. Write each
 action as self-contained for low-reasoning-budget executors. Model invalid input,
 duplicates, permissions, timeouts, and rollback as separate actions or flows.
 
+“Copyable” does not require inventing a final implementation URL or selector. A
+uniquely named page, product area, control, CLI subcommand, API operation, or
+continuous operation context from the authoritative design is a valid entry. Do
+not manufacture entries from field names, broken fragments, or implementation
+guesses. Use an implementation prerequisite only when the design has no unique
+execution surface. If a user action still depends on that prerequisite, the flow
+is not executable and review must reject it; bulk prerequisites cannot make an
+acceptance document complete.
+
 ## Validation gates
 
 1. Top level is a mapping and `flows` is a non-empty list.
@@ -71,6 +80,7 @@ duplicates, permissions, timeouts, and rollback as separate actions or flows.
 | `how: normal operation` | Name page, command, parameters, and test data. |
 | `expected: success` | State observable result and failure criterion. |
 | Permission failures hidden in prose | Add a dedicated action or flow. |
+| Most user actions are entry prerequisites | Extract the unique product surface and operation sequence from the owning design; unresolved flows remain blockers. |
 | Extra prose states a different result | Delete the duplicate fact or correct YAML; retain one authority. |
 
 ## Submit
@@ -82,3 +92,4 @@ omac work submit <issue-id> --acceptance-file <file>
 ```
 
 The file must parse as YAML directly. Do not submit a verdict during authoring.
+After submit succeeds, stop immediately and perform no further platform writes.

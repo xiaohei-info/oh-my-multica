@@ -1,6 +1,7 @@
 """omac work — 被派发 agent 的统一执行接口(5 类 issue × 产出/评审阶段)。"""
 from __future__ import annotations
 
+import hashlib
 import os
 import sys
 
@@ -21,12 +22,14 @@ from ..output import add_output_flag, print_json
 
 NAME = "work"
 SUMMARY = "Agent 执行接口:读取实例事实并提交结构化交付"
-DESCRIPTION = """Agent 处理 omac 任务时使用的唯一执行接口。
+DESCRIPTION = """Agent 处理 omac 任务时使用的统一执行接口。
 
 先运行 show 读取当前实例事实、权威顺序、角色/产物 guide 和精确 submit 命令;
-完成后只通过 submit 交付。show 与 submit 默认输出 JSON,成功与错误都可被 Agent 稳定解析。
+大型上游产物按 show/issue 正文给出的 source label 用 read 物化；完成后只通过 submit 交付。
+show、read 与 submit 默认输出 JSON，均可被 Agent 稳定解析。
 
   show     输出任务事实包(task/context/protocol/authority/guide_refs/submit)
+  read     按当前 issue 的 source label 物化上游 deliverable/附件
   submit   校验并提交交付物,返回 submitted_phase/next_phase/advanced_to
 
 issue 类型与交付参数:
@@ -50,6 +53,13 @@ def register(parser):
     show._parse_error_renderer = _render_parse_error
     show.add_argument("issue_id")
     add_output_flag(show, default="json")
+
+    read = sub.add_parser("read", help="按 source label 读取上游交付并写入文件")
+    read._work_action = "read"
+    read._parse_error_renderer = _render_parse_error
+    read.add_argument("issue_id")
+    read.add_argument("--source", required=True)
+    read.add_argument("--output-file", required=True)
 
     submit = sub.add_parser("submit", help="给 Agent 提交交付物并返回结构化结果(默认 JSON)")
     submit._work_action = "submit"
@@ -253,12 +263,19 @@ def _submit(args) -> int:
     if result.phase.value == "review":
         message += ui(
             f"\nVerdict submitted: {args.verdict}"
-            "\nThe OMAC loop owns final platform state. Do not edit issue status or assignee manually.",
+            "\nThe OMAC loop owns final platform state. Do not edit issue status or assignee manually."
+            "\nSubmission succeeded. Stop now; do not perform further platform writes.",
             f"\nverdict 已提交: {args.verdict}"
-            "\n平台终态由 omac loop 收口；不要手动修改 issue 状态/assignee。",
+            "\n平台终态由 omac loop 收口；不要手动修改 issue 状态/assignee。"
+            "\n提交成功，立即停止；不要再执行任何平台写操作。",
         )
     else:
-        message += ui(f"\nAdvanced to: {target}", f"\n状态推进: {target}")
+        message += ui(
+            f"\nAdvanced to: {target}"
+            "\nSubmission succeeded. Stop now; do not perform further platform writes.",
+            f"\n状态推进: {target}"
+            "\n提交成功，立即停止；不要再执行任何平台写操作。",
+        )
     if getattr(result, "message", None):
         message += f"\n{result.message}"
     if getattr(args, "output", "json") == "json":
@@ -272,6 +289,8 @@ def _submit(args) -> int:
             "deliverable_keys": list(result.deliverable_keys),
             "advanced_to": target,
             "message": result.message,
+            "terminal": True,
+            "next_action": "stop",
         }
         if result.phase.value == "review":
             payload["verdict"] = args.verdict
@@ -317,6 +336,76 @@ def _run_show(args) -> int:
     return exit_codes.OK
 
 
+def _run_read(args) -> int:
+    """按当前 issue 的稳定 source label 精确物化上游正式交付。"""
+    store = _resolve_store()
+    try:
+        item = store.get_work_item(args.issue_id)
+    except Exception as exc:
+        raise ValidationError(ui(
+            f"Could not read work item '{args.issue_id}': {exc}",
+            f"无法读取 work item '{args.issue_id}' —— {exc}"))
+
+    ref = next(
+        (ref for ref in item.source_refs if ref.get("label") == args.source),
+        None,
+    )
+    if ref is None:
+        labels = sorted(
+            str(ref.get("label")) for ref in item.source_refs if ref.get("label"))
+        raise ValidationError(ui(
+            f"Source '{args.source}' is not attached to this task. Available: {labels}",
+            f"当前任务没有 source '{args.source}'。可用 source: {labels}"))
+
+    source_issue_id = str(ref.get("issue_id") or "").strip()
+    if not source_issue_id:
+        raise ValidationError(ui(
+            f"Source '{args.source}' has no upstream issue identity",
+            f"source '{args.source}' 缺少上游 issue identity"))
+    try:
+        upstream = store.get_work_item(source_issue_id)
+    except Exception as exc:
+        raise ValidationError(ui(
+            f"Could not read upstream issue '{source_issue_id}': {exc}",
+            f"无法读取上游 issue '{source_issue_id}' —— {exc}"))
+
+    delivery_key = ref.get("delivery_key") or args.source
+    content = (
+        upstream.project_rules
+        if delivery_key in {"project-rules", "project_rules"}
+        else upstream.deliverable
+    )
+    if not isinstance(content, str) or not content:
+        raise ValidationError(ui(
+            f"Upstream issue '{source_issue_id}' has no readable {delivery_key} deliverable",
+            f"上游 issue '{source_issue_id}' 没有可读取的 {delivery_key} 交付物"))
+
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    expected_digest = ref.get("content_sha256")
+    if expected_digest and digest != expected_digest:
+        raise ValidationError(ui(
+            f"Upstream source digest changed: expected {expected_digest}, got {digest}",
+            f"上游 source digest 已变化：期望 {expected_digest}，实际 {digest}"))
+    try:
+        with open(args.output_file, "w", encoding="utf-8") as fh:
+            fh.write(content)
+    except OSError as exc:
+        raise ValidationError(ui(
+            f"Could not write output file '{args.output_file}': {exc}",
+            f"无法写入输出文件 '{args.output_file}' —— {exc}"))
+
+    print_json({
+        "ok": True,
+        "issue_id": args.issue_id,
+        "source": args.source,
+        "source_issue_id": source_issue_id,
+        "output_file": args.output_file,
+        "sha256": digest,
+        "bytes": len(content.encode("utf-8")),
+    })
+    return exit_codes.OK
+
+
 def _store_env(store) -> dict:
     config = store.config
     env = {
@@ -353,6 +442,8 @@ def run(args) -> int:
     try:
         if args.action == "show":
             return _run_show(args)
+        if args.action == "read":
+            return _run_read(args)
         if args.action == "submit":
             return _submit(args)
         return not_implemented(f"work {args.action}", "P2")

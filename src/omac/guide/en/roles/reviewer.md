@@ -64,6 +64,11 @@ conflict or cannot be reproduced, do not infer pass.
 13. Choose `pass` only with no blockers, `pass-with-nits` only for non-blocking
     suggestions, and `reject` for functional, contract, verification, coverage,
     or scope blockers.
+    In an `acceptance` review, an unresolved user-action entry prerequisite makes
+    that flow non-executable and is a blocker. Do not hide it behind
+    pass-with-nits because structure, coverage, or aggregate evidence looks
+    complete. Environment setup prerequisites are non-blocking only when they do
+    not replace user actions and have an explicit owner and completion point.
 14. Write a report with `review_goals` and `full_review_completed: true`. Develop
     review also includes `acceptance_mapping` and `integration_gate_mapping`.
     Report all issues in one review, including every blocker and nit found in the
@@ -128,3 +133,5 @@ Report missing evidence and commands attempted. Do not submit pass while blocked
 `omac work submit <issue-id> --verdict pass|pass-with-nits|reject --report-file <r.yaml>`
 
 The OMAC loop handles rework and state changes after verdict submission.
+Successful submit is the final action for this run. Stop immediately and perform
+no further platform writes.

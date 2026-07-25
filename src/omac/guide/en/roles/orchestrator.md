@@ -24,6 +24,12 @@ guide does not decide product facts.
 
 - The issue body, upstream chain, design, acceptance document, current manifest,
   and exact submission command from `work show`.
+- A large upstream artifact marked `content_externalized: true` in
+  `work show.context.source_issues` is intentionally omitted from the body.
+  Run the exact `omac work read <issue-id> --source <label> --output-file <path>`
+  command from the issue body, materialize the authoritative upstream
+  deliverable attachment, and verify the returned `sha256`. Do not decompose
+  from the body summary alone.
 - Final-acceptance results, especially failed flows and notes, for incremental
   decomposition.
 - Current `contract`, `previous_review`, and node state. Completed nodes are
@@ -33,7 +39,9 @@ guide does not decide product facts.
 ## Steps
 
 1. Read `work show`, the design, acceptance document, references, current
-   manifest or failure notes, and `submit`.
+   manifest or failure notes, and `submit`. For every source marked
+   `content_externalized: true`, run the exact `omac work read` command and read
+   the output file before decomposition.
 2. Identify Wave 0 foundations: shared contracts, migrations, test
    infrastructure, CI gates, and independently acceptable foundation
    capabilities. Only complete capabilities directly consumed by later nodes

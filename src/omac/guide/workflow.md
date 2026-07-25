@@ -57,7 +57,8 @@ Controller Agent 应直接执行这条下一步命令，让 `dag run` 接管开�
 - 标题带 `[DAG:...]` 的 issue 是 omac 派发任务；Agent 先跑
   `omac work show <issue-id> --output json`，再按返回的 `submit` 交付。
 - 下游 issue 的 Human 内容提供上游链接；Agent 从 `work show.context.source_issues`
-  读取引用，再查询上游实例上下文和 deliverable/ref。
+  读取引用。短产物可随正文内联；大型产物保留在上游 deliverable 附件中，并由下游正文给出
+  精确 `omac work read` 命令，Agent 必须先物化并校验摘要后再工作。
 - review 是各 issue 类型的阶段，不是另一条 issue。
 - 验收文档锚定需求目标，manifest `contract.acceptance` 必须引用验收 flow。
 - worker、reviewer、acceptor 都提交结构化证据；缺项由 `omac work submit` 当场拒绝。

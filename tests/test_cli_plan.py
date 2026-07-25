@@ -6,15 +6,37 @@ MOCK_AUTO_COMPLETE_DELAY=0 让评审在首轮 wake 即收敛,避免真实等待�
 from __future__ import annotations
 
 import json
-import os
+from types import SimpleNamespace
 
 import pytest
+import yaml
 
 from omac.cli import exit_codes
 from omac.cli.main import main
 from omac.engines import create_engine
 from omac.engines.mock import MockStore
-from omac.engines.models import EngineConfig
+from omac.engines.models import EngineConfig, WorkItemStatus
+
+
+def test_acceptance_guard_rejects_generic_expected_template():
+    from omac.pipeline.plan import _acceptance_guard
+
+    content = yaml.safe_dump({
+        "flows": [{
+            "id": "flow-generic",
+            "name": "通用模板",
+            "actions": [{
+                "step": f"执行不同业务动作 {i}",
+                "how": f"在页面 {i} 执行动作",
+                "expected": "证明本 Action step 中的每个子句成立，否则失败。",
+            } for i in range(40)],
+        }],
+    }, allow_unicode=True)
+
+    errors = _acceptance_guard(SimpleNamespace(deliverable=content))
+
+    assert len(errors) == 1
+    assert "expected is reused by 40/40 actions" in errors[0]
 
 
 # ── fixtures ──────────────────────────────────────────────────────────────
@@ -400,7 +422,6 @@ nodes:
 
 def _configure_create_mock(tmp_path, monkeypatch):
     """完整 mock 配置:planner/orchestrator/workers/reviewers 角色齐全。"""
-    from omac.core.taskmeta import TaskKind
     monkeypatch.chdir(tmp_path)
     assert main(["config", "set", "engine", "mock"]) == exit_codes.OK
     assert main(["config", "set", "workspace", "mock-workspace"]) == exit_codes.OK
@@ -429,7 +450,6 @@ def _configure_create_mock(tmp_path, monkeypatch):
 
 def _first_item_of_kind(engine, kind):
     """取该 kind 的首个 work item(按创建顺序)。"""
-    from omac.core.taskmeta import TaskKind
     items = [i for i in engine.store.list_work_items(engine.store.config.workspace_id)
              if i.kind == kind]
     return items[0] if items else None
@@ -576,6 +596,150 @@ def test_create_with_doc_skips_plan(tmp_path, monkeypatch):
     assert plan_item is None, "带 --doc 时不应创建 plan 阶段 work item"
 
 
+def test_doc_directory_builds_generic_design_source_set(tmp_path, monkeypatch):
+    """目录输入只提供完整文件清单和通用阅读要求，不内置项目目录约定。"""
+    from omac.pipeline.plan import _read_file
+
+    monkeypatch.chdir(tmp_path)
+    docs = tmp_path / "docs"
+    (docs / "archive").mkdir(parents=True)
+    (docs / "README.md").write_text("repository-specific index", encoding="utf-8")
+    (docs / "overview.md").write_text("CURRENT DESIGN BODY", encoding="utf-8")
+    (docs / "archive" / "old.md").write_text("OLD DESIGN BODY", encoding="utf-8")
+
+    source_set = _read_file("docs", language="cn")
+
+    assert "docs/README.md" in source_set
+    assert "docs/overview.md" in source_set
+    assert "docs/archive/old.md" in source_set
+    assert "CURRENT DESIGN BODY" not in source_set
+    assert "OLD DESIGN BODY" not in source_set
+    assert "递归检查该目录" in source_set
+    assert "根据仓库治理规则和文档内容判断" in source_set
+    assert "只完成 work show 当前阶段要求的交付" in source_set
+    assert "生成验收计划" not in source_set
+    assert "完整 DAG" not in source_set
+    assert "排除 archive" not in source_set
+    assert "README.md 是权威" not in source_set
+
+
+def test_resume_doc_pipeline_restarts_and_reuses_acceptance_issue(
+        tmp_path, monkeypatch):
+    """--doc 恢复复用原 acceptance issue，并外置大型验收产物。"""
+    from omac.core.taskmeta import TaskKind
+    from omac.pipeline.tasks import AuthoringTaskSpec, create_authoring_task
+
+    engine = _configure_create_mock(tmp_path, monkeypatch)
+    large_acceptance = ACCEPTANCE_YAML + "\n# " + ("x" * (70 * 1024))
+    MockStore.set_kind_delivery(
+        "acceptance", {"acceptance": large_acceptance})
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "design.md").write_text("# Current design", encoding="utf-8")
+
+    acceptance_item = create_authoring_task(
+        engine,
+        AuthoringTaskSpec(
+            kind=TaskKind.ACCEPTANCE,
+            title="demo-doc-resume 验收文档",
+            dag_key="acceptance-p-doc1234",
+            assignee="alice",
+            source_of_truth={"plan": "旧提示:生成验收计划和完整 DAG"},
+        ),
+    )
+    engine.store.update_status(acceptance_item.id, WorkItemStatus.IN_REVIEW)
+    decompose_item = engine.store.create_work_item(
+        "mock-workspace", "demo-doc-resume 拆解", "oversized old body",
+        dag_key="decompose-p-doc1234", worker="bob",
+        kind=TaskKind.DECOMPOSE,
+    )
+
+    def _unexpected_list_lookup(*_args, **_kwargs):
+        raise AssertionError("exact recovery IDs must bypass dag-key list lookup")
+
+    monkeypatch.setattr(
+        "omac.pipeline.plan._find_by_dag_key", _unexpected_list_lookup)
+
+    assert main([
+        "plan", "resume",
+        "--plan-id", "p-doc1234",
+        "--name", "demo-doc-resume",
+        "--doc", "docs",
+        "--restart-active",
+        "--acceptance-issue-id", acceptance_item.id,
+        "--decompose-issue-id", decompose_item.id,
+    ]) == exit_codes.OK
+
+    acceptance_items = [
+        item for item in engine.store.list_work_items("mock-workspace")
+        if item.kind == TaskKind.ACCEPTANCE
+    ]
+    refreshed_decompose = engine.store.get_work_item(decompose_item.id)
+    plan_items = [
+        item for item in engine.store.list_work_items("mock-workspace")
+        if item.kind == TaskKind.PLAN
+    ]
+    assert len(acceptance_items) == 1
+    assert acceptance_items[0].id == acceptance_item.id
+    assert "current stage delivery required by `work show`" in acceptance_items[0].description
+    assert "生成验收计划和完整 DAG" not in acceptance_items[0].description
+    assert large_acceptance not in refreshed_decompose.description
+    assert "omac work read" in refreshed_decompose.description
+    acceptance_ref = next(
+        ref for ref in refreshed_decompose.source_refs
+        if ref.get("label") == "acceptance"
+    )
+    assert acceptance_ref["issue_id"] == acceptance_item.id
+    assert acceptance_ref["content_externalized"] is True
+    assert plan_items == []
+
+
+def test_resume_doc_pipeline_restarts_reviewer_without_rerunning_author(
+        tmp_path, monkeypatch):
+    """review run 停滞时保留交付物，只重启 Reviewer。"""
+    from omac.core.taskmeta import TaskKind, TaskPhase
+    from omac.pipeline.tasks import AuthoringTaskSpec, create_authoring_task
+
+    engine = _configure_create_mock(tmp_path, monkeypatch)
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "design.md").write_text("# Current design", encoding="utf-8")
+
+    acceptance_item = create_authoring_task(
+        engine,
+        AuthoringTaskSpec(
+            kind=TaskKind.ACCEPTANCE,
+            title="demo-review-resume 验收文档",
+            dag_key="acceptance-p-review01",
+            assignee="alice",
+            source_of_truth={"plan": "current source"},
+        ),
+    )
+    engine.store.update_work_item_metadata(
+        acceptance_item.id,
+        deliverable=ACCEPTANCE_YAML,
+        reviewer="bob",
+        phase=TaskPhase.REVIEW,
+    )
+    engine.store.update_status(acceptance_item.id, WorkItemStatus.IN_PROGRESS)
+
+    assert main([
+        "plan", "resume",
+        "--plan-id", "p-review01",
+        "--name", "demo-review-resume",
+        "--doc", "docs",
+        "--restart-active",
+        "--no-confirm",
+    ]) == exit_codes.OK
+
+    roles = [
+        role for item_id, _dag_key, role, _ts in engine.store.assign_log
+        if item_id == acceptance_item.id
+    ]
+    assert roles == ["reviewer"]
+    assert engine.store.get_work_item(acceptance_item.id).deliverable == ACCEPTANCE_YAML
+
+
 def test_create_replaces_only_existing_agents_managed_section(tmp_path, monkeypatch):
     _configure_create_mock(tmp_path, monkeypatch)
     agents = tmp_path / "AGENTS.md"
@@ -630,11 +794,33 @@ def test_plan_confirm_marks_waiting_issue_done(tmp_path, monkeypatch):
         "mock-workspace", "demo-confirm 设计方案", "demo-confirm 设计方案", dag_key="plan",
         worker="alice", kind=TaskKind.PLAN)
     engine.store.update_work_item_metadata(
-        item.id, deliverable="设计方案正文", phase=TaskPhase.REVIEW)
+        item.id, deliverable="设计方案正文", phase=TaskPhase.CONFIRMATION)
     engine.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
 
     assert main(["plan", "confirm", "--name", "demo-confirm"]) == exit_codes.OK
     assert engine.store.get_work_item(item.id).status == WorkItemStatus.DONE
+
+
+def test_plan_confirm_rejects_unreviewed_delivery(tmp_path, monkeypatch):
+    """产出刚进入 review、Reviewer 尚未通过时，人工确认不能提前放行。"""
+    from omac.core.taskmeta import TaskKind, TaskPhase
+    from omac.engines.models import WorkItemStatus
+
+    engine = _configure_create_mock(tmp_path, monkeypatch)
+    MockStore.set_auto_confirm(False)
+    item = engine.store.create_work_item(
+        "mock-workspace", "demo-unreviewed 验收文档", "demo-unreviewed 验收文档",
+        dag_key="acceptance-p-unreviewed", worker="alice", kind=TaskKind.ACCEPTANCE)
+    engine.store.update_work_item_metadata(
+        item.id,
+        deliverable="schema: omac.acceptance/v1\nflows:\n- id: flow-1\n  name: flow\n  actions:\n  - step: s\n    how: h\n    expected: e\n",
+        phase=TaskPhase.REVIEW)
+    engine.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+
+    assert main([
+        "plan", "confirm", "--dag-key", "acceptance-p-unreviewed",
+    ]) == exit_codes.VALIDATION
+    assert engine.store.get_work_item(item.id).status == WorkItemStatus.IN_REVIEW
 
 
 def test_plan_confirm_dag_key_exactly_selects_waiting_issue(tmp_path, monkeypatch):
@@ -652,7 +838,7 @@ def test_plan_confirm_dag_key_exactly_selects_waiting_issue(tmp_path, monkeypatc
         dag_key="plan-p-second22", worker="alice", kind=TaskKind.PLAN)
     for item in (first, second):
         engine.store.update_work_item_metadata(
-            item.id, deliverable="设计方案正文", phase=TaskPhase.REVIEW)
+            item.id, deliverable="设计方案正文", phase=TaskPhase.CONFIRMATION)
         engine.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
 
     assert main(["plan", "confirm", "--dag-key", "plan-p-second22"]) == exit_codes.OK

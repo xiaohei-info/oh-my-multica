@@ -67,8 +67,9 @@ For a dispatched task, do not pre-read every guide. Read `guide_refs` from
   `omac work show <issue-id> --output json` first, then uses the returned
   `submit` command.
 - A downstream issue gives humans links to upstream issues. Agents read
-  `work show.context.source_issues`, then inspect the referenced task context
-  and deliverable/ref.
+  `work show.context.source_issues`. Small artifacts may be inline; large ones
+  stay on the upstream deliverable attachment. The downstream body provides an
+  exact `omac work read` command, which the agent runs and verifies before work.
 - Review is a phase of every issue type, not a separate issue.
 - The acceptance document anchors the requested outcome. A manifest node's
   `contract.acceptance` must reference an acceptance flow.

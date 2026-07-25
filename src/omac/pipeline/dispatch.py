@@ -77,9 +77,12 @@ _AUTHORING_ACTION_KEYS = {
 def _next_action(kind: TaskKind, phase: TaskPhase, language: str) -> str:
     """「现在做什么」:只陈述当前动作,不混入静态 guide 命令。"""
     if phase == TaskPhase.REVIEW:
-        return t("work.protocol.review", language=language)
-    key = _AUTHORING_ACTION_KEYS.get(kind)
-    return t(key, language=language) if key else ""
+        action = t("work.protocol.review", language=language)
+    else:
+        key = _AUTHORING_ACTION_KEYS.get(kind)
+        action = t(key, language=language) if key else ""
+    control = t("work.protocol.control", language=language)
+    return f"{action}\n{control}" if action else control
 
 
 # ==================== submit 参数(单一事实源,防漂移) ====================
@@ -194,7 +197,8 @@ def _env_setup_checklist(item: Any) -> Optional[List[str]]:
 def _previous_review_context(item: Any) -> Optional[Dict[str, Any]]:
     report = getattr(item, "review_report", None)
     report_ref = getattr(item, "review_report_ref", None)
-    if not report and not report_ref:
+    comment = getattr(item, "review_comment", None)
+    if not report and not report_ref and not comment:
         return None
 
     previous: Dict[str, Any] = {}
@@ -207,6 +211,8 @@ def _previous_review_context(item: Any) -> Optional[Dict[str, Any]]:
         previous["report"] = report
     if report_ref:
         previous["report_ref"] = report_ref
+    if comment:
+        previous["comment"] = comment
     return previous
 
 def build_show_output(item: Any, identity: str, *, language: str = EN) -> Dict[str, Any]:
@@ -312,6 +318,11 @@ def build_show_output(item: Any, identity: str, *, language: str = EN) -> Dict[s
         "task": task,
         "context": context,
         "protocol": protocol,
+        "control": {
+            "platform_writes": "omac-only",
+            "submit_is_terminal": True,
+            "post_submit_actions": [],
+        },
         "submit": submit,
         "authority": authority_order(language),
         "guide_refs": guide_refs_for(kind, phase),
@@ -757,6 +768,7 @@ def submit(
             issue_id,
             review_verdict="",
             review_comment="",
+            review_subject_digest="",
             decision_required={},
             phase=TaskPhase.REVIEW,
             **metadata,
@@ -781,12 +793,22 @@ def submit(
         store.update_work_item_metadata(
             issue_id,
             review_verdict=verdict,
+            review_comment="",
             review_report=report,
             review_report_source=_read_text(report_file),
             phase=TaskPhase.REVIEW,
         )
         # 状态保持 IN_REVIEW,由 loop / plan 流水线收割判定 done / blocked。
-        return SubmitResult(kind, phase, "review_report", WorkItemStatus.IN_REVIEW)
+        return SubmitResult(
+            kind, phase, "review_report", WorkItemStatus.IN_REVIEW,
+            message=ui(
+                "Review submission is complete. Stop now. Do not add an issue comment, "
+                "change status, reassign, rerun, or perform any other platform write; "
+                "the OMAC loop will route the verdict.",
+                "评审提交已完成，请立即停止。不要再添加 issue comment、修改状态、"
+                "重新分配、rerun 或执行任何平台写入；由 OMAC loop 收割并路由 verdict。",
+            ),
+        )
 
     # ---------- final-acceptance × authoring ----------
     if kind == TaskKind.FINAL_ACCEPTANCE and phase == TaskPhase.AUTHORING:
@@ -936,19 +958,26 @@ def normalize_source_refs(
     *,
     labels: Optional[List[str]] = None,
     engine_env: Optional[Dict[str, str]] = None,
-) -> List[Dict[str, str]]:
+) -> List[Dict[str, Any]]:
     """把上游 issue 引用规整成稳定小对象;只存引用,不存上游正文。"""
-    refs: List[Dict[str, str]] = []
+    refs: List[Dict[str, Any]] = []
     for idx, raw in enumerate(source_refs or []):
         if isinstance(raw, dict):
             issue_id = str(raw.get("issue_id") or raw.get("id") or raw.get("ref") or "").strip()
             if not issue_id:
                 continue
-            ref: Dict[str, str] = {"issue_id": issue_id}
-            for key in ("label", "kind", "url"):
+            ref: Dict[str, Any] = {"issue_id": issue_id}
+            for key in (
+                "label", "kind", "url", "content_sha256", "delivery_key",
+            ):
                 value = raw.get(key)
                 if value:
                     ref[key] = str(value)
+            if raw.get("content_externalized") is True:
+                ref["content_externalized"] = True
+            content_bytes = raw.get("content_bytes")
+            if isinstance(content_bytes, int) and content_bytes >= 0:
+                ref["content_bytes"] = content_bytes
             refs.append(ref)
         else:
             issue_id = str(raw).strip()

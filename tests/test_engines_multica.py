@@ -1,10 +1,12 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from omac.engines.models import EngineConfig
 from omac.engines.models import WorkItemStatus
-from omac.engines.multica import MulticaStore
+from omac.engines.multica import MulticaRuntime, MulticaStore
+from omac.errors import PlatformError
 
 
 def test_multica_text_file_commands_allow_process_owned_external_file(monkeypatch):
@@ -26,6 +28,133 @@ def test_multica_text_file_commands_allow_process_owned_external_file(monkeypatc
     )
 
     assert "--allow-external-file" in calls[0]
+
+
+def test_multica_description_repair_runs_before_metadata_updates(monkeypatch):
+    """紧凑正文必须先落盘，避免旧巨型 description 拖死 metadata API。"""
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    events = []
+
+    monkeypatch.setattr(
+        store,
+        "_run_multica_with_text_file",
+        lambda args, flag, text: events.append(("description", text)),
+    )
+    monkeypatch.setattr(
+        store,
+        "_set_metadata",
+        lambda item_id, key, value: events.append(("metadata", key)),
+    )
+    monkeypatch.setattr(
+        store,
+        "get_work_item",
+        lambda item_id: store._issue_to_work_item(
+            {
+                "id": item_id,
+                "title": "t",
+                "description": "compact",
+                "status": "todo",
+                "metadata": {"dag_key": "decompose-p1", "kind": "decompose"},
+            },
+            "ws",
+        ),
+    )
+
+    store.update_work_item_metadata(
+        "issue-1",
+        worker="bob",
+        source_refs=[{"label": "acceptance", "issue_id": "issue-a"}],
+        description="compact body",
+    )
+
+    assert events[0] == ("description", "compact body")
+    assert events[1:] == [
+        ("metadata", "worker"),
+        ("metadata", "source_refs"),
+    ]
+
+
+def test_multica_description_resolve_timeout_uses_direct_exact_update(monkeypatch):
+    """CLI resolver 被巨型正文拖死时，精确 UUID 走同一 API 的幂等 PUT。"""
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    events = []
+
+    def fail_cli(*_args, **_kwargs):
+        raise PlatformError("resolve issue: context deadline exceeded")
+
+    monkeypatch.setattr(store, "_run_multica_with_text_file", fail_cli)
+    monkeypatch.setattr(
+        store,
+        "_put_issue_description_direct",
+        lambda item_id, description: events.append(
+            ("direct-description", item_id, description)),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        store,
+        "_set_metadata",
+        lambda item_id, key, value: events.append(("metadata", key)),
+    )
+    monkeypatch.setattr(
+        store,
+        "get_work_item",
+        lambda item_id: store._issue_to_work_item(
+            {
+                "id": item_id,
+                "title": "t",
+                "description": "compact",
+                "status": "todo",
+                "metadata": {"dag_key": "decompose-p1", "kind": "decompose"},
+            },
+            "ws",
+        ),
+    )
+
+    store.update_work_item_metadata(
+        "8e6bd282-6039-41d2-aa00-969a0bf1554a",
+        worker="bob",
+        description="compact body",
+    )
+
+    assert events == [
+        (
+            "direct-description",
+            "8e6bd282-6039-41d2-aa00-969a0bf1554a",
+            "compact body",
+        ),
+        ("metadata", "worker"),
+    ]
+
+
+def test_direct_description_update_keeps_token_out_of_process_args(
+        tmp_path, monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        '{"server_url":"https://api.example.test","token":"secret-token"}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MULTICA_CONFIG_PATH", str(config_path))
+    observed = {}
+
+    def run(args, **kwargs):
+        observed["args"] = args
+        header_path = args[args.index("--header") + 1].removeprefix("@")
+        body_path = args[args.index("--data-binary") + 1].removeprefix("@")
+        observed["headers"] = Path(header_path).read_text(encoding="utf-8")
+        observed["body"] = Path(body_path).read_text(encoding="utf-8")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("omac.engines.multica.subprocess.run", run)
+
+    store._put_issue_description_direct(
+        "8e6bd282-6039-41d2-aa00-969a0bf1554a",
+        "compact body",
+    )
+
+    assert "secret-token" not in " ".join(observed["args"])
+    assert "Authorization: Bearer secret-token" in observed["headers"]
+    assert '"description": "compact body"' in observed["body"]
 
 
 def test_multica_payload_upload_allows_process_owned_external_files(monkeypatch):
@@ -203,6 +332,33 @@ def test_multica_review_report_source_writes_ref_without_full_report_metadata(mo
         "bytes": len("summary: large reviewer report\n".encode("utf-8")),
         "filename": "omac-review-report.yaml",
     }) in writes
+
+
+def test_multica_payload_ref_downloads_known_attachment_without_comment_thread(monkeypatch):
+    """ref 已含 attachment_id 时直接取附件，评论线程超时不应拖死轮询。"""
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    calls = []
+
+    def fake_run(args, capture=True):
+        calls.append(args)
+        if args[:2] == ["attachment", "download"]:
+            output_dir = Path(args[args.index("--output-dir") + 1])
+            (output_dir / "review.yaml").write_text("verdict: reject\n")
+            return None
+        if args[:3] == ["issue", "comment", "list"]:
+            raise PlatformError("Request timed out: server did not respond")
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+
+    content = store._load_payload_comment("issue-1", "review-report", {
+        "comment_id": "comment-1",
+        "attachment_id": "attachment-1",
+        "filename": "review.yaml",
+    })
+
+    assert content == "verdict: reject\n"
+    assert not any(args[:3] == ["issue", "comment", "list"] for args in calls)
 
 
 def test_multica_project_rules_are_uploaded_and_read_through_ref(monkeypatch):
@@ -538,6 +694,69 @@ def test_multica_runtime_reruns_existing_cancelled_assignment(monkeypatch):
     assert ["issue", "rerun", "issue-1", "--output", "json"] in calls
 
 
+def test_multica_runtime_cancel_interrupts_active_direct_run(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    runtime = MulticaRuntime(store)
+    calls = []
+
+    def fake_run(args):
+        calls.append(args)
+        if args[:2] == ["issue", "runs"]:
+            return [{"id": "task-active", "kind": "direct", "status": "running"}]
+        if args[:2] == ["issue", "cancel-task"]:
+            return {"id": "task-active", "status": "cancelled"}
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+
+    assert runtime.cancel("issue-1") is True
+    assert [
+        "issue", "cancel-task", "task-active",
+        "--issue", "issue-1", "--output", "json",
+    ] in calls
+    assert not any(args[:2] == ["issue", "assign"] for args in calls)
+
+
+def test_multica_runtime_cancel_clears_stale_assignment_without_active_run(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    runtime = MulticaRuntime(store)
+    calls = []
+
+    def fake_run(args):
+        calls.append(args)
+        if args[:2] == ["issue", "runs"]:
+            return [{"id": "task-old", "kind": "direct", "status": "cancelled"}]
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+
+    assert runtime.cancel("issue-1") is False
+    assert not any(args[:2] == ["issue", "assign"] for args in calls)
+
+
+def test_multica_clear_assignment_preserves_review_evidence(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    calls = []
+
+    def fake_run(args):
+        calls.append(args)
+        if args[:2] == ["issue", "assign"]:
+            return {"id": "issue-1", "assignee_id": None}
+        if args[:3] == ["issue", "metadata", "set"]:
+            return None
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+
+    store.clear_assignment("issue-1")
+
+    assert ["issue", "assign", "issue-1", "--unassign"] in calls
+    assert [
+        "issue", "metadata", "set", "issue-1",
+        "--key", "reviewer", "--value", "",
+    ] in calls
+
+
 def test_multica_runtime_reruns_cancelled_direct_even_when_comment_is_newer(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
     calls = []
@@ -630,6 +849,42 @@ def test_multica_runtime_does_not_rerun_fresh_failed_assignment(monkeypatch):
     runtime.wake("issue-1", "alice", "reviewer")
 
     assert calls.count(["issue", "rerun", "issue-1", "--output", "json"]) == 1
+
+
+def test_multica_reviewer_metadata_failure_does_not_start_assignment(monkeypatch):
+    """评审身份必须先持久化；metadata 失败时不能先启动错误身份的 run。"""
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    calls = []
+
+    monkeypatch.setattr(store, "_resolve_agent_id", lambda name: "agent-reviewer")
+
+    def fake_run(args, capture=True):
+        calls.append(args)
+        if args[:2] == ["issue", "get"]:
+            return {
+                "id": "issue-1",
+                "assignee_id": "agent-old",
+                "title": "t",
+                "description": "d",
+                "status": "in_review",
+                "metadata": {
+                    "dag_key": "node-a",
+                    "kind": "decompose",
+                    "reviewer": "old-reviewer",
+                },
+            }
+        if args[:3] == ["issue", "metadata", "set"]:
+            raise PlatformError("Request timed out: server did not respond")
+        if args[:2] == ["issue", "assign"]:
+            return {"id": "issue-1", "assignee_id": "agent-reviewer"}
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+
+    with pytest.raises(PlatformError, match="timed out"):
+        store.assign_work_item("issue-1", "hermes-reviewer", "reviewer")
+
+    assert not any(args[:2] == ["issue", "assign"] for args in calls)
 
 
 def test_multica_runtime_reruns_completed_same_assignee_assignment(monkeypatch):

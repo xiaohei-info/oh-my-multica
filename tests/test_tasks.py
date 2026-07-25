@@ -7,6 +7,8 @@
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 import omac.pipeline.tasks as tasks_module
@@ -41,6 +43,39 @@ def _payload(**over):
 def _poll():
     """测试用 no-op poll(配合 MOCK_AUTO_COMPLETE_DELAY=0 立即收敛)。"""
     pass
+
+
+def _review_report(verdict="pass"):
+    return {
+        "review_goals": ["完整复核当前交付"],
+        "diff_reviewed": True,
+        "tests_rerun": True,
+        "coverage_checked": True,
+        "full_review_completed": True,
+        "acceptance_mapping": [
+            {
+                "acceptance": "端到端可走通",
+                "evidence": "独立复核通过",
+                "status": "fail" if verdict == "reject" else "pass",
+            }
+        ],
+        "blockers": ["仍有 blocker"] if verdict == "reject" else [],
+    }
+
+
+def test_produced_requires_review_phase_and_review_status_to_agree():
+    """远端 phase 写后读延迟时，旧 review phase 不能跳过 producer 返工。"""
+    stale = SimpleNamespace(
+        phase=TaskPhase.REVIEW,
+        status=WorkItemStatus.IN_PROGRESS,
+    )
+    submitted = SimpleNamespace(
+        phase=TaskPhase.REVIEW,
+        status=WorkItemStatus.IN_REVIEW,
+    )
+
+    assert tasks_module._produced(stale) is False
+    assert tasks_module._produced(submitted) is True
 
 
 def test_create_authoring_task_renders_body_contract_and_source_refs():
@@ -205,6 +240,115 @@ def test_run_task_renders_markdown_source_of_truth_as_collapsible_markdown():
     assert "### plan\n````" not in item.description
 
 
+def test_large_issue_backed_source_is_externalized_from_issue_body():
+    """大型上游交付保留在源 issue 附件中，下游正文只放可校验读取入口。"""
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    upstream = eng.store.create_work_item(
+        "ws", "acceptance", "acceptance", dag_key="acceptance-p1",
+        worker="alice", kind=TaskKind.ACCEPTANCE)
+    large_acceptance = "schema: omac.acceptance/v1\n" + "x" * (70 * 1024)
+    eng.store.update_work_item_metadata(
+        upstream.id, deliverable=large_acceptance,
+        phase=TaskPhase.CONFIRMATION)
+    eng.store.update_status(upstream.id, WorkItemStatus.DONE)
+
+    item = create_authoring_task(eng, AuthoringTaskSpec(
+        kind=TaskKind.DECOMPOSE,
+        title="decompose",
+        dag_key="decompose-p1",
+        assignee="bob",
+        source_refs=[{"label": "acceptance", "issue_id": upstream.id}],
+        source_of_truth={"acceptance": large_acceptance},
+    ))
+
+    assert large_acceptance not in item.description
+    assert "Large upstream artifact omitted from the issue body" in item.description
+    assert (
+        f"omac work read {item.id} --source acceptance "
+        "--output-file /tmp/omac-acceptance.yaml"
+    ) in item.description
+    assert item.source_refs[0]["content_externalized"] is True
+    assert item.source_refs[0]["content_bytes"] == len(
+        large_acceptance.encode("utf-8"))
+    assert item.source_refs[0]["content_sha256"]
+
+
+def test_resume_refreshes_unstarted_authoring_issue_in_place():
+    """正文回填失败后的 resume 必须刷新原 issue，不能创建第二条。"""
+    eng = _engine()
+    item = eng.store.create_work_item(
+        "ws", "decompose", "decompose", dag_key="decompose-p1",
+        worker="bob", kind=TaskKind.DECOMPOSE)
+
+    result = run_task(
+        eng,
+        TaskKind.DECOMPOSE,
+        _payload(
+            title="decompose",
+            source_of_truth={"acceptance": "small acceptance"},
+        ),
+        "bob",
+        source_refs=[{"label": "acceptance", "issue_id": "acceptance-1"}],
+        poll=_poll,
+        resume_item_id=item.id,
+    )
+
+    refreshed = eng.store.get_work_item(item.id)
+    assert result["item_id"] == item.id
+    assert len(eng.store.list_work_items("ws")) == 1
+    assert "small acceptance" in refreshed.description
+    assert refreshed.source_refs == [
+        {"label": "acceptance", "issue_id": "acceptance-1"}
+    ]
+
+
+def test_resume_snapshot_shrinks_unreadable_issue_before_full_get():
+    """巨型旧正文不可读时，先用 list 快照覆盖紧凑正文，再完整读取。"""
+    eng = _engine()
+    base_store = eng.store
+    snapshot = base_store.create_work_item(
+        "ws", "decompose", "oversized old body", dag_key="decompose-p1",
+        worker="bob", kind=TaskKind.DECOMPOSE)
+
+    class _UnreadableUntilRefreshed:
+        def __init__(self, delegate):
+            self.delegate = delegate
+            self.config = delegate.config
+            self.refreshed = False
+
+        def __getattr__(self, name):
+            return getattr(self.delegate, name)
+
+        def get_work_item(self, item_id):
+            if not self.refreshed:
+                raise RuntimeError("old issue body is too large to read")
+            return self.delegate.get_work_item(item_id)
+
+        def update_work_item_metadata(self, item_id, **metadata):
+            if metadata.get("description") is not None:
+                self.refreshed = True
+            return self.delegate.update_work_item_metadata(item_id, **metadata)
+
+    eng.store = _UnreadableUntilRefreshed(base_store)
+
+    result = run_task(
+        eng,
+        TaskKind.DECOMPOSE,
+        _payload(
+            title="decompose",
+            source_of_truth={"acceptance": "small acceptance"},
+        ),
+        "bob",
+        source_refs=[{"label": "acceptance", "issue_id": "acceptance-1"}],
+        poll=_poll,
+        resume_item_id=snapshot.id,
+        resume_item_snapshot=snapshot,
+    )
+
+    assert result["item_id"] == snapshot.id
+    assert eng.store.refreshed is True
+
+
 def test_run_task_handoff_to_reviewer_does_not_post_trigger_comment():
     """正常转派 reviewer 只靠 assign + metadata 交接,不发评论触发第二次 run。"""
     eng = _engine()
@@ -215,24 +359,159 @@ def test_run_task_handoff_to_reviewer_does_not_post_trigger_comment():
     assert not any("阶段变更" in c and "omac work submit" in c for c in comments)
 
 
-def test_run_task_pass_with_nits_accepts_worker_followup_without_second_review():
-    """pass-with-nits 转回产出者修完即收口,不再浪费第二轮 reviewer。"""
+def test_run_task_pass_with_nits_re_reviews_changed_worker_followup():
+    """pass-with-nits 后若交付变化，最终交付必须重新经过 reviewer。"""
     eng = _engine()
     MockStore.set_kind_delivery_sequence(
         "plan", [{"plan": "计划正文-v1"}, {"plan": "计划正文-v2"}])
-    MockStore.set_review_verdict_sequence(["pass-with-nits", "reject"])
+    MockStore.set_review_verdict_sequence(["pass-with-nits", "pass"])
 
     res = run_task(eng, TaskKind.PLAN, _payload(), "alice",
                    reviewers=["bob"], poll=_poll)
 
     item = eng.store.get_work_item(res["item_id"])
-    assert res["verdict"] == "pass-with-nits"
-    assert res["rounds"] == 1
+    assert res["verdict"] == "pass"
+    assert res["rounds"] == 2
     assert res["delivery"]["plan"] == "计划正文-v2"
     assert item.status == WorkItemStatus.DONE
-    assert item.bounces.review == 0
+    assert item.bounces.review == 1
     assert item.decision_required is None
     assert eng.store.get_comments(item.id) == []
+
+
+def test_run_task_resume_confirmation_re_reviews_stale_subject():
+    """confirmation 只能复用仍绑定当前交付的 verdict。"""
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = create_authoring_task(eng, AuthoringTaskSpec(
+        kind=TaskKind.PLAN,
+        title="feature-x",
+        dag_key="plan-p1",
+        assignee="alice",
+    ))
+    eng.store.update_work_item_metadata(
+        item.id,
+        deliverable="计划正文-v2",
+        phase=TaskPhase.CONFIRMATION,
+        review_verdict="pass-with-nits",
+        review_bounce=1,
+    )
+    current = eng.store.get_work_item(item.id)
+    current.review_subject_digest = "stale-v1-review-subject"
+    eng.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+    def submit_fresh_review():
+        current = eng.store.get_work_item(item.id)
+        if current.phase == TaskPhase.REVIEW and current.review_verdict is None:
+            eng.store.update_work_item_metadata(
+                item.id, review_verdict="pass",
+                review_report=_review_report())
+
+    result = run_task(
+        eng,
+        TaskKind.PLAN,
+        _payload(),
+        "alice",
+        reviewers=["bob"],
+        poll=submit_fresh_review,
+        resume_item_id=item.id,
+    )
+
+    assert result["verdict"] == "pass"
+    assert result["rounds"] == 2
+    assert result["delivery"]["plan"] == "计划正文-v2"
+
+
+def test_run_task_resume_confirmation_consumes_subject_after_prior_bounces():
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = create_authoring_task(eng, AuthoringTaskSpec(
+        kind=TaskKind.PLAN,
+        title="feature-x",
+        dag_key="plan-p1",
+        assignee="alice",
+    ))
+    eng.store.update_work_item_metadata(
+        item.id,
+        deliverable="计划正文-v3",
+        phase=TaskPhase.CONFIRMATION,
+        review_verdict="pass",
+        review_report=_review_report(),
+        review_bounce=2,
+    )
+    current = eng.store.get_work_item(item.id)
+    current.review_subject_digest = tasks_module._review_subject_digest(
+        TaskKind.PLAN, current, 3)
+    eng.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+
+    result = run_task(
+        eng,
+        TaskKind.PLAN,
+        _payload(),
+        "alice",
+        reviewers=["bob"],
+        poll=lambda: pytest.fail("current confirmation must not redispatch"),
+        resume_item_id=item.id,
+    )
+
+    assert result["verdict"] == "pass"
+    assert result["rounds"] == 3
+    assert eng.store.assign_log == []
+
+
+def test_run_task_resume_confirmation_rejects_invalid_stored_review_evidence():
+    """旧 CLI 遗留的无效 report 不得越过 Reviewer 证据门进入人工确认。"""
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = create_authoring_task(eng, AuthoringTaskSpec(
+        kind=TaskKind.ACCEPTANCE,
+        title="acceptance document",
+        dag_key="acceptance-p1",
+        assignee="alice",
+    ))
+    eng.store.update_work_item_metadata(
+        item.id,
+        deliverable="当前验收正文",
+        phase=TaskPhase.CONFIRMATION,
+        review_verdict="pass",
+        review_report={
+            key: value
+            for key, value in _review_report().items()
+            if key != "full_review_completed"
+        },
+    )
+    current = eng.store.get_work_item(item.id)
+    current.review_subject_digest = tasks_module._review_subject_digest(
+        TaskKind.ACCEPTANCE, current, 1)
+    eng.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+
+    def submit_valid_review_then_confirm():
+        current = eng.store.get_work_item(item.id)
+        if current.phase == TaskPhase.REVIEW and current.review_verdict is None:
+            eng.store.update_work_item_metadata(
+                item.id,
+                review_verdict="pass",
+                review_report=_review_report(),
+            )
+            return
+        if current.phase == TaskPhase.CONFIRMATION:
+            if not current.review_report.get("full_review_completed"):
+                pytest.fail("invalid stored review evidence reached human confirmation")
+            eng.store.update_status(item.id, WorkItemStatus.DONE)
+
+    result = run_task(
+        eng,
+        TaskKind.ACCEPTANCE,
+        _payload(title="acceptance document"),
+        "alice",
+        reviewers=["bob"],
+        confirm=True,
+        poll=submit_valid_review_then_confirm,
+        resume_item_id=item.id,
+    )
+
+    assert result["verdict"] == "pass"
+    assert [entry[2] for entry in eng.store.assign_log] == ["reviewer"]
+    assert eng.store.get_work_item(item.id).review_report[
+        "full_review_completed"
+    ] is True
+    assert eng.store.get_work_item(item.id).review_comment == ""
 
 
 def test_run_task_resume_done_pass_with_nits_is_terminal():
@@ -295,7 +574,9 @@ def test_run_task_ignores_blank_review_verdict_while_waiting():
     def poll_until_valid_verdict():
         calls["n"] += 1
         if calls["n"] == 1:
-            eng.store.update_work_item_metadata(item.id, review_verdict="pass")
+            eng.store.update_work_item_metadata(
+                item.id, review_verdict="pass",
+                review_report=_review_report())
         if calls["n"] > 3:
             raise TimeoutError("blank verdict was treated as terminal")
 
@@ -310,7 +591,7 @@ def test_run_task_ignores_blank_review_verdict_while_waiting():
 
 
 def test_human_gate_blocks_until_confirmed():
-    """confirm=True 且无人工确认时,人机门不放行:产出停在 IN_REVIEW 等 DONE。"""
+    """Reviewer 通过后才进入 confirmation；无人确认时保持等待。"""
     eng = _engine()
     MockStore.set_kind_delivery("plan", {"plan": "计划正文"})
     calls = {"n": 0}
@@ -323,10 +604,14 @@ def test_human_gate_blocks_until_confirmed():
     with pytest.raises(TimeoutError):
         run_task(eng, TaskKind.PLAN, _payload(), "alice",
                  reviewers=["bob"], confirm=True, poll=bounded_poll)
+    item = eng.store.list_work_items("ws")[0]
+    assert item.review_verdict == "pass"
+    assert item.reviewer is None
+    assert item.phase.value == "confirmation"
 
 
 def test_human_gate_passes_when_confirmed_to_done():
-    """confirm=True:人工把 issue 流转到 DONE(auto_confirm 模拟)→ 翻回评审 → 通过。"""
+    """confirm=True:Reviewer 通过后，人工确认才把 issue 流转到 DONE。"""
     eng = _engine()
     MockStore.set_auto_confirm(True)
     MockStore.set_kind_delivery("plan", {"plan": "计划正文"})
@@ -335,6 +620,36 @@ def test_human_gate_passes_when_confirmed_to_done():
     assert res["verdict"] == "pass"
     item = eng.store.get_work_item(res["item_id"])
     assert item.status == WorkItemStatus.DONE
+    assert item.review_verdict == "pass"
+    assert item.phase.value == "confirmation"
+
+
+def test_human_gate_persists_confirmation_after_clearing_assignment(monkeypatch):
+    """unassign 可能触发平台状态写；confirmation 必须作为最后一次阶段写入。"""
+    eng = _engine()
+    MockStore.set_auto_confirm(True)
+    MockStore.set_kind_delivery("plan", {"plan": "计划正文"})
+    events = []
+    original_update = eng.store.update_work_item_metadata
+    original_clear = eng.store.clear_assignment
+
+    def tracking_update(item_id, **kwargs):
+        if kwargs.get("phase") == TaskPhase.CONFIRMATION:
+            events.append("phase")
+        return original_update(item_id, **kwargs)
+
+    def tracking_clear(item_id):
+        events.append("clear")
+        return original_clear(item_id)
+
+    monkeypatch.setattr(eng.store, "update_work_item_metadata", tracking_update)
+    monkeypatch.setattr(eng.store, "clear_assignment", tracking_clear)
+
+    run_task(
+        eng, TaskKind.PLAN, _payload(), "alice",
+        reviewers=["bob"], confirm=True, poll=_poll)
+
+    assert events[-2:] == ["clear", "phase"]
 
 
 def test_human_gate_no_reviewers_stops_at_human_done():
@@ -370,6 +685,7 @@ def test_reject_twice_then_pass():
     assert res["verdict"] == "pass"
     item = eng.store.get_work_item(res["item_id"])
     assert item.status == WorkItemStatus.DONE
+    assert item.bounces.review == 2
     # 全程同一 issue id,未新建评审 issue
     assert len(eng.store.list_work_items("ws")) == 1
     assert item.id == res["item_id"]
@@ -392,6 +708,188 @@ def test_exhausted_needs_decision():
     # 全程同一 issue id
     assert len(eng.store.list_work_items("ws")) == 1
     assert report["item_id"] == eng.store.list_work_items("ws")[0].id
+
+
+def test_final_reject_does_not_start_unreviewed_producer_revision():
+    """最后一轮 reject 后直接交人决策，不再启动一份无人评审的新产物。"""
+    eng = _engine()
+    MockStore.set_kind_delivery_sequence(
+        "plan", [{"plan": "计划正文-v1"}, {"plan": "计划正文-v2"}])
+    MockStore.set_review_rejects(99)
+
+    with pytest.raises(NeedsDecision):
+        run_task(
+            eng, TaskKind.PLAN, _payload(), "alice",
+            reviewers=["bob"], max_revisions=1, poll=_poll)
+
+    item = eng.store.list_work_items("ws")[0]
+    assert item.deliverable == "计划正文-v1"
+    assert item.review_verdict == "reject"
+    assert item.bounces.review == 1
+
+
+def test_resume_uses_persisted_review_bounce_limit():
+    """平台状态滞后为 in_progress 时也必须收割 verdict 和 review_bounce。"""
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = create_authoring_task(eng, AuthoringTaskSpec(
+        kind=TaskKind.PLAN,
+        title="feature-x",
+        dag_key="plan-p1",
+        assignee="alice",
+    ))
+    eng.store.update_work_item_metadata(
+        item.id,
+        deliverable="计划正文-v3",
+        phase=TaskPhase.REVIEW,
+        review_verdict="reject",
+        review_comment="第三轮仍有 blocker",
+        review_report=_review_report("reject"),
+        review_bounce=2,
+    )
+    current = eng.store.get_work_item(item.id)
+    current.review_subject_digest = tasks_module._review_subject_digest(
+        TaskKind.PLAN, current, 3)
+    # Multica 在 Reviewer run 完成后可能仍保留 in_progress；持久化 verdict、
+    # phase 和 subject digest 才是可恢复的业务事实。
+    eng.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
+
+    with pytest.raises(NeedsDecision) as exc:
+        run_task(
+            eng,
+            TaskKind.PLAN,
+            _payload(),
+            "alice",
+            reviewers=["bob", "charlie"],
+            max_revisions=3,
+            poll=lambda: pytest.fail("final reject must not start a producer"),
+            resume_item_id=item.id,
+        )
+
+    got = eng.store.get_work_item(item.id)
+    assert exc.value.report["rounds"] == 3
+    assert got.bounces.review == 3
+    assert got.review_verdict == "reject"
+    assert got.phase == TaskPhase.REVIEW
+
+
+def test_resume_invalidates_verdict_from_an_unbound_review_subject():
+    """旧 CLI 遗留的 verdict 未绑定当前交付时，不得被新评审轮次消费。"""
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = create_authoring_task(eng, AuthoringTaskSpec(
+        kind=TaskKind.ACCEPTANCE,
+        title="acceptance document",
+        dag_key="acceptance-p1",
+        assignee="alice",
+    ))
+    eng.store.update_work_item_metadata(
+        item.id,
+        deliverable="当前验收正文",
+        phase=TaskPhase.REVIEW,
+        review_verdict="pass-with-nits",
+        review_comment="旧交付的建议",
+    )
+    eng.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+
+    def submit_fresh_review():
+        current = eng.store.get_work_item(item.id)
+        assert current.phase == TaskPhase.REVIEW
+        assert current.review_verdict is None
+        assert current.review_subject_digest
+        eng.store.update_work_item_metadata(
+            item.id, review_verdict="pass",
+            review_report=_review_report())
+
+    result = run_task(
+        eng,
+        TaskKind.ACCEPTANCE,
+        _payload(title="acceptance document"),
+        "alice",
+        reviewers=["bob"],
+        poll=submit_fresh_review,
+        resume_item_id=item.id,
+    )
+
+    assert result["verdict"] == "pass"
+    assert [entry[2] for entry in eng.store.assign_log] == ["reviewer"]
+
+
+def test_resume_consumes_verdict_bound_to_current_review_subject():
+    """进程重启后，已绑定当前交付的 verdict 应直接收割，不得重复派 Reviewer。"""
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = create_authoring_task(eng, AuthoringTaskSpec(
+        kind=TaskKind.PLAN,
+        title="feature-x",
+        dag_key="plan-p1",
+        assignee="alice",
+    ))
+    eng.store.update_work_item_metadata(
+        item.id,
+        deliverable="计划正文",
+        phase=TaskPhase.REVIEW,
+        review_verdict="pass",
+        review_report=_review_report(),
+    )
+    current = eng.store.get_work_item(item.id)
+    current.review_subject_digest = tasks_module._review_subject_digest(
+        TaskKind.PLAN, current, 1)
+    eng.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+
+    result = run_task(
+        eng,
+        TaskKind.PLAN,
+        _payload(),
+        "alice",
+        reviewers=["bob"],
+        poll=lambda: pytest.fail("bound verdict must not be redispatched"),
+        resume_item_id=item.id,
+    )
+
+    assert result["verdict"] == "pass"
+    assert eng.store.assign_log == []
+
+
+def test_resume_rejects_invalid_verdict_bound_to_current_review_subject():
+    """review 阶段收割旧 verdict 时也必须重新验证持久化 report。"""
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = create_authoring_task(eng, AuthoringTaskSpec(
+        kind=TaskKind.ACCEPTANCE,
+        title="acceptance document",
+        dag_key="acceptance-p1",
+        assignee="alice",
+    ))
+    eng.store.update_work_item_metadata(
+        item.id,
+        deliverable="当前验收正文",
+        phase=TaskPhase.REVIEW,
+        review_verdict="pass",
+        review_report={},
+    )
+    current = eng.store.get_work_item(item.id)
+    current.review_subject_digest = tasks_module._review_subject_digest(
+        TaskKind.ACCEPTANCE, current, 1)
+    eng.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+
+    def submit_valid_review():
+        current = eng.store.get_work_item(item.id)
+        if current.phase == TaskPhase.REVIEW and current.review_verdict is None:
+            eng.store.update_work_item_metadata(
+                item.id,
+                review_verdict="pass",
+                review_report=_review_report(),
+            )
+
+    result = run_task(
+        eng,
+        TaskKind.ACCEPTANCE,
+        _payload(title="acceptance document"),
+        "alice",
+        reviewers=["bob"],
+        poll=submit_valid_review,
+        resume_item_id=item.id,
+    )
+
+    assert result["verdict"] == "pass"
+    assert [entry[2] for entry in eng.store.assign_log] == ["reviewer"]
 
 
 def test_reviewer_rotation_avoids_producer():

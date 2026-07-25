@@ -7,6 +7,7 @@ plan 阶段把业务流程拆成 flows(每条 flow 一个可验收的端到端�
 左移门机器校验打回(见 core.evidence.validate_acceptance_results)。
 """
 from dataclasses import dataclass
+from collections import defaultdict
 
 import yaml
 
@@ -32,6 +33,35 @@ class AcceptanceDoc:
     @property
     def flow_ids(self) -> list:
         return [flow.id for flow in self.flows]
+
+
+def _validate_expected_specificity(flows: list[Flow]) -> None:
+    """拒绝用一个通用 expected 覆盖大多数不同 action。
+
+    单纯非空不足以保证可执行性。若同一判据覆盖了大型文档中至少 30% 的
+    actions，执行者只能回头解释 step，违反 action 自包含约束。
+    """
+    expected_steps = defaultdict(list)
+    total = 0
+    for flow in flows:
+        for action in flow.actions:
+            total += 1
+            normalized = " ".join(action.expected.split())
+            expected_steps[normalized].append(action.step)
+
+    if total < 20:
+        return
+
+    repeated = max(expected_steps.values(), key=len)
+    threshold = max(12, (total * 3 + 9) // 10)
+    if len(repeated) < threshold:
+        return
+
+    raise ValueError(
+        "action.expected is reused by "
+        f"{len(repeated)}/{total} actions; each action expected must state "
+        "its own observable outcome and failure criterion"
+    )
 
 
 def _load_action(raw) -> Action:
@@ -81,6 +111,7 @@ def load_acceptance_doc(raw) -> AcceptanceDoc:
             name=name,
             actions=[_load_action(a) for a in actions_raw],
         ))
+    _validate_expected_specificity(flows)
     return AcceptanceDoc(flows=flows)
 
 

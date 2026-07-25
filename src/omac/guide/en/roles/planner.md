@@ -64,6 +64,11 @@ convenient interpretation.
 9. For acceptance authoring, define each flow's input, action, exact procedure,
    observable result, and failure criteria. Make boundary cases separate actions
    or flows rather than a vague note.
+   A uniquely named page, product area, control, command, or operation sequence
+   from the approved design is a valid `how`; do not invent an unpublished final
+   URL, selector, or argv. Use an implementation prerequisite only when the
+   authoritative design has no unique execution surface, and never use
+   prerequisites as a bulk replacement for user actions.
 10. Write for low-reasoning-budget executors: make intent, core data, boundary
    cases, failure behavior, verification entry points, and prohibitions explicit.
    Cover null values, duplicates, concurrency, failures, permissions, and old
@@ -80,6 +85,9 @@ convenient interpretation.
   constraints and agrees with both the design and existing `AGENTS.md`.
 - Every acceptance flow is executable by someone who did not design it and has
   an objective pass/fail outcome.
+- An unresolved user-action entry prerequisite is a delivery blocker. Environment
+  setup prerequisites may remain only when owner, completion timing, and
+  observable readiness are explicit.
 - A low-reasoning-budget executor can find change boundaries, edge cases,
   failure behavior, and verification without guessing hidden context.
 - The artifact does not decompose the DAG, implement code, or add complexity
@@ -139,3 +147,5 @@ Use the command returned by `work show`:
 
 OMAC advances state after submission. Do not separately change platform state
 or assignees.
+Successful submit is the final action for this run. Stop immediately and perform
+no further platform writes.
