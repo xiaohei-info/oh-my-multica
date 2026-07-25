@@ -32,9 +32,13 @@
 
 ## 机器预检与收敛模式
 
-- Reviewer 派发前，OMAC 的 machine preflight 会检查可机械判断的 manifest
-  问题，包括命令语法、Go 本地包目标、显式输出冲突和无可达 producer 的输入。
-  机器门失败直接返回 authoring，不消耗 Reviewer 轮次；先修完全部机器问题再提交。
+- Reviewer 派发前，OMAC 的 machine preflight 只检查不依赖项目规范、语义无歧义的
+  机械事实，例如 shell 语法和缺少 `./` / `../` 前缀的 Go 本地包目标。没有显式
+  typed IO contract 时，OMAC 不会根据通用 flag 名称、当前文件是否存在或
+  `scope_paths` 推断 artifact producer / input materialization。
+- 机器门失败直接返回 authoring，不消耗 Reviewer 轮次。`review_comment` 只保存有界
+  摘要；完整结构化问题保存在附件中。重新工作前运行摘要给出的
+  `omac work show <issue-id> --output json`，读取 `context.machine_feedback`，逐条修完后再提交。
 - `review_state.mode=normal` 时按 `required_closures` 逐项关闭并对完整 manifest
   做影响分析。
 - `review_state.mode=convergence-audit` 时禁止继续逐条补丁式修复。先按

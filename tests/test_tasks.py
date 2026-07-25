@@ -19,6 +19,7 @@ from omac.engines import create_engine
 from omac.engines.mock import MockStore
 from omac.engines.models import EngineConfig, WorkItemStatus
 from omac.errors import NeedsDecision
+from omac.pipeline.dispatch import build_show_output
 from omac.pipeline.tasks import AuthoringTaskSpec, create_authoring_task, run_task
 
 
@@ -111,6 +112,75 @@ def test_produced_requires_review_phase_and_review_status_to_agree():
 
     assert tasks_module._produced(stale) is False
     assert tasks_module._produced(submitted) is True
+
+
+def test_machine_gate_externalizes_large_feedback_for_author(monkeypatch):
+    MockStore.reset()
+    eng = _engine()
+    errors = [
+        f"node node-{index}: deterministic failure with enough detail for repair"
+        for index in range(240)
+    ]
+    monkeypatch.setattr(
+        tasks_module, "run_review_preflight", lambda _item: list(errors))
+
+    with pytest.raises(NeedsDecision):
+        run_task(
+            eng,
+            TaskKind.DECOMPOSE,
+            _payload(title="large machine feedback"),
+            "alice",
+            reviewers=["bob"],
+            max_revisions=1,
+            poll=_poll,
+        )
+
+    item = eng.store.list_work_items("ws")[0]
+    assert len((item.review_comment or "").encode("utf-8")) < 8192
+    assert f"omac work show {item.id} --output json" in item.review_comment
+    assert "context.machine_feedback" in item.review_comment
+    assert item.machine_feedback == {
+        "schema": "omac.machine-feedback/v1",
+        "gate": "machine-gate",
+        "error_count": len(errors),
+        "errors": errors,
+    }
+    assert item.machine_feedback_ref["bytes"] > 8192
+    assert item.machine_feedback_ref["sha256"]
+
+    output = build_show_output(item, "orchestrator:alice")
+    assert output["context"]["machine_feedback"] == item.machine_feedback
+    assert output["context"]["machine_feedback_ref"] == item.machine_feedback_ref
+
+
+def test_machine_feedback_clears_across_review_lifecycle():
+    MockStore.reset()
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = create_authoring_task(eng, AuthoringTaskSpec(
+        kind=TaskKind.DECOMPOSE,
+        title="lifecycle",
+        dag_key="decompose-lifecycle",
+        assignee="alice",
+    ))
+    feedback = {
+        "schema": "omac.machine-feedback/v1",
+        "gate": "machine-gate",
+        "error_count": 1,
+        "errors": ["fix the local target"],
+    }
+
+    eng.store.update_work_item_metadata(
+        item.id, machine_feedback=feedback, review_comment="bounded summary")
+    eng.store.reset_review(item.id)
+    reset = eng.store.get_work_item(item.id)
+    assert reset.machine_feedback is None
+    assert reset.machine_feedback_ref is None
+
+    eng.store.update_work_item_metadata(
+        item.id, machine_feedback=feedback, review_comment="bounded summary")
+    prepared = eng.store.prepare_review_cycle(item.id, "subject-v2")
+    assert prepared.machine_feedback is None
+    assert prepared.machine_feedback_ref is None
 
 
 def test_create_authoring_task_renders_body_contract_and_source_refs():

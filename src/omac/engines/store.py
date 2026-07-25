@@ -11,7 +11,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
-from ..core.taskmeta import Bounces, TaskKind, TaskPhase
+from ..core.taskmeta import TaskKind, TaskPhase
 from .models import EngineConfig, ProjectInfo, WorkItem, WorkItemStatus, WorkspaceInfo
 
 
@@ -119,6 +119,8 @@ class WorkItemStore(ABC):
         artifacts: Optional[Dict[str, Any]] = None,
         review_verdict: Optional[str] = None,
         review_comment: Optional[str] = None,
+        machine_feedback: Optional[Dict[str, Any]] = None,
+        machine_feedback_source: Optional[str] = None,
         verification: Optional[Dict[str, Any]] = None,
         verification_source: Optional[str] = None,
         review_report: Optional[Dict[str, Any]] = None,

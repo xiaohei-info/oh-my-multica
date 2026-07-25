@@ -18,6 +18,9 @@ from typing import Any, Callable, Dict, List, Optional
 from ..core import logsetup
 from ..core.evidence import validate_review_evidence
 from ..core.manifest import Contract, _load_contract
+from ..core.machine_feedback import (
+    build_machine_feedback, machine_feedback_summary,
+)
 from ..core.review_convergence import build_review_obligations
 from ..core.review_preflight import run_review_preflight
 from ..core.taskmeta import DELIVERY_CONTENT_KEY, TaskKind, TaskPhase, make_dag_key
@@ -101,14 +104,11 @@ def _restart_invalid_review(
     """清除无效 verdict/report，并在同一评审对象上重新派审。"""
     store.reset_review(item_id)
     store.prepare_review_cycle(item_id, subject_digest)
+    feedback = build_machine_feedback("review-evidence", errors)
     return store.update_work_item_metadata(
         item_id,
-        review_comment=ui(
-            "Stored review evidence is invalid; submit a complete review report:\n"
-            + "\n".join(f"- {error}" for error in errors),
-            "已存储的评审证据无效，请重新提交完整评审报告:\n"
-            + "\n".join(f"- {error}" for error in errors),
-        ),
+        machine_feedback=feedback,
+        review_comment=machine_feedback_summary(item_id, feedback),
     )
 
 
@@ -426,14 +426,11 @@ def run_task(
         if hint is None and _produced(current):
             return current
         if hint:
+            feedback = build_machine_feedback("machine-gate", hint)
             store.update_work_item_metadata(
                 item_id,
-                review_comment=ui(
-                    "Machine-gate revision required:\n"
-                    + "\n".join(f"- {error}" for error in hint),
-                    "机器门要求返工:\n"
-                    + "\n".join(f"- {error}" for error in hint),
-                ),
+                machine_feedback=feedback,
+                review_comment=machine_feedback_summary(item_id, feedback),
             )
         store.mark_in_progress(item_id)
         store.assign_work_item(item_id, assignee, "worker")
@@ -488,8 +485,9 @@ def run_task(
         prepare_confirmation: bool = True,
     ) -> Dict[str, Any]:
         current = store.get_work_item(item_id)
-        if current.review_comment:
-            store.update_work_item_metadata(item_id, review_comment="")
+        if current.review_comment or current.machine_feedback_ref:
+            store.update_work_item_metadata(
+                item_id, review_comment="", machine_feedback={})
         if not confirm:
             store.mark_done(item_id)
             log.info(logsetup.EVT_NODE_DONE, kind=kind.value, id=item_id)
@@ -593,7 +591,8 @@ def run_task(
                      gate="review-nits", round=round_index, max=max_revisions)
             store.update_work_item_metadata(
                 item_id, phase=TaskPhase.AUTHORING,
-                review_comment="", review_bounce=round_index)
+                review_comment="", machine_feedback={},
+                review_bounce=round_index)
             store.update_status(item_id, WorkItemStatus.TODO)
             delivered = _produce()
             delivery = _delivery_of(kind, delivered)

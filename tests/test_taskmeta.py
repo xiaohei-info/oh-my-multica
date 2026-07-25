@@ -7,7 +7,6 @@
 """
 import json
 import pathlib
-import subprocess
 from unittest.mock import patch
 
 import pytest
@@ -15,7 +14,7 @@ import pytest
 from omac.core import taskmeta
 from omac.core.taskmeta import Bounces, TaskKind, TaskPhase
 from omac.engines.metadata_policy import assert_metadata_write_allowed
-from omac.engines.models import EngineConfig, WorkItemStatus
+from omac.engines.models import EngineConfig
 from omac.engines.mock import MockStore
 from omac.engines.multica import MulticaStore
 
@@ -375,6 +374,11 @@ def test_metadata_policy_rejects_inline_prose_fields():
             "decision_required",
             {"verdict": "pass-with-nits", "nits": [{"issue": "rename", "fix": "use x"}]},
         )
+
+
+def test_metadata_policy_rejects_values_above_multica_limit():
+    with pytest.raises(ValueError, match="8192 bytes"):
+        assert_metadata_write_allowed("review_comment", "x" * 8193)
 
 
 def test_multica_old_issue_without_kind_reads_develop():
