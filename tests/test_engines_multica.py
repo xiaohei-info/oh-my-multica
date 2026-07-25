@@ -1,3 +1,5 @@
+import hashlib
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -72,6 +74,127 @@ def test_multica_description_repair_runs_before_metadata_updates(monkeypatch):
         ("metadata", "worker"),
         ("metadata", "source_refs"),
     ]
+
+
+def test_multica_externalizes_machine_feedback_before_bounded_summary(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    errors = [f"error-{index}: {'x' * 80}" for index in range(160)]
+    feedback = {
+        "schema": "omac.machine-feedback/v1",
+        "gate": "machine-gate",
+        "error_count": len(errors),
+        "errors": errors,
+    }
+    summary = (
+        "Machine gate found 160 errors. Read the complete structured feedback with "
+        "`omac work show issue-1 --output json` at `context.machine_feedback`."
+    )
+    events = []
+
+    def publish(item_id, key, source, suffix):
+        events.append(("payload", key, source, suffix))
+        return {
+            "attachment_id": "attachment-1",
+            "sha256": "a" * 64,
+            "bytes": len(source.encode("utf-8")),
+            "filename": "omac-machine-feedback.json",
+        }
+
+    monkeypatch.setattr(store, "_publish_payload_comment", publish)
+    monkeypatch.setattr(
+        store,
+        "_set_metadata",
+        lambda item_id, key, value: events.append(("metadata", key, value)),
+    )
+    monkeypatch.setattr(store, "get_work_item", lambda item_id: SimpleNamespace(id=item_id))
+
+    store.update_work_item_metadata(
+        "issue-1",
+        machine_feedback=feedback,
+        review_comment=summary,
+    )
+
+    payload_event = events[0]
+    assert payload_event[0:2] == ("payload", "machine-feedback")
+    assert len(payload_event[2].encode("utf-8")) > 8192
+    metadata_events = [event for event in events if event[0] == "metadata"]
+    assert [event[1] for event in metadata_events] == [
+        "machine_feedback_ref",
+        "review_comment",
+    ]
+    assert all(
+        len(json.dumps(event[2], ensure_ascii=False).encode("utf-8")) <= 8192
+        for event in metadata_events
+    )
+
+
+def test_multica_machine_feedback_ref_fails_closed_when_payload_is_missing(
+        monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    monkeypatch.setattr(store, "_load_payload_comment", lambda *_args: None)
+
+    with pytest.raises(PlatformError, match="machine feedback attachment"):
+        store._issue_to_work_item(
+            {
+                "id": "issue-1",
+                "title": "t",
+                "description": "d",
+                "status": "todo",
+                "metadata": {
+                    "dag_key": "decompose-p1",
+                    "kind": "decompose",
+                    "machine_feedback_ref": json.dumps({
+                        "attachment_id": "attachment-1",
+                        "sha256": "a" * 64,
+                        "bytes": 9000,
+                        "filename": "omac-machine-feedback.json",
+                    }),
+                },
+            },
+            "ws",
+        )
+
+
+def test_multica_machine_feedback_ref_loads_complete_structured_payload(
+        monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    feedback = {
+        "schema": "omac.machine-feedback/v1",
+        "gate": "machine-gate",
+        "error_count": 2,
+        "errors": ["first", "second"],
+    }
+    monkeypatch.setattr(
+        store,
+        "_load_payload_comment",
+        lambda *_args: json.dumps(feedback),
+    )
+
+    item = store._issue_to_work_item(
+        {
+            "id": "issue-1",
+            "title": "t",
+            "description": "d",
+            "status": "todo",
+            "metadata": {
+                "dag_key": "decompose-p1",
+                "kind": "decompose",
+                "review_comment": "bounded summary",
+                "machine_feedback_ref": json.dumps({
+                    "attachment_id": "attachment-1",
+                    "sha256": hashlib.sha256(
+                        json.dumps(feedback).encode("utf-8")).hexdigest(),
+                    "bytes": 9000,
+                    "filename": "omac-machine-feedback.json",
+                }),
+            },
+        },
+        "ws",
+    )
+
+    assert item.review_comment == "bounded summary"
+    assert item.machine_feedback == feedback
+    assert item.machine_feedback_ref["attachment_id"] == "attachment-1"
 
 
 def test_multica_description_resolve_timeout_uses_direct_exact_update(monkeypatch):

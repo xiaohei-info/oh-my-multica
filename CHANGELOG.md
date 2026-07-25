@@ -14,9 +14,16 @@ This file records public changes to oh-my-multica. The format follows
   blocker ledger, structured prior-blocker regression results, and automatic
   convergence-audit signaling. Legacy in-flight review reports remain readable
   until OMAC prepares their next review subject.
-- Deterministic manifest preflight now rejects invalid shell syntax, bare Go
-  local package targets, duplicate explicit output producers, and command inputs
-  without an owned scope or reachable producer before a Reviewer is dispatched.
+- Deterministic manifest preflight now limits itself to mechanically certain
+  facts, including invalid shell syntax and bare Go local package targets. In
+  the absence of an explicit typed IO contract, generic command flags, current
+  file existence, and scope ownership are no longer treated as artifact-flow
+  evidence.
+- Machine-gate findings are stored as complete structured attachment payloads.
+  Multica metadata contains only a bounded reference and summary pointing
+  Authors to `work show.context.machine_feedback`; missing or invalid feedback
+  attachments fail closed, while legacy in-flight issues without the new field
+  remain readable.
 - The evidence schema now requires every contract acceptance item to be mapped
   through `commands[].business_tests` on a command with a non-empty `cmd` and
   integer exit code `0`. Reviewer reports must also include

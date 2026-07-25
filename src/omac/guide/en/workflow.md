@@ -81,9 +81,14 @@ For a dispatched task, do not pre-read every guide. Read `guide_refs` from
 - Reviewers continue after findings, complete the entire review scope, set
   `full_review_completed: true`, and report every blocker and nit found in one
   review pass.
-- OMAC runs deterministic preflight before Reviewer dispatch so mechanical
-  syntax, target, producer, and output-collision defects return to the author
-  without consuming a Reviewer cycle.
+- OMAC runs deterministic preflight before Reviewer dispatch for mechanically
+  certain facts such as shell syntax and Go local package targets missing a
+  `./` or `../` prefix. Without an explicit typed IO contract, it does not infer
+  producers or materialization from generic flags, current file existence, or
+  `scope_paths`. Complete machine feedback lives in an attachment; the author
+  follows the bounded summary's `omac work show <issue-id> --output json`
+  entrypoint and reads `context.machine_feedback` without consuming a Reviewer
+  cycle.
 - Every review has finite `review_obligations`. Cross-cycle blockers live in a
   review ledger with stable root-cause identity and explicit fixed, unchanged,
   deeper, regressed, or new classification.

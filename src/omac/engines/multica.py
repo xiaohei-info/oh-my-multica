@@ -24,7 +24,7 @@ import yaml
 from ..core.taskmeta import (
     CI_BOUNCE_KEY, CONTRACT_REF_KEY, DECISION_REQUIRED_KEY, DELIVERABLE_KEY,
     DELIVERABLE_REF_KEY, KIND_KEY, MERGE_BOUNCE_KEY, PHASE_KEY,
-    PROJECT_RULES_KEY, PROJECT_RULES_REF_KEY, REVIEW_BOUNCE_KEY,
+    MACHINE_FEEDBACK_REF_KEY, PROJECT_RULES_KEY, PROJECT_RULES_REF_KEY, REVIEW_BOUNCE_KEY,
     REVIEW_LEDGER_REF_KEY, REVIEW_OBLIGATIONS_KEY, REVIEW_REPORT_REF_KEY,
     REVIEW_SUBJECT_DIGEST_KEY,
     SOURCE_REFS_KEY, TaskKind, TaskPhase, VERIFICATION_REF_KEY, WORKER_BOUNCE_KEY,
@@ -36,7 +36,12 @@ from .models import (
     AgentInfo, AgentProvisionSpec, EngineConfig, ProjectInfo, RuntimeTarget,
     SkillPackage, WorkItem, WorkItemStatus, WorkspaceInfo,
 )
-from .metadata_policy import assert_metadata_write_allowed, parse_payload_text
+from ..core.machine_feedback import (
+    dump_machine_feedback, is_machine_feedback, parse_machine_feedback,
+)
+from .metadata_policy import (
+    assert_metadata_write_allowed, encode_metadata_value, parse_payload_text,
+)
 from .runtime import AgentRuntime
 from .store import WorkItemStore
 
@@ -321,6 +326,7 @@ class MulticaStore(WorkItemStore):
             "project-rules": ui("Project rules file", "项目级开发规范文件"),
             "verification": ui("Verification evidence file", "验证证据文件"),
             "review-report": ui("Review report file", "评审报告文件"),
+            "machine-feedback": ui("Machine feedback file", "机器反馈文件"),
         }.get(key, ui("Handoff file", "交接文件"))
         ref_key = {
             "contract": CONTRACT_REF_KEY,
@@ -328,6 +334,7 @@ class MulticaStore(WorkItemStore):
             "project-rules": PROJECT_RULES_REF_KEY,
             "verification": VERIFICATION_REF_KEY,
             "review-report": REVIEW_REPORT_REF_KEY,
+            "machine-feedback": MACHINE_FEEDBACK_REF_KEY,
         }.get(key, f"{key}_ref")
         return ui(
             f"## omac {key}\n"
@@ -430,6 +437,8 @@ class MulticaStore(WorkItemStore):
         verification_ref = self._json_metadata(metadata, VERIFICATION_REF_KEY)
         review_report_ref = self._json_metadata(metadata, REVIEW_REPORT_REF_KEY)
         review_ledger_ref = self._json_metadata(metadata, REVIEW_LEDGER_REF_KEY)
+        machine_feedback_ref = self._json_metadata(
+            metadata, MACHINE_FEEDBACK_REF_KEY)
         review_obligations = self._json_metadata(metadata, REVIEW_OBLIGATIONS_KEY)
         contract_ref = self._json_metadata(metadata, CONTRACT_REF_KEY)
         source_refs = self._json_metadata(metadata, SOURCE_REFS_KEY)
@@ -465,6 +474,31 @@ class MulticaStore(WorkItemStore):
                     "YAML/JSON 台账，然后重新执行 "
                     f"`omac work show {issue_data['id']} --output json`。"))
 
+        machine_feedback = None
+        if isinstance(machine_feedback_ref, dict) and machine_feedback_ref:
+            feedback_text = self._load_payload_comment(
+                issue_data["id"], "machine-feedback", machine_feedback_ref)
+            machine_feedback = parse_payload_text(feedback_text)
+            expected_sha = machine_feedback_ref.get("sha256")
+            digest_matches = (
+                not expected_sha
+                or (
+                    isinstance(feedback_text, str)
+                    and hashlib.sha256(feedback_text.encode("utf-8")).hexdigest()
+                    == expected_sha
+                )
+            )
+            if not is_machine_feedback(machine_feedback) or not digest_matches:
+                raise PlatformError(ui(
+                    "Could not load the machine feedback attachment referenced by "
+                    f"work item {issue_data['id']}. Restore a valid "
+                    "omac.machine-feedback/v1 JSON attachment, then rerun "
+                    f"`omac work show {issue_data['id']} --output json`.",
+                    "无法读取或解析工作单元 "
+                    f"{issue_data['id']} 引用的 machine feedback attachment。"
+                    "请恢复合法的 omac.machine-feedback/v1 JSON 附件，然后重新执行 "
+                    f"`omac work show {issue_data['id']} --output json`。"))
+
         contract = None
         if isinstance(contract_ref, dict):
             contract_text = self._load_payload_comment(issue_data["id"], "contract", contract_ref)
@@ -490,6 +524,11 @@ class MulticaStore(WorkItemStore):
             verification_ref=verification_ref if isinstance(verification_ref, dict) else None,
             review_verdict=self._optional_text_metadata(metadata, "review_verdict"),
             review_comment=self._optional_text_metadata(metadata, "review_comment"),
+            machine_feedback=machine_feedback,
+            machine_feedback_ref=(
+                machine_feedback_ref
+                if isinstance(machine_feedback_ref, dict) and machine_feedback_ref
+                else None),
             review_report=review_report,
             review_report_ref=review_report_ref if isinstance(review_report_ref, dict) else None,
             review_subject_digest=self._optional_text_metadata(
@@ -697,7 +736,7 @@ class MulticaStore(WorkItemStore):
     def _set_metadata(self, item_id: str, key: str, value: Any):
         # capture 默认开:吃掉 multica 的确认表格,不漏进编排者终端(进度靠事件流)。
         assert_metadata_write_allowed(key, value)
-        encoded = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+        encoded = encode_metadata_value(value)
         self._run_multica([
             "issue", "metadata", "set", item_id,
             "--key", key, "--value", encoded,
@@ -747,6 +786,8 @@ class MulticaStore(WorkItemStore):
         artifacts: Optional[Dict[str, Any]] = None,
         review_verdict: Optional[str] = None,
         review_comment: Optional[str] = None,
+        machine_feedback: Optional[Dict[str, Any]] = None,
+        machine_feedback_source: Optional[str] = None,
         verification: Optional[Dict[str, Any]] = None,
         verification_source: Optional[str] = None,
         review_report: Optional[Dict[str, Any]] = None,
@@ -790,6 +831,22 @@ class MulticaStore(WorkItemStore):
             self._set_metadata(item_id, "blocked_by", blocked_by)
         if artifacts is not None:
             self._set_metadata(item_id, "artifacts", artifacts)
+        if machine_feedback is not None or machine_feedback_source is not None:
+            if machine_feedback_source is None and machine_feedback:
+                machine_feedback_source = dump_machine_feedback(machine_feedback)
+            if machine_feedback_source:
+                parsed = parse_machine_feedback(machine_feedback_source)
+                if parsed is None or (
+                    machine_feedback is not None and machine_feedback != parsed
+                ):
+                    raise ValidationError(ui(
+                        "Machine feedback must use schema omac.machine-feedback/v1",
+                        "machine feedback 必须使用 omac.machine-feedback/v1 schema"))
+                ref = self._publish_payload_comment(
+                    item_id, "machine-feedback", machine_feedback_source, ".json")
+                self._set_metadata(item_id, MACHINE_FEEDBACK_REF_KEY, ref)
+            else:
+                self._set_metadata(item_id, MACHINE_FEEDBACK_REF_KEY, "{}")
         if review_comment is not None:
             self._set_metadata(item_id, "review_comment", review_comment)
         if verification is not None and verification_source is None:
@@ -921,6 +978,7 @@ class MulticaStore(WorkItemStore):
     def reset_review(self, item_id: str):
         self._set_metadata(item_id, "review_verdict", "")
         self._set_metadata(item_id, "review_comment", "")
+        self._set_metadata(item_id, MACHINE_FEEDBACK_REF_KEY, "{}")
         self._set_metadata(item_id, DECISION_REQUIRED_KEY, "{}")
         self._set_metadata(item_id, REVIEW_SUBJECT_DIGEST_KEY, "")
         self._set_metadata(item_id, PHASE_KEY, TaskPhase.AUTHORING.value)
@@ -931,6 +989,7 @@ class MulticaStore(WorkItemStore):
             return item
         self._set_metadata(item_id, "review_verdict", "")
         self._set_metadata(item_id, "review_comment", "")
+        self._set_metadata(item_id, MACHINE_FEEDBACK_REF_KEY, "{}")
         self._set_metadata(item_id, REVIEW_REPORT_REF_KEY, "{}")
         self._set_metadata(item_id, DECISION_REQUIRED_KEY, "{}")
         self._set_metadata(item_id, REVIEW_SUBJECT_DIGEST_KEY, subject_digest)
