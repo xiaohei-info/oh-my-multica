@@ -35,6 +35,25 @@ guide does not decide product facts.
 - Current `contract`, `previous_review`, and node state. Completed nodes are
   facts, not drafts to casually rewrite.
 - The manifest artifact guide's schema, lint gates, and contract fields.
+- During rework, `work show.context.review_state` and `required_closures`.
+  Every closure is tied to a stable blocker and root cause; wording or node
+  movement cannot close it by implication.
+
+## Machine preflight and convergence mode
+
+- Before Reviewer dispatch, OMAC machine preflight checks deterministic
+  manifest defects such as shell syntax, Go local package targets, explicit
+  output collisions, and inputs without a reachable producer. Fix every
+  machine preflight finding before resubmitting; it does not consume a Reviewer
+  cycle.
+- In `review_state.mode=normal`, close every `required_closures` item and review
+  the full manifest impact.
+- In `review_state.mode=convergence-audit`, stop patching findings one at a
+  time. Group history by `root_cause_key`, audit the complete ownership,
+  artifact, execution, and evidence chain, then repair every affected node and
+  verification command together.
+- Preserve blocker identity and provide independently reproducible closure
+  evidence.
 
 ## Steps
 

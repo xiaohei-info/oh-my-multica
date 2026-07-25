@@ -81,6 +81,15 @@ For a dispatched task, do not pre-read every guide. Read `guide_refs` from
 - Reviewers continue after findings, complete the entire review scope, set
   `full_review_completed: true`, and report every blocker and nit found in one
   review pass.
+- OMAC runs deterministic preflight before Reviewer dispatch so mechanical
+  syntax, target, producer, and output-collision defects return to the author
+  without consuming a Reviewer cycle.
+- Every review has finite `review_obligations`. Cross-cycle blockers live in a
+  review ledger with stable root-cause identity and explicit fixed, unchanged,
+  deeper, regressed, or new classification.
+- Repeated new blockers or a regression switches `review_state` to
+  `convergence-audit`, requiring root-cause closure instead of unlimited normal
+  bounce cycles.
 - State exists in both the manifest and the platform work item. Re-running
   `dag run` reuses completed nodes and continues from current state.
 

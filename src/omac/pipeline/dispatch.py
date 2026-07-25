@@ -21,6 +21,13 @@ from omac.core.acceptance import load_acceptance_doc, load_acceptance_doc_file
 from omac.core.lint import lint as lint_manifest, lint_increment
 from omac.core.manifest import _load_contract, load_manifest
 from omac.core.project_rules import END_MARKER, START_MARKER
+from omac.core.review_convergence import (
+    REVIEW_PROTOCOL_VERSION,
+    advance_review_ledger,
+    open_blockers,
+    required_closures,
+    review_state,
+)
 from omac.core.taskmeta import TaskKind, TaskPhase
 from omac.engines.models import WorkItem, WorkItemStatus
 from omac.engines.store import WorkItemStore
@@ -285,6 +292,15 @@ def build_show_output(item: Any, identity: str, *, language: str = EN) -> Dict[s
         previous_review = _previous_review_context(item)
         if previous_review is not None:
             context["previous_review"] = previous_review
+        ledger = getattr(item, "review_ledger", None)
+        if isinstance(ledger, dict):
+            context["review_state"] = review_state(ledger)
+            closures = required_closures(ledger)
+            if closures:
+                context["required_closures"] = closures
+            ledger_ref = getattr(item, "review_ledger_ref", None)
+            if ledger_ref:
+                context["review_ledger_ref"] = ledger_ref
     else:
         # review 阶段:评审对象(deliverable) + contract + worker 的 env_setup
         context["deliverable"] = item.deliverable
@@ -302,6 +318,16 @@ def build_show_output(item: Any, identity: str, *, language: str = EN) -> Dict[s
         env_setup = _env_setup_checklist(item)
         if env_setup is not None:
             context["env_setup"] = env_setup
+        obligations = getattr(item, "review_obligations", None)
+        if obligations:
+            ledger = getattr(item, "review_ledger", None)
+            context["review_protocol"] = REVIEW_PROTOCOL_VERSION
+            context["review_obligations"] = list(obligations)
+            context["prior_open_blockers"] = open_blockers(ledger)
+            context["review_state"] = review_state(ledger)
+            ledger_ref = getattr(item, "review_ledger_ref", None)
+            if ledger_ref:
+                context["review_ledger_ref"] = ledger_ref
 
     source_refs = normalize_source_refs(getattr(item, "source_refs", None))
     if source_refs:
@@ -491,11 +517,17 @@ class _Item:
         verification: Optional[Dict[str, Any]] = None,
         review_verdict: Optional[str] = None,
         review_report: Optional[Dict[str, Any]] = None,
+        review_obligations: Optional[List[Dict[str, Any]]] = None,
+        review_ledger: Optional[Dict[str, Any]] = None,
+        review_subject_digest: Optional[str] = None,
     ):
         self.artifacts = artifacts
         self.verification = verification
         self.review_verdict = review_verdict
         self.review_report = review_report
+        self.review_obligations = review_obligations
+        self.review_ledger = review_ledger
+        self.review_subject_digest = review_subject_digest
 
 
 def _validate_plan_authoring(
@@ -638,7 +670,13 @@ def _validate_review(
             "--plan-file 与 --project-rules-file 后再评审。"))
     report = _parse_structured(report_file)
     node = _Node(_contract_from_item(item))
-    probe = _Item(review_verdict=verdict, review_report=report)
+    probe = _Item(
+        review_verdict=verdict,
+        review_report=report,
+        review_obligations=getattr(item, "review_obligations", None),
+        review_ledger=getattr(item, "review_ledger", None),
+        review_subject_digest=getattr(item, "review_subject_digest", None),
+    )
     errors = evidence_mod.validate_review_evidence(node, probe)
     if errors:
         raise ValidationError(ui(
@@ -790,13 +828,28 @@ def submit(
     # ---------- review(各 kind 共用) ----------
     if phase == TaskPhase.REVIEW:
         report = _validate_review(kind, verdict, report_file, item)
+        metadata: Dict[str, Any] = {}
+        if getattr(item, "review_obligations", None):
+            ledger = advance_review_ledger(
+                getattr(item, "review_ledger", None),
+                report,
+                verdict=verdict,
+                subject_digest=item.review_subject_digest or "unknown",
+                round_index=max(1, item.bounces.review + 1),
+            )
+            metadata.update({
+                "review_ledger": ledger,
+                "review_ledger_source": yaml.safe_dump(
+                    ledger, allow_unicode=True, sort_keys=False),
+            })
         store.update_work_item_metadata(
             issue_id,
-            review_verdict=verdict,
             review_comment="",
             review_report=report,
             review_report_source=_read_text(report_file),
+            review_verdict=verdict,
             phase=TaskPhase.REVIEW,
+            **metadata,
         )
         # 状态保持 IN_REVIEW,由 loop / plan 流水线收割判定 done / blocked。
         return SubmitResult(

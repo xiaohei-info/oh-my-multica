@@ -40,8 +40,9 @@ _MESSAGES = {
             "user-journey review. Record pass/fail and evidence for every item."
         ),
         "work.protocol.review": (
-            "Reproduce independently: prepare the environment from env_setup, "
-            "rerun verification and integration tests, inspect the complete diff, "
+            "Reproduce independently: cover every review_obligation, disposition "
+            "every prior blocker, prepare the environment from env_setup, rerun "
+            "verification and integration tests, inspect the complete diff, "
             "continue after the first blocker, and report all issues found in one "
             "review. Keep shared state read-only and issue a verdict from the "
             "contract and acceptance goals."
@@ -152,7 +153,7 @@ _MESSAGES = {
         "work.protocol.decompose": "把设计方案和验收文档拆成 manifest DAG：每个节点都有完整 contract，acceptance 锚定验收文档，DAG 无环。",
         "work.protocol.develop": "推分支并开 PR（base=contract.pr_base，由 worker 创建，OMAC 不代建）。按 TDD 工作，把每条 acceptance 映射到成功命令下的具体业务测试，并提交结构化验证证据；完整交付 contract，禁止骨架、占位和生产假数据兜底；不要手动修改 issue 状态、assignee、rerun 或 cancel 状态。",
         "work.protocol.final_acceptance": "以验收文档为清单做用户视角端到端走查，逐条记录 pass/fail 和证据。",
-        "work.protocol.review": "独立复跑：按 env_setup 搭建环境，重跑验证命令与集成测试，检查完整 diff，发现第一个 blocker 后继续审查并一次性报告本轮全部问题；只读共享状态，并依据 contract 与验收目标给出 verdict。",
+        "work.protocol.review": "独立复跑：覆盖全部 review_obligations，逐项处置历史 blocker，按 env_setup 搭建环境，重跑验证命令与集成测试，检查完整 diff，发现第一个 blocker 后继续审查并一次性报告本轮全部问题；只读共享状态，并依据 contract 与验收目标给出 verdict。",
         "work.protocol.control": "不要直接修改平台状态、负责人、metadata，也不要直接 rerun 或 cancel；所有写入只通过 OMAC。submit 成功就是本次执行的最后动作，立即停止，不再执行任何平台写操作。",
         "work.protocol.pr_link": "建议让 GitHub PR 的分支名、标题或正文包含 `{issue_key}`，这样 Multica 可以自动关联该 issue；缺失时仍可交付。",
         "work.authority.current": "work show 当前实例事实",

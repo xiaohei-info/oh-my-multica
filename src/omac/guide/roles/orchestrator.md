@@ -27,6 +27,20 @@
 - 增量拆解时的 final acceptance results，尤其是失败 flow 及 notes。
 - 当前 `contract`、`previous_review` 和已有节点状态；已 done 节点不是可随意重写的草稿。
 - manifest artifact guide 规定的节点 schema、lint 硬门和 contract 字段。
+- 返工时 `work show.context.review_state` 与 `required_closures`。每个 closure
+  都绑定稳定 `blocker_id` 和根因，不能通过换措辞或移动节点规避。
+
+## 机器预检与收敛模式
+
+- Reviewer 派发前，OMAC 的 machine preflight 会检查可机械判断的 manifest
+  问题，包括命令语法、Go 本地包目标、显式输出冲突和无可达 producer 的输入。
+  机器门失败直接返回 authoring，不消耗 Reviewer 轮次；先修完全部机器问题再提交。
+- `review_state.mode=normal` 时按 `required_closures` 逐项关闭并对完整 manifest
+  做影响分析。
+- `review_state.mode=convergence-audit` 时禁止继续逐条补丁式修复。先按
+  `root_cause_key` 归并历史问题，审计整条 ownership、artifact、执行和 evidence
+  链，再一次性修改所有受影响节点和验证命令。
+- 修复必须保留稳定 blocker 身份，并为每项 closure 提供可独立复验的证据。
 
 ## 执行步骤
 

@@ -13,6 +13,8 @@ import tempfile
 import pytest
 
 from omac.core.manifest import Contract, Manifest, Node, load_manifest, save_manifest
+from omac.core.review_convergence import (
+    REVIEW_PROTOCOL_VERSION, build_review_obligations, open_blockers)
 from omac.engines import create_engine
 from omac.engines.mock import MockRuntime, MockStore
 from omac.core.taskmeta import TaskPhase
@@ -85,6 +87,59 @@ def _business_command(cmd="pytest -q", acceptance="works"):
             "acceptance": acceptance,
             "test": "tests/test_feature.py::test_feature_works",
         }],
+    }
+
+
+def _review_report(item, verdict="pass", *, nits=None):
+    failed_id = "dimension:structure" if verdict == "reject" else None
+    return {
+        "review_protocol": REVIEW_PROTOCOL_VERSION,
+        "review_goals": ["复核交付是否满足验收"],
+        "diff_reviewed": True,
+        "tests_rerun": True,
+        "integration_tests_rerun": True,
+        "coverage_checked": True,
+        "full_review_completed": True,
+        "obligation_results": [
+            {
+                "obligation_id": obligation["obligation_id"],
+                "status": (
+                    "fail" if obligation["obligation_id"] == failed_id
+                    else "pass"),
+                "evidence": "独立复核完成",
+            }
+            for obligation in item.review_obligations
+        ],
+        "prior_blocker_results": [
+            {
+                "blocker_id": blocker["blocker_id"],
+                "status": "fixed",
+                "evidence": "历史 blocker 已回归",
+            }
+            for blocker in open_blockers(item.review_ledger)
+        ],
+        "acceptance_mapping": [{
+            "acceptance": "works",
+            "status": "fail" if verdict == "reject" else "pass",
+        }],
+        "integration_gate_mapping": [{
+            "gate": "gate-1",
+            "status": "pass",
+            "commands": [{"cmd": "pytest tests/int", "exit_code": 0}],
+            "metrics": {"route_coverage": 100},
+            "artifacts": ["coverage.xml"],
+            "source_of_truth": ["docs/d.md"],
+            "delivery_goal": "delivers",
+        }],
+        "blockers": ([{
+            "root_cause_key": "core-acceptance",
+            "obligation_id": failed_id,
+            "classification": "new",
+            "summary": "核心验收未满足",
+            "evidence": "独立验证失败",
+            "required_fix": "修复核心验收路径",
+        }] if failed_id else []),
+        "nits": list(nits or []),
     }
 
 
@@ -485,6 +540,9 @@ class TestReviewerHandoff:
 
         assert result.state == "converged"
         assert "a" in result.done
+        item = eng.store.get_work_item(manifest.nodes["a"].work_item_id)
+        assert item.review_obligations
+        assert item.review_ledger["cycles"][0]["verdict"] == "pass"
 
     def test_reviewer_handoff_assigns_reviewer(self):
         """有 reviewer 节点:collect_results 把 issue 转派给 reviewer。"""
@@ -825,6 +883,8 @@ class TestEvidenceGateRegression:
         got = eng.store.get_work_item(item.id)
         assert got.reviewer == "bob"
         assert got.phase == TaskPhase.REVIEW
+        assert got.review_subject_digest
+        assert got.review_obligations
         # assign_log 含 reviewer 分配
         assert any(role == "reviewer" for _, _, role, _ in eng.store.assign_log)
 
@@ -951,19 +1011,9 @@ class TestReviewerRejectBoundedFallback:
         path = str(tmp_path / "m.yaml")
         manifest, eng, item = self._setup_reject_node(eng, path)
         eng.store.update_work_item_metadata(
-            item.id,
-            review_report={
-                "review_goals": ["复核交付是否满足验收"],
-                "diff_reviewed": True,
-                "tests_rerun": True,
-                "coverage_checked": True,
-                "full_review_completed": True,
-                "acceptance_mapping": [
-                    {"acceptance": "works", "status": "fail"},
-                ],
-                "blockers": ["核心验收未满足"],
-            },
-        )
+            item.id, review_obligations=build_review_obligations(item))
+        eng.store.update_work_item_metadata(
+            item.id, review_report=_review_report(item, "reject"))
 
         result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
 
@@ -981,19 +1031,12 @@ class TestReviewerRejectBoundedFallback:
         path = str(tmp_path / "m.yaml")
         manifest, eng, item = self._setup_reject_node(eng, path)
         eng.store.update_work_item_metadata(
+            item.id, review_obligations=build_review_obligations(item))
+        eng.store.update_work_item_metadata(
             item.id,
             review_verdict="pass-with-nits",
-            review_report={
-                "review_goals": ["确认建议项"],
-                "summary": "x" * 9000,
-                "diff_reviewed": True,
-                "tests_rerun": True,
-                "coverage_checked": True,
-                "full_review_completed": True,
-                "acceptance_mapping": [{"acceptance": "works", "status": "pass"}],
-                "blockers": [],
-                "nits": ["建议后续优化"],
-            },
+            review_report=_review_report(
+                item, "pass-with-nits", nits=["建议后续优化"]),
         )
 
         first = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
@@ -1031,6 +1074,36 @@ class TestReviewerRejectBoundedFallback:
         assert got.status == WorkItemStatus.DONE
         assert got.review_verdict is None
         assert got.bounces.review == 0
+
+    def test_pass_with_nits_cannot_bypass_obligation_evidence_gate(self, tmp_path):
+        from omac.engines import create_engine
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        eng.store.update_work_item_metadata(
+            item.id, review_obligations=build_review_obligations(item))
+        eng.store.update_work_item_metadata(
+            item.id,
+            review_verdict="pass-with-nits",
+            review_report={
+                "review_goals": ["partial legacy report"],
+                "diff_reviewed": True,
+                "tests_rerun": True,
+                "coverage_checked": True,
+                "full_review_completed": True,
+                "acceptance_mapping": [{"acceptance": "works", "status": "pass"}],
+                "blockers": [],
+                "nits": ["looks fine"],
+            },
+        )
+
+        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+
+        got = eng.store.get_work_item(item.id)
+        assert result.state == "running"
+        assert got.status == WorkItemStatus.IN_PROGRESS
+        assert got.review_verdict is None
+        assert got.bounces.review == 1
 
     def test_done_node_repairs_worker_status_regression(self, tmp_path):
         """已完成节点遇到平台状态被 worker 回退为 in_review 时,以 manifest done 为准纠偏。"""

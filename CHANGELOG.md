@@ -10,6 +10,13 @@ This file records public changes to oh-my-multica. The format follows
 
 ### Changed
 
+- New review cycles use finite `review_obligations`, a persistent cross-cycle
+  blocker ledger, structured prior-blocker regression results, and automatic
+  convergence-audit signaling. Legacy in-flight review reports remain readable
+  until OMAC prepares their next review subject.
+- Deterministic manifest preflight now rejects invalid shell syntax, bare Go
+  local package targets, duplicate explicit output producers, and command inputs
+  without an owned scope or reachable producer before a Reviewer is dispatched.
 - The evidence schema now requires every contract acceptance item to be mapped
   through `commands[].business_tests` on a command with a non-empty `cmd` and
   integer exit code `0`. Reviewer reports must also include
