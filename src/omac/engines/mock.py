@@ -13,7 +13,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 import yaml
-from ..core.taskmeta import DELIVERY_CONTENT_KEY, Bounces, TaskKind, TaskPhase
+from ..core.taskmeta import DELIVERY_CONTENT_KEY, TaskKind, TaskPhase
 from ..errors import ValidationError
 from ..i18n import ui
 from .models import (
@@ -267,14 +267,13 @@ class MockStore(WorkItemStore):
         item = _shared_work_items.get(item_id)
         if not item:
             return
-        # 人机门自动确认(测试模拟人工):停在评审阶段、尚未指派 reviewer 的产出
+        # 人机门自动确认(测试模拟人工):Reviewer 已通过并进入 confirmation
         # → 人工把它流转到 DONE(approval 信号)。与 auto_complete 独立开关。
-        # 每个 item 只确认一次:翻回 IN_REVIEW 进评审时不再被误重复确认(否则会
-        # 在 reviewer 指派前又置 DONE,导致评审轮询死等)。
+        # 每个 item 只确认一次，review 阶段绝不允许提前确认。
         if (_shared_auto_confirm and item_id not in _shared_assigned_items
                 and item_id not in _shared_human_confirmed
                 and item.status == WorkItemStatus.IN_REVIEW
-                and item.phase == TaskPhase.REVIEW):
+                and item.phase == TaskPhase.CONFIRMATION):
             item.status = WorkItemStatus.DONE
             _shared_human_confirmed.add(item_id)
             return
@@ -380,7 +379,8 @@ class MockStore(WorkItemStore):
             else:
                 item.review_verdict = _shared_review_verdict
                 item.review_comment = "Mock: LGTM"
-            item.review_report = self._mock_review_report(item_id) or {
+            item.review_report = self._mock_review_report(
+                item_id, item.review_verdict) or {
                 "diff_reviewed": True,
                 "tests_rerun": True,
                 "coverage_checked": True,
@@ -438,7 +438,9 @@ class MockStore(WorkItemStore):
             ] if contract.integration_gates else [],
         }
 
-    def _mock_review_report(self, item_id: str) -> Optional[Dict[str, Any]]:
+    def _mock_review_report(
+        self, item_id: str, verdict: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
         from ..core.manifest import Contract as _Contract
 
         contract = _shared_contracts_by_item_id.get(item_id)
@@ -471,10 +473,10 @@ class MockStore(WorkItemStore):
             "acceptance_mapping": [
                 {"acceptance": acceptance,
                  "evidence": f"Mock auto-review for {acceptance}",
-                 "status": "pass"}
+                 "status": "fail" if verdict == "reject" else "pass"}
                 for acceptance in contract.acceptance
             ],
-            "blockers": [],
+            "blockers": ["Mock: needs revision"] if verdict == "reject" else [],
             "nits": [],
         }
 
@@ -567,6 +569,7 @@ class MockStore(WorkItemStore):
         verification_source: Optional[str] = None,
         review_report: Optional[Dict[str, Any]] = None,
         review_report_source: Optional[str] = None,
+        review_subject_digest: Optional[str] = None,
         decision_required: Optional[Dict[str, Any]] = None,
         phase: Optional[TaskPhase] = None,
         worker_bounce: Optional[int] = None,
@@ -605,6 +608,8 @@ class MockStore(WorkItemStore):
                 "filename": "omac-review-report.yaml",
                 "bytes": len(review_report_source.encode("utf-8")),
             }
+        if review_subject_digest is not None:
+            item.review_subject_digest = review_subject_digest or None
         if decision_required is not None:
             item.decision_required = decision_required
         if phase is not None:
@@ -678,7 +683,21 @@ class MockStore(WorkItemStore):
         item.review_verdict = None
         item.review_comment = None
         item.decision_required = None
+        item.review_subject_digest = None
         item.phase = TaskPhase.AUTHORING
+
+    def prepare_review_cycle(self, item_id: str, subject_digest: str) -> WorkItem:
+        item = self.get_work_item(item_id)
+        if item.review_subject_digest == subject_digest:
+            return item
+        item.review_verdict = None
+        item.review_comment = None
+        item.review_report = None
+        item.review_report_ref = None
+        item.decision_required = None
+        item.review_subject_digest = subject_digest
+        item.phase = TaskPhase.REVIEW
+        return item
 
     def assign_work_item(self, item_id: str, assignee: str, role: str):
         item = self.get_work_item(item_id)
@@ -688,6 +707,11 @@ class MockStore(WorkItemStore):
             item.reviewer = assignee
         _shared_assign_log.append((item_id, item.dag_key, role, time.time()))
         _shared_assigned_items[item_id] = time.time()
+
+    def clear_assignment(self, item_id: str) -> None:
+        item = self.get_work_item(item_id)
+        item.reviewer = None
+        _shared_assigned_items.pop(item_id, None)
 
     @property
     def assign_log(self):
@@ -703,6 +727,10 @@ class MockRuntime(AgentRuntime):
     def wake(self, item_id: str, agent: str, role: str) -> None:
         # MockStore.assign_work_item 已启动自动完成计时,这里只确认 item 存在。
         self._store.get_work_item(item_id)
+
+    def cancel(self, item_id: str) -> bool:
+        self._store.get_work_item(item_id)
+        return False
 
     def list_targets(self) -> List[RuntimeTarget]:
         return [RuntimeTarget(

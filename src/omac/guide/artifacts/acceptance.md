@@ -52,6 +52,12 @@ flows:
 后续执行者可能是低推理预算模型。每个 action 必须自包含，不能依赖隐含上下文。
 边界条件应写成独立 action 或独立 flow，例如无效输入、重复提交、权限不足、超时和回滚结果。
 
+`how` 的“可复制”不等于必须提前知道最终实现 URL 或选择器。权威设计已经唯一命名的页面、
+产品区域、控件、CLI 子命令、API operation 或连续操作上下文可以直接使用；不得从字段名、
+残句或实现猜测中制造入口。只有设计没有定义唯一执行表面时才声明 implementation prerequisite。
+如果用户动作仍依赖该 prerequisite，当前 flow 尚不可执行，评审必须 reject；不得把大多数用户
+动作批量改成 prerequisite 后仍宣称验收文档完成。
+
 ## 校验硬门
 
 1. 顶层必须是 mapping，`flows` 必须是非空列表。
@@ -70,6 +76,7 @@ flows:
 | `how` 写“正常操作” | 写明页面、命令、参数和测试数据，使步骤可复现。 |
 | `expected` 写“成功” | 写可观察结果和失败判据。 |
 | 把权限不足等情况藏在正文 | 为每个边界条件增加独立 action 或 flow。 |
+| 大多数用户动作都标记为入口 prerequisite | 回到 owning design 提取唯一产品表面和操作序列；仍无法确定的 flow 保持 blocker，不得通过评审。 |
 | 另附正文并描述不同结果 | 删除重复事实或修正结构化 YAML；权威值只保留一份。 |
 
 ## 提交
@@ -81,3 +88,4 @@ omac work submit <issue-id> --acceptance-file <file>
 ```
 
 提交文件必须能被 YAML parser 直接读取；不要在产出阶段提交 verdict。
+submit 成功后立即停止，不再追加评论或修改平台状态。

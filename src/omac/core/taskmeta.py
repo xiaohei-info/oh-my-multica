@@ -33,9 +33,10 @@ class TaskKind(Enum):
 
 
 class TaskPhase(Enum):
-    """issue 当前阶段(同一条 issue 内的产出/评审两段)。"""
+    """issue 当前阶段(同一条 issue 内的产出、评审、人工确认)。"""
     AUTHORING = "authoring"
     REVIEW = "review"
+    CONFIRMATION = "confirmation"
 
 
 DEFAULT_KIND = TaskKind.DEVELOP
@@ -86,6 +87,7 @@ PROJECT_RULES_REF_KEY = "project_rules_ref"
 CONTRACT_REF_KEY = "contract_ref"
 VERIFICATION_REF_KEY = "verification_ref"
 REVIEW_REPORT_REF_KEY = "review_report_ref"
+REVIEW_SUBJECT_DIGEST_KEY = "review_subject_digest"
 DECISION_REQUIRED_KEY = "decision_required"
 SOURCE_REFS_KEY = "source_refs"
 

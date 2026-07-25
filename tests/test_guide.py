@@ -136,6 +136,16 @@ def test_orchestrator_role_has_wave_decomposition() -> None:
         assert item in content, f"orchestrator missing decomposition anchor: {item}"
 
 
+def test_orchestrator_reads_externalized_upstream_artifacts_through_omac() -> None:
+    chinese = load_role_topic("orchestrator")
+    english = load_role_topic("orchestrator", language="en")
+
+    for item in ["content_externalized", "omac work read", "sha256", "附件"]:
+        assert item in chinese, f"orchestrator missing external source protocol: {item}"
+    for item in ["content_externalized", "omac work read", "sha256", "attachment"]:
+        assert item in english, f"english orchestrator missing external source protocol: {item}"
+
+
 def test_worker_role_has_tdd_and_evidence() -> None:
     content = load_role_topic("worker")
     for item in [

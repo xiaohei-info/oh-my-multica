@@ -28,6 +28,10 @@ class AgentRuntime(ABC):
         """
 
     @abstractmethod
+    def cancel(self, item_id: str) -> bool:
+        """取消该工作单元当前仍活跃的 Agent run；没有活跃 run 时返回 False。"""
+
+    @abstractmethod
     def list_targets(self) -> List[RuntimeTarget]:
         """列出用户创建 Agent 时可选择的运行时目标。"""
 

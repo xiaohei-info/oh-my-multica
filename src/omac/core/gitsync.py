@@ -94,6 +94,20 @@ def _has_unpushed_files(repo_root: str, paths) -> bool:
     return result.returncode == 0 and bool(result.stdout.strip())
 
 
+def _path_matches_remote_tracking(
+    repo_root: str, path: str, branch: str,
+) -> bool:
+    """只读比较 HEAD 与本地 origin/<branch> 快照中的同一文件 blob。"""
+    relative = _repo_relative_path(repo_root, path)
+    local = _run(repo_root, "rev-parse", f"HEAD:{relative}")
+    remote = _run(repo_root, "rev-parse", f"origin/{branch}:{relative}")
+    return (
+        local.returncode == 0
+        and remote.returncode == 0
+        and local.stdout.strip() == remote.stdout.strip()
+    )
+
+
 def _retry_manifest_push(path: str, repo_root: str) -> None:
     _retry_files_push([path], repo_root)
 
@@ -210,7 +224,13 @@ def ensure_config_synced(config_path: str, branch: str = "main",
                 f"Automatic configuration commit failed: {r.stderr.strip()}",
                 f"config 自动提交失败: {r.stderr.strip()}"))
 
-    # 补推(覆盖「已提交未推送」;已同步时 Everything up-to-date 幂等)
+    # 已知 origin/<branch> 快照包含相同 config blob 时无需联网重复 push。
+    # resume 只消费既有配置；网络离线不应阻断一个已同步的幂等续跑。
+    if _path_matches_remote_tracking(repo_root, config_path, branch):
+        log.info(logsetup.EVT_CONFIG_SYNCED, path=config_path, branch=branch)
+        return
+
+    # 本地 config 与远端跟踪快照不同，补推已提交但未推送的配置。
     r = _run(repo_root, "push", "origin", branch)
     if r.returncode != 0:
         raise ValidationError(ui(

@@ -22,20 +22,6 @@ from omac.pipeline.dispatch import (
 )
 from omac.pipeline.loop import tick
 
-import pytest
-
-from omac.core.taskmeta import TaskKind, TaskPhase
-from omac.engines import create_engine
-from omac.engines.models import EngineConfig
-from omac.pipeline.dispatch import (
-    SUBMIT_PARAM_SPECS,
-    SUBMIT_PARAMS_BY_KIND_PHASE,
-    build_show_output,
-    submit_template_for,
-)
-from omac.cli.main import main
-from omac.cli import exit_codes
-
 
 def _store(auto_complete: str = "false"):
     config = EngineConfig(
@@ -80,6 +66,20 @@ def _make_item(store, kind: TaskKind, phase: TaskPhase, dag_key: str = "a",
                 "env_setup": ["docker compose up -d db"],
             })
     return store.get_work_item(item.id)
+
+
+def test_work_show_authoring_exposes_machine_gate_feedback_without_report():
+    store = _store()
+    item = _make_item(store, TaskKind.ACCEPTANCE, TaskPhase.AUTHORING)
+    store.update_work_item_metadata(
+        item.id, review_comment="machine gate: expected template is too generic")
+
+    output = build_show_output(
+        store.get_work_item(item.id), "planner:alice")
+
+    assert output["context"]["previous_review"] == {
+        "comment": "machine gate: expected template is too generic",
+    }
 
 
 # 9 种组合(final-acceptance 仅 authoring)
@@ -136,6 +136,11 @@ def test_show_output_structure(kind, phase):
     assert "context" in out
     assert "protocol" in out
     assert "submit" in out
+    assert out["control"] == {
+        "platform_writes": "omac-only",
+        "submit_is_terminal": True,
+        "post_submit_actions": [],
+    }
 
     # 任务标识
     assert out["task"]["kind"] == kind.value
@@ -158,6 +163,8 @@ def test_show_output_structure(kind, phase):
 
     # 协议非空
     assert out["protocol"].strip() != ""
+    assert "Do not edit platform status" in out["protocol"]
+    assert "Submitting successfully is the final action" in out["protocol"]
 
     # submit 模板以 omac work submit <id> 开头
     assert out["submit"].startswith(f"omac work submit {item.id}")
@@ -280,6 +287,45 @@ def test_show_cli_defaults_to_agent_json(tmp_path, monkeypatch, capsys):
     assert data["task"]["title"] == item.title
     assert data["guide_refs"] == EXPECTED_GUIDE_REFS[
         (TaskKind.PLAN, TaskPhase.AUTHORING)]
+
+
+def test_work_read_materializes_named_upstream_deliverable(
+    tmp_path, monkeypatch, capsys,
+):
+    """Agent 可通过当前 issue 的稳定 source label 读取上游附件正文。"""
+    monkeypatch.chdir(tmp_path)
+    main(["config", "set", "engine", "mock"])
+    main(["config", "set", "workspace", "mock-workspace"])
+    capsys.readouterr()
+
+    store = _store()
+    upstream = store.create_work_item(
+        "mock-workspace", "acceptance", "acceptance",
+        dag_key="acceptance-p1", worker="alice",
+        kind=TaskKind.ACCEPTANCE)
+    store.update_work_item_metadata(
+        upstream.id, deliverable="schema: omac.acceptance/v1\nflows: []\n")
+    current = store.create_work_item(
+        "mock-workspace", "decompose", "decompose",
+        dag_key="decompose-p1", worker="bob", kind=TaskKind.DECOMPOSE)
+    store.update_work_item_metadata(
+        current.id,
+        source_refs=[{"label": "acceptance", "issue_id": upstream.id}],
+    )
+    output_file = tmp_path / "acceptance.yaml"
+
+    assert main([
+        "work", "read", current.id,
+        "--source", "acceptance",
+        "--output-file", str(output_file),
+    ]) == exit_codes.OK
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["source"] == "acceptance"
+    assert payload["source_issue_id"] == upstream.id
+    assert payload["bytes"] == output_file.stat().st_size
+    assert output_file.read_text() == "schema: omac.acceptance/v1\nflows: []\n"
 
 
 def test_work_show_localizes_omac_prose_without_changing_facts(
@@ -838,7 +884,7 @@ class TestSubmitPerKindPhase:
         rfile = tmp_path / "report.yaml"
         rfile.write_text(yaml.safe_dump(_make_review_report()))
 
-        result = dispatch_mod.submit(
+        dispatch_mod.submit(
             eng.store, item.id, verdict="pass", report_file=str(rfile),
         )
         got = eng.store.get_work_item(item.id)
@@ -861,6 +907,8 @@ class TestSubmitPerKindPhase:
             initial_status=WorkItemStatus.IN_REVIEW,
         )
         item.phase = dispatch_mod.TaskPhase.REVIEW
+        store.update_work_item_metadata(
+            item.id, review_comment="旧机器门错误")
         store.set_node_contract(item.id, CONTRACT)
         rfile = tmp_path / "report.yaml"
         rfile.write_text(yaml.safe_dump(_make_review_report()))
@@ -876,6 +924,11 @@ class TestSubmitPerKindPhase:
         assert out["deliverable_key"] == "review_report"
         assert out["advanced_to"] == "in_review"
         assert out["verdict"] == "pass"
+        assert out["terminal"] is True
+        assert out["next_action"] == "stop"
+        assert "Review submission is complete" in out["message"]
+        assert "Do not add an issue comment" in out["message"]
+        assert store.get_work_item(item.id).review_comment == ""
 
     def test_review_reject_verdict_is_structured_verdict(self, tmp_path):
         """reviewer reject 必须能经 work submit 写入结构化 verdict/report。
@@ -1040,6 +1093,8 @@ class TestSubmitPerKindPhase:
         assert out["next_phase"] == "review"
         assert out["deliverable_keys"] == ["plan", "project_rules"]
         assert "verdict" not in out
+        assert out["terminal"] is True
+        assert out["next_action"] == "stop"
         assert "Authoring is complete" in out["message"]
         assert "Do not submit a verdict" in out["message"]
         assert "wait for the OMAC loop" in out["message"]

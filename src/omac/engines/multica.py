@@ -4,7 +4,9 @@
 - MulticaStore:issue create/get/metadata set/list/comment/update/assign
 - MulticaRuntime:assign 即唤醒(wake 为确认性 no-op)
 
-认证由 multica CLI 自管(~/.multica),本实现不触碰 token。
+认证通常由 multica CLI 自管(~/.multica)。仅当旧巨型 issue 让 CLI 的
+ID resolver 在 description 修复前超时时，使用同一配置中的 token 对精确
+UUID 执行一次幂等 PUT；token 不进入日志、事件或持久化数据。
 """
 from __future__ import annotations
 
@@ -13,6 +15,7 @@ import json
 import os
 import subprocess
 import tempfile
+import uuid
 import zipfile
 from typing import Any, Dict, List, Optional
 
@@ -22,7 +25,7 @@ from ..core.taskmeta import (
     CI_BOUNCE_KEY, CONTRACT_REF_KEY, DECISION_REQUIRED_KEY, DELIVERABLE_KEY,
     DELIVERABLE_REF_KEY, KIND_KEY, MERGE_BOUNCE_KEY, PHASE_KEY,
     PROJECT_RULES_KEY, PROJECT_RULES_REF_KEY, REVIEW_BOUNCE_KEY,
-    REVIEW_REPORT_REF_KEY,
+    REVIEW_REPORT_REF_KEY, REVIEW_SUBJECT_DIGEST_KEY,
     SOURCE_REFS_KEY, TaskKind, TaskPhase, VERIFICATION_REF_KEY, WORKER_BOUNCE_KEY,
     parse_bounces, parse_kind, parse_phase,
 )
@@ -122,6 +125,95 @@ class MulticaStore(WorkItemStore):
                 os.unlink(path)
             except FileNotFoundError:
                 pass
+
+    def _put_issue_description_direct(
+        self,
+        item_id: str,
+        description: str,
+    ) -> None:
+        """绕过 CLI 的 issue resolver，用精确 UUID 幂等修复 description。"""
+        try:
+            parsed_id = uuid.UUID(item_id)
+        except ValueError as exc:
+            raise PlatformError(ui(
+                f"Direct description recovery requires a canonical issue UUID: {item_id}",
+                f"直接恢复 description 需要完整 issue UUID：{item_id}")) from exc
+        if str(parsed_id) != item_id.lower():
+            raise PlatformError(ui(
+                f"Direct description recovery requires a canonical issue UUID: {item_id}",
+                f"直接恢复 description 需要完整 issue UUID：{item_id}"))
+
+        config_path = os.path.expanduser(
+            os.environ.get("MULTICA_CONFIG_PATH", "~/.multica/config.json"))
+        try:
+            with open(config_path, encoding="utf-8") as fh:
+                cli_config = json.load(fh)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise PlatformError(ui(
+                f"Could not read Multica auth config for description recovery: {exc}",
+                f"无法读取 Multica 认证配置以恢复 description：{exc}")) from exc
+
+        token = str(cli_config.get("token") or "").strip()
+        server_url = str(
+            os.environ.get("MULTICA_SERVER_URL")
+            or cli_config.get("server_url")
+            or ""
+        ).rstrip("/")
+        if not token or not server_url:
+            raise PlatformError(ui(
+                "Multica token or server_url is missing for description recovery",
+                "description 恢复缺少 Multica token 或 server_url"))
+
+        header_fd, header_path = tempfile.mkstemp(
+            prefix="omac-multica-headers-", text=True)
+        body_fd, body_path = tempfile.mkstemp(
+            prefix="omac-multica-body-", suffix=".json", text=True)
+        try:
+            with os.fdopen(header_fd, "w", encoding="utf-8") as fh:
+                fh.write(
+                    f"Authorization: Bearer {token}\n"
+                    "Content-Type: application/json\n"
+                    "Accept: application/json\n"
+                    f"X-Workspace-ID: {self.config.workspace_id}\n"
+                )
+            with os.fdopen(body_fd, "w", encoding="utf-8") as fh:
+                json.dump(
+                    {"description": description}, fh,
+                    ensure_ascii=False,
+                )
+            try:
+                result = subprocess.run(
+                    [
+                        "curl",
+                        "--silent",
+                        "--show-error",
+                        "--fail",
+                        "--request", "PUT",
+                        "--header", f"@{header_path}",
+                        "--data-binary", f"@{body_path}",
+                        "--output", os.devnull,
+                        "--max-time", "30",
+                        f"{server_url}/api/issues/{item_id}",
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+            except FileNotFoundError as exc:
+                raise PlatformError(ui(
+                    "curl is required for direct Multica description recovery",
+                    "直接恢复 Multica description 需要 curl")) from exc
+            if result.returncode != 0:
+                raise PlatformError(ui(
+                    f"Direct Multica description recovery failed: "
+                    f"{(result.stderr or '').strip()}",
+                    f"直接恢复 Multica description 失败："
+                    f"{(result.stderr or '').strip()}"))
+        finally:
+            for path in (header_path, body_path):
+                try:
+                    os.unlink(path)
+                except FileNotFoundError:
+                    pass
 
     def _status_to_multica(self, status: WorkItemStatus) -> str:
         mapping = {
@@ -257,26 +349,26 @@ class MulticaStore(WorkItemStore):
     def _load_payload_comment(self, item_id: str, key: str, ref: Optional[Dict[str, Any]]) -> Optional[str]:
         if not ref:
             return None
-        comment_id = ref.get("comment_id")
-        if not comment_id:
-            return None
-        comments = self._run_multica([
-            "issue", "comment", "list", item_id,
-            "--thread", comment_id,
-            "--output", "json",
-            "--full",
-        ])
-        if not isinstance(comments, list):
-            return None
-        begin, end = self._payload_markers(key)
         attachment_id = ref.get("attachment_id")
-        for comment in comments:
-            if comment.get("id") != comment_id:
-                continue
-            content = comment.get("content") or ""
-            if begin in content and end in content:
-                return content.split(begin, 1)[1].split(end, 1)[0].strip("\n")
-            if not attachment_id:
+        comment_id = ref.get("comment_id")
+        if not attachment_id:
+            if not comment_id:
+                return None
+            comments = self._run_multica([
+                "issue", "comment", "list", item_id,
+                "--thread", comment_id,
+                "--output", "json",
+                "--full",
+            ])
+            if not isinstance(comments, list):
+                return None
+            begin, end = self._payload_markers(key)
+            for comment in comments:
+                if comment.get("id") != comment_id:
+                    continue
+                content = comment.get("content") or ""
+                if begin in content and end in content:
+                    return content.split(begin, 1)[1].split(end, 1)[0].strip("\n")
                 filename = ref.get("filename")
                 for attachment in comment.get("attachments") or []:
                     if not filename or attachment.get("filename") == filename:
@@ -381,6 +473,8 @@ class MulticaStore(WorkItemStore):
             review_comment=self._optional_text_metadata(metadata, "review_comment"),
             review_report=review_report,
             review_report_ref=review_report_ref if isinstance(review_report_ref, dict) else None,
+            review_subject_digest=self._optional_text_metadata(
+                metadata, REVIEW_SUBJECT_DIGEST_KEY),
             decision_required=self._json_metadata(metadata, DECISION_REQUIRED_KEY),
             contract=contract,
             contract_ref=contract_ref if isinstance(contract_ref, dict) else None,
@@ -633,6 +727,7 @@ class MulticaStore(WorkItemStore):
         verification_source: Optional[str] = None,
         review_report: Optional[Dict[str, Any]] = None,
         review_report_source: Optional[str] = None,
+        review_subject_digest: Optional[str] = None,
         decision_required: Optional[Dict[str, Any]] = None,
         phase: Optional[TaskPhase] = None,
         worker_bounce: Optional[int] = None,
@@ -644,6 +739,22 @@ class MulticaStore(WorkItemStore):
         source_refs: Optional[List[Dict[str, Any]]] = None,
         description: Optional[str] = None,
     ) -> WorkItem:
+        # 正文修复必须最先执行。旧版 OMAC 可能已把大型上游产物内联到
+        # description；Multica 的 metadata API 会解析并返回整条 issue，
+        # 若先写 metadata，恢复流程会在有机会压缩正文前超时。
+        if description is not None:
+            try:
+                self._run_multica_with_text_file(
+                    ["issue", "update", item_id], "--description-file", description)
+            except PlatformError as exc:
+                error = str(exc).lower()
+                resolver_timeout = (
+                    "context deadline exceeded" in error
+                    or "client.timeout" in error
+                )
+                if not resolver_timeout:
+                    raise
+                self._put_issue_description_direct(item_id, description)
         if worker is not None:
             self._set_metadata(item_id, "worker", worker)
         if reviewer is not None:
@@ -668,6 +779,9 @@ class MulticaStore(WorkItemStore):
             ref = self._publish_payload_comment(
                 item_id, "review-report", review_report_source, ".yaml")
             self._set_metadata(item_id, REVIEW_REPORT_REF_KEY, ref)
+        if review_subject_digest is not None:
+            self._set_metadata(
+                item_id, REVIEW_SUBJECT_DIGEST_KEY, review_subject_digest)
         if decision_required is not None:
             self._set_metadata(item_id, DECISION_REQUIRED_KEY, decision_required)
         if worker_bounce is not None:
@@ -697,9 +811,6 @@ class MulticaStore(WorkItemStore):
             self._set_metadata(item_id, SOURCE_REFS_KEY, source_refs)
         if phase is not None:
             self._set_metadata(item_id, PHASE_KEY, phase.value)
-        if description is not None:
-            self._run_multica_with_text_file(
-                ["issue", "update", item_id], "--description-file", description)
         return self.get_work_item(item_id)
 
     def set_node_contract(self, item_id: str, contract: Any):
@@ -773,7 +884,20 @@ class MulticaStore(WorkItemStore):
         self._set_metadata(item_id, "review_verdict", "")
         self._set_metadata(item_id, "review_comment", "")
         self._set_metadata(item_id, DECISION_REQUIRED_KEY, "{}")
+        self._set_metadata(item_id, REVIEW_SUBJECT_DIGEST_KEY, "")
         self._set_metadata(item_id, PHASE_KEY, TaskPhase.AUTHORING.value)
+
+    def prepare_review_cycle(self, item_id: str, subject_digest: str) -> WorkItem:
+        item = self.get_work_item(item_id)
+        if item.review_subject_digest == subject_digest:
+            return item
+        self._set_metadata(item_id, "review_verdict", "")
+        self._set_metadata(item_id, "review_comment", "")
+        self._set_metadata(item_id, REVIEW_REPORT_REF_KEY, "{}")
+        self._set_metadata(item_id, DECISION_REQUIRED_KEY, "{}")
+        self._set_metadata(item_id, REVIEW_SUBJECT_DIGEST_KEY, subject_digest)
+        self._set_metadata(item_id, PHASE_KEY, TaskPhase.REVIEW.value)
+        return self.get_work_item(item_id)
 
     def assign_work_item(self, item_id: str, assignee: str, role: str):
         agent_id = self._resolve_agent_id(assignee)
@@ -783,16 +907,20 @@ class MulticaStore(WorkItemStore):
             if isinstance(current, dict) and current.get("assignee_id")
             else None
         )
-        self._run_multica(["issue", "assign", item_id, "--to", agent_id])
         if role == "worker":
             self.update_work_item_metadata(item_id, worker=assignee)
         elif role == "reviewer":
             self.update_work_item_metadata(item_id, reviewer=assignee)
+        self._run_multica(["issue", "assign", item_id, "--to", agent_id])
         # 改派到不同 agent 时，Multica assignment 会创建 run，随后的 wake
         # 只需确认，避免再 rerun 一次。同一 assignee 的 assign 是幂等更新，
         # 不会创建 run；此时保留 wake 的终态检查，让它对旧 run 执行一次 rerun。
         if current_assignee_id != agent_id:
             self._mark_assignment_wake_pending(item_id)
+
+    def clear_assignment(self, item_id: str) -> None:
+        self._run_multica(["issue", "assign", item_id, "--unassign"])
+        self._set_metadata(item_id, "reviewer", "")
 
 
 class MulticaRuntime(AgentRuntime):
@@ -819,6 +947,23 @@ class MulticaRuntime(AgentRuntime):
             if status in {"failed", "cancelled", "completed"}:
                 self._store._run_multica(["issue", "rerun", item_id, "--output", "json"])
         return None
+
+    def cancel(self, item_id: str) -> bool:
+        runs = self._store._run_multica(["issue", "runs", item_id, "--output", "json"])
+        latest = _latest_direct_run(runs if isinstance(runs, list) else [])
+        cancelled = False
+        if latest and (latest.get("status") or "").lower() in {
+            "queued", "pending", "running", "dispatching",
+        }:
+            task_id = latest.get("id")
+            if task_id:
+                self._store._run_multica([
+                    "issue", "cancel-task", str(task_id),
+                    "--issue", item_id, "--output", "json",
+                ])
+                cancelled = True
+
+        return cancelled
 
     @staticmethod
     def _items(payload, key: str) -> List[Dict[str, Any]]:

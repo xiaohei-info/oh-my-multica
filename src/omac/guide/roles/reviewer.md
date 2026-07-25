@@ -46,6 +46,9 @@
 12. 发现第一个 blocker 后继续检查完整 diff、相关实现、测试、配置、迁移和必要文档。第一处问题只是记录点，不能提前结束评审。
 13. 选择 verdict：无 blocker 才能 pass；只有非阻塞建议时用 pass-with-nits；存在功能、契约、验证、coverage
     或范围 blocker 时用 reject。禁止把建议项伪装成 blocker。
+    `acceptance` 评审中，未解决的用户动作入口 prerequisite 使对应 flow 无法执行，属于 blocker；
+    不得因结构、覆盖率或聚合证据完整而用 pass-with-nits 掩盖。测试环境 setup prerequisite
+    只有在不替代用户动作且明确 owner/补齐时机时才可作为非阻塞计划项。
 14. 编写 report。所有类型必须包含 `review_goals` 和 `full_review_completed: true`；develop review 还必须覆盖
     `acceptance_mapping` 和 `integration_gate_mapping`。blockers 和 nits 必须一次性包含本轮发现的全部问题，并让其与 verdict 一致；每个 blocker 写清事实、影响和可执行修复方向。
 
@@ -101,3 +104,4 @@
 `omac work submit <issue-id> --verdict pass|pass-with-nits|reject --report-file <r.yaml>`
 
 提交 verdict 后由 OMAC loop 处理返工、收口和后续状态；reviewer 不直接改平台状态。
+submit 成功是本次执行的最后动作；立即停止，不再追加评论或执行平台写操作。

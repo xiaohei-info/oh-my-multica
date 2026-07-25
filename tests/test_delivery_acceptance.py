@@ -73,6 +73,22 @@ def _write_doc(tmp_path, doc):
     return doc_path
 
 
+def test_acceptance_doc_rejects_one_generic_expected_reused_across_most_actions():
+    actions = [
+        {
+            "step": f"执行不同业务动作 {i}",
+            "how": f"在页面 {i} 执行动作",
+            "expected": "证明本 Action step 中的每个子句成立，否则失败。",
+        }
+        for i in range(40)
+    ]
+
+    with pytest.raises(ValueError, match="expected.*reused by 40/40 actions"):
+        load_acceptance_doc({
+            "flows": [{"id": "flow-generic", "name": "通用模板", "actions": actions}],
+        })
+
+
 # ── acceptance_doc_path / config ────────────────────────────────────
 
 def test_doc_path_and_config():

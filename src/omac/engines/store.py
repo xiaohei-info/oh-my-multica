@@ -123,6 +123,7 @@ class WorkItemStore(ABC):
         verification_source: Optional[str] = None,
         review_report: Optional[Dict[str, Any]] = None,
         review_report_source: Optional[str] = None,
+        review_subject_digest: Optional[str] = None,
         decision_required: Optional[Dict[str, Any]] = None,
         phase: Optional[TaskPhase] = None,
         worker_bounce: Optional[int] = None,
@@ -183,6 +184,10 @@ class WorkItemStore(ABC):
         """
 
     @abstractmethod
+    def prepare_review_cycle(self, item_id: str, subject_digest: str) -> WorkItem:
+        """绑定当前评审对象；对象变化时清除旧 verdict/report，保持 review 阶段。"""
+
+    @abstractmethod
     def assign_work_item(self, item_id: str, assignee: str, role: str):
         """将工作单元分配给成员(role: "worker" | "reviewer"),并同步 metadata。
 
@@ -190,6 +195,10 @@ class WorkItemStore(ABC):
         (设计文档 §7.4)。是否由 assign 触发 agent 唤醒是执行面(AgentRuntime)
         的事,本方法只保证数据面生效。
         """
+
+    @abstractmethod
+    def clear_assignment(self, item_id: str) -> None:
+        """解除当前 Agent assignment，但保留 worker/review 交付和判定证据。"""
 
     # ==================== 便捷方法(基类实现) ====================
 

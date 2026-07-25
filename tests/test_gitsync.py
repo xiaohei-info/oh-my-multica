@@ -151,6 +151,22 @@ class TestEnsureConfigSynced:
                                     capture_output=True, text=True).stdout.strip()
         assert head_before == head_after  # 无空提交
 
+    def test_clean_and_pushed_does_not_require_remote_network(self, tmp_path):
+        """HEAD 与 origin/main 的 config blob 相同，resume 不应重复 push。"""
+        work = _make_repo(tmp_path)
+        _write_config(work)
+        _git(work, "add", ".omac/config.yaml")
+        _git(work, "commit", "-m", "add config")
+        _git(work, "push", "origin", "main")
+        remote = tmp_path / "remote.git"
+        remote.rename(tmp_path / "remote-offline.git")
+
+        ensure_config_synced(
+            ".omac/config.yaml", repo_root=str(work), engine_type="multica")
+
+        assert not _dirty(work, ".omac/config.yaml")
+        assert not _unpushed(work, ".omac/config.yaml")
+
     def test_sync_disabled_skips(self, tmp_path, monkeypatch):
         """sync 关(mock 引擎)→ 完全 no-op:脏 config 也不碰、不报错。"""
         monkeypatch.delenv("OMAC_GIT_SYNC", raising=False)

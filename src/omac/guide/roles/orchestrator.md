@@ -21,6 +21,9 @@
 ## 权威输入
 
 - `work show` 中的 issue 正文、上游 issue 链、设计方案、验收文档、现有 manifest 和精确提交命令。
+- `work show.context.source_issues` 中标记 `content_externalized: true` 的大型上游产物不会复制进正文。
+  必须执行 issue 正文给出的 `omac work read <issue-id> --source <label> --output-file <path>`，
+  从上游 deliverable 附件物化权威内容，并核对返回的 `sha256`；不能仅凭正文摘要开始拆解。
 - 增量拆解时的 final acceptance results，尤其是失败 flow 及 notes。
 - 当前 `contract`、`previous_review` 和已有节点状态；已 done 节点不是可随意重写的草稿。
 - manifest artifact guide 规定的节点 schema、lint 硬门和 contract 字段。
@@ -28,7 +31,8 @@
 ## 执行步骤
 
 1. 运行 `omac work show <issue-id> --output json`，读取设计方案、验收文档、上游引用、
-   当前 manifest 或失败 notes，以及精确 `submit`。
+   当前 manifest 或失败 notes，以及精确 `submit`。若 source 标记为 `content_externalized: true`，
+   先逐条运行正文给出的 `omac work read` 命令并读取输出文件，再进入拆解。
 2. 先识别 Wave 0 地基：共享契约、迁移、测试基础设施、CI 闸门和可独立验收的基础能力。只有后续节点
    真正需要先消费的完整能力才成为硬前置；禁止目录空壳、固定返回值、占位实现或生产假数据兜底。
 3. 按稳定 contract/API 划分 Wave 1 并行 track，最大化并行开发。每个 track 内先安排小地基，
