@@ -186,6 +186,11 @@ def test_orchestrator_consumes_machine_preflight_and_convergence_contract() -> N
         assert item in chinese
     for item in ["required_closures", "review_state", "convergence-audit", "machine preflight"]:
         assert item in english
+    for content in (chinese, english):
+        assert "context.machine_feedback" in content
+        assert "typed IO" in content
+    assert "inputs without a reachable producer" not in english
+    assert "output collisions" not in english
 
 
 def test_workflow_explains_finite_review_coverage_and_ledger() -> None:
@@ -195,6 +200,9 @@ def test_workflow_explains_finite_review_coverage_and_ledger() -> None:
     for item in ["review_obligations", "review ledger", "deterministic preflight"]:
         assert item in chinese
         assert item in english
+    for content in (chinese, english):
+        assert "context.machine_feedback" in content
+        assert "typed IO" in content
 
 
 def test_acceptor_role_has_final_acceptance_protocol() -> None:

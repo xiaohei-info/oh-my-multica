@@ -287,6 +287,12 @@ def build_show_output(item: Any, identity: str, *, language: str = EN) -> Dict[s
     decision_required = getattr(item, "decision_required", None)
     if decision_required is not None:
         context["decision_required"] = decision_required
+    machine_feedback = getattr(item, "machine_feedback", None)
+    if machine_feedback is not None:
+        context["machine_feedback"] = machine_feedback
+        machine_feedback_ref = getattr(item, "machine_feedback_ref", None)
+        if machine_feedback_ref is not None:
+            context["machine_feedback_ref"] = machine_feedback_ref
 
     if phase == TaskPhase.AUTHORING:
         previous_review = _previous_review_context(item)
@@ -806,6 +812,7 @@ def submit(
             issue_id,
             review_verdict="",
             review_comment="",
+            machine_feedback={},
             review_subject_digest="",
             decision_required={},
             phase=TaskPhase.REVIEW,
@@ -845,6 +852,7 @@ def submit(
         store.update_work_item_metadata(
             issue_id,
             review_comment="",
+            machine_feedback={},
             review_report=report,
             review_report_source=_read_text(report_file),
             review_verdict=verdict,

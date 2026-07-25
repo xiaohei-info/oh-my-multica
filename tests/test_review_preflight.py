@@ -44,34 +44,29 @@ def _item(command_a, command_b=None, *, blocked_by=None, scope_paths=None):
 
 
 def test_preflight_rejects_bare_go_local_package_target():
-    errors = run_review_preflight(_item("go test cmd/oactl/entrypoint/..."))
+    errors = run_review_preflight(_item("go test cmd/..."))
 
     assert errors == [
         "node node-a: Go local package target must start with ./ or ../: "
-        "cmd/oactl/entrypoint/..."
+        "cmd/..."
     ]
 
 
-def test_preflight_rejects_duplicate_explicit_output_path():
+def test_preflight_skips_ambiguous_component_manifest_flag_semantics():
     errors = run_review_preflight(_item(
-        "python package.py --bundle artifacts/source.tar.zst",
-        "python package.py --bundle artifacts/source.tar.zst --kind second",
+        "python aggregate.py --component-manifest future/components.yaml --kind first",
+        "python aggregate.py --component-manifest future/components.yaml --kind second",
     ))
 
-    assert errors == [
-        "artifact output path has multiple producers: artifacts/source.tar.zst "
-        "(node-a command 1, node-a command 2)"
-    ]
+    assert errors == []
 
 
-def test_preflight_rejects_unmaterialized_command_input():
+def test_preflight_skips_future_input_and_manifest_materialization_without_typed_io():
     errors = run_review_preflight(_item(
-        "python verify.py --manifest generated/review-manifest.yaml"))
+        "python aggregate.py --input future/a.json "
+        "--manifest future/review-manifest.yaml"))
 
-    assert errors == [
-        "node node-a: command input has no reachable producer or owned scope: "
-        "generated/review-manifest.yaml"
-    ]
+    assert errors == []
 
 
 def test_preflight_accepts_command_input_owned_by_node_scope():
@@ -114,6 +109,10 @@ def test_preflight_accepts_input_from_reachable_predecessor():
     )
 
     assert run_review_preflight(item) == []
+
+
+def test_preflight_accepts_explicit_relative_go_local_package_target():
+    assert run_review_preflight(_item("go test ./cmd/...")) == []
 
 
 def test_preflight_rejects_invalid_shell_syntax_once_per_command():

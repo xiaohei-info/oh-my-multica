@@ -100,6 +100,8 @@ class WorkItem:
     # 审核信息(由 reviewer 写入)
     review_verdict: Optional[str] = None
     review_comment: Optional[str] = None
+    machine_feedback: Optional[Dict[str, Any]] = None
+    machine_feedback_ref: Optional[Dict[str, Any]] = None
     review_report: Optional[Dict[str, Any]] = None
     review_report_ref: Optional[Dict[str, Any]] = None
     review_subject_digest: Optional[str] = None

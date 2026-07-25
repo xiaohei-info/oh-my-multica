@@ -64,7 +64,11 @@ Controller Agent 应直接执行这条下一步命令，让 `dag run` 接管开�
 - worker、reviewer、acceptor 都提交结构化证据；缺项由 `omac work submit` 当场拒绝。
 - worker 必须用成功命令下的 `business_tests` 将每条 acceptance 映射到具体业务测试；Reviewer 查看测试代码确认其验证真实业务行为。
 - Reviewer 发现问题后继续完成整个评审范围，以 `full_review_completed: true` 声明完整审查，并一次性报告本轮全部 blockers 和 nits。
-- OMAC 在 Reviewer 前执行 deterministic preflight，把命令语法、目标、输入 producer 和输出冲突等机械问题直接退回产出者，不消耗 Reviewer 轮次。
+- OMAC 在 Reviewer 前执行 deterministic preflight，只把 shell 语法、缺少 `./` / `../`
+  前缀的 Go 本地包目标等语义无歧义的机械问题退回产出者，不消耗 Reviewer 轮次。
+  没有显式 typed IO contract 时，不根据通用 flag、当前文件存在性或 `scope_paths`
+  猜测 producer / materialization。完整机器反馈存于附件；产出者按有界摘要中的
+  `omac work show <issue-id> --output json` 入口读取 `context.machine_feedback`。
 - 每轮 review 都有有限 `review_obligations`；Reviewer 必须逐项给结论。跨轮 blocker 写入 review ledger，以稳定根因区分 fixed、unchanged、deeper、regressed 和 new。
 - 连续出现新 blocker 或已关闭 blocker 回归时，`review_state` 自动进入 `convergence-audit`，要求根因级整链修复，而不是无限普通 bounce。
 - 状态同时落在 manifest 与平台 work item 中；重跑 `dag run` 会复用已完成节点并续跑。

@@ -6,6 +6,7 @@ assign 后按延迟自动模拟完成/失败/评审通过,
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import tempfile
 import time
@@ -13,6 +14,9 @@ import json
 from typing import Any, Dict, List, Optional
 
 import yaml
+from ..core.machine_feedback import (
+    dump_machine_feedback, parse_machine_feedback,
+)
 from ..core.taskmeta import DELIVERY_CONTENT_KEY, TaskKind, TaskPhase
 from ..errors import ValidationError
 from ..i18n import ui
@@ -651,6 +655,8 @@ class MockStore(WorkItemStore):
         artifacts: Optional[Dict[str, Any]] = None,
         review_verdict: Optional[str] = None,
         review_comment: Optional[str] = None,
+        machine_feedback: Optional[Dict[str, Any]] = None,
+        machine_feedback_source: Optional[str] = None,
         verification: Optional[Dict[str, Any]] = None,
         verification_source: Optional[str] = None,
         review_report: Optional[Dict[str, Any]] = None,
@@ -683,6 +689,27 @@ class MockStore(WorkItemStore):
             item.review_verdict = review_verdict
         if review_comment is not None:
             item.review_comment = review_comment
+        if machine_feedback is not None or machine_feedback_source is not None:
+            if machine_feedback_source is None and machine_feedback:
+                machine_feedback_source = dump_machine_feedback(machine_feedback)
+            if not machine_feedback_source:
+                item.machine_feedback = None
+                item.machine_feedback_ref = None
+            else:
+                parsed = parse_machine_feedback(machine_feedback_source)
+                if parsed is None or (
+                    machine_feedback is not None and machine_feedback != parsed
+                ):
+                    raise ValidationError(ui(
+                        "Machine feedback must use schema omac.machine-feedback/v1",
+                        "machine feedback 必须使用 omac.machine-feedback/v1 schema"))
+                item.machine_feedback = parsed
+                item.machine_feedback_ref = {
+                    "filename": "omac-machine-feedback.json",
+                    "bytes": len(machine_feedback_source.encode("utf-8")),
+                    "sha256": hashlib.sha256(
+                        machine_feedback_source.encode("utf-8")).hexdigest(),
+                }
         if verification is not None:
             item.verification = verification
         if verification_source is not None:
@@ -780,6 +807,8 @@ class MockStore(WorkItemStore):
         item = self.get_work_item(item_id)
         item.review_verdict = None
         item.review_comment = None
+        item.machine_feedback = None
+        item.machine_feedback_ref = None
         item.decision_required = None
         item.review_subject_digest = None
         item.phase = TaskPhase.AUTHORING
@@ -790,6 +819,8 @@ class MockStore(WorkItemStore):
             return item
         item.review_verdict = None
         item.review_comment = None
+        item.machine_feedback = None
+        item.machine_feedback_ref = None
         item.review_report = None
         item.review_report_ref = None
         item.decision_required = None

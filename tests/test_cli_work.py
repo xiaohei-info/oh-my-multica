@@ -1129,6 +1129,12 @@ class TestSubmitPerKindPhase:
             item.id,
             review_verdict="reject",
             review_comment="stale blocker",
+            machine_feedback={
+                "schema": "omac.machine-feedback/v1",
+                "gate": "machine-gate",
+                "error_count": 1,
+                "errors": ["stale machine finding"],
+            },
             decision_required={"decision": "revise"},
         )
         afile = tmp_path / "acceptance.yaml"
@@ -1146,6 +1152,8 @@ class TestSubmitPerKindPhase:
         assert got.status == WorkItemStatus.IN_REVIEW
         assert not got.review_verdict
         assert not got.review_comment
+        assert got.machine_feedback is None
+        assert got.machine_feedback_ref is None
         assert got.decision_required == {}
 
     def test_acceptance_authoring_schema_rejected(self, tmp_path):

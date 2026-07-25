@@ -400,7 +400,7 @@ def collect_results(
             if verdict == "pass-with-nits" and not gate_errors:
                 store.update_work_item_metadata(
                     node.work_item_id, phase=TaskPhase.AUTHORING,
-                    review_comment="")
+                    review_comment="", machine_feedback={})
                 try:
                     store.assign_work_item(node.work_item_id, node.worker, "worker")
                     store.update_status(node.work_item_id, WorkItemStatus.IN_PROGRESS)

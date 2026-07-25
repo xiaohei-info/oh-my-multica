@@ -41,11 +41,17 @@ guide does not decide product facts.
 
 ## Machine preflight and convergence mode
 
-- Before Reviewer dispatch, OMAC machine preflight checks deterministic
-  manifest defects such as shell syntax, Go local package targets, explicit
-  output collisions, and inputs without a reachable producer. Fix every
-  machine preflight finding before resubmitting; it does not consume a Reviewer
-  cycle.
+- Before Reviewer dispatch, OMAC machine preflight checks only mechanically
+  certain facts that do not depend on project conventions, such as shell syntax
+  and Go local package targets missing a `./` or `../` prefix. Without an
+  explicit typed IO contract, OMAC does not infer artifact producers or input
+  materialization from generic flag names, current file existence, or
+  `scope_paths`.
+- A machine preflight failure returns directly to authoring without consuming a
+  Reviewer cycle. `review_comment` contains only a bounded summary; the complete
+  structured findings are stored in an attachment. Before reworking, run the
+  summary's `omac work show <issue-id> --output json` command and read
+  `context.machine_feedback`, then fix every finding before resubmitting.
 - In `review_state.mode=normal`, close every `required_closures` item and review
   the full manifest impact.
 - In `review_state.mode=convergence-audit`, stop patching findings one at a
