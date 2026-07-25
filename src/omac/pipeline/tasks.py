@@ -18,6 +18,8 @@ from typing import Any, Callable, Dict, List, Optional
 from ..core import logsetup
 from ..core.evidence import validate_review_evidence
 from ..core.manifest import Contract, _load_contract
+from ..core.review_convergence import build_review_obligations
+from ..core.review_preflight import run_review_preflight
 from ..core.taskmeta import DELIVERY_CONTENT_KEY, TaskKind, TaskPhase, make_dag_key
 from ..engines.models import WorkItem, WorkItemStatus
 from ..errors import NeedsDecision, ValidationError
@@ -453,10 +455,13 @@ def run_task(
                 "rounds": 0, "verdict": delivered.review_verdict,
                 "kind": kind.value}
 
-    # 机器门(零 token):通过即止,耗尽转 NeedsDecision
-    if guard is not None:
+    # 机器门(零 reviewer token):阶段 guard + 通用 review preflight。
+    # 所有可确定判断先回给产出者，Reviewer 只消费通过后的语义问题。
+    if guard is not None or reviewers:
         for guard_round in range(1, max_revisions + 1):
-            guard_errors: List[str] = guard(delivered)
+            guard_errors: List[str] = guard(delivered) if guard is not None else []
+            if reviewers:
+                guard_errors.extend(run_review_preflight(delivered))
             if not guard_errors:
                 break
             log.info(logsetup.EVT_REVISION, kind=kind.value, id=item_id,
@@ -551,6 +556,12 @@ def run_task(
     for round_index in range(review_bounce + 1, max_revisions + 1):
         reviewer = _pick_reviewer(reviewers, assignee, round_index - 1)
         subject_digest = _review_subject_digest(kind, delivered, round_index)
+        current = store.get_work_item(item_id)
+        if current.review_subject_digest != subject_digest:
+            store.update_work_item_metadata(
+                item_id,
+                review_obligations=build_review_obligations(current),
+            )
         reviewed = store.prepare_review_cycle(item_id, subject_digest)
         while True:
             if _has_review_verdict(reviewed):

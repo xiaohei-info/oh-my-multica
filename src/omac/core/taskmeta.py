@@ -88,6 +88,8 @@ CONTRACT_REF_KEY = "contract_ref"
 VERIFICATION_REF_KEY = "verification_ref"
 REVIEW_REPORT_REF_KEY = "review_report_ref"
 REVIEW_SUBJECT_DIGEST_KEY = "review_subject_digest"
+REVIEW_OBLIGATIONS_KEY = "review_obligations"
+REVIEW_LEDGER_REF_KEY = "review_ledger_ref"
 DECISION_REQUIRED_KEY = "decision_required"
 SOURCE_REFS_KEY = "source_refs"
 

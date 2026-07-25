@@ -334,6 +334,79 @@ def test_multica_review_report_source_writes_ref_without_full_report_metadata(mo
     }) in writes
 
 
+def test_multica_review_ledger_and_obligations_roundtrip_from_metadata(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    monkeypatch.setattr(
+        store,
+        "_load_payload_comment",
+        lambda item_id, label, ref: (
+            "schema: omac.review-ledger/v1\ncycles: []\nblockers: []\n"
+            if label == "review-ledger" else None),
+    )
+
+    item = store._issue_to_work_item({
+        "id": "issue-1",
+        "title": "review",
+        "description": "review",
+        "status": "in_review",
+        "metadata": {
+            "dag_key": "review-1",
+            "kind": "decompose",
+            "phase": "review",
+            "review_obligations": '[{"obligation_id":"dimension:authority"}]',
+            "review_ledger_ref": '{"attachment_id":"ledger-1"}',
+        },
+    }, "ws")
+
+    assert item.review_obligations == [
+        {"obligation_id": "dimension:authority"}]
+    assert item.review_ledger == {
+        "schema": "omac.review-ledger/v1", "cycles": [], "blockers": []}
+    assert item.review_ledger_ref == {"attachment_id": "ledger-1"}
+
+
+def test_multica_writes_review_evidence_before_terminal_verdict(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    events = []
+
+    monkeypatch.setattr(
+        store,
+        "_publish_payload_comment",
+        lambda item_id, label, source, suffix: (
+            events.append(("publish", label))
+            or {"attachment_id": f"{label}-attachment"}),
+    )
+    monkeypatch.setattr(
+        store,
+        "_set_metadata",
+        lambda item_id, key, value: events.append(("metadata", key)),
+    )
+    monkeypatch.setattr(
+        store,
+        "get_work_item",
+        lambda item_id: store._issue_to_work_item({
+            "id": item_id,
+            "title": "review",
+            "description": "review",
+            "status": "in_review",
+            "metadata": {"dag_key": "review-1", "kind": "decompose"},
+        }, "ws"),
+    )
+
+    store.update_work_item_metadata(
+        "issue-1",
+        review_report_source="full_review_completed: true\n",
+        review_ledger_source=(
+            "schema: omac.review-ledger/v1\ncycles: []\nblockers: []\n"),
+        review_verdict="reject",
+    )
+
+    assert events.index(("metadata", "review_report_ref")) < events.index(
+        ("metadata", "review_verdict"))
+    assert events.index(("metadata", "review_ledger_ref")) < events.index(
+        ("metadata", "review_verdict"))
+
+
 def test_multica_payload_ref_downloads_known_attachment_without_comment_thread(monkeypatch):
     """ref 已含 attachment_id 时直接取附件，评论线程超时不应拖死轮询。"""
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))

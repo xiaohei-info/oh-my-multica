@@ -33,6 +33,7 @@ from omac.core.config import (
     resolve_retry,
 )
 from omac.core.manifest import Manifest, Node
+from omac.core.review_convergence import REVIEW_PROTOCOL_VERSION, open_blockers
 from omac.engines.mock import MockRuntime, MockStore
 from omac.engines.models import EngineConfig, WorkItem, WorkItemStatus
 from omac.pipeline.delivery import run_merge_delivery
@@ -65,6 +66,42 @@ def _merge_script(tmp_path, body, name="merge.sh"):
 def _merge_config(script_path, timeout_minutes=30):
     return {"merge": {"command": f"sh {script_path} {{pr_url}}",
                       "timeout_minutes": timeout_minutes}}
+
+
+def _current_pass_report(store, item_id, goal):
+    item = store.get_work_item(item_id)
+    report = {
+        "review_goals": [goal],
+        "diff_reviewed": True,
+        "tests_rerun": True,
+        "coverage_checked": True,
+        "full_review_completed": True,
+        "integration_tests_rerun": True,
+        "acceptance_mapping": [
+            {"acceptance": "a works", "evidence": "ok", "status": "pass"}],
+        "blockers": [],
+    }
+    if item.review_obligations:
+        report.update({
+            "review_protocol": REVIEW_PROTOCOL_VERSION,
+            "obligation_results": [
+                {
+                    "obligation_id": obligation["obligation_id"],
+                    "status": "pass",
+                    "evidence": "independently verified",
+                }
+                for obligation in item.review_obligations
+            ],
+            "prior_blocker_results": [
+                {
+                    "blocker_id": blocker["blocker_id"],
+                    "status": "fixed",
+                    "evidence": "rework verified",
+                }
+                for blocker in open_blockers(item.review_ledger)
+            ],
+        })
+    return report
 
 
 # 一个「reviewer-pass 后」的节点:reviewer pass 的证据已落盘(pr_url + review_verdict + review_report),
@@ -386,14 +423,7 @@ class TestCollectResultsMerge:
         # reviewer 重新 pass → 此时才允许 merge → done
         store.update_work_item_metadata(
             item.id, review_verdict="pass",
-            review_report={
-                "review_goals": ["re-review"], "diff_reviewed": True,
-                "tests_rerun": True, "coverage_checked": True,
-                "full_review_completed": True,
-                "integration_tests_rerun": True,
-                "acceptance_mapping": [
-                    {"acceptance": "a works", "evidence": "ok", "status": "pass"}],
-                "blockers": []})
+            review_report=_current_pass_report(store, item.id, "re-review"))
         store.update_status(item.id, WorkItemStatus.DONE)
         loop.collect_results(store, rt, manifest, path, retry_limits=dict(DEFAULT_RETRY),
                             config=_merge_config(pass_script))
@@ -435,14 +465,7 @@ class TestCollectResultsMerge:
         # reviewer pass
         store.update_work_item_metadata(
             item.id, review_verdict="pass",
-            review_report={
-                "review_goals": ["x"], "diff_reviewed": True,
-                "tests_rerun": True, "coverage_checked": True,
-                "full_review_completed": True,
-                "integration_tests_rerun": True,
-                "acceptance_mapping": [
-                    {"acceptance": "a works", "evidence": "ok", "status": "pass"}],
-                "blockers": []})
+            review_report=_current_pass_report(store, item.id, "x"))
         store.update_status(item.id, WorkItemStatus.DONE)
         # tick 2:merge 冲突 → bounce
         loop.collect_results(store, rt, manifest, path, retry_limits=dict(DEFAULT_RETRY),
@@ -464,14 +487,7 @@ class TestCollectResultsMerge:
         # reviewer 重新 pass
         store.update_work_item_metadata(
             item.id, review_verdict="pass",
-            review_report={
-                "review_goals": ["x2"], "diff_reviewed": True,
-                "tests_rerun": True, "coverage_checked": True,
-                "full_review_completed": True,
-                "integration_tests_rerun": True,
-                "acceptance_mapping": [
-                    {"acceptance": "a works", "evidence": "ok", "status": "pass"}],
-                "blockers": []})
+            review_report=_current_pass_report(store, item.id, "x2"))
         store.update_status(item.id, WorkItemStatus.DONE)
         # tick 4:merge 成功 → done
         loop.collect_results(store, rt, manifest, path, retry_limits=dict(DEFAULT_RETRY),

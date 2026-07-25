@@ -25,7 +25,8 @@ from ..core.taskmeta import (
     CI_BOUNCE_KEY, CONTRACT_REF_KEY, DECISION_REQUIRED_KEY, DELIVERABLE_KEY,
     DELIVERABLE_REF_KEY, KIND_KEY, MERGE_BOUNCE_KEY, PHASE_KEY,
     PROJECT_RULES_KEY, PROJECT_RULES_REF_KEY, REVIEW_BOUNCE_KEY,
-    REVIEW_REPORT_REF_KEY, REVIEW_SUBJECT_DIGEST_KEY,
+    REVIEW_LEDGER_REF_KEY, REVIEW_OBLIGATIONS_KEY, REVIEW_REPORT_REF_KEY,
+    REVIEW_SUBJECT_DIGEST_KEY,
     SOURCE_REFS_KEY, TaskKind, TaskPhase, VERIFICATION_REF_KEY, WORKER_BOUNCE_KEY,
     parse_bounces, parse_kind, parse_phase,
 )
@@ -428,6 +429,8 @@ class MulticaStore(WorkItemStore):
 
         verification_ref = self._json_metadata(metadata, VERIFICATION_REF_KEY)
         review_report_ref = self._json_metadata(metadata, REVIEW_REPORT_REF_KEY)
+        review_ledger_ref = self._json_metadata(metadata, REVIEW_LEDGER_REF_KEY)
+        review_obligations = self._json_metadata(metadata, REVIEW_OBLIGATIONS_KEY)
         contract_ref = self._json_metadata(metadata, CONTRACT_REF_KEY)
         source_refs = self._json_metadata(metadata, SOURCE_REFS_KEY)
         verification = None
@@ -445,6 +448,12 @@ class MulticaStore(WorkItemStore):
         if review_report is None:
             legacy_report = self._json_metadata(metadata, "review_report")
             review_report = legacy_report if isinstance(legacy_report, dict) else None
+
+        review_ledger = None
+        if isinstance(review_ledger_ref, dict):
+            ledger_text = self._load_payload_comment(
+                issue_data["id"], "review-ledger", review_ledger_ref)
+            review_ledger = parse_payload_text(ledger_text)
 
         contract = None
         if isinstance(contract_ref, dict):
@@ -475,6 +484,11 @@ class MulticaStore(WorkItemStore):
             review_report_ref=review_report_ref if isinstance(review_report_ref, dict) else None,
             review_subject_digest=self._optional_text_metadata(
                 metadata, REVIEW_SUBJECT_DIGEST_KEY),
+            review_obligations=(
+                review_obligations if isinstance(review_obligations, list) else []),
+            review_ledger=review_ledger,
+            review_ledger_ref=(
+                review_ledger_ref if isinstance(review_ledger_ref, dict) else None),
             decision_required=self._json_metadata(metadata, DECISION_REQUIRED_KEY),
             contract=contract,
             contract_ref=contract_ref if isinstance(contract_ref, dict) else None,
@@ -728,6 +742,9 @@ class MulticaStore(WorkItemStore):
         review_report: Optional[Dict[str, Any]] = None,
         review_report_source: Optional[str] = None,
         review_subject_digest: Optional[str] = None,
+        review_obligations: Optional[List[Dict[str, Any]]] = None,
+        review_ledger: Optional[Dict[str, Any]] = None,
+        review_ledger_source: Optional[str] = None,
         decision_required: Optional[Dict[str, Any]] = None,
         phase: Optional[TaskPhase] = None,
         worker_bounce: Optional[int] = None,
@@ -763,8 +780,6 @@ class MulticaStore(WorkItemStore):
             self._set_metadata(item_id, "blocked_by", blocked_by)
         if artifacts is not None:
             self._set_metadata(item_id, "artifacts", artifacts)
-        if review_verdict is not None:
-            self._set_metadata(item_id, "review_verdict", review_verdict)
         if review_comment is not None:
             self._set_metadata(item_id, "review_comment", review_comment)
         if verification is not None and verification_source is None:
@@ -779,6 +794,16 @@ class MulticaStore(WorkItemStore):
             ref = self._publish_payload_comment(
                 item_id, "review-report", review_report_source, ".yaml")
             self._set_metadata(item_id, REVIEW_REPORT_REF_KEY, ref)
+        if review_obligations is not None:
+            self._set_metadata(
+                item_id, REVIEW_OBLIGATIONS_KEY, review_obligations)
+        if review_ledger is not None and review_ledger_source is None:
+            review_ledger_source = json.dumps(
+                review_ledger, ensure_ascii=False, indent=2)
+        if review_ledger_source is not None:
+            ref = self._publish_payload_comment(
+                item_id, "review-ledger", review_ledger_source, ".yaml")
+            self._set_metadata(item_id, REVIEW_LEDGER_REF_KEY, ref)
         if review_subject_digest is not None:
             self._set_metadata(
                 item_id, REVIEW_SUBJECT_DIGEST_KEY, review_subject_digest)
@@ -811,6 +836,9 @@ class MulticaStore(WorkItemStore):
             self._set_metadata(item_id, SOURCE_REFS_KEY, source_refs)
         if phase is not None:
             self._set_metadata(item_id, PHASE_KEY, phase.value)
+        # verdict 是终态可见信号；所有报告和 ledger 证据必须先持久化。
+        if review_verdict is not None:
+            self._set_metadata(item_id, "review_verdict", review_verdict)
         return self.get_work_item(item_id)
 
     def set_node_contract(self, item_id: str, contract: Any):

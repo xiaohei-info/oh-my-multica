@@ -28,6 +28,28 @@ conflict or cannot be reproduced, do not infer pass.
   gates, coverage gate, and scope paths.
 - Relevant artifact guidance plus outputs, metrics, and artifacts produced by
   independent reproduction.
+- `work show.context.review_protocol`, `review_obligations`,
+  `prior_open_blockers`, and `review_state`. They define the finite review scope
+  and cross-cycle regression facts; do not silently narrow them.
+
+## Finite coverage and regression
+
+- Disposition every `review_obligations[].obligation_id` exactly once in
+  `obligation_results` with `pass|fail` and non-empty evidence.
+- Disposition every `prior_open_blockers[].blocker_id` in
+  `prior_blocker_results` as `fixed|unchanged|deeper|regressed`.
+- A v2 blocker contains `root_cause_key`, `obligation_id`, `classification`,
+  `summary`, `evidence`, and `required_fix`. Keep the root-cause identity stable
+  across wording, line, and version changes.
+- Use `new` only for a genuinely new root cause, `unchanged` when the defect
+  remains, `deeper` when the same root cause is not fully closed, and
+  `regressed` when a previously fixed defect reappears.
+- Report each `root_cause_key` at most once per cycle. A prior blocker that is
+  not `fixed` must remain in `blockers` with the same root and a classification
+  matching `prior_blocker_results`; a root declared fixed cannot also remain a
+  current blocker.
+- Keep `full_review_completed: true`, but OMAC also computes completeness from
+  obligation and prior-blocker coverage. The boolean cannot hide omissions.
 
 ## Steps
 
@@ -69,7 +91,8 @@ conflict or cannot be reproduced, do not infer pass.
     pass-with-nits because structure, coverage, or aggregate evidence looks
     complete. Environment setup prerequisites are non-blocking only when they do
     not replace user actions and have an explicit owner and completion point.
-14. Write a report with `review_goals` and `full_review_completed: true`. Develop
+14. Write a report with `review_goals`, `full_review_completed: true`,
+    `obligation_results`, and `prior_blocker_results`. Develop
     review also includes `acceptance_mapping` and `integration_gate_mapping`.
     Report all issues in one review, including every blocker and nit found in the
     pass. Each blocker states the fact, impact, and actionable repair direction.
@@ -91,7 +114,7 @@ conflict or cannot be reproduced, do not infer pass.
 
 ## Rework
 
-For a revised issue, rerun `work show`, inspect the complete new diff, and
+For a revised issue, rerun `work show`, disposition every prior blocker, inspect the complete new diff, and
 independently rerun the entire current-contract verification. Confirm every old
 blocker is gone and look again for new issues, regressions, scope growth, or
 coverage gaps instead of checking only the previous findings. If only the report schema is wrong,

@@ -161,6 +161,8 @@ def test_reviewer_role_has_verdict_and_independent_checks() -> None:
     for item in [
         "独立复跑", "pass", "reject", "review_goals", "coverage", "project_rules",
         "full_review_completed", "发现第一个 blocker 后继续", "一次性",
+        "review_obligations", "obligation_results", "prior_blocker_results",
+        "root_cause_key",
     ]:
         assert item in content, f"reviewer missing review anchor: {item}"
 
@@ -174,6 +176,25 @@ def test_planner_and_orchestrator_require_complete_foundation_capabilities() -> 
         assert "假数据兜底" in content
     assert "可运行骨架" not in planner
     assert "可运行骨架" not in orchestrator
+
+
+def test_orchestrator_consumes_machine_preflight_and_convergence_contract() -> None:
+    chinese = load_role_topic("orchestrator")
+    english = load_role_topic("orchestrator", language="en")
+
+    for item in ["required_closures", "review_state", "convergence-audit", "machine preflight"]:
+        assert item in chinese
+    for item in ["required_closures", "review_state", "convergence-audit", "machine preflight"]:
+        assert item in english
+
+
+def test_workflow_explains_finite_review_coverage_and_ledger() -> None:
+    chinese = load_topic("workflow")
+    english = load_topic("workflow", language="en")
+
+    for item in ["review_obligations", "review ledger", "deterministic preflight"]:
+        assert item in chinese
+        assert item in english
 
 
 def test_acceptor_role_has_final_acceptance_protocol() -> None:

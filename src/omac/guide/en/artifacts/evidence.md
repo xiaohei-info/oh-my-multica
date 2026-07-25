@@ -47,6 +47,7 @@ env_setup:
 ### Reviewer report
 
 ```yaml
+review_protocol: omac.review/v2
 review_goals:
   - Acceptance is fully covered and each item is verifiable
 diff_reviewed: true
@@ -54,6 +55,12 @@ tests_rerun: true
 integration_tests_rerun: true
 coverage_checked: true
 full_review_completed: true
+obligation_results:
+  - obligation_id: dimension:authority
+    status: pass
+    evidence: Current work-show facts and authoritative sources were checked
+  # Include every work show.context.review_obligations item
+prior_blocker_results: [] # Cover prior_open_blockers as fixed|unchanged|deeper|regressed
 acceptance_mapping:
   - { acceptance: "flow-login", evidence: "tests/e2e/test_login.py", status: pass }
 integration_gate_mapping:
@@ -67,6 +74,18 @@ integration_gate_mapping:
     artifacts: []
 blockers: []
 nits: []
+```
+
+For reject, `blockers` contains structured objects:
+
+```yaml
+blockers:
+  - root_cause_key: release-trust-handoff
+    obligation_id: dimension:evidence
+    classification: new # or unchanged|deeper|regressed
+    summary: Release N trust handoff is incomplete
+    evidence: The verifier does not consume the N signature report
+    required_fix: Verify N and N+1 signatures and payload digests symmetrically
 ```
 
 ### Final acceptance results
@@ -101,10 +120,13 @@ Submit the PR URL separately through `--pr-url`, not in verification YAML.
 | `review_goals` | Non-empty list of independently verified review goals. |
 | `diff_reviewed` / `tests_rerun` / `coverage_checked` | `true`: the diff was read, tests rerun independently, and coverage checked. |
 | `full_review_completed` | `true`: the Reviewer continued after findings, completed the entire review scope, and reported every issue found in that pass. |
+| `review_protocol` | `omac.review/v2` for a newly prepared review cycle. |
+| `obligation_results` | Exactly covers `work show.context.review_obligations`; each item has ID, pass/fail, and non-empty evidence. |
+| `prior_blocker_results` | Exactly covers `prior_open_blockers` as fixed/unchanged/deeper/regressed with evidence. |
 | `integration_tests_rerun` | `true` when the contract has integration gates. |
 | `acceptance_mapping` | Evidence and pass/fail for every contract acceptance flow. |
 | `integration_gate_mapping` | Independently reproduced gate results aligned with the contract. |
-| `blockers` | Empty for pass forms; non-empty actionable blockers for reject. |
+| `blockers` | Empty for pass forms; structured obligation/root-cause/classification/evidence/repair objects for reject. Each root appears once per cycle; unresolved prior roots remain listed with classification matching `prior_blocker_results`. |
 | `nits` | Non-blocking improvement suggestions. |
 
 Submit verdict through `--verdict`, not report YAML. Valid values are `pass`,
@@ -137,6 +159,8 @@ Submit verdict through `--verdict`, not report YAML. Valid values are `pass`,
 3. Gate mapping covers each gate and validates commands, metrics, artifacts,
    sources, and delivery goals.
 4. Pass forms have no blockers; reject has blockers.
+5. Obligation results contain no missing, duplicate, or unknown IDs; pass forms require every obligation to pass.
+6. Every prior open blocker is dispositioned; unresolved history cannot be hidden by pass.
 
 ### Final acceptance results
 
