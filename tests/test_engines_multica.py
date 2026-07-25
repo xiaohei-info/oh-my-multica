@@ -365,6 +365,32 @@ def test_multica_review_ledger_and_obligations_roundtrip_from_metadata(monkeypat
     assert item.review_ledger_ref == {"attachment_id": "ledger-1"}
 
 
+@pytest.mark.parametrize("ledger_text", [None, "not: [valid", "- blocker-a\n"])
+def test_multica_review_ledger_ref_fails_closed_when_payload_is_invalid(
+    monkeypatch, ledger_text
+):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    monkeypatch.setattr(
+        store,
+        "_load_payload_comment",
+        lambda item_id, label, ref: ledger_text,
+    )
+
+    with pytest.raises(PlatformError, match="review ledger"):
+        store._issue_to_work_item({
+            "id": "issue-1",
+            "title": "review",
+            "description": "review",
+            "status": "in_review",
+            "metadata": {
+                "dag_key": "review-1",
+                "kind": "decompose",
+                "phase": "review",
+                "review_ledger_ref": '{"attachment_id":"ledger-1"}',
+            },
+        }, "ws")
+
+
 def test_multica_writes_review_evidence_before_terminal_verdict(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
     events = []

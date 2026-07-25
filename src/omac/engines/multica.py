@@ -454,6 +454,16 @@ class MulticaStore(WorkItemStore):
             ledger_text = self._load_payload_comment(
                 issue_data["id"], "review-ledger", review_ledger_ref)
             review_ledger = parse_payload_text(ledger_text)
+            if not isinstance(review_ledger, dict):
+                raise PlatformError(ui(
+                    "Could not load the review ledger attachment referenced by "
+                    f"work item {issue_data['id']}. Restore a valid YAML/JSON "
+                    "review ledger, then rerun "
+                    f"`omac work show {issue_data['id']} --output json`.",
+                    "无法读取或解析工作单元 "
+                    f"{issue_data['id']} 引用的 review ledger 附件。请恢复合法的 "
+                    "YAML/JSON 台账，然后重新执行 "
+                    f"`omac work show {issue_data['id']} --output json`。"))
 
         contract = None
         if isinstance(contract_ref, dict):

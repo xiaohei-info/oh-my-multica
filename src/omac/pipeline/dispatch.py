@@ -517,11 +517,17 @@ class _Item:
         verification: Optional[Dict[str, Any]] = None,
         review_verdict: Optional[str] = None,
         review_report: Optional[Dict[str, Any]] = None,
+        review_obligations: Optional[List[Dict[str, Any]]] = None,
+        review_ledger: Optional[Dict[str, Any]] = None,
+        review_subject_digest: Optional[str] = None,
     ):
         self.artifacts = artifacts
         self.verification = verification
         self.review_verdict = review_verdict
         self.review_report = review_report
+        self.review_obligations = review_obligations
+        self.review_ledger = review_ledger
+        self.review_subject_digest = review_subject_digest
 
 
 def _validate_plan_authoring(
@@ -664,7 +670,13 @@ def _validate_review(
             "--plan-file 与 --project-rules-file 后再评审。"))
     report = _parse_structured(report_file)
     node = _Node(_contract_from_item(item))
-    probe = _Item(review_verdict=verdict, review_report=report)
+    probe = _Item(
+        review_verdict=verdict,
+        review_report=report,
+        review_obligations=getattr(item, "review_obligations", None),
+        review_ledger=getattr(item, "review_ledger", None),
+        review_subject_digest=getattr(item, "review_subject_digest", None),
+    )
     errors = evidence_mod.validate_review_evidence(node, probe)
     if errors:
         raise ValidationError(ui(

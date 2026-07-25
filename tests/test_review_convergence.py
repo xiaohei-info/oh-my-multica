@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+import pytest
 import yaml
 
 from omac.core.review_convergence import (
@@ -12,6 +13,7 @@ from omac.core.review_convergence import (
 from omac.core.taskmeta import TaskKind, TaskPhase
 from omac.engines.mock import MockStore
 from omac.engines.models import EngineConfig, WorkItemStatus
+from omac.errors import ValidationError
 from omac.pipeline import dispatch
 from omac.engines import create_engine
 from omac.pipeline.tasks import run_task
@@ -212,6 +214,31 @@ def test_review_report_rejects_duplicate_root_cause_keys():
     assert "review_report contains duplicate root_cause_key: duplicate-root" in errors
 
 
+def test_review_report_blocker_must_reference_failed_obligation():
+    item = _item()
+    obligations = build_review_obligations(item)
+    item.review_obligations = obligations
+    report = _report(
+        obligations,
+        blockers=[{
+            "root_cause_key": "contradictory-root",
+            "obligation_id": "dimension:structure",
+            "classification": "new",
+            "summary": "claims a blocker despite passing evidence",
+            "evidence": "all obligation results say pass",
+            "required_fix": "make the result and blocker agree",
+        }],
+    )
+
+    errors = validate_convergence_review(item, "reject", report)
+
+    assert (
+        "review_report.blockers[0].obligation_id must reference a failed obligation"
+        in errors
+    )
+    assert "review_report reject verdict requires at least one failed obligation" in errors
+
+
 def test_ledger_closes_old_blocker_and_adds_new_blocker():
     item = _item()
     obligations = build_review_obligations(item)
@@ -260,6 +287,65 @@ def test_ledger_closes_old_blocker_and_adds_new_blocker():
     assert records["command-target"]["status"] == "open"
     assert second_ledger["cycles"][-1]["fixed_count"] == 1
     assert second_ledger["cycles"][-1]["new_count"] == 1
+
+
+def test_ledger_same_subject_and_verdict_with_different_report_advances():
+    item = _item()
+    obligations = build_review_obligations(item)
+
+    def rejected_report(root):
+        return _report(
+            obligations,
+            failed={"dimension:structure"},
+            blockers=[{
+                "root_cause_key": root,
+                "obligation_id": "dimension:structure",
+                "classification": "new",
+                "summary": root,
+                "evidence": root,
+                "required_fix": f"fix {root}",
+            }],
+        )
+
+    first = rejected_report("root-a")
+    second = rejected_report("root-b")
+    ledger = advance_review_ledger(
+        None, first, verdict="reject", subject_digest="same", round_index=1)
+
+    ledger = advance_review_ledger(
+        ledger, second, verdict="reject", subject_digest="same", round_index=1)
+
+    assert len(ledger["cycles"]) == 2
+    assert {record["root_cause_key"] for record in ledger["blockers"]} == {
+        "root-a",
+        "root-b",
+    }
+    assert ledger["cycles"][0]["report_digest"] != ledger["cycles"][1]["report_digest"]
+
+
+def test_ledger_identical_retry_remains_idempotent():
+    item = _item()
+    obligations = build_review_obligations(item)
+    report = _report(
+        obligations,
+        failed={"dimension:structure"},
+        blockers=[{
+            "root_cause_key": "same-root",
+            "obligation_id": "dimension:structure",
+            "classification": "new",
+            "summary": "same root",
+            "evidence": "same evidence",
+            "required_fix": "same fix",
+        }],
+    )
+    ledger = advance_review_ledger(
+        None, report, verdict="reject", subject_digest="same", round_index=1)
+
+    retried = advance_review_ledger(
+        ledger, report, verdict="reject", subject_digest="same", round_index=1)
+
+    assert retried == ledger
+    assert len(retried["cycles"]) == 1
 
 
 def test_reappearing_closed_root_cause_is_classified_as_regression():
@@ -493,6 +579,34 @@ def test_review_submit_updates_ledger_before_exposing_verdict(tmp_path):
     assert current.review_ledger["cycles"][0]["subject_digest"] == "subject-v1"
     assert current.review_ledger["cycles"][0]["new_count"] == 1
     assert current.review_ledger["blockers"][0]["root_cause_key"] == "command-target"
+
+
+def test_v2_review_submit_rejects_legacy_report_before_metadata_write(tmp_path):
+    store = _store()
+    item = store.create_work_item(
+        "ws", "review", "review", dag_key="review-1", worker="alice",
+        reviewer="bob", kind=TaskKind.DECOMPOSE,
+        initial_status=WorkItemStatus.IN_REVIEW,
+    )
+    item.phase = TaskPhase.REVIEW
+    item.deliverable = "nodes: []"
+    item.review_subject_digest = "subject-v1"
+    item.review_obligations = build_review_obligations(item)
+    path = tmp_path / "legacy.yaml"
+    path.write_text(yaml.safe_dump({
+        "full_review_completed": True,
+        "blockers": [],
+        "nits": [],
+    }))
+
+    with pytest.raises(ValidationError, match="review_protocol"):
+        dispatch.submit(
+            store, item.id, verdict="pass", report_file=str(path))
+
+    current = store.get_work_item(item.id)
+    assert current.review_verdict is None
+    assert current.review_report is None
+    assert current.review_ledger is None
 
 
 def test_legacy_review_report_remains_accepted_without_v2_obligations(tmp_path):

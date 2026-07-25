@@ -224,6 +224,9 @@ def validate_convergence_review(item: Any, verdict: str, report: Any) -> list[st
                 errors.append(f"{prefix}.{field} must be a non-empty string")
         if blocker.get("obligation_id") not in expected:
             errors.append(f"{prefix}.obligation_id references an unknown obligation")
+        elif results.get(blocker.get("obligation_id"), {}).get("status") != "fail":
+            errors.append(
+                f"{prefix}.obligation_id must reference a failed obligation")
         if blocker.get("classification") not in _BLOCKER_CLASSIFICATIONS:
             errors.append(f"{prefix}.classification is invalid")
         root_cause_key = blocker.get("root_cause_key")
@@ -277,8 +280,12 @@ def validate_convergence_review(item: Any, verdict: str, report: Any) -> list[st
         ]
         if unresolved:
             errors.append("review_report pass verdict requires all prior blockers to be fixed")
-    elif verdict == "reject" and not valid_blockers:
-        errors.append("review_report reject verdict requires structured blockers")
+    elif verdict == "reject":
+        if not valid_blockers:
+            errors.append("review_report reject verdict requires structured blockers")
+        if not failed:
+            errors.append(
+                "review_report reject verdict requires at least one failed obligation")
     return errors
 
 
@@ -291,6 +298,13 @@ def _new_ledger() -> dict:
     return {"schema": REVIEW_LEDGER_SCHEMA, "cycles": [], "blockers": []}
 
 
+def _review_report_digest(report: dict) -> str:
+    encoded = json.dumps(
+        report, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        default=str).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def advance_review_ledger(
     ledger: Any,
     report: dict,
@@ -300,6 +314,7 @@ def advance_review_ledger(
     round_index: int,
 ) -> dict:
     """Apply one validated review report to a durable blocker ledger."""
+    report_digest = _review_report_digest(report)
     current = deepcopy(ledger) if isinstance(ledger, dict) else _new_ledger()
     current.setdefault("schema", REVIEW_LEDGER_SCHEMA)
     current.setdefault("cycles", [])
@@ -309,6 +324,7 @@ def advance_review_ledger(
         if (
             latest.get("subject_digest") == subject_digest
             and latest.get("verdict") == verdict
+            and latest.get("report_digest") == report_digest
         ):
             return current
     prior_open_ids = sorted(
@@ -403,6 +419,7 @@ def advance_review_ledger(
     current["cycles"].append({
         "round": round_index,
         "subject_digest": subject_digest,
+        "report_digest": report_digest,
         "verdict": verdict,
         "obligation_results": obligation_results,
         "new_count": new_count,
