@@ -389,6 +389,20 @@ class MockStore(WorkItemStore):
                 "blockers": [],
                 "nits": [],
             }
+            if item.review_obligations:
+                from ..core.review_convergence import advance_review_ledger
+                item.review_ledger = advance_review_ledger(
+                    item.review_ledger,
+                    item.review_report,
+                    verdict=item.review_verdict,
+                    subject_digest=item.review_subject_digest or "mock-subject",
+                    round_index=max(1, item.bounces.review + 1),
+                )
+                item.review_ledger_ref = {
+                    "filename": "omac-review-ledger.yaml",
+                    "bytes": len(yaml.safe_dump(
+                        item.review_ledger, allow_unicode=True).encode("utf-8")),
+                }
             del _shared_assigned_items[item_id]
 
     def _mock_verification(self, item_id: str) -> Optional[Dict[str, Any]]:
@@ -442,11 +456,75 @@ class MockStore(WorkItemStore):
         self, item_id: str, verdict: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         from ..core.manifest import Contract as _Contract
+        from ..core.review_convergence import (
+            REVIEW_PROTOCOL_VERSION, open_blockers)
 
         contract = _shared_contracts_by_item_id.get(item_id)
+        item = _shared_work_items[item_id]
+        obligations = list(item.review_obligations or [])
         if contract is None or not isinstance(contract, _Contract):
-            return None
-        return {
+            if not obligations:
+                return None
+            failed_id = "dimension:structure" if verdict == "reject" else None
+            return {
+                "review_protocol": REVIEW_PROTOCOL_VERSION,
+                "diff_reviewed": True,
+                "tests_rerun": True,
+                "coverage_checked": True,
+                "full_review_completed": True,
+                "obligation_results": [
+                    {
+                        "obligation_id": obligation["obligation_id"],
+                        "status": (
+                            "fail" if obligation["obligation_id"] == failed_id
+                            else "pass"),
+                        "evidence": "Mock finite review coverage",
+                    }
+                    for obligation in obligations
+                ],
+                "prior_blocker_results": [
+                    {
+                        "blocker_id": blocker["blocker_id"],
+                        "status": "fixed",
+                        "evidence": "Mock regression check passed",
+                    }
+                    for blocker in open_blockers(item.review_ledger)
+                ],
+                "blockers": ([{
+                    "root_cause_key": f"mock-review-{item.bounces.review + 1}",
+                    "obligation_id": failed_id,
+                    "classification": "new",
+                    "summary": "Mock: needs revision",
+                    "evidence": "Mock finite review found a blocker",
+                    "required_fix": "Mock author must revise the deliverable",
+                }] if failed_id else []),
+                "nits": [],
+            }
+        if not obligations:
+            obligations = []
+        failed_id = "dimension:structure" if verdict == "reject" else None
+        report = {
+            "review_protocol": REVIEW_PROTOCOL_VERSION,
+            "obligation_results": [
+                {
+                    "obligation_id": obligation["obligation_id"],
+                    "status": (
+                        "fail" if obligation["obligation_id"] == failed_id
+                        else "pass"),
+                    "evidence": "Mock finite review coverage",
+                }
+                for obligation in obligations
+            ],
+            "prior_blocker_results": [
+                {
+                    "blocker_id": blocker["blocker_id"],
+                    "status": "fixed",
+                    "evidence": "Mock regression check passed",
+                }
+                for blocker in open_blockers(item.review_ledger)
+            ],
+        }
+        report.update({
             "review_goals": ["Mock review goal"],
             "diff_reviewed": True,
             "tests_rerun": True,
@@ -476,9 +554,17 @@ class MockStore(WorkItemStore):
                  "status": "fail" if verdict == "reject" else "pass"}
                 for acceptance in contract.acceptance
             ],
-            "blockers": ["Mock: needs revision"] if verdict == "reject" else [],
+            "blockers": ([{
+                "root_cause_key": f"mock-review-{item.bounces.review + 1}",
+                "obligation_id": failed_id,
+                "classification": "new",
+                "summary": "Mock: needs revision",
+                "evidence": "Mock finite review found a blocker",
+                "required_fix": "Mock author must revise the deliverable",
+            }] if failed_id else []),
             "nits": [],
-        }
+        })
+        return report
 
     # ==================== 成员池 ====================
 
@@ -570,6 +656,9 @@ class MockStore(WorkItemStore):
         review_report: Optional[Dict[str, Any]] = None,
         review_report_source: Optional[str] = None,
         review_subject_digest: Optional[str] = None,
+        review_obligations: Optional[List[Dict[str, Any]]] = None,
+        review_ledger: Optional[Dict[str, Any]] = None,
+        review_ledger_source: Optional[str] = None,
         decision_required: Optional[Dict[str, Any]] = None,
         phase: Optional[TaskPhase] = None,
         worker_bounce: Optional[int] = None,
@@ -610,6 +699,15 @@ class MockStore(WorkItemStore):
             }
         if review_subject_digest is not None:
             item.review_subject_digest = review_subject_digest or None
+        if review_obligations is not None:
+            item.review_obligations = list(review_obligations)
+        if review_ledger is not None:
+            item.review_ledger = review_ledger
+        if review_ledger_source is not None:
+            item.review_ledger_ref = {
+                "filename": "omac-review-ledger.yaml",
+                "bytes": len(review_ledger_source.encode("utf-8")),
+            }
         if decision_required is not None:
             item.decision_required = decision_required
         if phase is not None:

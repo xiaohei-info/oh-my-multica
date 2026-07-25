@@ -13,6 +13,8 @@ from typing import Any, Dict, List, Set, Tuple
 from ..core import graph, logsetup
 from ..core.config import DEFAULT_RETRY
 from ..core.evidence import validate_review_evidence, validate_worker_evidence
+from ..core.review_convergence import (
+    build_review_obligations, review_subject_digest)
 from ..core.gitsync import commit_manifest
 from ..core.manifest import Manifest, save_manifest, set_node
 from ..pipeline.delivery import advance_delivery, run_merge_delivery
@@ -394,7 +396,8 @@ def collect_results(
 
             log.info(logsetup.EVT_VERDICT, kind=_DAG_KIND, node=key,
                      id=node.work_item_id, verdict=verdict)
-            if verdict == "pass-with-nits":
+            gate_errors = validate_review_evidence(node, item)
+            if verdict == "pass-with-nits" and not gate_errors:
                 store.update_work_item_metadata(
                     node.work_item_id, phase=TaskPhase.AUTHORING,
                     review_comment="")
@@ -417,7 +420,6 @@ def collect_results(
                         f"Failed to return nits to worker {node.worker}: {exc}",
                         f"回退到 worker {node.worker} 处理 nits 失败: {exc}")
                 continue
-            gate_errors = validate_review_evidence(node, item)
             if not gate_errors and verdict != "reject":
                 # reviewer pass → P4.2 自动 merge 门。未显式配置 merge.command 时
                 # 使用默认 gh pr merge 命令。
@@ -487,13 +489,19 @@ def collect_results(
 
     # ---- reviewer 阶段过渡(遍历后执行,避免改 manifest 影响遍历)----
     for key, item_id, reviewer in pending_review:
-        nd = manifest.nodes[key]
+        current = store.get_work_item(item_id)
+        subject_digest = review_subject_digest(
+            current, max(1, current.bounces.review + 1))
+        store.update_work_item_metadata(
+            item_id,
+            review_obligations=build_review_obligations(current),
+        )
+        store.prepare_review_cycle(item_id, subject_digest)
         # 先把工单标 IN_REVIEW 再派发 reviewer,否则 mock 下 assign 内
         # get_work_item 触发的 auto_complete 会先在 IN_PROGRESS(刚从
         # CI 回落)走 deliverable 路径把 assigned 槽位清空,后续
         # wake 的 auto_complete 找不到已派发项而无法置评审判定。
         store.update_status(item_id, WorkItemStatus.IN_REVIEW)
-        store.update_work_item_metadata(item_id, phase=TaskPhase.REVIEW)
         store.assign_work_item(item_id, reviewer, "reviewer")
         set_node(manifest, key, status="in_review")
         log.info(logsetup.EVT_REVIEW_DISPATCH, kind=_DAG_KIND, node=key,

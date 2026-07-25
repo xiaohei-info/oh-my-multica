@@ -17,6 +17,7 @@ from types import SimpleNamespace
 import pytest
 
 from omac.core.manifest import Contract, Manifest, Node, load_manifest, save_manifest
+from omac.core.review_convergence import REVIEW_PROTOCOL_VERSION, open_blockers
 from omac.core.taskmeta import TaskKind
 from omac.engines import create_engine
 from omac.engines.models import EngineConfig, WorkItemStatus
@@ -89,6 +90,31 @@ def _tmp_manifest_path(manifest):
     os.close(fd)
     save_manifest(manifest, path)
     return path
+
+
+def _with_current_review_protocol(item, report):
+    if not item.review_obligations:
+        return report
+    report.update({
+        "review_protocol": REVIEW_PROTOCOL_VERSION,
+        "obligation_results": [
+            {
+                "obligation_id": obligation["obligation_id"],
+                "status": "pass",
+                "evidence": "independently verified",
+            }
+            for obligation in item.review_obligations
+        ],
+        "prior_blocker_results": [
+            {
+                "blocker_id": blocker["blocker_id"],
+                "status": "fixed",
+                "evidence": "rework verified",
+            }
+            for blocker in open_blockers(item.review_ledger)
+        ],
+    })
+    return report
 
 
 def test_final_acceptance_body_reads_mapping_contract_and_repositories():
@@ -515,10 +541,11 @@ class TestDispatchLoopIntegration:
         assert not any("阶段变更" in c for c in eng.store.get_comments(item_id))
 
         # 3) 手动扮演 reviewer:提交 pass verdict 与结构化报告
+        review_item = eng.store.get_work_item(item_id)
         eng.store.update_work_item_metadata(
             item_id,
             review_verdict="pass",
-            review_report={
+            review_report=_with_current_review_protocol(review_item, {
                 "review_goals": ["验收映射全覆盖"],
                 "diff_reviewed": True,
                 "tests_rerun": True,
@@ -541,7 +568,7 @@ class TestDispatchLoopIntegration:
                 }],
                 "blockers": [],
                 "nits": [],
-            },
+            }),
         )
         tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
 

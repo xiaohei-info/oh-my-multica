@@ -45,6 +45,7 @@ env_setup:
 ## reviewer report
 
 ```yaml
+review_protocol: omac.review/v2
 review_goals:
   - acceptance 全覆盖且逐条可验证
 diff_reviewed: true
@@ -52,6 +53,12 @@ tests_rerun: true
 integration_tests_rerun: true
 coverage_checked: true
 full_review_completed: true
+obligation_results:
+  - obligation_id: dimension:authority
+    status: pass
+    evidence: 已核对当前 work show 与权威来源
+  # 按 work show.context.review_obligations 逐项完整列出
+prior_blocker_results: [] # 按 prior_open_blockers 逐项列出 fixed|unchanged|deeper|regressed
 acceptance_mapping:
   - { acceptance: "flow-login", evidence: "tests/e2e/test_login.py", status: pass }
 integration_gate_mapping:
@@ -65,6 +72,18 @@ integration_gate_mapping:
     artifacts: []
 blockers: []
 nits: []
+```
+
+reject 时 `blockers` 使用结构化对象：
+
+```yaml
+blockers:
+  - root_cause_key: release-trust-handoff
+    obligation_id: dimension:evidence
+    classification: new # 或 unchanged|deeper|regressed
+    summary: Release N 信任交接不闭合
+    evidence: 验证器未消费 N 的签名报告
+    required_fix: 对称校验 N 与 N+1 的签名和 payload digest
 ```
 
 ## final acceptance results
@@ -99,10 +118,13 @@ PR URL 不写入 verification YAML，而是通过 submit 的 `--pr-url` 单独�
 | `review_goals` | 非空评审目标列表，说明本轮独立验证什么。 |
 | `diff_reviewed` / `tests_rerun` / `coverage_checked` | 必须为 `true`，表示已看 diff、独立复跑测试并检查覆盖率。 |
 | `full_review_completed` | 必须为 `true`，表示发现问题后仍完成整个评审范围，并一次性报告本轮全部已发现问题。 |
+| `review_protocol` | 新 review cycle 固定为 `omac.review/v2`。 |
+| `obligation_results` | 精确覆盖 `work show.context.review_obligations`；每项有 `obligation_id`、`pass/fail` 和非空 evidence。 |
+| `prior_blocker_results` | 精确覆盖全部 `prior_open_blockers`，状态为 `fixed/unchanged/deeper/regressed` 并给出 evidence。 |
 | `integration_tests_rerun` | contract 有 integration gates 时必须为 `true`。 |
 | `acceptance_mapping` | 逐项映射 contract `acceptance` 到证据和 `pass/fail` 状态。 |
 | `integration_gate_mapping` | 按 gate 名称记录独立复跑结果，字段必须与 contract 对齐。 |
-| `blockers` | pass 类 verdict 时必须为空；reject 时必须非空并给出可执行阻塞原因。 |
+| `blockers` | pass 类 verdict 时必须为空；reject 时为结构化对象列表，绑定 obligation、稳定 root cause、分类、证据和修复入口。同一 root 每轮只出现一次，未关闭的历史 root 必须继续列出且分类与 `prior_blocker_results` 一致。 |
 | `nits` | 不阻塞通过的改进建议。 |
 
 verdict 不写入 report YAML，而是通过 submit 的 `--verdict` 提交；合法值为 `pass`、
@@ -134,6 +156,8 @@ verdict 不写入 report YAML，而是通过 submit 的 `--verdict` 提交；合
 2. 基础复核标志和 `full_review_completed` 必须为 `true`；有 integration gates 时还必须独立复跑集成测试。
 3. integration gate mapping 必须覆盖每个 gate，且命令、指标、产物、事实源和交付目标通过校验。
 4. pass 或 pass-with-nits 不得有 blockers；reject 必须有 blockers。
+5. obligation results 必须无遗漏、无重复、无未知 ID；pass 类 verdict 要求全部 obligation 为 pass。
+6. 每个历史 open blocker 都必须被处置；未关闭项不能被 pass 隐藏。
 
 ### final acceptance results
 

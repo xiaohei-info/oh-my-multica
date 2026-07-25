@@ -11,6 +11,7 @@
 """
 
 from .acceptance import AcceptanceDoc, load_acceptance_doc
+from .review_convergence import validate_convergence_review
 
 REVIEW_APPROVE = {"pass", "pass-with-nits"}
 REVIEW_VERDICTS = REVIEW_APPROVE | {"reject"}
@@ -296,6 +297,9 @@ def validate_review_evidence(node, item) -> list:
 
     if report.get("full_review_completed") is not True:
         errors.append("review_report.full_review_completed must be true")
+
+    if getattr(item, "review_obligations", None):
+        errors.extend(validate_convergence_review(item, verdict, report))
 
     if contract is None:
         return errors

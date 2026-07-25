@@ -24,6 +24,24 @@
 - `source_of_truth`、acceptance flow、`non_goals`、`verification_commands`、
   `integration_gates`、coverage gate 和 `scope_paths`。
 - 对应 artifact guide，以及独立复跑产生的命令输出、metrics 和 artifacts。
+- `work show.context.review_protocol`、`review_obligations`、`prior_open_blockers`
+  和 `review_state`。它们定义本轮有限审查范围与跨轮回归事实，不能自行删减。
+
+## 有限审查与跨轮回归
+
+- `review_obligations` 中每个 `obligation_id` 都必须在 report 的
+  `obligation_results` 中出现一次，并给出 `pass|fail` 与非空 evidence。
+- `prior_open_blockers` 中每个 `blocker_id` 都必须在 `prior_blocker_results`
+  中判定为 `fixed|unchanged|deeper|regressed`。
+- v2 blocker 必须包含 `root_cause_key`、`obligation_id`、`classification`、
+  `summary`、`evidence` 和 `required_fix`。根因身份不能使用版本号、行号或临时措辞。
+- `classification=new` 只用于首次出现的根因；旧问题未解决用 `unchanged`，
+  同根因仍未闭合用 `deeper`，已关闭后重新出现用 `regressed`。
+- 同一 `root_cause_key` 每轮只能出现一次。历史 blocker 若不是 `fixed`，必须在
+  `blockers` 中保留同一根因，且 classification 与 `prior_blocker_results` 状态一致；
+  声明 `fixed` 的根因不得同时仍列为 blocker。
+- `full_review_completed: true` 仍必须提交，但 OMAC 还会根据 obligation 与历史
+  blocker 覆盖计算完整性；布尔声明不能覆盖缺项。
 
 ## 执行步骤
 
@@ -49,7 +67,8 @@
     `acceptance` 评审中，未解决的用户动作入口 prerequisite 使对应 flow 无法执行，属于 blocker；
     不得因结构、覆盖率或聚合证据完整而用 pass-with-nits 掩盖。测试环境 setup prerequisite
     只有在不替代用户动作且明确 owner/补齐时机时才可作为非阻塞计划项。
-14. 编写 report。所有类型必须包含 `review_goals` 和 `full_review_completed: true`；develop review 还必须覆盖
+14. 编写 report。所有类型必须包含 `review_goals`、`full_review_completed: true`、
+    `obligation_results` 和 `prior_blocker_results`；develop review 还必须覆盖
     `acceptance_mapping` 和 `integration_gate_mapping`。blockers 和 nits 必须一次性包含本轮发现的全部问题，并让其与 verdict 一致；每个 blocker 写清事实、影响和可执行修复方向。
 
 ## 完成条件
@@ -66,7 +85,7 @@
 
 1. 收到修订后的同一 issue 时，重新运行 `omac work show <issue-id> --output json`，读取当前 deliverable 和历史 report。
 2. 查看相对上一轮的新 diff，但仍独立复跑当前 contract 的完整验证，不能直接沿用旧 pass。
-3. 确认全部旧 blocker 已消除，同时重新审查完整新 diff，检查修复是否引入新问题、范围扩张、回归或 coverage 缺口；禁止只复核上一轮问题。
+3. 逐项提交 `prior_blocker_results`，确认全部旧 blocker 已消除，同时重新审查完整新 diff，检查修复是否引入新问题、范围扩张、回归或 coverage 缺口；禁止只复核上一轮问题。
 4. 若仅 report schema 不合法，修正同一 report 后按当前提交命令重新交付，不改变技术 verdict 来绕过校验。
 
 ## 阻塞与升级

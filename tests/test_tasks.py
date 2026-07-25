@@ -13,6 +13,7 @@ import pytest
 
 import omac.pipeline.tasks as tasks_module
 from omac.core.manifest import Contract
+from omac.core.review_convergence import REVIEW_PROTOCOL_VERSION, open_blockers
 from omac.core.taskmeta import TaskKind, TaskPhase
 from omac.engines import create_engine
 from omac.engines.mock import MockStore
@@ -45,8 +46,8 @@ def _poll():
     pass
 
 
-def _review_report(verdict="pass"):
-    return {
+def _review_report(verdict="pass", item=None):
+    report = {
         "review_goals": ["完整复核当前交付"],
         "diff_reviewed": True,
         "tests_rerun": True,
@@ -61,6 +62,40 @@ def _review_report(verdict="pass"):
         ],
         "blockers": ["仍有 blocker"] if verdict == "reject" else [],
     }
+    obligations = list(getattr(item, "review_obligations", None) or [])
+    if not obligations:
+        return report
+    failed_id = "dimension:structure" if verdict == "reject" else None
+    report.update({
+        "review_protocol": REVIEW_PROTOCOL_VERSION,
+        "obligation_results": [
+            {
+                "obligation_id": obligation["obligation_id"],
+                "status": (
+                    "fail" if obligation["obligation_id"] == failed_id
+                    else "pass"),
+                "evidence": "独立覆盖当前 obligation",
+            }
+            for obligation in obligations
+        ],
+        "prior_blocker_results": [
+            {
+                "blocker_id": blocker["blocker_id"],
+                "status": "fixed",
+                "evidence": "历史 blocker 回归通过",
+            }
+            for blocker in open_blockers(getattr(item, "review_ledger", None))
+        ],
+        "blockers": ([{
+            "root_cause_key": "test-review-blocker",
+            "obligation_id": failed_id,
+            "classification": "new",
+            "summary": "仍有 blocker",
+            "evidence": "测试发现 blocker",
+            "required_fix": "完成返工",
+        }] if failed_id else []),
+    })
+    return report
 
 
 def test_produced_requires_review_phase_and_review_status_to_agree():
@@ -403,7 +438,7 @@ def test_run_task_resume_confirmation_re_reviews_stale_subject():
         if current.phase == TaskPhase.REVIEW and current.review_verdict is None:
             eng.store.update_work_item_metadata(
                 item.id, review_verdict="pass",
-                review_report=_review_report())
+                review_report=_review_report(item=current))
 
     result = run_task(
         eng,
@@ -487,7 +522,7 @@ def test_run_task_resume_confirmation_rejects_invalid_stored_review_evidence():
             eng.store.update_work_item_metadata(
                 item.id,
                 review_verdict="pass",
-                review_report=_review_report(),
+                review_report=_review_report(item=current),
             )
             return
         if current.phase == TaskPhase.CONFIRMATION:
@@ -576,7 +611,7 @@ def test_run_task_ignores_blank_review_verdict_while_waiting():
         if calls["n"] == 1:
             eng.store.update_work_item_metadata(
                 item.id, review_verdict="pass",
-                review_report=_review_report())
+                review_report=_review_report(item=eng.store.get_work_item(item.id)))
         if calls["n"] > 3:
             raise TimeoutError("blank verdict was treated as terminal")
 
@@ -797,7 +832,7 @@ def test_resume_invalidates_verdict_from_an_unbound_review_subject():
         assert current.review_subject_digest
         eng.store.update_work_item_metadata(
             item.id, review_verdict="pass",
-            review_report=_review_report())
+            review_report=_review_report(item=current))
 
     result = run_task(
         eng,
@@ -875,7 +910,7 @@ def test_resume_rejects_invalid_verdict_bound_to_current_review_subject():
             eng.store.update_work_item_metadata(
                 item.id,
                 review_verdict="pass",
-                review_report=_review_report(),
+                review_report=_review_report(item=current),
             )
 
     result = run_task(
