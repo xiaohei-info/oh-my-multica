@@ -19,7 +19,7 @@ from ..core.machine_feedback import (
     dump_machine_feedback, parse_machine_feedback,
 )
 from ..core.taskmeta import DELIVERY_CONTENT_KEY, TaskKind, TaskPhase
-from ..errors import ValidationError
+from ..errors import ValidationError, WorkItemNotFoundError
 from ..i18n import ui
 from .models import (
     AgentInfo, AgentProvisionSpec, EngineConfig, ProjectInfo, RuntimeTarget,
@@ -653,7 +653,7 @@ class MockStore(WorkItemStore):
 
     def get_work_item(self, item_id: str) -> WorkItem:
         if item_id not in _shared_work_items:
-            raise RuntimeError(ui(
+            raise WorkItemNotFoundError(ui(
                 f"Work item not found: {item_id}",
                 f"工作单元不存在: {item_id}"))
         self._auto_complete_check(item_id)

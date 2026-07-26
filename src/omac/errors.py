@@ -15,6 +15,10 @@ class PlatformError(OmacError):
     exit_code = 2
 
 
+class WorkItemNotFoundError(PlatformError, RuntimeError):
+    """适配器已明确证明目标工作单元不存在。"""
+
+
 class AuthError(OmacError):
     """认证错误(平台 CLI 未登录等)→ exit 3。"""
     exit_code = 3

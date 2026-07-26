@@ -13,7 +13,7 @@ from ...core.graph import downstream_of
 from ...core.taskmeta import TaskKind
 from ...engines import EngineConfig, create_engine
 from ...engines.models import PullRequestState, WorkItemStatus
-from ...errors import OmacError, ValidationError
+from ...errors import OmacError, ValidationError, WorkItemNotFoundError
 from ...i18n import ui
 
 NAME = "node"
@@ -238,13 +238,11 @@ def _cmd_retry(args) -> int:
             # 引用仍保留，worker 可以从 previous_review 获取返工依据。
             engine.store.reset_review(node.work_item_id)
             engine.store.update_status(node.work_item_id, WorkItemStatus.TODO)
-        except RuntimeError as exc:
+        except WorkItemNotFoundError:
             # mock 的跨进程恢复没有持久化 store；陈旧 work_item_id 与 reconcile
             # 的“平台工单不存在”语义相同。retry 仍保留 ID 以兼容输出契约，
             # 下一次 dag run 再由 reconcile 清空并重新建单。
-            message = str(exc).lower()
-            if "not found" not in message and "不存在" not in message:
-                raise
+            pass
 
     # 重置为 todo;work_item_id 保留(同一 issue 续用)。
     node.status = "todo"
@@ -278,7 +276,13 @@ def _cmd_accept(args) -> int:
         item = engine.store.get_work_item(node.work_item_id)
         artifacts = item.artifacts if isinstance(item.artifacts, dict) else {}
         pr_url = artifacts.get("pr_url") or artifacts.get("pr")
-        if item.kind == TaskKind.DEVELOP and pr_url and not node.merged:
+        if item.kind == TaskKind.DEVELOP:
+            if not pr_url:
+                raise ValidationError(ui(
+                    "This develop node has no PR, so it cannot be accepted as done. "
+                    "Use `omac node abandon` for an explicit abandonment.",
+                    "该 develop 节点没有 PR，不能 accept 为 done；如需放弃请显式使用 "
+                    "`omac node abandon`。"))
             observation = engine.store.observe_pull_request(pr_url)
             state = observation.state
             if not isinstance(state, PullRequestState):

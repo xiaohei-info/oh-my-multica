@@ -37,7 +37,7 @@ def _classify(status: str) -> str:
     """manifest 状态 → progress 桶名。"""
     if status == "done":
         return "done"
-    if status in ("in_progress", "in_review"):
+    if status in ("in_progress", "ci_check", "in_review", "merging"):
         return "running"
     if status == "todo":
         return "todo"

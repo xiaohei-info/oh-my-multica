@@ -118,6 +118,7 @@ class Node:
     # P4.2:done = 已合入集成分支;记录合入信息(merged: true / 时间)
     merged: bool = False
     merged_at: str | None = None
+    merge_request_state: str | None = None
 
     def __post_init__(self):
         if isinstance(self.contract, dict):
@@ -150,6 +151,7 @@ def _build_nodes(raw) -> dict:
             status=n.get("status", "todo"),
             merged=bool(n.get("merged", False)),
             merged_at=n.get("merged_at"),
+            merge_request_state=n.get("merge_request_state"),
         )
     return nodes
 
@@ -198,6 +200,8 @@ def save_manifest(manifest: Manifest, path: str):
         if n.merged:
             node["merged"] = True
             node["merged_at"] = n.merged_at
+        if n.merge_request_state is not None:
+            node["merge_request_state"] = n.merge_request_state
         node_list.append(node)
 
     data = {"meta": manifest.meta, "nodes": node_list}

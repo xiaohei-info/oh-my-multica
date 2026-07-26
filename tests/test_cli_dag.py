@@ -230,6 +230,17 @@ class TestBuildStatusReport:
         assert p["failed"] == 0
         assert p["converged"] is False
 
+    def test_merging_node_counts_as_running(self, tmp_path):
+        path = _manifest_yaml(tmp_path, [
+            {"id": "a", "worker": "alice", "status": "merging"},
+        ])
+        manifest = load_manifest(path)
+
+        report = build_status_report(manifest, _mock_store(), path)
+
+        assert report["progress"]["running"] == 1
+        assert report["progress"]["todo"] == 0
+
     def test_converged_when_all_done(self, tmp_path):
         path = _manifest_yaml(tmp_path, [
             {"id": "a", "worker": "alice", "status": "done"},
