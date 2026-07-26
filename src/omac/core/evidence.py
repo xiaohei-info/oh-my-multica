@@ -53,13 +53,76 @@ def _validate_expected_commands(command_by_text, expected_commands, *, missing_p
     return errors
 
 
+def normalize_acceptance_item(item):
+    """Coerce one contract acceptance entry to a stable non-empty string.
+
+    YAML unquoted list items like ``package tests: foo`` parse as one-key
+    dicts. Treat those as ``\"package tests: foo\"`` so evidence gates never
+    crash on ``set(acceptance)`` and business-test matching stays stable.
+    """
+    if isinstance(item, str):
+        text = item.strip()
+        return text or None
+    if isinstance(item, dict):
+        if not item:
+            return None
+        if len(item) == 1:
+            key, value = next(iter(item.items()))
+            key_text = str(key).strip()
+            if not key_text:
+                return None
+            if value is None:
+                return key_text
+            if isinstance(value, str):
+                value_text = value.strip()
+                return f"{key_text}: {value_text}" if value_text else key_text
+            return f"{key_text}: {value}"
+        parts = []
+        for key in sorted(item.keys(), key=lambda x: str(x)):
+            value = item[key]
+            key_text = str(key).strip()
+            if not key_text:
+                continue
+            if value is None:
+                parts.append(key_text)
+            elif isinstance(value, str):
+                value_text = value.strip()
+                parts.append(f"{key_text}: {value_text}" if value_text else key_text)
+            else:
+                parts.append(f"{key_text}: {value}")
+        return "; ".join(parts) if parts else None
+    return None
+
+
+def normalize_acceptance_list(items):
+    """Return ``(normalized_strings, errors)`` for a contract acceptance list."""
+    if items is None:
+        return [], []
+    if not isinstance(items, list):
+        return [], [f"acceptance must be a list, got {type(items).__name__}"]
+    normalized = []
+    errors = []
+    for index, item in enumerate(items):
+        text = normalize_acceptance_item(item)
+        if text is None:
+            errors.append(
+                f"acceptance[{index}] must be a non-empty string "
+                f"(got {type(item).__name__})"
+            )
+            continue
+        normalized.append(text)
+    return normalized, errors
+
+
 def _collect_business_test_coverage(commands, expected_acceptance, *, prefix):
     errors = []
     covered = set()
     if not isinstance(commands, list):
         return errors, covered
 
-    expected = set(expected_acceptance)
+    expected_list, normalize_errors = normalize_acceptance_list(expected_acceptance)
+    errors.extend(normalize_errors)
+    expected = set(expected_list)
     for command in commands:
         if not isinstance(command, dict):
             continue
@@ -303,8 +366,13 @@ def validate_worker_evidence(node, item, *, require_pr_url=True) -> list:
                 )
             )
 
+    expected_acceptance, acceptance_errors = normalize_acceptance_list(
+        getattr(contract, "acceptance", None)
+    )
+    errors.extend(acceptance_errors)
+
     business_test_errors, covered_acceptance = _collect_business_test_coverage(
-        verification.get("commands"), contract.acceptance, prefix="verification")
+        verification.get("commands"), expected_acceptance, prefix="verification")
     errors.extend(business_test_errors)
     actual_gates = verification.get("integration_gates")
     if isinstance(actual_gates, list):
@@ -312,11 +380,11 @@ def validate_worker_evidence(node, item, *, require_pr_url=True) -> list:
             if not isinstance(actual_gate, dict):
                 continue
             gate_errors, gate_coverage = _collect_business_test_coverage(
-                actual_gate.get("commands"), contract.acceptance,
+                actual_gate.get("commands"), expected_acceptance,
                 prefix="verification")
             errors.extend(gate_errors)
             covered_acceptance.update(gate_coverage)
-    for acceptance in contract.acceptance:
+    for acceptance in expected_acceptance:
         if acceptance not in covered_acceptance:
             errors.append(f"verification missing business test for acceptance: {acceptance}")
 
@@ -397,7 +465,11 @@ def validate_review_evidence(node, item) -> list:
             for mapping in mappings
             if isinstance(mapping, dict) and mapping.get("status") in required_statuses
         }
-        for acceptance in contract.acceptance:
+        expected_acceptance, acceptance_errors = normalize_acceptance_list(
+            getattr(contract, "acceptance", None)
+        )
+        errors.extend(acceptance_errors)
+        for acceptance in expected_acceptance:
             if acceptance not in mapped_acceptance:
                 errors.append(f"review_report missing acceptance mapping: {acceptance}")
 

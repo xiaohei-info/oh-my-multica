@@ -279,6 +279,83 @@ def test_worker_evidence_rejects_boolean_business_test_exit_code():
     assert "verification missing business test for acceptance: works" in errs
 
 
+def test_worker_evidence_coerces_yaml_one_key_dict_acceptance_without_crash():
+    """Unquoted YAML ``- package tests: detail`` becomes a one-key dict."""
+    contract = Contract(
+        objective="do it",
+        acceptance=[
+            "works",
+            {"package tests": "valid, duplicate no-op, supersede, path escape"},
+        ],
+        non_goals=["no creep"],
+        verification_commands=["pytest -q"],
+        integration_gates=[{
+            "name": "gate-1", "layer": "L1", "delivery_goal": "delivers",
+            "source_of_truth": ["docs/d.md"], "covers": ["route"],
+            "acceptance_refs": ["works"], "commands": ["pytest tests/int"],
+            "required_metrics": {"route_coverage": 100}, "artifacts": ["coverage.xml"],
+        }],
+        pr_base="feature/v1",
+        coverage_gate=90,
+    )
+    node = Node(id="yaml-acc", worker="alice", contract=contract)
+    package_acc = "package tests: valid, duplicate no-op, supersede, path escape"
+    v = _good_verification()
+    v["commands"][0]["business_tests"] = [
+        {
+            "acceptance": "works",
+            "test": "tests/test_feature.py::test_feature_works",
+        },
+        {
+            "acceptance": package_acc,
+            "test": "tests/test_package.py::test_package_rules",
+        },
+    ]
+
+    errs = validate_worker_evidence(
+        node, Item(artifacts={"pr_url": "u"}, verification=v)
+    )
+
+    assert errs == []
+
+
+def test_normalize_acceptance_item_yaml_one_key_dict():
+    from omac.core.evidence import normalize_acceptance_item, normalize_acceptance_list
+
+    assert (
+        normalize_acceptance_item({"package tests": "valid, duplicate no-op"})
+        == "package tests: valid, duplicate no-op"
+    )
+    texts, errors = normalize_acceptance_list([
+        "plain",
+        {"package tests": "valid"},
+        "",
+        12,
+    ])
+    assert texts == ["plain", "package tests: valid"]
+    assert any("acceptance[2]" in e for e in errors)
+    assert any("acceptance[3]" in e for e in errors)
+
+
+def test_load_contract_normalizes_yaml_dict_acceptance():
+    from omac.core.manifest import _load_contract
+
+    contract = _load_contract({
+        "objective": "o",
+        "acceptance": [
+            "works",
+            {"package tests": "valid, duplicate no-op, supersede, path escape"},
+        ],
+        "verification_commands": ["pytest -q"],
+        "pr_base": "main",
+    })
+    assert contract is not None
+    assert contract.acceptance == [
+        "works",
+        "package tests: valid, duplicate no-op, supersede, path escape",
+    ]
+
+
 # ---------- review evidence ----------
 
 def test_review_evidence_reject_requires_blockers():

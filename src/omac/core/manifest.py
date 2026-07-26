@@ -56,6 +56,19 @@ class Contract:
     scope_paths: list = field(default_factory=list)
 
 
+def _normalize_acceptance_on_load(raw_acceptance):
+    """Normalize acceptance at manifest load (YAML one-key maps → strings).
+
+    Import lazily to avoid a circular import with evidence helpers.
+    """
+    from .evidence import normalize_acceptance_list
+
+    normalized, errors = normalize_acceptance_list(raw_acceptance)
+    if errors:
+        raise ValidationError("; ".join(errors))
+    return normalized
+
+
 def _load_contract(raw):
     if raw is None:
         return None
@@ -63,7 +76,7 @@ def _load_contract(raw):
         objective=raw.get("objective"),
         source_of_truth=list(raw.get("source_of_truth", [])),
         required_contracts=list(raw.get("required_contracts", [])),
-        acceptance=list(raw.get("acceptance", [])),
+        acceptance=_normalize_acceptance_on_load(raw.get("acceptance", [])),
         non_goals=list(raw.get("non_goals", [])),
         verification_commands=list(raw.get("verification_commands", [])),
         integration_gates=list(raw.get("integration_gates", [])),
