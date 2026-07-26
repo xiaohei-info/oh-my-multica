@@ -13,7 +13,7 @@
   <label class="field">manifest
     <select id="manifest-selector" data-i18n-title="manifest_title" title="Choose a manifest"><option value="">— Choose —</option></select>
   </label>
-  <span class="badge" id="progress-badge" style="display:none"></span>
+  <span class="badge is-hidden" id="progress-badge"></span>
   <span class="spacer"></span>
   <span class="badge" id="poll-state" data-i18n-title="last_refresh" title="Last status refresh"><span class="pulse"></span><span id="poll-ts">—</span></span>
   <label class="field"><span data-i18n="theme">Theme</span>
@@ -28,8 +28,12 @@
 <main>
   <section class="dag-wrap" aria-label="DAG overview" data-i18n-aria="dag_overview">
     <div class="toolbar" id="dag-toolbar">
-      <span class="region-title" style="margin:0" data-i18n="dag_overview">DAG overview</span>
-      <span class="spacer" style="flex:1"></span>
+      <span class="region-title toolbar-title" data-i18n="dag_overview">DAG overview</span>
+      <span class="spacer"></span>
+      <button id="collapse-btn" data-i18n="collapse">Collapse</button>
+      <button id="expand-all-btn" data-i18n="expand_all">Expand all</button>
+      <button id="focus-active-btn" data-i18n="focus_active">Active</button>
+      <button id="focus-anomaly-btn" data-i18n="focus_anomaly">Anomalies</button>
       <button id="fit-btn" data-i18n="fit" data-i18n-title="fit_title" title="Fit the full graph">Fit</button>
       <div class="legend" id="dag-legend"></div>
     </div>
@@ -47,23 +51,24 @@
   <label for="tab-anomaly" data-i18n="anomalies">Anomalies</label>
   <input type="radio" name="tab" id="tab-static"/>
   <label for="tab-static" data-i18n="static_info">Static information</label>
-  <div style="flex:1"></div>
-  <span class="badge" id="tick-state" style="align-self:center;margin-right:8px">—</span>
+  <div class="spacer"></div>
+  <span class="badge tick-state" id="tick-state">—</span>
 
-  <div class="tab-body-wrap" style="position:absolute">
+  <div class="tab-body-wrap">
   <div class="tab-body active" id="anomaly-panel" data-tab="tab-anomaly">
     <p class="empty" id="anomaly-empty" data-i18n="no_anomalies">No failed or blocked nodes. The DAG is converged or still progressing.</p>
     <div id="anomaly-content"></div>
   </div>
   <div class="tab-body" id="static-info" data-tab="tab-static">
-    <button class="primary" id="reload-static" style="margin-bottom:10px" data-i18n="refresh">Refresh</button>
+    <button class="primary reload-static" id="reload-static" data-i18n="refresh">Refresh</button>
     <div id="static-content"><p class="empty" data-i18n="static_intro">Choose a manifest to load configuration, source manifest, and acceptance checks.</p></div>
   </div>
   </div>
 </footer>
 
-<div class="msg" id="toast" style="display:none"></div>
+<div class="msg" id="toast"></div>
 
+<script src="/static/dag-projection.js" defer></script>
 <script src="/static/app.js" defer></script>
 </body>
 </html>

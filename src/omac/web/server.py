@@ -381,7 +381,7 @@ def _constant_time_eq(a: str, b: str) -> bool:
 
 
 class WebServer:
-    """组合器:server 实例 + 启动/停止。缓存以 poll_interval 为 TTL。"""
+    """组合器:server 实例 + 启动/停止。缓存不会超过前端轮询间隔。"""
 
     def __init__(self, host: str, port: int, *,
                  token: str | None = None, refresh: int = 10,
@@ -394,12 +394,13 @@ class WebServer:
         self.refresh = refresh
         self.open_browser = open_browser
         self.poll_interval = poll_interval if poll_interval is not None else api._poll_interval()
+        self.cache_ttl = min(self.poll_interval, self.refresh)
         self.handler_cls = handler_cls
         self._server: ThreadingHTTPServer | None = None
 
     def _build(self) -> ThreadingHTTPServer:
         require_token_if_exposed(self.host, self.token)
-        cache = api.StatusCache(ttl=self.poll_interval)
+        cache = api.StatusCache(ttl=self.cache_ttl)
         # 把运行时配置注入 handler 类(供所有连接复用)。
         self.handler_cls.token = self.token
         self.handler_cls.refresh = self.refresh
@@ -420,10 +421,10 @@ class WebServer:
         print(ui(
             f"omac web started → http://{host}:{port}/  "
             f"(token={'on' if self.token else 'off'}, refresh={self.refresh}s, "
-            f"cache_ttl={self.poll_interval}s)",
+            f"cache_ttl={self.cache_ttl}s)",
             f"omac web 已启动 → http://{host}:{port}/  "
             f"(token={'on' if self.token else 'off'}, refresh={self.refresh}s, "
-            f"cache_ttl={self.poll_interval}s)"),
+            f"cache_ttl={self.cache_ttl}s)"),
             file=sys.stderr,
         )
         try:

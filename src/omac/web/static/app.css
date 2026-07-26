@@ -5,7 +5,7 @@
   --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444; --info:#3b82f6;
   --todo:#94a3b8; --in_progress:#3b82f6; --ci_check:#a855f7;
   --in_review:#f59e0b; --merging:#10b981; --done:#22c55e;
-  --blocked:#ef4444; --abandoned:#6b7280;
+  --failed:#dc2626; --blocked:#ef4444; --abandoned:#6b7280; --unknown:#64748b;
   --row-h:84; --col-w:200;
 }
 html.light{
@@ -20,7 +20,7 @@ body{margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
 header.topbar{display:flex;align-items:center;gap:16px;padding:10px 16px;
   background:var(--panel);border-bottom:1px solid var(--border);flex-wrap:wrap}
 header h1{font-size:15px;margin:0;white-space:nowrap}
-header .spacer{flex:1}
+.spacer{flex:1}
 label.field{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
 select,button{font-family:inherit;font-size:12px;background:var(--panel-2);
   color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 8px;cursor:pointer}
@@ -28,6 +28,10 @@ button:hover{border-color:var(--accent)}
 button.primary{background:var(--accent-weak);color:#fff;border-color:var(--accent-weak)}
 .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;
   background:var(--panel-2);border:1px solid var(--border)}
+.is-hidden{display:none !important}
+.toolbar-title{margin:0}
+.tick-state{align-self:center;margin-right:8px}
+.reload-static{margin-bottom:10px}
 .pulse{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--ok);margin-right:6px}
 main{flex:1;display:grid;grid-template-columns:1fr 360px;min-height:0}
 @media(max-width:900px){main{grid-template-columns:1fr}}
@@ -52,9 +56,16 @@ ul.acceptance li{margin:3px 0}
 .edge{stroke:var(--border);stroke-width:1.5;fill:none;opacity:.75}
 .node rect{rx:8;ry:8;stroke-width:1.5;cursor:pointer}
 .node text{fill:var(--text);font-size:11px;font-family:inherit;pointer-events:none}
+.node .ni{font-size:10px;font-weight:700}
 .node .nk{font-weight:600}
 .node .ns{font-size:10px;fill:var(--muted)}
+.node.state-failed rect{stroke-width:3}
 .node.selected rect{stroke:var(--accent);stroke-width:3}
+.aggregate rect{fill:var(--panel-2);stroke:var(--muted);stroke-dasharray:4 3;cursor:pointer}
+.aggregate text{fill:var(--muted);font-size:10px;font-family:inherit;pointer-events:none}
+.aggregate-edge{stroke:var(--muted);stroke-width:1.5;stroke-dasharray:4 3;fill:none}
+.dag-error{fill:var(--bad);font-size:13px;font-weight:700}
+.dag-error-detail{fill:var(--muted);font-size:11px}
 .edge.dim{opacity:.18}
 .node.dim rect{opacity:.35}
 .edge.hl{stroke:var(--accent);stroke-width:2.5;opacity:1}
@@ -66,7 +77,7 @@ footer.tabs label{padding:10px 16px;font-size:12px;color:var(--muted);cursor:poi
 footer.tabs input:checked + label{color:var(--text);border-bottom-color:var(--accent)}
 .tab-body{display:none;padding:16px;overflow:auto}
 .tab-body.active{display:block}
-.tab-body-wrap{max-height:320px;overflow:auto}
+.tab-body-wrap{position:absolute;max-height:320px;overflow:auto}
 
 .anomaly-card{border-left:3px solid var(--bad);background:var(--panel);border-radius:6px;
   padding:10px 12px;margin-bottom:10px;border:1px solid var(--border);border-left-width:3px}
@@ -81,9 +92,20 @@ footer.tabs input:checked + label{color:var(--text);border-bottom-color:var(--ac
 .toolbar{display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;align-items:center}
 .legend{display:flex;gap:10px;flex-wrap:wrap;font-size:11px;color:var(--muted)}
 .legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:4px;vertical-align:middle}
-.msg{position:fixed;bottom:12px;left:50%;transform:translateX(-50%);background:var(--panel-2);
+.legend-todo i{background:var(--todo)} .legend-in_progress i{background:var(--in_progress)}
+.legend-ci_check i{background:var(--ci_check)} .legend-in_review i{background:var(--in_review)}
+.legend-merging i{background:var(--merging)} .legend-done i{background:var(--done)}
+.legend-failed i{background:var(--failed)} .legend-blocked i{background:var(--blocked)}
+.legend-abandoned i{background:var(--abandoned)} .legend-unknown i{background:var(--unknown)}
+.msg{display:none;position:fixed;bottom:12px;left:50%;transform:translateX(-50%);background:var(--panel-2);
   border:1px solid var(--border);padding:6px 14px;border-radius:6px;font-size:12px;z-index:99;
   box-shadow:0 4px 16px rgba(0,0,0,.3)}
+.msg.is-visible{display:block}
 .msg.err{border-color:var(--bad)}
 a.ext{color:var(--accent);text-decoration:none}
 a.ext:hover{text-decoration:underline}
+.section-title{margin-top:12px}
+.detail-meta{font-size:11px;color:var(--muted);margin-top:8px}
+.copy-row-spaced{margin-top:10px}
+.anomaly-card .small{font-size:11px}
+.anomaly-card .muted{font-size:11px;color:var(--muted)}

@@ -2,12 +2,13 @@
 "use strict";
 
 /* ---------- 状态 → 着色 ---------- */
-const STATES = ["todo","in_progress","ci_check","in_review","merging","done","blocked","abandoned"];
+const STATES = ["todo","in_progress","ci_check","in_review","merging","done","failed","blocked","abandoned"];
 const COPY = {
   en: {
     choose:"Choose", manifest_title:"Choose a manifest", last_refresh:"Last status refresh",
     theme:"Theme", theme_auto:"System", theme_dark:"Dark", theme_light:"Light",
     dag_overview:"DAG overview", dag_visualization:"DAG visualization", fit:"Fit",
+    collapse:"Collapse", expand_all:"Expand all", focus_active:"Active", focus_anomaly:"Anomaly focus", hidden:"hidden",
     fit_title:"Fit the full graph", node_details:"Node details",
     select_node:"Select a DAG node to inspect its contract, evidence, and links.",
     anomalies:"Anomalies", static_info:"Static information",
@@ -24,12 +25,15 @@ const COPY = {
     acceptance_missing:"Acceptance file not found", static_failed:"Failed to load static information",
     state_todo:"Todo", state_in_progress:"In progress", state_ci_check:"CI check",
     state_in_review:"In review", state_merging:"Merging", state_done:"Done",
-    state_blocked:"Blocked", state_abandoned:"Abandoned"
+    state_failed:"Failed", state_blocked:"Blocked", state_abandoned:"Abandoned", state_unknown:"Unknown",
+    dag_error_unknown_dependency:"Cannot render DAG: it references a missing dependency.",
+    dag_error_cycle:"Cannot render DAG: it contains a dependency cycle."
   },
   cn: {
     choose:"选择", manifest_title:"选择要查看的 manifest", last_refresh:"最后状态刷新时间",
     theme:"主题", theme_auto:"跟随系统", theme_dark:"深色", theme_light:"浅色",
     dag_overview:"DAG 总览", dag_visualization:"DAG 可视化", fit:"全图",
+    collapse:"收起", expand_all:"全部展开", focus_active:"进行中", focus_anomaly:"异常聚焦", hidden:"已隐藏",
     fit_title:"回到全图视野", node_details:"节点详情",
     select_node:"点击 DAG 中的一个节点查看 contract、证据和链接。",
     anomalies:"异常面板", static_info:"静态信息页",
@@ -46,11 +50,17 @@ const COPY = {
     acceptance_missing:"未找到验收文件", static_failed:"静态信息加载失败",
     state_todo:"待开始", state_in_progress:"进行中", state_ci_check:"CI 校验",
     state_in_review:"评审中", state_merging:"合并中", state_done:"完成",
-    state_blocked:"受阻", state_abandoned:"已放弃"
+    state_failed:"失败", state_blocked:"受阻", state_abandoned:"已放弃", state_unknown:"未知",
+    dag_error_unknown_dependency:"无法渲染 DAG：它引用了不存在的依赖。",
+    dag_error_cycle:"无法渲染 DAG：它包含依赖环。"
   }
 };
 function copy(key){ return (COPY[state.language]||COPY.en)[key] || COPY.en[key] || key; }
-function stateLabel(value){ return copy("state_"+value) || value; }
+function stateLabel(value){
+  const key = "state_"+(value || "unknown");
+  const label = copy(key);
+  return label === key ? (value || copy("state_unknown")) : label;
+}
 function applyLanguage(language){
   state.language = language === "cn" ? "cn" : "en";
   document.documentElement.lang = state.language === "cn" ? "zh-CN" : "en";
@@ -59,8 +69,10 @@ function applyLanguage(language){
   document.querySelectorAll("[data-i18n-title]").forEach(el => el.title=copy(el.dataset.i18nTitle));
   document.querySelectorAll("[data-i18n-aria]").forEach(el => el.setAttribute("aria-label",copy(el.dataset.i18nAria)));
 }
-function stateColor(s, root){
-  return getComputedStyle(root||document.documentElement).getPropertyValue("--"+s).trim() || "#888";
+function stateColor(status, root){
+  const view = OMACDag.presentState(status);
+  const name = view.safe_fallback ? "unknown" : status;
+  return getComputedStyle(root||document.documentElement).getPropertyValue("--"+name).trim() || "#888";
 }
 
 /* ---------- 全局状态 ---------- */
@@ -71,6 +83,9 @@ const state = {
   refresh: 10,
   nodes: {},
   selected: null,
+  expanded: [],
+  focus: "default",
+  detailGeneration: 0,
   pollTimer: null,
   language: "en",
 };
@@ -80,10 +95,10 @@ const $ = (id) => document.getElementById(id);
 function toast(msg, isErr){
   const t = $("toast");
   t.textContent = msg;
-  t.style.display = "block";
+  t.classList.add("is-visible");
   t.classList.toggle("err", !!isErr);
   clearTimeout(toast._t);
-  toast._t = setTimeout(() => t.style.display = "none", 2500);
+  toast._t = setTimeout(() => t.classList.remove("is-visible"), 2500);
 }
 async function api(path){
   const r = await fetch(path);
@@ -115,6 +130,34 @@ window.matchMedia("(prefers-color-scheme:dark)").addEventListener("change", ()=>
 });
 
 /* ---------- manifest 选择 ---------- */
+function clearNodeDetail(){
+  state.detailGeneration += 1;
+  $("detail-empty").classList.remove("is-hidden");
+  $("detail-content").innerHTML = "";
+}
+
+function clearRenderedStatus(){
+  state.status = null;
+  state.nodes = {};
+  const svg = $("dag-canvas");
+  while(svg.firstChild) svg.removeChild(svg.firstChild);
+  $("dag-legend").innerHTML = "";
+  $("anomaly-content").innerHTML = "";
+  $("anomaly-empty").classList.remove("is-hidden");
+  const progress = $("progress-badge");
+  progress.classList.add("is-hidden");
+  progress.textContent = "";
+  $("poll-ts").textContent = "—";
+  $("tick-state").textContent = "—";
+}
+
+function resetDagView(){
+  state.expanded = [];
+  state.focus = "default";
+  state.selected = null;
+  clearNodeDetail();
+}
+
 async function loadManifests(){
   state.manifests = await api("/api/manifests");
   const sel = $("manifest-selector");
@@ -130,25 +173,33 @@ async function loadManifests(){
 $("manifest-selector").addEventListener("change", e => selectManifest(e.target.value));
 
 async function selectManifest(path){
-  if(!path){ state.current=null; return; }
+  const isNewManifest = state.current !== path;
+  cancelPoll();
+  if(isNewManifest){
+    resetDagView();
+    clearRenderedStatus();
+  }
+  if(!path){ state.current = null; return; }
   localStorage.setItem("omac-last-manifest", path);
   state.current = path;
-  cancelPoll();
   await fetchStatus();
   startPoll();
 }
 
 /* ---------- 状态获取 + 轮询 ---------- */
 async function fetchStatus(){
+  const manifest = state.current;
+  if(!manifest) return;
   try{
-    const s = await api("/api/dag/status?manifest="+encodeURIComponent(state.current));
+    const s = await api("/api/dag/status?manifest="+encodeURIComponent(manifest));
+    if(state.current !== manifest) return;
     state.status = s;
     state.nodes = {};
     (s.nodes||[]).forEach(n => state.nodes[n.key]=n);
     renderDAG(s);
     renderAnomaly(s);
     const pb = $("progress-badge");
-    pb.style.display="";
+    pb.classList.remove("is-hidden");
     pb.textContent = copy("progress")+" "+(s.progress?s.progress.done+"/"+s.progress.total:"?");
     $("poll-ts").textContent = new Date().toLocaleTimeString();
   }catch(e){ toast(copy("refresh_failed")+": "+e.message, true); }
@@ -159,77 +210,91 @@ function startPoll(){
 }
 function cancelPoll(){ if(state.pollTimer){ clearInterval(state.pollTimer); state.pollTimer=null; } }
 
+function redrawDAG(){ if(state.status) renderDAG(state.status); }
+$("collapse-btn").addEventListener("click", ()=>{
+  state.expanded = OMACDag.collapseBranches(state.expanded);
+  state.focus = "default";
+  redrawDAG();
+});
+$("expand-all-btn").addEventListener("click", ()=>{
+  state.expanded = [];
+  state.focus = "all";
+  redrawDAG();
+});
+$("focus-active-btn").addEventListener("click", ()=>{
+  state.expanded = [];
+  state.focus = "active";
+  redrawDAG();
+});
+$("focus-anomaly-btn").addEventListener("click", ()=>{
+  state.expanded = [];
+  state.focus = "anomaly";
+  redrawDAG();
+});
+
 /* ---------- DAG 布局渲染 ---------- */
-function layeredLayout(s){
-  const nodes = s.nodes||[];
-  const byKey = {};
-  nodes.forEach(n => byKey[n.key]=n);
-  // 最长路径分层(layer = max(layer[dep]) + 1)
-  const layer = {};
-  const depsOf = {};
-  nodes.forEach(n => { depsOf[n.key]=n.blocked_by||[]; });
-  function lay(k, stack){
-    if(layer[k]!==undefined) return layer[k];
-    if(stack.has(k)){ layer[k]=0; return 0; }
-    stack.add(k);
-    let l=0;
-    (depsOf[k]||[]).forEach(d => { if(byKey[d]) l=Math.max(l, lay(d, stack)+1); });
-    stack.delete(k);
-    layer[k]=l;
-    return l;
-  }
-  nodes.forEach(n => lay(n.key, new Set()));
-  // 按 layer 分组, 组内按 key 稳定排序
-  const groups={};
-  nodes.forEach(n => { (groups[layer[n.key]]=groups[layer[n.key]]||[]).push(n); });
-  Object.values(groups).forEach(g => g.sort((a,b)=> a.key<b.key?-1:1));
+function layeredLayout(projection){
   const colW=parseInt(getComputedStyle(document.documentElement).getPropertyValue("--col-w"))||200;
   const rowH=parseInt(getComputedStyle(document.documentElement).getPropertyValue("--row-h"))||84;
-  const padX=48, padY=56;
-  let maxRow=0;
-  const pos={};
-  Object.keys(groups).sort((a,b)=>+a-+b).forEach(li => {
-    const row=groups[li];
-    maxRow=Math.max(maxRow, row.length);
-    row.forEach((n, i) => { pos[n.key]={x:padX+ +li*colW, y:padY+i*rowH}; });
-  });
-  const W = padX*2 + (Math.max(...Object.values(layer),0))*colW;
-  const H = padY*2 + maxRow*rowH;
-  return { pos, W, H, layer, depsOf, byKey, colW, rowH, padX, padY };
+  return OMACDag.layoutDag(projection, {colW, rowH});
+}
+
+function renderDagError(svg, error){
+  const ns = "http://www.w3.org/2000/svg";
+  const details = error.code === "unknown_dependency"
+    ? error.dependencies.map(item => item.node+" → "+item.dependency).join(", ")
+    : error.nodes.join(", ");
+  const message = error.code === "unknown_dependency"
+    ? copy("dag_error_unknown_dependency") : copy("dag_error_cycle");
+  svg.setAttribute("viewBox", "0 0 400 200");
+  const text = document.createElementNS(ns, "text");
+  text.setAttribute("x", "24"); text.setAttribute("y", "80");
+  text.setAttribute("class", "dag-error"); text.textContent = message;
+  svg.appendChild(text);
+  const detail = document.createElementNS(ns, "text");
+  detail.setAttribute("x", "24"); detail.setAttribute("y", "108");
+  detail.setAttribute("class", "dag-error-detail"); detail.textContent = details;
+  svg.appendChild(detail);
 }
 
 function renderDAG(s){
   const svg = $("dag-canvas");
-  const L = layeredLayout(s);
+  const projection = OMACDag.projectDag(s.nodes||[], {
+    expanded: state.expanded,
+    focus: state.focus,
+  });
+  const L = layeredLayout(projection);
   svg.setAttribute("viewBox", "0 0 "+Math.max(L.W,400)+" "+Math.max(L.H,200));
   // 清空 + 渲染组
   const ns = "http://www.w3.org/2000/svg";
   while(svg.firstChild) svg.removeChild(svg.firstChild);
+  if(projection.error){
+    renderDagError(svg, projection.error);
+    $("dag-legend").innerHTML = "";
+    syncSelectedProjection(projection);
+    return;
+  }
   const edgesG = document.createElementNS(ns,"g");
   const nodesG = document.createElementNS(ns,"g");
   svg.appendChild(edgesG); svg.appendChild(nodesG);
 
-  // edges: dep -> node (dep 先完成, 箭头指向 node)
-
-  (s.nodes||[]).forEach(n => {
-    (n.blocked_by||[]).forEach(d => {
-      if(!L.pos[d]||!L.pos[n.key]) return;
-      const a=L.pos[d], b=L.pos[n.key];
+  projection.edges.forEach(edge => {
+      const a=L.pos[edge.from], b=L.pos[edge.to];
       const x1=a.x+120, y1=a.y+28, x2=b.x, y2=b.y+28;
       const mx=(x1+x2)/2;
       const path=document.createElementNS(ns,"path");
       path.setAttribute("d","M "+x1+" "+y1+" C "+mx+" "+y1+", "+mx+" "+y2+", "+x2+" "+y2);
       path.setAttribute("class","edge");
-      path.dataset.from=d; path.dataset.to=n.key;
+      path.dataset.from=edge.from; path.dataset.to=edge.to;
       edgesG.appendChild(path);
-    });
   });
 
-  // nodes
-  (s.nodes||[]).forEach(n => {
+  projection.nodes.forEach(n => {
     const p=L.pos[n.key]; if(!p) return;
+    const presentation = OMACDag.presentState(n.status);
+    const styleName = presentation.safe_fallback ? "unknown" : n.status;
     const g=document.createElementNS(ns,"g");
-    g.setAttribute("class","node"+(state.selected===n.key?" selected":""));
+    g.setAttribute("class","node state-"+styleName+(state.selected===n.key?" selected":""));
     g.dataset.key=n.key;
     const rect=document.createElementNS(ns,"rect");
     rect.setAttribute("x",p.x); rect.setAttribute("y",p.y);
@@ -238,9 +303,13 @@ function renderDAG(s){
     rect.setAttribute("stroke", stateColor(n.status, document.documentElement));
     g.appendChild(rect);
     const t1=document.createElementNS(ns,"text");
-    t1.setAttribute("x",p.x+10); t1.setAttribute("y",p.y+22);
-    t1.setAttribute("class","nk"); t1.textContent=n.key;
+    t1.setAttribute("x",p.x+10); t1.setAttribute("y",p.y+22); t1.setAttribute("class","ni");
+    t1.textContent=presentation.icon;
     g.appendChild(t1);
+    const tKey=document.createElementNS(ns,"text");
+    tKey.setAttribute("x",p.x+28); tKey.setAttribute("y",p.y+22);
+    tKey.setAttribute("class","nk"); tKey.textContent=n.key;
+    g.appendChild(tKey);
     const t2=document.createElementNS(ns,"text");
     t2.setAttribute("x",p.x+10); t2.setAttribute("y",p.y+40);
     t2.setAttribute("class","ns"); t2.textContent=stateLabel(n.status);
@@ -249,10 +318,39 @@ function renderDAG(s){
     nodesG.appendChild(g);
   });
 
-  // legend
+  projection.aggregates.forEach(aggregate => {
+    const source=L.pos[aggregate.source];
+    const aggregatePosition=L.aggregatePositions[aggregate.source];
+    if(!source || !aggregatePosition) return;
+    const x=aggregatePosition.x, y=aggregatePosition.y;
+    const edge=document.createElementNS(ns,"path");
+    edge.setAttribute("d","M "+(source.x+120)+" "+(source.y+28)+" L "+x+" "+(y+20));
+    edge.setAttribute("class","aggregate-edge"); edgesG.appendChild(edge);
+    const g=document.createElementNS(ns,"g");
+    g.setAttribute("class","aggregate"); g.dataset.source=aggregate.source;
+    const rect=document.createElementNS(ns,"rect");
+    rect.setAttribute("x",x); rect.setAttribute("y",y); rect.setAttribute("width",L.aggregateWidth); rect.setAttribute("height",L.aggregateHeight); rect.setAttribute("rx",6);
+    g.appendChild(rect);
+    const label=document.createElementNS(ns,"text");
+    const summary=aggregate.status_summary.map(item => stateLabel(item.status)+" "+item.count).join(" · ");
+    label.setAttribute("x",x+8); label.setAttribute("y",y+16); label.textContent="+ "+aggregate.hidden_count+" "+copy("hidden");
+    g.appendChild(label);
+    const detail=document.createElementNS(ns,"text");
+    detail.setAttribute("x",x+8); detail.setAttribute("y",y+30); detail.textContent=summary;
+    g.appendChild(detail);
+    g.addEventListener("click", ()=>{
+      if(!state.expanded.includes(aggregate.source)) state.expanded.push(aggregate.source);
+      state.focus="default"; redrawDAG();
+    });
+    nodesG.appendChild(g);
+  });
+
+  syncSelectedProjection(projection);
+
+  const present = new Set((s.nodes||[]).map(n => n.status));
   const lg = $("dag-legend");
-  lg.innerHTML = STATES.filter(st => (s.nodes||[]).some(n=>n.status===st))
-    .map(st=> '<span><i style="background:'+stateColor(st, document.documentElement)+'"></i>'+stateLabel(st)+'</span>').join("");
+  lg.innerHTML = STATES.filter(status => present.has(status))
+    .map(status=> '<span class="legend-'+esc(status)+'"><i></i>'+stateLabel(status)+'</span>').join("");
 }
 
 function dimForSelected(){
@@ -280,9 +378,29 @@ function dimForSelected(){
   });
 }
 
+function clearSelection(){
+  state.selected = null;
+  clearNodeDetail();
+  dimForSelected();
+}
+
+function syncSelectedProjection(projection){
+  if(!state.selected) return;
+  const visibleKeys = new Set(projection.nodes.map(node => node.key));
+  if(!visibleKeys.has(state.selected) || !state.nodes[state.selected]){
+    clearSelection();
+    return;
+  }
+  dimForSelected();
+}
+
 /* ---------- 节点详情 ---------- */
 function selectNode(key){
-  state.selected = (state.selected===key? null : key);
+  if(state.selected === key){
+    clearSelection();
+    return;
+  }
+  state.selected = key;
   $("dag-canvas").querySelectorAll(".node").forEach(g=>{
     g.classList.toggle("selected", g.dataset.key===state.selected);
   });
@@ -291,9 +409,11 @@ function selectNode(key){
 }
 async function renderDetail(key){
   // 立即用 status 中的节点信息绘制基本卡, 再通过 /api/node/{key} 拿合约与证据
+  const manifest = state.current;
+  const detailGeneration = ++state.detailGeneration;
   const n = state.nodes[key];
   const dc = $("detail-content");
-  $("detail-empty").style.display="none";
+  $("detail-empty").classList.add("is-hidden");
   if(!n){ dc.innerHTML='<p class="empty">'+copy("no_selected")+'</p>'; return; }
   const sub = (arr)=> (Array.isArray(arr)&&arr.length)?"<ul class='acceptance'>"+arr.map(x=>"<li>"+esc(x)+"</li>")+"</ul>" : '<span class="empty">'+copy("none")+'</span>';
   dc.innerHTML =
@@ -308,11 +428,12 @@ async function renderDetail(key){
     '</dl>'+
     '<p class="empty" id="detail-extra">'+copy("loading_evidence")+'</p>';
   try{
-    const full = await api("/api/node/"+encodeURIComponent(key)+"?manifest="+encodeURIComponent(state.current));
+    const full = await api("/api/node/"+encodeURIComponent(key)+"?manifest="+encodeURIComponent(manifest));
+    if(state.detailGeneration !== detailGeneration || state.selected !== key || state.current !== manifest) return;
     const c = full.contract||{};
     const ev = full.evidence;
     $("detail-extra").outerHTML =
-      '<h3 class="region-title" style="margin-top:12px">Contract</h3>'+
+      '<h3 class="region-title section-title">Contract</h3>'+
       '<dl class="kv">'+
         '<dt>objective</dt><dd>'+esc(c.objective||"—")+'</dd>'+
         '<dt>pr_base</dt><dd>'+esc(c.pr_base||"—")+'</dd>'+
@@ -321,7 +442,7 @@ async function renderDetail(key){
         '<dt>verification_commands</dt><dd>'+sub(c.verification_commands)+'</dd>'+
         '<dt>integration_gates</dt><dd>'+sub(c.integration_gates)+'</dd>'+
       '</dl>'+
-      '<h3 class="region-title" style="margin-top:12px">'+copy("evidence_chain")+'</h3>'+
+      '<h3 class="region-title section-title">'+copy("evidence_chain")+'</h3>'+
       (ev ? '<dl class="kv">'+
         '<dt>work_item_id</dt><dd>'+esc(ev.work_item_id||"—")+'</dd>'+
         '<dt>platform_status</dt><dd>'+esc(ev.platform_status||"—")+'</dd>'+
@@ -330,11 +451,12 @@ async function renderDetail(key){
         '<dt>has verification</dt><dd>'+(ev.verification? "✓":"—")+'</dd>'+
         '<dt>artifacts</dt><dd><pre class="contract">'+esc(JSON.stringify(ev.artifacts||{},null,2))+'</pre></dd>'+
       '</dl>' : '<p class="empty">'+copy("no_evidence")+'</p>')+
-      '<p style="font-size:11px;color:var(--muted);margin-top:8px">'+copy("bounce_count")+': '+(full.rollback_count!=null?full.rollback_count:"—")+' · '+esc(full.comments||"")+'</p>'+
-      '<div style="margin-top:10px" class="copy-row"><code id="retry-cmd">omac node retry '+esc(state.current)+' '+esc(key)+'</code><button data-copy="retry-cmd">'+copy("copy_retry")+'</button></div>'+
+      '<p class="detail-meta">'+copy("bounce_count")+': '+(full.rollback_count!=null?full.rollback_count:"—")+' · '+esc(full.comments||"")+'</p>'+
+      '<div class="copy-row copy-row-spaced"><code id="retry-cmd">omac node retry '+esc(state.current)+' '+esc(key)+'</code><button data-copy="retry-cmd">'+copy("copy_retry")+'</button></div>'+
       '<div class="copy-row"><code id="abandon-cmd">omac node abandon '+esc(state.current)+' '+esc(key)+'</code><button data-copy="abandon-cmd">'+copy("copy_abandon")+'</button></div>';
     wireCopy();
   }catch(e){
+    if(state.detailGeneration !== detailGeneration || state.selected !== key || state.current !== manifest) return;
     $("detail-extra").outerHTML = '<p class="empty">'+copy("detail_failed")+': '+esc(e.message)+'</p>';
   }
 }
@@ -343,15 +465,15 @@ async function renderDetail(key){
 function renderAnomaly(s){
   const nd = s.needs_decision;
   const wrap = $("anomaly-content");
-  $("anomaly-empty").style.display = nd? "none":"block";
+  $("anomaly-empty").classList.toggle("is-hidden", !!nd);
   if(!nd){ wrap.innerHTML=""; return; }
   const card = (n) =>
     '<div class="anomaly-card '+(n.status==="blocked"?"blocked":"")+'">'+
       '<span class="state hl-'+esc(n.status)+'">'+stateLabel(n.status)+' · '+esc(n.key)+'</span>'+
       '<div class="reason">'+copy("reason")+': '+esc(n.reason||"—")+'</div>'+
-      (n.pr_url?'<div style="font-size:11px">PR: <a class="ext" href="'+esc(n.pr_url)+'" target="_blank" rel="noopener">'+esc(n.pr_url)+'</a></div>':"")+
-      (n.work_item_id?'<div style="font-size:11px;color:var(--muted)">work_item_id: '+esc(n.work_item_id)+'</div>':"")+
-      (n.evidence_summary?'<div style="font-size:11px;color:var(--muted)">review_verdict: '+esc(n.evidence_summary.review_verdict||"—")+'</div>':"")+
+      (n.pr_url?'<div class="small">PR: <a class="ext" href="'+esc(n.pr_url)+'" target="_blank" rel="noopener">'+esc(n.pr_url)+'</a></div>':"")+
+      (n.work_item_id?'<div class="muted">work_item_id: '+esc(n.work_item_id)+'</div>':"")+
+      (n.evidence_summary?'<div class="muted">review_verdict: '+esc(n.evidence_summary.review_verdict||"—")+'</div>':"")+
     '</div>';
   wrap.innerHTML =
     (nd.failed_nodes||[]).map(card).join("") +
@@ -393,7 +515,7 @@ async function loadStatic(){
         '<dt>engine</dt><dd>'+esc((cfg.engine||cfg.defaults&&cfg.defaults))+'</dd>'+
       '</dl>'+
       '<pre class="contract">'+esc(JSON.stringify(cfg,null,2))+'</pre>'+
-      '<h3 class="region-title" style="margin-top:12px">'+copy("acceptance_checks")+'</h3>'+
+      '<h3 class="region-title section-title">'+copy("acceptance_checks")+'</h3>'+
       (meta.found===false ?
         '<p class="empty">'+copy("acceptance_missing")+': '+esc(meta.acceptance_file||"—")+'</p>'
         : '<ul class="acceptance">'+((acc.flows||[]).map(f=>"<li><b>"+esc(f.id||"?")+"</b> · "+esc(f.name||"")+"</li>").join("") || '<span class="empty">'+copy("none")+'</span>')+'</ul>'
