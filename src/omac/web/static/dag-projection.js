@@ -2,15 +2,26 @@
 "use strict";
 
 const DEFAULT_VISIBLE_DEPTH = 3;
-const ACTIVE_STATES = new Set(["in_progress", "ci_check", "in_review", "merging"]);
+const EXPAND_BATCH = 8;
+const DEFAULT_NODE_BUDGET = 60;
+const DEFAULT_EDGE_BUDGET = 240;
+const ROOT_AGGREGATE = "@roots";
+const ACTIVE_STATES = new Set([
+  "in_progress", "running", "ci_check", "in_review", "review", "rework",
+  "merging",
+]);
 const ANOMALY_STATES = new Set(["failed", "blocked"]);
-const IMPORTANT_STATES = new Set([...ACTIVE_STATES, ...ANOMALY_STATES]);
+const AUTO_REVEAL_STATES = new Set([...ACTIVE_STATES, "failed"]);
 
 const statePresentation = {
   todo: {icon:"•", marker:"neutral", strong_border:false, safe_fallback:false},
+  pending: {icon:"○", marker:"pending", strong_border:false, safe_fallback:false},
   in_progress: {icon:"▶", marker:"running", strong_border:false, safe_fallback:false},
+  running: {icon:"▶", marker:"running", strong_border:false, safe_fallback:false},
   ci_check: {icon:"CI", marker:"ci", strong_border:false, safe_fallback:false},
   in_review: {icon:"◉", marker:"review", strong_border:false, safe_fallback:false},
+  review: {icon:"◉", marker:"review", strong_border:false, safe_fallback:false},
+  rework: {icon:"↺", marker:"rework", strong_border:false, safe_fallback:false},
   merging: {icon:"⇄", marker:"merge", strong_border:false, safe_fallback:false},
   done: {icon:"✓", marker:"check", strong_border:false, safe_fallback:false},
   failed: {icon:"✕", marker:"error", strong_border:true, safe_fallback:false},
@@ -127,6 +138,47 @@ function focusKeys(graph, focus){
   return graph.keys.filter(key => states.has(graph.byNodeKey[key].status));
 }
 
+function keysInStates(graph, states){
+  return graph.keys.filter(key => states.has(graph.byNodeKey[key].status));
+}
+
+function edgeCount(graph, visible){
+  let count = 0;
+  visible.forEach(key => {
+    graph.dependencies[key].forEach(dependency => {
+      if(visible.has(dependency)) count += 1;
+    });
+  });
+  return count;
+}
+
+function orderedKeys(keys, depths){
+  return [...new Set(keys)].sort((left, right) =>
+    depths[left] - depths[right] || left.localeCompare(right));
+}
+
+function addVisible(graph, depths, visible, keys, limits, maxAdded){
+  let added = 0;
+  let truncated = false;
+  orderedKeys(keys, depths).forEach(key => {
+    if(visible.has(key)) return;
+    if(added >= maxAdded) return;
+    if(visible.size >= limits.nodeLimit) {
+      truncated = true;
+      return;
+    }
+    if(graph.dependencies[key].some(dependency => !visible.has(dependency))) return;
+    visible.add(key);
+    if(edgeCount(graph, visible) > limits.edgeLimit) {
+      visible.delete(key);
+      truncated = true;
+      return;
+    }
+    added += 1;
+  });
+  return {added, truncated};
+}
+
 function projectDag(nodes, options){
   const graph = buildGraph(nodes);
   const error = graphError(graph);
@@ -134,20 +186,38 @@ function projectDag(nodes, options){
   const depths = computeDepths(graph);
   const settings = options || {};
   const focus = settings.focus || "default";
-  let visible;
+  const limits = {
+    nodeLimit: settings.nodeBudget || DEFAULT_NODE_BUDGET,
+    edgeLimit: settings.edgeBudget || DEFAULT_EDGE_BUDGET,
+  };
+  const visible = new Set();
+  let budgetTruncated = false;
+
+  const add = (keys, maxAdded=Number.POSITIVE_INFINITY) => {
+    const result = addVisible(graph, depths, visible, keys, limits, maxAdded);
+    budgetTruncated = budgetTruncated || result.truncated;
+  };
+  add(ancestorKeys(graph, settings.pinned || []));
   if(focus === "all") {
-    visible = new Set(graph.keys);
+    add(graph.keys);
   } else if(focus === "active" || focus === "anomaly") {
-    visible = ancestorKeys(graph, focusKeys(graph, focus));
+    add(ancestorKeys(graph, focusKeys(graph, focus)));
   } else {
-    visible = new Set(graph.keys.filter(key => depths[key] <= DEFAULT_VISIBLE_DEPTH));
-    ancestorKeys(graph, graph.keys.filter(key => IMPORTANT_STATES.has(graph.byNodeKey[key].status)))
-      .forEach(key => visible.add(key));
+    const activePaths = ancestorKeys(graph, keysInStates(graph, AUTO_REVEAL_STATES));
+    add(activePaths);
+    add(graph.keys.filter(key => depths[key] <= DEFAULT_VISIBLE_DEPTH));
   }
 
   (settings.expanded || []).forEach(source => {
-    if(!visible.has(source) || !graph.children[source]) return;
-    revealClosure(graph, source).forEach(key => visible.add(key));
+    let hidden;
+    if(source === ROOT_AGGREGATE) {
+      hidden = graph.keys.filter(key =>
+        graph.dependencies[key].length === 0 && !visible.has(key));
+    } else {
+      if(!visible.has(source) || !graph.children[source]) return;
+      hidden = hiddenRevealClosure(graph, source, visible);
+    }
+    add(hidden, EXPAND_BATCH);
   });
 
   const visibleNodes = graph.keys
@@ -171,59 +241,114 @@ function projectDag(nodes, options){
     });
     return result;
   }, []);
-  return {depths, nodes: visibleNodes, edges, aggregates};
+  const hiddenRoots = graph.keys.filter(key =>
+    graph.dependencies[key].length === 0 && !visible.has(key));
+  if(hiddenRoots.length) {
+    aggregates.unshift({
+      source: null,
+      hidden_count: hiddenRoots.length,
+      status_summary: statusSummary(graph, hiddenRoots),
+    });
+  }
+  return {
+    depths, nodes: visibleNodes, edges, aggregates,
+    budget: {
+      node_limit: limits.nodeLimit,
+      edge_limit: limits.edgeLimit,
+      visible_nodes: visibleNodes.length,
+      visible_edges: edges.length,
+      truncated: budgetTruncated,
+    },
+  };
+}
+
+function barycenter(keys, order){
+  if(!keys.length) return Number.POSITIVE_INFINITY;
+  return keys.reduce((sum, key) => sum + (order[key] ?? 0), 0) / keys.length;
 }
 
 function layoutDag(projection, options){
   const settings = options || {};
-  const colW = settings.colW || 200;
-  const rowH = settings.rowH || 84;
+  const colW = settings.colW || 230;
+  const rowH = settings.rowH || 88;
   const padX = settings.padX || 48;
   const padY = settings.padY || 56;
-  const nodeWidth = settings.nodeWidth || 120;
-  const nodeHeight = settings.nodeHeight || 56;
-  const aggregateWidth = settings.aggregateWidth || 150;
-  const aggregateHeight = settings.aggregateHeight || 40;
-  const aggregateGap = settings.aggregateGap || 12;
+  const nodeWidth = settings.nodeWidth || 160;
+  const nodeHeight = settings.nodeHeight || 60;
+  const aggregateWidth = settings.aggregateWidth || 170;
+  const aggregateHeight = settings.aggregateHeight || 44;
   const nodes = projection.nodes || [];
   const depths = projection.depths || {};
   const groups = {};
   nodes.forEach(node => {
     const depth = depths[node.key];
-    (groups[depth] = groups[depth] || []).push(node);
+    (groups[depth] = groups[depth] || []).push(node.key);
   });
-  Object.values(groups).forEach(group => group.sort((left, right) =>
-    left.key.localeCompare(right.key)));
+  Object.values(groups).forEach(group => group.sort());
+  const incoming = {};
+  const outgoing = {};
+  nodes.forEach(node => { incoming[node.key] = []; outgoing[node.key] = []; });
+  (projection.edges || []).forEach(edge => {
+    incoming[edge.to].push(edge.from);
+    outgoing[edge.from].push(edge.to);
+  });
+  const depthKeys = Object.keys(groups).map(Number).sort((left, right) => left - right);
+  const orderMap = () => {
+    const result = {};
+    depthKeys.forEach(depth => groups[depth].forEach((key, index) => { result[key] = index; }));
+    return result;
+  };
+  for(let pass=0; pass<4; pass += 1) {
+    let order = orderMap();
+    depthKeys.slice(1).forEach(depth => {
+      groups[depth].sort((left, right) =>
+        barycenter(incoming[left], order) - barycenter(incoming[right], order)
+        || order[left] - order[right] || left.localeCompare(right));
+    });
+    order = orderMap();
+    depthKeys.slice(0, -1).reverse().forEach(depth => {
+      groups[depth].sort((left, right) =>
+        barycenter(outgoing[left], order) - barycenter(outgoing[right], order)
+        || order[left] - order[right] || left.localeCompare(right));
+    });
+  }
 
   const pos = {};
-  let maxRow = 0;
-  Object.keys(groups).sort((left, right) => +left - +right).forEach(depth => {
-    const row = groups[depth];
-    maxRow = Math.max(maxRow, row.length);
-    row.forEach((node, index) => {
-      pos[node.key] = {x: padX + (+depth - 1) * colW, y: padY + index * rowH};
+  const occupied = {};
+  depthKeys.forEach(depth => {
+    occupied[depth] = new Set();
+    groups[depth].forEach((key, index) => {
+      occupied[depth].add(index);
+      pos[key] = {x: padX + (depth - 1) * colW, y: padY + index * rowH};
     });
   });
 
-  const maxVisibleDepth = nodes.reduce((maximum, node) =>
-    Math.max(maximum, depths[node.key] || 1), 1);
   const aggregates = projection.aggregates || [];
   const aggregatePositions = {};
-  const aggregateY = padY + maxRow * rowH + aggregateGap;
-  aggregates.forEach((aggregate, index) => {
-    aggregatePositions[aggregate.source] = {
-      x: padX + index * (aggregateWidth + aggregateGap), y: aggregateY,
+  aggregates.forEach(aggregate => {
+    const source = aggregate.source;
+    const targetDepth = source ? (depths[source] || 0) + 1 : 1;
+    occupied[targetDepth] = occupied[targetDepth] || new Set();
+    const preferred = source ? Math.max(0, Math.round((pos[source].y - padY) / rowH)) : 0;
+    let row = preferred;
+    for(let distance=0; occupied[targetDepth].has(row); distance += 1) {
+      const before = preferred - distance - 1;
+      const after = preferred + distance + 1;
+      row = before >= 0 && !occupied[targetDepth].has(before) ? before : after;
+    }
+    occupied[targetDepth].add(row);
+    aggregatePositions[source === null ? ROOT_AGGREGATE : source] = {
+      x: padX + (targetDepth - 1) * colW,
+      y: padY + row * rowH,
     };
   });
-  const graphWidth = padX * 2 + maxVisibleDepth * colW;
-  const aggregateWidthTotal = aggregates.length
-    ? padX * 2 + aggregates.length * aggregateWidth
-      + (aggregates.length - 1) * aggregateGap
-    : 0;
-  const W = Math.max(graphWidth, aggregateWidthTotal);
-  const H = aggregates.length
-    ? aggregateY + aggregateHeight + padY
-    : padY * 2 + maxRow * rowH;
+
+  const allBoxes = [
+    ...Object.values(pos).map(point => ({...point, width:nodeWidth, height:nodeHeight})),
+    ...Object.values(aggregatePositions).map(point => ({...point, width:aggregateWidth, height:aggregateHeight})),
+  ];
+  const W = allBoxes.reduce((maximum, box) => Math.max(maximum, box.x + box.width + padX), 400);
+  const H = allBoxes.reduce((maximum, box) => Math.max(maximum, box.y + box.height + padY), 200);
   return {
     pos, aggregatePositions, W, H, colW, rowH, padX, padY,
     nodeWidth, nodeHeight, aggregateWidth, aggregateHeight,
@@ -240,11 +365,24 @@ function presentState(status){
   };
 }
 
+function directRelations(nodes, key){
+  const graph = buildGraph(nodes);
+  return {
+    upstream: (graph.dependencies[key] || []).slice(),
+    downstream: (graph.children[key] || []).slice(),
+  };
+}
+
 global.OMACDag = {
   DEFAULT_VISIBLE_DEPTH,
+  EXPAND_BATCH,
+  DEFAULT_NODE_BUDGET,
+  DEFAULT_EDGE_BUDGET,
+  ROOT_AGGREGATE,
   statePresentation,
   presentState,
   collapseBranches,
+  directRelations,
   layoutDag,
   projectDag,
 };
