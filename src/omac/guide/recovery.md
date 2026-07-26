@@ -23,6 +23,27 @@
    - 修改 manifest：调整 contract、换人或拆小；必要时先运行 `omac dag check`。
 4. 重新运行 `omac dag run <manifest>`。已 done 节点会复用，其余节点续跑。
 
+## plan / decompose review 耗尽后的继续决策
+
+当 `omac plan create/resume` 因 plan、acceptance 或 decompose 的 review 轮次耗尽而
+exit 20 时，先读取报告中的 `item_id`、`rounds`、`last_opinion` 和 `next_action`，再由
+Human 或获授权的 operator 明确决定是否增加一轮：
+
+```bash
+omac plan continue-review --dag-key decompose-p-xxxx \
+  --reason "Human approved one additional review round"
+omac plan resume --plan-id p-xxxx
+```
+
+- `continue-review` 在同一 work item 上写入小型 `review_continuation` decision，绝对上限
+  只增加一轮；它不清零 `review_bounce`，未消费上一轮授权时也拒绝继续叠加。
+- exhausted reject 会通过 OMAC `reset_review` 和 status 恢复到 authoring/todo，让 producer
+  先更新交付；final pass-with-nits 已有新交付时只开放下一 Reviewer round。
+- 该命令不修改 `.omac/config.yaml` 或 `retry.review`，因此不会为了单次人工决策制造项目
+  Git revision 漂移。`retry.review` 仍是新任务和旧自动化入口的默认预算。
+- 命令只读检查 active Agent；发现活跃 run 时拒绝，不会自动 cancel。等待当前 run 结束后
+  再执行，除非调用者另行选择现有的显式取消/重启流程。
+
 ## 动作选择
 
 | 报告信号 | 先检查 | 推荐动作 |
@@ -106,3 +127,5 @@ nodes:
 - 禁止绕过失败隔离直接推进 blocked 节点。
 - 禁止在未读取实例事实和证据链时凭猜测 accept 或 abandon。
 - 禁止把 exit 20 报告成成功。
+- 禁止为了单次 plan review 继续而修改 `retry.review` 并污染被评审 revision；使用
+  `omac plan continue-review`。

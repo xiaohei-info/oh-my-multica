@@ -92,6 +92,26 @@ def test_mock_bounce_increment_pattern():
     assert store.get_work_item(item.id).bounces.review == 1
 
 
+def test_mock_review_continuation_roundtrip():
+    store = MockStore(_mock_config())
+    item = store.create_work_item(
+        "ws", "t", "d", dag_key="decompose-p1", worker="alice",
+        kind=TaskKind.DECOMPOSE)
+    continuation = {
+        "schema": "omac.review-continuation/v1",
+        "stage": "decompose",
+        "mode": "producer-rework",
+        "authorized_through_round": 9,
+        "decision_count": 1,
+        "reason": "operator decision",
+    }
+
+    store.update_work_item_metadata(
+        item.id, review_continuation=continuation)
+
+    assert store.get_work_item(item.id).review_continuation == continuation
+
+
 # ==================== Multica(subprocess mock)写后读回 ====================
 
 class _FakeMulticaProc:
@@ -278,6 +298,29 @@ def test_multica_update_phase_and_bounces_roundtrip():
     assert ref["attachment_id"] == "att-1"
     assert fake.comments[item.id][0]["attachments"]
     assert "<!-- omac-deliverable-begin -->" not in fake.comments[item.id][0]["content"]
+
+
+def test_multica_review_continuation_roundtrip():
+    store = _multica_store()
+    fake = _FakeMulticaProc()
+    continuation = {
+        "schema": "omac.review-continuation/v1",
+        "stage": "decompose",
+        "mode": "producer-rework",
+        "authorized_through_round": 9,
+        "decision_count": 1,
+        "reason": "operator decision",
+    }
+    with patch("subprocess.run", side_effect=fake.run):
+        item = store.create_work_item(
+            "ws", "t", "d", dag_key="decompose-p1", worker="alice",
+            kind=TaskKind.DECOMPOSE)
+        store.update_work_item_metadata(
+            item.id, review_continuation=continuation)
+        got = store.get_work_item(item.id)
+
+    assert got.review_continuation == continuation
+    assert fake.metadata[item.id]["review_continuation"] == continuation
 
 
 def test_multica_review_report_uses_ref_not_nested_json_string():

@@ -815,6 +815,201 @@ def test_exhausted_needs_decision():
     assert report["item_id"] == eng.store.list_work_items("ws")[0].id
 
 
+def _exhausted_decompose_review(
+        eng, *, verdict="reject", bounce=8, continuation=None):
+    item = create_authoring_task(eng, AuthoringTaskSpec(
+        kind=TaskKind.DECOMPOSE,
+        title="decompose review",
+        dag_key="decompose-p-review",
+        assignee="alice",
+    ))
+    eng.store.update_work_item_metadata(
+        item.id,
+        deliverable="meta:\n  name: review\nnodes: []\n",
+        phase=TaskPhase.REVIEW,
+        review_verdict=verdict or "",
+        review_comment="budget exhausted",
+        review_report=_review_report(verdict) if verdict else None,
+        review_bounce=bounce,
+    )
+    current = eng.store.get_work_item(item.id)
+    if continuation is not None:
+        current.review_continuation = continuation
+    if verdict == "reject" and bounce > 0:
+        current.review_subject_digest = tasks_module._review_subject_digest(
+            TaskKind.DECOMPOSE, current, bounce)
+    eng.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+    return current
+
+
+def test_legacy_config_budget_increase_reworks_rejected_delivery_before_review():
+    """旧 config 提高上限仍兼容，但 reject 必须先回 producer，不能直接重审旧交付。"""
+    eng = _engine()
+    _exhausted_decompose_review(eng)
+    MockStore.set_kind_delivery(
+        "decompose", {"manifest": "meta:\n  name: revised\nnodes: []\n"})
+
+    result = run_task(
+        eng,
+        TaskKind.DECOMPOSE,
+        {"title": "decompose review"},
+        "alice",
+        reviewers=["bob"],
+        max_revisions=9,
+        poll=_poll,
+        resume_item_id=eng.store.list_work_items("ws")[0].id,
+    )
+
+    assert result["verdict"] == "pass"
+    assert result["rounds"] == 9
+    assert [entry[2] for entry in eng.store.assign_log] == ["worker", "reviewer"]
+
+
+def test_persisted_review_continuation_survives_process_resume_for_reject():
+    first = _engine(MOCK_AUTO_COMPLETE="false")
+    continuation = {
+        "schema": "omac.review-continuation/v1",
+        "stage": "decompose",
+        "mode": "producer-rework",
+        "authorized_through_round": 9,
+        "decision_count": 1,
+        "reason": "operator approved one more round",
+    }
+    item = _exhausted_decompose_review(first, continuation=continuation)
+    first.store.reset_review(item.id)
+    first.store.update_status(item.id, WorkItemStatus.TODO)
+    MockStore.set_kind_delivery(
+        "decompose", {"manifest": "meta:\n  name: revised\nnodes: []\n"})
+
+    resumed = _engine()
+    result = run_task(
+        resumed,
+        TaskKind.DECOMPOSE,
+        {"title": "decompose review"},
+        "alice",
+        reviewers=["bob"],
+        max_revisions=8,
+        poll=_poll,
+        resume_item_id=item.id,
+    )
+
+    assert result["verdict"] == "pass"
+    assert result["rounds"] == 9
+    assert [entry[2] for entry in resumed.store.assign_log] == ["worker", "reviewer"]
+
+
+def test_persisted_review_continuation_reviews_final_nits_delivery_once():
+    first = _engine(MOCK_AUTO_COMPLETE="false")
+    continuation = {
+        "schema": "omac.review-continuation/v1",
+        "stage": "decompose",
+        "mode": "review-only",
+        "authorized_through_round": 9,
+        "decision_count": 1,
+        "reason": "operator approved one more round",
+    }
+    item = _exhausted_decompose_review(
+        first, verdict=None, continuation=continuation)
+
+    resumed = _engine()
+    result = run_task(
+        resumed,
+        TaskKind.DECOMPOSE,
+        {"title": "decompose review"},
+        "alice",
+        reviewers=["bob"],
+        max_revisions=8,
+        poll=_poll,
+        resume_item_id=item.id,
+    )
+
+    assert result["verdict"] == "pass"
+    assert result["rounds"] == 9
+    assert [entry[2] for entry in resumed.store.assign_log] == ["reviewer"]
+
+
+def test_final_pass_with_nits_exhaustion_can_continue_one_review_round():
+    from omac.pipeline.plan import plan_continue_review
+
+    eng = _engine()
+    MockStore.set_kind_delivery_sequence("decompose", [
+        {"manifest": "meta:\n  name: first\nnodes: []\n"},
+        {"manifest": "meta:\n  name: revised\nnodes: []\n"},
+    ])
+    MockStore.set_review_verdict_sequence(["pass-with-nits"])
+
+    with pytest.raises(NeedsDecision):
+        run_task(
+            eng,
+            TaskKind.DECOMPOSE,
+            {"title": "decompose review"},
+            "alice",
+            reviewers=["bob"],
+            max_revisions=1,
+            poll=_poll,
+            dag_key="decompose-p-final-nits",
+        )
+
+    item = eng.store.list_work_items("ws")[0]
+    assert "revised" in item.deliverable
+    assert item.review_verdict is None
+    assert item.bounces.review == 1
+
+    decision = plan_continue_review(
+        eng, 1, dag_key=item.dag_key,
+        reason="operator approved final nits recheck")
+    assert decision["mode"] == "review-only"
+    MockStore.set_review_verdict("pass")
+
+    resumed = _engine()
+    result = run_task(
+        resumed,
+        TaskKind.DECOMPOSE,
+        {"title": "decompose review"},
+        "alice",
+        reviewers=["bob"],
+        max_revisions=1,
+        poll=_poll,
+        resume_item_id=item.id,
+    )
+
+    assert result["verdict"] == "pass"
+    assert result["rounds"] == 2
+    assert [entry[2] for entry in resumed.store.assign_log] == [
+        "worker", "reviewer", "worker", "reviewer",
+    ]
+
+
+def test_consumed_review_continuation_does_not_reset_budget_again():
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    continuation = {
+        "schema": "omac.review-continuation/v1",
+        "stage": "decompose",
+        "mode": "producer-rework",
+        "authorized_through_round": 9,
+        "decision_count": 1,
+        "reason": "operator approved one more round",
+    }
+    item = _exhausted_decompose_review(
+        eng, bounce=9, continuation=continuation)
+
+    with pytest.raises(NeedsDecision) as exc:
+        run_task(
+            eng,
+            TaskKind.DECOMPOSE,
+            {"title": "decompose review"},
+            "alice",
+            reviewers=["bob"],
+            max_revisions=8,
+            poll=lambda: pytest.fail("consumed authorization must not dispatch"),
+            resume_item_id=item.id,
+        )
+
+    assert exc.value.report["rounds"] == 9
+    assert [entry[2] for entry in eng.store.assign_log] == []
+    assert "omac plan continue-review --dag-key decompose-p-review" in str(exc.value)
+
+
 def test_final_reject_does_not_start_unreviewed_producer_revision():
     """最后一轮 reject 后直接交人决策，不再启动一份无人评审的新产物。"""
     eng = _engine()

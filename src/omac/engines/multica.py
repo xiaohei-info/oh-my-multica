@@ -25,7 +25,8 @@ from ..core.taskmeta import (
     CI_BOUNCE_KEY, CONTRACT_REF_KEY, DECISION_REQUIRED_KEY, DELIVERABLE_KEY,
     DELIVERABLE_REF_KEY, KIND_KEY, MERGE_BOUNCE_KEY, PHASE_KEY,
     MACHINE_FEEDBACK_REF_KEY, PROJECT_RULES_KEY, PROJECT_RULES_REF_KEY, REVIEW_BOUNCE_KEY,
-    REVIEW_LEDGER_REF_KEY, REVIEW_OBLIGATIONS_KEY, REVIEW_REPORT_REF_KEY,
+    REVIEW_CONTINUATION_KEY, REVIEW_LEDGER_REF_KEY, REVIEW_OBLIGATIONS_KEY,
+    REVIEW_REPORT_REF_KEY,
     REVIEW_SUBJECT_DIGEST_KEY,
     SOURCE_REFS_KEY, TaskKind, TaskPhase, VERIFICATION_REF_KEY, WORKER_BOUNCE_KEY,
     parse_bounces, parse_kind, parse_phase,
@@ -437,6 +438,8 @@ class MulticaStore(WorkItemStore):
         verification_ref = self._json_metadata(metadata, VERIFICATION_REF_KEY)
         review_report_ref = self._json_metadata(metadata, REVIEW_REPORT_REF_KEY)
         review_ledger_ref = self._json_metadata(metadata, REVIEW_LEDGER_REF_KEY)
+        review_continuation = self._json_metadata(
+            metadata, REVIEW_CONTINUATION_KEY)
         machine_feedback_ref = self._json_metadata(
             metadata, MACHINE_FEEDBACK_REF_KEY)
         review_obligations = self._json_metadata(metadata, REVIEW_OBLIGATIONS_KEY)
@@ -538,6 +541,9 @@ class MulticaStore(WorkItemStore):
             review_ledger=review_ledger,
             review_ledger_ref=(
                 review_ledger_ref if isinstance(review_ledger_ref, dict) else None),
+            review_continuation=(
+                review_continuation
+                if isinstance(review_continuation, dict) else None),
             decision_required=self._json_metadata(metadata, DECISION_REQUIRED_KEY),
             contract=contract,
             contract_ref=contract_ref if isinstance(contract_ref, dict) else None,
@@ -796,6 +802,7 @@ class MulticaStore(WorkItemStore):
         review_obligations: Optional[List[Dict[str, Any]]] = None,
         review_ledger: Optional[Dict[str, Any]] = None,
         review_ledger_source: Optional[str] = None,
+        review_continuation: Optional[Dict[str, Any]] = None,
         decision_required: Optional[Dict[str, Any]] = None,
         phase: Optional[TaskPhase] = None,
         worker_bounce: Optional[int] = None,
@@ -871,6 +878,9 @@ class MulticaStore(WorkItemStore):
             ref = self._publish_payload_comment(
                 item_id, "review-ledger", review_ledger_source, ".yaml")
             self._set_metadata(item_id, REVIEW_LEDGER_REF_KEY, ref)
+        if review_continuation is not None:
+            self._set_metadata(
+                item_id, REVIEW_CONTINUATION_KEY, review_continuation)
         if review_subject_digest is not None:
             self._set_metadata(
                 item_id, REVIEW_SUBJECT_DIGEST_KEY, review_subject_digest)
@@ -1061,6 +1071,17 @@ class MulticaRuntime(AgentRuntime):
                 cancelled = True
 
         return cancelled
+
+    def is_active(self, item_id: str) -> bool:
+        runs = self._store._run_multica([
+            "issue", "runs", item_id, "--output", "json",
+        ])
+        latest = _latest_direct_run(runs if isinstance(runs, list) else [])
+        return bool(
+            latest
+            and (latest.get("status") or "").lower()
+            in {"queued", "pending", "running", "dispatching"}
+        )
 
     @staticmethod
     def _items(payload, key: str) -> List[Dict[str, Any]]:

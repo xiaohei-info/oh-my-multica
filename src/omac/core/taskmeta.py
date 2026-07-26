@@ -91,6 +91,7 @@ REVIEW_SUBJECT_DIGEST_KEY = "review_subject_digest"
 REVIEW_OBLIGATIONS_KEY = "review_obligations"
 REVIEW_LEDGER_REF_KEY = "review_ledger_ref"
 MACHINE_FEEDBACK_REF_KEY = "machine_feedback_ref"
+REVIEW_CONTINUATION_KEY = "review_continuation"
 DECISION_REQUIRED_KEY = "decision_required"
 SOURCE_REFS_KEY = "source_refs"
 
