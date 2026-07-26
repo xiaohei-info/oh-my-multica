@@ -10,6 +10,12 @@ This file records public changes to oh-my-multica. The format follows
 
 ### Changed
 
+- Exhausted plan-stage reviews now have an explicit
+  `omac plan continue-review` operator decision. It grants one monotonic,
+  persisted review round on the existing work item, restores rejected work to
+  the producer through OMAC state transitions, preserves final-nits deliveries
+  for Reviewer recheck, refuses active Agent runs without cancelling them, and
+  avoids changing project `retry.review` or the reviewed Git revision.
 - New review cycles use finite `review_obligations`, a persistent cross-cycle
   blocker ledger, structured prior-blocker regression results, and automatic
   convergence-audit signaling. Legacy in-flight review reports remain readable

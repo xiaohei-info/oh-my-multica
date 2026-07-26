@@ -939,6 +939,23 @@ def test_multica_runtime_cancel_interrupts_active_direct_run(monkeypatch):
     assert not any(args[:2] == ["issue", "assign"] for args in calls)
 
 
+def test_multica_runtime_reports_active_direct_run_without_cancelling(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    runtime = MulticaRuntime(store)
+    calls = []
+
+    def fake_run(args):
+        calls.append(args)
+        if args[:2] == ["issue", "runs"]:
+            return [{"id": "task-active", "kind": "direct", "status": "running"}]
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+
+    assert runtime.is_active("issue-1") is True
+    assert calls == [["issue", "runs", "issue-1", "--output", "json"]]
+
+
 def test_multica_runtime_cancel_clears_stale_assignment_without_active_run(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
     runtime = MulticaRuntime(store)

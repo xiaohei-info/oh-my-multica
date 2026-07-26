@@ -38,6 +38,9 @@ from ..core.gitsync import commit_files, ensure_config_synced, ensure_files_clea
 from ..core.lint import lint
 from ..core.manifest import loads_manifest, save_manifest
 from ..core.project_rules import read_agents_snapshot, write_project_rules
+from ..core.review_continuation import (
+    authorized_review_limit, build_review_continuation,
+)
 from ..core.taskmeta import TaskKind, TaskPhase, make_dag_key, make_plan_id
 from ..engines.models import WorkItem, WorkItemStatus
 from ..errors import ValidationError
@@ -226,8 +229,18 @@ def _acceptance_guard(item: WorkItem) -> List[str]:
 
 
 def _find_by_dag_key(ctx: PlanContext, kind: TaskKind, dag_key: str) -> Optional[WorkItem]:
+    return _find_stage_item(
+        ctx.engine.store, ctx.workspace_id, kind, dag_key)
+
+
+def _find_stage_item(
+    store,
+    workspace_id: str,
+    kind: TaskKind,
+    dag_key: str,
+) -> Optional[WorkItem]:
     matches = [
-        item for item in ctx.engine.store.list_work_items(ctx.workspace_id)
+        item for item in store.list_work_items(workspace_id)
         if item.kind == kind and item.dag_key == dag_key
     ]
     if len(matches) > 1:
@@ -235,6 +248,137 @@ def _find_by_dag_key(ctx: PlanContext, kind: TaskKind, dag_key: str) -> Optional
             f"dag_key is not unique: {dag_key}. Resolve duplicate platform issues first.",
             f"dag_key 不唯一:{dag_key} —— 平台数据异常,请先人工处理重复 issue。"))
     return matches[0] if matches else None
+
+
+def _continuation_selector(
+    *,
+    dag_key: Optional[str],
+    plan_id: Optional[str],
+    stage: Optional[str],
+) -> tuple[TaskKind, str, str]:
+    allowed = {
+        TaskKind.PLAN.value: TaskKind.PLAN,
+        TaskKind.ACCEPTANCE.value: TaskKind.ACCEPTANCE,
+        TaskKind.DECOMPOSE.value: TaskKind.DECOMPOSE,
+    }
+    if dag_key:
+        plan_id_value = plan_id_from_dag_key(dag_key)
+        stage_value = next(
+            (prefix for prefix in allowed if dag_key.startswith(f"{prefix}-")),
+            None,
+        )
+        if stage_value is None:
+            raise ValidationError(ui(
+                f"Unsupported plan stage DAG key: {dag_key}",
+                f"不支持的 plan stage DAG key:{dag_key}"))
+        if stage and stage != stage_value:
+            raise ValidationError(ui(
+                f"--stage {stage} conflicts with --dag-key {dag_key}",
+                f"--stage {stage} 与 --dag-key {dag_key} 冲突"))
+        return allowed[stage_value], dag_key, plan_id_value
+    if not plan_id or not stage:
+        raise ValidationError(ui(
+            "continue-review requires --dag-key, or --plan-id together with --stage",
+            "continue-review 需要 --dag-key，或同时提供 --plan-id 与 --stage"))
+    if stage not in allowed:
+        raise ValidationError(ui(
+            f"Unsupported review stage: {stage}",
+            f"不支持的 review stage:{stage}"))
+    plan_id_value = (
+        plan_id_from_dag_key(plan_id)
+        if plan_id.startswith(("plan-", "acceptance-", "decompose-"))
+        else plan_id
+    )
+    kind = allowed[stage]
+    return kind, make_dag_key(kind, scope=plan_id_value), plan_id_value
+
+
+def plan_continue_review(
+    engine,
+    configured_limit: int,
+    *,
+    dag_key: Optional[str] = None,
+    plan_id: Optional[str] = None,
+    stage: Optional[str] = None,
+    issue_id: Optional[str] = None,
+    reason: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Persist one operator-authorized review round without changing project config."""
+    kind, stage_key, plan_id_value = _continuation_selector(
+        dag_key=dag_key, plan_id=plan_id, stage=stage)
+    store = engine.store
+    if issue_id:
+        item = store.get_work_item(issue_id)
+        if item.kind != kind or item.dag_key != stage_key:
+            raise ValidationError(ui(
+                f"Issue {issue_id} is {item.kind.value}/{item.dag_key}, expected "
+                f"{kind.value}/{stage_key}.",
+                f"Issue {issue_id} 是 {item.kind.value}/{item.dag_key}，期望 "
+                f"{kind.value}/{stage_key}。"))
+    else:
+        item = _find_stage_item(
+            store, store.config.workspace_id, kind, stage_key)
+        if item is None:
+            raise ValidationError(ui(
+                f"No {kind.value} issue matches {stage_key}.",
+                f"未找到 {stage_key} 对应的 {kind.value} issue。"))
+
+    if engine.runtime.is_active(item.id):
+        raise ValidationError(ui(
+            f"Work item {item.id} still has an active Agent run. Wait for it to finish "
+            "before authorizing another review round; continue-review never cancels runs.",
+            f"Work item {item.id} 仍有活跃 Agent run。请等待其结束后再授权额外 review；"
+            "continue-review 永不取消运行。"))
+
+    current_limit = authorized_review_limit(item, configured_limit)
+    current_round = max(0, item.bounces.review)
+    if current_round < current_limit:
+        raise ValidationError(ui(
+            f"Review round {current_round + 1} is already authorized through round "
+            f"{current_limit}. Run plan resume instead of stacking another decision.",
+            f"当前已授权到 review round {current_limit}；请运行 plan resume，"
+            "不要重复叠加 decision。"))
+
+    if item.review_verdict == "reject":
+        mode = "producer-rework"
+    elif (
+        item.phase == TaskPhase.REVIEW
+        and item.status == WorkItemStatus.IN_REVIEW
+        and not item.review_verdict
+        and bool(item.deliverable)
+    ):
+        mode = "review-only"
+    else:
+        raise ValidationError(ui(
+            f"Work item {item.id} is not in an exhausted reject or final-nits state.",
+            f"Work item {item.id} 不处于 review reject 耗尽或 final-nits 待复评状态。"))
+
+    decision_reason = (
+        (reason or "operator approved one additional review round").strip()
+        or "operator approved one additional review round"
+    )
+    if len(decision_reason.encode("utf-8")) > 1024:
+        raise ValidationError(ui(
+            "--reason must be at most 1024 UTF-8 bytes",
+            "--reason 最多 1024 UTF-8 bytes"))
+    continuation = build_review_continuation(
+        item, configured_limit, mode=mode, reason=decision_reason)
+    store.update_work_item_metadata(
+        item.id, review_continuation=continuation)
+    if mode == "producer-rework":
+        store.reset_review(item.id)
+        store.update_status(item.id, WorkItemStatus.TODO)
+
+    return {
+        "item_id": item.id,
+        "dag_key": stage_key,
+        "plan_id": plan_id_value,
+        "stage": kind.value,
+        "mode": mode,
+        "authorized_through_round": continuation["authorized_through_round"],
+        "decision_count": continuation["decision_count"],
+        "next_action": f"omac plan resume --plan-id {plan_id_value}",
+    }
 
 
 def _require_by_dag_key(ctx: PlanContext, kind: TaskKind, dag_key: str) -> WorkItem:

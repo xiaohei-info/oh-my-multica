@@ -328,6 +328,17 @@ def test_recovery_topic_has_decision_flow() -> None:
         assert item in content, f"recovery missing: {item}"
 
 
+def test_recovery_documents_plan_review_continuation_without_config_drift() -> None:
+    chinese = load_topic("recovery")
+    english = load_topic("recovery", language="en")
+
+    for content in (chinese, english):
+        assert "omac plan continue-review" in content
+        assert "review_continuation" in content
+        assert "retry.review" in content
+        assert "active Agent" in content
+
+
 def test_dag_help_has_hard_constraints() -> None:
     _assert_no_residue(DAG_DESC, "dag --help")
     for item in ["前台阻塞", "重试显式", "失败隔离", "manifest 唯一口径"]:

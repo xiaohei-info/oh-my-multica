@@ -362,6 +362,14 @@ class MockStore(WorkItemStore):
                 item.deliverable = content
                 if item.kind == TaskKind.PLAN:
                     item.project_rules = deliverable.get("project_rules")
+                # 对齐 dispatch.submit 的 authoring → review 原子推进：新交付
+                # 不能继续携带上一轮 verdict/subject 或机器反馈。
+                item.review_verdict = None
+                item.review_comment = None
+                item.machine_feedback = None
+                item.machine_feedback_ref = None
+                item.review_subject_digest = None
+                item.decision_required = {}
                 item.phase = TaskPhase.REVIEW
                 item.status = WorkItemStatus.IN_REVIEW
             else:
@@ -665,6 +673,7 @@ class MockStore(WorkItemStore):
         review_obligations: Optional[List[Dict[str, Any]]] = None,
         review_ledger: Optional[Dict[str, Any]] = None,
         review_ledger_source: Optional[str] = None,
+        review_continuation: Optional[Dict[str, Any]] = None,
         decision_required: Optional[Dict[str, Any]] = None,
         phase: Optional[TaskPhase] = None,
         worker_bounce: Optional[int] = None,
@@ -735,6 +744,8 @@ class MockStore(WorkItemStore):
                 "filename": "omac-review-ledger.yaml",
                 "bytes": len(review_ledger_source.encode("utf-8")),
             }
+        if review_continuation is not None:
+            item.review_continuation = review_continuation or None
         if decision_required is not None:
             item.decision_required = decision_required
         if phase is not None:
@@ -860,6 +871,10 @@ class MockRuntime(AgentRuntime):
     def cancel(self, item_id: str) -> bool:
         self._store.get_work_item(item_id)
         return False
+
+    def is_active(self, item_id: str) -> bool:
+        self._store.get_work_item(item_id)
+        return item_id in _shared_assigned_items
 
     def list_targets(self) -> List[RuntimeTarget]:
         return [RuntimeTarget(
