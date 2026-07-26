@@ -19,6 +19,31 @@ class WorkItemStatus(Enum):
     BLOCKED = "blocked"
 
 
+class PullRequestState(Enum):
+    """远端 PR 的合并闭环结论。"""
+    MERGED = "merged"
+    OPEN = "open"
+    CLOSED_UNMERGED = "closed_unmerged"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True)
+class MergeCommandResult:
+    """一次合并请求的本地执行结果；它不是远端合入事实。"""
+    succeeded: bool
+    exit_code: Optional[int]
+    output: str = ""
+    timed_out: bool = False
+
+
+@dataclass(frozen=True)
+class PullRequestObservation:
+    """适配器从 PR 远端读取的当前事实。"""
+    state: PullRequestState
+    merged_at: Optional[str] = None
+    detail: str = ""
+
+
 @dataclass
 class WorkspaceInfo:
     """工作空间信息"""

@@ -18,7 +18,7 @@ from ..core.review_convergence import (
 from ..core.gitsync import commit_manifest
 from ..core.manifest import Manifest, save_manifest, set_node
 from ..pipeline.delivery import advance_delivery, run_merge_delivery
-from ..engines.models import WorkItemStatus
+from ..engines.models import PullRequestState, WorkItemStatus
 from ..engines.runtime import AgentRuntime
 from ..engines.store import WorkItemStore
 from ..errors import PlatformError
@@ -32,7 +32,7 @@ log = logsetup.get_logger(__name__)
 _DAG_KIND = "develop"
 
 # manifest status 字符串常量
-RUNNING_STATUSES = {"in_progress", "ci_check", "in_review"}
+RUNNING_STATUSES = {"in_progress", "ci_check", "in_review", "merging"}
 FAILED_STATUSES = {"blocked", "failed"}
 TERMINAL_STATUSES = {"done", "blocked", "failed", "cancelled", "abandoned"}
 
@@ -103,6 +103,38 @@ def _has_unreviewed_worker_delivery(node, item) -> bool:
     )
 
 
+def _pull_request_url(item) -> str:
+    artifacts = getattr(item, "artifacts", None)
+    if not isinstance(artifacts, dict):
+        return ""
+    return artifacts.get("pr_url") or artifacts.get("pr") or ""
+
+
+def _pull_request_state(observation) -> PullRequestState:
+    state = getattr(observation, "state", PullRequestState.UNKNOWN)
+    if isinstance(state, PullRequestState):
+        return state
+    try:
+        return PullRequestState(str(state).lower())
+    except ValueError:
+        return PullRequestState.UNKNOWN
+
+
+def _complete_merge_if_confirmed(
+    store: WorkItemStore, runtime: AgentRuntime, manifest: Manifest, key: str,
+    retry_limits: dict, config: dict,
+) -> str:
+    action = run_merge_delivery(
+        config, manifest, key, store, runtime, retry_limits)
+    if action == "pass":
+        node = manifest.nodes[key]
+        store.update_status(node.work_item_id, WorkItemStatus.DONE)
+        set_node(manifest, key, status="done")
+        log.info(logsetup.EVT_NODE_DONE, kind=_DAG_KIND, node=key,
+                 id=node.work_item_id)
+    return action
+
+
 # ==================== reconcile ====================
 
 def reconcile(store: WorkItemStore, manifest: Manifest, manifest_path: str) -> bool:
@@ -157,6 +189,35 @@ def reconcile(store: WorkItemStore, manifest: Manifest, manifest_path: str) -> b
             # reject 是业务未通过,必须回到 review 回收路径处理有界返工。
             if item.review_verdict == "reject":
                 set_node(manifest, key, status="in_review")
+                changed = True
+                continue
+            pr_url = _pull_request_url(item)
+            if (
+                getattr(item, "kind", TaskKind.DEVELOP) == TaskKind.DEVELOP
+                and pr_url and not node.merged
+            ):
+                observation = store.observe_pull_request(pr_url)
+                state = _pull_request_state(observation)
+                if state == PullRequestState.MERGED and getattr(observation, "merged_at", None):
+                    node.merged = True
+                    node.merged_at = observation.merged_at
+                    if item.status != WorkItemStatus.DONE:
+                        store.update_status(node.work_item_id, WorkItemStatus.DONE)
+                    changed = True
+                    continue
+                if state == PullRequestState.OPEN:
+                    store.update_status(node.work_item_id, WorkItemStatus.IN_REVIEW)
+                    set_node(manifest, key, status="merging")
+                    changed = True
+                    continue
+                detail = getattr(observation, "detail", "") or ui(
+                    "PR closed without merge or merge facts are unavailable",
+                    "PR 未合入即关闭，或无法获得合入事实")
+                store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
+                store.add_comment(node.work_item_id, ui(
+                    f"⚠️ Historical done state lacks confirmed merge; refusing closure. {detail}",
+                    f"⚠️ 历史 done 状态缺少已确认的合入事实；拒绝收口。{detail}"))
+                set_node(manifest, key, status="blocked")
                 changed = True
                 continue
             if item.review_verdict == "pass-with-nits":
@@ -331,14 +392,10 @@ def collect_results(
                 # CI 绿(或无可用 CI 而跳过):nits follow-up 已经由上一轮 reviewer 接受,
                 # worker 修完后直接进入 merge/done,不再浪费第二轮 reviewer。
                 if item.review_verdict == "pass-with-nits":
-                    merge_action = run_merge_delivery(
-                        config or {}, manifest, key, store, runtime, limits)
+                    merge_action = _complete_merge_if_confirmed(
+                        store, runtime, manifest, key, limits, config or {})
                     if merge_action == "pass":
                         store.reset_review(node.work_item_id)
-                        store.update_status(node.work_item_id, WorkItemStatus.DONE)
-                        set_node(manifest, key, status="done")
-                        log.info(logsetup.EVT_NODE_DONE, kind=_DAG_KIND, node=key,
-                                 id=node.work_item_id)
                     elif merge_action == "blocked":
                         failures[key] = ui(
                             "Merge failed and retry.merge is exhausted.",
@@ -349,13 +406,15 @@ def collect_results(
                 elif node.reviewer:
                     pending_review.append((key, node.work_item_id, node.reviewer))
                 else:
-                    # 无 reviewer 时 CI 绿即可直接 done;同步把平台工单置 DONE,
-                    # 避免 advance_delivery 把工单倒回 IN_PROGRESS 后,
-                    # reconcile 下轮把节点从 done 拉回 in_progress 形成永久循环。
-                    store.update_status(node.work_item_id, WorkItemStatus.DONE)
-                    set_node(manifest, key, status="done")
-                    log.info(logsetup.EVT_NODE_DONE, kind=_DAG_KIND, node=key,
-                             id=node.work_item_id)
+                    merge_action = _complete_merge_if_confirmed(
+                        store, runtime, manifest, key, limits, config or {})
+                    if merge_action == "blocked":
+                        failures[key] = ui(
+                            "Merge outcome cannot be confirmed.",
+                            "无法确认 merge 结果。")
+                        log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
+                                 id=node.work_item_id, reason=ui(
+                                     "Merge confirmation failed", "merge 确认失败"))
             elif item.status == WorkItemStatus.FAILED:
                 store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
                 store.add_comment(node.work_item_id, ui(
@@ -421,16 +480,10 @@ def collect_results(
                         f"回退到 worker {node.worker} 处理 nits 失败: {exc}")
                 continue
             if not gate_errors and verdict != "reject":
-                # reviewer pass → P4.2 自动 merge 门。未显式配置 merge.command 时
-                # 使用默认 gh pr merge 命令。
-                merge_action = run_merge_delivery(
-                    config or {}, manifest, key, store, runtime, limits)
-                if merge_action == "pass":
-                    store.update_status(node.work_item_id, WorkItemStatus.DONE)
-                    set_node(manifest, key, status="done")
-                    log.info(logsetup.EVT_NODE_DONE, kind=_DAG_KIND, node=key,
-                             id=node.work_item_id)
-                elif merge_action == "blocked":
+                # reviewer pass → P4.2 自动 merge 门。命令与远端观察均由引擎适配器执行。
+                merge_action = _complete_merge_if_confirmed(
+                    store, runtime, manifest, key, limits, config or {})
+                if merge_action == "blocked":
                     failures[key] = ui(
                         "Merge failed and retry.merge is exhausted.",
                         "merge 失败,回退上界(retry.merge)已耗尽")
@@ -486,6 +539,17 @@ def collect_results(
                         failures[key] = ui(
                             f"Failed to return to worker {node.worker}: {exc}",
                             f"回退到 worker {node.worker} 失败: {exc}")
+
+        elif node.status == "merging":
+            merge_action = _complete_merge_if_confirmed(
+                store, runtime, manifest, key, limits, config or {})
+            if merge_action == "blocked":
+                failures[key] = ui(
+                    "Merge outcome cannot be confirmed.",
+                    "无法确认 merge 结果。")
+                log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
+                         id=node.work_item_id, reason=ui(
+                             "Merge confirmation failed", "merge 确认失败"))
 
     # ---- reviewer 阶段过渡(遍历后执行,避免改 manifest 影响遍历)----
     for key, item_id, reviewer in pending_review:

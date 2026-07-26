@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import os
 import stat
+from types import SimpleNamespace
 
 import pytest
 
@@ -185,9 +186,9 @@ class TestRunMergeDeliveryUnit:
             "gh pr merge https://example.com/pr/1 --squash --delete-branch")
         assert seen["kwargs"]["shell"] is True
         assert manifest.nodes["a"].merged is True
-        # 无任何评论 / 成功后节点语义回到 in_progress(即将 done)
+        # 无任何评论 / 远端确认后交给 loop 收口为 done
         assert store.get_comments(item.id) == []
-        assert manifest.nodes["a"].status == "in_progress"
+        assert manifest.nodes["a"].status == "merging"
 
     def test_merge_block_missing_command_uses_default(self, monkeypatch):
         store = _store()
@@ -546,3 +547,146 @@ class TestManifestPersistence:
         m2 = mmod.load_manifest(path)
         assert m2.nodes["a"].merged is True
         assert m2.nodes["a"].merged_at is not None
+
+
+class TestMergeClosureRegression:
+    """develop 节点只有经过远端确认的合入才能闭环。"""
+
+    @staticmethod
+    def _successful_merge_command(monkeypatch):
+        def fake_run(command, **kwargs):  # noqa: ARG001
+            class Proc:
+                returncode = 0
+                stdout = "merge requested"
+                stderr = ""
+
+            return Proc()
+
+        monkeypatch.setattr("omac.pipeline.delivery.subprocess.run", fake_run)
+
+    def test_no_reviewer_node_cannot_be_done_without_confirmed_merge(self, tmp_path):
+        store = _store()
+        runtime = _runtime(store)
+        item = _review_passed_item(store, reviewer=None)
+        manifest = Manifest(meta={}, nodes={
+            "a": Node(id="a", worker="alice", reviewer=None,
+                      work_item_id=item.id, status="in_progress"),
+        })
+        path = str(tmp_path / "m.yaml")
+        store.observe_pull_request = lambda pr_url: SimpleNamespace(
+            state="open", merged_at=None)
+
+        loop.collect_results(
+            store, runtime, manifest, path,
+            retry_limits=dict(DEFAULT_RETRY), config={})
+
+        assert manifest.nodes["a"].status != "done"
+        assert manifest.nodes["a"].merged is False
+
+    def test_successful_command_with_open_pr_cannot_unlock_downstream(
+        self, tmp_path, monkeypatch,
+    ):
+        store = _store()
+        runtime = _runtime(store)
+        item = _review_passed_item(store)
+        manifest = Manifest(meta={}, nodes={
+            "a": Node(id="a", worker="alice", reviewer="bob",
+                      work_item_id=item.id, status="in_review"),
+            "b": Node(id="b", worker="alice", reviewer="bob",
+                      blocked_by=["a"]),
+        })
+        path = str(tmp_path / "m.yaml")
+        self._successful_merge_command(monkeypatch)
+        observed = []
+        store.observe_pull_request = lambda pr_url: (
+            observed.append(pr_url)
+            or SimpleNamespace(state="open", merged_at=None)
+        )
+
+        result = loop.tick(
+            store, runtime, manifest, path, retry_limits=dict(DEFAULT_RETRY), config={})
+
+        assert observed == ["https://example.com/pr/1"]
+        assert manifest.nodes["a"].status != "done"
+        assert manifest.nodes["b"].status == "todo"
+        assert result.state != "converged"
+
+    def test_confirmed_merge_uses_authoritative_remote_timestamp(
+        self, tmp_path, monkeypatch,
+    ):
+        store = _store()
+        runtime = _runtime(store)
+        item = _review_passed_item(store)
+        manifest = Manifest(meta={}, nodes={
+            "a": Node(id="a", worker="alice", reviewer="bob",
+                      work_item_id=item.id, status="in_review"),
+        })
+        path = str(tmp_path / "m.yaml")
+        self._successful_merge_command(monkeypatch)
+        merged_at = "2026-07-26T08:15:00Z"
+        store.observe_pull_request = lambda pr_url: SimpleNamespace(
+            state="merged", merged_at=merged_at)
+
+        loop.collect_results(
+            store, runtime, manifest, path,
+            retry_limits=dict(DEFAULT_RETRY), config={})
+
+        assert manifest.nodes["a"].status == "done"
+        assert manifest.nodes["a"].merged is True
+        assert manifest.nodes["a"].merged_at == merged_at
+
+    def test_historical_done_backfills_confirmed_remote_merge(self, tmp_path):
+        store = _store()
+        item = _review_passed_item(store)
+        merged_at = "2026-07-26T08:30:00Z"
+        manifest = Manifest(meta={}, nodes={
+            "a": Node(id="a", worker="alice", reviewer="bob",
+                      work_item_id=item.id, status="done"),
+        })
+        store.observe_pull_request = lambda pr_url: SimpleNamespace(
+            state="merged", merged_at=merged_at)
+
+        assert loop.reconcile(store, manifest, str(tmp_path / "m.yaml")) is True
+
+        assert manifest.nodes["a"].status == "done"
+        assert manifest.nodes["a"].merged is True
+        assert manifest.nodes["a"].merged_at == merged_at
+
+    def test_historical_done_with_open_pr_reenters_merge_closure_without_cancelling(
+        self, tmp_path,
+    ):
+        store = _store()
+        runtime = _runtime(store)
+        item = _review_passed_item(store)
+        manifest = Manifest(meta={}, nodes={
+            "a": Node(id="a", worker="alice", reviewer="bob",
+                      work_item_id=item.id, status="done"),
+        })
+        store.observe_pull_request = lambda pr_url: SimpleNamespace(
+            state="open", merged_at=None)
+        runtime.cancel = lambda item_id: pytest.fail("merge reconciliation must not cancel runs")
+
+        assert loop.reconcile(store, manifest, str(tmp_path / "m.yaml")) is True
+        result = loop.tick(
+            store, runtime, manifest, str(tmp_path / "m.yaml"),
+            retry_limits=dict(DEFAULT_RETRY), config={})
+
+        assert manifest.nodes["a"].status == "merging"
+        assert manifest.nodes["a"].work_item_id == item.id
+        assert result.state == "running"
+
+    @pytest.mark.parametrize("state", ["closed_unmerged", "unknown"])
+    def test_historical_done_with_unconfirmed_pr_fails_closed(self, tmp_path, state):
+        store = _store()
+        item = _review_passed_item(store)
+        manifest = Manifest(meta={}, nodes={
+            "a": Node(id="a", worker="alice", reviewer="bob",
+                      work_item_id=item.id, status="done"),
+        })
+        store.observe_pull_request = lambda pr_url: SimpleNamespace(
+            state=state, merged_at=None, detail="remote unavailable")
+
+        assert loop.reconcile(store, manifest, str(tmp_path / "m.yaml")) is True
+
+        assert manifest.nodes["a"].status == "blocked"
+        assert store.get_work_item(item.id).status is WorkItemStatus.BLOCKED

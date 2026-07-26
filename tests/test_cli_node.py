@@ -279,6 +279,35 @@ def test_accept_marks_done_and_updates_platform_status(tmp_path, capsys, monkeyp
     assert engine.store.get_work_item(item.id).status == WorkItemStatus.DONE
 
 
+def test_accept_rejects_develop_pr_without_confirmed_merge(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OMAC_ENGINE", "mock")
+    monkeypatch.setenv("OMAC_WORKSPACE_ID", "ws-1")
+
+    from types import SimpleNamespace
+    from omac.engines import EngineConfig, create_engine
+    from omac.engines.models import WorkItemStatus
+
+    engine = create_engine("mock", EngineConfig(
+        "mock", "ws-1", extra={"MOCK_AUTO_COMPLETE": "false"}))
+    item = engine.store.create_work_item("ws-1", "t", "d", "b", "bob")
+    engine.store.update_work_item_metadata(
+        item.id, artifacts={"pr_url": "https://example.com/pr/1"})
+    engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
+    engine.store.observe_pull_request = lambda pr_url: SimpleNamespace(
+        state="open", merged_at=None)
+
+    import omac.cli.commands.node as node_mod
+    monkeypatch.setattr(node_mod, "create_engine", lambda *a, **kw: engine)
+    path = _write_manifest(tmp_path, [{
+        "id": "b", "worker": "bob", "status": "blocked", "work_item_id": item.id,
+    }])
+
+    assert main(["node", "accept", path, "b"]) == exit_codes.VALIDATION
+    assert load_manifest(path).nodes["b"].status == "blocked"
+    assert engine.store.get_work_item(item.id).status is WorkItemStatus.BLOCKED
+
+
 def test_retry_reassign_worker_validated_against_config(tmp_path, capsys, monkeypatch):
     monkeypatch.chdir(tmp_path)
     # config.roles.workers 提供 agent 池

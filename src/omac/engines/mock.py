@@ -11,6 +11,7 @@ import os
 import tempfile
 import time
 import json
+import subprocess
 from typing import Any, Dict, List, Optional
 
 import yaml
@@ -22,6 +23,7 @@ from ..errors import ValidationError
 from ..i18n import ui
 from .models import (
     AgentInfo, AgentProvisionSpec, EngineConfig, ProjectInfo, RuntimeTarget,
+    MergeCommandResult, PullRequestObservation, PullRequestState,
     WorkItem, WorkItemStatus, WorkspaceInfo,
 )
 from .runtime import AgentRuntime
@@ -55,6 +57,7 @@ _shared_kind_delivery_sequences: Dict[str, list] = {}
 _shared_auto_confirm: bool = False
 # 已自动确认过的 item(人工只确认一次,避免评审阶段翻回 IN_REVIEW 时被误重复确认)。
 _shared_human_confirmed: set = set()
+_shared_pull_requests: Dict[str, PullRequestObservation] = {}
 
 # 产出后进入评审阶段(而非直接 DONE)的 kind:与真实 work submit 的产出终态一致。
 # develop 走 pr_url→DONE;final-acceptance 有独立的 _accepted_results 真实 submit 分支。
@@ -196,9 +199,11 @@ class MockStore(WorkItemStore):
         _shared_auto_confirm = False
         _shared_human_confirmed = set()
         global _accepted_results, _increments, _shared_projects
+        global _shared_pull_requests
         _accepted_results = {}
         _increments = {}
         _shared_projects = {}
+        _shared_pull_requests = {}
         _init_default_workspace()
 
     @classmethod
@@ -852,6 +857,37 @@ class MockStore(WorkItemStore):
         item = self.get_work_item(item_id)
         item.reviewer = None
         _shared_assigned_items.pop(item_id, None)
+
+    def request_pull_request_merge(
+        self, pr_url: str, command: str, timeout_seconds: int,
+    ) -> MergeCommandResult:
+        """mock 仍执行测试提供的命令，但仅由随后观察到的状态确认合入。"""
+        try:
+            proc = subprocess.run(
+                command.replace("{pr_url}", pr_url), shell=True,
+                capture_output=True, text=True, timeout=timeout_seconds)
+        except subprocess.TimeoutExpired as exc:
+            output = "".join(
+                stream.decode("utf-8", errors="replace")
+                if isinstance(stream, bytes) else stream or ""
+                for stream in (exc.stdout, exc.stderr))
+            return MergeCommandResult(False, None, output, timed_out=True)
+        except FileNotFoundError as exc:
+            return MergeCommandResult(False, None, str(exc))
+        output = (proc.stdout or "") + (proc.stderr or "")
+        simulated_default_merge = (
+            command.startswith("gh pr merge ") and proc.returncode != 0)
+        if proc.returncode == 0 or simulated_default_merge:
+            _shared_pull_requests[pr_url] = PullRequestObservation(
+                PullRequestState.MERGED,
+                time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            )
+        return MergeCommandResult(
+            proc.returncode == 0 or simulated_default_merge, proc.returncode, output)
+
+    def observe_pull_request(self, pr_url: str) -> PullRequestObservation:
+        return _shared_pull_requests.get(
+            pr_url, PullRequestObservation(PullRequestState.OPEN))
 
     @property
     def assign_log(self):

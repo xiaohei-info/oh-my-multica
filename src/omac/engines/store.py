@@ -12,7 +12,10 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
 from ..core.taskmeta import TaskKind, TaskPhase
-from .models import EngineConfig, ProjectInfo, WorkItem, WorkItemStatus, WorkspaceInfo
+from .models import (
+    EngineConfig, MergeCommandResult, ProjectInfo, PullRequestObservation,
+    WorkItem, WorkItemStatus, WorkspaceInfo,
+)
 
 
 class WorkItemStore(ABC):
@@ -207,6 +210,22 @@ class WorkItemStore(ABC):
     @abstractmethod
     def clear_assignment(self, item_id: str) -> None:
         """解除当前 Agent assignment，但保留 worker/review 交付和判定证据。"""
+
+    # ==================== PR 合并闭环 ====================
+
+    @abstractmethod
+    def request_pull_request_merge(
+        self, pr_url: str, command: str, timeout_seconds: int,
+    ) -> MergeCommandResult:
+        """向远端发起一次合并请求。
+
+        返回的是本地命令结果，不能据此推导 PR 已合入；调用方必须随后调用
+        ``observe_pull_request``。命令执行属于引擎适配器，pipeline/CLI 不得直调平台 CLI。
+        """
+
+    @abstractmethod
+    def observe_pull_request(self, pr_url: str) -> PullRequestObservation:
+        """读取远端 PR 当前事实；不可确认时返回 ``UNKNOWN``，不得臆测已合入。"""
 
     # ==================== 便捷方法(基类实现) ====================
 
