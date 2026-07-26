@@ -216,7 +216,7 @@ vm.runInNewContext(fs.readFileSync(process.argv[2], "utf8"), context, {filename:
 let source = fs.readFileSync(process.argv[1], "utf8");
 const marker = "init();\n})();";
 if(!source.includes(marker)) throw new Error("app bootstrap marker missing");
-source = source.replace(marker, "globalThis.__omacApp = {state, selectManifest, selectNode};\ninit();\n})();");
+source = source.replace(marker, "globalThis.__omacApp = {state, selectManifest, selectNode, fetchStatus, setViewport:typeof setViewport==='function'?setViewport:null};\ninit();\n})();");
 vm.runInNewContext(source, context, {filename:process.argv[1]});
 const flush = async (rounds = 1) => { for(let index = 0; index < rounds; index++) await Promise.resolve(); };
 (async () => {
@@ -493,6 +493,7 @@ def test_spa_wires_collapsible_dag_controls_to_the_pure_projection():
 
     for control in [
         "collapse-btn", "expand-all-btn", "focus-active-btn", "focus-anomaly-btn",
+        "fit-btn", "reset-view-btn",
     ]:
         assert id_present(html, control), f"缺少 DAG 控件: {control}"
     assert "OMACDag.projectDag" in js
@@ -557,6 +558,66 @@ def test_dag_projection_defaults_to_three_layers_and_expands_one_boundary_at_a_t
         "status_summary": [{"status": "todo", "count": 1}],
     }]
     assert _dag_module_value("context.OMACDag.collapseBranches(['three'])") == []
+
+
+def test_dag_projection_expands_at_most_eight_nodes_per_click():
+    nodes = [
+        {"key": "root", "status": "todo"},
+        {"key": "middle", "status": "todo", "blocked_by": ["root"]},
+        {"key": "boundary", "status": "todo", "blocked_by": ["middle"]},
+    ] + [
+        {"key": f"child-{index:02d}", "status": "todo", "blocked_by": ["boundary"]}
+        for index in range(20)
+    ]
+
+    first = _project_dag(nodes, {"expanded": ["boundary"]})
+    second = _project_dag(nodes, {"expanded": ["boundary", "boundary"]})
+
+    assert len(first["nodes"]) == 3 + 8
+    assert first["budget"]["truncated"] is False
+    assert next(item for item in first["aggregates"] if item["source"] == "boundary")["hidden_count"] == 12
+    assert len(second["nodes"]) == 3 + 16
+    assert next(item for item in second["aggregates"] if item["source"] == "boundary")["hidden_count"] == 4
+    assert _dag_module_value("context.OMACDag.EXPAND_BATCH") == 8
+
+
+def test_dag_projection_enforces_visible_node_budget_and_aggregates_hidden_roots():
+    nodes = [
+        {"key": f"root-{index:03d}", "status": "todo"}
+        for index in range(70)
+    ]
+
+    projection = _project_dag(nodes)
+
+    assert len(projection["nodes"]) == 60
+    assert projection["budget"] == {
+        "node_limit": 60,
+        "edge_limit": 240,
+        "visible_nodes": 60,
+        "visible_edges": 0,
+        "truncated": True,
+    }
+    assert projection["aggregates"] == [{
+        "source": None,
+        "hidden_count": 10,
+        "status_summary": [{"status": "todo", "count": 10}],
+    }]
+
+
+def test_dag_projection_enforces_edge_budget_for_dense_dags():
+    nodes = []
+    for index in range(30):
+        nodes.append({
+            "key": f"node-{index:02d}",
+            "status": "todo",
+            "blocked_by": [f"node-{parent:02d}" for parent in range(index)],
+        })
+
+    projection = _project_dag(nodes, {"focus": "all"})
+
+    assert projection["budget"]["truncated"] is True
+    assert projection["budget"]["visible_edges"] <= 240
+    assert len(projection["nodes"]) < len(nodes)
 
 
 def test_dag_projection_aggregate_describes_its_complete_reveal_closure():
@@ -832,9 +893,23 @@ def test_dag_layout_places_aggregates_in_separate_non_overlapping_slots():
     boundary = aggregate_positions["boundary"]
     right_boundary = aggregate_positions["right-boundary"]
 
-    assert boundary["y"] >= important["y"] + layout["nodeHeight"]
+    assert abs(boundary["y"] - layout["pos"]["boundary"]["y"]) <= layout["rowH"] * 2
     assert boundary != right_boundary
-    assert boundary["x"] + layout["aggregateWidth"] <= right_boundary["x"]
+    assert boundary["x"] == layout["pos"]["boundary"]["x"] + layout["colW"]
+
+
+def test_dag_layout_orders_each_layer_by_dependency_barycenter():
+    nodes = [
+        {"key": "root-a", "status": "todo"},
+        {"key": "root-b", "status": "todo"},
+        {"key": "child-a", "status": "todo", "blocked_by": ["root-b"]},
+        {"key": "child-b", "status": "todo", "blocked_by": ["root-a"]},
+    ]
+
+    layout = _layout_dag(nodes)
+
+    assert layout["pos"]["root-a"]["y"] < layout["pos"]["root-b"]["y"]
+    assert layout["pos"]["child-b"]["y"] < layout["pos"]["child-a"]["y"]
 
 
 def test_dag_layout_width_uses_projected_depth_for_shallow_focuses():
@@ -852,14 +927,15 @@ def test_dag_layout_width_uses_projected_depth_for_shallow_focuses():
 
     active = _layout_dag(nodes, {"focus": "active"})
     anomaly = _layout_dag(nodes, {"focus": "anomaly"})
+    all_nodes = _layout_dag(nodes, {"focus": "all"})
 
-    expected_width = active["padX"] * 2 + 2 * active["colW"]
-    assert active["W"] == expected_width
-    assert anomaly["W"] == expected_width
+    assert active["W"] == anomaly["W"]
+    assert active["W"] < all_nodes["W"]
 
 
 @pytest.mark.parametrize("important_state", [
-    "in_progress", "ci_check", "in_review", "merging", "failed", "blocked",
+    "in_progress", "running", "ci_check", "in_review", "review", "rework",
+    "merging", "failed",
 ])
 def test_dag_projection_reveals_every_important_state_with_full_ancestor_path(important_state):
     nodes = [
@@ -874,6 +950,24 @@ def test_dag_projection_reveals_every_important_state_with_full_ancestor_path(im
     assert [node["key"] for node in projection["nodes"]] == [
         "root", "middle", "deep", "important",
     ]
+
+
+def test_dag_projection_does_not_auto_expand_deep_blocked_cascade():
+    nodes = [
+        {"key": "root", "status": "failed"},
+        {"key": "one", "status": "blocked", "blocked_by": ["root"]},
+        {"key": "two", "status": "blocked", "blocked_by": ["one"]},
+        {"key": "three", "status": "blocked", "blocked_by": ["two"]},
+        {"key": "four", "status": "blocked", "blocked_by": ["three"]},
+    ]
+
+    projection = _project_dag(nodes)
+
+    assert [node["key"] for node in projection["nodes"]] == ["root", "one", "two"]
+    assert projection["aggregates"] == [{
+        "source": "two", "hidden_count": 1,
+        "status_summary": [{"status": "blocked", "count": 1}],
+    }]
 
 
 def test_dag_projection_reports_hidden_count_and_status_summary_per_boundary():
@@ -916,7 +1010,7 @@ def test_dag_projection_state_presentation_covers_known_states_and_unknown_fallb
 
     for status in [
         "todo", "in_progress", "ci_check", "in_review", "merging", "done",
-        "failed", "blocked", "abandoned",
+        "failed", "blocked", "abandoned", "pending", "running", "review", "rework",
     ]:
         assert presentation[status]["icon"]
         assert presentation[status]["marker"]
@@ -926,6 +1020,131 @@ def test_dag_projection_state_presentation_covers_known_states_and_unknown_fallb
     assert unknown == {
         "icon": "?", "marker": "unknown", "strong_border": False,
         "safe_fallback": True, "status": "vendor_pending",
+    }
+
+
+def test_dag_projection_reports_only_direct_relations_for_selection_highlight():
+    relations = _dag_module_value("context.OMACDag.directRelations(["
+        "{key:'root',blocked_by:[]},"
+        "{key:'middle',blocked_by:['root']},"
+        "{key:'leaf',blocked_by:['middle']}], 'middle')")
+
+    assert relations == {"upstream": ["root"], "downstream": ["leaf"]}
+
+
+def test_spa_preserves_view_state_during_polling_and_resets_it_on_manifest_switch():
+    result = _run_app_dom_scenario(r"""
+async ({app, setFetchHandler, jsonResponse}) => {
+  const status = manifest => ({
+    nodes:[{key:manifest+'-root', status:'todo', blocked_by:[]}],
+    progress:{done:0, total:1},
+  });
+  setFetchHandler(path => {
+    if(path.includes('manifest=one')) return jsonResponse(status('one'));
+    if(path.includes('manifest=two')) return jsonResponse(status('two'));
+    throw new Error('unexpected request: '+path);
+  });
+  await app.selectManifest('one');
+  app.state.expanded = ['one-root'];
+  app.state.selected = 'one-root';
+  app.state.viewport = {x:41, y:23, scale:1.4, initialized:true, userAdjusted:true};
+  await app.fetchStatus();
+  const afterPoll = {
+    expanded:app.state.expanded.slice(), selected:app.state.selected,
+    viewport:Object.assign({}, app.state.viewport),
+  };
+  await app.selectManifest('two');
+  return {afterPoll, afterSwitch:{
+    expanded:app.state.expanded.slice(), selected:app.state.selected,
+    viewport:Object.assign({}, app.state.viewport),
+  }};
+}
+""")
+
+    assert result["afterPoll"] == {
+        "expanded": ["one-root"], "selected": "one-root",
+        "viewport": {"x": 41, "y": 23, "scale": 1.4,
+                     "initialized": True, "userAdjusted": True},
+    }
+    assert result["afterSwitch"]["expanded"] == []
+    assert result["afterSwitch"]["selected"] is None
+    assert result["afterSwitch"]["viewport"]["userAdjusted"] is False
+
+
+def test_polling_keeps_a_selected_active_node_visible_after_it_becomes_done():
+    result = _run_app_dom_scenario(r"""
+async ({app, setFetchHandler, jsonResponse}) => {
+  let statusCall = 0;
+  setFetchHandler(path => {
+    if(!path.includes('manifest=one')) throw new Error('unexpected request: '+path);
+    statusCall += 1;
+    return jsonResponse({nodes:[
+      {key:'root', status:'todo', blocked_by:[]},
+      {key:'middle', status:'todo', blocked_by:['root']},
+      {key:'boundary', status:'todo', blocked_by:['middle']},
+      {key:'deep', status:statusCall===1?'in_progress':'done', blocked_by:['boundary']},
+    ], progress:{done:statusCall===1?0:1, total:4}});
+  });
+  await app.selectManifest('one');
+  app.state.selected = 'deep';
+  await app.fetchStatus();
+  return {selected:app.state.selected};
+}
+""")
+
+    assert result["selected"] == "deep"
+
+
+def test_spa_renders_arrow_markers_zoom_pan_and_budget_notice():
+    html = _read_index()
+    js = _read_asset("app.js")
+    css = _read_asset("app.css")
+
+    assert id_present(html, "dag-budget")
+    assert id_present(html, "reset-view-btn")
+    assert 'marker-end' in js
+    assert 'addEventListener("wheel"' in js
+    assert 'addEventListener("pointerdown"' in js
+    assert 'setViewport(' in js
+    assert 'touch-action:none' in css.replace(" ", "")
+
+
+def test_spa_wheel_zoom_pointer_pan_and_reset_update_the_viewport():
+    result = _run_app_dom_scenario(r"""
+async ({app, elements, setFetchHandler, jsonResponse}) => {
+  setFetchHandler(path => {
+    if(path.includes('manifest=one')) return jsonResponse({
+      nodes:[{key:'root', status:'todo', blocked_by:[]}],
+      progress:{done:0, total:1},
+    });
+    throw new Error('unexpected request: '+path);
+  });
+  await app.selectManifest('one');
+  app.setViewport({x:10, y:20, scale:1}, true);
+  elements['dag-canvas'].listeners.wheel[0]({
+    deltaY:-200, clientX:100, clientY:80, preventDefault:()=>{},
+  });
+  const afterZoom = Object.assign({}, app.state.viewport);
+  elements['dag-canvas'].listeners.pointerdown[0]({
+    pointerId:7, clientX:10, clientY:20,
+  });
+  elements['dag-canvas'].listeners.pointermove[0]({
+    pointerId:7, clientX:25, clientY:35,
+  });
+  elements['dag-canvas'].listeners.pointerup[0]({pointerId:7});
+  const afterPan = Object.assign({}, app.state.viewport);
+  elements['reset-view-btn'].listeners.click[0]({});
+  return {afterZoom, afterPan, afterReset:Object.assign({}, app.state.viewport)};
+}
+""")
+
+    assert result["afterZoom"]["scale"] > 1
+    assert result["afterZoom"]["userAdjusted"] is True
+    assert result["afterPan"]["x"] == pytest.approx(result["afterZoom"]["x"] + 15)
+    assert result["afterPan"]["y"] == pytest.approx(result["afterZoom"]["y"] + 15)
+    assert result["afterReset"] == {
+        "x": 0, "y": 0, "scale": 1,
+        "initialized": True, "userAdjusted": True,
     }
 
 

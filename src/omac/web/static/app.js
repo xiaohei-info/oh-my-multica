@@ -2,13 +2,18 @@
 "use strict";
 
 /* ---------- 状态 → 着色 ---------- */
-const STATES = ["todo","in_progress","ci_check","in_review","merging","done","failed","blocked","abandoned"];
+const STATES = [
+  "todo","pending","in_progress","running","ci_check","in_review","review",
+  "rework","merging","done","failed","blocked","abandoned",
+];
 const COPY = {
   en: {
     choose:"Choose", manifest_title:"Choose a manifest", last_refresh:"Last status refresh",
     theme:"Theme", theme_auto:"System", theme_dark:"Dark", theme_light:"Light",
     dag_overview:"DAG overview", dag_visualization:"DAG visualization", fit:"Fit",
+    reset_view:"Reset", reset_view_title:"Reset zoom and pan",
     collapse:"Collapse", expand_all:"Expand all", focus_active:"Active", focus_anomaly:"Anomaly focus", hidden:"hidden",
+    show_next:"show next", budget_limited:"Visible budget reached",
     fit_title:"Fit the full graph", node_details:"Node details",
     select_node:"Select a DAG node to inspect its contract, evidence, and links.",
     anomalies:"Anomalies", static_info:"Static information",
@@ -23,8 +28,8 @@ const COPY = {
     copied:"Copied to clipboard", copy_failed:"Copy failed", loading_static:"Loading configuration and acceptance checks…",
     config_summary:"config.yaml summary", acceptance_checks:"Acceptance checks",
     acceptance_missing:"Acceptance file not found", static_failed:"Failed to load static information",
-    state_todo:"Todo", state_in_progress:"In progress", state_ci_check:"CI check",
-    state_in_review:"In review", state_merging:"Merging", state_done:"Done",
+    state_todo:"Todo", state_pending:"Pending", state_in_progress:"In progress", state_running:"Running", state_ci_check:"CI check",
+    state_in_review:"In review", state_review:"Review", state_rework:"Rework", state_merging:"Merging", state_done:"Done",
     state_failed:"Failed", state_blocked:"Blocked", state_abandoned:"Abandoned", state_unknown:"Unknown",
     dag_error_unknown_dependency:"Cannot render DAG: it references a missing dependency.",
     dag_error_cycle:"Cannot render DAG: it contains a dependency cycle."
@@ -33,7 +38,9 @@ const COPY = {
     choose:"选择", manifest_title:"选择要查看的 manifest", last_refresh:"最后状态刷新时间",
     theme:"主题", theme_auto:"跟随系统", theme_dark:"深色", theme_light:"浅色",
     dag_overview:"DAG 总览", dag_visualization:"DAG 可视化", fit:"全图",
+    reset_view:"重置", reset_view_title:"重置缩放和平移",
     collapse:"收起", expand_all:"全部展开", focus_active:"进行中", focus_anomaly:"异常聚焦", hidden:"已隐藏",
+    show_next:"展开下一批", budget_limited:"已达到可见预算",
     fit_title:"回到全图视野", node_details:"节点详情",
     select_node:"点击 DAG 中的一个节点查看 contract、证据和链接。",
     anomalies:"异常面板", static_info:"静态信息页",
@@ -48,8 +55,8 @@ const COPY = {
     copied:"已复制到剪贴板", copy_failed:"复制失败", loading_static:"正在加载配置和验收清单…",
     config_summary:"config.yaml 摘要", acceptance_checks:"验收清单",
     acceptance_missing:"未找到验收文件", static_failed:"静态信息加载失败",
-    state_todo:"待开始", state_in_progress:"进行中", state_ci_check:"CI 校验",
-    state_in_review:"评审中", state_merging:"合并中", state_done:"完成",
+    state_todo:"待开始", state_pending:"待开始", state_in_progress:"进行中", state_running:"运行中", state_ci_check:"CI 校验",
+    state_in_review:"评审中", state_review:"评审中", state_rework:"返工中", state_merging:"合并中", state_done:"完成",
     state_failed:"失败", state_blocked:"受阻", state_abandoned:"已放弃", state_unknown:"未知",
     dag_error_unknown_dependency:"无法渲染 DAG：它引用了不存在的依赖。",
     dag_error_cycle:"无法渲染 DAG：它包含依赖环。"
@@ -85,6 +92,8 @@ const state = {
   selected: null,
   expanded: [],
   focus: "default",
+  viewport: {x:0, y:0, scale:1, initialized:false, userAdjusted:false},
+  graphBounds: null,
   detailGeneration: 0,
   pollTimer: null,
   language: "en",
@@ -149,12 +158,16 @@ function clearRenderedStatus(){
   progress.textContent = "";
   $("poll-ts").textContent = "—";
   $("tick-state").textContent = "—";
+  $("dag-budget").classList.add("is-hidden");
+  $("dag-budget").textContent = "";
 }
 
 function resetDagView(){
   state.expanded = [];
   state.focus = "default";
   state.selected = null;
+  state.viewport = {x:0, y:0, scale:1, initialized:false, userAdjusted:false};
+  state.graphBounds = null;
   clearNodeDetail();
 }
 
@@ -234,9 +247,54 @@ $("focus-anomaly-btn").addEventListener("click", ()=>{
 
 /* ---------- DAG 布局渲染 ---------- */
 function layeredLayout(projection){
-  const colW=parseInt(getComputedStyle(document.documentElement).getPropertyValue("--col-w"))||200;
-  const rowH=parseInt(getComputedStyle(document.documentElement).getPropertyValue("--row-h"))||84;
+  const colW=parseInt(getComputedStyle(document.documentElement).getPropertyValue("--col-w"))||230;
+  const rowH=parseInt(getComputedStyle(document.documentElement).getPropertyValue("--row-h"))||88;
   return OMACDag.layoutDag(projection, {colW, rowH});
+}
+
+function canvasSize(){
+  const svg = $("dag-canvas");
+  return {width:svg.clientWidth||960, height:svg.clientHeight||520};
+}
+
+function applyViewport(){
+  const world = $("dag-canvas").querySelectorAll(".dag-world")[0];
+  if(!world) return;
+  const view = state.viewport;
+  world.setAttribute("transform", "translate("+view.x+" "+view.y+") scale("+view.scale+")");
+}
+
+function setViewport(next, userAdjusted){
+  const scale = Math.max(.2, Math.min(3.5, Number(next.scale)||1));
+  state.viewport = {
+    x:Number(next.x)||0,
+    y:Number(next.y)||0,
+    scale,
+    initialized:true,
+    userAdjusted:userAdjusted === undefined ? true : !!userAdjusted,
+  };
+  applyViewport();
+}
+
+function fitView(userAdjusted){
+  if(!state.graphBounds) return;
+  const size = canvasSize();
+  const margin = 32;
+  const scale = Math.min(
+    (size.width-margin*2)/state.graphBounds.W,
+    (size.height-margin*2)/state.graphBounds.H,
+    1.5,
+  );
+  const safeScale = Math.max(.2, scale);
+  setViewport({
+    scale:safeScale,
+    x:(size.width-state.graphBounds.W*safeScale)/2,
+    y:(size.height-state.graphBounds.H*safeScale)/2,
+  }, userAdjusted);
+}
+
+function resetViewport(){
+  setViewport({x:0, y:0, scale:1}, true);
 }
 
 function renderDagError(svg, error){
@@ -246,7 +304,8 @@ function renderDagError(svg, error){
     : error.nodes.join(", ");
   const message = error.code === "unknown_dependency"
     ? copy("dag_error_unknown_dependency") : copy("dag_error_cycle");
-  svg.setAttribute("viewBox", "0 0 400 200");
+  const size = canvasSize();
+  svg.setAttribute("viewBox", "0 0 "+size.width+" "+size.height);
   const text = document.createElementNS(ns, "text");
   text.setAttribute("x", "24"); text.setAttribute("y", "80");
   text.setAttribute("class", "dag-error"); text.textContent = message;
@@ -262,9 +321,12 @@ function renderDAG(s){
   const projection = OMACDag.projectDag(s.nodes||[], {
     expanded: state.expanded,
     focus: state.focus,
+    pinned: state.selected ? [state.selected] : [],
   });
   const L = layeredLayout(projection);
-  svg.setAttribute("viewBox", "0 0 "+Math.max(L.W,400)+" "+Math.max(L.H,200));
+  const size = canvasSize();
+  svg.setAttribute("viewBox", "0 0 "+size.width+" "+size.height);
+  state.graphBounds = {W:Math.max(L.W,400), H:Math.max(L.H,200)};
   // 清空 + 渲染组
   const ns = "http://www.w3.org/2000/svg";
   while(svg.firstChild) svg.removeChild(svg.firstChild);
@@ -274,17 +336,29 @@ function renderDAG(s){
     syncSelectedProjection(projection);
     return;
   }
+  const defs = document.createElementNS(ns,"defs");
+  const marker = document.createElementNS(ns,"marker");
+  marker.setAttribute("id","dag-arrow");
+  marker.setAttribute("markerWidth","8"); marker.setAttribute("markerHeight","8");
+  marker.setAttribute("refX","7"); marker.setAttribute("refY","4");
+  marker.setAttribute("orient","auto"); marker.setAttribute("markerUnits","strokeWidth");
+  const arrow = document.createElementNS(ns,"path");
+  arrow.setAttribute("d","M 0 0 L 8 4 L 0 8 z"); arrow.setAttribute("class","arrowhead");
+  marker.appendChild(arrow); defs.appendChild(marker); svg.appendChild(defs);
+  const world = document.createElementNS(ns,"g");
+  world.setAttribute("class","dag-world");
   const edgesG = document.createElementNS(ns,"g");
   const nodesG = document.createElementNS(ns,"g");
-  svg.appendChild(edgesG); svg.appendChild(nodesG);
+  world.appendChild(edgesG); world.appendChild(nodesG); svg.appendChild(world);
 
   projection.edges.forEach(edge => {
       const a=L.pos[edge.from], b=L.pos[edge.to];
-      const x1=a.x+120, y1=a.y+28, x2=b.x, y2=b.y+28;
+      const x1=a.x+L.nodeWidth, y1=a.y+L.nodeHeight/2, x2=b.x, y2=b.y+L.nodeHeight/2;
       const mx=(x1+x2)/2;
       const path=document.createElementNS(ns,"path");
       path.setAttribute("d","M "+x1+" "+y1+" C "+mx+" "+y1+", "+mx+" "+y2+", "+x2+" "+y2);
       path.setAttribute("class","edge");
+      path.setAttribute("marker-end","url(#dag-arrow)");
       path.dataset.from=edge.from; path.dataset.to=edge.to;
       edgesG.appendChild(path);
   });
@@ -298,7 +372,7 @@ function renderDAG(s){
     g.dataset.key=n.key;
     const rect=document.createElementNS(ns,"rect");
     rect.setAttribute("x",p.x); rect.setAttribute("y",p.y);
-    rect.setAttribute("width",120); rect.setAttribute("height",56);
+    rect.setAttribute("width",L.nodeWidth); rect.setAttribute("height",L.nodeHeight);
     rect.setAttribute("fill", stateColor(n.status, document.documentElement)+"22");
     rect.setAttribute("stroke", stateColor(n.status, document.documentElement));
     g.appendChild(rect);
@@ -319,33 +393,48 @@ function renderDAG(s){
   });
 
   projection.aggregates.forEach(aggregate => {
-    const source=L.pos[aggregate.source];
-    const aggregatePosition=L.aggregatePositions[aggregate.source];
-    if(!source || !aggregatePosition) return;
+    const token=aggregate.source===null ? OMACDag.ROOT_AGGREGATE : aggregate.source;
+    const source=aggregate.source===null ? null : L.pos[aggregate.source];
+    const aggregatePosition=L.aggregatePositions[token];
+    if(!aggregatePosition) return;
     const x=aggregatePosition.x, y=aggregatePosition.y;
-    const edge=document.createElementNS(ns,"path");
-    edge.setAttribute("d","M "+(source.x+120)+" "+(source.y+28)+" L "+x+" "+(y+20));
-    edge.setAttribute("class","aggregate-edge"); edgesG.appendChild(edge);
+    if(source){
+      const edge=document.createElementNS(ns,"path");
+      edge.setAttribute("d","M "+(source.x+L.nodeWidth)+" "+(source.y+L.nodeHeight/2)+" L "+x+" "+(y+L.aggregateHeight/2));
+      edge.setAttribute("class","aggregate-edge");
+      edge.setAttribute("marker-end","url(#dag-arrow)");
+      edgesG.appendChild(edge);
+    }
     const g=document.createElementNS(ns,"g");
-    g.setAttribute("class","aggregate"); g.dataset.source=aggregate.source;
+    g.setAttribute("class","aggregate"); g.dataset.source=token;
     const rect=document.createElementNS(ns,"rect");
     rect.setAttribute("x",x); rect.setAttribute("y",y); rect.setAttribute("width",L.aggregateWidth); rect.setAttribute("height",L.aggregateHeight); rect.setAttribute("rx",6);
     g.appendChild(rect);
     const label=document.createElementNS(ns,"text");
     const summary=aggregate.status_summary.map(item => stateLabel(item.status)+" "+item.count).join(" · ");
-    label.setAttribute("x",x+8); label.setAttribute("y",y+16); label.textContent="+ "+aggregate.hidden_count+" "+copy("hidden");
+    const nextCount=Math.min(OMACDag.EXPAND_BATCH, aggregate.hidden_count);
+    label.setAttribute("x",x+8); label.setAttribute("y",y+16);
+    label.textContent="+ "+aggregate.hidden_count+" "+copy("hidden")+" · "+copy("show_next")+" "+nextCount;
     g.appendChild(label);
     const detail=document.createElementNS(ns,"text");
     detail.setAttribute("x",x+8); detail.setAttribute("y",y+30); detail.textContent=summary;
     g.appendChild(detail);
     g.addEventListener("click", ()=>{
-      if(!state.expanded.includes(aggregate.source)) state.expanded.push(aggregate.source);
+      state.expanded.push(token);
       state.focus="default"; redrawDAG();
     });
     nodesG.appendChild(g);
   });
 
   syncSelectedProjection(projection);
+  if(!state.viewport.initialized) fitView(false); else applyViewport();
+
+  const budget = $("dag-budget");
+  const limited = projection.budget && projection.budget.truncated;
+  budget.classList.toggle("is-hidden", !limited);
+  budget.textContent = limited
+    ? copy("budget_limited")+": "+projection.budget.visible_nodes+"/"+projection.budget.node_limit+" nodes · "+projection.budget.visible_edges+"/"+projection.budget.edge_limit+" edges"
+    : "";
 
   const present = new Set((s.nodes||[]).map(n => n.status));
   const lg = $("dag-legend");
@@ -357,26 +446,58 @@ function dimForSelected(){
   const svg=$("dag-canvas"); if(!state.selected){
     svg.querySelectorAll(".node,.edge").forEach(e=>{e.classList.remove("dim","hl");}); return;
   }
-  // 高亮 selected 及其上下游
-  const up=new Set(), down=new Set();
-  // upstream: 依赖链(祖先)
-  function walkUp(k){ if(up.has(k)) return; up.add(k);
-    (state.nodes[k].blocked_by||[]).forEach(d=>{ if(state.nodes[d]) walkUp(d); }); }
-  // downstream: 被依赖链(后代)
-  function walkDown(k){ if(down.has(k)) return; down.add(k);
-    Object.values(state.nodes).forEach(n=>{ if((n.blocked_by||[]).includes(k)) walkDown(n.key); }); }
-  walkUp(state.selected); walkDown(state.selected);
-  const reach=new Set([...up, ...down]);
+  const relations=OMACDag.directRelations(Object.values(state.nodes), state.selected);
+  const reach=new Set([state.selected, ...relations.upstream, ...relations.downstream]);
   svg.querySelectorAll(".node").forEach(g=>{
     const k=g.dataset.key;
     g.classList.toggle("dim", !reach.has(k));
   });
   svg.querySelectorAll(".edge").forEach(e=>{
     const f=e.dataset.from, t=e.dataset.to;
-    const hlU = (up.has(f)&&up.has(t)) || (down.has(f)&&down.has(t));
-    e.classList.toggle("hl", hlU && (state.selected===f||state.selected===t||reach.has(f)&&reach.has(t)));
+    const highlighted = state.selected===f || state.selected===t;
+    e.classList.toggle("hl", highlighted);
+    e.classList.toggle("dim", !highlighted);
   });
 }
+
+$("fit-btn").addEventListener("click", ()=> fitView(true));
+$("reset-view-btn").addEventListener("click", resetViewport);
+
+const dagCanvas = $("dag-canvas");
+dagCanvas.addEventListener("wheel", event=>{
+  event.preventDefault();
+  const rect = dagCanvas.getBoundingClientRect ? dagCanvas.getBoundingClientRect() : {left:0, top:0};
+  const px = (event.clientX||0)-rect.left;
+  const py = (event.clientY||0)-rect.top;
+  const previous = state.viewport;
+  const factor = Math.exp(-(event.deltaY||0)*.0015);
+  const scale = Math.max(.2, Math.min(3.5, previous.scale*factor));
+  const worldX = (px-previous.x)/previous.scale;
+  const worldY = (py-previous.y)/previous.scale;
+  setViewport({x:px-worldX*scale, y:py-worldY*scale, scale}, true);
+}, {passive:false});
+
+let pan = null;
+dagCanvas.addEventListener("pointerdown", event=>{
+  pan = {pointerId:event.pointerId, x:event.clientX, y:event.clientY,
+    originX:state.viewport.x, originY:state.viewport.y};
+  if(dagCanvas.setPointerCapture) dagCanvas.setPointerCapture(event.pointerId);
+  dagCanvas.classList.add("is-panning");
+});
+dagCanvas.addEventListener("pointermove", event=>{
+  if(!pan || pan.pointerId!==event.pointerId) return;
+  setViewport({
+    x:pan.originX+event.clientX-pan.x,
+    y:pan.originY+event.clientY-pan.y,
+    scale:state.viewport.scale,
+  }, true);
+});
+function endPan(event){
+  if(!pan || pan.pointerId!==event.pointerId) return;
+  pan=null; dagCanvas.classList.remove("is-panning");
+}
+dagCanvas.addEventListener("pointerup", endPan);
+dagCanvas.addEventListener("pointercancel", endPan);
 
 function clearSelection(){
   state.selected = null;
