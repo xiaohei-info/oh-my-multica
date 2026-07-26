@@ -188,6 +188,13 @@ def reconcile(store: WorkItemStore, manifest: Manifest, manifest_path: str) -> b
             changed = True
             continue
 
+        # blocked/failed 是 OMAC 已持久化的失败决策。平台投影可能因为进程在
+        # manifest-first 转换后、平台状态写入前崩溃而短暂滞后；不能用这个
+        # 旧投影反向解锁节点。显式 node retry 会先把 manifest 改为 todo，
+        # 合法的新 worker 交付则由上面的证据分支接管。
+        if node.status in FAILED_STATUSES:
+            continue
+
         # 运行中节点的终态回收归 collect_results(证据门 + 阶段交接)
         if node.status in RUNNING_STATUSES:
             continue
