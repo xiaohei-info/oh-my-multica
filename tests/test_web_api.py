@@ -11,7 +11,6 @@ from __future__ import annotations
 import contextlib
 import io
 import json
-import sys
 import threading
 import urllib.error
 import urllib.request
@@ -147,6 +146,27 @@ def test_manifests_lists_yaml_and_progress(orch, simple_manifest, monkeypatch):
         demo = next(m for m in data if m["name"] == "demo")
         assert demo["total"] == 2
         assert demo["done"] == 0
+
+
+def test_manifests_excludes_acceptance_and_zero_node_yaml(
+        orch, simple_manifest, monkeypatch):
+    _write_manifest(orch, "open-agent-cluster", [
+        {"id": "platform-core", "worker": "alice"},
+    ])
+    (orch / "open-agent-cluster.acceptance.yaml").write_text(
+        yaml.safe_dump({"flows": [{"id": "f1", "actions": []}]}),
+        encoding="utf-8",
+    )
+    _write_manifest(orch, "empty", [])
+
+    monkeypatch.chdir(orch.parent)
+    with _Server(orch_subpath=str(orch)) as s:
+        status, body = s.get("/api/manifests")
+
+    assert status == 200
+    assert [item["name"] for item in json.loads(body)] == [
+        "demo", "open-agent-cluster",
+    ]
 
 
 def test_meta_does_not_read_project_config(orch, monkeypatch):

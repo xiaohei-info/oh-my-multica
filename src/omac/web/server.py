@@ -60,7 +60,7 @@ HTML_PAGE = """<!doctype html>
 <h1>omac web — 本地只读可视化面板</h1>
 <p>本期只读 API(后端只做了「解析参数 → 调命令函数 → 返回 JSON」):</p>
 <ul>
-  <li><code>GET /api/manifests</code> — 扫 <code>.omac/*.yaml</code>(排除 config),带进度摘要</li>
+  <li><code>GET /api/manifests</code> — 列出含节点的 DAG manifest(排除 config/acceptance),带进度摘要</li>
   <li><code>GET /api/config</code> ← <code>config get --output json</code></li>
   <li><code>GET /api/dag/status?manifest=&lt;path&gt;</code> ← <code>dag status --output json</code>(TTL 缓存 = poll_interval)</li>
   <li><code>GET /api/node/&lt;key&gt;?manifest=&lt;path&gt;</code> ← <code>node show --output json</code></li>
