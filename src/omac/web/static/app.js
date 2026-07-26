@@ -8,7 +8,7 @@ const COPY = {
     choose:"Choose", manifest_title:"Choose a manifest", last_refresh:"Last status refresh",
     theme:"Theme", theme_auto:"System", theme_dark:"Dark", theme_light:"Light",
     dag_overview:"DAG overview", dag_visualization:"DAG visualization", fit:"Fit",
-    collapse:"Collapse", expand_all:"Expand all", focus_active:"Active", focus_anomaly:"Anomaly focus",
+    collapse:"Collapse", expand_all:"Expand all", focus_active:"Active", focus_anomaly:"Anomaly focus", hidden:"hidden",
     fit_title:"Fit the full graph", node_details:"Node details",
     select_node:"Select a DAG node to inspect its contract, evidence, and links.",
     anomalies:"Anomalies", static_info:"Static information",
@@ -31,7 +31,7 @@ const COPY = {
     choose:"选择", manifest_title:"选择要查看的 manifest", last_refresh:"最后状态刷新时间",
     theme:"主题", theme_auto:"跟随系统", theme_dark:"深色", theme_light:"浅色",
     dag_overview:"DAG 总览", dag_visualization:"DAG 可视化", fit:"全图",
-    collapse:"收起", expand_all:"全部展开", focus_active:"进行中", focus_anomaly:"异常聚焦",
+    collapse:"收起", expand_all:"全部展开", focus_active:"进行中", focus_anomaly:"异常聚焦", hidden:"已隐藏",
     fit_title:"回到全图视野", node_details:"节点详情",
     select_node:"点击 DAG 中的一个节点查看 contract、证据和链接。",
     anomalies:"异常面板", static_info:"静态信息页",
@@ -193,24 +193,9 @@ $("focus-anomaly-btn").addEventListener("click", ()=>{
 
 /* ---------- DAG 布局渲染 ---------- */
 function layeredLayout(projection){
-  const nodes = projection.nodes;
-  const depths = projection.depths;
-  const groups={};
-  nodes.forEach(n => { (groups[depths[n.key]]=groups[depths[n.key]]||[]).push(n); });
-  Object.values(groups).forEach(g => g.sort((a,b)=> a.key<b.key?-1:1));
   const colW=parseInt(getComputedStyle(document.documentElement).getPropertyValue("--col-w"))||200;
   const rowH=parseInt(getComputedStyle(document.documentElement).getPropertyValue("--row-h"))||84;
-  const padX=48, padY=56;
-  let maxRow=0;
-  const pos={};
-  Object.keys(groups).sort((a,b)=>+a-+b).forEach(li => {
-    const row=groups[li];
-    maxRow=Math.max(maxRow, row.length);
-    row.forEach((n, i) => { pos[n.key]={x:padX+(+li-1)*colW, y:padY+i*rowH}; });
-  });
-  const W = padX*2 + Math.max(...Object.values(depths),1)*colW;
-  const H = padY*2 + maxRow*rowH;
-  return { pos, W, H, colW, rowH, padX, padY };
+  return OMACDag.layoutDag(projection, {colW, rowH});
 }
 
 function renderDAG(s){
@@ -269,19 +254,21 @@ function renderDAG(s){
   });
 
   projection.aggregates.forEach(aggregate => {
-    const source=L.pos[aggregate.source]; if(!source) return;
-    const x=source.x+136, y=source.y+8;
+    const source=L.pos[aggregate.source];
+    const aggregatePosition=L.aggregatePositions[aggregate.source];
+    if(!source || !aggregatePosition) return;
+    const x=aggregatePosition.x, y=aggregatePosition.y;
     const edge=document.createElementNS(ns,"path");
     edge.setAttribute("d","M "+(source.x+120)+" "+(source.y+28)+" L "+x+" "+(y+20));
     edge.setAttribute("class","aggregate-edge"); edgesG.appendChild(edge);
     const g=document.createElementNS(ns,"g");
     g.setAttribute("class","aggregate"); g.dataset.source=aggregate.source;
     const rect=document.createElementNS(ns,"rect");
-    rect.setAttribute("x",x); rect.setAttribute("y",y); rect.setAttribute("width",150); rect.setAttribute("height",40); rect.setAttribute("rx",6);
+    rect.setAttribute("x",x); rect.setAttribute("y",y); rect.setAttribute("width",L.aggregateWidth); rect.setAttribute("height",L.aggregateHeight); rect.setAttribute("rx",6);
     g.appendChild(rect);
     const label=document.createElementNS(ns,"text");
     const summary=aggregate.status_summary.map(item => stateLabel(item.status)+" "+item.count).join(" · ");
-    label.setAttribute("x",x+8); label.setAttribute("y",y+16); label.textContent="+ "+aggregate.hidden_count+" hidden";
+    label.setAttribute("x",x+8); label.setAttribute("y",y+16); label.textContent="+ "+aggregate.hidden_count+" "+copy("hidden");
     g.appendChild(label);
     const detail=document.createElementNS(ns,"text");
     detail.setAttribute("x",x+8); detail.setAttribute("y",y+30); detail.textContent=summary;

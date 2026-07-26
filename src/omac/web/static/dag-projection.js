@@ -108,7 +108,7 @@ function projectDag(nodes, options){
 
   (settings.expanded || []).forEach(source => {
     if(!visible.has(source) || !graph.children[source]) return;
-    graph.children[source].forEach(child => visible.add(child));
+    ancestorKeys(graph, graph.children[source]).forEach(key => visible.add(key));
   });
 
   const visibleNodes = graph.keys
@@ -135,6 +135,62 @@ function projectDag(nodes, options){
   return {depths, nodes: visibleNodes, edges, aggregates};
 }
 
+function layoutDag(projection, options){
+  const settings = options || {};
+  const colW = settings.colW || 200;
+  const rowH = settings.rowH || 84;
+  const padX = settings.padX || 48;
+  const padY = settings.padY || 56;
+  const nodeWidth = settings.nodeWidth || 120;
+  const nodeHeight = settings.nodeHeight || 56;
+  const aggregateWidth = settings.aggregateWidth || 150;
+  const aggregateHeight = settings.aggregateHeight || 40;
+  const aggregateGap = settings.aggregateGap || 12;
+  const nodes = projection.nodes || [];
+  const depths = projection.depths || {};
+  const groups = {};
+  nodes.forEach(node => {
+    const depth = depths[node.key];
+    (groups[depth] = groups[depth] || []).push(node);
+  });
+  Object.values(groups).forEach(group => group.sort((left, right) =>
+    left.key.localeCompare(right.key)));
+
+  const pos = {};
+  let maxRow = 0;
+  Object.keys(groups).sort((left, right) => +left - +right).forEach(depth => {
+    const row = groups[depth];
+    maxRow = Math.max(maxRow, row.length);
+    row.forEach((node, index) => {
+      pos[node.key] = {x: padX + (+depth - 1) * colW, y: padY + index * rowH};
+    });
+  });
+
+  const maxVisibleDepth = nodes.reduce((maximum, node) =>
+    Math.max(maximum, depths[node.key] || 1), 1);
+  const aggregates = projection.aggregates || [];
+  const aggregatePositions = {};
+  const aggregateY = padY + maxRow * rowH + aggregateGap;
+  aggregates.forEach((aggregate, index) => {
+    aggregatePositions[aggregate.source] = {
+      x: padX + index * (aggregateWidth + aggregateGap), y: aggregateY,
+    };
+  });
+  const graphWidth = padX * 2 + maxVisibleDepth * colW;
+  const aggregateWidthTotal = aggregates.length
+    ? padX * 2 + aggregates.length * aggregateWidth
+      + (aggregates.length - 1) * aggregateGap
+    : 0;
+  const W = Math.max(graphWidth, aggregateWidthTotal);
+  const H = aggregates.length
+    ? aggregateY + aggregateHeight + padY
+    : padY * 2 + maxRow * rowH;
+  return {
+    pos, aggregatePositions, W, H, colW, rowH, padX, padY,
+    nodeWidth, nodeHeight, aggregateWidth, aggregateHeight,
+  };
+}
+
 function collapseBranches(){ return []; }
 
 function presentState(status){
@@ -150,6 +206,7 @@ global.OMACDag = {
   statePresentation,
   presentState,
   collapseBranches,
+  layoutDag,
   projectDag,
 };
 })(globalThis);

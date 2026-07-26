@@ -87,6 +87,32 @@ process.stdout.write(JSON.stringify(%s));
     return json.loads(completed.stdout)
 
 
+def _layout_dag(nodes, options=None):
+    """运行浏览器同源模块中的布局函数，验证实际 SVG 几何输入。"""
+    module = _static_dir().joinpath("dag-projection.js")
+    program = """
+const fs = require('fs');
+const vm = require('vm');
+const context = {};
+context.globalThis = context;
+vm.runInNewContext(fs.readFileSync(process.argv[1], 'utf8'), context,
+  { filename: process.argv[1] });
+const input = JSON.parse(fs.readFileSync(0, 'utf8'));
+const dag = context.OMACDag;
+const projection = dag.projectDag(input.nodes, input.options || {});
+process.stdout.write(JSON.stringify(dag.layoutDag(projection)));
+"""
+    completed = subprocess.run(
+        ["node", "-e", program, str(module)],
+        input=json.dumps({"nodes": nodes, "options": options or {}}),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    return json.loads(completed.stdout)
+
+
 # ----------------------- fixtures(与 test_web_api.py 同形) -----------------------
 
 @pytest.fixture
@@ -350,6 +376,15 @@ def test_spa_wires_collapsible_dag_controls_to_the_pure_projection():
     assert ".node.state-failed" in css
 
 
+def test_aggregate_hidden_label_has_english_and_chinese_translations():
+    """聚合控件不能把 hidden 固定为英文，语言切换必须覆盖该标签。"""
+    js = _read_asset("app.js")
+
+    assert 'hidden:"hidden"' in js
+    assert 'hidden:"已隐藏"' in js
+    assert 'aggregate.hidden_count+" "+copy("hidden")' in js
+
+
 # ==================== 4.5 可折叠分层 DAG 纯投影 ====================
 
 def test_dag_projection_assigns_deterministic_depth_without_duplication():
@@ -396,6 +431,83 @@ def test_dag_projection_defaults_to_three_layers_and_expands_one_boundary_at_a_t
         "status_summary": [{"status": "todo", "count": 1}],
     }]
     assert _dag_module_value("context.OMACDag.collapseBranches(['three'])") == []
+
+
+def test_dag_projection_manual_expansion_keeps_multi_parent_ancestor_closure():
+    """手动露出一个多父 child 时，所有真实入边的祖先也必须同时露出。"""
+    nodes = [
+        {"key": "root", "status": "todo"},
+        {"key": "left", "status": "todo", "blocked_by": ["root"]},
+        {"key": "boundary", "status": "todo", "blocked_by": ["left"]},
+        {"key": "other-1", "status": "todo", "blocked_by": ["root"]},
+        {"key": "other-2", "status": "todo", "blocked_by": ["other-1"]},
+        {"key": "other-parent", "status": "todo", "blocked_by": ["other-2"]},
+        {
+            "key": "manual-child", "status": "todo",
+            "blocked_by": ["boundary", "other-parent"],
+        },
+    ]
+
+    projection = _project_dag(nodes, {"expanded": ["boundary"]})
+
+    assert [node["key"] for node in projection["nodes"]] == [
+        "root", "left", "other-1", "boundary", "other-2", "other-parent",
+        "manual-child",
+    ]
+    assert projection["edges"] == [
+        {"from": "boundary", "to": "manual-child"},
+        {"from": "left", "to": "boundary"},
+        {"from": "other-1", "to": "other-2"},
+        {"from": "other-2", "to": "other-parent"},
+        {"from": "other-parent", "to": "manual-child"},
+        {"from": "root", "to": "left"},
+        {"from": "root", "to": "other-1"},
+    ]
+
+
+def test_dag_layout_places_aggregates_in_separate_non_overlapping_slots():
+    """聚合控件必须避开自动可见的重要节点，也不能彼此抢占点击区域。"""
+    nodes = [
+        {"key": "root", "status": "todo"},
+        {"key": "middle", "status": "todo", "blocked_by": ["root"]},
+        {"key": "boundary", "status": "todo", "blocked_by": ["middle"]},
+        {"key": "important", "status": "in_progress", "blocked_by": ["boundary"]},
+        {"key": "hidden", "status": "todo", "blocked_by": ["boundary"]},
+        {"key": "right-middle", "status": "todo", "blocked_by": ["root"]},
+        {"key": "right-boundary", "status": "todo", "blocked_by": ["right-middle"]},
+        {"key": "right-hidden", "status": "todo", "blocked_by": ["right-boundary"]},
+    ]
+
+    layout = _layout_dag(nodes)
+    aggregate_positions = layout["aggregatePositions"]
+    important = layout["pos"]["important"]
+    boundary = aggregate_positions["boundary"]
+    right_boundary = aggregate_positions["right-boundary"]
+
+    assert boundary["y"] >= important["y"] + layout["nodeHeight"]
+    assert boundary != right_boundary
+    assert boundary["x"] + layout["aggregateWidth"] <= right_boundary["x"]
+
+
+def test_dag_layout_width_uses_projected_depth_for_shallow_focuses():
+    """深层普通分支不能把 active/anomaly 聚焦视图的 SVG 变宽。"""
+    nodes = [
+        {"key": "root", "status": "todo"},
+        {"key": "active", "status": "in_progress", "blocked_by": ["root"]},
+        {"key": "failure", "status": "failed", "blocked_by": ["root"]},
+        {"key": "deep-1", "status": "todo", "blocked_by": ["root"]},
+        {"key": "deep-2", "status": "todo", "blocked_by": ["deep-1"]},
+        {"key": "deep-3", "status": "todo", "blocked_by": ["deep-2"]},
+        {"key": "deep-4", "status": "todo", "blocked_by": ["deep-3"]},
+        {"key": "deep-5", "status": "todo", "blocked_by": ["deep-4"]},
+    ]
+
+    active = _layout_dag(nodes, {"focus": "active"})
+    anomaly = _layout_dag(nodes, {"focus": "anomaly"})
+
+    expected_width = active["padX"] * 2 + 2 * active["colW"]
+    assert active["W"] == expected_width
+    assert anomaly["W"] == expected_width
 
 
 @pytest.mark.parametrize("important_state", [
