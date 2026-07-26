@@ -38,10 +38,12 @@ from dataclasses import dataclass
 
 import time
 
-from ..core.config import DEFAULT_RETRY, get_ci_config, get_merge_config
+from ..core.config import DEFAULT_RETRY, get_ci_config, get_merge_config, resolve_delivery
+from ..core.evidence import validate_external_merge_evidence
 from ..engines.models import WorkItemStatus
 from ..engines.runtime import AgentRuntime
 from ..core.manifest import Manifest
+from ..errors import PlatformError
 from ..i18n import ui
 
 # ── manifest 侧细分态 ↔ 平台 WorkItemStatus 映射表 ──────────────────────────
@@ -214,6 +216,89 @@ def advance_delivery(
     return "bounce"
 
 
+# ── review-before-PR 适配:评审后确定性 draft PR 发布 ────────────────────────
+
+def run_pr_publish(manifest: Manifest, node_key: str, store: object) -> str:
+    """评审 pass 后的确定性 draft PR 发布门(delivery.review_before_pr 适配)。
+
+    守卫(任一不过 → blocked + 报错即教学,返回 ``'blocked'``):
+      - ``artifacts.branch`` / ``artifacts.tip_sha`` 缺失 → 教化 worker 经
+        ``omac work submit`` 补交 branch + tip 交付;
+      - ``review_report`` 未绑定 ``tip_sha`` → 拒绝(评审对象不可追溯);
+      - ``review_report.tip_sha != artifacts.tip_sha`` → stale-tip 拒绝
+        (评审覆盖的不是当前交付 tip,绝不发布)。
+
+    幂等:``artifacts`` 已记录同 tip 的 ``pr_url`` + ``pr_tip_sha`` → 直接
+    返回 ``'pass'``,不重复发布。平台调用只经
+    ``WorkItemStore.publish_draft_pr``(§12.4);PlatformError → blocked。
+    成功:``artifacts`` 回填 ``pr_url`` + ``pr_tip_sha``,返回 ``'pass'``。
+    """
+    node = manifest.nodes[node_key]
+    item_id = node.work_item_id
+    item = store.get_work_item(item_id)
+    artifacts = item.artifacts if isinstance(item.artifacts, dict) else {}
+    branch = artifacts.get("branch")
+    tip_sha = artifacts.get("tip_sha")
+
+    if not branch or not tip_sha:
+        store.add_comment(item_id, ui(
+            "⚠️ Review passed, but artifacts.branch/artifacts.tip_sha is missing, "
+            "so the draft PR cannot be published.\n"
+            "Resubmit with `omac work submit <id> --branch <branch> "
+            "--tip-sha <sha> --verification-file <ev.yaml>`.",
+            "⚠️ 评审已通过,但缺 artifacts.branch/artifacts.tip_sha,无法发布 draft PR。\n"
+            "请用 `omac work submit <id> --branch <branch> --tip-sha <sha> "
+            "--verification-file <ev.yaml>` 补交 branch + tip 交付。"))
+        node.status = "blocked"
+        store.update_status(item_id, WorkItemStatus.BLOCKED)
+        return "blocked"
+
+    report = item.review_report if isinstance(item.review_report, dict) else {}
+    review_tip = report.get("tip_sha")
+    if not review_tip:
+        store.add_comment(item_id, ui(
+            "⚠️ Review passed but review_report is not bound to a tip_sha; "
+            "refusing to publish an untraceable review.\n"
+            "The reviewer must record review_report.tip_sha for the exact tip "
+            "it reviewed.",
+            "⚠️ 评审已通过但 review_report 未绑定 tip_sha,评审对象不可追溯,拒绝发布。\n"
+            "reviewer 必须在 review_report.tip_sha 记录所评审的精确 tip。"))
+        node.status = "blocked"
+        store.update_status(item_id, WorkItemStatus.BLOCKED)
+        return "blocked"
+
+    if review_tip != tip_sha:
+        store.add_comment(item_id, ui(
+            f"⚠️ Stale review tip: review_report.tip_sha ({review_tip}) does not "
+            f"match the delivered artifacts.tip_sha ({tip_sha}). The review does "
+            "not cover the current tip; re-review the current tip before publishing.",
+            f"⚠️ 评审 tip 已过期:review_report.tip_sha({review_tip})与交付的 "
+            f"artifacts.tip_sha({tip_sha})不一致 —— 评审未覆盖当前 tip,"
+            "须对当前 tip 重新评审后才能发布。"))
+        node.status = "blocked"
+        store.update_status(item_id, WorkItemStatus.BLOCKED)
+        return "blocked"
+
+    if artifacts.get("pr_url") and artifacts.get("pr_tip_sha") == tip_sha:
+        # 幂等:当前 tip 的 draft PR 已发布过,直接放行(重跑/续跑安全)。
+        return "pass"
+
+    try:
+        pr_url = store.publish_draft_pr(item_id, branch=branch, tip_sha=tip_sha)
+    except PlatformError as exc:
+        store.add_comment(item_id, ui(
+            f"⚠️ Draft PR publication failed: {exc}",
+            f"⚠️ draft PR 发布失败: {exc}"))
+        node.status = "blocked"
+        store.update_status(item_id, WorkItemStatus.BLOCKED)
+        return "blocked"
+
+    merged_artifacts = dict(artifacts)
+    merged_artifacts.update({"pr_url": pr_url, "pr_tip_sha": tip_sha})
+    store.update_work_item_metadata(item_id, artifacts=merged_artifacts)
+    return "pass"
+
+
 # ── P4.2 自动 merge 与冲突回退 ──────────────────────────────────────────────
 
 def run_merge_delivery(
@@ -240,15 +325,39 @@ def run_merge_delivery(
     回退计数(读/写)经平台 ``WorkItem.bounces.merge``(单一事实源,Store 只存取);
     manifest Node 不持计数。上界由 ``config.retry.merge``(缺省 3)经
     ``resolve_retry`` 解析后注入 ``loop.tick`` 的 ``retry_limits``。
+
+    external merge 适配(delivery.external_merge,缺省关):不执行任何 merge
+    命令,改走 ``_external_merge_delivery`` —— 无证据返回 ``'waiting'``(节点
+    停留 manifest 细分态 ``merging``,后续 tick 重查),stale/wrong/畸形证据
+    返回 ``'blocked'``,绑定已批准 pr_url + tip 的有效证据返回 ``'pass'``。
+    返回:'pass'(继续) | 'bounce'(已转回 worker) | 'blocked' | 'waiting'(仅 external 模式)。
     """
     node = manifest.nodes[node_key]
     item_id = node.work_item_id
-    merge = get_merge_config(config)
 
     item = store.get_work_item(item_id)
     pr_url = ""
     if isinstance(item.artifacts, dict):
         pr_url = item.artifacts.get("pr_url") or item.artifacts.get("pr") or ""
+
+    # external merge 适配(delivery.external_merge,缺省关 —— 上游行为不变):
+    # OMAC 绝不执行 merge 命令,只等待并校验绑定已批准 pr_url + tip 的外部证据。
+    if resolve_delivery(config)["external_merge"]:
+        if not pr_url:
+            store.add_comment(item_id, ui(
+                "⚠️ External merge mode is enabled, but the node has no pr_url, "
+                "so there is no approved PR to wait for.\n"
+                "Publish the PR first (review-before-PR publishes it after a green "
+                "review, or submit one with `omac work submit <id> --pr-url <url> ...`).",
+                "⚠️ 已启用 external merge 模式,但节点无 pr_url,没有可等待的已批准 PR。\n"
+                "请先发布 PR(review-before-PR 会在评审通过后发布,或用 "
+                "`omac work submit <id> --pr-url <url> ...` 提交)。"))
+            node.status = "blocked"
+            store.update_status(item_id, WorkItemStatus.BLOCKED)
+            return "blocked"
+        return _external_merge_delivery(manifest, node, item, store, pr_url)
+
+    merge = get_merge_config(config)
 
     if not pr_url:
         # merge 已配置但 reviewer pass 后无 pr_url —— 防御性阻断并教化。
@@ -297,6 +406,81 @@ def run_merge_delivery(
             f"Merge command failed (exit code {proc.returncode})",
             f"merge 命令失败(退出码 {proc.returncode})"),
         output=output)
+
+
+def _external_merge_delivery(manifest: Manifest, node, item, store, pr_url: str) -> str:
+    """external merge 模式的 merge 门:OMAC 绝不合并,只等待并校验外部证据。
+
+    - 无 ``artifacts.external_merge`` → 结构化等待态:node「merging」(平台
+      in_review),``artifacts.external_merge_wait`` 记录绑定的 pr_url + 已批准
+      tip 与起始时间,并贴一次教学评论(同 pr_url/tip 下幂等,不重复刷屏);
+      返回 ``'waiting'``(loop 本 tick 不推进,后续 tick 重查证据)。
+    - 证据存在 → ``validate_external_merge_evidence`` 强制绑定已批准
+      pr_url + tip(``pr_tip_sha`` 优先,退回 ``tip_sha``);任一不过 →
+      blocked + 报错即教学,返回 ``'blocked'``,绝不放行。
+    - 证据有效 → 与默认 merge 成功路径对称:node.merged / merged_at
+      (优先取证据时间),返回 ``'pass'``。
+
+    已批准 tip 取自 ``pr_tip_sha``(run_pr_publish 发布时记录)或 worker 交付的
+    ``tip_sha``;两者都未知时证据只绑定 pr_url。
+    """
+    item_id = node.work_item_id
+    artifacts = item.artifacts if isinstance(item.artifacts, dict) else {}
+    approved_tip = artifacts.get("pr_tip_sha") or artifacts.get("tip_sha") or ""
+    evidence = artifacts.get("external_merge")
+
+    if evidence is None:
+        node.status = "merging"
+        store.update_status(item_id, to_platform_status("merging"))
+        wait = artifacts.get("external_merge_wait")
+        if (not isinstance(wait, dict)
+                or wait.get("pr_url") != pr_url
+                or wait.get("tip_sha") != approved_tip):
+            merged_artifacts = dict(artifacts)
+            merged_artifacts["external_merge_wait"] = {
+                "pr_url": pr_url,
+                "tip_sha": approved_tip,
+                "since": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            }
+            store.update_work_item_metadata(item_id, artifacts=merged_artifacts)
+            store.add_comment(item_id, ui(
+                "⏳ External merge mode: OMAC will not merge this PR itself. "
+                "Waiting for the authorized external merge authority to merge "
+                f"{pr_url} at tip {approved_tip or '(unbound)'} and deliver "
+                "merge evidence bound to that exact pr_url + tip_sha "
+                "(artifacts.external_merge = {merged: true, pr_url, tip_sha, "
+                "merged_at}).",
+                "⏳ external merge 模式:OMAC 不会自行合并此 PR。等待获授权的外部 "
+                f"merge 权威合并 {pr_url}(tip {approved_tip or '(未绑定)'})并投递"
+                "绑定该 pr_url + tip_sha 的 merge 证据"
+                "(artifacts.external_merge = {merged: true, pr_url, tip_sha, "
+                "merged_at})。"))
+        return "waiting"
+
+    errors = validate_external_merge_evidence(
+        evidence, pr_url=pr_url, tip_sha=approved_tip)
+    if errors:
+        reason = "; ".join(errors)
+        store.add_comment(item_id, ui(
+            f"⚠️ External merge evidence rejected: {reason}\n"
+            "Only evidence bound to the approved pr_url + tip_sha advances; "
+            "redeliver artifacts.external_merge for the exact approved PR/tip, "
+            "or re-review if the tip moved.",
+            f"⚠️ 外部 merge 证据被拒绝:{reason}\n"
+            "只有绑定已批准 pr_url + tip_sha 的证据才能推进;请按精确的已批准 "
+            "PR/tip 重新投递 artifacts.external_merge;若 tip 已变动须重新评审。"))
+        node.status = "blocked"
+        store.update_status(item_id, WorkItemStatus.BLOCKED)
+        return "blocked"
+
+    # 外部证据有效 → 与默认 merge 成功路径对称(已合入集成分支)
+    node.status = "in_progress"
+    node.merged = True
+    merged_at = evidence.get("merged_at")
+    node.merged_at = merged_at if isinstance(merged_at, str) and merged_at else \
+        time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    store.update_status(item_id, to_platform_status("in_progress"))
+    return "pass"
 
 
 def _bounce_or_block_merge(node, item, store, runtime, retry_limits, *,

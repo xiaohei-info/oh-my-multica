@@ -25,7 +25,7 @@ from .models import (
     WorkItem, WorkItemStatus, WorkspaceInfo,
 )
 from .runtime import AgentRuntime
-from .store import WorkItemStore
+from .store import WorkItemStore, check_pr_readiness_payload
 
 
 # 模块级共享状态:所有 MockStore 实例共用,CLI 与测试读写同一份
@@ -152,6 +152,11 @@ class MockStore(WorkItemStore):
     def __init__(self, config: EngineConfig):
         super().__init__(config)
         _init_default_workspace()
+        # draft PR 发布日志(实例级,测试断言用):(item_id, branch, tip_sha)
+        self.pr_publish_log: List[tuple] = []
+        # PR ready 检查 stub(实例级,测试断言/注入用):默认放行。
+        self.pr_readiness_log: List[str] = []
+        self.pr_readiness_payload: Optional[Dict[str, Any]] = None
         # 实例创建时刷新全局行为设置(以最后一次创建为准)。
         # config.extra 可能为 None:见于 dag.py 在无额外 OMAC_* env 时传 None,
         # 此时沿用模块默认值(与 EngineConfig.extra 默认 factory 一致)。
@@ -401,6 +406,11 @@ class MockStore(WorkItemStore):
                 "blockers": [],
                 "nits": [],
             }
+            # review-before-PR 适配(当前精确 tip QE 契约):评审报告绑定 worker
+            # 交付的精确 tip,run_pr_publish 据此拒绝 stale-tip 发布。
+            if isinstance(item.artifacts, dict) and item.artifacts.get("tip_sha"):
+                item.review_report = dict(item.review_report)
+                item.review_report["tip_sha"] = item.artifacts["tip_sha"]
             if item.review_obligations:
                 from ..core.review_convergence import advance_review_ledger
                 item.review_ledger = advance_review_ledger(
@@ -802,6 +812,20 @@ class MockStore(WorkItemStore):
     def get_comments(self, item_id: str) -> List[str]:
         """测试辅助:读回评论。"""
         return list(_shared_comments.get(item_id, []))
+
+    # ==================== PR 发布 ====================
+
+    def publish_draft_pr(self, item_id: str, *, branch: str, tip_sha: str) -> str:
+        """内存模拟:记录发布日志并返回确定性 URL(测试断言用)。"""
+        self.get_work_item(item_id)
+        self.pr_publish_log.append((item_id, branch, tip_sha))
+        return f"https://mock.example.com/pr/{item_id}"
+
+    def validate_pr_ready_for_handoff(self, pr_url: str) -> None:
+        """内存模拟:记录检查调用;注入 pr_readiness_payload 时按同一纯校验评估。"""
+        self.pr_readiness_log.append(pr_url)
+        if self.pr_readiness_payload is not None:
+            check_pr_readiness_payload(pr_url, self.pr_readiness_payload)
 
     # ==================== 状态和分配 ====================
 

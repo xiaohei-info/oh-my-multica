@@ -7,10 +7,10 @@
     register(parser)     挂子命令参数
     run(args) -> int     执行,返回退出码(None 视为 0);业务错误 raise OmacError
 """
-from . import config_cmd, dag, guide, init_cmd, node, plan, web, work
+from . import bridge, config_cmd, dag, guide, init_cmd, node, plan, web, work
 
 COMMAND_GROUPS = [
-    ("CORE COMMANDS(调用者/驱动侧)", [plan, dag, node]),
+    ("CORE COMMANDS(调用者/驱动侧)", [plan, dag, node, bridge]),
     ("WORK COMMANDS(被派发 agent 侧)", [work]),
     ("SETUP COMMANDS", [init_cmd, config_cmd]),
     ("GUIDE COMMANDS", [guide]),

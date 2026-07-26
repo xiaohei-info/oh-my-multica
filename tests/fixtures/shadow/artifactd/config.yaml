@@ -1,0 +1,20 @@
+# Artifactd shadow pilot configuration — machine-plane only, no external side
+# effects. engine: mock means no assignment, PR, merge, deploy, or product
+# mutation can leave the process; the live Multica queues are untouched.
+engine: mock
+workspace: mock-workspace
+roles:
+  workers: [alice]
+  reviewers: [bob]
+defaults:
+  max_parallel: 2
+  poll_interval: 0
+delivery:
+  review_before_pr: true
+  external_merge: true
+plan_gate:
+  store_dir: .omac/plans
+  allowed_hosts: []
+machine:
+  project: delivery-operations
+  namespace: omac

@@ -11,13 +11,14 @@ from pathlib import Path
 from typing import Any, Dict, List, Set, Tuple
 
 from ..core import graph, logsetup
-from ..core.config import DEFAULT_RETRY
+from ..core.config import DEFAULT_RETRY, resolve_delivery
 from ..core.evidence import validate_review_evidence, validate_worker_evidence
 from ..core.review_convergence import (
     build_review_obligations, review_subject_digest)
 from ..core.gitsync import commit_manifest
 from ..core.manifest import Manifest, save_manifest, set_node
-from ..pipeline.delivery import advance_delivery, run_merge_delivery
+from ..bridge.multica import build_plan_gate_report, partition_ready_by_plan_gate
+from ..pipeline.delivery import advance_delivery, run_merge_delivery, run_pr_publish
 from ..engines.models import WorkItemStatus
 from ..engines.runtime import AgentRuntime
 from ..engines.store import WorkItemStore
@@ -32,7 +33,9 @@ log = logsetup.get_logger(__name__)
 _DAG_KIND = "develop"
 
 # manifest status 字符串常量
-RUNNING_STATUSES = {"in_progress", "ci_check", "in_review"}
+# merging:external merge 模式的等待细分态(平台 in_review);默认模式 merge 命令
+# 同步完成,节点不会跨 tick 停留于此,加入集合不改变上游行为。
+RUNNING_STATUSES = {"in_progress", "ci_check", "in_review", "merging"}
 FAILED_STATUSES = {"blocked", "failed"}
 TERMINAL_STATUSES = {"done", "blocked", "failed", "cancelled", "abandoned"}
 
@@ -79,6 +82,9 @@ class TickResult:
     failed: List[str] = field(default_factory=list)
     running: List[str] = field(default_factory=list)
     dispatched: List[str] = field(default_factory=list)
+    # 人工计划门阻断的节点(node.gate.human_plan 且未解锁):保持 todo、不派发,
+    # 以 needs_decision 呈现;仅 PlanReturn 校验器可解锁(见 bridge.multica)。
+    plan_gated: List[str] = field(default_factory=list)
     report: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -220,6 +226,11 @@ def collect_results(
             if k in limits:
                 limits[k] = v
 
+    # review-before-PR 适配(delivery.review_before_pr,缺省关 —— 上游顺序不变):
+    #   worker(branch+tip) → 证据门(不要 pr_url) → review → run_pr_publish
+    #   → CI(对发布的 pr_url)→ merge 门。评审前无 PR,CI 门推迟到发布之后。
+    review_before_pr = resolve_delivery(config or {})["review_before_pr"]
+
     for key, node in manifest.nodes.items():
         if node.status not in RUNNING_STATUSES or not node.work_item_id:
             continue
@@ -291,7 +302,8 @@ def collect_results(
                 runtime.wake(node.work_item_id, node.worker, "worker")
                 continue
             if item.status == WorkItemStatus.DONE:
-                gate_errors = validate_worker_evidence(node, item)
+                gate_errors = validate_worker_evidence(
+                    node, item, require_pr_url=not review_before_pr)
                 if gate_errors:
                     reason = "; ".join(gate_errors)
                     store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
@@ -310,9 +322,14 @@ def collect_results(
                 # 失败/超时 → 有界「回到 worker」(retry_limits["ci"])。
                 # advance_delivery 已处理节点状态与平台状态切换;返回 'pass' 继续,
                 # 'bounce' 已转回 worker(本 tick 不再推进), 'blocked' 则阻止后续。
-                ci_action = advance_delivery(
-                    config or {}, manifest, key, store, runtime, limits,
-                    project_root=_project_root_from_manifest_path(manifest_path))
+                # review-before-PR 适配:评审前无 PR 可检,CI 门推迟到评审 pass +
+                # run_pr_publish 发布之后(in_review 回收路径)。
+                if review_before_pr:
+                    ci_action = "pass"
+                else:
+                    ci_action = advance_delivery(
+                        config or {}, manifest, key, store, runtime, limits,
+                        project_root=_project_root_from_manifest_path(manifest_path))
                 if ci_action == "bounce":
                     failures[key] = ui(
                         "CI failed; returned to the worker for resubmission.",
@@ -331,6 +348,20 @@ def collect_results(
                 # CI 绿(或无可用 CI 而跳过):nits follow-up 已经由上一轮 reviewer 接受,
                 # worker 修完后直接进入 merge/done,不再浪费第二轮 reviewer。
                 if item.review_verdict == "pass-with-nits":
+                    if review_before_pr:
+                        # 适配模式:nits 修复后仍无 PR,先按评审绑定 tip 发布再合并。
+                        publish_action = run_pr_publish(manifest, key, store)
+                        if publish_action == "blocked":
+                            set_node(manifest, key, status="blocked")
+                            failures[key] = ui(
+                                "Draft PR publication after review is blocked; "
+                                "see the issue comments.",
+                                "评审后 draft PR 发布受阻(详见 issue 评论)")
+                            log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND,
+                                     node=key, id=node.work_item_id,
+                                     reason=ui("PR publish blocked",
+                                               "draft PR 发布受阻"))
+                            continue
                     merge_action = run_merge_delivery(
                         config or {}, manifest, key, store, runtime, limits)
                     if merge_action == "pass":
@@ -421,6 +452,44 @@ def collect_results(
                         f"回退到 worker {node.worker} 处理 nits 失败: {exc}")
                 continue
             if not gate_errors and verdict != "reject":
+                if review_before_pr:
+                    # review-before-PR 适配顺序:评审 pass → 发布 draft PR →
+                    # CI(对发布的 pr_url)→ merge 门。
+                    publish_action = run_pr_publish(manifest, key, store)
+                    if publish_action == "blocked":
+                        set_node(manifest, key, status="blocked")
+                        failures[key] = ui(
+                            "Draft PR publication after review is blocked; "
+                            "see the issue comments.",
+                            "评审后 draft PR 发布受阻(详见 issue 评论)")
+                        log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND,
+                                 node=key, id=node.work_item_id,
+                                 reason=ui("PR publish blocked",
+                                           "draft PR 发布受阻"))
+                        continue
+                    ci_action = advance_delivery(
+                        config or {}, manifest, key, store, runtime, limits,
+                        project_root=_project_root_from_manifest_path(manifest_path))
+                    if ci_action == "bounce":
+                        # 发布后 CI 未过 → 新 tip 使本次评审失效,清除旧判定
+                        # (与 merge 回退对称),强制重走完整 review→publish 链。
+                        store.reset_review(node.work_item_id)
+                        failures[key] = ui(
+                            "CI failed after PR publication; returned to the "
+                            "worker for resubmission.",
+                            "发布后 CI 未通过,已转回 worker(上界未耗尽,待重交)")
+                        log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=key,
+                                 id=node.work_item_id, gate="ci")
+                        continue
+                    if ci_action == "blocked":
+                        failures[key] = ui(
+                            "CI failed and retry.ci is exhausted.",
+                            "CI 检查未通过,回退上界(retry.ci)已耗尽")
+                        log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND,
+                                 node=key, id=node.work_item_id,
+                                 reason=ui("CI retry limit exhausted",
+                                           "CI 回退上界已耗尽"))
+                        continue
                 # reviewer pass → P4.2 自动 merge 门。未显式配置 merge.command 时
                 # 使用默认 gh pr merge 命令。
                 merge_action = run_merge_delivery(
@@ -487,6 +556,31 @@ def collect_results(
                             f"Failed to return to worker {node.worker}: {exc}",
                             f"回退到 worker {node.worker} 失败: {exc}")
 
+        # ---- merging:external merge 等待态回收 ----
+        # 默认模式 merge 命令同步完成,节点不会跨 tick 停留于 merging;
+        # 只有 delivery.external_merge 开启时节点才会以 merging 等待外部证据,
+        # 每 tick 重查一次(证据经 store 元数据到达,bridge/CLI 负责投递)。
+        elif node.status == "merging":
+            merge_action = run_merge_delivery(
+                config or {}, manifest, key, store, runtime, limits)
+            if merge_action == "pass":
+                if item.review_verdict == "pass-with-nits":
+                    store.reset_review(node.work_item_id)
+                store.update_status(node.work_item_id, WorkItemStatus.DONE)
+                set_node(manifest, key, status="done")
+                log.info(logsetup.EVT_NODE_DONE, kind=_DAG_KIND, node=key,
+                         id=node.work_item_id)
+            elif merge_action == "blocked":
+                set_node(manifest, key, status="blocked")
+                failures[key] = ui(
+                    "External merge evidence was rejected; see the issue comments.",
+                    "外部 merge 证据被拒绝(详见 issue 评论)")
+                log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
+                         id=node.work_item_id, reason=ui(
+                             "External merge evidence rejected",
+                             "外部 merge 证据被拒绝"))
+            # else "waiting"/"bounce":保持 merging 或已转回,本 tick 不再推进。
+
     # ---- reviewer 阶段过渡(遍历后执行,避免改 manifest 影响遍历)----
     for key, item_id, reviewer in pending_review:
         current = store.get_work_item(item_id)
@@ -494,7 +588,11 @@ def collect_results(
             current, max(1, current.bounces.review + 1))
         store.update_work_item_metadata(
             item_id,
-            review_obligations=build_review_obligations(current),
+            # review-before-PR 适配:评审对象由 review_report.tip_sha 精确绑定
+            # (run_pr_publish 强制校验),不挂 convergence obligations 协议;
+            # 显式写 [] 清掉历史残留,避免旧 obligations 触发 v2 协议校验。
+            review_obligations=(
+                [] if review_before_pr else build_review_obligations(current)),
         )
         store.prepare_review_cycle(item_id, subject_digest)
         # 先把工单标 IN_REVIEW 再派发 reviewer,否则 mock 下 assign 内
@@ -747,6 +845,10 @@ def tick(
     snapshot = _build_snapshot(manifest)
     ready = graph.ready_nodes(snapshot)
 
+    # 4.5 人工计划门(node.gate.human_plan,缺省无标记 —— 上游行为不变):
+    #     硬/歧义工作在校验器记录不可变 PlanReturn 快照前绝不派发。
+    ready, plan_gated = partition_ready_by_plan_gate(manifest, ready)
+
     # 5. DISPATCH: 派发就绪节点(受 max_parallel 约束)
     dispatched = _dispatch(store, runtime, manifest, manifest_path, ready, max_parallel)
 
@@ -761,14 +863,15 @@ def tick(
     running = [k for k, n in manifest.nodes.items() if n.status in RUNNING_STATUSES]
     failed_keys = [k for k, n in manifest.nodes.items() if n.status in FAILED_STATUSES]
 
-    # 状态判定:running 优先(有在飞节点继续推进),其次 needs_decision(有失败),
-    # 最后 converged(全部 done)
+    # 状态判定:running 优先(有进行中节点继续推进),其次 needs_decision(有失败
+    # 或有被人工计划门阻断的节点),最后 converged(全部 done)
     if running:
         state = "running"
-    elif failed_keys:
+    elif failed_keys or plan_gated:
         state = "needs_decision"
         log.info(logsetup.EVT_NEEDS_DECISION, kind=_DAG_KIND,
-                 failed=sorted(failed_keys), done=len(done),
+                 failed=sorted(failed_keys), plan_gated=sorted(plan_gated),
+                 done=len(done),
                  total=len(manifest.nodes))
     else:
         state = "converged"
@@ -781,6 +884,14 @@ def tick(
         from ..pipeline.report import NEEDS_DECISION_KEYS, build_needs_decision  # 延迟导入,避免循环依赖
         report = build_needs_decision(
             store, manifest, manifest_path, set(failed_keys), evidence=new_failures)
+        if plan_gated:
+            # 人工计划门节点不是失败:以独立原因段并入报告(同一锁定 schema),
+            # next_actions 前置可复制的 PlanReturn 修复命令。
+            gate_report = build_plan_gate_report(manifest, manifest_path, plan_gated)
+            report["failed_nodes"] = gate_report["failed_nodes"] + report["failed_nodes"]
+            report["blocked_downstream"] = sorted(
+                set(report["blocked_downstream"]) | set(gate_report["blocked_downstream"]))
+            report["next_actions"] = gate_report["next_actions"] + report["next_actions"]
         # 锁定 schema:P5 web / agent 消费方只依赖 NEEDS_DECISION_KEYS
         assert set(report.keys()) == set(NEEDS_DECISION_KEYS)
 
@@ -790,5 +901,6 @@ def tick(
         failed=failed_keys,
         running=running,
         dispatched=dispatched,
+        plan_gated=sorted(plan_gated),
         report=report,
     )

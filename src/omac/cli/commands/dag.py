@@ -413,6 +413,8 @@ def _emit(result, manifest, args) -> None:
         "failed": result.failed,
         "dispatched": result.dispatched,
     }
+    if getattr(result, "plan_gated", None):
+        payload["plan_gated"] = result.plan_gated
     payload["report"] = result.report or None
 
     if args.output == "json":
@@ -547,13 +549,20 @@ def _loop_or_single_locked(args, single_round: bool) -> int:
 
         if last_result.state == "needs_decision":
             _emit(last_result, manifest, args)
-            raise NeedsDecision(
-                ui(
+            gated = getattr(last_result, "plan_gated", [])
+            if gated and not last_result.failed:
+                message = ui(
+                    f"Caller decision required: nodes {gated} are held by the "
+                    "human plan gate. Submit a validated PlanReturn (see the "
+                    "report's next_actions) before continuing.",
+                    f"需调用者决策:节点 {gated} 被人工计划门阻断 —— 请提交经校验的 "
+                    "PlanReturn(见报告 next_actions)后继续。")
+            else:
+                message = ui(
                     f"Caller decision required: nodes {last_result.failed} failed or are blocked. "
                     "Rerun, retry, or abandon before continuing.",
-                    f"需调用者决策:节点 {last_result.failed} 失败/受阻,重跑/重试/abandon 后继续。"),
-                report=last_result.report,
-            )
+                    f"需调用者决策:节点 {last_result.failed} 失败/受阻,重跑/重试/abandon 后继续。")
+            raise NeedsDecision(message, report=last_result.report)
 
         if single_round:
             _emit(last_result, manifest, args)

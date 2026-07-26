@@ -1,6 +1,7 @@
 # manifest.py
 from dataclasses import dataclass, field
 from contextlib import contextmanager
+from datetime import datetime
 import fcntl
 import hashlib
 import os
@@ -112,6 +113,8 @@ class Node:
     reviewer: str | None = None
     risk: str | None = None
     gate: dict | None = None
+    ui: dict | None = None       # UI 契约块(可选;校验见 validate_ui_contract)
+    runner: dict | None = None   # runner/lease 元数据(可选;V1 只记录不强制)
     contract: Contract | None = None
     work_item_id: str | None = None   # 平台返回的 work item id（Phase 2 回填）
     status: str = "todo"           # manifest 携带的节点状态
@@ -145,6 +148,8 @@ def _build_nodes(raw) -> dict:
             reviewer=n.get("reviewer"),
             risk=n.get("risk"),
             gate=n.get("gate"),
+            ui=n.get("ui"),
+            runner=n.get("runner"),
             contract=_load_contract(n.get("contract")),
             work_item_id=n.get("work_item_id"),
             status=n.get("status", "todo"),
@@ -165,6 +170,79 @@ def loads_manifest(text: str) -> Manifest:
     """从 YAML 文本解析 manifest(不落盘,供 pipeline 直接消费 LLM 产出的 manifest)。"""
     raw = _expand_env(yaml.safe_load(text))
     return Manifest(meta=raw.get("meta", {}), nodes=_build_nodes(raw))
+
+
+# runner.expected_tip:严格 40 位小写 hex SHA(与 evidence._TIP_SHA_RE 同规则)
+_EXPECTED_TIP_RE = re.compile(r"^[0-9a-f]{40}$")
+
+
+def _non_empty_str(value) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def validate_ui_contract(ui) -> list:
+    """校验节点 ui 块(UI 契约)。返回失败消息列表;空列表 = 合法。
+
+    必须是映射,且包含:design_doc / visual_reference / visual_acceptance
+    (均非空字符串,visual_acceptance 为独立视觉验收证据引用),
+    以及 desktop / mobile 两个映射(各含非空 viewport + screenshot)。
+    不在 load_manifest 内自动执行(向后兼容),由 lint/调用方显式触发。
+    """
+    if not isinstance(ui, dict):
+        return [f"ui must be a mapping; got {type(ui).__name__}"]
+    errors = []
+    for key in ("design_doc", "visual_reference", "visual_acceptance"):
+        if not _non_empty_str(ui.get(key)):
+            errors.append(f"ui.{key} must be a non-empty string")
+    for key in ("desktop", "mobile"):
+        block = ui.get(key)
+        if not isinstance(block, dict):
+            errors.append(f"ui.{key} must be a mapping (viewport/screenshot)")
+            continue
+        for sub in ("viewport", "screenshot"):
+            if not _non_empty_str(block.get(sub)):
+                errors.append(f"ui.{key}.{sub} must be a non-empty string")
+    return errors
+
+
+def validate_runner_metadata(runner) -> list:
+    """校验节点 runner 块(runner/lease 元数据)。返回失败消息列表;空列表 = 合法。
+
+    runner_class 必填(非空字符串);preferred_host / actual_host /
+    lease_holder 可选非空字符串;expected_tip 可选,严格 40 位小写 hex;
+    lease_expires_at 可选,ISO-8601 时间戳(接受结尾 Z);
+    lease_expires_at 无 lease_holder → 报错(fail closed)。
+    V1 只校验与记录,不做 lease 强制执行。
+    """
+    if not isinstance(runner, dict):
+        return [f"runner must be a mapping; got {type(runner).__name__}"]
+    errors = []
+    if not _non_empty_str(runner.get("runner_class")):
+        errors.append("runner.runner_class must be a non-empty string")
+    for key in ("preferred_host", "actual_host", "lease_holder"):
+        value = runner.get(key)
+        if value is not None and not _non_empty_str(value):
+            errors.append(f"runner.{key} must be a non-empty string")
+    expected_tip = runner.get("expected_tip")
+    if expected_tip is not None and (
+            not isinstance(expected_tip, str) or not _EXPECTED_TIP_RE.match(expected_tip)):
+        errors.append("runner.expected_tip must be a 40-character lowercase hex SHA")
+    lease_expires_at = runner.get("lease_expires_at")
+    if lease_expires_at is not None:
+        if not isinstance(lease_expires_at, str):
+            errors.append("runner.lease_expires_at must be an ISO-8601 timestamp string")
+        else:
+            text = lease_expires_at
+            if text.endswith("Z"):
+                text = text[:-1] + "+00:00"
+            try:
+                datetime.fromisoformat(text)
+            except ValueError:
+                errors.append(
+                    f"runner.lease_expires_at must be an ISO-8601 timestamp: {lease_expires_at!r}")
+        if not _non_empty_str(runner.get("lease_holder")):
+            errors.append("runner.lease_expires_at requires runner.lease_holder")
+    return errors
 
 def save_manifest(manifest: Manifest, path: str):
     """把 manifest 原子序列化回 YAML。
@@ -193,6 +271,10 @@ def save_manifest(manifest: Manifest, path: str):
             node["risk"] = n.risk
         if n.gate is not None:
             node["gate"] = n.gate
+        if n.ui is not None:
+            node["ui"] = n.ui
+        if n.runner is not None:
+            node["runner"] = n.runner
         if n.contract is not None:
             node["contract"] = _dump_contract(n.contract)
         if n.merged:

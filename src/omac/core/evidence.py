@@ -10,6 +10,8 @@
   2. review_report.full_review_completed  reviewer 必须完成整个评审范围后才能提交
 """
 
+import re
+
 from .acceptance import AcceptanceDoc, load_acceptance_doc
 from .review_convergence import validate_convergence_review
 
@@ -17,6 +19,9 @@ REVIEW_APPROVE = {"pass", "pass-with-nits"}
 REVIEW_VERDICTS = REVIEW_APPROVE | {"reject"}
 
 ACCEPTANCE_STATUS = {"pass", "fail"}
+
+# review-before-PR 适配:worker 以 branch + 精确 tip(40 位小写 hex SHA)交付
+_TIP_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
 
 def _command_succeeded(command) -> bool:
@@ -200,13 +205,69 @@ def _requires_env_setup(contract) -> bool:
     return bool(getattr(contract, "integration_gates", None))
 
 
-def validate_worker_evidence(node, item) -> list:
-    """Return gate failure messages for worker artifacts + verification."""
+def validate_external_merge_evidence(evidence, *, pr_url: str, tip_sha: str) -> list:
+    """校验外部 merge 证据(delivery.external_merge 适配)。
+
+    证据必须绑定到已批准的 PR 与精确 tip:
+      - evidence 必须是 dict 且 ``merged`` 严格为 True;
+      - ``pr_url`` 必填且必须等于当前已批准的 pr_url;
+      - 已批准 tip 已知时,``tip_sha`` 必填、严格 40 位小写 hex,
+        且必须等于已批准 tip(stale-tip 拒绝);
+      - 已批准 tip 未知时(默认排序且 worker 未交 tip),证据只绑定 pr_url。
+
+    返回失败消息列表;空列表 = 证据有效。
+    """
+    errors = []
+    if not isinstance(evidence, dict):
+        return ["external_merge evidence must be a mapping"]
+    if evidence.get("merged") is not True:
+        errors.append("external_merge.merged must be true")
+    ev_pr = evidence.get("pr_url")
+    if not isinstance(ev_pr, str) or not ev_pr.strip():
+        errors.append("external_merge.pr_url is required")
+    elif ev_pr != pr_url:
+        errors.append(
+            f"external_merge.pr_url ({ev_pr}) does not match the approved "
+            f"pr_url ({pr_url})")
+    ev_tip = evidence.get("tip_sha")
+    if tip_sha:
+        if not isinstance(ev_tip, str) or not _TIP_SHA_RE.match(ev_tip):
+            errors.append(
+                "external_merge.tip_sha must be a 40-character lowercase hex SHA")
+        elif ev_tip != tip_sha:
+            errors.append(
+                f"external_merge.tip_sha ({ev_tip}) does not match the approved "
+                f"tip_sha ({tip_sha}); the merge does not cover the reviewed tip")
+    elif ev_tip is not None and (
+            not isinstance(ev_tip, str) or not _TIP_SHA_RE.match(ev_tip)):
+        errors.append(
+            "external_merge.tip_sha must be a 40-character lowercase hex SHA")
+    return errors
+
+
+def validate_worker_evidence(node, item, *, require_pr_url=True) -> list:
+    """Return gate failure messages for worker artifacts + verification.
+
+    require_pr_url=True(缺省,上游行为不变):artifacts.pr_url 必填。
+    require_pr_url=False(review-before-PR 适配):不要求 pr_url,改为强制
+    artifacts.branch + artifacts.tip_sha(严格 40 位小写 hex SHA)——
+    PR 在评审 pass 后才由 pipeline 确定性发布。
+    """
     errors = []
     contract = getattr(node, "contract", None)
+    artifacts = getattr(item, "artifacts", None)
 
-    if not _has_pr_url(getattr(item, "artifacts", None)):
-        errors.append("artifacts.pr_url is required")
+    if require_pr_url:
+        if not _has_pr_url(artifacts):
+            errors.append("artifacts.pr_url is required")
+    else:
+        branch = artifacts.get("branch") if isinstance(artifacts, dict) else None
+        if not isinstance(branch, str) or not branch.strip():
+            errors.append("artifacts.branch is required")
+        tip_sha = artifacts.get("tip_sha") if isinstance(artifacts, dict) else None
+        if not isinstance(tip_sha, str) or not _TIP_SHA_RE.match(tip_sha):
+            errors.append(
+                "artifacts.tip_sha must be a 40-character lowercase hex SHA")
 
     if contract is None:
         return errors

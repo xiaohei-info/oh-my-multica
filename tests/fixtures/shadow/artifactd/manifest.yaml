@@ -1,0 +1,40 @@
+meta:
+  name: artifactd-shadow
+  dag_key: artifactd-shadow
+  namespace: omac
+  source:
+    project: artifactd
+    issue: ART-101
+nodes:
+  - id: shadow-config
+    worker: alice
+    reviewer: bob
+    title: Artifactd shadow configuration node
+    description: >-
+      Non-UI shadow scenario. Proves plan-gate block/unlock, machine isolation,
+      review-before-PR ordering, and the external merge handoff without any
+      assignment, PR, merge, deploy, or product mutation.
+    gate:
+      human_plan: true
+    runner:
+      runner_class: hermes
+      preferred_host: atlas
+    contract:
+      objective: Prove shadow delivery sequencing without product mutation.
+      acceptance:
+        - Shadow node delivers a branch and exact tip without a PR
+        - Independent review passes on the exact tip before any draft PR exists
+      verification_commands:
+        - "true"
+      integration_gates:
+        - name: "shadow-gate"
+          layer: "L1"
+          delivery_goal: "shadow sequencing proven"
+          source_of_truth: ["tests/fixtures/shadow/artifactd/plan.md"]
+          covers: ["shadow-config"]
+          acceptance_refs:
+            - "Shadow node delivers a branch and exact tip without a PR"
+          commands: ["true"]
+          required_metrics: {"shadow_coverage": 100}
+          artifacts: ["shadow-evidence.json"]
+      pr_base: main

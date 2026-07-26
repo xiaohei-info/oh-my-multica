@@ -20,6 +20,9 @@
       goal_required: false      # 无 --doc 时是否强制 --goal/--goal-file
     ci:    { check_command, timeout_minutes }   # 可选;未显式配置时检测 .github/workflows
     merge: { command }                           # 可选;未显式配置时默认 gh pr merge
+    delivery: { review_before_pr: false,      # 可选;开启后先评审 branch+tip,评审 pass 再发 draft PR
+                external_merge: false }       # 可选;开启后 OMAC 绝不自行 merge,只等待并校验外部 merge 证据
+    machine: { project, namespace }           # 可选;机器隔离,须成对设置(缺省无隔离)
     acceptance: { max_rounds }                   # 总控验收外层循环上限(与 retry 正交)
     retry:                                     # 各类「回到 worker」回退次数上限
       worker: 3                                # worker run 结束但未 submit → worker 继续处理
@@ -59,6 +62,24 @@ DEFAULT_RETRY = {
     "ci": 3,
     "review": 3,
     "merge": 3,
+}
+
+# 交付排序特性门(全部缺省关闭 —— 上游默认行为不变)
+DEFAULT_DELIVERY = {
+    "review_before_pr": False,
+    "external_merge": False,
+}
+
+# PlanReturn 人工计划门(缺省:无受信 host —— fail closed;快照存入 .omac/plans)
+DEFAULT_PLAN_GATE = {
+    "store_dir": os.path.join(CONFIG_DIR, "plans"),
+    "allowed_hosts": [],
+}
+
+# 机器隔离(缺省:不配置 —— project/namespace 均为 None,无机器隔离)
+DEFAULT_MACHINE = {
+    "project": None,
+    "namespace": None,
 }
 
 # 总控验收外层循环上限(设计文档 §6;与 retry 正交)
@@ -166,6 +187,100 @@ def resolve_workflow(config: dict) -> dict:
                 f"workflow.{key} must be true or false; got {type(val).__name__}({val!r})",
                 f"workflow.{key} 必须为布尔值 true/false,got {type(val).__name__}({val!r})"))
         resolved[key] = val
+    return resolved
+
+
+def resolve_delivery(config: dict) -> dict:
+    """解析 delivery 块:交付排序特性门,缺省全关(上游默认行为不变)。
+
+    review_before_pr:开启后 worker 以 branch + 精确 tip_sha 交付(无 pr_url),
+    评审 pass 后由 pipeline 确定性发布 draft PR,再走 CI → merge 门。
+    external_merge:开启后 OMAC 绝不执行 merge 命令;进入结构化等待态,
+    只接受绑定到已批准 pr_url + tip 的外部 merge 证据(artifacts.external_merge),
+    stale/wrong/畸形证据一律拒绝(blocked + 报错即教学)。
+    校验规则与 resolve_workflow 一致:值必须为布尔,非法值 ValidationError → exit 5。
+    """
+    raw = get_value(config, "delivery")
+    if raw is None:
+        return dict(DEFAULT_DELIVERY)
+    if not isinstance(raw, dict):
+        raise ValidationError(ui(
+            f"delivery must be a YAML mapping; got {type(raw).__name__}",
+            f"delivery 配置应为 YAML 映射,got {type(raw).__name__}"))
+    resolved = dict(DEFAULT_DELIVERY)
+    for key in DEFAULT_DELIVERY:
+        if key not in raw:
+            continue
+        val = raw[key]
+        if not isinstance(val, bool):
+            raise ValidationError(ui(
+                f"delivery.{key} must be true or false; got {type(val).__name__}({val!r})",
+                f"delivery.{key} 必须为布尔值 true/false,got {type(val).__name__}({val!r})"))
+        resolved[key] = val
+    return resolved
+
+
+def resolve_plan_gate(config: dict) -> dict:
+    """解析 plan_gate 块:PlanReturn 人工计划门的快照目录与受信 host。
+
+    store_dir 必须为字符串;allowed_hosts 必须为字符串列表(缺省空 ——
+    host 形式 fail closed,必须显式配置才可用)。非法值 ValidationError → exit 5。
+    """
+    raw = get_value(config, "plan_gate")
+    if raw is None:
+        return dict(DEFAULT_PLAN_GATE)
+    if not isinstance(raw, dict):
+        raise ValidationError(ui(
+            f"plan_gate must be a YAML mapping (store_dir/allowed_hosts); got {type(raw).__name__}",
+            f"plan_gate 配置应为 YAML 映射(store_dir/allowed_hosts),got {type(raw).__name__}"))
+    resolved = dict(DEFAULT_PLAN_GATE)
+    if "store_dir" in raw:
+        val = raw["store_dir"]
+        if not isinstance(val, str) or not val:
+            raise ValidationError(ui(
+                f"plan_gate.store_dir must be a non-empty string; got {type(val).__name__}({val!r})",
+                f"plan_gate.store_dir 必须为非空字符串,got {type(val).__name__}({val!r})"))
+        resolved["store_dir"] = val
+    if "allowed_hosts" in raw:
+        val = raw["allowed_hosts"]
+        if not isinstance(val, list) or any(not isinstance(h, str) or not h for h in val):
+            raise ValidationError(ui(
+                f"plan_gate.allowed_hosts must be a list of non-empty strings; got {val!r}",
+                f"plan_gate.allowed_hosts 必须为非空字符串列表,got {val!r}"))
+        resolved["allowed_hosts"] = list(val)
+    return resolved
+
+
+def resolve_machine(config: dict) -> dict:
+    """解析 machine 块:机器隔离的 project/namespace 指针。
+
+    缺省(块不存在)→ DEFAULT_MACHINE(两者皆 None,无机器隔离)。
+    project/namespace 设置时必须为非空字符串;隔离要求成对出现 ——
+    只设其一 → ValidationError(exit 5)。非法值同样 ValidationError → exit 5。
+    """
+    raw = get_value(config, "machine")
+    if raw is None:
+        return dict(DEFAULT_MACHINE)
+    if not isinstance(raw, dict):
+        raise ValidationError(ui(
+            f"machine must be a YAML mapping (project/namespace); got {type(raw).__name__}",
+            f"machine 配置应为 YAML 映射(project/namespace),got {type(raw).__name__}"))
+    resolved = dict(DEFAULT_MACHINE)
+    for key in DEFAULT_MACHINE:
+        if key not in raw:
+            continue
+        val = raw[key]
+        if not isinstance(val, str) or not val:
+            raise ValidationError(ui(
+                f"machine.{key} must be a non-empty string; got {type(val).__name__}({val!r})",
+                f"machine.{key} 必须为非空字符串,got {type(val).__name__}({val!r})"))
+        resolved[key] = val
+    if (resolved["project"] is None) != (resolved["namespace"] is None):
+        raise ValidationError(ui(
+            "machine isolation requires both project and namespace; "
+            f"got project={resolved['project']!r}, namespace={resolved['namespace']!r}",
+            "机器隔离必须同时设置 project 与 namespace;"
+            f"got project={resolved['project']!r},namespace={resolved['namespace']!r}"))
     return resolved
 
 

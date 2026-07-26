@@ -12,7 +12,33 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
 from ..core.taskmeta import TaskKind, TaskPhase
+from ..errors import PlatformError, ValidationError
+from ..i18n import ui
 from .models import EngineConfig, ProjectInfo, WorkItem, WorkItemStatus, WorkspaceInfo
+
+
+def is_github_pr_url(pr_url: Any) -> bool:
+    return (isinstance(pr_url, str)
+            and pr_url.startswith("https://github.com/") and "/pull/" in pr_url)
+
+
+def check_pr_readiness_payload(pr_url: str, payload: Dict[str, Any]) -> None:
+    """按 PR readiness 负载(isDraft/state)评估 worker 交付前置门(纯校验,无平台调用)。
+
+    draft 或非 OPEN 抛 ValidationError(报错即教学)。获取负载的平台调用
+    (如 gh pr view)只允许封装在各引擎适配器内(§12.4)。
+    """
+    if payload.get("isDraft") is True:
+        raise ValidationError(ui(
+            f"GitHub PR is still a draft and cannot enter CI/review/merge: {pr_url}\n"
+            "Run `gh pr ready <pr-url>` or mark it ready for review on GitHub.",
+            f"GitHub PR 仍是 draft,不能交付给下游 CI/review/merge: {pr_url}\n"
+            "请先执行 `gh pr ready <pr-url>` 或在 GitHub 页面 Mark ready for review。"))
+    state = payload.get("state")
+    if state and state != "OPEN":
+        raise ValidationError(ui(
+            f"GitHub PR is not OPEN and cannot be delivered: {pr_url} (state={state})",
+            f"GitHub PR 状态不是 OPEN,不能交付: {pr_url} (state={state})"))
 
 
 class WorkItemStore(ABC):
@@ -209,6 +235,37 @@ class WorkItemStore(ABC):
         """解除当前 Agent assignment，但保留 worker/review 交付和判定证据。"""
 
     # ==================== 便捷方法(基类实现) ====================
+
+    def publish_draft_pr(self, item_id: str, *, branch: str, tip_sha: str) -> str:
+        """数据面:为评审已通过的 branch + 精确 tip 发布 draft PR,返回 PR URL。
+
+        review-before-PR 适配(delivery.review_before_pr)的评审后发布原语。
+        平台 CLI 调用(如 gh pr create --draft)只允许封装在各引擎适配器内
+        (§12.4);不支持该能力的引擎保持本基类实现 —— 抛 PlatformError,
+        由 pipeline.delivery.run_pr_publish 转为 blocked(报错即教学)。
+        """
+        raise PlatformError(ui(
+            f"Engine {self.config.engine_type!r} does not support draft PR "
+            "publication (publish_draft_pr)",
+            f"引擎 {self.config.engine_type!r} 不支持 draft PR 发布"
+            "(publish_draft_pr)"))
+
+    def validate_pr_ready_for_handoff(self, pr_url: str) -> None:
+        """数据面:worker 交付前置门 —— GitHub PR 必须 ready(非 draft 且 OPEN),
+        否则不进入 CI/review/merge。
+
+        非 GitHub URL 无可校验,直接放行。GitHub URL 而引擎不支持该检查时
+        fail-closed(抛 ValidationError,报错即教学);支持的平台在适配器内
+        覆盖本方法,gh 等平台 CLI 调用只允许封装在适配器内(§12.4 红线)。
+        """
+        if not is_github_pr_url(pr_url):
+            return
+        raise ValidationError(ui(
+            f"Engine {self.config.engine_type!r} cannot verify GitHub PR "
+            f"readiness for {pr_url} (validate_pr_ready_for_handoff). "
+            "Use an engine adapter that supports GitHub PR readiness checks.",
+            f"引擎 {self.config.engine_type!r} 无法校验 GitHub PR ready 状态"
+            f"({pr_url}) —— 请使用支持 GitHub PR ready 检查的引擎适配器。"))
 
     def check_member_exists(self, workspace_id: str, member_name: str) -> bool:
         return member_name in self.list_members(workspace_id)

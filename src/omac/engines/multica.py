@@ -44,7 +44,7 @@ from .metadata_policy import (
     assert_metadata_write_allowed, encode_metadata_value, parse_payload_text,
 )
 from .runtime import AgentRuntime
-from .store import WorkItemStore
+from .store import WorkItemStore, check_pr_readiness_payload, is_github_pr_url
 
 
 def _latest_run(runs: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -972,6 +972,78 @@ class MulticaStore(WorkItemStore):
         self._run_multica_with_text_file(
             ["issue", "comment", "add", item_id],
             "--content-file", comment)
+
+    # ==================== PR 发布 ====================
+
+    def publish_draft_pr(self, item_id: str, *, branch: str, tip_sha: str) -> str:
+        """评审后为 branch + 精确 tip 发布 draft PR,返回 PR URL。
+
+        gh CLI 调用封装在本适配器内(§12.4 红线:pipeline 不直接 shell 平台 CLI);
+        gh 不在 PATH 或发布失败抛 PlatformError,由 pipeline 转 blocked。
+        """
+        item = self.get_work_item(item_id)
+        cmd = [
+            "gh", "pr", "create", "--draft",
+            "--head", branch,
+            "--title", item.title or branch,
+            "--body", ui(
+                f"Draft PR published by omac after review passed (tip {tip_sha}).",
+                f"omac 评审通过后发布的 draft PR(tip {tip_sha})。"),
+        ]
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True)
+        except FileNotFoundError:
+            raise PlatformError(ui(
+                "gh CLI is not on PATH. Install it and sign in: "
+                "brew install gh && gh auth login",
+                "gh CLI 不在 PATH —— 先安装并登录:brew install gh && gh auth login"))
+        if result.returncode != 0:
+            stderr = (result.stderr or "").strip()
+            raise PlatformError(ui(
+                f"gh pr create --draft failed: {stderr}",
+                f"gh pr create --draft 失败: {stderr}"))
+        return result.stdout.strip()
+
+    def validate_pr_ready_for_handoff(self, pr_url: str) -> None:
+        """worker 交付前置门:GitHub PR 必须不是 draft 且 OPEN,否则不进入 CI/review/merge。
+
+        gh CLI 调用封装在本适配器内(§12.4 红线:pipeline 不直接调平台 CLI);
+        gh 缺失/超时/失败/非 JSON 一律抛带修复指令的 ValidationError。
+        """
+        if not is_github_pr_url(pr_url):
+            return
+        try:
+            proc = subprocess.run(
+                ["gh", "pr", "view", pr_url, "--json", "isDraft,state"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except FileNotFoundError:
+            raise ValidationError(ui(
+                "GitHub PR readiness checks require gh CLI. Install it, sign in, "
+                "and retry: brew install gh && gh auth login",
+                "GitHub PR ready 检查需要 gh CLI。请安装并登录后重试: "
+                "brew install gh && gh auth login"))
+        except subprocess.TimeoutExpired:
+            raise ValidationError(ui(
+                f"GitHub PR readiness check timed out: {pr_url}. "
+                "Verify network and GitHub access.",
+                f"GitHub PR ready 检查超时: {pr_url}。请确认网络/GitHub 可达后重试。"))
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout or "").strip()
+            raise ValidationError(ui(
+                f"GitHub PR readiness check failed: {pr_url}\n{detail}",
+                f"GitHub PR ready 检查失败: {pr_url}\n{detail}"))
+        try:
+            payload = json.loads(proc.stdout or "{}")
+        except json.JSONDecodeError:
+            raise ValidationError(ui(
+                f"GitHub PR readiness check returned non-JSON output: {pr_url}\n"
+                f"{(proc.stdout or '').strip()}",
+                f"GitHub PR ready 检查返回非 JSON: {pr_url}\n"
+                f"{(proc.stdout or '').strip()}"))
+        check_pr_readiness_payload(pr_url, payload)
 
     # ==================== 状态和分配 ====================
 

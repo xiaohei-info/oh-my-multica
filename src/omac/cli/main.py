@@ -34,6 +34,9 @@ _EN_SUBCOMMAND_HELP = {
     "accept": "Accept a known risk and mark the node done",
     "abandon": "Abandon a node and release non-hard-dependent work",
     "submit": "Validate and submit one structured deliverable",
+    "dry-run": "Evaluate dispatch decisions without any writes",
+    "submit-plan-return": "Validate a PlanReturn and unlock the human plan gate",
+    "submit-merge-evidence": "Submit external merge evidence for validation",
     "get": "Read the full configuration or one key",
     "set": "Write one configuration key",
 }

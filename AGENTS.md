@@ -16,6 +16,11 @@ The web routing layer may only parse parameters, call command functions, and
 return JSON unchanged. It must not read manifests, call engines, or transform
 data. Humans, agents, and the web interface must always see the same facts.
 
+The Multica bridge layer (`src/omac/bridge/`) follows the same rule: it
+composes `WorkItemStore`/`AgentRuntime` and core validators only, never shells
+out to platform CLIs, and does not recreate the scheduler — `pipeline/loop.py`
+remains the only progression engine.
+
 ## Exit-Code Contract (§5.1 — Stable and Safe for Script Branching)
 
 | Code | Meaning |

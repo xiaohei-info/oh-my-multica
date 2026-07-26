@@ -1,6 +1,6 @@
 # lint.py
 import os
-from .manifest import Manifest
+from .manifest import Manifest, validate_runner_metadata, validate_ui_contract
 from ..i18n import ui
 
 def _has_cycle(nodes):
@@ -103,6 +103,11 @@ def lint(m: Manifest, pool: set, *, acceptance=None) -> list:
             if n.reviewer not in pool:
                 errs.append(f"node {n.id}: reviewer '{n.reviewer}' not in agent pool")
         errs.extend(_contract_errors(n))
+        # Stage 4 可选块:存在时才校验(未启用适配的 manifest 行为不变)
+        if n.ui is not None:
+            errs.extend(f"node {n.id}: {e}" for e in validate_ui_contract(n.ui))
+        if n.runner is not None:
+            errs.extend(f"node {n.id}: {e}" for e in validate_runner_metadata(n.runner))
     if acceptance is not None:
         flow_ids = set(getattr(acceptance, "flow_ids", None) or [])
         for n in m.nodes.values():

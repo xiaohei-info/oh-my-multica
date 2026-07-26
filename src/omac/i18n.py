@@ -135,6 +135,7 @@ _MESSAGES = {
         "cli.command.config": "Read and write project configuration",
         "cli.command.guide": "Load stable workflow knowledge named by guide_refs",
         "cli.command.web": "Local read-only dashboard for progress and evidence",
+        "cli.command.bridge": "Multica bridge: plan gate, projection, external merge evidence",
         "cli.description.plan": "Create, inspect, confirm, or resume the design-to-manifest pipeline.",
         "cli.description.dag": "Validate, inspect, and run a manifest DAG deterministically.",
         "cli.description.node": "Inspect exit-20 evidence and make explicit retry, accept, or abandon decisions.",
@@ -143,6 +144,7 @@ _MESSAGES = {
         "cli.description.config": "Read and write .omac/config.yaml with dotted keys.",
         "cli.description.guide": "Agent guide: run `omac work show <id> --output json` first, then load stable static knowledge for the current task facts.",
         "cli.description.web": "Start the local read-only dashboard. API responses are command JSON unchanged.",
+        "cli.description.bridge": "Thinnest Multica bridge: human plan gate intake, five-stage parent projection, and external merge evidence intake.",
     },
     CN: {
         "config.language.prompt": "语言（en/cn）",
@@ -226,6 +228,7 @@ _MESSAGES = {
         "cli.command.config": "读写项目配置",
         "cli.command.guide": "按 guide_refs 加载稳定工作流知识",
         "cli.command.web": "本地只读进度与证据面板",
+        "cli.command.bridge": "Multica 桥接：人工计划门、投影与外部 merge 证据",
         "cli.description.plan": "创建、查看、确认或恢复从设计到 manifest 的流水线。",
         "cli.description.dag": "确定性地校验、查看并执行 manifest DAG。",
         "cli.description.node": "查看 exit 20 证据，并显式决定 retry、accept 或 abandon。",
@@ -234,6 +237,7 @@ _MESSAGES = {
         "cli.description.config": "通过点分键读写 .omac/config.yaml。",
         "cli.description.guide": "读取 work show 当前实例事实后，加载稳定静态知识。",
         "cli.description.web": "启动本地只读面板；API 原样返回命令 JSON。",
+        "cli.description.bridge": "最薄 Multica 桥接：人工计划门摄入、五阶段父工单投影与外部 merge 证据摄入。",
     },
 }
 

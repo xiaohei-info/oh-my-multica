@@ -783,7 +783,7 @@ class TestSubmitPerKindPhase:
         assert got.verification is None
         assert got.status == WorkItemStatus.TODO
 
-    def test_develop_authoring_rejects_github_draft_pr_atomic(self, tmp_path, monkeypatch):
+    def test_develop_authoring_rejects_github_draft_pr_atomic(self, tmp_path):
         eng = _engine()
         item = eng.store.create_work_item(
             "mock-workspace", "t", "d", dag_key="a", worker="alice",
@@ -793,12 +793,8 @@ class TestSubmitPerKindPhase:
         vfile = tmp_path / "verification.yaml"
         vfile.write_text(yaml.safe_dump(_make_verification()))
 
-        class _R:
-            returncode = 0
-            stdout = '{"isDraft": true}\n'
-            stderr = ""
-
-        monkeypatch.setattr(dispatch_mod.subprocess, "run", lambda *a, **k: _R())
+        # PR ready 检查走 WorkItemStore 数据面(§12.4);mock 注入 draft payload。
+        eng.store.pr_readiness_payload = {"isDraft": True}
 
         with pytest.raises(ValidationError) as exc:
             dispatch_mod.submit(
@@ -813,7 +809,7 @@ class TestSubmitPerKindPhase:
         assert got.verification is None
         assert got.status == WorkItemStatus.TODO
 
-    def test_develop_authoring_accepts_ready_pr_without_multica_issue_key(self, tmp_path, monkeypatch):
+    def test_develop_authoring_accepts_ready_pr_without_multica_issue_key(self, tmp_path):
         eng = _engine()
         item = eng.store.create_work_item(
             "mock-workspace", "t", "d", dag_key="a", worker="alice",
@@ -824,18 +820,13 @@ class TestSubmitPerKindPhase:
         vfile = tmp_path / "verification.yaml"
         vfile.write_text(yaml.safe_dump(_make_verification()))
 
-        class _R:
-            returncode = 0
-            stdout = json.dumps({
-                "isDraft": False,
-                "state": "OPEN",
-                "headRefName": "agent/codex/wave0",
-                "title": "feat: skeleton",
-                "body": "No issue key here.",
-            })
-            stderr = ""
-
-        monkeypatch.setattr(dispatch_mod.subprocess, "run", lambda *a, **k: _R())
+        eng.store.pr_readiness_payload = {
+            "isDraft": False,
+            "state": "OPEN",
+            "headRefName": "agent/codex/wave0",
+            "title": "feat: skeleton",
+            "body": "No issue key here.",
+        }
 
         result = dispatch_mod.submit(
             eng.store, item.id,
@@ -845,7 +836,7 @@ class TestSubmitPerKindPhase:
 
         assert result.advanced_to == WorkItemStatus.DONE
 
-    def test_develop_authoring_accepts_github_ready_pr(self, tmp_path, monkeypatch):
+    def test_develop_authoring_accepts_github_ready_pr(self, tmp_path):
         eng = _engine()
         item = eng.store.create_work_item(
             "mock-workspace", "t", "d", dag_key="a", worker="alice",
@@ -855,12 +846,7 @@ class TestSubmitPerKindPhase:
         vfile = tmp_path / "verification.yaml"
         vfile.write_text(yaml.safe_dump(_make_verification()))
 
-        class _R:
-            returncode = 0
-            stdout = '{"isDraft": false}\n'
-            stderr = ""
-
-        monkeypatch.setattr(dispatch_mod.subprocess, "run", lambda *a, **k: _R())
+        eng.store.pr_readiness_payload = {"isDraft": False, "state": "OPEN"}
 
         result = dispatch_mod.submit(
             eng.store, item.id,
