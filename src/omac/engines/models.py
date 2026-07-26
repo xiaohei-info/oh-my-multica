@@ -38,6 +38,24 @@ class MergeCommandResult:
 
 
 @dataclass(frozen=True)
+class PullRequestCheckResult:
+    """一次 PR 检查命令的本地结果；由引擎适配器执行。"""
+    succeeded: bool
+    exit_code: Optional[int]
+    output: str = ""
+    timed_out: bool = False
+
+
+@dataclass(frozen=True)
+class PullRequestReadiness:
+    """PR 是否可进入 CI/review 的远端读取结果。"""
+    is_draft: Optional[bool]
+    state: Optional[str]
+    detail: str = ""
+    failure: Optional[str] = None
+
+
+@dataclass(frozen=True)
 class PullRequestObservation:
     """适配器从 PR 远端读取的当前事实。"""
     state: PullRequestState

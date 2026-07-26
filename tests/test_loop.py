@@ -19,6 +19,7 @@ from omac.engines import create_engine
 from omac.engines.mock import MockRuntime, MockStore
 from omac.core.taskmeta import TaskPhase
 from omac.engines.models import EngineConfig, WorkItemStatus
+from omac.pipeline import loop
 from omac.pipeline.loop import TickResult, tick
 
 
@@ -44,7 +45,7 @@ def _default_gh_merge_succeeds_in_loop_tests(monkeypatch):
             return Proc()
         return real_run(command, *args, **kwargs)
 
-    monkeypatch.setattr("omac.pipeline.delivery.subprocess.run", fake_run)
+    monkeypatch.setattr("omac.engines.mock.subprocess.run", fake_run)
 
 
 def _config(**extra):
@@ -471,6 +472,16 @@ class TestFailureInjection:
 
 
 # ==================== 3. 幂等:中途重建 loop 继续推进 ====================
+
+def test_reconcile_does_not_swallow_programming_errors(tmp_path):
+    store = _engine().store
+    manifest = Manifest(meta={}, nodes={
+        "a": Node(id="a", worker="alice", work_item_id="1", status="done"),
+    })
+    store.get_work_item = lambda item_id: (_ for _ in ()).throw(ValueError("bug"))
+
+    with pytest.raises(ValueError, match="bug"):
+        loop.reconcile(store, manifest, str(tmp_path / "m.yaml"))
 
 class TestIdempotency:
     def test_done_nodes_reused_no_duplicate_issues(self):

@@ -13,7 +13,8 @@ from typing import Any, Dict, List, Optional
 
 from ..core.taskmeta import TaskKind, TaskPhase
 from .models import (
-    EngineConfig, MergeCommandResult, ProjectInfo, PullRequestObservation,
+    EngineConfig, MergeCommandResult, ProjectInfo, PullRequestCheckResult,
+    PullRequestObservation, PullRequestReadiness,
     WorkItem, WorkItemStatus, WorkspaceInfo,
 )
 
@@ -226,6 +227,20 @@ class WorkItemStore(ABC):
     @abstractmethod
     def observe_pull_request(self, pr_url: str) -> PullRequestObservation:
         """读取远端 PR 当前事实；不可确认时返回 ``UNKNOWN``，不得臆测已合入。"""
+
+    @abstractmethod
+    def check_pull_request(
+        self, pr_url: str, command: str, timeout_seconds: int,
+    ) -> PullRequestCheckResult:
+        """执行一次 PR 检查命令并返回本地结果。
+
+        配置的命令（包括默认平台 CLI）只允许由引擎适配器执行；pipeline 只依据
+        结果推进 CI 门，不直接调用平台 CLI。
+        """
+
+    @abstractmethod
+    def read_pull_request_readiness(self, pr_url: str) -> PullRequestReadiness:
+        """读取 PR draft/open 事实，供 develop authoring 的交付前置门使用。"""
 
     # ==================== 便捷方法(基类实现) ====================
 

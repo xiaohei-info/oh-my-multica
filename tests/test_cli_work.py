@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -793,12 +794,12 @@ class TestSubmitPerKindPhase:
         vfile = tmp_path / "verification.yaml"
         vfile.write_text(yaml.safe_dump(_make_verification()))
 
-        class _R:
-            returncode = 0
-            stdout = '{"isDraft": true}\n'
-            stderr = ""
-
-        monkeypatch.setattr(dispatch_mod.subprocess, "run", lambda *a, **k: _R())
+        store = eng.store
+        monkeypatch.setattr(
+            store, "read_pull_request_readiness",
+            lambda pr_url: SimpleNamespace(
+                is_draft=True, state="OPEN", failure=None, detail=""),
+        )
 
         with pytest.raises(ValidationError) as exc:
             dispatch_mod.submit(
@@ -824,18 +825,11 @@ class TestSubmitPerKindPhase:
         vfile = tmp_path / "verification.yaml"
         vfile.write_text(yaml.safe_dump(_make_verification()))
 
-        class _R:
-            returncode = 0
-            stdout = json.dumps({
-                "isDraft": False,
-                "state": "OPEN",
-                "headRefName": "agent/codex/wave0",
-                "title": "feat: skeleton",
-                "body": "No issue key here.",
-            })
-            stderr = ""
-
-        monkeypatch.setattr(dispatch_mod.subprocess, "run", lambda *a, **k: _R())
+        monkeypatch.setattr(
+            eng.store, "read_pull_request_readiness",
+            lambda pr_url: SimpleNamespace(
+                is_draft=False, state="OPEN", failure=None, detail=""),
+        )
 
         result = dispatch_mod.submit(
             eng.store, item.id,
@@ -855,12 +849,11 @@ class TestSubmitPerKindPhase:
         vfile = tmp_path / "verification.yaml"
         vfile.write_text(yaml.safe_dump(_make_verification()))
 
-        class _R:
-            returncode = 0
-            stdout = '{"isDraft": false}\n'
-            stderr = ""
-
-        monkeypatch.setattr(dispatch_mod.subprocess, "run", lambda *a, **k: _R())
+        monkeypatch.setattr(
+            eng.store, "read_pull_request_readiness",
+            lambda pr_url: SimpleNamespace(
+                is_draft=False, state="OPEN", failure=None, detail=""),
+        )
 
         result = dispatch_mod.submit(
             eng.store, item.id,

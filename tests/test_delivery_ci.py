@@ -26,7 +26,6 @@ from omac.pipeline.delivery import (
     VALID_MANIFEST_STATUSES,
     CIResult,
     advance_delivery,
-    run_ci_check,
     to_platform_status,
 )
 from omac.pipeline import loop
@@ -155,14 +154,11 @@ class TestAdvanceDeliveryUnit:
         assert any("boom" in c for c in comments)
 
     def test_ci_timeout_bounces_worker(self, tmp_path, monkeypatch):
-        import omac.pipeline.delivery as delivery
-        import subprocess as sp
-
-        def fake_run(cmd, **kw):
-            raise sp.TimeoutExpired(cmd=cmd, timeout=kw.get("timeout"),
-                                    output=b"still running", stderr=b"")
-        monkeypatch.setattr(delivery.subprocess, "run", fake_run)
         store = _store()
+        store.check_pull_request = lambda *args: type("Result", (), {
+            "succeeded": False, "timed_out": True,
+            "exit_code": None, "output": "still running",
+        })()
         item = _worker_done_item(store)
         manifest = Manifest(meta={}, nodes={"a": _node()})
         manifest.nodes["a"].work_item_id = item.id
@@ -233,47 +229,6 @@ class TestAdvanceDeliveryUnit:
         assert any("omac work submit" in c for c in comments)
 
 
-# ── run_ci_check 直接测试 ───────────────────────────────────────────────────
-
-class TestRunCiCheck:
-    def test_pass_exit_0(self, tmp_path):
-        script = _ci_script(tmp_path, 'echo ok; exit 0')
-        res = run_ci_check(f"sh {script} {{pr_url}}", "https://x")
-        assert res.passed is True and res.timed_out is False and res.exit_code == 0
-
-    def test_fail_exit_1(self, tmp_path):
-        script = _ci_script(tmp_path, 'echo bad; exit 1')
-        res = run_ci_check(f"sh {script} {{pr_url}}", "https://x")
-        assert res.passed is False and res.timed_out is False and res.exit_code == 1
-        assert "bad" in res.summary
-
-    def test_fail_tail_output(self, tmp_path):
-        script = _ci_script(tmp_path, "exit 2")
-        res = run_ci_check(f"sh {script} {{pr_url}}", "https://x")
-        assert "exit code 2" in res.label
-
-    def test_timeout_branch(self, tmp_path, monkeypatch):
-        import omac.pipeline.delivery as delivery
-        import subprocess as sp
-        def fake_run(cmd, **kw):
-            raise sp.TimeoutExpired(cmd=cmd, timeout=kw.get("timeout"),
-                                    output=b"partial", stderr=b"")
-        monkeypatch.setattr(delivery.subprocess, "run", fake_run)
-        res = run_ci_check("gh pr checks {pr_url}", "https://x")
-        assert res.timed_out is True and res.passed is False and res.exit_code is None
-        assert "CI check timed out" in res.label
-
-    def test_timeout_str_decode_branch(self, tmp_path, monkeypatch):
-        import omac.pipeline.delivery as delivery
-        import subprocess as sp
-        def fake_run(cmd, **kw):
-            raise sp.TimeoutExpired(cmd=cmd, timeout=kw.get("timeout"),
-                                    output="out-str", stderr="err-str")
-        monkeypatch.setattr(delivery.subprocess, "run", fake_run)
-        res = run_ci_check("gh pr checks {pr_url}", "https://x")
-        assert res.timed_out is True and "out-str" in res.output
-
-
 # ── 经真实 collect_results 的 e2e(对齐主线 harvest 顺序) ──────────────────
 
 class TestCollectResultsCi:
@@ -308,14 +263,17 @@ class TestCollectResultsCi:
         (workflows / "ci.yml").write_text("name: ci\n", encoding="utf-8")
         seen = {}
 
-        def fake_ci(command, pr_url, timeout_minutes=30):
+        def fake_ci(pr_url, command, timeout_seconds):
             seen["command"] = command
             seen["pr_url"] = pr_url
-            seen["timeout_minutes"] = timeout_minutes
-            return CIResult(True, False, 0, "ok", "ok")
+            seen["timeout_seconds"] = timeout_seconds
+            return type("Result", (), {
+                "succeeded": True, "timed_out": False,
+                "exit_code": 0, "output": "ok",
+            })()
 
-        monkeypatch.setattr("omac.pipeline.delivery.run_ci_check", fake_ci)
         store = _store()
+        store.check_pull_request = fake_ci
         rt = _runtime(store)
         manifest, item = self._advance_to_worker_done(store)
         path = str(tmp_path / ".omac" / "m.yaml")
@@ -329,7 +287,7 @@ class TestCollectResultsCi:
         assert seen == {
             "command": "gh pr checks {pr_url} --watch --fail-fast",
             "pr_url": "https://example.com/pr/1",
-            "timeout_minutes": 30,
+            "timeout_seconds": 1800,
         }
         assert manifest.nodes["a"].status == "in_review"
 

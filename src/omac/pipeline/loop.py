@@ -21,7 +21,7 @@ from ..pipeline.delivery import advance_delivery, run_merge_delivery
 from ..engines.models import PullRequestState, WorkItemStatus
 from ..engines.runtime import AgentRuntime
 from ..engines.store import WorkItemStore
-from ..errors import PlatformError, WorkItemNotFoundError
+from ..errors import AuthError, PlatformError, WorkItemNotFoundError
 from ..i18n import current_language, ui
 from ..pipeline.dispatch import normalize_source_refs, render_issue_body
 from ..core.taskmeta import TaskKind, TaskPhase
@@ -168,7 +168,7 @@ def reconcile(store: WorkItemStore, manifest: Manifest, manifest_path: str) -> b
                 set_node(manifest, key, work_item_id=None, status="todo")
                 changed = True
             continue
-        except Exception:
+        except (PlatformError, AuthError):
             if node.status != "abandoned":
                 set_node(manifest, key, status="blocked")
                 changed = True

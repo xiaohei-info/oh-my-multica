@@ -179,7 +179,7 @@ class TestRunMergeDeliveryUnit:
 
             return Proc()
 
-        monkeypatch.setattr("omac.pipeline.delivery.subprocess.run", fake_run)
+        monkeypatch.setattr("omac.engines.mock.subprocess.run", fake_run)
 
         assert run_merge_delivery({}, manifest, "a", store, _runtime(store),
                                   dict(DEFAULT_RETRY)) == "pass"
@@ -206,7 +206,7 @@ class TestRunMergeDeliveryUnit:
 
             return Proc()
 
-        monkeypatch.setattr("omac.pipeline.delivery.subprocess.run", fake_run)
+        monkeypatch.setattr("omac.engines.mock.subprocess.run", fake_run)
 
         assert run_merge_delivery(
             {"merge": {"timeout_minutes": 30}}, manifest, "a", store,
@@ -359,7 +359,7 @@ class TestCollectResultsMerge:
 
             return Proc()
 
-        monkeypatch.setattr("omac.pipeline.delivery.subprocess.run", fake_run)
+        monkeypatch.setattr("omac.engines.mock.subprocess.run", fake_run)
 
         loop.collect_results(store, rt, manifest, path, retry_limits=dict(DEFAULT_RETRY),
                             config={})
@@ -563,7 +563,7 @@ class TestMergeClosureRegression:
 
             return Proc()
 
-        monkeypatch.setattr("omac.pipeline.delivery.subprocess.run", fake_run)
+        monkeypatch.setattr("omac.engines.mock.subprocess.run", fake_run)
 
     def test_no_reviewer_node_cannot_be_done_without_confirmed_merge(self, tmp_path):
         store = _store()
@@ -848,6 +848,28 @@ class TestMergeClosureRegression:
 
         assert requests == []
         assert manifest.nodes["a"].status == "blocked"
+
+    def test_malformed_merge_request_state_fails_closed_without_request(self, tmp_path):
+        store = _store()
+        runtime = _runtime(store)
+        item = _review_passed_item(store)
+        manifest = Manifest(meta={}, nodes={
+            "a": Node(id="a", worker="alice", reviewer="bob",
+                      work_item_id=item.id, status="merging",
+                      merge_request_state="definitely-not-a-state"),
+        })
+        store.observe_pull_request = lambda pr_url: SimpleNamespace(
+            state="open", merged_at=None)
+        requests = []
+        store.request_pull_request_merge = lambda *args: requests.append(args)
+
+        loop.collect_results(
+            store, runtime, manifest, str(tmp_path / "m.yaml"),
+            retry_limits=dict(DEFAULT_RETRY), config={})
+
+        assert requests == []
+        assert manifest.nodes["a"].status == "blocked"
+        assert manifest.nodes["a"].status != "done"
 
     def test_timeout_with_pending_pr_stays_merging_without_worker_bounce(
         self, tmp_path,

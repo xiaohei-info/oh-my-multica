@@ -23,7 +23,8 @@ from ..errors import ValidationError, WorkItemNotFoundError
 from ..i18n import ui
 from .models import (
     AgentInfo, AgentProvisionSpec, EngineConfig, ProjectInfo, RuntimeTarget,
-    MergeCommandResult, PullRequestObservation, PullRequestState,
+    MergeCommandResult, PullRequestCheckResult, PullRequestObservation,
+    PullRequestReadiness, PullRequestState,
     WorkItem, WorkItemStatus, WorkspaceInfo,
 )
 from .runtime import AgentRuntime
@@ -888,6 +889,30 @@ class MockStore(WorkItemStore):
     def observe_pull_request(self, pr_url: str) -> PullRequestObservation:
         return _shared_pull_requests.get(
             pr_url, PullRequestObservation(PullRequestState.OPEN))
+
+    def check_pull_request(
+        self, pr_url: str, command: str, timeout_seconds: int,
+    ) -> PullRequestCheckResult:
+        try:
+            proc = subprocess.run(
+                command.replace("{pr_url}", pr_url), shell=True,
+                capture_output=True, text=True, timeout=timeout_seconds)
+        except subprocess.TimeoutExpired as exc:
+            output = "".join(
+                stream.decode("utf-8", errors="replace")
+                if isinstance(stream, bytes) else stream or ""
+                for stream in (exc.stdout, exc.stderr))
+            return PullRequestCheckResult(False, None, output, timed_out=True)
+        except FileNotFoundError as exc:
+            return PullRequestCheckResult(False, None, str(exc))
+        output = (proc.stdout or "") + (proc.stderr or "")
+        simulated_default_check = (
+            command.startswith("gh pr checks ") and proc.returncode != 0)
+        return PullRequestCheckResult(
+            proc.returncode == 0 or simulated_default_check, proc.returncode, output)
+
+    def read_pull_request_readiness(self, pr_url: str) -> PullRequestReadiness:
+        return PullRequestReadiness(is_draft=False, state="OPEN")
 
     @property
     def assign_log(self):
