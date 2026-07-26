@@ -262,14 +262,34 @@ def run_merge_delivery(
         return _settle_merge_observation(
             node, item, store, runtime, retry_limits, observation)
 
+    if node.merge_request_state == "intent":
+        store.add_comment(item_id, ui(
+            "⚠️ A prior merge request may have started before the process stopped. "
+            "OMAC will not send a duplicate request; verify the PR remotely, then use "
+            "`omac node retry` if a new request is needed.",
+            "⚠️ 先前的 merge 请求可能在进程中断前已开始。OMAC 不会重复请求；"
+            "请先远端核实 PR，若确需重新请求再执行 `omac node retry`。"))
+        node.status = "blocked"
+        store.update_status(item_id, WorkItemStatus.BLOCKED)
+        return "blocked"
+    if node.merge_request_state == "requested":
+        node.status = "merging"
+        store.update_status(item_id, to_platform_status("merging"))
+        if manifest_path:
+            save_manifest(manifest, manifest_path)
+        return "pending"
+
     node.status = "merging"
-    node.merge_request_state = "requested"
+    node.merge_request_state = "intent"
     store.update_status(item_id, to_platform_status("merging"))
     if manifest_path:
         save_manifest(manifest, manifest_path)
 
     result = store.request_pull_request_merge(
         pr_url, merge["command"], max(1, int(merge.get("timeout_minutes", 30))) * 60)
+    node.merge_request_state = "requested"
+    if manifest_path:
+        save_manifest(manifest, manifest_path)
     observation = store.observe_pull_request(pr_url)
     state = _observation_state(observation)
     if state in {PullRequestState.MERGED, PullRequestState.PENDING}:

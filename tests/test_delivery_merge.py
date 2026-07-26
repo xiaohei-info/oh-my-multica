@@ -707,6 +707,23 @@ class TestMergeClosureRegression:
         assert manifest.nodes["a"].status == "blocked"
         assert manifest.nodes["a"].work_item_id == item.id
 
+    def test_platform_read_failure_blocks_historical_done_with_cached_merge_marker(
+        self, tmp_path,
+    ):
+        store = _store()
+        item = _review_passed_item(store)
+        manifest = Manifest(meta={}, nodes={
+            "a": Node(id="a", worker="alice", reviewer="bob",
+                      work_item_id=item.id, status="done", merged=True,
+                      merged_at="2026-07-26T08:00:00Z"),
+        })
+        store.get_work_item = lambda item_id: (_ for _ in ()).throw(
+            PlatformError("platform timeout"))
+
+        assert loop.reconcile(store, manifest, str(tmp_path / "m.yaml")) is True
+
+        assert manifest.nodes["a"].status == "blocked"
+
     def test_historical_done_without_pr_fails_closed(self, tmp_path):
         store = _store()
         item = _review_passed_item(store)
@@ -781,7 +798,56 @@ class TestMergeClosureRegression:
             store, runtime, manifest, path,
             retry_limits=dict(DEFAULT_RETRY), config={})
 
-        assert persisted_states == ["requested"]
+        assert persisted_states == ["intent"]
+
+    def test_requested_merge_is_not_reissued_after_reload(self, tmp_path):
+        store = _store()
+        runtime = _runtime(store)
+        item = _review_passed_item(store)
+        manifest = Manifest(meta={}, nodes={
+            "a": Node(id="a", worker="alice", reviewer="bob",
+                      work_item_id=item.id, status="in_review"),
+        })
+        path = str(tmp_path / "m.yaml")
+        save_manifest(manifest, path)
+        store.observe_pull_request = lambda pr_url: SimpleNamespace(
+            state="open", merged_at=None)
+        requests = []
+        store.request_pull_request_merge = lambda *args: requests.append(args) or SimpleNamespace(
+            succeeded=True, exit_code=0, output="")
+
+        loop.collect_results(
+            store, runtime, manifest, path,
+            retry_limits=dict(DEFAULT_RETRY), config={})
+        reloaded = load_manifest(path)
+        loop.collect_results(
+            store, runtime, reloaded, path,
+            retry_limits=dict(DEFAULT_RETRY), config={})
+
+        assert len(requests) == 1
+        assert reloaded.nodes["a"].status == "merging"
+        assert reloaded.nodes["a"].merge_request_state == "requested"
+
+    def test_unproven_merge_intent_does_not_retry_after_restart(self, tmp_path):
+        store = _store()
+        runtime = _runtime(store)
+        item = _review_passed_item(store)
+        manifest = Manifest(meta={}, nodes={
+            "a": Node(id="a", worker="alice", reviewer="bob",
+                      work_item_id=item.id, status="merging",
+                      merge_request_state="intent"),
+        })
+        store.observe_pull_request = lambda pr_url: SimpleNamespace(
+            state="open", merged_at=None)
+        requests = []
+        store.request_pull_request_merge = lambda *args: requests.append(args)
+
+        loop.collect_results(
+            store, runtime, manifest, str(tmp_path / "m.yaml"),
+            retry_limits=dict(DEFAULT_RETRY), config={})
+
+        assert requests == []
+        assert manifest.nodes["a"].status == "blocked"
 
     def test_timeout_with_pending_pr_stays_merging_without_worker_bounce(
         self, tmp_path,

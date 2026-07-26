@@ -246,6 +246,7 @@ def _cmd_retry(args) -> int:
 
     # 重置为 todo;work_item_id 保留(同一 issue 续用)。
     node.status = "todo"
+    node.merge_request_state = None
     save_manifest(manifest, args.manifest)
 
     print_json({
@@ -266,43 +267,48 @@ def _cmd_accept(args) -> int:
     manifest = _load_or_raise(args.manifest)
     node = _require_node(manifest, args.node_key)
 
-    if node.work_item_id:
-        engine = _build_engine(load_config())
-        if engine is None:
+    if not node.work_item_id:
+        raise ValidationError(ui(
+            "A node without a work item cannot be accepted as done. "
+            "Use `omac node abandon` for an explicit abandonment.",
+            "没有工作单元的节点不能 accept 为 done；如需放弃请显式使用 `omac node abandon`。"))
+
+    engine = _build_engine(load_config())
+    if engine is None:
+        raise ValidationError(ui(
+            "The node has a work_item_id, but engine configuration cannot be resolved. "
+            "Set OMAC_ENGINE and OMAC_WORKSPACE_ID or configure .omac/config.yaml first.",
+            "节点有 work_item_id,但无法解析引擎配置；为避免 manifest 与平台状态分裂,请先配置 OMAC_ENGINE/OMAC_WORKSPACE_ID 或 .omac/config.yaml"))
+    item = engine.store.get_work_item(node.work_item_id)
+    artifacts = item.artifacts if isinstance(item.artifacts, dict) else {}
+    pr_url = artifacts.get("pr_url") or artifacts.get("pr")
+    if item.kind == TaskKind.DEVELOP:
+        if not pr_url:
             raise ValidationError(ui(
-                "The node has a work_item_id, but engine configuration cannot be resolved. "
-                "Set OMAC_ENGINE and OMAC_WORKSPACE_ID or configure .omac/config.yaml first.",
-                "节点有 work_item_id,但无法解析引擎配置；为避免 manifest 与平台状态分裂,请先配置 OMAC_ENGINE/OMAC_WORKSPACE_ID 或 .omac/config.yaml"))
-        item = engine.store.get_work_item(node.work_item_id)
-        artifacts = item.artifacts if isinstance(item.artifacts, dict) else {}
-        pr_url = artifacts.get("pr_url") or artifacts.get("pr")
-        if item.kind == TaskKind.DEVELOP:
-            if not pr_url:
-                raise ValidationError(ui(
-                    "This develop node has no PR, so it cannot be accepted as done. "
-                    "Use `omac node abandon` for an explicit abandonment.",
-                    "该 develop 节点没有 PR，不能 accept 为 done；如需放弃请显式使用 "
-                    "`omac node abandon`。"))
-            observation = engine.store.observe_pull_request(pr_url)
-            state = observation.state
-            if not isinstance(state, PullRequestState):
-                try:
-                    state = PullRequestState(str(state).lower())
-                except ValueError:
-                    state = PullRequestState.UNKNOWN
-            if state != PullRequestState.MERGED or not observation.merged_at:
-                raise ValidationError(ui(
-                    "This develop node has a PR without confirmed merge; use `omac node abandon` "
-                    "for an explicit abandonment, or wait for remote merge confirmation.",
-                    "该 develop 节点的 PR 尚未确认合入；如需放弃请显式使用 `omac node abandon`，"
-                    "否则等待远端确认合入。"))
-            node.merged = True
-            node.merged_at = observation.merged_at
-        engine.store.update_work_item_metadata(
-            node.work_item_id,
-            decision_required={},
-        )
-        engine.store.update_status(node.work_item_id, WorkItemStatus.DONE)
+                "This develop node has no PR, so it cannot be accepted as done. "
+                "Use `omac node abandon` for an explicit abandonment.",
+                "该 develop 节点没有 PR，不能 accept 为 done；如需放弃请显式使用 "
+                "`omac node abandon`。"))
+        observation = engine.store.observe_pull_request(pr_url)
+        state = observation.state
+        if not isinstance(state, PullRequestState):
+            try:
+                state = PullRequestState(str(state).lower())
+            except ValueError:
+                state = PullRequestState.UNKNOWN
+        if state != PullRequestState.MERGED or not observation.merged_at:
+            raise ValidationError(ui(
+                "This develop node has a PR without confirmed merge; use `omac node abandon` "
+                "for an explicit abandonment, or wait for remote merge confirmation.",
+                "该 develop 节点的 PR 尚未确认合入；如需放弃请显式使用 `omac node abandon`，"
+                "否则等待远端确认合入。"))
+        node.merged = True
+        node.merged_at = observation.merged_at
+    engine.store.update_work_item_metadata(
+        node.work_item_id,
+        decision_required={},
+    )
+    engine.store.update_status(node.work_item_id, WorkItemStatus.DONE)
 
     node.status = "done"
     save_manifest(manifest, args.manifest)

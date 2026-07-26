@@ -333,6 +333,16 @@ def test_accept_rejects_develop_node_without_pr(tmp_path, monkeypatch):
     assert load_manifest(path).nodes["b"].status == "blocked"
 
 
+def test_accept_rejects_node_without_work_item(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    path = _write_manifest(tmp_path, [{
+        "id": "b", "worker": "bob", "status": "blocked",
+    }])
+
+    assert main(["node", "accept", path, "b"]) == exit_codes.VALIDATION
+    assert load_manifest(path).nodes["b"].status == "blocked"
+
+
 def test_accept_rejects_merged_flag_without_authoritative_timestamp(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("OMAC_ENGINE", "mock")

@@ -47,6 +47,8 @@ from .metadata_policy import (
 from .runtime import AgentRuntime
 from .store import WorkItemStore
 
+MULTICA_PR_VIEW_FIELDS = "state,mergedAt,autoMergeRequest,mergeStateStatus"
+
 
 def _latest_run(runs: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     if not runs:
@@ -1062,7 +1064,7 @@ class MulticaStore(WorkItemStore):
         try:
             proc = subprocess.run(
                 ["gh", "pr", "view", pr_url, "--json",
-                 "state,mergedAt,autoMergeRequest,isInMergeQueue"],
+                 MULTICA_PR_VIEW_FIELDS],
                 capture_output=True, text=True, timeout=30)
         except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
             return PullRequestObservation(PullRequestState.UNKNOWN, detail=str(exc))
@@ -1078,8 +1080,13 @@ class MulticaStore(WorkItemStore):
         if state == "MERGED":
             return PullRequestObservation(PullRequestState.MERGED, merged_at=merged_at)
         if state == "OPEN":
-            if payload.get("autoMergeRequest") or payload.get("isInMergeQueue"):
+            merge_state = str(payload.get("mergeStateStatus") or "").upper()
+            if payload.get("autoMergeRequest") or merge_state == "QUEUED":
                 return PullRequestObservation(PullRequestState.PENDING)
+            if merge_state == "UNKNOWN" or not merge_state:
+                return PullRequestObservation(
+                    PullRequestState.UNKNOWN,
+                    detail="missing or unknown mergeStateStatus")
             return PullRequestObservation(PullRequestState.OPEN)
         if state == "CLOSED":
             return PullRequestObservation(PullRequestState.CLOSED_UNMERGED)

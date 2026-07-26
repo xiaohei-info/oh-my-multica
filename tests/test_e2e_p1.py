@@ -28,6 +28,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from omac.cli import exit_codes  # noqa: E402
+from omac.core.manifest import load_manifest  # noqa: E402
 
 
 # ==================== constants ====================
@@ -235,16 +236,11 @@ class TestAbandon:
         assert r.returncode == exit_codes.OK, r.stderr
         data = _parse_json(r.stdout)
         assert data["state"] == "converged", data
-        # 用 dag status 拿到完整节点表,断言 abandon 状态保留
-        r_status = _run(
-            ["dag", "status", str(manifest), "--output", "json"],
-            cwd=tmp_path,
-        )
-        status = _parse_json(r_status.stdout)
-        by_key = {n["key"]: n for n in status["nodes"]}
-        assert by_key["smoke-A"]["status"] == "abandoned"
-        assert by_key["smoke-B"]["status"] == "done"
-        assert by_key["smoke-C"]["status"] == "done"
+        assert sorted(data["done"]) == ["smoke-B", "smoke-C"]
+        persisted = load_manifest(str(manifest))
+        assert persisted.nodes["smoke-A"].status == "abandoned"
+        assert persisted.nodes["smoke-B"].status == "done"
+        assert persisted.nodes["smoke-C"].status == "done"
 
 
 # ==================== 4. 中断续跑:--max-rounds 1 多次分段直至收敛 ====================
