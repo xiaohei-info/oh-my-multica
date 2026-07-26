@@ -237,7 +237,8 @@ def get_merge_config(config: dict) -> dict | None:
     """返回 merge 配置块;未显式配置时默认用 gh pr merge。
 
     设计文档 §7.3:reviewer pass 后应进入自动合并门。显式 command 最高优先级;
-    未配置或 command 为空时使用 GitHub CLI 默认命令。退出码即结论。
+    未配置或 command 为空时使用 GitHub CLI 默认命令。命令退出码仅表示请求结果；
+    合入结论必须由引擎随后观察远端 PR。
     """
     merge = config.get("merge")
     if isinstance(merge, dict) and merge.get("command"):

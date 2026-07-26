@@ -10,8 +10,9 @@ from ..output import add_output_flag, hint, print_json
 from ...core.config import ENV_ENGINE, ENV_WORKSPACE, load_config, resolve_engine_settings
 from ...core.manifest import load_manifest, save_manifest
 from ...core.graph import downstream_of
+from ...core.taskmeta import TaskKind
 from ...engines import EngineConfig, create_engine
-from ...engines.models import WorkItemStatus
+from ...engines.models import PullRequestState, WorkItemStatus
 from ...errors import OmacError, ValidationError
 from ...i18n import ui
 
@@ -274,6 +275,25 @@ def _cmd_accept(args) -> int:
                 "The node has a work_item_id, but engine configuration cannot be resolved. "
                 "Set OMAC_ENGINE and OMAC_WORKSPACE_ID or configure .omac/config.yaml first.",
                 "节点有 work_item_id,但无法解析引擎配置；为避免 manifest 与平台状态分裂,请先配置 OMAC_ENGINE/OMAC_WORKSPACE_ID 或 .omac/config.yaml"))
+        item = engine.store.get_work_item(node.work_item_id)
+        artifacts = item.artifacts if isinstance(item.artifacts, dict) else {}
+        pr_url = artifacts.get("pr_url") or artifacts.get("pr")
+        if item.kind == TaskKind.DEVELOP and pr_url and not node.merged:
+            observation = engine.store.observe_pull_request(pr_url)
+            state = observation.state
+            if not isinstance(state, PullRequestState):
+                try:
+                    state = PullRequestState(str(state).lower())
+                except ValueError:
+                    state = PullRequestState.UNKNOWN
+            if state != PullRequestState.MERGED or not observation.merged_at:
+                raise ValidationError(ui(
+                    "This develop node has a PR without confirmed merge; use `omac node abandon` "
+                    "for an explicit abandonment, or wait for remote merge confirmation.",
+                    "该 develop 节点的 PR 尚未确认合入；如需放弃请显式使用 `omac node abandon`，"
+                    "否则等待远端确认合入。"))
+            node.merged = True
+            node.merged_at = observation.merged_at
         engine.store.update_work_item_metadata(
             node.work_item_id,
             decision_required={},

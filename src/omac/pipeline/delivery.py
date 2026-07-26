@@ -18,13 +18,15 @@ manifest 的 ``Node`` 不携带回退计数(单一事实源)。上界由 ``confi
 
 本模块还承载 reviewer pass 之后的 P4.2 自动 merge 门(§7.3):
 
-    reviewer pass ─► merging ─ merge.command ─ 成功 ──► done(已合入)
-                                         │
-                                         └ 冲突/失败 ──► 有界转回 worker
-                                                        (merge_bounce+1,
-                                                         ≥ 上界 → blocked)
+    reviewer pass ─► merging ─ merge.command ─► observe remote PR
+                                                    │
+                         MERGED + mergedAt ─────────┴──► done(已合入)
+                         OPEN / queue pending ─────────► merging
+                         CLOSED_UNMERGED ──────────────► 有界转回 worker
+                         UNKNOWN ──────────────────────► blocked
 
-纪律(§12.4):CI / merge 走模板命令(subprocess),绝不直接 shell out 平台 CLI;
+纪律(§12.4):CI 走模板命令；merge/observe 只经 WorkItemStore 由引擎适配器执行，
+pipeline 不直接 shell out 平台 CLI；
 CI 在显式配置 ``config.ci.check_command`` 或检测到 ``.github/workflows``
 时启用;否则跳过。merge 默认使用 ``gh pr merge``;显式 ``config.merge.command``
 可覆盖。
@@ -36,10 +38,8 @@ from __future__ import annotations
 import subprocess
 from dataclasses import dataclass
 
-import time
-
 from ..core.config import DEFAULT_RETRY, get_ci_config, get_merge_config
-from ..engines.models import WorkItemStatus
+from ..engines.models import PullRequestState, WorkItemStatus
 from ..engines.runtime import AgentRuntime
 from ..core.manifest import Manifest
 from ..i18n import ui
@@ -224,23 +224,7 @@ def run_merge_delivery(
     runtime: AgentRuntime,
     retry_limits: dict,
 ) -> str:
-    """reviewer pass 后、进 done 之前的自动 merge 门(§7.3)。
-
-    - 未配置 merge → 默认执行 ``gh pr merge {pr_url} --squash --delete-branch``。
-    - 配置了 merge 但节点无 pr_url → 防御性 blocked + 报错即教学,返回 ``'blocked'``。
-    - 配置了 merge → 进入 ``merging``(manifest 细分态,平台仍 in_review),执行
-      ``merge.command``:
-        * 成功 → 回到 ``in_progress`` 语义即「已合入」;manifest ``Node`` 记录
-          ``merged: true`` / ``merged_at``;返回 ``'pass'``(loop 随即 ``done``)。
-        * 冲突/失败 → 失败摘要(命令输出尾部) add_comment + reset_review + 转回
-          worker + wake + ``merge_bounce``+1;
-          - ≥ ``retry_limits['merge']`` → blocked,返回 ``'blocked'``
-          - 否则返回 ``'bounce'``(节点已置回 in_progress,loop 本 tick 不动它)。
-
-    回退计数(读/写)经平台 ``WorkItem.bounces.merge``(单一事实源,Store 只存取);
-    manifest Node 不持计数。上界由 ``config.retry.merge``(缺省 3)经
-    ``resolve_retry`` 解析后注入 ``loop.tick`` 的 ``retry_limits``。
-    """
+    """PR 合并闭环：命令只请求合并，只有远端观察确认 MERGED 才能通过。"""
     node = manifest.nodes[node_key]
     item_id = node.work_item_id
     merge = get_merge_config(config)
@@ -261,46 +245,70 @@ def run_merge_delivery(
         store.update_status(item_id, WorkItemStatus.BLOCKED)
         return "blocked"
 
-    # 进入 merging(manifest 细分态;平台仍 in_review)
+    if node.status == "merging":
+        return _settle_merge_observation(
+            node, item, store, runtime, retry_limits, store.observe_pull_request(pr_url))
+
     node.status = "merging"
     store.update_status(item_id, to_platform_status("merging"))
+    result = store.request_pull_request_merge(
+        pr_url, merge["command"], max(1, int(merge.get("timeout_minutes", 30))) * 60)
+    observation = store.observe_pull_request(pr_url)
+    state = _observation_state(observation)
+    if state == PullRequestState.MERGED:
+        return _settle_merge_observation(
+            node, item, store, runtime, retry_limits, observation)
+    if state == PullRequestState.OPEN and result.succeeded:
+        return "pending"
+    if state == PullRequestState.OPEN:
+        label = ui(
+            "Merge command timed out" if result.timed_out else
+            f"Merge command failed (exit code {result.exit_code})",
+            "merge 命令超时" if result.timed_out else
+            f"merge 命令失败(退出码 {result.exit_code})")
+        return _bounce_or_block_merge(node, item, store, runtime, retry_limits,
+                                      label=label, output=result.output)
+    return _settle_merge_observation(
+        node, item, store, runtime, retry_limits, observation,
+        command_output=result.output)
 
-    command = merge["command"].replace("{pr_url}", pr_url)
-    timeout = max(1, int(merge.get("timeout_minutes", 30))) * 60
+
+def _observation_state(observation) -> PullRequestState:
+    state = getattr(observation, "state", PullRequestState.UNKNOWN)
+    if isinstance(state, PullRequestState):
+        return state
     try:
-        proc = subprocess.run(
-            command, shell=True, capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired as exc:
-        out = ""
-        for stream in (exc.stdout, exc.stderr):
-            if isinstance(stream, bytes):
-                out += stream.decode("utf-8", errors="replace")
-            elif isinstance(stream, str):
-                out += stream
+        return PullRequestState(str(state).lower())
+    except ValueError:
+        return PullRequestState.UNKNOWN
+
+
+def _settle_merge_observation(
+    node, item, store, runtime, retry_limits, observation, *, command_output: str = "",
+) -> str:
+    state = _observation_state(observation)
+    if state == PullRequestState.MERGED and getattr(observation, "merged_at", None):
+        node.merged = True
+        node.merged_at = observation.merged_at
+        return "pass"
+    if state == PullRequestState.OPEN:
+        return "pending"
+    if state == PullRequestState.CLOSED_UNMERGED:
         return _bounce_or_block_merge(
             node, item, store, runtime, retry_limits,
-            failed=True, label=ui("Merge command timed out", "merge 命令超时"), output=out)
-
-    output = (proc.stdout or "") + (proc.stderr or "")
-    if proc.returncode == 0:
-        # 合入成功 → done = 已合入集成分支
-        node.status = "in_progress"
-        node.merged = True
-        node.merged_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        store.update_status(item_id, to_platform_status("in_progress"))
-        return "pass"
-
-    # merge 冲突/失败
-    return _bounce_or_block_merge(
-        node, item, store, runtime, retry_limits,
-        failed=True, label=ui(
-            f"Merge command failed (exit code {proc.returncode})",
-            f"merge 命令失败(退出码 {proc.returncode})"),
-        output=output)
+            label=ui("PR closed without merge", "PR 已关闭但未合入"),
+            output=command_output)
+    detail = getattr(observation, "detail", "") or ui("missing authoritative mergedAt", "缺少权威 mergedAt")
+    store.add_comment(item.id, ui(
+        f"⚠️ Merge outcome cannot be confirmed; refusing to mark done. {detail}",
+        f"⚠️ 无法确认 PR 已合入；拒绝标记 done。{detail}"))
+    node.status = "blocked"
+    store.update_status(item.id, WorkItemStatus.BLOCKED)
+    return "blocked"
 
 
 def _bounce_or_block_merge(node, item, store, runtime, retry_limits, *,
-                           failed: bool, label: str, output: str) -> str:
+                           label: str, output: str) -> str:
     """merge 失败后的有界「回到 worker」回退(CI 路径的对称实现)。
 
     复用与 CI 回退相同的单一事实源与封顶语义:

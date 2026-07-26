@@ -1112,6 +1112,8 @@ class TestReviewerRejectBoundedFallback:
         path = str(tmp_path / "m.yaml")
         manifest, eng, item = self._setup_reject_node(eng, path)
         manifest.nodes["a"].status = "done"
+        manifest.nodes["a"].merged = True
+        manifest.nodes["a"].merged_at = "2026-07-26T08:00:00Z"
         eng.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
         eng.store.update_work_item_metadata(item.id, review_verdict="pass-with-nits")
         save_manifest(manifest, path)

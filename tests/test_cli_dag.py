@@ -94,7 +94,8 @@ def test_dag_run_rejects_missing_required_acceptance_file(
 def _mixed_manifest(tmp_path):
     """Manifest with nodes in various states; work_item_ids use 1,2,3 (mock order)."""
     return _manifest_yaml(tmp_path, [
-        {"id": "a", "worker": "alice", "status": "done", "work_item_id": "1"},
+        {"id": "a", "worker": "alice", "status": "done", "work_item_id": "1",
+         "merged": True, "merged_at": "2026-07-26T08:00:00Z"},
         {"id": "b", "worker": "bob", "status": "in_progress", "work_item_id": "2", "blocked_by": ["a"]},
         {"id": "c", "worker": "charlie", "status": "todo"},
         {"id": "d", "worker": "alice", "status": "blocked", "work_item_id": "3", "blocked_by": ["b"]},

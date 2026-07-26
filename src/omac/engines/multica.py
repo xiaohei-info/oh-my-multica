@@ -35,6 +35,7 @@ from ..errors import AuthError, PlatformError, ValidationError
 from ..i18n import ui
 from .models import (
     AgentInfo, AgentProvisionSpec, EngineConfig, ProjectInfo, RuntimeTarget,
+    MergeCommandResult, PullRequestObservation, PullRequestState,
     SkillPackage, WorkItem, WorkItemStatus, WorkspaceInfo,
 )
 from ..core.machine_feedback import (
@@ -1028,6 +1029,49 @@ class MulticaStore(WorkItemStore):
     def clear_assignment(self, item_id: str) -> None:
         self._run_multica(["issue", "assign", item_id, "--unassign"])
         self._set_metadata(item_id, "reviewer", "")
+
+    def request_pull_request_merge(
+        self, pr_url: str, command: str, timeout_seconds: int,
+    ) -> MergeCommandResult:
+        try:
+            proc = subprocess.run(
+                command.replace("{pr_url}", pr_url), shell=True,
+                capture_output=True, text=True, timeout=timeout_seconds)
+        except subprocess.TimeoutExpired as exc:
+            output = "".join(
+                stream.decode("utf-8", errors="replace")
+                if isinstance(stream, bytes) else stream or ""
+                for stream in (exc.stdout, exc.stderr))
+            return MergeCommandResult(False, None, output, timed_out=True)
+        except FileNotFoundError as exc:
+            return MergeCommandResult(False, None, str(exc))
+        return MergeCommandResult(
+            proc.returncode == 0, proc.returncode,
+            (proc.stdout or "") + (proc.stderr or ""))
+
+    def observe_pull_request(self, pr_url: str) -> PullRequestObservation:
+        try:
+            proc = subprocess.run(
+                ["gh", "pr", "view", pr_url, "--json", "state,mergedAt"],
+                capture_output=True, text=True, timeout=30)
+        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+            return PullRequestObservation(PullRequestState.UNKNOWN, detail=str(exc))
+        if proc.returncode != 0:
+            return PullRequestObservation(
+                PullRequestState.UNKNOWN, detail=(proc.stderr or proc.stdout or "").strip())
+        try:
+            payload = json.loads(proc.stdout or "{}")
+        except json.JSONDecodeError as exc:
+            return PullRequestObservation(PullRequestState.UNKNOWN, detail=str(exc))
+        state = str(payload.get("state") or "").upper()
+        merged_at = payload.get("mergedAt")
+        if state == "MERGED":
+            return PullRequestObservation(PullRequestState.MERGED, merged_at=merged_at)
+        if state == "OPEN":
+            return PullRequestObservation(PullRequestState.OPEN)
+        if state == "CLOSED":
+            return PullRequestObservation(PullRequestState.CLOSED_UNMERGED)
+        return PullRequestObservation(PullRequestState.UNKNOWN, detail=f"unexpected PR state: {state}")
 
 
 class MulticaRuntime(AgentRuntime):
