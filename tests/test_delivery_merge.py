@@ -3,14 +3,14 @@
 主线 loop(L1.8 + P4.1) 已用 canonical 存储(WorkItem.bounces.merge +
 config.retry.merge + reset_review)门,本模块补 reviewer pass 后的自动 merge 门:
 
-    reviewer pass → merging ─ merge.command ─ 成功 ──► done(merged: true)
-                                        │
-                                        └ 冲突/失败 ──► 有界转回 worker
-                                                       (merge_bounce+1,
-                                                        ≥ 上界 → blocked)
+    reviewer pass → merging ─ merge.command ─► observe remote PR
+                                                   │
+                          MERGED + mergedAt ───────└──► done
+                          OPEN / pending ─────────────► merging
+                          明确失败 + OPEN ──────────► 有界转回 worker
 
-覆盖(对 harvest 顺序 §7.3 in_review reviewer pass → merging → done):
-  - 配置 merge:假 merge 脚本 exit 0 → pass → done + manifest 记录 merged: true / 时间;
+覆盖(对 result collection 顺序 §7.3 in_review reviewer pass → merging → done):
+  - 配置 merge:假 merge 脚本 exit 0 后仍需远端 MERGED + mergedAt,才记录 done;
   - 配置 merge:假 merge 脚本 exit 1(冲突) → bounce → 转回 worker + merge_bounce+1
     + reset_review(旧 verdict 失效,强制重走 ci→review→merge);
   - 冲突回退后不手动清空旧 verdict:tick 不会在旧 verdict 下自动 merge(reviewer gate);
@@ -35,6 +35,7 @@ from omac.core.config import (
 )
 from omac.core.manifest import Manifest, Node, load_manifest, save_manifest
 from omac.core.review_convergence import REVIEW_PROTOCOL_VERSION, open_blockers
+from omac.core.taskmeta import TaskPhase
 from omac.engines.mock import MockRuntime, MockStore
 from omac.engines.models import EngineConfig, WorkItem, WorkItemStatus
 from omac.errors import PlatformError
@@ -71,6 +72,12 @@ def _merge_script(tmp_path, body, name="merge.sh"):
 def _merge_config(script_path, timeout_minutes=30):
     return {"merge": {"command": f"sh {script_path} {{pr_url}}",
                       "timeout_minutes": timeout_minutes}}
+
+
+def _saved_manifest(tmp_path, manifest, name="m.yaml"):
+    path = str(tmp_path / name)
+    save_manifest(manifest, path)
+    return path
 
 
 def _current_pass_report(store, item_id, goal):
@@ -162,7 +169,7 @@ class TestMergeConfig:
 # ── run_merge_delivery 单元测试 ────────────────────────────────────────────
 
 class TestRunMergeDeliveryUnit:
-    def test_default_merge_command_runs_when_unconfigured(self, monkeypatch):
+    def test_default_merge_command_runs_when_unconfigured(self, monkeypatch, tmp_path):
         store = _store()
         item = _review_passed_item(store)
         manifest = Manifest(meta={}, nodes={"a": _node()})
@@ -184,8 +191,9 @@ class TestRunMergeDeliveryUnit:
 
         monkeypatch.setattr("omac.engines.mock.subprocess.run", fake_run)
 
+        path = _saved_manifest(tmp_path, manifest)
         assert run_merge_delivery({}, manifest, "a", store, _runtime(store),
-                                  dict(DEFAULT_RETRY)) == "pass"
+                                  dict(DEFAULT_RETRY), path) == "pass"
         assert seen["command"] == (
             "gh pr merge https://example.com/pr/1 --squash --delete-branch")
         assert seen["kwargs"]["shell"] is True
@@ -194,7 +202,7 @@ class TestRunMergeDeliveryUnit:
         assert store.get_comments(item.id) == []
         assert manifest.nodes["a"].status == "merging"
 
-    def test_merge_block_missing_command_uses_default(self, monkeypatch):
+    def test_merge_block_missing_command_uses_default(self, monkeypatch, tmp_path):
         store = _store()
         item = _review_passed_item(store)
         manifest = Manifest(meta={}, nodes={"a": _node()})
@@ -211,9 +219,10 @@ class TestRunMergeDeliveryUnit:
 
         monkeypatch.setattr("omac.engines.mock.subprocess.run", fake_run)
 
+        path = _saved_manifest(tmp_path, manifest)
         assert run_merge_delivery(
             {"merge": {"timeout_minutes": 30}}, manifest, "a", store,
-            _runtime(store), dict(DEFAULT_RETRY)) == "pass"
+            _runtime(store), dict(DEFAULT_RETRY), path) == "pass"
         assert manifest.nodes["a"].merged is True
 
     def test_merge_passes_returns_pass_and_records_merge_info(self, tmp_path):
@@ -225,7 +234,9 @@ class TestRunMergeDeliveryUnit:
         script = _merge_script(tmp_path, 'echo merged; exit 0')
         cfg = _merge_config(script)
         limits = dict(DEFAULT_RETRY)
-        assert run_merge_delivery(cfg, manifest, "a", store, _runtime(store), limits) == "pass"
+        path = _saved_manifest(tmp_path, manifest)
+        assert run_merge_delivery(
+            cfg, manifest, "a", store, _runtime(store), limits, path) == "pass"
         assert manifest.nodes["a"].merged is True
         assert manifest.nodes["a"].merged_at is not None
         # 成功后节点语义回到 in_progress(即将 done),未落评论
@@ -240,7 +251,9 @@ class TestRunMergeDeliveryUnit:
         script = _merge_script(tmp_path, 'echo "CONFLICT in foo.py" >&2; exit 1')
         cfg = _merge_config(script)
         limits = dict(DEFAULT_RETRY)
-        assert run_merge_delivery(cfg, manifest, "a", store, _runtime(store), limits) == "bounce"
+        path = _saved_manifest(tmp_path, manifest)
+        assert run_merge_delivery(
+            cfg, manifest, "a", store, _runtime(store), limits, path) == "bounce"
         assert manifest.nodes["a"].status == "in_progress"
         assert store.get_work_item(item.id).bounces.merge == 1
         comments = store.get_comments(item.id)
@@ -259,6 +272,7 @@ class TestRunMergeDeliveryUnit:
         script = _merge_script(tmp_path, 'echo fail; exit 1')
         cfg = _merge_config(script)
         limits = dict(DEFAULT_RETRY)
+        path = _saved_manifest(tmp_path, manifest)
         result = None
         for _ in range(DEFAULT_RETRY["merge"]):
             manifest.nodes["a"].status = "in_review"
@@ -273,7 +287,8 @@ class TestRunMergeDeliveryUnit:
                     "acceptance_mapping": [
                         {"acceptance": "a works", "evidence": "ok", "status": "pass"}],
                     "blockers": []})
-            result = run_merge_delivery(cfg, manifest, "a", store, _runtime(store), limits)
+            result = run_merge_delivery(
+                cfg, manifest, "a", store, _runtime(store), limits, path)
         assert result == "blocked"
         assert manifest.nodes["a"].status == "blocked"
         assert store.get_work_item(item.id).bounces.merge == DEFAULT_RETRY["merge"]
@@ -286,9 +301,10 @@ class TestRunMergeDeliveryUnit:
         manifest.nodes["a"].work_item_id = item.id
         manifest.nodes["a"].status = "in_review"
         script = _merge_script(tmp_path, "exit 1")
+        path = _saved_manifest(tmp_path, manifest)
         assert run_merge_delivery(
             _merge_config(script), manifest, "a", store, _runtime(store),
-            resolve_retry({"retry": {"merge": 0}})) == "blocked"
+            resolve_retry({"retry": {"merge": 0}}), path) == "blocked"
 
     def test_custom_retry_merge_limit(self, tmp_path):
         store = _store()
@@ -297,6 +313,7 @@ class TestRunMergeDeliveryUnit:
         manifest.nodes["a"].work_item_id = item.id
         script = _merge_script(tmp_path, "exit 1")
         limits = resolve_retry({"retry": {"merge": 5}})
+        path = _saved_manifest(tmp_path, manifest)
         for i in range(5):
             manifest.nodes["a"].status = "in_review"
             store.update_status(item.id, WorkItemStatus.DONE)
@@ -311,7 +328,7 @@ class TestRunMergeDeliveryUnit:
                         {"acceptance": "a works", "evidence": "ok", "status": "pass"}],
                     "blockers": []})
             res = run_merge_delivery(_merge_config(script), manifest, "a", store,
-                                     _runtime(store), limits)
+                                     _runtime(store), limits, path)
             if i < 4:
                 assert res == "bounce"
             else:
@@ -326,9 +343,10 @@ class TestRunMergeDeliveryUnit:
         manifest.nodes["a"].work_item_id = item.id
         manifest.nodes["a"].status = "in_review"
         script = _merge_script(tmp_path, "exit 0")
+        path = _saved_manifest(tmp_path, manifest)
         res = run_merge_delivery(
             _merge_config(script), manifest, "a", store, _runtime(store),
-            dict(DEFAULT_RETRY))
+            dict(DEFAULT_RETRY), path)
         assert res == "blocked"
         assert manifest.nodes["a"].status == "blocked"
         comments = store.get_comments(item.id)
@@ -541,11 +559,11 @@ class TestManifestPersistence:
         manifest = Manifest(meta={"name": "demo"}, nodes={"a": _node()})
         manifest.nodes["a"].work_item_id = item.id
         manifest.nodes["a"].status = "in_review"
+        path = _saved_manifest(tmp_path, manifest)
         run_merge_delivery(_merge_config(script), manifest, "a", store,
-                           _runtime(store), dict(DEFAULT_RETRY))
+                           _runtime(store), dict(DEFAULT_RETRY), path)
         assert manifest.nodes["a"].merged is True
         assert manifest.nodes["a"].merged_at is not None
-        path = str(tmp_path / "m.yaml")
         import omac.core.manifest as mmod
         mmod.save_manifest(manifest, path)
         m2 = mmod.load_manifest(path)
@@ -947,6 +965,336 @@ class TestMergeClosureRegression:
         assert reloaded.nodes["a"].status == "blocked"
         assert reloaded.nodes["a"].merge_request_state == "intent"
         assert f"omac node retry {path} a" in "\n".join(store.get_comments(item.id))
+
+    def test_definite_merge_failure_persists_worker_bounce_before_crash(
+        self, tmp_path,
+    ):
+        store = _store()
+        runtime = _runtime(store)
+        item = _review_passed_item(store)
+        manifest = Manifest(meta={}, nodes={
+            "a": Node(id="a", worker="alice", reviewer="bob",
+                      work_item_id=item.id, status="in_review"),
+        })
+        path = str(tmp_path / "m.yaml")
+        save_manifest(manifest, path)
+        old_pr = "https://example.com/pr/1"
+        new_pr = "https://example.com/pr/2"
+        merged_at = "2026-07-26T10:00:00Z"
+        requests = []
+        merged_prs = set()
+
+        def request(pr_url, *args):
+            requests.append(pr_url)
+            if pr_url == old_pr:
+                return SimpleNamespace(
+                    succeeded=False, timed_out=False, exit_code=1,
+                    output="merge conflict")
+            merged_prs.add(pr_url)
+            return SimpleNamespace(
+                succeeded=True, timed_out=False, exit_code=0,
+                output="merge requested")
+
+        def observe(pr_url):
+            if pr_url in merged_prs:
+                return SimpleNamespace(state="merged", merged_at=merged_at)
+            return SimpleNamespace(state="open", merged_at=None)
+
+        store.request_pull_request_merge = request
+        store.observe_pull_request = observe
+        worker_effects = []
+        completed_update_status = store.update_status
+        completed_reset_review = store.reset_review
+        completed_assign = store.assign_work_item
+        completed_wake = runtime.wake
+
+        def assert_bounce_is_durable(effect):
+            persisted = load_manifest(path).nodes["a"]
+            assert persisted.status == "in_progress"
+            assert persisted.merge_request_state is None
+            worker_effects.append(effect)
+
+        def update_status_after_persist(item_id, status):
+            if requests and status is WorkItemStatus.IN_PROGRESS:
+                assert_bounce_is_durable("status")
+            completed_update_status(item_id, status)
+
+        def reset_review_after_persist(item_id):
+            assert_bounce_is_durable("reset")
+            completed_reset_review(item_id)
+
+        def assign_after_persist(item_id, agent, role):
+            assert_bounce_is_durable("assign")
+            completed_assign(item_id, agent, role)
+
+        def crash_after_worker_wake(item_id, agent, role):
+            assert_bounce_is_durable("wake")
+            completed_wake(item_id, agent, role)
+            raise RuntimeError("simulated crash before final tick save")
+
+        store.update_status = update_status_after_persist
+        store.reset_review = reset_review_after_persist
+        store.assign_work_item = assign_after_persist
+        runtime.wake = crash_after_worker_wake
+
+        with pytest.raises(RuntimeError, match="simulated crash"):
+            loop.collect_results(
+                store, runtime, manifest, path,
+                retry_limits=dict(DEFAULT_RETRY), config={})
+
+        platform_item = store.get_work_item(item.id)
+        persisted = load_manifest(path)
+        assert manifest.nodes["a"].status == "in_progress"
+        assert manifest.nodes["a"].merge_request_state is None
+        assert persisted.nodes["a"].status == "in_progress"
+        assert persisted.nodes["a"].merge_request_state is None
+        assert platform_item.status is WorkItemStatus.IN_PROGRESS
+        assert platform_item.phase is TaskPhase.AUTHORING
+        assert platform_item.review_verdict is None
+        assert len(store.assign_log) == 1
+        assert worker_effects == ["status", "reset", "assign", "wake"]
+        assert requests == [old_pr]
+
+        resumed_runtime = _runtime(store)
+        running = loop.tick(
+            store, resumed_runtime, persisted, path,
+            retry_limits=dict(DEFAULT_RETRY), config={})
+        assert running.state == "running"
+        assert persisted.nodes["a"].status == "in_progress"
+        assert len(store.assign_log) == 1
+        assert requests == [old_pr]
+
+        store.update_work_item_metadata(
+            item.id, artifacts={"pr_url": new_pr})
+        store.update_status(item.id, WorkItemStatus.DONE)
+        reviewing = loop.tick(
+            store, resumed_runtime, persisted, path,
+            retry_limits=dict(DEFAULT_RETRY), config={})
+        assert reviewing.state == "running"
+        assert persisted.nodes["a"].status == "in_review"
+
+        store.update_work_item_metadata(
+            item.id,
+            review_verdict="pass",
+            review_report=_current_pass_report(
+                store, item.id, "review restarted delivery"),
+        )
+        store.update_status(item.id, WorkItemStatus.DONE)
+        converged = loop.tick(
+            store, resumed_runtime, persisted, path,
+            retry_limits=dict(DEFAULT_RETRY), config={})
+
+        final_disk = load_manifest(path)
+        assert converged.state == "converged"
+        assert persisted.nodes["a"].status == "done"
+        assert final_disk.nodes["a"].status == "done"
+        assert final_disk.nodes["a"].merged is True
+        assert final_disk.nodes["a"].merged_at == merged_at
+        assert store.get_work_item(item.id).status is WorkItemStatus.DONE
+        assert requests == [old_pr, new_pr]
+
+    def test_merge_intent_is_saved_before_platform_status_write(self, tmp_path):
+        store = _store()
+        runtime = _runtime(store)
+        item = _review_passed_item(store)
+        manifest = Manifest(meta={}, nodes={
+            "a": Node(id="a", worker="alice", reviewer="bob",
+                      work_item_id=item.id, status="in_review"),
+        })
+        path = _saved_manifest(tmp_path, manifest)
+        observations = iter(("open", "pending"))
+        store.observe_pull_request = lambda pr_url: SimpleNamespace(
+            state=next(observations), merged_at=None)
+        store.request_pull_request_merge = lambda *args: SimpleNamespace(
+            succeeded=True, timed_out=False, exit_code=0, output="requested")
+        original_update_status = store.update_status
+        persisted_at_write = []
+
+        def update_status(item_id, status):
+            persisted = load_manifest(path).nodes["a"]
+            persisted_at_write.append(
+                (persisted.status, persisted.merge_request_state))
+            original_update_status(item_id, status)
+
+        store.update_status = update_status
+
+        result = run_merge_delivery(
+            {}, manifest, "a", store, runtime, dict(DEFAULT_RETRY), path)
+
+        assert result == "pending"
+        assert persisted_at_write == [("merging", "intent")]
+        reloaded = load_manifest(path).nodes["a"]
+        assert reloaded.status == "merging"
+        assert reloaded.merge_request_state == "requested"
+
+    def test_merge_delivery_without_manifest_path_has_no_external_effects(self):
+        store = _store()
+        runtime = _runtime(store)
+        item = _review_passed_item(store)
+        manifest = Manifest(meta={}, nodes={
+            "a": Node(id="a", worker="alice", reviewer="bob",
+                      work_item_id=item.id, status="in_review"),
+        })
+        effects = []
+        store.observe_pull_request = lambda *args: effects.append("observe")
+        store.request_pull_request_merge = lambda *args: effects.append("merge")
+
+        with pytest.raises(ValueError, match="manifest_path"):
+            run_merge_delivery(
+                {}, manifest, "a", store, runtime, dict(DEFAULT_RETRY))
+
+        assert effects == []
+        assert manifest.nodes["a"].status == "in_review"
+        assert manifest.nodes["a"].merge_request_state is None
+        assert store.get_work_item(item.id).status is WorkItemStatus.DONE
+        assert store.get_comments(item.id) == []
+        assert store.assign_log == []
+
+    def test_merge_bounce_cap_is_saved_before_platform_writes(self, tmp_path):
+        store = _store()
+        runtime = _runtime(store)
+        item = _review_passed_item(store)
+        manifest = Manifest(meta={}, nodes={
+            "a": Node(id="a", worker="alice", reviewer="bob",
+                      work_item_id=item.id, status="in_review"),
+        })
+        path = _saved_manifest(tmp_path, manifest)
+        store.observe_pull_request = lambda pr_url: SimpleNamespace(
+            state="open", merged_at=None)
+        store.request_pull_request_merge = lambda *args: SimpleNamespace(
+            succeeded=False, timed_out=False, exit_code=1, output="conflict")
+        effects = []
+        original_add_comment = store.add_comment
+        original_update_metadata = store.update_work_item_metadata
+        original_update_status = store.update_status
+
+        def assert_durable(effect):
+            persisted = load_manifest(path).nodes["a"]
+            expected = (
+                ("merging", "intent")
+                if manifest.nodes["a"].status == "merging"
+                else ("blocked", None)
+            )
+            assert (persisted.status, persisted.merge_request_state) == expected
+            effects.append(effect)
+
+        def add_comment(item_id, comment):
+            assert_durable("comment")
+            original_add_comment(item_id, comment)
+
+        def update_metadata(item_id, **kwargs):
+            assert_durable("metadata")
+            return original_update_metadata(item_id, **kwargs)
+
+        def update_status(item_id, status):
+            assert_durable("status")
+            original_update_status(item_id, status)
+
+        store.add_comment = add_comment
+        store.update_work_item_metadata = update_metadata
+        store.update_status = update_status
+
+        result = run_merge_delivery(
+            {}, manifest, "a", store, runtime,
+            resolve_retry({"retry": {"merge": 0}}), path)
+
+        assert result == "blocked"
+        assert load_manifest(path).nodes["a"].status == "blocked"
+        assert effects == ["status", "comment", "metadata", "status"]
+        assert store.assign_log == []
+
+    def test_merge_bounce_cap_survives_crash_before_platform_block(self, tmp_path):
+        store = _store()
+        runtime = _runtime(store)
+        item = _review_passed_item(store)
+        manifest = Manifest(meta={}, nodes={
+            "a": Node(id="a", worker="alice", reviewer="bob",
+                      work_item_id=item.id, status="in_review"),
+        })
+        path = _saved_manifest(tmp_path, manifest)
+        store.observe_pull_request = lambda pr_url: SimpleNamespace(
+            state="open", merged_at=None)
+        requests = []
+        store.request_pull_request_merge = lambda *args: requests.append(args) or SimpleNamespace(
+            succeeded=False, timed_out=False, exit_code=1, output="conflict")
+
+        def crash_after_durable_block(item_id, comment):
+            persisted = load_manifest(path).nodes["a"]
+            assert persisted.status == "blocked"
+            assert persisted.merge_request_state is None
+            raise RuntimeError("simulated crash before platform block")
+
+        store.add_comment = crash_after_durable_block
+
+        with pytest.raises(RuntimeError, match="simulated crash"):
+            run_merge_delivery(
+                {}, manifest, "a", store, runtime,
+                resolve_retry({"retry": {"merge": 0}}), path)
+
+        assert store.get_work_item(item.id).status is WorkItemStatus.IN_REVIEW
+        reloaded = load_manifest(path)
+        result = loop.tick(
+            store, _runtime(store), reloaded, path,
+            retry_limits=resolve_retry({"retry": {"merge": 0}}), config={})
+
+        assert result.state == "needs_decision"
+        assert reloaded.nodes["a"].status == "blocked"
+        assert len(requests) == 1
+        assert requests[0][0] == "https://example.com/pr/1"
+
+    def test_closed_unmerged_is_saved_before_worker_side_effects(self, tmp_path):
+        store = _store()
+        runtime = _runtime(store)
+        item = _review_passed_item(store)
+        manifest = Manifest(meta={}, nodes={
+            "a": Node(id="a", worker="alice", reviewer="bob",
+                      work_item_id=item.id, status="in_review",
+                      merge_request_state="requested"),
+        })
+        path = _saved_manifest(tmp_path, manifest)
+        store.observe_pull_request = lambda pr_url: SimpleNamespace(
+            state="closed_unmerged", merged_at=None)
+        requests = []
+        store.request_pull_request_merge = lambda *args: requests.append(args)
+        effects = []
+        original_update_status = store.update_status
+        original_reset_review = store.reset_review
+        original_assign = store.assign_work_item
+        original_wake = runtime.wake
+
+        def assert_durable(effect):
+            persisted = load_manifest(path).nodes["a"]
+            assert persisted.status == "in_progress"
+            assert persisted.merge_request_state is None
+            effects.append(effect)
+
+        def update_status(item_id, status):
+            assert_durable("status")
+            original_update_status(item_id, status)
+
+        def reset_review(item_id):
+            assert_durable("reset")
+            original_reset_review(item_id)
+
+        def assign(item_id, agent, role):
+            assert_durable("assign")
+            original_assign(item_id, agent, role)
+
+        def wake(item_id, agent, role):
+            assert_durable("wake")
+            original_wake(item_id, agent, role)
+
+        store.update_status = update_status
+        store.reset_review = reset_review
+        store.assign_work_item = assign
+        runtime.wake = wake
+
+        result = run_merge_delivery(
+            {}, manifest, "a", store, runtime, dict(DEFAULT_RETRY), path)
+
+        assert result == "bounce"
+        assert requests == []
+        assert effects == ["status", "reset", "assign", "wake"]
 
     def test_timeout_with_pending_pr_stays_merging_without_worker_bounce(
         self, tmp_path,

@@ -4,7 +4,7 @@
 - mock:多节点带依赖 manifest,循环调 tick 至 converged,节点全 done
 - mock 失败注入:tick 返回 needs_decision,失败节点 blocked、下游 blocked、report 完整
 - 幂等:tick 序列中途重建 loop 对同一 manifest 继续,done 节点复用、不重复建 issue
-- 无 reviewer 节点直接 done;有 reviewer 节点经 in_review → done(mock 自动评审)
+- 无 reviewer 节点也必须经远端 MERGED + mergedAt 门;有 reviewer 先经 in_review
 - 不存在任何自动重试路径(blocked 节点在后续 tick 保持 blocked)
 """
 import os
@@ -542,8 +542,8 @@ class TestIdempotency:
 # ==================== 4. reviewer 阶段交接 ====================
 
 class TestReviewerHandoff:
-    def test_no_reviewer_direct_done(self):
-        """无 reviewer 节点:worker 完成 → 直接 done。"""
+    def test_no_reviewer_still_requires_merge_closure(self):
+        """无 reviewer 节点:跳过评审交接，但仍须远端合入确认才 done。"""
         nodes = [_node("a", reviewer=None)]
         manifest = _manifest(nodes)
         path = _tmp_manifest_path(manifest)
@@ -553,8 +553,7 @@ class TestReviewerHandoff:
 
         assert result.state == "converged"
         assert "a" in result.done
-        # 不经过 in_review
-        # (mock 自动完成 → done,collect_results 直接标 done)
+        # 不经过 in_review，MockStore 的明确合并配置提供远端 MERGED 事实。
 
     def test_with_reviewer_goes_through_in_review(self):
         """有 reviewer 节点:worker 完成 → in_review → reviewer pass → done。"""

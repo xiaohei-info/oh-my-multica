@@ -234,6 +234,10 @@ def run_merge_delivery(
     manifest_path: str | None = None,
 ) -> str:
     """PR 合并闭环：命令只请求合并，只有远端观察确认 MERGED 才能通过。"""
+    if not manifest_path:
+        raise ValueError(
+            "manifest_path is required for restart-safe merge delivery")
+
     node = manifest.nodes[node_key]
     item_id = node.work_item_id
     merge = get_merge_config(config)
@@ -245,16 +249,19 @@ def run_merge_delivery(
 
     if not pr_url:
         # merge 已配置但 reviewer pass 后无 pr_url —— 防御性阻断并教化。
+        node.status = "blocked"
+        save_manifest(manifest, manifest_path)
         store.add_comment(item_id, ui(
             "⚠️ Merge is configured, but the node has no pr_url, so automatic merge cannot run.\n"
             "Confirm the worker submitted a PR URL with `omac work submit <id> --pr-url <url> ...`.",
             "⚠️ merge 已配置(command)但节点无 pr_url,无法执行自动合并。\n"
             "请确认 worker 已用 `omac work submit <id> --pr-url <url> ...` 提交 PR 地址。"))
-        node.status = "blocked"
         store.update_status(item_id, WorkItemStatus.BLOCKED)
         return "blocked"
 
     if not merge_request_state_is_valid(node.merge_request_state):
+        node.status = "blocked"
+        save_manifest(manifest, manifest_path)
         return block_unproven_merge_request(
             node, item, store, manifest_path, node_key,
             f"Merge request state {node.merge_request_state!r} is invalid.")
@@ -263,48 +270,51 @@ def run_merge_delivery(
     state = _observation_state(observation)
     if state == PullRequestState.MERGED:
         return _settle_merge_observation(
-            node, item, store, runtime, retry_limits, observation)
+            node, item, store, runtime, retry_limits, observation,
+            manifest=manifest, manifest_path=manifest_path)
     if state == PullRequestState.PENDING:
         node.status = "merging"
         node.merge_request_state = "requested"
+        save_manifest(manifest, manifest_path)
         store.update_status(item_id, to_platform_status("merging"))
-        if manifest_path:
-            save_manifest(manifest, manifest_path)
         return "pending"
     if state != PullRequestState.OPEN:
         return _settle_merge_observation(
-            node, item, store, runtime, retry_limits, observation)
+            node, item, store, runtime, retry_limits, observation,
+            manifest=manifest, manifest_path=manifest_path)
 
     if node.merge_request_state == "intent":
+        node.status = "blocked"
+        save_manifest(manifest, manifest_path)
         return block_unproven_merge_request(
             node, item, store, manifest_path, node_key,
             "A prior merge request may have started before the process stopped.")
     if node.merge_request_state == "requested":
         node.status = "merging"
+        save_manifest(manifest, manifest_path)
         store.update_status(item_id, to_platform_status("merging"))
-        if manifest_path:
-            save_manifest(manifest, manifest_path)
         return "pending"
 
     node.status = "merging"
     node.merge_request_state = "intent"
+    save_manifest(manifest, manifest_path)
     store.update_status(item_id, to_platform_status("merging"))
-    if manifest_path:
-        save_manifest(manifest, manifest_path)
 
     result = store.request_pull_request_merge(
         pr_url, merge["command"], max(1, int(merge.get("timeout_minutes", 30))) * 60)
     if not getattr(result, "timed_out", False):
         node.merge_request_state = "requested"
-        if manifest_path:
-            save_manifest(manifest, manifest_path)
+        save_manifest(manifest, manifest_path)
     observation = store.observe_pull_request(pr_url)
     state = _observation_state(observation)
     if state in {PullRequestState.MERGED, PullRequestState.PENDING}:
         return _settle_merge_observation(
-            node, item, store, runtime, retry_limits, observation)
+            node, item, store, runtime, retry_limits, observation,
+            manifest=manifest, manifest_path=manifest_path)
     if state == PullRequestState.OPEN:
         if getattr(result, "timed_out", False):
+            node.status = "blocked"
+            save_manifest(manifest, manifest_path)
             return block_unproven_merge_request(
                 node, item, store, manifest_path, node_key,
                 "Merge request timed out while the PR remains OPEN; the external outcome is unknown.")
@@ -316,9 +326,12 @@ def run_merge_delivery(
             "merge 命令超时" if result.timed_out else
             f"merge 命令失败(退出码 {result.exit_code})")
         return _bounce_or_block_merge(node, item, store, runtime, retry_limits,
+                                      manifest=manifest,
+                                      manifest_path=manifest_path,
                                       label=label, output=result.output)
     return _settle_merge_observation(
         node, item, store, runtime, retry_limits, observation,
+        manifest=manifest, manifest_path=manifest_path,
         command_output=result.output)
 
 
@@ -333,7 +346,8 @@ def _observation_state(observation) -> PullRequestState:
 
 
 def _settle_merge_observation(
-    node, item, store, runtime, retry_limits, observation, *, command_output: str = "",
+    node, item, store, runtime, retry_limits, observation, *,
+    manifest: Manifest, manifest_path: str | None, command_output: str = "",
 ) -> str:
     state = _observation_state(observation)
     if state == PullRequestState.MERGED and getattr(observation, "merged_at", None):
@@ -349,19 +363,22 @@ def _settle_merge_observation(
         node.merge_request_state = None
         return _bounce_or_block_merge(
             node, item, store, runtime, retry_limits,
+            manifest=manifest, manifest_path=manifest_path,
             label=ui("PR closed without merge", "PR 已关闭但未合入"),
             output=command_output)
     detail = getattr(observation, "detail", "") or ui("missing authoritative mergedAt", "缺少权威 mergedAt")
+    node.status = "blocked"
+    node.merge_request_state = None
+    save_manifest(manifest, manifest_path)
     store.add_comment(item.id, ui(
         f"⚠️ Merge outcome cannot be confirmed; refusing to mark done. {detail}",
         f"⚠️ 无法确认 PR 已合入；拒绝标记 done。{detail}"))
-    node.status = "blocked"
-    node.merge_request_state = None
     store.update_status(item.id, WorkItemStatus.BLOCKED)
     return "blocked"
 
 
 def _bounce_or_block_merge(node, item, store, runtime, retry_limits, *,
+                           manifest: Manifest, manifest_path: str | None,
                            label: str, output: str) -> str:
     """merge 失败后的有界「回到 worker」回退(CI 路径的对称实现)。
 
@@ -371,28 +388,35 @@ def _bounce_or_block_merge(node, item, store, runtime, retry_limits, *,
     - 读/写 WorkItem.bounces.merge,封顶即 blocked,否则转回 worker + wake。
     """
     item_id = node.work_item_id
+    cur_bounce = item.bounces.merge
+    next_bounce = cur_bounce + 1
+    merge_limit = retry_limits.get("merge", DEFAULT_RETRY["merge"])
     node.merge_request_state = None
+    if merge_limit == 0 or next_bounce >= merge_limit:
+        node.status = "blocked"
+    else:
+        node.status = "in_progress"
+
+    # 先持久化业务状态，再执行平台 reset/assign/wake。这样 worker 已被成功
+    # 唤醒后即使进程在 tick 尾部保存前崩溃，重启也会从 authoring 接管，
+    # 不会继续观察旧 PR 或重复 merge 请求。
+    save_manifest(manifest, manifest_path)
+
     tail = _tail(output) or ui("(no output)", "(无输出)")
     store.add_comment(item_id, ui(
         f"⚠️ {label}. Returning to the worker to resolve the merge and rerun ci→review→merge.\n\n"
         f"--- Command output tail ---\n{tail}",
         f"⚠️ {label} —— merge 冲突,转回 worker 解决后重新走 ci→review→merge。\n\n"
         f"--- 命令输出尾部 ---\n{tail}"))
-
-    cur_bounce = item.bounces.merge
-    next_bounce = cur_bounce + 1
     store.update_work_item_metadata(item_id, merge_bounce=next_bounce)
 
-    merge_limit = retry_limits.get("merge", DEFAULT_RETRY["merge"])
-    if merge_limit == 0 or next_bounce >= merge_limit:
-        node.status = "blocked"
+    if node.status == "blocked":
         store.update_status(item_id, WorkItemStatus.BLOCKED)
         return "blocked"
 
     # 有界转回 worker:改回 in_progress,清除旧评审判定,重新派发 worker 并唤醒。
     # reset_review 确保旧 verdict 不会在新一轮被复用——强制 reviewer 重新 pass,
     # 否则新 PR 会在旧 verdict 下被自动 merge,绕过 reviewer gate。
-    node.status = "in_progress"
     store.update_status(item_id, to_platform_status("in_progress"))
     store.reset_review(item_id)
     store.assign_work_item(item_id, node.worker, "worker")
