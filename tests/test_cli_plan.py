@@ -5,6 +5,8 @@ MOCK_AUTO_COMPLETE_DELAY=0 让评审在首轮 wake 即收敛,避免真实等待�
 """
 from __future__ import annotations
 
+from dataclasses import asdict
+import hashlib
 import json
 import subprocess
 from types import SimpleNamespace
@@ -488,6 +490,80 @@ def test_create_default_combination(tmp_path, monkeypatch, capsys):
     assert "演示设计方案" in acc_item.description, "acceptance issue body 应含定稿设计方案"
     assert "演示设计方案" in dec_item.description, "decompose issue body 应含定稿设计方案"
     assert "登录流程" in dec_item.description, "decompose issue body 应含验收文档(flow)"
+
+
+def test_reviewed_manifest_is_execution_equivalent_after_plan_canonicalization(
+        tmp_path, monkeypatch):
+    """review 对象经 plan 落盘、DAG load/dispatch 后保持同一执行语义。"""
+    from omac.core.manifest import load_manifest, loads_manifest
+    from omac.core.taskmeta import TaskKind
+    from omac.pipeline.loop import tick
+
+    engine = _configure_create_mock(tmp_path, monkeypatch)
+    acceptance_raw = yaml.safe_load(ACCEPTANCE_YAML)
+    reviewed_raw = yaml.safe_load(GOOD_MANIFEST)
+    reviewed_raw["meta"]["reviewed_extension"] = "preserved"
+    for node in reviewed_raw["nodes"]:
+        contract = node["contract"]
+        contract["required_contracts"] = []
+        contract["acceptance_doc"] = acceptance_raw
+        contract["coverage_gate"] = 90 if node["id"] == "login" else 80
+        node["blocked_by"] = []
+    reviewed_text = yaml.safe_dump(
+        reviewed_raw, allow_unicode=True, sort_keys=False)
+    MockStore.set_kind_delivery("decompose", {"manifest": reviewed_text})
+
+    assert main(["plan", "create", "--name", "manifest-equivalence"]) == exit_codes.OK
+
+    manifest_path = tmp_path / ".omac" / "manifest-equivalence.yaml"
+    acceptance_path = (
+        tmp_path / ".omac" / "manifest-equivalence.acceptance.yaml")
+    final_raw = yaml.safe_load(manifest_path.read_text())
+    reviewed = loads_manifest(reviewed_text)
+    final = load_manifest(str(manifest_path))
+
+    assert final_raw["meta"]["reviewed_extension"] == "preserved"
+    assert final_raw["meta"]["acceptance_required"] is True
+    assert final_raw["meta"]["acceptance_file"] == acceptance_path.name
+    assert final_raw["meta"]["plan_id"].startswith("p-")
+    assert len(final_raw["meta"]["source_issues"]) == 3
+
+    final_contracts = {
+        node["id"]: node["contract"] for node in final_raw["nodes"]}
+    assert "coverage_gate" not in final_contracts["login"]
+    assert final_contracts["dashboard"]["coverage_gate"] == 80
+    for contract in final_contracts.values():
+        assert "required_contracts" not in contract
+        assert "acceptance_doc" not in contract
+
+    assert acceptance_path.read_text() == ACCEPTANCE_YAML
+    assert hashlib.sha256(acceptance_path.read_bytes()).digest() == hashlib.sha256(
+        ACCEPTANCE_YAML.encode()).digest()
+
+    def execution_node(node):
+        payload = asdict(node)
+        if payload["contract"] is not None:
+            payload["contract"]["acceptance_doc"] = None
+        return payload
+
+    assert {
+        key: execution_node(node) for key, node in reviewed.nodes.items()
+    } == {
+        key: execution_node(node) for key, node in final.nodes.items()
+    }
+
+    tick(engine.store, engine.runtime, final, str(manifest_path), max_parallel=4)
+    develop_items = {
+        item.dag_key: item
+        for item in engine.store.list_work_items("mock-workspace")
+        if item.kind == TaskKind.DEVELOP
+    }
+    assert set(develop_items) == {"login", "dashboard"}
+    for key, item in develop_items.items():
+        assert asdict(item.contract) == asdict(final.nodes[key].contract)
+        assert item.contract.acceptance_doc is None
+        assert item.contract.coverage_gate == (90 if key == "login" else 80)
+        assert f"≥ {item.contract.coverage_gate}%" in item.description
 
 
 def test_create_chinese_name_uses_generated_plan_id_for_dag_keys(tmp_path, monkeypatch):
