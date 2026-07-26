@@ -1,11 +1,12 @@
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from omac.engines.models import EngineConfig
+from omac.engines.models import EngineConfig, PullRequestState
 from omac.engines.models import WorkItemStatus
 from omac.engines.multica import MulticaRuntime, MulticaStore
 from omac.errors import PlatformError
@@ -1250,3 +1251,65 @@ def test_multica_runtime_lists_actual_runtime_shape(monkeypatch):
 
     assert len(targets) == 1
     assert targets[0].type == "codex"
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected_state", "expected_merged_at"),
+    [
+        ({"state": "MERGED", "mergedAt": "2026-07-26T08:45:00Z"},
+         PullRequestState.MERGED, "2026-07-26T08:45:00Z"),
+        ({"state": "OPEN", "mergedAt": None}, PullRequestState.OPEN, None),
+        ({"state": "OPEN", "mergedAt": None,
+          "autoMergeRequest": {"enabledAt": "2026-07-26T08:40:00Z"},
+          "isInMergeQueue": False},
+         getattr(PullRequestState, "PENDING", "pending"), None),
+        ({"state": "OPEN", "mergedAt": None,
+          "autoMergeRequest": None, "isInMergeQueue": True},
+         getattr(PullRequestState, "PENDING", "pending"), None),
+        ({"state": "CLOSED", "mergedAt": None},
+         PullRequestState.CLOSED_UNMERGED, None),
+    ],
+)
+def test_multica_observe_pull_request_classifies_remote_states(
+    monkeypatch, payload, expected_state, expected_merged_at,
+):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    calls = []
+
+    def run(args, **kwargs):
+        calls.append((args, kwargs))
+        return SimpleNamespace(returncode=0, stdout=json.dumps(payload), stderr="")
+
+    monkeypatch.setattr("omac.engines.multica.subprocess.run", run)
+
+    observation = store.observe_pull_request("https://example.com/pr/1")
+
+    assert observation.state is expected_state
+    assert observation.merged_at == expected_merged_at
+    assert "autoMergeRequest" in calls[0][0][-1]
+    assert "isInMergeQueue" in calls[0][0][-1]
+
+
+@pytest.mark.parametrize(
+    "run_result",
+    [
+        SimpleNamespace(returncode=1, stdout="", stderr="authentication failed"),
+        subprocess.TimeoutExpired(cmd="gh", timeout=30),
+        SimpleNamespace(returncode=0, stdout="not-json", stderr=""),
+    ],
+)
+def test_multica_observe_pull_request_fails_closed_for_unreadable_remote(
+    monkeypatch, run_result,
+):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+
+    def run(*args, **kwargs):
+        if isinstance(run_result, BaseException):
+            raise run_result
+        return run_result
+
+    monkeypatch.setattr("omac.engines.multica.subprocess.run", run)
+
+    observation = store.observe_pull_request("https://example.com/pr/1")
+
+    assert observation.state is PullRequestState.UNKNOWN

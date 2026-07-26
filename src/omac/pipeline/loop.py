@@ -21,7 +21,7 @@ from ..pipeline.delivery import advance_delivery, run_merge_delivery
 from ..engines.models import PullRequestState, WorkItemStatus
 from ..engines.runtime import AgentRuntime
 from ..engines.store import WorkItemStore
-from ..errors import PlatformError
+from ..errors import PlatformError, WorkItemNotFoundError
 from ..i18n import current_language, ui
 from ..pipeline.dispatch import normalize_source_refs, render_issue_body
 from ..core.taskmeta import TaskKind, TaskPhase
@@ -120,12 +120,16 @@ def _pull_request_state(observation) -> PullRequestState:
         return PullRequestState.UNKNOWN
 
 
+def _has_confirmed_merge(node) -> bool:
+    return bool(node.merged and node.merged_at)
+
+
 def _complete_merge_if_confirmed(
     store: WorkItemStore, runtime: AgentRuntime, manifest: Manifest, key: str,
-    retry_limits: dict, config: dict,
+    retry_limits: dict, config: dict, manifest_path: str,
 ) -> str:
     action = run_merge_delivery(
-        config, manifest, key, store, runtime, retry_limits)
+        config, manifest, key, store, runtime, retry_limits, manifest_path)
     if action == "pass":
         node = manifest.nodes[key]
         store.update_status(node.work_item_id, WorkItemStatus.DONE)
@@ -153,12 +157,17 @@ def reconcile(store: WorkItemStore, manifest: Manifest, manifest_path: str) -> b
             continue
         try:
             item = store.get_work_item(node.work_item_id)
-        except Exception:
-            # work item 不存在:调用者明确接受的终态(done/abandoned)保持;
-            # blocked/failed/cancelled 可能是用户删掉平台 issue 后的恢复路径,
-            # 应清空旧 id 走新建。
-            if node.status not in {"done", "abandoned"}:
+        except WorkItemNotFoundError:
+            if node.status == "done" and not _has_confirmed_merge(node):
+                set_node(manifest, key, status="blocked")
+                changed = True
+            elif node.status not in {"done", "abandoned"}:
                 set_node(manifest, key, work_item_id=None, status="todo")
+                changed = True
+            continue
+        except Exception:
+            if node.status not in {"abandoned", "done"} or not _has_confirmed_merge(node):
+                set_node(manifest, key, status="blocked")
                 changed = True
             continue
 
@@ -191,11 +200,20 @@ def reconcile(store: WorkItemStore, manifest: Manifest, manifest_path: str) -> b
                 set_node(manifest, key, status="in_review")
                 changed = True
                 continue
-            pr_url = _pull_request_url(item)
-            if (
-                getattr(item, "kind", TaskKind.DEVELOP) == TaskKind.DEVELOP
-                and pr_url and not node.merged
-            ):
+            if getattr(item, "kind", TaskKind.DEVELOP) == TaskKind.DEVELOP:
+                pr_url = _pull_request_url(item)
+                if not pr_url:
+                    store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
+                    store.add_comment(node.work_item_id, ui(
+                        "⚠️ Develop done requires a PR with confirmed remote merge facts.",
+                        "⚠️ develop done 必须有带远端合入确认事实的 PR。"))
+                    set_node(manifest, key, status="blocked")
+                    changed = True
+                    continue
+                if _has_confirmed_merge(node):
+                    if item.status != WorkItemStatus.DONE:
+                        store.update_status(node.work_item_id, WorkItemStatus.DONE)
+                    continue
                 observation = store.observe_pull_request(pr_url)
                 state = _pull_request_state(observation)
                 if state == PullRequestState.MERGED and getattr(observation, "merged_at", None):
@@ -205,8 +223,10 @@ def reconcile(store: WorkItemStore, manifest: Manifest, manifest_path: str) -> b
                         store.update_status(node.work_item_id, WorkItemStatus.DONE)
                     changed = True
                     continue
-                if state == PullRequestState.OPEN:
+                if state in {PullRequestState.OPEN, PullRequestState.PENDING}:
                     store.update_status(node.work_item_id, WorkItemStatus.IN_REVIEW)
+                    node.merge_request_state = (
+                        "requested" if state == PullRequestState.PENDING else None)
                     set_node(manifest, key, status="merging")
                     changed = True
                     continue
@@ -393,7 +413,7 @@ def collect_results(
                 # worker 修完后直接进入 merge/done,不再浪费第二轮 reviewer。
                 if item.review_verdict == "pass-with-nits":
                     merge_action = _complete_merge_if_confirmed(
-                        store, runtime, manifest, key, limits, config or {})
+                        store, runtime, manifest, key, limits, config or {}, manifest_path)
                     if merge_action == "pass":
                         store.reset_review(node.work_item_id)
                     elif merge_action == "blocked":
@@ -407,7 +427,7 @@ def collect_results(
                     pending_review.append((key, node.work_item_id, node.reviewer))
                 else:
                     merge_action = _complete_merge_if_confirmed(
-                        store, runtime, manifest, key, limits, config or {})
+                        store, runtime, manifest, key, limits, config or {}, manifest_path)
                     if merge_action == "blocked":
                         failures[key] = ui(
                             "Merge outcome cannot be confirmed.",
@@ -482,7 +502,7 @@ def collect_results(
             if not gate_errors and verdict != "reject":
                 # reviewer pass → P4.2 自动 merge 门。命令与远端观察均由引擎适配器执行。
                 merge_action = _complete_merge_if_confirmed(
-                    store, runtime, manifest, key, limits, config or {})
+                    store, runtime, manifest, key, limits, config or {}, manifest_path)
                 if merge_action == "blocked":
                     failures[key] = ui(
                         "Merge failed and retry.merge is exhausted.",
@@ -542,7 +562,7 @@ def collect_results(
 
         elif node.status == "merging":
             merge_action = _complete_merge_if_confirmed(
-                store, runtime, manifest, key, limits, config or {})
+                store, runtime, manifest, key, limits, config or {}, manifest_path)
             if merge_action == "blocked":
                 failures[key] = ui(
                     "Merge outcome cannot be confirmed.",

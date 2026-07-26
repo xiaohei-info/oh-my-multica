@@ -264,9 +264,13 @@ class TestHappyPath:
         """develop issue 同时链接直接 blocked_by 节点的 Multica issue。"""
         foundation = _node("foundation", title="Shared contract foundation")
         foundation.status = "done"
+        foundation.merged = True
+        foundation.merged_at = "2026-07-26T08:00:00Z"
         foundation.work_item_id = "issue-foundation"
         data = _node("data", title="Persistence layer")
         data.status = "done"
+        data.merged = True
+        data.merged_at = "2026-07-26T08:00:00Z"
         data.work_item_id = "issue-data"
         missing = _node("missing", title="Abandoned setup")
         missing.status = "abandoned"

@@ -23,6 +23,7 @@ class PullRequestState(Enum):
     """远端 PR 的合并闭环结论。"""
     MERGED = "merged"
     OPEN = "open"
+    PENDING = "pending"
     CLOSED_UNMERGED = "closed_unmerged"
     UNKNOWN = "unknown"
 

@@ -31,7 +31,7 @@ from ..core.taskmeta import (
     SOURCE_REFS_KEY, TaskKind, TaskPhase, VERIFICATION_REF_KEY, WORKER_BOUNCE_KEY,
     parse_bounces, parse_kind, parse_phase,
 )
-from ..errors import AuthError, PlatformError, ValidationError
+from ..errors import AuthError, PlatformError, ValidationError, WorkItemNotFoundError
 from ..i18n import ui
 from .models import (
     AgentInfo, AgentProvisionSpec, EngineConfig, ProjectInfo, RuntimeTarget,
@@ -65,6 +65,11 @@ def _latest_run(runs: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
 def _latest_direct_run(runs: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     direct_runs = [run for run in runs if (run.get("kind") or "direct") == "direct"]
     return _latest_run(direct_runs)
+
+
+def _is_not_found(message: str) -> bool:
+    text = message.lower()
+    return "not found" in text or "does not exist" in text or "404" in text
 
 
 class MulticaStore(WorkItemStore):
@@ -108,6 +113,10 @@ class MulticaStore(WorkItemStore):
                 raise AuthError(ui(
                     f"multica authentication failed; run `multica login`: {stderr}",
                     f"multica 认证失败(先 multica login): {stderr}"))
+            if args[:2] == ["issue", "get"] and _is_not_found(stderr):
+                raise WorkItemNotFoundError(ui(
+                    f"Multica issue not found: {args[2]}",
+                    f"Multica issue 不存在: {args[2]}"))
             raise PlatformError(ui(
                 f"multica command failed: {' '.join(cmd)}\n{stderr}",
                 f"multica 调用失败: {' '.join(cmd)}\n{stderr}"))
@@ -1052,7 +1061,8 @@ class MulticaStore(WorkItemStore):
     def observe_pull_request(self, pr_url: str) -> PullRequestObservation:
         try:
             proc = subprocess.run(
-                ["gh", "pr", "view", pr_url, "--json", "state,mergedAt"],
+                ["gh", "pr", "view", pr_url, "--json",
+                 "state,mergedAt,autoMergeRequest,isInMergeQueue"],
                 capture_output=True, text=True, timeout=30)
         except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
             return PullRequestObservation(PullRequestState.UNKNOWN, detail=str(exc))
@@ -1068,6 +1078,8 @@ class MulticaStore(WorkItemStore):
         if state == "MERGED":
             return PullRequestObservation(PullRequestState.MERGED, merged_at=merged_at)
         if state == "OPEN":
+            if payload.get("autoMergeRequest") or payload.get("isInMergeQueue"):
+                return PullRequestObservation(PullRequestState.PENDING)
             return PullRequestObservation(PullRequestState.OPEN)
         if state == "CLOSED":
             return PullRequestObservation(PullRequestState.CLOSED_UNMERGED)

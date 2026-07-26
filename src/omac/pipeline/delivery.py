@@ -41,7 +41,7 @@ from dataclasses import dataclass
 from ..core.config import DEFAULT_RETRY, get_ci_config, get_merge_config
 from ..engines.models import PullRequestState, WorkItemStatus
 from ..engines.runtime import AgentRuntime
-from ..core.manifest import Manifest
+from ..core.manifest import Manifest, save_manifest
 from ..i18n import ui
 
 # ── manifest 侧细分态 ↔ 平台 WorkItemStatus 映射表 ──────────────────────────
@@ -223,6 +223,7 @@ def run_merge_delivery(
     store: object,
     runtime: AgentRuntime,
     retry_limits: dict,
+    manifest_path: str | None = None,
 ) -> str:
     """PR 合并闭环：命令只请求合并，只有远端观察确认 MERGED 才能通过。"""
     node = manifest.nodes[node_key]
@@ -245,22 +246,38 @@ def run_merge_delivery(
         store.update_status(item_id, WorkItemStatus.BLOCKED)
         return "blocked"
 
-    if node.status == "merging":
-        return _settle_merge_observation(
-            node, item, store, runtime, retry_limits, store.observe_pull_request(pr_url))
-
-    node.status = "merging"
-    store.update_status(item_id, to_platform_status("merging"))
-    result = store.request_pull_request_merge(
-        pr_url, merge["command"], max(1, int(merge.get("timeout_minutes", 30))) * 60)
     observation = store.observe_pull_request(pr_url)
     state = _observation_state(observation)
     if state == PullRequestState.MERGED:
         return _settle_merge_observation(
             node, item, store, runtime, retry_limits, observation)
-    if state == PullRequestState.OPEN and result.succeeded:
+    if state == PullRequestState.PENDING:
+        node.status = "merging"
+        node.merge_request_state = "requested"
+        store.update_status(item_id, to_platform_status("merging"))
+        if manifest_path:
+            save_manifest(manifest, manifest_path)
         return "pending"
+    if state != PullRequestState.OPEN:
+        return _settle_merge_observation(
+            node, item, store, runtime, retry_limits, observation)
+
+    node.status = "merging"
+    node.merge_request_state = "requested"
+    store.update_status(item_id, to_platform_status("merging"))
+    if manifest_path:
+        save_manifest(manifest, manifest_path)
+
+    result = store.request_pull_request_merge(
+        pr_url, merge["command"], max(1, int(merge.get("timeout_minutes", 30))) * 60)
+    observation = store.observe_pull_request(pr_url)
+    state = _observation_state(observation)
+    if state in {PullRequestState.MERGED, PullRequestState.PENDING}:
+        return _settle_merge_observation(
+            node, item, store, runtime, retry_limits, observation)
     if state == PullRequestState.OPEN:
+        if result.succeeded:
+            return "pending"
         label = ui(
             "Merge command timed out" if result.timed_out else
             f"Merge command failed (exit code {result.exit_code})",
@@ -290,10 +307,14 @@ def _settle_merge_observation(
     if state == PullRequestState.MERGED and getattr(observation, "merged_at", None):
         node.merged = True
         node.merged_at = observation.merged_at
+        node.merge_request_state = None
         return "pass"
-    if state == PullRequestState.OPEN:
+    if state == PullRequestState.PENDING:
+        node.status = "merging"
+        node.merge_request_state = "requested"
         return "pending"
     if state == PullRequestState.CLOSED_UNMERGED:
+        node.merge_request_state = None
         return _bounce_or_block_merge(
             node, item, store, runtime, retry_limits,
             label=ui("PR closed without merge", "PR 已关闭但未合入"),
@@ -303,6 +324,7 @@ def _settle_merge_observation(
         f"⚠️ Merge outcome cannot be confirmed; refusing to mark done. {detail}",
         f"⚠️ 无法确认 PR 已合入；拒绝标记 done。{detail}"))
     node.status = "blocked"
+    node.merge_request_state = None
     store.update_status(item.id, WorkItemStatus.BLOCKED)
     return "blocked"
 
@@ -317,6 +339,7 @@ def _bounce_or_block_merge(node, item, store, runtime, retry_limits, *,
     - 读/写 WorkItem.bounces.merge,封顶即 blocked,否则转回 worker + wake。
     """
     item_id = node.work_item_id
+    node.merge_request_state = None
     tail = _tail(output) or ui("(no output)", "(无输出)")
     store.add_comment(item_id, ui(
         f"⚠️ {label}. Returning to the worker to resolve the merge and rerun ci→review→merge.\n\n"

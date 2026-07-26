@@ -39,8 +39,10 @@ def _engine(**extra):
 def _done_manifest(path):
     """2 节点、全部 done 的 manifest(模拟内层 loop 已收敛)."""
     m = Manifest(meta={"name": "feature-x", "pr_base": "feature/v1"}, nodes={
-        "a": Node(id="a", worker="alice", status="done", work_item_id="wi-a"),
-        "b": Node(id="b", worker="bob", blocked_by=["a"], status="done", work_item_id="wi-b"),
+        "a": Node(id="a", worker="alice", status="done", work_item_id="wi-a",
+                  merged=True, merged_at="2026-07-26T08:00:00Z"),
+        "b": Node(id="b", worker="bob", blocked_by=["a"], status="done", work_item_id="wi-b",
+                  merged=True, merged_at="2026-07-26T08:00:00Z"),
     })
     save_manifest(m, path)
     return m
@@ -133,10 +135,12 @@ def test_final_acceptance_issue_has_complete_authoring_context(tmp_path):
     }, nodes={
         "build": Node(
             id="build", worker="alice", status="done",
-            contract=Contract(pr_base="main"), work_item_id="build-issue"),
+            contract=Contract(pr_base="main"), work_item_id="build-issue",
+            merged=True, merged_at="2026-07-26T08:00:00Z"),
         "closeout": Node(
             id="closeout", worker="bob", status="done", blocked_by=["build"],
-            contract=Contract(pr_base="main"), work_item_id="closeout-issue"),
+            contract=Contract(pr_base="main"), work_item_id="closeout-issue",
+            merged=True, merged_at="2026-07-26T08:00:00Z"),
     })
     save_manifest(manifest, path)
     doc = _acceptance_doc([("ACC-001", "Login", 1)])
@@ -180,7 +184,8 @@ def test_incremental_decompose_issue_has_failed_flow_and_manifest_context(tmp_pa
     }, nodes={
         "a": Node(
             id="a", worker="alice", status="done",
-            contract=Contract(pr_base="main"), work_item_id="work-a"),
+            contract=Contract(pr_base="main"), work_item_id="work-a",
+            merged=True, merged_at="2026-07-26T08:00:00Z"),
     })
     save_manifest(manifest, path)
     doc = _acceptance_doc([("ACC-001", "Login", 1)])
@@ -443,7 +448,8 @@ def test_decompose_submit_real_path(tmp_path):
     """real work submit --manifest-file 路径:decompose authoring 落 IN_REVIEW + deliverable。"""
     eng, store, item = _decompose_store(tmp_path)
     existing = Manifest(meta={"pr_base": "feature/v1"}, nodes={
-        "b": Node(id="b", worker="bob", blocked_by=["a"], status="done"),
+        "b": Node(id="b", worker="bob", blocked_by=["a"], status="done",
+                  merged=True, merged_at="2026-07-26T08:00:00Z"),
     })
     manifest = Manifest(meta={}, nodes={
         "fix-b": Node(id="fix-b", worker="alice", blocked_by=["b"]),
