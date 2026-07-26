@@ -16,6 +16,28 @@ Use its task, context, authority, guide references, submit command, and agent
 pool as instance facts. This guide does not override facts, existing manifests,
 or incremental-decomposition context.
 
+## Canonical plan-to-DAG handoff
+
+The decompose Reviewer reviews the submitted manifest deliverable. After that
+review passes, `omac plan create/resume` writes a canonical execution manifest
+from the same `Manifest` / `Contract` model that `omac dag run` loads:
+
+- An explicit default `coverage_gate: 90` may be omitted; loading restores 90.
+  Non-default coverage gates remain in the canonical file.
+- Empty `required_contracts: []` and null per-node `acceptance_doc` values may be
+  omitted; loading restores their empty/none execution meaning.
+- The reviewed acceptance artifact is written once as the sibling file named by
+  `meta.acceptance_file`. The manifest records `acceptance_required`, `plan_id`,
+  and `source_issues`; it does not duplicate that authoritative document in
+  every node contract.
+- `work_item_id` and `status` are runtime facts. `omac dag run` supplements them
+  as nodes are dispatched and advanced without changing the node's executable
+  contract.
+
+This is semantic canonicalization, not a second review object. If
+`acceptance_required` is true and the configured acceptance file is missing,
+DAG execution is fail-closed and explains how to restore the reviewed artifact.
+
 ## Minimum valid example
 
 The example shows the full contract shape. Replace `worker` and `reviewer` with

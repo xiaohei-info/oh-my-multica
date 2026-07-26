@@ -146,6 +146,22 @@ def test_orchestrator_reads_externalized_upstream_artifacts_through_omac() -> No
         assert item in english, f"english orchestrator missing external source protocol: {item}"
 
 
+def test_manifest_guide_explains_canonical_plan_to_dag_handoff() -> None:
+    chinese = load_artifact_topic("manifest")
+    english = load_artifact_topic("manifest", language="en")
+
+    for item in [
+        "canonical", "coverage_gate: 90", "required_contracts: []",
+        "acceptance_file", "work_item_id", "status", "fail-closed",
+    ]:
+        assert item in english, f"english manifest guide missing canonical handoff: {item}"
+    for item in [
+        "规范化", "coverage_gate: 90", "required_contracts: []",
+        "acceptance_file", "work_item_id", "status", "失败关闭",
+    ]:
+        assert item in chinese, f"manifest guide missing canonical handoff: {item}"
+
+
 def test_worker_role_has_tdd_and_evidence() -> None:
     content = load_role_topic("worker")
     for item in [

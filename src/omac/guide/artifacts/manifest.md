@@ -14,6 +14,25 @@ omac work show <issue-id> --output json
 以返回的 task、context、authority、guide_refs 和 submit 为当前实例事实，并从实例上下文读取
 可用 agent pool。本文是静态 guide，不得覆盖实例事实、contract、已有 manifest 或增量拆解上下文。
 
+## plan 到 DAG 的规范化交接
+
+decompose Reviewer 审查作者提交的 manifest deliverable。评审通过后，
+`omac plan create/resume` 使用与 `omac dag run` 相同的 `Manifest` / `Contract`
+执行模型写出 canonical 文件：
+
+- 显式默认值 `coverage_gate: 90` 可以省略，重新加载时恢复为 90；非默认覆盖率门槛
+  必须保留在 canonical 文件中。
+- 空 `required_contracts: []` 和节点上的 null `acceptance_doc` 可以省略，重新加载后
+  分别恢复为空列表和 None 的执行语义。
+- 已评审的权威 acceptance 产物只写入一次，由 `meta.acceptance_file` 指向同目录文件；
+  manifest 同时补充 `acceptance_required`、`plan_id`、`source_issues`，不会在每个节点
+  contract 中复制第二份可能漂移的验收正文。
+- `work_item_id` 与 `status` 是运行态事实；`omac dag run` 派发和推进节点时再补充，
+  不改变节点的可执行 contract。
+
+这是语义规范化，不是第二个评审对象。若 `acceptance_required` 为 true 但
+`acceptance_file` 缺失，DAG 执行会失败关闭，并提示如何恢复已评审的 acceptance 产物。
+
 ## 最小合法示例
 
 以下示例列出完整 contract 形状；`worker` 和 `reviewer` 必须替换为实例 agent pool 中的不同成员：
