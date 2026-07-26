@@ -85,6 +85,7 @@ const state = {
   selected: null,
   expanded: [],
   focus: "default",
+  detailGeneration: 0,
   pollTimer: null,
   language: "en",
 };
@@ -130,8 +131,24 @@ window.matchMedia("(prefers-color-scheme:dark)").addEventListener("change", ()=>
 
 /* ---------- manifest 选择 ---------- */
 function clearNodeDetail(){
+  state.detailGeneration += 1;
   $("detail-empty").classList.remove("is-hidden");
   $("detail-content").innerHTML = "";
+}
+
+function clearRenderedStatus(){
+  state.status = null;
+  state.nodes = {};
+  const svg = $("dag-canvas");
+  while(svg.firstChild) svg.removeChild(svg.firstChild);
+  $("dag-legend").innerHTML = "";
+  $("anomaly-content").innerHTML = "";
+  $("anomaly-empty").classList.remove("is-hidden");
+  const progress = $("progress-badge");
+  progress.classList.add("is-hidden");
+  progress.textContent = "";
+  $("poll-ts").textContent = "—";
+  $("tick-state").textContent = "—";
 }
 
 function resetDagView(){
@@ -160,8 +177,7 @@ async function selectManifest(path){
   cancelPoll();
   if(isNewManifest){
     resetDagView();
-    state.status = null;
-    state.nodes = {};
+    clearRenderedStatus();
   }
   if(!path){ state.current = null; return; }
   localStorage.setItem("omac-last-manifest", path);
@@ -394,6 +410,7 @@ function selectNode(key){
 async function renderDetail(key){
   // 立即用 status 中的节点信息绘制基本卡, 再通过 /api/node/{key} 拿合约与证据
   const manifest = state.current;
+  const detailGeneration = ++state.detailGeneration;
   const n = state.nodes[key];
   const dc = $("detail-content");
   $("detail-empty").classList.add("is-hidden");
@@ -412,7 +429,7 @@ async function renderDetail(key){
     '<p class="empty" id="detail-extra">'+copy("loading_evidence")+'</p>';
   try{
     const full = await api("/api/node/"+encodeURIComponent(key)+"?manifest="+encodeURIComponent(manifest));
-    if(state.selected !== key || state.current !== manifest) return;
+    if(state.detailGeneration !== detailGeneration || state.selected !== key || state.current !== manifest) return;
     const c = full.contract||{};
     const ev = full.evidence;
     $("detail-extra").outerHTML =
@@ -439,7 +456,7 @@ async function renderDetail(key){
       '<div class="copy-row"><code id="abandon-cmd">omac node abandon '+esc(state.current)+' '+esc(key)+'</code><button data-copy="abandon-cmd">'+copy("copy_abandon")+'</button></div>';
     wireCopy();
   }catch(e){
-    if(state.selected !== key || state.current !== manifest) return;
+    if(state.detailGeneration !== detailGeneration || state.selected !== key || state.current !== manifest) return;
     $("detail-extra").outerHTML = '<p class="empty">'+copy("detail_failed")+': '+esc(e.message)+'</p>';
   }
 }

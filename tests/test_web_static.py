@@ -113,6 +113,132 @@ process.stdout.write(JSON.stringify(dag.layoutDag(projection)));
     return json.loads(completed.stdout)
 
 
+def _run_app_dom_scenario(scenario: str):
+    """在最小 DOM 中运行实际 app.js，验证交互状态而不是源码文本。"""
+    app = _static_dir().joinpath("app.js")
+    projection = _static_dir().joinpath("dag-projection.js")
+    program = r"""
+const fs = require("fs");
+const vm = require("vm");
+
+class ClassList {
+  constructor(){ this.values = new Set(); }
+  add(...names){ names.forEach(name => this.values.add(name)); }
+  remove(...names){ names.forEach(name => this.values.delete(name)); }
+  contains(name){ return this.values.has(name); }
+  toggle(name, force){
+    const enabled = force === undefined ? !this.values.has(name) : !!force;
+    if(enabled) this.values.add(name); else this.values.delete(name);
+    return enabled;
+  }
+  set(value){ this.values = new Set(String(value).split(/\s+/).filter(Boolean)); }
+}
+
+class Element {
+  constructor(document, id){
+    this.ownerDocument = document; this.id = id || ""; this.children = [];
+    this.dataset = {}; this.classList = new ClassList(); this.attributes = {};
+    this.listeners = {}; this.value = ""; this.textContent = ""; this.title = "";
+    this._innerHTML = ""; this._outerHTML = "";
+  }
+  get firstChild(){ return this.children[0] || null; }
+  get innerHTML(){ return this._innerHTML; }
+  set innerHTML(value){
+    this._innerHTML = String(value); this.children = [];
+    this.ownerDocument.registerMarkup(this, this._innerHTML);
+  }
+  get outerHTML(){ return this._outerHTML || this._innerHTML; }
+  set outerHTML(value){
+    this._outerHTML = String(value); this.ownerDocument.outerHTMLWrites.push(this._outerHTML);
+  }
+  appendChild(child){ child.parentNode = this; this.children.push(child); return child; }
+  removeChild(child){ this.children.splice(this.children.indexOf(child), 1); return child; }
+  setAttribute(name, value){
+    const text = String(value); this.attributes[name] = text;
+    if(name === "class") this.classList.set(text);
+    if(name.startsWith("data-")) this.dataset[name.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = text;
+  }
+  addEventListener(name, handler){ (this.listeners[name] = this.listeners[name] || []).push(handler); }
+  querySelectorAll(selector){ return this.ownerDocument.querySelectorAllWithin(this, selector); }
+}
+
+class Document {
+  constructor(){ this.elements = {}; this.documentElement = new Element(this, "html"); this.title = ""; this.outerHTMLWrites = []; }
+  make(id){ const element = new Element(this, id); this.elements[id] = element; return element; }
+  getElementById(id){ return this.elements[id] || this.make(id); }
+  createElementNS(){ return new Element(this, ""); }
+  registerMarkup(parent, markup){
+    for(const match of String(markup).matchAll(/\bid=["']([^"']+)["']/g)){
+      const element = this.make(match[1]); element.parentNode = parent;
+    }
+  }
+  querySelectorAll(selector){ return this.querySelectorAllWithin(null, selector); }
+  querySelectorAllWithin(root, selector){
+    if(selector.includes("[data-i18n]") || selector.includes("[data-copy]") || selector.includes("footer.tabs")) return [];
+    const matches = selector.split(",").map(item => item.trim());
+    const nodes = [];
+    const visit = node => { node.children.forEach(child => { nodes.push(child); visit(child); }); };
+    if(root) visit(root); else Object.values(this.elements).forEach(node => nodes.push(node));
+    return [...new Set(nodes)].filter(node => matches.some(match =>
+      match.startsWith(".") && node.classList.contains(match.slice(1))));
+  }
+}
+
+const document = new Document();
+[
+  "theme-select", "toast", "manifest-selector", "collapse-btn", "expand-all-btn",
+  "focus-active-btn", "focus-anomaly-btn", "fit-btn", "dag-canvas", "dag-legend",
+  "detail-empty", "detail-content", "progress-badge", "poll-ts", "tick-state",
+  "anomaly-empty", "anomaly-content", "reload-static", "tab-static", "static-content",
+].forEach(id => document.make(id));
+const storage = new Map();
+const context = {
+  console, document, localStorage:{getItem:key => storage.get(key) || null, setItem:(key, value) => storage.set(key, String(value))},
+  navigator:{clipboard:{writeText:async () => {}}}, setInterval:() => 1, clearInterval:() => {},
+  setTimeout:() => 1, clearTimeout:() => {}, getComputedStyle:() => ({getPropertyValue:() => "#888"}),
+  matchMedia:() => ({matches:false, addEventListener:() => {}}),
+};
+context.window = context; context.globalThis = context;
+const jsonResponse = value => ({ok:true, headers:{get:name => name === "content-type" ? "application/json" : null}, json:async () => value, text:async () => JSON.stringify(value)});
+const deferred = () => {
+  let resolve; let reject;
+  const promise = new Promise((ok, fail) => { resolve = ok; reject = fail; });
+  return {promise, resolve, reject};
+};
+let fetchHandler = path => {
+  if(path === "/api/meta") return jsonResponse({refresh:10});
+  if(path === "/api/config") return jsonResponse({language:"en"});
+  if(path === "/api/manifests") return jsonResponse([]);
+  throw new Error("unexpected request: "+path);
+};
+context.fetch = path => fetchHandler(path);
+vm.runInNewContext(fs.readFileSync(process.argv[2], "utf8"), context, {filename:process.argv[2]});
+let source = fs.readFileSync(process.argv[1], "utf8");
+const marker = "init();\n})();";
+if(!source.includes(marker)) throw new Error("app bootstrap marker missing");
+source = source.replace(marker, "globalThis.__omacApp = {state, selectManifest, selectNode};\ninit();\n})();");
+vm.runInNewContext(source, context, {filename:process.argv[1]});
+const flush = async (rounds = 1) => { for(let index = 0; index < rounds; index++) await Promise.resolve(); };
+(async () => {
+  await flush(8);
+  const scenario = __SCENARIO__;
+  const result = await scenario({
+    app:context.__omacApp, document, elements:document.elements, setFetchHandler:handler => { fetchHandler = handler; },
+    jsonResponse, deferred, flush,
+  });
+  process.stdout.write(JSON.stringify(result));
+})().catch(error => { console.error(error.stack || error); process.exitCode = 1; });
+""".replace("__SCENARIO__", scenario)
+    completed = subprocess.run(
+        ["node", "-e", program, str(app), str(projection)],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    return json.loads(completed.stdout)
+
+
 # ----------------------- fixtures(与 test_web_api.py 同形) -----------------------
 
 @pytest.fixture
@@ -529,7 +655,122 @@ def test_spa_closes_selection_and_detail_after_every_dag_redraw():
         js,
         re.DOTALL,
     )
-    assert "if(state.selected !== key || state.current !== manifest) return;" in js
+
+
+def test_manifest_switch_clears_old_dom_surfaces_before_the_new_request_fails():
+    """新 manifest 请求失败时，旧 SVG、面板、进度和详情也必须保持清空。"""
+    result = _run_app_dom_scenario(r"""
+async ({app, document, elements, setFetchHandler, jsonResponse, deferred, flush}) => {
+  const status = {
+    nodes:[{key:"task", status:"failed", blocked_by:[]}],
+    progress:{done:0, total:1},
+    needs_decision:{failed_nodes:[{key:"task", status:"failed", reason:"old anomaly"}]},
+  };
+  let pending;
+  setFetchHandler(path => {
+    if(path.includes("/api/dag/status?manifest=one")) return jsonResponse(status);
+    if(path.includes("/api/node/task?manifest=one")) return jsonResponse({
+      contract:{}, evidence:null, rollback_count:0, comments:"old detail",
+    });
+    if(path.includes("/api/dag/status?manifest=two")) {
+      pending = deferred(); return pending.promise;
+    }
+    throw new Error("unexpected request: "+path);
+  });
+  await app.selectManifest("one");
+  app.selectNode("task");
+  await flush(8);
+  elements["tick-state"].textContent = "old tick";
+  const before = {
+    svg:elements["dag-canvas"].children.length,
+    legend:elements["dag-legend"].innerHTML,
+    anomaly:elements["anomaly-content"].innerHTML,
+    progress:elements["progress-badge"].textContent,
+    detail:elements["detail-content"].innerHTML,
+  };
+  const request = app.selectManifest("two");
+  await flush();
+  const immediate = {
+    svg:elements["dag-canvas"].children.length,
+    legend:elements["dag-legend"].innerHTML,
+    anomaly:elements["anomaly-content"].innerHTML,
+    anomalyEmpty:elements["anomaly-empty"].classList.contains("is-hidden"),
+    progressVisible:!elements["progress-badge"].classList.contains("is-hidden"),
+    progress:elements["progress-badge"].textContent,
+    poll:elements["poll-ts"].textContent,
+    tick:elements["tick-state"].textContent,
+    detail:elements["detail-content"].innerHTML,
+    detailEmpty:elements["detail-empty"].classList.contains("is-hidden"),
+    statusIsNull:app.state.status === null,
+    nodeCount:Object.keys(app.state.nodes).length,
+    selected:app.state.selected,
+  };
+  pending.reject(new Error("two unavailable"));
+  await request;
+  await flush(4);
+  return {before, immediate, afterFailure:{
+    svg:elements["dag-canvas"].children.length,
+    legend:elements["dag-legend"].innerHTML,
+    anomaly:elements["anomaly-content"].innerHTML,
+    progressVisible:!elements["progress-badge"].classList.contains("is-hidden"),
+    detail:elements["detail-content"].innerHTML,
+    statusIsNull:app.state.status === null,
+  }};
+}
+""")
+
+    assert result["before"]["svg"] > 0
+    assert result["before"]["legend"]
+    assert result["before"]["anomaly"]
+    assert result["before"]["progress"]
+    assert result["before"]["detail"]
+    assert result["immediate"] == {
+        "svg": 0, "legend": "", "anomaly": "", "anomalyEmpty": False,
+        "progressVisible": False, "progress": "", "poll": "—", "tick": "—",
+        "detail": "", "detailEmpty": False, "statusIsNull": True,
+        "nodeCount": 0, "selected": None,
+    }
+    assert result["afterFailure"] == {
+        "svg": 0, "legend": "", "anomaly": "", "progressVisible": False,
+        "detail": "", "statusIsNull": True,
+    }
+
+
+def test_newest_detail_request_wins_after_same_node_is_deselected_and_reselected():
+    """同节点重选后，先发出的详情响应不得覆盖最后一次选择的 DOM。"""
+    result = _run_app_dom_scenario(r"""
+async ({app, elements, setFetchHandler, jsonResponse, deferred, flush}) => {
+  const requests = [];
+  setFetchHandler(path => {
+    if(path.includes("/api/dag/status?manifest=one")) return jsonResponse({
+      nodes:[{key:"task", status:"todo", blocked_by:[]}], progress:{done:0, total:1},
+    });
+    if(path.includes("/api/node/task?manifest=one")) {
+      const request = deferred(); requests.push(request); return request.promise;
+    }
+    throw new Error("unexpected request: "+path);
+  });
+  await app.selectManifest("one");
+  app.selectNode("task");
+  await flush(2);
+  app.selectNode("task");
+  app.selectNode("task");
+  await flush(2);
+  requests[1].resolve(jsonResponse({
+    contract:{objective:"newest detail"}, evidence:null, rollback_count:0, comments:"",
+  }));
+  await flush(8);
+  requests[0].resolve(jsonResponse({
+    contract:{objective:"stale detail"}, evidence:null, rollback_count:0, comments:"",
+  }));
+  await flush(8);
+  return {selected:app.state.selected, detailWrites:document.outerHTMLWrites};
+}
+""")
+
+    assert result["selected"] == "task"
+    assert "newest detail" in result["detailWrites"][-1]
+    assert "stale detail" not in result["detailWrites"][-1]
 
 
 def test_spacer_layout_is_shared_by_header_toolbar_and_footer():
