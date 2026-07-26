@@ -22,6 +22,7 @@ from ..core.machine_feedback import (
     build_machine_feedback, machine_feedback_summary,
 )
 from ..core.review_convergence import build_review_obligations
+from ..core.review_continuation import authorized_review_limit
 from ..core.review_preflight import run_review_preflight
 from ..core.taskmeta import DELIVERY_CONTENT_KEY, TaskKind, TaskPhase, make_dag_key
 from ..engines.models import WorkItem, WorkItemStatus
@@ -123,6 +124,58 @@ def _review_opinion(item: WorkItem) -> Optional[str]:
     if isinstance(blockers, list) and blockers:
         return "\n".join(str(blocker) for blocker in blockers)
     return None
+
+
+def _review_continuation_action(item: WorkItem) -> Optional[str]:
+    if item.kind not in {
+        TaskKind.PLAN, TaskKind.ACCEPTANCE, TaskKind.DECOMPOSE,
+    }:
+        return None
+    return f"omac plan continue-review --dag-key {item.dag_key}"
+
+
+def _rejected_verdict_was_counted(kind: TaskKind, item: WorkItem) -> bool:
+    round_index = max(0, item.bounces.review)
+    return (
+        item.review_verdict == "reject"
+        and round_index > 0
+        and item.review_subject_digest
+        == _review_subject_digest(kind, item, round_index)
+    )
+
+
+def _review_exhausted_error(
+    kind: TaskKind,
+    item: WorkItem,
+    rounds: int,
+    last_opinion: Optional[str],
+) -> NeedsDecision:
+    action = _review_continuation_action(item)
+    instruction = (
+        f" Run `{action}` to authorize exactly one additional review round, "
+        "then run plan resume."
+        if action else ""
+    )
+    instruction_zh = (
+        f" 运行 `{action}` 明确授权额外一轮 review，然后再运行 plan resume。"
+        if action else ""
+    )
+    report = {
+        "item_id": item.id,
+        "kind": kind.value,
+        "rounds": rounds,
+        "last_opinion": last_opinion,
+    }
+    if action:
+        report["next_action"] = action
+    return NeedsDecision(
+        ui(
+            f"{kind.value} did not pass review after {rounds} revisions."
+            f"{instruction}",
+            f"{kind.value} 任务在 {rounds} 轮修订后仍未通过评审。"
+            f"{instruction_zh}"),
+        report=report,
+    )
 
 
 def _review_subject_digest(
@@ -426,18 +479,21 @@ def run_task(
         if hint is None and _produced(current):
             return current
         if hint:
-            feedback = build_machine_feedback("machine-gate", hint)
-            store.update_work_item_metadata(
-                item_id,
-                machine_feedback=feedback,
-                review_comment=machine_feedback_summary(item_id, feedback),
-            )
+            _persist_machine_feedback(hint)
         store.mark_in_progress(item_id)
         store.assign_work_item(item_id, assignee, "worker")
         runtime.wake(item_id, assignee, "worker")
         produced = _poll_until(store, item_id, _produced, poll)
         _raise_if_authoring_stopped(produced)
         return produced
+
+    def _persist_machine_feedback(errors: List[str]) -> None:
+        feedback = build_machine_feedback("machine-gate", errors)
+        store.update_work_item_metadata(
+            item_id,
+            machine_feedback=feedback,
+            review_comment=machine_feedback_summary(item_id, feedback),
+        )
 
     log.info(logsetup.EVT_DISPATCH, kind=kind.value, id=item_id, worker=assignee)
     delivered = _produce()
@@ -451,6 +507,17 @@ def run_task(
         return {"item_id": item_id, "delivery": delivery,
                 "rounds": 0, "verdict": delivered.review_verdict,
                 "kind": kind.value}
+
+    initial_review_limit = authorized_review_limit(delivered, max_revisions)
+    if (
+        reviewers
+        and _rejected_verdict_was_counted(kind, delivered)
+        and delivered.bounces.review < initial_review_limit
+    ):
+        store.reset_review(item_id)
+        store.update_status(item_id, WorkItemStatus.TODO)
+        delivered = _produce()
+        delivery = _delivery_of(kind, delivered)
 
     # 机器门(零 reviewer token):阶段 guard + 通用 review preflight。
     # 所有可确定判断先回给产出者，Reviewer 只消费通过后的语义问题。
@@ -469,6 +536,9 @@ def run_task(
         else:
             log.info(logsetup.EVT_NEEDS_DECISION, kind=kind.value, id=item_id,
                      gate="guard", rounds=max_revisions)
+            # Producer submit 会按真实协议清除已消费的 feedback。预算耗尽
+            # 后必须把 exit 20 的完整问题重新持久化，供 operator/Author 读取。
+            _persist_machine_feedback(guard_errors)
             raise NeedsDecision(
                 ui(
                     f"{kind.value} did not pass the machine gate after {max_revisions} revisions",
@@ -523,7 +593,7 @@ def run_task(
                     delivery, prepare_confirmation=False)
             log.info(logsetup.EVT_REVISION, kind=kind.value, id=item_id,
                      gate="review-evidence", round=confirmation_round,
-                     max=max_revisions)
+                     max=authorized_review_limit(delivered, max_revisions))
             delivered = _restart_invalid_review(
                 store, item_id, current_subject, evidence_errors)
         else:
@@ -539,19 +609,15 @@ def run_task(
     # review_bounce 是已经发生的评审回退次数。它必须跨进程持久化，
     # 否则 plan resume 会重置预算并让有界循环变成事实上的无限循环。
     review_bounce = max(0, delivered.bounces.review)
+    review_limit = authorized_review_limit(delivered, max_revisions)
     last_opinion = _review_opinion(delivered)
-    if review_bounce >= max_revisions:
+    if review_bounce >= review_limit:
         log.info(logsetup.EVT_NEEDS_DECISION, kind=kind.value, id=item_id,
                  gate="review", rounds=review_bounce)
-        raise NeedsDecision(
-            ui(
-                f"{kind.value} did not pass review after {review_bounce} revisions",
-                f"{kind.value} 任务在 {review_bounce} 轮修订后仍未通过评审"),
-            report={"item_id": item_id, "kind": kind.value,
-                    "rounds": review_bounce,
-                    "last_opinion": last_opinion})
+        raise _review_exhausted_error(
+            kind, delivered, review_bounce, last_opinion)
 
-    for round_index in range(review_bounce + 1, max_revisions + 1):
+    for round_index in range(review_bounce + 1, review_limit + 1):
         reviewer = _pick_reviewer(reviewers, assignee, round_index - 1)
         subject_digest = _review_subject_digest(kind, delivered, round_index)
         current = store.get_work_item(item_id)
@@ -568,7 +634,7 @@ def run_task(
                     break
                 log.info(logsetup.EVT_REVISION, kind=kind.value, id=item_id,
                          gate="review-evidence", round=round_index,
-                         max=max_revisions)
+                         max=review_limit)
                 reviewed = _restart_invalid_review(
                     store, item_id, subject_digest, evidence_errors)
 
@@ -588,7 +654,7 @@ def run_task(
 
         if verdict == "pass-with-nits":
             log.info(logsetup.EVT_REVISION, kind=kind.value, id=item_id,
-                     gate="review-nits", round=round_index, max=max_revisions)
+                     gate="review-nits", round=round_index, max=review_limit)
             store.update_work_item_metadata(
                 item_id, phase=TaskPhase.AUTHORING,
                 review_comment="", machine_feedback={},
@@ -596,17 +662,12 @@ def run_task(
             store.update_status(item_id, WorkItemStatus.TODO)
             delivered = _produce()
             delivery = _delivery_of(kind, delivered)
-            if round_index >= max_revisions:
+            if round_index >= review_limit:
                 log.info(logsetup.EVT_NEEDS_DECISION, kind=kind.value,
                          id=item_id, gate="review-nits",
                          rounds=round_index)
-                raise NeedsDecision(
-                    ui(
-                        f"{kind.value} changed after the final review round",
-                        f"{kind.value} 在最后一轮评审后仍产生了新交付"),
-                    report={"item_id": item_id, "kind": kind.value,
-                            "rounds": round_index,
-                            "last_opinion": _review_opinion(reviewed)})
+                raise _review_exhausted_error(
+                    kind, delivered, round_index, _review_opinion(reviewed))
 
             # 产出者重新提交后，无论改动大小，最终交付都必须重新评审。
             # 下一轮 prepare_review_cycle 会用新交付 digest 清除旧 verdict。
@@ -616,19 +677,14 @@ def run_task(
         # 返工上下文由下一轮 agent 通过 work show 读取,不写评论以免触发额外 run。
         last_opinion = _review_opinion(reviewed)
         log.info(logsetup.EVT_REVISION, kind=kind.value, id=item_id,
-                 gate="review", round=round_index, max=max_revisions)
+                 gate="review", round=round_index, max=review_limit)
         store.update_work_item_metadata(
             item_id, review_bounce=round_index)
-        if round_index >= max_revisions:
+        if round_index >= review_limit:
             log.info(logsetup.EVT_NEEDS_DECISION, kind=kind.value, id=item_id,
                      gate="review", rounds=round_index)
-            raise NeedsDecision(
-                ui(
-                    f"{kind.value} did not pass review after {round_index} revisions",
-                    f"{kind.value} 任务在 {round_index} 轮修订后仍未通过评审"),
-                report={"item_id": item_id, "kind": kind.value,
-                        "rounds": round_index,
-                        "last_opinion": last_opinion})
+            raise _review_exhausted_error(
+                kind, reviewed, round_index, last_opinion)
         store.reset_review(item_id)
         store.update_status(item_id, WorkItemStatus.TODO)
         delivered = _produce()

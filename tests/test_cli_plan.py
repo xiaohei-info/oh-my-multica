@@ -6,6 +6,7 @@ MOCK_AUTO_COMPLETE_DELAY=0 让评审在首轮 wake 即收敛,避免真实等待�
 from __future__ import annotations
 
 import json
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -15,6 +16,7 @@ from omac.cli import exit_codes
 from omac.cli.main import main
 from omac.engines import create_engine
 from omac.engines.mock import MockStore
+from omac.engines.mock import MockRuntime
 from omac.engines.models import EngineConfig, WorkItemStatus
 
 
@@ -877,6 +879,162 @@ def test_plan_confirm_no_waiting_issue_is_validation_error(tmp_path, monkeypatch
     """没有待确认的 issue 时 confirm 报校验错(exit 5),提示无可放行对象。"""
     _configure_create_mock(tmp_path, monkeypatch)
     assert main(["plan", "confirm", "--name", "nonexistent"]) == exit_codes.VALIDATION
+
+
+def _create_exhausted_decompose_issue(engine, *, verdict="reject", bounce=8):
+    from omac.core.taskmeta import TaskKind, TaskPhase
+
+    item = engine.store.create_work_item(
+        "mock-workspace",
+        "decompose review",
+        "desc",
+        dag_key="decompose-p-continue01",
+        worker="alice",
+        reviewer="bob",
+        kind=TaskKind.DECOMPOSE,
+        initial_status=WorkItemStatus.IN_REVIEW,
+    )
+    engine.store.update_work_item_metadata(
+        item.id,
+        phase=TaskPhase.REVIEW,
+        deliverable="meta:\n  name: continue\nnodes: []\n",
+        review_verdict=verdict or "",
+        review_comment="budget exhausted",
+        review_bounce=bounce,
+    )
+    return engine.store.get_work_item(item.id)
+
+
+def test_plan_continue_review_persists_one_round_without_git_revision_change(
+        tmp_path, monkeypatch, capsys):
+    engine = _configure_mock(tmp_path, monkeypatch, reviewers=("bob",))
+    item = _create_exhausted_decompose_issue(engine)
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", ".omac/config.yaml"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-qm", "baseline"], cwd=tmp_path, check=True)
+    head_before = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=tmp_path, text=True).strip()
+    config_before = (tmp_path / ".omac" / "config.yaml").read_bytes()
+
+    assert main([
+        "plan", "continue-review",
+        "--dag-key", item.dag_key,
+        "--reason", "approved after operator review",
+    ]) == exit_codes.OK
+
+    head_after = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=tmp_path, text=True).strip()
+    got = engine.store.get_work_item(item.id)
+    assert head_after == head_before
+    assert (tmp_path / ".omac" / "config.yaml").read_bytes() == config_before
+    assert subprocess.check_output(
+        ["git", "status", "--porcelain"], cwd=tmp_path, text=True) == ""
+    assert got.phase.value == "authoring"
+    assert got.status == WorkItemStatus.TODO
+    assert got.bounces.review == 8
+    assert got.review_continuation == {
+        "schema": "omac.review-continuation/v1",
+        "stage": "decompose",
+        "mode": "producer-rework",
+        "authorized_through_round": 9,
+        "decision_count": 1,
+        "reason": "approved after operator review",
+    }
+    assert "omac plan resume --plan-id p-continue01" in capsys.readouterr().err
+
+
+def test_plan_continue_review_preserves_final_nits_delivery_for_reviewer(
+        tmp_path, monkeypatch):
+    engine = _configure_mock(tmp_path, monkeypatch, reviewers=("bob",))
+    item = _create_exhausted_decompose_issue(engine, verdict=None)
+    delivery_before = item.deliverable
+
+    assert main([
+        "plan", "continue-review", "--dag-key", item.dag_key,
+    ]) == exit_codes.OK
+
+    got = engine.store.get_work_item(item.id)
+    assert got.phase.value == "review"
+    assert got.status == WorkItemStatus.IN_REVIEW
+    assert got.deliverable == delivery_before
+    assert got.review_continuation["mode"] == "review-only"
+    assert got.review_continuation["authorized_through_round"] == 9
+
+
+def test_plan_continue_review_supports_plan_id_and_stage_selector(
+        tmp_path, monkeypatch):
+    from omac.core.taskmeta import TaskKind, TaskPhase
+
+    engine = _configure_mock(tmp_path, monkeypatch, reviewers=("bob",))
+    item = engine.store.create_work_item(
+        "mock-workspace",
+        "design review",
+        "desc",
+        dag_key="plan-p-continue02",
+        worker="alice",
+        reviewer="bob",
+        kind=TaskKind.PLAN,
+        initial_status=WorkItemStatus.IN_REVIEW,
+    )
+    engine.store.update_work_item_metadata(
+        item.id,
+        phase=TaskPhase.REVIEW,
+        deliverable="# revised design",
+        project_rules="# project rules",
+        review_verdict="reject",
+        review_bounce=8,
+    )
+
+    assert main([
+        "plan", "continue-review",
+        "--plan-id", "p-continue02",
+        "--stage", "plan",
+    ]) == exit_codes.OK
+
+    got = engine.store.get_work_item(item.id)
+    assert got.phase == TaskPhase.AUTHORING
+    assert got.status == WorkItemStatus.TODO
+    assert got.review_continuation["stage"] == "plan"
+    assert got.review_continuation["authorized_through_round"] == 9
+
+
+def test_plan_continue_review_does_not_stack_unconsumed_budget(
+        tmp_path, monkeypatch):
+    engine = _configure_mock(tmp_path, monkeypatch, reviewers=("bob",))
+    item = _create_exhausted_decompose_issue(engine)
+
+    assert main([
+        "plan", "continue-review", "--dag-key", item.dag_key,
+    ]) == exit_codes.OK
+    assert main([
+        "plan", "continue-review", "--dag-key", item.dag_key,
+    ]) == exit_codes.VALIDATION
+    got = engine.store.get_work_item(item.id)
+    assert got.review_continuation["authorized_through_round"] == 9
+    assert got.review_continuation["decision_count"] == 1
+
+
+def test_plan_continue_review_refuses_active_agent_without_cancelling(
+        tmp_path, monkeypatch):
+    engine = _configure_mock(tmp_path, monkeypatch, reviewers=("bob",))
+    item = _create_exhausted_decompose_issue(engine)
+    engine.store.assign_work_item(item.id, "bob", "reviewer")
+    monkeypatch.setenv("MOCK_AUTO_COMPLETE", "false")
+
+    def fail_cancel(self, item_id):
+        pytest.fail("continue-review must never cancel an active Agent")
+
+    monkeypatch.setattr(MockRuntime, "cancel", fail_cancel)
+
+    assert main([
+        "plan", "continue-review", "--dag-key", item.dag_key,
+    ]) == exit_codes.VALIDATION
+    got = engine.store.get_work_item(item.id)
+    assert got.phase.value == "review"
+    assert got.review_verdict == "reject"
+    assert getattr(got, "review_continuation", None) is None
 
 
 def test_create_no_review_skips_review_stages(tmp_path, monkeypatch):

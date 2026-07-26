@@ -71,6 +71,9 @@ Controller Agent 应直接执行这条下一步命令，让 `dag run` 接管开�
   `omac work show <issue-id> --output json` 入口读取 `context.machine_feedback`。
 - 每轮 review 都有有限 `review_obligations`；Reviewer 必须逐项给结论。跨轮 blocker 写入 review ledger，以稳定根因区分 fixed、unchanged、deeper、regressed 和 new。
 - 连续出现新 blocker 或已关闭 blocker 回归时，`review_state` 自动进入 `convergence-audit`，要求根因级整链修复，而不是无限普通 bounce。
+- plan / acceptance / decompose 的 review 预算耗尽后，Human 可用
+  `omac plan continue-review --dag-key <stage-key>` 明确授权一轮。授权作为平台 work item
+  的 `review_continuation` 持久化，不修改项目内 `retry.review`，跨进程 `plan resume` 仍有效。
 - 状态同时落在 manifest 与平台 work item 中；重跑 `dag run` 会复用已完成节点并续跑。
 
 ## 监督边界

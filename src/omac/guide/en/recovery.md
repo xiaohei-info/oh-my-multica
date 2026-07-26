@@ -27,6 +27,32 @@ structured stdout report is the current recovery fact.
 4. Re-run `omac dag run <manifest>`. Completed nodes are reused; the remainder
    continues from current state.
 
+## Continuing an exhausted plan-stage review
+
+When `omac plan create/resume` returns exit 20 because plan, acceptance, or
+decompose review rounds are exhausted, read `item_id`, `rounds`, `last_opinion`,
+and `next_action`. A Human or authorized operator can then grant exactly one
+additional round:
+
+```bash
+omac plan continue-review --dag-key decompose-p-xxxx \
+  --reason "Human approved one additional review round"
+omac plan resume --plan-id p-xxxx
+```
+
+- `continue-review` stores a small `review_continuation` decision on the same
+  work item. It increases the absolute limit by one, never resets
+  `review_bounce`, and refuses to stack another decision before the current one
+  is consumed.
+- An exhausted reject is restored through OMAC `reset_review` and todo status so
+  the producer revises first. A final pass-with-nits delivery that was already
+  revised proceeds directly to its next Reviewer round.
+- The command does not modify `.omac/config.yaml` or `retry.review`, so a
+  one-off operator decision cannot change the reviewed Git revision.
+  `retry.review` remains the default budget for new work and legacy automation.
+- The command performs a read-only active Agent check. If a run is active it
+  refuses the decision and never cancels that run automatically.
+
 ## Choosing an action
 
 | Signal | Inspect first | Usual action |
@@ -118,3 +144,5 @@ nodes:
 - Do not bypass failure isolation to advance a blocked node.
 - Do not accept or abandon from guesses before reading instance facts and evidence.
 - Do not report exit 20 as success.
+- Do not change `retry.review` merely to continue one exhausted plan review and
+  thereby change the reviewed revision; use `omac plan continue-review`.

@@ -10,7 +10,11 @@ from ...errors import ValidationError
 from ...i18n import resolve_language, ui
 from .. import exit_codes
 from ..output import hint
-from ...pipeline.plan import PlanContext, plan_create, plan_dag_key_from_id, plan_resume
+from ...pipeline.plan import (
+    PlanContext, plan_continue_review, plan_create, plan_dag_key_from_id,
+    plan_resume,
+)
+from ..output import print_json
 
 def resolve_review_rounds(cfg: dict | None = None) -> int:
     """plan 流水线评审修订轮次上界,与 dag run 节点评审共用 config.retry.review。
@@ -90,6 +94,22 @@ def register(parser):
         help="跳过设计/验收的人机确认门(默认开启,需人工把 issue 流转到 DONE 放行)")
     resume.add_argument("--engine", help="引擎类型,缺省按 config.yaml / 环境变量")
     resume.add_argument("--workspace", help="工作空间 id,缺省按 config.yaml / 环境变量")
+
+    continue_review = sub.add_parser(
+        "continue-review",
+        help="人工授权同一 plan stage 额外一轮 review，不修改项目 config")
+    selector = continue_review.add_mutually_exclusive_group(required=True)
+    selector.add_argument("--dag-key", help="精确 stage DAG key,如 decompose-p-xxxx")
+    selector.add_argument("--plan-id", help="plan 流水线唯一 ID,如 p-xxxx")
+    continue_review.add_argument(
+        "--stage", choices=("plan", "acceptance", "decompose"),
+        help="使用 --plan-id 时必填；指定需要继续的 stage")
+    continue_review.add_argument(
+        "--issue-id", help="精确指定 stage issue，绕过项目级列表查询")
+    continue_review.add_argument(
+        "--reason", help="记录本次人工授权原因；不写入项目文件")
+    continue_review.add_argument("--engine", help="引擎类型,缺省按 config.yaml / 环境变量")
+    continue_review.add_argument("--workspace", help="工作空间 id,缺省按 config.yaml / 环境变量")
 
 
 def _resolve_engine(args):
@@ -268,6 +288,27 @@ def _resume(args) -> int:
     )
 
 
+def _continue_review(args) -> int:
+    cfg = config_mod.load_config()
+    engine = _resolve_engine(args)
+    result = plan_continue_review(
+        engine,
+        resolve_review_rounds(cfg),
+        dag_key=args.dag_key,
+        plan_id=args.plan_id,
+        stage=args.stage,
+        issue_id=args.issue_id,
+        reason=args.reason,
+    )
+    print_json({"ok": True, **result})
+    hint(ui(
+        f"Review continuation authorized through round "
+        f"{result['authorized_through_round']}. Run `{result['next_action']}`.",
+        f"已授权 review 至 round {result['authorized_through_round']}。"
+        f"运行 `{result['next_action']}` 继续。"))
+    return exit_codes.OK
+
+
 def run(args) -> int:
     if args.action == "create":
         return _create(args)
@@ -275,6 +316,8 @@ def run(args) -> int:
         return _confirm(args)
     if args.action == "resume":
         return _resume(args)
+    if args.action == "continue-review":
+        return _continue_review(args)
     raise ValidationError(ui(
         f"Unknown plan subcommand: {args.action}",
         f"未知 plan 子命令:{args.action}"))

@@ -32,6 +32,10 @@ class AgentRuntime(ABC):
         """取消该工作单元当前仍活跃的 Agent run；没有活跃 run 时返回 False。"""
 
     @abstractmethod
+    def is_active(self, item_id: str) -> bool:
+        """只读判断该工作单元是否仍有活跃 Agent run，不得产生取消副作用。"""
+
+    @abstractmethod
     def list_targets(self) -> List[RuntimeTarget]:
         """列出用户创建 Agent 时可选择的运行时目标。"""
 

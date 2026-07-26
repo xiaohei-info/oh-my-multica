@@ -95,6 +95,10 @@ For a dispatched task, do not pre-read every guide. Read `guide_refs` from
 - Repeated new blockers or a regression switches `review_state` to
   `convergence-audit`, requiring root-cause closure instead of unlimited normal
   bounce cycles.
+- After plan, acceptance, or decompose review budget is exhausted, a Human can
+  authorize one round with `omac plan continue-review --dag-key <stage-key>`.
+  The `review_continuation` decision is persisted on the platform work item,
+  does not modify project `retry.review`, and survives a later process resume.
 - State exists in both the manifest and the platform work item. Re-running
   `dag run` reuses completed nodes and continues from current state.
 

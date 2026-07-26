@@ -293,6 +293,9 @@ def build_show_output(item: Any, identity: str, *, language: str = EN) -> Dict[s
         machine_feedback_ref = getattr(item, "machine_feedback_ref", None)
         if machine_feedback_ref is not None:
             context["machine_feedback_ref"] = machine_feedback_ref
+    review_continuation = getattr(item, "review_continuation", None)
+    if review_continuation is not None:
+        context["review_continuation"] = review_continuation
 
     if phase == TaskPhase.AUTHORING:
         previous_review = _previous_review_context(item)
