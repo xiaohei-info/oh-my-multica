@@ -73,6 +73,7 @@ def _env(tmp_path: Path, *, log_file: str | None = None,
         "OMAC_WORKSPACE_ID": "mock-workspace",
         "MOCK_AUTO_COMPLETE": "true",
         "MOCK_AUTO_COMPLETE_DELAY": "0",
+        "MOCK_AUTO_MERGE_ON_SUCCESS": "true",
         "PYTHONPATH": str(SRC_DIR),
     })
     if log_file is not None:

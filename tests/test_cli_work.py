@@ -12,7 +12,9 @@ from omac.cli import exit_codes
 from omac.core.manifest import Contract, Manifest, Node, save_manifest
 from omac.core.taskmeta import TaskKind, TaskPhase
 from omac.engines import create_engine
-from omac.engines.models import EngineConfig, WorkItemStatus
+from omac.engines.models import (
+    EngineConfig, PullRequestReadiness, PullRequestReadinessFailure, WorkItemStatus,
+)
 from omac.errors import ValidationError
 from omac.pipeline import dispatch as dispatch_mod
 from omac.pipeline.dispatch import (
@@ -797,8 +799,7 @@ class TestSubmitPerKindPhase:
         store = eng.store
         monkeypatch.setattr(
             store, "read_pull_request_readiness",
-            lambda pr_url: SimpleNamespace(
-                is_draft=True, state="OPEN", failure=None, detail=""),
+            lambda pr_url: PullRequestReadiness(is_draft=True, state="OPEN"),
         )
 
         with pytest.raises(ValidationError) as exc:
@@ -814,6 +815,27 @@ class TestSubmitPerKindPhase:
         assert got.verification is None
         assert got.status == WorkItemStatus.TODO
 
+    def test_develop_authoring_rejects_unknown_readiness_result(self, tmp_path, monkeypatch):
+        eng = _engine()
+        item = eng.store.create_work_item(
+            "mock-workspace", "t", "d", dag_key="a", worker="alice",
+            kind=dispatch_mod.TaskKind.DEVELOP,
+        )
+        eng.store.set_node_contract(item.id, CONTRACT)
+        vfile = tmp_path / "verification.yaml"
+        vfile.write_text(yaml.safe_dump(_make_verification()))
+        monkeypatch.setattr(
+            eng.store, "read_pull_request_readiness",
+            lambda pr_url: PullRequestReadinessFailure("unknown", "bad"),
+        )
+
+        with pytest.raises(ValidationError, match="readiness"):
+            dispatch_mod.submit(
+                eng.store, item.id,
+                pr_url="https://github.com/acme/snake/pull/1",
+                verification_file=str(vfile),
+            )
+
     def test_develop_authoring_accepts_ready_pr_without_multica_issue_key(self, tmp_path, monkeypatch):
         eng = _engine()
         item = eng.store.create_work_item(
@@ -827,8 +849,7 @@ class TestSubmitPerKindPhase:
 
         monkeypatch.setattr(
             eng.store, "read_pull_request_readiness",
-            lambda pr_url: SimpleNamespace(
-                is_draft=False, state="OPEN", failure=None, detail=""),
+            lambda pr_url: PullRequestReadiness(is_draft=False, state="OPEN"),
         )
 
         result = dispatch_mod.submit(
@@ -851,8 +872,7 @@ class TestSubmitPerKindPhase:
 
         monkeypatch.setattr(
             eng.store, "read_pull_request_readiness",
-            lambda pr_url: SimpleNamespace(
-                is_draft=False, state="OPEN", failure=None, detail=""),
+            lambda pr_url: PullRequestReadiness(is_draft=False, state="OPEN"),
         )
 
         result = dispatch_mod.submit(

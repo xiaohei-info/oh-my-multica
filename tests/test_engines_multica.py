@@ -7,7 +7,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from omac.engines.models import EngineConfig, PullRequestState
+from omac.engines.models import (
+    EngineConfig, PullRequestReadinessFailure, PullRequestState,
+)
 from omac.engines.models import WorkItemStatus
 from omac.engines.multica import MulticaRuntime, MulticaStore
 from omac.errors import PlatformError
@@ -1358,3 +1360,21 @@ def test_multica_pr_check_and_readiness_stay_in_adapter(monkeypatch):
     assert readiness.state == "OPEN"
     assert calls[0][0] == "gh pr checks https://github.com/acme/repo/pull/1"
     assert calls[1][0][-1] == "isDraft,state"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [None, {}, {"isDraft": None, "state": "OPEN"}, {"isDraft": False},
+     {"isDraft": "false", "state": "OPEN"}],
+)
+def test_multica_readiness_malformed_payload_fails_closed(monkeypatch, payload):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    monkeypatch.setattr(
+        "omac.engines.multica.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0, stdout=json.dumps(payload), stderr=""),
+    )
+
+    result = store.read_pull_request_readiness("https://github.com/acme/repo/pull/1")
+
+    assert isinstance(result, PullRequestReadinessFailure)

@@ -53,7 +53,10 @@ def _default_gh_merge_succeeds_in_dispatch_tests(monkeypatch):
 
 
 def _config(**extra):
-    base = {"MOCK_AUTO_COMPLETE": "true", "MOCK_AUTO_COMPLETE_DELAY": "0"}
+    base = {
+        "MOCK_AUTO_COMPLETE": "true", "MOCK_AUTO_COMPLETE_DELAY": "0",
+        "MOCK_AUTO_MERGE_ON_SUCCESS": "true",
+    }
     base.update(extra)
     return EngineConfig(engine_type="mock", workspace_id="ws", extra=base)
 

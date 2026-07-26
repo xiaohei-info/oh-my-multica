@@ -3,7 +3,9 @@ import pytest
 
 from omac.core.manifest import Contract
 from omac.engines import Engine, create_engine
-from omac.engines.models import AgentProvisionSpec, EngineConfig, WorkItemStatus
+from omac.engines.models import (
+    AgentProvisionSpec, EngineConfig, PullRequestState, WorkItemStatus,
+)
 from omac.engines.mock import MockRuntime, MockStore
 from omac.errors import ValidationError
 
@@ -166,3 +168,40 @@ def test_list_members_and_comments():
     item = store.create_work_item("ws", "t", "d", dag_key="a", worker="alice")
     store.add_comment(item.id, "hello")
     assert store.get_comments(item.id) == ["hello"]
+
+
+def test_failed_merge_or_check_is_not_synthesized_as_success(monkeypatch):
+    store = _engine(MOCK_AUTO_MERGE_ON_SUCCESS="false").store
+
+    class Proc:
+        returncode = 1
+        stdout = ""
+        stderr = "failed"
+
+    monkeypatch.setattr("omac.engines.mock.subprocess.run", lambda *args, **kwargs: Proc())
+
+    merge = store.request_pull_request_merge(
+        "https://mock.example.com/pr/1", "gh pr merge {pr_url}", 30)
+    check = store.check_pull_request(
+        "https://mock.example.com/pr/1", "gh pr checks {pr_url}", 30)
+
+    assert merge.succeeded is False
+    assert check.succeeded is False
+    assert store.observe_pull_request("https://mock.example.com/pr/1").state is PullRequestState.OPEN
+
+
+def test_mock_merge_requires_explicit_auto_merge_configuration(monkeypatch):
+    class Proc:
+        returncode = 0
+        stdout = "ok"
+        stderr = ""
+
+    monkeypatch.setattr("omac.engines.mock.subprocess.run", lambda *args, **kwargs: Proc())
+    pr_url = "https://mock.example.com/pr/1"
+    plain = _engine(MOCK_AUTO_MERGE_ON_SUCCESS="false").store
+
+    assert plain.request_pull_request_merge(pr_url, "true", 30).succeeded is True
+    assert plain.observe_pull_request(pr_url).state is PullRequestState.OPEN
+    configured = _engine(MOCK_AUTO_MERGE_ON_SUCCESS="true").store
+    assert configured.request_pull_request_merge(pr_url, "true", 30).succeeded is True
+    assert configured.observe_pull_request(pr_url).state is PullRequestState.MERGED

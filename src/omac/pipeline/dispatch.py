@@ -28,7 +28,10 @@ from omac.core.review_convergence import (
     review_state,
 )
 from omac.core.taskmeta import TaskKind, TaskPhase
-from omac.engines.models import WorkItem, WorkItemStatus
+from omac.engines.models import (
+    PullRequestReadiness, PullRequestReadinessFailure,
+    PullRequestReadinessFailureKind, WorkItem, WorkItemStatus,
+)
 from omac.engines.store import WorkItemStore
 from omac.errors import ValidationError
 from omac.i18n import CN, EN, t, ui
@@ -621,22 +624,32 @@ def _validate_pr_ready_for_handoff(store: WorkItemStore, pr_url: str) -> None:
     if not _is_github_pr_url(pr_url):
         return
     readiness = store.read_pull_request_readiness(pr_url)
-    if readiness.failure == "missing_cli":
+    if isinstance(readiness, PullRequestReadinessFailure):
+        if readiness.category == PullRequestReadinessFailureKind.MISSING_CLI:
+            raise ValidationError(ui(
+                "GitHub PR readiness checks require gh CLI. Install it, sign in, and retry: "
+                "brew install gh && gh auth login",
+                "GitHub PR ready 检查需要 gh CLI。请安装并登录后重试: "
+                "brew install gh && gh auth login"))
+        if readiness.category == PullRequestReadinessFailureKind.TIMEOUT:
+            raise ValidationError(ui(
+                f"GitHub PR readiness check timed out: {pr_url}. Verify network and GitHub access.",
+                f"GitHub PR ready 检查超时: {pr_url}。请确认网络/GitHub 可达后重试。"))
+        if readiness.category in {
+            PullRequestReadinessFailureKind.COMMAND,
+            PullRequestReadinessFailureKind.MALFORMED,
+        }:
+            raise ValidationError(ui(
+                f"GitHub PR readiness check failed: {pr_url}\n{readiness.detail}",
+                f"GitHub PR ready 检查失败: {pr_url}\n{readiness.detail}"))
         raise ValidationError(ui(
-            "GitHub PR readiness checks require gh CLI. Install it, sign in, and retry: "
-            "brew install gh && gh auth login",
-            "GitHub PR ready 检查需要 gh CLI。请安装并登录后重试: "
-            "brew install gh && gh auth login"))
-    if readiness.failure == "timeout":
+            f"GitHub PR readiness result is unknown and cannot be trusted: {pr_url}",
+            f"GitHub PR readiness 结果类型未知，不能信任: {pr_url}"))
+    if not isinstance(readiness, PullRequestReadiness):
         raise ValidationError(ui(
-            f"GitHub PR readiness check timed out: {pr_url}. Verify network and GitHub access.",
-            f"GitHub PR ready 检查超时: {pr_url}。请确认网络/GitHub 可达后重试。"))
-    if readiness.failure in {"failed", "malformed"}:
-        detail = readiness.detail
-        raise ValidationError(ui(
-            f"GitHub PR readiness check failed: {pr_url}\n{detail}",
-            f"GitHub PR ready 检查失败: {pr_url}\n{detail}"))
-    if readiness.is_draft is True:
+            f"GitHub PR readiness result is malformed and cannot be trusted: {pr_url}",
+            f"GitHub PR readiness 结果格式错误，不能信任: {pr_url}"))
+    if readiness.is_draft:
         raise ValidationError(ui(
             f"GitHub PR is still a draft and cannot enter CI/review/merge: {pr_url}\n"
             "Run `gh pr ready <pr-url>` or mark it ready for review on GitHub.",

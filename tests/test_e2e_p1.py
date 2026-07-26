@@ -49,6 +49,7 @@ def _env(**extra) -> dict:
         "OMAC_WORKSPACE_ID": "mock-workspace",
         "MOCK_AUTO_COMPLETE": "true",
         "MOCK_AUTO_COMPLETE_DELAY": "0",
+        "MOCK_AUTO_MERGE_ON_SUCCESS": "true",
         "PYTHONPATH": src if not old_pythonpath else src + os.pathsep + old_pythonpath,
     })
     env.update(extra)

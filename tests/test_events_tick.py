@@ -17,7 +17,10 @@ from omac.pipeline.loop import tick
 def _engine():
     return create_engine("mock", EngineConfig(
         engine_type="mock", workspace_id="ws",
-        extra={"MOCK_AUTO_COMPLETE": "true", "MOCK_AUTO_COMPLETE_DELAY": "0"}))
+        extra={
+            "MOCK_AUTO_COMPLETE": "true", "MOCK_AUTO_COMPLETE_DELAY": "0",
+            "MOCK_AUTO_MERGE_ON_SUCCESS": "true",
+        }))
 
 
 def _node(key, blocked_by=None):
@@ -38,7 +41,7 @@ def _path(manifest):
 
 def _settle(store, runtime, manifest, path):
     for _ in range(50):
-        r = tick(store, runtime, manifest, path)
+        r = tick(store, runtime, manifest, path, config={"engine": "mock"})
         if r.state != "running":
             return r
     raise AssertionError("did not settle")
