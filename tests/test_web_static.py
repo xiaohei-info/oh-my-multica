@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import threading
 import urllib.error
 import urllib.request
@@ -33,6 +34,57 @@ def _read_index() -> str:
 
 def _read_asset(name: str) -> str:
     return _static_dir().joinpath(name).read_text(encoding="utf-8")
+
+
+def _project_dag(nodes, options=None):
+    """通过 Node 运行浏览器实际加载的纯投影模块，避免复制 JavaScript 逻辑到测试。"""
+    module = _static_dir().joinpath("dag-projection.js")
+    if not module.is_file():
+        pytest.fail("collapsible DAG projection module is missing")
+    program = """
+const fs = require('fs');
+const vm = require('vm');
+const context = {};
+context.globalThis = context;
+vm.runInNewContext(fs.readFileSync(process.argv[1], 'utf8'), context,
+  { filename: process.argv[1] });
+const input = JSON.parse(fs.readFileSync(0, 'utf8'));
+const dag = context.OMACDag;
+const result = dag.projectDag(input.nodes, input.options || {});
+process.stdout.write(JSON.stringify(result));
+"""
+    completed = subprocess.run(
+        ["node", "-e", program, str(module)],
+        input=json.dumps({"nodes": nodes, "options": options or {}}),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    return json.loads(completed.stdout)
+
+
+def _dag_module_value(expression: str):
+    module = _static_dir().joinpath("dag-projection.js")
+    if not module.is_file():
+        pytest.fail("collapsible DAG projection module is missing")
+    program = """
+const fs = require('fs');
+const vm = require('vm');
+const context = {};
+context.globalThis = context;
+vm.runInNewContext(fs.readFileSync(process.argv[1], 'utf8'), context,
+  { filename: process.argv[1] });
+process.stdout.write(JSON.stringify(%s));
+""" % expression
+    completed = subprocess.run(
+        ["node", "-e", program, str(module)],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    return json.loads(completed.stdout)
 
 
 # ----------------------- fixtures(与 test_web_api.py 同形) -----------------------
@@ -159,6 +211,16 @@ def test_index_csp_uses_same_origin_css_and_js_without_inline_code():
     assert '<script src="/static/app.js" defer></script>' in html
 
 
+def test_strict_csp_assets_do_not_use_inline_style_attributes_or_cssom_style_writes():
+    """style-src 'self' 下所有展示状态必须通过同源 CSS class 表达。"""
+    html = _read_index()
+    js = _read_asset("app.js")
+    assert not re.search(r"\sstyle\s*=", html, re.IGNORECASE)
+    assert ".style." not in js
+    assert not re.search(r"\sstyle=", js, re.IGNORECASE)
+    assert re.search(r"\.tab-body-wrap\s*\{[^}]*position:absolute", _read_asset("app.css"))
+
+
 def test_same_origin_css_and_js_are_packaged_and_contain_spa_bootstrap():
     css = _read_asset("app.css")
     js = _read_asset("app.js")
@@ -184,7 +246,7 @@ def test_index_references_only_declared_same_origin_assets():
         r'(?i)<link[^>]+rel=["\']stylesheet["\'][^>]+href=["\']([^"\']+)',
         html,
     )
-    assert scripts == ["/static/app.js"]
+    assert scripts == ["/static/dag-projection.js", "/static/app.js"]
     assert styles == ["/static/app.css"]
     assert not re.search(r"""(?i)@import\s+(?:url\()?["']?http""", css)
 
@@ -222,7 +284,7 @@ def test_all_five_regions_present():
 
 @pytest.mark.parametrize("state", [
     "todo", "in_progress", "ci_check", "in_review", "merging",
-    "done", "blocked", "abandoned",
+    "done", "failed", "blocked", "abandoned", "unknown",
 ])
 def test_state_token_present_in_spa_assets(state):
     """8 态着色 token 可位于同源 CSS/JS，不要求内联在 HTML。"""
@@ -270,6 +332,141 @@ def test_static_index_uses_the_manifest_api(orch, simple_manifest, monkeypatch):
     assert 'const config = await api("/api/config");' in js
     assert 'applyLanguage(config.language||"en");' in js
     assert "/api/node/" in js, "SPA 必须消费 /api/node/<key>"
+
+
+def test_spa_wires_collapsible_dag_controls_to_the_pure_projection():
+    html = _read_index()
+    js = _read_asset("app.js")
+    css = _read_asset("app.css")
+
+    for control in [
+        "collapse-btn", "expand-all-btn", "focus-active-btn", "focus-anomaly-btn",
+    ]:
+        assert id_present(html, control), f"缺少 DAG 控件: {control}"
+    assert "OMACDag.projectDag" in js
+    assert "aggregate" in js
+    assert "presentState" in js
+    assert ".aggregate" in css
+    assert ".node.state-failed" in css
+
+
+# ==================== 4.5 可折叠分层 DAG 纯投影 ====================
+
+def test_dag_projection_assigns_deterministic_depth_without_duplication():
+    nodes = [
+        {"key": "root-b", "status": "todo"},
+        {"key": "merge", "status": "todo", "blocked_by": ["root-b", "root-a"]},
+        {"key": "root-a", "status": "todo"},
+        {"key": "tail", "status": "todo", "blocked_by": ["merge"]},
+    ]
+
+    projection = _project_dag(nodes)
+
+    assert projection["depths"] == {
+        "root-a": 1, "root-b": 1, "merge": 2, "tail": 3,
+    }
+    assert [node["key"] for node in projection["nodes"]].count("merge") == 1
+    assert projection["edges"] == [
+        {"from": "merge", "to": "tail"},
+        {"from": "root-a", "to": "merge"},
+        {"from": "root-b", "to": "merge"},
+    ]
+
+
+def test_dag_projection_defaults_to_three_layers_and_expands_one_boundary_at_a_time():
+    nodes = [
+        {"key": "one", "status": "todo"},
+        {"key": "two", "status": "todo", "blocked_by": ["one"]},
+        {"key": "three", "status": "todo", "blocked_by": ["two"]},
+        {"key": "four", "status": "todo", "blocked_by": ["three"]},
+        {"key": "five", "status": "todo", "blocked_by": ["four"]},
+    ]
+
+    initial = _project_dag(nodes)
+    assert [node["key"] for node in initial["nodes"]] == ["one", "two", "three"]
+    assert initial["aggregates"] == [{
+        "source": "three", "hidden_count": 2,
+        "status_summary": [{"status": "todo", "count": 2}],
+    }]
+
+    expanded = _project_dag(nodes, {"expanded": ["three"]})
+    assert [node["key"] for node in expanded["nodes"]] == ["one", "two", "three", "four"]
+    assert expanded["aggregates"] == [{
+        "source": "four", "hidden_count": 1,
+        "status_summary": [{"status": "todo", "count": 1}],
+    }]
+    assert _dag_module_value("context.OMACDag.collapseBranches(['three'])") == []
+
+
+@pytest.mark.parametrize("important_state", [
+    "in_progress", "ci_check", "in_review", "merging", "failed", "blocked",
+])
+def test_dag_projection_reveals_every_important_state_with_full_ancestor_path(important_state):
+    nodes = [
+        {"key": "root", "status": "todo"},
+        {"key": "middle", "status": "todo", "blocked_by": ["root"]},
+        {"key": "deep", "status": "todo", "blocked_by": ["middle"]},
+        {"key": "important", "status": important_state, "blocked_by": ["deep"]},
+    ]
+
+    projection = _project_dag(nodes)
+
+    assert [node["key"] for node in projection["nodes"]] == [
+        "root", "middle", "deep", "important",
+    ]
+
+
+def test_dag_projection_reports_hidden_count_and_status_summary_per_boundary():
+    nodes = [
+        {"key": "root", "status": "todo"},
+        {"key": "middle", "status": "todo", "blocked_by": ["root"]},
+        {"key": "boundary", "status": "todo", "blocked_by": ["middle"]},
+        {"key": "done-child", "status": "done", "blocked_by": ["boundary"]},
+        {"key": "todo-child", "status": "todo", "blocked_by": ["boundary"]},
+    ]
+
+    projection = _project_dag(nodes)
+
+    assert projection["aggregates"] == [{
+        "source": "boundary", "hidden_count": 2,
+        "status_summary": [
+            {"status": "done", "count": 1},
+            {"status": "todo", "count": 1},
+        ],
+    }]
+
+
+def test_dag_projection_supports_active_and_anomaly_focus_without_losing_paths():
+    nodes = [
+        {"key": "root", "status": "todo"},
+        {"key": "active", "status": "in_progress", "blocked_by": ["root"]},
+        {"key": "failure", "status": "failed", "blocked_by": ["root"]},
+        {"key": "ordinary", "status": "todo", "blocked_by": ["root"]},
+    ]
+
+    active = _project_dag(nodes, {"focus": "active"})
+    anomaly = _project_dag(nodes, {"focus": "anomaly"})
+
+    assert [node["key"] for node in active["nodes"]] == ["root", "active"]
+    assert [node["key"] for node in anomaly["nodes"]] == ["root", "failure"]
+
+
+def test_dag_projection_state_presentation_covers_known_states_and_unknown_fallback():
+    presentation = _dag_module_value("context.OMACDag.statePresentation")
+
+    for status in [
+        "todo", "in_progress", "ci_check", "in_review", "merging", "done",
+        "failed", "blocked", "abandoned",
+    ]:
+        assert presentation[status]["icon"]
+        assert presentation[status]["marker"]
+    assert presentation["failed"]["strong_border"] is True
+
+    unknown = _dag_module_value("context.OMACDag.presentState('vendor_pending')")
+    assert unknown == {
+        "icon": "?", "marker": "unknown", "strong_border": False,
+        "safe_fallback": True, "status": "vendor_pending",
+    }
 
 
 # ==================== 5. /static/<path> 通配路由(nit 修复:单一入口→静态资源通配) ==================
