@@ -46,6 +46,7 @@ _shared_provisioned_members: Dict[str, List[str]] = {}
 # 默认行为(可在实例创建时覆盖)
 _shared_auto_complete_enabled: bool = True
 _shared_auto_complete_delay: int = 2
+_shared_auto_merge_on_success: bool = False
 _shared_kind_deliverables: Dict[str, Dict[str, Any]] = {}
 _shared_review_rejects_remaining: int = 0
 _shared_review_verdict: str = "pass"
@@ -161,11 +162,14 @@ class MockStore(WorkItemStore):
         # 此时沿用模块默认值(与 EngineConfig.extra 默认 factory 一致)。
         cfg_extra = config.extra or {}
         global _shared_auto_complete_enabled, _shared_auto_complete_delay
+        global _shared_auto_merge_on_success
         global _shared_provisioned_members
         _shared_auto_complete_enabled = str(
             cfg_extra.get("MOCK_AUTO_COMPLETE", "true")).lower() == "true"
         _shared_auto_complete_delay = int(
             cfg_extra.get("MOCK_AUTO_COMPLETE_DELAY", "2"))
+        _shared_auto_merge_on_success = str(
+            cfg_extra.get("MOCK_AUTO_MERGE_ON_SUCCESS", "false")).lower() == "true"
 
     # ==================== 测试辅助(类级) ====================
 
@@ -176,6 +180,7 @@ class MockStore(WorkItemStore):
         global _shared_comments, _shared_next_id, _shared_contracts_by_item_id
         global _shared_assigned_items, _shared_fail_keys, _shared_assign_log
         global _shared_auto_complete_enabled, _shared_auto_complete_delay
+        global _shared_auto_merge_on_success
         global _shared_kind_deliverables, _shared_review_rejects_remaining
         global _shared_review_verdict, _shared_review_verdict_sequence
         global _shared_provisioned_members
@@ -190,6 +195,7 @@ class MockStore(WorkItemStore):
         _shared_assign_log = []
         _shared_auto_complete_enabled = True
         _shared_auto_complete_delay = 2
+        _shared_auto_merge_on_success = False
         _shared_provisioned_members = {}
         _shared_kind_deliverables = {}
         _shared_kind_delivery_sequences = {}
@@ -876,15 +882,13 @@ class MockStore(WorkItemStore):
         except FileNotFoundError as exc:
             return MergeCommandResult(False, None, str(exc))
         output = (proc.stdout or "") + (proc.stderr or "")
-        simulated_default_merge = (
-            command.startswith("gh pr merge ") and proc.returncode != 0)
-        if proc.returncode == 0 or simulated_default_merge:
+        if proc.returncode == 0 and _shared_auto_merge_on_success:
             _shared_pull_requests[pr_url] = PullRequestObservation(
                 PullRequestState.MERGED,
                 time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             )
         return MergeCommandResult(
-            proc.returncode == 0 or simulated_default_merge, proc.returncode, output)
+            proc.returncode == 0, proc.returncode, output)
 
     def observe_pull_request(self, pr_url: str) -> PullRequestObservation:
         return _shared_pull_requests.get(
@@ -906,10 +910,8 @@ class MockStore(WorkItemStore):
         except FileNotFoundError as exc:
             return PullRequestCheckResult(False, None, str(exc))
         output = (proc.stdout or "") + (proc.stderr or "")
-        simulated_default_check = (
-            command.startswith("gh pr checks ") and proc.returncode != 0)
         return PullRequestCheckResult(
-            proc.returncode == 0 or simulated_default_check, proc.returncode, output)
+            proc.returncode == 0, proc.returncode, output)
 
     def read_pull_request_readiness(self, pr_url: str) -> PullRequestReadiness:
         return PullRequestReadiness(is_draft=False, state="OPEN")

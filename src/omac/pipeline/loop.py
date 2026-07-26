@@ -17,7 +17,10 @@ from ..core.review_convergence import (
     build_review_obligations, review_subject_digest)
 from ..core.gitsync import commit_manifest
 from ..core.manifest import Manifest, save_manifest, set_node
-from ..pipeline.delivery import advance_delivery, run_merge_delivery
+from ..pipeline.delivery import (
+    advance_delivery, block_unproven_merge_request,
+    merge_request_state_is_valid, run_merge_delivery,
+)
 from ..engines.models import PullRequestState, WorkItemStatus
 from ..engines.runtime import AgentRuntime
 from ..engines.store import WorkItemStore
@@ -213,7 +216,13 @@ def reconcile(store: WorkItemStore, manifest: Manifest, manifest_path: str) -> b
                     set_node(manifest, key, status="blocked")
                     changed = True
                     continue
-                if _has_confirmed_merge(node):
+                if not merge_request_state_is_valid(node.merge_request_state):
+                    block_unproven_merge_request(
+                        node, item, store, manifest_path, key,
+                        f"Historical merge request state {node.merge_request_state!r} is invalid.")
+                    changed = True
+                    continue
+                if _has_confirmed_merge(node) and node.merge_request_state is None:
                     if item.status != WorkItemStatus.DONE:
                         store.update_status(node.work_item_id, WorkItemStatus.DONE)
                     continue
@@ -222,14 +231,15 @@ def reconcile(store: WorkItemStore, manifest: Manifest, manifest_path: str) -> b
                 if state == PullRequestState.MERGED and getattr(observation, "merged_at", None):
                     node.merged = True
                     node.merged_at = observation.merged_at
+                    node.merge_request_state = None
                     if item.status != WorkItemStatus.DONE:
                         store.update_status(node.work_item_id, WorkItemStatus.DONE)
                     changed = True
                     continue
                 if state in {PullRequestState.OPEN, PullRequestState.PENDING}:
                     store.update_status(node.work_item_id, WorkItemStatus.IN_REVIEW)
-                    node.merge_request_state = (
-                        "requested" if state == PullRequestState.PENDING else None)
+                    if state == PullRequestState.PENDING:
+                        node.merge_request_state = "requested"
                     set_node(manifest, key, status="merging")
                     changed = True
                     continue

@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 from ..core.taskmeta import TaskKind, TaskPhase
 from .models import (
     EngineConfig, MergeCommandResult, ProjectInfo, PullRequestCheckResult,
-    PullRequestObservation, PullRequestReadiness,
+    PullRequestObservation, PullRequestReadiness, PullRequestReadinessFailure,
     WorkItem, WorkItemStatus, WorkspaceInfo,
 )
 
@@ -239,7 +239,9 @@ class WorkItemStore(ABC):
         """
 
     @abstractmethod
-    def read_pull_request_readiness(self, pr_url: str) -> PullRequestReadiness:
+    def read_pull_request_readiness(
+        self, pr_url: str,
+    ) -> PullRequestReadiness | PullRequestReadinessFailure:
         """读取 PR draft/open 事实，供 develop authoring 的交付前置门使用。"""
 
     # ==================== 便捷方法(基类实现) ====================

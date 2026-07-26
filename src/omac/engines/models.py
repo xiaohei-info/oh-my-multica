@@ -46,13 +46,25 @@ class PullRequestCheckResult:
     timed_out: bool = False
 
 
+class PullRequestReadinessFailureKind(Enum):
+    MISSING_CLI = "missing_cli"
+    TIMEOUT = "timeout"
+    COMMAND = "command"
+    MALFORMED = "malformed"
+
+
 @dataclass(frozen=True)
 class PullRequestReadiness:
     """PR 是否可进入 CI/review 的远端读取结果。"""
-    is_draft: Optional[bool]
-    state: Optional[str]
-    detail: str = ""
-    failure: Optional[str] = None
+    is_draft: bool
+    state: str
+
+
+@dataclass(frozen=True)
+class PullRequestReadinessFailure:
+    """PR readiness 无法证明时的显式失败结果。"""
+    category: PullRequestReadinessFailureKind
+    detail: str
 
 
 @dataclass(frozen=True)

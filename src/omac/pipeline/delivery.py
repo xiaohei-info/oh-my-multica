@@ -36,6 +36,7 @@ CI 在显式配置 ``config.ci.check_command`` 或检测到 ``.github/workflows`
 from __future__ import annotations
 
 from dataclasses import dataclass
+import shlex
 
 from ..core.config import DEFAULT_RETRY, get_ci_config, get_merge_config
 from ..engines.models import PullRequestCheckResult, PullRequestState, WorkItemStatus
@@ -57,6 +58,7 @@ MANIFEST_TO_PLATFORM_STATUS: dict[str, WorkItemStatus] = {
 }
 
 VALID_MANIFEST_STATUSES = set(MANIFEST_TO_PLATFORM_STATUS)
+VALID_MERGE_REQUEST_STATES = {None, "intent", "requested"}
 
 
 def to_platform_status(manifest_status: str) -> WorkItemStatus:
@@ -108,6 +110,27 @@ def _ci_result(result: PullRequestCheckResult) -> CIResult:
         output=result.output,
         summary=_tail(result.output) or ui("(no output)", "(无输出)"),
     )
+
+
+def merge_request_state_is_valid(state: str | None) -> bool:
+    return state in VALID_MERGE_REQUEST_STATES
+
+
+def block_unproven_merge_request(
+    node, item, store, manifest_path: str | None, node_key: str, detail: str,
+) -> str:
+    """保留不确定的 merge marker，要求人工核实后显式 retry。"""
+    retry = (
+        f"omac node retry {shlex.quote(manifest_path)} {shlex.quote(node_key)}"
+        if manifest_path else "omac node retry <manifest> <node>"
+    )
+    store.add_comment(item.id, ui(
+        f"⚠️ {detail} OMAC will not send another merge request. Verify the PR remotely, "
+        f"then run:\n\n    {retry}",
+        f"⚠️ {detail} OMAC 不会再次请求合入。请先远端核实 PR，再执行：\n\n    {retry}"))
+    node.status = "blocked"
+    store.update_status(item.id, WorkItemStatus.BLOCKED)
+    return "blocked"
 
 
 # ── worker 证据过门后的 CI 门推进 ─────────────────────────────────────────────
@@ -231,15 +254,10 @@ def run_merge_delivery(
         store.update_status(item_id, WorkItemStatus.BLOCKED)
         return "blocked"
 
-    if node.merge_request_state not in {None, "intent", "requested"}:
-        store.add_comment(item_id, ui(
-            "⚠️ Merge request state is invalid, so OMAC will not request a merge. "
-            "Verify the PR remotely, then use `omac node retry` to clear this state.",
-            "⚠️ merge 请求状态无效，OMAC 不会请求合入。请先远端核实 PR，"
-            "再执行 `omac node retry` 清除此状态。"))
-        node.status = "blocked"
-        store.update_status(item_id, WorkItemStatus.BLOCKED)
-        return "blocked"
+    if not merge_request_state_is_valid(node.merge_request_state):
+        return block_unproven_merge_request(
+            node, item, store, manifest_path, node_key,
+            f"Merge request state {node.merge_request_state!r} is invalid.")
 
     observation = store.observe_pull_request(pr_url)
     state = _observation_state(observation)
@@ -258,15 +276,9 @@ def run_merge_delivery(
             node, item, store, runtime, retry_limits, observation)
 
     if node.merge_request_state == "intent":
-        store.add_comment(item_id, ui(
-            "⚠️ A prior merge request may have started before the process stopped. "
-            "OMAC will not send a duplicate request; verify the PR remotely, then use "
-            "`omac node retry` if a new request is needed.",
-            "⚠️ 先前的 merge 请求可能在进程中断前已开始。OMAC 不会重复请求；"
-            "请先远端核实 PR，若确需重新请求再执行 `omac node retry`。"))
-        node.status = "blocked"
-        store.update_status(item_id, WorkItemStatus.BLOCKED)
-        return "blocked"
+        return block_unproven_merge_request(
+            node, item, store, manifest_path, node_key,
+            "A prior merge request may have started before the process stopped.")
     if node.merge_request_state == "requested":
         node.status = "merging"
         store.update_status(item_id, to_platform_status("merging"))
@@ -282,15 +294,20 @@ def run_merge_delivery(
 
     result = store.request_pull_request_merge(
         pr_url, merge["command"], max(1, int(merge.get("timeout_minutes", 30))) * 60)
-    node.merge_request_state = "requested"
-    if manifest_path:
-        save_manifest(manifest, manifest_path)
+    if not getattr(result, "timed_out", False):
+        node.merge_request_state = "requested"
+        if manifest_path:
+            save_manifest(manifest, manifest_path)
     observation = store.observe_pull_request(pr_url)
     state = _observation_state(observation)
     if state in {PullRequestState.MERGED, PullRequestState.PENDING}:
         return _settle_merge_observation(
             node, item, store, runtime, retry_limits, observation)
     if state == PullRequestState.OPEN:
+        if getattr(result, "timed_out", False):
+            return block_unproven_merge_request(
+                node, item, store, manifest_path, node_key,
+                "Merge request timed out while the PR remains OPEN; the external outcome is unknown.")
         if result.succeeded:
             return "pending"
         label = ui(

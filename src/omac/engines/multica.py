@@ -36,7 +36,8 @@ from ..i18n import ui
 from .models import (
     AgentInfo, AgentProvisionSpec, EngineConfig, ProjectInfo, RuntimeTarget,
     MergeCommandResult, PullRequestCheckResult, PullRequestObservation,
-    PullRequestReadiness, PullRequestState,
+    PullRequestReadiness, PullRequestReadinessFailure,
+    PullRequestReadinessFailureKind, PullRequestState,
     SkillPackage, WorkItem, WorkItemStatus, WorkspaceInfo,
 )
 from ..core.machine_feedback import (
@@ -1112,23 +1113,38 @@ class MulticaStore(WorkItemStore):
             proc.returncode == 0, proc.returncode,
             (proc.stdout or "") + (proc.stderr or ""))
 
-    def read_pull_request_readiness(self, pr_url: str) -> PullRequestReadiness:
+    def read_pull_request_readiness(
+        self, pr_url: str,
+    ) -> PullRequestReadiness | PullRequestReadinessFailure:
         try:
             proc = subprocess.run(
                 ["gh", "pr", "view", pr_url, "--json", "isDraft,state"],
                 capture_output=True, text=True, timeout=30)
         except FileNotFoundError as exc:
-            return PullRequestReadiness(None, None, str(exc), "missing_cli")
+            return PullRequestReadinessFailure(
+                PullRequestReadinessFailureKind.MISSING_CLI, str(exc))
         except subprocess.TimeoutExpired as exc:
-            return PullRequestReadiness(None, None, str(exc), "timeout")
+            return PullRequestReadinessFailure(
+                PullRequestReadinessFailureKind.TIMEOUT, str(exc))
         if proc.returncode != 0:
-            return PullRequestReadiness(
-                None, None, (proc.stderr or proc.stdout or "").strip(), "failed")
+            return PullRequestReadinessFailure(
+                PullRequestReadinessFailureKind.COMMAND,
+                (proc.stderr or proc.stdout or "").strip())
         try:
             payload = json.loads(proc.stdout or "{}")
         except json.JSONDecodeError as exc:
-            return PullRequestReadiness(None, None, str(exc), "malformed")
-        return PullRequestReadiness(payload.get("isDraft"), payload.get("state"))
+            return PullRequestReadinessFailure(
+                PullRequestReadinessFailureKind.MALFORMED, str(exc))
+        if not isinstance(payload, dict):
+            return PullRequestReadinessFailure(
+                PullRequestReadinessFailureKind.MALFORMED, "readiness payload is not an object")
+        is_draft = payload.get("isDraft")
+        state = payload.get("state")
+        if not isinstance(is_draft, bool) or not isinstance(state, str) or not state:
+            return PullRequestReadinessFailure(
+                PullRequestReadinessFailureKind.MALFORMED,
+                "readiness payload is missing typed isDraft/state fields")
+        return PullRequestReadiness(is_draft, state)
 
 
 class MulticaRuntime(AgentRuntime):

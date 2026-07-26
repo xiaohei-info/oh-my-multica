@@ -47,7 +47,10 @@ from omac.pipeline import loop
 def _store():
     return MockStore(EngineConfig(
         engine_type="mock", workspace_id="ws",
-        extra={"MOCK_AUTO_COMPLETE": "false", "MOCK_AUTO_COMPLETE_DELAY": "0"}))
+        extra={
+            "MOCK_AUTO_COMPLETE": "false", "MOCK_AUTO_COMPLETE_DELAY": "0",
+            "MOCK_AUTO_MERGE_ON_SUCCESS": "true",
+        }))
 
 
 def _runtime(store):  # noqa: ARG001 — 保持与 loop 签名对称
@@ -665,6 +668,8 @@ class TestMergeClosureRegression:
         })
         store.observe_pull_request = lambda pr_url: SimpleNamespace(
             state="open", merged_at=None)
+        store.request_pull_request_merge = lambda *args: SimpleNamespace(
+            succeeded=True, timed_out=False, exit_code=0, output="")
         runtime.cancel = lambda item_id: pytest.fail("merge reconciliation must not cancel runs")
 
         assert loop.reconcile(store, manifest, str(tmp_path / "m.yaml")) is True
@@ -870,6 +875,78 @@ class TestMergeClosureRegression:
         assert requests == []
         assert manifest.nodes["a"].status == "blocked"
         assert manifest.nodes["a"].status != "done"
+
+    @pytest.mark.parametrize(
+        ("marker", "remote_state", "expected_status", "expected_marker"),
+        [
+            ("invalid", "merged", "blocked", "invalid"),
+            ("invalid", "open", "blocked", "invalid"),
+            ("invalid", "pending", "blocked", "invalid"),
+            ("intent", "merged", "done", None),
+            ("intent", "open", "merging", "intent"),
+            ("intent", "pending", "merging", "requested"),
+            ("requested", "merged", "done", None),
+            ("requested", "open", "merging", "requested"),
+            ("requested", "pending", "merging", "requested"),
+        ],
+    )
+    def test_historical_done_preserves_merge_marker_closure(
+        self, tmp_path, marker, remote_state, expected_status, expected_marker,
+    ):
+        store = _store()
+        runtime = _runtime(store)
+        item = _review_passed_item(store)
+        manifest = Manifest(meta={}, nodes={
+            "a": Node(id="a", worker="alice", reviewer="bob",
+                      work_item_id=item.id, status="done",
+                      merge_request_state=marker),
+        })
+        merged_at = "2026-07-26T09:00:00Z" if remote_state == "merged" else None
+        store.observe_pull_request = lambda pr_url: SimpleNamespace(
+            state=remote_state, merged_at=merged_at)
+        requests = []
+        store.request_pull_request_merge = lambda *args: requests.append(args)
+        path = str(tmp_path / "m.yaml")
+
+        loop.reconcile(store, manifest, path)
+
+        assert manifest.nodes["a"].status == expected_status
+        assert manifest.nodes["a"].merge_request_state == expected_marker
+        if remote_state == "open" and marker in {"intent", "requested"}:
+            loop.collect_results(
+                store, runtime, manifest, path,
+                retry_limits=dict(DEFAULT_RETRY), config={})
+            assert manifest.nodes["a"].merge_request_state == expected_marker
+        assert requests == []
+
+    def test_timeout_with_open_pr_preserves_intent_across_restart(self, tmp_path):
+        store = _store()
+        runtime = _runtime(store)
+        item = _review_passed_item(store)
+        manifest = Manifest(meta={}, nodes={
+            "a": Node(id="a", worker="alice", reviewer="bob",
+                      work_item_id=item.id, status="in_review"),
+        })
+        path = str(tmp_path / "m.yaml")
+        save_manifest(manifest, path)
+        store.observe_pull_request = lambda pr_url: SimpleNamespace(
+            state="open", merged_at=None)
+        requests = []
+        store.request_pull_request_merge = lambda *args: requests.append(args) or SimpleNamespace(
+            succeeded=False, timed_out=True, exit_code=None, output="timeout")
+
+        loop.collect_results(
+            store, runtime, manifest, path,
+            retry_limits=dict(DEFAULT_RETRY), config={})
+        reloaded = load_manifest(path)
+        loop.collect_results(
+            store, runtime, reloaded, path,
+            retry_limits=dict(DEFAULT_RETRY), config={})
+
+        assert len(requests) == 1
+        assert reloaded.nodes["a"].status == "blocked"
+        assert reloaded.nodes["a"].merge_request_state == "intent"
+        assert f"omac node retry {path} a" in "\n".join(store.get_comments(item.id))
 
     def test_timeout_with_pending_pr_stays_merging_without_worker_bounce(
         self, tmp_path,

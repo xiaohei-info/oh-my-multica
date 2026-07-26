@@ -27,7 +27,10 @@ ORCHESTRATOR = "bob"
 
 
 def _engine(**extra):
-    base = {"MOCK_AUTO_COMPLETE": "true", "MOCK_AUTO_COMPLETE_DELAY": "0"}
+    base = {
+        "MOCK_AUTO_COMPLETE": "true", "MOCK_AUTO_COMPLETE_DELAY": "0",
+        "MOCK_AUTO_MERGE_ON_SUCCESS": "true",
+    }
     base.update(extra)
     config = EngineConfig(engine_type="mock", workspace_id="ws", extra=base)
     eng = create_engine("mock", config)
@@ -174,6 +177,7 @@ def test_final_acceptance_issue_has_complete_authoring_context(tmp_path):
     }, {})
 
     outcome = run_acceptance_loop(engine, manifest, path, doc, {
+        "engine": "mock",
         "roles": {"reviewers": REVIEWERS, "orchestrator": ORCHESTRATOR},
     })
 
@@ -224,6 +228,7 @@ def test_incremental_decompose_issue_has_failed_flow_and_manifest_context(tmp_pa
     })
 
     outcome = run_acceptance_loop(engine, manifest, path, doc, {
+        "engine": "mock",
         "roles": {"reviewers": REVIEWERS, "orchestrator": ORCHESTRATOR},
         "acceptance": {"max_rounds": 2},
     })
@@ -279,6 +284,7 @@ def test_e2e_two_fails_then_pass(tmp_path):
     MockStore.set_acceptance_behaviors(accepted, increments)
 
     config = {
+        "engine": "mock",
         "defaults": {"max_parallel": 4, "poll_interval": 0},
         "roles": {"reviewers": REVIEWERS, "orchestrator": ORCHESTRATOR},
         "acceptance": {"max_rounds": 3},
@@ -317,6 +323,7 @@ def test_e2e_all_pass_first_round(tmp_path):
     }, {})
 
     config = {
+        "engine": "mock",
         "defaults": {"max_parallel": 4, "poll_interval": 0},
         "roles": {"reviewers": REVIEWERS, "orchestrator": ORCHESTRATOR},
     }
@@ -341,6 +348,7 @@ def test_acceptance_loop_uses_manifest_plan_id_in_dag_key(tmp_path):
     }, {})
 
     config = {
+        "engine": "mock",
         "defaults": {"max_parallel": 4, "poll_interval": 0},
         "roles": {"reviewers": REVIEWERS, "orchestrator": ORCHESTRATOR},
     }
@@ -380,6 +388,7 @@ def test_max_rounds_exhausted(tmp_path):
     MockStore.set_acceptance_behaviors(accepted, increments)
 
     config = {
+        "engine": "mock",
         "defaults": {"max_parallel": 4, "poll_interval": 0},
         "roles": {"reviewers": REVIEWERS, "orchestrator": ORCHESTRATOR},
         "acceptance": {"max_rounds": 2},
@@ -416,6 +425,7 @@ def test_increment_persisted_resumable(tmp_path):
     })
 
     config = {
+        "engine": "mock",
         "defaults": {"max_parallel": 4, "poll_interval": 0},
         "roles": {"reviewers": REVIEWERS, "orchestrator": ORCHESTRATOR},
         "acceptance": {"max_rounds": 3},
@@ -439,7 +449,7 @@ def test_no_acceptance_skips(tmp_path):
     doc = _acceptance_doc([("f1", "F1", 1)])  # won't be used
     engine = _engine()
     _seed_confirmed_done(engine, manifest, path)
-    config = {"defaults": {"poll_interval": 0}}
+    config = {"engine": "mock", "defaults": {"poll_interval": 0}}
     outcome = run_acceptance_loop(
         engine, manifest, path, doc, config, no_acceptance=True)
     assert outcome.exit_code == 0
