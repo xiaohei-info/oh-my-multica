@@ -25,7 +25,9 @@ const COPY = {
     acceptance_missing:"Acceptance file not found", static_failed:"Failed to load static information",
     state_todo:"Todo", state_in_progress:"In progress", state_ci_check:"CI check",
     state_in_review:"In review", state_merging:"Merging", state_done:"Done",
-    state_failed:"Failed", state_blocked:"Blocked", state_abandoned:"Abandoned", state_unknown:"Unknown"
+    state_failed:"Failed", state_blocked:"Blocked", state_abandoned:"Abandoned", state_unknown:"Unknown",
+    dag_error_unknown_dependency:"Cannot render DAG: it references a missing dependency.",
+    dag_error_cycle:"Cannot render DAG: it contains a dependency cycle."
   },
   cn: {
     choose:"选择", manifest_title:"选择要查看的 manifest", last_refresh:"最后状态刷新时间",
@@ -48,7 +50,9 @@ const COPY = {
     acceptance_missing:"未找到验收文件", static_failed:"静态信息加载失败",
     state_todo:"待开始", state_in_progress:"进行中", state_ci_check:"CI 校验",
     state_in_review:"评审中", state_merging:"合并中", state_done:"完成",
-    state_failed:"失败", state_blocked:"受阻", state_abandoned:"已放弃", state_unknown:"未知"
+    state_failed:"失败", state_blocked:"受阻", state_abandoned:"已放弃", state_unknown:"未知",
+    dag_error_unknown_dependency:"无法渲染 DAG：它引用了不存在的依赖。",
+    dag_error_cycle:"无法渲染 DAG：它包含依赖环。"
   }
 };
 function copy(key){ return (COPY[state.language]||COPY.en)[key] || COPY.en[key] || key; }
@@ -125,6 +129,18 @@ window.matchMedia("(prefers-color-scheme:dark)").addEventListener("change", ()=>
 });
 
 /* ---------- manifest 选择 ---------- */
+function clearNodeDetail(){
+  $("detail-empty").classList.remove("is-hidden");
+  $("detail-content").innerHTML = "";
+}
+
+function resetDagView(){
+  state.expanded = [];
+  state.focus = "default";
+  state.selected = null;
+  clearNodeDetail();
+}
+
 async function loadManifests(){
   state.manifests = await api("/api/manifests");
   const sel = $("manifest-selector");
@@ -140,18 +156,27 @@ async function loadManifests(){
 $("manifest-selector").addEventListener("change", e => selectManifest(e.target.value));
 
 async function selectManifest(path){
-  if(!path){ state.current=null; return; }
+  const isNewManifest = state.current !== path;
+  cancelPoll();
+  if(isNewManifest){
+    resetDagView();
+    state.status = null;
+    state.nodes = {};
+  }
+  if(!path){ state.current = null; return; }
   localStorage.setItem("omac-last-manifest", path);
   state.current = path;
-  cancelPoll();
   await fetchStatus();
   startPoll();
 }
 
 /* ---------- 状态获取 + 轮询 ---------- */
 async function fetchStatus(){
+  const manifest = state.current;
+  if(!manifest) return;
   try{
-    const s = await api("/api/dag/status?manifest="+encodeURIComponent(state.current));
+    const s = await api("/api/dag/status?manifest="+encodeURIComponent(manifest));
+    if(state.current !== manifest) return;
     state.status = s;
     state.nodes = {};
     (s.nodes||[]).forEach(n => state.nodes[n.key]=n);
@@ -198,6 +223,24 @@ function layeredLayout(projection){
   return OMACDag.layoutDag(projection, {colW, rowH});
 }
 
+function renderDagError(svg, error){
+  const ns = "http://www.w3.org/2000/svg";
+  const details = error.code === "unknown_dependency"
+    ? error.dependencies.map(item => item.node+" → "+item.dependency).join(", ")
+    : error.nodes.join(", ");
+  const message = error.code === "unknown_dependency"
+    ? copy("dag_error_unknown_dependency") : copy("dag_error_cycle");
+  svg.setAttribute("viewBox", "0 0 400 200");
+  const text = document.createElementNS(ns, "text");
+  text.setAttribute("x", "24"); text.setAttribute("y", "80");
+  text.setAttribute("class", "dag-error"); text.textContent = message;
+  svg.appendChild(text);
+  const detail = document.createElementNS(ns, "text");
+  detail.setAttribute("x", "24"); detail.setAttribute("y", "108");
+  detail.setAttribute("class", "dag-error-detail"); detail.textContent = details;
+  svg.appendChild(detail);
+}
+
 function renderDAG(s){
   const svg = $("dag-canvas");
   const projection = OMACDag.projectDag(s.nodes||[], {
@@ -209,6 +252,12 @@ function renderDAG(s){
   // 清空 + 渲染组
   const ns = "http://www.w3.org/2000/svg";
   while(svg.firstChild) svg.removeChild(svg.firstChild);
+  if(projection.error){
+    renderDagError(svg, projection.error);
+    $("dag-legend").innerHTML = "";
+    syncSelectedProjection(projection);
+    return;
+  }
   const edgesG = document.createElementNS(ns,"g");
   const nodesG = document.createElementNS(ns,"g");
   svg.appendChild(edgesG); svg.appendChild(nodesG);
@@ -280,6 +329,8 @@ function renderDAG(s){
     nodesG.appendChild(g);
   });
 
+  syncSelectedProjection(projection);
+
   const present = new Set((s.nodes||[]).map(n => n.status));
   const lg = $("dag-legend");
   lg.innerHTML = STATES.filter(status => present.has(status))
@@ -311,9 +362,29 @@ function dimForSelected(){
   });
 }
 
+function clearSelection(){
+  state.selected = null;
+  clearNodeDetail();
+  dimForSelected();
+}
+
+function syncSelectedProjection(projection){
+  if(!state.selected) return;
+  const visibleKeys = new Set(projection.nodes.map(node => node.key));
+  if(!visibleKeys.has(state.selected) || !state.nodes[state.selected]){
+    clearSelection();
+    return;
+  }
+  dimForSelected();
+}
+
 /* ---------- 节点详情 ---------- */
 function selectNode(key){
-  state.selected = (state.selected===key? null : key);
+  if(state.selected === key){
+    clearSelection();
+    return;
+  }
+  state.selected = key;
   $("dag-canvas").querySelectorAll(".node").forEach(g=>{
     g.classList.toggle("selected", g.dataset.key===state.selected);
   });
@@ -322,6 +393,7 @@ function selectNode(key){
 }
 async function renderDetail(key){
   // 立即用 status 中的节点信息绘制基本卡, 再通过 /api/node/{key} 拿合约与证据
+  const manifest = state.current;
   const n = state.nodes[key];
   const dc = $("detail-content");
   $("detail-empty").classList.add("is-hidden");
@@ -339,7 +411,8 @@ async function renderDetail(key){
     '</dl>'+
     '<p class="empty" id="detail-extra">'+copy("loading_evidence")+'</p>';
   try{
-    const full = await api("/api/node/"+encodeURIComponent(key)+"?manifest="+encodeURIComponent(state.current));
+    const full = await api("/api/node/"+encodeURIComponent(key)+"?manifest="+encodeURIComponent(manifest));
+    if(state.selected !== key || state.current !== manifest) return;
     const c = full.contract||{};
     const ev = full.evidence;
     $("detail-extra").outerHTML =
@@ -366,6 +439,7 @@ async function renderDetail(key){
       '<div class="copy-row"><code id="abandon-cmd">omac node abandon '+esc(state.current)+' '+esc(key)+'</code><button data-copy="abandon-cmd">'+copy("copy_abandon")+'</button></div>';
     wireCopy();
   }catch(e){
+    if(state.selected !== key || state.current !== manifest) return;
     $("detail-extra").outerHTML = '<p class="empty">'+copy("detail_failed")+': '+esc(e.message)+'</p>';
   }
 }

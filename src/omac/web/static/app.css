@@ -20,7 +20,7 @@ body{margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
 header.topbar{display:flex;align-items:center;gap:16px;padding:10px 16px;
   background:var(--panel);border-bottom:1px solid var(--border);flex-wrap:wrap}
 header h1{font-size:15px;margin:0;white-space:nowrap}
-header .spacer{flex:1}
+.spacer{flex:1}
 label.field{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
 select,button{font-family:inherit;font-size:12px;background:var(--panel-2);
   color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 8px;cursor:pointer}
@@ -64,6 +64,8 @@ ul.acceptance li{margin:3px 0}
 .aggregate rect{fill:var(--panel-2);stroke:var(--muted);stroke-dasharray:4 3;cursor:pointer}
 .aggregate text{fill:var(--muted);font-size:10px;font-family:inherit;pointer-events:none}
 .aggregate-edge{stroke:var(--muted);stroke-width:1.5;stroke-dasharray:4 3;fill:none}
+.dag-error{fill:var(--bad);font-size:13px;font-weight:700}
+.dag-error-detail{fill:var(--muted);font-size:11px}
 .edge.dim{opacity:.18}
 .node.dim rect{opacity:.35}
 .edge.hl{stroke:var(--accent);stroke-width:2.5;opacity:1}

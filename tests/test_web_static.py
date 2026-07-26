@@ -420,8 +420,8 @@ def test_dag_projection_defaults_to_three_layers_and_expands_one_boundary_at_a_t
     initial = _project_dag(nodes)
     assert [node["key"] for node in initial["nodes"]] == ["one", "two", "three"]
     assert initial["aggregates"] == [{
-        "source": "three", "hidden_count": 2,
-        "status_summary": [{"status": "todo", "count": 2}],
+        "source": "three", "hidden_count": 1,
+        "status_summary": [{"status": "todo", "count": 1}],
     }]
 
     expanded = _project_dag(nodes, {"expanded": ["three"]})
@@ -431,6 +431,113 @@ def test_dag_projection_defaults_to_three_layers_and_expands_one_boundary_at_a_t
         "status_summary": [{"status": "todo", "count": 1}],
     }]
     assert _dag_module_value("context.OMACDag.collapseBranches(['three'])") == []
+
+
+def test_dag_projection_aggregate_describes_its_complete_reveal_closure():
+    """聚合摘要必须包含点击时补入的跨分支依赖祖先，且不预报更深后代。"""
+    nodes = [
+        {"key": "root", "status": "todo"},
+        {"key": "left", "status": "todo", "blocked_by": ["root"]},
+        {"key": "boundary", "status": "todo", "blocked_by": ["left"]},
+        {"key": "other-1", "status": "todo", "blocked_by": ["root"]},
+        {"key": "other-2", "status": "todo", "blocked_by": ["other-1"]},
+        {"key": "other-parent", "status": "abandoned", "blocked_by": ["other-2"]},
+        {
+            "key": "revealed-child", "status": "done",
+            "blocked_by": ["boundary", "other-parent"],
+        },
+        {"key": "later-child", "status": "todo", "blocked_by": ["revealed-child"]},
+    ]
+
+    initial = _project_dag(nodes)
+    aggregate = next(item for item in initial["aggregates"] if item["source"] == "boundary")
+    expanded = _project_dag(nodes, {"expanded": ["boundary"]})
+
+    assert aggregate == {
+        "source": "boundary",
+        "hidden_count": 2,
+        "status_summary": [
+            {"status": "abandoned", "count": 1},
+            {"status": "done", "count": 1},
+        ],
+    }
+    assert {node["key"] for node in expanded["nodes"]} - {
+        node["key"] for node in initial["nodes"]
+    } == {"other-parent", "revealed-child"}
+
+
+def test_dag_projection_fails_closed_for_unknown_dependencies_and_cycles():
+    """无效图不能被伪装为可布局 DAG，前端必须得到明确只读错误。"""
+    unknown = _project_dag([
+        {"key": "root", "status": "todo"},
+        {"key": "child", "status": "todo", "blocked_by": ["missing", "root"]},
+    ])
+    cycle = _project_dag([
+        {"key": "alpha", "status": "todo", "blocked_by": ["charlie"]},
+        {"key": "bravo", "status": "todo", "blocked_by": ["alpha"]},
+        {"key": "charlie", "status": "todo", "blocked_by": ["bravo"]},
+    ])
+    js = _read_asset("app.js")
+    css = _read_asset("app.css")
+
+    assert unknown == {
+        "depths": {}, "nodes": [], "edges": [], "aggregates": [],
+        "error": {
+            "code": "unknown_dependency",
+            "dependencies": [{"node": "child", "dependency": "missing"}],
+        },
+    }
+    assert cycle == {
+        "depths": {}, "nodes": [], "edges": [], "aggregates": [],
+        "error": {"code": "cycle", "nodes": ["alpha", "bravo", "charlie"]},
+    }
+    assert "renderDagError" in js
+    assert "projection.error" in js
+    assert ".dag-error" in css
+
+
+def test_spa_resets_dag_view_state_when_switching_manifests():
+    """切换 manifest 不得继承上一个图的展开、聚焦、选中或详情状态。"""
+    js = _read_asset("app.js")
+
+    assert "function resetDagView()" in js
+    assert "state.expanded = [];" in js
+    assert 'state.focus = "default";' in js
+    assert "state.selected = null;" in js
+    assert "clearNodeDetail();" in js
+    assert re.search(
+        r"async function selectManifest\(path\)\{.*?"
+        r"const isNewManifest = state\.current !== path;.*?"
+        r"if\(isNewManifest\)\{.*?resetDagView\(\);.*?\}.*?"
+        r"state\.current = path;",
+        js,
+        re.DOTALL,
+    )
+
+
+def test_spa_closes_selection_and_detail_after_every_dag_redraw():
+    """redraw 后仅保留仍可见的选择；异步旧详情也不得回写。"""
+    js = _read_asset("app.js")
+
+    assert "function syncSelectedProjection(projection)" in js
+    assert "const visibleKeys = new Set(projection.nodes.map(node => node.key));" in js
+    assert "clearSelection();" in js
+    assert "dimForSelected();" in js
+    assert re.search(
+        r"projection\.aggregates\.forEach\(aggregate => \{.*?\}\);\s*"
+        r"syncSelectedProjection\(projection\);",
+        js,
+        re.DOTALL,
+    )
+    assert "if(state.selected !== key || state.current !== manifest) return;" in js
+
+
+def test_spacer_layout_is_shared_by_header_toolbar_and_footer():
+    """三处布局均使用 .spacer，样式不能只限定在 header。"""
+    css = _read_asset("app.css")
+
+    assert re.search(r"\.spacer\s*\{[^}]*flex\s*:\s*1", css)
+    assert "header .spacer" not in css
 
 
 def test_dag_projection_manual_expansion_keeps_multi_parent_ancestor_closure():

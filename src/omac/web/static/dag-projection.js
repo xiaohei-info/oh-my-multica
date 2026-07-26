@@ -26,15 +26,55 @@ function buildGraph(nodes){
   const keys = Object.keys(byNodeKey).sort();
   const dependencies = {};
   const children = {};
+  const unknownDependencies = [];
   keys.forEach(key => { children[key] = []; });
   keys.forEach(key => {
-    dependencies[key] = (byNodeKey[key].blocked_by || [])
-      .filter(dep => Object.prototype.hasOwnProperty.call(byNodeKey, dep))
-      .slice().sort();
+    const declared = Array.isArray(byNodeKey[key].blocked_by)
+      ? byNodeKey[key].blocked_by : [];
+    dependencies[key] = declared.filter(dep => {
+      const known = typeof dep === "string"
+        && Object.prototype.hasOwnProperty.call(byNodeKey, dep);
+      if(!known) unknownDependencies.push({node:key, dependency:String(dep)});
+      return known;
+    }).slice().sort();
     dependencies[key].forEach(dep => children[dep].push(key));
   });
   keys.forEach(key => children[key].sort());
-  return {byNodeKey, keys, dependencies, children};
+  unknownDependencies.sort((left, right) =>
+    left.node.localeCompare(right.node) || left.dependency.localeCompare(right.dependency));
+  return {byNodeKey, keys, dependencies, children, unknownDependencies};
+}
+
+function cycleNodes(graph){
+  const states = {};
+  const stack = [];
+  const result = new Set();
+  const visit = key => {
+    if(states[key] === "done") return;
+    if(states[key] === "visiting") {
+      stack.slice(stack.indexOf(key)).forEach(node => result.add(node));
+      return;
+    }
+    states[key] = "visiting";
+    stack.push(key);
+    graph.dependencies[key].forEach(visit);
+    stack.pop();
+    states[key] = "done";
+  };
+  graph.keys.forEach(visit);
+  return [...result].sort();
+}
+
+function graphError(graph){
+  if(graph.unknownDependencies.length) {
+    return {code:"unknown_dependency", dependencies:graph.unknownDependencies};
+  }
+  const nodes = cycleNodes(graph);
+  return nodes.length ? {code:"cycle", nodes} : null;
+}
+
+function invalidProjection(error){
+  return {depths:{}, nodes:[], edges:[], aggregates:[], error};
 }
 
 function computeDepths(graph){
@@ -65,15 +105,12 @@ function ancestorKeys(graph, initialKeys){
   return result;
 }
 
-function hiddenDescendants(graph, source, visible){
-  const result = new Set();
-  const visit = key => {
-    if(visible.has(key) || result.has(key)) return;
-    result.add(key);
-    graph.children[key].forEach(visit);
-  };
-  graph.children[source].forEach(visit);
-  return result;
+function revealClosure(graph, source){
+  return ancestorKeys(graph, graph.children[source] || []);
+}
+
+function hiddenRevealClosure(graph, source, visible){
+  return new Set([...revealClosure(graph, source)].filter(key => !visible.has(key)));
 }
 
 function statusSummary(graph, keys){
@@ -92,6 +129,8 @@ function focusKeys(graph, focus){
 
 function projectDag(nodes, options){
   const graph = buildGraph(nodes);
+  const error = graphError(graph);
+  if(error) return invalidProjection(error);
   const depths = computeDepths(graph);
   const settings = options || {};
   const focus = settings.focus || "default";
@@ -108,7 +147,7 @@ function projectDag(nodes, options){
 
   (settings.expanded || []).forEach(source => {
     if(!visible.has(source) || !graph.children[source]) return;
-    ancestorKeys(graph, graph.children[source]).forEach(key => visible.add(key));
+    revealClosure(graph, source).forEach(key => visible.add(key));
   });
 
   const visibleNodes = graph.keys
@@ -123,8 +162,8 @@ function projectDag(nodes, options){
   });
   edges.sort((left, right) => left.from.localeCompare(right.from) || left.to.localeCompare(right.to));
   const aggregates = visibleNodes.reduce((result, node) => {
-    if(!graph.children[node.key].some(child => !visible.has(child))) return result;
-    const hidden = hiddenDescendants(graph, node.key, visible);
+    const hidden = hiddenRevealClosure(graph, node.key, visible);
+    if(!hidden.size) return result;
     result.push({
       source: node.key,
       hidden_count: hidden.size,
