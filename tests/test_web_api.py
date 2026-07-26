@@ -314,6 +314,18 @@ def test_status_cache_through_http(orch, simple_manifest, monkeypatch):
     assert invocations["n"] == 1
 
 
+def test_web_server_bounds_status_cache_ttl_by_frontend_refresh():
+    """状态缓存不能比前端下一次轮询更久，避免已观测状态被旧缓存遮住。"""
+    server = web_srv.WebServer(
+        "127.0.0.1", 0, refresh=5, poll_interval=30,
+    )
+    httpd = server._build()
+    try:
+        assert httpd.RequestHandlerClass.cache.ttl == 5
+    finally:
+        httpd.server_close()
+
+
 # ==================== 安全测试 ====================
 
 def test_nonlocal_host_without_token_exits_5(tmp_path, monkeypatch):
