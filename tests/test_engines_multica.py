@@ -1331,3 +1331,30 @@ def test_multica_observe_pull_request_fails_closed_for_unreadable_remote(
     observation = store.observe_pull_request("https://example.com/pr/1")
 
     assert observation.state is PullRequestState.UNKNOWN
+
+
+def test_multica_pr_check_and_readiness_stay_in_adapter(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    calls = []
+    responses = iter([
+        SimpleNamespace(returncode=0, stdout="checks ok", stderr=""),
+        SimpleNamespace(returncode=0, stdout=json.dumps({
+            "isDraft": False, "state": "OPEN"}), stderr=""),
+    ])
+
+    def run(args, **kwargs):
+        calls.append((args, kwargs))
+        return next(responses)
+
+    monkeypatch.setattr("omac.engines.multica.subprocess.run", run)
+
+    check = store.check_pull_request(
+        "https://github.com/acme/repo/pull/1", "gh pr checks {pr_url}", 30)
+    readiness = store.read_pull_request_readiness(
+        "https://github.com/acme/repo/pull/1")
+
+    assert check.succeeded is True
+    assert readiness.is_draft is False
+    assert readiness.state == "OPEN"
+    assert calls[0][0] == "gh pr checks https://github.com/acme/repo/pull/1"
+    assert calls[1][0][-1] == "isDraft,state"

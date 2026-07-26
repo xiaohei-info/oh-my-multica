@@ -18,6 +18,11 @@ def test_list_workspaces_is_part_of_store_interface():
     assert hasattr(WorkItemStore, "list_workspaces")
 
 
+def test_pr_operations_are_part_of_store_interface():
+    assert hasattr(WorkItemStore, "check_pull_request")
+    assert hasattr(WorkItemStore, "read_pull_request_readiness")
+
+
 def test_mock_list_workspaces_returns_workspaceinfo():
     store = create_engine("mock", EngineConfig(engine_type="mock", workspace_id="ws")).store
     infos = store.list_workspaces()

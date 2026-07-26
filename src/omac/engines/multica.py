@@ -35,7 +35,8 @@ from ..errors import AuthError, PlatformError, ValidationError, WorkItemNotFound
 from ..i18n import ui
 from .models import (
     AgentInfo, AgentProvisionSpec, EngineConfig, ProjectInfo, RuntimeTarget,
-    MergeCommandResult, PullRequestObservation, PullRequestState,
+    MergeCommandResult, PullRequestCheckResult, PullRequestObservation,
+    PullRequestReadiness, PullRequestState,
     SkillPackage, WorkItem, WorkItemStatus, WorkspaceInfo,
 )
 from ..core.machine_feedback import (
@@ -1091,6 +1092,43 @@ class MulticaStore(WorkItemStore):
         if state == "CLOSED":
             return PullRequestObservation(PullRequestState.CLOSED_UNMERGED)
         return PullRequestObservation(PullRequestState.UNKNOWN, detail=f"unexpected PR state: {state}")
+
+    def check_pull_request(
+        self, pr_url: str, command: str, timeout_seconds: int,
+    ) -> PullRequestCheckResult:
+        try:
+            proc = subprocess.run(
+                command.replace("{pr_url}", pr_url), shell=True,
+                capture_output=True, text=True, timeout=timeout_seconds)
+        except subprocess.TimeoutExpired as exc:
+            output = "".join(
+                stream.decode("utf-8", errors="replace")
+                if isinstance(stream, bytes) else stream or ""
+                for stream in (exc.stdout, exc.stderr))
+            return PullRequestCheckResult(False, None, output, timed_out=True)
+        except FileNotFoundError as exc:
+            return PullRequestCheckResult(False, None, str(exc))
+        return PullRequestCheckResult(
+            proc.returncode == 0, proc.returncode,
+            (proc.stdout or "") + (proc.stderr or ""))
+
+    def read_pull_request_readiness(self, pr_url: str) -> PullRequestReadiness:
+        try:
+            proc = subprocess.run(
+                ["gh", "pr", "view", pr_url, "--json", "isDraft,state"],
+                capture_output=True, text=True, timeout=30)
+        except FileNotFoundError as exc:
+            return PullRequestReadiness(None, None, str(exc), "missing_cli")
+        except subprocess.TimeoutExpired as exc:
+            return PullRequestReadiness(None, None, str(exc), "timeout")
+        if proc.returncode != 0:
+            return PullRequestReadiness(
+                None, None, (proc.stderr or proc.stdout or "").strip(), "failed")
+        try:
+            payload = json.loads(proc.stdout or "{}")
+        except json.JSONDecodeError as exc:
+            return PullRequestReadiness(None, None, str(exc), "malformed")
+        return PullRequestReadiness(payload.get("isDraft"), payload.get("state"))
 
 
 class MulticaRuntime(AgentRuntime):

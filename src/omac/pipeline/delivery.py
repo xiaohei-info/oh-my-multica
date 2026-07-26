@@ -35,11 +35,10 @@ CI 在显式配置 ``config.ci.check_command`` 或检测到 ``.github/workflows`
 """
 from __future__ import annotations
 
-import subprocess
 from dataclasses import dataclass
 
 from ..core.config import DEFAULT_RETRY, get_ci_config, get_merge_config
-from ..engines.models import PullRequestState, WorkItemStatus
+from ..engines.models import PullRequestCheckResult, PullRequestState, WorkItemStatus
 from ..engines.runtime import AgentRuntime
 from ..core.manifest import Manifest, save_manifest
 from ..i18n import ui
@@ -101,30 +100,14 @@ def _tail(text: str, n: int = 2000) -> str:
     return "..." + text[-n:]
 
 
-def run_ci_check(check_command: str, pr_url: str, timeout_minutes: int = 30) -> CIResult:
-    """执行 ``ci.check_command`` 模板命令,把 ``{pr_url}`` 占位替换为实际 PR 地址。
-
-    命令本身负责轮询远端 CI 直到出结果(退出码即结论);本函数用 ``timeout_minutes``
-    作为外层安全阀,超时即判定失败并带回退。
-    """
-    cmd = check_command.replace("{pr_url}", pr_url)
-    timeout = max(1, int(timeout_minutes)) * 60
-    try:
-        proc = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired as exc:
-        out = ""
-        for stream in (exc.stdout, exc.stderr):
-            if isinstance(stream, bytes):
-                out += stream.decode("utf-8", errors="replace")
-            elif isinstance(stream, str):
-                out += stream
-        return CIResult(passed=False, timed_out=True, exit_code=None,
-                        output=out, summary=_tail(out) or ui("(no output)", "(无输出)"))
-    output = (proc.stdout or "") + (proc.stderr or "")
-    return CIResult(passed=proc.returncode == 0, timed_out=False,
-                    exit_code=proc.returncode, output=output,
-                    summary=_tail(output) or ui("(no output)", "(无输出)"))
+def _ci_result(result: PullRequestCheckResult) -> CIResult:
+    return CIResult(
+        passed=result.succeeded,
+        timed_out=result.timed_out,
+        exit_code=result.exit_code,
+        output=result.output,
+        summary=_tail(result.output) or ui("(no output)", "(无输出)"),
+    )
 
 
 # ── worker 证据过门后的 CI 门推进 ─────────────────────────────────────────────
@@ -180,8 +163,10 @@ def advance_delivery(
     node.status = "ci_check"
     store.update_status(item_id, to_platform_status("ci_check"))
 
-    result = run_ci_check(
-        ci["check_command"], pr_url, ci.get("timeout_minutes", 30))
+    result = _ci_result(store.check_pull_request(
+        pr_url, ci["check_command"],
+        max(1, int(ci.get("timeout_minutes", 30))) * 60,
+    ))
     if result.passed:
         node.status = "in_progress"
         store.update_status(item_id, to_platform_status("in_progress"))
@@ -242,6 +227,16 @@ def run_merge_delivery(
             "Confirm the worker submitted a PR URL with `omac work submit <id> --pr-url <url> ...`.",
             "⚠️ merge 已配置(command)但节点无 pr_url,无法执行自动合并。\n"
             "请确认 worker 已用 `omac work submit <id> --pr-url <url> ...` 提交 PR 地址。"))
+        node.status = "blocked"
+        store.update_status(item_id, WorkItemStatus.BLOCKED)
+        return "blocked"
+
+    if node.merge_request_state not in {None, "intent", "requested"}:
+        store.add_comment(item_id, ui(
+            "⚠️ Merge request state is invalid, so OMAC will not request a merge. "
+            "Verify the PR remotely, then use `omac node retry` to clear this state.",
+            "⚠️ merge 请求状态无效，OMAC 不会请求合入。请先远端核实 PR，"
+            "再执行 `omac node retry` 清除此状态。"))
         node.status = "blocked"
         store.update_status(item_id, WorkItemStatus.BLOCKED)
         return "blocked"

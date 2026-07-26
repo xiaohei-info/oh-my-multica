@@ -49,7 +49,7 @@ def _default_gh_merge_succeeds_in_dispatch_tests(monkeypatch):
             return Proc()
         return real_run(command, *args, **kwargs)
 
-    monkeypatch.setattr("omac.pipeline.delivery.subprocess.run", fake_run)
+    monkeypatch.setattr("omac.engines.mock.subprocess.run", fake_run)
 
 
 def _config(**extra):

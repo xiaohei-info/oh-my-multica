@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 import json
-import subprocess
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import yaml
@@ -598,10 +597,10 @@ def _validate_decompose_authoring(
 
 
 def _validate_develop_authoring(
-    pr_url: str, verification_file: str, item: WorkItem
+    store: WorkItemStore, pr_url: str, verification_file: str, item: WorkItem
 ) -> Dict[str, Any]:
     """develop × authoring 左移校验:复用 P2.2 validate_worker_evidence。"""
-    _validate_pr_ready_for_handoff(pr_url)
+    _validate_pr_ready_for_handoff(store, pr_url)
     verification = _parse_structured(verification_file)
     node = _Node(_contract_from_item(item))
     probe = _Item(artifacts={"pr_url": pr_url}, verification=verification)
@@ -617,45 +616,33 @@ def _is_github_pr_url(pr_url: str) -> bool:
     return isinstance(pr_url, str) and pr_url.startswith("https://github.com/") and "/pull/" in pr_url
 
 
-def _validate_pr_ready_for_handoff(pr_url: str) -> None:
+def _validate_pr_ready_for_handoff(store: WorkItemStore, pr_url: str) -> None:
     """worker 交付前置门:GitHub PR 必须不是 draft,否则不进入 CI/review/merge。"""
     if not _is_github_pr_url(pr_url):
         return
-    try:
-        proc = subprocess.run(
-            ["gh", "pr", "view", pr_url, "--json", "isDraft,state"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-    except FileNotFoundError:
+    readiness = store.read_pull_request_readiness(pr_url)
+    if readiness.failure == "missing_cli":
         raise ValidationError(ui(
             "GitHub PR readiness checks require gh CLI. Install it, sign in, and retry: "
             "brew install gh && gh auth login",
             "GitHub PR ready 检查需要 gh CLI。请安装并登录后重试: "
             "brew install gh && gh auth login"))
-    except subprocess.TimeoutExpired:
+    if readiness.failure == "timeout":
         raise ValidationError(ui(
             f"GitHub PR readiness check timed out: {pr_url}. Verify network and GitHub access.",
             f"GitHub PR ready 检查超时: {pr_url}。请确认网络/GitHub 可达后重试。"))
-    if proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout or "").strip()
+    if readiness.failure in {"failed", "malformed"}:
+        detail = readiness.detail
         raise ValidationError(ui(
             f"GitHub PR readiness check failed: {pr_url}\n{detail}",
             f"GitHub PR ready 检查失败: {pr_url}\n{detail}"))
-    try:
-        payload = json.loads(proc.stdout or "{}")
-    except json.JSONDecodeError:
-        raise ValidationError(ui(
-            f"GitHub PR readiness check returned non-JSON output: {pr_url}\n{(proc.stdout or '').strip()}",
-            f"GitHub PR ready 检查返回非 JSON: {pr_url}\n{(proc.stdout or '').strip()}"))
-    if payload.get("isDraft") is True:
+    if readiness.is_draft is True:
         raise ValidationError(ui(
             f"GitHub PR is still a draft and cannot enter CI/review/merge: {pr_url}\n"
             "Run `gh pr ready <pr-url>` or mark it ready for review on GitHub.",
             f"GitHub PR 仍是 draft,不能交付给下游 CI/review/merge: {pr_url}\n"
             "请先执行 `gh pr ready <pr-url>` 或在 GitHub 页面 Mark ready for review。"))
-    state = payload.get("state")
+    state = readiness.state
     if state and state != "OPEN":
         raise ValidationError(ui(
             f"GitHub PR is not OPEN and cannot be delivered: {pr_url} (state={state})",
@@ -825,7 +812,7 @@ def submit(
 
     # ---------- develop × authoring ----------
     if kind == TaskKind.DEVELOP and phase == TaskPhase.AUTHORING:
-        verification = _validate_develop_authoring(pr_url, verification_file, item)
+        verification = _validate_develop_authoring(store, pr_url, verification_file, item)
         store.update_work_item_metadata(
             issue_id,
             artifacts={"pr_url": pr_url},
