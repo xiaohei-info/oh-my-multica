@@ -59,6 +59,7 @@ MANIFEST_TO_PLATFORM_STATUS: dict[str, WorkItemStatus] = {
 
 VALID_MANIFEST_STATUSES = set(MANIFEST_TO_PLATFORM_STATUS)
 VALID_MERGE_REQUEST_STATES = {None, "intent", "requested"}
+MERGE_BOUNCE_PENDING_PREFIX = "bounce_pending:"
 
 
 def to_platform_status(manifest_status: str) -> WorkItemStatus:
@@ -113,7 +114,19 @@ def _ci_result(result: PullRequestCheckResult) -> CIResult:
 
 
 def merge_request_state_is_valid(state: str | None) -> bool:
-    return state in VALID_MERGE_REQUEST_STATES
+    return state in VALID_MERGE_REQUEST_STATES or merge_bounce_attempt(state) is not None
+
+
+def merge_bounce_attempt(state: str | None) -> int | None:
+    """解析 durable merge bounce marker 中的绝对回退次数。"""
+    if not isinstance(state, str) or not state.startswith(MERGE_BOUNCE_PENDING_PREFIX):
+        return None
+    raw = state[len(MERGE_BOUNCE_PENDING_PREFIX):]
+    try:
+        attempt = int(raw)
+    except ValueError:
+        return None
+    return attempt if attempt > 0 else None
 
 
 def block_unproven_merge_request(
@@ -243,6 +256,13 @@ def run_merge_delivery(
     merge = get_merge_config(config)
 
     item = store.get_work_item(item_id)
+    pending_attempt = merge_bounce_attempt(node.merge_request_state)
+    if pending_attempt is not None:
+        return _resume_merge_bounce(
+            node, item, store, runtime, retry_limits,
+            manifest=manifest, manifest_path=manifest_path,
+            attempt=pending_attempt)
+
     pr_url = ""
     if isinstance(item.artifacts, dict):
         pr_url = item.artifacts.get("pr_url") or item.artifacts.get("pr") or ""
@@ -390,35 +410,58 @@ def _bounce_or_block_merge(node, item, store, runtime, retry_limits, *,
     item_id = node.work_item_id
     cur_bounce = item.bounces.merge
     next_bounce = cur_bounce + 1
-    merge_limit = retry_limits.get("merge", DEFAULT_RETRY["merge"])
-    node.merge_request_state = None
-    if merge_limit == 0 or next_bounce >= merge_limit:
-        node.status = "blocked"
-    else:
-        node.status = "in_progress"
-
-    # 先持久化业务状态，再执行平台 reset/assign/wake。这样 worker 已被成功
-    # 唤醒后即使进程在 tick 尾部保存前崩溃，重启也会从 authoring 接管，
-    # 不会继续观察旧 PR 或重复 merge 请求。
+    node.status = "merging"
+    node.merge_request_state = f"{MERGE_BOUNCE_PENDING_PREFIX}{next_bounce}"
     save_manifest(manifest, manifest_path)
 
-    tail = _tail(output) or ui("(no output)", "(无输出)")
-    store.add_comment(item_id, ui(
-        f"⚠️ {label}. Returning to the worker to resolve the merge and rerun ci→review→merge.\n\n"
-        f"--- Command output tail ---\n{tail}",
-        f"⚠️ {label} —— merge 冲突,转回 worker 解决后重新走 ci→review→merge。\n\n"
-        f"--- 命令输出尾部 ---\n{tail}"))
-    store.update_work_item_metadata(item_id, merge_bounce=next_bounce)
+    return _resume_merge_bounce(
+        node, item, store, runtime, retry_limits,
+        manifest=manifest, manifest_path=manifest_path,
+        attempt=next_bounce, label=label, output=output)
 
-    if node.status == "blocked":
+
+def _resume_merge_bounce(
+    node, item, store, runtime, retry_limits, *,
+    manifest: Manifest, manifest_path: str,
+    attempt: int, label: str | None = None, output: str = "",
+) -> str:
+    """幂等补齐 durable merge bounce；完成前始终保留 bounce_pending marker。"""
+    item_id = node.work_item_id
+    current = item.bounces.merge
+    if current > attempt:
+        node.status = "blocked"
+        save_manifest(manifest, manifest_path)
+        store.add_comment(item_id, ui(
+            "⚠️ Persisted merge bounce attempt is older than platform metadata; refusing automatic recovery.",
+            "⚠️ manifest 中的 merge 回退轮次早于平台元数据；拒绝自动恢复。"))
         store.update_status(item_id, WorkItemStatus.BLOCKED)
         return "blocked"
 
-    # 有界转回 worker:改回 in_progress,清除旧评审判定,重新派发 worker 并唤醒。
-    # reset_review 确保旧 verdict 不会在新一轮被复用——强制 reviewer 重新 pass,
-    # 否则新 PR 会在旧 verdict 下被自动 merge,绕过 reviewer gate。
+    if current < attempt:
+        resolved_label = label or ui(
+            "Merge failed; resuming the pending worker handoff",
+            "merge 失败；继续完成尚未结束的 worker 交接")
+        tail = _tail(output) or ui("(no output)", "(无输出)")
+        store.add_comment(item_id, ui(
+            f"⚠️ {resolved_label}. Returning to the worker to resolve the merge and rerun ci→review→merge.\n\n"
+            f"--- Command output tail ---\n{tail}",
+            f"⚠️ {resolved_label} —— 转回 worker 解决后重新走 ci→review→merge。\n\n"
+            f"--- 命令输出尾部 ---\n{tail}"))
+        store.update_work_item_metadata(item_id, merge_bounce=attempt)
+
+    merge_limit = retry_limits.get("merge", DEFAULT_RETRY["merge"])
+    if merge_limit == 0 or attempt >= merge_limit:
+        store.update_status(item_id, WorkItemStatus.BLOCKED)
+        node.status = "blocked"
+        node.merge_request_state = None
+        save_manifest(manifest, manifest_path)
+        return "blocked"
+
     store.update_status(item_id, to_platform_status("in_progress"))
     store.reset_review(item_id)
     store.assign_work_item(item_id, node.worker, "worker")
     runtime.wake(item_id, node.worker, "worker")
+    node.status = "in_progress"
+    node.merge_request_state = None
+    save_manifest(manifest, manifest_path)
     return "bounce"
