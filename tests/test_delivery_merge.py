@@ -966,12 +966,16 @@ class TestMergeClosureRegression:
         assert reloaded.nodes["a"].merge_request_state == "intent"
         assert f"omac node retry {path} a" in "\n".join(store.get_comments(item.id))
 
-    def test_definite_merge_failure_persists_worker_bounce_before_crash(
-        self, tmp_path,
+    @pytest.mark.parametrize(
+        "failure_point", ["comment", "metadata", "status", "reset", "assign", "wake"])
+    def test_merge_bounce_pending_recovers_after_each_platform_effect(
+        self, tmp_path, failure_point,
     ):
         store = _store()
         runtime = _runtime(store)
         item = _review_passed_item(store)
+        store.update_work_item_metadata(item.id, phase=TaskPhase.REVIEW)
+        store.update_status(item.id, WorkItemStatus.IN_REVIEW)
         manifest = Manifest(meta={}, nodes={
             "a": Node(id="a", worker="alice", reviewer="bob",
                       work_item_id=item.id, status="in_review"),
@@ -1002,58 +1006,73 @@ class TestMergeClosureRegression:
 
         store.request_pull_request_merge = request
         store.observe_pull_request = observe
-        worker_effects = []
+        original_add_comment = store.add_comment
+        original_update_metadata = store.update_work_item_metadata
         completed_update_status = store.update_status
         completed_reset_review = store.reset_review
         completed_assign = store.assign_work_item
         completed_wake = runtime.wake
+        crashed = False
 
-        def assert_bounce_is_durable(effect):
+        def after_effect(effect):
+            nonlocal crashed
             persisted = load_manifest(path).nodes["a"]
-            assert persisted.status == "in_progress"
-            assert persisted.merge_request_state is None
-            worker_effects.append(effect)
+            assert persisted.status == "merging"
+            assert persisted.merge_request_state.startswith("bounce_pending:")
+            if effect == failure_point and not crashed:
+                crashed = True
+                raise RuntimeError(f"simulated crash after {effect}")
+
+        def add_comment_then_maybe_crash(item_id, comment):
+            original_add_comment(item_id, comment)
+            after_effect("comment")
+
+        def update_metadata_then_maybe_crash(item_id, **kwargs):
+            result = original_update_metadata(item_id, **kwargs)
+            if "merge_bounce" in kwargs:
+                after_effect("metadata")
+            return result
 
         def update_status_after_persist(item_id, status):
-            if requests and status is WorkItemStatus.IN_PROGRESS:
-                assert_bounce_is_durable("status")
             completed_update_status(item_id, status)
+            if requests and status is WorkItemStatus.IN_PROGRESS:
+                after_effect("status")
 
         def reset_review_after_persist(item_id):
-            assert_bounce_is_durable("reset")
             completed_reset_review(item_id)
+            after_effect("reset")
 
         def assign_after_persist(item_id, agent, role):
-            assert_bounce_is_durable("assign")
             completed_assign(item_id, agent, role)
+            after_effect("assign")
 
-        def crash_after_worker_wake(item_id, agent, role):
-            assert_bounce_is_durable("wake")
+        def wake_after_persist(item_id, agent, role):
             completed_wake(item_id, agent, role)
-            raise RuntimeError("simulated crash before final tick save")
+            after_effect("wake")
 
+        store.add_comment = add_comment_then_maybe_crash
+        store.update_work_item_metadata = update_metadata_then_maybe_crash
         store.update_status = update_status_after_persist
         store.reset_review = reset_review_after_persist
         store.assign_work_item = assign_after_persist
-        runtime.wake = crash_after_worker_wake
+        runtime.wake = wake_after_persist
 
-        with pytest.raises(RuntimeError, match="simulated crash"):
+        with pytest.raises(RuntimeError, match=f"simulated crash after {failure_point}"):
             loop.collect_results(
                 store, runtime, manifest, path,
                 retry_limits=dict(DEFAULT_RETRY), config={})
 
-        platform_item = store.get_work_item(item.id)
         persisted = load_manifest(path)
-        assert manifest.nodes["a"].status == "in_progress"
-        assert manifest.nodes["a"].merge_request_state is None
-        assert persisted.nodes["a"].status == "in_progress"
-        assert persisted.nodes["a"].merge_request_state is None
-        assert platform_item.status is WorkItemStatus.IN_PROGRESS
-        assert platform_item.phase is TaskPhase.AUTHORING
-        assert platform_item.review_verdict is None
-        assert len(store.assign_log) == 1
-        assert worker_effects == ["status", "reset", "assign", "wake"]
+        assert persisted.nodes["a"].status == "merging"
+        assert persisted.nodes["a"].merge_request_state == "bounce_pending:1"
         assert requests == [old_pr]
+
+        store.add_comment = original_add_comment
+        store.update_work_item_metadata = original_update_metadata
+        store.update_status = completed_update_status
+        store.reset_review = completed_reset_review
+        store.assign_work_item = completed_assign
+        runtime.wake = completed_wake
 
         resumed_runtime = _runtime(store)
         running = loop.tick(
@@ -1061,7 +1080,20 @@ class TestMergeClosureRegression:
             retry_limits=dict(DEFAULT_RETRY), config={})
         assert running.state == "running"
         assert persisted.nodes["a"].status == "in_progress"
-        assert len(store.assign_log) == 1
+        assert persisted.nodes["a"].merge_request_state is None
+        platform_item = store.get_work_item(item.id)
+        assert platform_item.status is WorkItemStatus.IN_PROGRESS
+        assert platform_item.phase is TaskPhase.AUTHORING
+        assert platform_item.review_verdict is None
+        assert platform_item.bounces.merge == 1
+        assert requests == [old_pr]
+        worker_assignments = len([entry for entry in store.assign_log if entry[2] == "worker"])
+        assert worker_assignments in {1, 2}
+
+        loop.tick(
+            store, resumed_runtime, persisted, path,
+            retry_limits=dict(DEFAULT_RETRY), config={})
+        assert len([entry for entry in store.assign_log if entry[2] == "worker"]) == worker_assignments
         assert requests == [old_pr]
 
         store.update_work_item_metadata(
@@ -1092,6 +1124,10 @@ class TestMergeClosureRegression:
         assert final_disk.nodes["a"].merged_at == merged_at
         assert store.get_work_item(item.id).status is WorkItemStatus.DONE
         assert requests == [old_pr, new_pr]
+        bounce_comments = [
+            comment for comment in store.get_comments(item.id)
+            if "Returning to the worker" in comment]
+        assert 1 <= len(bounce_comments) <= 2
 
     def test_merge_intent_is_saved_before_platform_status_write(self, tmp_path):
         store = _store()
@@ -1170,12 +1206,10 @@ class TestMergeClosureRegression:
 
         def assert_durable(effect):
             persisted = load_manifest(path).nodes["a"]
-            expected = (
-                ("merging", "intent")
-                if manifest.nodes["a"].status == "merging"
-                else ("blocked", None)
+            assert (persisted.status, persisted.merge_request_state) == (
+                manifest.nodes["a"].status,
+                manifest.nodes["a"].merge_request_state,
             )
-            assert (persisted.status, persisted.merge_request_state) == expected
             effects.append(effect)
 
         def add_comment(item_id, comment):
@@ -1217,11 +1251,12 @@ class TestMergeClosureRegression:
         requests = []
         store.request_pull_request_merge = lambda *args: requests.append(args) or SimpleNamespace(
             succeeded=False, timed_out=False, exit_code=1, output="conflict")
+        original_add_comment = store.add_comment
 
         def crash_after_durable_block(item_id, comment):
             persisted = load_manifest(path).nodes["a"]
-            assert persisted.status == "blocked"
-            assert persisted.merge_request_state is None
+            assert persisted.status == "merging"
+            assert persisted.merge_request_state == "bounce_pending:1"
             raise RuntimeError("simulated crash before platform block")
 
         store.add_comment = crash_after_durable_block
@@ -1233,6 +1268,7 @@ class TestMergeClosureRegression:
 
         assert store.get_work_item(item.id).status is WorkItemStatus.IN_REVIEW
         reloaded = load_manifest(path)
+        store.add_comment = original_add_comment
         result = loop.tick(
             store, _runtime(store), reloaded, path,
             retry_limits=resolve_retry({"retry": {"merge": 0}}), config={})
@@ -1264,8 +1300,8 @@ class TestMergeClosureRegression:
 
         def assert_durable(effect):
             persisted = load_manifest(path).nodes["a"]
-            assert persisted.status == "in_progress"
-            assert persisted.merge_request_state is None
+            assert persisted.status == "merging"
+            assert persisted.merge_request_state == "bounce_pending:1"
             effects.append(effect)
 
         def update_status(item_id, status):
@@ -1295,6 +1331,9 @@ class TestMergeClosureRegression:
         assert result == "bounce"
         assert requests == []
         assert effects == ["status", "reset", "assign", "wake"]
+        persisted = load_manifest(path).nodes["a"]
+        assert persisted.status == "in_progress"
+        assert persisted.merge_request_state is None
 
     def test_timeout_with_pending_pr_stays_merging_without_worker_bounce(
         self, tmp_path,

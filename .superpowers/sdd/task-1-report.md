@@ -430,10 +430,85 @@ Collected: `897`; exit code `0` (`886 passed, 11 skipped`).
 
 ### Residual risk
 
-Platform writes are not one distributed transaction, so a crash can still
-leave the platform projection temporarily behind the manifest. The durable
-manifest state is now authoritative for restart decisions: running authoring
-work is resumed without another merge request, and persisted failure states do
-not auto-unblock. Production DAG callers already provide a manifest path; the
-new path requirement affects only direct internal/test calls that previously
-opted out of restart safety.
+The fifth follow-up persisted the destination state before platform writes, but
+did not represent an unfinished worker handoff. A crash before reset/assign/wake
+could therefore leave `in_progress` on disk while the platform remained in the
+review phase. The sixth review correctly identified this statement as broader
+than the implementation actually guaranteed.
+
+## Sixth re-review durable merge-bounce follow-up
+
+### RED
+
+Replaced the single wake-boundary regression with a real platform fixture in
+`IN_REVIEW + REVIEW + verdict=pass`, parameterized across crashes after each
+bounce side effect: comment, absolute metadata write, status update, review
+reset, worker assignment, and wake.
+
+```sh
+.venv/bin/python -m pytest \
+  tests/test_delivery_merge.py::TestMergeClosureRegression::test_merge_bounce_pending_recovers_after_each_platform_effect -q
+```
+
+Result before implementation: `6 failed`. Every failure showed that the disk
+manifest had already cleared the merge marker and moved to ordinary
+`in_progress`, so restart had no durable instruction to finish the handoff.
+
+### Fix
+
+- Reused `merge_request_state` as the single tagged closure marker. The durable
+  form `bounce_pending:<absolute-attempt>` means the merge command is proven to
+  have failed safely and the worker handoff is incomplete. The suffix is the
+  absolute `merge_bounce` target, not another state field.
+- A pending marker is saved before comment/metadata/status/reset/assign/wake.
+  Restart sees it before PR observation and replays the same handoff without
+  issuing another merge request.
+- `merge_bounce` is written as the marker's absolute value. If the platform
+  already contains that value after a partial attempt, replay does not
+  increment it or repost the normal bounce comment.
+- Status update, review reset, assignment, and wake use their existing
+  idempotent contracts. Only after every operation returns successfully does
+  OMAC save `in_progress + marker=None`.
+- Retry exhaustion follows the same pending marker but settles to `blocked`;
+  `CLOSED_UNMERGED` uses the safe bounce path. Timeout plus OPEN remains
+  `intent + blocked` and never enters `bounce_pending`.
+
+### GREEN and verification
+
+Focused fault-injection GREEN:
+
+```sh
+.venv/bin/python -m pytest \
+  tests/test_delivery_merge.py::TestMergeClosureRegression::test_merge_bounce_pending_recovers_after_each_platform_effect -q
+```
+
+Result: `6 passed`.
+
+Related suite:
+
+```sh
+.venv/bin/python -m pytest \
+  tests/test_delivery_merge.py tests/test_loop.py \
+  tests/test_cli_node.py tests/test_manifest.py -q
+```
+
+Result: `131 passed`.
+
+Full suite:
+
+```sh
+.venv/bin/python -m pytest tests/ -q
+```
+
+Collected: `902`; exit code `0` (`891 passed, 11 skipped`).
+`git diff --check` passed.
+
+### Remaining non-blocking items
+
+- A process crash after a bounce comment is accepted but before the absolute
+  counter write can duplicate that diagnostic comment on replay. It cannot
+  duplicate the merge request, increment the counter twice, or create an
+  unbounded Agent Run loop.
+- Historical `done` fail-closed reconciliation may repeat a diagnostic comment
+  or status write. This remains a Minor follow-up because it does not issue a
+  merge request or dispatch an Agent Run.
