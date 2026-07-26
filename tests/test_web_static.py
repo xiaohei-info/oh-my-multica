@@ -2,14 +2,13 @@
 
 三条防线(对应用户验收标准):
 1. wheel 安装后资源随包可达 —— 通过 importlib.resources 读取 static/index.html。
-2. 页面无外部网络请求 —— 源码级 CSP 自检:无 <script src=/>link href=http/https/外部 url()。
+2. 页面无外部网络请求 —— 源码级 CSP 自检:仅引用同源 app.css/app.js。
 3. 五个区域 + 8 态着色齐全 —— 静态解析 <section>/<div> id 与 state-token 是否齐备。
 """
 from __future__ import annotations
 
 import json
 import re
-import sys
 import threading
 import urllib.error
 import urllib.request
@@ -18,9 +17,6 @@ import pytest
 import yaml
 
 import omac.web.server as web_srv
-import omac.web.api as web_api
-from omac.cli import exit_codes
-from omac.cli.main import main as cli_main
 
 
 # ----------------------- 资源读取 -----------------------
@@ -33,6 +29,10 @@ def _static_dir():
 
 def _read_index() -> str:
     return _static_dir().joinpath("index.html").read_text(encoding="utf-8")
+
+
+def _read_asset(name: str) -> str:
+    return _static_dir().joinpath(name).read_text(encoding="utf-8")
 
 
 # ----------------------- fixtures(与 test_web_api.py 同形) -----------------------
@@ -118,19 +118,20 @@ class _Server:
 # ==================== 1. 资源存在性 ====================
 
 def test_static_index_html_exists():
-    """wheel 安装后,omac.web.static.index.html 由 package-data 随包可达。"""
+    """wheel 安装后，SPA HTML shell 由 package-data 随包可达。"""
     idx = _static_dir().joinpath("index.html")
     assert idx.is_file(), f"缺 static index.html: {idx}"
-    assert idx.stat().st_size > 2000, "index.html 过小(预期嵌入样式+脚本,大于 2KB)"
+    assert idx.stat().st_size > 2000, "index.html 过小，缺少预期 SPA 结构"
 
 
 def test_static_index_has_doctype_and_utf8():
     html = _read_index()
+    js = _read_asset("app.js")
     assert re.search(r"<!doctype\s+html>", html, re.IGNORECASE), "必须 <!doctype html>"
     assert "charset=\"utf-8\"" in html.replace(" ", ""), "必须声明 utf-8"
     assert "<html lang=\"en\">" in html
-    assert "const COPY" in html
-    assert "language: \"en\"" in html
+    assert "const COPY" in js
+    assert "language: \"en\"" in js
 
 
 # ==================== 2. CSP 自检 ==================
@@ -141,18 +142,51 @@ _EXT = re.compile(
 )
 
 
+def test_index_csp_uses_same_origin_css_and_js_without_inline_code():
+    html = _read_index()
+    csp = re.search(
+        r'<meta[^>]+http-equiv="Content-Security-Policy"[^>]+content="([^"]+)"',
+        html,
+    )
+    assert csp, "index must declare Content-Security-Policy"
+    policy = csp.group(1)
+    assert "script-src 'self'" in policy
+    assert "style-src 'self'" in policy
+    assert "'unsafe-inline'" not in policy
+    assert not re.search(r"(?is)<style(?:\s[^>]*)?>.*?</style>", html)
+    assert not re.search(r"(?is)<script(?![^>]+\bsrc=)[^>]*>.*?</script>", html)
+    assert '<link rel="stylesheet" href="/static/app.css" />' in html
+    assert '<script src="/static/app.js" defer></script>' in html
+
+
+def test_same_origin_css_and_js_are_packaged_and_contain_spa_bootstrap():
+    css = _read_asset("app.css")
+    js = _read_asset("app.js")
+    assert ":root" in css
+    assert "#dag-canvas" in css
+    assert 'api("/api/manifests")' in js
+    assert "async function loadManifests()" in js
+    assert "init();" in js
+
+
 def test_index_no_external_resource_urls():
     html = _read_index()
     matches = _EXT.findall(html)
     assert not matches, f"检测到外部资源 URL(违反 CSP): {matches}"
 
 
-def test_index_no_inline_external_import():
-    """禁止 <script src=> / <link rel=stylesheet href=> / @import url(http 等。"""
+def test_index_references_only_declared_same_origin_assets():
+    """允许严格 CSP 的同源资源，禁止其它脚本、样式与网络 import。"""
     html = _read_index()
-    assert not re.search(r"(?i)<\s*script[^>]\bsrc\s*=", html), "禁止外部 <script src=>"
-    assert not re.search(r"(?i)<\s*link[^>]\bhref\s*=", html), "禁止外部 <link href=>"
-    assert not re.search(r"""(?i)@import\s+(?:url\()?["']?http""", html), "禁止 @import 外部"
+    css = _read_asset("app.css")
+    scripts = re.findall(r'(?i)<script[^>]+src=["\']([^"\']+)', html)
+    styles = re.findall(
+        r'(?i)<link[^>]+rel=["\']stylesheet["\'][^>]+href=["\']([^"\']+)',
+        html,
+    )
+    assert scripts == ["/static/app.js"]
+    assert styles == ["/static/app.css"]
+    assert not re.search(r"""(?i)@import\s+(?:url\()?["']?http""", css)
 
 
 def test_index_no_eval():
@@ -190,10 +224,10 @@ def test_all_five_regions_present():
     "todo", "in_progress", "ci_check", "in_review", "merging",
     "done", "blocked", "abandoned",
 ])
-def test_state_token_present_in_index(state):
-    """8 态着色:索引中需出现每个状态 token(用于 CSS / 图例 / 着色逻辑)。"""
-    html = _read_index()
-    assert state in html, f"缺状态 token: {state}"
+def test_state_token_present_in_spa_assets(state):
+    """8 态着色 token 可位于同源 CSS/JS，不要求内联在 HTML。"""
+    assets = _read_asset("app.css") + _read_asset("app.js")
+    assert state in assets, f"缺状态 token: {state}"
 
 
 # ==================== 4. HTTP 集成:index 默认进入 SPA ====================
@@ -201,7 +235,6 @@ def test_state_token_present_in_index(state):
 def test_root_serves_spa_not_bulletin(orch, simple_manifest, monkeypatch):
     """GET / 进入单页面板(不再是旧版提示页),且包含 SPA 必备 root 节点。"""
     monkeypatch.chdir(orch.parent)
-    html = _read_index()
     with _Server(orch_subpath=str(orch)) as s:
         status, body, ctype = s.get("/", with_headers=True)
     assert status == 200
@@ -230,13 +263,13 @@ def test_index_polls_meta_for_refresh(orch, simple_manifest, monkeypatch):
 def test_static_index_uses_the_manifest_api(orch, simple_manifest, monkeypatch):
     """SPA 通过命令一致的 API 读取运行状态与项目配置。"""
     monkeypatch.chdir(orch.parent)
-    html = _read_index()
-    assert "/api/manifests" in html, "SPA 必须消费 /api/manifests"
-    assert "/api/dag/status" in html, "SPA 必须消费 /api/dag/status"
-    assert "/api/meta" in html, "SPA 必须消费 /api/meta(轮询间隔)"
-    assert 'const config = await api("/api/config");' in html
-    assert 'applyLanguage(config.language||"en");' in html
-    assert "/api/node/" in html, "SPA 必须消费 /api/node/<key>"
+    js = _read_asset("app.js")
+    assert "/api/manifests" in js, "SPA 必须消费 /api/manifests"
+    assert "/api/dag/status" in js, "SPA 必须消费 /api/dag/status"
+    assert "/api/meta" in js, "SPA 必须消费 /api/meta(轮询间隔)"
+    assert 'const config = await api("/api/config");' in js
+    assert 'applyLanguage(config.language||"en");' in js
+    assert "/api/node/" in js, "SPA 必须消费 /api/node/<key>"
 
 
 # ==================== 5. /static/<path> 通配路由(nit 修复:单一入口→静态资源通配) ==================
@@ -250,6 +283,20 @@ def test_static_asset_route_serves_index_html_via_static_path(orch, simple_manif
     assert "text/html" in ctype, f"expected text/html, got {ctype}"
     src = _read_index().strip()
     assert body.strip() == src, "/static/index.html 应与 SOURCE index.html 同源"
+
+
+@pytest.mark.parametrize("asset,expected_type,needle", [
+    ("app.css", "text/css", ":root"),
+    ("app.js", "text/javascript", "loadManifests"),
+])
+def test_same_origin_spa_assets_return_200(
+        orch, simple_manifest, monkeypatch, asset, expected_type, needle):
+    monkeypatch.chdir(orch.parent)
+    with _Server(orch_subpath=str(orch)) as s:
+        status, body, ctype = s.get(f"/static/{asset}", with_headers=True)
+    assert status == 200
+    assert expected_type in ctype
+    assert needle in body
 
 
 def test_static_asset_route_404_on_missing(orch, simple_manifest, monkeypatch):
