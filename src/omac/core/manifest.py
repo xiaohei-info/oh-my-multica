@@ -74,6 +74,13 @@ def _load_contract(raw):
 
 
 def _dump_contract(contract):
+    """Serialize the canonical executable contract, omitting semantic defaults.
+
+    ``coverage_gate=90`` and empty optional collections are restored by
+    ``_load_contract``. Plan-owned acceptance content is persisted once in the
+    sibling acceptance artifact referenced by ``meta.acceptance_file`` rather
+    than copied into every node's ``acceptance_doc``.
+    """
     if contract is None:
         return None
     data = {

@@ -586,6 +586,9 @@ def plan_create(
     # provenance:把塑造本 DAG 的源头 issue(设计/验收/拆解)记入 manifest meta,
     # 让 dag run 派发的 develop issue 也能溯源,防后续执行跑偏。
     source_issues = [r for r in [plan_item_id, acceptance_item_id, decompose_item_id] if r]
+    # Reviewer 审查原始 decompose deliverable；最终文件使用同一个 Manifest
+    # 执行模型做 canonical dump。默认值/空字段可省略，权威 acceptance 原文
+    # 单独落盘并由 meta.acceptance_file 引用，不能形成第二份可漂移的正文。
     manifest = loads_manifest(manifest_text)
     manifest.meta["plan_id"] = plan_id
     manifest.meta.setdefault("name", name)
@@ -794,6 +797,8 @@ def plan_resume(
     _write_if_missing(base_dir)
 
     source_issues = [r for r in [plan_item_id, acceptance_item_id, decompose_item_id] if r]
+    # 与 plan_create 保持同一 review → execution handoff：同一执行模型做
+    # canonical dump，acceptance 权威正文单独落盘并由 manifest meta 引用。
     manifest = loads_manifest(manifest_text)
     manifest.meta["plan_id"] = plan_id_value
     manifest.meta.setdefault("name", resolved_name)
