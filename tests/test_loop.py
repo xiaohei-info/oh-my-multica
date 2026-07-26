@@ -262,16 +262,27 @@ class TestHappyPath:
 
     def test_dispatch_appends_direct_dependency_issue_refs(self):
         """develop issue 同时链接直接 blocked_by 节点的 Multica issue。"""
+        eng = _engine()
+        foundation_item = eng.store.create_work_item(
+            "ws", "foundation", "d", dag_key="foundation", worker="alice")
+        eng.store.update_work_item_metadata(
+            foundation_item.id, artifacts={"pr_url": "https://pr/foundation"})
+        eng.store.update_status(foundation_item.id, WorkItemStatus.DONE)
+        data_item = eng.store.create_work_item(
+            "ws", "data", "d", dag_key="data", worker="alice")
+        eng.store.update_work_item_metadata(
+            data_item.id, artifacts={"pr_url": "https://pr/data"})
+        eng.store.update_status(data_item.id, WorkItemStatus.DONE)
         foundation = _node("foundation", title="Shared contract foundation")
         foundation.status = "done"
         foundation.merged = True
         foundation.merged_at = "2026-07-26T08:00:00Z"
-        foundation.work_item_id = "issue-foundation"
+        foundation.work_item_id = foundation_item.id
         data = _node("data", title="Persistence layer")
         data.status = "done"
         data.merged = True
         data.merged_at = "2026-07-26T08:00:00Z"
-        data.work_item_id = "issue-data"
+        data.work_item_id = data_item.id
         missing = _node("missing", title="Abandoned setup")
         missing.status = "abandoned"
         feature = _node(
@@ -283,28 +294,26 @@ class TestHappyPath:
             "source_issues": ["plan-1", "acc-1", "dec-1"],
         })
         path = _tmp_manifest_path(manifest)
-        eng = _engine()
-
         tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
         item = eng.store.get_work_item(manifest.nodes["feature"].work_item_id)
 
         assert item.source_refs[-2:] == [
             {
                 "label": "Prerequisite implementation · Shared contract foundation",
-                "issue_id": "issue-foundation",
+                "issue_id": foundation_item.id,
             },
             {
                 "label": "Prerequisite implementation · Persistence layer",
-                "issue_id": "issue-data",
+                "issue_id": data_item.id,
             },
         ]
         assert item.blocked_by == ["foundation", "data", "missing"]
         assert (
-            "- Prerequisite implementation · Shared contract foundation: `issue-foundation`"
+            f"- Prerequisite implementation · Shared contract foundation: `#{foundation_item.id}`"
             in item.description
         )
-        assert "omac work show issue-foundation" not in item.description
-        assert "omac work show issue-data" not in item.description
+        assert f"omac work show {foundation_item.id}" not in item.description
+        assert f"omac work show {data_item.id}" not in item.description
         assert "Abandoned setup" not in item.description
 
     def test_dispatch_develop_dag_key_includes_manifest_dag_suffix(self):
@@ -489,13 +498,13 @@ class TestIdempotency:
         # 但 done 节点状态在 manifest 里保持 done,reconcile 不会动它(无 work_item_id 跳过)
         eng2 = _engine()
         # 手动清空 a 的 work_item_id 模拟「平台已无此 item」
-        # 但 done 状态不变——reconcile 跳过无 work_item_id 的节点
+        # done 没有工作单元不再是有效的 develop 收口状态。
         from omac.core.manifest import set_node
         set_node(manifest, "a", work_item_id=None)
 
         r3 = tick(eng2.store, eng2.runtime, manifest, path)
-        # a 保持 done(不重新派发),b 应继续推进
-        assert "a" in r3.done
+        # a 被 fail-closed 阻断，不能再作为无工作单元的 done 上游。
+        assert "a" in r3.failed
         assert "a" not in r3.dispatched
 
     def test_full_run_idempotent_reload(self):

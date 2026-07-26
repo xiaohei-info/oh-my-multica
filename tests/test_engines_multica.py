@@ -1,5 +1,6 @@
 import hashlib
 import json
+import shutil
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -1258,13 +1259,14 @@ def test_multica_runtime_lists_actual_runtime_shape(monkeypatch):
     [
         ({"state": "MERGED", "mergedAt": "2026-07-26T08:45:00Z"},
          PullRequestState.MERGED, "2026-07-26T08:45:00Z"),
-        ({"state": "OPEN", "mergedAt": None}, PullRequestState.OPEN, None),
+        ({"state": "OPEN", "mergedAt": None, "mergeStateStatus": "CLEAN"},
+         PullRequestState.OPEN, None),
         ({"state": "OPEN", "mergedAt": None,
           "autoMergeRequest": {"enabledAt": "2026-07-26T08:40:00Z"},
-          "isInMergeQueue": False},
+          "mergeStateStatus": "CLEAN"},
          getattr(PullRequestState, "PENDING", "pending"), None),
         ({"state": "OPEN", "mergedAt": None,
-          "autoMergeRequest": None, "isInMergeQueue": True},
+          "autoMergeRequest": None, "mergeStateStatus": "QUEUED"},
          getattr(PullRequestState, "PENDING", "pending"), None),
         ({"state": "CLOSED", "mergedAt": None},
          PullRequestState.CLOSED_UNMERGED, None),
@@ -1287,7 +1289,23 @@ def test_multica_observe_pull_request_classifies_remote_states(
     assert observation.state is expected_state
     assert observation.merged_at == expected_merged_at
     assert "autoMergeRequest" in calls[0][0][-1]
-    assert "isInMergeQueue" in calls[0][0][-1]
+    assert "mergeStateStatus" in calls[0][0][-1]
+    assert "isInMergeQueue" not in calls[0][0][-1]
+
+
+def test_multica_pr_view_fields_are_supported_by_local_gh():
+    if shutil.which("gh") is None:
+        pytest.skip("gh is not installed")
+
+    result = subprocess.run(
+        ["gh", "pr", "view", "--help"], capture_output=True, text=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    module = __import__("omac.engines.multica", fromlist=["x"])
+    fields = module.MULTICA_PR_VIEW_FIELDS
+    for field in fields.split(","):
+        assert field in result.stdout
 
 
 @pytest.mark.parametrize(

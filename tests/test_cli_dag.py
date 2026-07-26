@@ -222,10 +222,10 @@ class TestBuildStatusReport:
 
         p = report["progress"]
         assert p["total"] == 6
-        assert p["done"] == 2      # a, e
+        assert p["done"] == 1      # a; e has no work item and is blocked
         assert p["running"] == 1   # b (in_progress)
         assert p["todo"] == 1      # c
-        assert p["blocked"] == 1   # d
+        assert p["blocked"] == 2   # d, e
         assert p["abandoned"] == 1 # f
         assert p["failed"] == 0
         assert p["converged"] is False
@@ -241,7 +241,7 @@ class TestBuildStatusReport:
         assert report["progress"]["running"] == 1
         assert report["progress"]["todo"] == 0
 
-    def test_converged_when_all_done(self, tmp_path):
+    def test_no_work_item_done_does_not_converge(self, tmp_path):
         path = _manifest_yaml(tmp_path, [
             {"id": "a", "worker": "alice", "status": "done"},
             {"id": "b", "worker": "bob", "status": "done", "blocked_by": ["a"]},
@@ -249,8 +249,8 @@ class TestBuildStatusReport:
         manifest = load_manifest(path)
         store = _mock_store()
         report = build_status_report(manifest, store, path)
-        assert report["progress"]["converged"] is True
-        assert report["needs_decision"] is None
+        assert report["progress"]["converged"] is False
+        assert {node["key"] for node in report["needs_decision"]["failed_nodes"]} == {"a", "b"}
 
     def test_node_table_fields(self, tmp_path):
         path = _mixed_manifest(tmp_path)
@@ -311,13 +311,17 @@ class TestBuildStatusReport:
 
     def test_needs_decision_null_when_no_failures(self, tmp_path):
         path = _manifest_yaml(tmp_path, [
-            {"id": "a", "worker": "alice", "status": "done"},
-            {"id": "b", "worker": "bob", "status": "in_progress", "work_item_id": "1"},
+            {"id": "a", "worker": "alice", "status": "done", "work_item_id": "1",
+             "merged": True, "merged_at": "2026-07-26T08:00:00Z"},
+            {"id": "b", "worker": "bob", "status": "in_progress", "work_item_id": "2"},
         ])
         manifest = load_manifest(path)
         store = _mock_store()
+        store.create_work_item("ws", "A", "d", dag_key="a", worker="alice")
+        store.update_work_item_metadata("1", artifacts={"pr_url": "https://pr/1"})
+        store.update_status("1", WorkItemStatus.DONE)
         store.create_work_item("ws", "B", "d", dag_key="b", worker="bob")
-        store.update_status("1", WorkItemStatus.IN_PROGRESS)
+        store.update_status("2", WorkItemStatus.IN_PROGRESS)
 
         report = build_status_report(manifest, store, path)
         assert report["needs_decision"] is None
@@ -382,8 +386,8 @@ class TestDagStatusCLI:
         data = json.loads(out)
         assert set(data.keys()) == set(STATUS_REPORT_KEYS)
         assert data["progress"]["total"] == 2
-        assert data["progress"]["done"] == 1
-        assert data["progress"]["blocked"] == 1
+        assert data["progress"]["done"] == 0
+        assert data["progress"]["blocked"] == 2
         assert data["needs_decision"] is not None
 
     def test_assemble_engine_preserves_workspace_slug_from_config(self, tmp_path):
@@ -433,7 +437,7 @@ class TestDagStatusCLI:
                       "--workspace", "ws", "--output", "json"])
         assert code == exit_codes.OK
         data = json.loads(capsys.readouterr().out)
-        assert data["progress"]["done"] == 1
+        assert data["progress"]["done"] == 0
 
     def test_status_reads_config_next_to_absolute_manifest(self, tmp_path, monkeypatch, capsys):
         """从项目外执行 dag status /abs/project/.omac/m.yaml 也读项目配置。"""
@@ -455,7 +459,7 @@ class TestDagStatusCLI:
         assert main(["dag", "status", str(manifest_path), "--output", "json"]) == exit_codes.OK
 
         data = json.loads(capsys.readouterr().out)
-        assert data["progress"]["done"] == 1
+        assert data["progress"]["done"] == 0
 
     def test_status_manifest_not_found(self, tmp_path, monkeypatch, capsys):
         monkeypatch.chdir(tmp_path)

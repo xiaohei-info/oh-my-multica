@@ -154,11 +154,14 @@ def reconcile(store: WorkItemStore, manifest: Manifest, manifest_path: str) -> b
     changed = False
     for key, node in manifest.nodes.items():
         if not node.work_item_id:
+            if node.status == "done":
+                set_node(manifest, key, status="blocked")
+                changed = True
             continue
         try:
             item = store.get_work_item(node.work_item_id)
         except WorkItemNotFoundError:
-            if node.status == "done" and not _has_confirmed_merge(node):
+            if node.status == "done":
                 set_node(manifest, key, status="blocked")
                 changed = True
             elif node.status not in {"done", "abandoned"}:
@@ -166,7 +169,7 @@ def reconcile(store: WorkItemStore, manifest: Manifest, manifest_path: str) -> b
                 changed = True
             continue
         except Exception:
-            if node.status not in {"abandoned", "done"} or not _has_confirmed_merge(node):
+            if node.status != "abandoned":
                 set_node(manifest, key, status="blocked")
                 changed = True
             continue

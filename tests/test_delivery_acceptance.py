@@ -14,7 +14,7 @@ from omac.core.acceptance import load_acceptance_doc
 from omac.core.manifest import Contract, Manifest, Node, load_manifest, save_manifest
 from omac.engines import create_engine
 from omac.engines.mock import MockStore
-from omac.engines.models import EngineConfig
+from omac.engines.models import EngineConfig, WorkItemStatus
 from omac.errors import NeedsDecision
 from omac.pipeline.acceptance import (
     acceptance_doc_path, resolve_acceptance_config, AcceptanceOutcome,
@@ -46,6 +46,24 @@ def _done_manifest(path):
     })
     save_manifest(m, path)
     return m
+
+
+def _seed_confirmed_done(engine, manifest, path):
+    """为历史已完成 develop 节点提供可核验的 PR-bearing WorkItem。"""
+    for node in manifest.nodes.values():
+        if node.status != "done":
+            continue
+        item = engine.store.create_work_item(
+            "ws", node.id, "historical done", dag_key=node.id,
+            worker=node.worker or "alice", reviewer=node.reviewer,
+        )
+        engine.store.update_work_item_metadata(
+            item.id, artifacts={"pr_url": f"https://example.com/pr/{item.id}"})
+        engine.store.update_status(item.id, WorkItemStatus.DONE)
+        node.work_item_id = item.id
+        node.merged = True
+        node.merged_at = node.merged_at or "2026-07-26T08:00:00Z"
+    save_manifest(manifest, path)
 
 
 def _acceptance_doc(flows):
@@ -145,6 +163,7 @@ def test_final_acceptance_issue_has_complete_authoring_context(tmp_path):
     save_manifest(manifest, path)
     doc = _acceptance_doc([("ACC-001", "Login", 1)])
     engine = _engine()
+    _seed_confirmed_done(engine, manifest, path)
     project = engine.store.create_project(
         "ws", "demo", repo_urls=["git@github.com:owner/demo.git"])
     engine.store.config.project_id = project.id
@@ -172,7 +191,7 @@ def test_final_acceptance_issue_has_complete_authoring_context(tmp_path):
     assert "Final implementation delivery" in item.description
     assert item.contract["acceptance_doc"]["flows"][0]["id"] == "ACC-001"
     assert item.contract["repo_urls"] == ["git@github.com:owner/demo.git"]
-    assert item.source_refs[-1]["issue_id"] == "closeout-issue"
+    assert item.source_refs[-1]["issue_id"] == manifest.nodes["closeout"].work_item_id
     assert "acceptance_doc:" not in item.description
 
 
@@ -190,6 +209,7 @@ def test_incremental_decompose_issue_has_failed_flow_and_manifest_context(tmp_pa
     save_manifest(manifest, path)
     doc = _acceptance_doc([("ACC-001", "Login", 1)])
     engine = _engine()
+    _seed_confirmed_done(engine, manifest, path)
     MockStore.set_acceptance_behaviors({
         "final-acceptance-r1": [
             {"id": "ACC-001", "status": "fail", "notes": "broken"},
@@ -235,6 +255,7 @@ def test_e2e_two_fails_then_pass(tmp_path):
     _write_doc(tmp_path, doc)
 
     engine = _engine()
+    _seed_confirmed_done(engine, manifest, path)
 
     # Round 1: 2 fails; Round 2: all pass
     accepted = {
@@ -287,6 +308,7 @@ def test_e2e_all_pass_first_round(tmp_path):
     _write_doc(tmp_path, doc)
 
     engine = _engine()
+    _seed_confirmed_done(engine, manifest, path)
     MockStore.set_acceptance_behaviors({
         "final-acceptance-r1": [
             {"id": "f1", "status": "pass"},
@@ -311,6 +333,7 @@ def test_acceptance_loop_uses_manifest_plan_id_in_dag_key(tmp_path):
     _write_doc(tmp_path, doc)
 
     engine = _engine()
+    _seed_confirmed_done(engine, manifest, path)
     MockStore.set_acceptance_behaviors({
         "final-acceptance-p-1234abcd-r1": [
             {"id": "f1", "status": "pass"},
@@ -334,6 +357,7 @@ def test_max_rounds_exhausted(tmp_path):
     _write_doc(tmp_path, doc)
 
     engine = _engine()
+    _seed_confirmed_done(engine, manifest, path)
     # Always fail f2
     accepted = {
         "final-acceptance-r1": [
@@ -375,6 +399,7 @@ def test_increment_persisted_resumable(tmp_path):
     _write_doc(tmp_path, doc)
 
     engine = _engine()
+    _seed_confirmed_done(engine, manifest, path)
     MockStore.set_acceptance_behaviors({
         "final-acceptance-r1": [
             {"id": "f1", "status": "pass"},
@@ -413,6 +438,7 @@ def test_no_acceptance_skips(tmp_path):
     manifest = _done_manifest(path)
     doc = _acceptance_doc([("f1", "F1", 1)])  # won't be used
     engine = _engine()
+    _seed_confirmed_done(engine, manifest, path)
     config = {"defaults": {"poll_interval": 0}}
     outcome = run_acceptance_loop(
         engine, manifest, path, doc, config, no_acceptance=True)
