@@ -1,6 +1,6 @@
 """验收文档结构 —— plan 阶段(P3)产出,总控验收(P4)共用同一份 schema。
 
-flows: [{id, name, actions: [{step, how, expected}]}]
+flows: [{id, name, actions: [{id, kind, step, how, expected}]}]
 
 plan 阶段把业务流程拆成 flows(每条 flow 一个可验收的端到端路径),
 总控验收按 flow 逐项走查、记录 pass/fail。两边对齐同一个 id,故漏项可被
@@ -8,12 +8,15 @@ plan 阶段把业务流程拆成 flows(每条 flow 一个可验收的端到端�
 """
 from dataclasses import dataclass
 from collections import defaultdict
+import re
 
 import yaml
 
 
 @dataclass
 class Action:
+    id: str
+    kind: str
     step: str
     how: str
     expected: str
@@ -28,11 +31,71 @@ class Flow:
 
 @dataclass
 class AcceptanceDoc:
+    schema: str
     flows: list  # list[Flow]
 
     @property
     def flow_ids(self) -> list:
         return [flow.id for flow in self.flows]
+
+    @property
+    def action_ids_by_flow(self) -> dict[str, list[str]]:
+        return {
+            flow.id: [action.id for action in flow.actions]
+            for flow in self.flows
+        }
+
+    @property
+    def business_action_ids_by_flow(self) -> dict[str, list[str]]:
+        return {
+            flow.id: [
+                action.id for action in flow.actions
+                if action.kind == ACTION_KIND_BUSINESS
+            ]
+            for flow in self.flows
+        }
+
+    @property
+    def step_count(self) -> int:
+        return sum(len(flow.actions) for flow in self.flows)
+
+    @property
+    def business_action_count(self) -> int:
+        return sum(
+            len(action_ids)
+            for action_ids in self.business_action_ids_by_flow.values()
+        )
+
+
+_EMBEDDED_ACTION_ID = re.compile(r"Action ID=`([^`]+)`")
+ACTION_KIND_BUSINESS = "business-action"
+ACTION_KIND_FLOW_STEP = "flow-step"
+_ACTION_KINDS = {ACTION_KIND_BUSINESS, ACTION_KIND_FLOW_STEP}
+
+
+def _embedded_action_ids(raw) -> list[str]:
+    identities = []
+    for field in ("how", "expected"):
+        value = raw.get(field)
+        if isinstance(value, str):
+            identities.extend(_EMBEDDED_ACTION_ID.findall(value))
+    return list(dict.fromkeys(identities))
+
+
+def _action_id(raw, flow_id: str, index: int, embedded_ids: list[str]) -> str:
+    explicit = raw.get("id")
+    if isinstance(explicit, str) and explicit.strip():
+        return explicit.strip()
+    if len(embedded_ids) > 1:
+        raise ValueError(
+            f"flow {flow_id} action {index} contains conflicting Action IDs: "
+            + ", ".join(embedded_ids))
+    if embedded_ids:
+        return embedded_ids[0]
+    # Legacy omac.acceptance/v1 documents did not require action.id. Keep them
+    # readable with a deterministic migration identity instead of silently
+    # dropping action-level responsibility.
+    return f"{flow_id}/STEP-{index:02d}"
 
 
 def _validate_expected_specificity(flows: list[Flow]) -> None:
@@ -64,9 +127,28 @@ def _validate_expected_specificity(flows: list[Flow]) -> None:
     )
 
 
-def _load_action(raw) -> Action:
+def _load_action(raw, *, flow_id: str, index: int, require_id: bool) -> Action:
     if not isinstance(raw, dict):
         raise ValueError(f"action must be an object, got {type(raw).__name__}")
+    if require_id and not (
+        isinstance(raw.get("id"), str) and raw["id"].strip()
+    ):
+        raise ValueError(
+            f"flow {flow_id} action {index} id is required by omac.acceptance/v2")
+    embedded_ids = _embedded_action_ids(raw)
+    kind = raw.get("kind")
+    if require_id and not (isinstance(kind, str) and kind.strip()):
+        raise ValueError(
+            f"flow {flow_id} action {index} kind is required by omac.acceptance/v2")
+    if kind is None:
+        # v1 did not carry a kind field. Its explicit `Action ID=...` marker is
+        # the published distinction used by the OAC acceptance document: 495
+        # business Actions versus the remaining flow procedure steps.
+        kind = ACTION_KIND_BUSINESS if embedded_ids else ACTION_KIND_FLOW_STEP
+    if kind not in _ACTION_KINDS:
+        raise ValueError(
+            f"flow {flow_id} action {index} kind must be one of: "
+            + ", ".join(sorted(_ACTION_KINDS)))
     step = raw.get("step")
     if not isinstance(step, str) or not step.strip():
         raise ValueError("action.step is required")
@@ -76,13 +158,22 @@ def _load_action(raw) -> Action:
     expected = raw.get("expected")
     if not isinstance(expected, str) or not expected.strip():
         raise ValueError(f"action {step!r} expected is required")
-    return Action(step=step, how=how, expected=expected)
+    return Action(
+        id=_action_id(raw, flow_id, index, embedded_ids),
+        kind=kind,
+        step=step,
+        how=how,
+        expected=expected,
+    )
 
 
 def load_acceptance_doc(raw) -> AcceptanceDoc:
     """从 yaml.safe_load 后的 dict 构造 AcceptanceDoc;结构不全则报错。"""
     if not isinstance(raw, dict):
         raise ValueError(f"acceptance doc must be a mapping, got {type(raw).__name__}")
+    schema = raw.get("schema", "omac.acceptance/v1")
+    if schema not in {"omac.acceptance/v1", "omac.acceptance/v2"}:
+        raise ValueError(f"unsupported acceptance schema: {schema}")
     flows_raw = raw.get("flows")
     if not isinstance(flows_raw, list) or not flows_raw:
         raise ValueError("acceptance doc flows must be a non-empty list")
@@ -106,13 +197,25 @@ def load_acceptance_doc(raw) -> AcceptanceDoc:
         actions_raw = f.get("actions")
         if not isinstance(actions_raw, list) or not actions_raw:
             raise ValueError(f"flow {flow_id} actions must be a non-empty list")
+        actions = [
+            _load_action(
+                action,
+                flow_id=flow_id,
+                index=index,
+                require_id=schema == "omac.acceptance/v2",
+            )
+            for index, action in enumerate(actions_raw, start=1)
+        ]
+        action_ids = [action.id for action in actions]
+        if len(action_ids) != len(set(action_ids)):
+            raise ValueError(f"flow {flow_id} contains duplicate action ids")
         flows.append(Flow(
             id=flow_id,
             name=name,
-            actions=[_load_action(a) for a in actions_raw],
+            actions=actions,
         ))
     _validate_expected_specificity(flows)
-    return AcceptanceDoc(flows=flows)
+    return AcceptanceDoc(schema=schema, flows=flows)
 
 
 def load_acceptance_doc_file(path: str) -> AcceptanceDoc:

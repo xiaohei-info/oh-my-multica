@@ -103,7 +103,7 @@ blockers:
 | 字段 | 语义 |
 |---|---|
 | `commands` | contract `verification_commands` 的实际运行结果；`cmd` 文本必须精确匹配，`exit_code` 必须为 0。 |
-| `commands[].business_tests` | 当前成功命令实际执行的具体业务测试索引；每项包含 contract 中的 `acceptance` 和稳定的 `test` 标识。承载命令必须有非空 `cmd`，且 `exit_code` 必须是整数 `0`；supporting command 可以不含该字段。 |
+| `commands[].business_tests` | 当前成功命令实际执行的具体业务测试索引；`acceptance` 写完整 flow claim ID 或精确 `business-action` contribution ID，`flow-step` 与 `acceptance_refs` 不进入该字段。每项同时包含稳定的 `test` 标识。 |
 | `integration_gates` | 按 gate 名称记录命令、指标、产物、事实源和交付目标。 |
 | `pr_base` | 必须与 contract `pr_base` 完全一致。 |
 | `coverage` | 数字覆盖率，必须达到 contract `coverage_gate`。 |
@@ -122,7 +122,7 @@ PR URL 不写入 verification YAML，而是通过 submit 的 `--pr-url` 单独�
 | `obligation_results` | 精确覆盖 `work show.context.review_obligations`；每项有 `obligation_id`、`pass/fail` 和非空 evidence。 |
 | `prior_blocker_results` | 精确覆盖全部 `prior_open_blockers`，状态为 `fixed/unchanged/deeper/regressed` 并给出 evidence。 |
 | `integration_tests_rerun` | contract 有 integration gates 时必须为 `true`。 |
-| `acceptance_mapping` | 逐项映射 contract `acceptance` 到证据和 `pass/fail` 状态。 |
+| `acceptance_mapping` | 逐项映射完整 flow claim 与精确 Action contribution 到证据和 `pass/fail`；trace ref 不产生映射义务。 |
 | `integration_gate_mapping` | 按 gate 名称记录独立复跑结果，字段必须与 contract 对齐。 |
 | `blockers` | pass 类 verdict 时必须为空；reject 时为结构化对象列表，绑定 obligation、稳定 root cause、分类、证据和修复入口。同一 root 每轮只出现一次，未关闭的历史 root 必须继续列出且分类与 `prior_blocker_results` 一致。 |
 | `nits` | 不阻塞通过的改进建议。 |
@@ -144,7 +144,7 @@ verdict 不写入 report YAML，而是通过 submit 的 `--verdict` 提交；合
 
 1. submit 必须同时提供 PR URL 和 verification 文件；GitHub PR 必须可交付且不是 draft。
 2. `commands` 与每条 integration gate 的 `commands` 必须覆盖 contract 中的精确命令，且退出码为 0。
-3. contract 中每条 acceptance 必须被普通命令或 integration gate 成功命令下的具体 `business_tests` 覆盖；不得引用 contract 外的 acceptance。
+3. contract 中每条完整 claim 与业务 Action contribution 必须被成功命令下的具体 `business_tests` 覆盖；flow-step/trace ref 不要求覆盖，也不得引用 contract 责任外的目标。
 4. gate 的 `source_of_truth` 和 `delivery_goal` 必须与 contract 完全一致。
 5. metrics 必须达到 contract 阈值，contract 要求的 artifacts 必须全部出现。
 6. contract 声明 integration gates 时，`env_setup` 必须非空且每项都是非空字符串。
@@ -152,7 +152,7 @@ verdict 不写入 report YAML，而是通过 submit 的 `--verdict` 提交；合
 
 ### reviewer report
 
-1. `review_goals` 和 `acceptance_mapping` 必须非空，并覆盖 contract 的每个 acceptance。
+1. `review_goals` 和 `acceptance_mapping` 必须非空，并覆盖 contract 的每个完整 claim 与 Action contribution；trace ref 不产生义务。
 2. 基础复核标志和 `full_review_completed` 必须为 `true`；有 integration gates 时还必须独立复跑集成测试。
 3. integration gate mapping 必须覆盖每个 gate，且命令、指标、产物、事实源和交付目标通过校验。
 4. pass 或 pass-with-nits 不得有 blockers；reject 必须有 blockers。

@@ -51,7 +51,12 @@ nodes:
       source_of_truth:
         - docs/design.md#跨模块契约
       required_contracts: []
-      acceptance:
+      acceptance_contributions:
+        - flow_id: flow-login-renewal
+          action_ids:
+            - ACT-LOGIN-RENEWAL-01
+            - ACT-LOGIN-RENEWAL-02
+      acceptance_refs:
         - flow-login-renewal
       non_goals:
         - 不修改支付流程
@@ -76,6 +81,27 @@ nodes:
       acceptance_doc: null
       scope_paths:
         - src/auth/**
+  - id: auth-renewal-e2e
+    title: Verify session renewal journey
+    worker: integration-agent
+    reviewer: review-agent
+    blocked_by: [auth-renewal]
+    contract:
+      objective: 独立执行并证明完整登录续期 flow
+      source_of_truth: [docs/design.md#验收映射]
+      acceptance_claims: [flow-login-renewal]
+      acceptance_refs: [flow-login-renewal]
+      non_goals: [不重新实现会话续期组件]
+      verification_commands: [python3 -m pytest tests/e2e/test_auth_renewal.py]
+      integration_gates:
+        - name: auth-renewal-flow
+          layer: L2
+          source_of_truth: [docs/design.md#验收映射]
+          delivery_goal: 完整登录续期 flow 可独立复验
+          covers: [session-renewal-flow]
+          acceptance_refs: [flow-login-renewal]
+          commands: [python3 -m pytest tests/e2e/test_auth_renewal.py]
+      pr_base: feature/login-renewal
 ```
 
 ## 字段语义
@@ -122,7 +148,10 @@ nodes:
 | `objective` | 一句话描述可交付结果。 |
 | `source_of_truth` | 指向包含数据结构、边界条件、模块边界和契约的权威章节。 |
 | `required_contracts` | 开始前必须存在的共享合同路径；非空路径会由 lint 检查存在性。 |
-| `acceptance` | 引用验收文档中的稳定 flow id。 |
+| `acceptance_claims` | 当前节点负责执行并独立证明的完整 flow；无需重复枚举该 flow 的 Action。 |
+| `acceptance_contributions` | 当前节点实现归属的精确 `{flow_id, action_ids}`；只能引用验收文档中 `kind: business-action` 的 Action。 |
+| `acceptance_refs` | 仅用于需求追溯的 flow id；不产生 Worker 或 Reviewer 验收义务。 |
+| `acceptance` | 历史完整 flow claim 字段；保持原语义可读取，不得与新字段混用。 |
 | `non_goals` | 相邻但明确禁止扩张的范围。 |
 | `verification_commands` | worker 可直接复制运行的节点验证命令。 |
 | `integration_gates` | 节点交付后必须通过的跨模块或端到端门。 |
@@ -135,7 +164,12 @@ nodes:
 `source_of_truth`、`covers`、`acceptance_refs`、`commands`。`required_metrics` 若出现必须是
 object，`artifacts` 若出现必须是列表。worker verification 和 reviewer report 必须复现 contract
 中的 gate 名称、命令、事实源与交付目标。worker verification 还必须通过成功命令下的
-`business_tests` 将每条 contract acceptance 映射到具体业务测试。
+`business_tests` 将每条完整 flow claim 和 Action contribution 映射到具体业务测试；trace ref 不需要测试映射。
+
+整张 DAG 必须形成显式责任矩阵：每个 flow 恰有一个 canonical full owner；每个
+`business-action` 至少有一个 contribution owner；full owner 必须等于或传递依赖该 flow 的所有
+contribution owners。`flow-step` 由 full owner 执行，不写入 manifest contributions。这样上游
+bootstrap 无法冒充完整 UJ owner，final closeout 也无需复制近千个步骤 ID。
 
 后续 worker 可能是低推理预算模型。每个 contract 必须独立可执行，不能依赖隐含上下文；
 边界条件、禁止范围、验证入口和集成结果都要显式写出。
@@ -150,11 +184,11 @@ verification 中说明原因。reviewer 应判断这些改动是否服务于 con
 1. YAML 必须可解析；每个节点必须有 `id` 和 `worker`。
 2. worker/reviewer 必须在 agent pool 内，且 reviewer 与 worker 不同。
 3. `blocked_by` 只能引用有效节点，完整 DAG 不得有环；增量节点 id 不得与既有节点冲突。
-4. contract 的 `objective`、`source_of_truth`、`acceptance`、`non_goals`、
+4. contract 的 `objective`、`source_of_truth`、至少一种验收责任、`non_goals`、
    `verification_commands`、`integration_gates`、`pr_base` 必须非空。
 5. 每个 integration gate 的必填标量与列表都必须非空；metrics/artifacts 类型必须正确。
 6. `coverage_gate` 必须是 0 到 100 的数字；`required_contracts` 中的路径必须存在。
-7. 提供验收文档时，每个 `contract.acceptance` 必须锚定真实 flow id。
+7. 提供验收文档时，claim/ref 必须锚定真实 flow，contribution 必须锚定真实 `business-action`；每个 flow 恰有一个完整 owner、业务 Action 贡献闭包完整，且 full owner 的依赖闭包覆盖全部 contribution owners。
 8. `meta.closeout_node` 若存在，必须引用 manifest 中的节点。
 
 ## 常见错误 → 修正
@@ -165,7 +199,10 @@ verification 中说明原因。reviewer 应判断这些改动是否服务于 con
 | 节点只交付骨架、占位或假数据兜底 | 将节点改成自身完整、可运行、可验收的真实基础能力；否则与后续实现合并成一个完整 contract。 |
 | 为了表达顺序感而增加 `blocked_by` | 只保留真实运行前置，其余通过合同解耦。 |
 | contract 只写目标，没有验证入口 | 补齐全部必填字段和至少一个完整 integration gate。 |
-| `acceptance` 使用自然语言摘要 | 改为验收文档中的稳定 flow id。 |
+| 普通组件把 flow id 写成完整 claim | 组件只声明业务 Action contribution；完整 owner 放在依赖所有贡献节点的集成/closeout 节点。 |
+| full owner 再复制该 flow 的全部 Action ID | 删除重复 contributions；full owner 通过 DAG 依赖闭包承接实现结果并执行完整 flow。 |
+| 只需追溯需求却声明验收义务 | 使用 `acceptance_refs`；trace ref 不要求完整 UJ 或业务测试。 |
+| 旧 `acceptance` 与新字段混用 | 将旧值明确迁移到 `acceptance_claims`，再补 contributions/refs；禁止静默改义。 |
 | 把 `scope_paths` 当拒绝其他文件的依据 | 允许必要配套文件，并要求在 PR 或 verification 中解释。 |
 | 复制整段设计到 `description` | 只保留 `source_of_truth` 锚点，维持单一事实源。 |
 

@@ -222,9 +222,15 @@ def _validate_acceptance(text: str) -> acceptance_mod.AcceptanceDoc:
 def _acceptance_guard(item: WorkItem) -> List[str]:
     """acceptance authoring 左移质量门；错误作为返工上下文交回 planner。"""
     try:
-        _validate_acceptance(item.deliverable or "")
+        acceptance_doc = _validate_acceptance(item.deliverable or "")
     except (ValueError, yaml.YAMLError) as exc:
         return [f"acceptance quality gate: {exc}"]
+    if acceptance_doc.schema != "omac.acceptance/v2":
+        return [
+            "acceptance quality gate: new acceptance authoring must use "
+            "omac.acceptance/v2 with explicit action.id; v1 remains readable "
+            "for existing plans and active manifests"
+        ]
     return []
 
 
@@ -457,7 +463,15 @@ def _compose_guard(
                 f"Delivery is missing '{_MANIFEST_KEY}'; the orchestrator did not submit a manifest.",
                 f"交付缺少 '{_MANIFEST_KEY}' —— orchestrator 未产出 manifest")]
         manifest = loads_manifest(text)
-        return lint(manifest, members, acceptance=acceptance_doc)
+        return lint(
+            manifest,
+            members,
+            acceptance=acceptance_doc,
+            require_explicit_responsibility=(
+                acceptance_doc is not None
+                and acceptance_doc.schema == "omac.acceptance/v2"
+            ),
+        )
 
     return guard
 
@@ -578,6 +592,7 @@ def plan_create(
                if acceptance_item_id else [])
         ),
         dag_key=make_dag_key(TaskKind.DECOMPOSE, scope=plan_id),
+        review_acceptance_doc=acceptance_doc,
     )
     decompose_item_id = res["item_id"]
     manifest_text = _phase_text(res["delivery"], _MANIFEST_KEY)
@@ -791,6 +806,7 @@ def plan_resume(
         dag_key=decompose_key,
         resume_item_id=decompose_item.id if decompose_item else None,
         resume_item_snapshot=decompose_item,
+        review_acceptance_doc=acceptance_doc,
     )
     decompose_item_id = res["item_id"]
     manifest_text = _phase_text(res["delivery"], _MANIFEST_KEY)

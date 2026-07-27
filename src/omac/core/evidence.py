@@ -11,6 +11,7 @@
 """
 
 from .acceptance import AcceptanceDoc, load_acceptance_doc
+from .acceptance_responsibility import evidence_targets
 from .review_convergence import validate_convergence_review
 
 REVIEW_APPROVE = {"pass", "pass-with-nits"}
@@ -242,8 +243,9 @@ def validate_worker_evidence(node, item) -> list:
                 )
             )
 
+    expected_acceptance = evidence_targets(contract)
     business_test_errors, covered_acceptance = _collect_business_test_coverage(
-        verification.get("commands"), contract.acceptance, prefix="verification")
+        verification.get("commands"), expected_acceptance, prefix="verification")
     errors.extend(business_test_errors)
     actual_gates = verification.get("integration_gates")
     if isinstance(actual_gates, list):
@@ -251,11 +253,11 @@ def validate_worker_evidence(node, item) -> list:
             if not isinstance(actual_gate, dict):
                 continue
             gate_errors, gate_coverage = _collect_business_test_coverage(
-                actual_gate.get("commands"), contract.acceptance,
+                actual_gate.get("commands"), expected_acceptance,
                 prefix="verification")
             errors.extend(gate_errors)
             covered_acceptance.update(gate_coverage)
-    for acceptance in contract.acceptance:
+    for acceptance in expected_acceptance:
         if acceptance not in covered_acceptance:
             errors.append(f"verification missing business test for acceptance: {acceptance}")
 
@@ -336,7 +338,7 @@ def validate_review_evidence(node, item) -> list:
             for mapping in mappings
             if isinstance(mapping, dict) and mapping.get("status") in required_statuses
         }
-        for acceptance in contract.acceptance:
+        for acceptance in evidence_targets(contract):
             if acceptance not in mapped_acceptance:
                 errors.append(f"review_report missing acceptance mapping: {acceptance}")
 

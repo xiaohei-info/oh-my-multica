@@ -11,6 +11,14 @@ import hashlib
 import json
 from typing import Any
 
+from .acceptance_responsibility import (
+    contributions,
+    full_claims,
+    responsibility_matrix,
+)
+from .manifest import loads_manifest
+from .taskmeta import TaskKind
+
 
 REVIEW_PROTOCOL_VERSION = "omac.review/v2"
 REVIEW_LEDGER_SCHEMA = "omac.review-ledger/v1"
@@ -62,7 +70,7 @@ def required_closures(ledger: Any) -> list[dict]:
     ]
 
 
-def build_review_obligations(item: Any) -> list[dict]:
+def build_review_obligations(item: Any, *, acceptance_doc: Any = None) -> list[dict]:
     """Build a stable, finite review coverage set for the current work item."""
     obligations = [
         {"obligation_id": obligation_id, "category": "dimension", "requirement": requirement}
@@ -70,7 +78,7 @@ def build_review_obligations(item: Any) -> list[dict]:
     ]
     contract = getattr(item, "contract", None)
     acceptance = sorted({
-        value for value in _contract_value(contract, "acceptance", [])
+        value for value in full_claims(contract)
         if isinstance(value, str) and value.strip()
     })
     for acceptance_id in acceptance:
@@ -79,6 +87,24 @@ def build_review_obligations(item: Any) -> list[dict]:
             "category": "acceptance",
             "requirement": f"Verify acceptance outcome {acceptance_id}",
             "subject": acceptance_id,
+        })
+    action_responsibilities = sorted({
+        (contribution.get("flow_id"), action_id)
+        for contribution in contributions(contract)
+        for action_id in (contribution.get("action_ids", []) or [])
+        if isinstance(contribution.get("flow_id"), str)
+        and contribution.get("flow_id").strip()
+        and isinstance(action_id, str) and action_id.strip()
+    })
+    for flow_id, action_id in action_responsibilities:
+        obligations.append({
+            "obligation_id": f"acceptance-action:{flow_id}:{action_id}",
+            "category": "acceptance-contribution",
+            "requirement": (
+                f"Verify declared contribution {action_id} within {flow_id} "
+                "against this node contract"
+            ),
+            "subject": {"flow_id": flow_id, "action_id": action_id},
         })
     gates = _contract_value(contract, "integration_gates", [])
     gate_names = sorted({
@@ -93,6 +119,25 @@ def build_review_obligations(item: Any) -> list[dict]:
             "requirement": f"Independently verify integration gate {gate_name}",
             "subject": gate_name,
         })
+    kind = getattr(getattr(item, "kind", None), "value", getattr(item, "kind", None))
+    deliverable = getattr(item, "deliverable", None)
+    if kind == TaskKind.DECOMPOSE.value and isinstance(deliverable, str):
+        try:
+            matrix = responsibility_matrix(
+                loads_manifest(deliverable), acceptance_doc)
+        except (TypeError, ValueError):
+            matrix = []
+        if matrix:
+            obligations.append({
+                "obligation_id": "acceptance-responsibility:matrix",
+                "category": "acceptance-responsibility",
+                "requirement": (
+                    "Review the compact responsibility matrix in one pass: one "
+                    "canonical full-flow owner, business-Action contribution "
+                    "coverage, dependency closure, and every reported gap"
+                ),
+                "responsibility_matrix": matrix,
+            })
     return obligations
 
 

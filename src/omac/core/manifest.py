@@ -44,6 +44,12 @@ class Contract:
     source_of_truth: list = field(default_factory=list)
     required_contracts: list = field(default_factory=list)
     acceptance: list = field(default_factory=list)
+    # New manifests use explicit responsibility semantics. ``acceptance`` is
+    # retained as the published legacy full-flow claim field and is never
+    # reinterpreted as a trace-only reference.
+    acceptance_claims: list = field(default_factory=list)
+    acceptance_contributions: list = field(default_factory=list)
+    acceptance_refs: list = field(default_factory=list)
     non_goals: list = field(default_factory=list)
     verification_commands: list = field(default_factory=list)
     integration_gates: list = field(default_factory=list)
@@ -63,6 +69,9 @@ def _load_contract(raw):
         source_of_truth=list(raw.get("source_of_truth", [])),
         required_contracts=list(raw.get("required_contracts", [])),
         acceptance=list(raw.get("acceptance", [])),
+        acceptance_claims=list(raw.get("acceptance_claims", [])),
+        acceptance_contributions=list(raw.get("acceptance_contributions", [])),
+        acceptance_refs=list(raw.get("acceptance_refs", [])),
         non_goals=list(raw.get("non_goals", [])),
         verification_commands=list(raw.get("verification_commands", [])),
         integration_gates=list(raw.get("integration_gates", [])),
@@ -85,12 +94,20 @@ def _dump_contract(contract):
         return None
     data = {
         "objective": contract.objective,
-        "acceptance": list(contract.acceptance),
         "non_goals": list(contract.non_goals),
         "verification_commands": list(contract.verification_commands),
         "integration_gates": list(contract.integration_gates),
         "pr_base": contract.pr_base,
     }
+    if contract.acceptance:
+        data["acceptance"] = list(contract.acceptance)
+    if contract.acceptance_claims:
+        data["acceptance_claims"] = list(contract.acceptance_claims)
+    if contract.acceptance_contributions:
+        data["acceptance_contributions"] = list(
+            contract.acceptance_contributions)
+    if contract.acceptance_refs:
+        data["acceptance_refs"] = list(contract.acceptance_refs)
     if contract.source_of_truth:
         data["source_of_truth"] = list(contract.source_of_truth)
     if contract.required_contracts:

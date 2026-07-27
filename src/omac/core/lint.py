@@ -1,6 +1,13 @@
 # lint.py
 import os
 from .manifest import Manifest
+from .acceptance_responsibility import (
+    contract_shape_errors,
+    full_claims,
+    matrix_errors,
+    trace_refs,
+    uses_explicit_responsibility,
+)
 from ..i18n import ui
 
 def _has_cycle(nodes):
@@ -54,8 +61,15 @@ def _contract_errors(node) -> list:
     prefix = f"node {node.id}: contract"
     if not contract.objective:
         errs.append(f"{prefix}.objective is required")
-    if not contract.acceptance:
-        errs.append(f"{prefix}.acceptance must be non-empty")
+    if not (
+        contract.acceptance
+        or contract.acceptance_claims
+        or contract.acceptance_contributions
+        or contract.acceptance_refs
+    ):
+        errs.append(
+            f"{prefix} must declare acceptance_claims, "
+            "acceptance_contributions, or acceptance_refs")
     if not contract.source_of_truth:
         errs.append(f"{prefix}.source_of_truth must be non-empty")
     if not contract.non_goals:
@@ -77,10 +91,17 @@ def _contract_errors(node) -> list:
     for required_path in contract.required_contracts:
         if not os.path.exists(required_path):
             errs.append(f"{prefix}.required_contracts path does not exist: {required_path}")
+    errs.extend(contract_shape_errors(node))
     return errs
 
 
-def lint(m: Manifest, pool: set, *, acceptance=None) -> list:
+def lint(
+    m: Manifest,
+    pool: set,
+    *,
+    acceptance=None,
+    require_explicit_responsibility: bool = False,
+) -> list:
     """schema 校验 manifest。
 
     acceptance(AcceptanceDoc|None):有验收文档时,每个节点的 contract.acceptance
@@ -103,17 +124,33 @@ def lint(m: Manifest, pool: set, *, acceptance=None) -> list:
             if n.reviewer not in pool:
                 errs.append(f"node {n.id}: reviewer '{n.reviewer}' not in agent pool")
         errs.extend(_contract_errors(n))
+        if (
+            require_explicit_responsibility
+            and n.contract is not None
+            and n.contract.acceptance
+        ):
+            errs.append(
+                f"node {n.id}: legacy contract.acceptance is read-compatible "
+                "but not allowed for new decomposition; migrate full-flow claims "
+                "to acceptance_claims and declare exact contributions/refs")
     if acceptance is not None:
         flow_ids = set(getattr(acceptance, "flow_ids", None) or [])
         for n in m.nodes.values():
             contract = getattr(n, "contract", None)
             if not contract:
                 continue
-            for a in contract.acceptance:
+            for a in full_claims(contract) + trace_refs(contract):
+                if not isinstance(a, str) or not a.strip():
+                    continue
                 if a not in flow_ids:
                     errs.append(ui(
                         f"node {n.id}: contract.acceptance '{a}' is not anchored to an acceptance flow",
                         f"node {n.id}: contract.acceptance '{a}' 未锚定验收文档 flow"))
+        if any(
+            uses_explicit_responsibility(getattr(node, "contract", None))
+            for node in m.nodes.values()
+        ):
+            errs.extend(matrix_errors(m, acceptance))
     if _has_cycle(m.nodes):
         errs.append("manifest DAG has a cycle")
     return errs

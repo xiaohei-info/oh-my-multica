@@ -57,7 +57,12 @@ nodes:
       source_of_truth:
         - docs/design.md#cross-module-contract
       required_contracts: []
-      acceptance:
+      acceptance_contributions:
+        - flow_id: flow-login-renewal
+          action_ids:
+            - ACT-LOGIN-RENEWAL-01
+            - ACT-LOGIN-RENEWAL-02
+      acceptance_refs:
         - flow-login-renewal
       non_goals:
         - Do not change payment flows
@@ -82,6 +87,27 @@ nodes:
       acceptance_doc: null
       scope_paths:
         - src/auth/**
+  - id: auth-renewal-e2e
+    title: Verify session renewal journey
+    worker: integration-agent
+    reviewer: review-agent
+    blocked_by: [auth-renewal]
+    contract:
+      objective: Independently execute and prove the complete renewal flow
+      source_of_truth: [docs/design.md#acceptance-mapping]
+      acceptance_claims: [flow-login-renewal]
+      acceptance_refs: [flow-login-renewal]
+      non_goals: [Do not reimplement the renewal component]
+      verification_commands: [python3 -m pytest tests/e2e/test_auth_renewal.py]
+      integration_gates:
+        - name: auth-renewal-flow
+          layer: L2
+          source_of_truth: [docs/design.md#acceptance-mapping]
+          delivery_goal: The complete renewal flow is independently reproducible
+          covers: [session-renewal-flow]
+          acceptance_refs: [flow-login-renewal]
+          commands: [python3 -m pytest tests/e2e/test_auth_renewal.py]
+      pr_base: feature/login-renewal
 ```
 
 ## Field semantics
@@ -134,7 +160,10 @@ must be acyclic.
 | `objective` | One-sentence deliverable result. |
 | `source_of_truth` | Authoritative sections with data, edges, boundaries, and contracts. |
 | `required_contracts` | Shared contract paths required before start; non-empty entries are linted for existence. |
-| `acceptance` | Stable acceptance-document flow IDs. |
+| `acceptance_claims` | Complete flows this node executes and independently proves; it does not repeat the flow Action list. |
+| `acceptance_contributions` | Exact `{flow_id, action_ids}` implemented by this node; IDs may reference only `kind: business-action` entries. |
+| `acceptance_refs` | Trace-only flow references; they create no Worker or Reviewer acceptance obligation. |
+| `acceptance` | Legacy complete-flow claim field. It remains readable with its original meaning and cannot be mixed with the new fields. |
 | `non_goals` | Adjacent scope explicitly forbidden. |
 | `verification_commands` | Copyable node verification commands. |
 | `integration_gates` | Cross-module or end-to-end gates required after delivery. |
@@ -148,7 +177,15 @@ Each integration gate has `name`, `layer`, `delivery_goal`, and non-empty
 `required_metrics` is an object and `artifacts` is a list. Worker verification
 and reviewer reports repeat gate names, commands, sources, and goals from the
 contract. Worker verification also maps every contract acceptance item to a
-concrete business test through `business_tests` on a successful command.
+concrete business test through `business_tests` on a successful command. This
+applies to complete flow claims and Action contributions, not trace-only refs.
+
+The complete DAG forms an explicit responsibility matrix: every flow has one
+canonical full owner; every `business-action` has a contribution owner; and the
+full owner is or transitively depends on every contribution owner for that flow.
+`flow-step` records belong to the full owner and are not copied into manifest
+contributions. An upstream bootstrap cannot masquerade as an end-to-end owner,
+and final closeout does not repeat nearly a thousand step IDs.
 
 Contracts must be independently executable by low-reasoning-budget workers;
 state edge cases, prohibited scope, verification entry points, and integration
@@ -163,12 +200,12 @@ non-goals, and parallel boundaries, not merely path membership.
 2. Worker and reviewer are in the agent pool and are different people.
 3. `blocked_by` references valid nodes; the DAG has no cycle; incremental IDs do
    not collide with existing nodes.
-4. Contract `objective`, `source_of_truth`, `acceptance`, `non_goals`,
+4. Contract `objective`, `source_of_truth`, at least one acceptance responsibility, `non_goals`,
    `verification_commands`, `integration_gates`, and `pr_base` are non-empty.
 5. Every integration gate's required scalars and lists are non-empty; metrics and
    artifacts have correct types.
 6. `coverage_gate` is 0–100 and required-contract paths exist.
-7. With an acceptance document, every `contract.acceptance` references a real flow.
+7. With an acceptance document, claims/refs name real flows and contributions name real `business-action` IDs; every flow has one full owner, business-Action coverage is complete, and the owner dependency closure contains every contribution owner.
 8. `meta.closeout_node`, when present, references a manifest node.
 
 ## Common errors → corrections
@@ -179,7 +216,10 @@ non-goals, and parallel boundaries, not merely path membership.
 | A node delivers only a skeleton, placeholder, or synthetic-data fallback | Make it a complete runnable and acceptable foundation capability, or merge it with the later work into one complete contract. |
 | `blocked_by` added just to show order | Keep only real prerequisites; use contracts to decouple the rest. |
 | Contract has an objective but no verification | Fill every required field and at least one complete integration gate. |
-| `acceptance` is a natural-language summary | Use stable acceptance-document flow IDs. |
+| A component writes a flow ID as a full claim | Declare its business-Action contributions and put the full claim on an integration/closeout node downstream of all contributors. |
+| The full owner repeats every flow Action ID | Remove those duplicate contributions; DAG dependency closure connects the full owner to implementation owners. |
+| Traceability is expressed as an acceptance obligation | Use `acceptance_refs`; trace refs require neither a full journey nor business-test evidence. |
+| Legacy `acceptance` is mixed with new fields | Migrate it explicitly to `acceptance_claims`, then add contributions/refs; never silently reinterpret it. |
 | `scope_paths` rejects every other file | Permit required supporting files and explain them in PR or verification. |
 | Design copied into `description` | Keep source-of-truth anchors only. |
 
