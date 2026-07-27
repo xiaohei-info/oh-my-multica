@@ -19,6 +19,7 @@ from .lint import lint
 from .manifest import (
     Manifest, Node, _dump_contract, _load_contract, load_manifest, save_manifest,
 )
+from .retry_budget import amendment_bounce_baseline
 from .stage_recovery import (
     classify_stage_recovery_observation,
     prepare_stage_recovery,
@@ -939,6 +940,7 @@ def _prepare_apply_ledger(
                 "stage": stage,
                 "state": "pending",
                 "baseline": recovery_control_snapshot(item),
+                "bounce_baseline": amendment_bounce_baseline(item),
                 "expected_contract_sha256": _digest(
                     _dump_contract(node.contract) if node.contract else None),
             }
