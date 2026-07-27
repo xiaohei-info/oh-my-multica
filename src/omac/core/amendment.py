@@ -111,7 +111,7 @@ def work_item_evidence_digest(item: Any) -> str:
 
 
 def historical_work_item_evidence_digest(item: Any) -> str:
-    """绑定 historical correction 不得改变的 Store 事实。"""
+    """绑定 historical correction 从 Reviewer 到 apply 不得改变的 Store 事实。"""
     status = getattr(item, "status", None)
     phase = getattr(item, "phase", None)
     return _digest({
