@@ -710,10 +710,11 @@ def _amendment_id(
     historical_corrections: list[dict[str, Any]],
     evidence: dict[str, str],
 ) -> str:
-    return f"amend-{_digest([
+    identity = _digest([
         definition_digest, _proposal_core(proposal), minimal,
         historical_corrections, evidence,
-    ])[:12]}"
+    ])[:12]
+    return "amend-" + identity
 
 
 def build_reviewed_amendment(
