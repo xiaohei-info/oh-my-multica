@@ -148,9 +148,18 @@ lint and submit with the current command.
 - The operation cannot carry or change objectives, sources, commands, scope,
   workers, `blocked_by`, topology, or runtime facts. A done/merged node allows
   only an acceptance-only `historical_contract_correction: true` with a reason;
-  it never replays authoring/review/merge or dispatches an Agent. An unfinished
-  node without a work item changes definition only; an existing delivery returns
-  only to review.
+  it never replays authoring/review/merge or dispatches an Agent. An unstarted
+  node without a work item changes definition only when it omits `resume_stage`;
+  an existing delivery returns to review by default.
+- Any explicit `resume_stage: review|authoring|merging` requires an existing work
+  item. To override the default recovery classification, put it on the same
+  `update-responsibility` operation. `merging` requires an existing Reviewer-pass
+  PR; accept silently syncs the new contract without resetting review, changing
+  Store status/phase, dispatching an Agent, observing, or requesting a merge.
+  The later `dag run` owns merge delivery. Never split one node into an
+  `update-responsibility` plus a second `resume` operation: multiple operations
+  for one node are invalid. A historical contract correction cannot set
+  `resume_stage`.
 - Reviewer receives the complete before/after responsibility matrix and historical
   correction audit through the obligation attachment returned by
   `omac work show ... --output json`; do not inline the large matrix in issue body.
