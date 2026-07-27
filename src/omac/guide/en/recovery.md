@@ -118,7 +118,10 @@ omac dag amend propose .omac/project.yaml \
 - Unchanged nodes preserve work-item IDs, status, bounces, PR, verification/review
   references, and merged facts. Contract-only changes with unchanged delivery
   evidence resume at review; a valid passed-review PR may resume at merging;
-  implementation-scope changes resume at authoring.
+  implementation-scope changes resume at authoring. Merge-only accept neither
+  observes nor requests a PR merge; the next DAG run delegates that work to
+  `run_merge_delivery`, where transient `UNKNOWN` observations consume no merge
+  retry and cannot issue a duplicate merge request.
 - Done/merged nodes cannot be changed or removed. Changing worker or `scope_paths`
   on an executed node requires an explicit ownership migration and reason.
 - For `blocked_by`, worker, scope, or other implementation-semantic changes,

@@ -17,8 +17,14 @@ from .lint import lint
 from .manifest import (
     Manifest, Node, _dump_contract, _load_contract, load_manifest, save_manifest,
 )
-from .taskmeta import TaskPhase
-from ..engines.models import WorkItemStatus
+from .stage_recovery import (
+    classify_stage_recovery_observation,
+    prepare_stage_recovery,
+    recovery_control_snapshot,
+    recovery_evidence_digest,
+    stage_recovery_subject,
+    validate_stage_recovery,
+)
 from ..errors import ValidationError
 from ..i18n import ui
 
@@ -90,10 +96,7 @@ def manifest_definition_digest(manifest: Manifest) -> str:
 
 def work_item_evidence_digest(item: Any) -> str:
     """绑定现有代码交付，不把易变 status/assignee 混入。"""
-    return _digest({
-        "artifacts": getattr(item, "artifacts", None),
-        "verification": getattr(item, "verification", None),
-    })
+    return recovery_evidence_digest(item)
 
 
 def parse_proposal(source: str | dict[str, Any]) -> dict[str, Any]:
@@ -503,62 +506,6 @@ def _verify_evidence(current: Manifest, amendment: dict[str, Any], store: Any) -
                 f"节点 {node_id} 的交付证据在 amendment 评审后发生变化；请 rebase 后重新评审。"))
 
 
-def _review_subject(node: Node, item: Any) -> str:
-    return _digest({
-        "contract": _dump_contract(node.contract) if node.contract else None,
-        "evidence": work_item_evidence_digest(item),
-    })
-
-
-def _control_snapshot(item: Any) -> dict[str, Any]:
-    contract = getattr(item, "contract", None)
-    if isinstance(contract, dict):
-        contract_value = contract
-    elif contract is None:
-        contract_value = None
-    else:
-        contract_value = _dump_contract(contract)
-    status = getattr(item, "status", None)
-    phase = getattr(item, "phase", None)
-    return {
-        "status": getattr(status, "value", status),
-        "phase": getattr(phase, "value", phase),
-        "review_verdict": getattr(item, "review_verdict", None),
-        "review_subject_digest": getattr(item, "review_subject_digest", None),
-        "contract_sha256": _digest(contract_value),
-    }
-
-
-def _sync_stage(
-    store: Any, node: Node, stage: str, *, expected_subject: str | None = None,
-) -> None:
-    if not node.work_item_id:
-        return
-    item_id = node.work_item_id
-    if node.contract is not None:
-        store.set_node_contract(item_id, node.contract)
-    if stage == "review":
-        store.reset_review(item_id)
-        subject = expected_subject or _review_subject(
-            node, store.get_work_item(item_id))
-        store.prepare_review_cycle(item_id, subject)
-        store.update_work_item_metadata(item_id, phase=TaskPhase.REVIEW)
-        store.update_status(item_id, WorkItemStatus.IN_REVIEW)
-    elif stage == "merging":
-        item = store.get_work_item(item_id)
-        artifacts = item.artifacts if isinstance(item.artifacts, dict) else {}
-        if item.review_verdict not in {"pass", "pass-with-nits"} or not (
-            artifacts.get("pr_url") or artifacts.get("pr")
-        ):
-            raise ValidationError(
-                f"node {node.id}: merge-only recovery requires a passed review and PR")
-        store.update_work_item_metadata(item_id, phase=TaskPhase.REVIEW)
-        store.update_status(item_id, WorkItemStatus.IN_REVIEW)
-    else:
-        store.reset_review(item_id)
-        store.update_status(item_id, WorkItemStatus.TODO)
-
-
 def _prepare_apply_ledger(
     manifest: Manifest,
     amendment_id: str,
@@ -580,77 +527,18 @@ def _prepare_apply_ledger(
             entry = {
                 "stage": stage,
                 "state": "pending",
-                "baseline": _control_snapshot(item),
+                "baseline": recovery_control_snapshot(item),
                 "expected_contract_sha256": _digest(
                     _dump_contract(node.contract) if node.contract else None),
             }
             if stage == "review":
-                entry["expected_review_subject"] = _review_subject(node, item)
+                entry["expected_review_subject"] = stage_recovery_subject(node, item)
             entries[node_id] = entry
     return {
         "schema": APPLY_LEDGER_SCHEMA,
         "amendment_id": amendment_id,
         "nodes": entries,
     }
-
-
-def _target_reached(entry: dict[str, Any], current: dict[str, Any]) -> bool:
-    stage = entry["stage"]
-    if current["contract_sha256"] != entry.get("expected_contract_sha256"):
-        return False
-    if stage == "review":
-        return (
-            current["status"] == WorkItemStatus.IN_REVIEW.value
-            and current["phase"] == TaskPhase.REVIEW.value
-            and current["review_subject_digest"]
-            == entry.get("expected_review_subject")
-        )
-    if stage == "authoring":
-        return (
-            current["status"] == WorkItemStatus.TODO.value
-            and current["phase"] == TaskPhase.AUTHORING.value
-            and current["review_verdict"] in {None, ""}
-            and current["review_subject_digest"] in {None, ""}
-        )
-    return (
-        current["status"] == WorkItemStatus.IN_REVIEW.value
-        and current["phase"] == TaskPhase.REVIEW.value
-        and current["review_verdict"] in {"pass", "pass-with-nits"}
-    )
-
-
-def _safe_to_compensate(
-    entry: dict[str, Any], current: dict[str, Any],
-) -> bool:
-    baseline = entry.get("baseline") or {}
-    if current == baseline:
-        return True
-    without_contract = {
-        key: value for key, value in current.items() if key != "contract_sha256"
-    }
-    baseline_without_contract = {
-        key: value for key, value in baseline.items() if key != "contract_sha256"
-    }
-    if without_contract == baseline_without_contract:
-        return True
-    if entry["stage"] == "review":
-        return (
-            current["status"] == baseline.get("status")
-            and current["review_verdict"] in {None, ""}
-            and current["phase"] in {
-                TaskPhase.AUTHORING.value, TaskPhase.REVIEW.value,
-            }
-            and current["review_subject_digest"] in {
-                None, "", entry.get("expected_review_subject"),
-            }
-        )
-    if entry["stage"] == "authoring":
-        return (
-            current["status"] == baseline.get("status")
-            and current["phase"] == TaskPhase.AUTHORING.value
-            and current["review_verdict"] in {None, ""}
-        )
-    return False
 
 
 def _save_ledger(manifest: Manifest, manifest_path: str, ledger: dict[str, Any]) -> None:
@@ -681,14 +569,21 @@ def _resume_apply_ledger(
             summary["synced"].append(node_id)
             continue
         item = store.get_work_item(node.work_item_id)
-        current = _control_snapshot(item)
-        if _target_reached(entry, current):
+        current = recovery_control_snapshot(item)
+        observation = classify_stage_recovery_observation(
+            entry["stage"],
+            entry.get("baseline") or {},
+            current,
+            expected_contract_sha256=entry.get("expected_contract_sha256") or "",
+            expected_review_subject=entry.get("expected_review_subject"),
+        )
+        if observation == "reached":
             entry["state"] = "synced"
             entry["observed"] = current
             _save_ledger(manifest, manifest_path, ledger)
             summary["synced"].append(node_id)
             continue
-        if not _safe_to_compensate(entry, current):
+        if observation == "progressed":
             entry["state"] = "observed_progress"
             entry["observed"] = current
             entry["reason"] = (
@@ -700,14 +595,15 @@ def _resume_apply_ledger(
         entry["state"] = "syncing"
         entry["attempt_baseline"] = current
         _save_ledger(manifest, manifest_path, ledger)
-        _sync_stage(
-            store,
+        prepare_stage_recovery(
             node,
+            store,
             entry["stage"],
-            expected_subject=entry.get("expected_review_subject"),
+            expected_review_subject=entry.get("expected_review_subject"),
+            sync_contract=True,
         )
         entry["state"] = "synced"
-        entry["observed"] = _control_snapshot(
+        entry["observed"] = recovery_control_snapshot(
             store.get_work_item(node.work_item_id))
         _save_ledger(manifest, manifest_path, ledger)
         summary["synced"].append(node_id)
@@ -728,12 +624,11 @@ def _validate_stage_preconditions(
             raise ValidationError(
                 f"node {node_id}: merge-only recovery requires an existing work item")
         item = store.get_work_item(node.work_item_id)
-        artifacts = item.artifacts if isinstance(item.artifacts, dict) else {}
-        if item.review_verdict not in {"pass", "pass-with-nits"} or not (
-            artifacts.get("pr_url") or artifacts.get("pr")
-        ):
+        try:
+            validate_stage_recovery(item, "merging")
+        except ValueError as exc:
             raise ValidationError(
-                f"node {node_id}: merge-only recovery requires a passed review and PR")
+                f"node {node_id}: {exc}") from exc
 
 
 def apply_amendment(

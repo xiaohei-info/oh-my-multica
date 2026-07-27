@@ -91,7 +91,9 @@ omac dag amend propose .omac/project.yaml \
   拒绝应用，要求重新生成并评审。
 - 未变节点的 `work_item_id`、status、bounce、PR、verification/review 引用和 merged 事实不动。
   contract-only 且交付证据未变的节点恢复到 review；有效 pass+PR 的 merge-only 节点恢复到
-  merging；改变实现 scope 的节点才回 authoring。新增节点从 authoring 开始。
+  merging；改变实现 scope 的节点才回 authoring。新增节点从 authoring 开始。merge-only
+  accept 不观察或请求 PR merge，后续统一由 `run_merge_delivery` 处理；临时 `UNKNOWN` 不消耗
+  merge retry，也不会重复发起 merge。
 - done/merged 节点不可修改或删除。已执行节点改变 worker 或 `scope_paths` 必须携带显式
   ownership migration 及理由。
 - 对 blocked_by、worker、scope 或其他实现语义变更，OMAC 会计算受影响后继闭包。未启动后继

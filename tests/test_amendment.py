@@ -289,6 +289,10 @@ def test_merge_only_recovery_keeps_pass_verdict_and_enters_merging(tmp_path):
     reviewed = build_reviewed_amendment(
         load_manifest(str(path)), proposal, engine.store,
         issue_id="amendment-issue", reviewer_verdict="pass")
+    engine.store.observe_pull_request = lambda *_args, **_kwargs: pytest.fail(
+        "amendment accept must delegate PR observation to dag run")
+    engine.store.request_pull_request_merge = lambda *_args, **_kwargs: pytest.fail(
+        "amendment accept must delegate merge requests to dag run")
 
     result = apply_amendment(str(path), reviewed, engine.store, {"alice", "bob", "charlie"})
 
@@ -451,18 +455,22 @@ def test_apply_ledger_retries_only_unfinished_node_side_effects(tmp_path, monkey
     reviewed = build_reviewed_amendment(
         load_manifest(str(path)), proposal, engine.store,
         issue_id="amendment-issue", reviewer_verdict="pass")
-    original_sync = amendment_mod._sync_stage
+    original_sync = amendment_mod.prepare_stage_recovery
     failed = False
 
-    def fail_second(store, node, stage, *, expected_subject=None):
+    def fail_second(
+        node, store, stage, *, expected_review_subject=None, sync_contract=False,
+    ):
         nonlocal failed
         if node.id == "started-dependent" and not failed:
             failed = True
             raise RuntimeError("simulated Store interruption")
         return original_sync(
-            store, node, stage, expected_subject=expected_subject)
+            node, store, stage,
+            expected_review_subject=expected_review_subject,
+            sync_contract=sync_contract)
 
-    monkeypatch.setattr(amendment_mod, "_sync_stage", fail_second)
+    monkeypatch.setattr(amendment_mod, "prepare_stage_recovery", fail_second)
     with pytest.raises(RuntimeError, match="Store interruption"):
         apply_amendment(
             str(path), reviewed, engine.store, {"alice", "bob", "charlie"})
@@ -475,7 +483,7 @@ def test_apply_ledger_retries_only_unfinished_node_side_effects(tmp_path, monkey
     engine.store.update_status(first.id, WorkItemStatus.DONE)
     interrupted.nodes["bootstrap"].status = "done"
     save_manifest(interrupted, str(path))
-    monkeypatch.setattr(amendment_mod, "_sync_stage", original_sync)
+    monkeypatch.setattr(amendment_mod, "prepare_stage_recovery", original_sync)
 
     result = apply_amendment(
         str(path), reviewed, engine.store, {"alice", "bob", "charlie"})
