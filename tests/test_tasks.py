@@ -10,9 +10,15 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+import yaml
 
 import omac.pipeline.tasks as tasks_module
-from omac.core.manifest import Contract
+from omac.core.acceptance import load_acceptance_doc
+from omac.core.amendment import (
+    build_reviewed_amendment,
+    historical_work_item_evidence_digest,
+)
+from omac.core.manifest import Contract, Manifest, Node
 from omac.core.review_convergence import REVIEW_PROTOCOL_VERSION, open_blockers
 from omac.core.taskmeta import TaskKind, TaskPhase
 from omac.engines import create_engine
@@ -1225,6 +1231,126 @@ def test_failure_in_production_short_circuits():
                  poll=_poll, dag_key="plan")
     assert exc.value.report["rounds"] == 0
     assert "producer failed" in exc.value.report["last_opinion"]
+
+
+def test_historical_amendment_review_obligation_uses_reviewed_apply_evidence():
+    eng = _engine()
+    historical_item = eng.store.create_work_item(
+        "ws", "historical", "completed delivery", "historical-node", "alice",
+        reviewer="bob",
+    )
+    contract = Contract(
+        objective="historical delivery",
+        source_of_truth=["docs/design.md"],
+        acceptance=["UJ-HISTORICAL-001"],
+        non_goals=["do not replay the completed delivery"],
+        verification_commands=["pytest -q"],
+        integration_gates=[{
+            "name": "historical-gate",
+            "layer": "L1",
+            "delivery_goal": "preserve the completed delivery",
+            "source_of_truth": ["docs/design.md"],
+            "covers": ["historical-node"],
+            "acceptance_refs": ["UJ-HISTORICAL-001"],
+            "commands": ["pytest -q"],
+        }],
+        pr_base="main",
+    )
+    eng.store.set_node_contract(historical_item.id, contract)
+    eng.store.update_work_item_metadata(
+        historical_item.id,
+        artifacts={"pr_url": "https://example.test/pr/1"},
+        verification={"subject_digest": "verification-1"},
+        review_verdict="pass",
+        review_report={"blockers": []},
+        review_subject_digest="review-subject-1",
+        review_ledger={"schema": "omac.review-ledger/v1", "rounds": []},
+    )
+    eng.store.update_status(historical_item.id, WorkItemStatus.DONE)
+    manifest = Manifest(meta={}, nodes={
+        "historical-node": Node(
+            id="historical-node",
+            worker="alice",
+            reviewer="bob",
+            contract=contract,
+            work_item_id=historical_item.id,
+            status="done",
+            merged=True,
+        ),
+    })
+    proposal = {
+        "schema": "omac.dag-amendment/v1",
+        "reason": "correct historical acceptance responsibility",
+        "operations": [{
+            "op": "update-responsibility",
+            "node": "historical-node",
+            "acceptance_claims": ["UJ-HISTORICAL-001"],
+            "acceptance_contributions": [{
+                "flow_id": "UJ-HISTORICAL-001",
+                "action_ids": ["ACT-HISTORICAL-001"],
+            }],
+            "acceptance_refs": ["UJ-HISTORICAL-001"],
+            "clear_legacy_acceptance": True,
+            "integration_gate_responsibility_patches": [{
+                "name": "historical-gate",
+                "acceptance_refs": ["UJ-HISTORICAL-001"],
+            }],
+            "historical_contract_correction": True,
+            "reason": "correct metadata without replaying the completed delivery",
+        }],
+    }
+    acceptance = load_acceptance_doc({
+        "schema": "omac.acceptance/v2",
+        "flows": [{
+            "id": "UJ-HISTORICAL-001",
+            "name": "historical flow",
+            "actions": [{
+                "id": "ACT-HISTORICAL-001",
+                "kind": "business-action",
+                "step": "complete the historical action",
+                "how": "use the existing delivery",
+                "expected": "the responsibility metadata is corrected",
+            }],
+        }],
+    })
+    MockStore.set_kind_delivery(
+        "amendment", {"amendment": yaml.safe_dump(proposal, sort_keys=False)})
+
+    result = run_task(
+        eng,
+        TaskKind.AMENDMENT,
+        _payload(title="historical amendment"),
+        "charlie",
+        reviewers=["bob"],
+        poll=_poll,
+        review_acceptance_doc=acceptance,
+        review_amendment_manifest=manifest,
+    )
+
+    amendment_item = eng.store.get_work_item(result["item_id"])
+    obligation = next(
+        entry for entry in amendment_item.review_obligations
+        if entry["obligation_id"] == "acceptance-responsibility:amendment-matrix"
+    )
+    obligation_digest = obligation["historical_contract_corrections"][0][
+        "evidence_sha256"
+    ]
+    expected_digest = historical_work_item_evidence_digest(
+        eng.store.get_work_item(historical_item.id))
+    reviewed = build_reviewed_amendment(
+        manifest,
+        proposal,
+        eng.store,
+        issue_id=amendment_item.id,
+        reviewer_verdict="pass",
+        acceptance=acceptance,
+    )
+
+    assert obligation_digest == expected_digest
+    assert reviewed["base"]["evidence_sha256"]["historical-node"] == expected_digest
+    assert reviewed["analysis"]["historical_contract_corrections"][0][
+        "evidence_sha256"
+    ] == expected_digest
 
 
 def test_explicit_resume_failed_authoring_reruns_same_item_once(monkeypatch):

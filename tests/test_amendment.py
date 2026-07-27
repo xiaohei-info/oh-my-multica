@@ -354,6 +354,9 @@ def test_done_merged_historical_responsibility_correction_preserves_facts_and_ne
     assert ledger["state"] == "synced"
     assert ledger["store_side_effect"] == "set_node_contract"
     assert ledger["before_contract_sha256"] == correction["before_contract_sha256"]
+    assert ledger["evidence_sha256"] == reviewed["base"]["evidence_sha256"][
+        "bootstrap"
+    ]
     store_after = engine.store.get_work_item(item.id)
     assert store_after.contract.acceptance == []
     assert store_after.contract.acceptance_claims == ["UJ-BOOTSTRAP"]
@@ -444,6 +447,62 @@ def test_historical_contract_sync_fails_closed_on_unexpected_store_contract_drif
         apply_amendment(
             str(path), reviewed, engine.store, {"alice", "bob", "charlie"},
             acceptance=_responsibility_acceptance_doc())
+
+    unchanged = load_manifest(str(path))
+    assert unchanged.meta.get("amendment_apply") is None
+    assert unchanged.meta.get("last_amendment_id") is None
+
+
+@pytest.mark.parametrize(("field", "value"), [
+    ("review_verdict", "reject"),
+    ("review_report", {"blockers": ["late review drift"]}),
+    ("review_report_ref", {"sha256": "changed-review-report-ref"}),
+    ("review_subject_digest", "changed-review-subject"),
+    ("review_ledger", {"schema": "omac.review-ledger/v1", "rounds": [1]}),
+    ("review_ledger_ref", {"sha256": "changed-review-ledger-ref"}),
+    ("verification_ref", {"sha256": "changed-verification-ref"}),
+])
+def test_historical_apply_fails_closed_when_review_or_reference_evidence_drifts(
+    tmp_path, field, value,
+):
+    path = _manifest(tmp_path)
+    engine = _engine()
+    item = engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    engine.store.update_work_item_metadata(
+        item.id,
+        verification={"subject_digest": "verification-1"},
+        review_verdict="pass",
+        review_report={"blockers": []},
+        review_subject_digest="review-subject-1",
+        review_ledger={"schema": "omac.review-ledger/v1", "rounds": []},
+    )
+    engine.store.update_status(item.id, WorkItemStatus.DONE)
+    manifest = load_manifest(str(path))
+    node = manifest.nodes["bootstrap"]
+    node.status = "done"
+    node.merged = True
+    engine.store.set_node_contract(item.id, node.contract)
+    save_manifest(manifest, str(path))
+    reviewed = build_reviewed_amendment(
+        manifest,
+        _proposal(_responsibility_update(historical=True)),
+        engine.store,
+        issue_id="amendment-issue",
+        reviewer_verdict="pass",
+        acceptance=_responsibility_acceptance_doc(),
+    )
+
+    setattr(engine.store.get_work_item(item.id), field, value)
+
+    with pytest.raises(ValidationError, match="delivery evidence changed"):
+        apply_amendment(
+            str(path),
+            reviewed,
+            engine.store,
+            {"alice", "bob", "charlie"},
+            acceptance=_responsibility_acceptance_doc(),
+        )
 
     unchanged = load_manifest(str(path))
     assert unchanged.meta.get("amendment_apply") is None
