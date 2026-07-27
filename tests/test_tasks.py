@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import copy
 from types import SimpleNamespace
 
 import pytest
@@ -18,7 +19,7 @@ from omac.core.taskmeta import TaskKind, TaskPhase
 from omac.engines import create_engine
 from omac.engines.mock import MockStore
 from omac.engines.models import EngineConfig, WorkItemStatus
-from omac.errors import NeedsDecision
+from omac.errors import NeedsDecision, PlatformError
 from omac.pipeline.dispatch import build_show_output
 from omac.pipeline.tasks import AuthoringTaskSpec, create_authoring_task, run_task
 
@@ -426,7 +427,7 @@ def test_resume_snapshot_shrinks_unreadable_issue_before_full_get():
 
         def get_work_item(self, item_id):
             if not self.refreshed:
-                raise RuntimeError("old issue body is too large to read")
+                raise PlatformError("old issue body is too large to read")
             return self.delegate.get_work_item(item_id)
 
         def update_work_item_metadata(self, item_id, **metadata):
@@ -484,8 +485,10 @@ def test_run_task_pass_with_nits_re_reviews_changed_worker_followup():
     assert eng.store.get_comments(item.id) == []
 
 
-def test_run_task_resume_confirmation_re_reviews_stale_subject():
-    """confirmation 只能复用仍绑定当前交付的 verdict。"""
+def test_run_task_resume_confirmation_rejects_stale_subject_without_agent_path(
+    monkeypatch,
+):
+    """confirmation 的旧 subject 必须人工处理，不能自动重跑 Reviewer。"""
     eng = _engine(MOCK_AUTO_COMPLETE="false")
     item = create_authoring_task(eng, AuthoringTaskSpec(
         kind=TaskKind.PLAN,
@@ -503,29 +506,33 @@ def test_run_task_resume_confirmation_re_reviews_stale_subject():
     current = eng.store.get_work_item(item.id)
     current.review_subject_digest = "stale-v1-review-subject"
     eng.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
-    def submit_fresh_review():
-        current = eng.store.get_work_item(item.id)
-        if current.phase == TaskPhase.REVIEW and current.review_verdict is None:
-            eng.store.update_work_item_metadata(
-                item.id, review_verdict="pass",
-                review_report=_review_report(item=current))
-
-    result = run_task(
-        eng,
-        TaskKind.PLAN,
-        _payload(),
-        "alice",
-        reviewers=["bob"],
-        poll=submit_fresh_review,
-        resume_item_id=item.id,
+    monkeypatch.setattr(
+        eng.runtime, "is_active",
+        lambda *_args: pytest.fail("confirmation must not inspect Agent runs"),
+    )
+    monkeypatch.setattr(
+        eng.runtime, "wake",
+        lambda *_args: pytest.fail("confirmation must not wake Reviewer"),
     )
 
-    assert result["verdict"] == "pass"
-    assert result["rounds"] == 2
-    assert result["delivery"]["plan"] == "计划正文-v2"
+    with pytest.raises(NeedsDecision) as exc:
+        run_task(
+            eng,
+            TaskKind.PLAN,
+            _payload(),
+            "alice",
+            reviewers=["bob"],
+            poll=lambda: pytest.fail("confirmation must not poll an Agent run"),
+            resume_item_id=item.id,
+        )
+
+    assert exc.value.report["phase"] == "confirmation"
+    assert eng.store.assign_log == []
 
 
-def test_run_task_resume_confirmation_consumes_subject_after_prior_bounces():
+def test_run_task_resume_confirmation_consumes_subject_after_prior_bounces(
+    monkeypatch,
+):
     eng = _engine(MOCK_AUTO_COMPLETE="false")
     item = create_authoring_task(eng, AuthoringTaskSpec(
         kind=TaskKind.PLAN,
@@ -545,7 +552,15 @@ def test_run_task_resume_confirmation_consumes_subject_after_prior_bounces():
     current.review_subject_digest = tasks_module._review_subject_digest(
         TaskKind.PLAN, current, 3)
     current.agent_run_failed = True
-    eng.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+    eng.store.update_status(item.id, WorkItemStatus.FAILED)
+    monkeypatch.setattr(
+        eng.runtime, "is_active",
+        lambda *_args: pytest.fail("valid confirmation must not inspect Agent runs"),
+    )
+    monkeypatch.setattr(
+        eng.runtime, "wake",
+        lambda *_args: pytest.fail("valid confirmation must not wake an Agent"),
+    )
 
     result = run_task(
         eng,
@@ -562,8 +577,10 @@ def test_run_task_resume_confirmation_consumes_subject_after_prior_bounces():
     assert eng.store.assign_log == []
 
 
-def test_run_task_resume_confirmation_rejects_invalid_stored_review_evidence():
-    """旧 CLI 遗留的无效 report 不得越过 Reviewer 证据门进入人工确认。"""
+def test_run_task_resume_confirmation_rejects_invalid_evidence_without_agent_path(
+    monkeypatch,
+):
+    """无效 confirmation 证据 fail closed，不自动重跑 Reviewer。"""
     eng = _engine(MOCK_AUTO_COMPLETE="false")
     item = create_authoring_task(eng, AuthoringTaskSpec(
         kind=TaskKind.ACCEPTANCE,
@@ -587,37 +604,29 @@ def test_run_task_resume_confirmation_rejects_invalid_stored_review_evidence():
         TaskKind.ACCEPTANCE, current, 1)
     eng.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
 
-    def submit_valid_review_then_confirm():
-        current = eng.store.get_work_item(item.id)
-        if current.phase == TaskPhase.REVIEW and current.review_verdict is None:
-            eng.store.update_work_item_metadata(
-                item.id,
-                review_verdict="pass",
-                review_report=_review_report(item=current),
-            )
-            return
-        if current.phase == TaskPhase.CONFIRMATION:
-            if not current.review_report.get("full_review_completed"):
-                pytest.fail("invalid stored review evidence reached human confirmation")
-            eng.store.update_status(item.id, WorkItemStatus.DONE)
-
-    result = run_task(
-        eng,
-        TaskKind.ACCEPTANCE,
-        _payload(title="acceptance document"),
-        "alice",
-        reviewers=["bob"],
-        confirm=True,
-        poll=submit_valid_review_then_confirm,
-        resume_item_id=item.id,
+    monkeypatch.setattr(
+        eng.runtime, "is_active",
+        lambda *_args: pytest.fail("confirmation must not inspect Agent runs"),
+    )
+    monkeypatch.setattr(
+        eng.runtime, "wake",
+        lambda *_args: pytest.fail("confirmation must not wake Reviewer"),
     )
 
-    assert result["verdict"] == "pass"
-    assert [entry[2] for entry in eng.store.assign_log] == ["reviewer"]
-    assert eng.store.get_work_item(item.id).review_report[
-        "full_review_completed"
-    ] is True
-    assert eng.store.get_work_item(item.id).review_comment == ""
+    with pytest.raises(NeedsDecision) as exc:
+        run_task(
+            eng,
+            TaskKind.ACCEPTANCE,
+            _payload(title="acceptance document"),
+            "alice",
+            reviewers=["bob"],
+            confirm=True,
+            poll=lambda: pytest.fail("confirmation must not poll an Agent run"),
+            resume_item_id=item.id,
+        )
+
+    assert exc.value.report["phase"] == "confirmation"
+    assert eng.store.assign_log == []
 
 
 def test_run_task_resume_done_pass_with_nits_is_terminal():
@@ -1305,6 +1314,56 @@ def test_explicit_resume_completed_without_submit_reruns_once(monkeypatch):
     assert wakes == [(item.id, "alice", "worker")]
 
 
+@pytest.mark.parametrize(
+    "status, finished_without_submit",
+    [
+        (WorkItemStatus.FAILED, False),
+        (WorkItemStatus.IN_PROGRESS, True),
+    ],
+)
+def test_explicit_resume_authoring_with_deliverable_fails_closed(
+    monkeypatch, status, finished_without_submit,
+):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = create_authoring_task(eng, AuthoringTaskSpec(
+        kind=TaskKind.AMENDMENT,
+        title="running DAG amendment",
+        dag_key="amend-has-deliverable",
+        assignee="alice",
+    ))
+    eng.store.update_work_item_metadata(
+        item.id,
+        deliverable="existing amendment draft",
+        phase=TaskPhase.AUTHORING,
+    )
+    current = eng.store.get_work_item(item.id)
+    current.agent_run_finished_without_submit = finished_without_submit
+    eng.store.update_status(item.id, status)
+    monkeypatch.setattr(
+        eng.runtime, "is_active",
+        lambda *_args: pytest.fail("ineligible resume must not inspect Agent runs"),
+    )
+    monkeypatch.setattr(
+        eng.runtime, "wake",
+        lambda *_args: pytest.fail("ineligible resume must not wake an Agent"),
+    )
+
+    with pytest.raises(NeedsDecision) as exc:
+        run_task(
+            eng,
+            TaskKind.AMENDMENT,
+            _payload(title="running DAG amendment"),
+            "alice",
+            poll=lambda: pytest.fail("ineligible resume must not poll"),
+            resume_item_id=item.id,
+        )
+
+    assert exc.value.report["phase"] == "authoring"
+    assert exc.value.report["last_opinion"] == (
+        "authoring resume requires an empty deliverable")
+    assert eng.store.assign_log == []
+
+
 def test_explicit_resume_does_not_duplicate_active_authoring_run(monkeypatch):
     eng = _engine(MOCK_AUTO_COMPLETE="false")
     item = create_authoring_task(eng, AuthoringTaskSpec(
@@ -1483,6 +1542,93 @@ def test_explicit_resume_confirmation_failure_never_reruns_agent(monkeypatch):
         )
 
     assert exc.value.report["phase"] == "confirmation"
+
+
+def test_explicit_resume_confirmation_in_progress_never_enters_agent_path(
+    monkeypatch,
+):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = create_authoring_task(eng, AuthoringTaskSpec(
+        kind=TaskKind.AMENDMENT,
+        title="running DAG amendment",
+        dag_key="amend-confirmation-active",
+        assignee="alice",
+    ))
+    eng.store.update_work_item_metadata(
+        item.id, deliverable="amendment body", phase=TaskPhase.CONFIRMATION)
+    eng.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
+    monkeypatch.setattr(
+        eng.runtime, "is_active",
+        lambda *_args: pytest.fail("confirmation must not inspect active runs"),
+    )
+    monkeypatch.setattr(
+        eng.runtime, "wake",
+        lambda *_args: pytest.fail("confirmation must not wake an Agent"),
+    )
+
+    with pytest.raises(NeedsDecision) as exc:
+        run_task(
+            eng,
+            TaskKind.AMENDMENT,
+            _payload(title="running DAG amendment"),
+            "alice",
+            reviewers=["bob"],
+            confirm=True,
+            pause_at_confirmation=True,
+            poll=lambda: pytest.fail("confirmation must not poll an Agent run"),
+            resume_item_id=item.id,
+        )
+
+    assert exc.value.report["phase"] == "confirmation"
+    assert eng.store.assign_log == []
+
+
+def test_explicit_resume_uses_current_confirmation_over_stale_snapshot(
+    monkeypatch,
+):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = create_authoring_task(eng, AuthoringTaskSpec(
+        kind=TaskKind.PLAN,
+        title="feature-x",
+        dag_key="plan-stale-snapshot",
+        assignee="alice",
+    ))
+    stale_snapshot = copy.deepcopy(item)
+    eng.store.update_work_item_metadata(
+        item.id,
+        deliverable="current plan",
+        phase=TaskPhase.CONFIRMATION,
+        review_verdict="pass",
+        review_report=_review_report(),
+        review_bounce=1,
+    )
+    current = eng.store.get_work_item(item.id)
+    current.review_subject_digest = tasks_module._review_subject_digest(
+        TaskKind.PLAN, current, 2)
+    eng.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+    monkeypatch.setattr(
+        eng.runtime, "is_active",
+        lambda *_args: pytest.fail("current confirmation must bypass Agent runtime"),
+    )
+    monkeypatch.setattr(
+        eng.runtime, "wake",
+        lambda *_args: pytest.fail("current confirmation must not wake an Agent"),
+    )
+
+    result = run_task(
+        eng,
+        TaskKind.PLAN,
+        _payload(),
+        "alice",
+        reviewers=["bob"],
+        poll=lambda: pytest.fail("current confirmation must not poll an Agent run"),
+        resume_item_id=item.id,
+        resume_item_snapshot=stale_snapshot,
+    )
+
+    assert result["verdict"] == "pass"
+    assert result["delivery"]["plan"] == "current plan"
+    assert eng.store.assign_log == []
 
 
 def test_blocked_production_short_circuits_on_resume():

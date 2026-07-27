@@ -26,7 +26,7 @@ from ..core.review_continuation import authorized_review_limit
 from ..core.review_preflight import run_review_preflight
 from ..core.taskmeta import DELIVERY_CONTENT_KEY, TaskKind, TaskPhase, make_dag_key
 from ..engines.models import WorkItem, WorkItemStatus
-from ..errors import NeedsDecision, ValidationError
+from ..errors import NeedsDecision, PlatformError, ValidationError
 from ..i18n import current_language, ui
 from .dispatch import normalize_source_refs, render_issue_body
 
@@ -446,7 +446,19 @@ def run_task(
     )
 
     if resume_item_id is not None:
-        item = resume_item_snapshot or store.get_work_item(resume_item_id)
+        if resume_item_snapshot is None:
+            item = store.get_work_item(resume_item_id)
+        else:
+            try:
+                item = store.get_work_item(resume_item_id)
+            except PlatformError:
+                if not (
+                    resume_item_snapshot.status == WorkItemStatus.TODO
+                    and resume_item_snapshot.phase == TaskPhase.AUTHORING
+                    and not resume_item_snapshot.deliverable
+                ):
+                    raise
+                item = resume_item_snapshot
         if (
             item.status == WorkItemStatus.TODO
             and item.phase == TaskPhase.AUTHORING
@@ -461,19 +473,12 @@ def run_task(
 
     explicit_resume = resume_item_id is not None
     resume_authoring_attempt_available = explicit_resume
+    resumed_confirmation: Optional[WorkItem] = None
 
-    if (
-        explicit_resume
-        and item.phase == TaskPhase.CONFIRMATION
-        and (
-            item.status in (WorkItemStatus.FAILED, WorkItemStatus.BLOCKED)
-            or item.agent_run_failed
-            or item.agent_run_finished_without_submit
-        )
-    ):
+    if explicit_resume and item.phase == TaskPhase.CONFIRMATION:
         confirmation_round = max(1, item.bounces.review + 1)
         confirmation_is_consumable = (
-            _has_review_verdict(item)
+            item.review_verdict in {"pass", "pass-with-nits"}
             and item.review_subject_digest == _review_subject_digest(
                 kind, item, confirmation_round)
             and not _review_evidence_errors(contract, item)
@@ -494,6 +499,32 @@ def run_task(
                     "last_opinion": "confirmation does not permit Agent rerun",
                 },
             )
+        resumed_confirmation = item
+
+    def _raise_if_resume_has_deliverable(candidate: WorkItem) -> None:
+        stopped = (
+            candidate.status == WorkItemStatus.FAILED
+            or candidate.agent_run_failed
+            or candidate.agent_run_finished_without_submit
+        )
+        if not stopped or not candidate.deliverable:
+            return
+        raise NeedsDecision(
+            ui(
+                f"{kind.value} authoring resume requires an empty deliverable "
+                f"(item {item_id})",
+                f"{kind.value} 产出阶段仅能在交付物为空时恢复"
+                f"（item {item_id}）",
+            ),
+            report={
+                "item_id": item_id,
+                "kind": kind.value,
+                "phase": TaskPhase.AUTHORING.value,
+                "rounds": 0,
+                "last_opinion": (
+                    "authoring resume requires an empty deliverable"),
+            },
+        )
 
     def _raise_if_authoring_stopped(candidate: WorkItem) -> None:
         if candidate.phase != TaskPhase.AUTHORING:
@@ -522,6 +553,7 @@ def run_task(
             and resume_authoring_attempt_available
             and current.phase == TaskPhase.AUTHORING
         ):
+            _raise_if_resume_has_deliverable(current)
             if runtime.is_active(item_id):
                 current = _poll_until(
                     store,
@@ -542,6 +574,7 @@ def run_task(
                 ):
                     resume_authoring_attempt_available = False
                     return current
+                _raise_if_resume_has_deliverable(current)
             if (
                 current.status == WorkItemStatus.FAILED
                 or current.agent_run_finished_without_submit
@@ -594,7 +627,7 @@ def run_task(
         return evidence
 
     log.info(logsetup.EVT_DISPATCH, kind=kind.value, id=item_id, worker=assignee)
-    delivered = _produce()
+    delivered = resumed_confirmation or _produce()
     delivery = _delivery_of(kind, delivered)
 
     if (
@@ -619,7 +652,7 @@ def run_task(
 
     # 机器门(零 reviewer token):阶段 guard + 通用 review preflight。
     # 所有可确定判断先回给产出者，Reviewer 只消费通过后的语义问题。
-    if guard is not None or reviewers:
+    if resumed_confirmation is None and (guard is not None or reviewers):
         for guard_round in range(1, max_revisions + 1):
             guard_errors: List[str] = guard(delivered) if guard is not None else []
             if reviewers:
