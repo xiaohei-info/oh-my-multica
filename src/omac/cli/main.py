@@ -32,6 +32,7 @@ _EN_SUBCOMMAND_HELP = {
     "tick": "Advance one round and return exit 0, 10, or 20",
     "retry": "Reset a node to todo, optionally with another worker",
     "accept": "Accept a known risk and mark the node done",
+    "amend-accept": "Accept a Reviewer-approved amendment and apply it",
     "abandon": "Abandon a node and release non-hard-dependent work",
     "submit": "Validate and submit one structured deliverable",
     "get": "Read the full configuration or one key",
@@ -84,8 +85,10 @@ def _localize_parser_help(parser: argparse.ArgumentParser, language: str) -> Non
     for action in parser._actions:
         if isinstance(action, argparse._SubParsersAction):
             for choice in action._choices_actions:
+                child = action.choices.get(choice.dest)
+                help_key = getattr(child, "_help_key", choice.dest)
                 choice.help = _EN_SUBCOMMAND_HELP.get(
-                    choice.dest, choice.dest.replace("_", " ").capitalize())
+                    help_key, choice.dest.replace("_", " ").capitalize())
             for name, child in action.choices.items():
                 if _has_han(child.description):
                     child.description = _EN_SUBCOMMAND_HELP.get(name, name.capitalize())

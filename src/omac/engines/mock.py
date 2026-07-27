@@ -63,7 +63,9 @@ _shared_pull_requests: Dict[str, PullRequestObservation] = {}
 
 # 产出后进入评审阶段(而非直接 DONE)的 kind:与真实 work submit 的产出终态一致。
 # develop 走 pr_url→DONE;final-acceptance 有独立的 _accepted_results 真实 submit 分支。
-_AUTHORING_TO_REVIEW = (TaskKind.PLAN, TaskKind.ACCEPTANCE, TaskKind.DECOMPOSE)
+_AUTHORING_TO_REVIEW = (
+    TaskKind.PLAN, TaskKind.ACCEPTANCE, TaskKind.DECOMPOSE, TaskKind.AMENDMENT,
+)
 
 
 def _init_default_workspace():

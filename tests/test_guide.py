@@ -162,6 +162,22 @@ def test_manifest_guide_explains_canonical_plan_to_dag_handoff() -> None:
         assert item in chinese, f"manifest guide missing canonical handoff: {item}"
 
 
+def test_recovery_guide_explains_running_dag_amendment() -> None:
+    chinese = load_topic("recovery")
+    english = load_topic("recovery", language="en")
+
+    for item in [
+        "omac dag amend propose", "omac dag amend accept", "confirmation",
+        "definition digest", "ownership migration", "--resume-issue-id",
+    ]:
+        assert item in english, f"english recovery guide missing amendment rule: {item}"
+    for item in [
+        "omac dag amend propose", "omac dag amend accept", "confirmation",
+        "definition digest", "ownership migration", "--resume-issue-id",
+    ]:
+        assert item in chinese, f"recovery guide missing amendment rule: {item}"
+
+
 def test_worker_role_has_tdd_and_evidence() -> None:
     content = load_role_topic("worker")
     for item in [

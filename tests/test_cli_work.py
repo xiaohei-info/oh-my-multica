@@ -1,4 +1,4 @@
-"""work show 9 种(kind × phase)Agent 事实包 + submit 模板/左移门/退出码。"""
+"""work show 的 kind × phase 事实包 + submit 模板/左移门/退出码。"""
 from __future__ import annotations
 
 import json
@@ -85,7 +85,7 @@ def test_work_show_authoring_exposes_machine_gate_feedback_without_report():
     }
 
 
-# 9 种组合(final-acceptance 仅 authoring)
+# amendment 与 decompose 一样含 authoring/review；final-acceptance 仅 authoring。
 COMBINATIONS = [
     (TaskKind.PLAN, TaskPhase.AUTHORING),
     (TaskKind.PLAN, TaskPhase.REVIEW),
@@ -93,6 +93,8 @@ COMBINATIONS = [
     (TaskKind.ACCEPTANCE, TaskPhase.REVIEW),
     (TaskKind.DECOMPOSE, TaskPhase.AUTHORING),
     (TaskKind.DECOMPOSE, TaskPhase.REVIEW),
+    (TaskKind.AMENDMENT, TaskPhase.AUTHORING),
+    (TaskKind.AMENDMENT, TaskPhase.REVIEW),
     (TaskKind.DEVELOP, TaskPhase.AUTHORING),
     (TaskKind.DEVELOP, TaskPhase.REVIEW),
     (TaskKind.FINAL_ACCEPTANCE, TaskPhase.AUTHORING),
@@ -110,6 +112,10 @@ EXPECTED_GUIDE_REFS = {
     (TaskKind.DECOMPOSE, TaskPhase.AUTHORING): [
         "omac guide role orchestrator", "omac guide artifact manifest"],
     (TaskKind.DECOMPOSE, TaskPhase.REVIEW): [
+        "omac guide role reviewer", "omac guide artifact manifest"],
+    (TaskKind.AMENDMENT, TaskPhase.AUTHORING): [
+        "omac guide role orchestrator", "omac guide artifact manifest"],
+    (TaskKind.AMENDMENT, TaskPhase.REVIEW): [
         "omac guide role reviewer", "omac guide artifact manifest"],
     (TaskKind.DEVELOP, TaskPhase.AUTHORING): [
         "omac guide role worker", "omac guide artifact evidence"],
@@ -250,7 +256,7 @@ def test_submit_template_matches_registered_params(kind, phase):
 
 
 def test_all_kind_phase_pairs_covered():
-    """9 种组合全部在 SUBMIT_PARAMS_BY_KIND_PHASE 中有定义。"""
+    """全部受支持组合都在 SUBMIT_PARAMS_BY_KIND_PHASE 中有定义。"""
     assert set(SUBMIT_PARAMS_BY_KIND_PHASE.keys()) == set(COMBINATIONS)
 
 
