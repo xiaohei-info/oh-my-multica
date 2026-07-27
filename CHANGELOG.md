@@ -10,6 +10,10 @@ This file records public changes to oh-my-multica. The format follows
 
 ### Changed
 
+- Historical DAG amendment review obligations now bind the same expanded
+  WorkItem evidence digest used to build and apply the reviewed amendment, so
+  review, ledger, and evidence-reference drift fails closed instead of causing
+  a deterministic Reviewer/apply digest disagreement.
 - Exhausted plan-stage reviews now have an explicit
   `omac plan continue-review` operator decision. It grants one monotonic,
   persisted review round on the existing work item, restores rejected work to
