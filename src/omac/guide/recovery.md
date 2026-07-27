@@ -78,11 +78,14 @@ omac dag amend propose .omac/project.yaml \
 ```
 
 - Orchestrator 只提交 `omac.dag-amendment/v1` 的结构化 operations；不能写运行态字段。
-- 全局 acceptance responsibility 迁移必须使用 `update-responsibility`：只携带三个责任字段、
-  `clear_legacy_acceptance: true` 和按名称定位的 gate `acceptance_refs` patch，不能复制完整 contract。
+- done/merged 历史责任校正必须使用 `update-responsibility`：只携带 `acceptance`、三个新责任字段
+  和按名称定位的 gate `acceptance_refs` patch，不能复制完整 contract；活动节点仍使用普通完整
+  contract update。
   done/merged 默认仍不可变；只有带 `historical_contract_correction: true` 与 operation reason 的
   acceptance-only 校正才允许，且只写 manifest 和 `historical_contract_correction/synced` ledger 条目，
-  不恢复 Store 阶段、不派发 Agent、不重放 merge。
+  不恢复 Store 阶段、不派发 Agent、不重放 merge。Reviewer 在 pass 前通过
+  `review_obligations_ref` 附件审查 before/after 责任矩阵、完整 contract digest、运行事实 digest、
+  evidence digest、允许字段 diff 与 reason；这些审计字段同时进入 amendment identity 和 apply ledger。
 - OMAC 先做 DAG、循环、依赖、agent pool、done/merged 不可变性和 ownership migration
   机器门，再交给独立 Reviewer。
 - Reviewer pass 后命令以 exit 20 停在 `confirmation`，不会自动应用。人工审阅生成的

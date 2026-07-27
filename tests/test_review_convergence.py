@@ -7,6 +7,7 @@ from omac.core.review_convergence import (
     REVIEW_PROTOCOL_VERSION,
     advance_review_ledger,
     build_review_obligations,
+    required_closures,
     review_state,
     validate_convergence_review,
 )
@@ -94,21 +95,22 @@ def _amendment_manifest():
 
 
 def _amendment_item(manifest):
+    contract = _dump_contract(manifest.nodes["node-a"].contract)
+    contract.pop("acceptance")
+    contract.update({
+        "acceptance_claims": ["UJ-AMEND-001"],
+        "acceptance_contributions": [{
+            "flow_id": "UJ-AMEND-001", "action_ids": ["ACT-AMEND-001"],
+        }],
+        "acceptance_refs": ["UJ-AMEND-001"],
+    })
     raw = {
         "schema": "omac.dag-amendment/v1",
         "reason": "move global acceptance responsibility",
         "operations": [{
-            "op": "update-responsibility",
+            "op": "update",
             "node": "node-a",
-            "acceptance_claims": ["UJ-AMEND-001"],
-            "acceptance_contributions": [{
-                "flow_id": "UJ-AMEND-001", "action_ids": ["ACT-AMEND-001"],
-            }],
-            "acceptance_refs": ["UJ-AMEND-001"],
-            "clear_legacy_acceptance": True,
-            "integration_gate_responsibility_patches": [{
-                "name": "amendment-gate", "acceptance_refs": ["UJ-AMEND-001"],
-            }],
+            "set": {"contract": contract},
         }],
     }
     return SimpleNamespace(
@@ -172,6 +174,7 @@ def test_amendment_review_requires_disposition_of_compact_before_after_responsib
     }
     assert matrix["after"][0]["contributed_business_action_count"] == 1
     assert matrix["after"][0]["missing_business_action_ids"] == []
+    assert matrix["changed_flow_ids"] == ["UJ-AMEND-001"]
     assert "ACT-AMEND-001" not in yaml.safe_dump(matrix["after"])
     assert matrix["historical_contract_corrections"] == []
 
@@ -185,6 +188,127 @@ def test_amendment_review_requires_disposition_of_compact_before_after_responsib
     assert validate_convergence_review(item, "pass", report) == [
         "review_report missing obligation result: acceptance-responsibility:amendment-matrix"
     ]
+
+
+def test_amendment_matrix_blocker_becomes_required_rework_closure():
+    manifest = _amendment_manifest()
+    item = _amendment_item(manifest)
+    obligations = build_review_obligations(
+        item,
+        acceptance_doc=_amendment_acceptance_doc(),
+        amendment_manifest=manifest,
+    )
+    obligation_id = "acceptance-responsibility:amendment-matrix"
+    report = _report(
+        obligations,
+        failed={obligation_id},
+        blockers=[{
+            "root_cause_key": "amendment-responsibility-gap",
+            "obligation_id": obligation_id,
+            "classification": "new",
+            "summary": "the amended responsibility matrix has a gap",
+            "evidence": "the before/after matrix exposes a missing owner",
+            "required_fix": "correct the responsibility operation",
+        }],
+    )
+
+    ledger = advance_review_ledger(
+        None, report, verdict="reject", subject_digest="subject-1",
+        round_index=1)
+
+    assert required_closures(ledger) == [{
+        "blocker_id": ledger["blockers"][0]["blocker_id"],
+        "obligation_id": obligation_id,
+        "root_cause_key": "amendment-responsibility-gap",
+        "summary": "the amended responsibility matrix has a gap",
+        "required_fix": "correct the responsibility operation",
+    }]
+
+
+def test_amendment_reviewer_sees_historical_correction_audit_before_pass():
+    manifest = _amendment_manifest()
+    node = manifest.nodes["node-a"]
+    node.status = "done"
+    node.merged = True
+    node.work_item_id = "work-1"
+    proposal = {
+        "schema": "omac.dag-amendment/v1",
+        "reason": "correct historical responsibility",
+        "operations": [{
+            "op": "update-responsibility",
+            "node": "node-a",
+            "acceptance": [],
+            "acceptance_claims": ["UJ-AMEND-001"],
+            "acceptance_contributions": [{
+                "flow_id": "UJ-AMEND-001", "action_ids": ["ACT-AMEND-001"],
+            }],
+            "acceptance_refs": ["UJ-AMEND-001"],
+            "integration_gate_responsibility_patches": [{
+                "name": "amendment-gate", "acceptance_refs": ["UJ-AMEND-001"],
+            }],
+            "historical_contract_correction": True,
+            "reason": "correct the immutable historical responsibility record",
+        }],
+    }
+    item = SimpleNamespace(
+        kind=TaskKind.AMENDMENT,
+        contract=None,
+        deliverable=yaml.safe_dump(proposal, sort_keys=False),
+        review_ledger=None,
+        review_obligations=None,
+    )
+
+    obligations = build_review_obligations(
+        item,
+        acceptance_doc=_amendment_acceptance_doc(),
+        amendment_manifest=manifest,
+        amendment_evidence={"node-a": "evidence-sha"},
+    )
+    matrix = next(
+        obligation for obligation in obligations
+        if obligation["obligation_id"] == "acceptance-responsibility:amendment-matrix"
+    )
+    correction = matrix["historical_contract_corrections"][0]
+
+    assert correction["node"] == "node-a"
+    assert correction["before_contract_sha256"] != correction["after_contract_sha256"]
+    assert correction["evidence_sha256"] == "evidence-sha"
+    assert correction["allowed_field_diff"] == [
+        "contract.acceptance",
+        "contract.acceptance_claims",
+        "contract.acceptance_contributions",
+        "contract.acceptance_refs",
+    ]
+
+
+def test_run_task_hands_amendment_matrix_to_reviewer_by_attachment_ref():
+    MockStore.reset()
+    engine = create_engine("mock", EngineConfig(
+        engine_type="mock", workspace_id="ws",
+        extra={"MOCK_AUTO_COMPLETE": "true", "MOCK_AUTO_COMPLETE_DELAY": "0"},
+    ))
+    manifest = _amendment_manifest()
+    amendment = yaml.safe_load(_amendment_item(manifest).deliverable)
+    MockStore.set_kind_delivery("amendment", {
+        "amendment": yaml.safe_dump(amendment, sort_keys=False),
+    })
+
+    result = run_task(
+        engine, TaskKind.AMENDMENT, {"title": "amend responsibility"}, "alice",
+        reviewers=["bob"], max_revisions=2, poll=lambda: None,
+        review_acceptance_doc=_amendment_acceptance_doc(),
+        review_amendment_manifest=manifest,
+    )
+
+    item = engine.store.get_work_item(result["item_id"])
+    show = dispatch.build_show_output(item, "reviewer:bob")
+    assert item.review_obligations_ref["filename"] == "omac-review-obligations.yaml"
+    assert item.review_obligations_ref["sha256"]
+    assert show["context"]["review_obligations_ref"] == item.review_obligations_ref
+    assert any(
+        obligation["obligation_id"] == "acceptance-responsibility:amendment-matrix"
+        for obligation in show["context"]["review_obligations"])
+    assert "acceptance-responsibility:amendment-matrix" not in item.description
 
 
 def test_review_cannot_claim_complete_with_unreviewed_obligation():

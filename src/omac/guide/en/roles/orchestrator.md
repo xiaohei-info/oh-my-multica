@@ -140,11 +140,12 @@ lint and submit with the current command.
 
 ### Acceptance-responsibility amendment
 
-- A global responsibility migration must use the compact `update-responsibility`
-  operation: carry only `acceptance_claims`, `acceptance_contributions`,
-  `acceptance_refs`, `clear_legacy_acceptance: true`, and named gate
-  `acceptance_refs` patches. The current manifest is the sole source for every
-  other contract field; never repeat a complete contract.
+- A done/merged historical correction must use the compact
+  `update-responsibility` operation: carry only `acceptance`,
+  `acceptance_claims`, `acceptance_contributions`, `acceptance_refs`, and named
+  gate `acceptance_refs` patches. The current manifest is the sole source for
+  every other contract field; never repeat a complete contract. Active nodes
+  continue to use normal complete contract updates.
 - The operation cannot carry or change objectives, sources, commands, scope,
   workers, `blocked_by`, topology, or runtime facts. A done/merged node allows
   only an acceptance-only `historical_contract_correction: true` with a reason;

@@ -753,11 +753,12 @@ class MockStore(WorkItemStore):
             item.review_subject_digest = review_subject_digest or None
         if review_obligations is not None:
             item.review_obligations = list(review_obligations)
+            source = yaml.safe_dump(
+                item.review_obligations, allow_unicode=True, sort_keys=False)
             item.review_obligations_ref = {
                 "filename": "omac-review-obligations.yaml",
-                "bytes": len(yaml.safe_dump(
-                    item.review_obligations, allow_unicode=True,
-                    sort_keys=False).encode("utf-8")),
+                "bytes": len(source.encode("utf-8")),
+                "sha256": hashlib.sha256(source.encode("utf-8")).hexdigest(),
             }
         if review_ledger is not None:
             item.review_ledger = review_ledger

@@ -502,8 +502,9 @@ def run_task(
         if kind != TaskKind.AMENDMENT or review_amendment_manifest is None:
             return {}
         from ..core.amendment import (
-            _historical_contract_corrections, parse_proposal,
-            work_item_evidence_digest,
+            _historical_contract_corrections,
+            historical_work_item_evidence_digest,
+            parse_proposal,
         )
 
         proposal = parse_proposal(candidate.deliverable or "")
@@ -514,7 +515,7 @@ def run_task(
             if not node.work_item_id:
                 raise ValidationError(
                     f"historical contract correction node {node.id} requires a work item for evidence CAS")
-            evidence[node.id] = work_item_evidence_digest(
+            evidence[node.id] = historical_work_item_evidence_digest(
                 store.get_work_item(node.work_item_id))
         return evidence
 

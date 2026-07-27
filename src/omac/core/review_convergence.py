@@ -159,11 +159,18 @@ def build_review_obligations(
             after = _apply_definition(amendment_manifest, proposal)
             before_matrix = responsibility_matrix(amendment_manifest, acceptance_doc)
             after_matrix = responsibility_matrix(after, acceptance_doc)
+            before_by_flow = {row["flow_id"]: row for row in before_matrix}
+            after_by_flow = {row["flow_id"]: row for row in after_matrix}
+            changed_flow_ids = sorted(
+                flow_id for flow_id in set(before_by_flow) | set(after_by_flow)
+                if before_by_flow.get(flow_id) != after_by_flow.get(flow_id)
+            )
             corrections = _historical_contract_corrections(
                 amendment_manifest, proposal, amendment_evidence)
         except (KeyError, TypeError, ValueError):
             before_matrix = []
             after_matrix = []
+            changed_flow_ids = []
             corrections = []
         if before_matrix or after_matrix:
             obligations.append({
@@ -176,6 +183,7 @@ def build_review_obligations(
                 ),
                 "before": before_matrix,
                 "after": after_matrix,
+                "changed_flow_ids": changed_flow_ids,
                 "historical_contract_corrections": corrections,
             })
     return obligations

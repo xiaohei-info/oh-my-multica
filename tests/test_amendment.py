@@ -25,7 +25,7 @@ from omac.engines.mock import MockStore
 from omac.engines.models import EngineConfig, WorkItem, WorkItemStatus
 from omac.errors import NeedsDecision, ValidationError
 from omac.pipeline import loop
-from omac.pipeline.dispatch import build_show_output, submit
+from omac.pipeline.dispatch import submit
 
 
 def _engine():
@@ -173,13 +173,13 @@ def _responsibility_update(*, historical=False, action_id="ACT-BOOT-01"):
     operation = {
         "op": "update-responsibility",
         "node": "bootstrap",
+        "acceptance": [],
         "acceptance_claims": ["UJ-BOOTSTRAP"],
         "acceptance_contributions": [{
             "flow_id": "UJ-BOOTSTRAP",
             "action_ids": [action_id],
         }],
         "acceptance_refs": ["UJ-BOOTSTRAP"],
-        "clear_legacy_acceptance": True,
         "integration_gate_responsibility_patches": [{
             "name": "bootstrap",
             "acceptance_refs": ["UJ-BOOTSTRAP"],
@@ -219,7 +219,7 @@ def test_complete_contract_update_preserves_and_validates_responsibility_fields(
         "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
     engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
     acceptance = _responsibility_acceptance_doc()
-    proposal = _proposal(_responsibility_update())
+    proposal = _proposal(_explicit_responsibility_update())
 
     reviewed = build_reviewed_amendment(
         load_manifest(str(path)), proposal, engine.store,
@@ -244,7 +244,7 @@ def test_complete_contract_update_preserves_and_validates_responsibility_fields(
         }]
         assert contract.acceptance_refs == ["UJ-BOOTSTRAP"]
 
-    invalid = _proposal(_responsibility_update(action_id="UNKNOWN-ACTION"))
+    invalid = _proposal(_explicit_responsibility_update("UNKNOWN-ACTION"))
     errors = validate_proposal(
         load_manifest(str(_manifest(tmp_path))), invalid,
         {"alice", "bob", "charlie"}, acceptance=acceptance,
@@ -260,7 +260,7 @@ def test_acceptance_drift_after_amendment_review_fails_closed(tmp_path):
         "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
     acceptance = _responsibility_acceptance_doc()
     reviewed = build_reviewed_amendment(
-        load_manifest(str(path)), _proposal(_responsibility_update()),
+        load_manifest(str(path)), _proposal(_explicit_responsibility_update()),
         engine.store, issue_id="amendment-issue", reviewer_verdict="pass",
         acceptance=acceptance,
     )
@@ -331,13 +331,17 @@ def test_done_merged_historical_responsibility_correction_preserves_facts_and_ne
         amendment_mod, "prepare_stage_recovery",
         lambda *_args, **_kwargs: pytest.fail("historical correction must not recover Store stages"),
     )
+    monkeypatch.setattr(
+        engine.store, "set_node_contract",
+        lambda *_args, **_kwargs: pytest.fail("historical correction must not write Store contract"),
+    )
 
     result = apply_amendment(
         str(path), reviewed, engine.store, {"alice", "bob", "charlie"},
         acceptance=acceptance)
 
     updated = load_manifest(str(path)).nodes["bootstrap"]
-    assert result["sync"]["synced"] == ["bootstrap"]
+    assert result["sync"]["already_complete"] == ["bootstrap"]
     assert {key: getattr(updated, key) for key in runtime_before} == runtime_before
     assert updated.contract.acceptance == []
     assert updated.contract.acceptance_claims == ["UJ-BOOTSTRAP"]
@@ -348,20 +352,22 @@ def test_done_merged_historical_responsibility_correction_preserves_facts_and_ne
     ledger = load_manifest(str(path)).meta["amendment_apply"]["nodes"]["bootstrap"]
     assert ledger["stage"] == "historical_contract_correction"
     assert ledger["state"] == "synced"
-    assert ledger["store_side_effect"] == "set_node_contract"
+    assert ledger["store_side_effect"] == "none"
     assert ledger["before_contract_sha256"] == correction["before_contract_sha256"]
+    assert ledger["after_contract_sha256"] == correction["after_contract_sha256"]
+    assert ledger["before_responsibility_sha256"] == correction["before_responsibility_sha256"]
+    assert ledger["after_responsibility_sha256"] == correction["after_responsibility_sha256"]
+    assert ledger["evidence_sha256"] == correction["evidence_sha256"]
+    assert ledger["runtime_facts_sha256"] == correction["runtime_facts_sha256"]
+    assert ledger["allowed_field_diff"] == correction["allowed_field_diff"]
+    assert ledger["reason"] == correction["reason"]
+    assert engine.store.get_work_item(item.id).status == WorkItemStatus.DONE
     store_after = engine.store.get_work_item(item.id)
-    assert store_after.contract.acceptance == []
-    assert store_after.contract.acceptance_claims == ["UJ-BOOTSTRAP"]
-    assert store_after.contract_ref["sha256"]
-    assert store_after.contract_ref["sha256"] != store_before.contract_ref["sha256"]
-    show = build_show_output(store_after, "reviewer:bob")
-    assert show["context"]["contract"]["acceptance_claims"] == ["UJ-BOOTSTRAP"]
-    assert show["context"]["contract_ref"] == store_after.contract_ref
     for field in (
         "status", "phase", "worker", "reviewer", "artifacts", "verification",
         "verification_ref", "review_verdict", "review_report", "review_report_ref",
-        "review_subject_digest", "review_ledger", "review_ledger_ref",
+        "review_subject_digest", "review_ledger", "review_ledger_ref", "contract",
+        "contract_ref",
     ):
         assert getattr(store_after, field) == getattr(store_before, field)
 
@@ -370,89 +376,21 @@ def test_done_merged_historical_responsibility_correction_preserves_facts_and_ne
     assert repeated["sync"]["already_complete"] == ["bootstrap"]
 
 
-def test_historical_contract_sync_recovers_after_store_write_without_republishing(
-    tmp_path, monkeypatch,
-):
-    path = _manifest(tmp_path)
-    engine = _engine()
-    item = engine.store.create_work_item(
-        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
-    engine.store.update_status(item.id, WorkItemStatus.DONE)
-    manifest = load_manifest(str(path))
-    node = manifest.nodes["bootstrap"]
-    node.status = "done"
-    node.merged = True
-    node.merged_at = "2026-07-26T23:03:59Z"
-    engine.store.set_node_contract(item.id, node.contract)
-    save_manifest(manifest, str(path))
-    reviewed = build_reviewed_amendment(
-        manifest, _proposal(_responsibility_update(historical=True)), engine.store,
-        issue_id="amendment-issue", reviewer_verdict="pass",
-        acceptance=_responsibility_acceptance_doc())
-    original_set = engine.store.set_node_contract
-    calls = 0
-
-    def write_then_crash(item_id, contract):
-        nonlocal calls
-        calls += 1
-        original_set(item_id, contract)
-        raise RuntimeError("crash after Store contract publish")
-
-    monkeypatch.setattr(engine.store, "set_node_contract", write_then_crash)
-    with pytest.raises(RuntimeError, match="after Store contract publish"):
-        apply_amendment(
-            str(path), reviewed, engine.store, {"alice", "bob", "charlie"},
-            acceptance=_responsibility_acceptance_doc())
-
-    partial = load_manifest(str(path))
-    assert partial.meta["amendment_apply"]["nodes"]["bootstrap"]["state"] == "syncing"
-    monkeypatch.setattr(engine.store, "set_node_contract", original_set)
-    result = apply_amendment(
-        str(path), reviewed, engine.store, {"alice", "bob", "charlie"})
-
-    assert calls == 1
-    assert result["sync"]["synced"] == ["bootstrap"]
-    completed = load_manifest(str(path))
-    assert completed.meta["amendment_apply"]["nodes"]["bootstrap"]["state"] == "synced"
-
-
-def test_historical_contract_sync_fails_closed_on_unexpected_store_contract_drift(tmp_path):
-    path = _manifest(tmp_path)
-    engine = _engine()
-    item = engine.store.create_work_item(
-        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
-    engine.store.update_status(item.id, WorkItemStatus.DONE)
-    manifest = load_manifest(str(path))
-    node = manifest.nodes["bootstrap"]
-    node.status = "done"
-    node.merged = True
-    engine.store.set_node_contract(item.id, node.contract)
-    save_manifest(manifest, str(path))
-    reviewed = build_reviewed_amendment(
-        manifest, _proposal(_responsibility_update(historical=True)), engine.store,
-        issue_id="amendment-issue", reviewer_verdict="pass",
-        acceptance=_responsibility_acceptance_doc())
-    drifted = copy.deepcopy(node.contract)
-    drifted.objective = "unexpected Store contract drift"
-    engine.store.set_node_contract(item.id, drifted)
-
-    with pytest.raises(ValidationError, match="Store contract changed"):
-        apply_amendment(
-            str(path), reviewed, engine.store, {"alice", "bob", "charlie"},
-            acceptance=_responsibility_acceptance_doc())
-
-    unchanged = load_manifest(str(path))
-    assert unchanged.meta.get("amendment_apply") is None
-    assert unchanged.meta.get("last_amendment_id") is None
-
-
 @pytest.mark.parametrize("field, value", [
     ("objective", "smuggled objective"),
+    ("source_of_truth", ["docs/other.md"]),
+    ("non_goals", ["smuggled"]),
     ("scope_paths", ["src/**"]),
     ("commands", ["rm -rf /"]),
+    ("integration_gates", []),
+    ("contract", {}),
     ("worker", "charlie"),
     ("blocked_by", ["closeout"]),
     ("status", "todo"),
+    ("work_item_id", "forged"),
+    ("merged", False),
+    ("merged_at", "2026-07-27T00:00:00Z"),
+    ("merge_request_state", "requested"),
 ])
 def test_historical_responsibility_correction_rejects_every_non_whitelisted_field(
     tmp_path, field, value,
@@ -469,6 +407,23 @@ def test_historical_responsibility_correction_rejects_every_non_whitelisted_fiel
         acceptance=_responsibility_acceptance_doc())
 
     assert any("unsupported fields" in error for error in errors)
+
+
+def test_historical_correction_rejects_invalid_gate_responsibility_patch(tmp_path):
+    manifest = load_manifest(str(_manifest(tmp_path)))
+    node = manifest.nodes["bootstrap"]
+    node.status = "done"
+    node.merged = True
+    operation = _responsibility_update(historical=True)
+    operation["integration_gate_responsibility_patches"][0]["acceptance_refs"] = [
+        "UJ-BOOTSTRAP", "UJ-BOOTSTRAP", "",
+    ]
+
+    errors = validate_proposal(
+        manifest, _proposal(operation), {"alice", "bob", "charlie"})
+
+    assert any("entries must be non-empty strings" in error for error in errors)
+    assert any("must not contain duplicates" in error for error in errors)
 
 
 def test_historical_correction_requires_marker_and_evidence_cas(tmp_path):
@@ -498,34 +453,72 @@ def test_historical_correction_requires_marker_and_evidence_cas(tmp_path):
             acceptance=acceptance)
 
 
-def test_responsibility_update_without_work_item_is_definition_only_but_existing_delivery_reopens_review(tmp_path):
+def test_historical_correction_rejects_reviewer_or_manifest_runtime_drift(tmp_path):
+    path = _manifest(tmp_path)
+    engine = _engine()
+    item = engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    engine.store.update_work_item_metadata(
+        item.id, review_verdict="pass", review_report={"blockers": []})
+    engine.store.update_status(item.id, WorkItemStatus.DONE)
+    manifest = load_manifest(str(path))
+    manifest.nodes["bootstrap"].status = "done"
+    manifest.nodes["bootstrap"].merged = True
+    manifest.nodes["bootstrap"].merged_at = "2026-07-26T23:03:59Z"
+    save_manifest(manifest, str(path))
+    reviewed = build_reviewed_amendment(
+        manifest, _proposal(_responsibility_update(historical=True)), engine.store,
+        issue_id="amendment-issue", reviewer_verdict="pass",
+        acceptance=_responsibility_acceptance_doc())
+
+    engine.store.update_work_item_metadata(item.id, review_verdict="reject")
+    with pytest.raises(ValidationError, match="delivery evidence changed"):
+        apply_amendment(
+            str(path), reviewed, engine.store, {"alice", "bob", "charlie"},
+            acceptance=_responsibility_acceptance_doc())
+
+    engine.store.update_work_item_metadata(item.id, review_verdict="pass")
+    changed = load_manifest(str(path))
+    changed.nodes["bootstrap"].merged_at = "2026-07-27T00:00:00Z"
+    save_manifest(changed, str(path))
+    with pytest.raises(ValidationError, match="audit changed"):
+        apply_amendment(
+            str(path), reviewed, engine.store, {"alice", "bob", "charlie"},
+            acceptance=_responsibility_acceptance_doc())
+
+
+def test_historical_responsibility_operation_is_rejected_for_non_terminal_nodes(tmp_path):
     path = _manifest(tmp_path)
     acceptance = _responsibility_acceptance_doc()
     manifest = load_manifest(str(path))
-    manifest.nodes["bootstrap"].work_item_id = None
-    manifest.nodes["bootstrap"].status = "todo"
-    save_manifest(manifest, str(path))
-    engine = _engine()
+    errors = validate_proposal(
+        manifest, _proposal(_responsibility_update(historical=True)),
+        {"alice", "bob", "charlie"}, acceptance=acceptance)
 
-    reviewed = build_reviewed_amendment(
-        manifest, _proposal(_responsibility_update()), engine.store,
-        issue_id="amendment-issue", reviewer_verdict="pass", acceptance=acceptance)
-    assert reviewed["analysis"]["minimal_rerun"] == {
-        "review": [], "authoring": [], "merging": [],
-    }
-    apply_amendment(
-        str(path), reviewed, engine.store, {"alice", "bob", "charlie"},
-        acceptance=acceptance)
-    assert load_manifest(str(path)).nodes["bootstrap"].status == "todo"
+    assert any(
+        "only valid for done/merged nodes" in error for error in errors)
 
-    path = _manifest(tmp_path)
-    engine = _engine()
-    engine.store.create_work_item(
-        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
-    reviewed = build_reviewed_amendment(
-        load_manifest(str(path)), _proposal(_responsibility_update()), engine.store,
-        issue_id="amendment-issue", reviewer_verdict="pass", acceptance=acceptance)
-    assert reviewed["analysis"]["minimal_rerun"]["review"] == ["bootstrap"]
+
+def test_historical_responsibility_correction_rejects_noop(tmp_path):
+    manifest = load_manifest(str(_manifest(tmp_path)))
+    node = manifest.nodes["bootstrap"]
+    node.status = "done"
+    node.merged = True
+    operation = _responsibility_update(historical=True)
+    operation.update({
+        "acceptance": ["UJ-WHOLE-FLOW"],
+        "acceptance_claims": [],
+        "acceptance_contributions": [],
+        "acceptance_refs": [],
+        "integration_gate_responsibility_patches": [{
+            "name": "bootstrap", "acceptance_refs": ["UJ-WHOLE-FLOW"],
+        }],
+    })
+
+    errors = validate_proposal(
+        manifest, _proposal(operation), {"alice", "bob", "charlie"})
+
+    assert any("must change at least one acceptance responsibility field" in error for error in errors)
 
 
 def test_responsibility_operation_stays_compact_for_145_large_contracts(tmp_path):
@@ -537,6 +530,9 @@ def test_responsibility_operation_stays_compact_for_145_large_contracts(tmp_path
             "worker": "alice",
             "reviewer": "bob",
             "blocked_by": [],
+            "work_item_id": f"work-{index}",
+            "status": "done",
+            "merged": True,
             "contract": {
                 "objective": huge_objective,
                 "source_of_truth": ["docs/design.md"],
@@ -561,23 +557,38 @@ def test_responsibility_operation_stays_compact_for_145_large_contracts(tmp_path
     operations = [{
         "op": "update-responsibility",
         "node": f"node-{index}",
+        "acceptance": [],
         "acceptance_claims": [f"UJ-{index}"],
         "acceptance_contributions": [],
         "acceptance_refs": [f"UJ-{index}"],
-        "clear_legacy_acceptance": True,
         "integration_gate_responsibility_patches": [{
             "name": f"gate-{index}", "acceptance_refs": [f"UJ-{index}"],
         }],
+        "historical_contract_correction": True,
+        "reason": f"migrate historical responsibility for node-{index}",
     } for index in range(145)]
-    engine = _engine()
+    item = WorkItem(
+        id="template", workspace_id="ws", title="historical",
+        description="historical", status=WorkItemStatus.DONE,
+        dag_key="historical-template")
+
+    class ScaleStore:
+        config = EngineConfig(engine_type="mock", workspace_id="ws")
+
+        def list_members(self, _workspace_id):
+            return ["alice", "bob"]
+
+        def get_work_item(self, item_id):
+            return copy.deepcopy(item)
+
     reviewed = build_reviewed_amendment(
-        load_manifest(str(path)), _proposal(*operations), engine.store,
+        load_manifest(str(path)), _proposal(*operations), ScaleStore(),
         issue_id="amendment-issue", reviewer_verdict="pass")
     rendered = yaml.safe_dump(reviewed, sort_keys=False)
 
     assert all("contract" not in operation for operation in reviewed["operations"])
     assert huge_objective not in rendered
-    assert len(rendered.encode("utf-8")) < 150_000
+    assert len(rendered.encode("utf-8")) < 200_000
 
 
 _OAC_MANIFEST = Path(
@@ -595,6 +606,16 @@ def test_real_oac_done_node_historical_responsibility_correction_is_facts_only(t
     monkeypatch.chdir(_OAC_MANIFEST.parent.parent)
     manifest = load_manifest(str(path))
     node = manifest.nodes["source-ownership-baseline-contract"]
+    assert node.status == "done"
+    assert node.merged is True
+    assert node.merged_at == "2026-07-26T23:03:59Z"
+    assert node.work_item_id
+    assert node.contract.acceptance == [
+        "UJ-PLATFORM-INSTALL-001", "UJ-OAC-UPGRADE-001",
+    ]
+    assert node.contract.integration_gates[0]["acceptance_refs"] == [
+        "UJ-PLATFORM-INSTALL-001", "UJ-OAC-UPGRADE-001",
+    ]
     facts_before = {
         field: getattr(node, field)
         for field in (
@@ -609,11 +630,6 @@ def test_real_oac_done_node_historical_responsibility_correction_is_facts_only(t
         status=WorkItemStatus.DONE,
         dag_key="source-ownership-baseline-contract",
     )
-    item.contract = amendment_mod._canonical_contract_value(node.contract)
-    item.contract_ref = {
-        "sha256": amendment_mod._contract_digest(node.contract),
-    }
-
     class HistoricalStore:
         config = EngineConfig(engine_type="mock", workspace_id="ws")
 
@@ -624,16 +640,10 @@ def test_real_oac_done_node_historical_responsibility_correction_is_facts_only(t
             assert item_id == item.id
             return item
 
-        def set_node_contract(self, item_id, contract):
-            assert item_id == item.id
-            item.contract = amendment_mod._canonical_contract_value(contract)
-            item.contract_ref = {
-                "sha256": amendment_mod._contract_digest(contract),
-            }
-
     operation = {
         "op": "update-responsibility",
         "node": node.id,
+        "acceptance": [],
         "acceptance_claims": [
             "UJ-PLATFORM-INSTALL-001", "UJ-OAC-UPGRADE-001",
         ],
@@ -641,7 +651,6 @@ def test_real_oac_done_node_historical_responsibility_correction_is_facts_only(t
         "acceptance_refs": [
             "UJ-PLATFORM-INSTALL-001", "UJ-OAC-UPGRADE-001",
         ],
-        "clear_legacy_acceptance": True,
         "integration_gate_responsibility_patches": [{
             "name": "source-ownership-baseline-contract-gate",
             "acceptance_refs": [
@@ -670,6 +679,27 @@ def test_real_oac_done_node_historical_responsibility_correction_is_facts_only(t
 
     second = apply_amendment(str(path), reviewed, HistoricalStore(), {node.worker, node.reviewer})
     assert second["sync"]["already_complete"] == [node.id]
+
+
+def test_historical_correction_audit_is_bound_into_amendment_identity(tmp_path):
+    path = _manifest(tmp_path)
+    engine = _engine()
+    engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    manifest = load_manifest(str(path))
+    manifest.nodes["bootstrap"].status = "done"
+    manifest.nodes["bootstrap"].merged = True
+    save_manifest(manifest, str(path))
+    reviewed = build_reviewed_amendment(
+        manifest, _proposal(_responsibility_update(historical=True)), engine.store,
+        issue_id="amendment-issue", reviewer_verdict="pass",
+        acceptance=_responsibility_acceptance_doc())
+    reviewed["analysis"]["historical_contract_corrections"][0]["reason"] = "tampered"
+
+    with pytest.raises(ValidationError, match="identity does not match"):
+        apply_amendment(
+            str(path), reviewed, engine.store, {"alice", "bob", "charlie"},
+            acceptance=_responsibility_acceptance_doc())
 
 
 def test_propose_amendment_passes_authoritative_acceptance_to_reviewer_obligations(
@@ -712,7 +742,7 @@ def test_propose_amendment_passes_authoritative_acceptance_to_reviewer_obligatio
         observed["manifest"] = kwargs["review_amendment_manifest"]
         return {
             "item_id": issue.id,
-            "delivery": {"amendment": _proposal(_responsibility_update())},
+            "delivery": {"amendment": _proposal(_explicit_responsibility_update())},
         }
 
     monkeypatch.setattr(amendment_pipeline, "run_task", fake_run_task)

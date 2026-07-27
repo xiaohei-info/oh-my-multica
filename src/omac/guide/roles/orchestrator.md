@@ -104,10 +104,10 @@
 
 ### 运行中 amendment 的责任迁移
 
-- 全局责任迁移必须使用紧凑 `update-responsibility` operation：只提交
-  `acceptance_claims`、`acceptance_contributions`、`acceptance_refs`、
-  `clear_legacy_acceptance: true` 和按 gate 名称定位的 `acceptance_refs` patch；当前 manifest
-  是其余 contract 的唯一真源，不能复制完整 contract。
+- done/merged 历史责任校正必须使用紧凑 `update-responsibility` operation：只提交
+  `acceptance`、`acceptance_claims`、`acceptance_contributions`、`acceptance_refs` 和按 gate
+  名称定位的 `acceptance_refs` patch；当前 manifest 是其余 contract 的唯一真源，不能复制
+  完整 contract。活动节点继续使用普通完整 contract update。
 - operation 不能携带或改变 objective、source、commands、scope、worker、`blocked_by`、拓扑或运行事实。
   done/merged 节点只有带 `historical_contract_correction: true` 和 reason 的 acceptance-only 校正可用，
   且不重放 authoring/review/merge，也不派发 Agent。无 work item 的未完成节点只改定义；已有交付才最小回到 review。
