@@ -38,13 +38,17 @@
       <button id="reset-view-btn" data-i18n="reset_view" data-i18n-title="reset_view_title" title="Reset zoom and pan">Reset</button>
       <span class="badge budget is-hidden" id="dag-budget"></span>
       <div class="legend" id="dag-legend"></div>
+      <div class="detail-load-state is-hidden" id="dag-detail-status" role="status" aria-live="polite">
+        <span id="dag-detail-status-text"></span>
+        <button class="is-hidden" id="dag-detail-retry" type="button" data-i18n="detail_retry">Retry</button>
+      </div>
     </div>
     <svg id="dag-canvas" xmlns="http://www.w3.org/2000/svg" aria-label="DAG visualization" data-i18n-aria="dag_visualization" role="img"></svg>
   </section>
 
   <aside class="detail" id="node-detail" aria-label="Node details" data-i18n-aria="node_details">
     <p class="empty" id="detail-empty" data-i18n="select_node">Select a DAG node to inspect its contract, evidence, and links.</p>
-    <div id="detail-content"></div>
+    <div id="detail-content" aria-live="polite" aria-busy="false"></div>
   </aside>
 </main>
 

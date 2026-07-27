@@ -235,6 +235,23 @@ def test_dag_status_endpoint_never_calls_live_reconcile(
     assert json.loads(body)["progress"]["total"] == 2
 
 
+def test_dag_status_endpoint_never_loads_multica_node_evidence(
+        orch, simple_manifest, monkeypatch):
+    """manifest-only DAG snapshot 不得隐式读取较慢的 Multica contract/附件。"""
+    monkeypatch.chdir(orch.parent)
+    monkeypatch.setattr(
+        web_srv.api, "node_show",
+        lambda *_args: pytest.fail("DAG snapshot must not load node evidence"),
+    )
+
+    with _Server(orch_subpath=str(orch)) as server:
+        status, body = server.get(
+            f"/api/dag/status?manifest={simple_manifest}")
+
+    assert status == 200
+    assert json.loads(body)["progress"]["total"] == 2
+
+
 def test_node_show_endpoint_equals_cli(orch, simple_manifest, monkeypatch):
     monkeypatch.chdir(orch.parent)
     code, cli_data = _cli_json(

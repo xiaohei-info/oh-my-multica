@@ -10,6 +10,11 @@ This file records public changes to oh-my-multica. The format follows
 
 ### Changed
 
+- OMAC Web now groups collapsed DAG nodes by their exact visible dependency
+  signature, draws every represented parent edge, and never double-counts one
+  hidden node across summaries. Node detail reads now expose immediate loading,
+  error, retry, keyboard, and accessibility feedback while cancelling stale
+  Multica requests during rapid selection changes.
 - Historical DAG amendment review obligations now bind the same expanded
   WorkItem evidence digest used to build and apply the reviewed amendment, so
   review, ledger, and evidence-reference drift fails closed instead of causing
