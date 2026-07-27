@@ -342,6 +342,9 @@ def build_show_output(item: Any, identity: str, *, language: str = EN) -> Dict[s
             ledger = getattr(item, "review_ledger", None)
             context["review_protocol"] = REVIEW_PROTOCOL_VERSION
             context["review_obligations"] = list(obligations)
+            obligations_ref = getattr(item, "review_obligations_ref", None)
+            if obligations_ref:
+                context["review_obligations_ref"] = obligations_ref
             context["prior_open_blockers"] = open_blockers(ledger)
             context["review_state"] = review_state(ledger)
             ledger_ref = getattr(item, "review_ledger_ref", None)

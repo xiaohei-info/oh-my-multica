@@ -17,6 +17,8 @@ from omac.errors import ValidationError
 from omac.pipeline import dispatch
 from omac.engines import create_engine
 from omac.pipeline.tasks import run_task
+from omac.core.acceptance import load_acceptance_doc
+from omac.core.manifest import Contract, Manifest, Node, _dump_contract
 
 
 def _item(*, contract=None, ledger=None):
@@ -51,6 +53,73 @@ def _report(obligations, *, blockers=None, prior=None, failed=()):
     }
 
 
+def _amendment_acceptance_doc():
+    return load_acceptance_doc({
+        "schema": "omac.acceptance/v2",
+        "flows": [{
+            "id": "UJ-AMEND-001",
+            "name": "amendment flow",
+            "actions": [{
+                "id": "ACT-AMEND-001",
+                "kind": "business-action",
+                "step": "perform correction",
+                "how": "apply the accepted amendment",
+                "expected": "owner is corrected",
+            }],
+        }],
+    })
+
+
+def _amendment_manifest():
+    contract = Contract(
+        objective="preserve current contract",
+        source_of_truth=["docs/design.md"],
+        acceptance=["UJ-AMEND-001"],
+        non_goals=["no delivery replay"],
+        verification_commands=["pytest -q"],
+        integration_gates=[{
+            "name": "amendment-gate",
+            "layer": "L1",
+            "delivery_goal": "correct ownership",
+            "source_of_truth": ["docs/design.md"],
+            "covers": ["node-a"],
+            "acceptance_refs": ["UJ-AMEND-001"],
+            "commands": ["pytest -q"],
+        }],
+        pr_base="main",
+    )
+    return Manifest(meta={}, nodes={"node-a": Node(
+        id="node-a", worker="alice", reviewer="bob", contract=contract,
+    )})
+
+
+def _amendment_item(manifest):
+    raw = {
+        "schema": "omac.dag-amendment/v1",
+        "reason": "move global acceptance responsibility",
+        "operations": [{
+            "op": "update-responsibility",
+            "node": "node-a",
+            "acceptance_claims": ["UJ-AMEND-001"],
+            "acceptance_contributions": [{
+                "flow_id": "UJ-AMEND-001", "action_ids": ["ACT-AMEND-001"],
+            }],
+            "acceptance_refs": ["UJ-AMEND-001"],
+            "clear_legacy_acceptance": True,
+            "integration_gate_responsibility_patches": [{
+                "name": "amendment-gate", "acceptance_refs": ["UJ-AMEND-001"],
+            }],
+        }],
+    }
+    return SimpleNamespace(
+        kind=TaskKind.AMENDMENT,
+        contract=None,
+        deliverable=yaml.safe_dump(raw, sort_keys=False),
+        review_ledger=None,
+        review_obligations=None,
+    )
+
+
 def test_build_review_obligations_is_stable_and_contract_aware():
     item = _item(contract={
         "acceptance": ["UJ-2", "UJ-1", "UJ-1"],
@@ -73,6 +142,48 @@ def test_build_review_obligations_is_stable_and_contract_aware():
         "acceptance:UJ-2",
         "integration:api",
         "integration:release",
+    ]
+
+
+def test_amendment_review_requires_disposition_of_compact_before_after_responsibility_matrix():
+    manifest = _amendment_manifest()
+    item = _amendment_item(manifest)
+    obligations = build_review_obligations(
+        item,
+        acceptance_doc=_amendment_acceptance_doc(),
+        amendment_manifest=manifest,
+    )
+    matrix = next(
+        obligation for obligation in obligations
+        if obligation["obligation_id"] == "acceptance-responsibility:amendment-matrix"
+    )
+
+    assert matrix["before"][0] == {
+        "flow_id": "UJ-AMEND-001",
+        "full_claim_owners": ["node-a"],
+        "business_action_count": 1,
+        "contributed_business_action_count": 0,
+        "contribution_owners": [],
+        "full_owner_dependency_closure": [],
+        "missing_business_action_ids": ["ACT-AMEND-001"],
+        "unknown_business_action_ids": [],
+        "unreachable_contribution_owners": [],
+        "trace_nodes": [],
+    }
+    assert matrix["after"][0]["contributed_business_action_count"] == 1
+    assert matrix["after"][0]["missing_business_action_ids"] == []
+    assert "ACT-AMEND-001" not in yaml.safe_dump(matrix["after"])
+    assert matrix["historical_contract_corrections"] == []
+
+    item.review_obligations = obligations
+    report = _report(obligations)
+    report["obligation_results"] = [
+        result for result in report["obligation_results"]
+        if result["obligation_id"] != "acceptance-responsibility:amendment-matrix"
+    ]
+
+    assert validate_convergence_review(item, "pass", report) == [
+        "review_report missing obligation result: acceptance-responsibility:amendment-matrix"
     ]
 
 

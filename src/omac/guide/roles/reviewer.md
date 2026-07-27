@@ -28,6 +28,10 @@
   和 `review_state`。它们定义本轮有限审查范围与跨轮回归事实，不能自行删减。
 - decompose review 的 `acceptance-responsibility:matrix` obligation 携带紧凑全局责任矩阵；
   必须一次性检查每个 flow 的完整 owner、业务 Action 数量、贡献节点、依赖闭包和全部 gap。
+- amendment review 的 `acceptance-responsibility:amendment-matrix` obligation 同时携带
+  变更前/后的全部 flow 紧凑矩阵，以及历史校正的 contract/责任字段 digest、白名单 diff 和 reason。
+  正常 flow 不复制全部 Action ID；只在缺失、未知或不可达时列异常 ID。完整 obligation 由
+  `review_obligations_ref` 正式附件承载，必须通过 `omac work show ... --output json` 读取。
 
 ## 有限审查与跨轮回归
 
@@ -68,6 +72,9 @@
 11. `decompose review` 检查是否最大化并行；若节点还能拆出独立 PR/test/review 单元却被合并，应要求拆小。
     同时读取 obligation 中的紧凑责任矩阵，一轮内找全缺失/重复 owner、业务 Action 缺口、
     未知 Action 与完整 owner 无法到达贡献节点的问题，不能只抽查少数节点。
+    `amendment review` 必须逐项 disposition before/after responsibility obligation 与历史校正审计；
+    done/merged correction 只能变 acceptance responsibility 和命名 gate 的 `acceptance_refs`，
+    不得要求 Store 恢复、Agent 派发或 merge replay。
 12. 发现第一个 blocker 后继续检查完整 diff、相关实现、测试、配置、迁移和必要文档。第一处问题只是记录点，不能提前结束评审。
 13. 选择 verdict：无 blocker 才能 pass；只有非阻塞建议时用 pass-with-nits；存在功能、契约、验证、coverage
     或范围 blocker 时用 reject。禁止把建议项伪装成 blocker。

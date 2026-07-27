@@ -34,6 +34,12 @@ conflict or cannot be reproduced, do not infer pass.
 - In decompose review, the `acceptance-responsibility:matrix` obligation carries
   a compact global matrix. Review every flow owner, business-Action counts,
   contributing nodes, dependency closure, and every reported gap in one pass.
+- In amendment review, the `acceptance-responsibility:amendment-matrix`
+  obligation carries compact before/after matrices for every flow plus historical
+  correction contract/responsibility digests, whitelist diff, and reason. Normal
+  flows do not repeat Action IDs; only missing, unknown, or unreachable IDs are
+  listed. The formal `review_obligations_ref` attachment is restored by
+  `omac work show`; do not rely on an issue-body summary.
 
 ## Finite coverage and regression
 
@@ -90,6 +96,10 @@ conflict or cannot be reproduced, do not infer pass.
     Also read the compact responsibility matrix and find all missing or duplicate
     owners, business-Action gaps, unknown Actions, and contribution owners outside
     the full-owner dependency closure in the same round instead of sampling.
+    In `amendment review`, disposition the before/after responsibility obligation
+    and its historical-correction audit. A done/merged correction may change only
+    acceptance responsibility and named gate `acceptance_refs`; it must not demand
+    Store recovery, Agent dispatch, or merge replay.
 12. Continue after finding the first blocker and inspect the complete diff,
     related implementation, tests, configuration, migrations, and required
     documentation. The first issue is not a stopping point.

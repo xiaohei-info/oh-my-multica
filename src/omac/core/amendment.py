@@ -45,6 +45,13 @@ _REVIEW_SAFE_CONTRACT_FIELDS = {
     "acceptance", "acceptance_claims", "acceptance_contributions",
     "acceptance_refs", "integration_gates",
 }
+_RESPONSIBILITY_OPERATION = "update-responsibility"
+_RESPONSIBILITY_OPERATION_FIELDS = {
+    "op", "node", "acceptance_claims", "acceptance_contributions",
+    "acceptance_refs", "clear_legacy_acceptance",
+    "integration_gate_responsibility_patches",
+    "historical_contract_correction", "reason",
+}
 
 
 def _node_dict(node: Node, *, include_runtime: bool) -> dict[str, Any]:
@@ -230,6 +237,165 @@ def _contract_changes(before: Node, raw: dict[str, Any]) -> set[str]:
     }
 
 
+def _is_responsibility_operation(operation: dict[str, Any]) -> bool:
+    return operation.get("op") == _RESPONSIBILITY_OPERATION
+
+
+def _responsibility_digest(contract: Any) -> str:
+    dumped = _dump_contract(contract) if contract is not None else {}
+    gates = dumped.get("integration_gates") or []
+    return _digest({
+        "acceptance": dumped.get("acceptance", []),
+        "acceptance_claims": dumped.get("acceptance_claims", []),
+        "acceptance_contributions": dumped.get("acceptance_contributions", []),
+        "acceptance_refs": dumped.get("acceptance_refs", []),
+        "integration_gate_acceptance_refs": [{
+            "name": gate.get("name"),
+            "acceptance_refs": gate.get("acceptance_refs", []),
+        } for gate in gates if isinstance(gate, dict)],
+    })
+
+
+def _responsibility_contract(node: Node, operation: dict[str, Any]):
+    if node.contract is None:
+        raise ValueError("responsibility update requires an existing contract")
+    raw = _dump_contract(node.contract)
+    raw.pop("acceptance", None)
+    for field in (
+        "acceptance_claims", "acceptance_contributions", "acceptance_refs",
+    ):
+        raw[field] = copy.deepcopy(operation[field])
+    patches = operation.get("integration_gate_responsibility_patches") or []
+    if patches:
+        gates = copy.deepcopy(raw.get("integration_gates") or [])
+        patch_by_name = {patch["name"]: patch for patch in patches}
+        for gate in gates:
+            if isinstance(gate, dict) and gate.get("name") in patch_by_name:
+                gate["acceptance_refs"] = copy.deepcopy(
+                    patch_by_name[gate["name"]]["acceptance_refs"])
+        raw["integration_gates"] = gates
+    return _load_contract(raw)
+
+
+def _responsibility_allowed_diff(before: Node, after: Node) -> list[str]:
+    previous = _dump_contract(before.contract) if before.contract else {}
+    current = _dump_contract(after.contract) if after.contract else {}
+    changed = [
+        f"contract.{field}" for field in (
+            "acceptance", "acceptance_claims", "acceptance_contributions",
+            "acceptance_refs",
+        ) if previous.get(field, []) != current.get(field, [])
+    ]
+    previous_gates = {
+        gate.get("name"): gate for gate in previous.get("integration_gates", [])
+        if isinstance(gate, dict) and gate.get("name")
+    }
+    for gate in current.get("integration_gates", []):
+        if not isinstance(gate, dict) or not gate.get("name"):
+            continue
+        old = previous_gates.get(gate["name"], {})
+        if old.get("acceptance_refs", []) != gate.get("acceptance_refs", []):
+            changed.append(
+                f"contract.integration_gates[{gate['name']}].acceptance_refs")
+    return changed
+
+
+def _historical_contract_corrections(
+    manifest: Manifest,
+    proposal: dict[str, Any],
+    evidence: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    corrections = []
+    for operation in proposal.get("operations") or []:
+        if not (
+            _is_responsibility_operation(operation)
+            and operation.get("historical_contract_correction") is True
+        ):
+            continue
+        node = manifest.nodes[str(operation.get("node") or "")]
+        after = copy.deepcopy(node)
+        after.contract = _responsibility_contract(node, operation)
+        correction = {
+            "node": node.id,
+            "before_contract_sha256": _digest(_dump_contract(node.contract)),
+            "after_contract_sha256": _digest(_dump_contract(after.contract)),
+            "before_responsibility_sha256": _responsibility_digest(node.contract),
+            "after_responsibility_sha256": _responsibility_digest(after.contract),
+            "allowed_field_diff": _responsibility_allowed_diff(node, after),
+            "reason": operation["reason"],
+        }
+        if evidence is not None:
+            correction["evidence_sha256"] = evidence.get(node.id)
+        corrections.append(correction)
+    return corrections
+
+
+def _validate_responsibility_operation(
+    node: Node, operation: dict[str, Any], prefix: str,
+) -> list[str]:
+    errors = []
+    unknown = set(operation) - _RESPONSIBILITY_OPERATION_FIELDS
+    if unknown:
+        errors.append(
+            f"{prefix} contains unsupported fields: {', '.join(sorted(unknown))}")
+    for field in (
+        "acceptance_claims", "acceptance_contributions", "acceptance_refs",
+    ):
+        if field not in operation:
+            errors.append(f"{prefix}.{field} is required")
+        elif not isinstance(operation[field], list):
+            errors.append(f"{prefix}.{field} must be a list")
+    if operation.get("clear_legacy_acceptance") is not True:
+        errors.append(f"{prefix}.clear_legacy_acceptance must be true")
+    patches = operation.get("integration_gate_responsibility_patches", [])
+    if not isinstance(patches, list):
+        errors.append(f"{prefix}.integration_gate_responsibility_patches must be a list")
+        patches = []
+    gate_names = {
+        gate.get("name") for gate in (
+            _dump_contract(node.contract).get("integration_gates", [])
+            if node.contract else [])
+        if isinstance(gate, dict) and isinstance(gate.get("name"), str)
+    }
+    seen = set()
+    for index, patch in enumerate(patches):
+        patch_prefix = f"{prefix}.integration_gate_responsibility_patches[{index}]"
+        if not isinstance(patch, dict):
+            errors.append(f"{patch_prefix} must be an object")
+            continue
+        extra = set(patch) - {"name", "acceptance_refs"}
+        if extra:
+            errors.append(
+                f"{patch_prefix} contains unsupported fields: {', '.join(sorted(extra))}")
+        name = patch.get("name")
+        if not isinstance(name, str) or not name.strip():
+            errors.append(f"{patch_prefix}.name must be a non-empty string")
+        elif name not in gate_names:
+            errors.append(f"{patch_prefix}.name does not identify an existing integration gate")
+        elif name in seen:
+            errors.append(f"{patch_prefix}.name is duplicated: {name}")
+        seen.add(name)
+        if not isinstance(patch.get("acceptance_refs"), list):
+            errors.append(f"{patch_prefix}.acceptance_refs must be a list")
+    historical = operation.get("historical_contract_correction") is True
+    if node.status == "done" or node.merged:
+        if not historical:
+            errors.append(
+                f"{prefix}: done/merged node {node.id!r} requires "
+                "historical_contract_correction=true")
+        if not isinstance(operation.get("reason"), str) or not operation["reason"].strip():
+            errors.append(f"{prefix}.reason is required for a historical contract correction")
+        if not node.work_item_id:
+            errors.append(
+                f"{prefix}: historical contract correction requires an existing work item for evidence CAS")
+    elif historical:
+        errors.append(
+            f"{prefix}.historical_contract_correction is only valid for done/merged nodes")
+    if node.contract is None:
+        errors.append(f"{prefix}: responsibility update requires an existing contract")
+    return errors
+
+
 def _requires_ownership_migration(node: Node, changes: dict[str, Any]) -> bool:
     if "worker" in changes and changes["worker"] != node.worker:
         return True
@@ -240,6 +406,8 @@ def _requires_ownership_migration(node: Node, changes: dict[str, Any]) -> bool:
 
 def _operation_stage(node: Node | None, operation: dict[str, Any]) -> str:
     op = operation.get("op")
+    if op == _RESPONSIBILITY_OPERATION:
+        return "review"
     if op == "resume":
         return str(operation.get("stage") or "")
     if op in {"add", "remove"}:
@@ -270,6 +438,9 @@ def _apply_definition(manifest: Manifest, proposal: dict[str, Any]) -> Manifest:
         if op == "resume":
             continue
         node = amended.nodes[node_id]
+        if op == _RESPONSIBILITY_OPERATION:
+            node.contract = _responsibility_contract(node, operation)
+            continue
         for key, value in (operation.get("set") or {}).items():
             if key == "contract":
                 node.contract = _load_contract(value)
@@ -304,8 +475,10 @@ def validate_proposal(
             errors.append(f"{prefix} must be an object")
             continue
         op = operation.get("op")
-        if op not in {"update", "add", "remove", "resume"}:
-            errors.append(f"{prefix}.op must be update, add, remove, or resume")
+        if op not in {"update", "add", "remove", "resume", _RESPONSIBILITY_OPERATION}:
+            errors.append(
+                f"{prefix}.op must be update, add, remove, resume, or "
+                f"{_RESPONSIBILITY_OPERATION}")
             continue
         if op == "add":
             raw_node = operation.get("value") or {}
@@ -336,6 +509,9 @@ def validate_proposal(
         if node_id in seen:
             errors.append(f"{prefix}: node {node_id!r} has multiple operations")
         seen.add(node_id)
+        if op == _RESPONSIBILITY_OPERATION:
+            errors.extend(_validate_responsibility_operation(node, operation, prefix))
+            continue
         if node.status == "done" or node.merged:
             errors.append(f"{prefix}: done/merged node {node_id!r} is immutable")
             continue
@@ -360,6 +536,15 @@ def validate_proposal(
             errors.append(f"{prefix}.set.blocked_by must be a list")
         if "contract" in changes and not isinstance(changes["contract"], dict):
             errors.append(f"{prefix}.set.contract must be a complete object")
+        if (
+            "contract" in changes
+            and isinstance(changes["contract"], dict)
+            and _contract_changes(node, changes["contract"])
+            & {"acceptance_claims", "acceptance_contributions", "acceptance_refs"}
+        ):
+            errors.append(
+                f"{prefix}: responsibility migration must use "
+                f"{_RESPONSIBILITY_OPERATION}")
         if node.work_item_id and _requires_ownership_migration(node, changes):
             migration = operation.get("migration") or {}
             if migration.get("ownership_transfer") is not True or not migration.get("reason"):
@@ -407,6 +592,13 @@ def _classify(
         node_id = str(operation.get("node"))
         node = manifest.nodes.get(node_id)
         stage = _operation_stage(node, operation)
+        if (
+            _is_responsibility_operation(operation)
+            and operation.get("historical_contract_correction") is True
+        ):
+            continue
+        if _is_responsibility_operation(operation) and (node is None or not node.work_item_id):
+            continue
         if stage == "review" and (node is None or not node.work_item_id):
             stage = "authoring"
         if operation.get("op") == "remove":
@@ -419,6 +611,8 @@ def _implementation_affecting(node: Node | None, operation: dict[str, Any]) -> b
     op = operation.get("op")
     if op in {"add", "remove"}:
         return True
+    if op == _RESPONSIBILITY_OPERATION:
+        return False
     if op != "update" or node is None:
         return False
     changes = operation.get("set") or {}
@@ -513,8 +707,13 @@ def _amendment_id(
     definition_digest: str,
     proposal: dict[str, Any],
     minimal: dict[str, list[str]],
+    historical_corrections: list[dict[str, Any]],
+    evidence: dict[str, str],
 ) -> str:
-    return f"amend-{_digest([definition_digest, _proposal_core(proposal), minimal])[:12]}"
+    return f"amend-{_digest([
+        definition_digest, _proposal_core(proposal), minimal,
+        historical_corrections, evidence,
+    ])[:12]}"
 
 
 def build_reviewed_amendment(
@@ -541,14 +740,26 @@ def build_reviewed_amendment(
         raise ValidationError(
             "Amendment affects immutable downstream nodes: " + ", ".join(immutable))
     evidence: dict[str, str] = {}
+    historical_node_ids = {
+        str(operation.get("node"))
+        for operation in proposal.get("operations") or []
+        if _is_responsibility_operation(operation)
+        and operation.get("historical_contract_correction") is True
+    }
     affected_ids = {
         node_id for node_ids in minimal.values() for node_id in node_ids
     }
+    affected_ids.update(historical_node_ids)
     for node_id in affected_ids:
         node = manifest.nodes.get(node_id)
+        if node_id in historical_node_ids:
+            if node is None or not node.work_item_id:
+                raise ValidationError(
+                    f"historical contract correction node {node_id} requires a work item for evidence CAS")
         if node and node.work_item_id:
-            evidence[node_id] = work_item_evidence_digest(
-                store.get_work_item(node.work_item_id))
+            evidence[node_id] = work_item_evidence_digest(store.get_work_item(node.work_item_id))
+    historical_corrections = _historical_contract_corrections(
+        manifest, proposal, evidence)
     definition_digest = manifest_definition_digest(manifest)
     base = {
         "manifest_sha256": manifest_digest(manifest),
@@ -560,7 +771,8 @@ def build_reviewed_amendment(
         base["acceptance_sha256"] = acceptance_sha256
     return {
         **proposal,
-        "amendment_id": _amendment_id(definition_digest, proposal, minimal),
+        "amendment_id": _amendment_id(
+            definition_digest, proposal, minimal, historical_corrections, evidence),
         "base": base,
         "review": {"issue_id": issue_id, "verdict": reviewer_verdict},
         "human_confirmation": "pending",
@@ -568,6 +780,7 @@ def build_reviewed_amendment(
             "changed_nodes": _changed_node_ids(proposal),
             "derived_started_downstream": derived,
             "minimal_rerun": minimal,
+            "historical_contract_corrections": historical_corrections,
             "risk": (
                 "definition changes are CAS-protected; runtime-only drift is rebased "
                 "only when it does not change the minimum recovery set"
@@ -604,10 +817,21 @@ def _prepare_apply_ledger(
     manifest: Manifest,
     amendment_id: str,
     minimal: dict[str, list[str]],
+    historical_corrections: list[dict[str, Any]],
     store: Any,
     amendment_file: str | None,
 ) -> dict[str, Any]:
     entries: dict[str, Any] = {}
+    for correction in historical_corrections:
+        entries[correction["node"]] = {
+            "stage": "historical_contract_correction",
+            "state": "synced",
+            "store_side_effect": "none",
+            "before_contract_sha256": correction["before_contract_sha256"],
+            "after_contract_sha256": correction["after_contract_sha256"],
+            "allowed_field_diff": correction["allowed_field_diff"],
+            "reason": correction["reason"],
+        }
     for stage, node_ids in minimal.items():
         for node_id in node_ids:
             node = manifest.nodes.get(node_id)
@@ -745,6 +969,8 @@ def apply_amendment(
         (amendment.get("base") or {}).get("definition_sha256") or "",
         amendment,
         (amendment.get("analysis") or {}).get("minimal_rerun") or {},
+        (amendment.get("analysis") or {}).get("historical_contract_corrections") or [],
+        (amendment.get("base") or {}).get("evidence_sha256") or {},
     )
     if amendment.get("amendment_id") != expected_id:
         raise ValidationError(
@@ -776,6 +1002,14 @@ def apply_amendment(
             raise ValidationError(ui(
                 "The minimum recovery set changed after amendment review. Rebase and review again.",
                 "amendment 评审后最小恢复集合已变化；请基于最新事实 rebase 并重新评审。"))
+        corrections = _historical_contract_corrections(
+            current, amendment,
+            (amendment.get("base") or {}).get("evidence_sha256") or {})
+        if corrections != (amendment.get("analysis") or {}).get(
+                "historical_contract_corrections", []):
+            raise ValidationError(
+                "Historical contract correction audit changed after amendment review. "
+                "Generate and review a new amendment.")
         _verify_evidence(current, amendment, store)
         amended = _apply_definition(current, amendment)
         minimal = recomputed_minimal
@@ -794,7 +1028,7 @@ def apply_amendment(
             amended.meta.get("amendment_revision") or 0) + 1
         amended.meta["last_amendment_id"] = amendment.get("amendment_id")
         amended.meta["amendment_apply"] = _prepare_apply_ledger(
-            amended, amendment["amendment_id"], minimal, store,
+            amended, amendment["amendment_id"], minimal, corrections, store,
             amendment_file)
         save_manifest(amended, manifest_path)
         current = amended

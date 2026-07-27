@@ -417,6 +417,7 @@ def run_task(
     resume_item_id: Optional[str] = None,
     resume_item_snapshot: Optional[WorkItem] = None,
     review_acceptance_doc: Any = None,
+    review_amendment_manifest: Any = None,
 ) -> Dict[str, Any]:
     """派任务→等终态→取交付→有界修订循环。
 
@@ -496,6 +497,26 @@ def run_task(
             machine_feedback=feedback,
             review_comment=machine_feedback_summary(item_id, feedback),
         )
+
+    def _amendment_review_evidence(candidate: WorkItem) -> dict[str, str]:
+        if kind != TaskKind.AMENDMENT or review_amendment_manifest is None:
+            return {}
+        from ..core.amendment import (
+            _historical_contract_corrections, parse_proposal,
+            work_item_evidence_digest,
+        )
+
+        proposal = parse_proposal(candidate.deliverable or "")
+        evidence = {}
+        for correction in _historical_contract_corrections(
+                review_amendment_manifest, proposal):
+            node = review_amendment_manifest.nodes[correction["node"]]
+            if not node.work_item_id:
+                raise ValidationError(
+                    f"historical contract correction node {node.id} requires a work item for evidence CAS")
+            evidence[node.id] = work_item_evidence_digest(
+                store.get_work_item(node.work_item_id))
+        return evidence
 
     log.info(logsetup.EVT_DISPATCH, kind=kind.value, id=item_id, worker=assignee)
     delivered = _produce()
@@ -636,7 +657,10 @@ def run_task(
             store.update_work_item_metadata(
                 item_id,
                 review_obligations=build_review_obligations(
-                    current, acceptance_doc=review_acceptance_doc),
+                    current,
+                    acceptance_doc=review_acceptance_doc,
+                    amendment_manifest=review_amendment_manifest,
+                    amendment_evidence=_amendment_review_evidence(current)),
             )
         reviewed = store.prepare_review_cycle(item_id, subject_digest)
         while True:
