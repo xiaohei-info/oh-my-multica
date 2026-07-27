@@ -25,6 +25,7 @@ from omac.engines.mock import MockStore
 from omac.engines.models import EngineConfig, WorkItem, WorkItemStatus
 from omac.errors import NeedsDecision, ValidationError
 from omac.pipeline import loop
+from omac.pipeline.delivery import run_merge_delivery
 from omac.pipeline.dispatch import build_show_output, submit
 
 
@@ -1088,6 +1089,112 @@ def test_contract_only_amendment_preserves_runtime_facts_and_resumes_review(tmp_
     assert got.contract.acceptance == ["bootstrap workspace is valid"]
     assert got.bounces.review == 4
     assert got.status == WorkItemStatus.IN_REVIEW
+
+
+def _apply_exhausted_stage_amendment(tmp_path, stage):
+    path = _manifest(tmp_path)
+    engine = _engine()
+    item = engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    engine.store.update_work_item_metadata(
+        item.id,
+        artifacts={"pr_url": "https://example.test/pr/1", "head_sha": "abc"},
+        verification={"subject_digest": "verify-1", "commands": []},
+        review_verdict="pass",
+        worker_bounce=3,
+        review_bounce=4,
+        merge_bounce=5,
+    )
+    engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
+    reviewed = build_reviewed_amendment(
+        load_manifest(str(path)),
+        _proposal(_responsibility_update(resume_stage=stage)),
+        engine.store,
+        issue_id=f"amendment-{stage}",
+        reviewer_verdict="pass",
+        acceptance=_responsibility_acceptance_doc(),
+    )
+    apply_amendment(
+        str(path), reviewed, engine.store, {"alice", "bob", "charlie"},
+        acceptance=_responsibility_acceptance_doc(),
+    )
+    return path, engine, item
+
+
+@pytest.mark.parametrize("stage", ("authoring", "review", "merging"))
+def test_amendment_recovery_preserves_absolute_bounce_audit_and_records_fresh_budget(
+    tmp_path, stage,
+):
+    path, engine, item = _apply_exhausted_stage_amendment(tmp_path, stage)
+
+    got = engine.store.get_work_item(item.id)
+    ledger = load_manifest(str(path)).meta["amendment_apply"]["nodes"]["bootstrap"]
+
+    assert got.bounces.worker == 3
+    assert got.bounces.review == 4
+    assert got.bounces.merge == 5
+    assert ledger["bounce_baseline"] == {
+        "worker": 3,
+        "review": 4,
+        "merge": 5,
+    }
+
+
+def test_review_recovery_uses_fresh_budget_without_erasing_absolute_history(
+    tmp_path, monkeypatch,
+):
+    path, engine, item = _apply_exhausted_stage_amendment(tmp_path, "review")
+    manifest = load_manifest(str(path))
+    engine.store.update_work_item_metadata(item.id, review_verdict="reject")
+    monkeypatch.setattr(loop, "validate_review_evidence", lambda *_args: [])
+
+    failures = loop.collect_results(
+        engine.store, engine.runtime, manifest, str(path),
+        retry_limits={"worker": 3, "ci": 3, "review": 3, "merge": 3},
+    )
+
+    got = engine.store.get_work_item(item.id)
+    assert failures == {}
+    assert manifest.nodes["bootstrap"].status == "in_progress"
+    assert got.bounces.review == 5
+
+
+def test_authoring_recovery_uses_fresh_worker_budget_without_erasing_history(tmp_path):
+    path, engine, item = _apply_exhausted_stage_amendment(tmp_path, "authoring")
+    manifest = load_manifest(str(path))
+    manifest.nodes["bootstrap"].status = "in_progress"
+    engine.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
+    engine.store.get_work_item(item.id).agent_run_finished_without_submit = True
+
+    failures = loop.collect_results(
+        engine.store, engine.runtime, manifest, str(path),
+        retry_limits={"worker": 3, "ci": 3, "review": 3, "merge": 3},
+    )
+
+    got = engine.store.get_work_item(item.id)
+    assert failures == {}
+    assert manifest.nodes["bootstrap"].status == "in_progress"
+    assert got.bounces.worker == 4
+
+
+def test_merging_recovery_uses_fresh_merge_budget_without_erasing_history(tmp_path):
+    path, engine, item = _apply_exhausted_stage_amendment(tmp_path, "merging")
+    manifest = load_manifest(str(path))
+    engine.store.observe_pull_request = lambda _url: type("Observation", (), {
+        "state": "closed_unmerged",
+        "merged_at": None,
+        "detail": "closed without merge",
+    })()
+
+    result = run_merge_delivery(
+        {}, manifest, "bootstrap", engine.store, engine.runtime,
+        {"worker": 3, "ci": 3, "review": 3, "merge": 3}, str(path),
+    )
+
+    got = engine.store.get_work_item(item.id)
+    assert result == "bounce"
+    assert manifest.nodes["bootstrap"].status == "in_progress"
+    assert got.bounces.merge == 6
 
 
 def test_repeated_accept_after_node_progress_never_rolls_it_back(tmp_path):

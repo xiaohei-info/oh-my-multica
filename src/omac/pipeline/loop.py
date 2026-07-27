@@ -16,6 +16,7 @@ from ..core.config import DEFAULT_RETRY
 from ..core.evidence import validate_review_evidence, validate_worker_evidence
 from ..core.review_convergence import (
     build_review_obligations, review_subject_digest)
+from ..core.retry_budget import consumed_bounces
 from ..core.gitsync import commit_manifest
 from ..core.manifest import Manifest, save_manifest, set_node
 from ..pipeline.delivery import (
@@ -384,10 +385,12 @@ def collect_results(
             if item.agent_run_finished_without_submit:
                 worker_limit = limits.get("worker", DEFAULT_RETRY["worker"])
                 cur_bounce = item.bounces.worker
+                consumed = consumed_bounces(
+                    manifest, key, item, "worker")
                 reason = ui(
                     "Worker run ended without delivery through `omac work submit`.",
                     "worker run 已结束但未通过 omac work submit 交付")
-                if worker_limit == 0 or cur_bounce >= worker_limit:
+                if worker_limit == 0 or consumed >= worker_limit:
                     store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
                     set_node(manifest, key, status="blocked")
                     failures[key] = ui(
@@ -594,8 +597,10 @@ def collect_results(
                 # 受 retry_limits["review"] 约束。
                 review_limit = limits.get("review", DEFAULT_RETRY["review"])
                 cur_bounce = item.bounces.review
+                consumed = consumed_bounces(
+                    manifest, key, item, "review")
                 reason = "; ".join(gate_errors) if gate_errors else "reviewer reject"
-                if review_limit == 0 or cur_bounce >= review_limit:
+                if review_limit == 0 or consumed >= review_limit:
                     store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
                     store.add_comment(node.work_item_id, ui(
                         f"Review evidence retry limit ({review_limit}) exhausted: {reason}",
@@ -698,7 +703,12 @@ def _mark_downstream_blocked(
     downstream = graph.downstream_of(snapshot, failed)
     newly_blocked: Set[str] = set()
     for key in downstream:
-        if manifest.nodes[key].status not in TERMINAL_STATUSES:
+        node = manifest.nodes[key]
+        if node.status == "done" or (node.merged and node.merged_at):
+            if node.status != "done":
+                set_node(manifest, key, status="done")
+            continue
+        if node.status not in TERMINAL_STATUSES:
             set_node(manifest, key, status="blocked")
             newly_blocked.add(key)
     if newly_blocked:

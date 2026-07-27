@@ -39,6 +39,7 @@ from dataclasses import dataclass
 import shlex
 
 from ..core.config import DEFAULT_RETRY, get_ci_config, get_merge_config
+from ..core.retry_budget import consumed_bounces
 from ..engines.models import (
     PullRequestCheckResult, PullRequestObservation, PullRequestState,
     WorkItemStatus,
@@ -501,7 +502,9 @@ def _resume_merge_bounce(
         store.update_work_item_metadata(item_id, merge_bounce=attempt)
 
     merge_limit = retry_limits.get("merge", DEFAULT_RETRY["merge"])
-    if merge_limit == 0 or attempt >= merge_limit:
+    consumed_attempt = consumed_bounces(
+        manifest, node.id, item, "merge", absolute_count=attempt)
+    if merge_limit == 0 or consumed_attempt >= merge_limit:
         store.update_status(item_id, WorkItemStatus.BLOCKED)
         node.status = "blocked"
         node.merge_request_state = None
