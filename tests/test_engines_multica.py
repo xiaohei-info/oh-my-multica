@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 
 from omac.engines.models import (
     EngineConfig, PullRequestReadinessFailure, PullRequestState,
@@ -492,6 +493,80 @@ def test_multica_review_ledger_and_obligations_roundtrip_from_metadata(monkeypat
     assert item.review_ledger_ref == {"attachment_id": "ledger-1"}
 
 
+def test_multica_review_obligations_use_attachment_ref_and_roundtrip_above_metadata_limit(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    writes = []
+    obligations = [{
+        "obligation_id": f"acceptance-responsibility:{index}",
+        "requirement": "review compact matrix",
+        "before": [{"flow_id": f"UJ-{index}", "missing_business_action_ids": []}],
+        "after": [{"flow_id": f"UJ-{index}", "missing_business_action_ids": []}],
+    } for index in range(145)]
+    source = yaml.safe_dump(obligations, allow_unicode=True, sort_keys=False)
+    assert len(json.dumps(obligations).encode("utf-8")) > 8 * 1024
+
+    monkeypatch.setattr(
+        store, "_set_metadata", lambda item_id, key, value: writes.append((key, value)))
+    monkeypatch.setattr(
+        store, "_publish_payload_comment",
+        lambda item_id, label, content, suffix: {
+            "comment_id": "obligation-comment",
+            "attachment_id": "obligation-attachment",
+            "sha256": "obligation-sha",
+            "bytes": len(content.encode("utf-8")),
+            "filename": f"omac-{label}{suffix}",
+        },
+    )
+    monkeypatch.setattr(
+        store, "get_work_item",
+        lambda item_id: store._issue_to_work_item({
+            "id": item_id,
+            "title": "review",
+            "description": "review",
+            "status": "in_review",
+            "metadata": {
+                "dag_key": "amend-1", "kind": "amendment", "phase": "review",
+                "review_obligations_ref": {"attachment_id": "obligation-attachment"},
+            },
+        }, "ws"),
+    )
+    monkeypatch.setattr(
+        store, "_load_payload_comment",
+        lambda item_id, label, ref: source if label == "review-obligations" else None,
+    )
+
+    item = store.update_work_item_metadata("issue-1", review_obligations=obligations)
+
+    assert [key for key, _ in writes] == ["review_obligations_ref"]
+    assert writes[0][1]["attachment_id"] == "obligation-attachment"
+    assert writes[0][1]["bytes"] == len(source.encode("utf-8"))
+    assert item.review_obligations == obligations
+    comment = store._payload_comment(
+        "review-obligations", "obligation-sha", len(source.encode("utf-8")),
+        "omac-review-obligations.yaml")
+    assert "`review_obligations_ref`" in comment
+
+
+def test_multica_reads_legacy_inline_review_obligations_when_no_ref_exists():
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+
+    item = store._issue_to_work_item({
+        "id": "issue-1",
+        "title": "review",
+        "description": "review",
+        "status": "in_review",
+        "metadata": {
+            "dag_key": "review-1",
+            "kind": "decompose",
+            "phase": "review",
+            "review_obligations": '[{"obligation_id":"dimension:authority"}]',
+        },
+    }, "ws")
+
+    assert item.review_obligations == [{"obligation_id": "dimension:authority"}]
+    assert item.review_obligations_ref is None
+
+
 @pytest.mark.parametrize("ledger_text", [None, "not: [valid", "- blocker-a\n"])
 def test_multica_review_ledger_ref_fails_closed_when_payload_is_invalid(
     monkeypatch, ledger_text
@@ -713,6 +788,44 @@ def test_multica_set_node_contract_writes_ref_without_full_contract_metadata(mon
     assert published[0][0] == "contract"
     assert published[0][2] == ".yaml"
     assert "实现很长的自然语言目标" in published[0][1]
+
+
+def test_multica_done_contract_publish_keeps_issue_unassigned_and_does_not_start_run(
+    monkeypatch,
+):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    calls = []
+    writes = []
+    issue = {
+        "id": "issue-1", "status": "done", "assignee_id": None,
+        "metadata": {},
+    }
+
+    def run(args, capture=True):
+        calls.append(args)
+        if args[:2] == ["issue", "get"]:
+            return dict(issue)
+        if args[:3] == ["issue", "comment", "add"]:
+            return {
+                "id": "comment-1",
+                "attachments": [{"id": "attachment-1", "filename": "contract.yaml"}],
+            }
+        raise AssertionError(f"unexpected multica command: {args}")
+
+    monkeypatch.setattr(store, "_run_multica", run)
+    monkeypatch.setattr(
+        store, "_set_metadata",
+        lambda item_id, key, value: writes.append((key, value)),
+    )
+
+    store.set_node_contract("issue-1", {"acceptance_claims": ["UJ-BOOTSTRAP"]})
+
+    assert issue["status"] == "done"
+    assert issue["assignee_id"] is None
+    assert not any(command[:3] == ["issue", "assign", "issue-1"] for command in calls)
+    assert not any("run" in command or "rerun" in command for command in calls)
+    assert writes[0][0] == "contract_ref"
+    assert writes[0][1]["sha256"]
 
 
 def test_multica_source_refs_are_small_structured_metadata(monkeypatch):

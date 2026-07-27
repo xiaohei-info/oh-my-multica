@@ -101,6 +101,13 @@ omac dag amend propose .omac/project.yaml \
 
 - The Orchestrator submits only structured `omac.dag-amendment/v1` operations;
   runtime fields are not patchable.
+- A global acceptance-responsibility migration must use `update-responsibility`:
+  carry only the three responsibility fields, `clear_legacy_acceptance: true`, and
+  named gate `acceptance_refs` patches, never a complete contract. Done/merged
+  nodes remain immutable except an acceptance-only
+  `historical_contract_correction: true` with an operation reason. That path writes
+  only the manifest and a `historical_contract_correction/synced` ledger entry; it
+  never recovers Store stages, dispatches an Agent, or replays a merge.
 - OMAC checks DAG cycles, dependencies, the agent pool, immutable done/merged
   facts, and explicit ownership migration before independent Reviewer review.
 - Reviewer pass returns exit 20 in `confirmation`; it never applies automatically.

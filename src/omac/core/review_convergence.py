@@ -70,7 +70,13 @@ def required_closures(ledger: Any) -> list[dict]:
     ]
 
 
-def build_review_obligations(item: Any, *, acceptance_doc: Any = None) -> list[dict]:
+def build_review_obligations(
+    item: Any,
+    *,
+    acceptance_doc: Any = None,
+    amendment_manifest: Any = None,
+    amendment_evidence: dict[str, str] | None = None,
+) -> list[dict]:
     """Build a stable, finite review coverage set for the current work item."""
     obligations = [
         {"obligation_id": obligation_id, "category": "dimension", "requirement": requirement}
@@ -137,6 +143,40 @@ def build_review_obligations(item: Any, *, acceptance_doc: Any = None) -> list[d
                     "coverage, dependency closure, and every reported gap"
                 ),
                 "responsibility_matrix": matrix,
+            })
+    if (
+        kind == TaskKind.AMENDMENT.value
+        and isinstance(deliverable, str)
+        and amendment_manifest is not None
+    ):
+        try:
+            from .amendment import (
+                _apply_definition, _historical_contract_corrections,
+                parse_proposal,
+            )
+
+            proposal = parse_proposal(deliverable)
+            after = _apply_definition(amendment_manifest, proposal)
+            before_matrix = responsibility_matrix(amendment_manifest, acceptance_doc)
+            after_matrix = responsibility_matrix(after, acceptance_doc)
+            corrections = _historical_contract_corrections(
+                amendment_manifest, proposal, amendment_evidence)
+        except (KeyError, TypeError, ValueError):
+            before_matrix = []
+            after_matrix = []
+            corrections = []
+        if before_matrix or after_matrix:
+            obligations.append({
+                "obligation_id": "acceptance-responsibility:amendment-matrix",
+                "category": "acceptance-responsibility",
+                "requirement": (
+                    "Disposition the before/after compact acceptance responsibility "
+                    "matrix: every full owner, business-Action coverage count, "
+                    "contribution owner, dependency closure, and reported gap."
+                ),
+                "before": before_matrix,
+                "after": after_matrix,
+                "historical_contract_corrections": corrections,
             })
     return obligations
 

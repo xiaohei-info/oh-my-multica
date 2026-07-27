@@ -162,6 +162,7 @@ class WorkItem:
     review_report_ref: Optional[Dict[str, Any]] = None
     review_subject_digest: Optional[str] = None
     review_obligations: List[Dict[str, Any]] = field(default_factory=list)
+    review_obligations_ref: Optional[Dict[str, Any]] = None
     review_ledger: Optional[Dict[str, Any]] = None
     review_ledger_ref: Optional[Dict[str, Any]] = None
     review_continuation: Optional[Dict[str, Any]] = None

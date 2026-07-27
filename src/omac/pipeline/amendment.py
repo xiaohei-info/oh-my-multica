@@ -180,8 +180,13 @@ def propose_amendment(
         "Read every design document under each supplied docs path, the current manifest, "
         "and the Reviewer report. Submit one YAML object using schema "
         "omac.dag-amendment/v1 with reason and operations. Supported operations are "
-        "update/add/remove/resume. Never patch runtime fields. Never delete or rewrite "
-        "done/merged nodes. Use migration.ownership_transfer=true plus a reason when an "
+        "update/add/remove/resume/update-responsibility. Never patch runtime fields. "
+        "Done/merged nodes are immutable except update-responsibility with explicit "
+        "historical_contract_correction=true and an operation reason. Use "
+        "update-responsibility for every acceptance responsibility migration: carry only "
+        "acceptance_claims, acceptance_contributions, acceptance_refs, explicit legacy "
+        "acceptance clearing, and optional named integration-gate acceptance_refs patches; "
+        "never copy a complete contract. Use migration.ownership_transfer=true plus a reason when an "
         "executed node changes worker or scope_paths. A contract update is a complete "
         "replacement: preserve every intended acceptance_claims, "
         "acceptance_contributions, and acceptance_refs responsibility field and use only "
@@ -218,6 +223,8 @@ def propose_amendment(
         pause_at_confirmation=True,
         dag_key=f"amend-{Path(manifest_path).stem}",
         resume_item_id=resume_issue_id,
+        review_acceptance_doc=acceptance,
+        review_amendment_manifest=manifest,
     )
     issue = engine.store.get_work_item(outcome["item_id"])
     if issue.phase != TaskPhase.CONFIRMATION or issue.review_verdict != "pass":
