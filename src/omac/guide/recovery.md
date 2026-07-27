@@ -83,6 +83,12 @@ omac dag amend propose .omac/project.yaml \
   done/merged 默认仍不可变；只有带 `historical_contract_correction: true` 与 operation reason 的
   acceptance-only 校正才允许，且只写 manifest 和 `historical_contract_correction/synced` ledger 条目，
   不恢复 Store 阶段、不派发 Agent、不重放 merge。
+- 对无 work item 的未开始节点，省略 `resume_stage` 保持 definition-only；任何显式
+  `resume_stage: review|authoring|merging` 都要求已有 work item。对已有 work item，未提供 `resume_stage` 时职责
+  迁移仍按旧规则最小恢复到 review；需要覆盖时，在同一个 `update-responsibility` operation 中设置它，绝不能再为同一节点
+  增加第二个 `resume` operation。`merging` 要求 Reviewer pass 与 PR：accept 先静默同步新 contract/contract_ref，
+  再保持 review verdict、PR/verification、Store status/phase 和人员分配不变；它不派发 Agent，也不观察或请求
+  merge，后续 `dag run` 统一负责。historical contract correction 禁止设置 `resume_stage`。
 - OMAC 先做 DAG、循环、依赖、agent pool、done/merged 不可变性和 ownership migration
   机器门，再交给独立 Reviewer。
 - Reviewer pass 后命令以 exit 20 停在 `confirmation`，不会自动应用。人工审阅生成的

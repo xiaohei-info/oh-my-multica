@@ -50,7 +50,7 @@ _RESPONSIBILITY_OPERATION_FIELDS = {
     "op", "node", "acceptance_claims", "acceptance_contributions",
     "acceptance_refs", "clear_legacy_acceptance",
     "integration_gate_responsibility_patches",
-    "historical_contract_correction", "reason",
+    "historical_contract_correction", "reason", "resume_stage",
 }
 
 
@@ -422,6 +422,12 @@ def _validate_responsibility_operation(
         if not isinstance(patch.get("acceptance_refs"), list):
             errors.append(f"{patch_prefix}.acceptance_refs must be a list")
     historical = operation.get("historical_contract_correction") is True
+    resume_stage = operation.get("resume_stage")
+    if resume_stage is not None and resume_stage not in {
+        "review", "authoring", "merging",
+    }:
+        errors.append(
+            f"{prefix}.resume_stage must be review, authoring, or merging")
     if node.status == "done" or node.merged:
         if not historical:
             errors.append(
@@ -435,6 +441,11 @@ def _validate_responsibility_operation(
     elif historical:
         errors.append(
             f"{prefix}.historical_contract_correction is only valid for done/merged nodes")
+    if historical and "resume_stage" in operation:
+        errors.append(f"{prefix}: historical contract correction cannot set resume_stage")
+    if resume_stage in {"review", "authoring", "merging"} and not node.work_item_id:
+        errors.append(
+            f"{prefix}: explicit resume_stage requires an existing work item")
     if node.contract is None:
         errors.append(f"{prefix}: responsibility update requires an existing contract")
     return errors
@@ -451,7 +462,7 @@ def _requires_ownership_migration(node: Node, changes: dict[str, Any]) -> bool:
 def _operation_stage(node: Node | None, operation: dict[str, Any]) -> str:
     op = operation.get("op")
     if op == _RESPONSIBILITY_OPERATION:
-        return "review"
+        return str(operation.get("resume_stage") or "review")
     if op == "resume":
         return str(operation.get("stage") or "")
     if op in {"add", "remove"}:
@@ -883,6 +894,7 @@ def _prepare_apply_ledger(
     historical_corrections: list[dict[str, Any]],
     store: Any,
     amendment_file: str | None,
+    responsibility_merge_sync_nodes: set[str],
 ) -> dict[str, Any]:
     entries: dict[str, Any] = {}
     for correction in historical_corrections:
@@ -932,6 +944,8 @@ def _prepare_apply_ledger(
             }
             if stage == "review":
                 entry["expected_review_subject"] = stage_recovery_subject(node, item)
+            if stage == "merging":
+                entry["sync_contract"] = node_id in responsibility_merge_sync_nodes
             entries[node_id] = entry
     return {
         "schema": APPLY_LEDGER_SCHEMA,
@@ -1065,7 +1079,8 @@ def _resume_apply_ledger(
             store,
             entry["stage"],
             expected_review_subject=entry.get("expected_review_subject"),
-            sync_contract=True,
+            sync_contract=entry.get(
+                "sync_contract", entry["stage"] != "merging"),
         )
         entry["state"] = "synced"
         entry["observed"] = recovery_control_snapshot(
@@ -1174,7 +1189,16 @@ def apply_amendment(
         amended.meta["last_amendment_id"] = amendment.get("amendment_id")
         amended.meta["amendment_apply"] = _prepare_apply_ledger(
             amended, amendment["amendment_id"], minimal, corrections, store,
-            amendment_file)
+            amendment_file,
+            {
+                str(operation.get("node"))
+                for operation in amendment.get("operations") or []
+                if (
+                    _is_responsibility_operation(operation)
+                    and operation.get("resume_stage") == "merging"
+                )
+            },
+        )
         save_manifest(amended, manifest_path)
         current = amended
     else:

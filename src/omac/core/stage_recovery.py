@@ -87,10 +87,10 @@ def prepare_stage_recovery(
         return "no-work-item"
     item = store.get_work_item(node.work_item_id)
     validate_stage_recovery(item, stage)
-    if stage == "merging":
-        return "delegated-to-run-merge-delivery"
     if sync_contract and node.contract is not None:
         store.set_node_contract(node.work_item_id, node.contract)
+    if stage == "merging":
+        return "delegated-to-run-merge-delivery"
     store.reset_review(node.work_item_id)
     if stage == "review":
         subject = expected_review_subject or stage_recovery_subject(
@@ -114,6 +114,16 @@ def classify_stage_recovery_observation(
 ) -> str:
     """返回 reached/safe/progressed，供 restart-safe 补偿决定是否写 Store。"""
     contract_matches = current.get("contract_sha256") == expected_contract_sha256
+    without_contract = {
+        key: value for key, value in current.items() if key != "contract_sha256"
+    }
+    baseline_without_contract = {
+        key: value for key, value in baseline.items() if key != "contract_sha256"
+    }
+    if stage == "merging" and (
+        contract_matches and without_contract == baseline_without_contract
+    ):
+        return "reached"
     if stage == "review" and (
         contract_matches
         and current.get("status") == WorkItemStatus.IN_REVIEW.value
@@ -131,12 +141,6 @@ def classify_stage_recovery_observation(
         return "reached"
     if current == baseline:
         return "safe"
-    without_contract = {
-        key: value for key, value in current.items() if key != "contract_sha256"
-    }
-    baseline_without_contract = {
-        key: value for key, value in baseline.items() if key != "contract_sha256"
-    }
     if without_contract == baseline_without_contract:
         return "safe"
     if stage == "review" and (
