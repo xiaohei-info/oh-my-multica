@@ -15,9 +15,10 @@ import json
 import os
 import subprocess
 import tempfile
+import time
 import uuid
 import zipfile
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import yaml
 
@@ -51,6 +52,8 @@ from .runtime import AgentRuntime
 from .store import WorkItemStore
 
 MULTICA_PR_VIEW_FIELDS = "state,mergedAt,autoMergeRequest,mergeStateStatus"
+_ACTIVE_RUN_STATUSES = {"queued", "pending", "running", "dispatching"}
+_RERUNNABLE_DIRECT_RUN_STATUSES = {"failed", "cancelled", "completed"}
 
 
 def _latest_run(runs: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -824,8 +827,10 @@ class MulticaStore(WorkItemStore):
         latest = _latest_run(runs)
         if not latest:
             return None
-        active = {"queued", "pending", "running", "dispatching"}
-        if any((run.get("status") or "").lower() in active for run in runs):
+        if any(
+            (run.get("status") or "").lower() in _ACTIVE_RUN_STATUSES
+            for run in runs
+        ):
             return None
         return (latest.get("status") or "").lower() or None
 
@@ -1190,30 +1195,78 @@ class MulticaRuntime(AgentRuntime):
     阶段交接(评审/回退)= 同一 issue 转派新 assignee,天然支持接力棒传递。
     """
 
-    def __init__(self, store: MulticaStore):
+    def __init__(
+        self,
+        store: MulticaStore,
+        *,
+        active_observation_attempts: int = 4,
+        active_observation_interval: float = 0.5,
+        sleeper: Callable[[float], None] = time.sleep,
+    ):
+        if active_observation_attempts < 1:
+            raise ValueError("active_observation_attempts must be at least 1")
+        if active_observation_interval < 0:
+            raise ValueError("active_observation_interval must not be negative")
         self._store = store
+        self._active_observation_attempts = active_observation_attempts
+        self._active_observation_interval = active_observation_interval
+        self._sleeper = sleeper
+
+    def _issue_runs(self, item_id: str) -> List[Dict[str, Any]]:
+        runs = self._store._run_multica([
+            "issue", "runs", item_id, "--output", "json",
+        ])
+        if not isinstance(runs, list):
+            return []
+        return [run for run in runs if isinstance(run, dict)]
+
+    @staticmethod
+    def _has_active_run(runs: List[Dict[str, Any]]) -> bool:
+        return any(
+            (run.get("status") or "").lower() in _ACTIVE_RUN_STATUSES
+            for run in runs
+        )
 
     def wake(self, item_id: str, agent: str, role: str) -> None:
         if self._store._consume_assignment_wake_pending(item_id):
             return None
-        try:
-            runs = self._store._run_multica(["issue", "runs", item_id, "--output", "json"])
-        except PlatformError:
+        runs = self._issue_runs(item_id)
+        if self._has_active_run(runs):
             return None
-        latest = _latest_direct_run(runs if isinstance(runs, list) else [])
-        if latest:
-            status = (latest.get("status") or "").lower()
-            if status in {"failed", "cancelled", "completed"}:
-                self._store._run_multica(["issue", "rerun", item_id, "--output", "json"])
+        latest = _latest_direct_run(runs)
+        if not latest or (
+            (latest.get("status") or "").lower()
+            not in _RERUNNABLE_DIRECT_RUN_STATUSES
+        ):
+            return None
+
+        # Multica 的 Run 列表是最终一致投影。只有已经决定要 rerun 旧 direct
+        # Run 时才短暂重查，给刚由人工 comment 触发的 Run 一个可见窗口。
+        # 读取失败必须 fail closed；否则会把“不知道有没有 active Run”误当成安全。
+        for _attempt in range(1, self._active_observation_attempts):
+            self._sleeper(self._active_observation_interval)
+            runs = self._issue_runs(item_id)
+            if self._has_active_run(runs):
+                return None
+            latest = _latest_direct_run(runs)
+            if not latest or (
+                (latest.get("status") or "").lower()
+                not in _RERUNNABLE_DIRECT_RUN_STATUSES
+            ):
+                return None
+
+        self._store._run_multica([
+            "issue", "rerun", item_id, "--output", "json",
+        ])
         return None
 
     def cancel(self, item_id: str) -> bool:
         runs = self._store._run_multica(["issue", "runs", item_id, "--output", "json"])
         latest = _latest_direct_run(runs if isinstance(runs, list) else [])
         cancelled = False
-        if latest and (latest.get("status") or "").lower() in {
-            "queued", "pending", "running", "dispatching",
-        }:
+        if latest and (
+            (latest.get("status") or "").lower() in _ACTIVE_RUN_STATUSES
+        ):
             task_id = latest.get("id")
             if task_id:
                 self._store._run_multica([
@@ -1225,15 +1278,7 @@ class MulticaRuntime(AgentRuntime):
         return cancelled
 
     def is_active(self, item_id: str) -> bool:
-        runs = self._store._run_multica([
-            "issue", "runs", item_id, "--output", "json",
-        ])
-        latest = _latest_direct_run(runs if isinstance(runs, list) else [])
-        return bool(
-            latest
-            and (latest.get("status") or "").lower()
-            in {"queued", "pending", "running", "dispatching"}
-        )
+        return self._has_active_run(self._issue_runs(item_id))
 
     @staticmethod
     def _items(payload, key: str) -> List[Dict[str, Any]]:

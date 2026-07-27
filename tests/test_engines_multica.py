@@ -1036,6 +1036,198 @@ def test_multica_runtime_wake_does_not_rerun_active_direct_run(monkeypatch):
     assert calls == [["issue", "runs", "issue-1", "--output", "json"]]
 
 
+@pytest.mark.parametrize("status", ["queued", "pending", "running", "dispatching"])
+def test_multica_runtime_is_active_includes_comment_run(monkeypatch, status):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    runtime = MulticaRuntime(store)
+
+    monkeypatch.setattr(
+        store,
+        "_run_multica",
+        lambda args: [{
+            "id": "comment-active",
+            "status": status,
+            "kind": "comment",
+            "created_at": "2026-07-27T05:38:22Z",
+        }],
+    )
+
+    assert runtime.is_active("issue-1") is True
+
+
+def test_multica_runtime_wake_does_not_rerun_active_comment_run(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    calls = []
+
+    def fake_run(args):
+        calls.append(args)
+        if args[:2] == ["issue", "runs"]:
+            return [
+                {
+                    "id": "comment-active",
+                    "status": "running",
+                    "kind": "comment",
+                    "created_at": "2026-07-27T05:38:22Z",
+                },
+                {
+                    "id": "direct-old",
+                    "status": "completed",
+                    "kind": "direct",
+                    "created_at": "2026-07-27T05:00:00Z",
+                },
+            ]
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+
+    MulticaRuntime(store).wake("issue-1", "alice", "worker")
+
+    assert not any(args[:2] == ["issue", "rerun"] for args in calls)
+
+
+def test_multica_runtime_does_not_turn_completed_comment_into_direct_rerun(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    calls = []
+
+    def fake_run(args):
+        calls.append(args)
+        if args[:2] == ["issue", "runs"]:
+            return [{
+                "id": "comment-completed",
+                "status": "completed",
+                "kind": "comment",
+                "created_at": "2026-07-27T05:38:22Z",
+            }]
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+
+    MulticaRuntime(store).wake("issue-1", "alice", "worker")
+
+    assert calls == [["issue", "runs", "issue-1", "--output", "json"]]
+
+
+def test_multica_runtime_observes_eventually_visible_comment_before_rerun(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    calls = []
+    sleeps = []
+    observations = iter([
+        [{
+            "id": "direct-old",
+            "status": "completed",
+            "kind": "direct",
+            "created_at": "2026-07-27T05:00:00Z",
+        }],
+        [{
+            "id": "direct-old",
+            "status": "completed",
+            "kind": "direct",
+            "created_at": "2026-07-27T05:00:00Z",
+        }],
+        [
+            {
+                "id": "comment-active",
+                "status": "running",
+                "kind": "comment",
+                "created_at": "2026-07-27T05:38:22Z",
+            },
+            {
+                "id": "direct-old",
+                "status": "completed",
+                "kind": "direct",
+                "created_at": "2026-07-27T05:00:00Z",
+            },
+        ],
+    ])
+
+    def fake_run(args):
+        calls.append(args)
+        if args[:2] == ["issue", "runs"]:
+            return next(observations)
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+    runtime = MulticaRuntime(
+        store,
+        active_observation_attempts=3,
+        active_observation_interval=0.25,
+        sleeper=sleeps.append,
+    )
+
+    runtime.wake("issue-1", "alice", "worker")
+
+    assert sleeps == [0.25, 0.25]
+    assert not any(args[:2] == ["issue", "rerun"] for args in calls)
+
+
+def test_multica_runtime_reruns_once_after_bounded_inactive_observation(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    calls = []
+    sleeps = []
+
+    def fake_run(args):
+        calls.append(args)
+        if args[:2] == ["issue", "runs"]:
+            return [{
+                "id": "direct-failed",
+                "status": "failed",
+                "kind": "direct",
+                "created_at": "2026-07-27T05:00:00Z",
+            }]
+        if args[:2] == ["issue", "rerun"]:
+            return {"id": "direct-retry", "status": "queued"}
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+    runtime = MulticaRuntime(
+        store,
+        active_observation_attempts=3,
+        active_observation_interval=0.25,
+        sleeper=sleeps.append,
+    )
+
+    runtime.wake("issue-1", "alice", "worker")
+
+    assert sleeps == [0.25, 0.25]
+    assert calls.count([
+        "issue", "rerun", "issue-1", "--output", "json",
+    ]) == 1
+
+
+def test_multica_runtime_fails_closed_when_active_observation_errors(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    calls = []
+    observations = 0
+
+    def fake_run(args):
+        nonlocal observations
+        calls.append(args)
+        if args[:2] == ["issue", "runs"]:
+            observations += 1
+            if observations == 1:
+                return [{
+                    "id": "direct-failed",
+                    "status": "failed",
+                    "kind": "direct",
+                    "created_at": "2026-07-27T05:00:00Z",
+                }]
+            raise PlatformError("active run observation unavailable")
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+    runtime = MulticaRuntime(
+        store,
+        active_observation_attempts=3,
+        active_observation_interval=0,
+        sleeper=lambda _seconds: None,
+    )
+
+    with pytest.raises(PlatformError, match="observation unavailable"):
+        runtime.wake("issue-1", "alice", "worker")
+
+    assert not any(args[:2] == ["issue", "rerun"] for args in calls)
+
+
 def test_multica_get_work_item_does_not_treat_cancelled_run_as_worker_failure(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
 
