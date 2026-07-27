@@ -110,7 +110,12 @@
   是其余 contract 的唯一真源，不能复制完整 contract。
 - operation 不能携带或改变 objective、source、commands、scope、worker、`blocked_by`、拓扑或运行事实。
   done/merged 节点只有带 `historical_contract_correction: true` 和 reason 的 acceptance-only 校正可用，
-  且不重放 authoring/review/merge，也不派发 Agent。无 work item 的未完成节点只改定义；已有交付才最小回到 review。
+  且不重放 authoring/review/merge，也不派发 Agent。无 work item 的未开始节点省略 `resume_stage` 时保持 definition-only（只改定义）；已有交付默认最小回到 review。
+- 任何显式 `resume_stage: review|authoring|merging` 都要求已有 work item。若职责迁移需要覆盖该默认恢复分类，必须在同一个
+  `update-responsibility` 中设置它。`merging` 仅适用于已有
+  Reviewer pass 和 PR 的节点；accept 会静默同步新 contract，不重置 review、不改 Store status/phase、不派发
+  Agent，也不观察或请求 merge，后续 `dag run` 负责。禁止把同一节点拆成 `update-responsibility` 加第二个
+  `resume` operation；单节点多个 operation 不合法。historical contract correction 不得设置 `resume_stage`。
 - Reviewer 的完整 before/after 责任矩阵与历史校正审计在 obligation 附件中；通过
   `omac work show ... --output json` 读取，不能把大矩阵内联进 issue 正文。
 
