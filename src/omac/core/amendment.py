@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import shlex
 from typing import Any
 
 import yaml
@@ -25,12 +26,13 @@ from .stage_recovery import (
     stage_recovery_subject,
     validate_stage_recovery,
 )
-from ..errors import ValidationError
+from ..errors import NeedsDecision, ValidationError
 from ..i18n import ui
 
 
 SCHEMA = "omac.dag-amendment/v1"
 APPLY_LEDGER_SCHEMA = "omac.amendment-apply/v1"
+_COMPLETE_APPLY_STATES = {"synced", "observed_progress"}
 _RUNTIME_FIELDS = {
     "work_item_id", "status", "merged", "merged_at", "merge_request_state",
 }
@@ -97,6 +99,81 @@ def manifest_definition_digest(manifest: Manifest) -> str:
 def work_item_evidence_digest(item: Any) -> str:
     """绑定现有代码交付，不把易变 status/assignee 混入。"""
     return recovery_evidence_digest(item)
+
+
+def amendment_apply_blocker(
+    manifest: Manifest, manifest_path: str,
+) -> dict[str, Any] | None:
+    """返回未完成 amendment apply 的 fail-closed 证据；完成时返回 None。"""
+    ledger = manifest.meta.get("amendment_apply")
+    if ledger is None:
+        return None
+    if not isinstance(ledger, dict):
+        ledger = {}
+    nodes = ledger.get("nodes")
+    node_entries = nodes if isinstance(nodes, dict) else {}
+    incomplete = []
+    for node_id, entry in node_entries.items():
+        value = entry if isinstance(entry, dict) else {}
+        state = value.get("state")
+        if state in _COMPLETE_APPLY_STATES:
+            continue
+        incomplete.append({
+            "node_id": str(node_id),
+            "stage": value.get("stage"),
+            "state": state or "invalid",
+        })
+    incomplete.sort(key=lambda item: item["node_id"])
+
+    amendment_id = str(ledger.get("amendment_id") or "")
+    identity_matches = bool(
+        amendment_id
+        and amendment_id == manifest.meta.get("last_amendment_id")
+    )
+    schema_matches = ledger.get("schema") == APPLY_LEDGER_SCHEMA
+    structure_matches = isinstance(nodes, dict)
+    if not incomplete and identity_matches and schema_matches and structure_matches:
+        return None
+
+    amendment_file = str(
+        ledger.get("amendment_file") or "<reviewed-amendment.yaml>")
+    resume_command = " ".join((
+        "omac dag amend accept",
+        shlex.quote(manifest_path),
+        shlex.quote(amendment_file),
+    ))
+    return {
+        "reason": "amendment_apply_incomplete",
+        "amendment_id": amendment_id or None,
+        "last_amendment_id": manifest.meta.get("last_amendment_id"),
+        "ledger_schema": ledger.get("schema"),
+        "identity_matches": identity_matches,
+        "incomplete_nodes": incomplete,
+        "resume_command": resume_command,
+        "required_terminal_states": sorted(_COMPLETE_APPLY_STATES),
+    }
+
+
+def ensure_amendment_apply_complete(
+    manifest: Manifest, manifest_path: str,
+) -> None:
+    """阻止 Runner 消费只写入 manifest、尚未补偿 Store 的 amendment。"""
+    report = amendment_apply_blocker(manifest, manifest_path)
+    if report is None:
+        return
+    node_ids = [entry["node_id"] for entry in report["incomplete_nodes"]]
+    raise NeedsDecision(ui(
+        "DAG advancement is blocked because amendment "
+        f"{report['amendment_id'] or '<unknown>'} has unfinished apply state "
+        f"for nodes {node_ids}. Resume the same human-confirmed amendment with "
+        f"`{report['resume_command']}`; do not run, tick, reconcile, dispatch, or merge "
+        "until every ledger entry is synced or observed_progress.",
+        "DAG 推进已阻断：amendment "
+        f"{report['amendment_id'] or '<unknown>'} 的节点 {node_ids} 尚未完成 apply。"
+        f"请使用 `{report['resume_command']}` 续接同一个已人工确认的 amendment；"
+        "所有 ledger 条目达到 synced 或 observed_progress 前，不得 run、tick、"
+        "reconcile、派发或 merge。",
+    ), report=report)
 
 
 def parse_proposal(source: str | dict[str, Any]) -> dict[str, Any]:
@@ -511,6 +588,7 @@ def _prepare_apply_ledger(
     amendment_id: str,
     minimal: dict[str, list[str]],
     store: Any,
+    amendment_file: str | None,
 ) -> dict[str, Any]:
     entries: dict[str, Any] = {}
     for stage, node_ids in minimal.items():
@@ -537,6 +615,7 @@ def _prepare_apply_ledger(
     return {
         "schema": APPLY_LEDGER_SCHEMA,
         "amendment_id": amendment_id,
+        "amendment_file": amendment_file,
         "nodes": entries,
     }
 
@@ -636,6 +715,8 @@ def apply_amendment(
     amendment_source: str | dict[str, Any],
     store: Any,
     agent_pool: set[str],
+    *,
+    amendment_file: str | None = None,
 ) -> dict[str, Any]:
     amendment = parse_proposal(amendment_source)
     if amendment.get("review", {}).get("verdict") != "pass":
@@ -687,7 +768,8 @@ def apply_amendment(
             amended.meta.get("amendment_revision") or 0) + 1
         amended.meta["last_amendment_id"] = amendment.get("amendment_id")
         amended.meta["amendment_apply"] = _prepare_apply_ledger(
-            amended, amendment["amendment_id"], minimal, store)
+            amended, amendment["amendment_id"], minimal, store,
+            amendment_file)
         save_manifest(amended, manifest_path)
         current = amended
     else:
@@ -697,6 +779,9 @@ def apply_amendment(
         if ledger.get("amendment_id") != amendment.get("amendment_id"):
             raise ValidationError(
                 "Manifest amendment apply ledger does not match the accepted amendment")
+        if amendment_file and ledger.get("amendment_file") != amendment_file:
+            ledger["amendment_file"] = amendment_file
+            _save_ledger(current, manifest_path, ledger)
 
     sync_summary = _resume_apply_ledger(
         current, manifest_path, store)

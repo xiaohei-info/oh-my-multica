@@ -112,6 +112,12 @@ omac dag amend propose .omac/project.yaml \
   Ledger states `pending`, `syncing`, `synced`, and `observed_progress` make the
   Store side effects restart-safe: repeated accept compensates only unfinished
   safe work and never rolls back a node that already advanced.
+- While any ledger entry is `pending`, `syncing`, or otherwise non-terminal,
+  `dag run/tick/reconcile` fails closed before Store reads, dispatch, or merge.
+  The evidence names the amendment identity, unfinished nodes, and the exact
+  `omac dag amend accept <manifest> <amendment-file>` command for resuming that
+  same human-confirmed amendment. Runner progress resumes only after every entry
+  reaches `synced` or `observed_progress`.
 - Runtime-only status or work-item changes are rebased only when the
   definition digest and minimum recovery set remain unchanged. Node, contract, edge, or
   affected-set drift requires a new reviewed amendment.

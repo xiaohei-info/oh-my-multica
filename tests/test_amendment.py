@@ -1,8 +1,10 @@
 import copy
+import json
 
 import pytest
 import yaml
 
+import omac.cli.commands.dag as dag_cmd
 import omac.core.amendment as amendment_mod
 from omac.core.amendment import (
     apply_amendment,
@@ -18,7 +20,8 @@ from omac.cli.main import main
 from omac.engines import create_engine
 from omac.engines.mock import MockStore
 from omac.engines.models import EngineConfig, WorkItemStatus
-from omac.errors import ValidationError
+from omac.errors import NeedsDecision, ValidationError
+from omac.pipeline import loop
 from omac.pipeline.dispatch import submit
 
 
@@ -495,6 +498,92 @@ def test_apply_ledger_retries_only_unfinished_node_side_effects(tmp_path, monkey
     completed = load_manifest(str(path)).meta["amendment_apply"]["nodes"]
     assert completed["bootstrap"]["state"] == "synced"
     assert completed["started-dependent"]["state"] == "synced"
+
+
+def test_pending_apply_blocks_all_dag_progress_until_same_accept_resumes(
+    tmp_path, monkeypatch, capsys,
+):
+    path = _manifest(tmp_path)
+    engine = _engine()
+    item = engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    engine.store.update_work_item_metadata(
+        item.id,
+        artifacts={"pr_url": "https://example.test/pr/1", "head_sha": "abc"},
+        verification={"subject_digest": "verify-1", "commands": []},
+        review_verdict="reject",
+        review_report={"blockers": ["bad mapping"]},
+    )
+    engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
+    reviewed = build_reviewed_amendment(
+        load_manifest(str(path)), _proposal(_contract_update()), engine.store,
+        issue_id="amendment-issue", reviewer_verdict="pass")
+    amendment_file = tmp_path / "reviewed-amendment.yaml"
+    amendment_file.write_text(yaml.safe_dump(reviewed, sort_keys=False))
+    original_prepare = amendment_mod.prepare_stage_recovery
+
+    def crash_before_store(*_args, **_kwargs):
+        raise RuntimeError("crash after manifest before Store compensation")
+
+    monkeypatch.setattr(
+        amendment_mod, "prepare_stage_recovery", crash_before_store)
+    with pytest.raises(RuntimeError, match="before Store compensation"):
+        apply_amendment(
+            str(path), reviewed, engine.store, {"alice", "bob", "charlie"},
+            amendment_file=str(amendment_file),
+        )
+
+    partial = load_manifest(str(path))
+    ledger = partial.meta["amendment_apply"]
+    assert ledger["amendment_id"] == reviewed["amendment_id"]
+    assert ledger["amendment_file"] == str(amendment_file)
+    assert ledger["nodes"]["bootstrap"]["state"] == "syncing"
+
+    original_get = engine.store.get_work_item
+    monkeypatch.setattr(
+        engine.store, "get_work_item",
+        lambda *_args, **_kwargs: pytest.fail(
+            "pending amendment gate must run before reading Store"),
+    )
+    for advance in (
+        lambda: loop.reconcile(engine.store, partial, str(path)),
+        lambda: loop.tick(engine.store, engine.runtime, partial, str(path)),
+    ):
+        with pytest.raises(NeedsDecision) as exc_info:
+            advance()
+        report = exc_info.value.report
+        assert report["reason"] == "amendment_apply_incomplete"
+        assert report["amendment_id"] == reviewed["amendment_id"]
+        assert report["incomplete_nodes"] == [{
+            "node_id": "bootstrap", "stage": "review", "state": "syncing",
+        }]
+        assert report["resume_command"] == (
+            f"omac dag amend accept {path} {amendment_file}")
+
+    monkeypatch.setattr(
+        dag_cmd, "_assemble_engine",
+        lambda _args: pytest.fail(
+            "CLI run must block before engine assembly or dispatch"),
+    )
+    assert main(["dag", "run", str(path), "--output", "json"]) == exit_codes.NEEDS_DECISION
+    cli_report = json.loads(capsys.readouterr().out)
+    assert cli_report["amendment_id"] == reviewed["amendment_id"]
+    assert cli_report["resume_command"].endswith(str(amendment_file))
+
+    monkeypatch.setattr(engine.store, "get_work_item", original_get)
+    monkeypatch.setattr(amendment_mod, "prepare_stage_recovery", original_prepare)
+    result = apply_amendment(
+        str(path), reviewed, engine.store, {"alice", "bob", "charlie"},
+        amendment_file=str(amendment_file),
+    )
+
+    assert result["sync"]["synced"] == ["bootstrap"]
+    completed = load_manifest(str(path))
+    assert all(
+        entry["state"] in {"synced", "observed_progress"}
+        for entry in completed.meta["amendment_apply"]["nodes"].values()
+    )
+    loop.reconcile(engine.store, completed, str(path))
 
 
 def test_topology_change_fails_closed_for_completed_downstream(tmp_path):

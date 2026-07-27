@@ -12,6 +12,7 @@ from ...core.config import (
     CONFIG_PATH, DEFAULTS, ENV_ENGINE, ENV_WORKSPACE,
     load_config, resolve_engine_settings, resolve_retry,
 )
+from ...core.amendment import ensure_amendment_apply_complete
 from ...core.graph import node_waves
 from ...core.lint import lint
 from ...core.manifest import load_manifest, manifest_write_lock
@@ -605,6 +606,13 @@ def _loop_or_single_locked(args, single_round: bool) -> int:
 
     import time as _time
 
+    manifest = load_manifest(args.manifest)
+    try:
+        ensure_amendment_apply_complete(manifest, args.manifest)
+    except NeedsDecision as exc:
+        print_json(exc.report)
+        raise
+
     engine, _ = _assemble_engine(args)
     # 派单前:真实引擎下自动把 config 同步到 main,否则隔离区 agent clone 后读不到。
     config_path = _config_path_for_manifest(args.manifest)
@@ -612,7 +620,6 @@ def _loop_or_single_locked(args, single_round: bool) -> int:
                          engine_type=engine.store.config.engine_type)
     config = load_config(config_path)
     retry_limits = resolve_retry(config)
-    manifest = load_manifest(args.manifest)
     _validate_execution_invariants(manifest, args.manifest)
     max_parallel = _default_max_parallel(args)
     max_rounds = getattr(args, "max_rounds", None)

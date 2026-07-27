@@ -86,6 +86,10 @@ omac dag amend propose .omac/project.yaml \
   Store 不与文件系统共享事务，因此这不是跨系统原子事务；ledger 以
   `pending/syncing/synced/observed_progress` 记录每个节点的补偿进度。进程崩溃后，重复 accept
   只补偿尚未完成且仍安全的 side effect；已同步或已经继续推进的节点绝不回退。
+- ledger 存在 `pending`、`syncing` 或其他非完成状态时，`dag run/tick/reconcile` 在任何
+  Store 读取、派发或 merge 前失败关闭，并输出 amendment identity、未完成节点和同一
+  `omac dag amend accept <manifest> <amendment-file>` 续接命令。只有所有条目达到
+  `synced/observed_progress` 后 Runner 才恢复。
 - 完整 manifest digest 变化但 definition digest 未变时，只在最小恢复集合没有变化的前提下
   rebase 自然发生的 status/work_item 进展；任何 contract、边、节点定义或受影响集合漂移都会
   拒绝应用，要求重新生成并评审。

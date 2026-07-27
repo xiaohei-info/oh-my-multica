@@ -251,7 +251,8 @@ def accept_amendment(
             "只有 Reviewer pass 且进入 confirmation 后才能人工 accept。"))
 
     result = apply_amendment(
-        manifest_path, amendment, engine.store, agent_pool)
+        manifest_path, amendment, engine.store, agent_pool,
+        amendment_file=amendment_file)
     amendment["human_confirmation"] = "applied"
     amendment["human_reason"] = reason
     amendment["apply_result"] = result
