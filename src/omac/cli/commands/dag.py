@@ -26,7 +26,9 @@ from ...pipeline.review import run_review
 from ...pipeline.acceptance import (
     acceptance_doc_path, run_acceptance_loop,
 )
-from ...pipeline.report import build_status_report, render_table
+from ...pipeline.report import (
+    build_manifest_status_report, build_status_report, render_table,
+)
 
 NAME = "dag"
 SUMMARY = "manifest DAG 的检查、摘要、运行与受控修订"
@@ -44,6 +46,7 @@ DESCRIPTION = """manifest DAG 的检查、摘要与确定性执行。
            节点生命周期:todo → in_progress → ci_check* → in_review → merging* → done
            (* 由 config 的 ci/merge 决定;三类回退一律转回 worker,各有界 ≤3 次)
   status   随时查看快照(reconcile + 各节点状态),不推进;退出码恒 0
+  snapshot 只读取 manifest 生成状态快照;不创建 Engine、不 reconcile、不写文件
   tick     单轮推进后立即退出:exit 0 收敛 / 10 推进中 / 20 需决策(调试用)
   amend    对已运行 DAG 发起 Orchestrator→Reviewer→Human 的受控 amendment；
            Reviewer pass 后停在人工确认。accept 原子写 manifest，并用逐节点
@@ -122,6 +125,11 @@ def register(parser):
     status.add_argument("--workspace", help="workspace 覆盖(缺省读 config/env)")
     add_output_flag(status)
     _add_log_flags(status)
+
+    snapshot_p = sub.add_parser(
+        "snapshot", help="只读 manifest 快照(不调用 Engine、不 reconcile)")
+    snapshot_p.add_argument("manifest", help="manifest 文件路径")
+    add_output_flag(snapshot_p)
 
     tick = sub.add_parser("tick", help="单轮推进后退出(exit 0/10/20)")
     tick.add_argument("manifest", help="manifest 文件路径")
@@ -446,6 +454,24 @@ def status(args) -> int:
     return exit_codes.OK
 
 
+def snapshot(args) -> int:
+    """纯 manifest 快照；供只读观察面使用，绝不触发平台调用或写回。"""
+    if not os.path.exists(args.manifest):
+        raise ValidationError(ui(
+            f"Manifest file not found: {args.manifest}\n"
+            "  Generate it with `omac plan create --name <name>` or check the path.",
+            f"manifest 文件不存在: {args.manifest}\n"
+            f"  用 omac plan create --name <name> 生成,或检查路径"))
+    report = build_manifest_status_report(
+        load_manifest(args.manifest), args.manifest)
+    if args.output == "json":
+        print_json(report)
+    else:
+        import sys
+        sys.stdout.write(render_table(report))
+    return exit_codes.OK
+
+
 def amend(args) -> int:
     from ...pipeline.amendment import accept_amendment, propose_amendment
 
@@ -684,6 +710,8 @@ def run(args) -> int:
         return show(args)
     if args.action == "status":
         return status(args)
+    if args.action == "snapshot":
+        return snapshot(args)
     if args.action == "amend":
         return amend(args)
     if args.action == "tick":
