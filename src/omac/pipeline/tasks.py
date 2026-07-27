@@ -459,7 +459,45 @@ def run_task(
         item = create_authoring_task(engine, spec)
         item_id = item.id
 
+    explicit_resume = resume_item_id is not None
+    resume_authoring_attempt_available = explicit_resume
+
+    if (
+        explicit_resume
+        and item.phase == TaskPhase.CONFIRMATION
+        and (
+            item.status in (WorkItemStatus.FAILED, WorkItemStatus.BLOCKED)
+            or item.agent_run_failed
+            or item.agent_run_finished_without_submit
+        )
+    ):
+        confirmation_round = max(1, item.bounces.review + 1)
+        confirmation_is_consumable = (
+            _has_review_verdict(item)
+            and item.review_subject_digest == _review_subject_digest(
+                kind, item, confirmation_round)
+            and not _review_evidence_errors(contract, item)
+        )
+        if not confirmation_is_consumable:
+            raise NeedsDecision(
+                ui(
+                    f"{kind.value} is already in human confirmation; an Agent run "
+                    f"cannot be resumed (item {item_id})",
+                    f"{kind.value} 已进入人工确认阶段，不能恢复 Agent run"
+                    f"（item {item_id}）",
+                ),
+                report={
+                    "item_id": item_id,
+                    "kind": kind.value,
+                    "phase": TaskPhase.CONFIRMATION.value,
+                    "rounds": 0,
+                    "last_opinion": "confirmation does not permit Agent rerun",
+                },
+            )
+
     def _raise_if_authoring_stopped(candidate: WorkItem) -> None:
+        if candidate.phase != TaskPhase.AUTHORING:
+            return
         if candidate.status not in (WorkItemStatus.FAILED, WorkItemStatus.BLOCKED):
             return
         outcome = (
@@ -477,7 +515,44 @@ def run_task(
                     "last_opinion": f"producer {outcome}"})
 
     def _produce(hint: Optional[List[str]] = None) -> WorkItem:
+        nonlocal resume_authoring_attempt_available
         current = store.get_work_item(item_id)
+        if (
+            hint is None
+            and resume_authoring_attempt_available
+            and current.phase == TaskPhase.AUTHORING
+        ):
+            if runtime.is_active(item_id):
+                current = _poll_until(
+                    store,
+                    item_id,
+                    lambda candidate: (
+                        candidate.phase != TaskPhase.AUTHORING
+                        or candidate.status in (
+                            WorkItemStatus.DONE,
+                            WorkItemStatus.FAILED,
+                            WorkItemStatus.BLOCKED,
+                        )
+                        or candidate.agent_run_finished_without_submit
+                    ),
+                    poll,
+                )
+                if current.phase != TaskPhase.AUTHORING or (
+                    current.status == WorkItemStatus.DONE
+                ):
+                    resume_authoring_attempt_available = False
+                    return current
+            if (
+                current.status == WorkItemStatus.FAILED
+                or current.agent_run_finished_without_submit
+            ):
+                resume_authoring_attempt_available = False
+                store.mark_in_progress(item_id)
+                store.assign_work_item(item_id, assignee, "worker")
+                runtime.wake(item_id, assignee, "worker")
+                produced = _poll_until(store, item_id, _produced, poll)
+                _raise_if_authoring_stopped(produced)
+                return produced
         _raise_if_authoring_stopped(current)
         if hint is None and _produced(current):
             return current

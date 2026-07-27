@@ -1016,6 +1016,26 @@ def test_multica_get_work_item_keeps_in_progress_when_any_run_active(monkeypatch
     assert item.status == WorkItemStatus.IN_PROGRESS
 
 
+def test_multica_runtime_wake_does_not_rerun_active_direct_run(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    calls = []
+
+    def fake_run(args):
+        calls.append(args)
+        if args[:2] == ["issue", "runs"]:
+            return [{
+                "id": "run-active", "status": "running", "kind": "direct",
+                "created_at": "2026-07-27T01:00:00Z",
+            }]
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+
+    MulticaRuntime(store).wake("issue-1", "alice", "worker")
+
+    assert calls == [["issue", "runs", "issue-1", "--output", "json"]]
+
+
 def test_multica_get_work_item_does_not_treat_cancelled_run_as_worker_failure(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
 
@@ -1062,6 +1082,30 @@ def test_multica_runtime_reruns_existing_cancelled_assignment(monkeypatch):
     MulticaRuntime(store).wake("issue-1", "alice", "worker")
 
     assert ["issue", "rerun", "issue-1", "--output", "json"] in calls
+
+
+def test_multica_runtime_reruns_failed_direct_run_once(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    calls = []
+
+    def fake_run(args):
+        calls.append(args)
+        if args[:2] == ["issue", "runs"]:
+            return [{
+                "id": "run-failed", "status": "failed", "kind": "direct",
+                "created_at": "2026-07-27T01:00:00Z",
+            }]
+        if args[:2] == ["issue", "rerun"]:
+            return {"id": "run-retry", "status": "queued"}
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+
+    MulticaRuntime(store).wake("issue-1", "alice", "worker")
+
+    assert calls.count([
+        "issue", "rerun", "issue-1", "--output", "json",
+    ]) == 1
 
 
 def test_multica_runtime_cancel_interrupts_active_direct_run(monkeypatch):

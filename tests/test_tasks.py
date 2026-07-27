@@ -544,6 +544,7 @@ def test_run_task_resume_confirmation_consumes_subject_after_prior_bounces():
     current = eng.store.get_work_item(item.id)
     current.review_subject_digest = tasks_module._review_subject_digest(
         TaskKind.PLAN, current, 3)
+    current.agent_run_failed = True
     eng.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
 
     result = run_task(
@@ -1224,6 +1225,264 @@ def test_failure_in_production_short_circuits():
                  poll=_poll, dag_key="plan")
     assert exc.value.report["rounds"] == 0
     assert "producer failed" in exc.value.report["last_opinion"]
+
+
+def test_explicit_resume_failed_authoring_reruns_same_item_once(monkeypatch):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = create_authoring_task(eng, AuthoringTaskSpec(
+        kind=TaskKind.AMENDMENT,
+        title="running DAG amendment",
+        dag_key="amend-demo",
+        assignee="alice",
+        contract=_payload()["contract"],
+    ))
+    eng.store.update_work_item_metadata(item.id, review_bounce=2)
+    eng.store.update_status(item.id, WorkItemStatus.FAILED)
+    before = eng.store.get_work_item(item.id)
+    contract_before = before.contract
+    contract_ref_before = before.contract_ref
+    wakes = []
+
+    monkeypatch.setattr(eng.runtime, "is_active", lambda _item_id: False)
+
+    def wake(item_id, agent, role):
+        wakes.append((item_id, agent, role))
+        eng.store.update_work_item_metadata(
+            item_id,
+            deliverable="schema: omac.dag-amendment/v1\nreason: fixed\noperations: []\n",
+            phase=TaskPhase.REVIEW,
+        )
+        eng.store.update_status(item_id, WorkItemStatus.IN_REVIEW)
+
+    monkeypatch.setattr(eng.runtime, "wake", wake)
+
+    result = run_task(
+        eng,
+        TaskKind.AMENDMENT,
+        _payload(title="running DAG amendment"),
+        "alice",
+        poll=_poll,
+        resume_item_id=item.id,
+    )
+
+    assert result["item_id"] == item.id
+    assert len(eng.store.list_work_items("ws")) == 1
+    assert wakes == [(item.id, "alice", "worker")]
+    resumed = eng.store.get_work_item(item.id)
+    assert resumed.contract == contract_before
+    assert resumed.contract_ref == contract_ref_before
+    assert resumed.bounces.review == 2
+
+
+def test_explicit_resume_completed_without_submit_reruns_once(monkeypatch):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = create_authoring_task(eng, AuthoringTaskSpec(
+        kind=TaskKind.PLAN,
+        title="plan",
+        dag_key="plan-resume",
+        assignee="alice",
+    ))
+    item.agent_run_finished_without_submit = True
+    eng.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
+    wakes = []
+
+    monkeypatch.setattr(eng.runtime, "is_active", lambda _item_id: False)
+
+    def wake(item_id, agent, role):
+        wakes.append((item_id, agent, role))
+        eng.store.update_work_item_metadata(
+            item_id, deliverable="plan body", phase=TaskPhase.REVIEW)
+        eng.store.update_status(item_id, WorkItemStatus.IN_REVIEW)
+
+    monkeypatch.setattr(eng.runtime, "wake", wake)
+
+    result = run_task(
+        eng, TaskKind.PLAN, _payload(), "alice", poll=_poll,
+        resume_item_id=item.id,
+    )
+
+    assert result["item_id"] == item.id
+    assert wakes == [(item.id, "alice", "worker")]
+
+
+def test_explicit_resume_does_not_duplicate_active_authoring_run(monkeypatch):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = create_authoring_task(eng, AuthoringTaskSpec(
+        kind=TaskKind.AMENDMENT,
+        title="running DAG amendment",
+        dag_key="amend-active",
+        assignee="alice",
+    ))
+    eng.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
+    monkeypatch.setattr(eng.runtime, "is_active", lambda _item_id: True)
+    monkeypatch.setattr(
+        eng.runtime, "wake",
+        lambda *_args: pytest.fail("active run must not be woken again"),
+    )
+
+    def finish_existing_run():
+        eng.store.update_work_item_metadata(
+            item.id,
+            deliverable="schema: omac.dag-amendment/v1\nreason: fixed\noperations: []\n",
+            phase=TaskPhase.REVIEW,
+        )
+        eng.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+
+    result = run_task(
+        eng,
+        TaskKind.AMENDMENT,
+        _payload(title="running DAG amendment"),
+        "alice",
+        poll=finish_existing_run,
+        resume_item_id=item.id,
+    )
+
+    assert result["item_id"] == item.id
+    assert eng.store.assign_log == []
+
+
+def test_explicit_resume_waits_for_active_failure_then_reruns_once(monkeypatch):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = create_authoring_task(eng, AuthoringTaskSpec(
+        kind=TaskKind.AMENDMENT,
+        title="running DAG amendment",
+        dag_key="amend-active-failure",
+        assignee="alice",
+    ))
+    eng.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
+    wakes = []
+
+    monkeypatch.setattr(eng.runtime, "is_active", lambda _item_id: True)
+
+    def wake(item_id, agent, role):
+        wakes.append((item_id, agent, role))
+        eng.store.update_work_item_metadata(
+            item_id,
+            deliverable="schema: omac.dag-amendment/v1\nreason: fixed\noperations: []\n",
+            phase=TaskPhase.REVIEW,
+        )
+        eng.store.update_status(item_id, WorkItemStatus.IN_REVIEW)
+
+    monkeypatch.setattr(eng.runtime, "wake", wake)
+
+    def fail_existing_run():
+        eng.store.update_status(item.id, WorkItemStatus.FAILED)
+
+    result = run_task(
+        eng,
+        TaskKind.AMENDMENT,
+        _payload(title="running DAG amendment"),
+        "alice",
+        poll=fail_existing_run,
+        resume_item_id=item.id,
+    )
+
+    assert result["item_id"] == item.id
+    assert wakes == [(item.id, "alice", "worker")]
+
+
+def test_explicit_resume_failed_authoring_stops_after_one_real_retry(monkeypatch):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = create_authoring_task(eng, AuthoringTaskSpec(
+        kind=TaskKind.AMENDMENT,
+        title="running DAG amendment",
+        dag_key="amend-provider-failure",
+        assignee="alice",
+    ))
+    eng.store.update_status(item.id, WorkItemStatus.FAILED)
+    wakes = []
+    monkeypatch.setattr(eng.runtime, "is_active", lambda _item_id: False)
+
+    def fail_again(item_id, agent, role):
+        wakes.append((item_id, agent, role))
+        eng.store.update_status(item_id, WorkItemStatus.FAILED)
+
+    monkeypatch.setattr(eng.runtime, "wake", fail_again)
+
+    with pytest.raises(NeedsDecision) as exc:
+        run_task(
+            eng,
+            TaskKind.AMENDMENT,
+            _payload(title="running DAG amendment"),
+            "alice",
+            poll=_poll,
+            resume_item_id=item.id,
+        )
+
+    assert exc.value.report["last_opinion"] == "producer failed"
+    assert wakes == [(item.id, "alice", "worker")]
+
+
+def test_explicit_resume_failed_review_stays_with_reviewer(monkeypatch):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = create_authoring_task(eng, AuthoringTaskSpec(
+        kind=TaskKind.PLAN,
+        title="plan",
+        dag_key="plan-review-resume",
+        assignee="alice",
+    ))
+    eng.store.update_work_item_metadata(
+        item.id, deliverable="plan body", phase=TaskPhase.REVIEW)
+    eng.store.update_status(item.id, WorkItemStatus.FAILED)
+    item.agent_run_failed = True
+    wakes = []
+
+    def wake(item_id, agent, role):
+        wakes.append((item_id, agent, role))
+        current = eng.store.get_work_item(item_id)
+        eng.store.update_work_item_metadata(
+            item_id,
+            review_verdict="pass",
+            review_report=_review_report(item=current),
+        )
+
+    monkeypatch.setattr(eng.runtime, "wake", wake)
+
+    result = run_task(
+        eng,
+        TaskKind.PLAN,
+        _payload(),
+        "alice",
+        reviewers=["bob"],
+        poll=_poll,
+        resume_item_id=item.id,
+    )
+
+    assert result["verdict"] == "pass"
+    assert wakes == [(item.id, "bob", "reviewer")]
+
+
+def test_explicit_resume_confirmation_failure_never_reruns_agent(monkeypatch):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = create_authoring_task(eng, AuthoringTaskSpec(
+        kind=TaskKind.AMENDMENT,
+        title="running DAG amendment",
+        dag_key="amend-confirmation",
+        assignee="alice",
+    ))
+    eng.store.update_work_item_metadata(
+        item.id, deliverable="amendment body", phase=TaskPhase.CONFIRMATION)
+    eng.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+    item.agent_run_failed = True
+    monkeypatch.setattr(
+        eng.runtime, "wake",
+        lambda *_args: pytest.fail("confirmation must never rerun an agent"),
+    )
+
+    with pytest.raises(NeedsDecision) as exc:
+        run_task(
+            eng,
+            TaskKind.AMENDMENT,
+            _payload(title="running DAG amendment"),
+            "alice",
+            reviewers=["bob"],
+            confirm=True,
+            pause_at_confirmation=True,
+            poll=_poll,
+            resume_item_id=item.id,
+        )
+
+    assert exc.value.report["phase"] == "confirmation"
 
 
 def test_blocked_production_short_circuits_on_resume():
