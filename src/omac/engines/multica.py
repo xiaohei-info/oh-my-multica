@@ -768,10 +768,15 @@ class MulticaStore(WorkItemStore):
             raise PlatformError(ui(
                 f"Could not get issue {item_id}", f"获取 issue {item_id} 失败"))
         item = self._issue_to_work_item(result, self.config.workspace_id)
-        if item.status == WorkItemStatus.IN_PROGRESS:
+        if item.status in {WorkItemStatus.IN_PROGRESS, WorkItemStatus.IN_REVIEW}:
             latest_run_status = self._inactive_latest_run_status(item_id)
             if latest_run_status == "failed":
-                item.status = WorkItemStatus.FAILED
+                # authoring run 失败沿用既有 FAILED 投影；reviewer run 必须保留
+                # REVIEW 阶段，由 pipeline 在同一 issue 上恢复 reviewer，不能误回 worker。
+                if item.status == WorkItemStatus.IN_PROGRESS:
+                    item.status = WorkItemStatus.FAILED
+                else:
+                    item.agent_run_failed = True
             elif latest_run_status == "completed":
                 item.agent_run_finished_without_submit = True
         return item
