@@ -790,6 +790,44 @@ def test_multica_set_node_contract_writes_ref_without_full_contract_metadata(mon
     assert "实现很长的自然语言目标" in published[0][1]
 
 
+def test_multica_done_contract_publish_keeps_issue_unassigned_and_does_not_start_run(
+    monkeypatch,
+):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    calls = []
+    writes = []
+    issue = {
+        "id": "issue-1", "status": "done", "assignee_id": None,
+        "metadata": {},
+    }
+
+    def run(args, capture=True):
+        calls.append(args)
+        if args[:2] == ["issue", "get"]:
+            return dict(issue)
+        if args[:3] == ["issue", "comment", "add"]:
+            return {
+                "id": "comment-1",
+                "attachments": [{"id": "attachment-1", "filename": "contract.yaml"}],
+            }
+        raise AssertionError(f"unexpected multica command: {args}")
+
+    monkeypatch.setattr(store, "_run_multica", run)
+    monkeypatch.setattr(
+        store, "_set_metadata",
+        lambda item_id, key, value: writes.append((key, value)),
+    )
+
+    store.set_node_contract("issue-1", {"acceptance_claims": ["UJ-BOOTSTRAP"]})
+
+    assert issue["status"] == "done"
+    assert issue["assignee_id"] is None
+    assert not any(command[:3] == ["issue", "assign", "issue-1"] for command in calls)
+    assert not any("run" in command or "rerun" in command for command in calls)
+    assert writes[0][0] == "contract_ref"
+    assert writes[0][1]["sha256"]
+
+
 def test_multica_source_refs_are_small_structured_metadata(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
     writes = []

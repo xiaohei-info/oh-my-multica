@@ -804,6 +804,15 @@ class MockStore(WorkItemStore):
         item = _shared_work_items.get(item_id)
         if item is not None:
             item.contract = contract
+            from dataclasses import asdict, is_dataclass
+            payload = asdict(contract) if is_dataclass(contract) else contract
+            source = yaml.safe_dump(
+                payload, sort_keys=False, allow_unicode=True)
+            item.contract_ref = {
+                "filename": "omac-contract.yaml",
+                "bytes": len(source.encode("utf-8")),
+                "sha256": hashlib.sha256(source.encode("utf-8")).hexdigest(),
+            }
 
     def list_work_items(
         self,

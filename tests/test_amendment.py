@@ -25,7 +25,7 @@ from omac.engines.mock import MockStore
 from omac.engines.models import EngineConfig, WorkItem, WorkItemStatus
 from omac.errors import NeedsDecision, ValidationError
 from omac.pipeline import loop
-from omac.pipeline.dispatch import submit
+from omac.pipeline.dispatch import build_show_output, submit
 
 
 def _engine():
@@ -294,6 +294,8 @@ def test_done_merged_historical_responsibility_correction_preserves_facts_and_ne
     node.status = "done"
     node.merged = True
     node.merged_at = "2026-07-26T23:03:59Z"
+    engine.store.set_node_contract(item.id, node.contract)
+    store_before = copy.deepcopy(engine.store.get_work_item(item.id))
     runtime_before = {
         "work_item_id": node.work_item_id,
         "status": node.status,
@@ -310,7 +312,10 @@ def test_done_merged_historical_responsibility_correction_preserves_facts_and_ne
     assert reviewed["analysis"]["minimal_rerun"] == {
         "review": [], "authoring": [], "merging": [],
     }
-    assert reviewed["base"]["evidence_sha256"] == {"bootstrap": amendment_mod.work_item_evidence_digest(item)}
+    assert reviewed["base"]["evidence_sha256"] == {
+        "bootstrap": amendment_mod.historical_work_item_evidence_digest(
+            store_before),
+    }
     correction = reviewed["analysis"]["historical_contract_corrections"][0]
     assert correction["node"] == "bootstrap"
     assert correction["before_contract_sha256"] != correction["after_contract_sha256"]
@@ -332,7 +337,7 @@ def test_done_merged_historical_responsibility_correction_preserves_facts_and_ne
         acceptance=acceptance)
 
     updated = load_manifest(str(path)).nodes["bootstrap"]
-    assert result["sync"]["already_complete"] == ["bootstrap"]
+    assert result["sync"]["synced"] == ["bootstrap"]
     assert {key: getattr(updated, key) for key in runtime_before} == runtime_before
     assert updated.contract.acceptance == []
     assert updated.contract.acceptance_claims == ["UJ-BOOTSTRAP"]
@@ -343,12 +348,102 @@ def test_done_merged_historical_responsibility_correction_preserves_facts_and_ne
     ledger = load_manifest(str(path)).meta["amendment_apply"]["nodes"]["bootstrap"]
     assert ledger["stage"] == "historical_contract_correction"
     assert ledger["state"] == "synced"
+    assert ledger["store_side_effect"] == "set_node_contract"
     assert ledger["before_contract_sha256"] == correction["before_contract_sha256"]
-    assert engine.store.get_work_item(item.id).status == WorkItemStatus.DONE
+    store_after = engine.store.get_work_item(item.id)
+    assert store_after.contract.acceptance == []
+    assert store_after.contract.acceptance_claims == ["UJ-BOOTSTRAP"]
+    assert store_after.contract_ref["sha256"]
+    assert store_after.contract_ref["sha256"] != store_before.contract_ref["sha256"]
+    show = build_show_output(store_after, "reviewer:bob")
+    assert show["context"]["contract"]["acceptance_claims"] == ["UJ-BOOTSTRAP"]
+    assert show["context"]["contract_ref"] == store_after.contract_ref
+    for field in (
+        "status", "phase", "worker", "reviewer", "artifacts", "verification",
+        "verification_ref", "review_verdict", "review_report", "review_report_ref",
+        "review_subject_digest", "review_ledger", "review_ledger_ref",
+    ):
+        assert getattr(store_after, field) == getattr(store_before, field)
 
     repeated = apply_amendment(
         str(path), reviewed, engine.store, {"alice", "bob", "charlie"})
     assert repeated["sync"]["already_complete"] == ["bootstrap"]
+
+
+def test_historical_contract_sync_recovers_after_store_write_without_republishing(
+    tmp_path, monkeypatch,
+):
+    path = _manifest(tmp_path)
+    engine = _engine()
+    item = engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    engine.store.update_status(item.id, WorkItemStatus.DONE)
+    manifest = load_manifest(str(path))
+    node = manifest.nodes["bootstrap"]
+    node.status = "done"
+    node.merged = True
+    node.merged_at = "2026-07-26T23:03:59Z"
+    engine.store.set_node_contract(item.id, node.contract)
+    save_manifest(manifest, str(path))
+    reviewed = build_reviewed_amendment(
+        manifest, _proposal(_responsibility_update(historical=True)), engine.store,
+        issue_id="amendment-issue", reviewer_verdict="pass",
+        acceptance=_responsibility_acceptance_doc())
+    original_set = engine.store.set_node_contract
+    calls = 0
+
+    def write_then_crash(item_id, contract):
+        nonlocal calls
+        calls += 1
+        original_set(item_id, contract)
+        raise RuntimeError("crash after Store contract publish")
+
+    monkeypatch.setattr(engine.store, "set_node_contract", write_then_crash)
+    with pytest.raises(RuntimeError, match="after Store contract publish"):
+        apply_amendment(
+            str(path), reviewed, engine.store, {"alice", "bob", "charlie"},
+            acceptance=_responsibility_acceptance_doc())
+
+    partial = load_manifest(str(path))
+    assert partial.meta["amendment_apply"]["nodes"]["bootstrap"]["state"] == "syncing"
+    monkeypatch.setattr(engine.store, "set_node_contract", original_set)
+    result = apply_amendment(
+        str(path), reviewed, engine.store, {"alice", "bob", "charlie"})
+
+    assert calls == 1
+    assert result["sync"]["synced"] == ["bootstrap"]
+    completed = load_manifest(str(path))
+    assert completed.meta["amendment_apply"]["nodes"]["bootstrap"]["state"] == "synced"
+
+
+def test_historical_contract_sync_fails_closed_on_unexpected_store_contract_drift(tmp_path):
+    path = _manifest(tmp_path)
+    engine = _engine()
+    item = engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    engine.store.update_status(item.id, WorkItemStatus.DONE)
+    manifest = load_manifest(str(path))
+    node = manifest.nodes["bootstrap"]
+    node.status = "done"
+    node.merged = True
+    engine.store.set_node_contract(item.id, node.contract)
+    save_manifest(manifest, str(path))
+    reviewed = build_reviewed_amendment(
+        manifest, _proposal(_responsibility_update(historical=True)), engine.store,
+        issue_id="amendment-issue", reviewer_verdict="pass",
+        acceptance=_responsibility_acceptance_doc())
+    drifted = copy.deepcopy(node.contract)
+    drifted.objective = "unexpected Store contract drift"
+    engine.store.set_node_contract(item.id, drifted)
+
+    with pytest.raises(ValidationError, match="Store contract changed"):
+        apply_amendment(
+            str(path), reviewed, engine.store, {"alice", "bob", "charlie"},
+            acceptance=_responsibility_acceptance_doc())
+
+    unchanged = load_manifest(str(path))
+    assert unchanged.meta.get("amendment_apply") is None
+    assert unchanged.meta.get("last_amendment_id") is None
 
 
 @pytest.mark.parametrize("field, value", [
@@ -514,6 +609,10 @@ def test_real_oac_done_node_historical_responsibility_correction_is_facts_only(t
         status=WorkItemStatus.DONE,
         dag_key="source-ownership-baseline-contract",
     )
+    item.contract = amendment_mod._canonical_contract_value(node.contract)
+    item.contract_ref = {
+        "sha256": amendment_mod._contract_digest(node.contract),
+    }
 
     class HistoricalStore:
         config = EngineConfig(engine_type="mock", workspace_id="ws")
@@ -524,6 +623,13 @@ def test_real_oac_done_node_historical_responsibility_correction_is_facts_only(t
         def get_work_item(self, item_id):
             assert item_id == item.id
             return item
+
+        def set_node_contract(self, item_id, contract):
+            assert item_id == item.id
+            item.contract = amendment_mod._canonical_contract_value(contract)
+            item.contract_ref = {
+                "sha256": amendment_mod._contract_digest(contract),
+            }
 
     operation = {
         "op": "update-responsibility",
