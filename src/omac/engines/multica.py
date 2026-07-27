@@ -13,14 +13,18 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
 import tempfile
+import time
 import uuid
 import zipfile
-from typing import Any, Dict, List, Optional
+from enum import Enum
+from typing import Any, Callable, Dict, List, Optional, TypeVar
 
 import yaml
 
+from ..core import logsetup
 from ..core.taskmeta import (
     CI_BOUNCE_KEY, CONTRACT_REF_KEY, DECISION_REQUIRED_KEY, DELIVERABLE_KEY,
     DELIVERABLE_REF_KEY, KIND_KEY, MERGE_BOUNCE_KEY, PHASE_KEY,
@@ -51,6 +55,88 @@ from .runtime import AgentRuntime
 from .store import WorkItemStore
 
 MULTICA_PR_VIEW_FIELDS = "state,mergedAt,autoMergeRequest,mergeStateStatus"
+_MULTICA_READ_MAX_ATTEMPTS = 3
+_MULTICA_READ_INITIAL_DELAY = 1.0
+
+_ReadResult = TypeVar("_ReadResult")
+
+
+class _TransientReadFailure(str, Enum):
+    NETWORK_TIMEOUT = "network_timeout"
+    NETWORK_DNS = "network_dns"
+    NETWORK_REFUSED = "network_refused"
+    NETWORK_UNREACHABLE = "network_unreachable"
+    HTTP_429 = "http_429"
+    HTTP_502 = "http_502"
+    HTTP_503 = "http_503"
+    HTTP_504 = "http_504"
+    SERVER_UNAVAILABLE = "server_unavailable"
+
+
+def _transient_read_failure(message: str) -> Optional[_TransientReadFailure]:
+    """Classify only known transient Multica CLI output.
+
+    Auth, permission, not-found, validation, TLS/certificate, and unknown errors
+    deliberately fall through so callers fail immediately.
+    """
+    text = message.lower()
+    status_match = re.search(
+        r"\b(?:http(?: status)?|status(?: code)?|server returned)"
+        r"\s*[:=]?\s*(429|502|503|504)\b",
+        text,
+    )
+    if status_match is None:
+        status_match = re.search(
+            r'"status(?:_code)?"\s*:\s*(429|502|503|504)\b',
+            text,
+        )
+    if status_match:
+        return _TransientReadFailure(f"http_{status_match.group(1)}")
+    if "too many requests" in text or "请求过于频繁" in text:
+        return _TransientReadFailure.HTTP_429
+    if (
+        "request timed out" in text
+        or "context deadline exceeded" in text
+        or "i/o timeout" in text
+        or "client.timeout exceeded" in text
+        or "请求超时" in text
+    ):
+        return _TransientReadFailure.NETWORK_TIMEOUT
+    if (
+        "could not resolve the multica server address" in text
+        or "no such host" in text
+        or "temporary failure in name resolution" in text
+        or "server misbehaving" in text
+        or "name resolution" in text
+        or "无法解析 multica 服务器地址" in text
+    ):
+        return _TransientReadFailure.NETWORK_DNS
+    if (
+        "could not connect to the multica server" in text
+        or "connection refused" in text
+        or "无法连接到 multica 服务器" in text
+    ):
+        return _TransientReadFailure.NETWORK_REFUSED
+    if (
+        "could not reach the multica server" in text
+        or "connection reset" in text
+        or "network is unreachable" in text
+        or "host is unreachable" in text
+        or "broken pipe" in text
+        or "connection aborted" in text
+        or "无法访问 multica 服务器" in text
+    ):
+        return _TransientReadFailure.NETWORK_UNREACHABLE
+    if (
+        "multica service is temporarily unavailable (server error)" in text
+        or "multica 服务暂时不可用（服务器错误）" in text
+    ):
+        return _TransientReadFailure.SERVER_UNAVAILABLE
+    return None
+
+
+def _log_retry(event: str, **fields: Any) -> None:
+    logsetup.get_logger(__name__).warning(event, **fields)
 
 
 def _latest_run(runs: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -80,8 +166,13 @@ def _is_not_found(message: str) -> bool:
 class MulticaStore(WorkItemStore):
     """数据面:全部经 multica CLI。"""
 
-    def __init__(self, config: EngineConfig):
+    def __init__(
+        self,
+        config: EngineConfig,
+        sleeper: Callable[[float], None] = time.sleep,
+    ):
         super().__init__(config)
+        self._sleep = sleeper
         self._pending_assignment_wakes: set[str] = set()
 
     def _mark_assignment_wake_pending(self, item_id: str) -> None:
@@ -94,6 +185,37 @@ class MulticaStore(WorkItemStore):
         return True
 
     # ==================== 内部工具 ====================
+
+    def _run_idempotent_read(
+        self,
+        operation: str,
+        read: Callable[[], _ReadResult],
+    ) -> _ReadResult:
+        """Retry one explicitly idempotent read; writes never call this helper."""
+        for attempt in range(1, _MULTICA_READ_MAX_ATTEMPTS + 1):
+            try:
+                return read()
+            except PlatformError as exc:
+                reason = _transient_read_failure(str(exc))
+                if reason is None:
+                    raise
+                exhausted = attempt == _MULTICA_READ_MAX_ATTEMPTS
+                delay = 0.0 if exhausted else (
+                    _MULTICA_READ_INITIAL_DELAY * (2 ** (attempt - 1))
+                )
+                _log_retry(
+                    "multica_read_retry_exhausted" if exhausted
+                    else "multica_read_retry",
+                    operation=operation,
+                    attempt=attempt,
+                    max_attempts=_MULTICA_READ_MAX_ATTEMPTS,
+                    delay=delay,
+                    reason=reason.value,
+                )
+                if exhausted:
+                    raise
+                self._sleep(delay)
+        raise AssertionError("bounded read retry loop must return or raise")
 
     def _run_multica(self, args: List[str], capture=True) -> Any:
         """调用 multica CLI。
@@ -402,27 +524,25 @@ class MulticaStore(WorkItemStore):
                         break
         if not attachment_id:
             return None
-        with tempfile.TemporaryDirectory(prefix="omac-attachment-") as td:
-            for attempt in range(2):
-                try:
-                    self._run_multica([
-                        "attachment", "download", attachment_id,
-                        "--output-dir", td,
-                    ], capture=True)
-                    break
-                except PlatformError as exc:
-                    if attempt == 1 or "timed out" not in str(exc).lower():
-                        raise
-            filename = ref.get("filename")
-            candidates = []
-            if filename:
-                candidates.append(os.path.join(td, filename))
-            candidates.extend(os.path.join(td, p) for p in os.listdir(td))
-            for path in candidates:
-                if os.path.isfile(path):
-                    with open(path, "r", encoding="utf-8") as f:
-                        return f.read()
-        return None
+        filename = ref.get("filename")
+
+        def download() -> Optional[str]:
+            with tempfile.TemporaryDirectory(prefix="omac-attachment-") as td:
+                self._run_multica([
+                    "attachment", "download", attachment_id,
+                    "--output-dir", td,
+                ], capture=True)
+                candidates = []
+                if filename:
+                    candidates.append(os.path.join(td, filename))
+                candidates.extend(os.path.join(td, p) for p in os.listdir(td))
+                for path in candidates:
+                    if os.path.isfile(path):
+                        with open(path, "r", encoding="utf-8") as f:
+                            return f.read()
+            return None
+
+        return self._run_idempotent_read("attachment download", download)
 
     def _issue_to_work_item(self, issue_data: Dict, workspace_id: str) -> WorkItem:
         metadata = issue_data.get("metadata", {})
