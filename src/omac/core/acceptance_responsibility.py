@@ -41,20 +41,37 @@ def evidence_targets(contract: Any) -> list[str]:
         if isinstance(value, str) and value.strip()
     ]
     for contribution in contributions(contract):
-        targets.extend(contribution.get("action_ids", []) or [])
+        targets.extend(
+            action_id for action_id in contribution.get("action_ids", []) or []
+            if isinstance(action_id, str) and action_id.strip()
+        )
     return list(dict.fromkeys(targets))
+
+
+def dependency_closure(manifest: Any, node_id: str) -> set[str]:
+    """Return every direct or transitive prerequisite of a manifest node."""
+    if node_id not in manifest.nodes:
+        return set()
+    closure: set[str] = set()
+    stack = list(manifest.nodes[node_id].blocked_by)
+    while stack:
+        dependency = stack.pop()
+        if dependency in closure or dependency not in manifest.nodes:
+            continue
+        closure.add(dependency)
+        stack.extend(manifest.nodes[dependency].blocked_by)
+    return closure
 
 
 def _matrix_row(rows: dict[str, dict], flow_id: str) -> dict:
     return rows.setdefault(flow_id, {
-        "flow_id": flow_id,
         "full_claim_owners": [],
         "action_contributors": defaultdict(list),
         "trace_nodes": [],
     })
 
 
-def responsibility_matrix(manifest: Any) -> list[dict]:
+def _matrix_rows(manifest: Any) -> dict[str, dict]:
     rows: dict[str, dict] = {}
     for node_id, node in manifest.nodes.items():
         contract = getattr(node, "contract", None)
@@ -63,24 +80,63 @@ def responsibility_matrix(manifest: Any) -> list[dict]:
                 _matrix_row(rows, flow_id)["full_claim_owners"].append(node_id)
         for contribution in contributions(contract):
             flow_id = contribution.get("flow_id")
-            if not isinstance(flow_id, str) or not flow_id:
+            if not isinstance(flow_id, str) or not flow_id.strip():
                 continue
             row = _matrix_row(rows, flow_id)
             for action_id in contribution.get("action_ids", []) or []:
-                if isinstance(action_id, str) and action_id:
+                if isinstance(action_id, str) and action_id.strip():
                     row["action_contributors"][action_id].append(node_id)
         for flow_id in trace_refs(contract):
             if isinstance(flow_id, str) and flow_id.strip():
                 _matrix_row(rows, flow_id)["trace_nodes"].append(node_id)
-    return [{
-        "flow_id": flow_id,
-        "full_claim_owners": sorted(set(row["full_claim_owners"])),
-        "action_contributors": {
-            action_id: sorted(set(node_ids))
-            for action_id, node_ids in sorted(row["action_contributors"].items())
-        },
-        "trace_nodes": sorted(set(row["trace_nodes"])),
-    } for flow_id, row in sorted(rows.items())]
+    return rows
+
+
+def responsibility_matrix(manifest: Any, acceptance_doc: Any = None) -> list[dict]:
+    """Return a compact global matrix with dependency closure and only gaps.
+
+    The matrix intentionally does not repeat every Action-to-node mapping. Exact
+    mappings remain canonical in node contracts; the Reviewer receives counts,
+    contributing nodes, dependency closure, and exceptional IDs only.
+    """
+    rows = _matrix_rows(manifest)
+    expected_by_flow = (
+        acceptance_doc.business_action_ids_by_flow
+        if acceptance_doc is not None else {}
+    )
+    flow_ids = sorted(set(rows) | set(expected_by_flow))
+    matrix = []
+    for flow_id in flow_ids:
+        row = rows.get(flow_id, {})
+        owners = sorted(set(row.get("full_claim_owners", [])))
+        action_contributors = row.get("action_contributors", {})
+        declared_action_ids = set(action_contributors)
+        expected_action_ids = set(
+            expected_by_flow.get(flow_id, declared_action_ids))
+        missing = sorted(expected_action_ids - declared_action_ids)
+        unknown = sorted(declared_action_ids - expected_action_ids)
+        valid_action_ids = declared_action_ids & expected_action_ids
+        contribution_owners = sorted({
+            node_id
+            for action_id in valid_action_ids
+            for node_id in action_contributors.get(action_id, [])
+        })
+        closure = dependency_closure(manifest, owners[0]) if len(owners) == 1 else set()
+        unreachable = sorted(
+            set(contribution_owners) - set(owners) - closure)
+        matrix.append({
+            "flow_id": flow_id,
+            "full_claim_owners": owners,
+            "business_action_count": len(expected_action_ids),
+            "contributed_business_action_count": len(valid_action_ids),
+            "contribution_owners": contribution_owners,
+            "full_owner_dependency_closure": sorted(closure),
+            "missing_business_action_ids": missing,
+            "unknown_business_action_ids": unknown,
+            "unreachable_contribution_owners": unreachable,
+            "trace_nodes": sorted(set(row.get("trace_nodes", []))),
+        })
+    return matrix
 
 
 def contract_shape_errors(node: Any) -> list[str]:
@@ -126,14 +182,16 @@ def contract_shape_errors(node: Any) -> list[str]:
         for action_id in action_ids:
             if not isinstance(action_id, str) or not action_id.strip():
                 errors.append(f"{prefix}.action_ids entries must be non-empty strings")
+        if len(action_ids) != len(set(
+                action_id for action_id in action_ids if isinstance(action_id, str))):
+            errors.append(f"{prefix}.action_ids must not contain duplicates")
     return errors
 
 
 def matrix_errors(manifest: Any, acceptance_doc: Any) -> list[str]:
-    """Validate exact owners and action closure without node-name heuristics."""
+    """Validate canonical flow ownership and business-Action dependency closure."""
     errors: list[str] = []
-    flow_actions = acceptance_doc.action_ids_by_flow
-    rows = {row["flow_id"]: row for row in responsibility_matrix(manifest)}
+    flow_actions = acceptance_doc.business_action_ids_by_flow
 
     for node in manifest.nodes.values():
         contract = getattr(node, "contract", None)
@@ -142,15 +200,16 @@ def matrix_errors(manifest: Any, acceptance_doc: Any) -> list[str]:
                 continue
             if flow_id not in flow_actions:
                 errors.append(
-                    f"node {node.id}: acceptance responsibility references unknown flow '{flow_id}'")
-        node_contributions: dict[str, set[str]] = defaultdict(set)
+                    f"node {node.id}: acceptance responsibility references "
+                    f"unknown flow '{flow_id}'")
         for contribution in contributions(contract):
             flow_id = contribution.get("flow_id")
             if not isinstance(flow_id, str) or not flow_id.strip():
                 continue
             if flow_id not in flow_actions:
                 errors.append(
-                    f"node {node.id}: acceptance contribution references unknown flow '{flow_id}'")
+                    f"node {node.id}: acceptance contribution references "
+                    f"unknown flow '{flow_id}'")
                 continue
             known_actions = set(flow_actions[flow_id])
             for action_id in contribution.get("action_ids", []) or []:
@@ -158,31 +217,25 @@ def matrix_errors(manifest: Any, acceptance_doc: Any) -> list[str]:
                     continue
                 if action_id not in known_actions:
                     errors.append(
-                        f"node {node.id}: acceptance contribution references unknown action "
-                        f"'{action_id}' in flow {flow_id}")
-                else:
-                    node_contributions[flow_id].add(action_id)
-        for flow_id in full_claims(contract):
-            if not isinstance(flow_id, str) or flow_id not in flow_actions:
-                continue
-            missing = set(flow_actions.get(flow_id, [])) - node_contributions[flow_id]
-            if missing:
-                errors.append(
-                    f"node {node.id}: full claim {flow_id} does not cover every action; "
-                    f"missing: {', '.join(sorted(missing))}")
+                        f"node {node.id}: acceptance contribution references "
+                        f"unknown business action '{action_id}' in flow {flow_id}")
 
-    for flow_id, action_ids in flow_actions.items():
-        row = rows.get(flow_id, {})
-        owners = row.get("full_claim_owners", [])
+    for row in responsibility_matrix(manifest, acceptance_doc):
+        flow_id = row["flow_id"]
+        owners = row["full_claim_owners"]
         if not owners:
             errors.append(f"acceptance flow has no full claim owner: {flow_id}")
         elif len(owners) > 1:
             errors.append(
                 f"acceptance flow full claim has multiple owners: {flow_id}: "
                 + ", ".join(owners))
-        contributors = row.get("action_contributors", {})
-        for action_id in action_ids:
-            if not contributors.get(action_id):
-                errors.append(
-                    f"acceptance action has no contribution owner: {flow_id}/{action_id}")
+        if row["missing_business_action_ids"]:
+            errors.append(
+                f"acceptance business action has no contribution owner: {flow_id}/"
+                + ", ".join(row["missing_business_action_ids"]))
+        if len(owners) == 1 and row["unreachable_contribution_owners"]:
+            errors.append(
+                f"full claim owner {owners[0]} must depend on all contribution "
+                f"owners for {flow_id}; unreachable: "
+                + ", ".join(row["unreachable_contribution_owners"]))
     return errors

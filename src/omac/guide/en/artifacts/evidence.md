@@ -105,7 +105,7 @@ blockers:
 | Field | Meaning |
 |---|---|
 | `commands` | Actual results for contract `verification_commands`; command text matches exactly and exit code is 0. |
-| `commands[].business_tests` | Concrete business-test indexes executed by this successful command. `acceptance` is a complete flow claim ID or an exact Action contribution ID; trace-only `acceptance_refs` never appear here. Each entry also has a stable `test` identifier. |
+| `commands[].business_tests` | Concrete business-test indexes executed by this successful command. `acceptance` is a complete flow claim ID or an exact `business-action` contribution ID; `flow-step` and trace-only refs never appear here. Each entry also has a stable `test` identifier. |
 | `integration_gates` | Command, metric, artifact, source, and delivery-goal evidence by gate name. |
 | `pr_base` | Exactly matches contract `pr_base`. |
 | `coverage` | Numeric coverage meeting `coverage_gate`. |
@@ -146,7 +146,7 @@ Submit verdict through `--verdict`, not report YAML. Valid values are `pass`,
 
 1. Submit both PR URL and verification file; the GitHub PR is deliverable and not draft.
 2. Commands cover the contract's exact commands and exit 0.
-3. Every full claim and Action contribution is covered by concrete `business_tests` on a successful command; trace refs need no coverage and mappings do not reference targets outside the contract responsibility.
+3. Every full claim and business-Action contribution is covered by concrete `business_tests` on a successful command; flow steps and trace refs need no coverage, and mappings do not reference targets outside the contract responsibility.
 4. Gate sources and delivery goals exactly match the contract.
 5. Metrics meet thresholds and required artifacts are present.
 6. With integration gates, `env_setup` is a non-empty list of non-empty strings.

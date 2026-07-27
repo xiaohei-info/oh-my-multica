@@ -27,10 +27,12 @@ flows:
     name: A user signs in with valid credentials
     actions:
       - id: ACT-LOGIN-01
+        kind: business-action
         step: Open the sign-in entry point
         how: Visit /login
         expected: Account and password fields are visible
       - id: ACT-LOGIN-02
+        kind: business-action
         step: Submit valid credentials
         how: Enter the test account and select Sign in
         expected: The dashboard opens and shows the current user
@@ -42,10 +44,11 @@ flows:
 |---|---|
 | `schema` | New artifacts use `omac.acceptance/v2`; v1 is read-only compatibility. |
 | `flows` | Non-empty list of independently acceptable end-to-end paths. |
-| `flow.id` | Unique stable ID referenced by manifest `contract.acceptance` and final results. |
+| `flow.id` | Unique stable ID referenced by manifest claims, contributions, refs, and final results. |
 | `flow.name` | Non-empty human-readable user outcome. |
 | `actions` | Non-empty ordered actions for the flow. |
 | `action.id` | Stable, flow-unique Action ID used by manifest contribution ownership. |
+| `action.kind` | `business-action` needs implementation ownership; `flow-step` covers authority, setup, evidence, cleanup, and other procedure owned by the full-flow owner. |
 | `step` | The user or system action. |
 | `how` | Copyable entry point, command, page, parameter, or test data. |
 | `expected` | Observable outcome and the standard for deciding failure. |
@@ -69,15 +72,16 @@ acceptance document complete.
 1. Top level is a mapping and `flows` is a non-empty list.
 2. Each flow is an object with a unique, non-empty string `id` and `name`.
 3. Each flow has a non-empty `actions` list.
-4. Every v2 action is an object with non-empty `id`, `step`, `how`, and `expected`; action IDs are unique within the flow.
+4. Every v2 action has valid `id`, `kind`, `step`, `how`, and `expected`; `kind` is `business-action|flow-step`, and IDs are unique within the flow.
 5. IDs remain stable and match design flows and manifest `contract.acceptance`.
 6. Success or boundary conditions mentioned only in explanatory prose are not
    machine-verifiable acceptance facts.
 
-Legacy `omac.acceptance/v1` remains readable. OMAC first extracts an explicit
-`Action ID=...` embedded in the action text and otherwise derives
-`<flow-id>/STEP-<index>` as a stable migration identity. New artifacts must not
-rely on that compatibility path and must write `action.id` directly.
+Legacy `omac.acceptance/v1` remains readable. A record with an explicit embedded
+`Action ID=...` is a `business-action`; every other record is a `flow-step` with
+the stable migration identity `<flow-id>/STEP-<index>`. This preserves the
+existing 495-business-Action OAC interpretation without inferring from an
+`ACT-` prefix. New artifacts write both `action.id` and `action.kind` directly.
 
 ## Common errors → corrections
 

@@ -1,6 +1,6 @@
 """验收文档结构 —— plan 阶段(P3)产出,总控验收(P4)共用同一份 schema。
 
-flows: [{id, name, actions: [{step, how, expected}]}]
+flows: [{id, name, actions: [{id, kind, step, how, expected}]}]
 
 plan 阶段把业务流程拆成 flows(每条 flow 一个可验收的端到端路径),
 总控验收按 flow 逐项走查、记录 pass/fail。两边对齐同一个 id,故漏项可被
@@ -16,6 +16,7 @@ import yaml
 @dataclass
 class Action:
     id: str
+    kind: str
     step: str
     how: str
     expected: str
@@ -44,26 +45,53 @@ class AcceptanceDoc:
             for flow in self.flows
         }
 
+    @property
+    def business_action_ids_by_flow(self) -> dict[str, list[str]]:
+        return {
+            flow.id: [
+                action.id for action in flow.actions
+                if action.kind == ACTION_KIND_BUSINESS
+            ]
+            for flow in self.flows
+        }
+
+    @property
+    def step_count(self) -> int:
+        return sum(len(flow.actions) for flow in self.flows)
+
+    @property
+    def business_action_count(self) -> int:
+        return sum(
+            len(action_ids)
+            for action_ids in self.business_action_ids_by_flow.values()
+        )
+
 
 _EMBEDDED_ACTION_ID = re.compile(r"Action ID=`([^`]+)`")
+ACTION_KIND_BUSINESS = "business-action"
+ACTION_KIND_FLOW_STEP = "flow-step"
+_ACTION_KINDS = {ACTION_KIND_BUSINESS, ACTION_KIND_FLOW_STEP}
 
 
-def _action_id(raw, flow_id: str, index: int) -> str:
-    explicit = raw.get("id")
-    if isinstance(explicit, str) and explicit.strip():
-        return explicit.strip()
-    embedded = []
+def _embedded_action_ids(raw) -> list[str]:
+    identities = []
     for field in ("how", "expected"):
         value = raw.get(field)
         if isinstance(value, str):
-            embedded.extend(_EMBEDDED_ACTION_ID.findall(value))
-    identities = list(dict.fromkeys(embedded))
-    if len(identities) > 1:
+            identities.extend(_EMBEDDED_ACTION_ID.findall(value))
+    return list(dict.fromkeys(identities))
+
+
+def _action_id(raw, flow_id: str, index: int, embedded_ids: list[str]) -> str:
+    explicit = raw.get("id")
+    if isinstance(explicit, str) and explicit.strip():
+        return explicit.strip()
+    if len(embedded_ids) > 1:
         raise ValueError(
             f"flow {flow_id} action {index} contains conflicting Action IDs: "
-            + ", ".join(identities))
-    if identities:
-        return identities[0]
+            + ", ".join(embedded_ids))
+    if embedded_ids:
+        return embedded_ids[0]
     # Legacy omac.acceptance/v1 documents did not require action.id. Keep them
     # readable with a deterministic migration identity instead of silently
     # dropping action-level responsibility.
@@ -107,6 +135,20 @@ def _load_action(raw, *, flow_id: str, index: int, require_id: bool) -> Action:
     ):
         raise ValueError(
             f"flow {flow_id} action {index} id is required by omac.acceptance/v2")
+    embedded_ids = _embedded_action_ids(raw)
+    kind = raw.get("kind")
+    if require_id and not (isinstance(kind, str) and kind.strip()):
+        raise ValueError(
+            f"flow {flow_id} action {index} kind is required by omac.acceptance/v2")
+    if kind is None:
+        # v1 did not carry a kind field. Its explicit `Action ID=...` marker is
+        # the published distinction used by the OAC acceptance document: 495
+        # business Actions versus the remaining flow procedure steps.
+        kind = ACTION_KIND_BUSINESS if embedded_ids else ACTION_KIND_FLOW_STEP
+    if kind not in _ACTION_KINDS:
+        raise ValueError(
+            f"flow {flow_id} action {index} kind must be one of: "
+            + ", ".join(sorted(_ACTION_KINDS)))
     step = raw.get("step")
     if not isinstance(step, str) or not step.strip():
         raise ValueError("action.step is required")
@@ -117,7 +159,8 @@ def _load_action(raw, *, flow_id: str, index: int, require_id: bool) -> Action:
     if not isinstance(expected, str) or not expected.strip():
         raise ValueError(f"action {step!r} expected is required")
     return Action(
-        id=_action_id(raw, flow_id, index),
+        id=_action_id(raw, flow_id, index, embedded_ids),
+        kind=kind,
         step=step,
         how=how,
         expected=expected,

@@ -32,28 +32,31 @@ data model nor the machine/review evidence exposed the distinction.
 New contracts use three explicit fields:
 
 - `acceptance_claims`: complete flows this node independently proves;
-- `acceptance_contributions`: exact `{flow_id, action_ids}` delivered by this node;
+- `acceptance_contributions`: exact business `{flow_id, action_ids}` delivered by this node;
 - `acceptance_refs`: trace-only flow references with no execution obligation.
 
 The machine gate constructs the complete DAG matrix and rejects:
 
 - a flow without exactly one complete owner;
 - duplicate complete owners;
-- an Action without a contribution owner;
+- a `business-action` without a contribution owner;
 - unknown flows or Actions;
-- a full claim whose own node does not contribute every Action in the flow;
+- a full claim whose owner is not equal to or transitively downstream of every
+  contribution owner for the flow;
 - mixed use of legacy `acceptance` and the new fields.
 
-No node-name heuristic is used. A bootstrap node is legal if its explicit
-contract and evidence really cover the declared responsibility; a node named
-`integration` receives no special trust.
+No Action-prefix or node-name heuristic is used. Acceptance v2 marks every step
+as `business-action` or `flow-step`. Only business Actions enter the contribution
+matrix; authority, setup, verification, evidence, and cleanup procedure belongs
+to the canonical full owner. A node named `integration` receives no special trust.
 
 ## Reviewer behavior
 
-Decompose review receives one `acceptance-responsibility:matrix` obligation
-containing the global flow-to-owner, Action-to-contributor, and trace matrix.
-The Reviewer must inspect missing, duplicate, and impossible claims in one
-bounded pass.
+Decompose review receives one compact `acceptance-responsibility:matrix`
+obligation containing full owners, business-Action counts, contribution owners,
+dependency closure, and exceptional IDs only. It does not repeat every Action
+mapping already present in the manifest. The Reviewer inspects every reported
+gap in one bounded pass.
 
 Develop review creates full-flow obligations only for `acceptance_claims`,
 Action-scoped obligations for `acceptance_contributions`, and no obligation for
@@ -66,11 +69,13 @@ cover the same responsibility targets.
 complete-flow claim. Runtime loading and existing DAG execution do not silently
 reinterpret or discard it.
 
-New plan authoring requires `omac.acceptance/v2` with explicit `action.id`, and
+New plan authoring requires `omac.acceptance/v2` with explicit `action.id` and
+`action.kind`, and
 new decomposition rejects legacy `contract.acceptance` with a migration error.
-`omac.acceptance/v1` remains readable. OMAC extracts an embedded `Action ID`
-when present and otherwise assigns `<flow-id>/STEP-<index>` as a deterministic
-migration identity.
+`omac.acceptance/v1` remains readable. OMAC classifies a record with an embedded
+`Action ID` as a business Action; other records become `flow-step` with the
+deterministic identity `<flow-id>/STEP-<index>`. This preserves the current OAC
+interpretation of 922 total steps and 495 explicit business Actions.
 
 For an already-running DAG, upgrade does not rewrite completed or active nodes.
 An Orchestrator amendment can translate affected pending/blocked contracts to

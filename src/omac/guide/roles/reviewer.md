@@ -26,8 +26,8 @@
 - 对应 artifact guide，以及独立复跑产生的命令输出、metrics 和 artifacts。
 - `work show.context.review_protocol`、`review_obligations`、`prior_open_blockers`
   和 `review_state`。它们定义本轮有限审查范围与跨轮回归事实，不能自行删减。
-- decompose review 的 `acceptance-responsibility:matrix` obligation 携带全局责任矩阵；
-  必须一次性检查每个 flow 的完整 owner、全部 Action contribution 闭包和不可能/重复 claim。
+- decompose review 的 `acceptance-responsibility:matrix` obligation 携带紧凑全局责任矩阵；
+  必须一次性检查每个 flow 的完整 owner、业务 Action 数量、贡献节点、依赖闭包和全部 gap。
 
 ## 有限审查与跨轮回归
 
@@ -66,8 +66,8 @@
 10. 判断范围：`scope_paths` 是主要代码归属范围。必要配套文件只要服务于 contract 且已说明原因，
    不因必要配套文件未被预先列出而 reject；无关扩张、并行边界破坏或 `non_goals` 违规仍须 reject。
 11. `decompose review` 检查是否最大化并行；若节点还能拆出独立 PR/test/review 单元却被合并，应要求拆小。
-    同时读取 obligation 中的完整责任矩阵，一轮内找全缺失 owner、重复 owner、Action 缺口和
-    局部门禁无法支撑完整 claim 的结构问题，不能只抽查少数节点。
+    同时读取 obligation 中的紧凑责任矩阵，一轮内找全缺失/重复 owner、业务 Action 缺口、
+    未知 Action 与完整 owner 无法到达贡献节点的问题，不能只抽查少数节点。
 12. 发现第一个 blocker 后继续检查完整 diff、相关实现、测试、配置、迁移和必要文档。第一处问题只是记录点，不能提前结束评审。
 13. 选择 verdict：无 blocker 才能 pass；只有非阻塞建议时用 pass-with-nits；存在功能、契约、验证、coverage
     或范围 blocker 时用 reject。禁止把建议项伪装成 blocker。

@@ -42,7 +42,8 @@
    数据所有权、模块边界、依赖规则、兼容性、测试和安全要求；不得复制临时需求、任务步骤或
    本次 issue 专属指令。已有 `AGENTS.md` 是必须继承且不可冲突的上游约束。
 9. 若是验收文档，逐 flow 写明输入、动作、具体操作方式、可观察结果和失败判据；
-   每个 action 必须有稳定且 flow 内唯一的 `id`，供 Orchestrator 精确分配 Action 贡献；
+   每个 action 必须有稳定且 flow 内唯一的 `id`，并显式写 `kind: business-action|flow-step`；
+   只有 `business-action` 供 Orchestrator 分配实现贡献，authority/setup/evidence/cleanup 等写为 `flow-step`；
    边界条件必须成为独立 action 或 flow，不能藏在泛泛说明里。
    设计已经唯一命名的页面、产品区域、控件、命令或操作序列可以直接作为 `how`，
    不要求虚构尚未发布的最终 URL、选择器或完整 argv。只有权威设计连唯一执行表面都

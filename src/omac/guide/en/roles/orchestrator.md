@@ -35,8 +35,8 @@ guide does not decide product facts.
 - Current `contract`, `previous_review`, and node state. Completed nodes are
   facts, not drafts to casually rewrite.
 - The manifest artifact guide's schema, lint gates, and contract fields.
-- Every flow and stable Action ID in the acceptance document. Build the global
-  responsibility matrix before writing node contracts.
+- Every flow, stable step ID, and explicit `action.kind` in the acceptance
+  document. Assign implementation ownership only to `business-action` entries.
 - During rework, `work show.context.review_state` and `required_closures`.
   Every closure is tied to a stable blocker and root cause; wording or node
   movement cannot close it by implication.
@@ -54,10 +54,10 @@ guide does not decide product facts.
   structured findings are stored in an attachment. Before reworking, run the
   summary's `omac work show <issue-id> --output json` command and read
   `context.machine_feedback`, then fix every finding before resubmitting.
-- Acceptance responsibility is explicit structure, not a project naming
-  convention. The machine gate checks one full owner per flow, complete Action
-  contribution closure, and that a full claim is backed by every Action on the
-  same node.
+- Acceptance responsibility is explicit structure, not an Action-prefix or node
+  naming convention. The machine gate checks one full owner per flow, complete
+  `business-action` coverage, and that the full owner transitively depends on
+  every contribution owner.
 - In `review_state.mode=normal`, close every `required_closures` item and review
   the full manifest impact.
 - In `review_state.mode=convergence-audit`, stop patching findings one at a
@@ -93,9 +93,10 @@ guide does not decide product facts.
 7. Put only genuine runtime prerequisites in `blocked_by`; put coordination-only
    dependencies in the description.
 8. Build a global responsibility matrix from the authoritative acceptance
-   content rather than node-name guesses. Give `acceptance_claims` only to the
-   unique node that can independently prove every Action in a flow; assign exact
-   `{flow_id, action_ids}` through `acceptance_contributions`; use
+   content rather than node-name guesses. Give `acceptance_claims` to the unique
+   integration/closeout node that executes the full flow without repeating its
+   Action IDs; assign exact `{flow_id, action_ids}` for `business-action` entries
+   through `acceptance_contributions`; use
    `acceptance_refs` for traceability that creates no acceptance obligation.
    Then complete `objective`, `source_of_truth`, `non_goals`,
    `verification_commands`, `integration_gates`, and `pr_base`.
@@ -119,8 +120,9 @@ guide does not decide product facts.
   for convenience.
 - Every contract is complete and traceable to design anchors and acceptance
   flows; `pr_base` and verification entry points are explicit.
-- Every flow has exactly one feasible full owner and every Action has at least
-  one contribution owner; no missing, duplicate, or locally impossible claim remains.
+- Every flow has one full owner, every business Action has a contribution owner,
+  and the full owner is or transitively depends on all contribution owners; no
+  missing, duplicate, or upstream-impossible claim remains.
 - Every node is a complete, production-usable, independently acceptable delivery
   within its own contract and does not need a later patch to acquire its claimed value.
 - `scope_paths` communicates ownership, not a precise file list.

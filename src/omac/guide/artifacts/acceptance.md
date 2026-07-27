@@ -26,10 +26,12 @@ flows:
     name: 用户使用有效凭证登录
     actions:
       - id: ACT-LOGIN-01
+        kind: business-action
         step: 打开登录入口
         how: 访问 /login
         expected: 显示账号和密码输入框
       - id: ACT-LOGIN-02
+        kind: business-action
         step: 提交有效凭证
         how: 输入测试账号并点击登录
         expected: 进入 dashboard，展示当前用户信息
@@ -41,10 +43,11 @@ flows:
 |---|---|
 | `schema` | 新产物固定为 `omac.acceptance/v2`；v1 仅用于读取历史产物。 |
 | `flows` | 非空 flow 列表；每个 flow 是一个可独立验收的端到端路径。 |
-| `flow.id` | 唯一、稳定的标识，供 manifest `contract.acceptance` 和最终验收结果引用。 |
+| `flow.id` | 唯一、稳定的标识，供 manifest claim/contribution/ref 和最终验收结果引用。 |
 | `flow.name` | 非空的人类可读名称，说明被验收的用户结果。 |
 | `actions` | 非空动作列表，按执行顺序描述 flow。 |
 | `action.id` | flow 内唯一、稳定的 Action ID，供 manifest 精确声明局部贡献。 |
+| `action.kind` | `business-action` 表示需要实现归属的业务动作；`flow-step` 表示 authority、setup、evidence、cleanup 等由完整 flow owner 执行的流程步骤。 |
 | `step` | 用户或系统正在执行的动作。 |
 | `how` | 可复制的入口、命令、页面、参数或测试数据。 |
 | `expected` | 可观察结果以及据此判断失败的标准。 |
@@ -66,13 +69,14 @@ flows:
 1. 顶层必须是 mapping，`flows` 必须是非空列表。
 2. 每个 flow 必须是 object；`id` 和 `name` 必须是非空字符串，且 `id` 不得重复。
 3. 每个 flow 的 `actions` 必须是非空列表。
-4. v2 的每个 action 必须是 object，且 `id`、`step`、`how`、`expected` 都是非空字符串；action id 在 flow 内不得重复。
+4. v2 的每个 action 必须是 object，且 `id`、`kind`、`step`、`how`、`expected` 都合法；`kind` 只能是 `business-action|flow-step`，action id 在 flow 内不得重复。
 5. `flow.id` 必须稳定，并与 design 的 flows、manifest 的 `contract.acceptance` 保持一致。
 6. 只写在说明性正文中的成功条件或边界条件不计入可校验验收事实。
 
-历史 `omac.acceptance/v1` 仍可读取：OMAC 优先提取正文中明确的
-`Action ID=...`，否则以 `<flow-id>/STEP-<序号>` 生成稳定迁移身份。新产物不得依赖该兼容路径，
-必须直接写 `action.id`。
+历史 `omac.acceptance/v1` 仍可读取：OMAC 把正文中明确携带 `Action ID=...` 的记录视为
+`business-action`，其余记录视为 `flow-step`，并以 `<flow-id>/STEP-<序号>` 生成稳定步骤身份。
+这是旧 OAC 文档中 495 个业务 Action 的既有口径，不使用 `ACT-` 前缀猜测。新产物不得依赖兼容推断，
+必须直接写 `action.id` 与 `action.kind`。
 
 ## 常见错误 → 修正
 

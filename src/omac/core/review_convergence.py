@@ -70,7 +70,7 @@ def required_closures(ledger: Any) -> list[dict]:
     ]
 
 
-def build_review_obligations(item: Any) -> list[dict]:
+def build_review_obligations(item: Any, *, acceptance_doc: Any = None) -> list[dict]:
     """Build a stable, finite review coverage set for the current work item."""
     obligations = [
         {"obligation_id": obligation_id, "category": "dimension", "requirement": requirement}
@@ -123,7 +123,8 @@ def build_review_obligations(item: Any) -> list[dict]:
     deliverable = getattr(item, "deliverable", None)
     if kind == TaskKind.DECOMPOSE.value and isinstance(deliverable, str):
         try:
-            matrix = responsibility_matrix(loads_manifest(deliverable))
+            matrix = responsibility_matrix(
+                loads_manifest(deliverable), acceptance_doc)
         except (TypeError, ValueError):
             matrix = []
         if matrix:
@@ -131,9 +132,9 @@ def build_review_obligations(item: Any) -> list[dict]:
                 "obligation_id": "acceptance-responsibility:matrix",
                 "category": "acceptance-responsibility",
                 "requirement": (
-                    "Review the complete responsibility matrix in one pass: exactly one "
-                    "feasible full-flow owner per flow, complete Action contribution "
-                    "closure, and no missing, duplicate, or impossible claims"
+                    "Review the compact responsibility matrix in one pass: one "
+                    "canonical full-flow owner, business-Action contribution "
+                    "coverage, dependency closure, and every reported gap"
                 ),
                 "responsibility_matrix": matrix,
             })

@@ -592,6 +592,7 @@ def plan_create(
                if acceptance_item_id else [])
         ),
         dag_key=make_dag_key(TaskKind.DECOMPOSE, scope=plan_id),
+        review_acceptance_doc=acceptance_doc,
     )
     decompose_item_id = res["item_id"]
     manifest_text = _phase_text(res["delivery"], _MANIFEST_KEY)
@@ -805,6 +806,7 @@ def plan_resume(
         dag_key=decompose_key,
         resume_item_id=decompose_item.id if decompose_item else None,
         resume_item_snapshot=decompose_item,
+        review_acceptance_doc=acceptance_doc,
     )
     decompose_item_id = res["item_id"]
     manifest_text = _phase_text(res["delivery"], _MANIFEST_KEY)

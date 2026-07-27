@@ -27,7 +27,7 @@
 - 增量拆解时的 final acceptance results，尤其是失败 flow 及 notes。
 - 当前 `contract`、`previous_review` 和已有节点状态；已 done 节点不是可随意重写的草稿。
 - manifest artifact guide 规定的节点 schema、lint 硬门和 contract 字段。
-- 验收文档中每个 flow 与稳定 Action ID。必须先形成全局责任矩阵，再写各节点 contract。
+- 验收文档中每个 flow、稳定步骤 ID 与显式 `action.kind`。只为 `business-action` 分配实现归属。
 - 返工时 `work show.context.review_state` 与 `required_closures`。每个 closure
   都绑定稳定 `blocker_id` 和根因，不能通过换措辞或移动节点规避。
 
@@ -40,8 +40,8 @@
 - 机器门失败直接返回 authoring，不消耗 Reviewer 轮次。`review_comment` 只保存有界
   摘要；完整结构化问题保存在附件中。重新工作前运行摘要给出的
   `omac work show <issue-id> --output json`，读取 `context.machine_feedback`，逐条修完后再提交。
-- 验收责任是显式结构，不依赖项目命名约定：machine gate 会检查每个 flow 的唯一完整 owner、
-  所有 Action 的 contribution 闭包，以及完整 claim 是否由同一节点的全部 Action 贡献支撑。
+- 验收责任是显式结构，不依赖 Action 前缀或节点名字：machine gate 会检查每个 flow 的唯一完整 owner、
+  所有 `business-action` 的 contribution 闭包，以及 full owner 的传递依赖是否覆盖全部贡献节点。
 - `review_state.mode=normal` 时按 `required_closures` 逐项关闭并对完整 manifest
   做影响分析。
 - `review_state.mode=convergence-audit` 时禁止继续逐条补丁式修复。先按
@@ -66,8 +66,8 @@
 6. 保留 Wave 2 集成验收节点，覆盖跨 track 的主链路和验收 flow。
 7. 只把真实运行前置写入 `blocked_by`；软依赖写进 description。不要为了看起来有序而串行化可并行节点。
 8. 先根据权威 acceptance 内容建立全局责任矩阵，而不是按节点名字猜测：
-   `acceptance_claims` 只给能够独立证明完整 flow 全部 Action 的唯一节点；
-   `acceptance_contributions` 为组件节点分配精确 `flow_id` 与 `action_ids`；
+   `acceptance_claims` 只给执行完整 flow 的唯一集成/closeout 节点，且不复制 Action ID；
+   `acceptance_contributions` 为组件节点分配精确 `flow_id` 与 `business-action` IDs；
    `acceptance_refs` 只做追溯，不产生验收义务。然后补齐 `objective`、`source_of_truth`、
    `non_goals`、`verification_commands`、`integration_gates`、`pr_base`。
 9. `scope_paths` 只表达稳定的主要代码归属范围并减少并行冲突，不穷举依赖清单、锁文件、
@@ -86,7 +86,7 @@
 - Wave 0、Wave 1、Wave 2 的职责清楚，且不存在还能独立 PR/test/review 却被无理由合并的节点。
 - DAG 只保留真实 `blocked_by`，可并行节点没有被软依赖串行化。
 - 每个节点 contract 字段完整，设计锚点与验收 flow 可追溯，`pr_base` 和验证入口明确。
-- 每个 flow 恰有一个可行的完整 owner，每个 Action 至少有一个 contribution owner；没有缺失、重复或局部门禁冒充完整 flow 的 claim。
+- 每个 flow 恰有一个完整 owner，每个业务 Action 至少有一个 contribution owner，且完整 owner 等于或传递依赖全部贡献节点；没有缺失、重复或上游节点冒充完整 flow 的 claim。
 - 每个节点在自身 contract 范围内都是完整、生产可用、可独立验收的交付，不依赖后续补丁才获得其声称的价值。
 - `scope_paths` 表达模块所有权而非精确文件白名单，必要配套文件规则明确。
 - 低推理预算 worker 无需补全隐含上下文即可理解目标、非目标、边界条件和完成证据。

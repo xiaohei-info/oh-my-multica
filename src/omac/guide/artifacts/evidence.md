@@ -103,7 +103,7 @@ blockers:
 | 字段 | 语义 |
 |---|---|
 | `commands` | contract `verification_commands` 的实际运行结果；`cmd` 文本必须精确匹配，`exit_code` 必须为 0。 |
-| `commands[].business_tests` | 当前成功命令实际执行的具体业务测试索引；`acceptance` 写完整 flow claim ID 或精确 Action contribution ID，`acceptance_refs` 不进入该字段。每项同时包含稳定的 `test` 标识。 |
+| `commands[].business_tests` | 当前成功命令实际执行的具体业务测试索引；`acceptance` 写完整 flow claim ID 或精确 `business-action` contribution ID，`flow-step` 与 `acceptance_refs` 不进入该字段。每项同时包含稳定的 `test` 标识。 |
 | `integration_gates` | 按 gate 名称记录命令、指标、产物、事实源和交付目标。 |
 | `pr_base` | 必须与 contract `pr_base` 完全一致。 |
 | `coverage` | 数字覆盖率，必须达到 contract `coverage_gate`。 |
@@ -144,7 +144,7 @@ verdict 不写入 report YAML，而是通过 submit 的 `--verdict` 提交；合
 
 1. submit 必须同时提供 PR URL 和 verification 文件；GitHub PR 必须可交付且不是 draft。
 2. `commands` 与每条 integration gate 的 `commands` 必须覆盖 contract 中的精确命令，且退出码为 0。
-3. contract 中每条完整 claim 与 Action contribution 必须被成功命令下的具体 `business_tests` 覆盖；trace ref 不要求覆盖，也不得引用 contract 责任外的目标。
+3. contract 中每条完整 claim 与业务 Action contribution 必须被成功命令下的具体 `business_tests` 覆盖；flow-step/trace ref 不要求覆盖，也不得引用 contract 责任外的目标。
 4. gate 的 `source_of_truth` 和 `delivery_goal` 必须与 contract 完全一致。
 5. metrics 必须达到 contract 阈值，contract 要求的 artifacts 必须全部出现。
 6. contract 声明 integration gates 时，`env_setup` 必须非空且每项都是非空字符串。

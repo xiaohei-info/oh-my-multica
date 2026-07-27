@@ -352,10 +352,12 @@ flows:
     name: 登录流程
     actions:
       - id: ACT-LOGIN-01
+        kind: business-action
         step: 打开登录页
         how: GET /login
         expected: 返回 200 与登录表单
       - id: ACT-LOGIN-02
+        kind: business-action
         step: 提交合法凭证
         how: POST /login {user, pwd}
         expected: 跳转到首页
@@ -363,6 +365,7 @@ flows:
     name: 仪表盘流程
     actions:
       - id: ACT-DASHBOARD-01
+        kind: business-action
         step: 访问仪表盘
         how: GET /dash
         expected: 显示数据卡片

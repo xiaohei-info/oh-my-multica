@@ -62,10 +62,11 @@ convenient interpretation.
    copy temporary requirements, task steps, or issue-specific instructions.
    Existing `AGENTS.md` content is authoritative input and must not be contradicted.
 9. For acceptance authoring, define each flow's input, action, exact procedure,
-   observable result, and failure criteria. Give every action a stable ID that
-   is unique within its flow so the Orchestrator can assign exact Action
-   contributions. Make boundary cases separate actions or flows rather than a
-   vague note.
+   observable result, and failure criteria. Give every action a stable ID and
+   explicit `kind: business-action|flow-step`. Only business Actions receive
+   implementation contributions; authority, setup, evidence, cleanup, and
+   similar procedure use `flow-step`. Make boundary cases separate actions or
+   flows rather than a vague note.
    A uniquely named page, product area, control, command, or operation sequence
    from the approved design is a valid `how`; do not invent an unpublished final
    URL, selector, or argv. Use an implementation prerequisite only when the

@@ -240,7 +240,7 @@ def test_acceptance_artifact_defines_flow_action_schema() -> None:
     content = load_artifact_topic("acceptance")
     for item in [
         "schema: omac.acceptance/v2", "flows", "actions", "action.id",
-        "step", "how", "expected",
+        "action.kind", "business-action", "flow-step", "step", "how", "expected",
     ]:
         assert item in content, f"acceptance artifact missing schema anchor: {item}"
 
