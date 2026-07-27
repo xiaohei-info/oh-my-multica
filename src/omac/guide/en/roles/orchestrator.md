@@ -151,8 +151,8 @@ lint and submit with the current command.
   it never replays authoring/review/merge or dispatches an Agent. An unstarted
   node without a work item changes definition only when it omits `resume_stage`;
   an existing delivery returns to review by default.
-- Any explicit `resume_stage: review|authoring|merging` requires an existing work
-  item. To override the default recovery classification, put it on the same
+- Any explicit `resume_stage: review|authoring|merging` requires an existing work item.
+  To override the default recovery classification, put it on the same
   `update-responsibility` operation. `merging` requires an existing Reviewer-pass
   PR; accept silently syncs the new contract without resetting review, changing
   Store status/phase, dispatching an Agent, observing, or requesting a merge.
