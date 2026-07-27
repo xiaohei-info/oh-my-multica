@@ -169,7 +169,9 @@ def _explicit_responsibility_update(action_id="ACT-BOOT-01"):
     return operation
 
 
-def _responsibility_update(*, historical=False, action_id="ACT-BOOT-01"):
+def _responsibility_update(
+    *, historical=False, action_id="ACT-BOOT-01", resume_stage=None,
+):
     operation = {
         "op": "update-responsibility",
         "node": "bootstrap",
@@ -190,6 +192,8 @@ def _responsibility_update(*, historical=False, action_id="ACT-BOOT-01"):
             "historical_contract_correction": True,
             "reason": "Correct legacy acceptance ownership without changing delivery facts",
         })
+    if resume_stage is not None:
+        operation["resume_stage"] = resume_stage
     return operation
 
 
@@ -526,6 +530,229 @@ def test_responsibility_update_without_work_item_is_definition_only_but_existing
         load_manifest(str(path)), _proposal(_responsibility_update()), engine.store,
         issue_id="amendment-issue", reviewer_verdict="pass", acceptance=acceptance)
     assert reviewed["analysis"]["minimal_rerun"]["review"] == ["bootstrap"]
+
+
+def test_responsibility_resume_stage_validation_preserves_single_operation_invariant(tmp_path):
+    manifest = load_manifest(str(_manifest(tmp_path)))
+    acceptance = _responsibility_acceptance_doc()
+
+    invalid = validate_proposal(
+        manifest, _proposal(_responsibility_update(resume_stage="dispatch")),
+        {"alice", "bob", "charlie"}, acceptance=acceptance,
+    )
+    assert any("resume_stage must be review, authoring, or merging" in error
+               for error in invalid)
+
+    manifest.nodes["bootstrap"].status = "done"
+    manifest.nodes["bootstrap"].merged = True
+    historical = validate_proposal(
+        manifest, _proposal(_responsibility_update(
+            historical=True, resume_stage="merging")),
+        {"alice", "bob", "charlie"}, acceptance=acceptance,
+    )
+    assert any("historical contract correction cannot set resume_stage" in error
+               for error in historical)
+
+    duplicate = validate_proposal(
+        load_manifest(str(_manifest(tmp_path))),
+        _proposal(
+            _responsibility_update(resume_stage="merging"),
+            {"op": "resume", "node": "bootstrap", "stage": "merging"},
+        ),
+        {"alice", "bob", "charlie"}, acceptance=acceptance,
+    )
+    assert any("has multiple operations" in error for error in duplicate)
+
+
+@pytest.mark.parametrize("stage", ("review", "authoring", "merging"))
+def test_explicit_responsibility_resume_stage_requires_work_item_and_matches_minimal_rerun(
+    tmp_path, stage,
+):
+    path = _manifest(tmp_path)
+    acceptance = _responsibility_acceptance_doc()
+    no_item = load_manifest(str(path))
+    no_item.nodes["bootstrap"].work_item_id = None
+    errors = validate_proposal(
+        no_item,
+        _proposal(_responsibility_update(resume_stage=stage)),
+        {"alice", "bob", "charlie"},
+        acceptance=acceptance,
+    )
+    assert any("explicit resume_stage requires an existing work item" in error
+               for error in errors)
+
+    engine = _engine()
+    item = engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    engine.store.update_work_item_metadata(
+        item.id,
+        artifacts={"pr_url": "https://example.test/pr/1"},
+        verification={"subject_digest": "verify-1"},
+        review_verdict="pass",
+    )
+    reviewed = build_reviewed_amendment(
+        load_manifest(str(path)),
+        _proposal(_responsibility_update(resume_stage=stage)),
+        engine.store, issue_id=f"amendment-{stage}", reviewer_verdict="pass",
+        acceptance=acceptance,
+    )
+    assert reviewed["analysis"]["minimal_rerun"] == {
+        "review": ["bootstrap"] if stage == "review" else [],
+        "authoring": ["bootstrap"] if stage == "authoring" else [],
+        "merging": ["bootstrap"] if stage == "merging" else [],
+    }
+
+
+def test_responsibility_merging_rejects_missing_merge_preconditions(tmp_path):
+    path = _manifest(tmp_path)
+    engine = _engine()
+    item = engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    engine.store.update_work_item_metadata(
+        item.id,
+        artifacts={"pr_url": "https://example.test/pr/1"},
+        review_verdict="reject",
+    )
+    reviewed = build_reviewed_amendment(
+        load_manifest(str(path)),
+        _proposal(_responsibility_update(resume_stage="merging")),
+        engine.store, issue_id="amendment-issue", reviewer_verdict="pass",
+        acceptance=_responsibility_acceptance_doc(),
+    )
+
+    with pytest.raises(ValidationError, match="passed review and PR"):
+        apply_amendment(
+            str(path), reviewed, engine.store, {"alice", "bob", "charlie"},
+            acceptance=_responsibility_acceptance_doc(),
+        )
+
+
+def _merge_ready_responsibility_amendment(tmp_path):
+    path = _manifest(tmp_path)
+    engine = _engine()
+    item = engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    engine.store.update_work_item_metadata(
+        item.id,
+        artifacts={"pr_url": "https://example.test/pr/1", "head_sha": "abc"},
+        verification={"subject_digest": "verify-1", "commands": ["pytest -q"]},
+        review_verdict="pass",
+        review_report={"blockers": []},
+    )
+    engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
+    old_contract = load_manifest(str(path)).nodes["bootstrap"].contract
+    engine.store.set_node_contract(item.id, old_contract)
+    reviewed = build_reviewed_amendment(
+        load_manifest(str(path)),
+        _proposal(_responsibility_update(resume_stage="merging")),
+        engine.store, issue_id="amendment-issue", reviewer_verdict="pass",
+        acceptance=_responsibility_acceptance_doc(),
+    )
+    return path, engine, item, reviewed
+
+
+def test_responsibility_merging_syncs_contract_without_replaying_delivery(tmp_path, monkeypatch):
+    path, engine, item, reviewed = _merge_ready_responsibility_amendment(tmp_path)
+    before = copy.deepcopy(engine.store.get_work_item(item.id))
+    old_contract_ref = before.contract_ref["sha256"]
+    for method in (
+        "reset_review", "prepare_review_cycle", "assign_work_item",
+        "observe_pull_request", "request_pull_request_merge",
+    ):
+        monkeypatch.setattr(
+            engine.store, method,
+            lambda *_args, **_kwargs: pytest.fail(
+                "merge-stage responsibility recovery must not replay delivery"),
+        )
+
+    result = apply_amendment(
+        str(path), reviewed, engine.store, {"alice", "bob", "charlie"},
+        acceptance=_responsibility_acceptance_doc(),
+    )
+
+    updated = load_manifest(str(path)).nodes["bootstrap"]
+    store_after = engine.store.get_work_item(item.id)
+    assert result["minimal_rerun"] == {
+        "review": [], "authoring": [], "merging": ["bootstrap"],
+    }
+    assert updated.status == "merging"
+    assert store_after.contract.acceptance == []
+    assert store_after.contract.acceptance_claims == ["UJ-BOOTSTRAP"]
+    assert store_after.contract_ref["sha256"] != old_contract_ref
+    for field in (
+        "status", "phase", "worker", "reviewer", "artifacts", "verification",
+        "review_verdict", "review_report", "review_subject_digest",
+    ):
+        assert getattr(store_after, field) == getattr(before, field)
+    ledger = load_manifest(str(path)).meta["amendment_apply"]["nodes"]["bootstrap"]
+    assert ledger["stage"] == "merging"
+    assert ledger["state"] == "synced"
+
+
+def test_responsibility_merging_resumes_after_manifest_write_interruption(tmp_path, monkeypatch):
+    path, engine, item, reviewed = _merge_ready_responsibility_amendment(tmp_path)
+    original_prepare = amendment_mod.prepare_stage_recovery
+    monkeypatch.setattr(
+        amendment_mod, "prepare_stage_recovery",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("crash after manifest write")),
+    )
+    with pytest.raises(RuntimeError, match="after manifest write"):
+        apply_amendment(
+            str(path), reviewed, engine.store, {"alice", "bob", "charlie"},
+            acceptance=_responsibility_acceptance_doc(),
+        )
+
+    partial = load_manifest(str(path))
+    assert partial.nodes["bootstrap"].status == "merging"
+    assert partial.meta["amendment_apply"]["nodes"]["bootstrap"]["state"] == "syncing"
+    monkeypatch.setattr(amendment_mod, "prepare_stage_recovery", original_prepare)
+
+    result = apply_amendment(
+        str(path), reviewed, engine.store, {"alice", "bob", "charlie"})
+
+    assert result["sync"]["synced"] == ["bootstrap"]
+    assert engine.store.get_work_item(item.id).contract.acceptance_claims == [
+        "UJ-BOOTSTRAP"]
+
+
+def test_responsibility_merging_restart_observes_published_contract_once(tmp_path, monkeypatch):
+    path, engine, item, reviewed = _merge_ready_responsibility_amendment(tmp_path)
+    before = copy.deepcopy(engine.store.get_work_item(item.id))
+    original_set = engine.store.set_node_contract
+    calls = 0
+
+    def write_then_crash(item_id, contract):
+        nonlocal calls
+        calls += 1
+        original_set(item_id, contract)
+        raise RuntimeError("crash after Store contract publish")
+
+    monkeypatch.setattr(engine.store, "set_node_contract", write_then_crash)
+    with pytest.raises(RuntimeError, match="after Store contract publish"):
+        apply_amendment(
+            str(path), reviewed, engine.store, {"alice", "bob", "charlie"},
+            acceptance=_responsibility_acceptance_doc(),
+        )
+
+    partial = load_manifest(str(path))
+    assert partial.meta["amendment_apply"]["nodes"]["bootstrap"]["state"] == "syncing"
+    monkeypatch.setattr(engine.store, "set_node_contract", original_set)
+    result = apply_amendment(
+        str(path), reviewed, engine.store, {"alice", "bob", "charlie"})
+
+    store_after = engine.store.get_work_item(item.id)
+    assert calls == 1
+    assert result["sync"]["synced"] == ["bootstrap"]
+    assert store_after.contract.acceptance_claims == ["UJ-BOOTSTRAP"]
+    assert store_after.contract_ref["sha256"] != before.contract_ref["sha256"]
+    for field in (
+        "status", "phase", "worker", "reviewer", "artifacts", "verification",
+        "review_verdict", "review_report", "review_subject_digest",
+    ):
+        assert getattr(store_after, field) == getattr(before, field)
+    ledger = load_manifest(str(path)).meta["amendment_apply"]["nodes"]["bootstrap"]
+    assert ledger["state"] == "synced"
 
 
 def test_responsibility_operation_stays_compact_for_145_large_contracts(tmp_path):
@@ -914,6 +1141,8 @@ def test_merge_only_recovery_keeps_pass_verdict_and_enters_merging(tmp_path):
         "amendment accept must delegate PR observation to dag run")
     engine.store.request_pull_request_merge = lambda *_args, **_kwargs: pytest.fail(
         "amendment accept must delegate merge requests to dag run")
+    engine.store.set_node_contract = lambda *_args, **_kwargs: pytest.fail(
+        "pure merge resume must not republish the unchanged contract")
 
     result = apply_amendment(str(path), reviewed, engine.store, {"alice", "bob", "charlie"})
 

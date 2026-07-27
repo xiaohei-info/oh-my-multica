@@ -108,6 +108,16 @@ omac dag amend propose .omac/project.yaml \
   `historical_contract_correction: true` with an operation reason. That path writes
   only the manifest and a `historical_contract_correction/synced` ledger entry; it
   never recovers Store stages, dispatches an Agent, or replays a merge.
+- Omitting `resume_stage` for an unstarted node without a work item preserves
+  definition-only behavior. Any explicit `resume_stage: review|authoring|merging`
+  requires an existing work item; for an existing work item, omission preserves
+  the old minimal review recovery. Put an explicit stage on the same
+  `update-responsibility` operation; never add a second `resume` operation for
+  that node. `merging` requires a Reviewer-pass PR: accept silently
+  syncs the new contract/contract_ref while preserving the review verdict,
+  PR/verification, Store status/phase, and assignments. It dispatches no Agent
+  and neither observes nor requests a merge; the later `dag run` owns that work.
+  Historical contract correction cannot set `resume_stage`.
 - OMAC checks DAG cycles, dependencies, the agent pool, immutable done/merged
   facts, and explicit ownership migration before independent Reviewer review.
 - Reviewer pass returns exit 20 in `confirmation`; it never applies automatically.

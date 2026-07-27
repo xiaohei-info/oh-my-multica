@@ -176,6 +176,22 @@ def test_recovery_guide_explains_running_dag_amendment() -> None:
         "definition digest", "ownership migration", "--resume-issue-id",
     ]:
         assert item in chinese, f"recovery guide missing amendment rule: {item}"
+    for content in (chinese, english):
+        assert "resume_stage: review|authoring|merging" in content
+        assert "definition-only" in content
+    assert "都要求已有 work item" in chinese
+    assert "requires an existing work item" in english
+
+
+def test_orchestrator_recovery_instructions_match_resume_stage_rules() -> None:
+    chinese = load_role_topic("orchestrator")
+    english = load_role_topic("orchestrator", language="en")
+
+    for content in (chinese, english):
+        assert "resume_stage: review|authoring|merging" in content
+        assert "definition only" in content or "definition-only" in content
+    assert "都要求已有 work item" in chinese
+    assert "requires an existing work item" in english
 
 
 def test_worker_role_has_tdd_and_evidence() -> None:
