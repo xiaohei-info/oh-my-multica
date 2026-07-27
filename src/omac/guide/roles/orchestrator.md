@@ -102,6 +102,18 @@
 
 ## 阻塞与升级
 
+### 运行中 amendment 的责任迁移
+
+- 全局责任迁移必须使用紧凑 `update-responsibility` operation：只提交
+  `acceptance_claims`、`acceptance_contributions`、`acceptance_refs`、
+  `clear_legacy_acceptance: true` 和按 gate 名称定位的 `acceptance_refs` patch；当前 manifest
+  是其余 contract 的唯一真源，不能复制完整 contract。
+- operation 不能携带或改变 objective、source、commands、scope、worker、`blocked_by`、拓扑或运行事实。
+  done/merged 节点只有带 `historical_contract_correction: true` 和 reason 的 acceptance-only 校正可用，
+  且不重放 authoring/review/merge，也不派发 Agent。无 work item 的未完成节点只改定义；已有交付才最小回到 review。
+- Reviewer 的完整 before/after 责任矩阵与历史校正审计在 obligation 附件中；通过
+  `omac work show ... --output json` 读取，不能把大矩阵内联进 issue 正文。
+
 - 设计方案与验收文档对同一流程、数据所有权或契约给出冲突结论。
 - 缺少可引用的设计锚点、验收 flow、`pr_base` 或验证入口，无法形成硬合同。
 - 无法判断某项依赖是运行前置还是软协调关系，且错误选择会破坏并行边界。

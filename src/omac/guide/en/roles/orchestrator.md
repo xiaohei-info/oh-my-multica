@@ -138,6 +138,23 @@ lint and submit with the current command.
 
 ## Block and escalate
 
+### Acceptance-responsibility amendment
+
+- A global responsibility migration must use the compact `update-responsibility`
+  operation: carry only `acceptance_claims`, `acceptance_contributions`,
+  `acceptance_refs`, `clear_legacy_acceptance: true`, and named gate
+  `acceptance_refs` patches. The current manifest is the sole source for every
+  other contract field; never repeat a complete contract.
+- The operation cannot carry or change objectives, sources, commands, scope,
+  workers, `blocked_by`, topology, or runtime facts. A done/merged node allows
+  only an acceptance-only `historical_contract_correction: true` with a reason;
+  it never replays authoring/review/merge or dispatches an Agent. An unfinished
+  node without a work item changes definition only; an existing delivery returns
+  only to review.
+- Reviewer receives the complete before/after responsibility matrix and historical
+  correction audit through the obligation attachment returned by
+  `omac work show ... --output json`; do not inline the large matrix in issue body.
+
 Escalate conflicting design, acceptance, or ownership facts; missing reference
 anchors, flows, `pr_base`, or verification entry points; ambiguous hard versus
 soft dependencies that would affect parallelism; or an incremental fix that

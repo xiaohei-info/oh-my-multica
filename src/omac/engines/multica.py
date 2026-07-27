@@ -26,6 +26,7 @@ from ..core.taskmeta import (
     DELIVERABLE_REF_KEY, KIND_KEY, MERGE_BOUNCE_KEY, PHASE_KEY,
     MACHINE_FEEDBACK_REF_KEY, PROJECT_RULES_KEY, PROJECT_RULES_REF_KEY, REVIEW_BOUNCE_KEY,
     REVIEW_CONTINUATION_KEY, REVIEW_LEDGER_REF_KEY, REVIEW_OBLIGATIONS_KEY,
+    REVIEW_OBLIGATIONS_REF_KEY,
     REVIEW_REPORT_REF_KEY,
     REVIEW_SUBJECT_DIGEST_KEY,
     SOURCE_REFS_KEY, TaskKind, TaskPhase, VERIFICATION_REF_KEY, WORKER_BOUNCE_KEY,
@@ -341,6 +342,7 @@ class MulticaStore(WorkItemStore):
             "project-rules": ui("Project rules file", "项目级开发规范文件"),
             "verification": ui("Verification evidence file", "验证证据文件"),
             "review-report": ui("Review report file", "评审报告文件"),
+            "review-obligations": ui("Review obligations file", "评审义务文件"),
             "machine-feedback": ui("Machine feedback file", "机器反馈文件"),
         }.get(key, ui("Handoff file", "交接文件"))
         ref_key = {
@@ -349,6 +351,7 @@ class MulticaStore(WorkItemStore):
             "project-rules": PROJECT_RULES_REF_KEY,
             "verification": VERIFICATION_REF_KEY,
             "review-report": REVIEW_REPORT_REF_KEY,
+            "review-obligations": REVIEW_OBLIGATIONS_REF_KEY,
             "machine-feedback": MACHINE_FEEDBACK_REF_KEY,
         }.get(key, f"{key}_ref")
         return ui(
@@ -452,11 +455,32 @@ class MulticaStore(WorkItemStore):
         verification_ref = self._json_metadata(metadata, VERIFICATION_REF_KEY)
         review_report_ref = self._json_metadata(metadata, REVIEW_REPORT_REF_KEY)
         review_ledger_ref = self._json_metadata(metadata, REVIEW_LEDGER_REF_KEY)
+        review_obligations_ref = self._json_metadata(
+            metadata, REVIEW_OBLIGATIONS_REF_KEY)
         review_continuation = self._json_metadata(
             metadata, REVIEW_CONTINUATION_KEY)
         machine_feedback_ref = self._json_metadata(
             metadata, MACHINE_FEEDBACK_REF_KEY)
-        review_obligations = self._json_metadata(metadata, REVIEW_OBLIGATIONS_KEY)
+        review_obligations = None
+        if isinstance(review_obligations_ref, dict):
+            obligations_text = self._load_payload_comment(
+                issue_data["id"], "review-obligations", review_obligations_ref)
+            try:
+                review_obligations = yaml.safe_load(obligations_text)
+            except yaml.YAMLError:
+                review_obligations = None
+            if not isinstance(review_obligations, list):
+                raise PlatformError(ui(
+                    "Could not load the review obligations attachment referenced by "
+                    f"work item {issue_data['id']}. Restore a valid YAML/JSON "
+                    "review obligations list, then rerun "
+                    f"`omac work show {issue_data['id']} --output json`.",
+                    "无法读取或解析工作单元 "
+                    f"{issue_data['id']} 引用的 review obligations 附件。请恢复合法的 "
+                    "YAML/JSON obligations 列表，然后重新执行 "
+                    f"`omac work show {issue_data['id']} --output json`。"))
+        if review_obligations is None:
+            review_obligations = self._json_metadata(metadata, REVIEW_OBLIGATIONS_KEY)
         contract_ref = self._json_metadata(metadata, CONTRACT_REF_KEY)
         source_refs = self._json_metadata(metadata, SOURCE_REFS_KEY)
         verification = None
@@ -552,6 +576,9 @@ class MulticaStore(WorkItemStore):
                 metadata, REVIEW_SUBJECT_DIGEST_KEY),
             review_obligations=(
                 review_obligations if isinstance(review_obligations, list) else []),
+            review_obligations_ref=(
+                review_obligations_ref
+                if isinstance(review_obligations_ref, dict) else None),
             review_ledger=review_ledger,
             review_ledger_ref=(
                 review_ledger_ref if isinstance(review_ledger_ref, dict) else None),
@@ -888,8 +915,11 @@ class MulticaStore(WorkItemStore):
                 item_id, "review-report", review_report_source, ".yaml")
             self._set_metadata(item_id, REVIEW_REPORT_REF_KEY, ref)
         if review_obligations is not None:
-            self._set_metadata(
-                item_id, REVIEW_OBLIGATIONS_KEY, review_obligations)
+            source = yaml.safe_dump(
+                review_obligations, allow_unicode=True, sort_keys=False)
+            ref = self._publish_payload_comment(
+                item_id, "review-obligations", source, ".yaml")
+            self._set_metadata(item_id, REVIEW_OBLIGATIONS_REF_KEY, ref)
         if review_ledger is not None and review_ledger_source is None:
             review_ledger_source = json.dumps(
                 review_ledger, ensure_ascii=False, indent=2)
