@@ -38,7 +38,7 @@ from omac.core.review_convergence import REVIEW_PROTOCOL_VERSION, open_blockers
 from omac.core.taskmeta import TaskPhase
 from omac.engines.mock import MockRuntime, MockStore
 from omac.engines.models import EngineConfig, WorkItem, WorkItemStatus
-from omac.errors import PlatformError
+from omac.errors import AuthError, PlatformError
 from omac.pipeline.delivery import run_merge_delivery
 from omac.pipeline import loop
 
@@ -1441,6 +1441,65 @@ class TestMergeClosureRegression:
 
         assert result.state == "running"
         assert manifest.nodes["a"].status == "merging"
+        assert manifest.nodes["a"].merge_request_state == "requested"
+        assert store.get_work_item(item.id).bounces.merge == 0
+        assert requests == []
+
+    def test_auth_error_during_reconcile_blocks_and_preserves_merge_recovery_facts(
+        self, tmp_path,
+    ):
+        """凭证错误不是暂态 UNKNOWN：必须 fail closed，且不得重放 merge。"""
+        store = _store()
+        runtime = _runtime(store)
+        item = _review_passed_item(store)
+        manifest = Manifest(meta={}, nodes={
+            "a": Node(id="a", worker="alice", reviewer="bob",
+                      work_item_id=item.id, status="done",
+                      merge_request_state="requested"),
+        })
+        path = _saved_manifest(tmp_path, manifest)
+        store.observe_pull_request = lambda pr_url: (_ for _ in ()).throw(
+            AuthError("GitHub token is expired"))
+        requests = []
+        store.request_pull_request_merge = lambda *args: requests.append(args)
+
+        assert loop.reconcile(store, manifest, path) is True
+        result = loop.tick(
+            store, runtime, manifest, path,
+            retry_limits=dict(DEFAULT_RETRY), config={})
+
+        persisted = load_manifest(path).nodes["a"]
+        comments = "\n".join(store.get_comments(item.id))
+        assert result.state == "needs_decision"
+        assert persisted.status == "blocked"
+        assert persisted.merge_request_state == "requested"
+        assert store.get_work_item(item.id).status is WorkItemStatus.BLOCKED
+        assert store.get_work_item(item.id).bounces.merge == 0
+        assert requests == []
+        assert "authentication/authorization" in comments
+        assert f"omac node retry {path} a" in comments
+
+    def test_auth_error_while_merging_blocks_without_reissuing_merge(self, tmp_path):
+        store = _store()
+        runtime = _runtime(store)
+        item = _review_passed_item(store)
+        manifest = Manifest(meta={}, nodes={
+            "a": Node(id="a", worker="alice", reviewer="bob",
+                      work_item_id=item.id, status="merging",
+                      merge_request_state="requested"),
+        })
+        path = _saved_manifest(tmp_path, manifest)
+        store.observe_pull_request = lambda pr_url: (_ for _ in ()).throw(
+            AuthError("GitHub token is expired"))
+        requests = []
+        store.request_pull_request_merge = lambda *args: requests.append(args)
+
+        result = loop.tick(
+            store, runtime, manifest, path,
+            retry_limits=dict(DEFAULT_RETRY), config={})
+
+        assert result.state == "needs_decision"
+        assert manifest.nodes["a"].status == "blocked"
         assert manifest.nodes["a"].merge_request_state == "requested"
         assert store.get_work_item(item.id).bounces.merge == 0
         assert requests == []

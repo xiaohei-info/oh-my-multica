@@ -18,7 +18,7 @@ from ..core.review_convergence import (
 from ..core.gitsync import commit_manifest
 from ..core.manifest import Manifest, save_manifest, set_node
 from ..pipeline.delivery import (
-    advance_delivery, block_unproven_merge_request,
+    advance_delivery, block_merge_auth_error, block_unproven_merge_request,
     merge_request_state_is_valid, run_merge_delivery,
 )
 from ..engines.models import PullRequestState, WorkItemStatus
@@ -257,7 +257,12 @@ def reconcile(store: WorkItemStore, manifest: Manifest, manifest_path: str) -> b
                     continue
                 try:
                     observation = store.observe_pull_request(pr_url)
-                except (PlatformError, AuthError):
+                except AuthError:
+                    block_merge_auth_error(
+                        node, item, store, manifest, manifest_path, key)
+                    changed = True
+                    continue
+                except PlatformError:
                     store.update_status(node.work_item_id, WorkItemStatus.IN_REVIEW)
                     set_node(manifest, key, status="merging")
                     changed = True
