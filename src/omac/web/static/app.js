@@ -22,9 +22,10 @@ const COPY = {
     dag_loading:"Loading DAG from manifest…", dag_load_failed:"Could not load the manifest DAG.",
     progress:"Progress", refresh_failed:"Refresh failed", no_selected:"No node is selected.",
     none:"None", node:"Node", status:"Status", dependencies:"Dependencies",
-    loading_evidence:"Loading contract and evidence…", evidence_chain:"Evidence",
+    loading_evidence:"Loading contract and evidence…", loading_node_evidence:"Loading {node} Multica contract and evidence…", evidence_chain:"Evidence",
     no_evidence:"No evidence has been collected for this node yet.", bounce_count:"Bounce count",
-    copy_retry:"Copy retry", copy_abandon:"Copy abandon", detail_failed:"Failed to load node details",
+    copy_retry:"Copy retry", copy_abandon:"Copy abandon", detail_failed:"Failed to load node details", detail_retry:"Retry",
+    detail_node_failed:"Could not load {node} Multica contract and evidence: {error}",
     reason:"Reason", blocked_downstream:"Blocked downstream", copy:"Copy",
     copied:"Copied to clipboard", copy_failed:"Copy failed", loading_static:"Loading configuration and acceptance checks…",
     config_summary:"config.yaml summary", acceptance_checks:"Acceptance checks",
@@ -50,9 +51,10 @@ const COPY = {
     dag_loading:"正在从 manifest 加载 DAG…", dag_load_failed:"无法加载 manifest DAG。",
     progress:"进度", refresh_failed:"刷新失败", no_selected:"当前无选中节点。",
     none:"无", node:"节点", status:"状态", dependencies:"依赖",
-    loading_evidence:"正在加载 contract 和证据…", evidence_chain:"证据链",
+    loading_evidence:"正在加载 contract 和证据…", loading_node_evidence:"正在加载 {node} 的 Multica contract 和证据…", evidence_chain:"证据链",
     no_evidence:"该节点暂无已收集证据。", bounce_count:"回退计数",
-    copy_retry:"复制 retry", copy_abandon:"复制 abandon", detail_failed:"节点详情加载失败",
+    copy_retry:"复制 retry", copy_abandon:"复制 abandon", detail_failed:"节点详情加载失败", detail_retry:"重试",
+    detail_node_failed:"无法加载 {node} 的 Multica contract 和证据：{error}",
     reason:"原因", blocked_downstream:"受阻下游", copy:"复制",
     copied:"已复制到剪贴板", copy_failed:"复制失败", loading_static:"正在加载配置和验收清单…",
     config_summary:"config.yaml 摘要", acceptance_checks:"验收清单",
@@ -65,6 +67,10 @@ const COPY = {
   }
 };
 function copy(key){ return (COPY[state.language]||COPY.en)[key] || COPY.en[key] || key; }
+function formatCopy(key, values){
+  return Object.entries(values || {}).reduce(
+    (text, [name, value]) => text.split("{"+name+"}").join(String(value)), copy(key));
+}
 function stateLabel(value){
   const key = "state_"+(value || "unknown");
   const label = copy(key);
@@ -97,6 +103,8 @@ const state = {
   viewport: {x:0, y:0, scale:1, initialized:false, userAdjusted:false},
   graphBounds: null,
   detailGeneration: 0,
+  detailRequest: null,
+  detailPhase: "idle",
   pollTimer: null,
   statusRequest: null,
   language: "en",
@@ -112,8 +120,8 @@ function toast(msg, isErr){
   clearTimeout(toast._t);
   toast._t = setTimeout(() => t.classList.remove("is-visible"), 2500);
 }
-async function api(path){
-  const r = await fetch(path);
+async function api(path, options){
+  const r = await fetch(path, options);
   if(!r.ok){
     let detail = r.status;
     try { detail = (await r.json()).detail || (await r.json()).error || detail; } catch(e){}
@@ -143,9 +151,14 @@ window.matchMedia("(prefers-color-scheme:dark)").addEventListener("change", ()=>
 
 /* ---------- manifest 选择 ---------- */
 function clearNodeDetail(){
+  if(state.detailRequest) state.detailRequest.abort();
+  state.detailRequest = null;
+  state.detailPhase = "idle";
   state.detailGeneration += 1;
   $("detail-empty").classList.remove("is-hidden");
   $("detail-content").innerHTML = "";
+  $("detail-content").setAttribute("aria-busy", "false");
+  setDetailFeedback("idle");
 }
 
 function clearRenderedStatus(){
@@ -403,6 +416,10 @@ function renderDAG(s){
     const styleName = presentation.safe_fallback ? "unknown" : n.status;
     const g=document.createElementNS(ns,"g");
     g.setAttribute("class","node state-"+styleName+(state.selected===n.key?" selected":""));
+    g.setAttribute("role", "button");
+    g.setAttribute("tabindex", "0");
+    g.setAttribute("aria-label", n.key+", "+stateLabel(n.status));
+    g.setAttribute("aria-pressed", state.selected===n.key ? "true" : "false");
     g.dataset.key=n.key;
     const rect=document.createElementNS(ns,"rect");
     rect.setAttribute("x",p.x); rect.setAttribute("y",p.y);
@@ -423,24 +440,31 @@ function renderDAG(s){
     t2.setAttribute("class","ns"); t2.textContent=stateLabel(n.status);
     g.appendChild(t2);
     g.addEventListener("click", ()=> selectNode(n.key));
+    g.addEventListener("keydown", event=>{
+      if(event.key!=="Enter" && event.key!==" ") return;
+      event.preventDefault(); selectNode(n.key);
+    });
     nodesG.appendChild(g);
   });
 
   projection.aggregates.forEach(aggregate => {
-    const token=aggregate.source===null ? OMACDag.ROOT_AGGREGATE : aggregate.source;
-    const source=aggregate.source===null ? null : L.pos[aggregate.source];
+    const token=aggregate.token;
     const aggregatePosition=L.aggregatePositions[token];
     if(!aggregatePosition) return;
     const x=aggregatePosition.x, y=aggregatePosition.y;
-    if(source){
+    aggregate.sources.forEach(sourceKey => {
+      const source=L.pos[sourceKey];
       const edge=document.createElementNS(ns,"path");
       edge.setAttribute("d","M "+(source.x+L.nodeWidth)+" "+(source.y+L.nodeHeight/2)+" L "+x+" "+(y+L.aggregateHeight/2));
       edge.setAttribute("class","aggregate-edge");
       edge.setAttribute("marker-end","url(#dag-arrow)");
+      edge.dataset.from=sourceKey; edge.dataset.to=token;
       edgesG.appendChild(edge);
-    }
+    });
     const g=document.createElementNS(ns,"g");
-    g.setAttribute("class","aggregate"); g.dataset.source=token;
+    g.setAttribute("class","aggregate"); g.dataset.token=token;
+    g.setAttribute("role", "button"); g.setAttribute("tabindex", "0");
+    g.setAttribute("aria-label", "+ "+aggregate.hidden_count+" "+copy("hidden"));
     const rect=document.createElementNS(ns,"rect");
     rect.setAttribute("x",x); rect.setAttribute("y",y); rect.setAttribute("width",L.aggregateWidth); rect.setAttribute("height",L.aggregateHeight); rect.setAttribute("rx",6);
     g.appendChild(rect);
@@ -453,9 +477,14 @@ function renderDAG(s){
     const detail=document.createElementNS(ns,"text");
     detail.setAttribute("x",x+8); detail.setAttribute("y",y+30); detail.textContent=summary;
     g.appendChild(detail);
-    g.addEventListener("click", ()=>{
+    const expandAggregate=()=>{
       state.expanded.push(token);
       state.focus="default"; redrawDAG();
+    };
+    g.addEventListener("click", expandAggregate);
+    g.addEventListener("keydown", event=>{
+      if(event.key!=="Enter" && event.key!==" ") return;
+      event.preventDefault(); expandAggregate();
     });
     nodesG.appendChild(g);
   });
@@ -536,7 +565,16 @@ dagCanvas.addEventListener("pointercancel", endPan);
 function clearSelection(){
   state.selected = null;
   clearNodeDetail();
+  syncNodeSelection();
   dimForSelected();
+}
+
+function syncNodeSelection(){
+  $("dag-canvas").querySelectorAll(".node").forEach(g=>{
+    const selected = g.dataset.key===state.selected;
+    g.classList.toggle("selected", selected);
+    g.setAttribute("aria-pressed", selected ? "true" : "false");
+  });
 }
 
 function syncSelectedProjection(projection){
@@ -552,24 +590,50 @@ function syncSelectedProjection(projection){
 /* ---------- 节点详情 ---------- */
 function selectNode(key){
   if(state.selected === key){
-    clearSelection();
+    if(state.detailPhase === "error") renderDetail(key);
     return;
   }
   state.selected = key;
-  $("dag-canvas").querySelectorAll(".node").forEach(g=>{
-    g.classList.toggle("selected", g.dataset.key===state.selected);
-  });
+  syncNodeSelection();
   dimForSelected();
   renderDetail(key);
+}
+
+function setDetailFeedback(phase, key, error){
+  const wrap = $("dag-detail-status");
+  const retry = $("dag-detail-retry");
+  state.detailPhase = phase;
+  wrap.classList.toggle("is-hidden", phase === "idle" || phase === "success");
+  wrap.classList.toggle("err", phase === "error");
+  retry.classList.toggle("is-hidden", phase !== "error");
+  if(phase === "loading") {
+    $("dag-detail-status-text").textContent = formatCopy("loading_node_evidence", {node:key});
+  } else if(phase === "error") {
+    $("dag-detail-status-text").textContent = formatCopy(
+      "detail_node_failed", {node:key, error:error || copy("detail_failed")});
+  } else {
+    $("dag-detail-status-text").textContent = "";
+  }
 }
 async function renderDetail(key){
   // 立即用 status 中的节点信息绘制基本卡, 再通过 /api/node/{key} 拿合约与证据
   const manifest = state.current;
   const detailGeneration = ++state.detailGeneration;
+  if(state.detailRequest) state.detailRequest.abort();
+  const request = new AbortController();
+  state.detailRequest = request;
   const n = state.nodes[key];
   const dc = $("detail-content");
   $("detail-empty").classList.add("is-hidden");
-  if(!n){ dc.innerHTML='<p class="empty">'+copy("no_selected")+'</p>'; return; }
+  if(!n){
+    state.detailRequest = null;
+    dc.setAttribute("aria-busy", "false");
+    dc.innerHTML='<p class="empty">'+copy("no_selected")+'</p>';
+    setDetailFeedback("idle");
+    return;
+  }
+  dc.setAttribute("aria-busy", "true");
+  setDetailFeedback("loading", key);
   const sub = (arr)=> (Array.isArray(arr)&&arr.length)?"<ul class='acceptance'>"+arr.map(x=>"<li>"+esc(x)+"</li>")+"</ul>" : '<span class="empty">'+copy("none")+'</span>';
   dc.innerHTML =
     '<h3 class="region-title">'+copy("node")+' '+esc(key)+'</h3>'+
@@ -581,9 +645,12 @@ async function renderDetail(key){
       '<dt>pr_url</dt><dd>'+(n.pr_url?'<a class="ext" href="'+esc(n.pr_url)+'" target="_blank" rel="noopener">'+esc(n.pr_url)+'</a>':"—")+'</dd>'+
       '<dt>'+copy("dependencies")+'</dt><dd>'+((n.blocked_by||[]).join(", ")||copy("none"))+'</dd>'+
     '</dl>'+
-    '<p class="empty" id="detail-extra">'+copy("loading_evidence")+'</p>';
+    '<div class="detail-loading" id="detail-extra" role="status" aria-live="polite">'+
+      '<span class="detail-spinner" aria-hidden="true"></span>'+
+      '<span class="detail-skeleton"><span>'+copy("loading_evidence")+'</span><i></i><i></i></span>'+
+    '</div>';
   try{
-    const full = await api("/api/node/"+encodeURIComponent(key)+"?manifest="+encodeURIComponent(manifest));
+    const full = await api("/api/node/"+encodeURIComponent(key)+"?manifest="+encodeURIComponent(manifest), {signal:request.signal});
     if(state.detailGeneration !== detailGeneration || state.selected !== key || state.current !== manifest) return;
     const c = full.contract||{};
     const ev = full.evidence;
@@ -610,11 +677,21 @@ async function renderDetail(key){
       '<div class="copy-row copy-row-spaced"><code id="retry-cmd">omac node retry '+esc(state.current)+' '+esc(key)+'</code><button data-copy="retry-cmd">'+copy("copy_retry")+'</button></div>'+
       '<div class="copy-row"><code id="abandon-cmd">omac node abandon '+esc(state.current)+' '+esc(key)+'</code><button data-copy="abandon-cmd">'+copy("copy_abandon")+'</button></div>';
     wireCopy();
+    dc.setAttribute("aria-busy", "false");
+    state.detailRequest = null;
+    setDetailFeedback("success", key);
   }catch(e){
     if(state.detailGeneration !== detailGeneration || state.selected !== key || state.current !== manifest) return;
-    $("detail-extra").outerHTML = '<p class="empty">'+copy("detail_failed")+': '+esc(e.message)+'</p>';
+    if(request.signal.aborted) return;
+    dc.setAttribute("aria-busy", "false");
+    state.detailRequest = null;
+    setDetailFeedback("error", key, e.message);
+    $("detail-extra").outerHTML = '<p class="detail-error">'+copy("detail_failed")+': '+esc(e.message)+'</p>';
   }
 }
+$("dag-detail-retry").addEventListener("click", ()=>{
+  if(state.selected) renderDetail(state.selected);
+});
 
 /* ---------- 异常面板 ---------- */
 function renderAnomaly(s){

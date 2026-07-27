@@ -158,7 +158,10 @@ class Element {
     if(name === "class") this.classList.set(text);
     if(name.startsWith("data-")) this.dataset[name.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = text;
   }
+  removeAttribute(name){ delete this.attributes[name]; }
   addEventListener(name, handler){ (this.listeners[name] = this.listeners[name] || []).push(handler); }
+  click(){ (this.listeners.click || []).forEach(handler => handler({target:this, preventDefault:()=>{}})); }
+  dispatchEvent(event){ (this.listeners[event.type] || []).forEach(handler => handler(event)); }
   querySelectorAll(selector){ return this.ownerDocument.querySelectorAllWithin(this, selector); }
 }
 
@@ -188,6 +191,7 @@ const document = new Document();
 [
   "theme-select", "toast", "manifest-selector", "collapse-btn", "expand-all-btn",
   "focus-active-btn", "focus-anomaly-btn", "fit-btn", "dag-canvas", "dag-legend",
+  "dag-detail-status", "dag-detail-status-text", "dag-detail-retry",
   "detail-empty", "detail-content", "progress-badge", "poll-ts", "tick-state",
   "anomaly-empty", "anomaly-content", "reload-static", "tab-static", "static-content",
 ].forEach(id => document.make(id));
@@ -197,6 +201,10 @@ const context = {
   navigator:{clipboard:{writeText:async () => {}}}, setInterval:() => 1, clearInterval:() => {},
   setTimeout:() => 1, clearTimeout:() => {}, getComputedStyle:() => ({getPropertyValue:() => "#888"}),
   matchMedia:() => ({matches:false, addEventListener:() => {}}),
+  AbortController:class {
+    constructor(){ this.signal = {aborted:false}; }
+    abort(){ this.signal.aborted = true; }
+  },
 };
 context.window = context; context.globalThis = context;
 const jsonResponse = value => ({ok:true, headers:{get:name => name === "content-type" ? "application/json" : null}, json:async () => value, text:async () => JSON.stringify(value)});
@@ -211,12 +219,12 @@ let fetchHandler = path => {
   if(path === "/api/manifests") return jsonResponse([]);
   throw new Error("unexpected request: "+path);
 };
-context.fetch = path => fetchHandler(path);
+context.fetch = (path, options) => fetchHandler(path, options || {});
 vm.runInNewContext(fs.readFileSync(process.argv[2], "utf8"), context, {filename:process.argv[2]});
 let source = fs.readFileSync(process.argv[1], "utf8");
 const marker = "init();\n})();";
 if(!source.includes(marker)) throw new Error("app bootstrap marker missing");
-source = source.replace(marker, "globalThis.__omacApp = {state, selectManifest, selectNode, fetchStatus, setViewport:typeof setViewport==='function'?setViewport:null};\ninit();\n})();");
+source = source.replace(marker, "globalThis.__omacApp = {state, selectManifest, selectNode, fetchStatus, renderDetail, setViewport:typeof setViewport==='function'?setViewport:null};\ninit();\n})();");
 vm.runInNewContext(source, context, {filename:process.argv[1]});
 const flush = async (rounds = 1) => { for(let index = 0; index < rounds; index++) await Promise.resolve(); };
 (async () => {
@@ -503,6 +511,18 @@ def test_spa_wires_collapsible_dag_controls_to_the_pure_projection():
     assert ".node.state-failed" in css
 
 
+def test_node_detail_loading_feedback_has_live_regions_and_busy_target():
+    html = _read_index()
+
+    assert id_present(html, "dag-detail-status")
+    assert re.search(
+        r'id="dag-detail-status"[^>]*role="status"[^>]*aria-live="polite"',
+        html,
+    )
+    assert re.search(r'id="detail-content"[^>]*aria-live="polite"', html)
+    assert id_present(html, "dag-detail-retry")
+
+
 def test_aggregate_hidden_label_has_english_and_chinese_translations():
     """聚合控件不能把 hidden 固定为英文，语言切换必须覆盖该标签。"""
     js = _read_asset("app.js")
@@ -547,14 +567,16 @@ def test_dag_projection_defaults_to_three_layers_and_expands_one_boundary_at_a_t
     initial = _project_dag(nodes)
     assert [node["key"] for node in initial["nodes"]] == ["one", "two", "three"]
     assert initial["aggregates"] == [{
-        "source": "three", "hidden_count": 1,
+        "token": '@deps:["three"]', "sources": ["three"],
+        "hidden_keys": ["four"], "hidden_count": 1,
         "status_summary": [{"status": "todo", "count": 1}],
     }]
 
-    expanded = _project_dag(nodes, {"expanded": ["three"]})
+    expanded = _project_dag(nodes, {"expanded": ['@deps:["three"]']})
     assert [node["key"] for node in expanded["nodes"]] == ["one", "two", "three", "four"]
     assert expanded["aggregates"] == [{
-        "source": "four", "hidden_count": 1,
+        "token": '@deps:["four"]', "sources": ["four"],
+        "hidden_keys": ["five"], "hidden_count": 1,
         "status_summary": [{"status": "todo", "count": 1}],
     }]
     assert _dag_module_value("context.OMACDag.collapseBranches(['three'])") == []
@@ -570,14 +592,15 @@ def test_dag_projection_expands_at_most_eight_nodes_per_click():
         for index in range(20)
     ]
 
-    first = _project_dag(nodes, {"expanded": ["boundary"]})
-    second = _project_dag(nodes, {"expanded": ["boundary", "boundary"]})
+    token = '@deps:["boundary"]'
+    first = _project_dag(nodes, {"expanded": [token]})
+    second = _project_dag(nodes, {"expanded": [token, token]})
 
     assert len(first["nodes"]) == 3 + 8
     assert first["budget"]["truncated"] is False
-    assert next(item for item in first["aggregates"] if item["source"] == "boundary")["hidden_count"] == 12
+    assert next(item for item in first["aggregates"] if item["sources"] == ["boundary"])["hidden_count"] == 12
     assert len(second["nodes"]) == 3 + 16
-    assert next(item for item in second["aggregates"] if item["source"] == "boundary")["hidden_count"] == 4
+    assert next(item for item in second["aggregates"] if item["sources"] == ["boundary"])["hidden_count"] == 4
     assert _dag_module_value("context.OMACDag.EXPAND_BATCH") == 8
 
 
@@ -598,7 +621,8 @@ def test_dag_projection_enforces_visible_node_budget_and_aggregates_hidden_roots
         "truncated": True,
     }
     assert projection["aggregates"] == [{
-        "source": None,
+        "token": "@roots", "sources": [],
+        "hidden_keys": [f"root-{index:03d}" for index in range(60, 70)],
         "hidden_count": 10,
         "status_summary": [{"status": "todo", "count": 10}],
     }]
@@ -620,8 +644,8 @@ def test_dag_projection_enforces_edge_budget_for_dense_dags():
     assert len(projection["nodes"]) < len(nodes)
 
 
-def test_dag_projection_aggregate_describes_its_complete_reveal_closure():
-    """聚合摘要必须包含点击时补入的跨分支依赖祖先，且不预报更深后代。"""
+def test_dag_projection_reveals_cross_branch_merge_without_false_aggregate_edges():
+    """跨分支父节点先逐层展开，merge 只在全部真实父节点可见后出现。"""
     nodes = [
         {"key": "root", "status": "todo"},
         {"key": "left", "status": "todo", "blocked_by": ["root"]},
@@ -637,20 +661,26 @@ def test_dag_projection_aggregate_describes_its_complete_reveal_closure():
     ]
 
     initial = _project_dag(nodes)
-    aggregate = next(item for item in initial["aggregates"] if item["source"] == "boundary")
-    expanded = _project_dag(nodes, {"expanded": ["boundary"]})
+    other_parent = next(
+        item for item in initial["aggregates"]
+        if item["sources"] == ["other-2"])
+    first = _project_dag(nodes, {"expanded": [other_parent["token"]]})
+    merge = next(
+        item for item in first["aggregates"]
+        if item["sources"] == ["boundary", "other-parent"])
+    expanded = _project_dag(nodes, {
+        "expanded": [other_parent["token"], merge["token"]],
+    })
 
-    assert aggregate == {
-        "source": "boundary",
-        "hidden_count": 2,
-        "status_summary": [
-            {"status": "abandoned", "count": 1},
-            {"status": "done", "count": 1},
-        ],
-    }
+    assert other_parent["hidden_keys"] == ["other-parent"]
+    assert merge["hidden_keys"] == ["revealed-child"]
     assert {node["key"] for node in expanded["nodes"]} - {
         node["key"] for node in initial["nodes"]
     } == {"other-parent", "revealed-child"}
+    assert {tuple(edge.values()) for edge in expanded["edges"]} >= {
+        ("boundary", "revealed-child"),
+        ("other-parent", "revealed-child"),
+    }
 
 
 def test_dag_projection_fails_closed_for_unknown_dependencies_and_cycles():
@@ -850,14 +880,64 @@ async ({app, elements, setFetchHandler, jsonResponse}) => {
     assert result == {"current": None, "svg": 0, "status": None}
 
 
-def test_newest_detail_request_wins_after_same_node_is_deselected_and_reselected():
-    """同节点重选后，先发出的详情响应不得覆盖最后一次选择的 DOM。"""
+def test_node_click_shows_visible_loading_until_detail_resolves():
+    result = _run_app_dom_scenario(r"""
+async ({app, elements, setFetchHandler, jsonResponse, deferred, flush}) => {
+  const pending = deferred();
+  elements["dag-detail-status"].classList.add("is-hidden");
+  elements["dag-detail-retry"].classList.add("is-hidden");
+  setFetchHandler(path => {
+    if(path.includes("/api/dag/status?manifest=one")) return jsonResponse({
+      nodes:[{key:"task", status:"in_progress", blocked_by:[]}],
+      progress:{done:0, total:1},
+    });
+    if(path.includes("/api/node/task?manifest=one")) return pending.promise;
+    throw new Error("unexpected request: "+path);
+  });
+  await app.selectManifest("one");
+  app.selectNode("task");
+  const node = elements["dag-canvas"].querySelectorAll(".node")[0];
+  const immediate = {
+    selected:node.classList.contains("selected"),
+    statusVisible:!elements["dag-detail-status"].classList.contains("is-hidden"),
+    statusText:elements["dag-detail-status-text"].textContent,
+    busy:elements["detail-content"].attributes["aria-busy"],
+    detail:elements["detail-content"].innerHTML,
+  };
+  pending.resolve(jsonResponse({
+    contract:{objective:"loaded detail"}, evidence:null,
+    rollback_count:0, comments:"",
+  }));
+  await flush(8);
+  return {immediate, settled:{
+    statusVisible:!elements["dag-detail-status"].classList.contains("is-hidden"),
+    busy:elements["detail-content"].attributes["aria-busy"],
+    writes:document.outerHTMLWrites,
+  }};
+}
+""")
+
+    assert result["immediate"]["selected"] is True
+    assert result["immediate"]["statusVisible"] is True
+    assert "task" in result["immediate"]["statusText"]
+    assert "Multica" in result["immediate"]["statusText"]
+    assert result["immediate"]["busy"] == "true"
+    assert "detail-skeleton" in result["immediate"]["detail"]
+    assert result["settled"]["statusVisible"] is False
+    assert result["settled"]["busy"] == "false"
+    assert "loaded detail" in result["settled"]["writes"][-1]
+
+
+def test_node_detail_failure_is_visible_and_retryable():
     result = _run_app_dom_scenario(r"""
 async ({app, elements, setFetchHandler, jsonResponse, deferred, flush}) => {
   const requests = [];
+  elements["dag-detail-status"].classList.add("is-hidden");
+  elements["dag-detail-retry"].classList.add("is-hidden");
   setFetchHandler(path => {
     if(path.includes("/api/dag/status?manifest=one")) return jsonResponse({
-      nodes:[{key:"task", status:"todo", blocked_by:[]}], progress:{done:0, total:1},
+      nodes:[{key:"task", status:"failed", blocked_by:[]}],
+      progress:{done:0, total:1},
     });
     if(path.includes("/api/node/task?manifest=one")) {
       const request = deferred(); requests.push(request); return request.promise;
@@ -866,25 +946,149 @@ async ({app, elements, setFetchHandler, jsonResponse, deferred, flush}) => {
   });
   await app.selectManifest("one");
   app.selectNode("task");
-  await flush(2);
-  app.selectNode("task");
-  app.selectNode("task");
-  await flush(2);
+  requests[0].reject(new Error("Multica attachment timed out"));
+  await flush(8);
+  const failed = {
+    statusVisible:!elements["dag-detail-status"].classList.contains("is-hidden"),
+    statusText:elements["dag-detail-status-text"].textContent,
+    retryVisible:!elements["dag-detail-retry"].classList.contains("is-hidden"),
+    busy:elements["detail-content"].attributes["aria-busy"],
+    writes:document.outerHTMLWrites.slice(),
+  };
+  elements["dag-detail-retry"].click();
   requests[1].resolve(jsonResponse({
-    contract:{objective:"newest detail"}, evidence:null, rollback_count:0, comments:"",
+    contract:{objective:"retry worked"}, evidence:null,
+    rollback_count:0, comments:"",
   }));
   await flush(8);
-  requests[0].resolve(jsonResponse({
-    contract:{objective:"stale detail"}, evidence:null, rollback_count:0, comments:"",
-  }));
-  await flush(8);
-  return {selected:app.state.selected, detailWrites:document.outerHTMLWrites};
+  return {failed, settled:{
+    statusVisible:!elements["dag-detail-status"].classList.contains("is-hidden"),
+    retryVisible:!elements["dag-detail-retry"].classList.contains("is-hidden"),
+    writes:document.outerHTMLWrites,
+  }};
 }
 """)
 
-    assert result["selected"] == "task"
-    assert "newest detail" in result["detailWrites"][-1]
-    assert "stale detail" not in result["detailWrites"][-1]
+    assert result["failed"]["statusVisible"] is True
+    assert "task" in result["failed"]["statusText"]
+    assert "Multica attachment timed out" in result["failed"]["statusText"]
+    assert result["failed"]["retryVisible"] is True
+    assert result["failed"]["busy"] == "false"
+    assert "detail-error" in result["failed"]["writes"][-1]
+    assert result["settled"]["statusVisible"] is False
+    assert result["settled"]["retryVisible"] is False
+    assert "retry worked" in result["settled"]["writes"][-1]
+
+
+def test_switching_nodes_aborts_old_detail_request_and_ignores_stale_response():
+    result = _run_app_dom_scenario(r"""
+async ({app, elements, setFetchHandler, jsonResponse, deferred, flush}) => {
+  const requests = {};
+  const signals = {};
+  elements["dag-detail-status"].classList.add("is-hidden");
+  elements["dag-detail-retry"].classList.add("is-hidden");
+  setFetchHandler((path, options) => {
+    if(path.includes("/api/dag/status?manifest=one")) return jsonResponse({
+      nodes:[
+        {key:"first", status:"todo", blocked_by:[]},
+        {key:"second", status:"todo", blocked_by:[]},
+      ], progress:{done:0, total:2},
+    });
+    for(const key of ["first", "second"]){
+      if(path.includes("/api/node/"+key+"?manifest=one")) {
+        requests[key] = deferred(); signals[key] = options.signal;
+        return requests[key].promise;
+      }
+    }
+    throw new Error("unexpected request: "+path);
+  });
+  await app.selectManifest("one");
+  app.selectNode("first");
+  await flush(2);
+  app.selectNode("second");
+  await flush(2);
+  requests.second.resolve(jsonResponse({
+    contract:{objective:"second detail"}, evidence:null,
+    rollback_count:0, comments:"",
+  }));
+  await flush(8);
+  requests.first.resolve(jsonResponse({
+    contract:{objective:"stale first detail"}, evidence:null,
+    rollback_count:0, comments:"",
+  }));
+  await flush(8);
+  return {
+    firstAborted:signals.first && signals.first.aborted,
+    selected:app.state.selected,
+    statusText:elements["dag-detail-status-text"].textContent,
+    writes:document.outerHTMLWrites,
+  };
+}
+""")
+
+    assert result["firstAborted"] is True
+    assert result["selected"] == "second"
+    assert "second detail" in result["writes"][-1]
+    assert "stale first detail" not in result["writes"][-1]
+
+
+def test_repeated_click_on_selected_node_keeps_selection_and_one_request():
+    result = _run_app_dom_scenario(r"""
+async ({app, elements, setFetchHandler, jsonResponse, deferred, flush}) => {
+  let calls = 0;
+  const pending = deferred();
+  elements["dag-detail-status"].classList.add("is-hidden");
+  elements["dag-detail-retry"].classList.add("is-hidden");
+  setFetchHandler(path => {
+    if(path.includes("/api/dag/status?manifest=one")) return jsonResponse({
+      nodes:[{key:"task", status:"todo", blocked_by:[]}],
+      progress:{done:0, total:1},
+    });
+    if(path.includes("/api/node/task?manifest=one")) { calls += 1; return pending.promise; }
+    throw new Error("unexpected request: "+path);
+  });
+  await app.selectManifest("one");
+  app.selectNode("task");
+  app.selectNode("task");
+  await flush(2);
+  pending.resolve(jsonResponse({contract:{}, evidence:null, rollback_count:0, comments:""}));
+  await flush(8);
+  return {calls, selected:app.state.selected};
+}
+""")
+
+    assert result == {"calls": 1, "selected": "task"}
+
+
+def test_dag_nodes_are_keyboard_operable_and_expose_selection_state():
+    result = _run_app_dom_scenario(r"""
+async ({app, elements, setFetchHandler, jsonResponse, flush}) => {
+  setFetchHandler(path => {
+    if(path.includes("/api/dag/status?manifest=one")) return jsonResponse({
+      nodes:[{key:"task", status:"todo", blocked_by:[]}],
+      progress:{done:0, total:1},
+    });
+    if(path.includes("/api/node/task?manifest=one")) return jsonResponse({
+      contract:{}, evidence:null, rollback_count:0, comments:"",
+    });
+    throw new Error("unexpected request: "+path);
+  });
+  await app.selectManifest("one");
+  const node = elements["dag-canvas"].querySelectorAll(".node")[0];
+  node.dispatchEvent({type:"keydown", key:"Enter", preventDefault:()=>{}});
+  await flush(8);
+  return {
+    role:node.attributes.role,
+    tabIndex:node.attributes.tabindex,
+    pressed:node.attributes["aria-pressed"],
+    selected:app.state.selected,
+  };
+}
+""")
+
+    assert result == {
+        "role": "button", "tabIndex": "0", "pressed": "true", "selected": "task",
+    }
 
 
 def test_spacer_layout_is_shared_by_header_toolbar_and_footer():
@@ -896,7 +1100,7 @@ def test_spacer_layout_is_shared_by_header_toolbar_and_footer():
 
 
 def test_dag_projection_manual_expansion_keeps_multi_parent_ancestor_closure():
-    """手动露出一个多父 child 时，所有真实入边的祖先也必须同时露出。"""
+    """多父 child 只能在父节点逐层可见后展开，并保留全部真实入边。"""
     nodes = [
         {"key": "root", "status": "todo"},
         {"key": "left", "status": "todo", "blocked_by": ["root"]},
@@ -910,7 +1114,17 @@ def test_dag_projection_manual_expansion_keeps_multi_parent_ancestor_closure():
         },
     ]
 
-    projection = _project_dag(nodes, {"expanded": ["boundary"]})
+    initial = _project_dag(nodes)
+    other_parent = next(
+        item for item in initial["aggregates"]
+        if item["sources"] == ["other-2"])
+    first = _project_dag(nodes, {"expanded": [other_parent["token"]]})
+    child = next(
+        item for item in first["aggregates"]
+        if item["sources"] == ["boundary", "other-parent"])
+    projection = _project_dag(nodes, {
+        "expanded": [other_parent["token"], child["token"]],
+    })
 
     assert [node["key"] for node in projection["nodes"]] == [
         "root", "left", "other-1", "boundary", "other-2", "other-parent",
@@ -943,8 +1157,8 @@ def test_dag_layout_places_aggregates_in_separate_non_overlapping_slots():
     layout = _layout_dag(nodes)
     aggregate_positions = layout["aggregatePositions"]
     important = layout["pos"]["important"]
-    boundary = aggregate_positions["boundary"]
-    right_boundary = aggregate_positions["right-boundary"]
+    boundary = aggregate_positions['@deps:["boundary"]']
+    right_boundary = aggregate_positions['@deps:["right-boundary"]']
 
     assert abs(boundary["y"] - layout["pos"]["boundary"]["y"]) <= layout["rowH"] * 2
     assert boundary != right_boundary
@@ -1018,7 +1232,8 @@ def test_dag_projection_does_not_auto_expand_deep_blocked_cascade():
 
     assert [node["key"] for node in projection["nodes"]] == ["root", "one", "two"]
     assert projection["aggregates"] == [{
-        "source": "two", "hidden_count": 1,
+        "token": '@deps:["two"]', "sources": ["two"],
+        "hidden_keys": ["three"], "hidden_count": 1,
         "status_summary": [{"status": "blocked", "count": 1}],
     }]
 
@@ -1035,12 +1250,126 @@ def test_dag_projection_reports_hidden_count_and_status_summary_per_boundary():
     projection = _project_dag(nodes)
 
     assert projection["aggregates"] == [{
-        "source": "boundary", "hidden_count": 2,
+        "token": '@deps:["boundary"]', "sources": ["boundary"],
+        "hidden_keys": ["done-child", "todo-child"], "hidden_count": 2,
         "status_summary": [
             {"status": "done", "count": 1},
             {"status": "todo", "count": 1},
         ],
     }]
+
+
+def test_dag_projection_groups_hidden_frontier_by_exact_visible_dependencies():
+    """多父节点只能出现一次，并必须诚实暴露全部可见直接依赖。"""
+    nodes = [
+        {"key": "bootstrap-go", "status": "in_progress"},
+        {"key": "bootstrap-console", "status": "in_progress"},
+        {"key": "release-artifact-tooling", "status": "in_progress"},
+        {
+            "key": "runtime-sdk", "status": "blocked",
+            "blocked_by": ["bootstrap-go", "release-artifact-tooling"],
+        },
+        {
+            "key": "orchestrator-kernel", "status": "blocked",
+            "blocked_by": ["bootstrap-go", "release-artifact-tooling"],
+        },
+        {
+            "key": "ui-foundation", "status": "blocked",
+            "blocked_by": ["bootstrap-console", "release-artifact-tooling"],
+        },
+    ]
+
+    initial = _project_dag(nodes, {"focus": "active"})
+    represented = [
+        key for aggregate in initial["aggregates"]
+        for key in aggregate["hidden_keys"]
+    ]
+    by_sources = {
+        tuple(aggregate["sources"]): set(aggregate["hidden_keys"])
+        for aggregate in initial["aggregates"]
+    }
+
+    assert len(represented) == len(set(represented)) == 3
+    assert set(represented) == {
+        "runtime-sdk", "orchestrator-kernel", "ui-foundation",
+    }
+    assert by_sources == {
+        ("bootstrap-console", "release-artifact-tooling"): {"ui-foundation"},
+        ("bootstrap-go", "release-artifact-tooling"): {
+            "runtime-sdk", "orchestrator-kernel",
+        },
+    }
+
+    aggregate = next(
+        item for item in initial["aggregates"]
+        if item["sources"] == ["bootstrap-go", "release-artifact-tooling"]
+    )
+    expanded = _project_dag(nodes, {
+        "focus": "active", "expanded": [aggregate["token"]],
+    })
+    assert {node["key"] for node in expanded["nodes"]} == {
+        "bootstrap-go", "bootstrap-console", "release-artifact-tooling",
+        "runtime-sdk", "orchestrator-kernel",
+    }
+    assert {tuple(edge.values()) for edge in expanded["edges"]} >= {
+        ("bootstrap-go", "runtime-sdk"),
+        ("release-artifact-tooling", "runtime-sdk"),
+        ("bootstrap-go", "orchestrator-kernel"),
+        ("release-artifact-tooling", "orchestrator-kernel"),
+    }
+
+
+def test_dag_layout_keys_aggregate_by_token_and_keeps_every_source():
+    nodes = [
+        {"key": "bootstrap-go", "status": "in_progress"},
+        {"key": "bootstrap-console", "status": "in_progress"},
+        {"key": "release-artifact-tooling", "status": "in_progress"},
+        {
+            "key": "runtime-sdk", "status": "blocked",
+            "blocked_by": ["bootstrap-go", "release-artifact-tooling"],
+        },
+        {
+            "key": "ui-foundation", "status": "blocked",
+            "blocked_by": ["bootstrap-console", "release-artifact-tooling"],
+        },
+    ]
+    projection = _project_dag(nodes, {"focus": "active"})
+    layout = _layout_dag(nodes, {"focus": "active"})
+
+    assert set(layout["aggregatePositions"]) == {
+        aggregate["token"] for aggregate in projection["aggregates"]
+    }
+    assert all(len(aggregate["sources"]) == 2 for aggregate in projection["aggregates"])
+
+
+def test_dag_renderer_draws_one_aggregate_edge_from_every_visible_dependency():
+    result = _run_app_dom_scenario(r"""
+async ({app, elements, setFetchHandler, jsonResponse}) => {
+  setFetchHandler(path => {
+    if(path.includes("/api/dag/status?manifest=one")) return jsonResponse({
+      nodes:[
+        {key:"bootstrap-go", status:"in_progress", blocked_by:[]},
+        {key:"bootstrap-console", status:"in_progress", blocked_by:[]},
+        {key:"release-artifact-tooling", status:"in_progress", blocked_by:[]},
+        {key:"runtime-sdk", status:"blocked", blocked_by:["bootstrap-go", "release-artifact-tooling"]},
+        {key:"ui-foundation", status:"blocked", blocked_by:["bootstrap-console", "release-artifact-tooling"]},
+      ], progress:{done:0, total:5},
+    });
+    throw new Error("unexpected request: "+path);
+  });
+  await app.selectManifest("one");
+  elements["focus-active-btn"].click();
+  return elements["dag-canvas"].querySelectorAll(".aggregate-edge")
+    .map(edge => [edge.dataset.from, edge.dataset.to]).sort();
+}
+""")
+
+    assert result == [
+        ["bootstrap-console", '@deps:["bootstrap-console","release-artifact-tooling"]'],
+        ["bootstrap-go", '@deps:["bootstrap-go","release-artifact-tooling"]'],
+        ["release-artifact-tooling", '@deps:["bootstrap-console","release-artifact-tooling"]'],
+        ["release-artifact-tooling", '@deps:["bootstrap-go","release-artifact-tooling"]'],
+    ]
 
 
 def test_dag_projection_supports_active_and_anomaly_focus_without_losing_paths():

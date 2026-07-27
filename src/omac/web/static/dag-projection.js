@@ -116,14 +116,6 @@ function ancestorKeys(graph, initialKeys){
   return result;
 }
 
-function revealClosure(graph, source){
-  return ancestorKeys(graph, graph.children[source] || []);
-}
-
-function hiddenRevealClosure(graph, source, visible){
-  return new Set([...revealClosure(graph, source)].filter(key => !visible.has(key)));
-}
-
 function statusSummary(graph, keys){
   const counts = {};
   keys.forEach(key => {
@@ -131,6 +123,31 @@ function statusSummary(graph, keys){
     counts[status] = (counts[status] || 0) + 1;
   });
   return Object.keys(counts).sort().map(status => ({status, count: counts[status]}));
+}
+
+function aggregateToken(sources){
+  return sources.length ? "@deps:"+JSON.stringify(sources) : ROOT_AGGREGATE;
+}
+
+function hiddenFrontierGroups(graph, visible){
+  // Only nodes whose direct dependencies are visible belong in an aggregate.
+  // This keeps every hidden node in at most one exact dependency signature.
+  const groups = {};
+  graph.keys.forEach(key => {
+    if(visible.has(key)) return;
+    const sources = graph.dependencies[key];
+    if(sources.some(source => !visible.has(source))) return;
+    const token = aggregateToken(sources);
+    if(!groups[token]) groups[token] = {token, sources:sources.slice(), hidden_keys:[]};
+    groups[token].hidden_keys.push(key);
+  });
+  return Object.values(groups)
+    .map(group => ({
+      ...group,
+      hidden_count: group.hidden_keys.length,
+      status_summary: statusSummary(graph, group.hidden_keys),
+    }))
+    .sort((left, right) => left.token.localeCompare(right.token));
 }
 
 function focusKeys(graph, focus){
@@ -209,15 +226,9 @@ function projectDag(nodes, options){
   }
 
   (settings.expanded || []).forEach(source => {
-    let hidden;
-    if(source === ROOT_AGGREGATE) {
-      hidden = graph.keys.filter(key =>
-        graph.dependencies[key].length === 0 && !visible.has(key));
-    } else {
-      if(!visible.has(source) || !graph.children[source]) return;
-      hidden = hiddenRevealClosure(graph, source, visible);
-    }
-    add(hidden, EXPAND_BATCH);
+    const groups = hiddenFrontierGroups(graph, visible);
+    const matching = groups.filter(group => group.token === source);
+    add(matching.flatMap(group => group.hidden_keys), EXPAND_BATCH);
   });
 
   const visibleNodes = graph.keys
@@ -231,25 +242,7 @@ function projectDag(nodes, options){
     });
   });
   edges.sort((left, right) => left.from.localeCompare(right.from) || left.to.localeCompare(right.to));
-  const aggregates = visibleNodes.reduce((result, node) => {
-    const hidden = hiddenRevealClosure(graph, node.key, visible);
-    if(!hidden.size) return result;
-    result.push({
-      source: node.key,
-      hidden_count: hidden.size,
-      status_summary: statusSummary(graph, hidden),
-    });
-    return result;
-  }, []);
-  const hiddenRoots = graph.keys.filter(key =>
-    graph.dependencies[key].length === 0 && !visible.has(key));
-  if(hiddenRoots.length) {
-    aggregates.unshift({
-      source: null,
-      hidden_count: hiddenRoots.length,
-      status_summary: statusSummary(graph, hiddenRoots),
-    });
-  }
+  const aggregates = hiddenFrontierGroups(graph, visible);
   return {
     depths, nodes: visibleNodes, edges, aggregates,
     budget: {
@@ -326,10 +319,15 @@ function layoutDag(projection, options){
   const aggregates = projection.aggregates || [];
   const aggregatePositions = {};
   aggregates.forEach(aggregate => {
-    const source = aggregate.source;
-    const targetDepth = source ? (depths[source] || 0) + 1 : 1;
+    const sources = aggregate.sources || [];
+    const targetDepth = sources.length
+      ? Math.max(...sources.map(source => depths[source] || 0)) + 1 : 1;
     occupied[targetDepth] = occupied[targetDepth] || new Set();
-    const preferred = source ? Math.max(0, Math.round((pos[source].y - padY) / rowH)) : 0;
+    const preferred = sources.length
+      ? Math.max(0, Math.round(
+        (sources.reduce((sum, source) => sum + pos[source].y, 0)
+        / sources.length - padY) / rowH))
+      : 0;
     let row = preferred;
     for(let distance=0; occupied[targetDepth].has(row); distance += 1) {
       const before = preferred - distance - 1;
@@ -337,7 +335,7 @@ function layoutDag(projection, options){
       row = before >= 0 && !occupied[targetDepth].has(before) ? before : after;
     }
     occupied[targetDepth].add(row);
-    aggregatePositions[source === null ? ROOT_AGGREGATE : source] = {
+    aggregatePositions[aggregate.token] = {
       x: padX + (targetDepth - 1) * colW,
       y: padY + row * rowH,
     };
