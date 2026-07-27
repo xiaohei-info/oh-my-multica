@@ -330,7 +330,13 @@ def show(args) -> int:
     nodes = manifest.nodes
     total = len(nodes)
     with_contract = sum(
-        1 for n in nodes.values() if n.contract and n.contract.acceptance)
+        1 for n in nodes.values()
+        if n.contract and (
+            n.contract.acceptance
+            or n.contract.acceptance_claims
+            or n.contract.acceptance_contributions
+            or n.contract.acceptance_refs
+        ))
     waves = node_waves(nodes)
 
     by_wave: dict[int, list[str]] = {}

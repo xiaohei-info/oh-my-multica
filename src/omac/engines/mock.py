@@ -431,6 +431,7 @@ class MockStore(WorkItemStore):
 
     def _mock_verification(self, item_id: str) -> Optional[Dict[str, Any]]:
         from ..core.manifest import Contract as _Contract
+        from ..core.acceptance_responsibility import evidence_targets
 
         contract = _shared_contracts_by_item_id.get(item_id)
         if contract is None or not isinstance(contract, _Contract):
@@ -448,7 +449,7 @@ class MockStore(WorkItemStore):
                     "acceptance": acceptance,
                     "test": f"mock://{dag_key}/acceptance/{acceptance}",
                 }
-                for acceptance in contract.acceptance
+                for acceptance in evidence_targets(contract)
             ]
         return {
             "commands": commands,
@@ -479,6 +480,7 @@ class MockStore(WorkItemStore):
     def _mock_review_report(
         self, item_id: str, verdict: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
+        from ..core.acceptance_responsibility import evidence_targets
         from ..core.manifest import Contract as _Contract
         from ..core.review_convergence import (
             REVIEW_PROTOCOL_VERSION, open_blockers)
@@ -576,7 +578,7 @@ class MockStore(WorkItemStore):
                 {"acceptance": acceptance,
                  "evidence": f"Mock auto-review for {acceptance}",
                  "status": "fail" if verdict == "reject" else "pass"}
-                for acceptance in contract.acceptance
+                for acceptance in evidence_targets(contract)
             ],
             "blockers": ([{
                 "root_cause_key": f"mock-review-{item.bounces.review + 1}",

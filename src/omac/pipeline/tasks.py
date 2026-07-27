@@ -415,6 +415,7 @@ def run_task(
     dag_key: Optional[str] = None,
     resume_item_id: Optional[str] = None,
     resume_item_snapshot: Optional[WorkItem] = None,
+    review_acceptance_doc: Any = None,
 ) -> Dict[str, Any]:
     """派任务→等终态→取交付→有界修订循环。
 
@@ -624,7 +625,8 @@ def run_task(
         if current.review_subject_digest != subject_digest:
             store.update_work_item_metadata(
                 item_id,
-                review_obligations=build_review_obligations(current),
+                review_obligations=build_review_obligations(
+                    current, acceptance_doc=review_acceptance_doc),
             )
         reviewed = store.prepare_review_cycle(item_id, subject_digest)
         while True:

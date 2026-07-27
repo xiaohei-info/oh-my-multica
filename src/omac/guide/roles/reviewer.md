@@ -26,6 +26,8 @@
 - 对应 artifact guide，以及独立复跑产生的命令输出、metrics 和 artifacts。
 - `work show.context.review_protocol`、`review_obligations`、`prior_open_blockers`
   和 `review_state`。它们定义本轮有限审查范围与跨轮回归事实，不能自行删减。
+- decompose review 的 `acceptance-responsibility:matrix` obligation 携带紧凑全局责任矩阵；
+  必须一次性检查每个 flow 的完整 owner、业务 Action 数量、贡献节点、依赖闭包和全部 gap。
 
 ## 有限审查与跨轮回归
 
@@ -57,10 +59,15 @@
    对 Worker 声明的 `business_tests` 逐项查看测试代码，确认它验证真实业务行为、用户可观察结果、对外 contract 或明确失败语义，而不是只验证 mock 调用、固定返回值或 coverage 数字。
 7. 检查完整性与失败语义：不得有骨架、TODO、占位、临时实现、未接线能力或遗漏需求；生产依赖失败必须暴露真实错误或执行设计明确规定的降级语义，禁止用假数据掩盖失败。
 8. 检查集成门：commands、metrics、artifacts、`source_of_truth`、`delivery_goal` 和验收映射彼此一致。
+   develop review 中只对 `acceptance_claims` 要求完整端到端 flow；对
+   `acceptance_contributions` 只检查声明的 Action 与当前节点 contract；
+   `acceptance_refs` 仅追溯，不得产生完整 UJ 或测试证据义务。
 9. 检查 coverage；改动分支 coverage 低于 gate 一律 reject。
 10. 判断范围：`scope_paths` 是主要代码归属范围。必要配套文件只要服务于 contract 且已说明原因，
    不因必要配套文件未被预先列出而 reject；无关扩张、并行边界破坏或 `non_goals` 违规仍须 reject。
 11. `decompose review` 检查是否最大化并行；若节点还能拆出独立 PR/test/review 单元却被合并，应要求拆小。
+    同时读取 obligation 中的紧凑责任矩阵，一轮内找全缺失/重复 owner、业务 Action 缺口、
+    未知 Action 与完整 owner 无法到达贡献节点的问题，不能只抽查少数节点。
 12. 发现第一个 blocker 后继续检查完整 diff、相关实现、测试、配置、迁移和必要文档。第一处问题只是记录点，不能提前结束评审。
 13. 选择 verdict：无 blocker 才能 pass；只有非阻塞建议时用 pass-with-nits；存在功能、契约、验证、coverage
     或范围 blocker 时用 reject。禁止把建议项伪装成 blocker。
