@@ -23,7 +23,7 @@ manifest 的 ``Node`` 不携带回退计数(单一事实源)。上界由 ``confi
                          MERGED + mergedAt ─────────┴──► done(已合入)
                          OPEN / queue pending ─────────► merging
                          CLOSED_UNMERGED ──────────────► 有界转回 worker
-                         UNKNOWN ──────────────────────► blocked
+                         UNKNOWN / temporary read error ─► merging (observe later)
 
 纪律(§12.4):CI 走模板命令；merge/observe 只经 WorkItemStore 由引擎适配器执行，
 pipeline 不直接 shell out 平台 CLI；
@@ -39,9 +39,13 @@ from dataclasses import dataclass
 import shlex
 
 from ..core.config import DEFAULT_RETRY, get_ci_config, get_merge_config
-from ..engines.models import PullRequestCheckResult, PullRequestState, WorkItemStatus
+from ..engines.models import (
+    PullRequestCheckResult, PullRequestObservation, PullRequestState,
+    WorkItemStatus,
+)
 from ..engines.runtime import AgentRuntime
 from ..core.manifest import Manifest, save_manifest
+from ..errors import AuthError, PlatformError
 from ..i18n import ui
 
 # ── manifest 侧细分态 ↔ 平台 WorkItemStatus 映射表 ──────────────────────────
@@ -143,6 +147,34 @@ def block_unproven_merge_request(
         f"⚠️ {detail} OMAC 不会再次请求合入。请先远端核实 PR，再执行：\n\n    {retry}"))
     node.status = "blocked"
     store.update_status(item.id, WorkItemStatus.BLOCKED)
+    return "blocked"
+
+
+def block_merge_auth_error(
+    node, item, store, manifest: Manifest, manifest_path: str, node_key: str,
+) -> str:
+    """认证/授权失败必须 fail closed，且不能篡改既有 merge 恢复事实。"""
+    retry = f"omac node retry {shlex.quote(manifest_path)} {shlex.quote(node_key)}"
+    node.status = "blocked"
+    # 先写 manifest：即使凭证失效导致 issue 写回也失败，重启后仍不会重放 merge。
+    save_manifest(manifest, manifest_path)
+    message = ui(
+        "⚠️ Merge observation failed because platform authentication/authorization is unavailable. "
+        "OMAC did not retry or reissue the merge request. Restore the integration credential "
+        "or permission, verify the PR remotely, then inspect the node and explicitly recover with:\n\n"
+        f"    {retry}\n\n"
+        "After that, rerun `omac dag run <manifest>`.",
+        "⚠️ 因平台认证/授权不可用，无法观察 merge 状态。OMAC 未重试、未重新发起合入请求。"
+        "请修复集成凭证或权限并在远端核实 PR，然后检查该节点并显式恢复：\n\n"
+        f"    {retry}\n\n"
+        "之后重新运行 `omac dag run <manifest>`。")
+    try:
+        store.add_comment(item.id, message)
+        store.update_status(item.id, WorkItemStatus.BLOCKED)
+    except (AuthError, PlatformError):
+        # 本地 manifest 已是 durable fail-closed 事实；无有效凭证时不能依赖
+        # 远端 comment/status 写回才能阻止重复外部副作用。
+        pass
     return "blocked"
 
 
@@ -286,7 +318,11 @@ def run_merge_delivery(
             node, item, store, manifest_path, node_key,
             f"Merge request state {node.merge_request_state!r} is invalid.")
 
-    observation = store.observe_pull_request(pr_url)
+    try:
+        observation = _observe_pull_request(store, pr_url)
+    except AuthError:
+        return block_merge_auth_error(
+            node, item, store, manifest, manifest_path, node_key)
     state = _observation_state(observation)
     if state == PullRequestState.MERGED:
         return _settle_merge_observation(
@@ -325,7 +361,11 @@ def run_merge_delivery(
     if not getattr(result, "timed_out", False):
         node.merge_request_state = "requested"
         save_manifest(manifest, manifest_path)
-    observation = store.observe_pull_request(pr_url)
+    try:
+        observation = _observe_pull_request(store, pr_url)
+    except AuthError:
+        return block_merge_auth_error(
+            node, item, store, manifest, manifest_path, node_key)
     state = _observation_state(observation)
     if state in {PullRequestState.MERGED, PullRequestState.PENDING}:
         return _settle_merge_observation(
@@ -365,6 +405,19 @@ def _observation_state(observation) -> PullRequestState:
         return PullRequestState.UNKNOWN
 
 
+def _observe_pull_request(store, pr_url: str) -> PullRequestObservation:
+    """把临时远端读失败建模为 UNKNOWN，而不是业务 merge 失败。"""
+    try:
+        return store.observe_pull_request(pr_url)
+    except PlatformError as exc:
+        return PullRequestObservation(
+            PullRequestState.UNKNOWN,
+            detail=ui(
+                f"temporary PR observation failure: {exc}",
+                f"临时 PR 观察失败: {exc}"),
+        )
+
+
 def _settle_merge_observation(
     node, item, store, runtime, retry_limits, observation, *,
     manifest: Manifest, manifest_path: str | None, command_output: str = "",
@@ -386,15 +439,13 @@ def _settle_merge_observation(
             manifest=manifest, manifest_path=manifest_path,
             label=ui("PR closed without merge", "PR 已关闭但未合入"),
             output=command_output)
-    detail = getattr(observation, "detail", "") or ui("missing authoritative mergedAt", "缺少权威 mergedAt")
-    node.status = "blocked"
-    node.merge_request_state = None
+    # UNKNOWN 是观测不确定，不是 PR 明确失败。保留已持久化的 intent/requested
+    # marker，后续 tick 只 observe；这样既不消耗 merge bounce，也不会重复外部请求。
+    # 不为每次短暂读失败追加 comment，避免长期 runner 把同一 issue 刷满重复诊断。
+    node.status = "merging"
     save_manifest(manifest, manifest_path)
-    store.add_comment(item.id, ui(
-        f"⚠️ Merge outcome cannot be confirmed; refusing to mark done. {detail}",
-        f"⚠️ 无法确认 PR 已合入；拒绝标记 done。{detail}"))
-    store.update_status(item.id, WorkItemStatus.BLOCKED)
-    return "blocked"
+    store.update_status(item.id, to_platform_status("merging"))
+    return "pending"
 
 
 def _bounce_or_block_merge(node, item, store, runtime, retry_limits, *,
