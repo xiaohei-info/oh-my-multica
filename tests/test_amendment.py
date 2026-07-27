@@ -727,6 +727,48 @@ def test_propose_amendment_passes_authoritative_acceptance_to_reviewer_obligatio
     assert Path(result["amendment_file"]).exists()
 
 
+def test_propose_amendment_forwards_explicit_resume_issue_id(
+    tmp_path, monkeypatch,
+):
+    path = _manifest(tmp_path)
+    report = tmp_path / "report.md"
+    report.write_text("resume the existing amendment issue")
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "design.md").write_text("authoritative design")
+    engine = _engine()
+    issue = engine.store.create_work_item(
+        "ws", "amendment", "desc", "amendment", "alice",
+        reviewer="bob", kind=TaskKind.AMENDMENT)
+    engine.store.update_work_item_metadata(
+        issue.id, review_verdict="pass", phase=TaskPhase.CONFIRMATION)
+    engine.store.update_status(issue.id, WorkItemStatus.IN_REVIEW)
+    observed = {}
+
+    def fake_run_task(*_args, **kwargs):
+        observed["resume_item_id"] = kwargs["resume_item_id"]
+        return {
+            "item_id": issue.id,
+            "delivery": {"amendment": _proposal(_contract_update())},
+        }
+
+    monkeypatch.setattr(amendment_pipeline, "run_task", fake_run_task)
+
+    amendment_pipeline.propose_amendment(
+        engine,
+        str(path),
+        report_file=str(report),
+        docs=[str(docs)],
+        blocked_nodes=["bootstrap"],
+        orchestrator="alice",
+        reviewers=["bob"],
+        max_revisions=1,
+        resume_issue_id=issue.id,
+    )
+
+    assert observed["resume_item_id"] == issue.id
+
+
 def test_contract_only_amendment_preserves_runtime_facts_and_resumes_review(tmp_path):
     path = _manifest(tmp_path)
     engine = _engine()
@@ -1296,3 +1338,57 @@ def test_cli_amendment_stops_after_reviewer_then_human_accepts(tmp_path, monkeyp
     assert updated.nodes["bootstrap"].work_item_id == "1"
     assert engine.store.get_work_item(reviewed["review"]["issue_id"]).status == WorkItemStatus.DONE
     assert yaml.safe_load(amendment_path.read_text())["human_confirmation"] == "applied"
+
+
+def test_cli_amendment_resume_failed_authoring_reuses_issue(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.chdir(tmp_path)
+    omac_dir = tmp_path / ".omac"
+    omac_dir.mkdir()
+    (omac_dir / "config.yaml").write_text(yaml.safe_dump({
+        "engine": "mock",
+        "workspace": "ws",
+        "roles": {
+            "workers": ["alice", "charlie"],
+            "orchestrator": "alice",
+            "reviewers": ["bob"],
+        },
+        "retry": {"review": 2, "ci": 2, "merge": 2, "worker": 2},
+        "defaults": {"poll_interval": 0},
+    }))
+    manifest_path = _manifest(tmp_path)
+    report = tmp_path / "review.md"
+    report.write_text("resume failed amendment authoring")
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "design.md").write_text("authoritative design")
+
+    resume_issue_id = "e66f44e4-bd0f-4a9c-8bfa-2f60a7641d84"
+    observed = {}
+
+    def fake_propose(*_args, **kwargs):
+        observed["resume_issue_id"] = kwargs["resume_issue_id"]
+        return {
+            "state": "pending_human_confirmation",
+            "manifest": str(manifest_path),
+            "amendment_file": str(omac_dir / "dag.amendment.yaml"),
+            "amendment_id": "amendment-1",
+            "issue_id": resume_issue_id,
+            "reviewer_verdict": "pass",
+        }
+
+    monkeypatch.setattr(amendment_pipeline, "propose_amendment", fake_propose)
+
+    amendment_path = omac_dir / "dag.amendment.yaml"
+    code = main([
+        "dag", "amend", "propose", str(manifest_path),
+        "--report-file", str(report),
+        "--docs", str(docs),
+        "--blocked-node", "bootstrap",
+        "--resume-issue-id", resume_issue_id,
+        "--output-file", str(amendment_path),
+    ])
+
+    assert code == exit_codes.NEEDS_DECISION
+    assert observed["resume_issue_id"] == resume_issue_id
