@@ -145,8 +145,20 @@ def build_needs_decision(
     evidence: 节点 key → 精确失败原因(由 tick 的 collect_results 提供);
              未传入时(/status 路径)从 item 状态推导。
     """
+    return _build_needs_decision_from_items(
+        manifest, manifest_path, failed_keys,
+        _fetch_items(store, manifest), evidence)
+
+
+def _build_needs_decision_from_items(
+    manifest: Manifest,
+    manifest_path: str,
+    failed_keys: set[str],
+    items: dict,
+    evidence: dict[str, str] | None = None,
+) -> dict:
+    """从调用方提供的 WorkItem 快照构建决策段，避免重复平台读取。"""
     evidence = evidence or {}
-    items = _fetch_items(store, manifest)
     snapshot = _graph_snapshot(manifest)
     downstream = graph.downstream_of(snapshot, failed_keys)
     blocked_downstream = sorted(downstream)
@@ -160,6 +172,54 @@ def build_needs_decision(
         "blocked_downstream": blocked_downstream,
         "next_actions": next_actions,
     }
+
+
+def _build_report_from_items(
+    manifest: Manifest,
+    manifest_path: str,
+    items: dict,
+) -> dict:
+    """用已经取得的 item 快照构建稳定 schema；不拥有任何外部读取。"""
+    total = len(manifest.nodes)
+    counts = {k: 0 for k in (
+        "done", "running", "todo", "blocked", "failed", "abandoned")}
+    for node in manifest.nodes.values():
+        counts[_classify(node.status)] += 1
+    converged = total > 0 and counts["done"] + counts["abandoned"] == total
+
+    nodes = [_node_row(manifest.nodes[key], items.get(key)) for key in manifest.nodes]
+    failed_keys = {
+        key for key, node in manifest.nodes.items()
+        if node.status in FAILED_STATUSES
+    }
+    needs_decision = (
+        _build_needs_decision_from_items(
+            manifest, manifest_path, failed_keys, items, evidence=None)
+        if failed_keys else None
+    )
+    return {
+        "manifest": manifest_path,
+        "progress": {
+            "total": total,
+            "done": counts["done"],
+            "running": counts["running"],
+            "todo": counts["todo"],
+            "blocked": counts["blocked"],
+            "failed": counts["failed"],
+            "abandoned": counts["abandoned"],
+            "converged": converged,
+        },
+        "nodes": nodes,
+        "needs_decision": needs_decision,
+    }
+
+
+def build_manifest_status_report(
+    manifest: Manifest,
+    manifest_path: str,
+) -> dict:
+    """只从 manifest 构建状态快照，不调用 Engine、不 reconcile、不写文件。"""
+    return _build_report_from_items(manifest, manifest_path, {})
 
 
 def build_status_report(
@@ -177,33 +237,7 @@ def build_status_report(
     reconcile(store, manifest, manifest_path)
     items = _fetch_items(store, manifest)
 
-    total = len(manifest.nodes)
-    counts = {k: 0 for k in ("done", "running", "todo", "blocked", "failed", "abandoned")}
-    for key, node in manifest.nodes.items():
-        counts[_classify(node.status)] += 1
-    converged = total > 0 and counts["done"] + counts["abandoned"] == total
-
-    nodes = [_node_row(manifest.nodes[key], items.get(key)) for key in manifest.nodes]
-
-    failed_keys = {key for key, node in manifest.nodes.items()
-                   if node.status in FAILED_STATUSES}
-    needs_decision = build_needs_decision(store, manifest, manifest_path, failed_keys) if failed_keys else None
-
-    return {
-        "manifest": manifest_path,
-        "progress": {
-            "total": total,
-            "done": counts["done"],
-            "running": counts["running"],
-            "todo": counts["todo"],
-            "blocked": counts["blocked"],
-            "failed": counts["failed"],
-            "abandoned": counts["abandoned"],
-            "converged": converged,
-        },
-        "nodes": nodes,
-        "needs_decision": needs_decision,
-    }
+    return _build_report_from_items(manifest, manifest_path, items)
 
 
 # ==================== table 渲染(给人看) ====================

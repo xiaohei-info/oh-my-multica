@@ -718,8 +718,8 @@ def test_spa_closes_selection_and_detail_after_every_dag_redraw():
     )
 
 
-def test_manifest_switch_clears_old_dom_surfaces_before_the_new_request_fails():
-    """新 manifest 请求失败时，旧 SVG、面板、进度和详情也必须保持清空。"""
+def test_manifest_switch_shows_loading_and_failure_instead_of_blank_canvas():
+    """新 manifest 请求等待或失败时，画布必须给出明确状态而不是纯空白。"""
     result = _run_app_dom_scenario(r"""
 async ({app, document, elements, setFetchHandler, jsonResponse, deferred, flush}) => {
   const status = {
@@ -786,15 +786,68 @@ async ({app, document, elements, setFetchHandler, jsonResponse, deferred, flush}
     assert result["before"]["progress"]
     assert result["before"]["detail"]
     assert result["immediate"] == {
-        "svg": 0, "legend": "", "anomaly": "", "anomalyEmpty": False,
+        "svg": 1, "legend": "", "anomaly": "", "anomalyEmpty": False,
         "progressVisible": False, "progress": "", "poll": "—", "tick": "—",
         "detail": "", "detailEmpty": False, "statusIsNull": True,
         "nodeCount": 0, "selected": None,
     }
     assert result["afterFailure"] == {
-        "svg": 0, "legend": "", "anomaly": "", "progressVisible": False,
+        "svg": 1, "legend": "", "anomaly": "", "progressVisible": False,
         "detail": "", "statusIsNull": True,
     }
+
+
+def test_same_manifest_polling_reuses_one_in_flight_status_request():
+    result = _run_app_dom_scenario(r"""
+async ({app, setFetchHandler, jsonResponse, deferred, flush}) => {
+  let calls = 0;
+  const pending = deferred();
+  setFetchHandler(path => {
+    if(!path.includes('/api/dag/status?manifest=one')) throw new Error('unexpected request: '+path);
+    calls += 1;
+    return pending.promise;
+  });
+  const first = app.selectManifest('one');
+  await flush(2);
+  const second = app.fetchStatus();
+  await flush(2);
+  const callsWhilePending = calls;
+  pending.resolve(jsonResponse({
+    nodes:[{key:'root', status:'todo', blocked_by:[]}],
+    progress:{done:0, total:1},
+  }));
+  await Promise.all([first, second]);
+  await flush(4);
+  return {callsWhilePending, calls, status:app.state.status};
+}
+""")
+
+    assert result["callsWhilePending"] == 1
+    assert result["calls"] == 1
+    assert result["status"]["progress"] == {"done": 0, "total": 1}
+
+
+def test_clearing_manifest_selection_leaves_the_canvas_empty():
+    result = _run_app_dom_scenario(r"""
+async ({app, elements, setFetchHandler, jsonResponse}) => {
+  setFetchHandler(path => {
+    if(!path.includes('/api/dag/status?manifest=one')) throw new Error('unexpected request: '+path);
+    return jsonResponse({
+      nodes:[{key:'root', status:'todo', blocked_by:[]}],
+      progress:{done:0, total:1},
+    });
+  });
+  await app.selectManifest('one');
+  await app.selectManifest('');
+  return {
+    current:app.state.current,
+    svg:elements['dag-canvas'].children.length,
+    status:app.state.status,
+  };
+}
+""")
+
+    assert result == {"current": None, "svg": 0, "status": None}
 
 
 def test_newest_detail_request_wins_after_same_node_is_deselected_and_reselected():

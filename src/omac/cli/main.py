@@ -29,6 +29,7 @@ _EN_SUBCOMMAND_HELP = {
     "show": "Show current facts without advancing state",
     "run": "Run in the foreground until convergence or exit 20",
     "status": "Show a snapshot without advancing state",
+    "snapshot": "Read a manifest snapshot without platform access or reconciliation",
     "tick": "Advance one round and return exit 0, 10, or 20",
     "retry": "Reset a node to todo, optionally with another worker",
     "accept": "Accept a known risk and mark the node done",

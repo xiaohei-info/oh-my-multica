@@ -22,7 +22,7 @@ from omac.core import config as config_mod
 from omac.errors import OmacError
 from omac.i18n import ui
 
-# 单例 TTL 缓存,整个 web 进程共享,多请求复用 dag status 的 reconcile。
+# 单例 TTL 缓存,整个 web 进程共享,避免重复解析同一 manifest 快照。
 _status_cache = None
 
 
@@ -152,6 +152,12 @@ def dag_status(manifest_path: str) -> Any:
     return _cli_json(_cmd().dag.status, args)
 
 
+def dag_snapshot(manifest_path: str) -> Any:
+    """GET /api/dag/status 的只读数据源 ← dag snapshot --output json。"""
+    args = _ns(manifest=manifest_path, output="json")
+    return _cli_json(_cmd().dag.snapshot, args)
+
+
 def node_show(manifest_path: str, node_key: str) -> Any:
     """GET /api/node/{key} ← node show --output json。"""
     args = _ns(action="show", manifest=manifest_path, node_key=node_key, output="json")
@@ -183,13 +189,9 @@ def get_plan_acceptance(orchestrator_dir: Path, manifest_path: str) -> Any:
 
 
 class StatusCache:
-    """dag status 的 TTL 缓存,key = manifest 绝对路径。
+    """manifest snapshot 的 TTL 缓存,key = manifest 绝对路径。
 
-    多请求共享一次 reconcile,TTL = poll_interval(秒,缺省 30)。
-
-    演进提示(非阻塞):当前一期只读面板场景下 reconcile 结果可直接 TTL 缓存;
-    未来若 web 服务与 CLI 共享同一进程的 reconcile 状态,需评估该缓存与 manifest
-    源状态之间的失效策略(manifest 写入后是否应主动 invalidate)。
+    Web 观察面不执行 reconcile；TTL 仅减少重复 YAML 解析，且不会超过前端刷新间隔。
     """
 
     def __init__(self, ttl: int | None = None, cfg: dict | None = None):

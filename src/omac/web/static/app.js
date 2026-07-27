@@ -19,6 +19,7 @@ const COPY = {
     anomalies:"Anomalies", static_info:"Static information",
     no_anomalies:"No failed or blocked nodes. The DAG is converged or still progressing.",
     refresh:"Refresh", static_intro:"Choose a manifest to load configuration, source manifest, and acceptance checks.",
+    dag_loading:"Loading DAG from manifest…", dag_load_failed:"Could not load the manifest DAG.",
     progress:"Progress", refresh_failed:"Refresh failed", no_selected:"No node is selected.",
     none:"None", node:"Node", status:"Status", dependencies:"Dependencies",
     loading_evidence:"Loading contract and evidence…", evidence_chain:"Evidence",
@@ -46,6 +47,7 @@ const COPY = {
     anomalies:"异常面板", static_info:"静态信息页",
     no_anomalies:"当前无 failed 或 blocked 节点，所有节点已收敛或仍在推进。",
     refresh:"刷新", static_intro:"选择一个 manifest 后加载配置、manifest 原文和验收清单。",
+    dag_loading:"正在从 manifest 加载 DAG…", dag_load_failed:"无法加载 manifest DAG。",
     progress:"进度", refresh_failed:"刷新失败", no_selected:"当前无选中节点。",
     none:"无", node:"节点", status:"状态", dependencies:"依赖",
     loading_evidence:"正在加载 contract 和证据…", evidence_chain:"证据链",
@@ -96,6 +98,7 @@ const state = {
   graphBounds: null,
   detailGeneration: 0,
   pollTimer: null,
+  statusRequest: null,
   language: "en",
 };
 
@@ -191,6 +194,7 @@ async function selectManifest(path){
   if(isNewManifest){
     resetDagView();
     clearRenderedStatus();
+    if(path) renderDagNotice(copy("dag_loading"), false);
   }
   if(!path){ state.current = null; return; }
   localStorage.setItem("omac-last-manifest", path);
@@ -203,19 +207,37 @@ async function selectManifest(path){
 async function fetchStatus(){
   const manifest = state.current;
   if(!manifest) return;
+  if(state.statusRequest && state.statusRequest.manifest===manifest){
+    return state.statusRequest.promise;
+  }
+  const request = (async ()=>{
+    try{
+      const s = await api("/api/dag/status?manifest="+encodeURIComponent(manifest));
+      if(state.current !== manifest) return;
+      state.status = s;
+      state.nodes = {};
+      (s.nodes||[]).forEach(n => state.nodes[n.key]=n);
+      renderDAG(s);
+      renderAnomaly(s);
+      const pb = $("progress-badge");
+      pb.classList.remove("is-hidden");
+      pb.textContent = copy("progress")+" "+(s.progress?s.progress.done+"/"+s.progress.total:"?");
+      $("poll-ts").textContent = new Date().toLocaleTimeString();
+    }catch(e){
+      if(state.current===manifest && !state.status){
+        renderDagNotice(copy("dag_load_failed"), true);
+      }
+      toast(copy("refresh_failed")+": "+e.message, true);
+    }
+  })();
+  state.statusRequest = {manifest, promise:request};
   try{
-    const s = await api("/api/dag/status?manifest="+encodeURIComponent(manifest));
-    if(state.current !== manifest) return;
-    state.status = s;
-    state.nodes = {};
-    (s.nodes||[]).forEach(n => state.nodes[n.key]=n);
-    renderDAG(s);
-    renderAnomaly(s);
-    const pb = $("progress-badge");
-    pb.classList.remove("is-hidden");
-    pb.textContent = copy("progress")+" "+(s.progress?s.progress.done+"/"+s.progress.total:"?");
-    $("poll-ts").textContent = new Date().toLocaleTimeString();
-  }catch(e){ toast(copy("refresh_failed")+": "+e.message, true); }
+    return await request;
+  }finally{
+    if(state.statusRequest && state.statusRequest.promise===request){
+      state.statusRequest = null;
+    }
+  }
 }
 function startPoll(){
   cancelPoll();
@@ -314,6 +336,18 @@ function renderDagError(svg, error){
   detail.setAttribute("x", "24"); detail.setAttribute("y", "108");
   detail.setAttribute("class", "dag-error-detail"); detail.textContent = details;
   svg.appendChild(detail);
+}
+
+function renderDagNotice(message, isError){
+  const svg = $("dag-canvas");
+  while(svg.firstChild) svg.removeChild(svg.firstChild);
+  const size = canvasSize();
+  svg.setAttribute("viewBox", "0 0 "+size.width+" "+size.height);
+  const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+  text.setAttribute("x", "24"); text.setAttribute("y", "80");
+  text.setAttribute("class", isError ? "dag-error" : "dag-notice");
+  text.textContent = message;
+  svg.appendChild(text);
 }
 
 function renderDAG(s){

@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import json
 import threading
@@ -131,6 +132,14 @@ def _cli_json(args, cwd):
     return code, json.loads(buf_out.getvalue())
 
 
+def _tree_snapshot(root: Path) -> dict[str, str]:
+    """锁定项目内全部普通文件的路径和内容，证明 Web 请求没有副作用。"""
+    return {
+        str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted(root.rglob("*")) if path.is_file()
+    }
+
+
 # ==================== 一致性测试 ====================
 
 def test_manifests_lists_yaml_and_progress(orch, simple_manifest, monkeypatch):
@@ -194,10 +203,11 @@ def test_config_endpoint_equals_cli(orch, monkeypatch):
     assert api_data == cli_data
 
 
-def test_dag_status_endpoint_equals_cli(orch, simple_manifest, monkeypatch):
+def test_dag_status_endpoint_equals_manifest_snapshot_cli(
+        orch, simple_manifest, monkeypatch):
     monkeypatch.chdir(orch.parent)
     code, cli_data = _cli_json(
-        ["dag", "status", str(simple_manifest), "--output", "json"], cwd=None)
+        ["dag", "snapshot", str(simple_manifest), "--output", "json"], cwd=None)
     assert code == exit_codes.OK
     with _Server(orch_subpath=str(orch)) as s:
         status, body = s.get(f"/api/dag/status?manifest={simple_manifest}")
@@ -207,6 +217,22 @@ def test_dag_status_endpoint_equals_cli(orch, simple_manifest, monkeypatch):
     assert set(api_data.keys()) == {"manifest", "progress", "nodes", "needs_decision"}
     assert api_data["progress"]["total"] == 2
     assert api_data["nodes"][0]["key"] == "a"
+
+
+def test_dag_status_endpoint_never_calls_live_reconcile(
+        orch, simple_manifest, monkeypatch):
+    """Web DAG 首屏只能读取 manifest，不能因观察而调用平台或写回状态。"""
+    monkeypatch.chdir(orch.parent)
+    monkeypatch.setattr(
+        web_srv.api, "dag_status",
+        lambda _path: pytest.fail("web must not call live dag status"),
+    )
+
+    with _Server(orch_subpath=str(orch)) as s:
+        status, body = s.get(f"/api/dag/status?manifest={simple_manifest}")
+
+    assert status == 200
+    assert json.loads(body)["progress"]["total"] == 2
 
 
 def test_node_show_endpoint_equals_cli(orch, simple_manifest, monkeypatch):
@@ -253,13 +279,13 @@ def test_status_cache_counts_compute_calls(orch, simple_manifest, monkeypatch):
     monkeypatch.chdir(orch.parent)
     # 计数:替代 api.dag_status 并计数调用次数
     compute_calls = {"n": 0}
-    real_dag_status = web_srv.api.dag_status
+    real_dag_status = web_srv.api.dag_snapshot
 
     def counting(path):
         compute_calls["n"] += 1
         return real_dag_status(path)
 
-    monkeypatch.setattr(web_srv.api, "dag_status", counting)
+    monkeypatch.setattr(web_srv.api, "dag_snapshot", counting)
 
     # TTL 很小,便于测试过期。我们直接用 StatusCache 单独断言。
     web_api.reset_status_cache()
@@ -295,13 +321,13 @@ def test_status_cache_through_http(orch, simple_manifest, monkeypatch):
     """真实 HTTP 请求路径:TTL 内第一次触发命令,第二次命中缓存。"""
     monkeypatch.chdir(orch.parent)
     invocations = {"n": 0}
-    real = web_srv.api.dag_status
+    real = web_srv.api.dag_snapshot
 
     def counting(path):
         invocations["n"] += 1
         return real(path)
 
-    monkeypatch.setattr(web_srv.api, "dag_status", counting)
+    monkeypatch.setattr(web_srv.api, "dag_snapshot", counting)
 
     with _Server(orch_subpath=str(orch), poll_interval=1) as s:
         st1, b1 = s.get(f"/api/dag/status?manifest={simple_manifest}")
@@ -379,12 +405,84 @@ def test_local_bind_without_token_works(orch, simple_manifest, monkeypatch):
     monkeypatch.chdir(orch.parent)
     # CLI 不应因此退出。
     from omac.web.server import require_token_if_exposed
-    # 不应抛
     require_token_if_exposed("127.0.0.1", None)
 
     with _Server(token=None, orch_subpath=str(orch)) as s:
         st, body = s.get(f"/api/dag/status?manifest={simple_manifest}")
         assert st == 200
+
+
+def test_every_web_route_and_rejected_write_preserve_project_files(
+        orch, simple_manifest, acceptance_doc, monkeypatch):
+    """Web 的所有可达路由都是观察行为，任何请求都不能改项目文件。"""
+    monkeypatch.chdir(orch.parent)
+    before = _tree_snapshot(orch.parent)
+
+    with _Server(orch_subpath=str(orch)) as s:
+        paths = [
+            "/", "/static/app.js", "/api/meta", "/api/manifests",
+            "/api/config",
+            f"/api/dag/status?manifest={simple_manifest}",
+            f"/api/node/a?manifest={simple_manifest}",
+            f"/api/plan/acceptance?manifest={simple_manifest}",
+        ]
+        for path in paths:
+            status, _body = s.get(path)
+            assert status == 200, path
+
+        for method in ("POST", "PUT", "PATCH", "DELETE"):
+            request = urllib.request.Request(
+                f"http://{s.host}:{s.port}/api/dag/status",
+                data=b"{}", method=method,
+            )
+            try:
+                urllib.request.urlopen(request, timeout=5)
+                pytest.fail(f"{method} must be rejected")
+            except urllib.error.HTTPError as error:
+                assert error.code == 405
+                assert error.headers.get("Allow") == "GET"
+
+    assert _tree_snapshot(orch.parent) == before
+
+
+def test_node_detail_uses_only_the_store_read_method(
+        orch, monkeypatch):
+    """点击节点详情可读取平台证据，但不得写 issue、metadata、状态或评论。"""
+    from types import SimpleNamespace
+
+    import omac.cli.commands.node as node_cmd
+    from omac.engines.models import WorkItemStatus
+
+    manifest = _write_manifest(orch, "with-evidence", [{
+        "id": "a", "worker": "alice", "work_item_id": "issue-1",
+    }])
+    calls = []
+
+    class ReadOnlyStore:
+        def get_work_item(self, item_id):
+            calls.append(("get_work_item", item_id))
+            return SimpleNamespace(
+                id=item_id, status=WorkItemStatus.IN_PROGRESS,
+                artifacts=None, verification=None, review_verdict=None,
+                review_comment=None, review_report=None,
+            )
+
+        def __getattr__(self, name):
+            calls.append((name,))
+            raise AssertionError(f"Web node detail attempted store write: {name}")
+
+    monkeypatch.setattr(
+        node_cmd, "_build_engine",
+        lambda _config: SimpleNamespace(store=ReadOnlyStore()),
+    )
+    monkeypatch.chdir(orch.parent)
+
+    with _Server(orch_subpath=str(orch)) as s:
+        status, body = s.get(f"/api/node/a?manifest={manifest}")
+
+    assert status == 200
+    assert json.loads(body)["evidence"]["work_item_id"] == "issue-1"
+    assert calls == [("get_work_item", "issue-1")]
 
 
 def test_unknown_endpoint_returns_404(orch, monkeypatch):

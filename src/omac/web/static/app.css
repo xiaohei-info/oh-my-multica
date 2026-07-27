@@ -75,6 +75,7 @@ ul.acceptance li{margin:3px 0}
 .aggregate-edge{stroke:var(--muted);stroke-width:1.5;stroke-dasharray:4 3;fill:none}
 .dag-error{fill:var(--bad);font-size:13px;font-weight:700}
 .dag-error-detail{fill:var(--muted);font-size:11px}
+.dag-notice{fill:var(--muted);font-size:13px;font-weight:600}
 .edge.dim{opacity:.12}
 .node.dim{opacity:.28}
 .edge.hl{stroke:var(--accent);stroke-width:2.5;opacity:1}

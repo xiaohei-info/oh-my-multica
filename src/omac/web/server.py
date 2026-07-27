@@ -4,7 +4,7 @@
 - 把 URL 路径 + 查询参数解析为对 api.py 端点的一次调用(Bearer token 校验);
 - 决定 HTTP 状态码(api 层的 OmacError/退出码 → 合适的 HTTP 状态);
 - 决定内容类型(JSON/HTML);
-- 对 dag/status 应用 TTL 缓存。
+- 对纯 manifest snapshot 应用 TTL 缓存。
 
 不在本层做的事:
 - 任何业务逻辑、engine 调用、数据二次加工 —— 全部委派给 api.py,api.py 委派给命令层。
@@ -62,7 +62,7 @@ HTML_PAGE = """<!doctype html>
 <ul>
   <li><code>GET /api/manifests</code> — 列出含节点的 DAG manifest(排除 config/acceptance),带进度摘要</li>
   <li><code>GET /api/config</code> ← <code>config get --output json</code></li>
-  <li><code>GET /api/dag/status?manifest=&lt;path&gt;</code> ← <code>dag status --output json</code>(TTL 缓存 = poll_interval)</li>
+  <li><code>GET /api/dag/status?manifest=&lt;path&gt;</code> ← <code>dag snapshot --output json</code>(纯 manifest 只读快照)</li>
   <li><code>GET /api/node/&lt;key&gt;?manifest=&lt;path&gt;</code> ← <code>node show --output json</code></li>
   <li><code>GET /api/plan/acceptance?manifest=&lt;path&gt;</code> — 验收文档</li>
   <li><code>GET /api/meta</code> — 前端配置(refresh 等)</li>
@@ -243,7 +243,7 @@ class _JSONResponder:
                     "Missing query parameter: manifest", "缺少查询参数 manifest")))
             try:
                 value, _hit = self.cache.get_or_compute(
-                    manifest, lambda: api.dag_status(manifest))
+                    manifest, lambda: api.dag_snapshot(manifest))
                 return self._send_json(200, value)
             except BaseException as e:
                 return self._fail(self._status_for_error(e), e)
@@ -353,6 +353,9 @@ class _Handler(BaseHTTPRequestHandler):
         return self._method_not_allowed()
 
     def do_PUT(self):
+        return self._method_not_allowed()
+
+    def do_PATCH(self):
         return self._method_not_allowed()
 
     def do_DELETE(self):

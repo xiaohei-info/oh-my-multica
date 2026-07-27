@@ -467,6 +467,38 @@ class TestDagStatusCLI:
         code = main(["dag", "status", str(tmp_path / "nope.yaml")])
         assert code == exit_codes.VALIDATION
 
+
+class TestDagSnapshotCLI:
+    """dag snapshot 只读取 manifest，不装配 Engine、不执行 reconcile。"""
+
+    def test_snapshot_needs_no_engine_and_preserves_manifest(
+            self, tmp_path, monkeypatch, capsys):
+        path = _manifest_yaml(tmp_path, [
+            {"id": "a", "worker": "alice", "status": "done"},
+            {"id": "b", "worker": "bob", "status": "blocked",
+             "blocked_by": ["a"]},
+        ])
+        before = open(path, "rb").read()
+
+        import omac.cli.commands.dag as dag_mod
+        monkeypatch.setattr(
+            dag_mod, "_assemble_engine",
+            lambda _args: pytest.fail("dag snapshot must not assemble an engine"),
+        )
+
+        assert main(["dag", "snapshot", path, "--output", "json"]) == exit_codes.OK
+
+        data = json.loads(capsys.readouterr().out)
+        assert set(data) == set(STATUS_REPORT_KEYS)
+        assert data["progress"] == {
+            "total": 2, "done": 1, "running": 0, "todo": 0,
+            "blocked": 1, "failed": 0, "abandoned": 0,
+            "converged": False,
+        }
+        assert [node["status"] for node in data["nodes"]] == ["done", "blocked"]
+        assert data["needs_decision"]["failed_nodes"][0]["reason"] == "blocked"
+        assert open(path, "rb").read() == before
+
 """P1.5 cross-check: tick() exit-20 report shares /status needs_decision schema.
 
 Reviewer request: assert tick(...).report keys == NEEDS_DECISION_KEYS and is
