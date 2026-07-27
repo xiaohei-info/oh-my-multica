@@ -3,6 +3,7 @@ import copy
 import pytest
 import yaml
 
+import omac.core.amendment as amendment_mod
 from omac.core.amendment import (
     apply_amendment,
     build_reviewed_amendment,
@@ -10,7 +11,7 @@ from omac.core.amendment import (
     manifest_digest,
     validate_proposal,
 )
-from omac.core.manifest import load_manifest
+from omac.core.manifest import load_manifest, save_manifest
 from omac.core.taskmeta import TaskKind
 from omac.cli import exit_codes
 from omac.cli.main import main
@@ -80,6 +81,46 @@ def _proposal(*operations):
     }
 
 
+def _topology_manifest(tmp_path):
+    path = tmp_path / "topology.yaml"
+    path.write_text(yaml.safe_dump({
+        "meta": {"name": "topology"},
+        "nodes": [
+            {
+                "id": "foundation",
+                "worker": "charlie",
+                "blocked_by": [],
+                "status": "done",
+            },
+            {
+                "id": "bootstrap",
+                "worker": "alice",
+                "reviewer": "bob",
+                "blocked_by": [],
+                "work_item_id": "1",
+                "status": "blocked",
+                "contract": _contract_update()["set"]["contract"],
+            },
+            {
+                "id": "started-dependent",
+                "worker": "charlie",
+                "reviewer": "bob",
+                "blocked_by": ["bootstrap"],
+                "work_item_id": "2",
+                "status": "in_review",
+            },
+            {
+                "id": "future-dependent",
+                "worker": "alice",
+                "reviewer": "bob",
+                "blocked_by": ["started-dependent"],
+                "status": "todo",
+            },
+        ],
+    }, allow_unicode=True, sort_keys=False))
+    return path
+
+
 def _contract_update():
     return {
         "op": "update",
@@ -137,8 +178,99 @@ def test_contract_only_amendment_preserves_runtime_facts_and_resumes_review(tmp_
     assert node.contract.acceptance == ["bootstrap workspace is valid"]
     assert got.artifacts == {"pr_url": "https://example.test/pr/1", "head_sha": "abc"}
     assert got.verification == {"subject_digest": "verify-1", "commands": []}
+    assert got.contract.acceptance == ["bootstrap workspace is valid"]
     assert got.bounces.review == 4
     assert got.status == WorkItemStatus.IN_REVIEW
+
+
+def test_repeated_accept_after_node_progress_never_rolls_it_back(tmp_path):
+    path = _manifest(tmp_path)
+    engine = _engine()
+    item = engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    engine.store.update_work_item_metadata(
+        item.id,
+        artifacts={"pr_url": "https://example.test/pr/1", "head_sha": "abc"},
+        verification={"subject_digest": "verify-1", "commands": []},
+        review_verdict="reject",
+        review_report={"blockers": ["bad mapping"]},
+    )
+    engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
+    reviewed = build_reviewed_amendment(
+        load_manifest(str(path)), _proposal(_contract_update()), engine.store,
+        issue_id="amendment-issue", reviewer_verdict="pass")
+
+    first = apply_amendment(
+        str(path), reviewed, engine.store, {"alice", "bob", "charlie"})
+    assert first["sync"]["synced"] == ["bootstrap"]
+
+    engine.store.update_work_item_metadata(
+        item.id,
+        review_verdict="pass",
+        review_report={"blockers": []},
+    )
+    engine.store.update_status(item.id, WorkItemStatus.DONE)
+    progressed = load_manifest(str(path))
+    progressed.nodes["bootstrap"].status = "done"
+    progressed.nodes["bootstrap"].merged = True
+    progressed.nodes["bootstrap"].merged_at = "2026-07-27T01:00:00Z"
+    save_manifest(progressed, str(path))
+
+    second = apply_amendment(
+        str(path), reviewed, engine.store, {"alice", "bob", "charlie"})
+
+    got = engine.store.get_work_item(item.id)
+    reloaded = load_manifest(str(path))
+    assert second["sync"]["already_complete"] == ["bootstrap"]
+    assert got.status == WorkItemStatus.DONE
+    assert got.review_verdict == "pass"
+    assert reloaded.nodes["bootstrap"].status == "done"
+    assert reloaded.nodes["bootstrap"].merged is True
+    assert reloaded.meta["amendment_apply"]["nodes"]["bootstrap"]["state"] == "synced"
+
+
+def test_apply_ledger_completes_after_contract_write_but_before_review_reset(tmp_path, monkeypatch):
+    path = _manifest(tmp_path)
+    engine = _engine()
+    item = engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    engine.store.update_work_item_metadata(
+        item.id,
+        artifacts={"pr_url": "https://example.test/pr/1"},
+        verification={"subject_digest": "verify-1"},
+        review_verdict="reject",
+        review_report={"blockers": ["bad mapping"]},
+    )
+    engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
+    reviewed = build_reviewed_amendment(
+        load_manifest(str(path)), _proposal(_contract_update()), engine.store,
+        issue_id="amendment-issue", reviewer_verdict="pass")
+    original_reset = engine.store.reset_review
+    failed = False
+
+    def fail_reset(item_id):
+        nonlocal failed
+        if not failed:
+            failed = True
+            raise RuntimeError("simulated reset interruption")
+        return original_reset(item_id)
+
+    monkeypatch.setattr(engine.store, "reset_review", fail_reset)
+    with pytest.raises(RuntimeError, match="reset interruption"):
+        apply_amendment(
+            str(path), reviewed, engine.store, {"alice", "bob", "charlie"})
+    partial = engine.store.get_work_item(item.id)
+    assert partial.contract.acceptance == ["bootstrap workspace is valid"]
+    assert partial.review_verdict == "reject"
+
+    monkeypatch.setattr(engine.store, "reset_review", original_reset)
+    result = apply_amendment(
+        str(path), reviewed, engine.store, {"alice", "bob", "charlie"})
+
+    completed = engine.store.get_work_item(item.id)
+    assert result["sync"]["synced"] == ["bootstrap"]
+    assert completed.status == WorkItemStatus.IN_REVIEW
+    assert completed.review_verdict is None
 
 
 def test_merge_only_recovery_keeps_pass_verdict_and_enters_merging(tmp_path):
@@ -264,6 +396,114 @@ def test_amendment_rejects_cycles_and_reports_changed_nodes(tmp_path):
     errors = validate_proposal(manifest, proposal, {"alice", "bob", "charlie"})
 
     assert "manifest DAG has a cycle" in errors
+
+
+def test_topology_change_recovers_started_downstream_but_not_unstarted_closure(tmp_path):
+    path = _topology_manifest(tmp_path)
+    engine = _engine()
+    first = engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    engine.store.update_status(first.id, WorkItemStatus.BLOCKED)
+    second = engine.store.create_work_item(
+        "ws", "dependent", "desc", "started-dependent", "charlie", reviewer="bob")
+    engine.store.update_status(second.id, WorkItemStatus.IN_REVIEW)
+    proposal = _proposal({
+        "op": "update",
+        "node": "bootstrap",
+        "set": {"blocked_by": ["foundation"]},
+    })
+
+    reviewed = build_reviewed_amendment(
+        load_manifest(str(path)), proposal, engine.store,
+        issue_id="amendment-issue", reviewer_verdict="pass")
+
+    assert reviewed["analysis"]["derived_started_downstream"] == ["started-dependent"]
+    assert reviewed["analysis"]["minimal_rerun"] == {
+        "review": [],
+        "authoring": ["bootstrap", "started-dependent"],
+        "merging": [],
+    }
+    result = apply_amendment(
+        str(path), reviewed, engine.store, {"alice", "bob", "charlie"})
+    updated = load_manifest(str(path))
+    assert result["minimal_rerun"]["authoring"] == [
+        "bootstrap", "started-dependent"]
+    assert updated.nodes["bootstrap"].status == "todo"
+    assert updated.nodes["started-dependent"].status == "todo"
+    assert updated.nodes["future-dependent"].status == "todo"
+    assert "future-dependent" not in result["minimal_rerun"]["authoring"]
+
+
+def test_apply_ledger_retries_only_unfinished_node_side_effects(tmp_path, monkeypatch):
+    path = _topology_manifest(tmp_path)
+    engine = _engine()
+    first = engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    engine.store.update_status(first.id, WorkItemStatus.BLOCKED)
+    second = engine.store.create_work_item(
+        "ws", "dependent", "desc", "started-dependent", "charlie", reviewer="bob")
+    engine.store.update_status(second.id, WorkItemStatus.IN_REVIEW)
+    proposal = _proposal({
+        "op": "update",
+        "node": "bootstrap",
+        "set": {"blocked_by": ["foundation"]},
+    })
+    reviewed = build_reviewed_amendment(
+        load_manifest(str(path)), proposal, engine.store,
+        issue_id="amendment-issue", reviewer_verdict="pass")
+    original_sync = amendment_mod._sync_stage
+    failed = False
+
+    def fail_second(store, node, stage, *, expected_subject=None):
+        nonlocal failed
+        if node.id == "started-dependent" and not failed:
+            failed = True
+            raise RuntimeError("simulated Store interruption")
+        return original_sync(
+            store, node, stage, expected_subject=expected_subject)
+
+    monkeypatch.setattr(amendment_mod, "_sync_stage", fail_second)
+    with pytest.raises(RuntimeError, match="Store interruption"):
+        apply_amendment(
+            str(path), reviewed, engine.store, {"alice", "bob", "charlie"})
+
+    interrupted = load_manifest(str(path))
+    ledger = interrupted.meta["amendment_apply"]["nodes"]
+    assert ledger["bootstrap"]["state"] == "synced"
+    assert ledger["started-dependent"]["state"] == "syncing"
+
+    engine.store.update_status(first.id, WorkItemStatus.DONE)
+    interrupted.nodes["bootstrap"].status = "done"
+    save_manifest(interrupted, str(path))
+    monkeypatch.setattr(amendment_mod, "_sync_stage", original_sync)
+
+    result = apply_amendment(
+        str(path), reviewed, engine.store, {"alice", "bob", "charlie"})
+
+    assert engine.store.get_work_item(first.id).status == WorkItemStatus.DONE
+    assert engine.store.get_work_item(second.id).status == WorkItemStatus.TODO
+    assert result["sync"]["already_complete"] == ["bootstrap"]
+    assert result["sync"]["synced"] == ["started-dependent"]
+    completed = load_manifest(str(path)).meta["amendment_apply"]["nodes"]
+    assert completed["bootstrap"]["state"] == "synced"
+    assert completed["started-dependent"]["state"] == "synced"
+
+
+def test_topology_change_fails_closed_for_completed_downstream(tmp_path):
+    path = _topology_manifest(tmp_path)
+    manifest = load_manifest(str(path))
+    manifest.nodes["started-dependent"].status = "done"
+    manifest.nodes["started-dependent"].merged = True
+    proposal = _proposal({
+        "op": "update",
+        "node": "bootstrap",
+        "set": {"blocked_by": ["foundation"]},
+    })
+
+    errors = validate_proposal(
+        manifest, proposal, {"alice", "bob", "charlie"})
+
+    assert any("done/merged downstream" in error for error in errors)
 
 
 def test_added_node_cannot_smuggle_runtime_facts(tmp_path):

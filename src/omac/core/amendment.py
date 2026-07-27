@@ -24,6 +24,7 @@ from ..i18n import ui
 
 
 SCHEMA = "omac.dag-amendment/v1"
+APPLY_LEDGER_SCHEMA = "omac.amendment-apply/v1"
 _RUNTIME_FIELDS = {
     "work_item_id", "status", "merged", "merged_at", "merge_request_state",
 }
@@ -60,8 +61,11 @@ def _node_dict(node: Node, *, include_runtime: bool) -> dict[str, Any]:
 
 
 def _manifest_payload(manifest: Manifest, *, include_runtime: bool) -> dict[str, Any]:
+    meta = copy.deepcopy(manifest.meta)
+    if not include_runtime:
+        meta.pop("amendment_apply", None)
     return {
-        "meta": copy.deepcopy(manifest.meta),
+        "meta": meta,
         "nodes": [
             _node_dict(node, include_runtime=include_runtime)
             for node in manifest.nodes.values()
@@ -278,7 +282,14 @@ def validate_proposal(
         amended = _apply_definition(manifest, proposal)
     except (KeyError, TypeError, ValueError) as exc:
         return [f"could not apply proposal: {exc}"]
-    return lint(amended, agent_pool)
+    errors = lint(amended, agent_pool)
+    _, _, immutable = _minimal_rerun(manifest, proposal)
+    if immutable:
+        errors.append(
+            "implementation-affecting change reaches done/merged downstream nodes: "
+            + ", ".join(immutable)
+            + "; add an explicit compensating node instead of rewriting completed facts")
+    return errors
 
 
 def _changed_node_ids(proposal: dict[str, Any]) -> list[str]:
@@ -311,6 +322,92 @@ def _classify(
             continue
         result[stage].append(node_id)
     return result
+
+
+def _implementation_affecting(node: Node | None, operation: dict[str, Any]) -> bool:
+    op = operation.get("op")
+    if op in {"add", "remove"}:
+        return True
+    if op != "update" or node is None:
+        return False
+    changes = operation.get("set") or {}
+    if set(changes) & {"worker", "blocked_by", "gate"}:
+        return True
+    if "contract" not in changes:
+        return False
+    return bool(
+        _contract_changes(node, changes["contract"])
+        - _REVIEW_SAFE_CONTRACT_FIELDS
+    )
+
+
+def _downstream_union(
+    before: Manifest, after: Manifest, roots: set[str],
+) -> set[str]:
+    reverse: dict[str, set[str]] = {
+        node_id: set() for node_id in set(before.nodes) | set(after.nodes)
+    }
+    for manifest in (before, after):
+        for node_id, node in manifest.nodes.items():
+            for blocker in node.blocked_by:
+                reverse.setdefault(blocker, set()).add(node_id)
+    downstream: set[str] = set()
+    stack = list(roots)
+    while stack:
+        current = stack.pop()
+        for dependent in reverse.get(current, set()):
+            if dependent in downstream or dependent in roots:
+                continue
+            downstream.add(dependent)
+            stack.append(dependent)
+    return downstream
+
+
+def _node_started(node: Node) -> bool:
+    return bool(node.work_item_id) or node.status not in {"todo", "blocked"}
+
+
+def _minimal_rerun(
+    manifest: Manifest, proposal: dict[str, Any],
+) -> tuple[dict[str, list[str]], list[str], list[str]]:
+    minimal = _classify(manifest, proposal)
+    amended = _apply_definition(manifest, proposal)
+    roots = {
+        str(
+            (operation.get("value") or {}).get("id")
+            if operation.get("op") == "add" else operation.get("node")
+        )
+        for operation in proposal.get("operations") or []
+        if _implementation_affecting(
+            manifest.nodes.get(str(operation.get("node") or "")), operation)
+    }
+    roots.discard("None")
+    downstream = _downstream_union(manifest, amended, roots)
+    explicit_removed = {
+        str(operation.get("node"))
+        for operation in proposal.get("operations") or []
+        if operation.get("op") == "remove"
+    }
+    derived: list[str] = []
+    immutable: list[str] = []
+    ordered_ids = list(manifest.nodes) + [
+        node_id for node_id in amended.nodes if node_id not in manifest.nodes
+    ]
+    for node_id in ordered_ids:
+        if node_id not in downstream or node_id in explicit_removed:
+            continue
+        node = manifest.nodes.get(node_id) or amended.nodes.get(node_id)
+        if node is None or not _node_started(node):
+            continue
+        if node.status == "done" or node.merged:
+            immutable.append(node_id)
+            continue
+        for stage in minimal:
+            if node_id in minimal[stage]:
+                minimal[stage].remove(node_id)
+        minimal["authoring"].append(node_id)
+        derived.append(node_id)
+    return minimal, derived, immutable
 
 
 def _proposal_core(proposal: dict[str, Any]) -> dict[str, Any]:
@@ -346,13 +443,19 @@ def build_reviewed_amendment(
     if reviewer_verdict != "pass":
         raise ValidationError("Only a reviewer pass can enter human confirmation")
 
+    minimal, derived, immutable = _minimal_rerun(manifest, proposal)
+    if immutable:
+        raise ValidationError(
+            "Amendment affects immutable downstream nodes: " + ", ".join(immutable))
     evidence: dict[str, str] = {}
-    for node_id in _changed_node_ids(proposal):
+    affected_ids = {
+        node_id for node_ids in minimal.values() for node_id in node_ids
+    }
+    for node_id in affected_ids:
         node = manifest.nodes.get(node_id)
         if node and node.work_item_id:
             evidence[node_id] = work_item_evidence_digest(
                 store.get_work_item(node.work_item_id))
-    minimal = _classify(manifest, proposal)
     definition_digest = manifest_definition_digest(manifest)
     return {
         **proposal,
@@ -366,9 +469,11 @@ def build_reviewed_amendment(
         "human_confirmation": "pending",
         "analysis": {
             "changed_nodes": _changed_node_ids(proposal),
+            "derived_started_downstream": derived,
             "minimal_rerun": minimal,
             "risk": (
-                "definition changes are CAS-protected; runtime-only drift is rebased"
+                "definition changes are CAS-protected; runtime-only drift is rebased "
+                "only when it does not change the minimum recovery set"
             ),
         },
     }
@@ -398,7 +503,35 @@ def _verify_evidence(current: Manifest, amendment: dict[str, Any], store: Any) -
                 f"节点 {node_id} 的交付证据在 amendment 评审后发生变化；请 rebase 后重新评审。"))
 
 
-def _sync_stage(store: Any, node: Node, stage: str) -> None:
+def _review_subject(node: Node, item: Any) -> str:
+    return _digest({
+        "contract": _dump_contract(node.contract) if node.contract else None,
+        "evidence": work_item_evidence_digest(item),
+    })
+
+
+def _control_snapshot(item: Any) -> dict[str, Any]:
+    contract = getattr(item, "contract", None)
+    if isinstance(contract, dict):
+        contract_value = contract
+    elif contract is None:
+        contract_value = None
+    else:
+        contract_value = _dump_contract(contract)
+    status = getattr(item, "status", None)
+    phase = getattr(item, "phase", None)
+    return {
+        "status": getattr(status, "value", status),
+        "phase": getattr(phase, "value", phase),
+        "review_verdict": getattr(item, "review_verdict", None),
+        "review_subject_digest": getattr(item, "review_subject_digest", None),
+        "contract_sha256": _digest(contract_value),
+    }
+
+
+def _sync_stage(
+    store: Any, node: Node, stage: str, *, expected_subject: str | None = None,
+) -> None:
     if not node.work_item_id:
         return
     item_id = node.work_item_id
@@ -406,10 +539,8 @@ def _sync_stage(store: Any, node: Node, stage: str) -> None:
         store.set_node_contract(item_id, node.contract)
     if stage == "review":
         store.reset_review(item_id)
-        subject = _digest({
-            "contract": _dump_contract(node.contract) if node.contract else None,
-            "evidence": work_item_evidence_digest(store.get_work_item(item_id)),
-        })
+        subject = expected_subject or _review_subject(
+            node, store.get_work_item(item_id))
         store.prepare_review_cycle(item_id, subject)
         store.update_work_item_metadata(item_id, phase=TaskPhase.REVIEW)
         store.update_status(item_id, WorkItemStatus.IN_REVIEW)
@@ -426,6 +557,161 @@ def _sync_stage(store: Any, node: Node, stage: str) -> None:
     else:
         store.reset_review(item_id)
         store.update_status(item_id, WorkItemStatus.TODO)
+
+
+def _prepare_apply_ledger(
+    manifest: Manifest,
+    amendment_id: str,
+    minimal: dict[str, list[str]],
+    store: Any,
+) -> dict[str, Any]:
+    entries: dict[str, Any] = {}
+    for stage, node_ids in minimal.items():
+        for node_id in node_ids:
+            node = manifest.nodes.get(node_id)
+            if node is None or not node.work_item_id:
+                entries[node_id] = {
+                    "stage": stage,
+                    "state": "synced",
+                    "reason": "no existing work item side effect",
+                }
+                continue
+            item = store.get_work_item(node.work_item_id)
+            entry = {
+                "stage": stage,
+                "state": "pending",
+                "baseline": _control_snapshot(item),
+                "expected_contract_sha256": _digest(
+                    _dump_contract(node.contract) if node.contract else None),
+            }
+            if stage == "review":
+                entry["expected_review_subject"] = _review_subject(node, item)
+            entries[node_id] = entry
+    return {
+        "schema": APPLY_LEDGER_SCHEMA,
+        "amendment_id": amendment_id,
+        "nodes": entries,
+    }
+
+
+def _target_reached(entry: dict[str, Any], current: dict[str, Any]) -> bool:
+    stage = entry["stage"]
+    if current["contract_sha256"] != entry.get("expected_contract_sha256"):
+        return False
+    if stage == "review":
+        return (
+            current["status"] == WorkItemStatus.IN_REVIEW.value
+            and current["phase"] == TaskPhase.REVIEW.value
+            and current["review_subject_digest"]
+            == entry.get("expected_review_subject")
+        )
+    if stage == "authoring":
+        return (
+            current["status"] == WorkItemStatus.TODO.value
+            and current["phase"] == TaskPhase.AUTHORING.value
+            and current["review_verdict"] in {None, ""}
+            and current["review_subject_digest"] in {None, ""}
+        )
+    return (
+        current["status"] == WorkItemStatus.IN_REVIEW.value
+        and current["phase"] == TaskPhase.REVIEW.value
+        and current["review_verdict"] in {"pass", "pass-with-nits"}
+    )
+
+
+def _safe_to_compensate(
+    entry: dict[str, Any], current: dict[str, Any],
+) -> bool:
+    baseline = entry.get("baseline") or {}
+    if current == baseline:
+        return True
+    without_contract = {
+        key: value for key, value in current.items() if key != "contract_sha256"
+    }
+    baseline_without_contract = {
+        key: value for key, value in baseline.items() if key != "contract_sha256"
+    }
+    if without_contract == baseline_without_contract:
+        return True
+    if entry["stage"] == "review":
+        return (
+            current["status"] == baseline.get("status")
+            and current["review_verdict"] in {None, ""}
+            and current["phase"] in {
+                TaskPhase.AUTHORING.value, TaskPhase.REVIEW.value,
+            }
+            and current["review_subject_digest"] in {
+                None, "", entry.get("expected_review_subject"),
+            }
+        )
+    if entry["stage"] == "authoring":
+        return (
+            current["status"] == baseline.get("status")
+            and current["phase"] == TaskPhase.AUTHORING.value
+            and current["review_verdict"] in {None, ""}
+        )
+    return False
+
+
+def _save_ledger(manifest: Manifest, manifest_path: str, ledger: dict[str, Any]) -> None:
+    manifest.meta["amendment_apply"] = ledger
+    save_manifest(manifest, manifest_path)
+
+
+def _resume_apply_ledger(
+    manifest: Manifest,
+    manifest_path: str,
+    store: Any,
+) -> dict[str, list[str]]:
+    ledger = manifest.meta.get("amendment_apply")
+    if not isinstance(ledger, dict) or ledger.get("schema") != APPLY_LEDGER_SCHEMA:
+        raise ValidationError(
+            "Applied amendment is missing a valid per-node apply ledger")
+    summary = {"synced": [], "observed_progress": [], "already_complete": []}
+    for node_id, entry in ledger.get("nodes", {}).items():
+        state = entry.get("state")
+        if state in {"synced", "observed_progress"}:
+            summary["already_complete"].append(node_id)
+            continue
+        node = manifest.nodes.get(node_id)
+        if node is None or not node.work_item_id:
+            entry["state"] = "synced"
+            entry["reason"] = "no existing work item side effect"
+            _save_ledger(manifest, manifest_path, ledger)
+            summary["synced"].append(node_id)
+            continue
+        item = store.get_work_item(node.work_item_id)
+        current = _control_snapshot(item)
+        if _target_reached(entry, current):
+            entry["state"] = "synced"
+            entry["observed"] = current
+            _save_ledger(manifest, manifest_path, ledger)
+            summary["synced"].append(node_id)
+            continue
+        if not _safe_to_compensate(entry, current):
+            entry["state"] = "observed_progress"
+            entry["observed"] = current
+            entry["reason"] = (
+                "work item changed after definition apply; skipped to prevent rollback"
+            )
+            _save_ledger(manifest, manifest_path, ledger)
+            summary["observed_progress"].append(node_id)
+            continue
+        entry["state"] = "syncing"
+        entry["attempt_baseline"] = current
+        _save_ledger(manifest, manifest_path, ledger)
+        _sync_stage(
+            store,
+            node,
+            entry["stage"],
+            expected_subject=entry.get("expected_review_subject"),
+        )
+        entry["state"] = "synced"
+        entry["observed"] = _control_snapshot(
+            store.get_work_item(node.work_item_id))
+        _save_ledger(manifest, manifest_path, ledger)
+        summary["synced"].append(node_id)
+    return summary
 
 
 def _validate_stage_preconditions(
@@ -475,12 +761,22 @@ def apply_amendment(
     runtime_rebased = False
     if not already_applied:
         runtime_rebased = _verify_base(current, amendment)
-        _verify_evidence(current, amendment, store)
         errors = validate_proposal(current, amendment, agent_pool)
         if errors:
             raise ValidationError("Amendment validation failed:\n  - " + "\n  - ".join(errors))
+        recomputed_minimal, _, immutable = _minimal_rerun(current, amendment)
+        if immutable:
+            raise ValidationError(
+                "Amendment affects immutable downstream nodes: "
+                + ", ".join(immutable))
+        reviewed_minimal = (amendment.get("analysis") or {}).get("minimal_rerun") or {}
+        if recomputed_minimal != reviewed_minimal:
+            raise ValidationError(ui(
+                "The minimum recovery set changed after amendment review. Rebase and review again.",
+                "amendment 评审后最小恢复集合已变化；请基于最新事实 rebase 并重新评审。"))
+        _verify_evidence(current, amendment, store)
         amended = _apply_definition(current, amendment)
-        minimal = _classify(current, amendment)
+        minimal = recomputed_minimal
         _validate_stage_preconditions(amended, minimal, store)
         for stage, node_ids in minimal.items():
             for node_id in node_ids:
@@ -495,22 +791,26 @@ def apply_amendment(
         amended.meta["amendment_revision"] = int(
             amended.meta.get("amendment_revision") or 0) + 1
         amended.meta["last_amendment_id"] = amendment.get("amendment_id")
+        amended.meta["amendment_apply"] = _prepare_apply_ledger(
+            amended, amendment["amendment_id"], minimal, store)
         save_manifest(amended, manifest_path)
         current = amended
     else:
         runtime_rebased = True
         minimal = amendment.get("analysis", {}).get("minimal_rerun") or {}
-        _validate_stage_preconditions(current, minimal, store)
+        ledger = current.meta.get("amendment_apply") or {}
+        if ledger.get("amendment_id") != amendment.get("amendment_id"):
+            raise ValidationError(
+                "Manifest amendment apply ledger does not match the accepted amendment")
 
-    for stage, node_ids in minimal.items():
-        for node_id in node_ids:
-            node = current.nodes.get(node_id)
-            if node is not None:
-                _sync_stage(store, node, stage)
+    sync_summary = _resume_apply_ledger(
+        current, manifest_path, store)
 
     return {
         "amendment_id": amendment.get("amendment_id"),
         "manifest": manifest_path,
         "minimal_rerun": minimal,
         "runtime_rebased": runtime_rebased,
+        "apply_semantics": "manifest-atomic-with-restart-safe-store-compensation",
+        "sync": sync_summary,
     }

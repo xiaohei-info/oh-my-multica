@@ -45,7 +45,8 @@ DESCRIPTION = """manifest DAG 的检查、摘要与确定性执行。
   status   随时查看快照(reconcile + 各节点状态),不推进;退出码恒 0
   tick     单轮推进后立即退出:exit 0 收敛 / 10 推进中 / 20 需决策(调试用)
   amend    对已运行 DAG 发起 Orchestrator→Reviewer→Human 的受控 amendment；
-           Reviewer pass 后停在人工确认，accept 时 CAS 原子应用并最小化恢复节点。
+           Reviewer pass 后停在人工确认。accept 原子写 manifest，并用逐节点
+           apply ledger 对跨 Store side effect 做 restart-safe 补偿；它不是跨系统事务。
 
 有界运行:--max-rounds N / --max-minutes N(给不想长阻塞的 agent 调用者分段跑)
 进度事件(走 stderr,不污染 stdout 数据线):默认人类文本,--json-logs /

@@ -82,14 +82,21 @@ omac dag amend propose .omac/project.yaml \
   机器门，再交给独立 Reviewer。
 - Reviewer pass 后命令以 exit 20 停在 `confirmation`，不会自动应用。人工审阅生成的
   amendment 文件后再运行返回的 `omac dag amend accept ...` 命令。
-- accept 在 manifest 写锁内执行 CAS。完整 manifest digest 变化但 definition digest 未变时，
-  只把自然发生的 status/work_item 进展 rebase 进结果；任何 contract、边或节点定义漂移都会
+- accept 在 manifest 写锁内执行 CAS，并原子写入 manifest 定义与逐节点 apply ledger。
+  Store 不与文件系统共享事务，因此这不是跨系统原子事务；ledger 以
+  `pending/syncing/synced/observed_progress` 记录每个节点的补偿进度。进程崩溃后，重复 accept
+  只补偿尚未完成且仍安全的 side effect；已同步或已经继续推进的节点绝不回退。
+- 完整 manifest digest 变化但 definition digest 未变时，只在最小恢复集合没有变化的前提下
+  rebase 自然发生的 status/work_item 进展；任何 contract、边、节点定义或受影响集合漂移都会
   拒绝应用，要求重新生成并评审。
 - 未变节点的 `work_item_id`、status、bounce、PR、verification/review 引用和 merged 事实不动。
   contract-only 且交付证据未变的节点恢复到 review；有效 pass+PR 的 merge-only 节点恢复到
   merging；改变实现 scope 的节点才回 authoring。新增节点从 authoring 开始。
 - done/merged 节点不可修改或删除。已执行节点改变 worker 或 `scope_paths` 必须携带显式
   ownership migration 及理由。
+- 对 blocked_by、worker、scope 或其他实现语义变更，OMAC 会计算受影响后继闭包。未启动后继
+  继续由依赖自然阻塞；已启动后继进入显式 authoring 恢复集；若影响到 done/merged 后继则失败
+  关闭，要求 Orchestrator 增加补偿节点，不能把它们称为 unaffected。
 
 apply 后运行原命令即可衔接：
 

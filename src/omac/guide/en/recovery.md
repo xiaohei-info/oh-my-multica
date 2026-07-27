@@ -106,15 +106,26 @@ omac dag amend propose .omac/project.yaml \
 - Reviewer pass returns exit 20 in `confirmation`; it never applies automatically.
   Inspect the generated amendment and run the returned
   `omac dag amend accept ...` command.
-- Accept runs under the manifest write lock with CAS. Runtime-only changes to
-  status or work-item facts are rebased when the definition digest is unchanged;
-  any node, contract, or edge definition drift requires a new reviewed amendment.
+- Accept runs under the manifest write lock with CAS and atomically writes the
+  manifest definition plus a per-node apply ledger. The Store and filesystem do
+  not share a transaction, so this is not a cross-system atomic transaction.
+  Ledger states `pending`, `syncing`, `synced`, and `observed_progress` make the
+  Store side effects restart-safe: repeated accept compensates only unfinished
+  safe work and never rolls back a node that already advanced.
+- Runtime-only status or work-item changes are rebased only when the
+  definition digest and minimum recovery set remain unchanged. Node, contract, edge, or
+  affected-set drift requires a new reviewed amendment.
 - Unchanged nodes preserve work-item IDs, status, bounces, PR, verification/review
   references, and merged facts. Contract-only changes with unchanged delivery
   evidence resume at review; a valid passed-review PR may resume at merging;
   implementation-scope changes resume at authoring.
 - Done/merged nodes cannot be changed or removed. Changing worker or `scope_paths`
   on an executed node requires an explicit ownership migration and reason.
+- For `blocked_by`, worker, scope, or other implementation-semantic changes,
+  OMAC computes the affected successor closure. Unstarted successors remain
+  naturally dependency-blocked; started successors enter the explicit authoring
+  recovery set. Reaching a done/merged successor fails closed and requires an
+  Orchestrator-authored compensating node instead of calling it unaffected.
 
 After apply, resume the original workflow:
 
