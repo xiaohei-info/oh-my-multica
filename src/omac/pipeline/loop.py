@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Set, Tuple
 
 from ..core import graph, logsetup
+from ..core.amendment import ensure_amendment_apply_complete
 from ..core.config import DEFAULT_RETRY
 from ..core.evidence import validate_review_evidence, validate_worker_evidence
 from ..core.review_convergence import (
@@ -176,6 +177,7 @@ def reconcile(store: WorkItemStore, manifest: Manifest, manifest_path: str) -> b
     (证据门 + 阶段交接),reconcile 不同步其状态,避免把平台 DONE 直接写成
     manifest done 而短路证据门和 reviewer 交接。
     """
+    ensure_amendment_apply_complete(manifest, manifest_path)
     changed = False
     for key, node in manifest.nodes.items():
         if not node.work_item_id:
@@ -882,6 +884,8 @@ def tick(
     与「自动重试」不同 —— tick 不会把已 blocked 节点重置为 todo
     (必须经 `omac node retry` 显式决策);retry_limits 是节点内的有界往返。
     """
+    ensure_amendment_apply_complete(manifest, manifest_path)
+
     # 1. Reconcile: 平台状态同步回 manifest
     reconcile(store, manifest, manifest_path)
 

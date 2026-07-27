@@ -11,6 +11,7 @@ from ...core.config import ENV_ENGINE, ENV_WORKSPACE, load_config, resolve_engin
 from ...core.manifest import load_manifest, save_manifest
 from ...core.graph import downstream_of
 from ...core.taskmeta import TaskKind
+from ...core.stage_recovery import prepare_stage_recovery
 from ...engines import EngineConfig, create_engine
 from ...engines.models import PullRequestState, WorkItemStatus
 from ...errors import OmacError, ValidationError, WorkItemNotFoundError
@@ -234,10 +235,9 @@ def _cmd_retry(args) -> int:
     # 平台先写、本地后写：平台失败时不留下两边分叉的半完成 retry。
     if node.work_item_id and engine is not None:
         try:
-            # 清除旧 reviewer 判定并把 phase 恢复为 authoring；review report
-            # 引用仍保留，worker 可以从 previous_review 获取返工依据。
-            engine.store.reset_review(node.work_item_id)
-            engine.store.update_status(node.work_item_id, WorkItemStatus.TODO)
+            # 复用 DAG stage recovery 原语；清除旧 reviewer 判定并恢复
+            # authoring/todo，同时保留 PR、verification 与历史附件。
+            prepare_stage_recovery(node, engine.store, "authoring")
         except WorkItemNotFoundError:
             # mock 的跨进程恢复没有持久化 store；陈旧 work_item_id 与 reconcile
             # 的“平台工单不存在”语义相同。retry 仍保留 ID 以兼容输出契约，

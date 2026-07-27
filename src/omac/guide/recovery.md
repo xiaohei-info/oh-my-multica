@@ -20,7 +20,9 @@
    - `omac node retry <manifest> <key> [--worker 换人]`：重置为 todo。
    - `omac node accept <manifest> <key>`：人工接受已知风险并标记 done。
    - `omac node abandon <manifest> <key>`：放弃该节点，解锁非硬依赖下游。
-   - 修改 manifest：调整 contract、换人或拆小；必要时先运行 `omac dag check`。
+   - 若 DAG 尚未开始执行，可修改 manifest 后运行 `omac dag check`。
+   - 若 DAG 已开始执行且问题属于 contract、验收映射或拓扑定义，使用受控
+     `omac dag amend propose`，禁止直接覆盖运行中 manifest。
 4. 重新运行 `omac dag run <manifest>`。已 done 节点会复用，其余节点续跑。
 
 ### 阶段级恢复与 merge 观察
@@ -62,6 +64,58 @@ omac plan resume --plan-id p-xxxx
 
 `accept` 只用于接受已知风险，不是跳过失败验证。`retry` 必须有新的事实或方案，
 不能原样重复已失败的尝试。
+
+## 运行中 DAG 的受控 amendment
+
+当已批准 DAG 开始执行后才发现 contract、验收责任或依赖边错误，不要重新运行整份
+`plan`，也不要手工编辑 manifest。先准备 Reviewer/blocker 报告，再提供权威设计文档路径：
+
+```bash
+omac dag amend propose .omac/project.yaml \
+  --blocked-node bootstrap-console \
+  --report-file /tmp/dag-review.md \
+  --docs docs
+```
+
+- Orchestrator 只提交 `omac.dag-amendment/v1` 的结构化 operations；不能写运行态字段。
+- OMAC 先做 DAG、循环、依赖、agent pool、done/merged 不可变性和 ownership migration
+  机器门，再交给独立 Reviewer。
+- Reviewer pass 后命令以 exit 20 停在 `confirmation`，不会自动应用。人工审阅生成的
+  amendment 文件后再运行返回的 `omac dag amend accept ...` 命令。
+- accept 在 manifest 写锁内执行 CAS，并原子写入 manifest 定义与逐节点 apply ledger。
+  Store 不与文件系统共享事务，因此这不是跨系统原子事务；ledger 以
+  `pending/syncing/synced/observed_progress` 记录每个节点的补偿进度。进程崩溃后，重复 accept
+  只补偿尚未完成且仍安全的 side effect；已同步或已经继续推进的节点绝不回退。
+- ledger 存在 `pending`、`syncing` 或其他非完成状态时，`dag run/tick/reconcile` 在任何
+  Store 读取、派发或 merge 前失败关闭，并输出 amendment identity、未完成节点和同一
+  `omac dag amend accept <manifest> <amendment-file>` 续接命令。只有所有条目达到
+  `synced/observed_progress` 后 Runner 才恢复。
+- 完整 manifest digest 变化但 definition digest 未变时，只在最小恢复集合没有变化的前提下
+  rebase 自然发生的 status/work_item 进展；任何 contract、边、节点定义或受影响集合漂移都会
+  拒绝应用，要求重新生成并评审。
+- contract update 是完整替换，并统一经过 canonical manifest serializer；
+  `acceptance_claims`、`acceptance_contributions`、`acceptance_refs` 会被保留并依据
+  `meta.acceptance_file` 指向的权威文档校验。评审后 acceptance 内容漂移会拒绝首次 apply；
+  已写入 pending ledger 的崩溃恢复仍优先完成同一 amendment identity，避免半应用死锁。
+- 未变节点的 `work_item_id`、status、bounce、PR、verification/review 引用和 merged 事实不动。
+  contract-only 且交付证据未变的节点恢复到 review；有效 pass+PR 的 merge-only 节点恢复到
+  merging；改变实现 scope 的节点才回 authoring。新增节点从 authoring 开始。merge-only
+  accept 不观察或请求 PR merge，后续统一由 `run_merge_delivery` 处理；临时 `UNKNOWN` 不消耗
+  merge retry，也不会重复发起 merge。
+- done/merged 节点不可修改或删除。已执行节点改变 worker 或 `scope_paths` 必须携带显式
+  ownership migration 及理由。
+- 对 blocked_by、worker、scope 或其他实现语义变更，OMAC 会计算受影响后继闭包。未启动后继
+  继续由依赖自然阻塞；已启动后继进入显式 authoring 恢复集；若影响到 done/merged 后继则失败
+  关闭，要求 Orchestrator 增加补偿节点，不能把它们称为 unaffected。
+
+apply 后运行原命令即可衔接：
+
+```bash
+omac dag run .omac/project.yaml
+```
+
+若 accept 报 manifest definition 已变化或节点证据摘要变化，不要强行应用；基于最新事实重新
+propose/review。若已有 amendment issue，可用 `--resume-issue-id` 续接同一条交接时间线。
 
 ## Agent 可决策与 Human 决策边界
 

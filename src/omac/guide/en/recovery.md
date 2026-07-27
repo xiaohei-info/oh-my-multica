@@ -22,8 +22,9 @@ structured stdout report is the current recovery fact.
    - `omac node accept <manifest> <key>`: accept a known risk and mark done.
    - `omac node abandon <manifest> <key>`: abandon the node and unlock downstream
      work that does not hard-depend on its deliverable.
-   - Change the manifest: repair a contract, change assignment, or split a node;
-     run `omac dag check` when needed.
+   - Before execution starts, change the manifest and run `omac dag check`.
+   - After execution starts, use controlled `omac dag amend propose` for contract,
+     acceptance-mapping, or topology defects. Do not overwrite the live manifest.
 4. Re-run `omac dag run <manifest>`. Completed nodes are reused; the remainder
    continues from current state.
 
@@ -83,6 +84,73 @@ omac plan resume --plan-id p-xxxx
 
 `accept` accepts a known risk; it does not skip failed verification. `retry`
 requires new evidence or a new plan, not the same failed attempt.
+
+## Controlled amendment of a running DAG
+
+If a contract, acceptance responsibility, or dependency defect appears only after
+an approved DAG starts running, do not rerun the whole plan or edit the manifest
+by hand. Prepare the Reviewer/blocker report and pass the authoritative design
+document paths:
+
+```bash
+omac dag amend propose .omac/project.yaml \
+  --blocked-node bootstrap-console \
+  --report-file /tmp/dag-review.md \
+  --docs docs
+```
+
+- The Orchestrator submits only structured `omac.dag-amendment/v1` operations;
+  runtime fields are not patchable.
+- OMAC checks DAG cycles, dependencies, the agent pool, immutable done/merged
+  facts, and explicit ownership migration before independent Reviewer review.
+- Reviewer pass returns exit 20 in `confirmation`; it never applies automatically.
+  Inspect the generated amendment and run the returned
+  `omac dag amend accept ...` command.
+- Accept runs under the manifest write lock with CAS and atomically writes the
+  manifest definition plus a per-node apply ledger. The Store and filesystem do
+  not share a transaction, so this is not a cross-system atomic transaction.
+  Ledger states `pending`, `syncing`, `synced`, and `observed_progress` make the
+  Store side effects restart-safe: repeated accept compensates only unfinished
+  safe work and never rolls back a node that already advanced.
+- While any ledger entry is `pending`, `syncing`, or otherwise non-terminal,
+  `dag run/tick/reconcile` fails closed before Store reads, dispatch, or merge.
+  The evidence names the amendment identity, unfinished nodes, and the exact
+  `omac dag amend accept <manifest> <amendment-file>` command for resuming that
+  same human-confirmed amendment. Runner progress resumes only after every entry
+  reaches `synced` or `observed_progress`.
+- Runtime-only status or work-item changes are rebased only when the
+  definition digest and minimum recovery set remain unchanged. Node, contract, edge, or
+  affected-set drift requires a new reviewed amendment.
+- A contract update is a complete replacement serialized through the canonical
+  manifest serializer. `acceptance_claims`, `acceptance_contributions`, and
+  `acceptance_refs` are preserved and validated against the authoritative file
+  named by `meta.acceptance_file`. Acceptance drift after review rejects the
+  first apply; once a pending ledger exists, crash recovery still completes the
+  same amendment identity so the DAG cannot deadlock in a half-applied state.
+- Unchanged nodes preserve work-item IDs, status, bounces, PR, verification/review
+  references, and merged facts. Contract-only changes with unchanged delivery
+  evidence resume at review; a valid passed-review PR may resume at merging;
+  implementation-scope changes resume at authoring. Merge-only accept neither
+  observes nor requests a PR merge; the next DAG run delegates that work to
+  `run_merge_delivery`, where transient `UNKNOWN` observations consume no merge
+  retry and cannot issue a duplicate merge request.
+- Done/merged nodes cannot be changed or removed. Changing worker or `scope_paths`
+  on an executed node requires an explicit ownership migration and reason.
+- For `blocked_by`, worker, scope, or other implementation-semantic changes,
+  OMAC computes the affected successor closure. Unstarted successors remain
+  naturally dependency-blocked; started successors enter the explicit authoring
+  recovery set. Reaching a done/merged successor fails closed and requires an
+  Orchestrator-authored compensating node instead of calling it unaffected.
+
+After apply, resume the original workflow:
+
+```bash
+omac dag run .omac/project.yaml
+```
+
+If accept reports definition or delivery-evidence drift, do not force the patch;
+propose and review it again from current facts. Use `--resume-issue-id` to continue
+an existing amendment issue after a process interruption.
 
 ## Agent versus Human decisions
 
