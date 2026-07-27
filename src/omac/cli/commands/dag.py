@@ -45,7 +45,8 @@ DESCRIPTION = """manifest DAG 的检查、摘要与确定性执行。
            循环幂等:任意中断后重跑即续跑,done 节点复用。
            节点生命周期:todo → in_progress → ci_check* → in_review → merging* → done
            (* 由 config 的 ci/merge 决定;三类回退一律转回 worker,各有界 ≤3 次)
-  status   随时查看快照(reconcile + 各节点状态),不推进;退出码恒 0
+  status   随时查看快照(reconcile + 各节点状态),不推进;正常退出 0，
+           平台/网络错误退出 2，认证错误退出 3
   snapshot 只读取 manifest 生成状态快照;不创建 Engine、不 reconcile、不写文件
   tick     单轮推进后立即退出:exit 0 收敛 / 10 推进中 / 20 需决策(调试用)
   amend    对已运行 DAG 发起 Orchestrator→Reviewer→Human 的受控 amendment；
@@ -119,7 +120,8 @@ def register(parser):
     add_output_flag(run_p)
     _add_log_flags(run_p)
 
-    status = sub.add_parser("status", help="查看快照,不推进(退出码恒 0)")
+    status = sub.add_parser(
+        "status", help="查看快照,不推进(正常退出 0；平台/认证错误退出 2/3)")
     status.add_argument("manifest", help="manifest 文件路径")
     status.add_argument("--engine", help="引擎类型覆盖(缺省读 config/env)")
     status.add_argument("--workspace", help="workspace 覆盖(缺省读 config/env)")
@@ -434,7 +436,7 @@ def show(args) -> int:
 
 
 def status(args) -> int:
-    """reconcile + 快照,不推进;退出码恒 0(设计文档 §7.3)。"""
+    """reconcile + 快照，不推进；未知平台结果按稳定错误码退出。"""
     if not os.path.exists(args.manifest):
         raise ValidationError(ui(
             f"Manifest file not found: {args.manifest}\n"
