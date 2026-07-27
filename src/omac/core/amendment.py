@@ -7,6 +7,7 @@ Amendment 只描述 manifest 定义变更；work_item_id、状态、PR/verificat
 from __future__ import annotations
 
 import copy
+from dataclasses import asdict, is_dataclass
 import hashlib
 import json
 import shlex
@@ -41,7 +42,8 @@ _NODE_FIELDS = {
     "contract",
 }
 _REVIEW_SAFE_CONTRACT_FIELDS = {
-    "acceptance", "integration_gates",
+    "acceptance", "acceptance_claims", "acceptance_contributions",
+    "acceptance_refs", "integration_gates",
 }
 
 
@@ -99,6 +101,13 @@ def manifest_definition_digest(manifest: Manifest) -> str:
 def work_item_evidence_digest(item: Any) -> str:
     """绑定现有代码交付，不把易变 status/assignee 混入。"""
     return recovery_evidence_digest(item)
+
+
+def _acceptance_digest(acceptance: Any) -> str | None:
+    if acceptance is None:
+        return None
+    value = asdict(acceptance) if is_dataclass(acceptance) else acceptance
+    return _digest(value)
 
 
 def amendment_apply_blocker(
@@ -275,6 +284,8 @@ def validate_proposal(
     manifest: Manifest,
     proposal_source: str | dict[str, Any],
     agent_pool: set[str],
+    *,
+    acceptance: Any = None,
 ) -> list[str]:
     proposal = parse_proposal(proposal_source)
     errors: list[str] = []
@@ -362,7 +373,7 @@ def validate_proposal(
         amended = _apply_definition(manifest, proposal)
     except (KeyError, TypeError, ValueError) as exc:
         return [f"could not apply proposal: {exc}"]
-    errors = lint(amended, agent_pool)
+    errors = lint(amended, agent_pool, acceptance=acceptance)
     _, _, immutable = _minimal_rerun(manifest, proposal)
     if immutable:
         errors.append(
@@ -514,10 +525,12 @@ def build_reviewed_amendment(
     issue_id: str,
     reviewer_verdict: str,
     agent_pool: set[str] | None = None,
+    acceptance: Any = None,
 ) -> dict[str, Any]:
     proposal = parse_proposal(proposal_source)
     pool = agent_pool or set(store.list_members(store.config.workspace_id))
-    errors = validate_proposal(manifest, proposal, pool)
+    errors = validate_proposal(
+        manifest, proposal, pool, acceptance=acceptance)
     if errors:
         raise ValidationError("Amendment validation failed:\n  - " + "\n  - ".join(errors))
     if reviewer_verdict != "pass":
@@ -537,14 +550,18 @@ def build_reviewed_amendment(
             evidence[node_id] = work_item_evidence_digest(
                 store.get_work_item(node.work_item_id))
     definition_digest = manifest_definition_digest(manifest)
+    base = {
+        "manifest_sha256": manifest_digest(manifest),
+        "definition_sha256": definition_digest,
+        "evidence_sha256": evidence,
+    }
+    acceptance_sha256 = _acceptance_digest(acceptance)
+    if acceptance_sha256:
+        base["acceptance_sha256"] = acceptance_sha256
     return {
         **proposal,
         "amendment_id": _amendment_id(definition_digest, proposal, minimal),
-        "base": {
-            "manifest_sha256": manifest_digest(manifest),
-            "definition_sha256": definition_digest,
-            "evidence_sha256": evidence,
-        },
+        "base": base,
         "review": {"issue_id": issue_id, "verdict": reviewer_verdict},
         "human_confirmation": "pending",
         "analysis": {
@@ -717,6 +734,7 @@ def apply_amendment(
     agent_pool: set[str],
     *,
     amendment_file: str | None = None,
+    acceptance: Any = None,
 ) -> dict[str, Any]:
     amendment = parse_proposal(amendment_source)
     if amendment.get("review", {}).get("verdict") != "pass":
@@ -737,7 +755,15 @@ def apply_amendment(
     runtime_rebased = False
     if not already_applied:
         runtime_rebased = _verify_base(current, amendment)
-        errors = validate_proposal(current, amendment, agent_pool)
+        expected_acceptance = (amendment.get("base") or {}).get(
+            "acceptance_sha256")
+        if expected_acceptance and _acceptance_digest(acceptance) != expected_acceptance:
+            raise ValidationError(ui(
+                "The authoritative acceptance document changed after amendment review. "
+                "Generate and review a new amendment.",
+                "amendment 评审后权威 acceptance 文档已变化；请重新生成并评审 amendment。"))
+        errors = validate_proposal(
+            current, amendment, agent_pool, acceptance=acceptance)
         if errors:
             raise ValidationError("Amendment validation failed:\n  - " + "\n  - ".join(errors))
         recomputed_minimal, _, immutable = _minimal_rerun(current, amendment)

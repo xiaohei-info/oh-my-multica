@@ -13,6 +13,7 @@ from omac.core.amendment import (
     manifest_digest,
     validate_proposal,
 )
+from omac.core.acceptance import load_acceptance_doc
 from omac.core.manifest import load_manifest, save_manifest
 from omac.core.taskmeta import TaskKind
 from omac.cli import exit_codes
@@ -149,6 +150,104 @@ def _contract_update():
             },
         },
     }
+
+
+def _explicit_responsibility_update(action_id="ACT-BOOT-01"):
+    operation = _contract_update()
+    contract = operation["set"]["contract"]
+    contract.pop("acceptance")
+    contract.update({
+        "acceptance_claims": ["UJ-BOOTSTRAP"],
+        "acceptance_contributions": [{
+            "flow_id": "UJ-BOOTSTRAP",
+            "action_ids": [action_id],
+        }],
+        "acceptance_refs": ["UJ-BOOTSTRAP"],
+    })
+    return operation
+
+
+def _responsibility_acceptance_doc():
+    return load_acceptance_doc({
+        "schema": "omac.acceptance/v2",
+        "flows": [
+            {
+                "id": "UJ-BOOTSTRAP",
+                "name": "bootstrap",
+                "actions": [{
+                    "id": "ACT-BOOT-01",
+                    "kind": "business-action",
+                    "step": "bootstrap",
+                    "how": "run bootstrap",
+                    "expected": "workspace is ready",
+                }],
+            },
+        ],
+    })
+
+
+def test_complete_contract_update_preserves_and_validates_responsibility_fields(tmp_path):
+    path = _manifest(tmp_path)
+    engine = _engine()
+    item = engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
+    acceptance = _responsibility_acceptance_doc()
+    proposal = _proposal(_explicit_responsibility_update())
+
+    reviewed = build_reviewed_amendment(
+        load_manifest(str(path)), proposal, engine.store,
+        issue_id="amendment-issue", reviewer_verdict="pass",
+        acceptance=acceptance,
+    )
+    result = apply_amendment(
+        str(path), reviewed, engine.store, {"alice", "bob", "charlie"},
+        acceptance=acceptance,
+    )
+
+    assert result["minimal_rerun"] == {
+        "review": ["bootstrap"], "authoring": [], "merging": [],
+    }
+    manifest_contract = load_manifest(str(path)).nodes["bootstrap"].contract
+    store_contract = engine.store.get_work_item(item.id).contract
+    for contract in (manifest_contract, store_contract):
+        assert contract.acceptance == []
+        assert contract.acceptance_claims == ["UJ-BOOTSTRAP"]
+        assert contract.acceptance_contributions == [{
+            "flow_id": "UJ-BOOTSTRAP", "action_ids": ["ACT-BOOT-01"],
+        }]
+        assert contract.acceptance_refs == ["UJ-BOOTSTRAP"]
+
+    invalid = _proposal(_explicit_responsibility_update("UNKNOWN-ACTION"))
+    errors = validate_proposal(
+        load_manifest(str(_manifest(tmp_path))), invalid,
+        {"alice", "bob", "charlie"}, acceptance=acceptance,
+    )
+    assert any("unknown business action 'UNKNOWN-ACTION'" in error for error in errors)
+
+
+def test_acceptance_drift_after_amendment_review_fails_closed(tmp_path):
+    path = _manifest(tmp_path)
+    original = path.read_bytes()
+    engine = _engine()
+    engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    acceptance = _responsibility_acceptance_doc()
+    reviewed = build_reviewed_amendment(
+        load_manifest(str(path)), _proposal(_explicit_responsibility_update()),
+        engine.store, issue_id="amendment-issue", reviewer_verdict="pass",
+        acceptance=acceptance,
+    )
+    changed_acceptance = copy.deepcopy(acceptance)
+    changed_acceptance.flows[0].actions[0].expected = "a different authority"
+
+    with pytest.raises(ValidationError, match="acceptance document changed"):
+        apply_amendment(
+            str(path), reviewed, engine.store, {"alice", "bob", "charlie"},
+            acceptance=changed_acceptance,
+        )
+
+    assert path.read_bytes() == original
 
 
 def test_contract_only_amendment_preserves_runtime_facts_and_resumes_review(tmp_path):

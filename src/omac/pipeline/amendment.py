@@ -9,6 +9,7 @@ from typing import Any
 
 import yaml
 
+from ..core.acceptance import load_acceptance_doc_file
 from ..core.amendment import (
     apply_amendment, build_reviewed_amendment, parse_proposal, validate_proposal,
 )
@@ -61,6 +62,19 @@ def load_amendment_file(path: str) -> dict[str, Any]:
             f"Could not read amendment file {path}: {exc}",
             f"无法读取 amendment 文件 {path}: {exc}")) from exc
     return parse_proposal(value)
+
+
+def _acceptance_for_manifest(manifest, manifest_path: str):
+    configured = manifest.meta.get("acceptance_file")
+    if not configured:
+        return None
+    path = os.path.join(os.path.dirname(manifest_path), configured)
+    try:
+        return load_acceptance_doc_file(path)
+    except (OSError, ValueError) as exc:
+        raise ValidationError(ui(
+            f"Could not load the authoritative acceptance document {path}: {exc}",
+            f"无法读取权威 acceptance 文档 {path}: {exc}")) from exc
 
 
 def _validate_inputs(
@@ -151,6 +165,7 @@ def propose_amendment(
         raise ValidationError("At least one Reviewer agent is required")
 
     manifest = load_manifest(manifest_path)
+    acceptance = _acceptance_for_manifest(manifest, manifest_path)
     pool = set(engine.store.list_members(engine.store.config.workspace_id))
     missing_agents = [
         agent for agent in [orchestrator, *reviewers] if agent not in pool
@@ -167,7 +182,11 @@ def propose_amendment(
         "omac.dag-amendment/v1 with reason and operations. Supported operations are "
         "update/add/remove/resume. Never patch runtime fields. Never delete or rewrite "
         "done/merged nodes. Use migration.ownership_transfer=true plus a reason when an "
-        "executed node changes worker or scope_paths. Do not edit the live manifest.\n\n"
+        "executed node changes worker or scope_paths. A contract update is a complete "
+        "replacement: preserve every intended acceptance_claims, "
+        "acceptance_contributions, and acceptance_refs responsibility field and use only "
+        "flow/action identities from the authoritative acceptance document. Do not edit "
+        "the live manifest.\n\n"
         f"Current manifest: {_portable_path(manifest_path)}\n"
         f"Authoritative docs paths (read every design document under each path): "
         f"{', '.join(map(_portable_path, docs))}\n"
@@ -183,7 +202,8 @@ def propose_amendment(
     def guard(item) -> list[str]:
         if not item.deliverable:
             return ["amendment deliverable is empty"]
-        return validate_proposal(manifest, item.deliverable, pool)
+        return validate_proposal(
+            manifest, item.deliverable, pool, acceptance=acceptance)
 
     outcome = run_task(
         engine,
@@ -210,6 +230,7 @@ def propose_amendment(
         issue_id=issue.id,
         reviewer_verdict=issue.review_verdict,
         agent_pool=pool,
+        acceptance=acceptance,
     )
     target = output_file or default_amendment_path(manifest_path)
     _write_yaml_atomic(target, reviewed)
@@ -239,9 +260,14 @@ def accept_amendment(
     if not issue_id:
         raise ValidationError("Amendment review.issue_id is missing")
     issue = engine.store.get_work_item(issue_id)
+    current_manifest = load_manifest(manifest_path)
     already_applied = (
-        load_manifest(manifest_path).meta.get("last_amendment_id")
+        current_manifest.meta.get("last_amendment_id")
         == amendment.get("amendment_id")
+    )
+    acceptance = (
+        None if already_applied
+        else _acceptance_for_manifest(current_manifest, manifest_path)
     )
     if not already_applied and (
         issue.review_verdict != "pass" or issue.phase != TaskPhase.CONFIRMATION
@@ -252,7 +278,7 @@ def accept_amendment(
 
     result = apply_amendment(
         manifest_path, amendment, engine.store, agent_pool,
-        amendment_file=amendment_file)
+        amendment_file=amendment_file, acceptance=acceptance)
     amendment["human_confirmation"] = "applied"
     amendment["human_reason"] = reason
     amendment["apply_result"] = result

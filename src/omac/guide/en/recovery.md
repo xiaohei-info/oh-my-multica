@@ -121,6 +121,12 @@ omac dag amend propose .omac/project.yaml \
 - Runtime-only status or work-item changes are rebased only when the
   definition digest and minimum recovery set remain unchanged. Node, contract, edge, or
   affected-set drift requires a new reviewed amendment.
+- A contract update is a complete replacement serialized through the canonical
+  manifest serializer. `acceptance_claims`, `acceptance_contributions`, and
+  `acceptance_refs` are preserved and validated against the authoritative file
+  named by `meta.acceptance_file`. Acceptance drift after review rejects the
+  first apply; once a pending ledger exists, crash recovery still completes the
+  same amendment identity so the DAG cannot deadlock in a half-applied state.
 - Unchanged nodes preserve work-item IDs, status, bounces, PR, verification/review
   references, and merged facts. Contract-only changes with unchanged delivery
   evidence resume at review; a valid passed-review PR may resume at merging;

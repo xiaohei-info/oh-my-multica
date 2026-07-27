@@ -93,6 +93,10 @@ omac dag amend propose .omac/project.yaml \
 - 完整 manifest digest 变化但 definition digest 未变时，只在最小恢复集合没有变化的前提下
   rebase 自然发生的 status/work_item 进展；任何 contract、边、节点定义或受影响集合漂移都会
   拒绝应用，要求重新生成并评审。
+- contract update 是完整替换，并统一经过 canonical manifest serializer；
+  `acceptance_claims`、`acceptance_contributions`、`acceptance_refs` 会被保留并依据
+  `meta.acceptance_file` 指向的权威文档校验。评审后 acceptance 内容漂移会拒绝首次 apply；
+  已写入 pending ledger 的崩溃恢复仍优先完成同一 amendment identity，避免半应用死锁。
 - 未变节点的 `work_item_id`、status、bounce、PR、verification/review 引用和 merged 事实不动。
   contract-only 且交付证据未变的节点恢复到 review；有效 pass+PR 的 merge-only 节点恢复到
   merging；改变实现 scope 的节点才回 authoring。新增节点从 authoring 开始。merge-only
