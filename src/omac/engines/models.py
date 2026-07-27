@@ -187,6 +187,9 @@ class WorkItem:
     project_rules_ref: Optional[Dict[str, Any]] = None
     # 执行面信号:agent run 已终止但未通过 omac work submit 推进 issue。
     agent_run_finished_without_submit: bool = False
+    # reviewer 与 worker 共用 issue 状态，但失败 run 不能一概映射为 worker 失败。
+    # REVIEW 阶段由 loop 原地恢复 reviewer，避免丢弃已完成的 worker 交付。
+    agent_run_failed: bool = False
 
     def is_completed(self) -> bool:
         return self.status == WorkItemStatus.DONE

@@ -27,6 +27,25 @@ structured stdout report is the current recovery fact.
 4. Re-run `omac dag run <manifest>`. Completed nodes are reused; the remainder
    continues from current state.
 
+### Stage-aware recovery and merge observation
+
+- Recovery follows the issue's real `phase`: authoring resumes only the worker.
+  If a reviewer run fails or finishes without submitting a verdict, OMAC keeps
+  the same issue, worker PR/verification, and review subject, then redispatches
+  the reviewer in `review`; it must not incorrectly return to the worker.
+- `merging` only observes a persisted merge intent/request. GitHub/platform
+  `UNKNOWN` results and temporary observation failures keep the node in
+  `merging`; they do not consume `retry.merge`, return to the worker, or send a
+  second merge request.
+- Authentication or authorization failure is not a transient observation. OMAC
+  durably marks the node `blocked` while preserving the work item, PR, and merge
+  marker; it never reissues the merge. Restore credentials/permission, verify
+  the PR remotely, then use the prompted explicit recovery command before
+  rerunning the DAG.
+- Only an explicit `CLOSED_UNMERGED` observation or a known merge-command
+  failure enters merge-failure/rework semantics. `MERGED + mergedAt` remains
+  the sole fact that closes a node.
+
 ## Continuing an exhausted plan-stage review
 
 When `omac plan create/resume` returns exit 20 because plan, acceptance, or

@@ -18,7 +18,7 @@ from ..core.review_convergence import (
 from ..core.gitsync import commit_manifest
 from ..core.manifest import Manifest, save_manifest, set_node
 from ..pipeline.delivery import (
-    advance_delivery, block_unproven_merge_request,
+    advance_delivery, block_merge_auth_error, block_unproven_merge_request,
     merge_request_state_is_valid, run_merge_delivery,
 )
 from ..engines.models import PullRequestState, WorkItemStatus
@@ -127,6 +127,28 @@ def _has_confirmed_merge(node) -> bool:
     return bool(node.merged and node.merged_at)
 
 
+def _reviewer_run_needs_resume(item) -> bool:
+    """仅在 REVIEW 阶段识别失联 reviewer run，绝不回退 worker 交付。"""
+    return (
+        getattr(item, "phase", TaskPhase.AUTHORING) == TaskPhase.REVIEW
+        and (
+            getattr(item, "agent_run_failed", False)
+            or getattr(item, "agent_run_finished_without_submit", False)
+        )
+    )
+
+
+def _resume_reviewer_run(store, runtime, node) -> bool:
+    """在同一 issue 恢复 reviewer，不重置既有 worker/评审对象事实。"""
+    if not node.reviewer:
+        return False
+    item_id = node.work_item_id
+    store.update_status(item_id, WorkItemStatus.IN_REVIEW)
+    store.assign_work_item(item_id, node.reviewer, "reviewer")
+    runtime.wake(item_id, node.reviewer, "reviewer")
+    return True
+
+
 def _complete_merge_if_confirmed(
     store: WorkItemStore, runtime: AgentRuntime, manifest: Manifest, key: str,
     retry_limits: dict, config: dict, manifest_path: str,
@@ -233,7 +255,18 @@ def reconcile(store: WorkItemStore, manifest: Manifest, manifest_path: str) -> b
                     if item.status != WorkItemStatus.DONE:
                         store.update_status(node.work_item_id, WorkItemStatus.DONE)
                     continue
-                observation = store.observe_pull_request(pr_url)
+                try:
+                    observation = store.observe_pull_request(pr_url)
+                except AuthError:
+                    block_merge_auth_error(
+                        node, item, store, manifest, manifest_path, key)
+                    changed = True
+                    continue
+                except PlatformError:
+                    store.update_status(node.work_item_id, WorkItemStatus.IN_REVIEW)
+                    set_node(manifest, key, status="merging")
+                    changed = True
+                    continue
                 state = _pull_request_state(observation)
                 if state == PullRequestState.MERGED and getattr(observation, "merged_at", None):
                     node.merged = True
@@ -247,6 +280,11 @@ def reconcile(store: WorkItemStore, manifest: Manifest, manifest_path: str) -> b
                     store.update_status(node.work_item_id, WorkItemStatus.IN_REVIEW)
                     if state == PullRequestState.PENDING:
                         node.merge_request_state = "requested"
+                    set_node(manifest, key, status="merging")
+                    changed = True
+                    continue
+                if state == PullRequestState.UNKNOWN:
+                    store.update_status(node.work_item_id, WorkItemStatus.IN_REVIEW)
                     set_node(manifest, key, status="merging")
                     changed = True
                     continue
@@ -476,6 +514,24 @@ def collect_results(
         elif node.status == "in_review":
             verdict = item.review_verdict
             if not verdict:
+                if _reviewer_run_needs_resume(item):
+                    try:
+                        if _resume_reviewer_run(store, runtime, node):
+                            set_node(manifest, key, status="in_review")
+                            log.info(logsetup.EVT_REVIEW_DISPATCH, kind=_DAG_KIND,
+                                     node=key, id=node.work_item_id,
+                                     reviewer=node.reviewer, recovered=True)
+                            continue
+                    except PlatformError as exc:
+                        store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
+                        store.add_comment(node.work_item_id, ui(
+                            f"Failed to resume reviewer {node.reviewer}: {exc}",
+                            f"恢复 reviewer {node.reviewer} 失败: {exc}"))
+                        set_node(manifest, key, status="blocked")
+                        failures[key] = ui(
+                            f"Failed to resume reviewer {node.reviewer}: {exc}",
+                            f"恢复 reviewer {node.reviewer} 失败: {exc}")
+                        continue
                 # reviewer 已落终态但缺结构化 review_verdict → blocked(无证据不予通过)
                 if item.status in (WorkItemStatus.DONE, WorkItemStatus.FAILED, WorkItemStatus.BLOCKED):
                     store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)

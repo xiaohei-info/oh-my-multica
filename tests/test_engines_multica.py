@@ -815,6 +815,37 @@ def test_multica_get_work_item_maps_exhausted_failed_runs_to_failed(monkeypatch)
     assert item.status == WorkItemStatus.FAILED
 
 
+def test_multica_get_work_item_marks_failed_reviewer_run_without_rewriting_stage(
+    monkeypatch,
+):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+
+    def fake_run(args):
+        if args[:2] == ["issue", "get"]:
+            return {
+                "id": "issue-1",
+                "title": "t",
+                "description": "d",
+                "status": "in_review",
+                "metadata": {
+                    "dag_key": "node-a", "kind": "develop", "phase": "review",
+                },
+            }
+        if args[:2] == ["issue", "runs"]:
+            return [{
+                "id": "run-2", "status": "failed",
+                "created_at": "2026-07-27T00:00:00Z",
+            }]
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+
+    item = store.get_work_item("issue-1")
+
+    assert item.status == WorkItemStatus.IN_REVIEW
+    assert item.agent_run_failed is True
+
+
 def test_multica_get_work_item_marks_completed_without_submit_for_worker_followup(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
 

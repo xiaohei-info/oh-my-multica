@@ -38,7 +38,7 @@ from omac.core.review_convergence import REVIEW_PROTOCOL_VERSION, open_blockers
 from omac.core.taskmeta import TaskPhase
 from omac.engines.mock import MockRuntime, MockStore
 from omac.engines.models import EngineConfig, WorkItem, WorkItemStatus
-from omac.errors import PlatformError
+from omac.errors import AuthError, PlatformError
 from omac.pipeline.delivery import run_merge_delivery
 from omac.pipeline import loop
 
@@ -699,8 +699,8 @@ class TestMergeClosureRegression:
         assert manifest.nodes["a"].work_item_id == item.id
         assert result.state == "running"
 
-    @pytest.mark.parametrize("state", ["closed_unmerged", "unknown"])
-    def test_historical_done_with_unconfirmed_pr_fails_closed(self, tmp_path, state):
+    @pytest.mark.parametrize("state", ["closed_unmerged"])
+    def test_historical_done_with_confirmed_unmerged_pr_fails_closed(self, tmp_path, state):
         store = _store()
         item = _review_passed_item(store)
         manifest = Manifest(meta={}, nodes={
@@ -714,6 +714,21 @@ class TestMergeClosureRegression:
 
         assert manifest.nodes["a"].status == "blocked"
         assert store.get_work_item(item.id).status is WorkItemStatus.BLOCKED
+
+    def test_historical_done_with_unknown_pr_reopens_merge_observation(self, tmp_path):
+        store = _store()
+        item = _review_passed_item(store)
+        manifest = Manifest(meta={}, nodes={
+            "a": Node(id="a", worker="alice", reviewer="bob",
+                      work_item_id=item.id, status="done"),
+        })
+        store.observe_pull_request = lambda pr_url: SimpleNamespace(
+            state="unknown", merged_at=None, detail="remote unavailable")
+
+        assert loop.reconcile(store, manifest, str(tmp_path / "m.yaml")) is True
+
+        assert manifest.nodes["a"].status == "merging"
+        assert store.get_work_item(item.id).status is WorkItemStatus.IN_REVIEW
 
     def test_platform_read_failure_blocks_unconfirmed_historical_done(self, tmp_path):
         store = _store()
@@ -1358,3 +1373,173 @@ class TestMergeClosureRegression:
         assert manifest.nodes["a"].status == "merging"
         assert store.get_work_item(item.id).bounces.merge == 0
         assert not store.assign_log
+
+    def test_unknown_merge_observation_recovers_from_merge_without_bounce_or_reissue(
+        self, tmp_path,
+    ):
+        """bootstrap-e2e 型暂态读失败只留在 merge，重启后继续观察。"""
+        store = _store()
+        runtime = _runtime(store)
+        item = _review_passed_item(store)
+        manifest = Manifest(meta={}, nodes={
+            "a": Node(id="a", worker="alice", reviewer="bob",
+                      work_item_id=item.id, status="merging",
+                      merge_request_state="requested"),
+        })
+        path = _saved_manifest(tmp_path, manifest)
+        observations = iter((
+            SimpleNamespace(state="unknown", merged_at=None,
+                            detail="temporary GitHub read failure"),
+            SimpleNamespace(state="merged", merged_at="2026-07-27T00:00:00Z"),
+        ))
+        store.observe_pull_request = lambda pr_url: next(observations)
+        requests = []
+        store.request_pull_request_merge = lambda *args: requests.append(args)
+
+        first = loop.tick(
+            store, runtime, manifest, path,
+            retry_limits=dict(DEFAULT_RETRY), config={})
+
+        persisted = load_manifest(path).nodes["a"]
+        assert first.state == "running"
+        assert persisted.status == "merging"
+        assert persisted.merge_request_state == "requested"
+        assert store.get_work_item(item.id).bounces.merge == 0
+        assert requests == []
+        assert not store.assign_log
+
+        resumed = load_manifest(path)
+        second = loop.tick(
+            store, runtime, resumed, path,
+            retry_limits=dict(DEFAULT_RETRY), config={})
+
+        assert second.state == "converged"
+        assert resumed.nodes["a"].status == "done"
+        assert resumed.nodes["a"].merged_at == "2026-07-27T00:00:00Z"
+        assert requests == []
+
+    def test_temporary_merge_observation_error_stays_in_merge_without_bounce(
+        self, tmp_path,
+    ):
+        store = _store()
+        runtime = _runtime(store)
+        item = _review_passed_item(store)
+        manifest = Manifest(meta={}, nodes={
+            "a": Node(id="a", worker="alice", reviewer="bob",
+                      work_item_id=item.id, status="merging",
+                      merge_request_state="requested"),
+        })
+        path = _saved_manifest(tmp_path, manifest)
+        store.observe_pull_request = lambda pr_url: (_ for _ in ()).throw(
+            PlatformError("GitHub API timeout"))
+        requests = []
+        store.request_pull_request_merge = lambda *args: requests.append(args)
+
+        result = loop.tick(
+            store, runtime, manifest, path,
+            retry_limits=dict(DEFAULT_RETRY), config={})
+
+        assert result.state == "running"
+        assert manifest.nodes["a"].status == "merging"
+        assert manifest.nodes["a"].merge_request_state == "requested"
+        assert store.get_work_item(item.id).bounces.merge == 0
+        assert requests == []
+
+    def test_auth_error_during_reconcile_blocks_and_preserves_merge_recovery_facts(
+        self, tmp_path,
+    ):
+        """凭证错误不是暂态 UNKNOWN：必须 fail closed，且不得重放 merge。"""
+        store = _store()
+        runtime = _runtime(store)
+        item = _review_passed_item(store)
+        manifest = Manifest(meta={}, nodes={
+            "a": Node(id="a", worker="alice", reviewer="bob",
+                      work_item_id=item.id, status="done",
+                      merge_request_state="requested"),
+        })
+        path = _saved_manifest(tmp_path, manifest)
+        store.observe_pull_request = lambda pr_url: (_ for _ in ()).throw(
+            AuthError("GitHub token is expired"))
+        requests = []
+        store.request_pull_request_merge = lambda *args: requests.append(args)
+
+        assert loop.reconcile(store, manifest, path) is True
+        result = loop.tick(
+            store, runtime, manifest, path,
+            retry_limits=dict(DEFAULT_RETRY), config={})
+
+        persisted = load_manifest(path).nodes["a"]
+        comments = "\n".join(store.get_comments(item.id))
+        assert result.state == "needs_decision"
+        assert persisted.status == "blocked"
+        assert persisted.merge_request_state == "requested"
+        assert store.get_work_item(item.id).status is WorkItemStatus.BLOCKED
+        assert store.get_work_item(item.id).bounces.merge == 0
+        assert requests == []
+        assert "authentication/authorization" in comments
+        assert f"omac node retry {path} a" in comments
+
+    def test_auth_error_while_merging_blocks_without_reissuing_merge(self, tmp_path):
+        store = _store()
+        runtime = _runtime(store)
+        item = _review_passed_item(store)
+        manifest = Manifest(meta={}, nodes={
+            "a": Node(id="a", worker="alice", reviewer="bob",
+                      work_item_id=item.id, status="merging",
+                      merge_request_state="requested"),
+        })
+        path = _saved_manifest(tmp_path, manifest)
+        store.observe_pull_request = lambda pr_url: (_ for _ in ()).throw(
+            AuthError("GitHub token is expired"))
+        requests = []
+        store.request_pull_request_merge = lambda *args: requests.append(args)
+
+        result = loop.tick(
+            store, runtime, manifest, path,
+            retry_limits=dict(DEFAULT_RETRY), config={})
+
+        assert result.state == "needs_decision"
+        assert manifest.nodes["a"].status == "blocked"
+        assert manifest.nodes["a"].merge_request_state == "requested"
+        assert store.get_work_item(item.id).bounces.merge == 0
+        assert requests == []
+
+    def test_failed_reviewer_run_recovers_in_review_without_restarting_worker(
+        self, tmp_path,
+    ):
+        """reviewer run 失败只恢复 review 阶段，保留已完成 worker 交付。"""
+        store = _store()
+        runtime = _runtime(store)
+        item = _review_passed_item(store)
+        store.reset_review(item.id)
+        store.update_work_item_metadata(
+            item.id,
+            phase=TaskPhase.REVIEW,
+            verification={"commands": [{"command": "pytest", "exit_code": 0}]},
+        )
+        store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+        failed_review = store.get_work_item(item.id)
+        failed_review.agent_run_failed = True
+        manifest = Manifest(meta={}, nodes={
+            "a": Node(id="a", worker="alice", reviewer="bob",
+                      work_item_id=item.id, status="in_review"),
+        })
+        path = _saved_manifest(tmp_path, manifest)
+        artifacts_before = dict(failed_review.artifacts)
+        verification_before = dict(failed_review.verification)
+
+        result = loop.collect_results(
+            store, runtime, manifest, path,
+            retry_limits=dict(DEFAULT_RETRY), config={})
+
+        recovered = store.get_work_item(item.id)
+        assert result == {}
+        assert manifest.nodes["a"].status == "in_review"
+        assert recovered.status is WorkItemStatus.IN_REVIEW
+        assert recovered.phase is TaskPhase.REVIEW
+        assert recovered.reviewer == "bob"
+        assert recovered.artifacts == artifacts_before
+        assert recovered.verification == verification_before
+        assert store.assign_log[-1][0] == item.id
+        assert store.assign_log[-1][2] == "reviewer"
+        assert not [entry for entry in store.assign_log if entry[2] == "worker"]
