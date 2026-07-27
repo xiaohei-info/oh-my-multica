@@ -3,7 +3,8 @@
 设计文档 §5.2/§13.3:dag status --output json 与 dag run exit 20 报告共用同一 schema,
 P5 web 与 agent 都消费它。schema 用本模块的 *_KEYS 常量锁定,测试断言字段不变。
 
-退出码约定(§5.1):dag status 退出码恒为 0(观测,不是判定);
+退出码约定(§5.1):dag status 正常观测退出 0；平台/网络错误退出 2，
+认证错误退出 3。未知结果不得伪装成业务状态。
 dag run/tick 在 needs_decision 非空时 exit 20,report 结构完全相同。
 """
 from __future__ import annotations

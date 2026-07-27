@@ -730,7 +730,7 @@ class TestMergeClosureRegression:
         assert manifest.nodes["a"].status == "merging"
         assert store.get_work_item(item.id).status is WorkItemStatus.IN_REVIEW
 
-    def test_platform_read_failure_blocks_unconfirmed_historical_done(self, tmp_path):
+    def test_platform_read_failure_preserves_unconfirmed_historical_done(self, tmp_path):
         store = _store()
         item = _review_passed_item(store)
         manifest = Manifest(meta={}, nodes={
@@ -740,12 +740,13 @@ class TestMergeClosureRegression:
         store.get_work_item = lambda item_id: (_ for _ in ()).throw(
             PlatformError("platform timeout"))
 
-        assert loop.reconcile(store, manifest, str(tmp_path / "m.yaml")) is True
+        with pytest.raises(PlatformError, match="platform timeout"):
+            loop.reconcile(store, manifest, str(tmp_path / "m.yaml"))
 
-        assert manifest.nodes["a"].status == "blocked"
+        assert manifest.nodes["a"].status == "done"
         assert manifest.nodes["a"].work_item_id == item.id
 
-    def test_platform_read_failure_blocks_historical_done_with_cached_merge_marker(
+    def test_platform_read_failure_preserves_confirmed_historical_done(
         self, tmp_path,
     ):
         store = _store()
@@ -758,9 +759,12 @@ class TestMergeClosureRegression:
         store.get_work_item = lambda item_id: (_ for _ in ()).throw(
             PlatformError("platform timeout"))
 
-        assert loop.reconcile(store, manifest, str(tmp_path / "m.yaml")) is True
+        with pytest.raises(PlatformError, match="platform timeout"):
+            loop.reconcile(store, manifest, str(tmp_path / "m.yaml"))
 
-        assert manifest.nodes["a"].status == "blocked"
+        assert manifest.nodes["a"].status == "done"
+        assert manifest.nodes["a"].merged is True
+        assert manifest.nodes["a"].merged_at == "2026-07-26T08:00:00Z"
 
     def test_historical_done_without_pr_fails_closed(self, tmp_path):
         store = _store()
@@ -1445,12 +1449,11 @@ class TestMergeClosureRegression:
         assert store.get_work_item(item.id).bounces.merge == 0
         assert requests == []
 
-    def test_auth_error_during_reconcile_blocks_and_preserves_merge_recovery_facts(
+    def test_auth_error_during_reconcile_preserves_merge_recovery_facts(
         self, tmp_path,
     ):
-        """凭证错误不是暂态 UNKNOWN：必须 fail closed，且不得重放 merge。"""
+        """认证结果未知时向上传播，保持业务事实且不得重放 merge。"""
         store = _store()
-        runtime = _runtime(store)
         item = _review_passed_item(store)
         manifest = Manifest(meta={}, nodes={
             "a": Node(id="a", worker="alice", reviewer="bob",
@@ -1463,21 +1466,17 @@ class TestMergeClosureRegression:
         requests = []
         store.request_pull_request_merge = lambda *args: requests.append(args)
 
-        assert loop.reconcile(store, manifest, path) is True
-        result = loop.tick(
-            store, runtime, manifest, path,
-            retry_limits=dict(DEFAULT_RETRY), config={})
+        with pytest.raises(AuthError, match="GitHub token is expired"):
+            loop.reconcile(store, manifest, path)
 
         persisted = load_manifest(path).nodes["a"]
         comments = "\n".join(store.get_comments(item.id))
-        assert result.state == "needs_decision"
-        assert persisted.status == "blocked"
+        assert persisted.status == "done"
         assert persisted.merge_request_state == "requested"
-        assert store.get_work_item(item.id).status is WorkItemStatus.BLOCKED
+        assert store.get_work_item(item.id).status is WorkItemStatus.DONE
         assert store.get_work_item(item.id).bounces.merge == 0
         assert requests == []
-        assert "authentication/authorization" in comments
-        assert f"omac node retry {path} a" in comments
+        assert comments == ""
 
     def test_auth_error_while_merging_blocks_without_reissuing_merge(self, tmp_path):
         store = _store()
