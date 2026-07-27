@@ -51,7 +51,14 @@ nodes:
       source_of_truth:
         - docs/design.md#跨模块契约
       required_contracts: []
-      acceptance:
+      acceptance_claims:
+        - flow-login-renewal
+      acceptance_contributions:
+        - flow_id: flow-login-renewal
+          action_ids:
+            - ACT-LOGIN-RENEWAL-01
+            - ACT-LOGIN-RENEWAL-02
+      acceptance_refs:
         - flow-login-renewal
       non_goals:
         - 不修改支付流程
@@ -122,7 +129,10 @@ nodes:
 | `objective` | 一句话描述可交付结果。 |
 | `source_of_truth` | 指向包含数据结构、边界条件、模块边界和契约的权威章节。 |
 | `required_contracts` | 开始前必须存在的共享合同路径；非空路径会由 lint 检查存在性。 |
-| `acceptance` | 引用验收文档中的稳定 flow id。 |
+| `acceptance_claims` | 当前节点能够独立证明的完整 flow；Reviewer 对它要求完整端到端 UJ。 |
+| `acceptance_contributions` | 当前节点贡献的精确 `{flow_id, action_ids}`；Reviewer 只检查这些 Action 与节点 contract。 |
+| `acceptance_refs` | 仅用于需求追溯的 flow id；不产生 Worker 或 Reviewer 验收义务。 |
+| `acceptance` | 历史完整 flow claim 字段；保持原语义可读取，不得与新字段混用。 |
 | `non_goals` | 相邻但明确禁止扩张的范围。 |
 | `verification_commands` | worker 可直接复制运行的节点验证命令。 |
 | `integration_gates` | 节点交付后必须通过的跨模块或端到端门。 |
@@ -135,7 +145,11 @@ nodes:
 `source_of_truth`、`covers`、`acceptance_refs`、`commands`。`required_metrics` 若出现必须是
 object，`artifacts` 若出现必须是列表。worker verification 和 reviewer report 必须复现 contract
 中的 gate 名称、命令、事实源与交付目标。worker verification 还必须通过成功命令下的
-`business_tests` 将每条 contract acceptance 映射到具体业务测试。
+`business_tests` 将每条完整 flow claim 和 Action contribution 映射到具体业务测试；trace ref 不需要测试映射。
+
+整张 DAG 必须形成显式责任矩阵：每个 flow 恰有一个可行的完整 claim owner；验收文档中的每个
+Action ID 至少有一个 contribution owner；声明完整 claim 的节点必须在自身 contributions 中覆盖该
+flow 的全部 Action。这样局部 bootstrap/组件门无法仅凭一个 flow 引用冒充完整端到端验收。
 
 后续 worker 可能是低推理预算模型。每个 contract 必须独立可执行，不能依赖隐含上下文；
 边界条件、禁止范围、验证入口和集成结果都要显式写出。
@@ -150,11 +164,11 @@ verification 中说明原因。reviewer 应判断这些改动是否服务于 con
 1. YAML 必须可解析；每个节点必须有 `id` 和 `worker`。
 2. worker/reviewer 必须在 agent pool 内，且 reviewer 与 worker 不同。
 3. `blocked_by` 只能引用有效节点，完整 DAG 不得有环；增量节点 id 不得与既有节点冲突。
-4. contract 的 `objective`、`source_of_truth`、`acceptance`、`non_goals`、
+4. contract 的 `objective`、`source_of_truth`、至少一种验收责任、`non_goals`、
    `verification_commands`、`integration_gates`、`pr_base` 必须非空。
 5. 每个 integration gate 的必填标量与列表都必须非空；metrics/artifacts 类型必须正确。
 6. `coverage_gate` 必须是 0 到 100 的数字；`required_contracts` 中的路径必须存在。
-7. 提供验收文档时，每个 `contract.acceptance` 必须锚定真实 flow id。
+7. 提供验收文档时，claim/contribution/ref 必须锚定真实 flow/Action；每个 flow 恰有一个完整 owner，所有 Action contribution 闭包完整。
 8. `meta.closeout_node` 若存在，必须引用 manifest 中的节点。
 
 ## 常见错误 → 修正
@@ -165,7 +179,9 @@ verification 中说明原因。reviewer 应判断这些改动是否服务于 con
 | 节点只交付骨架、占位或假数据兜底 | 将节点改成自身完整、可运行、可验收的真实基础能力；否则与后续实现合并成一个完整 contract。 |
 | 为了表达顺序感而增加 `blocked_by` | 只保留真实运行前置，其余通过合同解耦。 |
 | contract 只写目标，没有验证入口 | 补齐全部必填字段和至少一个完整 integration gate。 |
-| `acceptance` 使用自然语言摘要 | 改为验收文档中的稳定 flow id。 |
+| 普通组件把 flow id 写成完整 claim | 改为精确 Action contribution；只有能独立证明全部 Action 的节点才声明 claim。 |
+| 只需追溯需求却声明验收义务 | 使用 `acceptance_refs`；trace ref 不要求完整 UJ 或业务测试。 |
+| 旧 `acceptance` 与新字段混用 | 将旧值明确迁移到 `acceptance_claims`，再补 contributions/refs；禁止静默改义。 |
 | 把 `scope_paths` 当拒绝其他文件的依据 | 允许必要配套文件，并要求在 PR 或 verification 中解释。 |
 | 复制整段设计到 `description` | 只保留 `source_of_truth` 锚点，维持单一事实源。 |
 

@@ -31,6 +31,9 @@ conflict or cannot be reproduced, do not infer pass.
 - `work show.context.review_protocol`, `review_obligations`,
   `prior_open_blockers`, and `review_state`. They define the finite review scope
   and cross-cycle regression facts; do not silently narrow them.
+- In decompose review, the `acceptance-responsibility:matrix` obligation carries
+  the global matrix. Review every flow owner, complete Action contribution
+  closure, and impossible or duplicate claim in one pass.
 
 ## Finite coverage and regression
 
@@ -74,12 +77,19 @@ conflict or cannot be reproduced, do not infer pass.
    an explicitly designed degradation rule, never synthetic data that hides failure.
 8. Check that commands, metrics, artifacts, source anchors, delivery goals, and
    acceptance mappings agree.
+   In develop review, require the complete end-to-end flow only for
+   `acceptance_claims`; check only declared Actions and the node contract for
+   `acceptance_contributions`; `acceptance_refs` are trace-only and create no
+   full-journey or business-test obligation.
 9. Reject coverage below its gate.
 10. Treat `scope_paths` as primary ownership. Required supporting files are valid
    when they serve the contract and are explained; unrelated scope growth,
    parallel-boundary damage, or non-goal violations still fail review.
 11. In `decompose review`, require maximum viable parallelism. If a node still
     contains independently PR/test/reviewable work, request another split.
+    Also read the complete responsibility matrix obligation and find all missing
+    owners, duplicate owners, Action gaps, and locally impossible full claims in
+    the same round instead of sampling a few nodes.
 12. Continue after finding the first blocker and inspect the complete diff,
     related implementation, tests, configuration, migrations, and required
     documentation. The first issue is not a stopping point.

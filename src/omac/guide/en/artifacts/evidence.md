@@ -105,7 +105,7 @@ blockers:
 | Field | Meaning |
 |---|---|
 | `commands` | Actual results for contract `verification_commands`; command text matches exactly and exit code is 0. |
-| `commands[].business_tests` | Concrete business-test indexes executed by this successful command. Each entry contains a contract `acceptance` and stable `test` identifier. The carrying command has a non-empty `cmd` and an integer `exit_code` of `0`; supporting commands may omit the field. |
+| `commands[].business_tests` | Concrete business-test indexes executed by this successful command. `acceptance` is a complete flow claim ID or an exact Action contribution ID; trace-only `acceptance_refs` never appear here. Each entry also has a stable `test` identifier. |
 | `integration_gates` | Command, metric, artifact, source, and delivery-goal evidence by gate name. |
 | `pr_base` | Exactly matches contract `pr_base`. |
 | `coverage` | Numeric coverage meeting `coverage_gate`. |
@@ -124,7 +124,7 @@ Submit the PR URL separately through `--pr-url`, not in verification YAML.
 | `obligation_results` | Exactly covers `work show.context.review_obligations`; each item has ID, pass/fail, and non-empty evidence. |
 | `prior_blocker_results` | Exactly covers `prior_open_blockers` as fixed/unchanged/deeper/regressed with evidence. |
 | `integration_tests_rerun` | `true` when the contract has integration gates. |
-| `acceptance_mapping` | Evidence and pass/fail for every contract acceptance flow. |
+| `acceptance_mapping` | Evidence and pass/fail for every complete flow claim and exact Action contribution; trace refs create no mapping obligation. |
 | `integration_gate_mapping` | Independently reproduced gate results aligned with the contract. |
 | `blockers` | Empty for pass forms; structured obligation/root-cause/classification/evidence/repair objects for reject. Each root appears once per cycle; unresolved prior roots remain listed with classification matching `prior_blocker_results`. |
 | `nits` | Non-blocking improvement suggestions. |
@@ -146,7 +146,7 @@ Submit verdict through `--verdict`, not report YAML. Valid values are `pass`,
 
 1. Submit both PR URL and verification file; the GitHub PR is deliverable and not draft.
 2. Commands cover the contract's exact commands and exit 0.
-3. Every contract acceptance item is covered by concrete `business_tests` on a successful ordinary or integration-gate command; mappings do not reference acceptance items outside the contract.
+3. Every full claim and Action contribution is covered by concrete `business_tests` on a successful command; trace refs need no coverage and mappings do not reference targets outside the contract responsibility.
 4. Gate sources and delivery goals exactly match the contract.
 5. Metrics meet thresholds and required artifacts are present.
 6. With integration gates, `env_setup` is a non-empty list of non-empty strings.
@@ -154,7 +154,7 @@ Submit verdict through `--verdict`, not report YAML. Valid values are `pass`,
 
 ### Reviewer report
 
-1. `review_goals` and `acceptance_mapping` are non-empty and cover every contract acceptance.
+1. `review_goals` and `acceptance_mapping` are non-empty and cover every full claim and Action contribution; trace refs create no obligation.
 2. Basic review flags and `full_review_completed` are `true`; integration tests are independently rerun when gates exist.
 3. Gate mapping covers each gate and validates commands, metrics, artifacts,
    sources, and delivery goals.

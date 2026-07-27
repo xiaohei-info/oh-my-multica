@@ -346,20 +346,24 @@ PROJECT_RULES_TEXT = """\
 """
 
 ACCEPTANCE_YAML = """\
+schema: omac.acceptance/v2
 flows:
   - id: flow-login
     name: 登录流程
     actions:
-      - step: 打开登录页
+      - id: ACT-LOGIN-01
+        step: 打开登录页
         how: GET /login
         expected: 返回 200 与登录表单
-      - step: 提交合法凭证
+      - id: ACT-LOGIN-02
+        step: 提交合法凭证
         how: POST /login {user, pwd}
         expected: 跳转到首页
   - id: flow-dashboard
     name: 仪表盘流程
     actions:
-      - step: 访问仪表盘
+      - id: ACT-DASHBOARD-01
+        step: 访问仪表盘
         how: GET /dash
         expected: 显示数据卡片
 """
@@ -372,8 +376,12 @@ nodes:
     worker: alice
     contract:
       objective: 实现登录
-      acceptance:
+      acceptance_claims:
         - flow-login
+      acceptance_contributions:
+        - flow_id: flow-login
+          action_ids: [ACT-LOGIN-01, ACT-LOGIN-02]
+      acceptance_refs: [flow-login]
       source_of_truth: ["docs/login.md"]
       non_goals: ["不改 dashboard"]
       verification_commands: ["pytest tests/login"]
@@ -391,8 +399,12 @@ nodes:
     blocked_by: [login]
     contract:
       objective: 实现仪表盘
-      acceptance:
+      acceptance_claims:
         - flow-dashboard
+      acceptance_contributions:
+        - flow_id: flow-dashboard
+          action_ids: [ACT-DASHBOARD-01]
+      acceptance_refs: [flow-dashboard]
       source_of_truth: ["docs/dash.md"]
       non_goals: ["不改 login"]
       verification_commands: ["pytest tests/dash"]

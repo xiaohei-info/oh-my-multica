@@ -222,9 +222,15 @@ def _validate_acceptance(text: str) -> acceptance_mod.AcceptanceDoc:
 def _acceptance_guard(item: WorkItem) -> List[str]:
     """acceptance authoring 左移质量门；错误作为返工上下文交回 planner。"""
     try:
-        _validate_acceptance(item.deliverable or "")
+        acceptance_doc = _validate_acceptance(item.deliverable or "")
     except (ValueError, yaml.YAMLError) as exc:
         return [f"acceptance quality gate: {exc}"]
+    if acceptance_doc.schema != "omac.acceptance/v2":
+        return [
+            "acceptance quality gate: new acceptance authoring must use "
+            "omac.acceptance/v2 with explicit action.id; v1 remains readable "
+            "for existing plans and active manifests"
+        ]
     return []
 
 
@@ -457,7 +463,15 @@ def _compose_guard(
                 f"Delivery is missing '{_MANIFEST_KEY}'; the orchestrator did not submit a manifest.",
                 f"交付缺少 '{_MANIFEST_KEY}' —— orchestrator 未产出 manifest")]
         manifest = loads_manifest(text)
-        return lint(manifest, members, acceptance=acceptance_doc)
+        return lint(
+            manifest,
+            members,
+            acceptance=acceptance_doc,
+            require_explicit_responsibility=(
+                acceptance_doc is not None
+                and acceptance_doc.schema == "omac.acceptance/v2"
+            ),
+        )
 
     return guard
 

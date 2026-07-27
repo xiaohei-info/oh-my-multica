@@ -21,15 +21,17 @@ Submit one directly parseable YAML mapping. Structured fields are the authority:
 
 ```yaml
 ---
-schema: omac.acceptance/v1
+schema: omac.acceptance/v2
 flows:
   - id: flow-login
     name: A user signs in with valid credentials
     actions:
-      - step: Open the sign-in entry point
+      - id: ACT-LOGIN-01
+        step: Open the sign-in entry point
         how: Visit /login
         expected: Account and password fields are visible
-      - step: Submit valid credentials
+      - id: ACT-LOGIN-02
+        step: Submit valid credentials
         how: Enter the test account and select Sign in
         expected: The dashboard opens and shows the current user
 ```
@@ -38,11 +40,12 @@ flows:
 
 | Field | Meaning |
 |---|---|
-| `schema` | Exactly `omac.acceptance/v1`. |
+| `schema` | New artifacts use `omac.acceptance/v2`; v1 is read-only compatibility. |
 | `flows` | Non-empty list of independently acceptable end-to-end paths. |
 | `flow.id` | Unique stable ID referenced by manifest `contract.acceptance` and final results. |
 | `flow.name` | Non-empty human-readable user outcome. |
 | `actions` | Non-empty ordered actions for the flow. |
+| `action.id` | Stable, flow-unique Action ID used by manifest contribution ownership. |
 | `step` | The user or system action. |
 | `how` | Copyable entry point, command, page, parameter, or test data. |
 | `expected` | Observable outcome and the standard for deciding failure. |
@@ -66,10 +69,15 @@ acceptance document complete.
 1. Top level is a mapping and `flows` is a non-empty list.
 2. Each flow is an object with a unique, non-empty string `id` and `name`.
 3. Each flow has a non-empty `actions` list.
-4. Every action is an object with non-empty string `step`, `how`, and `expected`.
+4. Every v2 action is an object with non-empty `id`, `step`, `how`, and `expected`; action IDs are unique within the flow.
 5. IDs remain stable and match design flows and manifest `contract.acceptance`.
 6. Success or boundary conditions mentioned only in explanatory prose are not
    machine-verifiable acceptance facts.
+
+Legacy `omac.acceptance/v1` remains readable. OMAC first extracts an explicit
+`Action ID=...` embedded in the action text and otherwise derives
+`<flow-id>/STEP-<index>` as a stable migration identity. New artifacts must not
+rely on that compatibility path and must write `action.id` directly.
 
 ## Common errors → corrections
 
