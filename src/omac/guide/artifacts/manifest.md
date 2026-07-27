@@ -5,6 +5,10 @@
 本合同用于 `decompose` 产出或评审阶段，把已批准的设计与验收文档拆成可并行推进、可独立验证的
 manifest DAG。manifest 通常保存为 `.omac/<name>.yaml`。
 
+同一合同也用于 `amendment` 产出/评审，但 amendment 只提交通用 manifest operations，不能
+直接提交一份覆盖运行态的完整 manifest。运行中修订的命令、CAS 与最小恢复规则见
+`omac guide recovery`。
+
 第一步必须运行：
 
 ```bash
@@ -212,6 +216,12 @@ verification 中说明原因。reviewer 应判断这些改动是否服务于 con
 
 ```bash
 omac work submit <issue-id> --manifest-file <file>
+```
+
+运行中 amendment 使用：
+
+```bash
+omac work submit <issue-id> --amendment-file <file>
 ```
 
 解析或 lint 失败会以校验错误返回；按错误逐项修正后重试，不要绕过校验或手动改平台状态。

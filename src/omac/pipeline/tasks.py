@@ -411,6 +411,7 @@ def run_task(
     poll: Callable[[], None],
     guard: Optional[Callable[[WorkItem], List[str]]] = None,
     confirm: bool = False,
+    pause_at_confirmation: bool = False,
     source_refs: Optional[List[Any]] = None,
     dag_key: Optional[str] = None,
     resume_item_id: Optional[str] = None,
@@ -572,6 +573,15 @@ def run_task(
             store.update_work_item_metadata(
                 item_id, phase=TaskPhase.CONFIRMATION)
         log.info(logsetup.EVT_HUMAN_GATE_WAIT, kind=kind.value, id=item_id)
+        if pause_at_confirmation:
+            return {
+                "item_id": item_id,
+                "delivery": current_delivery,
+                "rounds": rounds,
+                "verdict": verdict,
+                "kind": kind.value,
+                "pending_confirmation": True,
+            }
         confirmed = _poll_until(
             store, item_id, lambda i: i.status == WorkItemStatus.DONE, poll)
         confirmed_delivery = _delivery_of(kind, confirmed)

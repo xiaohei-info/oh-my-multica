@@ -6,6 +6,10 @@ Use this contract during `decompose` authoring or review. It turns approved
 design and acceptance documents into a parallel, independently verifiable
 manifest DAG, normally saved as `.omac/<name>.yaml`.
 
+The same contract guides `amendment` authoring/review, but an amendment submits
+generic manifest operations rather than a replacement live manifest. See
+`omac guide recovery` for CAS and minimal-resume rules.
+
 First run:
 
 ```bash
@@ -229,6 +233,12 @@ Re-read `work show` and use its exact command:
 
 ```bash
 omac work submit <issue-id> --manifest-file <file>
+```
+
+For a running-DAG amendment, use:
+
+```bash
+omac work submit <issue-id> --amendment-file <file>
 ```
 
 Fix parser or lint errors one by one. Do not bypass validation or manually move

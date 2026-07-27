@@ -4,7 +4,7 @@ issue 的范围是一个完整阶段:产出、评审、回退往返都发生在�
 时间线上。当前阶段(phase)与承担者由 issue metadata + assignee 表达,
 交接 = 转派(assign)。本模块集中定义:
 
-- 任务类型 kind(5 种):plan / acceptance / decompose / develop / final-acceptance
+- 任务类型 kind:plan / acceptance / decompose / amendment / develop / final-acceptance
 - 阶段 phase(产出 / 评审):authoring / review
 - 回退计数 bounces:ci_bounce / review_bounce / merge_bounce(每类有界,缺省 3)
 - 通用交付物 metadata key / ref key(按 kind 承载 plan/acceptance/manifest 等交付)
@@ -28,6 +28,7 @@ class TaskKind(Enum):
     PLAN = "plan"
     ACCEPTANCE = "acceptance"
     DECOMPOSE = "decompose"
+    AMENDMENT = "amendment"
     DEVELOP = "develop"
     FINAL_ACCEPTANCE = "final-acceptance"
 
@@ -101,6 +102,7 @@ DELIVERY_CONTENT_KEY = {
     TaskKind.PLAN: "plan",
     TaskKind.ACCEPTANCE: "acceptance",
     TaskKind.DECOMPOSE: "manifest",
+    TaskKind.AMENDMENT: "amendment",
     TaskKind.FINAL_ACCEPTANCE: "acceptance_results",
 }
 

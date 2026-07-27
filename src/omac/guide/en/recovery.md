@@ -22,8 +22,9 @@ structured stdout report is the current recovery fact.
    - `omac node accept <manifest> <key>`: accept a known risk and mark done.
    - `omac node abandon <manifest> <key>`: abandon the node and unlock downstream
      work that does not hard-depend on its deliverable.
-   - Change the manifest: repair a contract, change assignment, or split a node;
-     run `omac dag check` when needed.
+   - Before execution starts, change the manifest and run `omac dag check`.
+   - After execution starts, use controlled `omac dag amend propose` for contract,
+     acceptance-mapping, or topology defects. Do not overwrite the live manifest.
 4. Re-run `omac dag run <manifest>`. Completed nodes are reused; the remainder
    continues from current state.
 
@@ -83,6 +84,47 @@ omac plan resume --plan-id p-xxxx
 
 `accept` accepts a known risk; it does not skip failed verification. `retry`
 requires new evidence or a new plan, not the same failed attempt.
+
+## Controlled amendment of a running DAG
+
+If a contract, acceptance responsibility, or dependency defect appears only after
+an approved DAG starts running, do not rerun the whole plan or edit the manifest
+by hand. Prepare the Reviewer/blocker report and pass the authoritative design
+document paths:
+
+```bash
+omac dag amend propose .omac/project.yaml \
+  --blocked-node bootstrap-console \
+  --report-file /tmp/dag-review.md \
+  --docs docs
+```
+
+- The Orchestrator submits only structured `omac.dag-amendment/v1` operations;
+  runtime fields are not patchable.
+- OMAC checks DAG cycles, dependencies, the agent pool, immutable done/merged
+  facts, and explicit ownership migration before independent Reviewer review.
+- Reviewer pass returns exit 20 in `confirmation`; it never applies automatically.
+  Inspect the generated amendment and run the returned
+  `omac dag amend accept ...` command.
+- Accept runs under the manifest write lock with CAS. Runtime-only changes to
+  status or work-item facts are rebased when the definition digest is unchanged;
+  any node, contract, or edge definition drift requires a new reviewed amendment.
+- Unchanged nodes preserve work-item IDs, status, bounces, PR, verification/review
+  references, and merged facts. Contract-only changes with unchanged delivery
+  evidence resume at review; a valid passed-review PR may resume at merging;
+  implementation-scope changes resume at authoring.
+- Done/merged nodes cannot be changed or removed. Changing worker or `scope_paths`
+  on an executed node requires an explicit ownership migration and reason.
+
+After apply, resume the original workflow:
+
+```bash
+omac dag run .omac/project.yaml
+```
+
+If accept reports definition or delivery-evidence drift, do not force the patch;
+propose and review it again from current facts. Use `--resume-issue-id` to continue
+an existing amendment issue after a process interruption.
 
 ## Agent versus Human decisions
 

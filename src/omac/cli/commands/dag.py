@@ -28,7 +28,7 @@ from ...pipeline.acceptance import (
 from ...pipeline.report import build_status_report, render_table
 
 NAME = "dag"
-SUMMARY = "manifest DAG 的检查、摘要与执行(check/show/run/status/tick)"
+SUMMARY = "manifest DAG 的检查、摘要、运行与受控修订"
 DESCRIPTION = """manifest DAG 的检查、摘要与确定性执行。
 
 子命令:
@@ -44,6 +44,8 @@ DESCRIPTION = """manifest DAG 的检查、摘要与确定性执行。
            (* 由 config 的 ci/merge 决定;三类回退一律转回 worker,各有界 ≤3 次)
   status   随时查看快照(reconcile + 各节点状态),不推进;退出码恒 0
   tick     单轮推进后立即退出:exit 0 收敛 / 10 推进中 / 20 需决策(调试用)
+  amend    对已运行 DAG 发起 Orchestrator→Reviewer→Human 的受控 amendment；
+           Reviewer pass 后停在人工确认，accept 时 CAS 原子应用并最小化恢复节点。
 
 有界运行:--max-rounds N / --max-minutes N(给不想长阻塞的 agent 调用者分段跑)
 进度事件(走 stderr,不污染 stdout 数据线):默认人类文本,--json-logs /
@@ -125,6 +127,41 @@ def register(parser):
     tick.add_argument("--workspace", help="workspace 覆盖(缺省读 config/env)")
     add_output_flag(tick)
     _add_log_flags(tick)
+
+    amend = sub.add_parser(
+        "amend", help="受控修订已运行 DAG，不丢失既有运行事实")
+    amend_sub = amend.add_subparsers(
+        dest="amend_action", metavar="<amend-action>", required=True)
+    propose = amend_sub.add_parser(
+        "propose", help="派发 Orchestrator 产出 amendment，经 Reviewer 后停在人工确认")
+    propose.add_argument("manifest", help="当前运行 manifest 文件路径")
+    propose.add_argument("--report-file", required=True, help="触发修订的 Reviewer/blocker 报告")
+    propose.add_argument(
+        "--docs", action="append", required=True,
+        help="权威设计文档文件或目录；可重复，Agent 必须读取每个路径下全部设计文档")
+    propose.add_argument(
+        "--blocked-node", action="append", default=[],
+        help="已确认受影响的节点 ID；可重复")
+    propose.add_argument("--orchestrator", help="Orchestrator agent；缺省读 roles.orchestrator")
+    propose.add_argument("--reviewer", action="append", help="Reviewer agent；可重复，缺省读 roles.reviewers")
+    propose.add_argument("--max-revisions", type=int, help="Orchestrator↔Reviewer 最大修订轮次")
+    propose.add_argument("--output-file", help="reviewed amendment 输出文件")
+    propose.add_argument("--resume-issue-id", help="恢复已有 amendment issue，不新建")
+    propose.add_argument("--engine", help="引擎类型覆盖")
+    propose.add_argument("--workspace", help="workspace 覆盖")
+    add_output_flag(propose, default="json")
+
+    accept = amend_sub.add_parser(
+        "accept", help=ui(
+            "Accept a Reviewer-approved amendment and apply it to the current manifest",
+            "人工确认 Reviewer 已通过的 amendment，并应用到当前 manifest"))
+    accept._help_key = "amend-accept"
+    accept.add_argument("manifest", help="当前运行 manifest 文件路径")
+    accept.add_argument("amendment_file", help="Reviewer 已通过的 amendment YAML")
+    accept.add_argument("--reason", default="human approved after Reviewer pass", help="人工确认原因")
+    accept.add_argument("--engine", help="引擎类型覆盖")
+    accept.add_argument("--workspace", help="workspace 覆盖")
+    add_output_flag(accept, default="json")
 
 
 def _assemble_engine(args):
@@ -407,6 +444,60 @@ def status(args) -> int:
     return exit_codes.OK
 
 
+def amend(args) -> int:
+    from ...pipeline.amendment import accept_amendment, propose_amendment
+
+    engine, _ = _assemble_engine(args)
+    config = _load_config_for_manifest(args.manifest)
+    roles = config.get("roles") or {}
+    if args.amend_action == "propose":
+        reviewers = args.reviewer or roles.get("reviewers") or []
+        if isinstance(reviewers, str):
+            reviewers = [reviewers]
+        orchestrator = args.orchestrator or roles.get("orchestrator")
+        if not orchestrator:
+            workers = roles.get("workers") or []
+            if isinstance(workers, str):
+                workers = [workers]
+            orchestrator = workers[0] if workers else None
+        max_revisions = args.max_revisions
+        if max_revisions is None:
+            max_revisions = resolve_retry(config)["review"]
+        report = propose_amendment(
+            engine,
+            args.manifest,
+            report_file=args.report_file,
+            docs=args.docs,
+            blocked_nodes=args.blocked_node,
+            orchestrator=orchestrator,
+            reviewers=list(reviewers),
+            max_revisions=max_revisions,
+            output_file=args.output_file,
+            resume_issue_id=args.resume_issue_id,
+        )
+        print_json(report)
+        raise NeedsDecision(ui(
+            "Amendment passed Reviewer review and is waiting for human confirmation.",
+            "amendment 已通过 Reviewer，正在等待人工确认。"), report=report)
+
+    if args.amend_action == "accept":
+        with manifest_write_lock(args.manifest):
+            result = accept_amendment(
+                engine,
+                args.manifest,
+                args.amendment_file,
+                reason=args.reason,
+                agent_pool=set(engine.store.list_members(
+                    engine.store.config.workspace_id)),
+            )
+        print_json(result)
+        hint(ui(
+            f"Amendment applied. Resume with `omac dag run {args.manifest}`.",
+            f"amendment 已应用；运行 `omac dag run {args.manifest}` 无缝续跑。"))
+        return exit_codes.OK
+    raise ValidationError(f"Unknown dag amend action: {args.amend_action}")
+
+
 def _emit(result, manifest, args) -> None:
     """stdout 出数据:--output json 打完整 payload,否则 table 推进进度。
 
@@ -585,6 +676,8 @@ def run(args) -> int:
         return show(args)
     if args.action == "status":
         return status(args)
+    if args.action == "amend":
+        return amend(args)
     if args.action == "tick":
         return _loop_or_single(args, single_round=True)
     return _loop_or_single(args, single_round=False)

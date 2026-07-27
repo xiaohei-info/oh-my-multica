@@ -1,4 +1,4 @@
-"""omac work — 被派发 agent 的统一执行接口(5 类 issue × 产出/评审阶段)。"""
+"""omac work — 被派发 agent 的统一执行接口。"""
 from __future__ import annotations
 
 import hashlib
@@ -37,6 +37,7 @@ issue 类型与交付参数:
                                                    review: --verdict --report-file
   acceptance        产出: --acceptance-file      review: 同上
   decompose         产出: --manifest-file        review: 同上
+  amendment         产出: --amendment-file       review: 同上
   develop           产出: --pr-url --verification-file(env 依赖时须含 env_setup)
                                                  review: 同上(report 必含评审目标)
   final-acceptance  产出: --acceptance-results-file(逐项 pass/fail,无 review 阶段)
@@ -237,6 +238,7 @@ def _submit(args) -> int:
         project_rules_file=args.project_rules_file,
         acceptance_file=args.acceptance_file,
         manifest_file=args.manifest_file,
+        amendment_file=args.amendment_file,
         pr_url=args.pr_url,
         verification_file=args.verification_file,
         verdict=args.verdict,

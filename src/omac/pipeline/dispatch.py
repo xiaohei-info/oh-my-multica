@@ -78,6 +78,7 @@ _AUTHORING_ACTION_KEYS = {
     TaskKind.PLAN: "work.protocol.plan",
     TaskKind.ACCEPTANCE: "work.protocol.acceptance",
     TaskKind.DECOMPOSE: "work.protocol.decompose",
+    TaskKind.AMENDMENT: "work.protocol.decompose",
     TaskKind.DEVELOP: "work.protocol.develop",
     TaskKind.FINAL_ACCEPTANCE: "work.protocol.final_acceptance",
 }
@@ -102,6 +103,7 @@ SUBMIT_PARAM_SPECS: Dict[str, Dict[str, Any]] = {
     "--project-rules-file": {},
     "--acceptance-file": {},
     "--manifest-file": {},
+    "--amendment-file": {},
     "--pr-url": {},
     "--verification-file": {},
     "--verdict": {"choices": ["pass", "pass-with-nits", "reject"]},
@@ -117,6 +119,8 @@ SUBMIT_PARAMS_BY_KIND_PHASE: Dict[Tuple[TaskKind, TaskPhase], List[str]] = {
     (TaskKind.ACCEPTANCE, TaskPhase.AUTHORING): ["--acceptance-file"],
     (TaskKind.ACCEPTANCE, TaskPhase.REVIEW): ["--verdict", "--report-file"],
     (TaskKind.DECOMPOSE, TaskPhase.AUTHORING): ["--manifest-file"],
+    (TaskKind.AMENDMENT, TaskPhase.AUTHORING): ["--amendment-file"],
+    (TaskKind.AMENDMENT, TaskPhase.REVIEW): ["--verdict", "--report-file"],
     (TaskKind.DECOMPOSE, TaskPhase.REVIEW): ["--verdict", "--report-file"],
     (TaskKind.DEVELOP, TaskPhase.AUTHORING): ["--pr-url", "--verification-file"],
     (TaskKind.DEVELOP, TaskPhase.REVIEW): ["--verdict", "--report-file"],
@@ -151,6 +155,10 @@ GUIDE_REFS_BY_KIND_PHASE: Dict[Tuple[TaskKind, TaskPhase], List[str]] = {
     (TaskKind.DECOMPOSE, TaskPhase.AUTHORING): [
         "omac guide role orchestrator", "omac guide artifact manifest"],
     (TaskKind.DECOMPOSE, TaskPhase.REVIEW): [
+        "omac guide role reviewer", "omac guide artifact manifest"],
+    (TaskKind.AMENDMENT, TaskPhase.AUTHORING): [
+        "omac guide role orchestrator", "omac guide artifact manifest"],
+    (TaskKind.AMENDMENT, TaskPhase.REVIEW): [
         "omac guide role reviewer", "omac guide artifact manifest"],
     (TaskKind.DEVELOP, TaskPhase.AUTHORING): [
         "omac guide role worker", "omac guide artifact evidence"],
@@ -373,6 +381,7 @@ ALL_PARAMS = (
     "project_rules_file",
     "acceptance_file",
     "manifest_file",
+    "amendment_file",
     "pr_url",
     "verification_file",
     "verdict",
@@ -392,6 +401,10 @@ SPECS: Dict[TaskKind, Dict[TaskPhase, tuple]] = {
     },
     TaskKind.DECOMPOSE: {
         TaskPhase.AUTHORING: ("manifest_file",),
+        TaskPhase.REVIEW: ("verdict", "report_file"),
+    },
+    TaskKind.AMENDMENT: {
+        TaskPhase.AUTHORING: ("amendment_file",),
         TaskPhase.REVIEW: ("verdict", "report_file"),
     },
     TaskKind.DEVELOP: {
@@ -599,6 +612,22 @@ def _validate_decompose_authoring(
     return content
 
 
+def _validate_amendment_authoring(amendment_file: str) -> str:
+    from ..core.amendment import parse_proposal, SCHEMA
+
+    content = _read_text(amendment_file)
+    proposal = parse_proposal(content)
+    if proposal.get("schema") != SCHEMA:
+        raise ValidationError(ui(
+            f"Amendment schema must be {SCHEMA}",
+            f"amendment schema 必须是 {SCHEMA}"))
+    if not isinstance(proposal.get("operations"), list) or not proposal["operations"]:
+        raise ValidationError(ui(
+            "Amendment operations must be a non-empty list.",
+            "amendment operations 必须是非空列表。"))
+    return content
+
+
 def _validate_develop_authoring(
     store: WorkItemStore, pr_url: str, verification_file: str, item: WorkItem
 ) -> Dict[str, Any]:
@@ -665,7 +694,9 @@ def _validate_review(
     kind: TaskKind, verdict: str, report_file: str, item: WorkItem
 ) -> Dict[str, Any]:
     """review 阶段(各 kind 共用)左移校验:复用 P2.2 validate_review_evidence。"""
-    if kind in (TaskKind.PLAN, TaskKind.ACCEPTANCE, TaskKind.DECOMPOSE) and not item.deliverable:
+    if kind in (
+        TaskKind.PLAN, TaskKind.ACCEPTANCE, TaskKind.DECOMPOSE, TaskKind.AMENDMENT,
+    ) and not item.deliverable:
         raise ValidationError(ui(
             "Review target is missing because authoring was not submitted successfully. "
             "Ask the author to rerun `omac work submit`.",
@@ -772,6 +803,7 @@ def submit(
     project_rules_file: Optional[str] = None,
     acceptance_file: Optional[str] = None,
     manifest_file: Optional[str] = None,
+    amendment_file: Optional[str] = None,
     pr_url: Optional[str] = None,
     verification_file: Optional[str] = None,
     verdict: Optional[str] = None,
@@ -800,6 +832,7 @@ def submit(
         "project_rules_file": project_rules_file,
         "acceptance_file": acceptance_file,
         "manifest_file": manifest_file,
+        "amendment_file": amendment_file,
         "pr_url": pr_url,
         "verification_file": verification_file,
         "verdict": verdict,
@@ -929,6 +962,19 @@ def submit(
                 "产出阶段已结束；不要提交 verdict，不要执行 reviewer 协议。等待 omac loop 转派 reviewer 或人工确认。"),
         )
 
+    # ---------- amendment × authoring ----------
+    if kind == TaskKind.AMENDMENT and phase == TaskPhase.AUTHORING:
+        content = _validate_amendment_authoring(amendment_file)
+        advance_authoring_to_review(deliverable=content)
+        return SubmitResult(
+            kind, phase, "amendment", WorkItemStatus.IN_REVIEW,
+            next_phase=TaskPhase.REVIEW,
+            message=ui(
+                "Amendment authoring is complete. Wait for the independent Reviewer; "
+                "human confirmation happens only after Reviewer pass.",
+                "amendment 产出已完成；等待独立 Reviewer，只有 Reviewer pass 后才进入人工确认。"),
+        )
+
     raise ValidationError(ui(
         f"Unsupported delivery combination: {kind.value} × {phase.value}",
         f"未支持的交付组合: {kind.value} × {phase.value}"))
@@ -942,6 +988,7 @@ KIND_ROLE = {
     TaskKind.PLAN: "planner",
     TaskKind.ACCEPTANCE: "planner",
     TaskKind.DECOMPOSE: "orchestrator",
+    TaskKind.AMENDMENT: "orchestrator",
     TaskKind.DEVELOP: "worker",
     TaskKind.FINAL_ACCEPTANCE: "acceptor",
 }
@@ -951,6 +998,7 @@ KIND_GUIDE = {
     TaskKind.PLAN: "role planner",
     TaskKind.ACCEPTANCE: "role planner",
     TaskKind.DECOMPOSE: "role orchestrator",
+    TaskKind.AMENDMENT: "role orchestrator",
     TaskKind.DEVELOP: "role worker",
     TaskKind.FINAL_ACCEPTANCE: "role acceptor",
 }
@@ -959,6 +1007,7 @@ KIND_LABEL = {
     TaskKind.PLAN: "plan",
     TaskKind.ACCEPTANCE: "acceptance",
     TaskKind.DECOMPOSE: "decompose",
+    TaskKind.AMENDMENT: "amendment",
     TaskKind.DEVELOP: "develop",
     TaskKind.FINAL_ACCEPTANCE: "final-acceptance",
 }
@@ -967,6 +1016,7 @@ KIND_HUMAN_LABEL = {
     TaskKind.PLAN: "设计方案",
     TaskKind.ACCEPTANCE: "验收定义",
     TaskKind.DECOMPOSE: "任务拆解",
+    TaskKind.AMENDMENT: "运行中 DAG 修订",
     TaskKind.DEVELOP: "开发实现",
     TaskKind.FINAL_ACCEPTANCE: "最终验收",
 }
@@ -983,6 +1033,7 @@ KIND_HUMAN_LABEL_EN = {
     TaskKind.PLAN: "Design",
     TaskKind.ACCEPTANCE: "Acceptance definition",
     TaskKind.DECOMPOSE: "Task decomposition",
+    TaskKind.AMENDMENT: "Running DAG amendment",
     TaskKind.DEVELOP: "Implementation",
     TaskKind.FINAL_ACCEPTANCE: "Final acceptance",
 }
