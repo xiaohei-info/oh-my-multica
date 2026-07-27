@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Set, Tuple
@@ -20,7 +21,7 @@ from ..core.retry_budget import consumed_bounces
 from ..core.gitsync import commit_manifest
 from ..core.manifest import Manifest, save_manifest, set_node
 from ..pipeline.delivery import (
-    advance_delivery, block_merge_auth_error, block_unproven_merge_request,
+    advance_delivery, block_unproven_merge_request,
     merge_request_state_is_valid, run_merge_delivery,
 )
 from ..engines.models import PullRequestState, WorkItemStatus
@@ -50,6 +51,7 @@ _PLATFORM_TO_MANIFEST: Dict[str, str] = {
     "failed": "failed",
     "blocked": "blocked",
 }
+_MISSING_WORK_ITEM = object()
 
 
 def _project_root_from_manifest_path(manifest_path: str) -> str:
@@ -140,6 +142,47 @@ def _reviewer_run_needs_resume(item) -> bool:
     )
 
 
+def _requires_pull_request_observation(node, item) -> bool:
+    """判断 reconcile 的只读阶段是否需要查询远端 PR。"""
+    if node.status != "done":
+        return False
+    if _has_unreviewed_worker_delivery(node, item):
+        return False
+    if item.review_verdict == "reject":
+        return False
+    if getattr(item, "kind", TaskKind.DEVELOP) != TaskKind.DEVELOP:
+        return False
+    if not _pull_request_url(item):
+        return False
+    if not merge_request_state_is_valid(node.merge_request_state):
+        return False
+    return not (
+        _has_confirmed_merge(node) and node.merge_request_state is None
+    )
+
+
+def _observe_reconcile_inputs(
+    store: WorkItemStore, manifest: Manifest,
+) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    """先完整读取一轮所需事实；此阶段禁止任何 manifest/平台写入。"""
+    items: Dict[str, Any] = {}
+    pull_requests: Dict[str, Any] = {}
+    for key, node in manifest.nodes.items():
+        if not node.work_item_id:
+            continue
+        try:
+            item = store.get_work_item(node.work_item_id)
+        except WorkItemNotFoundError:
+            items[key] = _MISSING_WORK_ITEM
+            continue
+        items[key] = item
+        if not _requires_pull_request_observation(node, item):
+            continue
+        pull_requests[key] = store.observe_pull_request(
+            _pull_request_url(item))
+    return items, pull_requests
+
+
 def _resume_reviewer_run(store, runtime, node) -> bool:
     """在同一 issue 恢复 reviewer，不重置既有 worker/评审对象事实。"""
     if not node.reviewer:
@@ -177,8 +220,30 @@ def reconcile(store: WorkItemStore, manifest: Manifest, manifest_path: str) -> b
     运行中节点(in_progress/in_review)的终态回收由 collect_results 统一处理
     (证据门 + 阶段交接),reconcile 不同步其状态,避免把平台 DONE 直接写成
     manifest done 而短路证据门和 reviewer 交接。
+
+    一轮 reconcile 是 manifest 侧的原子观察：所有平台读取与状态计算先在
+    候选副本上完成。未知的平台/认证结果直接向上传播；只有整轮成功后才
+    原子写盘并替换调用者持有的 manifest，避免第 N 个读取失败留下前 N-1
+    个节点的部分状态。
     """
     ensure_amendment_apply_complete(manifest, manifest_path)
+    items, pull_requests = _observe_reconcile_inputs(store, manifest)
+    candidate = copy.deepcopy(manifest)
+    changed = _reconcile_candidate(
+        store, candidate, manifest_path, items, pull_requests)
+    if not changed:
+        return False
+    save_manifest(candidate, manifest_path)
+    manifest.meta = candidate.meta
+    manifest.nodes = candidate.nodes
+    return True
+
+
+def _reconcile_candidate(
+    store: WorkItemStore, manifest: Manifest, manifest_path: str,
+    items: Dict[str, Any], pull_requests: Dict[str, Any],
+) -> bool:
+    """用已完整观察的事实计算候选；此阶段不得再执行平台读取。"""
     changed = False
     for key, node in manifest.nodes.items():
         if not node.work_item_id:
@@ -186,19 +251,13 @@ def reconcile(store: WorkItemStore, manifest: Manifest, manifest_path: str) -> b
                 set_node(manifest, key, status="blocked")
                 changed = True
             continue
-        try:
-            item = store.get_work_item(node.work_item_id)
-        except WorkItemNotFoundError:
+        item = items[key]
+        if item is _MISSING_WORK_ITEM:
             if node.status == "done":
                 set_node(manifest, key, status="blocked")
                 changed = True
             elif node.status not in {"done", "abandoned"}:
                 set_node(manifest, key, work_item_id=None, status="todo")
-                changed = True
-            continue
-        except (PlatformError, AuthError):
-            if node.status != "abandoned":
-                set_node(manifest, key, status="blocked")
                 changed = True
             continue
 
@@ -258,18 +317,7 @@ def reconcile(store: WorkItemStore, manifest: Manifest, manifest_path: str) -> b
                     if item.status != WorkItemStatus.DONE:
                         store.update_status(node.work_item_id, WorkItemStatus.DONE)
                     continue
-                try:
-                    observation = store.observe_pull_request(pr_url)
-                except AuthError:
-                    block_merge_auth_error(
-                        node, item, store, manifest, manifest_path, key)
-                    changed = True
-                    continue
-                except PlatformError:
-                    store.update_status(node.work_item_id, WorkItemStatus.IN_REVIEW)
-                    set_node(manifest, key, status="merging")
-                    changed = True
-                    continue
+                observation = pull_requests[key]
                 state = _pull_request_state(observation)
                 if state == PullRequestState.MERGED and getattr(observation, "merged_at", None):
                     node.merged = True
@@ -320,8 +368,6 @@ def reconcile(store: WorkItemStore, manifest: Manifest, manifest_path: str) -> b
             set_node(manifest, key, status=manifest_status)
             changed = True
 
-    if changed:
-        save_manifest(manifest, manifest_path)
     return changed
 
 
