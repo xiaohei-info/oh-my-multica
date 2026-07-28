@@ -102,19 +102,51 @@ def _reject_symlink_components(path: Path) -> None:
                 f"Authoritative docs input must not traverse a symlink: {path}")
 
 
-def _docs_snapshot(paths: list[str]) -> dict[str, Any]:
+def _manifest_project_root(manifest_path: str) -> Path:
+    try:
+        manifest = Path(manifest_path).resolve(strict=True)
+    except OSError as exc:
+        raise ValidationError(f"Could not resolve manifest {manifest_path}: {exc}") from exc
+    return manifest.parent.parent if manifest.parent.name == ".omac" else manifest.parent
+
+
+def _resolve_docs_input(raw_path: str, project_root: Path) -> Path:
+    candidate = Path(raw_path)
+    if not candidate.is_absolute():
+        candidate = project_root / candidate
+    _reject_symlink_components(candidate)
+    try:
+        resolved = candidate.resolve(strict=True)
+    except OSError as exc:
+        raise ValidationError(
+            f"Could not resolve authoritative docs input {raw_path}: {exc}") from exc
+    try:
+        resolved.relative_to(project_root)
+    except ValueError as exc:
+        raise ValidationError(
+            "Authoritative docs input is outside the manifest project: "
+            f"{raw_path}") from exc
+    return resolved
+
+
+def _project_logical_path(path: Path, project_root: Path) -> str:
+    try:
+        return path.resolve(strict=True).relative_to(project_root).as_posix()
+    except (OSError, ValueError) as exc:
+        raise ValidationError(
+            f"Input is outside the manifest project: {path}") from exc
+
+
+def _docs_snapshot(
+    paths: list[str], *, project_root: Path,
+) -> dict[str, Any]:
+    project_root = project_root.resolve(strict=True)
     entries: dict[str, bytes] = {}
     for raw_path in sorted(set(paths)):
-        root = Path(raw_path)
-        _reject_symlink_components(root)
-        try:
-            resolved = root.resolve(strict=True)
-        except OSError as exc:
-            raise ValidationError(
-                f"Could not resolve authoritative docs input {raw_path}: {exc}") from exc
-        root_label = _portable_path(str(resolved))
+        resolved = _resolve_docs_input(raw_path, project_root)
         if resolved.is_file():
-            entries[root_label] = _read_document_bytes(resolved)
+            entries[_project_logical_path(resolved, project_root)] = (
+                _read_document_bytes(resolved))
             continue
         if not resolved.is_dir():
             raise ValidationError(
@@ -133,12 +165,7 @@ def _docs_snapshot(paths: list[str]) -> dict[str, Any]:
             if not candidate.is_file():
                 raise ValidationError(
                     f"Authoritative docs input contains a non-regular file: {candidate}")
-            try:
-                relative = candidate.resolve(strict=True).relative_to(resolved)
-            except (OSError, ValueError) as exc:
-                raise ValidationError(
-                    f"Authoritative docs input escapes its root: {candidate}") from exc
-            logical_path = f"{root_label}/{relative.as_posix()}"
+            logical_path = _project_logical_path(candidate, project_root)
             entries[logical_path] = _read_document_bytes(candidate)
     if not entries:
         raise ValidationError("Authoritative docs inputs contain no readable files")
@@ -208,37 +235,38 @@ def _acceptance_for_manifest(manifest, manifest_path: str):
 
 def _validate_inputs(
     manifest_path: str, report_file: str, docs: list[str], blocked_nodes: list[str],
-) -> tuple[str, list[str]]:
+) -> tuple[str, list[str], Path]:
     if not os.path.exists(manifest_path):
         raise ValidationError(f"Manifest file not found: {manifest_path}")
+    project_root = _manifest_project_root(manifest_path)
     try:
         report = Path(report_file).read_text(encoding="utf-8")
     except OSError as exc:
         raise ValidationError(f"Could not read Reviewer report {report_file}: {exc}") from exc
     if not report.strip():
         raise ValidationError("Reviewer report must not be empty")
-    missing = [path for path in docs if not os.path.exists(path)]
-    if missing:
-        raise ValidationError("Authoritative docs path not found: " + ", ".join(missing))
+    resolved_docs = [
+        str(_resolve_docs_input(path, project_root)) for path in docs]
     manifest = load_manifest(manifest_path)
     unknown = [node for node in blocked_nodes if node not in manifest.nodes]
     if unknown:
         raise ValidationError("Blocked node not found in manifest: " + ", ".join(unknown))
-    return report, docs
-
-
-def _portable_path(path: str) -> str:
-    resolved = Path(path).resolve()
-    try:
-        return str(resolved.relative_to(Path.cwd().resolve()))
-    except ValueError:
-        return str(path)
+    return report, resolved_docs, project_root
 
 
 def _contract(
-    manifest_path: str, docs: list[str], blocked_nodes: list[str], report_file: str,
+    manifest_path: str,
+    docs: list[str],
+    blocked_nodes: list[str],
+    report_file: str,
+    *,
+    project_root: Path,
 ) -> Contract:
-    sources = [_portable_path(manifest_path), *map(_portable_path, docs)]
+    manifest_source = _project_logical_path(Path(manifest_path), project_root)
+    sources = [
+        manifest_source,
+        *(_project_logical_path(Path(path), project_root) for path in docs),
+    ]
     return Contract(
         objective=(
             "Produce the smallest structured running-DAG amendment that resolves the "
@@ -256,7 +284,7 @@ def _contract(
             "Do not regenerate the whole plan or reset unaffected nodes",
         ],
         verification_commands=[
-            f"omac dag check {manifest_path} --no-review",
+            f"omac dag check {manifest_source} --no-review",
         ],
         integration_gates=[{
             "name": "running-dag-amendment",
@@ -265,7 +293,7 @@ def _contract(
             "source_of_truth": sources,
             "covers": blocked_nodes or ["reported blocker"],
             "acceptance_refs": ["amendment schema and invariant validation"],
-            "commands": [f"omac dag show {manifest_path} --output json"],
+            "commands": [f"omac dag show {manifest_source} --output json"],
         }],
         pr_base="manifest-runtime",
         coverage_gate=0,
@@ -289,6 +317,7 @@ def propose_amendment(
     supersedes_issue_id: str | None = None,
     poll=None,
 ) -> dict[str, Any]:
+    requested_docs = list(docs)
     if restart_authoring and not resume_issue_id:
         raise ValidationError(ui(
             "--restart-authoring requires --resume-issue-id",
@@ -325,9 +354,9 @@ def propose_amendment(
                 "next_action": next_action,
             },
         )
-    report, docs = _validate_inputs(
+    report, docs, project_root = _validate_inputs(
         manifest_path, report_file, docs, blocked_nodes)
-    docs_snapshot = _docs_snapshot(docs)
+    docs_snapshot = _docs_snapshot(docs, project_root=project_root)
     if not orchestrator:
         raise ValidationError("An Orchestrator agent is required")
     if not reviewers:
@@ -369,16 +398,19 @@ def propose_amendment(
         "clear_contract_boundary: true and omit every boundary field. "
         "Do not edit "
         "the live manifest.\n\n"
-        f"Current manifest: {_portable_path(manifest_path)}\n"
+        f"Current manifest: "
+        f"{_project_logical_path(Path(manifest_path), project_root)}\n"
         f"Authoritative docs paths (read every design document under each path): "
-        f"{', '.join(map(_portable_path, docs))}\n"
+        f"{', '.join(_project_logical_path(Path(path), project_root) for path in docs)}\n"
         f"Blocked nodes: {', '.join(blocked_nodes) or '(derive from report)'}\n\n"
         "Reviewer report:\n\n" + report
     )
     payload = {
         "title": f"Running DAG amendment: {Path(manifest_path).name}",
         "description": description,
-        "contract": _contract(manifest_path, docs, blocked_nodes, report_file),
+        "contract": _contract(
+            manifest_path, docs, blocked_nodes, report_file,
+            project_root=project_root),
     }
 
     attempt = None
@@ -427,7 +459,7 @@ def propose_amendment(
             next_action = _new_attempt_command(
                 manifest_path,
                 report_file=report_file,
-                docs=docs,
+                docs=requested_docs,
                 blocked_nodes=blocked_nodes,
                 supersedes_issue_id=existing.id,
                 output_file=output_file,
@@ -486,7 +518,7 @@ def propose_amendment(
                 "next_action": _new_attempt_command(
                     manifest_path,
                     report_file=report_file,
-                    docs=docs,
+                    docs=requested_docs,
                     blocked_nodes=blocked_nodes,
                     supersedes_issue_id=supersedes,
                     output_file=output_file,

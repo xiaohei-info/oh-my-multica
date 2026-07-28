@@ -1861,6 +1861,138 @@ def test_new_attempt_active_shell_fails_before_finalize_or_dispatch(monkeypatch)
             reuse_dag_key=True)
 
     assert exc.value.report["reason_code"] == "amendment-attempt-shell-active"
+    assert exc.value.report["next_action"] == (
+        f"omac work show {item.id} --output json")
+
+
+@pytest.mark.parametrize(
+    ("status", "phase"),
+    [
+        (WorkItemStatus.IN_PROGRESS, TaskPhase.AUTHORING),
+        (WorkItemStatus.IN_REVIEW, TaskPhase.AUTHORING),
+        (WorkItemStatus.BLOCKED, TaskPhase.AUTHORING),
+        (WorkItemStatus.FAILED, TaskPhase.AUTHORING),
+        (WorkItemStatus.DONE, TaskPhase.AUTHORING),
+        (WorkItemStatus.TODO, TaskPhase.REVIEW),
+        (WorkItemStatus.TODO, TaskPhase.CONFIRMATION),
+    ],
+)
+def test_new_attempt_never_resumes_a_deterministic_attempt_past_shell(
+    monkeypatch, status, phase,
+):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    dag_key = "amend-project-attempt-started"
+    attempt = {"request_digest": "same-attempt"}
+    item = eng.store.create_work_item(
+        "ws", "new amendment", "new amendment", dag_key, "alice",
+        kind=TaskKind.AMENDMENT)
+    item.amendment_attempt = attempt
+    item.status = status
+    item.phase = phase
+    monkeypatch.setattr(eng.runtime, "is_active", lambda _item_id: False)
+    monkeypatch.setattr(
+        eng.store, "assign_work_item",
+        lambda *_args, **_kwargs: pytest.fail("started attempt must not be assigned"))
+    monkeypatch.setattr(
+        eng.runtime, "wake",
+        lambda *_args, **_kwargs: pytest.fail("started attempt must not be woken"))
+
+    with pytest.raises(NeedsDecision) as exc:
+        run_task(
+            eng, TaskKind.AMENDMENT, _payload(title="new amendment"), "alice",
+            poll=lambda: pytest.fail("started attempt must not be polled"),
+            dag_key=dag_key, amendment_attempt=attempt, reuse_dag_key=True)
+
+    assert exc.value.report["reason_code"] == "amendment-attempt-already-started"
+    assert exc.value.report["next_action"] == (
+        f"omac work show {item.id} --output json")
+    assert "--resume-issue-id" in exc.value.report["recovery"]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("deliverable", "existing delivery"),
+        ("deliverable_ref", {"attachment_id": "delivery"}),
+        ("review_verdict", "pass"),
+        ("review_report", {"blockers": []}),
+        ("review_report_ref", {"attachment_id": "review"}),
+        ("review_subject_digest", "subject"),
+        ("review_ledger", {"schema": "omac.review-ledger/v1"}),
+        ("review_ledger_ref", {"attachment_id": "ledger"}),
+        ("review_continuation", {"authorized_rounds": 1}),
+        ("decision_required", {"reason": "human confirmation"}),
+    ],
+)
+def test_new_attempt_rejects_shell_with_delivery_or_review_history(
+    monkeypatch, field, value,
+):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    dag_key = "amend-project-attempt-evidence"
+    attempt = {"request_digest": "same-attempt"}
+    item = eng.store.create_work_item(
+        "ws", "new amendment", "new amendment", dag_key, "alice",
+        kind=TaskKind.AMENDMENT)
+    item.amendment_attempt = attempt
+    setattr(item, field, value)
+    monkeypatch.setattr(eng.runtime, "is_active", lambda _item_id: False)
+    monkeypatch.setattr(
+        eng.store, "assign_work_item",
+        lambda *_args, **_kwargs: pytest.fail("evidenced attempt must not be assigned"))
+
+    with pytest.raises(NeedsDecision) as exc:
+        run_task(
+            eng, TaskKind.AMENDMENT, _payload(title="new amendment"), "alice",
+            poll=lambda: pytest.fail("evidenced attempt must not be polled"),
+            dag_key=dag_key, amendment_attempt=attempt, reuse_dag_key=True)
+
+    assert exc.value.report["reason_code"] == "amendment-attempt-already-started"
+    assert field in exc.value.report["fields"]
+
+
+def test_new_attempt_runtime_observation_error_fails_closed(monkeypatch):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    dag_key = "amend-project-attempt-runtime-error"
+    item = eng.store.create_work_item(
+        "ws", "new amendment", "new amendment", dag_key, "alice",
+        kind=TaskKind.AMENDMENT)
+    monkeypatch.setattr(
+        eng.runtime, "is_active",
+        lambda _item_id: (_ for _ in ()).throw(PlatformError("runtime unavailable")))
+    monkeypatch.setattr(
+        eng.store, "assign_work_item",
+        lambda *_args, **_kwargs: pytest.fail("unknown activity must not dispatch"))
+
+    with pytest.raises(NeedsDecision) as exc:
+        run_task(
+            eng, TaskKind.AMENDMENT, _payload(title="new amendment"), "alice",
+            poll=_poll, dag_key=dag_key,
+            amendment_attempt={"request_digest": "same"}, reuse_dag_key=True)
+
+    assert exc.value.report["reason_code"] == "amendment-attempt-observation-failed"
+    assert exc.value.report["next_action"] == (
+        f"omac work show {item.id} --output json")
+
+
+def test_new_attempt_store_observation_error_fails_closed(monkeypatch):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    monkeypatch.setattr(
+        eng.store, "find_work_item_by_dag_key",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            PlatformError("store unavailable")))
+    monkeypatch.setattr(
+        eng.store, "create_work_item",
+        lambda *_args, **_kwargs: pytest.fail("unknown identity must not create"))
+
+    with pytest.raises(NeedsDecision) as exc:
+        run_task(
+            eng, TaskKind.AMENDMENT, _payload(title="new amendment"), "alice",
+            poll=_poll, dag_key="amend-project-attempt-store-error",
+            amendment_attempt={"request_digest": "same"}, reuse_dag_key=True)
+
+    assert exc.value.report["reason_code"] == "amendment-attempt-observation-failed"
+    assert "omac work show <attempt-issue-id> --output json" == (
+        exc.value.report["next_action"])
 
 
 @pytest.mark.parametrize(
@@ -1898,6 +2030,7 @@ def test_new_attempt_conflicting_shell_fails_without_dispatch(monkeypatch, confl
     assert exc.value.report["reason_code"] in {
         "amendment-attempt-shell-conflict",
         "amendment-attempt-identity-conflict",
+        "amendment-attempt-already-started",
     }
 
 

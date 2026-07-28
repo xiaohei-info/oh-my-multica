@@ -117,8 +117,13 @@ omac dag amend propose .omac/project.yaml \
     --supersedes-issue-id <old-issue-id>
   ```
 
-  attempt identity 绑定 manifest、report digest、递归 docs 内容 digest、blocked nodes 与 superseded issue；同一命令
-  崩溃重试会复用同一 issue，不同 report digest 会产生不同 attempt。新 issue metadata/source refs
+  attempt identity 绑定 manifest、report digest、递归 docs 内容 digest、blocked nodes 与 superseded issue。docs
+  的逻辑路径固定相对 manifest 所属项目根（manifest 位于 `.omac/` 时取其父目录），不受当前 cwd 影响；项目外
+  docs 失败关闭。相同命令在 issue 尚为 `TODO + authoring`、无交付/评审证据且无 active Run 的初始化崩溃场景中，
+  会幂等补齐并复用同一 issue。只要 attempt 已派发、进入 review/confirmation/终态，或已有交付与评审证据，
+  再次 `--new-attempt` 都会 exit 20，并要求先执行 `omac work show <issue-id> --output json`；需要继续时使用当前阶段
+  的普通命令与 `--resume-issue-id`，不能把 `--new-attempt` 当作 resume。不同 report/docs 内容 digest 会产生不同
+  attempt。新 issue metadata/source refs
   记录 supersedes、attempt id、report digest 和 docs digest；旧 issue 不会被清理、重开或自动关闭。新 attempt
   正常走 authoring → Reviewer → human confirmation，最终 amendment 仍应用到原 manifest/node。
 - accept 在 manifest 写锁内执行 CAS，并原子写入 manifest 定义与逐节点 apply ledger。
