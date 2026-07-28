@@ -1,6 +1,4 @@
 """core.manifest:load/save 往返、env 展开、set_node、contract 解析。"""
-import os
-
 import pytest
 
 from omac.core import manifest as manifest_mod
@@ -89,6 +87,17 @@ def test_manifest_write_lock_rejects_second_writer(tmp_path):
     with manifest_write_lock(path):
         with pytest.raises(ValidationError, match="Another `omac dag run`"):
             with manifest_write_lock(path):
+                pass
+
+
+def test_manifest_write_lock_uses_real_path_identity(tmp_path):
+    path = _write(tmp_path, BASIC)
+    alias = tmp_path / "manifest-alias.yaml"
+    alias.symlink_to(path)
+
+    with manifest_write_lock(path):
+        with pytest.raises(ValidationError, match="dag amend propose"):
+            with manifest_write_lock(alias):
                 pass
 
 

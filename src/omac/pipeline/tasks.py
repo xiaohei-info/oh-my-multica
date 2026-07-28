@@ -961,6 +961,9 @@ def run_task(
         nonlocal pristine_dispatch_required
         if not pristine_dispatch_required:
             return
+        # CLI 持有同 manifest 的 host-local 锁；这里再用 active observation
+        # 夹住最后一次 Store 重读，只消费当前可见事实。Multica 外部直写没有
+        # conditional CAS，不能把此观察宣称为跨平台 compare-and-dispatch。
         current = store.get_work_item(item_id)
         if _observe_attempt_active(engine, item_id, task_key):
             _reject_active_attempt(current, task_key)

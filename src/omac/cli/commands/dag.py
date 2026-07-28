@@ -488,6 +488,11 @@ def snapshot(args) -> int:
 
 
 def amend(args) -> int:
+    with manifest_write_lock(args.manifest):
+        return _amend_locked(args)
+
+
+def _amend_locked(args) -> int:
     from ...pipeline.amendment import accept_amendment, propose_amendment
 
     engine, _ = _assemble_engine(args)
@@ -531,15 +536,14 @@ def amend(args) -> int:
             "amendment 已通过 Reviewer，正在等待人工确认。"), report=report)
 
     if args.amend_action == "accept":
-        with manifest_write_lock(args.manifest):
-            result = accept_amendment(
-                engine,
-                args.manifest,
-                args.amendment_file,
-                reason=args.reason,
-                agent_pool=set(engine.store.list_members(
-                    engine.store.config.workspace_id)),
-            )
+        result = accept_amendment(
+            engine,
+            args.manifest,
+            args.amendment_file,
+            reason=args.reason,
+            agent_pool=set(engine.store.list_members(
+                engine.store.config.workspace_id)),
+        )
         print_json(result)
         hint(ui(
             f"Amendment applied. Resume with `omac dag run {args.manifest}`.",

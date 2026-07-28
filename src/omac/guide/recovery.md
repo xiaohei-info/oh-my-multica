@@ -126,6 +126,13 @@ omac dag amend propose .omac/project.yaml \
   attempt。新 issue metadata/source refs
   记录 supersedes、attempt id、report digest 和 docs digest；旧 issue 不会被清理、重开或自动关闭。新 attempt
   正常走 authoring → Reviewer → human confirmation，最终 amendment 仍应用到原 manifest/node。
+- `omac dag run`、`dag tick`、`dag amend propose` 与 `dag amend accept` 对同一个真实 manifest
+  共用同一把 host-local 写锁。锁在 engine 组装及 Store/Runtime 调用前获取，因此同一台机器上第二个 OMAC
+  进程会在任何 issue/Run 副作用前失败关闭。该保证只覆盖通过 OMAC 管理、位于同一主机且指向同一 manifest
+  realpath 的操作；它不是分布式锁，也不把 Multica 的 LWW metadata 变成 conditional CAS。其他机器上的 OMAC、
+  直接 Multica/API 写入或其他外部参与者若并发修改 issue，属于 unknown/unsupported 边界，OMAC 只能在首次
+  dispatch 前通过 active Run 观察与最后一次 pristine Store 重读拒绝已经可见的冲突，不能宣称线性化，也不会
+  cancel、清理或补偿无法证明归属的外部事实。
 - accept 在 manifest 写锁内执行 CAS，并原子写入 manifest 定义与逐节点 apply ledger。
   Store 不与文件系统共享事务，因此这不是跨系统原子事务；ledger 以
   `pending/syncing/synced/observed_progress` 记录每个节点的补偿进度。进程崩溃后，重复 accept

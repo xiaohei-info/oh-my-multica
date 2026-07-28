@@ -1,5 +1,9 @@
 import copy
 import json
+import os
+import subprocess
+import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -2451,6 +2455,112 @@ def test_cli_amendment_forwards_restart_authoring(tmp_path, monkeypatch):
     assert code == exit_codes.NEEDS_DECISION
     assert observed["resume_issue_id"] == "issue-1"
     assert observed["restart_authoring"] is True
+
+
+def test_cli_concurrent_amend_propose_fails_before_engine_or_pipeline_side_effects(
+    tmp_path, monkeypatch, capsys,
+):
+    project = tmp_path / "project"
+    project.mkdir()
+    omac_dir = project / ".omac"
+    omac_dir.mkdir()
+    (omac_dir / "config.yaml").write_text(yaml.safe_dump({
+        "engine": "mock",
+        "workspace": "ws",
+        "roles": {"orchestrator": "alice", "reviewers": ["bob"]},
+        "retry": {"review": 2},
+        "defaults": {"poll_interval": 0},
+    }))
+    manifest_path = _manifest(project)
+    report = project / "review.md"
+    report.write_text("concurrent amendment")
+    docs = project / "docs"
+    docs.mkdir()
+    (docs / "design.md").write_text("authoritative design")
+    output_file = omac_dir / "dag.concurrent.amendment.yaml"
+    ready = tmp_path / "first-propose-ready"
+    release = tmp_path / "release-first-propose"
+    repo_root = Path(__file__).resolve().parents[1]
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, [
+        str(repo_root / "src"), env.get("PYTHONPATH", ""),
+    ]))
+    script = """
+import sys
+import time
+from pathlib import Path
+
+import omac.pipeline.amendment as amendment_pipeline
+from omac.cli.main import main
+
+ready = Path(sys.argv[1])
+release = Path(sys.argv[2])
+manifest, report, docs, output_file = sys.argv[3:7]
+
+def hold_propose(*_args, **_kwargs):
+    ready.write_text("locked")
+    while not release.exists():
+        time.sleep(0.01)
+    return {
+        "state": "pending_human_confirmation",
+        "manifest": manifest,
+        "amendment_file": output_file,
+        "amendment_id": "held-amendment",
+        "issue_id": "held-issue",
+        "reviewer_verdict": "pass",
+    }
+
+amendment_pipeline.propose_amendment = hold_propose
+raise SystemExit(main([
+    "dag", "amend", "propose", manifest,
+    "--report-file", report,
+    "--docs", docs,
+    "--output-file", output_file,
+    "--output", "json",
+]))
+"""
+    first = subprocess.Popen(
+        [sys.executable, "-c", script, str(ready), str(release),
+         str(manifest_path), str(report), str(docs), str(output_file)],
+        cwd=repo_root,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        deadline = time.monotonic() + 10
+        while not ready.exists() and time.monotonic() < deadline:
+            if first.poll() is not None:
+                stdout, stderr = first.communicate()
+                pytest.fail(
+                    f"first propose exited before holding lock: {stdout}\n{stderr}")
+            time.sleep(0.01)
+        assert ready.exists(), "first propose did not reach the locked pipeline"
+
+        monkeypatch.setattr(
+            dag_cmd, "_assemble_engine",
+            lambda _args: pytest.fail(
+                "second propose must fail before engine assembly"))
+        monkeypatch.setattr(
+            amendment_pipeline, "propose_amendment",
+            lambda *_args, **_kwargs: pytest.fail(
+                "second propose must not enter the pipeline"))
+
+        code = main([
+            "dag", "amend", "propose", str(manifest_path),
+            "--report-file", str(report),
+            "--docs", str(docs),
+            "--output-file", str(output_file),
+            "--output", "json",
+        ])
+
+        assert code == exit_codes.VALIDATION
+        assert "dag amend propose" in capsys.readouterr().err
+    finally:
+        release.write_text("release")
+        stdout, stderr = first.communicate(timeout=10)
+        assert first.returncode == exit_codes.NEEDS_DECISION, (stdout, stderr)
 
 
 def test_cli_restart_authoring_fails_closed_without_multica_access(
