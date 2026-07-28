@@ -1142,6 +1142,44 @@ class TestReviewerRejectBoundedFallback:
             "producer_nodes": ["assembly"],
         }
 
+    def test_downstream_artifact_prose_stays_normal_rework_and_consumes_bounce(self, tmp_path):
+        from omac.engines import create_engine
+
+        contract = self._simple_contract()
+        contract.evidence_mode = EvidenceMode.FIXTURE
+        contract.produces = [ProducedArtifact("tooling-package")]
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(
+            eng, path, contract=contract)
+        manifest.nodes["assembly"] = Node(
+            id="assembly",
+            worker="bob",
+            blocked_by=["a"],
+            contract=Contract(
+                evidence_mode=EvidenceMode.LIVE,
+                produces=[ProducedArtifact("production-bundle")],
+            ),
+        )
+        save_manifest(manifest, path)
+        eng.store.update_work_item_metadata(
+            item.id, review_obligations=build_review_obligations(item))
+        report = _review_report(item, "reject")
+        report["blockers"][0]["required_fix"] = (
+            "Do not generate production-bundle; only fix the local fixture."
+        )
+        eng.store.update_work_item_metadata(item.id, review_report=report)
+
+        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+
+        got = eng.store.get_work_item(item.id)
+        assert result.state == "running"
+        assert manifest.nodes["a"].status == "in_progress"
+        assert got.status == WorkItemStatus.IN_PROGRESS
+        assert got.review_verdict is None
+        assert got.decision_required is None
+        assert got.bounces.review == 1
+
     def test_pass_with_nits_accepts_worker_followup_without_second_review(self, tmp_path):
         """pass-with-nits 只回 worker 修一次;worker 重交后直接 done,不再派 reviewer。"""
         from omac.engines import create_engine

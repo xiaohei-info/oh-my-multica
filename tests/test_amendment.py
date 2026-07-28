@@ -16,7 +16,12 @@ from omac.core.amendment import (
     validate_proposal,
 )
 from omac.core.acceptance import load_acceptance_doc
-from omac.core.manifest import load_manifest, save_manifest
+from omac.core.manifest import (
+    EvidenceMode,
+    ProducedArtifact,
+    load_manifest,
+    save_manifest,
+)
 from omac.core.taskmeta import TaskKind, TaskPhase
 from omac.cli import exit_codes
 from omac.cli.main import main
@@ -155,6 +160,25 @@ def _contract_update():
     }
 
 
+def _typed_boundary_contract_update():
+    operation = _contract_update()
+    operation["set"]["contract"].update({
+        "evidence_mode": "fixture",
+        "produces": [{"artifact_id": "tooling-package"}],
+        "consumes": [],
+    })
+    return operation
+
+
+def _add_typed_boundary(path):
+    manifest = load_manifest(str(path))
+    contract = manifest.nodes["bootstrap"].contract
+    contract.evidence_mode = EvidenceMode.FIXTURE
+    contract.produces = [ProducedArtifact("tooling-package")]
+    contract.consumes = []
+    save_manifest(manifest, str(path))
+
+
 def _explicit_responsibility_update(action_id="ACT-BOOT-01"):
     operation = _contract_update()
     contract = operation["set"]["contract"]
@@ -255,6 +279,98 @@ def test_complete_contract_update_preserves_and_validates_responsibility_fields(
         {"alice", "bob", "charlie"}, acceptance=acceptance,
     )
     assert any("unknown business action 'UNKNOWN-ACTION'" in error for error in errors)
+
+
+def test_complete_contract_replacement_requires_boundary_preservation_or_clear(tmp_path):
+    path = _manifest(tmp_path)
+    _add_typed_boundary(path)
+    manifest = load_manifest(str(path))
+
+    missing = validate_proposal(
+        manifest, _proposal(_contract_update()), {"alice", "bob", "charlie"})
+    preserved = validate_proposal(
+        manifest, _proposal(_typed_boundary_contract_update()),
+        {"alice", "bob", "charlie"})
+
+    assert any(
+        "must explicitly preserve evidence_mode, produces, and consumes" in error
+        for error in missing
+    )
+    assert preserved == []
+
+
+def test_contract_boundary_clear_expression_is_explicit_and_unambiguous(tmp_path):
+    path = _manifest(tmp_path)
+    _add_typed_boundary(path)
+    manifest = load_manifest(str(path))
+    false_clear = _contract_update()
+    false_clear["clear_contract_boundary"] = False
+    mixed_clear = _typed_boundary_contract_update()
+    mixed_clear["clear_contract_boundary"] = True
+    resume_clear = {
+        "op": "resume",
+        "node": "bootstrap",
+        "stage": "authoring",
+        "clear_contract_boundary": True,
+    }
+
+    false_errors = validate_proposal(
+        manifest, _proposal(false_clear), {"alice", "bob", "charlie"})
+    mixed_errors = validate_proposal(
+        manifest, _proposal(mixed_clear), {"alice", "bob", "charlie"})
+    resume_errors = validate_proposal(
+        manifest, _proposal(resume_clear), {"alice", "bob", "charlie"})
+
+    assert any("must be true when present" in error for error in false_errors)
+    assert any("cannot be combined" in error for error in mixed_errors)
+    assert any("valid only for update operations" in error for error in resume_errors)
+
+
+def test_explicit_contract_boundary_clear_survives_apply_reload_and_restart(tmp_path):
+    path = _manifest(tmp_path)
+    _add_typed_boundary(path)
+    engine = _engine()
+    item = engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
+    operation = _contract_update()
+    operation["clear_contract_boundary"] = True
+    reviewed = build_reviewed_amendment(
+        load_manifest(str(path)), _proposal(operation), engine.store,
+        issue_id="amendment-issue", reviewer_verdict="pass")
+
+    first = apply_amendment(
+        str(path), reviewed, engine.store, {"alice", "bob", "charlie"})
+    reloaded = load_manifest(str(path))
+    second = apply_amendment(
+        str(path), reviewed, engine.store, {"alice", "bob", "charlie"})
+
+    contract = reloaded.nodes["bootstrap"].contract
+    assert first["sync"]["synced"] == ["bootstrap"]
+    assert contract.evidence_mode is None
+    assert contract.produces == []
+    assert contract.consumes == []
+    assert second["sync"]["already_complete"] == ["bootstrap"]
+
+
+def test_typed_contract_boundary_preservation_survives_apply_and_reload(tmp_path):
+    path = _manifest(tmp_path)
+    _add_typed_boundary(path)
+    engine = _engine()
+    item = engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
+    reviewed = build_reviewed_amendment(
+        load_manifest(str(path)), _proposal(_typed_boundary_contract_update()),
+        engine.store, issue_id="amendment-issue", reviewer_verdict="pass")
+
+    apply_amendment(
+        str(path), reviewed, engine.store, {"alice", "bob", "charlie"})
+
+    contract = load_manifest(str(path)).nodes["bootstrap"].contract
+    assert contract.evidence_mode is EvidenceMode.FIXTURE
+    assert contract.produces == [ProducedArtifact("tooling-package")]
+    assert contract.consumes == []
 
 
 def test_acceptance_drift_after_amendment_review_fails_closed(tmp_path):
@@ -995,6 +1111,7 @@ def test_propose_amendment_passes_authoritative_acceptance_to_reviewer_obligatio
     observed = {}
 
     def fake_run_task(*_args, **kwargs):
+        observed["description"] = _args[2]["description"]
         observed["acceptance_doc"] = kwargs["review_acceptance_doc"]
         observed["manifest"] = kwargs["review_amendment_manifest"]
         return {
@@ -1011,6 +1128,8 @@ def test_propose_amendment_passes_authoritative_acceptance_to_reviewer_obligatio
     assert observed["acceptance_doc"].business_action_ids_by_flow == {
         "UJ-BOOTSTRAP": ["ACT-BOOT-01"]}
     assert observed["manifest"].nodes["bootstrap"].id == "bootstrap"
+    assert "clear_contract_boundary: true" in observed["description"]
+    assert "explicitly carry all three fields" in observed["description"]
     assert Path(result["amendment_file"]).exists()
 
 
