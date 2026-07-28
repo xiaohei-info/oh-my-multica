@@ -83,6 +83,7 @@ omac plan resume --plan-id p-xxxx
 | Signal | Inspect first | Usual action |
 |---|---|---|
 | `reviewer reject` | `report.blockers`, real diff, failed commands | Repair the node, then `omac node retry` |
+| `contract-boundary-conflict` | `decision_required.conflict_codes`, review-report reference, current contract `responsibility` | If the Reviewer crossed the boundary, preserve the contract, record the corrected fact, and `omac node retry` the same node. If the contract truly lacks an upstream input, amend it first and resume the same issue/PR at the approved stage. |
 | CI failure | CI log, `verification.commands` | Repair CI and retry; repair the contract or split if it is unsound |
 | Merge retries exhausted | PR base, conflict files, integration branch | Reassign and retry, or resolve the conflict then rerun |
 | `acceptance.max_rounds` exhausted | Failed-flow list, incremental manifest | Reduce scope, add nodes, or explicitly accept/abandon |
@@ -149,7 +150,11 @@ omac dag amend propose .omac/project.yaml \
   definition digest and minimum recovery set remain unchanged. Node, contract, edge, or
   affected-set drift requires a new reviewed amendment.
 - A contract update is a complete replacement serialized through the canonical
-  manifest serializer. `acceptance_claims`, `acceptance_contributions`, and
+  manifest serializer. When the existing contract has `evidence_mode`,
+  `produces`, or `consumes`, the replacement must explicitly carry all three.
+  To clear the typed boundary, set top-level `clear_contract_boundary: true` on
+  the update operation and omit all three fields from the replacement.
+  `acceptance_claims`, `acceptance_contributions`, and
   `acceptance_refs` are preserved and validated against the authoritative file
   named by `meta.acceptance_file`. Acceptance drift after review rejects the
   first apply; once a pending ledger exists, crash recovery still completes the

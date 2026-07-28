@@ -1,6 +1,7 @@
 # manifest.py
 from dataclasses import dataclass, field
 from contextlib import contextmanager
+from enum import Enum
 import fcntl
 import hashlib
 import os
@@ -38,6 +39,80 @@ def _expand_env(value):
         return [_expand_env(v) for v in value]
     return value
 
+class EvidenceMode(str, Enum):
+    """Authoritative evidence class for one independently reviewable node."""
+
+    FIXTURE = "fixture"
+    ARTIFACT = "artifact"
+    LIVE = "live"
+
+
+@dataclass(frozen=True)
+class ProducedArtifact:
+    """Stable artifact identity produced by one node."""
+
+    artifact_id: str
+
+
+@dataclass(frozen=True)
+class ConsumedArtifact:
+    """One exact artifact input and the upstream node that owns it."""
+
+    artifact_id: str
+    producer: str
+    evidence_mode: EvidenceMode
+
+
+def _load_evidence_mode(value):
+    if isinstance(value, EvidenceMode) or value is None:
+        return value
+    try:
+        return EvidenceMode(value)
+    except (TypeError, ValueError):
+        # Preserve invalid input so lint can return a repairable schema error.
+        return value
+
+
+def _load_produced_artifact(value):
+    if isinstance(value, ProducedArtifact):
+        return value
+    if isinstance(value, dict):
+        return ProducedArtifact(artifact_id=value.get("artifact_id"))
+    return value
+
+
+def _load_consumed_artifact(value):
+    if isinstance(value, ConsumedArtifact):
+        return value
+    if isinstance(value, dict):
+        return ConsumedArtifact(
+            artifact_id=value.get("artifact_id"),
+            producer=value.get("producer"),
+            evidence_mode=_load_evidence_mode(value.get("evidence_mode")),
+        )
+    return value
+
+
+def _dump_evidence_mode(value):
+    return value.value if isinstance(value, EvidenceMode) else value
+
+
+def _dump_produced_artifact(value):
+    if isinstance(value, ProducedArtifact):
+        return {"artifact_id": value.artifact_id}
+    return value
+
+
+def _dump_consumed_artifact(value):
+    if isinstance(value, ConsumedArtifact):
+        return {
+            "artifact_id": value.artifact_id,
+            "producer": value.producer,
+            "evidence_mode": _dump_evidence_mode(value.evidence_mode),
+        }
+    return value
+
+
 @dataclass
 class Contract:
     objective: str | None = None
@@ -59,11 +134,17 @@ class Contract:
     # 主要代码归属范围(可选、非穷举白名单):用于表达节点稳定的模块边界、降低
     # 并行冲突。完成 contract 必需的配套文件可扩展,但需在 PR/verification 说明。
     scope_paths: list = field(default_factory=list)
+    # 可选的 typed artifact boundary。旧 manifest 缺省 None/[] 时保持原语义。
+    evidence_mode: EvidenceMode | None = None
+    produces: list[ProducedArtifact] = field(default_factory=list)
+    consumes: list[ConsumedArtifact] = field(default_factory=list)
 
 
 def _load_contract(raw):
     if raw is None:
         return None
+    raw_produces = raw.get("produces", [])
+    raw_consumes = raw.get("consumes", [])
     return Contract(
         objective=raw.get("objective"),
         source_of_truth=list(raw.get("source_of_truth", [])),
@@ -79,6 +160,15 @@ def _load_contract(raw):
         coverage_gate=raw.get("coverage_gate", 90),
         acceptance_doc=raw.get("acceptance_doc"),
         scope_paths=list(raw.get("scope_paths", [])),
+        evidence_mode=_load_evidence_mode(raw.get("evidence_mode")),
+        produces=(
+            [_load_produced_artifact(value) for value in raw_produces]
+            if isinstance(raw_produces, list) else raw_produces
+        ),
+        consumes=(
+            [_load_consumed_artifact(value) for value in raw_consumes]
+            if isinstance(raw_consumes, list) else raw_consumes
+        ),
     )
 
 
@@ -114,6 +204,16 @@ def _dump_contract(contract):
         data["required_contracts"] = list(contract.required_contracts)
     if contract.scope_paths:
         data["scope_paths"] = list(contract.scope_paths)
+    if contract.evidence_mode is not None:
+        data["evidence_mode"] = _dump_evidence_mode(contract.evidence_mode)
+    if contract.produces:
+        data["produces"] = [
+            _dump_produced_artifact(value) for value in contract.produces
+        ]
+    if contract.consumes:
+        data["consumes"] = [
+            _dump_consumed_artifact(value) for value in contract.consumes
+        ]
     if contract.coverage_gate != 90:
         data["coverage_gate"] = contract.coverage_gate
     return data

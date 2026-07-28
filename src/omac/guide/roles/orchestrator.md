@@ -37,6 +37,12 @@
   机械事实，例如 shell 语法和缺少 `./` / `../` 前缀的 Go 本地包目标。没有显式
   typed IO contract 时，OMAC 不会根据通用 flag 名称、当前文件是否存在或
   `scope_paths` 推断 artifact producer / input materialization。
+- `work show.context.contract_boundary_schema` 给出可选 typed IO 形状。需要明确制品边界时，
+  为节点声明 `evidence_mode: fixture|artifact|live`、稳定的 `produces[].artifact_id`，
+  以及 `consumes[]` 的 `{artifact_id, producer, evidence_mode}`。fixture 表示当前节点拥有
+  完整可执行的确定性 fixture，不表示等待下游生产制品。
+- 每个 consume 的 producer 必须存在、声明对应 artifact，并位于消费者的传递上游；不要为了
+  协调顺序伪造 `blocked_by`。未声明这些可选字段的旧 manifest 保持原执行语义。
 - 机器门失败直接返回 authoring，不消耗 Reviewer 轮次。`review_comment` 只保存有界
   摘要；完整结构化问题保存在附件中。重新工作前运行摘要给出的
   `omac work show <issue-id> --output json`，读取 `context.machine_feedback`，逐条修完后再提交。

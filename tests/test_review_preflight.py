@@ -111,6 +111,50 @@ def test_preflight_accepts_input_from_reachable_predecessor():
     assert run_review_preflight(item) == []
 
 
+def test_preflight_rejects_typed_consume_from_non_upstream_producer():
+    import yaml
+    manifest = {
+        "meta": {"name": "demo"},
+        "nodes": [
+            {
+                "id": "future",
+                "worker": "alice",
+                "blocked_by": [],
+                "contract": {
+                    "evidence_mode": "artifact",
+                    "produces": [{"artifact_id": "future-output"}],
+                    "verification_commands": ["pytest -q"],
+                },
+            },
+            {
+                "id": "current",
+                "worker": "bob",
+                "blocked_by": [],
+                "contract": {
+                    "evidence_mode": "fixture",
+                    "consumes": [{
+                        "artifact_id": "future-output",
+                        "producer": "future",
+                        "evidence_mode": "artifact",
+                    }],
+                    "verification_commands": ["pytest -q"],
+                },
+            },
+        ],
+    }
+    item = SimpleNamespace(
+        kind=TaskKind.DECOMPOSE,
+        deliverable=yaml.safe_dump(manifest, sort_keys=False),
+    )
+
+    errors = run_review_preflight(item)
+
+    assert any(
+        "producer 'future' is not a transitive upstream dependency" in error
+        for error in errors
+    )
+
+
 def test_preflight_accepts_explicit_relative_go_local_package_target():
     assert run_review_preflight(_item("go test ./cmd/...")) == []
 

@@ -53,6 +53,7 @@ _RESPONSIBILITY_OPERATION_FIELDS = {
     "integration_gate_responsibility_patches",
     "historical_contract_correction", "reason", "resume_stage",
 }
+_CONTRACT_BOUNDARY_FIELDS = {"evidence_mode", "produces", "consumes"}
 
 
 def _node_dict(node: Node, *, include_runtime: bool) -> dict[str, Any]:
@@ -279,6 +280,41 @@ def _contract_changes(before: Node, raw: dict[str, Any]) -> set[str]:
         key for key in set(previous) | set(current)
         if previous.get(key) != current.get(key)
     }
+
+
+def _contract_boundary_replacement_errors(
+    node: Node, operation: dict[str, Any], prefix: str,
+) -> list[str]:
+    changes = operation.get("set") or {}
+    replacement = changes.get("contract")
+    clear_boundary = operation.get("clear_contract_boundary")
+    if clear_boundary is not None and clear_boundary is not True:
+        return [f"{prefix}.clear_contract_boundary must be true when present"]
+    if not isinstance(replacement, dict):
+        if clear_boundary is True:
+            return [
+                f"{prefix}.clear_contract_boundary requires a complete contract replacement"
+            ]
+        return []
+
+    replacement_fields = _CONTRACT_BOUNDARY_FIELDS.intersection(replacement)
+    if clear_boundary is True:
+        if replacement_fields:
+            return [
+                f"{prefix}: clear_contract_boundary=true cannot be combined with "
+                "evidence_mode, produces, or consumes"
+            ]
+        return []
+
+    previous = _dump_contract(node.contract) if node.contract is not None else {}
+    if not _CONTRACT_BOUNDARY_FIELDS.intersection(previous):
+        return []
+    if replacement_fields != _CONTRACT_BOUNDARY_FIELDS:
+        return [
+            f"{prefix}.set.contract must explicitly preserve evidence_mode, produces, "
+            "and consumes, or set clear_contract_boundary=true"
+        ]
+    return []
 
 
 def _is_responsibility_operation(operation: dict[str, Any]) -> bool:
@@ -536,6 +572,9 @@ def validate_proposal(
                 f"{prefix}.op must be update, add, remove, resume, or "
                 f"{_RESPONSIBILITY_OPERATION}")
             continue
+        if "clear_contract_boundary" in operation and op != "update":
+            errors.append(
+                f"{prefix}.clear_contract_boundary is valid only for update operations")
         if op == "add":
             raw_node = operation.get("value") or {}
             runtime_fields = set(raw_node) & _RUNTIME_FIELDS
@@ -592,6 +631,8 @@ def validate_proposal(
             errors.append(f"{prefix}.set.blocked_by must be a list")
         if "contract" in changes and not isinstance(changes["contract"], dict):
             errors.append(f"{prefix}.set.contract must be a complete object")
+        errors.extend(_contract_boundary_replacement_errors(
+            node, operation, prefix))
         if (
             "contract" in changes
             and isinstance(changes["contract"], dict)
