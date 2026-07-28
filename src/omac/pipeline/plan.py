@@ -41,7 +41,9 @@ from ..core.project_rules import read_agents_snapshot, write_project_rules
 from ..core.review_continuation import (
     authorized_review_limit, build_review_continuation,
 )
-from ..core.taskmeta import TaskKind, TaskPhase, make_dag_key, make_plan_id
+from ..core.taskmeta import (
+    DECISION_REQUIRED_SCHEMA, TaskKind, TaskPhase, make_dag_key, make_plan_id,
+)
 from ..engines.models import WorkItem, WorkItemStatus
 from ..errors import ValidationError
 from ..i18n import CN, ui
@@ -345,14 +347,27 @@ def plan_continue_review(
             f"当前已授权到 review round {current_limit}；请运行 plan resume，"
             "不要重复叠加 decision。"))
 
-    if item.review_verdict == "reject":
-        mode = "producer-rework"
-    elif (
+    decision = (
+        item.decision_required
+        if isinstance(item.decision_required, dict)
+        else {}
+    )
+    projected_final_nits = (
+        item.status == WorkItemStatus.BLOCKED
+        and decision.get("schema") == DECISION_REQUIRED_SCHEMA
+        and decision.get("gate") == "review-nits"
+        and decision.get("rounds") == current_round
+    )
+    review_only = (
         item.phase == TaskPhase.REVIEW
-        and item.status == WorkItemStatus.IN_REVIEW
+        and item.status in {WorkItemStatus.IN_REVIEW, WorkItemStatus.BLOCKED}
+        and (item.status != WorkItemStatus.BLOCKED or projected_final_nits)
         and not item.review_verdict
         and bool(item.deliverable)
-    ):
+    )
+    if item.review_verdict == "reject":
+        mode = "producer-rework"
+    elif review_only:
         mode = "review-only"
     else:
         raise ValidationError(ui(
@@ -374,6 +389,9 @@ def plan_continue_review(
     if mode == "producer-rework":
         store.reset_review(item.id)
         store.update_status(item.id, WorkItemStatus.TODO)
+    elif projected_final_nits:
+        store.update_work_item_metadata(item.id, decision_required={})
+        store.update_status(item.id, WorkItemStatus.IN_REVIEW)
 
     return {
         "item_id": item.id,
