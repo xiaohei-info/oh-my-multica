@@ -40,10 +40,11 @@ artifact boundary:
   undeclared production environment or downstream artifact.
 - `evidence_mode: artifact|live` uses declared artifacts or real runtime facts
   as the primary evidence class.
-- Consume only the `{artifact_id, producer, evidence_mode}` entries in
-  `consumes`; every producer must be a transitive `blocked_by` predecessor.
-  Deliver only `produces`, and never turn a downstream output into this node's
-  prerequisite.
+- Follow `work show.context.responsibility.input_policy`: `allowlist` permits
+  only typed `consumes`, `none` permits no external inputs, and
+  `transitional-upstream` permits legacy inputs only from transitive
+  `blocked_by` predecessors while a running manifest is migrated. No policy
+  permits non-upstream or downstream inputs. Deliver only `produces`.
 - A review request for an undeclared input, a non-upstream/downstream artifact,
   or live evidence from a fixture node is a contract boundary conflict. Do not
   expand implementation scope; wait for OMAC to route NeedsDecision.

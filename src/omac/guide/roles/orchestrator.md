@@ -42,7 +42,12 @@
   以及 `consumes[]` 的 `{artifact_id, producer, evidence_mode}`。fixture 表示当前节点拥有
   完整可执行的确定性 fixture，不表示等待下游生产制品。
 - 每个 consume 的 producer 必须存在、声明对应 artifact，并位于消费者的传递上游；不要为了
-  协调顺序伪造 `blocked_by`。未声明这些可选字段的旧 manifest 保持原执行语义。
+  协调顺序伪造 `blocked_by`。新规划的完整 typed DAG 必须声明精确 `consumes`（包括 `[]`）。
+  amendment 面对已运行且无法可信回填完成 producer typed outputs 的旧 manifest 时，可有意省略
+  `consumes` 选择 `transitional-upstream`；新规划不得使用该过渡形式。
+- 完整 contract replacement 只保留旧 contract 实际存在的 typed boundary 字段。旧 contract
+  省略 `consumes` 时继续省略，除非 amendment 明确改变 input policy；只有清除整个 boundary
+  时才使用 `clear_contract_boundary: true`。
 - 机器门失败直接返回 authoring，不消耗 Reviewer 轮次。`review_comment` 只保存有界
   摘要；完整结构化问题保存在附件中。重新工作前运行摘要给出的
   `omac work show <issue-id> --output json`，读取 `context.machine_feedback`，逐条修完后再提交。

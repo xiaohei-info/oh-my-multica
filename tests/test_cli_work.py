@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -16,8 +15,10 @@ from omac.core.manifest import (
     Manifest,
     Node,
     ProducedArtifact,
+    _load_contract,
     save_manifest,
 )
+from omac.core.contract_boundaries import responsibility_summary
 from omac.core.taskmeta import TaskKind, TaskPhase
 from omac.engines import create_engine
 from omac.engines.models import (
@@ -112,6 +113,7 @@ def test_work_show_projects_compact_contract_responsibility():
 
     assert output["context"]["responsibility"] == {
         "evidence_mode": "fixture",
+        "input_policy": "allowlist",
         "allowed_inputs": [{
             "artifact_id": "source-contracts",
             "producer": "source-contracts",
@@ -123,6 +125,31 @@ def test_work_show_projects_compact_contract_responsibility():
             "non-upstream or downstream nodes are outside this contract."
         ),
     }
+
+
+def test_work_show_projects_transitional_upstream_input_policy():
+    store = _store()
+    item = _make_item(store, TaskKind.DEVELOP, TaskPhase.AUTHORING)
+    store.set_node_contract(item.id, Contract(
+        objective="tooling",
+        evidence_mode=EvidenceMode.FIXTURE,
+        produces=[ProducedArtifact("tooling-package")],
+    ))
+
+    output = build_show_output(store.get_work_item(item.id), "worker:alice")
+
+    responsibility = output["context"]["responsibility"]
+    assert responsibility["input_policy"] == "transitional-upstream"
+    assert responsibility["allowed_inputs"] is None
+    assert "transitive upstream" in responsibility["boundary_rule"]
+
+
+def test_work_show_projects_explicit_null_as_invalid_for_raw_and_loaded_contracts():
+    raw = {"evidence_mode": "fixture", "consumes": None}
+    loaded = _load_contract(raw)
+
+    assert responsibility_summary(raw)["input_policy"] == "invalid"
+    assert responsibility_summary(loaded)["input_policy"] == "invalid"
 
 
 def test_orchestrator_show_projects_boundary_schema_without_history_payloads():
@@ -140,6 +167,12 @@ def test_orchestrator_show_projects_boundary_schema_without_history_payloads():
             "producer": "upstream-node-id",
             "evidence_mode": "artifact",
         }],
+        "consumes_semantics": {
+            "omitted": "transitional upstream inputs not yet enumerated",
+            "empty": "no external inputs",
+            "non_empty": "strict artifact allowlist",
+            "null": "invalid; consumes must be omitted or a list",
+        },
     }
     assert "deliverable" not in output["context"]["contract_boundary_schema"]
 
