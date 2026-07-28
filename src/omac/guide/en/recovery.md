@@ -168,6 +168,16 @@ omac dag amend propose .omac/project.yaml \
   cleared, reopened, or automatically closed. The new issue follows the normal
   authoring → Reviewer → human-confirmation flow and still targets the original
   manifest and nodes.
+- `omac dag run`, `dag tick`, `dag amend propose`, and `dag amend accept`
+  share one host-local lock for the same real manifest path. The CLI acquires it
+  before engine construction or any Store/Runtime call, so a second OMAC process
+  on the same host fails closed before creating an issue or Agent Run. This is
+  deliberately not a distributed lock and does not turn Multica LWW metadata into
+  conditional CAS. OMAC on another host, direct Multica/API writes, and other
+  external actors are an unknown/unsupported concurrency boundary. Before the
+  first dispatch OMAC still observes active Runs and rereads the pristine shell to
+  reject conflicts that are already visible, but it does not claim linearizability
+  and never cancels, clears, or compensates facts whose ownership cannot be proven.
 - Accept runs under the manifest write lock with CAS and atomically writes the
   manifest definition plus a per-node apply ledger. The Store and filesystem do
   not share a transaction, so this is not a cross-system atomic transaction.
