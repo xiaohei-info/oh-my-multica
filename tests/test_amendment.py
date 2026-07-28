@@ -1504,23 +1504,27 @@ def test_different_report_digest_creates_different_attempt_identity(
 
 
 def test_docs_digest_is_recursive_order_independent_and_content_bound(tmp_path):
-    docs_a = tmp_path / "docs-a"
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    docs_a = project_root / "docs-a"
     nested = docs_a / "nested"
     nested.mkdir(parents=True)
     (docs_a / "overview.md").write_text("overview")
     detail = nested / "detail.md"
     detail.write_text("detail v1")
-    docs_b = tmp_path / "single.md"
+    docs_b = project_root / "single.md"
     docs_b.write_text("single")
 
-    first = amendment_pipeline._docs_snapshot([str(docs_a), str(docs_b)])
-    reordered = amendment_pipeline._docs_snapshot([str(docs_b), str(docs_a)])
+    first = amendment_pipeline._docs_snapshot(
+        [str(docs_a), str(docs_b)], project_root=project_root)
+    reordered = amendment_pipeline._docs_snapshot(
+        [str(docs_b), str(docs_a)], project_root=project_root)
 
     assert reordered == first
     assert any(path.endswith("nested/detail.md") for path in first["docs_files"])
 
     issue = SimpleNamespace(id="old", identifier="AITEAM-811")
-    manifest = _manifest(tmp_path)
+    manifest = _manifest(project_root)
     first_attempt = amendment_pipeline._attempt_context(
         str(manifest), report="report", docs_snapshot=first,
         blocked_nodes=["bootstrap"], superseded_issue=issue)
@@ -1530,7 +1534,8 @@ def test_docs_digest_is_recursive_order_independent_and_content_bound(tmp_path):
     assert reordered_attempt["attempt_id"] == first_attempt["attempt_id"]
 
     detail.write_text("detail v2")
-    changed = amendment_pipeline._docs_snapshot([str(docs_a), str(docs_b)])
+    changed = amendment_pipeline._docs_snapshot(
+        [str(docs_a), str(docs_b)], project_root=project_root)
     changed_attempt = amendment_pipeline._attempt_context(
         str(manifest), report="report", docs_snapshot=changed,
         blocked_nodes=["bootstrap"], superseded_issue=issue)
@@ -1552,7 +1557,7 @@ def test_docs_digest_rejects_symlinks_and_path_escape(tmp_path, link_at_root):
         root = docs
 
     with pytest.raises(ValidationError, match="symlink"):
-        amendment_pipeline._docs_snapshot([str(root)])
+        amendment_pipeline._docs_snapshot([str(root)], project_root=tmp_path)
 
 
 def test_docs_digest_rejects_symlinked_parent_component(tmp_path):
@@ -1564,7 +1569,8 @@ def test_docs_digest_rejects_symlinked_parent_component(tmp_path):
     alias.symlink_to(real, target_is_directory=True)
 
     with pytest.raises(ValidationError, match="symlink"):
-        amendment_pipeline._docs_snapshot([str(alias / "nested")])
+        amendment_pipeline._docs_snapshot(
+            [str(alias / "nested")], project_root=tmp_path)
 
 
 def test_docs_digest_rejects_unreadable_file(tmp_path, monkeypatch):
@@ -1582,7 +1588,68 @@ def test_docs_digest_rejects_unreadable_file(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "read_bytes", fail_blocked)
 
     with pytest.raises(ValidationError, match="Could not read"):
-        amendment_pipeline._docs_snapshot([str(docs)])
+        amendment_pipeline._docs_snapshot([str(docs)], project_root=tmp_path)
+
+
+def test_docs_digest_is_stable_across_cwd_and_relative_absolute_inputs(
+    tmp_path, monkeypatch,
+):
+    project_root = tmp_path / "project"
+    manifest_dir = project_root / ".omac"
+    manifest_dir.mkdir(parents=True)
+    manifest = _manifest(manifest_dir)
+    docs = project_root / "docs"
+    nested = docs / "nested"
+    nested.mkdir(parents=True)
+    (docs / "overview.md").write_text("overview")
+    (nested / "detail.md").write_text("detail")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+
+    expected_root = amendment_pipeline._manifest_project_root(str(manifest))
+    assert expected_root == project_root.resolve()
+
+    monkeypatch.chdir(project_root)
+    from_root = amendment_pipeline._docs_snapshot(
+        ["docs"], project_root=expected_root)
+    monkeypatch.chdir(nested)
+    from_subdir = amendment_pipeline._docs_snapshot(
+        ["docs"], project_root=expected_root)
+    monkeypatch.chdir(elsewhere)
+    from_elsewhere = amendment_pipeline._docs_snapshot(
+        [str(docs)], project_root=expected_root)
+    absolute_file = amendment_pipeline._docs_snapshot(
+        [str(docs / "overview.md")], project_root=expected_root)
+    relative_file = amendment_pipeline._docs_snapshot(
+        ["docs/overview.md"], project_root=expected_root)
+
+    assert from_root == from_subdir == from_elsewhere
+    assert relative_file == absolute_file
+    assert from_root["docs_files"] == [
+        "docs/nested/detail.md", "docs/overview.md"]
+
+    superseded = SimpleNamespace(id="old", identifier="AITEAM-811")
+    attempts = [
+        amendment_pipeline._attempt_context(
+            str(manifest), report="report", docs_snapshot=snapshot,
+            blocked_nodes=["bootstrap"], superseded_issue=superseded)
+        for snapshot in (from_root, from_subdir, from_elsewhere)
+    ]
+    assert {attempt["docs_sha256"] for attempt in attempts} == {
+        from_root["docs_sha256"]}
+    assert len({attempt["request_digest"] for attempt in attempts}) == 1
+    assert len({attempt["attempt_id"] for attempt in attempts}) == 1
+
+
+def test_docs_digest_rejects_inputs_outside_manifest_project(tmp_path):
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    outside = tmp_path / "outside.md"
+    outside.write_text("outside")
+
+    with pytest.raises(ValidationError, match="outside the manifest project"):
+        amendment_pipeline._docs_snapshot(
+            [str(outside)], project_root=project_root)
 
 
 def test_existing_fixed_amendment_identity_teaches_new_attempt(tmp_path):

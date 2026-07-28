@@ -152,9 +152,18 @@ omac dag amend propose .omac/project.yaml \
   ```
 
   The attempt identity binds the manifest, report digest, recursive docs-content
-  digest, blocked nodes,
-  and superseded issue. A crash retry reuses the same issue; a different report
-  digest creates a different attempt. Metadata and source refs record the
+  digest, blocked nodes, and superseded issue. Docs logical paths are relative to
+  the manifest project root (the parent of `.omac/` when the manifest lives there),
+  never the current working directory; docs outside that project fail closed. A
+  crash retry reuses and finalizes the same issue only while it remains an
+  undispatched `TODO + authoring` shell with no delivery/review evidence and no
+  active Run. Once the attempt was dispatched, entered review/confirmation/a
+  terminal status, or contains delivery/review evidence, another `--new-attempt`
+  exits 20 and directs the operator to
+  `omac work show <issue-id> --output json`. Continue such work through its normal
+  current-phase command with `--resume-issue-id`; `--new-attempt` is not a resume
+  operation. A different report or docs-content digest creates a different attempt.
+  Metadata and source refs record the
   superseded issue, attempt id, report digest, and docs digest. The old issue is never
   cleared, reopened, or automatically closed. The new issue follows the normal
   authoring → Reviewer → human-confirmation flow and still targets the original

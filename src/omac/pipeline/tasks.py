@@ -482,19 +482,89 @@ def _shell_precondition_errors(
     return [name for matches, name in checks if not matches]
 
 
+def _attempt_follow_up(item_id: str) -> tuple[str, str]:
+    next_action = f"omac work show {item_id} --output json"
+    recovery = (
+        "Inspect the persisted attempt with the next_action command. If it was "
+        "already dispatched, continue it with the normal current-phase command "
+        f"and --resume-issue-id {item_id}; do not repeat --new-attempt."
+    )
+    return next_action, recovery
+
+
+def _observe_attempt_active(engine, item_id: str, dag_key: str) -> bool:
+    try:
+        return engine.runtime.is_active(item_id)
+    except PlatformError as exc:
+        next_action, recovery = _attempt_follow_up(item_id)
+        raise NeedsDecision(
+            "Could not prove whether the deterministic amendment attempt is active",
+            report={
+                "reason_code": "amendment-attempt-observation-failed",
+                "item_id": item_id,
+                "dag_key": dag_key,
+                "detail": str(exc),
+                "next_action": next_action,
+                "recovery": recovery,
+            },
+        ) from exc
+
+
+def _started_attempt_fields(item: WorkItem) -> List[str]:
+    fields = []
+    if item.status != WorkItemStatus.TODO:
+        fields.append("status")
+    if item.phase != TaskPhase.AUTHORING:
+        fields.append("phase")
+    evidence_fields = (
+        "deliverable", "deliverable_ref", "review_verdict", "review_comment",
+        "machine_feedback", "machine_feedback_ref", "review_report",
+        "review_report_ref", "review_subject_digest", "review_obligations",
+        "review_obligations_ref", "review_ledger", "review_ledger_ref",
+        "review_continuation", "decision_required",
+    )
+    fields.extend(
+        name for name in evidence_fields if getattr(item, name, None))
+    if item.agent_run_failed:
+        fields.append("agent_run_failed")
+    if item.agent_run_finished_without_submit:
+        fields.append("agent_run_finished_without_submit")
+    return fields
+
+
+def _reject_started_attempt(item: WorkItem, dag_key: str, fields: List[str]) -> None:
+    next_action, recovery = _attempt_follow_up(item.id)
+    raise NeedsDecision(
+        "The deterministic amendment attempt is no longer an undispatched authoring shell",
+        report={
+            "reason_code": "amendment-attempt-already-started",
+            "item_id": item.id,
+            "dag_key": dag_key,
+            "status": item.status.value,
+            "phase": item.phase.value,
+            "fields": sorted(set(fields)),
+            "next_action": next_action,
+            "recovery": recovery,
+        },
+    )
+
+
 def finalize_authoring_shell(
     engine, item: WorkItem, spec: AuthoringTaskSpec,
 ) -> WorkItem:
     """幂等完成 deterministic amendment shell；完整前绝不派发。"""
     if spec.kind != TaskKind.AMENDMENT or spec.amendment_attempt is None:
         raise ValidationError("Deterministic shell finalization is amendment-only")
-    if engine.runtime.is_active(item.id):
+    if _observe_attempt_active(engine, item.id, spec.dag_key):
+        next_action, recovery = _attempt_follow_up(item.id)
         raise NeedsDecision(
             "Deterministic amendment shell already has an active Agent Run",
             report={
                 "reason_code": "amendment-attempt-shell-active",
                 "item_id": item.id,
                 "dag_key": spec.dag_key,
+                "next_action": next_action,
+                "recovery": recovery,
             },
         )
     expected_title = f"[DAG:{spec.dag_key}] {spec.title}"
@@ -545,7 +615,7 @@ def finalize_authoring_shell(
     )
     finalized = store.get_work_item(item.id)
     errors = _attempt_identity_errors(finalized, spec, body=body, refs=refs)
-    if engine.runtime.is_active(item.id):
+    if _observe_attempt_active(engine, item.id, spec.dag_key):
         errors.append("active_run")
     if finalized.status != WorkItemStatus.TODO:
         errors.append("status")
@@ -648,10 +718,25 @@ def run_task(
                 engine, item.id, spec, item_snapshot=item)
         item_id = item.id
     else:
-        item = (
-            store.find_work_item_by_dag_key(store.config.workspace_id, task_key)
-            if reuse_dag_key else None
-        )
+        try:
+            item = (
+                store.find_work_item_by_dag_key(store.config.workspace_id, task_key)
+                if reuse_dag_key else None
+            )
+        except PlatformError as exc:
+            raise NeedsDecision(
+                "Could not safely observe the deterministic amendment attempt identity",
+                report={
+                    "reason_code": "amendment-attempt-observation-failed",
+                    "dag_key": task_key,
+                    "detail": str(exc),
+                    "next_action": "omac work show <attempt-issue-id> --output json",
+                    "recovery": (
+                        "Restore Store visibility and inspect the existing attempt before "
+                        "retrying; do not create or dispatch while its identity is unknown."
+                    ),
+                },
+            ) from exc
         reused_created_item = item is not None
         if item is None:
             try:
@@ -659,33 +744,44 @@ def run_task(
             except PlatformError:
                 if not reuse_dag_key:
                     raise
-                item = store.find_work_item_by_dag_key(
-                    store.config.workspace_id, task_key)
+                try:
+                    item = store.find_work_item_by_dag_key(
+                        store.config.workspace_id, task_key)
+                except PlatformError as observation_exc:
+                    raise NeedsDecision(
+                        "Issue creation was ambiguous and the deterministic attempt could not be observed",
+                        report={
+                            "reason_code": "amendment-attempt-observation-failed",
+                            "dag_key": task_key,
+                            "detail": str(observation_exc),
+                            "next_action": (
+                                "omac work show <attempt-issue-id> --output json"),
+                            "recovery": (
+                                "Restore Store visibility and inspect the existing attempt; "
+                                "do not create or dispatch while creation is ambiguous."
+                            ),
+                        },
+                    ) from observation_exc
                 if item is None:
                     raise
                 reused_created_item = True
-        if reused_created_item and (
-            item.status == WorkItemStatus.TODO
-            and item.phase == TaskPhase.AUTHORING
-            and not item.deliverable
-            and not item.deliverable_ref
-        ):
-            item = finalize_authoring_shell(engine, item, spec)
-        elif reused_created_item:
-            body, refs = _authoring_materialization(
-                engine, item.id, spec, item)
-            errors = _attempt_identity_errors(
-                item, spec, body=body, refs=refs)
-            if errors:
+        if reused_created_item:
+            if _observe_attempt_active(engine, item.id, task_key):
+                next_action, recovery = _attempt_follow_up(item.id)
                 raise NeedsDecision(
-                    "Existing amendment attempt has conflicting identity",
+                    "The deterministic amendment attempt already has an active Agent Run",
                     report={
-                        "reason_code": "amendment-attempt-identity-conflict",
+                        "reason_code": "amendment-attempt-shell-active",
                         "item_id": item.id,
                         "dag_key": task_key,
-                        "fields": errors,
+                        "next_action": next_action,
+                        "recovery": recovery,
                     },
                 )
+            started_fields = _started_attempt_fields(item)
+            if started_fields:
+                _reject_started_attempt(item, task_key, started_fields)
+            item = finalize_authoring_shell(engine, item, spec)
         item_id = item.id
 
     explicit_resume = resume_item_id is not None or reused_created_item
