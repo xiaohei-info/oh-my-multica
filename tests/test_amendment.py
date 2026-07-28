@@ -41,6 +41,7 @@ from omac.errors import NeedsDecision, ValidationError
 from omac.pipeline import loop
 from omac.pipeline.delivery import run_merge_delivery
 from omac.pipeline.dispatch import submit
+from omac.pipeline.tasks import run_task
 
 
 def _engine():
@@ -748,21 +749,80 @@ def test_historical_responsibility_correction_rejects_every_non_whitelisted_fiel
     assert any("unsupported fields" in error for error in errors)
 
 
-def test_historical_correction_rejects_empty_or_duplicate_gate_refs(tmp_path):
+@pytest.mark.parametrize(("refs", "messages"), [
+    ([{"bad": "value"}], ["entries must be non-empty strings"]),
+    ([["nested"]], ["entries must be non-empty strings"]),
+    ([42], ["entries must be non-empty strings"]),
+    (["UJ-BOOTSTRAP", {"bad": "value"}, ["nested"]], [
+        "entries must be non-empty strings",
+    ]),
+    (["  "], ["entries must be non-empty strings"]),
+    (["UJ-BOOTSTRAP", "UJ-BOOTSTRAP"], ["must not contain duplicates"]),
+    (["UJ-BOOTSTRAP", {"bad": "value"}, "UJ-BOOTSTRAP"], [
+        "entries must be non-empty strings", "must not contain duplicates",
+    ]),
+])
+def test_historical_correction_rejects_invalid_gate_refs(
+    tmp_path, refs, messages,
+):
+    manifest = load_manifest(str(_manifest(tmp_path)))
+    node = manifest.nodes["bootstrap"]
+    node.status = "done"
+    node.merged = True
+    operation = _responsibility_update(historical=True)
+    operation["integration_gate_responsibility_patches"][0]["acceptance_refs"] = refs
+
+    errors = validate_proposal(
+        manifest, _proposal(operation), {"alice", "bob", "charlie"})
+
+    for message in messages:
+        assert any(message in error for error in errors)
+
+
+def test_run_task_machine_guard_bounds_invalid_gate_ref_feedback(tmp_path):
     manifest = load_manifest(str(_manifest(tmp_path)))
     node = manifest.nodes["bootstrap"]
     node.status = "done"
     node.merged = True
     operation = _responsibility_update(historical=True)
     operation["integration_gate_responsibility_patches"][0]["acceptance_refs"] = [
-        "UJ-BOOTSTRAP", "UJ-BOOTSTRAP", "",
+        "UJ-BOOTSTRAP", {"bad": "value"}, "UJ-BOOTSTRAP",
     ]
+    proposal = _proposal(operation)
+    MockStore.reset()
+    engine = create_engine("mock", EngineConfig(
+        engine_type="mock",
+        workspace_id="ws",
+        extra={"MOCK_AUTO_COMPLETE": "true", "MOCK_AUTO_COMPLETE_DELAY": "0"},
+    ))
+    MockStore.set_kind_delivery("amendment", {
+        "amendment": yaml.safe_dump(proposal, sort_keys=False),
+    })
 
-    errors = validate_proposal(
-        manifest, _proposal(operation), {"alice", "bob", "charlie"})
+    with pytest.raises(NeedsDecision) as exc_info:
+        run_task(
+            engine,
+            TaskKind.AMENDMENT,
+            {"title": "invalid gate refs"},
+            "alice",
+            max_revisions=1,
+            poll=lambda: None,
+            guard=lambda item: validate_proposal(
+                manifest,
+                item.deliverable or "",
+                {"alice", "bob", "charlie"},
+                acceptance=_responsibility_acceptance_doc(),
+            ),
+        )
 
-    assert any("entries must be non-empty strings" in error for error in errors)
-    assert any("must not contain duplicates" in error for error in errors)
+    report = exc_info.value.report
+    assert report["phase"] == "guard"
+    assert report["rounds"] == 1
+    assert "entries must be non-empty strings" in report["last_opinion"]
+    assert "must not contain duplicates" in report["last_opinion"]
+    item = engine.store.get_work_item(report["item_id"])
+    assert item.status == WorkItemStatus.BLOCKED
+    assert item.decision_required["reason_code"] == "guard-budget-exhausted"
 
 
 def test_historical_responsibility_correction_rejects_noop(tmp_path):

@@ -458,10 +458,14 @@ def _validate_responsibility_operation(
             errors.append(f"{patch_prefix}.acceptance_refs must be a list")
         else:
             refs = patch["acceptance_refs"]
-            if any(not isinstance(ref, str) or not ref.strip() for ref in refs):
+            valid_refs = [
+                ref for ref in refs
+                if isinstance(ref, str) and ref.strip()
+            ]
+            if len(valid_refs) != len(refs):
                 errors.append(
                     f"{patch_prefix}.acceptance_refs entries must be non-empty strings")
-            if len(refs) != len(set(refs)):
+            if len(valid_refs) != len(set(valid_refs)):
                 errors.append(f"{patch_prefix}.acceptance_refs must not contain duplicates")
     historical = operation.get("historical_contract_correction") is True
     resume_stage = operation.get("resume_stage")
