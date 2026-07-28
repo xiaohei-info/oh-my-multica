@@ -215,6 +215,12 @@ class WorkItem:
     # reviewer 与 worker 共用 issue 状态，但失败 run 不能一概映射为 worker 失败。
     # REVIEW 阶段由 loop 原地恢复 reviewer，避免丢弃已完成的 worker 交付。
     agent_run_failed: bool = False
+    # 平台只读事实。时间戳不表示执行活动；实际 assignee 与未知持久字段则由
+    # amendment pristine-shell 门统一视为潜在活动证据并失败关闭。
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    platform_assignee_id: Optional[str] = None
+    unknown_persisted_fields: Dict[str, Any] = field(default_factory=dict)
 
     def is_completed(self) -> bool:
         return self.status == WorkItemStatus.DONE

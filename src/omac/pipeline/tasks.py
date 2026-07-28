@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from dataclasses import dataclass, field
+from dataclasses import MISSING, dataclass, field, fields as dataclass_fields
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional
 
@@ -432,54 +432,100 @@ def _contract_payload(contract: Any) -> Any:
     return contract
 
 
-def _attempt_identity_errors(
+_PRISTINE_AMENDMENT_INITIALIZATION_FIELDS = frozenset({
+    "id", "workspace_id", "identifier", "title", "description", "status",
+    "dag_key", "worker", "contract", "contract_ref", "source_refs", "kind",
+    "phase", "amendment_attempt", "created_at", "updated_at",
+})
+_NO_FIELD_DEFAULT = object()
+
+
+def _field_default(definition) -> Any:
+    if definition.default is not MISSING:
+        return definition.default
+    if definition.default_factory is not MISSING:
+        return definition.default_factory()
+    return _NO_FIELD_DEFAULT
+
+
+def _pristine_amendment_activity_projection(item: WorkItem) -> Dict[str, Any]:
+    """Project every persisted fact outside the positive initialization schema."""
+    definitions = {
+        definition.name: definition for definition in dataclass_fields(WorkItem)
+    }
+    projection = {}
+    for name, definition in definitions.items():
+        if name in _PRISTINE_AMENDMENT_INITIALIZATION_FIELDS:
+            continue
+        default = _field_default(definition)
+        value = getattr(item, name)
+        if default is _NO_FIELD_DEFAULT or value != default:
+            projection[name] = value
+    for name in set(vars(item)) - set(definitions):
+        projection[f"unknown_attribute.{name}"] = getattr(item, name)
+    return projection
+
+
+def _pristine_amendment_shell_errors(
     item: WorkItem,
     spec: AuthoringTaskSpec,
     *,
     body: str,
     refs: List[Dict[str, Any]],
-) -> List[str]:
+    workspace_id: str,
+    finalized: bool,
+) -> tuple[List[str], List[str]]:
+    """Validate a recoverable/final shell and return identity/activity errors."""
     expected_title = f"[DAG:{spec.dag_key}] {spec.title}"
+    contract_matches = (
+        _contract_payload(item.contract) == _contract_payload(spec.contract))
     checks = [
+        (bool(item.id), "id"),
+        (item.workspace_id == workspace_id, "workspace_id"),
         (item.title == expected_title, "title"),
-        (item.dag_key == spec.dag_key, "dag_key"),
-        (item.kind == TaskKind.AMENDMENT, "kind"),
-        (item.description == body, "description"),
-        (item.amendment_attempt == spec.amendment_attempt, "amendment_attempt"),
-        (item.source_refs == refs, "source_refs"),
         (
-            _contract_payload(item.contract) == _contract_payload(spec.contract),
+            item.description == body
+            if finalized else item.description in (spec.title, body),
+            "description",
+        ),
+        (
+            item.dag_key == spec.dag_key
+            if finalized else item.dag_key in ("", spec.dag_key),
+            "dag_key",
+        ),
+        (
+            item.worker == spec.assignee
+            if finalized else item.worker in (None, spec.assignee),
+            "worker",
+        ),
+        (
+            item.kind == TaskKind.AMENDMENT
+            if finalized else item.kind in (TaskKind.DEVELOP, TaskKind.AMENDMENT),
+            "kind",
+        ),
+        (
+            contract_matches
+            if finalized else item.contract is None or contract_matches,
             "contract",
         ),
-    ]
-    return [name for matches, name in checks if not matches]
-
-
-def _shell_precondition_errors(
-    item: WorkItem,
-    spec: AuthoringTaskSpec,
-    *,
-    body: str,
-    refs: List[Dict[str, Any]],
-) -> List[str]:
-    expected_title = f"[DAG:{spec.dag_key}] {spec.title}"
-    checks = [
-        (item.title == expected_title, "title"),
-        (item.status == WorkItemStatus.TODO, "status"),
-        (item.phase == TaskPhase.AUTHORING, "phase"),
-        (not item.deliverable and not item.deliverable_ref, "deliverable"),
-        (item.dag_key in ("", spec.dag_key), "dag_key"),
-        (item.kind in (TaskKind.DEVELOP, TaskKind.AMENDMENT), "kind"),
-        (item.description in (spec.title, body), "description"),
-        (item.amendment_attempt in (None, spec.amendment_attempt), "amendment_attempt"),
-        (item.source_refs in ([], refs), "source_refs"),
+        (item.contract_ref is None or isinstance(item.contract_ref, dict), "contract_ref"),
         (
-            item.contract is None
-            or _contract_payload(item.contract) == _contract_payload(spec.contract),
-            "contract",
+            item.source_refs == refs
+            if finalized else item.source_refs in ([], refs),
+            "source_refs",
+        ),
+        (
+            item.amendment_attempt == spec.amendment_attempt
+            if finalized else item.amendment_attempt in (None, spec.amendment_attempt),
+            "amendment_attempt",
         ),
     ]
-    return [name for matches, name in checks if not matches]
+    activity = _pristine_amendment_activity_projection(item)
+    if item.status != WorkItemStatus.TODO:
+        activity["status"] = item.status
+    if item.phase != TaskPhase.AUTHORING:
+        activity["phase"] = item.phase
+    return [name for matches, name in checks if not matches], sorted(activity)
 
 
 def _attempt_follow_up(item_id: str) -> tuple[str, str]:
@@ -510,26 +556,18 @@ def _observe_attempt_active(engine, item_id: str, dag_key: str) -> bool:
         ) from exc
 
 
-def _started_attempt_fields(item: WorkItem) -> List[str]:
-    fields = []
-    if item.status != WorkItemStatus.TODO:
-        fields.append("status")
-    if item.phase != TaskPhase.AUTHORING:
-        fields.append("phase")
-    evidence_fields = (
-        "deliverable", "deliverable_ref", "review_verdict", "review_comment",
-        "machine_feedback", "machine_feedback_ref", "review_report",
-        "review_report_ref", "review_subject_digest", "review_obligations",
-        "review_obligations_ref", "review_ledger", "review_ledger_ref",
-        "review_continuation", "decision_required",
+def _reject_active_attempt(item: WorkItem, dag_key: str) -> None:
+    next_action, recovery = _attempt_follow_up(item.id)
+    raise NeedsDecision(
+        "The deterministic amendment attempt already has an active Agent Run",
+        report={
+            "reason_code": "amendment-attempt-shell-active",
+            "item_id": item.id,
+            "dag_key": dag_key,
+            "next_action": next_action,
+            "recovery": recovery,
+        },
     )
-    fields.extend(
-        name for name in evidence_fields if getattr(item, name, None))
-    if item.agent_run_failed:
-        fields.append("agent_run_failed")
-    if item.agent_run_finished_without_submit:
-        fields.append("agent_run_finished_without_submit")
-    return fields
 
 
 def _reject_started_attempt(item: WorkItem, dag_key: str, fields: List[str]) -> None:
@@ -556,48 +594,21 @@ def finalize_authoring_shell(
     if spec.kind != TaskKind.AMENDMENT or spec.amendment_attempt is None:
         raise ValidationError("Deterministic shell finalization is amendment-only")
     if _observe_attempt_active(engine, item.id, spec.dag_key):
-        next_action, recovery = _attempt_follow_up(item.id)
-        raise NeedsDecision(
-            "Deterministic amendment shell already has an active Agent Run",
-            report={
-                "reason_code": "amendment-attempt-shell-active",
-                "item_id": item.id,
-                "dag_key": spec.dag_key,
-                "next_action": next_action,
-                "recovery": recovery,
-            },
-        )
-    expected_title = f"[DAG:{spec.dag_key}] {spec.title}"
-    base_checks = [
-        (item.title == expected_title, "title"),
-        (item.status == WorkItemStatus.TODO, "status"),
-        (item.phase == TaskPhase.AUTHORING, "phase"),
-        (not item.deliverable and not item.deliverable_ref, "deliverable"),
-        (item.dag_key in ("", spec.dag_key), "dag_key"),
-        (item.kind in (TaskKind.DEVELOP, TaskKind.AMENDMENT), "kind"),
-        (item.amendment_attempt in (None, spec.amendment_attempt), "amendment_attempt"),
-    ]
-    base_errors = [name for matches, name in base_checks if not matches]
-    if base_errors:
-        raise NeedsDecision(
-            "Deterministic amendment shell cannot be safely finalized",
-            report={
-                "reason_code": "amendment-attempt-shell-conflict",
-                "item_id": item.id,
-                "dag_key": spec.dag_key,
-                "fields": base_errors,
-            },
-        )
+        _reject_active_attempt(item, spec.dag_key)
     body, refs = _authoring_materialization(engine, item.id, spec, item)
-    errors = _shell_precondition_errors(item, spec, body=body, refs=refs)
-    if errors:
+    identity_errors, activity_fields = _pristine_amendment_shell_errors(
+        item, spec, body=body, refs=refs,
+        workspace_id=engine.store.config.workspace_id, finalized=False)
+    if activity_fields:
+        _reject_started_attempt(item, spec.dag_key, activity_fields)
+    if identity_errors:
         raise NeedsDecision(
             "Deterministic amendment shell cannot be safely finalized",
             report={
                 "reason_code": "amendment-attempt-shell-conflict",
                 "item_id": item.id,
                 "dag_key": spec.dag_key,
-                "fields": errors,
+                "fields": identity_errors,
             },
         )
     store = engine.store
@@ -614,23 +625,21 @@ def finalize_authoring_shell(
         phase=TaskPhase.AUTHORING,
     )
     finalized = store.get_work_item(item.id)
-    errors = _attempt_identity_errors(finalized, spec, body=body, refs=refs)
     if _observe_attempt_active(engine, item.id, spec.dag_key):
-        errors.append("active_run")
-    if finalized.status != WorkItemStatus.TODO:
-        errors.append("status")
-    if finalized.phase != TaskPhase.AUTHORING:
-        errors.append("phase")
-    if finalized.deliverable or finalized.deliverable_ref:
-        errors.append("deliverable")
-    if errors:
+        _reject_active_attempt(finalized, spec.dag_key)
+    identity_errors, activity_fields = _pristine_amendment_shell_errors(
+        finalized, spec, body=body, refs=refs,
+        workspace_id=store.config.workspace_id, finalized=True)
+    if activity_fields:
+        _reject_started_attempt(finalized, spec.dag_key, activity_fields)
+    if identity_errors:
         raise NeedsDecision(
             "Deterministic amendment shell finalization did not converge",
             report={
                 "reason_code": "amendment-attempt-shell-incomplete",
                 "item_id": item.id,
                 "dag_key": spec.dag_key,
-                "fields": sorted(set(errors)),
+                "fields": identity_errors,
             },
         )
     return finalized
@@ -766,26 +775,12 @@ def run_task(
                     raise
                 reused_created_item = True
         if reused_created_item:
-            if _observe_attempt_active(engine, item.id, task_key):
-                next_action, recovery = _attempt_follow_up(item.id)
-                raise NeedsDecision(
-                    "The deterministic amendment attempt already has an active Agent Run",
-                    report={
-                        "reason_code": "amendment-attempt-shell-active",
-                        "item_id": item.id,
-                        "dag_key": task_key,
-                        "next_action": next_action,
-                        "recovery": recovery,
-                    },
-                )
-            started_fields = _started_attempt_fields(item)
-            if started_fields:
-                _reject_started_attempt(item, task_key, started_fields)
             item = finalize_authoring_shell(engine, item, spec)
         item_id = item.id
 
     explicit_resume = resume_item_id is not None or reused_created_item
     resume_authoring_attempt_available = explicit_resume
+    pristine_dispatch_required = amendment_attempt is not None
 
     if (
         explicit_resume
@@ -962,7 +957,35 @@ def run_task(
                     )
             poll()
 
+    def _verify_pristine_attempt_before_dispatch() -> None:
+        nonlocal pristine_dispatch_required
+        if not pristine_dispatch_required:
+            return
+        current = store.get_work_item(item_id)
+        if _observe_attempt_active(engine, item_id, task_key):
+            _reject_active_attempt(current, task_key)
+        current = store.get_work_item(item_id)
+        body, refs = _authoring_materialization(
+            engine, item_id, spec, current)
+        identity_errors, activity_fields = _pristine_amendment_shell_errors(
+            current, spec, body=body, refs=refs,
+            workspace_id=store.config.workspace_id, finalized=True)
+        if activity_fields:
+            _reject_started_attempt(current, task_key, activity_fields)
+        if identity_errors:
+            raise NeedsDecision(
+                "Deterministic amendment shell changed before dispatch",
+                report={
+                    "reason_code": "amendment-attempt-shell-incomplete",
+                    "item_id": item_id,
+                    "dag_key": task_key,
+                    "fields": identity_errors,
+                },
+            )
+        pristine_dispatch_required = False
+
     def _dispatch_authoring_and_wait() -> WorkItem:
+        _verify_pristine_attempt_before_dispatch()
         baseline = None
         if runtime.capabilities.stable_direct_run_identity:
             baseline = {

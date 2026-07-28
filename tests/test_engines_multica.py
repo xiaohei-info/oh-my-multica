@@ -67,6 +67,35 @@ def test_multica_empty_ref_tombstones_suppress_legacy_payloads(monkeypatch):
     assert item.review_report_ref is None
 
 
+def test_multica_preserves_unknown_persisted_issue_facts_for_fail_closed_checks():
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+
+    item = store._issue_to_work_item({
+        "id": "issue-1",
+        "title": "amendment",
+        "description": "shell",
+        "status": "todo",
+        "created_at": "2026-07-28T00:00:00Z",
+        "updated_at": "2026-07-28T00:01:00Z",
+        "assignee_id": "agent-1",
+        "future_run_fact": {"run_id": "run-1"},
+        "metadata": {
+            "dag_key": "amend-project-attempt-pristine",
+            "kind": "amendment",
+            "phase": "authoring",
+            "future_execution_fact": False,
+        },
+    }, "ws")
+
+    assert item.created_at == "2026-07-28T00:00:00Z"
+    assert item.updated_at == "2026-07-28T00:01:00Z"
+    assert item.platform_assignee_id == "agent-1"
+    assert item.unknown_persisted_fields == {
+        "issue.future_run_fact": {"run_id": "run-1"},
+        "metadata.future_execution_fact": False,
+    }
+
+
 def test_multica_text_file_commands_allow_process_owned_external_file(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
     calls = []
