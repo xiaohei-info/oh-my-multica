@@ -87,7 +87,8 @@ omac dag amend propose .omac/project.yaml \
   `clear_legacy_acceptance: true` 和按名称定位的 gate `acceptance_refs` patch，不能复制完整 contract。
   done/merged 默认仍不可变；只有带 `historical_contract_correction: true` 与 operation reason 的
   acceptance-only 校正才允许，且只写 manifest 和 `historical_contract_correction/synced` ledger 条目，
-  不恢复 Store 阶段、不派发 Agent、不重放 merge。
+  Store 仅用于 apply 前 evidence CAS 读取，不写 contract、contract_ref 或任何其他事实；不恢复 Store
+  阶段、不派发 Agent、不重放 merge。
 - 对无 work item 的未开始节点，省略 `resume_stage` 保持 definition-only；任何显式
   `resume_stage: review|authoring|merging` 都要求已有 work item。对已有 work item，未提供 `resume_stage` 时职责
   迁移仍按旧规则最小恢复到 review；需要覆盖时，在同一个 `update-responsibility` operation 中设置它，绝不能再为同一节点
@@ -144,7 +145,8 @@ omac dag amend propose .omac/project.yaml \
 - accept 在 manifest 写锁内执行 CAS，并原子写入 manifest 定义与逐节点 apply ledger。
   Store 不与文件系统共享事务，因此这不是跨系统原子事务；ledger 以
   `pending/syncing/synced/observed_progress` 记录每个节点的补偿进度。进程崩溃后，重复 accept
-  只补偿尚未完成且仍安全的 side effect；已同步或已经继续推进的节点绝不回退。
+  只补偿尚未完成且仍安全的 side effect；historical correction 条目从创建起就是
+  `synced/store_side_effect:none`，已同步或已经继续推进的节点绝不回退。
 - ledger 存在 `pending`、`syncing` 或其他非完成状态时，`dag run/tick/reconcile` 在任何
   Store 读取、派发或 merge 前失败关闭，并输出 amendment identity、未完成节点和同一
   `omac dag amend accept <manifest> <amendment-file>` 续接命令。只有所有条目达到
