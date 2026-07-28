@@ -135,7 +135,18 @@ omac dag amend propose .omac/project.yaml \
   with `--resume-issue-id <issue-id>` to preserve the same issue, delivery, and
   Reviewer history.
 - Plain `--resume-issue-id` preserves a valid Reviewer-pass confirmation and
-  creates no new Agent Run. No current engine exposes a real atomic conditional
+  creates no new Agent Run. Resume first rereads current Store facts; any read
+  failure fails closed as-is before contract/metadata writes, Runtime observation,
+  assign, or wake. A caller snapshot never authorizes refresh or phase progress.
+  Refresh is allowed only after a successful current read proving
+  `TODO + authoring`, no deliverable/deliverable ref, and no stopped signal.
+  A confirmation is consumable only when its pass/pass-with-nits verdict, current
+  delivery subject, report, and evidence all revalidate. Otherwise OMAC exits 20
+  without clearing confirmation or dispatching a Worker/Reviewer. If an amendment
+  authoring Run stopped while Store already contains a delivery, OMAC likewise exits
+  20 before Runtime observation, assign, or wake and directs the operator to preserve
+  the old issue and create `--new-attempt --supersedes-issue-id <old-issue-id>`.
+  No current engine exposes a real atomic conditional
   restart/dispatch API. `--restart-authoring` remains only as a compatibility
   entry point: it fails closed with exit 20 before any issue read, write, or
   Agent dispatch and returns a `--new-attempt` command. OMAC keeps no speculative

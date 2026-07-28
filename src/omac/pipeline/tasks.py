@@ -101,6 +101,42 @@ def _review_evidence_errors(contract: Any, item: WorkItem) -> List[str]:
         SimpleNamespace(contract=contract), item)
 
 
+def _new_attempt_recovery(kind: TaskKind, item_id: str) -> tuple[str, str]:
+    if kind == TaskKind.AMENDMENT:
+        action = (
+            "omac dag amend propose <manifest> --report-file <report> "
+            "--docs <docs> --blocked-node <node> --new-attempt "
+            f"--supersedes-issue-id {item_id} --output json"
+        )
+        return action, (
+            "Keep the existing confirmation unchanged and create a deterministic "
+            "new amendment attempt with the current report/docs inputs."
+        )
+    return f"omac work show {item_id} --output json", (
+        "Inspect the current Store facts and start a fresh task through its normal "
+        "command; do not clear confirmation or simulate an in-place restart."
+    )
+
+
+def _confirmation_resume_errors(
+    kind: TaskKind,
+    contract: Any,
+    item: WorkItem,
+) -> list[str]:
+    round_index = max(1, item.bounces.review + 1)
+    expected_subject = _review_subject_digest(kind, item, round_index)
+    errors = []
+    if item.review_verdict not in {"pass", "pass-with-nits"}:
+        errors.append("confirmation requires a Reviewer-pass verdict")
+    if item.review_subject_digest != expected_subject:
+        errors.append("review subject does not match the current deliverable")
+    persisted_contract = (
+        _payload_contract(item.contract) if item.contract is not None else contract
+    )
+    errors.extend(_review_evidence_errors(persisted_contract, item))
+    return errors
+
+
 def _restart_invalid_review(
     store,
     item_id: str,
@@ -717,11 +753,16 @@ def run_task(
     reused_created_item = False
 
     if resume_item_id is not None:
-        item = resume_item_snapshot or store.get_work_item(resume_item_id)
+        # Store 当前事实是 resume 的唯一授权来源。调用方 snapshot 仅为兼容保留，
+        # 绝不能在读取失败时授权 refresh 或其他副作用。
+        item = store.get_work_item(resume_item_id)
         if (
             item.status == WorkItemStatus.TODO
             and item.phase == TaskPhase.AUTHORING
             and not item.deliverable
+            and not item.deliverable_ref
+            and not item.agent_run_failed
+            and not item.agent_run_finished_without_submit
         ):
             item = refresh_authoring_task(
                 engine, item.id, spec, item_snapshot=item)
@@ -781,39 +822,63 @@ def run_task(
     explicit_resume = resume_item_id is not None or reused_created_item
     resume_authoring_attempt_available = explicit_resume
     pristine_dispatch_required = amendment_attempt is not None
+    resumed_confirmation: WorkItem | None = None
+
+    if resume_item_id is not None and item.phase == TaskPhase.CONFIRMATION:
+        confirmation_errors = _confirmation_resume_errors(kind, contract, item)
+        if confirmation_errors:
+            next_action, recovery = _new_attempt_recovery(kind, item.id)
+            raise NeedsDecision(
+                ui(
+                    f"{kind.value} confirmation cannot be consumed from current "
+                    f"Store facts (item {item_id})",
+                    f"{kind.value} confirmation 无法基于当前 Store 事实安全消费"
+                    f"（item {item_id}）",
+                ),
+                report={
+                    "reason_code": "confirmation-not-consumable",
+                    "item_id": item_id,
+                    "kind": kind.value,
+                    "phase": TaskPhase.CONFIRMATION.value,
+                    "rounds": 0,
+                    "last_opinion": "; ".join(confirmation_errors),
+                    "errors": confirmation_errors,
+                    "next_action": next_action,
+                    "recovery": recovery,
+                },
+            )
+        resumed_confirmation = item
 
     if (
-        explicit_resume
-        and item.phase == TaskPhase.CONFIRMATION
+        resume_item_id is not None
+        and item.phase == TaskPhase.AUTHORING
+        and item.deliverable
         and (
             item.status in (WorkItemStatus.FAILED, WorkItemStatus.BLOCKED)
             or item.agent_run_failed
             or item.agent_run_finished_without_submit
         )
     ):
-        confirmation_round = max(1, item.bounces.review + 1)
-        confirmation_is_consumable = (
-            _has_review_verdict(item)
-            and item.review_subject_digest == _review_subject_digest(
-                kind, item, confirmation_round)
-            and not _review_evidence_errors(contract, item)
+        next_action, recovery = _new_attempt_recovery(kind, item.id)
+        raise NeedsDecision(
+            ui(
+                f"{kind.value} authoring cannot resume a stopped run while a "
+                f"deliverable is already present (item {item_id})",
+                f"{kind.value} authoring 已有交付物且原 Run 已停止，不能直接恢复"
+                f"（item {item_id}）",
+            ),
+            report={
+                "reason_code": "unsafe-authoring-resume",
+                "item_id": item_id,
+                "kind": kind.value,
+                "phase": TaskPhase.AUTHORING.value,
+                "rounds": 0,
+                "last_opinion": (
+                    "stopped authoring run already has a persisted deliverable"),
+                "next_action": next_action,
+                "recovery": recovery,
+            },
         )
-        if not confirmation_is_consumable:
-            raise NeedsDecision(
-                ui(
-                    f"{kind.value} is already in human confirmation; an Agent run "
-                    f"cannot be resumed (item {item_id})",
-                    f"{kind.value} 已进入人工确认阶段，不能恢复 Agent run"
-                    f"（item {item_id}）",
-                ),
-                report={
-                    "item_id": item_id,
-                    "kind": kind.value,
-                    "phase": TaskPhase.CONFIRMATION.value,
-                    "rounds": 0,
-                    "last_opinion": "confirmation does not permit Agent rerun",
-                },
-            )
 
     def _raise_if_authoring_stopped(candidate: WorkItem) -> None:
         if candidate.phase != TaskPhase.AUTHORING:
@@ -1110,7 +1175,7 @@ def run_task(
                 store.get_work_item(node.work_item_id))
         return evidence
 
-    delivered = _produce()
+    delivered = resumed_confirmation or _produce()
     delivery = _delivery_of(kind, delivered)
 
     if (
@@ -1135,7 +1200,7 @@ def run_task(
 
     # 机器门(零 reviewer token):阶段 guard + 通用 review preflight。
     # 所有可确定判断先回给产出者，Reviewer 只消费通过后的语义问题。
-    if guard is not None or reviewers:
+    if resumed_confirmation is None and (guard is not None or reviewers):
         for guard_round in range(1, max_revisions + 1):
             guard_errors: List[str] = guard(delivered) if guard is not None else []
             if reviewers:
@@ -1204,6 +1269,13 @@ def run_task(
 
     if delivered.phase == TaskPhase.CONFIRMATION:
         confirmation_round = max(1, delivered.bounces.review + 1)
+        if resumed_confirmation is not None:
+            return _finish_after_review(
+                delivered.review_verdict or "pass",
+                confirmation_round,
+                delivery,
+                prepare_confirmation=False,
+            )
         current_subject = _review_subject_digest(
             kind, delivered, confirmation_round)
         if (
