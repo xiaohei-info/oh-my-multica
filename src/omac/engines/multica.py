@@ -80,6 +80,13 @@ _KNOWN_ISSUE_FIELDS = {
     "attachments", "project_id", "project", "workspace_id", "workspace",
     "creator_id", "creator", "created_by_id", "created_by", "url", "web_url",
 }
+_READ_ONLY_ISSUE_ENVELOPE_FIELDS = frozenset({
+    "assignee_type", "creator_type", "due_date", "labels", "number",
+    "parent_issue_id", "position", "priority", "stage", "start_date",
+})
+_EMPTY_DEFAULT_ISSUE_ENVELOPE_FIELDS = {
+    "properties": {},
+}
 
 _ReadResult = TypeVar("_ReadResult")
 
@@ -574,11 +581,17 @@ class MulticaStore(WorkItemStore):
             for key, value in metadata.items()
             if key not in _KNOWN_WORK_ITEM_METADATA_KEYS
         }
-        unknown_persisted_fields.update({
-            f"issue.{key}": value
-            for key, value in issue_data.items()
-            if key not in _KNOWN_ISSUE_FIELDS
-        })
+        for key, value in issue_data.items():
+            if key in _KNOWN_ISSUE_FIELDS:
+                continue
+            if key in _READ_ONLY_ISSUE_ENVELOPE_FIELDS:
+                continue
+            if (
+                key in _EMPTY_DEFAULT_ISSUE_ENVELOPE_FIELDS
+                and value == _EMPTY_DEFAULT_ISSUE_ENVELOPE_FIELDS[key]
+            ):
+                continue
+            unknown_persisted_fields[f"issue.{key}"] = value
         raw_assignee = issue_data.get("assignee_id") or issue_data.get("assignee")
         if isinstance(raw_assignee, dict):
             raw_assignee = raw_assignee.get("id") or raw_assignee.get("identifier")

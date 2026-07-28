@@ -8,7 +8,9 @@
 from __future__ import annotations
 
 import copy
+import json
 from dataclasses import fields
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -28,6 +30,7 @@ from omac.engines.mock import MockStore
 from omac.engines.models import (
     AgentRunObservation, EngineConfig, WorkItem, WorkItemStatus,
 )
+from omac.engines.multica import MulticaStore
 from omac.errors import NeedsDecision, PlatformError, WorkItemNotFoundError
 from omac.pipeline.dispatch import build_show_output
 from omac.pipeline.tasks import AuthoringTaskSpec, create_authoring_task, run_task
@@ -55,6 +58,13 @@ def _payload(**over):
 def _poll():
     """测试用 no-op poll(配合 MOCK_AUTO_COMPLETE_DELAY=0 立即收敛)。"""
     pass
+
+
+_MULTICA_AITEAM_812_FIXTURE = (
+    Path(__file__).resolve().parent
+    / "fixtures"
+    / "multica_issue_aiteam_812.json"
+)
 
 
 def _review_report(verdict="pass", item=None):
@@ -2230,6 +2240,35 @@ _AMENDMENT_ACTIVITY_FIELD_CASES = [
 ]
 
 
+def _multica_aiteam_812_pristine_item(
+    eng,
+    *,
+    issue_overrides=None,
+    metadata_overrides=None,
+):
+    issue = json.loads(_MULTICA_AITEAM_812_FIXTURE.read_text(encoding="utf-8"))
+    issue.update(issue_overrides or {})
+    issue["metadata"] = {
+        **issue.get("metadata", {}),
+        **(metadata_overrides or {}),
+    }
+    item = eng.store.create_work_item(
+        "ws",
+        "new amendment",
+        "new amendment",
+        "amend-project-attempt-standard-envelope",
+        "alice",
+        kind=TaskKind.AMENDMENT,
+    )
+    issue["id"] = item.id
+    observed = MulticaStore(EngineConfig(
+        engine_type="multica",
+        workspace_id="ws",
+    ))._issue_to_work_item(issue, "ws")
+    vars(item).update(vars(observed))
+    return item
+
+
 def _pristine_attempt_fixture():
     eng = _engine(MOCK_AUTO_COMPLETE="false")
     payload = _payload(title="new amendment")
@@ -2252,6 +2291,112 @@ def _pristine_attempt_fixture():
     item.source_refs = refs
     item.amendment_attempt = spec.amendment_attempt
     return eng, item, spec, body, refs
+
+
+def test_multica_standard_issue_envelope_pristine_shell_can_finalize_and_dispatch(
+    monkeypatch,
+):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = _multica_aiteam_812_pristine_item(eng)
+    assignments = []
+    wakes = []
+    original_assign = eng.store.assign_work_item
+
+    def assign(item_id, assignee, role):
+        assignments.append((item_id, assignee, role))
+        return original_assign(item_id, assignee, role)
+
+    def wake(item_id, agent, role):
+        wakes.append((item_id, agent, role))
+        current = eng.store.get_work_item(item_id)
+        eng.store.update_work_item_metadata(
+            item_id,
+            deliverable="fresh amendment",
+            phase=TaskPhase.REVIEW,
+        )
+        current.deliverable_ref = {
+            "attachment_id": "fresh-attempt-delivery",
+            "sha256": "fresh-attempt",
+        }
+        eng.store.mark_in_review(item_id)
+
+    monkeypatch.setattr(eng.store, "assign_work_item", assign)
+    monkeypatch.setattr(eng.runtime, "wake", wake)
+
+    result = run_task(
+        eng,
+        TaskKind.AMENDMENT,
+        _payload(title="new amendment"),
+        "alice",
+        poll=_poll,
+        dag_key="amend-project-attempt-standard-envelope",
+        amendment_attempt={"request_digest": "standard-envelope"},
+        reuse_dag_key=True,
+    )
+
+    assert result["item_id"] == item.id
+    assert result["verdict"] == "pass"
+    assert item.identifier == "AITEAM-812"
+    assert item.unknown_persisted_fields == {}
+    assert assignments == [(item.id, "alice", "worker")]
+    assert wakes == [(item.id, "alice", "worker")]
+
+
+@pytest.mark.parametrize(
+    ("issue_overrides", "metadata_overrides", "expected_unknown"),
+    [
+        ({"future_run_fact": False}, {}, "issue.future_run_fact"),
+        ({}, {"future_execution_fact": False}, "metadata.future_execution_fact"),
+        ({"properties": {"future_run_fact": False}}, {}, "issue.properties"),
+    ],
+)
+def test_multica_pristine_shell_keeps_unknown_facts_fail_closed(
+    monkeypatch,
+    issue_overrides,
+    metadata_overrides,
+    expected_unknown,
+):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = _multica_aiteam_812_pristine_item(
+        eng,
+        issue_overrides=issue_overrides,
+        metadata_overrides=metadata_overrides,
+    )
+    monkeypatch.setattr(eng.runtime, "is_active", lambda _item_id: False)
+    monkeypatch.setattr(
+        eng.store,
+        "assign_work_item",
+        lambda *_args, **_kwargs: pytest.fail("unknown facts must prevent assign"),
+    )
+    monkeypatch.setattr(
+        eng.runtime,
+        "wake",
+        lambda *_args, **_kwargs: pytest.fail("unknown facts must prevent wake"),
+    )
+
+    with pytest.raises(NeedsDecision) as exc:
+        run_task(
+            eng,
+            TaskKind.AMENDMENT,
+            _payload(title="new amendment"),
+            "alice",
+            poll=lambda: pytest.fail("unknown facts must prevent polling"),
+            dag_key="amend-project-attempt-standard-envelope",
+            amendment_attempt={"request_digest": "standard-envelope"},
+            reuse_dag_key=True,
+        )
+
+    assert exc.value.exit_code == 20
+    assert exc.value.report["reason_code"] == "amendment-attempt-already-started"
+    assert exc.value.report["fields"] == ["unknown_persisted_fields"]
+    assert item.unknown_persisted_fields == {
+        expected_unknown: (
+            issue_overrides.get("properties")
+            if expected_unknown == "issue.properties"
+            else False
+        ),
+    }
+    assert eng.store.assign_log == []
 
 
 def test_pristine_amendment_projection_covers_every_work_item_field():
