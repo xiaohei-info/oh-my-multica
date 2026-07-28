@@ -7,6 +7,7 @@ from .acceptance_responsibility import dependency_closure
 from .manifest import (
     ConsumedArtifact,
     EvidenceMode,
+    MISSING_CONSUMES,
     ProducedArtifact,
 )
 from .taskmeta import DECISION_REQUIRED_SCHEMA, TaskKind, TaskPhase
@@ -20,11 +21,26 @@ CONTRACT_BOUNDARY_SCHEMA = {
         "producer": "upstream-node-id",
         "evidence_mode": EvidenceMode.ARTIFACT.value,
     }],
+    "consumes_semantics": {
+        "omitted": "transitional upstream inputs not yet enumerated",
+        "empty": "no external inputs",
+        "non_empty": "strict artifact allowlist",
+        "null": "invalid; consumes must be omitted or a list",
+    },
 }
 
-_BOUNDARY_RULE = (
+_ALLOWLIST_RULE = (
     "Only declared consumes are allowed external inputs; outputs from "
     "non-upstream or downstream nodes are outside this contract."
+)
+_NO_INPUT_RULE = (
+    "No external inputs are allowed; upstream, non-upstream, and downstream "
+    "outputs are outside this contract."
+)
+_TRANSITIONAL_RULE = (
+    "Consumes is omitted for transitional compatibility: only inputs from "
+    "transitive upstream dependencies are allowed; non-upstream and downstream "
+    "outputs remain outside this contract."
 )
 
 
@@ -32,6 +48,16 @@ def _value(contract: Any, name: str, default):
     if isinstance(contract, dict):
         return contract.get(name, default)
     return getattr(contract, name, default) if contract is not None else default
+
+
+def _declares(contract: Any, name: str) -> bool:
+    if isinstance(contract, dict):
+        return name in contract
+    if contract is None:
+        return False
+    if name == "consumes":
+        return getattr(contract, name, MISSING_CONSUMES) is not MISSING_CONSUMES
+    return getattr(contract, name, None) is not None
 
 
 def _mode_value(value: Any) -> str | None:
@@ -70,7 +96,7 @@ def has_contract_boundary(contract: Any) -> bool:
     return bool(
         _value(contract, "evidence_mode", None) is not None
         or _value(contract, "produces", [])
-        or _value(contract, "consumes", [])
+        or _declares(contract, "consumes")
     )
 
 
@@ -78,8 +104,9 @@ def responsibility_summary(contract: Any) -> dict[str, Any] | None:
     """Return a bounded responsibility projection without historical prose."""
     if not has_contract_boundary(contract):
         return None
-    consumes = []
-    raw_consumes = _value(contract, "consumes", [])
+    consumes_declared = _declares(contract, "consumes")
+    consumes = [] if consumes_declared else None
+    raw_consumes = _value(contract, "consumes", None)
     if isinstance(raw_consumes, list):
         for value in raw_consumes:
             artifact_id, producer, evidence_mode, valid = _consumed_value(value)
@@ -97,11 +124,24 @@ def responsibility_summary(contract: Any) -> dict[str, Any] | None:
             artifact_id, valid = _produced_value(value)
             if valid:
                 produces.append(artifact_id)
+    if not consumes_declared:
+        input_policy = "transitional-upstream"
+        boundary_rule = _TRANSITIONAL_RULE
+    elif not isinstance(raw_consumes, list):
+        input_policy = "invalid"
+        boundary_rule = "Consumes is declared but must be a list, not null."
+    elif not consumes:
+        input_policy = "none"
+        boundary_rule = _NO_INPUT_RULE
+    else:
+        input_policy = "allowlist"
+        boundary_rule = _ALLOWLIST_RULE
     return {
         "evidence_mode": _mode_value(_value(contract, "evidence_mode", None)),
+        "input_policy": input_policy,
         "allowed_inputs": consumes,
         "produces": produces,
-        "boundary_rule": _BOUNDARY_RULE,
+        "boundary_rule": boundary_rule,
     }
 
 
@@ -137,7 +177,9 @@ def _shape_errors(node: Any) -> list[str]:
     if len(produced_ids) != len(set(produced_ids)):
         errors.append(f"{prefix}.produces must not contain duplicate artifact_id values")
 
-    consumes = _value(contract, "consumes", [])
+    if not _declares(contract, "consumes"):
+        return errors
+    consumes = _value(contract, "consumes", None)
     if not isinstance(consumes, list):
         errors.append(
             f"{prefix}.consumes must be a list of typed upstream artifact inputs")
@@ -181,7 +223,8 @@ def manifest_boundary_errors(
     for node in manifest.nodes.values():
         if node.id in selected:
             errors.extend(_shape_errors(node))
-            consumes = _value(getattr(node, "contract", None), "consumes", [])
+            contract = getattr(node, "contract", None)
+            consumes = _value(contract, "consumes", None)
             if isinstance(consumes, list):
                 for value in consumes:
                     artifact_id, _producer, _mode, valid = _consumed_value(value)
@@ -209,7 +252,10 @@ def manifest_boundary_errors(
     for node in manifest.nodes.values():
         if node.id not in selected:
             continue
-        consumes = _value(getattr(node, "contract", None), "consumes", [])
+        contract = getattr(node, "contract", None)
+        if not _declares(contract, "consumes"):
+            continue
+        consumes = _value(contract, "consumes", None)
         if not isinstance(consumes, list):
             continue
         upstream = dependency_closure(manifest, node.id)
@@ -296,8 +342,9 @@ def contract_boundary_conflicts(
         return []
 
     upstream = dependency_closure(manifest, node.id)
+    consumes_declared = _declares(contract, "consumes")
     allowed_inputs = set()
-    consumes = _value(contract, "consumes", [])
+    consumes = _value(contract, "consumes", None)
     if isinstance(consumes, list):
         for value in consumes:
             artifact_id, producer, input_mode, valid = _consumed_value(value)
@@ -331,6 +378,13 @@ def contract_boundary_conflicts(
                     or input_mode not in valid_modes
                 ):
                     continue
+                fixture_requires_live = (
+                    current_mode == EvidenceMode.FIXTURE.value
+                    and input_mode == EvidenceMode.LIVE.value
+                )
+                if fixture_requires_live:
+                    conflicts.append({
+                        "reason_code": "fixture-requires-live-evidence"})
                 if (artifact_id, producer, input_mode) in allowed_inputs:
                     continue
                 if producer not in upstream:
@@ -339,7 +393,7 @@ def contract_boundary_conflicts(
                         "artifact_id": artifact_id or "",
                         "producer": producer or "",
                     })
-                else:
+                elif consumes_declared:
                     conflicts.append({
                         "reason_code": "review-requires-undeclared-artifact",
                         "artifact_id": artifact_id or "",

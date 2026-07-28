@@ -202,7 +202,8 @@ class TestRenderIssueBody:
         assert "## Responsibility boundary" in body
         assert "Evidence mode: `fixture`" in body
         assert "Produces: `tooling-package`" in body
-        assert "non-upstream or downstream nodes" in body
+        assert "Input policy: `transitional-upstream`" in body
+        assert "transitive upstream dependencies" in body
 
     def test_briefing_lists_render_as_nested_markdown(self):
         n = Node(id="a", worker="alice", title="Add login", reviewer="bob",

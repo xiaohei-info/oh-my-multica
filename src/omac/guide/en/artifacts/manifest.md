@@ -188,7 +188,7 @@ must be acyclic.
 | `scope_paths` | Optional primary code ownership for stable boundaries and lower parallel conflict. |
 | `evidence_mode` | Optional primary evidence class: `fixture`, `artifact`, or `live`. It is required when `produces` or `consumes` is declared. |
 | `produces` | Stable artifact IDs uniquely produced by this node, shaped as `{artifact_id}`. One artifact ID has one canonical producer. |
-| `consumes` | Allowed external inputs shaped as `{artifact_id, producer, evidence_mode}`. The producer must be transitive upstream and declare the artifact. |
+| `consumes` | Tri-state input policy. Omitted permits transitional legacy inputs only from transitive upstream dependencies; `[]` permits no external input; a non-empty list is a strict `{artifact_id, producer, evidence_mode}` allowlist. Explicit `null` is invalid. New complete DAGs use explicit `[]` or a non-empty list. |
 
 Each integration gate has `name`, `layer`, `delivery_goal`, and non-empty
 `source_of_truth`, `covers`, `acceptance_refs`, and `commands`. If present,

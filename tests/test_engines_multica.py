@@ -8,6 +8,9 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
+from omac.core.contract_boundaries import responsibility_summary
+from omac.core.manifest import _load_contract
+from omac.core.manifest import Contract, EvidenceMode, ProducedArtifact
 from omac.engines.models import (
     EngineConfig, PullRequestReadinessFailure, PullRequestState,
 )
@@ -790,6 +793,27 @@ def test_multica_set_node_contract_writes_ref_without_full_contract_metadata(mon
     assert "实现很长的自然语言目标" in published[0][1]
 
 
+def test_multica_contract_attachment_preserves_consumes_tristate(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    payloads = []
+    monkeypatch.setattr(store, "_set_metadata", lambda *_args: None)
+    monkeypatch.setattr(
+        store, "_publish_payload_comment",
+        lambda _item, _label, source, _suffix: (
+            payloads.append(yaml.safe_load(source)) or {"sha256": "s"}),
+    )
+    base = dict(
+        evidence_mode=EvidenceMode.FIXTURE,
+        produces=[ProducedArtifact("tooling-package")],
+    )
+
+    store.set_node_contract("legacy", Contract(**base))
+    store.set_node_contract("none", Contract(**base, consumes=[]))
+
+    assert "consumes" not in payloads[0]
+    assert payloads[1]["consumes"] == []
+
+
 def test_multica_done_contract_publish_keeps_issue_unassigned_and_does_not_start_run(
     monkeypatch,
 ):
@@ -900,6 +924,27 @@ def test_multica_reads_contract_from_ref_before_legacy_inline(monkeypatch):
 
     assert item.contract["objective"] == "来自 ref"
     assert item.contract["verification_commands"] == ["pytest -q"]
+
+
+def test_multica_readback_keeps_explicit_null_consumes_invalid(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    monkeypatch.setattr(
+        store, "_load_payload_comment",
+        lambda *_args: "evidence_mode: fixture\nconsumes: null\n",
+    )
+
+    item = store._issue_to_work_item({
+        "id": "issue-1", "title": "t", "description": "d", "status": "todo",
+        "metadata": {
+            "dag_key": "node-a", "kind": "develop",
+            "contract_ref": {"comment_id": "c1"},
+        },
+    }, "ws")
+
+    assert item.contract["consumes"] is None
+    assert responsibility_summary(item.contract)["input_policy"] == "invalid"
+    assert responsibility_summary(
+        _load_contract(item.contract))["input_policy"] == "invalid"
 
 
 def test_multica_get_work_item_maps_exhausted_failed_runs_to_failed(monkeypatch):

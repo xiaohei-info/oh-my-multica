@@ -47,6 +47,13 @@ class EvidenceMode(str, Enum):
     LIVE = "live"
 
 
+class _MissingContractField(Enum):
+    VALUE = "missing"
+
+
+MISSING_CONSUMES = _MissingContractField.VALUE
+
+
 @dataclass(frozen=True)
 class ProducedArtifact:
     """Stable artifact identity produced by one node."""
@@ -134,17 +141,19 @@ class Contract:
     # 主要代码归属范围(可选、非穷举白名单):用于表达节点稳定的模块边界、降低
     # 并行冲突。完成 contract 必需的配套文件可扩展,但需在 PR/verification 说明。
     scope_paths: list = field(default_factory=list)
-    # 可选的 typed artifact boundary。旧 manifest 缺省 None/[] 时保持原语义。
+    # 可选的 typed artifact boundary。consumes 使用 presence-aware 值：sentinel 表示
+    # 旧运行 manifest 未声明，[] 表示明确无外部输入，非空列表表示严格 allowlist；
+    # None 只保留显式 YAML null，供 lint 失败关闭。
     evidence_mode: EvidenceMode | None = None
     produces: list[ProducedArtifact] = field(default_factory=list)
-    consumes: list[ConsumedArtifact] = field(default_factory=list)
+    consumes: list[ConsumedArtifact] | None | _MissingContractField = MISSING_CONSUMES
 
 
 def _load_contract(raw):
     if raw is None:
         return None
     raw_produces = raw.get("produces", [])
-    raw_consumes = raw.get("consumes", [])
+    raw_consumes = raw["consumes"] if "consumes" in raw else MISSING_CONSUMES
     return Contract(
         objective=raw.get("objective"),
         source_of_truth=list(raw.get("source_of_truth", [])),
@@ -175,8 +184,9 @@ def _load_contract(raw):
 def _dump_contract(contract):
     """Serialize the canonical executable contract, omitting semantic defaults.
 
-    ``coverage_gate=90`` and empty optional collections are restored by
-    ``_load_contract``. Plan-owned acceptance content is persisted once in the
+    ``coverage_gate=90`` and omitted optional collections are restored by
+    ``_load_contract``. Explicit empty ``consumes`` remains serialized because
+    it is a policy, not a default. Plan-owned acceptance content is persisted once in the
     sibling acceptance artifact referenced by ``meta.acceptance_file`` rather
     than copied into every node's ``acceptance_doc``.
     """
@@ -210,10 +220,11 @@ def _dump_contract(contract):
         data["produces"] = [
             _dump_produced_artifact(value) for value in contract.produces
         ]
-    if contract.consumes:
-        data["consumes"] = [
-            _dump_consumed_artifact(value) for value in contract.consumes
-        ]
+    if contract.consumes is not MISSING_CONSUMES:
+        data["consumes"] = (
+            [_dump_consumed_artifact(value) for value in contract.consumes]
+            if isinstance(contract.consumes, list) else contract.consumes
+        )
     if contract.coverage_gate != 90:
         data["coverage_gate"] = contract.coverage_gate
     return data

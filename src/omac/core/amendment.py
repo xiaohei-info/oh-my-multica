@@ -307,12 +307,22 @@ def _contract_boundary_replacement_errors(
         return []
 
     previous = _dump_contract(node.contract) if node.contract is not None else {}
-    if not _CONTRACT_BOUNDARY_FIELDS.intersection(previous):
+    previous_fields = _CONTRACT_BOUNDARY_FIELDS.intersection(previous)
+    if not previous_fields:
         return []
-    if replacement_fields != _CONTRACT_BOUNDARY_FIELDS:
+    if not previous_fields.issubset(replacement_fields):
+        ordered = [
+            field for field in ("evidence_mode", "produces", "consumes")
+            if field in previous_fields
+        ]
+        required = ", ".join(ordered[:-1])
+        if len(ordered) > 1:
+            required += f", and {ordered[-1]}"
+        elif ordered:
+            required = ordered[0]
         return [
-            f"{prefix}.set.contract must explicitly preserve evidence_mode, produces, "
-            "and consumes, or set clear_contract_boundary=true"
+            f"{prefix}.set.contract must explicitly preserve {required}, or set "
+            "clear_contract_boundary=true"
         ]
     return []
 

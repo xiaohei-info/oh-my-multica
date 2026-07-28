@@ -176,7 +176,7 @@ nodes:
 | `scope_paths` | 可选的主要代码归属范围，用于表达稳定模块边界和降低并行冲突。 |
 | `evidence_mode` | 可选的主要证据类别：`fixture`、`artifact` 或 `live`。声明 `produces`/`consumes` 时必须显式填写。 |
 | `produces` | 当前节点唯一生产的稳定制品 id 列表，形状为 `{artifact_id}`；同一 id 只能有一个 producer。 |
-| `consumes` | 当前节点允许使用的外部输入，形状为 `{artifact_id, producer, evidence_mode}`；producer 必须是传递上游并声明该制品。 |
+| `consumes` | 三态输入策略：省略时，旧运行 manifest 过渡期仅允许传递上游输入；`[]` 表示无外部输入；非空列表是严格 `{artifact_id, producer, evidence_mode}` allowlist；显式 `null` 非法。新完整 DAG 使用显式 `[]` 或非空列表。 |
 
 每个 `integration_gates` 条目必须给出 `name`、`layer`、`delivery_goal`，以及非空的
 `source_of_truth`、`covers`、`acceptance_refs`、`commands`。`required_metrics` 若出现必须是
