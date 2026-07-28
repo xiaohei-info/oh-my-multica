@@ -8,7 +8,7 @@ from typing import Any
 from .. import exit_codes
 from ..output import add_output_flag, hint, print_json
 from ...core.config import ENV_ENGINE, ENV_WORKSPACE, load_config, resolve_engine_settings
-from ...core.manifest import load_manifest, save_manifest
+from ...core.manifest import MISSING_CONSUMES, load_manifest, save_manifest
 from ...core.graph import downstream_of
 from ...core.taskmeta import TaskKind
 from ...core.stage_recovery import prepare_stage_recovery
@@ -100,7 +100,10 @@ def _contract_to_dict(contract):
     """contract → 可序列化 dict(对齐 save_manifest 的 dump 形状)。"""
     if contract is None:
         return None
-    return asdict(contract)
+    data = asdict(contract)
+    if contract.consumes is MISSING_CONSUMES:
+        data.pop("consumes", None)
+    return data
 
 
 def _build_engine(config: dict):

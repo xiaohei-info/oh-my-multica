@@ -62,6 +62,10 @@ guide does not decide product facts.
   When amending a running legacy manifest whose completed producers cannot be
   given trustworthy typed outputs, deliberately omit `consumes` to select the
   transitional-upstream policy; never use it for greenfield planning.
+- A complete contract replacement preserves exactly the typed boundary fields
+  present in the old contract. Keep an omitted `consumes` omitted unless the
+  amendment intentionally changes input policy; use
+  `clear_contract_boundary: true` only to clear the whole boundary.
 - A machine preflight failure returns directly to authoring without consuming a
   Reviewer cycle. `review_comment` contains only a bounded summary; the complete
   structured findings are stored in an attachment. Before reworking, run the

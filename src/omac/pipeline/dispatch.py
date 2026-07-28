@@ -1263,6 +1263,7 @@ def render_issue_body(node, contract, kind, issue_id, source_refs=None, engine_e
             "allowlist": (
                 "只允许 consumes 明确声明的外部输入；非上游或下游节点产物不属于"
                 "当前 contract。"),
+            "invalid": "consumes 已声明但不是列表；该 contract 必须先修复。",
         }[input_policy]
         boundary_lines.append(ui(
             f"- Boundary: {responsibility['boundary_rule']}",

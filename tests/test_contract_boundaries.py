@@ -13,10 +13,12 @@ from omac.core.manifest import (
     Contract,
     EvidenceMode,
     Manifest,
+    MISSING_CONSUMES,
     Node,
     ProducedArtifact,
     _dump_contract,
     _load_contract,
+    loads_manifest,
 )
 
 
@@ -54,7 +56,7 @@ def test_old_contract_remains_readable_and_omits_boundary_defaults():
 
     assert contract.evidence_mode is None
     assert contract.produces == []
-    assert contract.consumes is None
+    assert contract.consumes is MISSING_CONSUMES
     assert "evidence_mode" not in _dump_contract(contract)
     assert "produces" not in _dump_contract(contract)
     assert "consumes" not in _dump_contract(contract)
@@ -73,12 +75,37 @@ def test_omitted_and_explicit_empty_consumes_survive_roundtrip():
         "consumes": [],
     })
 
-    assert omitted.consumes is None
+    assert omitted.consumes is MISSING_CONSUMES
     assert "consumes" not in _dump_contract(omitted)
     assert explicit_empty.consumes == []
     assert _dump_contract(explicit_empty)["consumes"] == []
-    assert _load_contract(_dump_contract(omitted)).consumes is None
+    assert _load_contract(_dump_contract(omitted)).consumes is MISSING_CONSUMES
     assert _load_contract(_dump_contract(explicit_empty)).consumes == []
+
+
+def test_explicit_null_consumes_is_preserved_and_rejected_from_yaml():
+    manifest = loads_manifest("""
+meta: {}
+nodes:
+  - id: tooling
+    worker: alice
+    contract:
+      objective: tooling
+      evidence_mode: fixture
+      produces:
+        - artifact_id: tooling-package
+      consumes: null
+""")
+    contract = manifest.nodes["tooling"].contract
+
+    assert contract.consumes is None
+    assert _dump_contract(contract)["consumes"] is None
+    assert responsibility_summary(contract)["input_policy"] == "invalid"
+    assert responsibility_summary({
+        "evidence_mode": "fixture", "consumes": None,
+    })["input_policy"] == "invalid"
+    assert any("contract.consumes must be a list" in error
+               for error in lint(manifest, POOL))
 
 
 def test_typed_boundary_roundtrip_preserves_enum_and_artifact_types():

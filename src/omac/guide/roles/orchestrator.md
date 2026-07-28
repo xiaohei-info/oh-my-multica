@@ -45,6 +45,9 @@
   协调顺序伪造 `blocked_by`。新规划的完整 typed DAG 必须声明精确 `consumes`（包括 `[]`）。
   amendment 面对已运行且无法可信回填完成 producer typed outputs 的旧 manifest 时，可有意省略
   `consumes` 选择 `transitional-upstream`；新规划不得使用该过渡形式。
+- 完整 contract replacement 只保留旧 contract 实际存在的 typed boundary 字段。旧 contract
+  省略 `consumes` 时继续省略，除非 amendment 明确改变 input policy；只有清除整个 boundary
+  时才使用 `clear_contract_boundary: true`。
 - 机器门失败直接返回 authoring，不消耗 Reviewer 轮次。`review_comment` 只保存有界
   摘要；完整结构化问题保存在附件中。重新工作前运行摘要给出的
   `omac work show <issue-id> --output json`，读取 `context.machine_feedback`，逐条修完后再提交。

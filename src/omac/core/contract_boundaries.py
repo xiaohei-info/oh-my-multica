@@ -7,6 +7,7 @@ from .acceptance_responsibility import dependency_closure
 from .manifest import (
     ConsumedArtifact,
     EvidenceMode,
+    MISSING_CONSUMES,
     ProducedArtifact,
 )
 from .taskmeta import DECISION_REQUIRED_SCHEMA, TaskKind, TaskPhase
@@ -24,6 +25,7 @@ CONTRACT_BOUNDARY_SCHEMA = {
         "omitted": "transitional upstream inputs not yet enumerated",
         "empty": "no external inputs",
         "non_empty": "strict artifact allowlist",
+        "null": "invalid; consumes must be omitted or a list",
     },
 }
 
@@ -51,7 +53,11 @@ def _value(contract: Any, name: str, default):
 def _declares(contract: Any, name: str) -> bool:
     if isinstance(contract, dict):
         return name in contract
-    return contract is not None and getattr(contract, name, None) is not None
+    if contract is None:
+        return False
+    if name == "consumes":
+        return getattr(contract, name, MISSING_CONSUMES) is not MISSING_CONSUMES
+    return getattr(contract, name, None) is not None
 
 
 def _mode_value(value: Any) -> str | None:
@@ -121,6 +127,9 @@ def responsibility_summary(contract: Any) -> dict[str, Any] | None:
     if not consumes_declared:
         input_policy = "transitional-upstream"
         boundary_rule = _TRANSITIONAL_RULE
+    elif not isinstance(raw_consumes, list):
+        input_policy = "invalid"
+        boundary_rule = "Consumes is declared but must be a list, not null."
     elif not consumes:
         input_policy = "none"
         boundary_rule = _NO_INPUT_RULE
