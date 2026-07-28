@@ -75,6 +75,29 @@ class PullRequestObservation:
     detail: str = ""
 
 
+@dataclass(frozen=True)
+class AgentRunObservation:
+    """One platform Agent Run with stable identity and trigger kind."""
+    id: str
+    kind: str
+    status: str
+
+    @property
+    def active(self) -> bool:
+        return self.status in {"queued", "pending", "running", "dispatching"}
+
+    @property
+    def terminal(self) -> bool:
+        return self.status in {"completed", "failed", "cancelled"}
+
+
+@dataclass(frozen=True)
+class RuntimeCapabilities:
+    """Runtime observation/dispatch guarantees exposed to the pipeline."""
+
+    stable_direct_run_identity: bool = False
+
+
 @dataclass
 class WorkspaceInfo:
     """工作空间信息"""
@@ -167,6 +190,7 @@ class WorkItem:
     review_ledger_ref: Optional[Dict[str, Any]] = None
     review_continuation: Optional[Dict[str, Any]] = None
     decision_required: Optional[Dict[str, Any]] = None
+    amendment_attempt: Optional[Dict[str, Any]] = None
 
     # 验收契约(编排器 dispatch 时下发):worker 读回后用同一套 validator 自校验
     contract: Optional[Dict[str, Any]] = None
@@ -191,6 +215,12 @@ class WorkItem:
     # reviewer 与 worker 共用 issue 状态，但失败 run 不能一概映射为 worker 失败。
     # REVIEW 阶段由 loop 原地恢复 reviewer，避免丢弃已完成的 worker 交付。
     agent_run_failed: bool = False
+    # 平台只读事实。时间戳不表示执行活动；实际 assignee 与未知持久字段则由
+    # amendment pristine-shell 门统一视为潜在活动证据并失败关闭。
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    platform_assignee_id: Optional[str] = None
+    unknown_persisted_fields: Dict[str, Any] = field(default_factory=dict)
 
     def is_completed(self) -> bool:
         return self.status == WorkItemStatus.DONE

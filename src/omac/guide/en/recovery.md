@@ -134,6 +134,50 @@ omac dag amend propose .omac/project.yaml \
   decision to continue, rerun the original `omac dag amend propose ...` command
   with `--resume-issue-id <issue-id>` to preserve the same issue, delivery, and
   Reviewer history.
+- Plain `--resume-issue-id` preserves a valid Reviewer-pass confirmation and
+  creates no new Agent Run. No current engine exposes a real atomic conditional
+  restart/dispatch API. `--restart-authoring` remains only as a compatibility
+  entry point: it fails closed with exit 20 before any issue read, write, or
+  Agent dispatch and returns a `--new-attempt` command. OMAC keeps no speculative
+  generation/journal state machine. A new attempt preserves the old confirmation as
+  audit history:
+
+  ```bash
+  omac dag amend propose .omac/project.yaml \
+    --blocked-node bootstrap-console \
+    --report-file /tmp/new-dag-review.md \
+    --docs docs \
+    --new-attempt \
+    --supersedes-issue-id <old-issue-id>
+  ```
+
+  The attempt identity binds the manifest, report digest, recursive docs-content
+  digest, blocked nodes, and superseded issue. Docs logical paths are relative to
+  the manifest project root (the parent of `.omac/` when the manifest lives there),
+  never the current working directory; docs outside that project fail closed. A
+  crash retry reuses and finalizes the same issue only while it remains an
+  undispatched `TODO + authoring` shell with no delivery/review evidence and no
+  active Run. Once the attempt was dispatched, entered review/confirmation/a
+  terminal status, or contains delivery/review evidence, another `--new-attempt`
+  exits 20 and directs the operator to
+  `omac work show <issue-id> --output json`. Continue such work through its normal
+  current-phase command with `--resume-issue-id`; `--new-attempt` is not a resume
+  operation. A different report or docs-content digest creates a different attempt.
+  Metadata and source refs record the
+  superseded issue, attempt id, report digest, and docs digest. The old issue is never
+  cleared, reopened, or automatically closed. The new issue follows the normal
+  authoring → Reviewer → human-confirmation flow and still targets the original
+  manifest and nodes.
+- `omac dag run`, `dag tick`, `dag amend propose`, and `dag amend accept`
+  share one host-local lock for the same real manifest path. The CLI acquires it
+  before engine construction or any Store/Runtime call, so a second OMAC process
+  on the same host fails closed before creating an issue or Agent Run. This is
+  deliberately not a distributed lock and does not turn Multica LWW metadata into
+  conditional CAS. OMAC on another host, direct Multica/API writes, and other
+  external actors are an unknown/unsupported concurrency boundary. Before the
+  first dispatch OMAC still observes active Runs and rereads the pristine shell to
+  reject conflicts that are already visible, but it does not claim linearizability
+  and never cancels, clears, or compensates facts whose ownership cannot be proven.
 - Accept runs under the manifest write lock with CAS and atomically writes the
   manifest definition plus a per-node apply ledger. The Store and filesystem do
   not share a transaction, so this is not a cross-system atomic transaction.

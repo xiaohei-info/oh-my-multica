@@ -22,9 +22,9 @@ from ..core.taskmeta import DELIVERY_CONTENT_KEY, TaskKind, TaskPhase
 from ..errors import ValidationError, WorkItemNotFoundError
 from ..i18n import ui
 from .models import (
-    AgentInfo, AgentProvisionSpec, EngineConfig, ProjectInfo, RuntimeTarget,
+    AgentInfo, AgentProvisionSpec, AgentRunObservation, EngineConfig, ProjectInfo, RuntimeTarget,
     MergeCommandResult, PullRequestCheckResult, PullRequestObservation,
-    PullRequestReadiness, PullRequestState,
+    PullRequestReadiness, PullRequestState, RuntimeCapabilities,
     WorkItem, WorkItemStatus, WorkspaceInfo,
 )
 from .runtime import AgentRuntime
@@ -60,12 +60,24 @@ _shared_auto_confirm: bool = False
 # 已自动确认过的 item(人工只确认一次,避免评审阶段翻回 IN_REVIEW 时被误重复确认)。
 _shared_human_confirmed: set = set()
 _shared_pull_requests: Dict[str, PullRequestObservation] = {}
+_shared_runs: Dict[str, List[AgentRunObservation]] = {}
+_shared_next_run_id: int = 1
+_shared_active_assignments: Dict[str, tuple[str, str]] = {}
 
 # 产出后进入评审阶段(而非直接 DONE)的 kind:与真实 work submit 的产出终态一致。
 # develop 走 pr_url→DONE;final-acceptance 有独立的 _accepted_results 真实 submit 分支。
 _AUTHORING_TO_REVIEW = (
     TaskKind.PLAN, TaskKind.ACCEPTANCE, TaskKind.DECOMPOSE, TaskKind.AMENDMENT,
 )
+
+
+def _finish_mock_run(item_id: str, status: str = "completed") -> None:
+    runs = _shared_runs.get(item_id) or []
+    if not runs:
+        return
+    latest = runs[-1]
+    runs[-1] = AgentRunObservation(
+        id=latest.id, kind=latest.kind, status=status)
 
 
 def _init_default_workspace():
@@ -209,10 +221,14 @@ class MockStore(WorkItemStore):
         _shared_human_confirmed = set()
         global _accepted_results, _increments, _shared_projects
         global _shared_pull_requests
+        global _shared_runs, _shared_next_run_id, _shared_active_assignments
         _accepted_results = {}
         _increments = {}
         _shared_projects = {}
         _shared_pull_requests = {}
+        _shared_runs = {}
+        _shared_next_run_id = 1
+        _shared_active_assignments = {}
         _init_default_workspace()
 
     @classmethod
@@ -303,6 +319,7 @@ class MockStore(WorkItemStore):
         if item.status == WorkItemStatus.IN_PROGRESS:
             if item.dag_key in _shared_fail_keys:
                 item.status = WorkItemStatus.FAILED
+                _finish_mock_run(item_id, "failed")
                 del _shared_assigned_items[item_id]
                 return
 
@@ -322,6 +339,7 @@ class MockStore(WorkItemStore):
                 # 调 dispatch.submit(acceptance_results_file=...) 经左移校验。
                 # contract.acceptance_doc 已由 acceptance._dispatch_and_wait 挂载。
                 # 先移除 auto-complete 标记,防止 dispatch.submit 内 get_work_item 二次触发。
+                _finish_mock_run(item_id)
                 del _shared_assigned_items[item_id]
                 results = _accepted_results.get(item.dag_key)
                 tmp = _write_tmp_json(results)
@@ -337,6 +355,7 @@ class MockStore(WorkItemStore):
                 # 走真实 work submit 路径:把增量 Manifest 序列化为 manifest YAML,
                 # 调 dispatch.submit(manifest_file=...) 经结构校验+lint,状态进 IN_REVIEW。
                 # 先移除 auto-complete 标记,防止 dispatch.submit 内 get_work_item 二次触发。
+                _finish_mock_run(item_id)
                 del _shared_assigned_items[item_id]
                 increment = _increments[item.dag_key]
                 base = _parse_base_manifest(item)
@@ -393,6 +412,7 @@ class MockStore(WorkItemStore):
                 verification = self._mock_verification(item_id)
                 if verification is not None:
                     item.verification = verification
+            _finish_mock_run(item_id)
             del _shared_assigned_items[item_id]
         elif item.status == WorkItemStatus.IN_REVIEW:
             if _shared_review_rejects_remaining > 0:
@@ -429,6 +449,7 @@ class MockStore(WorkItemStore):
                     "bytes": len(yaml.safe_dump(
                         item.review_ledger, allow_unicode=True).encode("utf-8")),
                 }
+            _finish_mock_run(item_id)
             del _shared_assigned_items[item_id]
 
     def _mock_verification(self, item_id: str) -> Optional[Dict[str, Any]]:
@@ -670,6 +691,14 @@ class MockStore(WorkItemStore):
         self._auto_complete_check(item_id)
         return _shared_work_items[item_id]
 
+    def set_authoring_identity(
+        self, item_id: str, *, dag_key: str, kind: TaskKind,
+    ) -> WorkItem:
+        item = self.get_work_item(item_id)
+        item.dag_key = dag_key
+        item.kind = kind
+        return item
+
     def update_work_item_metadata(
         self,
         item_id: str,
@@ -691,6 +720,7 @@ class MockStore(WorkItemStore):
         review_ledger_source: Optional[str] = None,
         review_continuation: Optional[Dict[str, Any]] = None,
         decision_required: Optional[Dict[str, Any]] = None,
+        amendment_attempt: Optional[Dict[str, Any]] = None,
         phase: Optional[TaskPhase] = None,
         worker_bounce: Optional[int] = None,
         ci_bounce: Optional[int] = None,
@@ -770,6 +800,8 @@ class MockStore(WorkItemStore):
             item.review_continuation = review_continuation or None
         if decision_required is not None:
             item.decision_required = decision_required
+        if amendment_attempt is not None:
+            item.amendment_attempt = dict(amendment_attempt)
         if phase is not None:
             item.phase = phase
         if worker_bounce is not None:
@@ -871,18 +903,34 @@ class MockStore(WorkItemStore):
         return item
 
     def assign_work_item(self, item_id: str, assignee: str, role: str):
+        global _shared_next_run_id
         item = self.get_work_item(item_id)
         if role == "worker":
             item.worker = assignee
         elif role == "reviewer":
             item.reviewer = assignee
+        assignment = (assignee, role)
+        same_active_assignment = (
+            item_id in _shared_assigned_items
+            and _shared_active_assignments.get(item_id) == assignment
+        )
         _shared_assign_log.append((item_id, item.dag_key, role, time.time()))
         _shared_assigned_items[item_id] = time.time()
+        _shared_active_assignments[item_id] = assignment
+        if not same_active_assignment:
+            run = AgentRunObservation(
+                id=f"mock-run-{_shared_next_run_id}",
+                kind="direct",
+                status="running",
+            )
+            _shared_next_run_id += 1
+            _shared_runs.setdefault(item_id, []).append(run)
 
     def clear_assignment(self, item_id: str) -> None:
         item = self.get_work_item(item_id)
         item.reviewer = None
         _shared_assigned_items.pop(item_id, None)
+        _shared_active_assignments.pop(item_id, None)
 
     def request_pull_request_merge(
         self, pr_url: str, command: str, timeout_seconds: int,
@@ -946,6 +994,10 @@ class MockRuntime(AgentRuntime):
     def __init__(self, store: MockStore):
         self._store = store
 
+    @property
+    def capabilities(self) -> RuntimeCapabilities:
+        return RuntimeCapabilities(stable_direct_run_identity=True)
+
     def wake(self, item_id: str, agent: str, role: str) -> None:
         # MockStore.assign_work_item 已启动自动完成计时,这里只确认 item 存在。
         self._store.get_work_item(item_id)
@@ -955,8 +1007,11 @@ class MockRuntime(AgentRuntime):
         return False
 
     def is_active(self, item_id: str) -> bool:
+        return any(run.active for run in self.list_runs(item_id))
+
+    def list_runs(self, item_id: str) -> List[AgentRunObservation]:
         self._store.get_work_item(item_id)
-        return item_id in _shared_assigned_items
+        return list(_shared_runs.get(item_id, []))
 
     def list_targets(self) -> List[RuntimeTarget]:
         return [RuntimeTarget(

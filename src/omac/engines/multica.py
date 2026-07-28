@@ -26,7 +26,8 @@ import yaml
 
 from ..core import logsetup
 from ..core.taskmeta import (
-    CI_BOUNCE_KEY, CONTRACT_REF_KEY, DECISION_REQUIRED_KEY, DELIVERABLE_KEY,
+    AMENDMENT_ATTEMPT_KEY, CI_BOUNCE_KEY, CONTRACT_REF_KEY,
+    DECISION_REQUIRED_KEY, DELIVERABLE_KEY,
     DELIVERABLE_REF_KEY, KIND_KEY, MERGE_BOUNCE_KEY, PHASE_KEY,
     MACHINE_FEEDBACK_REF_KEY, PROJECT_RULES_KEY, PROJECT_RULES_REF_KEY, REVIEW_BOUNCE_KEY,
     REVIEW_CONTINUATION_KEY, REVIEW_LEDGER_REF_KEY, REVIEW_OBLIGATIONS_KEY,
@@ -36,12 +37,14 @@ from ..core.taskmeta import (
     SOURCE_REFS_KEY, TaskKind, TaskPhase, VERIFICATION_REF_KEY, WORKER_BOUNCE_KEY,
     parse_bounces, parse_kind, parse_phase,
 )
-from ..errors import AuthError, PlatformError, ValidationError, WorkItemNotFoundError
+from ..errors import (
+    AuthError, PlatformError, ValidationError, WorkItemNotFoundError,
+)
 from ..i18n import ui
 from .models import (
-    AgentInfo, AgentProvisionSpec, EngineConfig, ProjectInfo, RuntimeTarget,
+    AgentInfo, AgentProvisionSpec, AgentRunObservation, EngineConfig, ProjectInfo, RuntimeTarget,
     MergeCommandResult, PullRequestCheckResult, PullRequestObservation,
-    PullRequestReadiness, PullRequestReadinessFailure,
+    PullRequestReadiness, PullRequestReadinessFailure, RuntimeCapabilities,
     PullRequestReadinessFailureKind, PullRequestState,
     SkillPackage, WorkItem, WorkItemStatus, WorkspaceInfo,
 )
@@ -57,6 +60,26 @@ from .store import WorkItemStore
 MULTICA_PR_VIEW_FIELDS = "state,mergedAt,autoMergeRequest,mergeStateStatus"
 _MULTICA_READ_MAX_ATTEMPTS = 3
 _MULTICA_READ_INITIAL_DELAY = 1.0
+_ACTIVE_RUN_STATUSES = {"queued", "pending", "running", "dispatching"}
+_RERUNNABLE_DIRECT_RUN_STATUSES = {"failed", "cancelled", "completed"}
+_KNOWN_WORK_ITEM_METADATA_KEYS = {
+    "dag_key", "worker", "reviewer", "blocked_by", "wave", "artifacts",
+    "verification", "review_verdict", "review_comment", "review_report",
+    "contract",
+    AMENDMENT_ATTEMPT_KEY, CI_BOUNCE_KEY, CONTRACT_REF_KEY,
+    DECISION_REQUIRED_KEY, DELIVERABLE_KEY, DELIVERABLE_REF_KEY, KIND_KEY,
+    MACHINE_FEEDBACK_REF_KEY, MERGE_BOUNCE_KEY, PHASE_KEY, PROJECT_RULES_KEY,
+    PROJECT_RULES_REF_KEY, REVIEW_BOUNCE_KEY, REVIEW_CONTINUATION_KEY,
+    REVIEW_LEDGER_REF_KEY, REVIEW_OBLIGATIONS_KEY, REVIEW_OBLIGATIONS_REF_KEY,
+    REVIEW_REPORT_REF_KEY, REVIEW_SUBJECT_DIGEST_KEY, SOURCE_REFS_KEY,
+    VERIFICATION_REF_KEY, WORKER_BOUNCE_KEY,
+}
+_KNOWN_ISSUE_FIELDS = {
+    "id", "identifier", "title", "description", "status", "metadata",
+    "created_at", "updated_at", "assignee_id", "assignee", "comments",
+    "attachments", "project_id", "project", "workspace_id", "workspace",
+    "creator_id", "creator", "created_by_id", "created_by", "url", "web_url",
+}
 
 _ReadResult = TypeVar("_ReadResult")
 
@@ -546,6 +569,20 @@ class MulticaStore(WorkItemStore):
 
     def _issue_to_work_item(self, issue_data: Dict, workspace_id: str) -> WorkItem:
         metadata = issue_data.get("metadata", {})
+        unknown_persisted_fields = {
+            f"metadata.{key}": value
+            for key, value in metadata.items()
+            if key not in _KNOWN_WORK_ITEM_METADATA_KEYS
+        }
+        unknown_persisted_fields.update({
+            f"issue.{key}": value
+            for key, value in issue_data.items()
+            if key not in _KNOWN_ISSUE_FIELDS
+        })
+        raw_assignee = issue_data.get("assignee_id") or issue_data.get("assignee")
+        if isinstance(raw_assignee, dict):
+            raw_assignee = raw_assignee.get("id") or raw_assignee.get("identifier")
+        platform_assignee_id = str(raw_assignee) if raw_assignee else None
 
         blocked_by = metadata.get("blocked_by", [])
         if isinstance(blocked_by, str):
@@ -561,17 +598,23 @@ class MulticaStore(WorkItemStore):
             except Exception:
                 wave = None
 
+        deliverable_ref_declared = DELIVERABLE_REF_KEY in metadata
         deliverable_ref = self._json_metadata(metadata, DELIVERABLE_REF_KEY)
-        deliverable = metadata.get(DELIVERABLE_KEY)
-        if not deliverable and isinstance(deliverable_ref, dict):
+        deliverable = None if deliverable_ref_declared else metadata.get(DELIVERABLE_KEY)
+        if isinstance(deliverable_ref, dict) and deliverable_ref:
             deliverable = self._load_payload_comment(issue_data["id"], "deliverable", deliverable_ref)
 
+        project_rules_ref_declared = PROJECT_RULES_REF_KEY in metadata
         project_rules_ref = self._json_metadata(metadata, PROJECT_RULES_REF_KEY)
-        project_rules = metadata.get(PROJECT_RULES_KEY)
-        if not project_rules and isinstance(project_rules_ref, dict):
+        project_rules = (
+            None if project_rules_ref_declared else metadata.get(PROJECT_RULES_KEY)
+        )
+        if isinstance(project_rules_ref, dict) and project_rules_ref:
             project_rules = self._load_payload_comment(
                 issue_data["id"], "project-rules", project_rules_ref)
 
+        verification_ref_declared = VERIFICATION_REF_KEY in metadata
+        review_report_ref_declared = REVIEW_REPORT_REF_KEY in metadata
         verification_ref = self._json_metadata(metadata, VERIFICATION_REF_KEY)
         review_report_ref = self._json_metadata(metadata, REVIEW_REPORT_REF_KEY)
         review_ledger_ref = self._json_metadata(metadata, REVIEW_LEDGER_REF_KEY)
@@ -581,8 +624,9 @@ class MulticaStore(WorkItemStore):
             metadata, REVIEW_CONTINUATION_KEY)
         machine_feedback_ref = self._json_metadata(
             metadata, MACHINE_FEEDBACK_REF_KEY)
+        amendment_attempt = self._json_metadata(metadata, AMENDMENT_ATTEMPT_KEY)
         review_obligations = None
-        if isinstance(review_obligations_ref, dict):
+        if isinstance(review_obligations_ref, dict) and review_obligations_ref:
             obligations_text = self._load_payload_comment(
                 issue_data["id"], "review-obligations", review_obligations_ref)
             try:
@@ -604,23 +648,23 @@ class MulticaStore(WorkItemStore):
         contract_ref = self._json_metadata(metadata, CONTRACT_REF_KEY)
         source_refs = self._json_metadata(metadata, SOURCE_REFS_KEY)
         verification = None
-        if isinstance(verification_ref, dict):
+        if isinstance(verification_ref, dict) and verification_ref:
             verification_text = self._load_payload_comment(issue_data["id"], "verification", verification_ref)
             verification = parse_payload_text(verification_text)
-        if verification is None:
+        if verification is None and not verification_ref_declared:
             legacy_verification = self._json_metadata(metadata, "verification")
             verification = legacy_verification if isinstance(legacy_verification, dict) else None
 
         review_report = None
-        if isinstance(review_report_ref, dict):
+        if isinstance(review_report_ref, dict) and review_report_ref:
             report_text = self._load_payload_comment(issue_data["id"], "review-report", review_report_ref)
             review_report = parse_payload_text(report_text)
-        if review_report is None:
+        if review_report is None and not review_report_ref_declared:
             legacy_report = self._json_metadata(metadata, "review_report")
             review_report = legacy_report if isinstance(legacy_report, dict) else None
 
         review_ledger = None
-        if isinstance(review_ledger_ref, dict):
+        if isinstance(review_ledger_ref, dict) and review_ledger_ref:
             ledger_text = self._load_payload_comment(
                 issue_data["id"], "review-ledger", review_ledger_ref)
             review_ledger = parse_payload_text(ledger_text)
@@ -682,7 +726,9 @@ class MulticaStore(WorkItemStore):
             wave=wave,
             artifacts=self._json_metadata(metadata, "artifacts"),
             verification=verification,
-            verification_ref=verification_ref if isinstance(verification_ref, dict) else None,
+            verification_ref=(
+                verification_ref if isinstance(verification_ref, dict) and verification_ref
+                else None),
             review_verdict=self._optional_text_metadata(metadata, "review_verdict"),
             review_comment=self._optional_text_metadata(metadata, "review_comment"),
             machine_feedback=machine_feedback,
@@ -691,21 +737,28 @@ class MulticaStore(WorkItemStore):
                 if isinstance(machine_feedback_ref, dict) and machine_feedback_ref
                 else None),
             review_report=review_report,
-            review_report_ref=review_report_ref if isinstance(review_report_ref, dict) else None,
+            review_report_ref=(
+                review_report_ref if isinstance(review_report_ref, dict) and review_report_ref
+                else None),
             review_subject_digest=self._optional_text_metadata(
                 metadata, REVIEW_SUBJECT_DIGEST_KEY),
             review_obligations=(
                 review_obligations if isinstance(review_obligations, list) else []),
             review_obligations_ref=(
                 review_obligations_ref
-                if isinstance(review_obligations_ref, dict) else None),
+                if isinstance(review_obligations_ref, dict) and review_obligations_ref
+                else None),
             review_ledger=review_ledger,
             review_ledger_ref=(
-                review_ledger_ref if isinstance(review_ledger_ref, dict) else None),
+                review_ledger_ref
+                if isinstance(review_ledger_ref, dict) and review_ledger_ref
+                else None),
             review_continuation=(
                 review_continuation
                 if isinstance(review_continuation, dict) else None),
             decision_required=self._json_metadata(metadata, DECISION_REQUIRED_KEY),
+            amendment_attempt=(
+                amendment_attempt if isinstance(amendment_attempt, dict) else None),
             contract=contract,
             contract_ref=contract_ref if isinstance(contract_ref, dict) else None,
             source_refs=source_refs if isinstance(source_refs, list) else [],
@@ -713,10 +766,18 @@ class MulticaStore(WorkItemStore):
             phase=parse_phase(metadata.get(PHASE_KEY)),
             bounces=parse_bounces(metadata),
             deliverable=deliverable,
-            deliverable_ref=deliverable_ref if isinstance(deliverable_ref, dict) else None,
+            deliverable_ref=(
+                deliverable_ref if isinstance(deliverable_ref, dict) and deliverable_ref
+                else None),
             project_rules=project_rules,
             project_rules_ref=(
-                project_rules_ref if isinstance(project_rules_ref, dict) else None),
+                project_rules_ref
+                if isinstance(project_rules_ref, dict) and project_rules_ref
+                else None),
+            created_at=issue_data.get("created_at"),
+            updated_at=issue_data.get("updated_at"),
+            platform_assignee_id=platform_assignee_id,
+            unknown_persisted_fields=unknown_persisted_fields,
         )
 
     def _resolve_agent_id(self, agent_name: str) -> str:
@@ -914,40 +975,14 @@ class MulticaStore(WorkItemStore):
         if not isinstance(result, dict):
             raise PlatformError(ui(
                 f"Could not get issue {item_id}", f"获取 issue {item_id} 失败"))
-        item = self._issue_to_work_item(result, self.config.workspace_id)
-        if item.status in {WorkItemStatus.IN_PROGRESS, WorkItemStatus.IN_REVIEW}:
-            latest_run_status = self._inactive_latest_run_status(item_id)
-            if latest_run_status == "failed":
-                # authoring run 失败沿用既有 FAILED 投影；reviewer run 必须保留
-                # REVIEW 阶段，由 pipeline 在同一 issue 上恢复 reviewer，不能误回 worker。
-                if item.status == WorkItemStatus.IN_PROGRESS:
-                    item.status = WorkItemStatus.FAILED
-                else:
-                    item.agent_run_failed = True
-            elif latest_run_status == "completed":
-                item.agent_run_finished_without_submit = True
-        return item
+        return self._issue_to_work_item(result, self.config.workspace_id)
 
-    def _inactive_latest_run_status(self, item_id: str) -> Optional[str]:
-        """没有 active run 时返回最新 run 状态;查询失败/仍在跑返回 None。
-
-        agent runtime 失败不会总是同步更新 issue status;如果没有任何 active run,
-        且最新可见 run 是 failed,编排侧不能无限等待。completed 但 issue 仍
-        in_progress 则表示 worker 没有 submit,由上层回退到 worker 继续处理。
-        """
-        try:
-            runs = self._run_multica(["issue", "runs", item_id, "--output", "json"])
-        except PlatformError:
-            return None
-        if not isinstance(runs, list) or not runs:
-            return None
-        latest = _latest_run(runs)
-        if not latest:
-            return None
-        active = {"queued", "pending", "running", "dispatching"}
-        if any((run.get("status") or "").lower() in active for run in runs):
-            return None
-        return (latest.get("status") or "").lower() or None
+    def set_authoring_identity(
+        self, item_id: str, *, dag_key: str, kind: TaskKind,
+    ) -> WorkItem:
+        self._set_metadata(item_id, "dag_key", dag_key)
+        self._set_metadata(item_id, KIND_KEY, kind.value)
+        return self.get_work_item(item_id)
 
     def update_work_item_metadata(
         self,
@@ -970,6 +1005,7 @@ class MulticaStore(WorkItemStore):
         review_ledger_source: Optional[str] = None,
         review_continuation: Optional[Dict[str, Any]] = None,
         decision_required: Optional[Dict[str, Any]] = None,
+        amendment_attempt: Optional[Dict[str, Any]] = None,
         phase: Optional[TaskPhase] = None,
         worker_bounce: Optional[int] = None,
         ci_bounce: Optional[int] = None,
@@ -1055,6 +1091,8 @@ class MulticaStore(WorkItemStore):
                 item_id, REVIEW_SUBJECT_DIGEST_KEY, review_subject_digest)
         if decision_required is not None:
             self._set_metadata(item_id, DECISION_REQUIRED_KEY, decision_required)
+        if amendment_attempt is not None:
+            self._set_metadata(item_id, AMENDMENT_ATTEMPT_KEY, amendment_attempt)
         if worker_bounce is not None:
             self._set_metadata(item_id, WORKER_BOUNCE_KEY, str(worker_bounce))
         if ci_bounce is not None:
@@ -1310,30 +1348,77 @@ class MulticaRuntime(AgentRuntime):
     阶段交接(评审/回退)= 同一 issue 转派新 assignee,天然支持接力棒传递。
     """
 
-    def __init__(self, store: MulticaStore):
+    def __init__(
+        self,
+        store: MulticaStore,
+        *,
+        active_observation_attempts: int = 4,
+        active_observation_interval: float = 0.5,
+        sleeper: Callable[[float], None] = time.sleep,
+    ):
+        if active_observation_attempts < 1:
+            raise ValueError("active_observation_attempts must be at least 1")
+        if active_observation_interval < 0:
+            raise ValueError("active_observation_interval must not be negative")
         self._store = store
+        self._active_observation_attempts = active_observation_attempts
+        self._active_observation_interval = active_observation_interval
+        self._sleeper = sleeper
+
+    @property
+    def capabilities(self) -> RuntimeCapabilities:
+        return RuntimeCapabilities(stable_direct_run_identity=True)
+
+    def _issue_runs(self, item_id: str) -> List[Dict[str, Any]]:
+        runs = self._store._run_multica([
+            "issue", "runs", item_id, "--output", "json",
+        ])
+        if not isinstance(runs, list):
+            return []
+        return [run for run in runs if isinstance(run, dict)]
+
+    @staticmethod
+    def _has_active_run(runs: List[Dict[str, Any]]) -> bool:
+        return any(
+            (run.get("status") or "").lower() in _ACTIVE_RUN_STATUSES
+            for run in runs
+        )
 
     def wake(self, item_id: str, agent: str, role: str) -> None:
         if self._store._consume_assignment_wake_pending(item_id):
             return None
-        try:
-            runs = self._store._run_multica(["issue", "runs", item_id, "--output", "json"])
-        except PlatformError:
+        runs = self._issue_runs(item_id)
+        if self._has_active_run(runs):
             return None
-        latest = _latest_direct_run(runs if isinstance(runs, list) else [])
-        if latest:
-            status = (latest.get("status") or "").lower()
-            if status in {"failed", "cancelled", "completed"}:
-                self._store._run_multica(["issue", "rerun", item_id, "--output", "json"])
+        latest = _latest_direct_run(runs)
+        if not latest or (
+            (latest.get("status") or "").lower()
+            not in _RERUNNABLE_DIRECT_RUN_STATUSES
+        ):
+            return None
+        for _attempt in range(1, self._active_observation_attempts):
+            self._sleeper(self._active_observation_interval)
+            runs = self._issue_runs(item_id)
+            if self._has_active_run(runs):
+                return None
+            latest = _latest_direct_run(runs)
+            if not latest or (
+                (latest.get("status") or "").lower()
+                not in _RERUNNABLE_DIRECT_RUN_STATUSES
+            ):
+                return None
+        self._store._run_multica([
+            "issue", "rerun", item_id, "--output", "json",
+        ])
         return None
 
     def cancel(self, item_id: str) -> bool:
         runs = self._store._run_multica(["issue", "runs", item_id, "--output", "json"])
         latest = _latest_direct_run(runs if isinstance(runs, list) else [])
         cancelled = False
-        if latest and (latest.get("status") or "").lower() in {
-            "queued", "pending", "running", "dispatching",
-        }:
+        if latest and (
+            (latest.get("status") or "").lower() in _ACTIVE_RUN_STATUSES
+        ):
             task_id = latest.get("id")
             if task_id:
                 self._store._run_multica([
@@ -1345,15 +1430,19 @@ class MulticaRuntime(AgentRuntime):
         return cancelled
 
     def is_active(self, item_id: str) -> bool:
-        runs = self._store._run_multica([
-            "issue", "runs", item_id, "--output", "json",
-        ])
-        latest = _latest_direct_run(runs if isinstance(runs, list) else [])
-        return bool(
-            latest
-            and (latest.get("status") or "").lower()
-            in {"queued", "pending", "running", "dispatching"}
-        )
+        return self._has_active_run(self._issue_runs(item_id))
+
+    def list_runs(self, item_id: str) -> List[AgentRunObservation]:
+        runs = self._issue_runs(item_id)
+        return [
+            AgentRunObservation(
+                id=str(run.get("id")),
+                kind=str(run.get("kind") or "direct").lower(),
+                status=str(run.get("status") or "").lower(),
+            )
+            for run in runs
+            if isinstance(run, dict) and run.get("id")
+        ]
 
     @staticmethod
     def _items(payload, key: str) -> List[Dict[str, Any]]:
