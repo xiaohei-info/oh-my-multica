@@ -13,10 +13,11 @@ from typing import Any, Dict, List, Optional
 
 from ..core.taskmeta import TaskKind, TaskPhase
 from ..core.restart import RestartClaimResult, RestartState
+from ..errors import ValidationError
 from .models import (
     EngineConfig, MergeCommandResult, ProjectInfo, PullRequestCheckResult,
     PullRequestObservation, PullRequestReadiness, PullRequestReadinessFailure,
-    WorkItem, WorkItemStatus, WorkspaceInfo,
+    StoreCapabilities, WorkItem, WorkItemStatus, WorkspaceInfo,
 )
 
 
@@ -31,6 +32,11 @@ class WorkItemStore(ABC):
 
     def __init__(self, config: EngineConfig):
         self.config = config
+
+    @property
+    def capabilities(self) -> StoreCapabilities:
+        """Conservative defaults keep unsupported destructive flows disabled."""
+        return StoreCapabilities()
 
     # ==================== 成员池 ====================
 
@@ -136,6 +142,7 @@ class WorkItemStore(ABC):
         review_ledger_source: Optional[str] = None,
         review_continuation: Optional[Dict[str, Any]] = None,
         decision_required: Optional[Dict[str, Any]] = None,
+        amendment_attempt: Optional[Dict[str, Any]] = None,
         phase: Optional[TaskPhase] = None,
         worker_bounce: Optional[int] = None,
         ci_bounce: Optional[int] = None,
@@ -175,6 +182,16 @@ class WorkItemStore(ABC):
     ) -> List[WorkItem]:
         """列出工作单元(进度查看/调试用,非主查询路径)。status 过滤可选。"""
 
+    def find_work_item_by_dag_key(
+        self, workspace_id: str, dag_key: str,
+    ) -> Optional[WorkItem]:
+        """Find one stable task identity, including a create-before-metadata shell."""
+        title_prefix = f"[DAG:{dag_key}]"
+        return next((
+            item for item in self.list_work_items(workspace_id)
+            if item.dag_key == dag_key or item.title.startswith(title_prefix)
+        ), None)
+
     @abstractmethod
     def add_comment(self, item_id: str, comment: str):
         """追加系统说明(进度报告/回退原因)，不得把它解释为新的 agent 输入。
@@ -196,19 +213,20 @@ class WorkItemStore(ABC):
         让重新提交后的节点再次接受评审,避免旧 verdict 立即再次触发 reject。
         """
 
-    @abstractmethod
     def claim_authoring_restart(
         self, item_id: str, candidate: RestartState, *, now: float,
     ) -> RestartClaimResult:
-        """竞争一个持久化 restart generation；只有 acquired 调用者可补偿写。"""
+        """Atomic restart claim; unsupported stores must never emulate it with LWW."""
+        raise ValidationError(
+            "This Store does not support an atomic authoring restart claim")
 
-    @abstractmethod
     def guard_authoring_restart(
         self, item_id: str, *, generation: str, owner_nonce: str,
     ) -> RestartState:
-        """校验当前单字段 fencing token，失配必须失败关闭。"""
+        """Validate a real Store fencing token."""
+        raise ValidationError(
+            "This Store does not support authoring restart fencing")
 
-    @abstractmethod
     def update_authoring_restart(
         self,
         item_id: str,
@@ -217,9 +235,10 @@ class WorkItemStore(ABC):
         owner_nonce: str,
         state: RestartState,
     ) -> RestartState:
-        """在 generation+owner 仍匹配时替换完整 restart journal。"""
+        """Persist restart state under a real atomic claim."""
+        raise ValidationError(
+            "This Store does not support authoring restart state")
 
-    @abstractmethod
     def restart_authoring(
         self,
         item_id: str,
@@ -227,12 +246,14 @@ class WorkItemStore(ABC):
         generation: str,
         owner_nonce: str,
     ) -> WorkItem:
-        """在持久化 generation fencing 下原地重开为干净 authoring。
+        """Atomically invalidate one confirmation and reopen authoring.
 
         仅清除当前交付和评审引用；平台评论与附件历史必须保留作审计证据。
         generation journal 绑定 kind/phase/status/review subject/deliverable identity；
         已完成转换的干净 authoring 可幂等重入。
         """
+        raise ValidationError(
+            "This Store does not support atomic authoring restart")
 
     @abstractmethod
     def prepare_review_cycle(self, item_id: str, subject_digest: str) -> WorkItem:

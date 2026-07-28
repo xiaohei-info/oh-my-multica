@@ -10,13 +10,12 @@ This file records public changes to oh-my-multica. The format follows
 
 ### Changed
 
-- `omac dag amend propose --resume-issue-id ... --restart-authoring` now uses a
-  persisted restart generation to fence cleanup, one-time input refresh,
-  Worker/Reviewer dispatch, and exact direct-Run observation. Applied
-  confirmations fail closed, historical or non-direct Runs cannot satisfy the
-  new cycle, crashes resume the same generation without rerun/cancel, and
-  missing structured submits or Reviewer verdicts converge to an explicit
-  decision instead of polling forever.
+- Amendment authoring restart is now capability-gated: engines without a real
+  atomic conditional claim, including Multica's LWW metadata Store, fail closed
+  before modifying the old confirmation. `--new-attempt --supersedes-issue-id`
+  creates an auditable, digest-bound, idempotently reusable amendment issue while
+  preserving the superseded confirmation. Multica's ordinary wake path also
+  observes all issue Runs before rerunning a terminal direct Run.
 - Typed `consumes` now preserves three distinct policies across manifest,
   amendment, Store attachment, and `work show` round trips: omitted permits
   transitional inputs only from transitive legacy upstream dependencies,

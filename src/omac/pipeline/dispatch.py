@@ -312,6 +312,9 @@ def build_show_output(item: Any, identity: str, *, language: str = EN) -> Dict[s
     review_continuation = getattr(item, "review_continuation", None)
     if review_continuation is not None:
         context["review_continuation"] = review_continuation
+    amendment_attempt = getattr(item, "amendment_attempt", None)
+    if amendment_attempt is not None:
+        context["amendment_attempt"] = amendment_attempt
 
     if phase == TaskPhase.AUTHORING:
         previous_review = _previous_review_context(item)
@@ -1093,6 +1096,7 @@ def normalize_source_refs(
             ref: Dict[str, Any] = {"issue_id": issue_id}
             for key in (
                 "label", "kind", "url", "content_sha256", "delivery_key",
+                "issue_key", "relation", "report_sha256",
             ):
                 value = raw.get(key)
                 if value:

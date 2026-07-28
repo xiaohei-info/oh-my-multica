@@ -1,7 +1,10 @@
 """运行中 DAG amendment 的 Orchestrator → Reviewer → Human 流水线。"""
 from __future__ import annotations
 
+import hashlib
+import json
 import os
+import shlex
 import tempfile
 import time
 from pathlib import Path
@@ -16,7 +19,7 @@ from ..core.amendment import (
 from ..core.manifest import Contract, load_manifest
 from ..core.taskmeta import TaskKind, TaskPhase
 from ..engines.models import WorkItemStatus
-from ..errors import ValidationError
+from ..errors import NeedsDecision, PlatformError, ValidationError
 from ..i18n import ui
 from .tasks import run_task
 
@@ -24,6 +27,60 @@ from .tasks import run_task
 def default_amendment_path(manifest_path: str) -> str:
     path = Path(manifest_path)
     return str(path.with_name(f"{path.stem}.amendment.yaml"))
+
+
+def _new_attempt_command(
+    manifest_path: str,
+    *,
+    report_file: str,
+    docs: list[str],
+    blocked_nodes: list[str],
+    supersedes_issue_id: str,
+    output_file: str | None,
+) -> str:
+    args = [
+        "omac", "dag", "amend", "propose", manifest_path,
+        "--report-file", report_file,
+    ]
+    for path in docs:
+        args.extend(["--docs", path])
+    for node_id in blocked_nodes:
+        args.extend(["--blocked-node", node_id])
+    args.extend([
+        "--new-attempt", "--supersedes-issue-id", supersedes_issue_id,
+    ])
+    if output_file:
+        args.extend(["--output-file", output_file])
+    args.extend(["--output", "json"])
+    return shlex.join(args)
+
+
+def _attempt_context(
+    manifest_path: str,
+    *,
+    report: str,
+    docs: list[str],
+    blocked_nodes: list[str],
+    superseded_issue,
+) -> dict[str, str]:
+    report_digest = hashlib.sha256(report.encode("utf-8")).hexdigest()
+    manifest_digest = hashlib.sha256(
+        Path(manifest_path).read_bytes()).hexdigest()
+    request_digest = hashlib.sha256(json.dumps({
+        "manifest_sha256": manifest_digest,
+        "report_sha256": report_digest,
+        "docs": sorted(map(_portable_path, docs)),
+        "blocked_nodes": sorted(blocked_nodes),
+        "supersedes_issue_id": superseded_issue.id,
+    }, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    return {
+        "schema": "omac.amendment-attempt/v1",
+        "attempt_id": request_digest[:16],
+        "request_digest": request_digest,
+        "report_sha256": report_digest,
+        "supersedes_issue_id": superseded_issue.id,
+        "supersedes_issue_key": superseded_issue.identifier or "",
+    }
 
 
 def _write_yaml_atomic(path: str, payload: dict[str, Any]) -> None:
@@ -156,12 +213,49 @@ def propose_amendment(
     output_file: str | None = None,
     resume_issue_id: str | None = None,
     restart_authoring: bool = False,
+    new_attempt: bool = False,
+    supersedes_issue_id: str | None = None,
     poll=None,
 ) -> dict[str, Any]:
     if restart_authoring and not resume_issue_id:
         raise ValidationError(ui(
             "--restart-authoring requires --resume-issue-id",
             "--restart-authoring 必须与 --resume-issue-id 一起使用"))
+    if new_attempt and not supersedes_issue_id:
+        raise ValidationError(ui(
+            "--new-attempt requires --supersedes-issue-id",
+            "--new-attempt 必须与 --supersedes-issue-id 一起使用"))
+    if supersedes_issue_id and not new_attempt:
+        raise ValidationError(ui(
+            "--supersedes-issue-id requires --new-attempt",
+            "--supersedes-issue-id 必须与 --new-attempt 一起使用"))
+    if new_attempt and (resume_issue_id or restart_authoring):
+        raise ValidationError(ui(
+            "--new-attempt cannot be combined with --resume-issue-id or --restart-authoring",
+            "--new-attempt 不能与 --resume-issue-id 或 --restart-authoring 同用"))
+    if restart_authoring and (
+        not engine.store.capabilities.atomic_authoring_restart
+        or not engine.runtime.capabilities.stable_direct_run_identity
+    ):
+        next_action = _new_attempt_command(
+            manifest_path,
+            report_file=report_file,
+            docs=docs,
+            blocked_nodes=blocked_nodes,
+            supersedes_issue_id=resume_issue_id,
+            output_file=output_file,
+        )
+        raise NeedsDecision(
+            ui(
+                "The selected engine cannot safely restart this confirmation in place; create a new amendment attempt",
+                "当前引擎无法安全原地重开该 confirmation；请创建新的 amendment attempt"),
+            report={
+                "reason_code": "atomic-restart-unsupported",
+                "engine": engine.store.config.engine_type,
+                "resume_issue_id": resume_issue_id,
+                "next_action": next_action,
+            },
+        )
     report, docs = _validate_inputs(
         manifest_path, report_file, docs, blocked_nodes)
     if not orchestrator:
@@ -217,29 +311,131 @@ def propose_amendment(
         "contract": _contract(manifest_path, docs, blocked_nodes, report_file),
     }
 
+    attempt = None
+    source_refs = None
+    dag_key = f"amend-{Path(manifest_path).stem}"
+    effective_resume_issue_id = resume_issue_id
+    if new_attempt:
+        superseded = engine.store.get_work_item(supersedes_issue_id)
+        if superseded.kind != TaskKind.AMENDMENT:
+            raise ValidationError("--supersedes-issue-id must reference an amendment issue")
+        if (
+            superseded.phase != TaskPhase.CONFIRMATION
+            or superseded.review_verdict != "pass"
+        ):
+            raise ValidationError(
+                "--supersedes-issue-id must reference a Reviewer-pass amendment "
+                "in human confirmation")
+        attempt = _attempt_context(
+            manifest_path,
+            report=report,
+            docs=docs,
+            blocked_nodes=blocked_nodes,
+            superseded_issue=superseded,
+        )
+        suffix = attempt["attempt_id"]
+        dag_key = f"amend-{Path(manifest_path).stem}-attempt-{suffix}"
+        payload["title"] += f" [attempt {suffix}]"
+        superseded_ref = {
+            "issue_id": superseded.id,
+            "label": (
+                f"superseded amendment {superseded.identifier}"
+                if superseded.identifier else "superseded amendment"
+            ),
+            "kind": "amendment",
+            "relation": "supersedes",
+            "report_sha256": attempt["report_sha256"],
+        }
+        if superseded.identifier:
+            superseded_ref["issue_key"] = superseded.identifier
+        source_refs = [superseded_ref]
+        existing = engine.store.find_work_item_by_dag_key(
+            engine.store.config.workspace_id, dag_key)
+        if existing is not None:
+            if existing.amendment_attempt not in (None, attempt):
+                raise NeedsDecision(
+                    "Amendment attempt identity conflict",
+                    report={
+                        "reason_code": "amendment-attempt-identity-conflict",
+                        "item_id": existing.id,
+                        "dag_key": dag_key,
+                    },
+                )
+            effective_resume_issue_id = existing.id
+    elif resume_issue_id is None:
+        existing = engine.store.find_work_item_by_dag_key(
+            engine.store.config.workspace_id, dag_key)
+        if existing is not None:
+            next_action = _new_attempt_command(
+                manifest_path,
+                report_file=report_file,
+                docs=docs,
+                blocked_nodes=blocked_nodes,
+                supersedes_issue_id=existing.id,
+                output_file=output_file,
+            )
+            raise NeedsDecision(
+                ui(
+                    "The amendment issue identity already exists; create an explicit new attempt",
+                    "amendment issue 身份已存在；请显式创建新的 attempt"),
+                report={
+                    "reason_code": "amendment-identity-conflict",
+                    "existing_issue_id": existing.id,
+                    "existing_issue_key": existing.identifier,
+                    "next_action": next_action,
+                },
+            )
+
     def guard(item) -> list[str]:
         if not item.deliverable:
             return ["amendment deliverable is empty"]
         return validate_proposal(
             manifest, item.deliverable, pool, acceptance=acceptance)
 
-    outcome = run_task(
-        engine,
-        TaskKind.AMENDMENT,
-        payload,
-        orchestrator,
-        reviewers=reviewers,
-        max_revisions=max_revisions,
-        poll=poll or (lambda: time.sleep(engine.store.config.polling_interval)),
-        guard=guard,
-        confirm=True,
-        pause_at_confirmation=True,
-        dag_key=f"amend-{Path(manifest_path).stem}",
-        resume_item_id=resume_issue_id,
-        restart_authoring=restart_authoring,
-        review_acceptance_doc=acceptance,
-        review_amendment_manifest=manifest,
-    )
+    try:
+        outcome = run_task(
+            engine,
+            TaskKind.AMENDMENT,
+            payload,
+            orchestrator,
+            reviewers=reviewers,
+            max_revisions=max_revisions,
+            poll=poll or (lambda: time.sleep(engine.store.config.polling_interval)),
+            guard=guard,
+            confirm=True,
+            pause_at_confirmation=True,
+            source_refs=source_refs,
+            dag_key=dag_key,
+            resume_item_id=effective_resume_issue_id,
+            restart_authoring=restart_authoring,
+            amendment_attempt=attempt,
+            reuse_dag_key=new_attempt,
+            review_acceptance_doc=acceptance,
+            review_amendment_manifest=manifest,
+        )
+    except PlatformError as exc:
+        if resume_issue_id or new_attempt or "conflict" not in str(exc).lower():
+            raise
+        conflict_item = engine.store.find_work_item_by_dag_key(
+            engine.store.config.workspace_id, dag_key)
+        supersedes = (
+            conflict_item.id if conflict_item is not None
+            else "<existing-amendment-issue-id>"
+        )
+        raise NeedsDecision(
+            "Amendment issue creation conflicted with an existing identity",
+            report={
+                "reason_code": "amendment-identity-conflict",
+                "next_action": _new_attempt_command(
+                    manifest_path,
+                    report_file=report_file,
+                    docs=docs,
+                    blocked_nodes=blocked_nodes,
+                    supersedes_issue_id=supersedes,
+                    output_file=output_file,
+                ),
+            },
+        ) from exc
     issue = engine.store.get_work_item(outcome["item_id"])
     if issue.phase != TaskPhase.CONFIRMATION or issue.review_verdict != "pass":
         raise ValidationError("Amendment did not reach Reviewer-pass confirmation")

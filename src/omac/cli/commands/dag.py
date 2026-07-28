@@ -162,7 +162,16 @@ def register(parser):
     propose.add_argument(
         "--restart-authoring",
         action="store_true",
-        help="与 --resume-issue-id 同用：作废旧 confirmation，并在同一 issue 重开 authoring",
+        help="与 --resume-issue-id 同用；仅原子 restart capability 引擎可原地重开",
+    )
+    propose.add_argument(
+        "--new-attempt",
+        action="store_true",
+        help="为同一 manifest/blocker 创建可审计的新 amendment attempt",
+    )
+    propose.add_argument(
+        "--supersedes-issue-id",
+        help="与 --new-attempt 同用：记录被替代的旧 amendment issue",
     )
     propose.add_argument("--engine", help="引擎类型覆盖")
     propose.add_argument("--workspace", help="workspace 覆盖")
@@ -449,7 +458,6 @@ def status(args) -> int:
             f"manifest 文件不存在: {args.manifest}\n"
             f"  用 omac plan create --name <name> 生成,或检查路径"))
     engine, _ = _assemble_engine(args)
-    config = _load_config_for_manifest(args.manifest)
     manifest = load_manifest(args.manifest)
     report = build_status_report(manifest, engine.store, args.manifest)
 
@@ -510,6 +518,8 @@ def amend(args) -> int:
             output_file=args.output_file,
             resume_issue_id=args.resume_issue_id,
             restart_authoring=args.restart_authoring,
+            new_attempt=args.new_attempt,
+            supersedes_issue_id=args.supersedes_issue_id,
         )
         print_json(report)
         raise NeedsDecision(ui(

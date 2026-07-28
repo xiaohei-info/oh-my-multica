@@ -29,7 +29,8 @@ from ..i18n import ui
 from .models import (
     AgentInfo, AgentProvisionSpec, AgentRunObservation, EngineConfig, ProjectInfo, RuntimeTarget,
     MergeCommandResult, PullRequestCheckResult, PullRequestObservation,
-    PullRequestReadiness, PullRequestState,
+    PullRequestReadiness, PullRequestState, RuntimeCapabilities,
+    StoreCapabilities,
     WorkItem, WorkItemStatus, WorkspaceInfo,
 )
 from .runtime import AgentRuntime
@@ -190,6 +191,13 @@ class MockStore(WorkItemStore):
             cfg_extra.get("MOCK_AUTO_COMPLETE_DELAY", "2"))
         _shared_auto_merge_on_success = str(
             cfg_extra.get("MOCK_AUTO_MERGE_ON_SUCCESS", "false")).lower() == "true"
+
+    @property
+    def capabilities(self) -> StoreCapabilities:
+        return StoreCapabilities(
+            atomic_authoring_restart=True,
+            authoring_restart_mechanism="in-memory-lock",
+        )
 
     # ==================== 测试辅助(类级) ====================
 
@@ -718,6 +726,7 @@ class MockStore(WorkItemStore):
         review_ledger_source: Optional[str] = None,
         review_continuation: Optional[Dict[str, Any]] = None,
         decision_required: Optional[Dict[str, Any]] = None,
+        amendment_attempt: Optional[Dict[str, Any]] = None,
         phase: Optional[TaskPhase] = None,
         worker_bounce: Optional[int] = None,
         ci_bounce: Optional[int] = None,
@@ -797,6 +806,8 @@ class MockStore(WorkItemStore):
             item.review_continuation = review_continuation or None
         if decision_required is not None:
             item.decision_required = decision_required
+        if amendment_attempt is not None:
+            item.amendment_attempt = dict(amendment_attempt)
         if phase is not None:
             item.phase = phase
         if worker_bounce is not None:
@@ -1030,10 +1041,12 @@ class MockStore(WorkItemStore):
             and not item.deliverable_ref
             and item.review_verdict is None
         )
-        if (
-            not partial_restart
-            and item.review_subject_digest != claim.base_review_subject_digest
-        ):
+        base_matches = (
+            item.status.value == claim.base_status
+            and item.review_subject_digest == claim.base_review_subject_digest
+            and deliverable_identity(item) == claim.base_deliverable_identity
+        )
+        if not partial_restart and not base_matches:
             raise NeedsDecision(
                 ui(
                     "Amendment confirmation changed before authoring restart; read it again and retry",
@@ -1185,6 +1198,10 @@ class MockRuntime(AgentRuntime):
 
     def __init__(self, store: MockStore):
         self._store = store
+
+    @property
+    def capabilities(self) -> RuntimeCapabilities:
+        return RuntimeCapabilities(stable_direct_run_identity=True)
 
     def wake(self, item_id: str, agent: str, role: str) -> None:
         # MockStore.assign_work_item 已启动自动完成计时,这里只确认 item 存在。

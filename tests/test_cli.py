@@ -59,6 +59,8 @@ def test_amend_propose_help_documents_explicit_authoring_restart(capsys):
     help_text = capsys.readouterr().out
     assert "--restart-authoring" in help_text
     assert "--resume-issue-id" in help_text
+    assert "--new-attempt" in help_text
+    assert "--supersedes-issue-id" in help_text
 
 
 def test_unknown_command_teaches(capsys):

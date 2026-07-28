@@ -10,7 +10,10 @@ from abc import ABC, abstractmethod
 from typing import List
 
 from ..errors import PlatformError
-from .models import AgentInfo, AgentProvisionSpec, AgentRunObservation, RuntimeTarget
+from .models import (
+    AgentInfo, AgentProvisionSpec, AgentRunObservation, RuntimeCapabilities,
+    RuntimeTarget,
+)
 
 
 class AgentRuntime(ABC):
@@ -57,3 +60,7 @@ class AgentRuntime(ABC):
     @abstractmethod
     def describe(self) -> str:
         """一句话说明该运行时的唤醒机制(体检/诊断输出用)。"""
+
+    @property
+    def capabilities(self) -> RuntimeCapabilities:
+        return RuntimeCapabilities()
