@@ -10,6 +10,11 @@ This file records public changes to oh-my-multica. The format follows
 
 ### Changed
 
+- Typed `consumes` now preserves three distinct policies across manifest,
+  amendment, Store attachment, and `work show` round trips: omitted permits
+  transitional inputs only from transitive legacy upstream dependencies,
+  explicit `[]` permits no external inputs, and a non-empty list remains a
+  strict artifact allowlist. New DAG plans still declare exact inputs.
 - Node contracts can optionally declare typed `evidence_mode`, `produces`, and
   `consumes` boundaries. Manifest lint verifies canonical producers and
   transitive upstream ownership, `work show` projects a compact responsibility

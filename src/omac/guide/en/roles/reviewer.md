@@ -69,6 +69,10 @@ conflict or cannot be reproduced, do not infer pass.
   non-upstream/downstream input or fixture-to-live demand to
   `contract-boundary-conflict` NeedsDecision instead of spending another Worker
   rework round.
+- Interpret `responsibility.input_policy` structurally. Omitted `consumes`
+  means `transitional-upstream`, so a structured input from a transitive
+  predecessor is not undeclared. Explicit `consumes: []` means no external
+  inputs; a non-empty list remains a strict allowlist.
 - Keep `full_review_completed: true`, but OMAC also computes completeness from
   obligation and prior-blocker coverage. The boolean cannot hide omissions.
 

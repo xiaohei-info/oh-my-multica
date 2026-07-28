@@ -1234,7 +1234,13 @@ def render_issue_body(node, contract, kind, issue_id, source_refs=None, engine_e
             f"- 证据模式: `{responsibility['evidence_mode']}`",
             language=language,
         )]
-        for value in responsibility["allowed_inputs"]:
+        input_policy = responsibility["input_policy"]
+        boundary_lines.append(ui(
+            f"- Input policy: `{input_policy}`",
+            f"- 输入策略: `{input_policy}`",
+            language=language,
+        ))
+        for value in responsibility["allowed_inputs"] or []:
             boundary_lines.append(ui(
                 f"- Allowed input: `{value['artifact_id']}` from "
                 f"`{value['producer']}` (`{value['evidence_mode']}`)",
@@ -1249,10 +1255,18 @@ def render_issue_body(node, contract, kind, issue_id, source_refs=None, engine_e
                 f"- Produces: {outputs}", f"- 产物: {outputs}",
                 language=language,
             ))
+        boundary_zh = {
+            "transitional-upstream": (
+                "consumes 处于过渡期未声明状态：只允许传递上游输入；非上游和下游"
+                "产物仍不属于当前 contract。"),
+            "none": "不允许任何外部输入。",
+            "allowlist": (
+                "只允许 consumes 明确声明的外部输入；非上游或下游节点产物不属于"
+                "当前 contract。"),
+        }[input_policy]
         boundary_lines.append(ui(
             f"- Boundary: {responsibility['boundary_rule']}",
-            "- 边界: 只允许使用 consumes 明确声明的外部输入；非上游或下游节点的产物"
-            "不属于当前 contract。",
+            f"- 边界: {boundary_zh}",
             language=language,
         ))
         boundary = (

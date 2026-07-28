@@ -134,17 +134,18 @@ class Contract:
     # 主要代码归属范围(可选、非穷举白名单):用于表达节点稳定的模块边界、降低
     # 并行冲突。完成 contract 必需的配套文件可扩展,但需在 PR/verification 说明。
     scope_paths: list = field(default_factory=list)
-    # 可选的 typed artifact boundary。旧 manifest 缺省 None/[] 时保持原语义。
+    # 可选的 typed artifact boundary。consumes 使用 tri-state：None 表示旧运行
+    # manifest 尚未枚举输入，[] 表示明确无外部输入，非空列表表示严格 allowlist。
     evidence_mode: EvidenceMode | None = None
     produces: list[ProducedArtifact] = field(default_factory=list)
-    consumes: list[ConsumedArtifact] = field(default_factory=list)
+    consumes: list[ConsumedArtifact] | None = None
 
 
 def _load_contract(raw):
     if raw is None:
         return None
     raw_produces = raw.get("produces", [])
-    raw_consumes = raw.get("consumes", [])
+    raw_consumes = raw.get("consumes")
     return Contract(
         objective=raw.get("objective"),
         source_of_truth=list(raw.get("source_of_truth", [])),
@@ -210,7 +211,7 @@ def _dump_contract(contract):
         data["produces"] = [
             _dump_produced_artifact(value) for value in contract.produces
         ]
-    if contract.consumes:
+    if contract.consumes is not None:
         data["consumes"] = [
             _dump_consumed_artifact(value) for value in contract.consumes
         ]

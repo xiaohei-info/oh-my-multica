@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
+from omac.core.manifest import Contract, EvidenceMode, ProducedArtifact
 from omac.engines.models import (
     EngineConfig, PullRequestReadinessFailure, PullRequestState,
 )
@@ -788,6 +789,27 @@ def test_multica_set_node_contract_writes_ref_without_full_contract_metadata(mon
     assert published[0][0] == "contract"
     assert published[0][2] == ".yaml"
     assert "实现很长的自然语言目标" in published[0][1]
+
+
+def test_multica_contract_attachment_preserves_consumes_tristate(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    payloads = []
+    monkeypatch.setattr(store, "_set_metadata", lambda *_args: None)
+    monkeypatch.setattr(
+        store, "_publish_payload_comment",
+        lambda _item, _label, source, _suffix: (
+            payloads.append(yaml.safe_load(source)) or {"sha256": "s"}),
+    )
+    base = dict(
+        evidence_mode=EvidenceMode.FIXTURE,
+        produces=[ProducedArtifact("tooling-package")],
+    )
+
+    store.set_node_contract("legacy", Contract(**base))
+    store.set_node_contract("none", Contract(**base, consumes=[]))
+
+    assert "consumes" not in payloads[0]
+    assert payloads[1]["consumes"] == []
 
 
 def test_multica_done_contract_publish_keeps_issue_unassigned_and_does_not_start_run(

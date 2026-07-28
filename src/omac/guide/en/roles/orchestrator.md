@@ -58,8 +58,10 @@ guide does not decide product facts.
   production artifacts.
 - Every consume producer must exist, declare the artifact, and be a transitive
   upstream dependency. Do not invent `blocked_by` edges for coordination only.
-  Legacy manifests that omit these optional fields keep their existing runtime
-  semantics.
+  New complete typed DAGs always declare exact `consumes` (including `[]`).
+  When amending a running legacy manifest whose completed producers cannot be
+  given trustworthy typed outputs, deliberately omit `consumes` to select the
+  transitional-upstream policy; never use it for greenfield planning.
 - A machine preflight failure returns directly to authoring without consuming a
   Reviewer cycle. `review_comment` contains only a bounded summary; the complete
   structured findings are stored in an attachment. Before reworking, run the

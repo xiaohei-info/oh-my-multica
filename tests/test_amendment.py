@@ -170,6 +170,12 @@ def _typed_boundary_contract_update():
     return operation
 
 
+def _transitional_boundary_contract_update():
+    operation = _typed_boundary_contract_update()
+    operation["set"]["contract"].pop("consumes")
+    return operation
+
+
 def _add_typed_boundary(path):
     manifest = load_manifest(str(path))
     contract = manifest.nodes["bootstrap"].contract
@@ -349,7 +355,7 @@ def test_explicit_contract_boundary_clear_survives_apply_reload_and_restart(tmp_
     assert first["sync"]["synced"] == ["bootstrap"]
     assert contract.evidence_mode is None
     assert contract.produces == []
-    assert contract.consumes == []
+    assert contract.consumes is None
     assert second["sync"]["already_complete"] == ["bootstrap"]
 
 
@@ -371,6 +377,29 @@ def test_typed_contract_boundary_preservation_survives_apply_and_reload(tmp_path
     assert contract.evidence_mode is EvidenceMode.FIXTURE
     assert contract.produces == [ProducedArtifact("tooling-package")]
     assert contract.consumes == []
+
+
+def test_transitional_consumes_survives_amendment_apply_reload_and_restart(tmp_path):
+    path = _manifest(tmp_path)
+    engine = _engine()
+    item = engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
+    reviewed = build_reviewed_amendment(
+        load_manifest(str(path)), _proposal(_transitional_boundary_contract_update()),
+        engine.store, issue_id="amendment-issue", reviewer_verdict="pass")
+
+    first = apply_amendment(
+        str(path), reviewed, engine.store, {"alice", "bob", "charlie"})
+    reloaded = load_manifest(str(path))
+    second = apply_amendment(
+        str(path), reviewed, engine.store, {"alice", "bob", "charlie"})
+
+    assert first["sync"]["synced"] == ["bootstrap"]
+    assert reloaded.nodes["bootstrap"].contract.consumes is None
+    assert "consumes" not in amendment_mod._dump_contract(
+        reloaded.nodes["bootstrap"].contract)
+    assert second["sync"]["already_complete"] == ["bootstrap"]
 
 
 def test_acceptance_drift_after_amendment_review_fails_closed(tmp_path):
