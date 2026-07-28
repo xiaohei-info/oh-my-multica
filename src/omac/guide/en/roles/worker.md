@@ -32,6 +32,22 @@ conflicts; do not redefine the contract.
   integration gates, and coverage gate.
 - The verification schema in the evidence artifact guide.
 
+When `work show.context.responsibility` is present, it is the node's typed
+artifact boundary:
+
+- `evidence_mode: fixture` proves tooling or behavior with complete,
+  executable deterministic fixtures owned by this node. Do not wait for an
+  undeclared production environment or downstream artifact.
+- `evidence_mode: artifact|live` uses declared artifacts or real runtime facts
+  as the primary evidence class.
+- Consume only the `{artifact_id, producer, evidence_mode}` entries in
+  `consumes`; every producer must be a transitive `blocked_by` predecessor.
+  Deliver only `produces`, and never turn a downstream output into this node's
+  prerequisite.
+- A review request for an undeclared input, a non-upstream/downstream artifact,
+  or live evidence from a fixture node is a contract boundary conflict. Do not
+  expand implementation scope; wait for OMAC to route NeedsDecision.
+
 ## Steps
 
 1. Run `work show` and read the full contract, upstream chain, review context,

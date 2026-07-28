@@ -10,6 +10,7 @@ work submit 的左移参数门 + 证据校验 + 原子 metadata 写入 + 阶段�
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 import json
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -17,8 +18,12 @@ import yaml
 
 from omac.core import evidence as evidence_mod
 from omac.core.acceptance import load_acceptance_doc, load_acceptance_doc_file
+from omac.core.contract_boundaries import (
+    CONTRACT_BOUNDARY_SCHEMA,
+    responsibility_summary,
+)
 from omac.core.lint import lint as lint_manifest, lint_increment
-from omac.core.manifest import _load_contract, load_manifest
+from omac.core.manifest import _dump_contract, _load_contract, load_manifest
 from omac.core.project_rules import END_MARKER, START_MARKER
 from omac.core.review_convergence import (
     REVIEW_PROTOCOL_VERSION,
@@ -279,11 +284,7 @@ def build_show_output(item: Any, identity: str, *, language: str = EN) -> Dict[s
     if isinstance(contract, dict):
         contract_payload = contract
     elif contract is not None:
-        # Contract dataclass → dict
-        contract_payload = {
-            k: v for k, v in vars(contract).items()
-            if v is not None and v != [] and v != 90
-        }
+        contract_payload = _dump_contract(contract)
     else:
         contract_payload = None
 
@@ -291,6 +292,11 @@ def build_show_output(item: Any, identity: str, *, language: str = EN) -> Dict[s
         "issue_description": getattr(item, "description", ""),
         "contract": contract_payload,
     }
+    responsibility = responsibility_summary(contract)
+    if responsibility is not None:
+        context["responsibility"] = responsibility
+    if kind in {TaskKind.DECOMPOSE, TaskKind.AMENDMENT}:
+        context["contract_boundary_schema"] = deepcopy(CONTRACT_BOUNDARY_SCHEMA)
     contract_ref = getattr(item, "contract_ref", None)
     if contract_ref is not None:
         context["contract_ref"] = contract_ref
@@ -1220,6 +1226,40 @@ def render_issue_body(node, contract, kind, issue_id, source_refs=None, engine_e
         scope = f"## {ui('Primary code ownership', '主要代码归属范围', language=language)}\n" + "\n".join(
             f"- `{value}`" for value in values)
 
+    responsibility = responsibility_summary(contract)
+    boundary = ""
+    if responsibility is not None:
+        boundary_lines = [ui(
+            f"- Evidence mode: `{responsibility['evidence_mode']}`",
+            f"- 证据模式: `{responsibility['evidence_mode']}`",
+            language=language,
+        )]
+        for value in responsibility["allowed_inputs"]:
+            boundary_lines.append(ui(
+                f"- Allowed input: `{value['artifact_id']}` from "
+                f"`{value['producer']}` (`{value['evidence_mode']}`)",
+                f"- 允许输入: `{value['artifact_id']}`，来自 "
+                f"`{value['producer']}`（`{value['evidence_mode']}`）",
+                language=language,
+            ))
+        if responsibility["produces"]:
+            outputs = ", ".join(
+                f"`{artifact_id}`" for artifact_id in responsibility["produces"])
+            boundary_lines.append(ui(
+                f"- Produces: {outputs}", f"- 产物: {outputs}",
+                language=language,
+            ))
+        boundary_lines.append(ui(
+            f"- Boundary: {responsibility['boundary_rule']}",
+            "- 边界: 只允许使用 consumes 明确声明的外部输入；非上游或下游节点的产物"
+            "不属于当前 contract。",
+            language=language,
+        ))
+        boundary = (
+            f"## {ui('Responsibility boundary', '责任边界', language=language)}\n"
+            + "\n".join(boundary_lines)
+        )
+
     constraints = []
     pr_base = _contract_summary(contract, "pr_base", None)
     if pr_base:
@@ -1258,6 +1298,7 @@ def render_issue_body(node, contract, kind, issue_id, source_refs=None, engine_e
             detail,
             exclusions,
             scope,
+            boundary,
             delivery_constraints,
             repositories,
             origin,

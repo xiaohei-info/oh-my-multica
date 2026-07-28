@@ -5,6 +5,7 @@ import shlex
 import subprocess
 from typing import Any
 
+from .contract_boundaries import manifest_boundary_errors
 from .manifest import loads_manifest
 from .taskmeta import TaskKind
 
@@ -71,7 +72,7 @@ def _manifest_preflight(text: str) -> list[str]:
     except Exception as exc:
         return [f"review preflight could not parse manifest: {exc}"]
 
-    errors: list[str] = []
+    errors: list[str] = manifest_boundary_errors(manifest)
     for node_id, node in manifest.nodes.items():
         for command in _node_commands(node):
             syntax_error = _shell_syntax_error(command)

@@ -12,7 +12,15 @@ import tempfile
 
 import pytest
 
-from omac.core.manifest import Contract, Manifest, Node, load_manifest, save_manifest
+from omac.core.manifest import (
+    Contract,
+    EvidenceMode,
+    Manifest,
+    Node,
+    ProducedArtifact,
+    load_manifest,
+    save_manifest,
+)
 from omac.core.review_convergence import (
     REVIEW_PROTOCOL_VERSION, build_review_obligations, open_blockers)
 from omac.engines import create_engine
@@ -1075,6 +1083,64 @@ class TestReviewerRejectBoundedFallback:
         assert got.status == WorkItemStatus.IN_PROGRESS
         assert got.review_verdict is None
         assert got.bounces.review == 1
+
+    def test_downstream_artifact_review_request_needs_decision_without_rework(self, tmp_path):
+        from omac.engines import create_engine
+
+        contract = self._simple_contract()
+        contract.evidence_mode = EvidenceMode.FIXTURE
+        contract.produces = [ProducedArtifact("tooling-package")]
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(
+            eng, path, contract=contract)
+        manifest.nodes["assembly"] = Node(
+            id="assembly",
+            worker="bob",
+            blocked_by=["a"],
+            contract=Contract(
+                evidence_mode=EvidenceMode.LIVE,
+                produces=[ProducedArtifact("production-bundle")],
+            ),
+        )
+        save_manifest(manifest, path)
+        eng.store.update_work_item_metadata(
+            item.id, review_obligations=build_review_obligations(item))
+        report = _review_report(item, "reject")
+        report["blockers"][0].update({
+            "required_fix": "Generate production-bundle before tooling can pass.",
+            "required_evidence_mode": "live",
+            "required_inputs": [{
+                "artifact_id": "production-bundle",
+                "producer": "assembly",
+                "evidence_mode": "live",
+            }],
+        })
+        eng.store.update_work_item_metadata(item.id, review_report=report)
+
+        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+
+        got = eng.store.get_work_item(item.id)
+        assert result.state == "needs_decision"
+        assert manifest.nodes["a"].status == "blocked"
+        assert got.status == WorkItemStatus.BLOCKED
+        assert got.bounces.review == 0
+        assert got.review_verdict == "reject"
+        assert got.decision_required == {
+            "schema": "omac.decision-required/v1",
+            "reason_code": "contract-boundary-conflict",
+            "kind": "develop",
+            "phase": "review",
+            "gate": "review-boundary",
+            "resume_issue_id": item.id,
+            "node_id": "a",
+            "conflict_codes": [
+                "fixture-requires-live-evidence",
+                "review-requires-non-upstream-artifact",
+            ],
+            "artifact_ids": ["production-bundle"],
+            "producer_nodes": ["assembly"],
+        }
 
     def test_pass_with_nits_accepts_worker_followup_without_second_review(self, tmp_path):
         """pass-with-nits 只回 worker 修一次;worker 重交后直接 done,不再派 reviewer。"""

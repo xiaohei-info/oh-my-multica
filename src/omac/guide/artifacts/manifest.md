@@ -85,6 +85,10 @@ nodes:
       acceptance_doc: null
       scope_paths:
         - src/auth/**
+      evidence_mode: fixture
+      produces:
+        - artifact_id: auth-renewal-component
+      consumes: []
   - id: auth-renewal-e2e
     title: Verify session renewal journey
     worker: integration-agent
@@ -106,6 +110,13 @@ nodes:
           acceptance_refs: [flow-login-renewal]
           commands: [python3 -m pytest tests/e2e/test_auth_renewal.py]
       pr_base: feature/login-renewal
+      evidence_mode: live
+      produces:
+        - artifact_id: auth-renewal-flow-evidence
+      consumes:
+        - artifact_id: auth-renewal-component
+          producer: auth-renewal
+          evidence_mode: artifact
 ```
 
 ## 字段语义
@@ -163,6 +174,9 @@ nodes:
 | `coverage_gate` | 0 到 100 的数字，默认 90。 |
 | `acceptance_doc` | 可选的验收文档结构上下文；仅在实例 contract 需要时填充。 |
 | `scope_paths` | 可选的主要代码归属范围，用于表达稳定模块边界和降低并行冲突。 |
+| `evidence_mode` | 可选的主要证据类别：`fixture`、`artifact` 或 `live`。声明 `produces`/`consumes` 时必须显式填写。 |
+| `produces` | 当前节点唯一生产的稳定制品 id 列表，形状为 `{artifact_id}`；同一 id 只能有一个 producer。 |
+| `consumes` | 当前节点允许使用的外部输入，形状为 `{artifact_id, producer, evidence_mode}`；producer 必须是传递上游并声明该制品。 |
 
 每个 `integration_gates` 条目必须给出 `name`、`layer`、`delivery_goal`，以及非空的
 `source_of_truth`、`covers`、`acceptance_refs`、`commands`。`required_metrics` 若出现必须是
@@ -194,6 +208,9 @@ verification 中说明原因。reviewer 应判断这些改动是否服务于 con
 6. `coverage_gate` 必须是 0 到 100 的数字；`required_contracts` 中的路径必须存在。
 7. 提供验收文档时，claim/ref 必须锚定真实 flow，contribution 必须锚定真实 `business-action`；每个 flow 恰有一个完整 owner、业务 Action 贡献闭包完整，且 full owner 的依赖闭包覆盖全部 contribution owners。
 8. `meta.closeout_node` 若存在，必须引用 manifest 中的节点。
+9. typed 制品边界若出现，`evidence_mode` 必须合法；每个 consume 的 producer 必须存在、
+   位于传递上游并生产对应 artifact。fixture 节点不能要求 live evidence。未声明这些字段的旧 manifest
+   保持原行为，不强制迁移。
 
 ## 常见错误 → 修正
 
@@ -208,6 +225,8 @@ verification 中说明原因。reviewer 应判断这些改动是否服务于 con
 | 只需追溯需求却声明验收义务 | 使用 `acceptance_refs`；trace ref 不要求完整 UJ 或业务测试。 |
 | 旧 `acceptance` 与新字段混用 | 将旧值明确迁移到 `acceptance_claims`，再补 contributions/refs；禁止静默改义。 |
 | 把 `scope_paths` 当拒绝其他文件的依据 | 允许必要配套文件，并要求在 PR 或 verification 中解释。 |
+| fixture 工具节点等待下游生产制品 | 声明 `evidence_mode: fixture`，用节点自有的完整可执行 fixture 验证；真实制品由下游节点声明并生产。 |
+| Reviewer 要求未声明或下游输入 | 在 blocker 中结构化写 `required_inputs` / `required_evidence_mode`；OMAC 将其路由为 contract boundary decision，而不是继续 Worker 返工。 |
 | 复制整段设计到 `description` | 只保留 `source_of_truth` 锚点，维持单一事实源。 |
 
 ## 提交

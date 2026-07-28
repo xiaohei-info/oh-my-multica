@@ -91,6 +91,10 @@ nodes:
       acceptance_doc: null
       scope_paths:
         - src/auth/**
+      evidence_mode: fixture
+      produces:
+        - artifact_id: auth-renewal-component
+      consumes: []
   - id: auth-renewal-e2e
     title: Verify session renewal journey
     worker: integration-agent
@@ -112,6 +116,13 @@ nodes:
           acceptance_refs: [flow-login-renewal]
           commands: [python3 -m pytest tests/e2e/test_auth_renewal.py]
       pr_base: feature/login-renewal
+      evidence_mode: live
+      produces:
+        - artifact_id: auth-renewal-flow-evidence
+      consumes:
+        - artifact_id: auth-renewal-component
+          producer: auth-renewal
+          evidence_mode: artifact
 ```
 
 ## Field semantics
@@ -175,6 +186,9 @@ must be acyclic.
 | `coverage_gate` | Number from 0 to 100; default 90. |
 | `acceptance_doc` | Optional structured acceptance context when the instance contract needs it. |
 | `scope_paths` | Optional primary code ownership for stable boundaries and lower parallel conflict. |
+| `evidence_mode` | Optional primary evidence class: `fixture`, `artifact`, or `live`. It is required when `produces` or `consumes` is declared. |
+| `produces` | Stable artifact IDs uniquely produced by this node, shaped as `{artifact_id}`. One artifact ID has one canonical producer. |
+| `consumes` | Allowed external inputs shaped as `{artifact_id, producer, evidence_mode}`. The producer must be transitive upstream and declare the artifact. |
 
 Each integration gate has `name`, `layer`, `delivery_goal`, and non-empty
 `source_of_truth`, `covers`, `acceptance_refs`, and `commands`. If present,
@@ -211,6 +225,10 @@ non-goals, and parallel boundaries, not merely path membership.
 6. `coverage_gate` is 0–100 and required-contract paths exist.
 7. With an acceptance document, claims/refs name real flows and contributions name real `business-action` IDs; every flow has one full owner, business-Action coverage is complete, and the owner dependency closure contains every contribution owner.
 8. `meta.closeout_node`, when present, references a manifest node.
+9. When a typed artifact boundary is present, `evidence_mode` must be valid;
+   every consume producer must exist, be transitive upstream, and produce the
+   named artifact. A fixture node cannot require live evidence. Legacy manifests
+   that omit these fields keep their existing behavior and require no migration.
 
 ## Common errors → corrections
 
