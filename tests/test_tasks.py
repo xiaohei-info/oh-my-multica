@@ -1786,6 +1786,61 @@ def test_restart_authoring_reuses_issue_and_runs_fresh_worker_review_cycle(monke
     assert refreshes == [item.id]
 
 
+def test_new_attempt_recovers_issue_created_before_metadata_without_duplicate(
+    monkeypatch,
+):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    dag_key = "amend-project-attempt-deadbeef"
+    attempt = {
+        "schema": "omac.amendment-attempt/v1",
+        "attempt_id": "deadbeef",
+        "request_digest": "request-digest",
+        "report_sha256": "report-digest",
+        "supersedes_issue_id": "old-issue",
+        "supersedes_issue_key": "AITEAM-811",
+    }
+    crashed = eng.store.create_work_item(
+        "ws", "new amendment", "new amendment", dag_key, "alice",
+        kind=TaskKind.AMENDMENT)
+    crashed.dag_key = ""  # Multica may crash after create and before dag_key metadata.
+
+    def wake(item_id, _agent, role):
+        current = eng.store.get_work_item(item_id)
+        if role == "worker":
+            eng.store.update_work_item_metadata(
+                item_id, deliverable="fresh amendment", phase=TaskPhase.REVIEW)
+            current.deliverable_ref = {
+                "attachment_id": "fresh-attempt-delivery",
+                "sha256": "fresh-attempt",
+            }
+            eng.store.mark_in_review(item_id)
+            return
+        eng.store.update_work_item_metadata(
+            item_id, review_verdict="pass",
+            review_report=_review_report(item=current))
+
+    monkeypatch.setattr(eng.runtime, "wake", wake)
+
+    result = run_task(
+        eng,
+        TaskKind.AMENDMENT,
+        _payload(title="new amendment"),
+        "alice",
+        reviewers=["bob"],
+        confirm=True,
+        pause_at_confirmation=True,
+        poll=_poll,
+        dag_key=dag_key,
+        amendment_attempt=attempt,
+        reuse_dag_key=True,
+    )
+
+    current = eng.store.get_work_item(crashed.id)
+    assert result["item_id"] == crashed.id
+    assert current.amendment_attempt == attempt
+    assert len(eng.store.list_work_items("ws")) == 1
+
+
 def test_restart_reviewer_reject_dispatches_fresh_worker_generation_run(monkeypatch):
     eng = _engine(MOCK_AUTO_COMPLETE="false")
     item = _confirmed_amendment(eng)
@@ -2088,6 +2143,25 @@ def test_restart_claim_rejects_done_confirmation():
             _restart_candidate(item, generation="generation-done"),
             now=100.0,
         )
+
+    assert exc.value.report["reason_code"] == "restart-base-mismatch"
+
+
+def test_mock_restart_rechecks_status_subject_and_deliverable_identity():
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = _confirmed_amendment(eng)
+    claim = eng.store.claim_authoring_restart(
+        item.id,
+        _restart_candidate(item, generation="generation-contract-parity"),
+        now=100.0,
+    ).restart
+    current = eng.store.get_work_item(item.id)
+    current.deliverable = "concurrent replacement"
+    current.deliverable_ref = {"sha256": "concurrent-replacement"}
+
+    with pytest.raises(NeedsDecision) as exc:
+        eng.store.restart_authoring(
+            item.id, generation=claim.generation, owner_nonce=claim.owner_nonce)
 
     assert exc.value.report["reason_code"] == "restart-base-mismatch"
 

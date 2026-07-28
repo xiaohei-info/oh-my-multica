@@ -1,6 +1,7 @@
 import copy
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -1338,6 +1339,229 @@ def test_propose_amendment_restart_requires_resume_issue(tmp_path):
         )
 
 
+def test_multica_restart_capability_rejects_before_remote_write(tmp_path, monkeypatch):
+    path = _manifest(tmp_path)
+    report = tmp_path / "report.md"
+    report.write_text("replace the reviewed amendment")
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "design.md").write_text("authoritative design")
+    from omac.engines.multica import MulticaRuntime, MulticaStore
+    store = MulticaStore(EngineConfig(
+        engine_type="multica", workspace_id="ws", project_id="project-1"))
+    runtime = MulticaRuntime(store)
+    monkeypatch.setattr(
+        store, "_run_multica",
+        lambda *_args, **_kwargs: pytest.fail("unsupported restart must not read/write Multica"),
+    )
+    monkeypatch.setattr(
+        runtime, "wake",
+        lambda *_args, **_kwargs: pytest.fail("unsupported restart must not create a Run"),
+    )
+    engine = SimpleNamespace(store=store, runtime=runtime)
+
+    with pytest.raises(NeedsDecision) as exc:
+        amendment_pipeline.propose_amendment(
+            engine,
+            str(path),
+            report_file=str(report),
+            docs=[str(docs)],
+            blocked_nodes=["bootstrap"],
+            orchestrator="alice",
+            reviewers=["bob"],
+            max_revisions=1,
+            resume_issue_id="old-issue-id",
+            restart_authoring=True,
+        )
+
+    report_payload = exc.value.report
+    assert report_payload["reason_code"] == "atomic-restart-unsupported"
+    assert "--new-attempt" in report_payload["next_action"]
+    assert "--supersedes-issue-id old-issue-id" in report_payload["next_action"]
+    assert "--resume-issue-id" not in report_payload["next_action"]
+
+
+def test_new_attempt_requires_superseded_issue(tmp_path):
+    path = _manifest(tmp_path)
+    report = tmp_path / "report.md"
+    report.write_text("new attempt")
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "design.md").write_text("authoritative design")
+
+    with pytest.raises(ValidationError, match="--supersedes-issue-id"):
+        amendment_pipeline.propose_amendment(
+            _engine(), str(path), report_file=str(report), docs=[str(docs)],
+            blocked_nodes=["bootstrap"], orchestrator="alice",
+            reviewers=["bob"], max_revisions=1, new_attempt=True,
+        )
+
+
+def test_new_attempt_is_auditable_idempotent_and_preserves_old_issue(
+    tmp_path, monkeypatch,
+):
+    path = _manifest(tmp_path)
+    report = tmp_path / "report.md"
+    report.write_text("first corrected report")
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "design.md").write_text("authoritative design")
+    engine = _engine()
+    old = engine.store.create_work_item(
+        "ws", "old amendment", "old confirmation", f"amend-{path.stem}", "alice",
+        reviewer="bob", kind=TaskKind.AMENDMENT)
+    old.identifier = "AITEAM-811"
+    engine.store.update_work_item_metadata(
+        old.id, deliverable="old proposal", review_verdict="pass",
+        phase=TaskPhase.CONFIRMATION)
+    engine.store.update_status(old.id, WorkItemStatus.IN_REVIEW)
+    old_before = copy.deepcopy(engine.store.get_work_item(old.id))
+    observed = []
+
+    def fake_run_task(_engine, _kind, payload, _assignee, **kwargs):
+        observed.append(kwargs)
+        issue = (
+            engine.store.get_work_item(kwargs["resume_item_id"])
+            if kwargs["resume_item_id"] else None
+        )
+        if issue is None:
+            issue = engine.store.create_work_item(
+                "ws", payload["title"], payload["description"],
+                kwargs["dag_key"], "alice", reviewer="bob",
+                kind=TaskKind.AMENDMENT)
+            engine.store.update_work_item_metadata(
+                issue.id,
+                amendment_attempt=kwargs["amendment_attempt"],
+                source_refs=kwargs["source_refs"],
+            )
+        engine.store.update_work_item_metadata(
+            issue.id, deliverable=_proposal(_contract_update()),
+            review_verdict="pass", phase=TaskPhase.CONFIRMATION)
+        engine.store.update_status(issue.id, WorkItemStatus.IN_REVIEW)
+        return {
+            "item_id": issue.id,
+            "delivery": {"amendment": _proposal(_contract_update())},
+        }
+
+    monkeypatch.setattr(amendment_pipeline, "run_task", fake_run_task)
+    kwargs = dict(
+        report_file=str(report), docs=[str(docs)],
+        blocked_nodes=["bootstrap"], orchestrator="alice",
+        reviewers=["bob"], max_revisions=1, new_attempt=True,
+        supersedes_issue_id=old.id,
+    )
+
+    first = amendment_pipeline.propose_amendment(engine, str(path), **kwargs)
+    second = amendment_pipeline.propose_amendment(engine, str(path), **kwargs)
+    attempt_issue = engine.store.get_work_item(first["issue_id"])
+
+    assert second["issue_id"] == first["issue_id"]
+    assert observed[0]["resume_item_id"] is None
+    assert observed[1]["resume_item_id"] == first["issue_id"]
+    assert "-attempt-" in observed[0]["dag_key"]
+    assert attempt_issue.amendment_attempt["supersedes_issue_id"] == old.id
+    assert attempt_issue.amendment_attempt["report_sha256"]
+    assert attempt_issue.source_refs == [{
+        "issue_id": old.id,
+        "issue_key": "AITEAM-811",
+        "label": "superseded amendment AITEAM-811",
+        "kind": "amendment",
+        "relation": "supersedes",
+        "report_sha256": attempt_issue.amendment_attempt["report_sha256"],
+    }]
+    old_after = engine.store.get_work_item(old.id)
+    assert old_after.phase == old_before.phase == TaskPhase.CONFIRMATION
+    assert old_after.deliverable == old_before.deliverable
+    assert old_after.review_verdict == old_before.review_verdict
+
+
+def test_new_attempt_requires_superseded_human_confirmation(tmp_path):
+    path = _manifest(tmp_path)
+    report = tmp_path / "report.md"
+    report.write_text("new attempt")
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "design.md").write_text("authoritative design")
+    engine = _engine()
+    old = engine.store.create_work_item(
+        "ws", "old amendment", "still authoring", "amend-old", "alice",
+        kind=TaskKind.AMENDMENT)
+
+    with pytest.raises(ValidationError, match="human confirmation"):
+        amendment_pipeline.propose_amendment(
+            engine, str(path), report_file=str(report), docs=[str(docs)],
+            blocked_nodes=["bootstrap"], orchestrator="alice",
+            reviewers=["bob"], max_revisions=1, new_attempt=True,
+            supersedes_issue_id=old.id)
+
+
+def test_different_report_digest_creates_different_attempt_identity(
+    tmp_path, monkeypatch,
+):
+    path = _manifest(tmp_path)
+    report = tmp_path / "report.md"
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "design.md").write_text("authoritative design")
+    engine = _engine()
+    old = engine.store.create_work_item(
+        "ws", "old amendment", "old confirmation", "amend-old", "alice",
+        kind=TaskKind.AMENDMENT)
+    engine.store.update_work_item_metadata(
+        old.id, deliverable="old", review_verdict="pass",
+        phase=TaskPhase.CONFIRMATION)
+    engine.store.update_status(old.id, WorkItemStatus.IN_REVIEW)
+    identities = []
+
+    def fake_run_task(_engine, _kind, payload, _assignee, **kwargs):
+        identities.append((kwargs["dag_key"], kwargs["amendment_attempt"]))
+        issue = engine.store.create_work_item(
+            "ws", payload["title"], payload["description"], kwargs["dag_key"],
+            "alice", kind=TaskKind.AMENDMENT)
+        engine.store.update_work_item_metadata(
+            issue.id, deliverable=_proposal(_contract_update()),
+            review_verdict="pass", phase=TaskPhase.CONFIRMATION,
+            amendment_attempt=kwargs["amendment_attempt"])
+        engine.store.update_status(issue.id, WorkItemStatus.IN_REVIEW)
+        return {"item_id": issue.id, "delivery": {
+            "amendment": _proposal(_contract_update())}}
+
+    monkeypatch.setattr(amendment_pipeline, "run_task", fake_run_task)
+    for body in ("report one", "report two"):
+        report.write_text(body)
+        amendment_pipeline.propose_amendment(
+            engine, str(path), report_file=str(report), docs=[str(docs)],
+            blocked_nodes=["bootstrap"], orchestrator="alice",
+            reviewers=["bob"], max_revisions=1, new_attempt=True,
+            supersedes_issue_id=old.id)
+
+    assert identities[0][0] != identities[1][0]
+    assert identities[0][1]["report_sha256"] != identities[1][1]["report_sha256"]
+
+
+def test_existing_fixed_amendment_identity_teaches_new_attempt(tmp_path):
+    path = _manifest(tmp_path)
+    report = tmp_path / "report.md"
+    report.write_text("resource conflict")
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "design.md").write_text("authoritative design")
+    engine = _engine()
+    old = engine.store.create_work_item(
+        "ws", "Running DAG amendment", "old confirmation",
+        f"amend-{path.stem}", "alice", kind=TaskKind.AMENDMENT)
+
+    with pytest.raises(NeedsDecision) as exc:
+        amendment_pipeline.propose_amendment(
+            engine, str(path), report_file=str(report), docs=[str(docs)],
+            blocked_nodes=["bootstrap"], orchestrator="alice",
+            reviewers=["bob"], max_revisions=1)
+
+    assert exc.value.report["reason_code"] == "amendment-identity-conflict"
+    assert exc.value.report["existing_issue_id"] == old.id
+    assert "--new-attempt" in exc.value.report["next_action"]
+
+
 def test_contract_only_amendment_preserves_runtime_facts_and_resumes_review(tmp_path):
     path = _manifest(tmp_path)
     engine = _engine()
@@ -2114,3 +2338,48 @@ def test_cli_amendment_forwards_restart_authoring(tmp_path, monkeypatch):
     assert code == exit_codes.NEEDS_DECISION
     assert observed["resume_issue_id"] == "issue-1"
     assert observed["restart_authoring"] is True
+
+
+def test_cli_amendment_forwards_new_attempt(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    omac_dir = tmp_path / ".omac"
+    omac_dir.mkdir()
+    (omac_dir / "config.yaml").write_text(yaml.safe_dump({
+        "engine": "mock",
+        "workspace": "ws",
+        "roles": {"orchestrator": "alice", "reviewers": ["bob"]},
+        "retry": {"review": 2},
+        "defaults": {"poll_interval": 0},
+    }))
+    manifest_path = _manifest(tmp_path)
+    report = tmp_path / "review.md"
+    report.write_text("new amendment attempt")
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "design.md").write_text("authoritative design")
+    observed = {}
+
+    def fake_propose(*_args, **kwargs):
+        observed.update(kwargs)
+        return {
+            "state": "pending_human_confirmation",
+            "manifest": str(manifest_path),
+            "amendment_file": str(omac_dir / "dag.amendment.yaml"),
+            "amendment_id": "amendment-attempt",
+            "issue_id": "issue-new",
+            "reviewer_verdict": "pass",
+        }
+
+    monkeypatch.setattr(amendment_pipeline, "propose_amendment", fake_propose)
+
+    code = main([
+        "dag", "amend", "propose", str(manifest_path),
+        "--report-file", str(report),
+        "--docs", str(docs),
+        "--new-attempt",
+        "--supersedes-issue-id", "issue-old",
+    ])
+
+    assert code == exit_codes.NEEDS_DECISION
+    assert observed["new_attempt"] is True
+    assert observed["supersedes_issue_id"] == "issue-old"

@@ -14,8 +14,9 @@ from dataclasses import dataclass
 from ..errors import ValidationError
 from ..i18n import ui
 from .models import (
-    AgentInfo, AgentProvisionSpec, EngineConfig, RuntimeTarget, SkillPackage,
-    WorkItem, WorkItemStatus, WorkspaceInfo,
+    AgentInfo, AgentProvisionSpec, EngineConfig, RuntimeCapabilities,
+    RuntimeTarget, SkillPackage, StoreCapabilities, WorkItem, WorkItemStatus,
+    WorkspaceInfo,
 )
 from .runtime import AgentRuntime
 from .store import WorkItemStore
@@ -49,5 +50,6 @@ __all__ = [
     "Engine", "create_engine", "ENGINE_TYPES",
     "WorkItemStore", "AgentRuntime",
     "AgentInfo", "AgentProvisionSpec", "RuntimeTarget", "SkillPackage",
-    "EngineConfig", "WorkItem", "WorkItemStatus", "WorkspaceInfo",
+    "EngineConfig", "StoreCapabilities", "RuntimeCapabilities",
+    "WorkItem", "WorkItemStatus", "WorkspaceInfo",
 ]

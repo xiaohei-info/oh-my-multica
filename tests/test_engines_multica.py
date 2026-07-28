@@ -11,115 +11,28 @@ import yaml
 from omac.core.contract_boundaries import responsibility_summary
 from omac.core.manifest import _load_contract
 from omac.core.manifest import Contract, EvidenceMode, ProducedArtifact
-from omac.core.taskmeta import TaskKind, TaskPhase
-from omac.core.restart import (
-    RESTART_KEY, RestartState, deliverable_identity, parse_restart_state,
-)
 from omac.engines.models import (
     AgentRunObservation, EngineConfig, PullRequestReadinessFailure, PullRequestState,
 )
 from omac.engines.models import WorkItemStatus
 from omac.engines.multica import MulticaRuntime, MulticaStore
-from omac.errors import PlatformError
+from omac.errors import PlatformError, ValidationError
 
 
-def test_multica_restart_authoring_clears_current_refs_but_not_history(monkeypatch):
+def test_multica_restart_authoring_is_unsupported_and_writes_nothing(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
-    current = SimpleNamespace(
-        id="issue-1",
-        kind=TaskKind.AMENDMENT,
-        phase=TaskPhase.CONFIRMATION,
-        status=WorkItemStatus.IN_REVIEW,
-        deliverable="old amendment",
-        deliverable_ref={"sha256": "old-delivery"},
-        review_verdict="pass",
-        review_subject_digest="old-subject",
-        review_report_ref={"sha256": "old-report"},
-        review_ledger_ref={"sha256": "old-ledger"},
-        machine_feedback_ref={"sha256": "old-feedback"},
-        decision_required={"reason_code": "old-decision"},
-        authoring_restart=None,
-    )
-    current.authoring_restart = RestartState(
-        generation="generation-1",
-        owner_nonce="owner-1",
-        request_digest="request-1",
-        state="claimed",
-        base_kind="amendment",
-        base_phase="confirmation",
-        base_status="in_review",
-        base_review_subject_digest="old-subject",
-        base_deliverable_identity=deliverable_identity(current),
-        baseline_run_ids=(),
-        lease_expires_at=999,
-    )
-    metadata = []
-    events = []
-
-    monkeypatch.setattr(store, "get_work_item", lambda _item_id: current)
     monkeypatch.setattr(
-        store,
-        "clear_assignment",
-        lambda item_id: events.append(("unassign", item_id)),
+        store, "_run_multica",
+        lambda *_args: pytest.fail("unsupported restart must not access Multica"),
     )
 
-    def set_metadata(item_id, key, value):
-        metadata.append((key, value))
-        if key == "phase":
-            current.phase = TaskPhase(value)
-        elif key == "review_subject_digest":
-            current.review_subject_digest = value or None
-        elif key == "review_verdict":
-            current.review_verdict = value or None
-        elif key == "deliverable_ref":
-            current.deliverable_ref = None
-            current.deliverable = None
-        elif key == "review_report_ref":
-            current.review_report_ref = None
-        elif key == "review_ledger_ref":
-            current.review_ledger_ref = None
-        elif key == "machine_feedback_ref":
-            current.machine_feedback_ref = None
-        elif key == "decision_required":
-            current.decision_required = None
-        elif key == RESTART_KEY:
-            current.authoring_restart = parse_restart_state(value)
-
-    monkeypatch.setattr(store, "_set_metadata", set_metadata)
-
-    def update_status(item_id, status):
-        events.append(("status", item_id, status))
-        current.status = status
-
-    monkeypatch.setattr(store, "update_status", update_status)
-
-    result = store.restart_authoring(
-        "issue-1", generation="generation-1", owner_nonce="owner-1")
-
-    assert result.phase == TaskPhase.AUTHORING
-    assert result.status == WorkItemStatus.TODO
-    assert events == [
-        ("unassign", "issue-1"),
-        ("status", "issue-1", WorkItemStatus.TODO),
-    ]
-    assert ("phase", "authoring") in metadata
-    assert metadata[-1][0] == RESTART_KEY
-    cleared = dict(metadata)
-    assert cleared["deliverable_ref"] == "{}"
-    assert cleared["review_report_ref"] == "{}"
-    assert cleared["review_ledger_ref"] == "{}"
-    assert cleared["decision_required"] == "{}"
-    assert cleared["machine_feedback_ref"] == "{}"
+    with pytest.raises(ValidationError, match="does not support"):
+        store.restart_authoring(
+            "issue-1", generation="generation-1", owner_nonce="owner-1")
 
 
 def test_multica_empty_ref_tombstones_suppress_legacy_payloads(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
-    monkeypatch.setattr(
-        store,
-        "_inactive_latest_run_status",
-        lambda _item_id: None,
-    )
-
     item = store._issue_to_work_item({
         "id": "issue-1",
         "title": "amendment",
@@ -1074,118 +987,38 @@ def test_multica_readback_keeps_explicit_null_consumes_invalid(monkeypatch):
         _load_contract(item.contract))["input_policy"] == "invalid"
 
 
-def test_multica_get_work_item_maps_exhausted_failed_runs_to_failed(monkeypatch):
-    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
-
-    def fake_run(args):
-        if args[:2] == ["issue", "get"]:
-            return {
-                "id": "issue-1",
-                "title": "t",
-                "description": "d",
-                "status": "in_progress",
-                "metadata": {"dag_key": "node-a", "kind": "develop"},
-            }
-        if args[:2] == ["issue", "runs"]:
-            return [
-                {"id": "run-2", "status": "failed", "created_at": "2026-07-09T08:35:58Z"},
-                {"id": "run-1", "status": "failed", "created_at": "2026-07-09T08:35:23Z"},
-            ]
-        raise AssertionError(args)
-
-    monkeypatch.setattr(store, "_run_multica", fake_run)
-
-    item = store.get_work_item("issue-1")
-
-    assert item.status == WorkItemStatus.FAILED
-
-
-def test_multica_get_work_item_marks_failed_reviewer_run_without_rewriting_stage(
-    monkeypatch,
+@pytest.mark.parametrize("status", ["in_progress", "in_review"])
+def test_multica_get_work_item_does_not_infer_issue_state_from_unbound_runs(
+    monkeypatch, status,
 ):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    calls = []
 
     def fake_run(args):
+        calls.append(args)
         if args[:2] == ["issue", "get"]:
             return {
                 "id": "issue-1",
                 "title": "t",
                 "description": "d",
-                "status": "in_review",
+                "status": status,
                 "metadata": {
-                    "dag_key": "node-a", "kind": "develop", "phase": "review",
+                    "dag_key": "node-a", "kind": "develop",
+                    "phase": "review" if status == "in_review" else "authoring",
                 },
             }
-        if args[:2] == ["issue", "runs"]:
-            return [{
-                "id": "run-2", "status": "failed",
-                "created_at": "2026-07-27T00:00:00Z",
-            }]
         raise AssertionError(args)
 
     monkeypatch.setattr(store, "_run_multica", fake_run)
 
     item = store.get_work_item("issue-1")
 
-    assert item.status == WorkItemStatus.IN_REVIEW
-    assert item.agent_run_failed is True
-
-
-def test_multica_get_work_item_marks_completed_without_submit_for_worker_followup(monkeypatch):
-    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
-
-    def fake_run(args):
-        if args[:2] == ["issue", "get"]:
-            return {
-                "id": "issue-1",
-                "title": "t",
-                "description": "d",
-                "status": "in_progress",
-                "metadata": {"dag_key": "node-a", "kind": "develop"},
-            }
-        if args[:2] == ["issue", "runs"]:
-            return [
-                {
-                    "id": "run-2",
-                    "status": "completed",
-                    "result": {"pr_url": ""},
-                    "created_at": "2026-07-09T08:35:58Z",
-                },
-            ]
-        raise AssertionError(args)
-
-    monkeypatch.setattr(store, "_run_multica", fake_run)
-
-    item = store.get_work_item("issue-1")
-
-    assert item.status == WorkItemStatus.IN_PROGRESS
-    assert item.agent_run_finished_without_submit is True
-
-
-def test_multica_get_work_item_keeps_in_progress_when_any_run_active(monkeypatch):
-    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
-
-    def fake_run(args):
-        if args[:2] == ["issue", "get"]:
-            return {
-                "id": "issue-1",
-                "title": "t",
-                "description": "d",
-                "status": "in_progress",
-                "metadata": {"dag_key": "node-a", "kind": "develop"},
-            }
-        if args[:2] == ["issue", "runs"]:
-            return [
-                {"id": "run-2", "status": "running", "created_at": "2026-07-09T08:35:58Z"},
-                {"id": "run-1", "status": "failed", "created_at": "2026-07-09T08:35:23Z"},
-            ]
-        raise AssertionError(args)
-
-    monkeypatch.setattr(store, "_run_multica", fake_run)
-
-    item = store.get_work_item("issue-1")
-
-    assert item.status == WorkItemStatus.IN_PROGRESS
+    assert item.status == (
+        WorkItemStatus.IN_REVIEW
+        if status == "in_review" else WorkItemStatus.IN_PROGRESS)
+    assert item.agent_run_failed is False
+    assert item.agent_run_finished_without_submit is False
+    assert calls == [["issue", "get", "issue-1", "--output", "json"]]
 
 
 def test_multica_runtime_wake_does_not_rerun_active_direct_run(monkeypatch):
@@ -1348,6 +1181,134 @@ def test_multica_runtime_active_includes_comment_and_indirect_runs(monkeypatch):
     assert runtime.is_active("issue-1") is True
 
 
+def test_multica_runtime_wake_does_not_rerun_active_comment_run(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    calls = []
+
+    def fake_run(args):
+        calls.append(args)
+        if args[:2] == ["issue", "runs"]:
+            return [
+                {"id": "comment-active", "status": "running", "kind": "comment"},
+                {"id": "direct-old", "status": "completed", "kind": "direct"},
+            ]
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+    MulticaRuntime(store).wake("issue-1", "alice", "worker")
+
+    assert not any(args[:2] == ["issue", "rerun"] for args in calls)
+
+
+def test_multica_runtime_does_not_rerun_completed_comment(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    calls = []
+    monkeypatch.setattr(store, "_run_multica", lambda args: (
+        calls.append(args) or [{
+            "id": "comment-completed", "status": "completed", "kind": "comment",
+        }]
+    ))
+
+    MulticaRuntime(store).wake("issue-1", "alice", "worker")
+
+    assert calls == [["issue", "runs", "issue-1", "--output", "json"]]
+
+
+def test_multica_runtime_observes_eventually_visible_active_run(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    calls = []
+    sleeps = []
+    observations = iter([
+        [{"id": "direct-old", "status": "completed", "kind": "direct"}],
+        [{"id": "direct-old", "status": "completed", "kind": "direct"}],
+        [
+            {"id": "comment-active", "status": "running", "kind": "comment"},
+            {"id": "direct-old", "status": "completed", "kind": "direct"},
+        ],
+    ])
+
+    def fake_run(args):
+        calls.append(args)
+        if args[:2] == ["issue", "runs"]:
+            return next(observations)
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+    runtime = MulticaRuntime(
+        store, active_observation_attempts=3,
+        active_observation_interval=0.25, sleeper=sleeps.append)
+
+    runtime.wake("issue-1", "alice", "worker")
+
+    assert sleeps == [0.25, 0.25]
+    assert not any(args[:2] == ["issue", "rerun"] for args in calls)
+
+
+def test_multica_runtime_reruns_once_after_bounded_observation(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    calls = []
+    sleeps = []
+
+    def fake_run(args):
+        calls.append(args)
+        if args[:2] == ["issue", "runs"]:
+            return [{"id": "direct-failed", "status": "failed", "kind": "direct"}]
+        if args[:2] == ["issue", "rerun"]:
+            return {"id": "direct-retry", "status": "queued"}
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+    runtime = MulticaRuntime(
+        store, active_observation_attempts=3,
+        active_observation_interval=0.25, sleeper=sleeps.append)
+
+    runtime.wake("issue-1", "alice", "worker")
+
+    assert sleeps == [0.25, 0.25]
+    assert calls.count([
+        "issue", "rerun", "issue-1", "--output", "json",
+    ]) == 1
+
+
+def test_multica_runtime_observation_error_fails_closed(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    calls = []
+    observations = 0
+
+    def fake_run(args):
+        nonlocal observations
+        calls.append(args)
+        if args[:2] == ["issue", "runs"]:
+            observations += 1
+            if observations == 1:
+                return [{
+                    "id": "direct-failed", "status": "failed", "kind": "direct",
+                }]
+            raise PlatformError("active run observation unavailable")
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+    runtime = MulticaRuntime(
+        store, active_observation_attempts=3,
+        active_observation_interval=0, sleeper=lambda _seconds: None)
+
+    with pytest.raises(PlatformError, match="observation unavailable"):
+        runtime.wake("issue-1", "alice", "worker")
+
+    assert not any(args[:2] == ["issue", "rerun"] for args in calls)
+
+
+def test_multica_runtime_assignment_fast_path_does_not_observe_runs(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    store._mark_assignment_wake_pending("issue-1")
+    monkeypatch.setattr(
+        store, "_run_multica",
+        lambda *_args: pytest.fail("assignment-triggered wake must stay a fast path"),
+    )
+
+    MulticaRuntime(store).wake("issue-1", "alice", "worker")
+
+
 def test_multica_runtime_lists_typed_run_identity(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
     runtime = MulticaRuntime(store)
@@ -1360,6 +1321,18 @@ def test_multica_runtime_lists_typed_run_identity(monkeypatch):
         AgentRunObservation(id="run-1", kind="direct", status="completed"),
         AgentRunObservation(id="run-2", kind="comment", status="running"),
     ]
+
+
+def test_restart_capability_parity_is_explicit():
+    multica_store = MulticaStore(EngineConfig(
+        engine_type="multica", workspace_id="ws"))
+    mock_engine = __import__("omac.engines", fromlist=["create_engine"]).create_engine(
+        "mock", EngineConfig(engine_type="mock", workspace_id="ws"))
+
+    assert multica_store.capabilities.atomic_authoring_restart is False
+    assert MulticaRuntime(multica_store).capabilities.stable_direct_run_identity is True
+    assert mock_engine.store.capabilities.atomic_authoring_restart is True
+    assert mock_engine.runtime.capabilities.stable_direct_run_identity is True
 
 
 def test_multica_runtime_cancel_clears_stale_assignment_without_active_run(monkeypatch):

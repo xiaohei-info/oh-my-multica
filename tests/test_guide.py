@@ -169,13 +169,13 @@ def test_recovery_guide_explains_running_dag_amendment() -> None:
     for item in [
         "omac dag amend propose", "omac dag amend accept", "confirmation",
         "definition digest", "ownership migration", "--resume-issue-id",
-        "--restart-authoring",
+        "--restart-authoring", "--new-attempt", "--supersedes-issue-id",
     ]:
         assert item in english, f"english recovery guide missing amendment rule: {item}"
     for item in [
         "omac dag amend propose", "omac dag amend accept", "confirmation",
         "definition digest", "ownership migration", "--resume-issue-id",
-        "--restart-authoring",
+        "--restart-authoring", "--new-attempt", "--supersedes-issue-id",
     ]:
         assert item in chinese, f"recovery guide missing amendment rule: {item}"
     for content in (chinese, english):
@@ -183,10 +183,10 @@ def test_recovery_guide_explains_running_dag_amendment() -> None:
         assert "definition-only" in content
     assert "都要求已有 work item" in chinese
     assert "requires an existing work item" in english
-    assert "unknown_partial" in chinese
-    assert "unknown_partial" in english
-    assert "generation/owner" in chinese
-    assert "generation/owner" in english
+    assert "LWW metadata" in chinese
+    assert "LWW metadata" in english
+    assert "report digest" in chinese
+    assert "report digest" in english
 
 
 def test_orchestrator_recovery_instructions_match_resume_stage_rules() -> None:

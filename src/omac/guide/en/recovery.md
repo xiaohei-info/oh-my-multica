@@ -135,35 +135,29 @@ omac dag amend propose .omac/project.yaml \
   with `--resume-issue-id <issue-id>` to preserve the same issue, delivery, and
   Reviewer history.
 - Plain `--resume-issue-id` preserves a valid Reviewer-pass confirmation and
-  creates no new Agent Run. If the reviewed amendment itself must be replaced,
-  explicitly add `--restart-authoring` and provide the new report/docs inputs:
+  creates no new Agent Run. `--restart-authoring` is available only when the
+  Store exposes a real atomic conditional claim/server lock and the Runtime
+  exposes stable direct Run identities. Multica has LWW metadata only, so it
+  fails closed with exit 20 before any issue write or Agent dispatch and returns
+  a `--new-attempt` command. A new attempt preserves the old confirmation as
+  audit history:
 
   ```bash
   omac dag amend propose .omac/project.yaml \
     --blocked-node bootstrap-console \
     --report-file /tmp/new-dag-review.md \
     --docs docs \
-    --resume-issue-id <issue-id> \
-    --restart-authoring
+    --new-attempt \
+    --supersedes-issue-id <old-issue-id>
   ```
 
-  This action is limited to an amendment at confirmation. OMAC first checks for
-  queued, pending, running, or dispatching Runs; an active Run fails closed with
-  exit 20 and is never cancelled. When safe, the Store competes for one durable
-  restart generation and binds cleanup, the single input refresh, dispatch, and
-  Run observation to that generation. It invalidates the current deliverable,
-  Reviewer verdict/report/ledger, continuation/bounce, decision, and machine-
-  feedback references while preserving historical comments and attachments.
-  The Worker must create a new deliverable_ref through `omac work submit`, then
-  complete a fresh Reviewer and human-confirmation cycle. Worker completion
-  without a structured submit and Reviewer completion without a verdict both
-  converge to exit 20; OMAC does not rerun, cancel, or poll forever.
-  Multica currently offers atomic replacement of one metadata key, but no
-  cross-field compare-and-set. OMAC therefore uses a single generation/owner
-  journal and checks that fencing token before and after each compensating write.
-  A lost token, ambiguous Run identity, or crash between remote writes is
-  reported honestly as `unknown_partial` for operator inspection, not as an
-  atomic transaction.
+  The attempt identity binds the manifest, report digest, docs, blocked nodes,
+  and superseded issue. A crash retry reuses the same issue; a different report
+  digest creates a different attempt. Metadata and source refs record the
+  superseded issue, attempt id, and report digest. The old issue is never
+  cleared, reopened, or automatically closed. The new issue follows the normal
+  authoring → Reviewer → human-confirmation flow and still targets the original
+  manifest and nodes.
 - Accept runs under the manifest write lock with CAS and atomically writes the
   manifest definition plus a per-node apply ledger. The Store and filesystem do
   not share a transaction, so this is not a cross-system atomic transaction.

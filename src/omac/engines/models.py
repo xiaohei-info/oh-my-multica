@@ -92,6 +92,21 @@ class AgentRunObservation:
         return self.status in {"completed", "failed", "cancelled"}
 
 
+@dataclass(frozen=True)
+class StoreCapabilities:
+    """Store guarantees that change which orchestration paths are safe."""
+
+    atomic_authoring_restart: bool = False
+    authoring_restart_mechanism: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class RuntimeCapabilities:
+    """Runtime observation/dispatch guarantees exposed to the pipeline."""
+
+    stable_direct_run_identity: bool = False
+
+
 @dataclass
 class WorkspaceInfo:
     """工作空间信息"""
@@ -185,6 +200,7 @@ class WorkItem:
     review_continuation: Optional[Dict[str, Any]] = None
     decision_required: Optional[Dict[str, Any]] = None
     authoring_restart: Optional[RestartState] = None
+    amendment_attempt: Optional[Dict[str, Any]] = None
 
     # 验收契约(编排器 dispatch 时下发):worker 读回后用同一套 validator 自校验
     contract: Optional[Dict[str, Any]] = None
