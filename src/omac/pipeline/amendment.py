@@ -155,8 +155,13 @@ def propose_amendment(
     max_revisions: int,
     output_file: str | None = None,
     resume_issue_id: str | None = None,
+    restart_authoring: bool = False,
     poll=None,
 ) -> dict[str, Any]:
+    if restart_authoring and not resume_issue_id:
+        raise ValidationError(ui(
+            "--restart-authoring requires --resume-issue-id",
+            "--restart-authoring 必须与 --resume-issue-id 一起使用"))
     report, docs = _validate_inputs(
         manifest_path, report_file, docs, blocked_nodes)
     if not orchestrator:
@@ -231,6 +236,7 @@ def propose_amendment(
         pause_at_confirmation=True,
         dag_key=f"amend-{Path(manifest_path).stem}",
         resume_item_id=resume_issue_id,
+        restart_authoring=restart_authoring,
         review_acceptance_doc=acceptance,
         review_amendment_manifest=manifest,
     )

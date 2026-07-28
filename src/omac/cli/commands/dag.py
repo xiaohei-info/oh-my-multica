@@ -159,6 +159,11 @@ def register(parser):
     propose.add_argument("--max-revisions", type=int, help="Orchestrator↔Reviewer 最大修订轮次")
     propose.add_argument("--output-file", help="reviewed amendment 输出文件")
     propose.add_argument("--resume-issue-id", help="恢复已有 amendment issue，不新建")
+    propose.add_argument(
+        "--restart-authoring",
+        action="store_true",
+        help="与 --resume-issue-id 同用：作废旧 confirmation，并在同一 issue 重开 authoring",
+    )
     propose.add_argument("--engine", help="引擎类型覆盖")
     propose.add_argument("--workspace", help="workspace 覆盖")
     add_output_flag(propose, default="json")
@@ -504,6 +509,7 @@ def amend(args) -> int:
             max_revisions=max_revisions,
             output_file=args.output_file,
             resume_issue_id=args.resume_issue_id,
+            restart_authoring=args.restart_authoring,
         )
         print_json(report)
         raise NeedsDecision(ui(

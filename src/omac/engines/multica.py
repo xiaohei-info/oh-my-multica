@@ -561,17 +561,23 @@ class MulticaStore(WorkItemStore):
             except Exception:
                 wave = None
 
+        deliverable_ref_declared = DELIVERABLE_REF_KEY in metadata
         deliverable_ref = self._json_metadata(metadata, DELIVERABLE_REF_KEY)
-        deliverable = metadata.get(DELIVERABLE_KEY)
-        if not deliverable and isinstance(deliverable_ref, dict):
+        deliverable = None if deliverable_ref_declared else metadata.get(DELIVERABLE_KEY)
+        if isinstance(deliverable_ref, dict) and deliverable_ref:
             deliverable = self._load_payload_comment(issue_data["id"], "deliverable", deliverable_ref)
 
+        project_rules_ref_declared = PROJECT_RULES_REF_KEY in metadata
         project_rules_ref = self._json_metadata(metadata, PROJECT_RULES_REF_KEY)
-        project_rules = metadata.get(PROJECT_RULES_KEY)
-        if not project_rules and isinstance(project_rules_ref, dict):
+        project_rules = (
+            None if project_rules_ref_declared else metadata.get(PROJECT_RULES_KEY)
+        )
+        if isinstance(project_rules_ref, dict) and project_rules_ref:
             project_rules = self._load_payload_comment(
                 issue_data["id"], "project-rules", project_rules_ref)
 
+        verification_ref_declared = VERIFICATION_REF_KEY in metadata
+        review_report_ref_declared = REVIEW_REPORT_REF_KEY in metadata
         verification_ref = self._json_metadata(metadata, VERIFICATION_REF_KEY)
         review_report_ref = self._json_metadata(metadata, REVIEW_REPORT_REF_KEY)
         review_ledger_ref = self._json_metadata(metadata, REVIEW_LEDGER_REF_KEY)
@@ -582,7 +588,7 @@ class MulticaStore(WorkItemStore):
         machine_feedback_ref = self._json_metadata(
             metadata, MACHINE_FEEDBACK_REF_KEY)
         review_obligations = None
-        if isinstance(review_obligations_ref, dict):
+        if isinstance(review_obligations_ref, dict) and review_obligations_ref:
             obligations_text = self._load_payload_comment(
                 issue_data["id"], "review-obligations", review_obligations_ref)
             try:
@@ -604,23 +610,23 @@ class MulticaStore(WorkItemStore):
         contract_ref = self._json_metadata(metadata, CONTRACT_REF_KEY)
         source_refs = self._json_metadata(metadata, SOURCE_REFS_KEY)
         verification = None
-        if isinstance(verification_ref, dict):
+        if isinstance(verification_ref, dict) and verification_ref:
             verification_text = self._load_payload_comment(issue_data["id"], "verification", verification_ref)
             verification = parse_payload_text(verification_text)
-        if verification is None:
+        if verification is None and not verification_ref_declared:
             legacy_verification = self._json_metadata(metadata, "verification")
             verification = legacy_verification if isinstance(legacy_verification, dict) else None
 
         review_report = None
-        if isinstance(review_report_ref, dict):
+        if isinstance(review_report_ref, dict) and review_report_ref:
             report_text = self._load_payload_comment(issue_data["id"], "review-report", review_report_ref)
             review_report = parse_payload_text(report_text)
-        if review_report is None:
+        if review_report is None and not review_report_ref_declared:
             legacy_report = self._json_metadata(metadata, "review_report")
             review_report = legacy_report if isinstance(legacy_report, dict) else None
 
         review_ledger = None
-        if isinstance(review_ledger_ref, dict):
+        if isinstance(review_ledger_ref, dict) and review_ledger_ref:
             ledger_text = self._load_payload_comment(
                 issue_data["id"], "review-ledger", review_ledger_ref)
             review_ledger = parse_payload_text(ledger_text)
@@ -682,7 +688,9 @@ class MulticaStore(WorkItemStore):
             wave=wave,
             artifacts=self._json_metadata(metadata, "artifacts"),
             verification=verification,
-            verification_ref=verification_ref if isinstance(verification_ref, dict) else None,
+            verification_ref=(
+                verification_ref if isinstance(verification_ref, dict) and verification_ref
+                else None),
             review_verdict=self._optional_text_metadata(metadata, "review_verdict"),
             review_comment=self._optional_text_metadata(metadata, "review_comment"),
             machine_feedback=machine_feedback,
@@ -691,17 +699,22 @@ class MulticaStore(WorkItemStore):
                 if isinstance(machine_feedback_ref, dict) and machine_feedback_ref
                 else None),
             review_report=review_report,
-            review_report_ref=review_report_ref if isinstance(review_report_ref, dict) else None,
+            review_report_ref=(
+                review_report_ref if isinstance(review_report_ref, dict) and review_report_ref
+                else None),
             review_subject_digest=self._optional_text_metadata(
                 metadata, REVIEW_SUBJECT_DIGEST_KEY),
             review_obligations=(
                 review_obligations if isinstance(review_obligations, list) else []),
             review_obligations_ref=(
                 review_obligations_ref
-                if isinstance(review_obligations_ref, dict) else None),
+                if isinstance(review_obligations_ref, dict) and review_obligations_ref
+                else None),
             review_ledger=review_ledger,
             review_ledger_ref=(
-                review_ledger_ref if isinstance(review_ledger_ref, dict) else None),
+                review_ledger_ref
+                if isinstance(review_ledger_ref, dict) and review_ledger_ref
+                else None),
             review_continuation=(
                 review_continuation
                 if isinstance(review_continuation, dict) else None),
@@ -713,10 +726,14 @@ class MulticaStore(WorkItemStore):
             phase=parse_phase(metadata.get(PHASE_KEY)),
             bounces=parse_bounces(metadata),
             deliverable=deliverable,
-            deliverable_ref=deliverable_ref if isinstance(deliverable_ref, dict) else None,
+            deliverable_ref=(
+                deliverable_ref if isinstance(deliverable_ref, dict) and deliverable_ref
+                else None),
             project_rules=project_rules,
             project_rules_ref=(
-                project_rules_ref if isinstance(project_rules_ref, dict) else None),
+                project_rules_ref
+                if isinstance(project_rules_ref, dict) and project_rules_ref
+                else None),
         )
 
     def _resolve_agent_id(self, agent_name: str) -> str:
@@ -1161,6 +1178,77 @@ class MulticaStore(WorkItemStore):
         self._set_metadata(item_id, DECISION_REQUIRED_KEY, "{}")
         self._set_metadata(item_id, REVIEW_SUBJECT_DIGEST_KEY, "")
         self._set_metadata(item_id, PHASE_KEY, TaskPhase.AUTHORING.value)
+
+    def restart_authoring(
+        self,
+        item_id: str,
+        *,
+        expected_review_subject_digest: Optional[str],
+    ) -> WorkItem:
+        current = self.get_work_item(item_id)
+        clean_authoring = (
+            current.phase == TaskPhase.AUTHORING
+            and current.deliverable is None
+            and not current.deliverable_ref
+            and current.review_verdict is None
+            and not current.review_report_ref
+            and not current.review_ledger_ref
+            and not current.machine_feedback_ref
+            and not current.decision_required
+        )
+        if clean_authoring:
+            if current.status != WorkItemStatus.TODO:
+                self.update_status(item_id, WorkItemStatus.TODO)
+            return self.get_work_item(item_id)
+        if current.kind != TaskKind.AMENDMENT or current.phase != TaskPhase.CONFIRMATION:
+            raise ValidationError(ui(
+                "Only an amendment in human confirmation can restart authoring",
+                "只有处于人工确认阶段的 amendment 才能重开 authoring"))
+        partial_restart = (
+            current.review_subject_digest is None
+            and current.deliverable is None
+            and not current.deliverable_ref
+            and current.review_verdict is None
+        )
+        if not partial_restart and (
+            not expected_review_subject_digest
+            or current.review_subject_digest != expected_review_subject_digest
+        ):
+            raise ValidationError(ui(
+                "Amendment confirmation changed before authoring restart; read it again and retry",
+                "重开 authoring 前 amendment confirmation 已变化；请重新读取后再试"))
+        if (
+            not partial_restart
+            and current.review_verdict not in {"pass", "pass-with-nits"}
+        ):
+            raise ValidationError(ui(
+                "Amendment authoring restart requires a Reviewer-pass confirmation",
+                "重开 amendment authoring 需要 Reviewer 已通过的 confirmation"))
+
+        self.clear_assignment(item_id)
+        for key, value in (
+            (DELIVERABLE_KEY, ""),
+            (DELIVERABLE_REF_KEY, "{}"),
+            (PROJECT_RULES_KEY, ""),
+            (PROJECT_RULES_REF_KEY, "{}"),
+            (VERIFICATION_REF_KEY, "{}"),
+            ("review_verdict", ""),
+            ("review_comment", ""),
+            (REVIEW_REPORT_REF_KEY, "{}"),
+            (REVIEW_SUBJECT_DIGEST_KEY, ""),
+            (REVIEW_OBLIGATIONS_KEY, "[]"),
+            (REVIEW_OBLIGATIONS_REF_KEY, "{}"),
+            (REVIEW_LEDGER_REF_KEY, "{}"),
+            (REVIEW_CONTINUATION_KEY, "{}"),
+            (DECISION_REQUIRED_KEY, "{}"),
+            (MACHINE_FEEDBACK_REF_KEY, "{}"),
+        ):
+            self._set_metadata(item_id, key, value)
+        # phase 最后写：进程若在清理途中退出，默认 confirmation resume 无法
+        # 消费已失效的 verdict；显式 restart 可基于同一 CAS 再次收尾。
+        self._set_metadata(item_id, PHASE_KEY, TaskPhase.AUTHORING.value)
+        self.update_status(item_id, WorkItemStatus.TODO)
+        return self.get_work_item(item_id)
 
     def prepare_review_cycle(self, item_id: str, subject_digest: str) -> WorkItem:
         item = self.get_work_item(item_id)

@@ -196,6 +196,20 @@ class WorkItemStore(ABC):
         """
 
     @abstractmethod
+    def restart_authoring(
+        self,
+        item_id: str,
+        *,
+        expected_review_subject_digest: Optional[str],
+    ) -> WorkItem:
+        """用 CAS 将已确认的 amendment 原地重开为干净 authoring。
+
+        仅清除当前交付和评审引用；平台评论与附件历史必须保留作审计证据。
+        ``expected_review_subject_digest`` 绑定调用方刚读取的 confirmation，防止
+        并发进程把更新后的交付误作废。已完成转换的干净 authoring 可幂等重入。
+        """
+
+    @abstractmethod
     def prepare_review_cycle(self, item_id: str, subject_digest: str) -> WorkItem:
         """绑定当前评审对象；对象变化时清除旧 verdict/report，保持 review 阶段。"""
 

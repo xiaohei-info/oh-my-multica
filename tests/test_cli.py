@@ -52,6 +52,15 @@ def test_version(capsys):
     assert "omac" in capsys.readouterr().out
 
 
+def test_amend_propose_help_documents_explicit_authoring_restart(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["dag", "amend", "propose", "--help"])
+    assert exc.value.code == 0
+    help_text = capsys.readouterr().out
+    assert "--restart-authoring" in help_text
+    assert "--resume-issue-id" in help_text
+
+
 def test_unknown_command_teaches(capsys):
     with pytest.raises(SystemExit) as e:
         main(["nope"])

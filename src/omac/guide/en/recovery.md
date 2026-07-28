@@ -134,6 +134,29 @@ omac dag amend propose .omac/project.yaml \
   decision to continue, rerun the original `omac dag amend propose ...` command
   with `--resume-issue-id <issue-id>` to preserve the same issue, delivery, and
   Reviewer history.
+- Plain `--resume-issue-id` preserves a valid Reviewer-pass confirmation and
+  creates no new Agent Run. If the reviewed amendment itself must be replaced,
+  explicitly add `--restart-authoring` and provide the new report/docs inputs:
+
+  ```bash
+  omac dag amend propose .omac/project.yaml \
+    --blocked-node bootstrap-console \
+    --report-file /tmp/new-dag-review.md \
+    --docs docs \
+    --resume-issue-id <issue-id> \
+    --restart-authoring
+  ```
+
+  This action is limited to an amendment at confirmation. OMAC first checks for
+  queued, pending, running, or dispatching Runs; an active Run fails closed with
+  exit 20 and is never cancelled. When safe, the Store CAS-invalidates the old
+  review subject and current deliverable, Reviewer verdict/report/ledger,
+  decision, and machine-feedback references while preserving historical
+  comments and attachments. It then refreshes the issue body, contract/source
+  refs, and restarts authoring on the same issue. The Worker must submit a fresh
+  structured deliverable, followed by a complete Reviewer and human-confirmation
+  cycle. A Run that completes without a fresh structured submit converges to
+  exit 20; OMAC neither reruns it automatically nor polls forever.
 - Accept runs under the manifest write lock with CAS and atomically writes the
   manifest definition plus a per-node apply ledger. The Store and filesystem do
   not share a transaction, so this is not a cross-system atomic transaction.

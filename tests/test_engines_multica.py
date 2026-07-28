@@ -11,12 +11,119 @@ import yaml
 from omac.core.contract_boundaries import responsibility_summary
 from omac.core.manifest import _load_contract
 from omac.core.manifest import Contract, EvidenceMode, ProducedArtifact
+from omac.core.taskmeta import TaskKind, TaskPhase
 from omac.engines.models import (
     EngineConfig, PullRequestReadinessFailure, PullRequestState,
 )
 from omac.engines.models import WorkItemStatus
 from omac.engines.multica import MulticaRuntime, MulticaStore
 from omac.errors import PlatformError
+
+
+def test_multica_restart_authoring_clears_current_refs_but_not_history(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    current = SimpleNamespace(
+        id="issue-1",
+        kind=TaskKind.AMENDMENT,
+        phase=TaskPhase.CONFIRMATION,
+        status=WorkItemStatus.IN_REVIEW,
+        deliverable="old amendment",
+        deliverable_ref={"sha256": "old-delivery"},
+        review_verdict="pass",
+        review_subject_digest="old-subject",
+        review_report_ref={"sha256": "old-report"},
+        review_ledger_ref={"sha256": "old-ledger"},
+        machine_feedback_ref={"sha256": "old-feedback"},
+        decision_required={"reason_code": "old-decision"},
+    )
+    metadata = []
+    events = []
+
+    monkeypatch.setattr(store, "get_work_item", lambda _item_id: current)
+    monkeypatch.setattr(
+        store,
+        "clear_assignment",
+        lambda item_id: events.append(("unassign", item_id)),
+    )
+
+    def set_metadata(item_id, key, value):
+        metadata.append((key, value))
+        if key == "phase":
+            current.phase = TaskPhase(value)
+        elif key == "review_subject_digest":
+            current.review_subject_digest = value or None
+        elif key == "review_verdict":
+            current.review_verdict = value or None
+        elif key == "deliverable_ref":
+            current.deliverable_ref = None
+            current.deliverable = None
+        elif key == "review_report_ref":
+            current.review_report_ref = None
+        elif key == "review_ledger_ref":
+            current.review_ledger_ref = None
+        elif key == "machine_feedback_ref":
+            current.machine_feedback_ref = None
+        elif key == "decision_required":
+            current.decision_required = None
+
+    monkeypatch.setattr(store, "_set_metadata", set_metadata)
+
+    def update_status(item_id, status):
+        events.append(("status", item_id, status))
+        current.status = status
+
+    monkeypatch.setattr(store, "update_status", update_status)
+
+    result = store.restart_authoring(
+        "issue-1", expected_review_subject_digest="old-subject")
+
+    assert result.phase == TaskPhase.AUTHORING
+    assert result.status == WorkItemStatus.TODO
+    assert events == [
+        ("unassign", "issue-1"),
+        ("status", "issue-1", WorkItemStatus.TODO),
+    ]
+    assert metadata[-1] == ("phase", "authoring")
+    cleared = dict(metadata)
+    assert cleared["deliverable_ref"] == "{}"
+    assert cleared["review_report_ref"] == "{}"
+    assert cleared["review_ledger_ref"] == "{}"
+    assert cleared["decision_required"] == "{}"
+    assert cleared["machine_feedback_ref"] == "{}"
+
+
+def test_multica_empty_ref_tombstones_suppress_legacy_payloads(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    monkeypatch.setattr(
+        store,
+        "_inactive_latest_run_status",
+        lambda _item_id: None,
+    )
+
+    item = store._issue_to_work_item({
+        "id": "issue-1",
+        "title": "amendment",
+        "description": "history remains in comments",
+        "status": "todo",
+        "metadata": {
+            "dag_key": "amend-restart",
+            "kind": "amendment",
+            "phase": "authoring",
+            "deliverable": "legacy old amendment",
+            "deliverable_ref": {},
+            "verification": {"old": True},
+            "verification_ref": {},
+            "review_report": {"old": True},
+            "review_report_ref": {},
+        },
+    }, "ws")
+
+    assert item.deliverable is None
+    assert item.deliverable_ref is None
+    assert item.verification is None
+    assert item.verification_ref is None
+    assert item.review_report is None
+    assert item.review_report_ref is None
 
 
 def test_multica_text_file_commands_allow_process_owned_external_file(monkeypatch):

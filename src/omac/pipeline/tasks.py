@@ -451,6 +451,7 @@ def run_task(
     dag_key: Optional[str] = None,
     resume_item_id: Optional[str] = None,
     resume_item_snapshot: Optional[WorkItem] = None,
+    restart_authoring: bool = False,
     review_acceptance_doc: Any = None,
     review_amendment_manifest: Any = None,
 ) -> Dict[str, Any]:
@@ -464,6 +465,15 @@ def run_task(
     """
     store = engine.store
     runtime = engine.runtime
+
+    if restart_authoring and resume_item_id is None:
+        raise ValidationError(ui(
+            "--restart-authoring requires --resume-issue-id",
+            "--restart-authoring 必须与 --resume-issue-id 一起使用"))
+    if restart_authoring and kind != TaskKind.AMENDMENT:
+        raise ValidationError(ui(
+            "Authoring restart is supported only for amendment tasks",
+            "只有 amendment 任务支持重开 authoring"))
 
     title = payload.get("title") or f"{kind.value} task"
     task_key = dag_key or make_dag_key(kind, title=title, unique=True)
@@ -482,6 +492,26 @@ def run_task(
 
     if resume_item_id is not None:
         item = resume_item_snapshot or store.get_work_item(resume_item_id)
+        if restart_authoring:
+            if runtime.is_active(item.id):
+                raise NeedsDecision(
+                    ui(
+                        f"Amendment {item.id} has an active Agent run; wait for it to finish before restarting authoring",
+                        f"amendment {item.id} 仍有活跃 Agent Run；等待其结束后再重开 authoring"),
+                    report={
+                        "item_id": item.id,
+                        "kind": kind.value,
+                        "phase": item.phase.value,
+                        "reason_code": "active-agent-run",
+                        "last_opinion": "active Agent run prevents authoring restart",
+                    },
+                )
+            item = store.restart_authoring(
+                item.id,
+                expected_review_subject_digest=item.review_subject_digest,
+            )
+            item = refresh_authoring_task(
+                engine, item.id, spec, item_snapshot=item)
         if (
             item.status == WorkItemStatus.TODO
             and item.phase == TaskPhase.AUTHORING
@@ -495,7 +525,7 @@ def run_task(
         item_id = item.id
 
     explicit_resume = resume_item_id is not None
-    resume_authoring_attempt_available = explicit_resume
+    resume_authoring_attempt_available = explicit_resume and not restart_authoring
 
     if (
         explicit_resume
@@ -549,8 +579,68 @@ def run_task(
             report={"item_id": item_id, "kind": kind.value, "rounds": 0,
                     "last_opinion": f"producer {outcome}"})
 
+    def _raise_completed_without_submit() -> None:
+        decision = {
+            "schema": DECISION_REQUIRED_SCHEMA,
+            "reason_code": "completed-without-submit",
+            "kind": kind.value,
+            "phase": TaskPhase.AUTHORING.value,
+            "resume_issue_id": item_id,
+        }
+        store.update_work_item_metadata(
+            item_id,
+            decision_required=decision,
+            phase=TaskPhase.AUTHORING,
+        )
+        store.mark_blocked(item_id)
+        log.info(
+            logsetup.EVT_NEEDS_DECISION,
+            kind=kind.value,
+            id=item_id,
+            gate="authoring-submit",
+            rounds=0,
+        )
+        raise NeedsDecision(
+            ui(
+                f"{kind.value} Agent run completed without a fresh structured deliverable (item {item_id})",
+                f"{kind.value} Agent Run 已结束但没有提交新的结构化交付物（item {item_id}）"),
+            report={
+                "item_id": item_id,
+                "kind": kind.value,
+                "phase": TaskPhase.AUTHORING.value,
+                "reason_code": "completed-without-submit",
+                "rounds": 0,
+                "last_opinion": "Agent run completed without omac work submit",
+            },
+        )
+
+    def _dispatch_authoring_and_wait() -> WorkItem:
+        store.mark_in_progress(item_id)
+        store.assign_work_item(item_id, assignee, "worker")
+        runtime.wake(item_id, assignee, "worker")
+        log.info(
+            logsetup.EVT_DISPATCH,
+            kind=kind.value,
+            id=item_id,
+            worker=assignee,
+        )
+        produced = _poll_until(
+            store,
+            item_id,
+            lambda candidate: (
+                _produced(candidate)
+                or candidate.agent_run_finished_without_submit
+            ),
+            poll,
+        )
+        if produced.agent_run_finished_without_submit and not _produced(produced):
+            _raise_completed_without_submit()
+        _raise_if_authoring_stopped(produced)
+        return produced
+
     def _produce(hint: Optional[List[str]] = None) -> WorkItem:
         nonlocal resume_authoring_attempt_available
+
         current = store.get_work_item(item_id)
         if (
             hint is None
@@ -582,23 +672,13 @@ def run_task(
                 or current.agent_run_finished_without_submit
             ):
                 resume_authoring_attempt_available = False
-                store.mark_in_progress(item_id)
-                store.assign_work_item(item_id, assignee, "worker")
-                runtime.wake(item_id, assignee, "worker")
-                produced = _poll_until(store, item_id, _produced, poll)
-                _raise_if_authoring_stopped(produced)
-                return produced
+                return _dispatch_authoring_and_wait()
         _raise_if_authoring_stopped(current)
         if hint is None and _produced(current):
             return current
         if hint:
             _persist_machine_feedback(hint)
-        store.mark_in_progress(item_id)
-        store.assign_work_item(item_id, assignee, "worker")
-        runtime.wake(item_id, assignee, "worker")
-        produced = _poll_until(store, item_id, _produced, poll)
-        _raise_if_authoring_stopped(produced)
-        return produced
+        return _dispatch_authoring_and_wait()
 
     def _persist_machine_feedback(errors: List[str]) -> None:
         feedback = build_machine_feedback("machine-gate", errors)
@@ -642,7 +722,6 @@ def run_task(
                 store.get_work_item(node.work_item_id))
         return evidence
 
-    log.info(logsetup.EVT_DISPATCH, kind=kind.value, id=item_id, worker=assignee)
     delivered = _produce()
     delivery = _delivery_of(kind, delivered)
 
