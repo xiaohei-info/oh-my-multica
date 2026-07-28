@@ -133,18 +133,6 @@ def historical_work_item_evidence_digest(item: Any) -> str:
     })
 
 
-def _canonical_contract_value(contract: Any) -> Any:
-    if contract is None:
-        return None
-    if isinstance(contract, dict):
-        contract = _load_contract(contract)
-    return _dump_contract(contract)
-
-
-def _contract_digest(contract: Any) -> str:
-    return _digest(_canonical_contract_value(contract))
-
-
 def _node_runtime_digest(node: Node) -> str:
     return _digest({
         "work_item_id": node.work_item_id,
@@ -468,6 +456,17 @@ def _validate_responsibility_operation(
         seen.add(name)
         if not isinstance(patch.get("acceptance_refs"), list):
             errors.append(f"{patch_prefix}.acceptance_refs must be a list")
+        else:
+            refs = patch["acceptance_refs"]
+            valid_refs = [
+                ref for ref in refs
+                if isinstance(ref, str) and ref.strip()
+            ]
+            if len(valid_refs) != len(refs):
+                errors.append(
+                    f"{patch_prefix}.acceptance_refs entries must be non-empty strings")
+            if len(valid_refs) != len(set(valid_refs)):
+                errors.append(f"{patch_prefix}.acceptance_refs must not contain duplicates")
     historical = operation.get("historical_contract_correction") is True
     resume_stage = operation.get("resume_stage")
     if resume_stage is not None and resume_stage not in {
@@ -495,6 +494,13 @@ def _validate_responsibility_operation(
             f"{prefix}: explicit resume_stage requires an existing work item")
     if node.contract is None:
         errors.append(f"{prefix}: responsibility update requires an existing contract")
+    if historical and not errors:
+        after = copy.deepcopy(node)
+        after.contract = _responsibility_contract(node, operation)
+        if not _responsibility_allowed_diff(node, after):
+            errors.append(
+                f"{prefix}: historical contract correction must change at least one "
+                "acceptance responsibility field")
     return errors
 
 
@@ -950,29 +956,18 @@ def _prepare_apply_ledger(
 ) -> dict[str, Any]:
     entries: dict[str, Any] = {}
     for correction in historical_corrections:
-        node = manifest.nodes[correction["node"]]
-        item = store.get_work_item(node.work_item_id)
-        current_contract_sha256 = _contract_digest(item.contract)
-        allowed_digests = {
-            correction["before_contract_sha256"],
-            correction["after_contract_sha256"],
-        }
-        if current_contract_sha256 not in allowed_digests:
-            raise ValidationError(
-                f"Node {node.id} Store contract changed after amendment review. "
-                "Review a rebased amendment before retrying.")
         entries[correction["node"]] = {
             "stage": "historical_contract_correction",
-            "state": "pending",
-            "store_side_effect": "set_node_contract",
+            "state": "synced",
+            "store_side_effect": "none",
             "runtime_facts_sha256": correction["runtime_facts_sha256"],
             "before_contract_sha256": correction["before_contract_sha256"],
             "after_contract_sha256": correction["after_contract_sha256"],
+            "before_responsibility_sha256": correction[
+                "before_responsibility_sha256"],
+            "after_responsibility_sha256": correction[
+                "after_responsibility_sha256"],
             "evidence_sha256": correction.get("evidence_sha256"),
-            "before_contract_ref_sha256": (
-                (item.contract_ref or {}).get("sha256")
-                if isinstance(item.contract_ref, dict) else None
-            ),
             "allowed_field_diff": correction["allowed_field_diff"],
             "reason": correction["reason"],
         }
@@ -1013,66 +1008,6 @@ def _save_ledger(manifest: Manifest, manifest_path: str, ledger: dict[str, Any])
     save_manifest(manifest, manifest_path)
 
 
-def _resume_historical_contract_correction(
-    manifest: Manifest,
-    manifest_path: str,
-    store: Any,
-    ledger: dict[str, Any],
-    node_id: str,
-    entry: dict[str, Any],
-) -> None:
-    node = manifest.nodes.get(node_id)
-    if node is None or not node.work_item_id:
-        raise ValidationError(
-            f"node {node_id}: historical contract correction lost its work item")
-    if _node_runtime_digest(node) != entry.get("runtime_facts_sha256"):
-        raise ValidationError(
-            f"Node {node_id} historical runtime audit changed during contract sync.")
-
-    item = store.get_work_item(node.work_item_id)
-    if historical_work_item_evidence_digest(item) != entry.get("evidence_sha256"):
-        raise ValidationError(
-            f"Node {node_id} Store evidence changed during historical contract sync.")
-    current_contract_sha256 = _contract_digest(item.contract)
-    after_contract_sha256 = entry.get("after_contract_sha256")
-    if current_contract_sha256 == after_contract_sha256:
-        ref = item.contract_ref if isinstance(item.contract_ref, dict) else {}
-        if not ref.get("sha256"):
-            raise ValidationError(
-                f"Node {node_id} Store reached the corrected contract without a "
-                "digest-bearing contract_ref.")
-        entry["state"] = "synced"
-        entry["observed_contract_sha256"] = current_contract_sha256
-        entry["contract_ref_sha256"] = ref["sha256"]
-        _save_ledger(manifest, manifest_path, ledger)
-        return
-    if current_contract_sha256 != entry.get("before_contract_sha256"):
-        raise ValidationError(
-            f"Node {node_id} Store contract changed during historical correction. "
-            "Review a rebased amendment before retrying.")
-
-    entry["state"] = "syncing"
-    entry["attempt_contract_sha256"] = current_contract_sha256
-    _save_ledger(manifest, manifest_path, ledger)
-    store.set_node_contract(node.work_item_id, node.contract)
-    updated = store.get_work_item(node.work_item_id)
-    if historical_work_item_evidence_digest(updated) != entry.get("evidence_sha256"):
-        raise ValidationError(
-            f"Node {node_id} Store evidence changed while publishing the corrected contract.")
-    observed_contract_sha256 = _contract_digest(updated.contract)
-    if observed_contract_sha256 != after_contract_sha256:
-        raise ValidationError(
-            f"Node {node_id} Store did not expose the corrected contract after publishing it.")
-    ref = updated.contract_ref if isinstance(updated.contract_ref, dict) else {}
-    if not ref.get("sha256"):
-        raise ValidationError(
-            f"Node {node_id} corrected contract is missing a digest-bearing contract_ref.")
-    entry["state"] = "synced"
-    entry["observed_contract_sha256"] = observed_contract_sha256
-    entry["contract_ref_sha256"] = ref["sha256"]
-    _save_ledger(manifest, manifest_path, ledger)
-
-
 def _resume_apply_ledger(
     manifest: Manifest,
     manifest_path: str,
@@ -1087,11 +1022,6 @@ def _resume_apply_ledger(
         state = entry.get("state")
         if state in {"synced", "observed_progress"}:
             summary["already_complete"].append(node_id)
-            continue
-        if entry.get("stage") == "historical_contract_correction":
-            _resume_historical_contract_correction(
-                manifest, manifest_path, store, ledger, node_id, entry)
-            summary["synced"].append(node_id)
             continue
         node = manifest.nodes.get(node_id)
         if node is None or not node.work_item_id:
