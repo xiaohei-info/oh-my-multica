@@ -417,51 +417,137 @@ def test_resume_refreshes_unstarted_authoring_issue_in_place():
     ]
 
 
-def test_resume_snapshot_shrinks_unreadable_issue_before_full_get():
-    """巨型旧正文不可读时，先用 list 快照覆盖紧凑正文，再完整读取。"""
-    eng = _engine()
+def test_resume_store_read_failure_never_uses_pristine_snapshot_for_refresh(
+    monkeypatch,
+):
+    """首次 Store 读取失败时，旧 pristine snapshot 不能授权任何 refresh 副作用。"""
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
     base_store = eng.store
-    snapshot = base_store.create_work_item(
-        "ws", "decompose", "oversized old body", dag_key="decompose-p1",
-        worker="bob", kind=TaskKind.DECOMPOSE)
+    item = create_authoring_task(eng, AuthoringTaskSpec(
+        kind=TaskKind.DECOMPOSE,
+        title="decompose",
+        dag_key="decompose-read-failure",
+        assignee="bob",
+    ))
+    snapshot = copy.deepcopy(item)
+    base_store.update_work_item_metadata(
+        item.id,
+        deliverable="current manifest",
+        phase=TaskPhase.CONFIRMATION,
+        review_verdict="pass",
+        review_report=_review_report(),
+    )
+    current = base_store.get_work_item(item.id)
+    current.review_subject_digest = tasks_module._review_subject_digest(
+        TaskKind.DECOMPOSE, current, 1)
+    base_store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+    confirmation_before = copy.deepcopy(base_store.get_work_item(item.id))
 
-    class _UnreadableUntilRefreshed:
+    class _FailFirstReadStore:
         def __init__(self, delegate):
             self.delegate = delegate
             self.config = delegate.config
-            self.refreshed = False
+            self.reads = 0
+            self.contract_writes = 0
+            self.metadata_writes = 0
+            self.assigns = 0
 
         def __getattr__(self, name):
             return getattr(self.delegate, name)
 
         def get_work_item(self, item_id):
-            if not self.refreshed:
-                raise PlatformError("old issue body is too large to read")
+            self.reads += 1
+            if self.reads == 1:
+                raise PlatformError("first Store read failed")
             return self.delegate.get_work_item(item_id)
 
+        def set_node_contract(self, item_id, contract):
+            self.contract_writes += 1
+            return self.delegate.set_node_contract(item_id, contract)
+
         def update_work_item_metadata(self, item_id, **metadata):
-            if metadata.get("description") is not None:
-                self.refreshed = True
+            self.metadata_writes += 1
             return self.delegate.update_work_item_metadata(item_id, **metadata)
 
-    eng.store = _UnreadableUntilRefreshed(base_store)
+        def assign_work_item(self, item_id, agent, role):
+            self.assigns += 1
+            return self.delegate.assign_work_item(item_id, agent, role)
 
-    result = run_task(
-        eng,
-        TaskKind.DECOMPOSE,
-        _payload(
-            title="decompose",
-            source_of_truth={"acceptance": "small acceptance"},
-        ),
-        "bob",
-        source_refs=[{"label": "acceptance", "issue_id": "acceptance-1"}],
-        poll=_poll,
-        resume_item_id=snapshot.id,
-        resume_item_snapshot=snapshot,
+    eng.store = _FailFirstReadStore(base_store)
+    runtime_calls = {"is_active": 0, "wake": 0}
+    monkeypatch.setattr(
+        eng.runtime,
+        "is_active",
+        lambda _item_id: runtime_calls.__setitem__(
+            "is_active", runtime_calls["is_active"] + 1),
+    )
+    monkeypatch.setattr(
+        eng.runtime,
+        "wake",
+        lambda *_args: runtime_calls.__setitem__(
+            "wake", runtime_calls["wake"] + 1),
     )
 
-    assert result["item_id"] == snapshot.id
-    assert eng.store.refreshed is True
+    with pytest.raises(PlatformError, match="first Store read failed"):
+        run_task(
+            eng,
+            TaskKind.DECOMPOSE,
+            _payload(
+                title="decompose",
+                source_of_truth={"acceptance": "new acceptance"},
+            ),
+            "bob",
+            source_refs=[{"label": "acceptance", "issue_id": "new-acceptance"}],
+            poll=lambda: pytest.fail("failed read must not poll"),
+            resume_item_id=item.id,
+            resume_item_snapshot=snapshot,
+        )
+
+    assert eng.store.contract_writes == 0
+    assert eng.store.metadata_writes == 0
+    assert eng.store.assigns == 0
+    assert runtime_calls == {"is_active": 0, "wake": 0}
+    assert base_store.get_work_item(item.id) == confirmation_before
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("deliverable_ref", {"attachment_id": "existing-delivery"}),
+        ("agent_run_failed", True),
+        ("agent_run_finished_without_submit", True),
+    ],
+)
+def test_resume_refresh_requires_no_delivery_ref_or_stopped_signal(
+    monkeypatch, field_name, value,
+):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = create_authoring_task(eng, AuthoringTaskSpec(
+        kind=TaskKind.PLAN,
+        title="plan",
+        dag_key=f"plan-no-refresh-{field_name}",
+        assignee="alice",
+    ))
+    setattr(eng.store.get_work_item(item.id), field_name, value)
+    monkeypatch.setattr(
+        tasks_module,
+        "refresh_authoring_task",
+        lambda *_args, **_kwargs: pytest.fail("current facts do not permit refresh"),
+    )
+    monkeypatch.setattr(eng.runtime, "is_active", lambda _item_id: False)
+
+    def wake(item_id, _agent, _role):
+        eng.store.update_work_item_metadata(
+            item_id, deliverable="fresh plan", phase=TaskPhase.REVIEW)
+        eng.store.mark_in_review(item_id)
+
+    monkeypatch.setattr(eng.runtime, "wake", wake)
+
+    result = run_task(
+        eng, TaskKind.PLAN, _payload(title="plan"), "alice",
+        poll=_poll, resume_item_id=item.id)
+
+    assert result["delivery"]["plan"] == "fresh plan"
 
 
 def test_run_task_handoff_to_reviewer_does_not_post_trigger_comment():
@@ -767,48 +853,6 @@ def test_resume_reads_current_store_before_using_snapshot(monkeypatch):
 
     assert result["verdict"] == "pass"
     assert result["delivery"]["plan"] == "current plan"
-
-
-def test_resume_never_consumes_confirmation_snapshot_when_store_is_unreadable(
-    monkeypatch,
-):
-    eng = _engine(MOCK_AUTO_COMPLETE="false")
-    item = create_authoring_task(eng, AuthoringTaskSpec(
-        kind=TaskKind.PLAN,
-        title="feature-x",
-        dag_key="plan-unreadable-current",
-        assignee="alice",
-    ))
-    eng.store.update_work_item_metadata(
-        item.id,
-        deliverable="snapshot plan",
-        phase=TaskPhase.CONFIRMATION,
-        review_verdict="pass",
-        review_report=_review_report(),
-    )
-    snapshot = copy.deepcopy(eng.store.get_work_item(item.id))
-    snapshot.review_subject_digest = tasks_module._review_subject_digest(
-        TaskKind.PLAN, snapshot, 1)
-    monkeypatch.setattr(
-        eng.store, "get_work_item",
-        lambda _item_id: (_ for _ in ()).throw(PlatformError("store unavailable")),
-    )
-    monkeypatch.setattr(
-        eng.runtime, "is_active",
-        lambda *_args: pytest.fail("unreadable Store must not reach Runtime"),
-    )
-
-    with pytest.raises(PlatformError, match="store unavailable"):
-        run_task(
-            eng,
-            TaskKind.PLAN,
-            _payload(),
-            "alice",
-            reviewers=["bob"],
-            poll=lambda: pytest.fail("unreadable Store must not poll"),
-            resume_item_id=item.id,
-            resume_item_snapshot=snapshot,
-        )
 
 
 def test_resume_not_found_never_uses_even_safe_authoring_snapshot(monkeypatch):
