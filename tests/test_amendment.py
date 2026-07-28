@@ -18,6 +18,7 @@ from omac.core.amendment import (
 from omac.core.acceptance import load_acceptance_doc
 from omac.core.manifest import (
     EvidenceMode,
+    MISSING_CONSUMES,
     ProducedArtifact,
     load_manifest,
     save_manifest,
@@ -185,6 +186,15 @@ def _add_typed_boundary(path):
     save_manifest(manifest, str(path))
 
 
+def _add_transitional_boundary(path):
+    manifest = load_manifest(str(path))
+    contract = manifest.nodes["bootstrap"].contract
+    contract.evidence_mode = EvidenceMode.FIXTURE
+    contract.produces = [ProducedArtifact("tooling-package")]
+    contract.consumes = MISSING_CONSUMES
+    save_manifest(manifest, str(path))
+
+
 def _explicit_responsibility_update(action_id="ACT-BOOT-01"):
     operation = _contract_update()
     contract = operation["set"]["contract"]
@@ -305,6 +315,66 @@ def test_complete_contract_replacement_requires_boundary_preservation_or_clear(t
     assert preserved == []
 
 
+def test_complete_replacement_preserves_actual_transitional_boundary_fields(tmp_path):
+    path = _manifest(tmp_path)
+    _add_transitional_boundary(path)
+    manifest = load_manifest(str(path))
+    preserved = validate_proposal(
+        manifest, _proposal(_transitional_boundary_contract_update()),
+        {"alice", "bob", "charlie"})
+    missing_produces = _transitional_boundary_contract_update()
+    missing_produces["set"]["contract"].pop("produces")
+    errors = validate_proposal(
+        manifest, _proposal(missing_produces), {"alice", "bob", "charlie"})
+
+    assert preserved == []
+    assert any(
+        "preserve evidence_mode, and produces" in error
+        and "consumes" not in error
+        for error in errors
+    )
+
+
+def test_complete_replacement_rejects_explicit_null_consumes(tmp_path):
+    path = _manifest(tmp_path)
+    _add_typed_boundary(path)
+    operation = _typed_boundary_contract_update()
+    operation["set"]["contract"]["consumes"] = None
+
+    errors = validate_proposal(
+        load_manifest(str(path)), _proposal(operation),
+        {"alice", "bob", "charlie"})
+
+    assert any("contract.consumes must be a list" in error for error in errors)
+
+
+def test_apply_and_restart_fail_closed_on_tampered_null_consumes(tmp_path):
+    path = _manifest(tmp_path)
+    _add_typed_boundary(path)
+    engine = _engine()
+    item = engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
+    reviewed = build_reviewed_amendment(
+        load_manifest(str(path)), _proposal(_typed_boundary_contract_update()),
+        engine.store, issue_id="amendment-issue", reviewer_verdict="pass")
+    reviewed["operations"][0]["set"]["contract"]["consumes"] = None
+    reviewed["amendment_id"] = amendment_mod._amendment_id(
+        reviewed["base"]["definition_sha256"], reviewed,
+        reviewed["analysis"]["minimal_rerun"],
+        reviewed["analysis"]["historical_contract_corrections"],
+        reviewed["base"]["evidence_sha256"],
+    )
+    original = path.read_bytes()
+
+    for _attempt in range(2):
+        with pytest.raises(ValidationError, match="contract.consumes must be a list"):
+            apply_amendment(
+                str(path), reviewed, engine.store, {"alice", "bob", "charlie"})
+        assert path.read_bytes() == original
+        assert load_manifest(str(path)).nodes["bootstrap"].contract.consumes == []
+
+
 def test_contract_boundary_clear_expression_is_explicit_and_unambiguous(tmp_path):
     path = _manifest(tmp_path)
     _add_typed_boundary(path)
@@ -355,7 +425,7 @@ def test_explicit_contract_boundary_clear_survives_apply_reload_and_restart(tmp_
     assert first["sync"]["synced"] == ["bootstrap"]
     assert contract.evidence_mode is None
     assert contract.produces == []
-    assert contract.consumes is None
+    assert contract.consumes is MISSING_CONSUMES
     assert second["sync"]["already_complete"] == ["bootstrap"]
 
 
@@ -396,7 +466,7 @@ def test_transitional_consumes_survives_amendment_apply_reload_and_restart(tmp_p
         str(path), reviewed, engine.store, {"alice", "bob", "charlie"})
 
     assert first["sync"]["synced"] == ["bootstrap"]
-    assert reloaded.nodes["bootstrap"].contract.consumes is None
+    assert reloaded.nodes["bootstrap"].contract.consumes is MISSING_CONSUMES
     assert "consumes" not in amendment_mod._dump_contract(
         reloaded.nodes["bootstrap"].contract)
     assert second["sync"]["already_complete"] == ["bootstrap"]
@@ -1158,7 +1228,8 @@ def test_propose_amendment_passes_authoritative_acceptance_to_reviewer_obligatio
         "UJ-BOOTSTRAP": ["ACT-BOOT-01"]}
     assert observed["manifest"].nodes["bootstrap"].id == "bootstrap"
     assert "clear_contract_boundary: true" in observed["description"]
-    assert "explicitly carry all three fields" in observed["description"]
+    assert "preserve only the boundary fields actually present" in observed["description"]
+    assert "omitted consumes must remain omitted" in observed["description"]
     assert Path(result["amendment_file"]).exists()
 
 

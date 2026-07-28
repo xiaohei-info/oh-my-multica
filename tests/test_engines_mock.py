@@ -1,7 +1,10 @@
 """engines:双接口装配、MockStore 写后读一致性、自动完成模拟、证据生成。"""
 import pytest
 
-from omac.core.manifest import Contract, EvidenceMode, ProducedArtifact
+from omac.core.contract_boundaries import responsibility_summary
+from omac.core.manifest import (
+    Contract, EvidenceMode, MISSING_CONSUMES, ProducedArtifact,
+)
 from omac.engines import Engine, create_engine
 from omac.engines.models import (
     AgentProvisionSpec, EngineConfig, PullRequestState, WorkItemStatus,
@@ -102,8 +105,20 @@ def test_mock_contract_preserves_transitional_and_explicit_empty_consumes():
     store.set_node_contract(first.id, Contract(**base))
     store.set_node_contract(second.id, Contract(**base, consumes=[]))
 
-    assert store.get_work_item(first.id).contract.consumes is None
+    assert store.get_work_item(first.id).contract.consumes is MISSING_CONSUMES
     assert store.get_work_item(second.id).contract.consumes == []
+
+
+def test_mock_raw_contract_readback_marks_explicit_null_consumes_invalid():
+    store = _engine(MOCK_AUTO_COMPLETE="false").store
+    item = store.create_work_item("ws", "a", "d", dag_key="a", worker="alice")
+    store.set_node_contract(item.id, {
+        "evidence_mode": "fixture", "consumes": None,
+    })
+
+    read_back = store.get_work_item(item.id).contract
+    assert read_back["consumes"] is None
+    assert responsibility_summary(read_back)["input_policy"] == "invalid"
 
 
 def test_assign_and_auto_complete_with_contract_evidence():
