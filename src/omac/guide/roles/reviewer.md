@@ -54,6 +54,9 @@
   `required_evidence_mode: fixture|artifact|live`。这些字段只描述边界，不复制交付物正文。
   OMAC 会把非上游/下游输入或 fixture→live 要求转为
   `contract-boundary-conflict` NeedsDecision，而不是继续消耗 Worker 返工轮次。
+- 按 `responsibility.input_policy` 的结构化语义评审：缺省 `consumes` 是
+  `transitional-upstream`，传递上游输入不算未声明；显式 `consumes: []` 表示无外部输入；
+  非空列表仍是严格 allowlist。
 - `full_review_completed: true` 仍必须提交，但 OMAC 还会根据 obligation 与历史
   blocker 覆盖计算完整性；布尔声明不能覆盖缺项。
 

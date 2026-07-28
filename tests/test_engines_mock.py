@@ -1,7 +1,7 @@
 """engines:双接口装配、MockStore 写后读一致性、自动完成模拟、证据生成。"""
 import pytest
 
-from omac.core.manifest import Contract
+from omac.core.manifest import Contract, EvidenceMode, ProducedArtifact
 from omac.engines import Engine, create_engine
 from omac.engines.models import (
     AgentProvisionSpec, EngineConfig, PullRequestState, WorkItemStatus,
@@ -88,6 +88,22 @@ def test_metadata_write_then_read():
     got = store.get_work_item(item.id)
     assert got.artifacts == {"pr_url": "u"}
     assert got.review_verdict == "pass"
+
+
+def test_mock_contract_preserves_transitional_and_explicit_empty_consumes():
+    store = _engine(MOCK_AUTO_COMPLETE="false").store
+    first = store.create_work_item("ws", "a", "d", dag_key="a", worker="alice")
+    second = store.create_work_item("ws", "b", "d", dag_key="b", worker="alice")
+    base = dict(
+        evidence_mode=EvidenceMode.FIXTURE,
+        produces=[ProducedArtifact("tooling-package")],
+    )
+
+    store.set_node_contract(first.id, Contract(**base))
+    store.set_node_contract(second.id, Contract(**base, consumes=[]))
+
+    assert store.get_work_item(first.id).contract.consumes is None
+    assert store.get_work_item(second.id).contract.consumes == []
 
 
 def test_assign_and_auto_complete_with_contract_evidence():

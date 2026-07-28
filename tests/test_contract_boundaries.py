@@ -54,10 +54,31 @@ def test_old_contract_remains_readable_and_omits_boundary_defaults():
 
     assert contract.evidence_mode is None
     assert contract.produces == []
-    assert contract.consumes == []
+    assert contract.consumes is None
     assert "evidence_mode" not in _dump_contract(contract)
     assert "produces" not in _dump_contract(contract)
     assert "consumes" not in _dump_contract(contract)
+
+
+def test_omitted_and_explicit_empty_consumes_survive_roundtrip():
+    omitted = _load_contract({
+        "objective": "transitional",
+        "evidence_mode": "fixture",
+        "produces": [{"artifact_id": "tooling-package"}],
+    })
+    explicit_empty = _load_contract({
+        "objective": "self-contained",
+        "evidence_mode": "fixture",
+        "produces": [{"artifact_id": "tooling-package"}],
+        "consumes": [],
+    })
+
+    assert omitted.consumes is None
+    assert "consumes" not in _dump_contract(omitted)
+    assert explicit_empty.consumes == []
+    assert _dump_contract(explicit_empty)["consumes"] == []
+    assert _load_contract(_dump_contract(omitted)).consumes is None
+    assert _load_contract(_dump_contract(explicit_empty)).consumes == []
 
 
 def test_typed_boundary_roundtrip_preserves_enum_and_artifact_types():
@@ -213,6 +234,7 @@ def test_responsibility_summary_is_compact_and_explicit():
 
     assert summary == {
         "evidence_mode": "fixture",
+        "input_policy": "allowlist",
         "allowed_inputs": [{
             "artifact_id": "source-contracts",
             "producer": "source-contracts",
@@ -224,6 +246,91 @@ def test_responsibility_summary_is_compact_and_explicit():
             "non-upstream or downstream nodes are outside this contract."
         ),
     }
+
+
+def test_responsibility_summary_distinguishes_transitional_and_no_input():
+    transitional = responsibility_summary(_contract(
+        evidence_mode=EvidenceMode.FIXTURE,
+        produces=[ProducedArtifact("tooling-package")],
+    ))
+    no_input = responsibility_summary(_contract(
+        evidence_mode=EvidenceMode.FIXTURE,
+        produces=[ProducedArtifact("tooling-package")],
+        consumes=[],
+    ))
+
+    assert transitional["input_policy"] == "transitional-upstream"
+    assert transitional["allowed_inputs"] is None
+    assert "transitive upstream" in transitional["boundary_rule"]
+    assert no_input["input_policy"] == "none"
+    assert no_input["allowed_inputs"] == []
+    assert "No external inputs" in no_input["boundary_rule"]
+
+
+def test_transitional_consumes_allows_structured_upstream_but_rejects_downstream():
+    upstream = Node(id="upstream", worker="alice")
+    tooling = Node(
+        id="tooling", worker="alice", blocked_by=["upstream"],
+        contract=_contract(
+            evidence_mode=EvidenceMode.FIXTURE,
+            produces=[ProducedArtifact("tooling-package")],
+        ),
+    )
+    downstream = Node(id="downstream", worker="bob", blocked_by=["tooling"])
+
+    upstream_report = {"blockers": [{"required_inputs": [{
+        "artifact_id": "legacy-output", "producer": "upstream",
+        "evidence_mode": "artifact",
+    }]}]}
+    downstream_report = {"blockers": [{"required_inputs": [{
+        "artifact_id": "future-output", "producer": "downstream",
+        "evidence_mode": "artifact",
+    }]}]}
+
+    manifest = _manifest(upstream, tooling, downstream)
+    assert contract_boundary_conflicts(
+        manifest, tooling, SimpleNamespace(review_report=upstream_report)) == []
+    assert contract_boundary_conflicts(
+        manifest, tooling, SimpleNamespace(review_report=downstream_report)
+    ) == [{
+        "reason_code": "review-requires-non-upstream-artifact",
+        "artifact_id": "future-output",
+        "producer": "downstream",
+    }]
+
+
+def test_explicit_empty_consumes_rejects_upstream_input():
+    upstream = Node(id="upstream", worker="alice")
+    tooling = Node(
+        id="tooling", worker="bob", blocked_by=["upstream"],
+        contract=_contract(evidence_mode=EvidenceMode.FIXTURE, consumes=[]),
+    )
+    report = {"blockers": [{"required_inputs": [{
+        "artifact_id": "legacy-output", "producer": "upstream",
+        "evidence_mode": "artifact",
+    }]}]}
+
+    assert contract_boundary_conflicts(
+        _manifest(upstream, tooling), tooling,
+        SimpleNamespace(review_report=report),
+    ) == [{
+        "reason_code": "review-requires-undeclared-artifact",
+        "artifact_id": "legacy-output",
+        "producer": "upstream",
+    }]
+
+
+def test_lint_does_not_require_typed_producer_outputs_for_omitted_consumes():
+    legacy = Node(id="legacy", worker="alice")
+    consumer = Node(
+        id="consumer", worker="bob", blocked_by=["legacy"],
+        contract=_contract(
+            evidence_mode=EvidenceMode.FIXTURE,
+            produces=[ProducedArtifact("tooling-package")],
+        ),
+    )
+
+    assert lint(_manifest(legacy, consumer), POOL) == []
 
 
 def test_review_conflict_detects_exact_downstream_artifact_and_live_requirement():
