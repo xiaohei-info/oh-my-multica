@@ -103,9 +103,9 @@ omac dag amend propose .omac/project.yaml \
   `omac dag amend propose ... --resume-issue-id <issue-id>` 命令续接同一 issue、交付与
   Reviewer 历史，不创建新的 amendment issue。
 - 普通 `--resume-issue-id` 不会作废合法的 Reviewer-pass confirmation，也不会创建新的
-  Agent Run。`--restart-authoring` 只允许 Store 提供真实原子 conditional claim/server lock
-  且 Runtime 提供稳定 direct Run 身份的引擎使用。Multica 只有 LWW metadata，不具备该能力，
-  因此会在任何 issue 写入或 Agent 派发前以 exit 20 失败关闭，并给出 `--new-attempt` 命令。
+  Agent Run。当前没有引擎提供真实原子 conditional restart/dispatch；`--restart-authoring`
+  仅保留为兼容入口，并会在任何 issue 读取、写入或 Agent 派发前以 exit 20 失败关闭，
+  给出 `--new-attempt` 命令。OMAC 不保留 speculative generation/journal 状态机。
   新 attempt 保留旧 confirmation 作为审计历史：
 
   ```bash
@@ -117,9 +117,9 @@ omac dag amend propose .omac/project.yaml \
     --supersedes-issue-id <old-issue-id>
   ```
 
-  attempt identity 绑定 manifest、report digest、docs、blocked nodes 与 superseded issue；同一命令
+  attempt identity 绑定 manifest、report digest、递归 docs 内容 digest、blocked nodes 与 superseded issue；同一命令
   崩溃重试会复用同一 issue，不同 report digest 会产生不同 attempt。新 issue metadata/source refs
-  记录 supersedes、attempt id 和 report digest；旧 issue 不会被清理、重开或自动关闭。新 attempt
+  记录 supersedes、attempt id、report digest 和 docs digest；旧 issue 不会被清理、重开或自动关闭。新 attempt
   正常走 authoring → Reviewer → human confirmation，最终 amendment 仍应用到原 manifest/node。
 - accept 在 manifest 写锁内执行 CAS，并原子写入 manifest 定义与逐节点 apply ledger。
   Store 不与文件系统共享事务，因此这不是跨系统原子事务；ledger 以

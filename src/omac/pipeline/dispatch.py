@@ -1096,7 +1096,7 @@ def normalize_source_refs(
             ref: Dict[str, Any] = {"issue_id": issue_id}
             for key in (
                 "label", "kind", "url", "content_sha256", "delivery_key",
-                "issue_key", "relation", "report_sha256",
+                "issue_key", "relation", "report_sha256", "docs_sha256",
             ):
                 value = raw.get(key)
                 if value:

@@ -31,10 +31,6 @@ class AgentRuntime(ABC):
         - 无法达成唤醒时抛 PlatformError,编排层据此把节点标 blocked。
         """
 
-    def wake_for_claim(self, item_id: str, agent: str, role: str) -> None:
-        """Generation-owned dispatch: never infer a blind rerun from history."""
-        self.wake(item_id, agent, role)
-
     @abstractmethod
     def cancel(self, item_id: str) -> bool:
         """取消该工作单元当前仍活跃的 Agent run；没有活跃 run 时返回 False。"""
@@ -44,10 +40,10 @@ class AgentRuntime(ABC):
         """只读判断该工作单元是否仍有活跃 Agent run，不得产生取消副作用。"""
 
     def list_runs(self, item_id: str) -> List[AgentRunObservation]:
-        """返回全部可见 Run；旧适配器在普通流程中仍可用，restart 会明确失败。"""
+        """返回全部可见 Run，供普通派发绑定 direct Run 身份。"""
         raise PlatformError(
-            "Runtime adapter does not expose stable Agent Run identities required "
-            "by --restart-authoring; implement AgentRuntime.list_runs first")
+            "Runtime adapter does not expose stable Agent Run identities; "
+            "implement AgentRuntime.list_runs first")
 
     @abstractmethod
     def list_targets(self) -> List[RuntimeTarget]:

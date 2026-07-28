@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..core.taskmeta import Bounces, TaskKind, TaskPhase
-from ..core.restart import RestartState
 
 
 class WorkItemStatus(Enum):
@@ -90,14 +89,6 @@ class AgentRunObservation:
     @property
     def terminal(self) -> bool:
         return self.status in {"completed", "failed", "cancelled"}
-
-
-@dataclass(frozen=True)
-class StoreCapabilities:
-    """Store guarantees that change which orchestration paths are safe."""
-
-    atomic_authoring_restart: bool = False
-    authoring_restart_mechanism: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -199,7 +190,6 @@ class WorkItem:
     review_ledger_ref: Optional[Dict[str, Any]] = None
     review_continuation: Optional[Dict[str, Any]] = None
     decision_required: Optional[Dict[str, Any]] = None
-    authoring_restart: Optional[RestartState] = None
     amendment_attempt: Optional[Dict[str, Any]] = None
 
     # 验收契约(编排器 dispatch 时下发):worker 读回后用同一套 validator 自校验

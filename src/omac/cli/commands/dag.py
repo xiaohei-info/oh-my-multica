@@ -162,7 +162,7 @@ def register(parser):
     propose.add_argument(
         "--restart-authoring",
         action="store_true",
-        help="与 --resume-issue-id 同用；仅原子 restart capability 引擎可原地重开",
+        help="与 --resume-issue-id 同用；当前引擎均失败关闭并提示 --new-attempt",
     )
     propose.add_argument(
         "--new-attempt",
@@ -506,21 +506,25 @@ def amend(args) -> int:
         max_revisions = args.max_revisions
         if max_revisions is None:
             max_revisions = resolve_retry(config)["review"]
-        report = propose_amendment(
-            engine,
-            args.manifest,
-            report_file=args.report_file,
-            docs=args.docs,
-            blocked_nodes=args.blocked_node,
-            orchestrator=orchestrator,
-            reviewers=list(reviewers),
-            max_revisions=max_revisions,
-            output_file=args.output_file,
-            resume_issue_id=args.resume_issue_id,
-            restart_authoring=args.restart_authoring,
-            new_attempt=args.new_attempt,
-            supersedes_issue_id=args.supersedes_issue_id,
-        )
+        try:
+            report = propose_amendment(
+                engine,
+                args.manifest,
+                report_file=args.report_file,
+                docs=args.docs,
+                blocked_nodes=args.blocked_node,
+                orchestrator=orchestrator,
+                reviewers=list(reviewers),
+                max_revisions=max_revisions,
+                output_file=args.output_file,
+                resume_issue_id=args.resume_issue_id,
+                restart_authoring=args.restart_authoring,
+                new_attempt=args.new_attempt,
+                supersedes_issue_id=args.supersedes_issue_id,
+            )
+        except NeedsDecision as exc:
+            print_json(exc.report)
+            raise
         print_json(report)
         raise NeedsDecision(ui(
             "Amendment passed Reviewer review and is waiting for human confirmation.",

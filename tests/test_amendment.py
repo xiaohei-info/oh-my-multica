@@ -1276,47 +1276,6 @@ def test_propose_amendment_forwards_explicit_resume_issue_id(
     assert observed["resume_item_id"] == issue.id
 
 
-def test_propose_amendment_forwards_restart_authoring(tmp_path, monkeypatch):
-    path = _manifest(tmp_path)
-    report = tmp_path / "report.md"
-    report.write_text("replace the reviewed amendment")
-    docs = tmp_path / "docs"
-    docs.mkdir()
-    (docs / "design.md").write_text("authoritative design")
-    engine = _engine()
-    issue = engine.store.create_work_item(
-        "ws", "amendment", "desc", "amendment", "alice",
-        reviewer="bob", kind=TaskKind.AMENDMENT)
-    engine.store.update_work_item_metadata(
-        issue.id, review_verdict="pass", phase=TaskPhase.CONFIRMATION)
-    engine.store.update_status(issue.id, WorkItemStatus.IN_REVIEW)
-    observed = {}
-
-    def fake_run_task(*_args, **kwargs):
-        observed["restart_authoring"] = kwargs["restart_authoring"]
-        return {
-            "item_id": issue.id,
-            "delivery": {"amendment": _proposal(_contract_update())},
-        }
-
-    monkeypatch.setattr(amendment_pipeline, "run_task", fake_run_task)
-
-    amendment_pipeline.propose_amendment(
-        engine,
-        str(path),
-        report_file=str(report),
-        docs=[str(docs)],
-        blocked_nodes=["bootstrap"],
-        orchestrator="alice",
-        reviewers=["bob"],
-        max_revisions=1,
-        resume_issue_id=issue.id,
-        restart_authoring=True,
-    )
-
-    assert observed["restart_authoring"] is True
-
-
 def test_propose_amendment_restart_requires_resume_issue(tmp_path):
     path = _manifest(tmp_path)
     report = tmp_path / "report.md"
@@ -1339,7 +1298,7 @@ def test_propose_amendment_restart_requires_resume_issue(tmp_path):
         )
 
 
-def test_multica_restart_capability_rejects_before_remote_write(tmp_path, monkeypatch):
+def test_restart_authoring_rejects_before_any_multica_access(tmp_path, monkeypatch):
     path = _manifest(tmp_path)
     report = tmp_path / "report.md"
     report.write_text("replace the reviewed amendment")
@@ -1424,6 +1383,9 @@ def test_new_attempt_is_auditable_idempotent_and_preserves_old_issue(
             engine.store.get_work_item(kwargs["resume_item_id"])
             if kwargs["resume_item_id"] else None
         )
+        if issue is None and kwargs["reuse_dag_key"]:
+            issue = engine.store.find_work_item_by_dag_key(
+                "ws", kwargs["dag_key"])
         if issue is None:
             issue = engine.store.create_work_item(
                 "ws", payload["title"], payload["description"],
@@ -1457,10 +1419,11 @@ def test_new_attempt_is_auditable_idempotent_and_preserves_old_issue(
 
     assert second["issue_id"] == first["issue_id"]
     assert observed[0]["resume_item_id"] is None
-    assert observed[1]["resume_item_id"] == first["issue_id"]
+    assert observed[1]["resume_item_id"] is None
     assert "-attempt-" in observed[0]["dag_key"]
     assert attempt_issue.amendment_attempt["supersedes_issue_id"] == old.id
     assert attempt_issue.amendment_attempt["report_sha256"]
+    assert attempt_issue.amendment_attempt["docs_sha256"]
     assert attempt_issue.source_refs == [{
         "issue_id": old.id,
         "issue_key": "AITEAM-811",
@@ -1468,6 +1431,7 @@ def test_new_attempt_is_auditable_idempotent_and_preserves_old_issue(
         "kind": "amendment",
         "relation": "supersedes",
         "report_sha256": attempt_issue.amendment_attempt["report_sha256"],
+        "docs_sha256": attempt_issue.amendment_attempt["docs_sha256"],
     }]
     old_after = engine.store.get_work_item(old.id)
     assert old_after.phase == old_before.phase == TaskPhase.CONFIRMATION
@@ -1537,6 +1501,88 @@ def test_different_report_digest_creates_different_attempt_identity(
 
     assert identities[0][0] != identities[1][0]
     assert identities[0][1]["report_sha256"] != identities[1][1]["report_sha256"]
+
+
+def test_docs_digest_is_recursive_order_independent_and_content_bound(tmp_path):
+    docs_a = tmp_path / "docs-a"
+    nested = docs_a / "nested"
+    nested.mkdir(parents=True)
+    (docs_a / "overview.md").write_text("overview")
+    detail = nested / "detail.md"
+    detail.write_text("detail v1")
+    docs_b = tmp_path / "single.md"
+    docs_b.write_text("single")
+
+    first = amendment_pipeline._docs_snapshot([str(docs_a), str(docs_b)])
+    reordered = amendment_pipeline._docs_snapshot([str(docs_b), str(docs_a)])
+
+    assert reordered == first
+    assert any(path.endswith("nested/detail.md") for path in first["docs_files"])
+
+    issue = SimpleNamespace(id="old", identifier="AITEAM-811")
+    manifest = _manifest(tmp_path)
+    first_attempt = amendment_pipeline._attempt_context(
+        str(manifest), report="report", docs_snapshot=first,
+        blocked_nodes=["bootstrap"], superseded_issue=issue)
+    reordered_attempt = amendment_pipeline._attempt_context(
+        str(manifest), report="report", docs_snapshot=reordered,
+        blocked_nodes=["bootstrap"], superseded_issue=issue)
+    assert reordered_attempt["attempt_id"] == first_attempt["attempt_id"]
+
+    detail.write_text("detail v2")
+    changed = amendment_pipeline._docs_snapshot([str(docs_a), str(docs_b)])
+    changed_attempt = amendment_pipeline._attempt_context(
+        str(manifest), report="report", docs_snapshot=changed,
+        blocked_nodes=["bootstrap"], superseded_issue=issue)
+    assert changed["docs_sha256"] != first["docs_sha256"]
+    assert changed_attempt["attempt_id"] != first_attempt["attempt_id"]
+
+
+@pytest.mark.parametrize("link_at_root", [False, True])
+def test_docs_digest_rejects_symlinks_and_path_escape(tmp_path, link_at_root):
+    outside = tmp_path / "outside.md"
+    outside.write_text("outside")
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    if link_at_root:
+        root = tmp_path / "docs-link"
+        root.symlink_to(docs, target_is_directory=True)
+    else:
+        (docs / "escape.md").symlink_to(outside)
+        root = docs
+
+    with pytest.raises(ValidationError, match="symlink"):
+        amendment_pipeline._docs_snapshot([str(root)])
+
+
+def test_docs_digest_rejects_symlinked_parent_component(tmp_path):
+    real = tmp_path / "real"
+    nested = real / "nested"
+    nested.mkdir(parents=True)
+    (nested / "design.md").write_text("design")
+    alias = tmp_path / "alias"
+    alias.symlink_to(real, target_is_directory=True)
+
+    with pytest.raises(ValidationError, match="symlink"):
+        amendment_pipeline._docs_snapshot([str(alias / "nested")])
+
+
+def test_docs_digest_rejects_unreadable_file(tmp_path, monkeypatch):
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    blocked = docs / "blocked.md"
+    blocked.write_text("secret")
+    original = Path.read_bytes
+
+    def fail_blocked(path):
+        if path == blocked:
+            raise PermissionError("denied")
+        return original(path)
+
+    monkeypatch.setattr(Path, "read_bytes", fail_blocked)
+
+    with pytest.raises(ValidationError, match="Could not read"):
+        amendment_pipeline._docs_snapshot([str(docs)])
 
 
 def test_existing_fixed_amendment_identity_teaches_new_attempt(tmp_path):
@@ -2338,6 +2384,46 @@ def test_cli_amendment_forwards_restart_authoring(tmp_path, monkeypatch):
     assert code == exit_codes.NEEDS_DECISION
     assert observed["resume_issue_id"] == "issue-1"
     assert observed["restart_authoring"] is True
+
+
+def test_cli_restart_authoring_fails_closed_without_multica_access(
+    tmp_path, monkeypatch, capsys,
+):
+    monkeypatch.chdir(tmp_path)
+    omac_dir = tmp_path / ".omac"
+    omac_dir.mkdir()
+    (omac_dir / "config.yaml").write_text(yaml.safe_dump({
+        "engine": "multica",
+        "workspace": "ws",
+        "project": "project-1",
+        "roles": {"orchestrator": "alice", "reviewers": ["bob"]},
+        "retry": {"review": 2},
+    }))
+    manifest_path = _manifest(tmp_path)
+    report = tmp_path / "review.md"
+    report.write_text("replace confirmation")
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "design.md").write_text("authoritative design")
+    from omac.engines.multica import MulticaStore
+    monkeypatch.setattr(
+        MulticaStore, "_run_multica",
+        lambda *_args, **_kwargs: pytest.fail("restart must not access Multica"))
+
+    code = main([
+        "dag", "amend", "propose", str(manifest_path),
+        "--report-file", str(report),
+        "--docs", str(docs),
+        "--resume-issue-id", "old-issue-id",
+        "--restart-authoring",
+        "--output", "json",
+    ])
+
+    output = capsys.readouterr()
+    assert code == exit_codes.NEEDS_DECISION
+    structured = json.loads(output.out)
+    assert "--new-attempt" in structured["next_action"]
+    assert "--supersedes-issue-id old-issue-id" in structured["next_action"]
 
 
 def test_cli_amendment_forwards_new_attempt(tmp_path, monkeypatch):

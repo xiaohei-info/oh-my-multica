@@ -10,12 +10,13 @@ This file records public changes to oh-my-multica. The format follows
 
 ### Changed
 
-- Amendment authoring restart is now capability-gated: engines without a real
-  atomic conditional claim, including Multica's LWW metadata Store, fail closed
-  before modifying the old confirmation. `--new-attempt --supersedes-issue-id`
-  creates an auditable, digest-bound, idempotently reusable amendment issue while
-  preserving the superseded confirmation. Multica's ordinary wake path also
-  observes all issue Runs before rerunning a terminal direct Run.
+- Removed the speculative amendment restart generation/journal framework because
+  no current engine offers atomic conditional restart/dispatch. The retained
+  `--restart-authoring` flag fails closed before remote access and directs users
+  to `--new-attempt --supersedes-issue-id`. New attempts finalize deterministic
+  partial shells before dispatch and bind identity to recursive docs content,
+  report, manifest, blockers, and the superseded confirmation. Multica's ordinary
+  wake path still observes all issue Runs before rerunning a terminal direct Run.
 - Typed `consumes` now preserves three distinct policies across manifest,
   amendment, Store attachment, and `work show` round trips: omitted permits
   transitional inputs only from transitive legacy upstream dependencies,

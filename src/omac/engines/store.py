@@ -12,12 +12,10 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
 from ..core.taskmeta import TaskKind, TaskPhase
-from ..core.restart import RestartClaimResult, RestartState
-from ..errors import ValidationError
 from .models import (
     EngineConfig, MergeCommandResult, ProjectInfo, PullRequestCheckResult,
     PullRequestObservation, PullRequestReadiness, PullRequestReadinessFailure,
-    StoreCapabilities, WorkItem, WorkItemStatus, WorkspaceInfo,
+    WorkItem, WorkItemStatus, WorkspaceInfo,
 )
 
 
@@ -32,11 +30,6 @@ class WorkItemStore(ABC):
 
     def __init__(self, config: EngineConfig):
         self.config = config
-
-    @property
-    def capabilities(self) -> StoreCapabilities:
-        """Conservative defaults keep unsupported destructive flows disabled."""
-        return StoreCapabilities()
 
     # ==================== 成员池 ====================
 
@@ -193,6 +186,12 @@ class WorkItemStore(ABC):
         ), None)
 
     @abstractmethod
+    def set_authoring_identity(
+        self, item_id: str, *, dag_key: str, kind: TaskKind,
+    ) -> WorkItem:
+        """幂等补齐 deterministic authoring shell 的不可变任务身份。"""
+
+    @abstractmethod
     def add_comment(self, item_id: str, comment: str):
         """追加系统说明(进度报告/回退原因)，不得把它解释为新的 agent 输入。
 
@@ -212,48 +211,6 @@ class WorkItemStore(ABC):
 
         让重新提交后的节点再次接受评审,避免旧 verdict 立即再次触发 reject。
         """
-
-    def claim_authoring_restart(
-        self, item_id: str, candidate: RestartState, *, now: float,
-    ) -> RestartClaimResult:
-        """Atomic restart claim; unsupported stores must never emulate it with LWW."""
-        raise ValidationError(
-            "This Store does not support an atomic authoring restart claim")
-
-    def guard_authoring_restart(
-        self, item_id: str, *, generation: str, owner_nonce: str,
-    ) -> RestartState:
-        """Validate a real Store fencing token."""
-        raise ValidationError(
-            "This Store does not support authoring restart fencing")
-
-    def update_authoring_restart(
-        self,
-        item_id: str,
-        *,
-        generation: str,
-        owner_nonce: str,
-        state: RestartState,
-    ) -> RestartState:
-        """Persist restart state under a real atomic claim."""
-        raise ValidationError(
-            "This Store does not support authoring restart state")
-
-    def restart_authoring(
-        self,
-        item_id: str,
-        *,
-        generation: str,
-        owner_nonce: str,
-    ) -> WorkItem:
-        """Atomically invalidate one confirmation and reopen authoring.
-
-        仅清除当前交付和评审引用；平台评论与附件历史必须保留作审计证据。
-        generation journal 绑定 kind/phase/status/review subject/deliverable identity；
-        已完成转换的干净 authoring 可幂等重入。
-        """
-        raise ValidationError(
-            "This Store does not support atomic authoring restart")
 
     @abstractmethod
     def prepare_review_cycle(self, item_id: str, subject_digest: str) -> WorkItem:
