@@ -103,8 +103,10 @@ omac dag amend propose .omac/project.yaml \
   `omac dag amend propose ... --resume-issue-id <issue-id>` 命令续接同一 issue、交付与
   Reviewer 历史，不创建新的 amendment issue。
 - 普通 `--resume-issue-id` 不会作废合法的 Reviewer-pass confirmation，也不会创建新的
-  Agent Run。resume 会先重新读取 Store 当前事实；调用方 snapshot 只在 Store 暂不可读且目标仍是
-  `TODO + authoring + 无交付物` 时用于修复旧正文，不能覆盖 Store 中已推进的阶段或证据。
+  Agent Run。resume 会先重新读取 Store 当前事实；任何读取失败都会原样失败关闭，并且在失败前不会
+  写 contract/metadata、观察 Runtime、assign 或 wake。调用方 snapshot 不参与 refresh 或阶段推进授权。
+  只有成功读取的当前事实同时满足 `TODO + authoring + 无 deliverable/deliverable_ref + 无 stopped signal`
+  时，才允许幂等刷新 issue body、contract 与 source refs。
   confirmation 只有在 verdict 为 pass/pass-with-nits、subject 仍绑定当前交付且 report/evidence
   重新校验通过时才可消费；否则 exit 20，既不清 confirmation，也不派发 Worker/Reviewer。若 amendment
   authoring Run 已停止但 Store 已有交付物，同样会在任何 Runtime 观察、assign 或 wake 前 exit 20，并要求

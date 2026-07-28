@@ -29,9 +29,7 @@ from ..core.taskmeta import (
     make_dag_key,
 )
 from ..engines.models import WorkItem, WorkItemStatus
-from ..errors import (
-    NeedsDecision, PlatformError, ValidationError, WorkItemNotFoundError,
-)
+from ..errors import NeedsDecision, PlatformError, ValidationError
 from ..i18n import current_language, ui
 from .dispatch import normalize_source_refs, render_issue_body
 
@@ -101,31 +99,6 @@ def _review_evidence_errors(contract: Any, item: WorkItem) -> List[str]:
     """重新验证持久化 Reviewer 证据，避免恢复时信任旧 CLI 写入的脏状态。"""
     return validate_review_evidence(
         SimpleNamespace(contract=contract), item)
-
-
-def _resume_snapshot_can_refresh(item: WorkItem | None) -> bool:
-    """Store 暂不可读时，仅允许未启动 authoring 快照帮助压缩旧正文。"""
-    return bool(
-        item is not None
-        and item.status == WorkItemStatus.TODO
-        and item.phase == TaskPhase.AUTHORING
-        and not item.deliverable
-        and not item.deliverable_ref
-        and not item.agent_run_failed
-        and not item.agent_run_finished_without_submit
-    )
-
-
-def _read_resume_item(store, item_id: str, snapshot: WorkItem | None) -> WorkItem:
-    """Store 是 resume 权威来源；快照只在安全的正文修复窗口兜底。"""
-    try:
-        return store.get_work_item(item_id)
-    except WorkItemNotFoundError:
-        raise
-    except PlatformError:
-        if not _resume_snapshot_can_refresh(snapshot):
-            raise
-        return snapshot
 
 
 def _new_attempt_recovery(kind: TaskKind, item_id: str) -> tuple[str, str]:
@@ -780,11 +753,16 @@ def run_task(
     reused_created_item = False
 
     if resume_item_id is not None:
-        item = _read_resume_item(store, resume_item_id, resume_item_snapshot)
+        # Store 当前事实是 resume 的唯一授权来源。调用方 snapshot 仅为兼容保留，
+        # 绝不能在读取失败时授权 refresh 或其他副作用。
+        item = store.get_work_item(resume_item_id)
         if (
             item.status == WorkItemStatus.TODO
             and item.phase == TaskPhase.AUTHORING
             and not item.deliverable
+            and not item.deliverable_ref
+            and not item.agent_run_failed
+            and not item.agent_run_finished_without_submit
         ):
             item = refresh_authoring_task(
                 engine, item.id, spec, item_snapshot=item)

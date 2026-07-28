@@ -717,7 +717,6 @@ def plan_resume(
             confirm=ctx.confirm,
             dag_key=plan_key,
             resume_item_id=plan_item.id,
-            resume_item_snapshot=plan_item,
         )
         plan_item_id = res["item_id"]
         plan_text = _phase_text(res["delivery"], _PLAN_KEY)
@@ -782,7 +781,6 @@ def plan_resume(
             source_refs=acceptance_spec.source_refs,
             dag_key=acceptance_key,
             resume_item_id=acceptance_item.id if acceptance_item else None,
-            resume_item_snapshot=acceptance_item,
         )
         acceptance_item_id = res["item_id"]
         acceptance_text = _phase_text(res["delivery"], _ACCEPTANCE_KEY)
@@ -823,7 +821,6 @@ def plan_resume(
         ),
         dag_key=decompose_key,
         resume_item_id=decompose_item.id if decompose_item else None,
-        resume_item_snapshot=decompose_item,
         review_acceptance_doc=acceptance_doc,
     )
     decompose_item_id = res["item_id"]
