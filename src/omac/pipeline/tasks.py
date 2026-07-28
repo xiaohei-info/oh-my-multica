@@ -24,7 +24,10 @@ from ..core.machine_feedback import (
 from ..core.review_convergence import build_review_obligations
 from ..core.review_continuation import authorized_review_limit
 from ..core.review_preflight import run_review_preflight
-from ..core.taskmeta import DELIVERY_CONTENT_KEY, TaskKind, TaskPhase, make_dag_key
+from ..core.taskmeta import (
+    DECISION_REQUIRED_SCHEMA, DELIVERY_CONTENT_KEY, TaskKind, TaskPhase,
+    make_dag_key,
+)
 from ..engines.models import WorkItem, WorkItemStatus
 from ..errors import NeedsDecision, ValidationError
 from ..i18n import current_language, ui
@@ -149,6 +152,8 @@ def _review_exhausted_error(
     item: WorkItem,
     rounds: int,
     last_opinion: Optional[str],
+    *,
+    gate: str = "review",
 ) -> NeedsDecision:
     action = _review_continuation_action(item)
     instruction = (
@@ -163,8 +168,11 @@ def _review_exhausted_error(
     report = {
         "item_id": item.id,
         "kind": kind.value,
+        "phase": TaskPhase.REVIEW.value,
+        "gate": gate,
         "rounds": rounds,
         "last_opinion": last_opinion,
+        "resume_issue_id": item.id,
     }
     if action:
         report["next_action"] = action
@@ -176,6 +184,33 @@ def _review_exhausted_error(
             f"{instruction_zh}"),
         report=report,
     )
+
+
+def _budget_exhausted_decision(
+    kind: TaskKind,
+    item: WorkItem,
+    *,
+    gate: str,
+    rounds: int,
+) -> Dict[str, Any]:
+    """Build the bounded platform projection for an exhausted task budget."""
+    decision: Dict[str, Any] = {
+        "schema": DECISION_REQUIRED_SCHEMA,
+        "reason_code": f"{gate}-budget-exhausted",
+        "kind": kind.value,
+        "phase": TaskPhase.REVIEW.value,
+        "gate": gate,
+        "rounds": rounds,
+        "resume_issue_id": item.id,
+    }
+    for key in ("machine_feedback_ref", "review_report_ref", "review_ledger_ref"):
+        value = getattr(item, key, None)
+        if isinstance(value, dict) and value:
+            decision[key] = value
+    action = _review_continuation_action(item)
+    if action:
+        decision["next_action"] = action
+    return decision
 
 
 def _review_subject_digest(
@@ -573,6 +608,18 @@ def run_task(
             review_comment=machine_feedback_summary(item_id, feedback),
         )
 
+    def _block_for_budget_decision(gate: str, rounds: int) -> WorkItem:
+        current = store.get_work_item(item_id)
+        decision = _budget_exhausted_decision(
+            kind, current, gate=gate, rounds=rounds)
+        store.update_work_item_metadata(
+            item_id,
+            decision_required=decision,
+            phase=TaskPhase.REVIEW,
+        )
+        store.mark_blocked(item_id)
+        return store.get_work_item(item_id)
+
     def _amendment_review_evidence(candidate: WorkItem) -> dict[str, str]:
         if kind != TaskKind.AMENDMENT or review_amendment_manifest is None:
             return {}
@@ -639,6 +686,7 @@ def run_task(
             # Producer submit 会按真实协议清除已消费的 feedback。预算耗尽
             # 后必须把 exit 20 的完整问题重新持久化，供 operator/Author 读取。
             _persist_machine_feedback(guard_errors)
+            _block_for_budget_decision("guard", max_revisions)
             raise NeedsDecision(
                 ui(
                     f"{kind.value} did not pass the machine gate after {max_revisions} revisions",
@@ -723,6 +771,7 @@ def run_task(
     if review_bounce >= review_limit:
         log.info(logsetup.EVT_NEEDS_DECISION, kind=kind.value, id=item_id,
                  gate="review", rounds=review_bounce)
+        delivered = _block_for_budget_decision("review", review_bounce)
         raise _review_exhausted_error(
             kind, delivered, review_bounce, last_opinion)
 
@@ -779,8 +828,11 @@ def run_task(
                 log.info(logsetup.EVT_NEEDS_DECISION, kind=kind.value,
                          id=item_id, gate="review-nits",
                          rounds=round_index)
+                delivered = _block_for_budget_decision(
+                    "review-nits", round_index)
                 raise _review_exhausted_error(
-                    kind, delivered, round_index, _review_opinion(reviewed))
+                    kind, delivered, round_index, _review_opinion(reviewed),
+                    gate="review-nits")
 
             # 产出者重新提交后，无论改动大小，最终交付都必须重新评审。
             # 下一轮 prepare_review_cycle 会用新交付 digest 清除旧 verdict。
@@ -796,6 +848,7 @@ def run_task(
         if round_index >= review_limit:
             log.info(logsetup.EVT_NEEDS_DECISION, kind=kind.value, id=item_id,
                      gate="review", rounds=round_index)
+            reviewed = _block_for_budget_decision("review", round_index)
             raise _review_exhausted_error(
                 kind, reviewed, round_index, last_opinion)
         store.reset_review(item_id)
