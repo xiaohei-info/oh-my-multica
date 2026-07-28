@@ -149,14 +149,21 @@ omac dag amend propose .omac/project.yaml \
 
   This action is limited to an amendment at confirmation. OMAC first checks for
   queued, pending, running, or dispatching Runs; an active Run fails closed with
-  exit 20 and is never cancelled. When safe, the Store CAS-invalidates the old
-  review subject and current deliverable, Reviewer verdict/report/ledger,
-  decision, and machine-feedback references while preserving historical
-  comments and attachments. It then refreshes the issue body, contract/source
-  refs, and restarts authoring on the same issue. The Worker must submit a fresh
-  structured deliverable, followed by a complete Reviewer and human-confirmation
-  cycle. A Run that completes without a fresh structured submit converges to
-  exit 20; OMAC neither reruns it automatically nor polls forever.
+  exit 20 and is never cancelled. When safe, the Store competes for one durable
+  restart generation and binds cleanup, the single input refresh, dispatch, and
+  Run observation to that generation. It invalidates the current deliverable,
+  Reviewer verdict/report/ledger, continuation/bounce, decision, and machine-
+  feedback references while preserving historical comments and attachments.
+  The Worker must create a new deliverable_ref through `omac work submit`, then
+  complete a fresh Reviewer and human-confirmation cycle. Worker completion
+  without a structured submit and Reviewer completion without a verdict both
+  converge to exit 20; OMAC does not rerun, cancel, or poll forever.
+  Multica currently offers atomic replacement of one metadata key, but no
+  cross-field compare-and-set. OMAC therefore uses a single generation/owner
+  journal and checks that fencing token before and after each compensating write.
+  A lost token, ambiguous Run identity, or crash between remote writes is
+  reported honestly as `unknown_partial` for operator inspection, not as an
+  atomic transaction.
 - Accept runs under the manifest write lock with CAS and atomically writes the
   manifest definition plus a per-node apply ledger. The Store and filesystem do
   not share a transaction, so this is not a cross-system atomic transaction.

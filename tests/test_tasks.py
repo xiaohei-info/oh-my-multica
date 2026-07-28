@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+import threading
 
 import pytest
 import yaml
@@ -21,9 +22,10 @@ from omac.core.amendment import (
 from omac.core.manifest import Contract, Manifest, Node
 from omac.core.review_convergence import REVIEW_PROTOCOL_VERSION, open_blockers
 from omac.core.taskmeta import TaskKind, TaskPhase
+from omac.core.restart import RestartState, deliverable_identity
 from omac.engines import create_engine
 from omac.engines.mock import MockStore
-from omac.engines.models import EngineConfig, WorkItemStatus
+from omac.engines.models import AgentRunObservation, EngineConfig, WorkItemStatus
 from omac.errors import NeedsDecision
 from omac.pipeline.dispatch import build_show_output
 from omac.pipeline.tasks import AuthoringTaskSpec, create_authoring_task, run_task
@@ -1713,7 +1715,15 @@ def test_restart_authoring_reuses_issue_and_runs_fresh_worker_review_cycle(monke
     eng = _engine(MOCK_AUTO_COMPLETE="false")
     item = _confirmed_amendment(eng)
     wakes = []
+    refreshes = []
     monkeypatch.setattr(eng.runtime, "is_active", lambda _item_id: False)
+    original_refresh = tasks_module.refresh_authoring_task
+
+    def count_refresh(*args, **kwargs):
+        refreshes.append(args[1])
+        return original_refresh(*args, **kwargs)
+
+    monkeypatch.setattr(tasks_module, "refresh_authoring_task", count_refresh)
 
     def wake(item_id, agent, role):
         wakes.append((item_id, agent, role))
@@ -1773,12 +1783,86 @@ def test_restart_authoring_reuses_issue_and_runs_fresh_worker_review_cycle(monke
     assert "new report and docs inputs" in current.description
     assert eng.store.get_comments(item.id) == ["historical reviewer evidence"]
     assert len(eng.store.list_work_items("ws")) == 1
+    assert refreshes == [item.id]
+
+
+def test_restart_reviewer_reject_dispatches_fresh_worker_generation_run(monkeypatch):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = _confirmed_amendment(eng)
+    wakes = []
+    worker_round = {"value": 0}
+    reviewer_round = {"value": 0}
+    runs = []
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
+
+    def wake(item_id, agent, role):
+        wakes.append((agent, role))
+        current = eng.store.get_work_item(item_id)
+        if role == "worker":
+            worker_round["value"] += 1
+            round_no = worker_round["value"]
+            eng.store.update_work_item_metadata(
+                item_id,
+                deliverable=f"fresh amendment {round_no}",
+                phase=TaskPhase.REVIEW,
+            )
+            current.deliverable_ref = {
+                "attachment_id": f"worker-delivery-{round_no}",
+                "sha256": f"worker-digest-{round_no}",
+            }
+            eng.store.mark_in_review(item_id)
+            runs.append(AgentRunObservation(
+                id=f"worker-run-{round_no}", kind="direct", status="completed"))
+            return
+        reviewer_round["value"] += 1
+        verdict = "reject" if reviewer_round["value"] == 1 else "pass"
+        eng.store.update_work_item_metadata(
+            item_id,
+            review_verdict=verdict,
+            review_report=_review_report(item=current, verdict=verdict),
+        )
+        runs.append(AgentRunObservation(
+            id=f"reviewer-run-{reviewer_round['value']}",
+            kind="direct",
+            status="completed",
+        ))
+
+    monkeypatch.setattr(eng.runtime, "wake", wake)
+
+    result = run_task(
+        eng,
+        TaskKind.AMENDMENT,
+        _payload(title="running DAG amendment"),
+        "alice",
+        reviewers=["bob"],
+        max_revisions=3,
+        confirm=True,
+        pause_at_confirmation=True,
+        poll=_poll,
+        resume_item_id=item.id,
+        restart_authoring=True,
+    )
+
+    assert result["pending_confirmation"] is True
+    assert wakes == [
+        ("alice", "worker"),
+        ("bob", "reviewer"),
+        ("alice", "worker"),
+        ("bob", "reviewer"),
+    ]
+    assert eng.store.get_work_item(item.id).authoring_restart.state == "confirmation"
 
 
 def test_restart_authoring_refuses_active_run_without_cancel_or_wake(monkeypatch):
     eng = _engine(MOCK_AUTO_COMPLETE="false")
     item = _confirmed_amendment(eng)
-    monkeypatch.setattr(eng.runtime, "is_active", lambda _item_id: True)
+    monkeypatch.setattr(
+        eng.runtime,
+        "list_runs",
+        lambda _item_id: [SimpleNamespace(
+            id="active-run", kind="direct", status="running", active=True,
+        )],
+    )
     monkeypatch.setattr(
         eng.runtime, "cancel",
         lambda *_args: pytest.fail("restart must never cancel an active run"),
@@ -1806,16 +1890,54 @@ def test_restart_authoring_refuses_active_run_without_cancel_or_wake(monkeypatch
     assert eng.store.get_work_item(item.id).phase == TaskPhase.CONFIRMATION
 
 
+@pytest.mark.parametrize("kind", ["comment", "indirect"])
+def test_restart_authoring_refuses_active_non_direct_run(monkeypatch, kind):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = _confirmed_amendment(eng)
+    monkeypatch.setattr(
+        eng.runtime,
+        "list_runs",
+        lambda _item_id: [AgentRunObservation(
+            id=f"active-{kind}", kind=kind, status="running")],
+    )
+    monkeypatch.setattr(
+        eng.runtime, "wake",
+        lambda *_args: pytest.fail("active non-direct run must fail closed"),
+    )
+
+    with pytest.raises(NeedsDecision) as exc:
+        run_task(
+            eng,
+            TaskKind.AMENDMENT,
+            _payload(title="running DAG amendment"),
+            "alice",
+            reviewers=["bob"],
+            confirm=True,
+            pause_at_confirmation=True,
+            poll=_poll,
+            resume_item_id=item.id,
+            restart_authoring=True,
+        )
+
+    assert exc.value.report["reason_code"] == "active-agent-run"
+
+
 def test_restart_authoring_completed_without_submit_converges_to_decision(monkeypatch):
     eng = _engine(MOCK_AUTO_COMPLETE="false")
     item = _confirmed_amendment(eng)
     wakes = []
-    monkeypatch.setattr(eng.runtime, "is_active", lambda _item_id: False)
+    completed = {"value": False}
+    monkeypatch.setattr(
+        eng.runtime,
+        "list_runs",
+        lambda _item_id: ([AgentRunObservation(
+            id="generation-worker-run", kind="direct", status="completed",
+        )] if completed["value"] else []),
+    )
 
     def complete_without_submit(item_id, agent, role):
         wakes.append((item_id, agent, role))
-        current = eng.store.get_work_item(item_id)
-        current.agent_run_finished_without_submit = True
+        completed["value"] = True
 
     monkeypatch.setattr(eng.runtime, "wake", complete_without_submit)
 
@@ -1843,12 +1965,16 @@ def test_restart_authoring_completed_without_submit_converges_to_decision(monkey
 def test_restart_authoring_store_transition_is_restart_safe_and_preserves_history():
     eng = _engine(MOCK_AUTO_COMPLETE="false")
     item = _confirmed_amendment(eng)
-    subject = eng.store.get_work_item(item.id).review_subject_digest
+    claim = eng.store.claim_authoring_restart(
+        item.id,
+        _restart_candidate(item, generation="generation-idempotent"),
+        now=100.0,
+    ).restart
 
     first = eng.store.restart_authoring(
-        item.id, expected_review_subject_digest=subject)
+        item.id, generation=claim.generation, owner_nonce=claim.owner_nonce)
     second = eng.store.restart_authoring(
-        item.id, expected_review_subject_digest=subject)
+        item.id, generation=claim.generation, owner_nonce=claim.owner_nonce)
 
     assert first.id == second.id == item.id
     assert second.phase == TaskPhase.AUTHORING
@@ -1860,6 +1986,11 @@ def test_restart_authoring_store_transition_is_restart_safe_and_preserves_histor
 def test_restart_authoring_finishes_a_partially_cleared_confirmation():
     eng = _engine(MOCK_AUTO_COMPLETE="false")
     item = _confirmed_amendment(eng)
+    claim = eng.store.claim_authoring_restart(
+        item.id,
+        _restart_candidate(item, generation="generation-partial"),
+        now=100.0,
+    ).restart
     current = eng.store.get_work_item(item.id)
     current.deliverable = None
     current.deliverable_ref = None
@@ -1867,13 +1998,484 @@ def test_restart_authoring_finishes_a_partially_cleared_confirmation():
     current.review_subject_digest = None
 
     restarted = eng.store.restart_authoring(
-        item.id, expected_review_subject_digest=None)
+        item.id, generation=claim.generation, owner_nonce=claim.owner_nonce)
 
     assert restarted.phase == TaskPhase.AUTHORING
     assert restarted.status == WorkItemStatus.TODO
     assert restarted.review_report_ref is None
     assert restarted.review_ledger_ref is None
     assert restarted.machine_feedback_ref is None
+
+
+def test_restart_recovers_after_cleanup_before_journal_advance():
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = _confirmed_amendment(eng)
+    claim = eng.store.claim_authoring_restart(
+        item.id,
+        _restart_candidate(item, generation="generation-cleanup-crash"),
+        now=100.0,
+    ).restart
+    current = eng.store.get_work_item(item.id)
+    current.deliverable = None
+    current.deliverable_ref = None
+    current.review_verdict = None
+    current.review_report_ref = None
+    current.review_ledger_ref = None
+    current.review_subject_digest = None
+    current.decision_required = None
+    current.machine_feedback_ref = None
+    current.phase = TaskPhase.AUTHORING
+    current.status = WorkItemStatus.IN_PROGRESS
+
+    recovered = eng.store.restart_authoring(
+        item.id, generation=claim.generation, owner_nonce=claim.owner_nonce)
+
+    assert recovered.status == WorkItemStatus.TODO
+    assert recovered.authoring_restart.state == "cleaned"
+
+
+def _restart_candidate(item, *, generation, owner="owner-1", now=100.0):
+    return RestartState(
+        generation=generation,
+        owner_nonce=owner,
+        request_digest="request-v2",
+        state="claimed",
+        base_kind="amendment",
+        base_phase="confirmation",
+        base_status="in_review",
+        base_review_subject_digest=item.review_subject_digest or "subject",
+        base_deliverable_identity=deliverable_identity(item),
+        baseline_run_ids=("historical-run",),
+        lease_expires_at=now + 90,
+    )
+
+
+def test_restart_claim_has_one_winner_under_two_concurrent_callers():
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = _confirmed_amendment(eng)
+    barrier = threading.Barrier(2)
+    results = []
+
+    def compete(generation):
+        barrier.wait()
+        results.append(eng.store.claim_authoring_restart(
+            item.id,
+            _restart_candidate(item, generation=generation),
+            now=100.0,
+        ))
+
+    threads = [
+        threading.Thread(target=compete, args=("generation-a",)),
+        threading.Thread(target=compete, args=("generation-b",)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert sum(result.acquired for result in results) == 1
+    assert len({result.restart.generation for result in results}) == 1
+
+
+def test_restart_claim_rejects_done_confirmation():
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = _confirmed_amendment(eng)
+    eng.store.mark_done(item.id)
+
+    with pytest.raises(NeedsDecision) as exc:
+        eng.store.claim_authoring_restart(
+            item.id,
+            _restart_candidate(item, generation="generation-done"),
+            now=100.0,
+        )
+
+    assert exc.value.report["reason_code"] == "restart-base-mismatch"
+
+
+def test_restart_takeover_resumes_same_generation_after_expired_owner():
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = _confirmed_amendment(eng)
+    first = _restart_candidate(
+        item, generation="generation-stable", owner="owner-old", now=0.0)
+    claimed = eng.store.claim_authoring_restart(item.id, first, now=0.0)
+    assert claimed.acquired is True
+
+    takeover = _restart_candidate(
+        item, generation="ignored-new-generation", owner="owner-new", now=200.0)
+    resumed = eng.store.claim_authoring_restart(item.id, takeover, now=200.0)
+
+    assert resumed.acquired is True
+    assert resumed.resumed is True
+    assert resumed.restart.generation == "generation-stable"
+    assert resumed.restart.owner_nonce == "owner-new"
+
+
+def test_restart_terminal_needs_decision_cannot_be_reclaimed_after_lease():
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = _confirmed_amendment(eng)
+    first = _restart_candidate(
+        item, generation="generation-terminal", owner="owner-old", now=0.0)
+    claimed = eng.store.claim_authoring_restart(item.id, first, now=0.0).restart
+    terminal = claimed.evolve(
+        state="needs_decision", detail="completed-without-submit",
+        lease_expires_at=0.0,
+    )
+    eng.store.update_authoring_restart(
+        item.id,
+        generation=claimed.generation,
+        owner_nonce=claimed.owner_nonce,
+        state=terminal,
+    )
+
+    retry = _restart_candidate(
+        item, generation="generation-new", owner="owner-new", now=200.0)
+    result = eng.store.claim_authoring_restart(item.id, retry, now=200.0)
+
+    assert result.acquired is False
+    assert result.restart == terminal
+
+
+def test_restart_resets_review_bounce_with_continuation():
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = _confirmed_amendment(eng)
+    current = eng.store.get_work_item(item.id)
+    current.bounces.review = 3
+    current.review_continuation = {"authorized_through_round": 4}
+    claim = eng.store.claim_authoring_restart(
+        item.id,
+        _restart_candidate(item, generation="generation-budget"),
+        now=100.0,
+    )
+
+    restarted = eng.store.restart_authoring(
+        item.id,
+        generation=claim.restart.generation,
+        owner_nonce=claim.restart.owner_nonce,
+    )
+
+    assert restarted.bounces.review == 0
+    assert restarted.review_continuation is None
+
+
+def test_restart_ignores_historical_completed_run(monkeypatch):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = _confirmed_amendment(eng)
+    historical = AgentRunObservation(
+        id="historical-completed", kind="direct", status="completed")
+    runs = [historical]
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
+
+    def wake(item_id, agent, role):
+        current = eng.store.get_work_item(item_id)
+        if role == "worker":
+            eng.store.update_work_item_metadata(
+                item_id, deliverable="fresh amendment", phase=TaskPhase.REVIEW)
+            eng.store.get_work_item(item_id).deliverable_ref = {
+                "attachment_id": "fresh-worker-delivery",
+                "sha256": "fresh-amendment",
+            }
+            eng.store.mark_in_review(item_id)
+            runs.append(AgentRunObservation(
+                id="fresh-worker-run", kind="direct", status="completed"))
+        else:
+            eng.store.update_work_item_metadata(
+                item_id,
+                review_verdict="pass",
+                review_report=_review_report(item=current),
+            )
+            runs.append(AgentRunObservation(
+                id="fresh-reviewer-run", kind="direct", status="completed"))
+
+    monkeypatch.setattr(eng.runtime, "wake", wake)
+
+    result = run_task(
+        eng,
+        TaskKind.AMENDMENT,
+        _payload(title="running DAG amendment"),
+        "alice",
+        reviewers=["bob"],
+        confirm=True,
+        pause_at_confirmation=True,
+        poll=_poll,
+        resume_item_id=item.id,
+        restart_authoring=True,
+    )
+
+    assert result["pending_confirmation"] is True
+
+
+def test_restart_waits_for_generation_run_visibility(monkeypatch):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = _confirmed_amendment(eng)
+    dispatched = {"value": False, "reads": 0, "reviewer": False}
+
+    def list_runs(_item_id):
+        if not dispatched["value"]:
+            return []
+        dispatched["reads"] += 1
+        if dispatched["reads"] <= 2:
+            return []
+        runs = [AgentRunObservation(
+            id="fresh-visible-run", kind="direct", status="running")]
+        if dispatched["reviewer"]:
+            runs.append(AgentRunObservation(
+                id="fresh-reviewer-run", kind="direct", status="running"))
+        return runs
+
+    monkeypatch.setattr(eng.runtime, "list_runs", list_runs)
+
+    def wake(item_id, agent, role):
+        current = eng.store.get_work_item(item_id)
+        if role == "worker":
+            dispatched["value"] = True
+            return
+        eng.store.update_work_item_metadata(
+            item_id,
+            review_verdict="pass",
+            review_report=_review_report(item=current),
+        )
+        dispatched["reviewer"] = True
+
+    monkeypatch.setattr(eng.runtime, "wake", wake)
+
+    def poll():
+        if dispatched["reads"] >= 3:
+            current = eng.store.get_work_item(item.id)
+            if current.phase == TaskPhase.AUTHORING:
+                eng.store.update_work_item_metadata(
+                    item.id,
+                    deliverable="fresh amendment",
+                    phase=TaskPhase.REVIEW,
+                )
+                eng.store.get_work_item(item.id).deliverable_ref = {
+                    "attachment_id": "fresh-visible-delivery",
+                    "sha256": "fresh-amendment",
+                }
+                eng.store.mark_in_review(item.id)
+
+    result = run_task(
+        eng,
+        TaskKind.AMENDMENT,
+        _payload(title="running DAG amendment"),
+        "alice",
+        reviewers=["bob"],
+        confirm=True,
+        pause_at_confirmation=True,
+        poll=poll,
+        resume_item_id=item.id,
+        restart_authoring=True,
+    )
+
+    assert result["pending_confirmation"] is True
+    assert dispatched["reads"] >= 3
+
+
+def test_restart_reviewer_completed_without_verdict_is_bounded(monkeypatch):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = _confirmed_amendment(eng)
+    stage = {"value": "initial"}
+
+    def list_runs(_item_id):
+        if stage["value"] == "initial":
+            return []
+        worker = AgentRunObservation(
+            id="worker-run", kind="direct", status="completed")
+        if stage["value"] == "worker-submitted":
+            return [worker]
+        return [worker, AgentRunObservation(
+            id="reviewer-run", kind="direct", status="completed")]
+
+    monkeypatch.setattr(eng.runtime, "list_runs", list_runs)
+
+    def wake(item_id, agent, role):
+        if role == "worker":
+            eng.store.update_work_item_metadata(
+                item_id, deliverable="fresh amendment", phase=TaskPhase.REVIEW)
+            eng.store.get_work_item(item_id).deliverable_ref = {
+                "attachment_id": "fresh-review-delivery",
+                "sha256": "fresh-amendment",
+            }
+            eng.store.mark_in_review(item_id)
+            stage["value"] = "worker-submitted"
+        else:
+            stage["value"] = "reviewer-completed"
+
+    monkeypatch.setattr(eng.runtime, "wake", wake)
+
+    with pytest.raises(NeedsDecision) as exc:
+        run_task(
+            eng,
+            TaskKind.AMENDMENT,
+            _payload(title="running DAG amendment"),
+            "alice",
+            reviewers=["bob"],
+            confirm=True,
+            pause_at_confirmation=True,
+            poll=_poll,
+            resume_item_id=item.id,
+            restart_authoring=True,
+        )
+
+    assert exc.value.report["reason_code"] == "reviewer-completed-without-verdict"
+    assert exc.value.report["phase"] == "review"
+    current = eng.store.get_work_item(item.id)
+    assert current.phase == TaskPhase.REVIEW
+    assert current.authoring_restart.state == "needs_decision"
+
+
+def _prepare_dispatching_restart(eng, item, *, assigned: bool):
+    payload = _payload(title="running DAG amendment")
+    spec = AuthoringTaskSpec(
+        kind=TaskKind.AMENDMENT,
+        title="running DAG amendment",
+        dag_key="amend-recovery",
+        assignee="alice",
+        description="",
+        contract=payload["contract"],
+    )
+    candidate = _restart_candidate(
+        item, generation="generation-recovery", owner="owner-crashed", now=0.0)
+    candidate = candidate.evolve(
+        request_digest=tasks_module._restart_request_digest(spec),
+        lease_expires_at=0.0,
+    )
+    claim = eng.store.claim_authoring_restart(item.id, candidate, now=0.0).restart
+    eng.store.restart_authoring(
+        item.id, generation=claim.generation, owner_nonce=claim.owner_nonce)
+    cleaned = eng.store.get_work_item(item.id).authoring_restart
+    tasks_module.refresh_authoring_task(
+        eng, item.id, spec, item_snapshot=item, restart=cleaned)
+    dispatching = cleaned.evolve(state="dispatching", lease_expires_at=0.0)
+    eng.store.update_authoring_restart(
+        item.id,
+        generation=cleaned.generation,
+        owner_nonce=cleaned.owner_nonce,
+        state=dispatching,
+    )
+    if assigned:
+        eng.store.mark_in_progress(item.id)
+        eng.store.assign_work_item(item.id, "alice", "worker")
+    return payload, dispatching
+
+
+def test_restart_recovers_crash_after_assign_before_wake_without_parallel_run(monkeypatch):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = _confirmed_amendment(eng)
+    payload, restart = _prepare_dispatching_restart(eng, item, assigned=True)
+    existing_runs = eng.runtime.list_runs(item.id)
+    wakes = []
+
+    def wake(item_id, agent, role):
+        wakes.append((item_id, agent, role))
+        eng.store.update_work_item_metadata(
+            item_id, deliverable="fresh amendment", phase=TaskPhase.REVIEW)
+        eng.store.get_work_item(item_id).deliverable_ref = {
+            "attachment_id": "fresh-recovered-delivery",
+            "sha256": "fresh-amendment",
+        }
+        eng.store.mark_in_review(item_id)
+
+    monkeypatch.setattr(eng.runtime, "wake", wake)
+
+    result = run_task(
+        eng,
+        TaskKind.AMENDMENT,
+        payload,
+        "alice",
+        confirm=True,
+        pause_at_confirmation=True,
+        poll=lambda: (
+            eng.store.update_work_item_metadata(
+                item.id, deliverable="fresh amendment", phase=TaskPhase.REVIEW),
+            setattr(eng.store.get_work_item(item.id), "deliverable_ref", {
+                "attachment_id": "fresh-recovered-delivery",
+                "sha256": "fresh-amendment",
+            }),
+            eng.store.mark_in_review(item.id),
+        ),
+        dag_key="amend-recovery",
+        resume_item_id=item.id,
+        restart_authoring=True,
+    )
+
+    assert result["pending_confirmation"] is True
+    assert wakes == []
+    assert eng.store.get_work_item(item.id).authoring_restart.generation == restart.generation
+    assert len(eng.runtime.list_runs(item.id)) == len(existing_runs)
+
+
+def test_restart_recovers_crash_after_wake_on_same_visible_run(monkeypatch):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = _confirmed_amendment(eng)
+    payload, restart = _prepare_dispatching_restart(eng, item, assigned=True)
+    run_ids_before = [run.id for run in eng.runtime.list_runs(item.id)]
+    assignments_before = len(eng.store.assign_log)
+
+    def poll():
+        current = eng.store.get_work_item(item.id)
+        if current.phase != TaskPhase.AUTHORING:
+            return
+        eng.store.update_work_item_metadata(
+            item.id, deliverable="fresh amendment", phase=TaskPhase.REVIEW)
+        current.deliverable_ref = {
+            "attachment_id": "fresh-after-wake-delivery",
+            "sha256": "fresh-amendment",
+        }
+        eng.store.mark_in_review(item.id)
+
+    result = run_task(
+        eng,
+        TaskKind.AMENDMENT,
+        payload,
+        "alice",
+        confirm=True,
+        pause_at_confirmation=True,
+        poll=poll,
+        dag_key="amend-recovery",
+        resume_item_id=item.id,
+        restart_authoring=True,
+    )
+
+    assert result["pending_confirmation"] is True
+    assert eng.store.get_work_item(item.id).authoring_restart.generation == restart.generation
+    assert [run.id for run in eng.runtime.list_runs(item.id)] == run_ids_before
+    assert len(eng.store.assign_log) == assignments_before
+
+
+def test_restart_recovers_crash_before_assign_on_same_generation(monkeypatch):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = _confirmed_amendment(eng)
+    payload, restart = _prepare_dispatching_restart(eng, item, assigned=False)
+    wakes = []
+
+    def wake(item_id, agent, role):
+        wakes.append((item_id, agent, role))
+        eng.store.update_work_item_metadata(
+            item_id, deliverable="fresh amendment", phase=TaskPhase.REVIEW)
+        eng.store.get_work_item(item_id).deliverable_ref = {
+            "attachment_id": "fresh-before-assign-delivery",
+            "sha256": "fresh-amendment",
+        }
+        eng.store.mark_in_review(item_id)
+
+    monkeypatch.setattr(eng.runtime, "wake", wake)
+
+    result = run_task(
+        eng,
+        TaskKind.AMENDMENT,
+        payload,
+        "alice",
+        confirm=True,
+        pause_at_confirmation=True,
+        poll=_poll,
+        dag_key="amend-recovery",
+        resume_item_id=item.id,
+        restart_authoring=True,
+    )
+
+    assert result["pending_confirmation"] is True
+    assert wakes == [(item.id, "alice", "worker")]
+    assert eng.store.get_work_item(item.id).authoring_restart.generation == restart.generation
 
 
 def test_blocked_production_short_circuits_on_resume():

@@ -133,3 +133,52 @@ def test_confirmation_resume_does_not_emit_dispatch_or_create_run(monkeypatch):
     assert result["pending_confirmation"] is True
     assert logsetup.EVT_DISPATCH not in _names(cap)
     assert logsetup.EVT_HUMAN_GATE_WAIT in _names(cap)
+
+
+def test_restart_logs_dispatch_only_after_wake_succeeds(monkeypatch):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = eng.store.create_work_item(
+        "ws", "amendment", "desc", "amend-restart-log", "alice",
+        kind=TaskKind.AMENDMENT,
+    )
+    eng.store.update_work_item_metadata(
+        item.id,
+        deliverable="reviewed amendment",
+        review_verdict="pass",
+        review_report={
+            "review_goals": ["review"],
+            "diff_reviewed": True,
+            "tests_rerun": True,
+            "coverage_checked": True,
+            "full_review_completed": True,
+            "acceptance_mapping": [{
+                "acceptance": "走通", "evidence": "reviewed", "status": "pass",
+            }],
+            "blockers": [],
+        },
+        phase=TaskPhase.CONFIRMATION,
+    )
+    current = eng.store.get_work_item(item.id)
+    current.deliverable_ref = {"attachment_id": "old", "sha256": "old"}
+    current.review_subject_digest = __import__(
+        "omac.pipeline.tasks", fromlist=["_review_subject_digest"]
+    )._review_subject_digest(TaskKind.AMENDMENT, current, 1)
+    eng.store.mark_in_review(item.id)
+    monkeypatch.setattr(
+        eng.runtime, "wake",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("wake failed")),
+    )
+
+    with capture_logs() as cap:
+        with pytest.raises(RuntimeError, match="wake failed"):
+            run_task(
+                eng,
+                TaskKind.AMENDMENT,
+                _payload(),
+                "alice",
+                poll=_poll,
+                resume_item_id=item.id,
+                restart_authoring=True,
+            )
+
+    assert logsetup.EVT_DISPATCH not in _names(cap)

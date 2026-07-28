@@ -12,6 +12,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
 from ..core.taskmeta import TaskKind, TaskPhase
+from ..core.restart import RestartClaimResult, RestartState
 from .models import (
     EngineConfig, MergeCommandResult, ProjectInfo, PullRequestCheckResult,
     PullRequestObservation, PullRequestReadiness, PullRequestReadinessFailure,
@@ -196,17 +197,41 @@ class WorkItemStore(ABC):
         """
 
     @abstractmethod
+    def claim_authoring_restart(
+        self, item_id: str, candidate: RestartState, *, now: float,
+    ) -> RestartClaimResult:
+        """竞争一个持久化 restart generation；只有 acquired 调用者可补偿写。"""
+
+    @abstractmethod
+    def guard_authoring_restart(
+        self, item_id: str, *, generation: str, owner_nonce: str,
+    ) -> RestartState:
+        """校验当前单字段 fencing token，失配必须失败关闭。"""
+
+    @abstractmethod
+    def update_authoring_restart(
+        self,
+        item_id: str,
+        *,
+        generation: str,
+        owner_nonce: str,
+        state: RestartState,
+    ) -> RestartState:
+        """在 generation+owner 仍匹配时替换完整 restart journal。"""
+
+    @abstractmethod
     def restart_authoring(
         self,
         item_id: str,
         *,
-        expected_review_subject_digest: Optional[str],
+        generation: str,
+        owner_nonce: str,
     ) -> WorkItem:
-        """用 CAS 将已确认的 amendment 原地重开为干净 authoring。
+        """在持久化 generation fencing 下原地重开为干净 authoring。
 
         仅清除当前交付和评审引用；平台评论与附件历史必须保留作审计证据。
-        ``expected_review_subject_digest`` 绑定调用方刚读取的 confirmation，防止
-        并发进程把更新后的交付误作废。已完成转换的干净 authoring 可幂等重入。
+        generation journal 绑定 kind/phase/status/review subject/deliverable identity；
+        已完成转换的干净 authoring 可幂等重入。
         """
 
     @abstractmethod

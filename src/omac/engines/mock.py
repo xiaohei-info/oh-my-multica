@@ -12,6 +12,7 @@ import tempfile
 import time
 import json
 import subprocess
+import threading
 from typing import Any, Dict, List, Optional
 
 import yaml
@@ -19,10 +20,14 @@ from ..core.machine_feedback import (
     dump_machine_feedback, parse_machine_feedback,
 )
 from ..core.taskmeta import DELIVERY_CONTENT_KEY, TaskKind, TaskPhase
-from ..errors import ValidationError, WorkItemNotFoundError
+from ..core.restart import (
+    TERMINAL_RESTART_STATES, RestartClaimResult, RestartState,
+    deliverable_identity,
+)
+from ..errors import NeedsDecision, ValidationError, WorkItemNotFoundError
 from ..i18n import ui
 from .models import (
-    AgentInfo, AgentProvisionSpec, EngineConfig, ProjectInfo, RuntimeTarget,
+    AgentInfo, AgentProvisionSpec, AgentRunObservation, EngineConfig, ProjectInfo, RuntimeTarget,
     MergeCommandResult, PullRequestCheckResult, PullRequestObservation,
     PullRequestReadiness, PullRequestState,
     WorkItem, WorkItemStatus, WorkspaceInfo,
@@ -60,12 +65,25 @@ _shared_auto_confirm: bool = False
 # 已自动确认过的 item(人工只确认一次,避免评审阶段翻回 IN_REVIEW 时被误重复确认)。
 _shared_human_confirmed: set = set()
 _shared_pull_requests: Dict[str, PullRequestObservation] = {}
+_shared_runs: Dict[str, List[AgentRunObservation]] = {}
+_shared_next_run_id: int = 1
+_shared_active_assignments: Dict[str, tuple[str, str]] = {}
+_restart_claim_lock = threading.Lock()
 
 # 产出后进入评审阶段(而非直接 DONE)的 kind:与真实 work submit 的产出终态一致。
 # develop 走 pr_url→DONE;final-acceptance 有独立的 _accepted_results 真实 submit 分支。
 _AUTHORING_TO_REVIEW = (
     TaskKind.PLAN, TaskKind.ACCEPTANCE, TaskKind.DECOMPOSE, TaskKind.AMENDMENT,
 )
+
+
+def _finish_mock_run(item_id: str, status: str = "completed") -> None:
+    runs = _shared_runs.get(item_id) or []
+    if not runs:
+        return
+    latest = runs[-1]
+    runs[-1] = AgentRunObservation(
+        id=latest.id, kind=latest.kind, status=status)
 
 
 def _init_default_workspace():
@@ -209,10 +227,14 @@ class MockStore(WorkItemStore):
         _shared_human_confirmed = set()
         global _accepted_results, _increments, _shared_projects
         global _shared_pull_requests
+        global _shared_runs, _shared_next_run_id, _shared_active_assignments
         _accepted_results = {}
         _increments = {}
         _shared_projects = {}
         _shared_pull_requests = {}
+        _shared_runs = {}
+        _shared_next_run_id = 1
+        _shared_active_assignments = {}
         _init_default_workspace()
 
     @classmethod
@@ -303,6 +325,7 @@ class MockStore(WorkItemStore):
         if item.status == WorkItemStatus.IN_PROGRESS:
             if item.dag_key in _shared_fail_keys:
                 item.status = WorkItemStatus.FAILED
+                _finish_mock_run(item_id, "failed")
                 del _shared_assigned_items[item_id]
                 return
 
@@ -322,6 +345,7 @@ class MockStore(WorkItemStore):
                 # 调 dispatch.submit(acceptance_results_file=...) 经左移校验。
                 # contract.acceptance_doc 已由 acceptance._dispatch_and_wait 挂载。
                 # 先移除 auto-complete 标记,防止 dispatch.submit 内 get_work_item 二次触发。
+                _finish_mock_run(item_id)
                 del _shared_assigned_items[item_id]
                 results = _accepted_results.get(item.dag_key)
                 tmp = _write_tmp_json(results)
@@ -337,6 +361,7 @@ class MockStore(WorkItemStore):
                 # 走真实 work submit 路径:把增量 Manifest 序列化为 manifest YAML,
                 # 调 dispatch.submit(manifest_file=...) 经结构校验+lint,状态进 IN_REVIEW。
                 # 先移除 auto-complete 标记,防止 dispatch.submit 内 get_work_item 二次触发。
+                _finish_mock_run(item_id)
                 del _shared_assigned_items[item_id]
                 increment = _increments[item.dag_key]
                 base = _parse_base_manifest(item)
@@ -393,6 +418,7 @@ class MockStore(WorkItemStore):
                 verification = self._mock_verification(item_id)
                 if verification is not None:
                     item.verification = verification
+            _finish_mock_run(item_id)
             del _shared_assigned_items[item_id]
         elif item.status == WorkItemStatus.IN_REVIEW:
             if _shared_review_rejects_remaining > 0:
@@ -429,6 +455,7 @@ class MockStore(WorkItemStore):
                     "bytes": len(yaml.safe_dump(
                         item.review_ledger, allow_unicode=True).encode("utf-8")),
                 }
+            _finish_mock_run(item_id)
             del _shared_assigned_items[item_id]
 
     def _mock_verification(self, item_id: str) -> Optional[Dict[str, Any]]:
@@ -855,13 +882,119 @@ class MockStore(WorkItemStore):
         item.review_subject_digest = None
         item.phase = TaskPhase.AUTHORING
 
+    def claim_authoring_restart(
+        self, item_id: str, candidate: RestartState, *, now: float,
+    ) -> RestartClaimResult:
+        with _restart_claim_lock:
+            item = self.get_work_item(item_id)
+            existing = item.authoring_restart
+            create_new_generation = existing is None
+            if existing is not None:
+                same_request = existing.request_digest == candidate.request_digest
+                if same_request and existing.state == "confirmation":
+                    return RestartClaimResult(
+                        existing, acquired=False, confirmation_reused=True)
+                if existing.state in TERMINAL_RESTART_STATES:
+                    if existing.state == "confirmation" and not same_request:
+                        create_new_generation = True
+                    else:
+                        return RestartClaimResult(existing, acquired=False)
+                elif same_request and existing.lease_expires_at <= now:
+                    resumed = existing.evolve(
+                        owner_nonce=candidate.owner_nonce,
+                        lease_expires_at=candidate.lease_expires_at,
+                    )
+                    item.authoring_restart = resumed
+                    return RestartClaimResult(resumed, acquired=True, resumed=True)
+                else:
+                    return RestartClaimResult(existing, acquired=False)
+
+            base_matches = create_new_generation and (
+                item.kind.value == candidate.base_kind
+                and item.phase.value == candidate.base_phase
+                and item.status.value == candidate.base_status
+                and item.review_subject_digest == candidate.base_review_subject_digest
+                and deliverable_identity(item) == candidate.base_deliverable_identity
+            )
+            if not base_matches or item.status != WorkItemStatus.IN_REVIEW:
+                raise NeedsDecision(
+                    "amendment restart base changed; inspect current confirmation before retry",
+                    report={
+                        "item_id": item_id,
+                        "reason_code": "restart-base-mismatch",
+                        "phase": item.phase.value,
+                        "status": item.status.value,
+                    },
+                )
+            item.authoring_restart = candidate
+            return RestartClaimResult(candidate, acquired=True)
+
+    def guard_authoring_restart(
+        self, item_id: str, *, generation: str, owner_nonce: str,
+    ) -> RestartState:
+        current = self.get_work_item(item_id).authoring_restart
+        if (
+            current is None
+            or current.generation != generation
+            or current.owner_nonce != owner_nonce
+        ):
+            raise NeedsDecision(
+                "amendment restart generation ownership changed",
+                report={
+                    "item_id": item_id,
+                    "reason_code": "restart-generation-conflict",
+                    "generation": generation,
+                },
+            )
+        return current
+
+    def update_authoring_restart(
+        self,
+        item_id: str,
+        *,
+        generation: str,
+        owner_nonce: str,
+        state: RestartState,
+    ) -> RestartState:
+        self.guard_authoring_restart(
+            item_id, generation=generation, owner_nonce=owner_nonce)
+        self.get_work_item(item_id).authoring_restart = state
+        observed = self.guard_authoring_restart(
+            item_id, generation=generation, owner_nonce=owner_nonce)
+        if observed != state:
+            raise NeedsDecision(
+                "amendment restart journal write was not preserved",
+                report={
+                    "item_id": item_id,
+                    "reason_code": "restart-journal-write-lost",
+                    "generation": generation,
+                    "outcome": "unknown_partial",
+                },
+            )
+        return observed
+
     def restart_authoring(
         self,
         item_id: str,
         *,
-        expected_review_subject_digest: Optional[str],
+        generation: str,
+        owner_nonce: str,
     ) -> WorkItem:
+        claim = self.guard_authoring_restart(
+            item_id, generation=generation, owner_nonce=owner_nonce)
         item = self.get_work_item(item_id)
+        if item.status == WorkItemStatus.DONE:
+            raise NeedsDecision(
+                ui(
+                    "The amendment confirmation was already applied; authoring cannot be restarted",
+                    "amendment confirmation 已经应用；不能重开 authoring"),
+                report={
+                    "item_id": item_id,
+                    "reason_code": "restart-base-mismatch",
+                    "phase": item.phase.value,
+                    "status": item.status.value,
+                },
+            )
         clean_authoring = (
             item.phase == TaskPhase.AUTHORING
             and item.deliverable is None
@@ -872,27 +1005,50 @@ class MockStore(WorkItemStore):
             and not item.machine_feedback_ref
             and not item.decision_required
         )
-        if clean_authoring:
+        if clean_authoring and claim.state in {
+            "claimed", "cleaned", "refreshed", "dispatching", "dispatched",
+        }:
             item.status = WorkItemStatus.TODO
+            if claim.state == "claimed":
+                item.authoring_restart = claim.evolve(state="cleaned")
             return item
         if item.kind != TaskKind.AMENDMENT or item.phase != TaskPhase.CONFIRMATION:
-            raise ValidationError(ui(
-                "Only an amendment in human confirmation can restart authoring",
-                "只有处于人工确认阶段的 amendment 才能重开 authoring"))
+            raise NeedsDecision(
+                ui(
+                    "Only an amendment in human confirmation can restart authoring",
+                    "只有处于人工确认阶段的 amendment 才能重开 authoring"),
+                report={
+                    "item_id": item_id,
+                    "reason_code": "restart-base-mismatch",
+                    "phase": item.phase.value,
+                    "status": item.status.value,
+                },
+            )
         partial_restart = (
             item.review_subject_digest is None
             and item.deliverable is None
             and not item.deliverable_ref
             and item.review_verdict is None
         )
-        if not partial_restart and (
-            not expected_review_subject_digest
-            or item.review_subject_digest != expected_review_subject_digest
+        if (
+            not partial_restart
+            and item.review_subject_digest != claim.base_review_subject_digest
         ):
-            raise ValidationError(ui(
-                "Amendment confirmation changed before authoring restart; read it again and retry",
-                "重开 authoring 前 amendment confirmation 已变化；请重新读取后再试"))
-        if not partial_restart and item.review_verdict not in {"pass", "pass-with-nits"}:
+            raise NeedsDecision(
+                ui(
+                    "Amendment confirmation changed before authoring restart; read it again and retry",
+                    "重开 authoring 前 amendment confirmation 已变化；请重新读取后再试"),
+                report={
+                    "item_id": item_id,
+                    "reason_code": "restart-base-mismatch",
+                    "phase": item.phase.value,
+                    "status": item.status.value,
+                },
+            )
+        if (
+            not partial_restart
+            and item.review_verdict not in {"pass", "pass-with-nits"}
+        ):
             raise ValidationError(ui(
                 "Amendment authoring restart requires a Reviewer-pass confirmation",
                 "重开 amendment authoring 需要 Reviewer 已通过的 confirmation"))
@@ -913,12 +1069,14 @@ class MockStore(WorkItemStore):
         item.review_ledger = None
         item.review_ledger_ref = None
         item.review_continuation = None
+        item.bounces.review = 0
         item.decision_required = None
         item.machine_feedback = None
         item.machine_feedback_ref = None
         item.phase = TaskPhase.AUTHORING
         item.status = WorkItemStatus.TODO
         _shared_assigned_items.pop(item_id, None)
+        item.authoring_restart = claim.evolve(state="cleaned")
         return item
 
     def prepare_review_cycle(self, item_id: str, subject_digest: str) -> WorkItem:
@@ -937,18 +1095,34 @@ class MockStore(WorkItemStore):
         return item
 
     def assign_work_item(self, item_id: str, assignee: str, role: str):
+        global _shared_next_run_id
         item = self.get_work_item(item_id)
         if role == "worker":
             item.worker = assignee
         elif role == "reviewer":
             item.reviewer = assignee
+        assignment = (assignee, role)
+        same_active_assignment = (
+            item_id in _shared_assigned_items
+            and _shared_active_assignments.get(item_id) == assignment
+        )
         _shared_assign_log.append((item_id, item.dag_key, role, time.time()))
         _shared_assigned_items[item_id] = time.time()
+        _shared_active_assignments[item_id] = assignment
+        if not same_active_assignment:
+            run = AgentRunObservation(
+                id=f"mock-run-{_shared_next_run_id}",
+                kind="direct",
+                status="running",
+            )
+            _shared_next_run_id += 1
+            _shared_runs.setdefault(item_id, []).append(run)
 
     def clear_assignment(self, item_id: str) -> None:
         item = self.get_work_item(item_id)
         item.reviewer = None
         _shared_assigned_items.pop(item_id, None)
+        _shared_active_assignments.pop(item_id, None)
 
     def request_pull_request_merge(
         self, pr_url: str, command: str, timeout_seconds: int,
@@ -1021,8 +1195,11 @@ class MockRuntime(AgentRuntime):
         return False
 
     def is_active(self, item_id: str) -> bool:
+        return any(run.active for run in self.list_runs(item_id))
+
+    def list_runs(self, item_id: str) -> List[AgentRunObservation]:
         self._store.get_work_item(item_id)
-        return item_id in _shared_assigned_items
+        return list(_shared_runs.get(item_id, []))
 
     def list_targets(self) -> List[RuntimeTarget]:
         return [RuntimeTarget(

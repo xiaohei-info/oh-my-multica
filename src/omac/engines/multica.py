@@ -36,10 +36,17 @@ from ..core.taskmeta import (
     SOURCE_REFS_KEY, TaskKind, TaskPhase, VERIFICATION_REF_KEY, WORKER_BOUNCE_KEY,
     parse_bounces, parse_kind, parse_phase,
 )
-from ..errors import AuthError, PlatformError, ValidationError, WorkItemNotFoundError
+from ..core.restart import (
+    RESTART_KEY, TERMINAL_RESTART_STATES, RestartClaimResult, RestartState,
+    deliverable_identity, dump_restart_state, parse_restart_state,
+)
+from ..errors import (
+    AuthError, NeedsDecision, PlatformError, ValidationError,
+    WorkItemNotFoundError,
+)
 from ..i18n import ui
 from .models import (
-    AgentInfo, AgentProvisionSpec, EngineConfig, ProjectInfo, RuntimeTarget,
+    AgentInfo, AgentProvisionSpec, AgentRunObservation, EngineConfig, ProjectInfo, RuntimeTarget,
     MergeCommandResult, PullRequestCheckResult, PullRequestObservation,
     PullRequestReadiness, PullRequestReadinessFailure,
     PullRequestReadinessFailureKind, PullRequestState,
@@ -587,6 +594,7 @@ class MulticaStore(WorkItemStore):
             metadata, REVIEW_CONTINUATION_KEY)
         machine_feedback_ref = self._json_metadata(
             metadata, MACHINE_FEEDBACK_REF_KEY)
+        authoring_restart = parse_restart_state(metadata.get(RESTART_KEY))
         review_obligations = None
         if isinstance(review_obligations_ref, dict) and review_obligations_ref:
             obligations_text = self._load_payload_comment(
@@ -719,6 +727,7 @@ class MulticaStore(WorkItemStore):
                 review_continuation
                 if isinstance(review_continuation, dict) else None),
             decision_required=self._json_metadata(metadata, DECISION_REQUIRED_KEY),
+            authoring_restart=authoring_restart,
             contract=contract,
             contract_ref=contract_ref if isinstance(contract_ref, dict) else None,
             source_refs=source_refs if isinstance(source_refs, list) else [],
@@ -1179,13 +1188,152 @@ class MulticaStore(WorkItemStore):
         self._set_metadata(item_id, REVIEW_SUBJECT_DIGEST_KEY, "")
         self._set_metadata(item_id, PHASE_KEY, TaskPhase.AUTHORING.value)
 
+    def claim_authoring_restart(
+        self, item_id: str, candidate: RestartState, *, now: float,
+    ) -> RestartClaimResult:
+        current = self.get_work_item(item_id)
+        existing = current.authoring_restart
+        create_new_generation = existing is None
+        if existing is not None:
+            same_request = existing.request_digest == candidate.request_digest
+            if same_request and existing.state == "confirmation":
+                return RestartClaimResult(
+                    existing, acquired=False, confirmation_reused=True)
+            if existing.state in TERMINAL_RESTART_STATES:
+                if existing.state == "confirmation" and not same_request:
+                    create_new_generation = True
+                else:
+                    return RestartClaimResult(existing, acquired=False)
+            elif same_request and existing.lease_expires_at <= now:
+                candidate = existing.evolve(
+                    owner_nonce=candidate.owner_nonce,
+                    lease_expires_at=candidate.lease_expires_at,
+                )
+            else:
+                return RestartClaimResult(existing, acquired=False)
+
+        if create_new_generation:
+            base_matches = (
+                current.kind.value == candidate.base_kind
+                and current.phase.value == candidate.base_phase
+                and current.status.value == candidate.base_status
+                and current.review_subject_digest
+                == candidate.base_review_subject_digest
+                and deliverable_identity(current)
+                == candidate.base_deliverable_identity
+            )
+            if not base_matches or current.status != WorkItemStatus.IN_REVIEW:
+                raise NeedsDecision(
+                    ui(
+                        "Amendment restart base changed; inspect the current confirmation before retrying",
+                        "amendment restart 基线已变化；重试前请检查当前 confirmation"),
+                    report={
+                        "item_id": item_id,
+                        "reason_code": "restart-base-mismatch",
+                        "phase": current.phase.value,
+                        "status": current.status.value,
+                    },
+                )
+
+        self._set_metadata(item_id, RESTART_KEY, dump_restart_state(candidate))
+        observed = self.get_work_item(item_id).authoring_restart
+        if (
+            observed is None
+            or observed.generation != candidate.generation
+            or observed.owner_nonce != candidate.owner_nonce
+        ):
+            if observed is not None:
+                return RestartClaimResult(observed, acquired=False)
+            raise NeedsDecision(
+                ui(
+                    "Multica did not preserve the restart claim; no cleanup or dispatch was attempted",
+                    "Multica 未保留 restart claim；尚未执行清理或派发"),
+                report={
+                    "item_id": item_id,
+                    "reason_code": "restart-claim-unknown",
+                    "generation": candidate.generation,
+                    "platform_atomicity": "single-key-last-write-wins-no-cas",
+                },
+            )
+        return RestartClaimResult(
+            observed,
+            acquired=True,
+            resumed=existing is not None and not create_new_generation,
+        )
+
+    def guard_authoring_restart(
+        self, item_id: str, *, generation: str, owner_nonce: str,
+    ) -> RestartState:
+        current = self.get_work_item(item_id).authoring_restart
+        if (
+            current is None
+            or current.generation != generation
+            or current.owner_nonce != owner_nonce
+        ):
+            raise NeedsDecision(
+                ui(
+                    "Amendment restart fencing token changed; remote state may be partially updated",
+                    "amendment restart fencing token 已变化；远端状态可能部分更新"),
+                report={
+                    "item_id": item_id,
+                    "reason_code": "restart-generation-conflict",
+                    "generation": generation,
+                    "outcome": "unknown_partial",
+                    "platform_atomicity": "single-key-last-write-wins-no-cas",
+                },
+            )
+        return current
+
+    def update_authoring_restart(
+        self,
+        item_id: str,
+        *,
+        generation: str,
+        owner_nonce: str,
+        state: RestartState,
+    ) -> RestartState:
+        self.guard_authoring_restart(
+            item_id, generation=generation, owner_nonce=owner_nonce)
+        self._set_metadata(item_id, RESTART_KEY, dump_restart_state(state))
+        observed = self.guard_authoring_restart(
+            item_id, generation=generation, owner_nonce=owner_nonce)
+        if observed != state:
+            raise NeedsDecision(
+                ui(
+                    "Multica did not preserve the requested restart journal update",
+                    "Multica 未保留请求的 restart journal 更新"),
+                report={
+                    "item_id": item_id,
+                    "reason_code": "restart-journal-write-lost",
+                    "generation": generation,
+                    "outcome": "unknown_partial",
+                    "platform_atomicity": "single-key-last-write-wins-no-cas",
+                },
+            )
+        return observed
+
     def restart_authoring(
         self,
         item_id: str,
         *,
-        expected_review_subject_digest: Optional[str],
+        generation: str,
+        owner_nonce: str,
     ) -> WorkItem:
+        claim = self.guard_authoring_restart(
+            item_id, generation=generation, owner_nonce=owner_nonce)
         current = self.get_work_item(item_id)
+        if current.status == WorkItemStatus.DONE:
+            raise NeedsDecision(
+                ui(
+                    "The amendment confirmation was already applied; authoring cannot be restarted",
+                    "amendment confirmation 已经应用；不能重开 authoring"),
+                report={
+                    "item_id": item_id,
+                    "reason_code": "restart-base-mismatch",
+                    "phase": current.phase.value,
+                    "status": current.status.value,
+                },
+            )
         clean_authoring = (
             current.phase == TaskPhase.AUTHORING
             and current.deliverable is None
@@ -1196,27 +1344,54 @@ class MulticaStore(WorkItemStore):
             and not current.machine_feedback_ref
             and not current.decision_required
         )
-        if clean_authoring:
+        if clean_authoring and claim.state in {
+            "claimed", "cleaned", "refreshed", "dispatching", "dispatched",
+        }:
             if current.status != WorkItemStatus.TODO:
                 self.update_status(item_id, WorkItemStatus.TODO)
+            if claim.state == "claimed":
+                self.update_authoring_restart(
+                    item_id,
+                    generation=generation,
+                    owner_nonce=owner_nonce,
+                    state=claim.evolve(state="cleaned"),
+                )
             return self.get_work_item(item_id)
         if current.kind != TaskKind.AMENDMENT or current.phase != TaskPhase.CONFIRMATION:
-            raise ValidationError(ui(
-                "Only an amendment in human confirmation can restart authoring",
-                "只有处于人工确认阶段的 amendment 才能重开 authoring"))
+            raise NeedsDecision(
+                ui(
+                    "Only an amendment in human confirmation can restart authoring",
+                    "只有处于人工确认阶段的 amendment 才能重开 authoring"),
+                report={
+                    "item_id": item_id,
+                    "reason_code": "restart-base-mismatch",
+                    "phase": current.phase.value,
+                    "status": current.status.value,
+                },
+            )
+        base_matches = (
+            current.status == WorkItemStatus.IN_REVIEW
+            and current.review_subject_digest == claim.base_review_subject_digest
+            and deliverable_identity(current) == claim.base_deliverable_identity
+        )
         partial_restart = (
             current.review_subject_digest is None
             and current.deliverable is None
             and not current.deliverable_ref
             and current.review_verdict is None
         )
-        if not partial_restart and (
-            not expected_review_subject_digest
-            or current.review_subject_digest != expected_review_subject_digest
-        ):
-            raise ValidationError(ui(
-                "Amendment confirmation changed before authoring restart; read it again and retry",
-                "重开 authoring 前 amendment confirmation 已变化；请重新读取后再试"))
+        if not base_matches and not partial_restart:
+            raise NeedsDecision(
+                ui(
+                    "Amendment confirmation changed before authoring restart; read it again and retry",
+                    "重开 authoring 前 amendment confirmation 已变化；请重新读取后再试"),
+                report={
+                    "item_id": item_id,
+                    "reason_code": "restart-base-mismatch",
+                    "phase": current.phase.value,
+                    "status": current.status.value,
+                },
+            )
         if (
             not partial_restart
             and current.review_verdict not in {"pass", "pass-with-nits"}
@@ -1225,7 +1400,44 @@ class MulticaStore(WorkItemStore):
                 "Amendment authoring restart requires a Reviewer-pass confirmation",
                 "重开 amendment authoring 需要 Reviewer 已通过的 confirmation"))
 
-        self.clear_assignment(item_id)
+        def fenced(action) -> None:
+            self.guard_authoring_restart(
+                item_id, generation=generation, owner_nonce=owner_nonce)
+            observed = self.get_work_item(item_id)
+            if (
+                observed.kind != TaskKind.AMENDMENT
+                or observed.status == WorkItemStatus.DONE
+                or observed.phase not in {
+                    TaskPhase.CONFIRMATION, TaskPhase.AUTHORING,
+                }
+                or (
+                    observed.review_subject_digest
+                    and observed.review_subject_digest
+                    != claim.base_review_subject_digest
+                )
+                or (
+                    observed.deliverable
+                    and deliverable_identity(observed)
+                    != claim.base_deliverable_identity
+                )
+            ):
+                raise NeedsDecision(
+                    ui(
+                        "Amendment state changed during restart compensation",
+                        "restart 补偿期间 amendment 状态发生变化"),
+                    report={
+                        "item_id": item_id,
+                        "reason_code": "restart-generation-conflict",
+                        "generation": generation,
+                        "outcome": "unknown_partial",
+                        "platform_atomicity": "single-key-last-write-wins-no-cas",
+                    },
+                )
+            action()
+            self.guard_authoring_restart(
+                item_id, generation=generation, owner_nonce=owner_nonce)
+
+        fenced(lambda: self.clear_assignment(item_id))
         for key, value in (
             (DELIVERABLE_KEY, ""),
             (DELIVERABLE_REF_KEY, "{}"),
@@ -1240,14 +1452,24 @@ class MulticaStore(WorkItemStore):
             (REVIEW_OBLIGATIONS_REF_KEY, "{}"),
             (REVIEW_LEDGER_REF_KEY, "{}"),
             (REVIEW_CONTINUATION_KEY, "{}"),
+            (REVIEW_BOUNCE_KEY, "0"),
             (DECISION_REQUIRED_KEY, "{}"),
             (MACHINE_FEEDBACK_REF_KEY, "{}"),
         ):
-            self._set_metadata(item_id, key, value)
+            fenced(lambda key=key, value=value: self._set_metadata(
+                item_id, key, value))
         # phase 最后写：进程若在清理途中退出，默认 confirmation resume 无法
         # 消费已失效的 verdict；显式 restart 可基于同一 CAS 再次收尾。
-        self._set_metadata(item_id, PHASE_KEY, TaskPhase.AUTHORING.value)
-        self.update_status(item_id, WorkItemStatus.TODO)
+        fenced(lambda: self._set_metadata(
+            item_id, PHASE_KEY, TaskPhase.AUTHORING.value))
+        fenced(lambda: self.update_status(item_id, WorkItemStatus.TODO))
+        cleaned = claim.evolve(state="cleaned")
+        self.update_authoring_restart(
+            item_id,
+            generation=generation,
+            owner_nonce=owner_nonce,
+            state=cleaned,
+        )
         return self.get_work_item(item_id)
 
     def prepare_review_cycle(self, item_id: str, subject_digest: str) -> WorkItem:
@@ -1415,6 +1637,13 @@ class MulticaRuntime(AgentRuntime):
                 self._store._run_multica(["issue", "rerun", item_id, "--output", "json"])
         return None
 
+    def wake_for_claim(self, item_id: str, agent: str, role: str) -> None:
+        # assign to a different agent already enqueues the generation's Run.
+        # A recovery process assigning the same agent must not rerun a historical
+        # terminal Run while the new assignment Run is still eventually visible.
+        self._store._consume_assignment_wake_pending(item_id)
+        return None
+
     def cancel(self, item_id: str) -> bool:
         runs = self._store._run_multica(["issue", "runs", item_id, "--output", "json"])
         latest = _latest_direct_run(runs if isinstance(runs, list) else [])
@@ -1433,15 +1662,23 @@ class MulticaRuntime(AgentRuntime):
         return cancelled
 
     def is_active(self, item_id: str) -> bool:
+        return any(run.active for run in self.list_runs(item_id))
+
+    def list_runs(self, item_id: str) -> List[AgentRunObservation]:
         runs = self._store._run_multica([
             "issue", "runs", item_id, "--output", "json",
         ])
-        latest = _latest_direct_run(runs if isinstance(runs, list) else [])
-        return bool(
-            latest
-            and (latest.get("status") or "").lower()
-            in {"queued", "pending", "running", "dispatching"}
-        )
+        if not isinstance(runs, list):
+            return []
+        return [
+            AgentRunObservation(
+                id=str(run.get("id")),
+                kind=str(run.get("kind") or "direct").lower(),
+                status=str(run.get("status") or "").lower(),
+            )
+            for run in runs
+            if isinstance(run, dict) and run.get("id")
+        ]
 
     @staticmethod
     def _items(payload, key: str) -> List[Dict[str, Any]]:

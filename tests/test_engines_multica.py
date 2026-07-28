@@ -12,8 +12,11 @@ from omac.core.contract_boundaries import responsibility_summary
 from omac.core.manifest import _load_contract
 from omac.core.manifest import Contract, EvidenceMode, ProducedArtifact
 from omac.core.taskmeta import TaskKind, TaskPhase
+from omac.core.restart import (
+    RESTART_KEY, RestartState, deliverable_identity, parse_restart_state,
+)
 from omac.engines.models import (
-    EngineConfig, PullRequestReadinessFailure, PullRequestState,
+    AgentRunObservation, EngineConfig, PullRequestReadinessFailure, PullRequestState,
 )
 from omac.engines.models import WorkItemStatus
 from omac.engines.multica import MulticaRuntime, MulticaStore
@@ -35,6 +38,20 @@ def test_multica_restart_authoring_clears_current_refs_but_not_history(monkeypat
         review_ledger_ref={"sha256": "old-ledger"},
         machine_feedback_ref={"sha256": "old-feedback"},
         decision_required={"reason_code": "old-decision"},
+        authoring_restart=None,
+    )
+    current.authoring_restart = RestartState(
+        generation="generation-1",
+        owner_nonce="owner-1",
+        request_digest="request-1",
+        state="claimed",
+        base_kind="amendment",
+        base_phase="confirmation",
+        base_status="in_review",
+        base_review_subject_digest="old-subject",
+        base_deliverable_identity=deliverable_identity(current),
+        baseline_run_ids=(),
+        lease_expires_at=999,
     )
     metadata = []
     events = []
@@ -65,6 +82,8 @@ def test_multica_restart_authoring_clears_current_refs_but_not_history(monkeypat
             current.machine_feedback_ref = None
         elif key == "decision_required":
             current.decision_required = None
+        elif key == RESTART_KEY:
+            current.authoring_restart = parse_restart_state(value)
 
     monkeypatch.setattr(store, "_set_metadata", set_metadata)
 
@@ -75,7 +94,7 @@ def test_multica_restart_authoring_clears_current_refs_but_not_history(monkeypat
     monkeypatch.setattr(store, "update_status", update_status)
 
     result = store.restart_authoring(
-        "issue-1", expected_review_subject_digest="old-subject")
+        "issue-1", generation="generation-1", owner_nonce="owner-1")
 
     assert result.phase == TaskPhase.AUTHORING
     assert result.status == WorkItemStatus.TODO
@@ -83,7 +102,8 @@ def test_multica_restart_authoring_clears_current_refs_but_not_history(monkeypat
         ("unassign", "issue-1"),
         ("status", "issue-1", WorkItemStatus.TODO),
     ]
-    assert metadata[-1] == ("phase", "authoring")
+    assert ("phase", "authoring") in metadata
+    assert metadata[-1][0] == RESTART_KEY
     cleared = dict(metadata)
     assert cleared["deliverable_ref"] == "{}"
     assert cleared["review_report_ref"] == "{}"
@@ -1298,6 +1318,48 @@ def test_multica_runtime_reports_active_direct_run_without_cancelling(monkeypatc
 
     assert runtime.is_active("issue-1") is True
     assert calls == [["issue", "runs", "issue-1", "--output", "json"]]
+
+
+def test_multica_runtime_active_checks_every_run_not_latest_direct(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    runtime = MulticaRuntime(store)
+    monkeypatch.setattr(store, "_run_multica", lambda _args: [
+        {
+            "id": "old-active-direct", "kind": "direct", "status": "running",
+            "created_at": "2026-07-28T01:00:00Z",
+        },
+        {
+            "id": "new-completed-direct", "kind": "direct", "status": "completed",
+            "created_at": "2026-07-28T02:00:00Z",
+        },
+    ])
+
+    assert runtime.is_active("issue-1") is True
+
+
+def test_multica_runtime_active_includes_comment_and_indirect_runs(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    runtime = MulticaRuntime(store)
+    monkeypatch.setattr(store, "_run_multica", lambda _args: [
+        {"id": "comment-active", "kind": "comment", "status": "pending"},
+        {"id": "indirect-active", "kind": "indirect", "status": "dispatching"},
+    ])
+
+    assert runtime.is_active("issue-1") is True
+
+
+def test_multica_runtime_lists_typed_run_identity(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    runtime = MulticaRuntime(store)
+    monkeypatch.setattr(store, "_run_multica", lambda _args: [
+        {"id": "run-1", "kind": "direct", "status": "completed"},
+        {"id": "run-2", "kind": "comment", "status": "running"},
+    ])
+
+    assert runtime.list_runs("issue-1") == [
+        AgentRunObservation(id="run-1", kind="direct", status="completed"),
+        AgentRunObservation(id="run-2", kind="comment", status="running"),
+    ]
 
 
 def test_multica_runtime_cancel_clears_stale_assignment_without_active_run(monkeypatch):

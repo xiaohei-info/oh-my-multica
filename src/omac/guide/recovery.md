@@ -117,11 +117,15 @@ omac dag amend propose .omac/project.yaml \
 
   该动作只适用于处于 confirmation 的 amendment。OMAC 先只读检查是否有
   queued/pending/running/dispatching Run；存在时以 exit 20 失败关闭，绝不 cancel。
-  安全时由 Store 对旧 review subject 做 CAS，把当前 deliverable、Reviewer verdict/report/
-  ledger、decision 和 machine feedback 引用失效，保留历史评论与附件，然后刷新 issue
-  正文、contract/source refs 并在同一 issue 重开 authoring。新 Worker 必须重新执行
-  `omac work submit`，随后完整重走 Reviewer 和人工确认。若 Agent Run completed 但没有
-  fresh structured submit，命令有界返回 exit 20，不会自动 rerun 或永久轮询。
+  安全时由 Store 竞争一个持久化 restart generation，并把清理、单次输入刷新、派发和
+  Run 观察都绑定到该 generation。它会使当前 deliverable、Reviewer verdict/report/ledger、
+  continuation/bounce、decision 和 machine feedback 引用失效，保留历史评论与附件，然后在
+  同一 issue 重开 authoring。新 Worker 必须通过 `omac work submit` 产生新的 deliverable_ref，
+  随后完整重走 Reviewer 和人工确认。若 Worker completed 但没有 fresh structured submit，或
+  Reviewer completed 但没有 verdict，命令会有界返回 exit 20，不自动 rerun/cancel 或永久轮询。
+  Multica 当前只提供单个 metadata key 的原子覆盖，没有跨字段 CAS；因此 OMAC 使用单字段
+  generation/owner journal，并在每次补偿写前后校验 fencing token。若 token 丢失、Run 身份不明
+  或进程在远端写之间退出，结果会诚实标记为 `unknown_partial`，要求人工检查，而不会声称事务已完成。
 - accept 在 manifest 写锁内执行 CAS，并原子写入 manifest 定义与逐节点 apply ledger。
   Store 不与文件系统共享事务，因此这不是跨系统原子事务；ledger 以
   `pending/syncing/synced/observed_progress` 记录每个节点的补偿进度。进程崩溃后，重复 accept

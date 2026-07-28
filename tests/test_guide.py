@@ -183,6 +183,10 @@ def test_recovery_guide_explains_running_dag_amendment() -> None:
         assert "definition-only" in content
     assert "都要求已有 work item" in chinese
     assert "requires an existing work item" in english
+    assert "unknown_partial" in chinese
+    assert "unknown_partial" in english
+    assert "generation/owner" in chinese
+    assert "generation/owner" in english
 
 
 def test_orchestrator_recovery_instructions_match_resume_stage_rules() -> None:
