@@ -1,7 +1,6 @@
 """Typed evidence and artifact boundaries shared by lint, dispatch, and review."""
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from .acceptance_responsibility import dependency_closure
@@ -178,9 +177,16 @@ def manifest_boundary_errors(
     selected = set(manifest.nodes) if node_ids is None else set(node_ids)
     errors = []
     produced_by: dict[str, list[str]] = {}
+    selected_consumed_artifacts: set[str] = set()
     for node in manifest.nodes.values():
         if node.id in selected:
             errors.extend(_shape_errors(node))
+            consumes = _value(getattr(node, "contract", None), "consumes", [])
+            if isinstance(consumes, list):
+                for value in consumes:
+                    artifact_id, _producer, _mode, valid = _consumed_value(value)
+                    if valid and isinstance(artifact_id, str) and artifact_id.strip():
+                        selected_consumed_artifacts.add(artifact_id)
         produces = _value(getattr(node, "contract", None), "produces", [])
         if not isinstance(produces, list):
             continue
@@ -191,7 +197,10 @@ def manifest_boundary_errors(
 
     for artifact_id, producers in sorted(produced_by.items()):
         unique = sorted(set(producers))
-        if len(unique) > 1 and selected.intersection(unique):
+        if len(unique) > 1 and (
+            selected.intersection(unique)
+            or artifact_id in selected_consumed_artifacts
+        ):
             errors.append(
                 f"artifact_id '{artifact_id}' has multiple producers: "
                 f"{', '.join(unique)}; assign one canonical producer or use "
@@ -229,18 +238,6 @@ def manifest_boundary_errors(
                     f"'{producer}'; declare it in that producer's contract.produces "
                     "or correct the consume identity")
     return errors
-
-
-def _blocker_text(blocker: dict[str, Any]) -> str:
-    return "\n".join(
-        value for key in ("summary", "required_fix")
-        if isinstance((value := blocker.get(key)), str)
-    )
-
-
-def _mentions_identifier(text: str, identifier: str) -> bool:
-    pattern = rf"(?<![A-Za-z0-9_.:/-]){re.escape(identifier)}(?![A-Za-z0-9_.:/-])"
-    return re.search(pattern, text) is not None
 
 
 def review_boundary_report_errors(report: Any) -> list[str]:
@@ -307,24 +304,16 @@ def contract_boundary_conflicts(
             if valid:
                 allowed_inputs.add((artifact_id, producer, input_mode))
 
-    artifacts: dict[str, str] = {}
-    for candidate in manifest.nodes.values():
-        produces = _value(getattr(candidate, "contract", None), "produces", [])
-        if not isinstance(produces, list):
-            continue
-        for value in produces:
-            artifact_id, valid = _produced_value(value)
-            if valid and isinstance(artifact_id, str) and artifact_id:
-                artifacts[artifact_id] = candidate.id
-
     conflicts = []
     current_mode = _mode_value(_value(contract, "evidence_mode", None))
+    valid_modes = {mode.value for mode in EvidenceMode}
     for blocker in blockers:
         if not isinstance(blocker, dict):
             continue
         required_mode = _mode_value(blocker.get("required_evidence_mode"))
         if (
             current_mode == EvidenceMode.FIXTURE.value
+            and required_mode in valid_modes
             and required_mode == EvidenceMode.LIVE.value
         ):
             conflicts.append({"reason_code": "fixture-requires-live-evidence"})
@@ -333,7 +322,14 @@ def contract_boundary_conflicts(
         if isinstance(required_inputs, list):
             for value in required_inputs:
                 artifact_id, producer, input_mode, valid = _consumed_value(value)
-                if not valid:
+                if (
+                    not valid
+                    or not isinstance(artifact_id, str)
+                    or not artifact_id.strip()
+                    or not isinstance(producer, str)
+                    or not producer.strip()
+                    or input_mode not in valid_modes
+                ):
                     continue
                 if (artifact_id, producer, input_mode) in allowed_inputs:
                     continue
@@ -349,20 +345,6 @@ def contract_boundary_conflicts(
                         "artifact_id": artifact_id or "",
                         "producer": producer or "",
                     })
-
-        text = _blocker_text(blocker)
-        for artifact_id, producer in artifacts.items():
-            if (
-                producer == node.id
-                or producer in upstream
-                or not _mentions_identifier(text, artifact_id)
-            ):
-                continue
-            conflicts.append({
-                "reason_code": "review-requires-non-upstream-artifact",
-                "artifact_id": artifact_id,
-                "producer": producer,
-            })
 
     unique = []
     seen = set()

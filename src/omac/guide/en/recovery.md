@@ -150,7 +150,11 @@ omac dag amend propose .omac/project.yaml \
   definition digest and minimum recovery set remain unchanged. Node, contract, edge, or
   affected-set drift requires a new reviewed amendment.
 - A contract update is a complete replacement serialized through the canonical
-  manifest serializer. `acceptance_claims`, `acceptance_contributions`, and
+  manifest serializer. When the existing contract has `evidence_mode`,
+  `produces`, or `consumes`, the replacement must explicitly carry all three.
+  To clear the typed boundary, set top-level `clear_contract_boundary: true` on
+  the update operation and omit all three fields from the replacement.
+  `acceptance_claims`, `acceptance_contributions`, and
   `acceptance_refs` are preserved and validated against the authoritative file
   named by `meta.acceptance_file`. Acceptance drift after review rejects the
   first apply; once a pending ledger exists, crash recovery still completes the

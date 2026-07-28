@@ -114,6 +114,9 @@ omac dag amend propose .omac/project.yaml \
   rebase 自然发生的 status/work_item 进展；任何 contract、边、节点定义或受影响集合漂移都会
   拒绝应用，要求重新生成并评审。
 - contract update 是完整替换，并统一经过 canonical manifest serializer；
+  现有 contract 含 `evidence_mode`、`produces` 或 `consumes` 时，replacement 必须显式
+  携带全部三个字段；若确实要清除 typed boundary，则在 update operation 顶层设置
+  `clear_contract_boundary: true`，并从 replacement 中省略全部三个字段。
   `acceptance_claims`、`acceptance_contributions`、`acceptance_refs` 会被保留并依据
   `meta.acceptance_file` 指向的权威文档校验。评审后 acceptance 内容漂移会拒绝首次 apply；
   已写入 pending ledger 的崩溃恢复仍优先完成同一 amendment identity，避免半应用死锁。

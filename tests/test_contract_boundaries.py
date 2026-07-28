@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from omac.core.contract_boundaries import (
     contract_boundary_conflicts,
     responsibility_summary,
@@ -283,7 +285,24 @@ def test_normal_local_rework_has_no_boundary_conflict():
         _manifest(tooling), tooling, SimpleNamespace(review_report=report)) == []
 
 
-def test_review_text_match_requires_complete_stable_artifact_identifier():
+@pytest.mark.parametrize("blocker", [
+    {
+        "required_fix": (
+            "Do not generate production-bundle; only fix the local fixture."
+        ),
+    },
+    {
+        "summary": "production-bundle is explicitly out of scope for this node.",
+        "required_fix": "Keep the rework inside the fixture contract.",
+    },
+    {
+        "required_fix": (
+            "Compare the local fixture naming with production-bundle, but do not "
+            "consume that downstream artifact."
+        ),
+    },
+])
+def test_review_prose_never_infers_boundary_conflicts(blocker):
     tooling = Node(
         id="tooling",
         worker="alice",
@@ -293,9 +312,9 @@ def test_review_text_match_requires_complete_stable_artifact_identifier():
         id="downstream",
         worker="bob",
         blocked_by=["tooling"],
-        contract=_contract(produces=[ProducedArtifact("release")]),
+        contract=_contract(produces=[ProducedArtifact("production-bundle")]),
     )
-    report = {"blockers": [{"required_fix": "Fix release-candidate validation."}]}
+    report = {"blockers": [blocker]}
 
     assert contract_boundary_conflicts(
         _manifest(tooling, downstream), tooling,
