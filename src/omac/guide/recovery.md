@@ -102,6 +102,37 @@ omac dag amend propose .omac/project.yaml \
   `blocked/review` 并携带 `decision_required`；人工决定继续后，使用原
   `omac dag amend propose ... --resume-issue-id <issue-id>` 命令续接同一 issue、交付与
   Reviewer 历史，不创建新的 amendment issue。
+- 普通 `--resume-issue-id` 不会作废合法的 Reviewer-pass confirmation，也不会创建新的
+  Agent Run。当前没有引擎提供真实原子 conditional restart/dispatch；`--restart-authoring`
+  仅保留为兼容入口，并会在任何 issue 读取、写入或 Agent 派发前以 exit 20 失败关闭，
+  给出 `--new-attempt` 命令。OMAC 不保留 speculative generation/journal 状态机。
+  新 attempt 保留旧 confirmation 作为审计历史：
+
+  ```bash
+  omac dag amend propose .omac/project.yaml \
+    --blocked-node bootstrap-console \
+    --report-file /tmp/new-dag-review.md \
+    --docs docs \
+    --new-attempt \
+    --supersedes-issue-id <old-issue-id>
+  ```
+
+  attempt identity 绑定 manifest、report digest、递归 docs 内容 digest、blocked nodes 与 superseded issue。docs
+  的逻辑路径固定相对 manifest 所属项目根（manifest 位于 `.omac/` 时取其父目录），不受当前 cwd 影响；项目外
+  docs 失败关闭。相同命令在 issue 尚为 `TODO + authoring`、无交付/评审证据且无 active Run 的初始化崩溃场景中，
+  会幂等补齐并复用同一 issue。只要 attempt 已派发、进入 review/confirmation/终态，或已有交付与评审证据，
+  再次 `--new-attempt` 都会 exit 20，并要求先执行 `omac work show <issue-id> --output json`；需要继续时使用当前阶段
+  的普通命令与 `--resume-issue-id`，不能把 `--new-attempt` 当作 resume。不同 report/docs 内容 digest 会产生不同
+  attempt。新 issue metadata/source refs
+  记录 supersedes、attempt id、report digest 和 docs digest；旧 issue 不会被清理、重开或自动关闭。新 attempt
+  正常走 authoring → Reviewer → human confirmation，最终 amendment 仍应用到原 manifest/node。
+- `omac dag run`、`dag tick`、`dag amend propose` 与 `dag amend accept` 对同一个真实 manifest
+  共用同一把 host-local 写锁。锁在 engine 组装及 Store/Runtime 调用前获取，因此同一台机器上第二个 OMAC
+  进程会在任何 issue/Run 副作用前失败关闭。该保证只覆盖通过 OMAC 管理、位于同一主机且指向同一 manifest
+  realpath 的操作；它不是分布式锁，也不把 Multica 的 LWW metadata 变成 conditional CAS。其他机器上的 OMAC、
+  直接 Multica/API 写入或其他外部参与者若并发修改 issue，属于 unknown/unsupported 边界，OMAC 只能在首次
+  dispatch 前通过 active Run 观察与最后一次 pristine Store 重读拒绝已经可见的冲突，不能宣称线性化，也不会
+  cancel、清理或补偿无法证明归属的外部事实。
 - accept 在 manifest 写锁内执行 CAS，并原子写入 manifest 定义与逐节点 apply ledger。
   Store 不与文件系统共享事务，因此这不是跨系统原子事务；ledger 以
   `pending/syncing/synced/observed_progress` 记录每个节点的补偿进度。进程崩溃后，重复 accept

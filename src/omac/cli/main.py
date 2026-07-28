@@ -68,6 +68,7 @@ _EN_ARGUMENT_HELP = {
     "refresh": "Browser polling interval in seconds",
     "token": "Bearer token required when binding beyond localhost",
     "issue_id": "Platform issue or work-item ID",
+    "restart_authoring": "Fail closed and direct amendment recovery to a new auditable attempt",
     "topic": "Guide topic",
     "key": "Dotted configuration key",
     "value": "Configuration value parsed as YAML",

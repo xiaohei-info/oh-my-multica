@@ -11,13 +11,13 @@ from __future__ import annotations
 
 import hashlib
 import re
-from dataclasses import dataclass, field
+from dataclasses import MISSING, dataclass, field, fields as dataclass_fields
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional
 
 from ..core import logsetup
 from ..core.evidence import validate_review_evidence
-from ..core.manifest import Contract, _load_contract
+from ..core.manifest import Contract, _dump_contract, _load_contract
 from ..core.machine_feedback import (
     build_machine_feedback, machine_feedback_summary,
 )
@@ -29,7 +29,7 @@ from ..core.taskmeta import (
     make_dag_key,
 )
 from ..engines.models import WorkItem, WorkItemStatus
-from ..errors import NeedsDecision, ValidationError
+from ..errors import NeedsDecision, PlatformError, ValidationError
 from ..i18n import current_language, ui
 from .dispatch import normalize_source_refs, render_issue_body
 
@@ -37,6 +37,7 @@ log = logsetup.get_logger(__name__)
 
 _REVIEW_VERDICTS = {"pass", "pass-with-nits", "reject"}
 _MAX_INLINE_SOURCE_BYTES = 64 * 1024
+_RUN_VISIBILITY_MAX_POLLS = 3
 
 
 @dataclass
@@ -51,6 +52,7 @@ class AuthoringTaskSpec:
     contract: Any = None
     source_refs: List[Any] = field(default_factory=list)
     source_of_truth: Dict[str, str] = field(default_factory=dict)
+    amendment_attempt: Optional[Dict[str, Any]] = None
 
 
 def _markdown_fence_for(text: str) -> str:
@@ -391,18 +393,14 @@ def create_authoring_task(engine, spec: AuthoringTaskSpec) -> WorkItem:
         worker=spec.assignee,
         kind=spec.kind,
     )
+    if spec.amendment_attempt is not None:
+        return finalize_authoring_shell(engine, item, spec)
     return refresh_authoring_task(engine, item.id, spec, item_snapshot=item)
 
 
-def refresh_authoring_task(
-    engine,
-    item_id: str,
-    spec: AuthoringTaskSpec,
-    *,
-    item_snapshot: Optional[WorkItem] = None,
-) -> WorkItem:
-    """先覆盖紧凑正文再完整读取，允许修复旧巨型 issue。"""
-    store = engine.store
+def _authoring_materialization(
+    engine, item_id: str, spec: AuthoringTaskSpec, item_snapshot: Optional[WorkItem],
+) -> tuple[str, List[Dict[str, Any]]]:
     env = _engine_env(engine)
     refs = normalize_source_refs(spec.source_refs, engine_env=env)
     refs = _externalize_large_sources(spec.source_of_truth, refs)
@@ -425,6 +423,239 @@ def refresh_authoring_task(
     if spec.source_of_truth:
         body += "\n\n" + _render_source_of_truth(
             spec.source_of_truth, refs, item_id, env, current_language())
+    return body, refs
+
+
+def _contract_payload(contract: Any) -> Any:
+    if isinstance(contract, Contract):
+        return _dump_contract(contract)
+    return contract
+
+
+_PRISTINE_AMENDMENT_INITIALIZATION_FIELDS = frozenset({
+    "id", "workspace_id", "identifier", "title", "description", "status",
+    "dag_key", "worker", "contract", "contract_ref", "source_refs", "kind",
+    "phase", "amendment_attempt", "created_at", "updated_at",
+})
+_NO_FIELD_DEFAULT = object()
+
+
+def _field_default(definition) -> Any:
+    if definition.default is not MISSING:
+        return definition.default
+    if definition.default_factory is not MISSING:
+        return definition.default_factory()
+    return _NO_FIELD_DEFAULT
+
+
+def _pristine_amendment_activity_projection(item: WorkItem) -> Dict[str, Any]:
+    """Project every persisted fact outside the positive initialization schema."""
+    definitions = {
+        definition.name: definition for definition in dataclass_fields(WorkItem)
+    }
+    projection = {}
+    for name, definition in definitions.items():
+        if name in _PRISTINE_AMENDMENT_INITIALIZATION_FIELDS:
+            continue
+        default = _field_default(definition)
+        value = getattr(item, name)
+        if default is _NO_FIELD_DEFAULT or value != default:
+            projection[name] = value
+    for name in set(vars(item)) - set(definitions):
+        projection[f"unknown_attribute.{name}"] = getattr(item, name)
+    return projection
+
+
+def _pristine_amendment_shell_errors(
+    item: WorkItem,
+    spec: AuthoringTaskSpec,
+    *,
+    body: str,
+    refs: List[Dict[str, Any]],
+    workspace_id: str,
+    finalized: bool,
+) -> tuple[List[str], List[str]]:
+    """Validate a recoverable/final shell and return identity/activity errors."""
+    expected_title = f"[DAG:{spec.dag_key}] {spec.title}"
+    contract_matches = (
+        _contract_payload(item.contract) == _contract_payload(spec.contract))
+    checks = [
+        (bool(item.id), "id"),
+        (item.workspace_id == workspace_id, "workspace_id"),
+        (item.title == expected_title, "title"),
+        (
+            item.description == body
+            if finalized else item.description in (spec.title, body),
+            "description",
+        ),
+        (
+            item.dag_key == spec.dag_key
+            if finalized else item.dag_key in ("", spec.dag_key),
+            "dag_key",
+        ),
+        (
+            item.worker == spec.assignee
+            if finalized else item.worker in (None, spec.assignee),
+            "worker",
+        ),
+        (
+            item.kind == TaskKind.AMENDMENT
+            if finalized else item.kind in (TaskKind.DEVELOP, TaskKind.AMENDMENT),
+            "kind",
+        ),
+        (
+            contract_matches
+            if finalized else item.contract is None or contract_matches,
+            "contract",
+        ),
+        (item.contract_ref is None or isinstance(item.contract_ref, dict), "contract_ref"),
+        (
+            item.source_refs == refs
+            if finalized else item.source_refs in ([], refs),
+            "source_refs",
+        ),
+        (
+            item.amendment_attempt == spec.amendment_attempt
+            if finalized else item.amendment_attempt in (None, spec.amendment_attempt),
+            "amendment_attempt",
+        ),
+    ]
+    activity = _pristine_amendment_activity_projection(item)
+    if item.status != WorkItemStatus.TODO:
+        activity["status"] = item.status
+    if item.phase != TaskPhase.AUTHORING:
+        activity["phase"] = item.phase
+    return [name for matches, name in checks if not matches], sorted(activity)
+
+
+def _attempt_follow_up(item_id: str) -> tuple[str, str]:
+    next_action = f"omac work show {item_id} --output json"
+    recovery = (
+        "Inspect the persisted attempt with the next_action command. If it was "
+        "already dispatched, continue it with the normal current-phase command "
+        f"and --resume-issue-id {item_id}; do not repeat --new-attempt."
+    )
+    return next_action, recovery
+
+
+def _observe_attempt_active(engine, item_id: str, dag_key: str) -> bool:
+    try:
+        return engine.runtime.is_active(item_id)
+    except PlatformError as exc:
+        next_action, recovery = _attempt_follow_up(item_id)
+        raise NeedsDecision(
+            "Could not prove whether the deterministic amendment attempt is active",
+            report={
+                "reason_code": "amendment-attempt-observation-failed",
+                "item_id": item_id,
+                "dag_key": dag_key,
+                "detail": str(exc),
+                "next_action": next_action,
+                "recovery": recovery,
+            },
+        ) from exc
+
+
+def _reject_active_attempt(item: WorkItem, dag_key: str) -> None:
+    next_action, recovery = _attempt_follow_up(item.id)
+    raise NeedsDecision(
+        "The deterministic amendment attempt already has an active Agent Run",
+        report={
+            "reason_code": "amendment-attempt-shell-active",
+            "item_id": item.id,
+            "dag_key": dag_key,
+            "next_action": next_action,
+            "recovery": recovery,
+        },
+    )
+
+
+def _reject_started_attempt(item: WorkItem, dag_key: str, fields: List[str]) -> None:
+    next_action, recovery = _attempt_follow_up(item.id)
+    raise NeedsDecision(
+        "The deterministic amendment attempt is no longer an undispatched authoring shell",
+        report={
+            "reason_code": "amendment-attempt-already-started",
+            "item_id": item.id,
+            "dag_key": dag_key,
+            "status": item.status.value,
+            "phase": item.phase.value,
+            "fields": sorted(set(fields)),
+            "next_action": next_action,
+            "recovery": recovery,
+        },
+    )
+
+
+def finalize_authoring_shell(
+    engine, item: WorkItem, spec: AuthoringTaskSpec,
+) -> WorkItem:
+    """幂等完成 deterministic amendment shell；完整前绝不派发。"""
+    if spec.kind != TaskKind.AMENDMENT or spec.amendment_attempt is None:
+        raise ValidationError("Deterministic shell finalization is amendment-only")
+    if _observe_attempt_active(engine, item.id, spec.dag_key):
+        _reject_active_attempt(item, spec.dag_key)
+    body, refs = _authoring_materialization(engine, item.id, spec, item)
+    identity_errors, activity_fields = _pristine_amendment_shell_errors(
+        item, spec, body=body, refs=refs,
+        workspace_id=engine.store.config.workspace_id, finalized=False)
+    if activity_fields:
+        _reject_started_attempt(item, spec.dag_key, activity_fields)
+    if identity_errors:
+        raise NeedsDecision(
+            "Deterministic amendment shell cannot be safely finalized",
+            report={
+                "reason_code": "amendment-attempt-shell-conflict",
+                "item_id": item.id,
+                "dag_key": spec.dag_key,
+                "fields": identity_errors,
+            },
+        )
+    store = engine.store
+    store.set_authoring_identity(
+        item.id, dag_key=spec.dag_key, kind=TaskKind.AMENDMENT)
+    if spec.contract is not None and item.contract is None:
+        store.set_node_contract(item.id, spec.contract)
+    store.update_work_item_metadata(
+        item.id,
+        worker=spec.assignee,
+        description=body,
+        source_refs=refs,
+        amendment_attempt=spec.amendment_attempt,
+        phase=TaskPhase.AUTHORING,
+    )
+    finalized = store.get_work_item(item.id)
+    if _observe_attempt_active(engine, item.id, spec.dag_key):
+        _reject_active_attempt(finalized, spec.dag_key)
+    identity_errors, activity_fields = _pristine_amendment_shell_errors(
+        finalized, spec, body=body, refs=refs,
+        workspace_id=store.config.workspace_id, finalized=True)
+    if activity_fields:
+        _reject_started_attempt(finalized, spec.dag_key, activity_fields)
+    if identity_errors:
+        raise NeedsDecision(
+            "Deterministic amendment shell finalization did not converge",
+            report={
+                "reason_code": "amendment-attempt-shell-incomplete",
+                "item_id": item.id,
+                "dag_key": spec.dag_key,
+                "fields": identity_errors,
+            },
+        )
+    return finalized
+
+
+def refresh_authoring_task(
+    engine,
+    item_id: str,
+    spec: AuthoringTaskSpec,
+    *,
+    item_snapshot: Optional[WorkItem] = None,
+) -> WorkItem:
+    """先覆盖紧凑正文再完整读取，允许修复旧巨型 issue。"""
+    store = engine.store
+    body, refs = _authoring_materialization(
+        engine, item_id, spec, item_snapshot)
     if spec.contract is not None:
         store.set_node_contract(item_id, spec.contract)
     return store.update_work_item_metadata(
@@ -432,6 +663,7 @@ def refresh_authoring_task(
         worker=spec.assignee,
         description=body,
         source_refs=refs,
+        amendment_attempt=spec.amendment_attempt,
     )
 
 
@@ -451,6 +683,8 @@ def run_task(
     dag_key: Optional[str] = None,
     resume_item_id: Optional[str] = None,
     resume_item_snapshot: Optional[WorkItem] = None,
+    amendment_attempt: Optional[Dict[str, Any]] = None,
+    reuse_dag_key: bool = False,
     review_acceptance_doc: Any = None,
     review_amendment_manifest: Any = None,
 ) -> Dict[str, Any]:
@@ -478,7 +712,9 @@ def run_task(
         contract=contract,
         source_refs=list(source_refs or []),
         source_of_truth=source_of_truth,
+        amendment_attempt=amendment_attempt,
     )
+    reused_created_item = False
 
     if resume_item_id is not None:
         item = resume_item_snapshot or store.get_work_item(resume_item_id)
@@ -491,11 +727,60 @@ def run_task(
                 engine, item.id, spec, item_snapshot=item)
         item_id = item.id
     else:
-        item = create_authoring_task(engine, spec)
+        try:
+            item = (
+                store.find_work_item_by_dag_key(store.config.workspace_id, task_key)
+                if reuse_dag_key else None
+            )
+        except PlatformError as exc:
+            raise NeedsDecision(
+                "Could not safely observe the deterministic amendment attempt identity",
+                report={
+                    "reason_code": "amendment-attempt-observation-failed",
+                    "dag_key": task_key,
+                    "detail": str(exc),
+                    "next_action": "omac work show <attempt-issue-id> --output json",
+                    "recovery": (
+                        "Restore Store visibility and inspect the existing attempt before "
+                        "retrying; do not create or dispatch while its identity is unknown."
+                    ),
+                },
+            ) from exc
+        reused_created_item = item is not None
+        if item is None:
+            try:
+                item = create_authoring_task(engine, spec)
+            except PlatformError:
+                if not reuse_dag_key:
+                    raise
+                try:
+                    item = store.find_work_item_by_dag_key(
+                        store.config.workspace_id, task_key)
+                except PlatformError as observation_exc:
+                    raise NeedsDecision(
+                        "Issue creation was ambiguous and the deterministic attempt could not be observed",
+                        report={
+                            "reason_code": "amendment-attempt-observation-failed",
+                            "dag_key": task_key,
+                            "detail": str(observation_exc),
+                            "next_action": (
+                                "omac work show <attempt-issue-id> --output json"),
+                            "recovery": (
+                                "Restore Store visibility and inspect the existing attempt; "
+                                "do not create or dispatch while creation is ambiguous."
+                            ),
+                        },
+                    ) from observation_exc
+                if item is None:
+                    raise
+                reused_created_item = True
+        if reused_created_item:
+            item = finalize_authoring_shell(engine, item, spec)
         item_id = item.id
 
-    explicit_resume = resume_item_id is not None
+    explicit_resume = resume_item_id is not None or reused_created_item
     resume_authoring_attempt_available = explicit_resume
+    pristine_dispatch_required = amendment_attempt is not None
 
     if (
         explicit_resume
@@ -549,8 +834,201 @@ def run_task(
             report={"item_id": item_id, "kind": kind.value, "rounds": 0,
                     "last_opinion": f"producer {outcome}"})
 
+    def _raise_completed_without_submit(
+        *, reason_code: str = "completed-without-submit", role: str = "worker",
+    ) -> None:
+        decision_phase = (
+            TaskPhase.REVIEW if role == "reviewer" else TaskPhase.AUTHORING
+        )
+        decision = {
+            "schema": DECISION_REQUIRED_SCHEMA,
+            "reason_code": reason_code,
+            "kind": kind.value,
+            "phase": decision_phase.value,
+            "resume_issue_id": item_id,
+        }
+        store.update_work_item_metadata(
+            item_id,
+            decision_required=decision,
+            phase=decision_phase,
+        )
+        store.mark_blocked(item_id)
+        log.info(
+            logsetup.EVT_NEEDS_DECISION,
+            kind=kind.value,
+            id=item_id,
+            gate=("review-verdict" if role == "reviewer" else "authoring-submit"),
+            rounds=0,
+        )
+        raise NeedsDecision(
+            ui(
+                f"{kind.value} Agent run completed without a fresh structured deliverable (item {item_id})",
+                f"{kind.value} Agent Run 已结束但没有提交新的结构化交付物（item {item_id}）"),
+            report={
+                "item_id": item_id,
+                "kind": kind.value,
+                "phase": decision_phase.value,
+                "reason_code": reason_code,
+                "rounds": 0,
+                "last_opinion": (
+                    "Reviewer run completed without verdict"
+                    if role == "reviewer"
+                    else "Agent run completed without omac work submit"
+                ),
+            },
+        )
+
+    def _wait_for_dispatched_run(
+        *,
+        baseline_ids: set[str],
+        predicate: Callable[[WorkItem], bool],
+        role: str,
+    ) -> tuple[WorkItem, Optional[str]]:
+        invisible_polls = 0
+        observed_run_id = None
+        while True:
+            current = store.get_work_item(item_id)
+            visible_runs = runtime.list_runs(item_id)
+            active_non_direct = [
+                run for run in visible_runs
+                if run.kind != "direct" and run.active
+            ]
+            if active_non_direct:
+                raise NeedsDecision(
+                    ui(
+                        "A non-direct Agent Run became active during direct dispatch",
+                        "direct 派发期间出现了活跃的非 direct Agent Run"),
+                    report={
+                        "item_id": item_id,
+                        "reason_code": "dispatch-run-race",
+                        "run_ids": [run.id for run in active_non_direct],
+                        "outcome": "unknown_partial",
+                    },
+                )
+            new_direct = [
+                run for run in visible_runs
+                if run.kind == "direct" and run.id not in baseline_ids
+            ]
+            if len(new_direct) > 1:
+                raise NeedsDecision(
+                    ui(
+                        "Multiple new direct Runs appeared for one dispatch",
+                        "一次派发出现了多个新的 direct Run"),
+                    report={
+                        "item_id": item_id,
+                        "reason_code": "dispatch-multiple-runs",
+                        "run_ids": [run.id for run in new_direct],
+                        "outcome": "unknown_partial",
+                    },
+                )
+            direct = new_direct
+            if observed_run_id is not None:
+                direct = [run for run in direct if run.id == observed_run_id]
+            if direct:
+                run = direct[0]
+                observed_run_id = run.id
+                invisible_polls = 0
+                if predicate(current):
+                    return current, observed_run_id
+                if run.terminal:
+                    _raise_completed_without_submit(
+                        reason_code=(
+                            "reviewer-completed-without-verdict"
+                            if role == "reviewer"
+                            else "completed-without-submit"
+                        ),
+                        role=role,
+                    )
+            else:
+                if observed_run_id is not None and predicate(current):
+                    return current, observed_run_id
+                invisible_polls += 1
+                if invisible_polls >= _RUN_VISIBILITY_MAX_POLLS:
+                    raise NeedsDecision(
+                        ui(
+                            "The dispatched Agent Run is still not visible; dispatch outcome is unknown",
+                            "已派发的 Agent Run 仍不可见；派发结果未知"),
+                        report={
+                            "item_id": item_id,
+                            "reason_code": "dispatch-run-not-observed",
+                            "role": role,
+                            "outcome": "unknown_partial",
+                        },
+                    )
+            poll()
+
+    def _verify_pristine_attempt_before_dispatch() -> None:
+        nonlocal pristine_dispatch_required
+        if not pristine_dispatch_required:
+            return
+        # CLI 持有同 manifest 的 host-local 锁；这里再用 active observation
+        # 夹住最后一次 Store 重读，只消费当前可见事实。Multica 外部直写没有
+        # conditional CAS，不能把此观察宣称为跨平台 compare-and-dispatch。
+        current = store.get_work_item(item_id)
+        if _observe_attempt_active(engine, item_id, task_key):
+            _reject_active_attempt(current, task_key)
+        current = store.get_work_item(item_id)
+        body, refs = _authoring_materialization(
+            engine, item_id, spec, current)
+        identity_errors, activity_fields = _pristine_amendment_shell_errors(
+            current, spec, body=body, refs=refs,
+            workspace_id=store.config.workspace_id, finalized=True)
+        if activity_fields:
+            _reject_started_attempt(current, task_key, activity_fields)
+        if identity_errors:
+            raise NeedsDecision(
+                "Deterministic amendment shell changed before dispatch",
+                report={
+                    "reason_code": "amendment-attempt-shell-incomplete",
+                    "item_id": item_id,
+                    "dag_key": task_key,
+                    "fields": identity_errors,
+                },
+            )
+        pristine_dispatch_required = False
+
+    def _dispatch_authoring_and_wait() -> WorkItem:
+        _verify_pristine_attempt_before_dispatch()
+        baseline = None
+        if runtime.capabilities.stable_direct_run_identity:
+            baseline = {
+                run.id for run in runtime.list_runs(item_id)
+                if run.kind == "direct"
+            }
+        store.mark_in_progress(item_id)
+        store.assign_work_item(item_id, assignee, "worker")
+        runtime.wake(item_id, assignee, "worker")
+        log.info(
+            logsetup.EVT_DISPATCH,
+            kind=kind.value,
+            id=item_id,
+            worker=assignee,
+        )
+        if baseline is not None:
+            produced, _run_id = _wait_for_dispatched_run(
+                baseline_ids=baseline,
+                predicate=_produced,
+                role="worker",
+            )
+            _raise_if_authoring_stopped(produced)
+            return produced
+        produced = _poll_until(
+            store,
+            item_id,
+            lambda candidate: (
+                _produced(candidate)
+                or candidate.agent_run_finished_without_submit
+            ),
+            poll,
+        )
+        if produced.agent_run_finished_without_submit and not _produced(produced):
+            _raise_completed_without_submit()
+        _raise_if_authoring_stopped(produced)
+        return produced
+
     def _produce(hint: Optional[List[str]] = None) -> WorkItem:
         nonlocal resume_authoring_attempt_available
+
         current = store.get_work_item(item_id)
         if (
             hint is None
@@ -582,23 +1060,13 @@ def run_task(
                 or current.agent_run_finished_without_submit
             ):
                 resume_authoring_attempt_available = False
-                store.mark_in_progress(item_id)
-                store.assign_work_item(item_id, assignee, "worker")
-                runtime.wake(item_id, assignee, "worker")
-                produced = _poll_until(store, item_id, _produced, poll)
-                _raise_if_authoring_stopped(produced)
-                return produced
+                return _dispatch_authoring_and_wait()
         _raise_if_authoring_stopped(current)
         if hint is None and _produced(current):
             return current
         if hint:
             _persist_machine_feedback(hint)
-        store.mark_in_progress(item_id)
-        store.assign_work_item(item_id, assignee, "worker")
-        runtime.wake(item_id, assignee, "worker")
-        produced = _poll_until(store, item_id, _produced, poll)
-        _raise_if_authoring_stopped(produced)
-        return produced
+        return _dispatch_authoring_and_wait()
 
     def _persist_machine_feedback(errors: List[str]) -> None:
         feedback = build_machine_feedback("machine-gate", errors)
@@ -642,7 +1110,6 @@ def run_task(
                 store.get_work_item(node.work_item_id))
         return evidence
 
-    log.info(logsetup.EVT_DISPATCH, kind=kind.value, id=item_id, worker=assignee)
     delivered = _produce()
     delivery = _delivery_of(kind, delivered)
 
@@ -801,12 +1268,25 @@ def run_task(
                     store, item_id, subject_digest, evidence_errors)
 
             store.mark_in_review(item_id)
+            reviewer_baseline = None
+            if runtime.capabilities.stable_direct_run_identity:
+                reviewer_baseline = {
+                    run.id for run in runtime.list_runs(item_id)
+                    if run.kind == "direct"
+                }
             store.assign_work_item(item_id, reviewer, "reviewer")
             log.info(logsetup.EVT_REVIEW_DISPATCH, kind=kind.value, id=item_id,
                      reviewer=reviewer)
             runtime.wake(item_id, reviewer, "reviewer")
-            reviewed = _poll_until(
-                store, item_id, _has_review_verdict, poll)
+            if reviewer_baseline is not None:
+                reviewed, _reviewer_run_id = _wait_for_dispatched_run(
+                    baseline_ids=reviewer_baseline,
+                    predicate=_has_review_verdict,
+                    role="reviewer",
+                )
+            else:
+                reviewed = _poll_until(
+                    store, item_id, _has_review_verdict, poll)
 
         verdict = reviewed.review_verdict
         log.info(logsetup.EVT_VERDICT, kind=kind.value, id=item_id,

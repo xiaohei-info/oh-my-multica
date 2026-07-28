@@ -135,6 +135,7 @@ class WorkItemStore(ABC):
         review_ledger_source: Optional[str] = None,
         review_continuation: Optional[Dict[str, Any]] = None,
         decision_required: Optional[Dict[str, Any]] = None,
+        amendment_attempt: Optional[Dict[str, Any]] = None,
         phase: Optional[TaskPhase] = None,
         worker_bounce: Optional[int] = None,
         ci_bounce: Optional[int] = None,
@@ -173,6 +174,22 @@ class WorkItemStore(ABC):
         status: Optional[WorkItemStatus] = None,
     ) -> List[WorkItem]:
         """列出工作单元(进度查看/调试用,非主查询路径)。status 过滤可选。"""
+
+    def find_work_item_by_dag_key(
+        self, workspace_id: str, dag_key: str,
+    ) -> Optional[WorkItem]:
+        """Find one stable task identity, including a create-before-metadata shell."""
+        title_prefix = f"[DAG:{dag_key}]"
+        return next((
+            item for item in self.list_work_items(workspace_id)
+            if item.dag_key == dag_key or item.title.startswith(title_prefix)
+        ), None)
+
+    @abstractmethod
+    def set_authoring_identity(
+        self, item_id: str, *, dag_key: str, kind: TaskKind,
+    ) -> WorkItem:
+        """幂等补齐 deterministic authoring shell 的不可变任务身份。"""
 
     @abstractmethod
     def add_comment(self, item_id: str, comment: str):

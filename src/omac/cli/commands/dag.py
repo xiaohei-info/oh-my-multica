@@ -159,6 +159,20 @@ def register(parser):
     propose.add_argument("--max-revisions", type=int, help="Orchestrator↔Reviewer 最大修订轮次")
     propose.add_argument("--output-file", help="reviewed amendment 输出文件")
     propose.add_argument("--resume-issue-id", help="恢复已有 amendment issue，不新建")
+    propose.add_argument(
+        "--restart-authoring",
+        action="store_true",
+        help="与 --resume-issue-id 同用；当前引擎均失败关闭并提示 --new-attempt",
+    )
+    propose.add_argument(
+        "--new-attempt",
+        action="store_true",
+        help="为同一 manifest/blocker 创建可审计的新 amendment attempt",
+    )
+    propose.add_argument(
+        "--supersedes-issue-id",
+        help="与 --new-attempt 同用：记录被替代的旧 amendment issue",
+    )
     propose.add_argument("--engine", help="引擎类型覆盖")
     propose.add_argument("--workspace", help="workspace 覆盖")
     add_output_flag(propose, default="json")
@@ -444,7 +458,6 @@ def status(args) -> int:
             f"manifest 文件不存在: {args.manifest}\n"
             f"  用 omac plan create --name <name> 生成,或检查路径"))
     engine, _ = _assemble_engine(args)
-    config = _load_config_for_manifest(args.manifest)
     manifest = load_manifest(args.manifest)
     report = build_status_report(manifest, engine.store, args.manifest)
 
@@ -475,6 +488,11 @@ def snapshot(args) -> int:
 
 
 def amend(args) -> int:
+    with manifest_write_lock(args.manifest):
+        return _amend_locked(args)
+
+
+def _amend_locked(args) -> int:
     from ...pipeline.amendment import accept_amendment, propose_amendment
 
     engine, _ = _assemble_engine(args)
@@ -493,33 +511,39 @@ def amend(args) -> int:
         max_revisions = args.max_revisions
         if max_revisions is None:
             max_revisions = resolve_retry(config)["review"]
-        report = propose_amendment(
-            engine,
-            args.manifest,
-            report_file=args.report_file,
-            docs=args.docs,
-            blocked_nodes=args.blocked_node,
-            orchestrator=orchestrator,
-            reviewers=list(reviewers),
-            max_revisions=max_revisions,
-            output_file=args.output_file,
-            resume_issue_id=args.resume_issue_id,
-        )
+        try:
+            report = propose_amendment(
+                engine,
+                args.manifest,
+                report_file=args.report_file,
+                docs=args.docs,
+                blocked_nodes=args.blocked_node,
+                orchestrator=orchestrator,
+                reviewers=list(reviewers),
+                max_revisions=max_revisions,
+                output_file=args.output_file,
+                resume_issue_id=args.resume_issue_id,
+                restart_authoring=args.restart_authoring,
+                new_attempt=args.new_attempt,
+                supersedes_issue_id=args.supersedes_issue_id,
+            )
+        except NeedsDecision as exc:
+            print_json(exc.report)
+            raise
         print_json(report)
         raise NeedsDecision(ui(
             "Amendment passed Reviewer review and is waiting for human confirmation.",
             "amendment 已通过 Reviewer，正在等待人工确认。"), report=report)
 
     if args.amend_action == "accept":
-        with manifest_write_lock(args.manifest):
-            result = accept_amendment(
-                engine,
-                args.manifest,
-                args.amendment_file,
-                reason=args.reason,
-                agent_pool=set(engine.store.list_members(
-                    engine.store.config.workspace_id)),
-            )
+        result = accept_amendment(
+            engine,
+            args.manifest,
+            args.amendment_file,
+            reason=args.reason,
+            agent_pool=set(engine.store.list_members(
+                engine.store.config.workspace_id)),
+        )
         print_json(result)
         hint(ui(
             f"Amendment applied. Resume with `omac dag run {args.manifest}`.",

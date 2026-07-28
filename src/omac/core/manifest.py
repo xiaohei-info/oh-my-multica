@@ -296,6 +296,11 @@ def loads_manifest(text: str) -> Manifest:
     raw = _expand_env(yaml.safe_load(text))
     return Manifest(meta=raw.get("meta", {}), nodes=_build_nodes(raw))
 
+def _canonical_manifest_target(path: str) -> str:
+    """Return the one filesystem identity used for manifest locking and writes."""
+    return os.path.realpath(os.path.abspath(path))
+
+
 def save_manifest(manifest: Manifest, path: str):
     """把 manifest 原子序列化回 YAML。
 
@@ -333,7 +338,7 @@ def save_manifest(manifest: Manifest, path: str):
         node_list.append(node)
 
     data = {"meta": manifest.meta, "nodes": node_list}
-    target = os.path.abspath(path)
+    target = _canonical_manifest_target(path)
     directory = os.path.dirname(target) or "."
     os.makedirs(directory, exist_ok=True)
     fd, temporary = tempfile.mkstemp(
@@ -362,8 +367,9 @@ def save_manifest(manifest: Manifest, path: str):
 
 @contextmanager
 def manifest_write_lock(path: str):
-    """同一台机器只允许一个 dag run/tick/amend accept 修改指定 manifest。"""
-    key = hashlib.sha256(os.path.abspath(path).encode("utf-8")).hexdigest()[:24]
+    """同一台机器只允许一个受管命令操作同一真实 manifest。"""
+    canonical_path = _canonical_manifest_target(path)
+    key = hashlib.sha256(canonical_path.encode("utf-8")).hexdigest()[:24]
     lock_path = os.path.join(tempfile.gettempdir(), f"omac-manifest-{key}.lock")
     fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
     try:
@@ -371,9 +377,10 @@ def manifest_write_lock(path: str):
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
             raise ValidationError(ui(
-                f"Another `omac dag run`, `tick`, or `dag amend accept` is already modifying manifest: {path}\n"
+                "Another `omac dag run`, `tick`, `dag amend propose`, or "
+                f"`dag amend accept` is already operating on manifest: {path}\n"
                 "Wait for it to exit, or confirm the stale process has stopped before retrying.",
-                f"已有另一个 omac dag run/tick 正在修改 manifest: {path}\n"
+                f"已有另一个 omac dag run/tick/amend propose/accept 正在操作 manifest: {path}\n"
                 "提示:等待现有进程退出,或确认旧进程已停止后再重试。")) from exc
         yield
     finally:

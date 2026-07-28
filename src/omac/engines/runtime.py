@@ -9,7 +9,11 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import List
 
-from .models import AgentInfo, AgentProvisionSpec, RuntimeTarget
+from ..errors import PlatformError
+from .models import (
+    AgentInfo, AgentProvisionSpec, AgentRunObservation, RuntimeCapabilities,
+    RuntimeTarget,
+)
 
 
 class AgentRuntime(ABC):
@@ -35,6 +39,12 @@ class AgentRuntime(ABC):
     def is_active(self, item_id: str) -> bool:
         """只读判断该工作单元是否仍有活跃 Agent run，不得产生取消副作用。"""
 
+    def list_runs(self, item_id: str) -> List[AgentRunObservation]:
+        """返回全部可见 Run，供普通派发绑定 direct Run 身份。"""
+        raise PlatformError(
+            "Runtime adapter does not expose stable Agent Run identities; "
+            "implement AgentRuntime.list_runs first")
+
     @abstractmethod
     def list_targets(self) -> List[RuntimeTarget]:
         """列出用户创建 Agent 时可选择的运行时目标。"""
@@ -46,3 +56,7 @@ class AgentRuntime(ABC):
     @abstractmethod
     def describe(self) -> str:
         """一句话说明该运行时的唤醒机制(体检/诊断输出用)。"""
+
+    @property
+    def capabilities(self) -> RuntimeCapabilities:
+        return RuntimeCapabilities()

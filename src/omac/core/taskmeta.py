@@ -96,6 +96,7 @@ MACHINE_FEEDBACK_REF_KEY = "machine_feedback_ref"
 REVIEW_CONTINUATION_KEY = "review_continuation"
 DECISION_REQUIRED_KEY = "decision_required"
 DECISION_REQUIRED_SCHEMA = "omac.decision-required/v1"
+AMENDMENT_ATTEMPT_KEY = "amendment_attempt"
 SOURCE_REFS_KEY = "source_refs"
 
 # run_task 交付 dict 的 key(按 kind 承载交付正文)——单一来源,tasks/plan/mock 共用。
