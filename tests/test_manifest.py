@@ -101,6 +101,59 @@ def test_manifest_write_lock_uses_real_path_identity(tmp_path):
                 pass
 
 
+@pytest.mark.parametrize("lock_path", ["target", "alias"])
+def test_manifest_save_and_lock_share_canonical_symlink_target(
+    tmp_path, monkeypatch, lock_path,
+):
+    target = tmp_path / "manifest.yaml"
+    target.write_text(BASIC)
+    target.chmod(0o640)
+    alias = tmp_path / "manifest-alias.yaml"
+    alias.symlink_to(target)
+    original_link = alias.readlink()
+    manifest = load_manifest(str(alias))
+    set_node(manifest, "a", work_item_id="42", status="done")
+    monkeypatch.chdir(tmp_path)
+    held_path = target if lock_path == "target" else "manifest-alias.yaml"
+
+    with manifest_write_lock(str(held_path)):
+        save_manifest(manifest, "manifest-alias.yaml")
+
+        assert alias.is_symlink()
+        assert alias.readlink() == original_link
+        assert load_manifest(str(target)).nodes["a"].status == "done"
+        assert target.stat().st_mode & 0o777 == 0o640
+        for second_path in (target, "manifest-alias.yaml"):
+            with pytest.raises(ValidationError, match="dag amend propose"):
+                with manifest_write_lock(str(second_path)):
+                    pass
+
+
+def test_manifest_alias_save_failure_preserves_link_target_and_cleans_temp(
+    tmp_path, monkeypatch,
+):
+    target = tmp_path / "manifest.yaml"
+    target.write_text(BASIC)
+    alias = tmp_path / "manifest-alias.yaml"
+    alias.symlink_to(target)
+    original = target.read_text()
+    manifest = load_manifest(str(alias))
+    set_node(manifest, "a", status="done")
+
+    def fail_after_partial_write(data, stream, **kwargs):
+        stream.write("meta:\n  name: partial\n")
+        raise OSError("alias dump failed")
+
+    monkeypatch.setattr(manifest_mod.yaml, "dump", fail_after_partial_write)
+
+    with pytest.raises(OSError, match="alias dump failed"):
+        save_manifest(manifest, str(alias))
+
+    assert alias.is_symlink()
+    assert target.read_text() == original
+    assert list(tmp_path.glob(".manifest.yaml.*.tmp")) == []
+
+
 def test_scope_paths_optional_roundtrip():
     """scope_paths 可选:填了则往返保留,没填则 dump 不出现(适配无结构的新项目)。"""
     from omac.core.manifest import Contract, _dump_contract, _load_contract
