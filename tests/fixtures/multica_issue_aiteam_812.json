@@ -1,0 +1,19 @@
+{
+  "id": "issue-aiteam-812",
+  "identifier": "AITEAM-812",
+  "title": "[DAG:amend-project-attempt-standard-envelope] new amendment",
+  "description": "new amendment",
+  "status": "todo",
+  "metadata": {},
+  "assignee_type": null,
+  "creator_type": "member",
+  "due_date": null,
+  "labels": [],
+  "number": 812,
+  "parent_issue_id": null,
+  "position": -1,
+  "priority": "none",
+  "properties": {},
+  "stage": null,
+  "start_date": null
+}
