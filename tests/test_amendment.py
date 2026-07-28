@@ -1275,6 +1275,69 @@ def test_propose_amendment_forwards_explicit_resume_issue_id(
     assert observed["resume_item_id"] == issue.id
 
 
+def test_propose_amendment_forwards_restart_authoring(tmp_path, monkeypatch):
+    path = _manifest(tmp_path)
+    report = tmp_path / "report.md"
+    report.write_text("replace the reviewed amendment")
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "design.md").write_text("authoritative design")
+    engine = _engine()
+    issue = engine.store.create_work_item(
+        "ws", "amendment", "desc", "amendment", "alice",
+        reviewer="bob", kind=TaskKind.AMENDMENT)
+    engine.store.update_work_item_metadata(
+        issue.id, review_verdict="pass", phase=TaskPhase.CONFIRMATION)
+    engine.store.update_status(issue.id, WorkItemStatus.IN_REVIEW)
+    observed = {}
+
+    def fake_run_task(*_args, **kwargs):
+        observed["restart_authoring"] = kwargs["restart_authoring"]
+        return {
+            "item_id": issue.id,
+            "delivery": {"amendment": _proposal(_contract_update())},
+        }
+
+    monkeypatch.setattr(amendment_pipeline, "run_task", fake_run_task)
+
+    amendment_pipeline.propose_amendment(
+        engine,
+        str(path),
+        report_file=str(report),
+        docs=[str(docs)],
+        blocked_nodes=["bootstrap"],
+        orchestrator="alice",
+        reviewers=["bob"],
+        max_revisions=1,
+        resume_issue_id=issue.id,
+        restart_authoring=True,
+    )
+
+    assert observed["restart_authoring"] is True
+
+
+def test_propose_amendment_restart_requires_resume_issue(tmp_path):
+    path = _manifest(tmp_path)
+    report = tmp_path / "report.md"
+    report.write_text("replace the reviewed amendment")
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "design.md").write_text("authoritative design")
+
+    with pytest.raises(ValidationError, match="--resume-issue-id"):
+        amendment_pipeline.propose_amendment(
+            _engine(),
+            str(path),
+            report_file=str(report),
+            docs=[str(docs)],
+            blocked_nodes=["bootstrap"],
+            orchestrator="alice",
+            reviewers=["bob"],
+            max_revisions=1,
+            restart_authoring=True,
+        )
+
+
 def test_contract_only_amendment_preserves_runtime_facts_and_resumes_review(tmp_path):
     path = _manifest(tmp_path)
     engine = _engine()
@@ -2006,3 +2069,48 @@ def test_cli_amendment_resume_failed_authoring_reuses_issue(
 
     assert code == exit_codes.NEEDS_DECISION
     assert observed["resume_issue_id"] == resume_issue_id
+
+
+def test_cli_amendment_forwards_restart_authoring(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    omac_dir = tmp_path / ".omac"
+    omac_dir.mkdir()
+    (omac_dir / "config.yaml").write_text(yaml.safe_dump({
+        "engine": "mock",
+        "workspace": "ws",
+        "roles": {"orchestrator": "alice", "reviewers": ["bob"]},
+        "retry": {"review": 2},
+        "defaults": {"poll_interval": 0},
+    }))
+    manifest_path = _manifest(tmp_path)
+    report = tmp_path / "review.md"
+    report.write_text("replace confirmation")
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "design.md").write_text("authoritative design")
+    observed = {}
+
+    def fake_propose(*_args, **kwargs):
+        observed.update(kwargs)
+        return {
+            "state": "pending_human_confirmation",
+            "manifest": str(manifest_path),
+            "amendment_file": str(omac_dir / "dag.amendment.yaml"),
+            "amendment_id": "amendment-2",
+            "issue_id": "issue-1",
+            "reviewer_verdict": "pass",
+        }
+
+    monkeypatch.setattr(amendment_pipeline, "propose_amendment", fake_propose)
+
+    code = main([
+        "dag", "amend", "propose", str(manifest_path),
+        "--report-file", str(report),
+        "--docs", str(docs),
+        "--resume-issue-id", "issue-1",
+        "--restart-authoring",
+    ])
+
+    assert code == exit_codes.NEEDS_DECISION
+    assert observed["resume_issue_id"] == "issue-1"
+    assert observed["restart_authoring"] is True

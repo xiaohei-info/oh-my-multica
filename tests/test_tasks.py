@@ -1679,6 +1679,203 @@ def test_explicit_resume_confirmation_failure_never_reruns_agent(monkeypatch):
     assert exc.value.report["phase"] == "confirmation"
 
 
+def _confirmed_amendment(eng):
+    item = create_authoring_task(eng, AuthoringTaskSpec(
+        kind=TaskKind.AMENDMENT,
+        title="running DAG amendment",
+        dag_key="amend-restart",
+        assignee="alice",
+        contract=_payload()["contract"],
+    ))
+    eng.store.update_work_item_metadata(
+        item.id,
+        deliverable="old amendment",
+        review_report=_review_report(),
+        review_ledger={"schema": "omac.review-ledger/v1", "blockers": []},
+        review_verdict="pass",
+        phase=TaskPhase.CONFIRMATION,
+    )
+    current = eng.store.get_work_item(item.id)
+    current.deliverable_ref = {"sha256": "old-delivery"}
+    current.review_report_ref = {"sha256": "old-report"}
+    current.review_ledger_ref = {"sha256": "old-ledger"}
+    current.decision_required = {"reason_code": "old-decision"}
+    current.machine_feedback = {"schema": "omac.machine-feedback/v1"}
+    current.machine_feedback_ref = {"sha256": "old-feedback"}
+    current.review_subject_digest = tasks_module._review_subject_digest(
+        TaskKind.AMENDMENT, current, 1)
+    eng.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+    eng.store.add_comment(item.id, "historical reviewer evidence")
+    return item
+
+
+def test_restart_authoring_reuses_issue_and_runs_fresh_worker_review_cycle(monkeypatch):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = _confirmed_amendment(eng)
+    wakes = []
+    monkeypatch.setattr(eng.runtime, "is_active", lambda _item_id: False)
+
+    def wake(item_id, agent, role):
+        wakes.append((item_id, agent, role))
+        current = eng.store.get_work_item(item_id)
+        if role == "worker":
+            assert current.phase == TaskPhase.AUTHORING
+            assert current.deliverable is None
+            assert current.deliverable_ref is None
+            assert current.review_verdict is None
+            assert current.review_report_ref is None
+            assert current.review_ledger_ref is None
+            assert current.decision_required is None
+            assert current.machine_feedback_ref is None
+            eng.store.update_work_item_metadata(
+                item_id,
+                deliverable="fresh amendment",
+                phase=TaskPhase.REVIEW,
+            )
+            fresh = eng.store.get_work_item(item_id)
+            fresh.deliverable_ref = {"sha256": "fresh-delivery"}
+            eng.store.update_status(item_id, WorkItemStatus.IN_REVIEW)
+            return
+        assert role == "reviewer"
+        eng.store.update_work_item_metadata(
+            item_id,
+            review_verdict="pass",
+            review_report=_review_report(item=current),
+        )
+
+    monkeypatch.setattr(eng.runtime, "wake", wake)
+
+    result = run_task(
+        eng,
+        TaskKind.AMENDMENT,
+        _payload(
+            title="running DAG amendment",
+            description="new report and docs inputs",
+        ),
+        "alice",
+        reviewers=["bob"],
+        confirm=True,
+        pause_at_confirmation=True,
+        poll=_poll,
+        resume_item_id=item.id,
+        restart_authoring=True,
+    )
+
+    assert result["pending_confirmation"] is True
+    assert result["delivery"]["amendment"] == "fresh amendment"
+    assert wakes == [
+        (item.id, "alice", "worker"),
+        (item.id, "bob", "reviewer"),
+    ]
+    current = eng.store.get_work_item(item.id)
+    assert current.phase == TaskPhase.CONFIRMATION
+    assert current.deliverable_ref == {"sha256": "fresh-delivery"}
+    assert "new report and docs inputs" in current.description
+    assert eng.store.get_comments(item.id) == ["historical reviewer evidence"]
+    assert len(eng.store.list_work_items("ws")) == 1
+
+
+def test_restart_authoring_refuses_active_run_without_cancel_or_wake(monkeypatch):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = _confirmed_amendment(eng)
+    monkeypatch.setattr(eng.runtime, "is_active", lambda _item_id: True)
+    monkeypatch.setattr(
+        eng.runtime, "cancel",
+        lambda *_args: pytest.fail("restart must never cancel an active run"),
+    )
+    monkeypatch.setattr(
+        eng.runtime, "wake",
+        lambda *_args: pytest.fail("restart must not wake while a run is active"),
+    )
+
+    with pytest.raises(NeedsDecision) as exc:
+        run_task(
+            eng,
+            TaskKind.AMENDMENT,
+            _payload(title="running DAG amendment"),
+            "alice",
+            reviewers=["bob"],
+            confirm=True,
+            pause_at_confirmation=True,
+            poll=_poll,
+            resume_item_id=item.id,
+            restart_authoring=True,
+        )
+
+    assert exc.value.report["reason_code"] == "active-agent-run"
+    assert eng.store.get_work_item(item.id).phase == TaskPhase.CONFIRMATION
+
+
+def test_restart_authoring_completed_without_submit_converges_to_decision(monkeypatch):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = _confirmed_amendment(eng)
+    wakes = []
+    monkeypatch.setattr(eng.runtime, "is_active", lambda _item_id: False)
+
+    def complete_without_submit(item_id, agent, role):
+        wakes.append((item_id, agent, role))
+        current = eng.store.get_work_item(item_id)
+        current.agent_run_finished_without_submit = True
+
+    monkeypatch.setattr(eng.runtime, "wake", complete_without_submit)
+
+    with pytest.raises(NeedsDecision) as exc:
+        run_task(
+            eng,
+            TaskKind.AMENDMENT,
+            _payload(title="running DAG amendment"),
+            "alice",
+            reviewers=["bob"],
+            confirm=True,
+            pause_at_confirmation=True,
+            poll=_poll,
+            resume_item_id=item.id,
+            restart_authoring=True,
+        )
+
+    assert exc.value.report["reason_code"] == "completed-without-submit"
+    assert wakes == [(item.id, "alice", "worker")]
+    current = eng.store.get_work_item(item.id)
+    assert current.status == WorkItemStatus.BLOCKED
+    assert current.decision_required["reason_code"] == "completed-without-submit"
+
+
+def test_restart_authoring_store_transition_is_restart_safe_and_preserves_history():
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = _confirmed_amendment(eng)
+    subject = eng.store.get_work_item(item.id).review_subject_digest
+
+    first = eng.store.restart_authoring(
+        item.id, expected_review_subject_digest=subject)
+    second = eng.store.restart_authoring(
+        item.id, expected_review_subject_digest=subject)
+
+    assert first.id == second.id == item.id
+    assert second.phase == TaskPhase.AUTHORING
+    assert second.status == WorkItemStatus.TODO
+    assert second.deliverable is None
+    assert eng.store.get_comments(item.id) == ["historical reviewer evidence"]
+
+
+def test_restart_authoring_finishes_a_partially_cleared_confirmation():
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = _confirmed_amendment(eng)
+    current = eng.store.get_work_item(item.id)
+    current.deliverable = None
+    current.deliverable_ref = None
+    current.review_verdict = None
+    current.review_subject_digest = None
+
+    restarted = eng.store.restart_authoring(
+        item.id, expected_review_subject_digest=None)
+
+    assert restarted.phase == TaskPhase.AUTHORING
+    assert restarted.status == WorkItemStatus.TODO
+    assert restarted.review_report_ref is None
+    assert restarted.review_ledger_ref is None
+    assert restarted.machine_feedback_ref is None
+
+
 def test_blocked_production_short_circuits_on_resume():
     eng = _engine(MOCK_AUTO_COMPLETE="false")
     item = create_authoring_task(eng, AuthoringTaskSpec(

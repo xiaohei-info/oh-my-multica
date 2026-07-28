@@ -8,7 +8,7 @@ from structlog.testing import capture_logs
 
 from omac.core import logsetup
 from omac.core.manifest import Contract
-from omac.core.taskmeta import TaskKind
+from omac.core.taskmeta import TaskKind, TaskPhase
 from omac.engines import create_engine
 from omac.engines.mock import MockStore
 from omac.engines.models import EngineConfig
@@ -79,4 +79,57 @@ def test_human_gate_wait_emitted_when_confirm():
         run_task(_engine(), TaskKind.PLAN, _payload(), "alice",
                  reviewers=["bob"], confirm=True, poll=_poll)
     MockStore.set_auto_confirm(False)
+    assert logsetup.EVT_HUMAN_GATE_WAIT in _names(cap)
+
+
+def test_confirmation_resume_does_not_emit_dispatch_or_create_run(monkeypatch):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = eng.store.create_work_item(
+        "ws", "amendment", "desc", "amend-confirmation", "alice",
+        kind=TaskKind.AMENDMENT,
+    )
+    eng.store.update_work_item_metadata(
+        item.id,
+        deliverable="reviewed amendment",
+        review_verdict="pass",
+        review_report={
+            "review_goals": ["review"],
+            "diff_reviewed": True,
+            "tests_rerun": True,
+            "coverage_checked": True,
+            "full_review_completed": True,
+            "acceptance_mapping": [{
+                "acceptance": "走通",
+                "evidence": "reviewed",
+                "status": "pass",
+            }],
+            "blockers": [],
+        },
+        phase=TaskPhase.CONFIRMATION,
+    )
+    current = eng.store.get_work_item(item.id)
+    current.review_subject_digest = __import__(
+        "omac.pipeline.tasks", fromlist=["_review_subject_digest"]
+    )._review_subject_digest(TaskKind.AMENDMENT, current, 1)
+    eng.store.mark_in_review(item.id)
+    monkeypatch.setattr(
+        eng.runtime, "wake",
+        lambda *_args: pytest.fail("confirmation resume must not wake an agent"),
+    )
+
+    with capture_logs() as cap:
+        result = run_task(
+            eng,
+            TaskKind.AMENDMENT,
+            _payload(),
+            "alice",
+            reviewers=["bob"],
+            confirm=True,
+            pause_at_confirmation=True,
+            poll=lambda: pytest.fail("confirmation resume must not poll"),
+            resume_item_id=item.id,
+        )
+
+    assert result["pending_confirmation"] is True
+    assert logsetup.EVT_DISPATCH not in _names(cap)
     assert logsetup.EVT_HUMAN_GATE_WAIT in _names(cap)

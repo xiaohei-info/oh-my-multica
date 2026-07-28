@@ -102,6 +102,26 @@ omac dag amend propose .omac/project.yaml \
   `blocked/review` 并携带 `decision_required`；人工决定继续后，使用原
   `omac dag amend propose ... --resume-issue-id <issue-id>` 命令续接同一 issue、交付与
   Reviewer 历史，不创建新的 amendment issue。
+- 普通 `--resume-issue-id` 不会作废合法的 Reviewer-pass confirmation，也不会创建新的
+  Agent Run。若旧 confirmation 的 amendment 内容本身必须替换，必须显式追加
+  `--restart-authoring`，并完整提供本轮新的 report/docs 输入：
+
+  ```bash
+  omac dag amend propose .omac/project.yaml \
+    --blocked-node bootstrap-console \
+    --report-file /tmp/new-dag-review.md \
+    --docs docs \
+    --resume-issue-id <issue-id> \
+    --restart-authoring
+  ```
+
+  该动作只适用于处于 confirmation 的 amendment。OMAC 先只读检查是否有
+  queued/pending/running/dispatching Run；存在时以 exit 20 失败关闭，绝不 cancel。
+  安全时由 Store 对旧 review subject 做 CAS，把当前 deliverable、Reviewer verdict/report/
+  ledger、decision 和 machine feedback 引用失效，保留历史评论与附件，然后刷新 issue
+  正文、contract/source refs 并在同一 issue 重开 authoring。新 Worker 必须重新执行
+  `omac work submit`，随后完整重走 Reviewer 和人工确认。若 Agent Run completed 但没有
+  fresh structured submit，命令有界返回 exit 20，不会自动 rerun 或永久轮询。
 - accept 在 manifest 写锁内执行 CAS，并原子写入 manifest 定义与逐节点 apply ledger。
   Store 不与文件系统共享事务，因此这不是跨系统原子事务；ledger 以
   `pending/syncing/synced/observed_progress` 记录每个节点的补偿进度。进程崩溃后，重复 accept

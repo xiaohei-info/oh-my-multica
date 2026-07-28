@@ -855,6 +855,72 @@ class MockStore(WorkItemStore):
         item.review_subject_digest = None
         item.phase = TaskPhase.AUTHORING
 
+    def restart_authoring(
+        self,
+        item_id: str,
+        *,
+        expected_review_subject_digest: Optional[str],
+    ) -> WorkItem:
+        item = self.get_work_item(item_id)
+        clean_authoring = (
+            item.phase == TaskPhase.AUTHORING
+            and item.deliverable is None
+            and not item.deliverable_ref
+            and item.review_verdict is None
+            and not item.review_report_ref
+            and not item.review_ledger_ref
+            and not item.machine_feedback_ref
+            and not item.decision_required
+        )
+        if clean_authoring:
+            item.status = WorkItemStatus.TODO
+            return item
+        if item.kind != TaskKind.AMENDMENT or item.phase != TaskPhase.CONFIRMATION:
+            raise ValidationError(ui(
+                "Only an amendment in human confirmation can restart authoring",
+                "只有处于人工确认阶段的 amendment 才能重开 authoring"))
+        partial_restart = (
+            item.review_subject_digest is None
+            and item.deliverable is None
+            and not item.deliverable_ref
+            and item.review_verdict is None
+        )
+        if not partial_restart and (
+            not expected_review_subject_digest
+            or item.review_subject_digest != expected_review_subject_digest
+        ):
+            raise ValidationError(ui(
+                "Amendment confirmation changed before authoring restart; read it again and retry",
+                "重开 authoring 前 amendment confirmation 已变化；请重新读取后再试"))
+        if not partial_restart and item.review_verdict not in {"pass", "pass-with-nits"}:
+            raise ValidationError(ui(
+                "Amendment authoring restart requires a Reviewer-pass confirmation",
+                "重开 amendment authoring 需要 Reviewer 已通过的 confirmation"))
+
+        item.deliverable = None
+        item.deliverable_ref = None
+        item.project_rules = None
+        item.project_rules_ref = None
+        item.verification = None
+        item.verification_ref = None
+        item.review_verdict = None
+        item.review_comment = None
+        item.review_report = None
+        item.review_report_ref = None
+        item.review_subject_digest = None
+        item.review_obligations = []
+        item.review_obligations_ref = None
+        item.review_ledger = None
+        item.review_ledger_ref = None
+        item.review_continuation = None
+        item.decision_required = None
+        item.machine_feedback = None
+        item.machine_feedback_ref = None
+        item.phase = TaskPhase.AUTHORING
+        item.status = WorkItemStatus.TODO
+        _shared_assigned_items.pop(item_id, None)
+        return item
+
     def prepare_review_cycle(self, item_id: str, subject_digest: str) -> WorkItem:
         item = self.get_work_item(item_id)
         if item.review_subject_digest == subject_digest:

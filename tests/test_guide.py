@@ -169,11 +169,13 @@ def test_recovery_guide_explains_running_dag_amendment() -> None:
     for item in [
         "omac dag amend propose", "omac dag amend accept", "confirmation",
         "definition digest", "ownership migration", "--resume-issue-id",
+        "--restart-authoring",
     ]:
         assert item in english, f"english recovery guide missing amendment rule: {item}"
     for item in [
         "omac dag amend propose", "omac dag amend accept", "confirmation",
         "definition digest", "ownership migration", "--resume-issue-id",
+        "--restart-authoring",
     ]:
         assert item in chinese, f"recovery guide missing amendment rule: {item}"
     for content in (chinese, english):
