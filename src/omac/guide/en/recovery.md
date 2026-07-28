@@ -113,7 +113,9 @@ omac dag amend propose .omac/project.yaml \
   nodes remain immutable except an acceptance-only
   `historical_contract_correction: true` with an operation reason. That path writes
   only the manifest and a `historical_contract_correction/synced` ledger entry; it
-  never recovers Store stages, dispatches an Agent, or replays a merge.
+  reads Store evidence only for pre-apply CAS and writes no contract, contract_ref,
+  or other Store fact. It never recovers Store stages, dispatches an Agent, or
+  replays a merge.
 - Omitting `resume_stage` for an unstarted node without a work item preserves
   definition-only behavior. Any explicit `resume_stage: review|authoring|merging`
   requires an existing work item; for an existing work item, omission preserves
@@ -194,7 +196,8 @@ omac dag amend propose .omac/project.yaml \
   not share a transaction, so this is not a cross-system atomic transaction.
   Ledger states `pending`, `syncing`, `synced`, and `observed_progress` make the
   Store side effects restart-safe: repeated accept compensates only unfinished
-  safe work and never rolls back a node that already advanced.
+  safe work. Historical correction entries start as
+  `synced/store_side_effect:none`; accept never rolls back a node that already advanced.
 - While any ledger entry is `pending`, `syncing`, or otherwise non-terminal,
   `dag run/tick/reconcile` fails closed before Store reads, dispatch, or merge.
   The evidence names the amendment identity, unfinished nodes, and the exact
