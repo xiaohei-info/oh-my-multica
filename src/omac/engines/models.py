@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..core.taskmeta import Bounces, TaskKind, TaskPhase
+from ..core.restart import RestartState
 
 
 class WorkItemStatus(Enum):
@@ -73,6 +74,22 @@ class PullRequestObservation:
     state: PullRequestState
     merged_at: Optional[str] = None
     detail: str = ""
+
+
+@dataclass(frozen=True)
+class AgentRunObservation:
+    """One platform Agent Run with stable identity and trigger kind."""
+    id: str
+    kind: str
+    status: str
+
+    @property
+    def active(self) -> bool:
+        return self.status in {"queued", "pending", "running", "dispatching"}
+
+    @property
+    def terminal(self) -> bool:
+        return self.status in {"completed", "failed", "cancelled"}
 
 
 @dataclass
@@ -167,6 +184,7 @@ class WorkItem:
     review_ledger_ref: Optional[Dict[str, Any]] = None
     review_continuation: Optional[Dict[str, Any]] = None
     decision_required: Optional[Dict[str, Any]] = None
+    authoring_restart: Optional[RestartState] = None
 
     # 验收契约(编排器 dispatch 时下发):worker 读回后用同一套 validator 自校验
     contract: Optional[Dict[str, Any]] = None

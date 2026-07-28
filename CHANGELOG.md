@@ -10,6 +10,13 @@ This file records public changes to oh-my-multica. The format follows
 
 ### Changed
 
+- `omac dag amend propose --resume-issue-id ... --restart-authoring` now uses a
+  persisted restart generation to fence cleanup, one-time input refresh,
+  Worker/Reviewer dispatch, and exact direct-Run observation. Applied
+  confirmations fail closed, historical or non-direct Runs cannot satisfy the
+  new cycle, crashes resume the same generation without rerun/cancel, and
+  missing structured submits or Reviewer verdicts converge to an explicit
+  decision instead of polling forever.
 - Typed `consumes` now preserves three distinct policies across manifest,
   amendment, Store attachment, and `work show` round trips: omitted permits
   transitional inputs only from transitive legacy upstream dependencies,
