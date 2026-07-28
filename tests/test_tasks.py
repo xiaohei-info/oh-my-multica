@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+from dataclasses import fields
 from types import SimpleNamespace
 
 import pytest
@@ -20,10 +21,12 @@ from omac.core.amendment import (
 )
 from omac.core.manifest import Contract, Manifest, Node
 from omac.core.review_convergence import REVIEW_PROTOCOL_VERSION, open_blockers
-from omac.core.taskmeta import TaskKind, TaskPhase
+from omac.core.taskmeta import Bounces, TaskKind, TaskPhase
 from omac.engines import create_engine
 from omac.engines.mock import MockStore
-from omac.engines.models import AgentRunObservation, EngineConfig, WorkItemStatus
+from omac.engines.models import (
+    AgentRunObservation, EngineConfig, WorkItem, WorkItemStatus,
+)
 from omac.errors import NeedsDecision, PlatformError
 from omac.pipeline.dispatch import build_show_output
 from omac.pipeline.tasks import AuthoringTaskSpec, create_authoring_task, run_task
@@ -1750,10 +1753,16 @@ def test_new_attempt_finalizes_every_partial_shell_before_dispatch(
 
     def assert_finalized_before_assign(item_id, assignee, role):
         current = eng.store.get_work_item(item_id)
-        body, refs = tasks_module._authoring_materialization(
-            eng, item_id, spec, current)
-        assert tasks_module._attempt_identity_errors(
-            current, spec, body=body, refs=refs) == []
+        if role == "worker":
+            body, refs = tasks_module._authoring_materialization(
+                eng, item_id, spec, current)
+            identity_errors, activity_fields = (
+                tasks_module._pristine_amendment_shell_errors(
+                    current, spec, body=body, refs=refs,
+                    workspace_id=eng.store.config.workspace_id,
+                    finalized=True))
+            assert identity_errors == []
+            assert activity_fields == ["status"]
         return original_assign(item_id, assignee, role)
 
     monkeypatch.setattr(eng.store, "set_authoring_identity", record_identity)
@@ -1834,6 +1843,200 @@ def test_new_attempt_finalize_is_idempotent_without_duplicate_contract_publish(
 
     assert second.id == item.id
     assert contract_writes == [item.id]
+    assert eng.store.assign_log == []
+
+
+_PRISTINE_AMENDMENT_INITIALIZATION_FIELDS = {
+    "id", "workspace_id", "identifier", "title", "description", "status",
+    "dag_key", "worker", "contract", "contract_ref", "source_refs", "kind",
+    "phase", "amendment_attempt", "created_at", "updated_at",
+}
+
+_AMENDMENT_ACTIVITY_FIELD_CASES = [
+    ("reviewer", "bob", "reviewer"),
+    ("blocked_by", ["upstream"], "blocked_by"),
+    ("wave", 1, "wave"),
+    ("artifacts", {"pr_url": "https://example.test/pr/1"}, "artifacts"),
+    ("verification", {"commands": []}, "verification"),
+    ("verification_ref", {"attachment_id": "verification"}, "verification_ref"),
+    ("review_verdict", "pass", "review_verdict"),
+    ("review_comment", "reviewed", "review_comment"),
+    ("machine_feedback", {"schema": "omac.machine-feedback/v1"}, "machine_feedback"),
+    ("machine_feedback_ref", {"attachment_id": "feedback"}, "machine_feedback_ref"),
+    ("review_report", {"blockers": []}, "review_report"),
+    ("review_report_ref", {"attachment_id": "review"}, "review_report_ref"),
+    ("review_subject_digest", "subject", "review_subject_digest"),
+    ("review_obligations", [{"obligation_id": "one"}], "review_obligations"),
+    ("review_obligations_ref", {"attachment_id": "obligations"}, "review_obligations_ref"),
+    ("review_ledger", {"schema": "omac.review-ledger/v1"}, "review_ledger"),
+    ("review_ledger_ref", {"attachment_id": "ledger"}, "review_ledger_ref"),
+    ("review_continuation", {"authorized_rounds": 1}, "review_continuation"),
+    ("decision_required", {"reason": "human"}, "decision_required"),
+    ("bounces", Bounces(worker=1), "bounces.worker"),
+    ("bounces", Bounces(ci=1), "bounces.ci"),
+    ("bounces", Bounces(review=1), "bounces.review"),
+    ("bounces", Bounces(merge=1), "bounces.merge"),
+    ("deliverable", "proposal", "deliverable"),
+    ("deliverable_ref", {"attachment_id": "delivery"}, "deliverable_ref"),
+    ("project_rules", "rules", "project_rules"),
+    ("project_rules_ref", {"attachment_id": "rules"}, "project_rules_ref"),
+    ("agent_run_finished_without_submit", True, "agent_run_finished_without_submit"),
+    ("agent_run_failed", True, "agent_run_failed"),
+    ("platform_assignee_id", "agent-1", "platform_assignee_id"),
+    ("unknown_persisted_fields", {"future_execution_fact": False},
+     "unknown_persisted_fields"),
+]
+
+
+def _pristine_attempt_fixture():
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    payload = _payload(title="new amendment")
+    spec = AuthoringTaskSpec(
+        kind=TaskKind.AMENDMENT,
+        title="new amendment",
+        dag_key="amend-project-attempt-pristine",
+        assignee="alice",
+        contract=payload["contract"],
+        source_refs=[{"issue_id": "old", "relation": "supersedes"}],
+        amendment_attempt={"request_digest": "pristine"},
+    )
+    item = eng.store.create_work_item(
+        "ws", spec.title, spec.title, spec.dag_key, spec.assignee,
+        kind=TaskKind.AMENDMENT)
+    body, refs = tasks_module._authoring_materialization(
+        eng, item.id, spec, item)
+    item.description = body
+    item.contract = spec.contract
+    item.source_refs = refs
+    item.amendment_attempt = spec.amendment_attempt
+    return eng, item, spec, body, refs
+
+
+def test_pristine_amendment_projection_covers_every_work_item_field():
+    activity_fields = {case[0] for case in _AMENDMENT_ACTIVITY_FIELD_CASES}
+    assert {definition.name for definition in fields(WorkItem)} == (
+        _PRISTINE_AMENDMENT_INITIALIZATION_FIELDS | activity_fields)
+
+
+@pytest.mark.parametrize(
+    "field_name", sorted(_PRISTINE_AMENDMENT_INITIALIZATION_FIELDS),
+)
+def test_pristine_amendment_projection_allows_only_initialization_fields(
+    field_name,
+):
+    eng, item, spec, body, refs = _pristine_attempt_fixture()
+    if field_name == "identifier":
+        item.identifier = "AITEAM-ATTEMPT"
+    elif field_name == "contract_ref":
+        item.contract_ref = {"attachment_id": "contract"}
+    elif field_name == "created_at":
+        item.created_at = "2026-07-28T00:00:00Z"
+    elif field_name == "updated_at":
+        item.updated_at = "2026-07-28T00:01:00Z"
+
+    identity_errors, activity_fields = (
+        tasks_module._pristine_amendment_shell_errors(
+            item, spec, body=body, refs=refs,
+            workspace_id=eng.store.config.workspace_id, finalized=True))
+
+    assert identity_errors == []
+    assert activity_fields == []
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value", "case_id"),
+    _AMENDMENT_ACTIVITY_FIELD_CASES,
+    ids=[case[2] for case in _AMENDMENT_ACTIVITY_FIELD_CASES],
+)
+def test_new_attempt_rejects_every_non_default_activity_field(
+    monkeypatch, field_name, value, case_id,
+):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    dag_key = f"amend-project-attempt-{case_id.replace('.', '-')}"
+    attempt = {"request_digest": "same-attempt"}
+    item = eng.store.create_work_item(
+        "ws", "new amendment", "new amendment", dag_key, "alice",
+        kind=TaskKind.AMENDMENT)
+    item.amendment_attempt = attempt
+    setattr(item, field_name, value)
+    monkeypatch.setattr(eng.runtime, "is_active", lambda _item_id: False)
+    monkeypatch.setattr(
+        eng.store, "assign_work_item",
+        lambda *_args, **_kwargs: pytest.fail("activity facts must prevent assign"))
+    monkeypatch.setattr(
+        eng.runtime, "wake",
+        lambda *_args, **_kwargs: pytest.fail("activity facts must prevent wake"))
+
+    with pytest.raises(NeedsDecision) as exc:
+        run_task(
+            eng, TaskKind.AMENDMENT, _payload(title="new amendment"), "alice",
+            poll=lambda: pytest.fail("activity facts must prevent polling"),
+            dag_key=dag_key, amendment_attempt=attempt, reuse_dag_key=True)
+
+    assert exc.value.report["reason_code"] == "amendment-attempt-already-started"
+    assert field_name in exc.value.report["fields"]
+    assert eng.store.assign_log == []
+
+
+def test_new_attempt_rechecks_pristine_shell_after_finalize_before_dispatch(
+    monkeypatch,
+):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    original_finalize = tasks_module.finalize_authoring_shell
+
+    def finalize_then_receive_submit_fact(engine, item, spec):
+        finalized = original_finalize(engine, item, spec)
+        finalized.artifacts = {"pr_url": "https://example.test/pr/after-finalize"}
+        return finalized
+
+    monkeypatch.setattr(
+        tasks_module, "finalize_authoring_shell", finalize_then_receive_submit_fact)
+    monkeypatch.setattr(
+        eng.store, "assign_work_item",
+        lambda *_args, **_kwargs: pytest.fail("post-finalize fact must prevent assign"))
+    monkeypatch.setattr(
+        eng.runtime, "wake",
+        lambda *_args, **_kwargs: pytest.fail("post-finalize fact must prevent wake"))
+
+    with pytest.raises(NeedsDecision) as exc:
+        run_task(
+            eng, TaskKind.AMENDMENT, _payload(title="new amendment"), "alice",
+            poll=_poll, dag_key="amend-project-attempt-post-finalize",
+            amendment_attempt={"request_digest": "post-finalize"},
+            reuse_dag_key=True)
+
+    assert exc.value.report["reason_code"] == "amendment-attempt-already-started"
+    assert exc.value.report["fields"] == ["artifacts"]
+    assert eng.store.assign_log == []
+
+
+def test_new_attempt_rejects_multica_split_submit_artifacts_before_verification(
+    monkeypatch,
+):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    dag_key = "amend-project-attempt-split-submit"
+    attempt = {"request_digest": "split-submit"}
+    item = eng.store.create_work_item(
+        "ws", "new amendment", "new amendment", dag_key, "alice",
+        kind=TaskKind.AMENDMENT)
+    item.amendment_attempt = attempt
+    item.artifacts = {"pr_url": "https://example.test/pr/partial"}
+    item.verification = {"commands": [{"command": "pytest", "exit_code": 0}]}
+    item.verification_ref = {"attachment_id": "verification-partial"}
+    monkeypatch.setattr(eng.runtime, "is_active", lambda _item_id: False)
+    monkeypatch.setattr(
+        eng.store, "assign_work_item",
+        lambda *_args, **_kwargs: pytest.fail("partial submit must prevent assign"))
+
+    with pytest.raises(NeedsDecision) as exc:
+        run_task(
+            eng, TaskKind.AMENDMENT, _payload(title="new amendment"), "alice",
+            poll=_poll, dag_key=dag_key,
+            amendment_attempt=attempt, reuse_dag_key=True)
+
+    assert exc.value.report["reason_code"] == "amendment-attempt-already-started"
+    assert set(exc.value.report["fields"]) >= {
+        "artifacts", "verification", "verification_ref"}
     assert eng.store.assign_log == []
 
 

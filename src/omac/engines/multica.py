@@ -62,6 +62,24 @@ _MULTICA_READ_MAX_ATTEMPTS = 3
 _MULTICA_READ_INITIAL_DELAY = 1.0
 _ACTIVE_RUN_STATUSES = {"queued", "pending", "running", "dispatching"}
 _RERUNNABLE_DIRECT_RUN_STATUSES = {"failed", "cancelled", "completed"}
+_KNOWN_WORK_ITEM_METADATA_KEYS = {
+    "dag_key", "worker", "reviewer", "blocked_by", "wave", "artifacts",
+    "verification", "review_verdict", "review_comment", "review_report",
+    "contract",
+    AMENDMENT_ATTEMPT_KEY, CI_BOUNCE_KEY, CONTRACT_REF_KEY,
+    DECISION_REQUIRED_KEY, DELIVERABLE_KEY, DELIVERABLE_REF_KEY, KIND_KEY,
+    MACHINE_FEEDBACK_REF_KEY, MERGE_BOUNCE_KEY, PHASE_KEY, PROJECT_RULES_KEY,
+    PROJECT_RULES_REF_KEY, REVIEW_BOUNCE_KEY, REVIEW_CONTINUATION_KEY,
+    REVIEW_LEDGER_REF_KEY, REVIEW_OBLIGATIONS_KEY, REVIEW_OBLIGATIONS_REF_KEY,
+    REVIEW_REPORT_REF_KEY, REVIEW_SUBJECT_DIGEST_KEY, SOURCE_REFS_KEY,
+    VERIFICATION_REF_KEY, WORKER_BOUNCE_KEY,
+}
+_KNOWN_ISSUE_FIELDS = {
+    "id", "identifier", "title", "description", "status", "metadata",
+    "created_at", "updated_at", "assignee_id", "assignee", "comments",
+    "attachments", "project_id", "project", "workspace_id", "workspace",
+    "creator_id", "creator", "created_by_id", "created_by", "url", "web_url",
+}
 
 _ReadResult = TypeVar("_ReadResult")
 
@@ -551,6 +569,20 @@ class MulticaStore(WorkItemStore):
 
     def _issue_to_work_item(self, issue_data: Dict, workspace_id: str) -> WorkItem:
         metadata = issue_data.get("metadata", {})
+        unknown_persisted_fields = {
+            f"metadata.{key}": value
+            for key, value in metadata.items()
+            if key not in _KNOWN_WORK_ITEM_METADATA_KEYS
+        }
+        unknown_persisted_fields.update({
+            f"issue.{key}": value
+            for key, value in issue_data.items()
+            if key not in _KNOWN_ISSUE_FIELDS
+        })
+        raw_assignee = issue_data.get("assignee_id") or issue_data.get("assignee")
+        if isinstance(raw_assignee, dict):
+            raw_assignee = raw_assignee.get("id") or raw_assignee.get("identifier")
+        platform_assignee_id = str(raw_assignee) if raw_assignee else None
 
         blocked_by = metadata.get("blocked_by", [])
         if isinstance(blocked_by, str):
@@ -742,6 +774,10 @@ class MulticaStore(WorkItemStore):
                 project_rules_ref
                 if isinstance(project_rules_ref, dict) and project_rules_ref
                 else None),
+            created_at=issue_data.get("created_at"),
+            updated_at=issue_data.get("updated_at"),
+            platform_assignee_id=platform_assignee_id,
+            unknown_persisted_fields=unknown_persisted_fields,
         )
 
     def _resolve_agent_id(self, agent_name: str) -> str:
