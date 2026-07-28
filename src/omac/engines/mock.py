@@ -804,8 +804,8 @@ class MockStore(WorkItemStore):
         item = _shared_work_items.get(item_id)
         if item is not None:
             item.contract = contract
-            from dataclasses import asdict, is_dataclass
-            payload = asdict(contract) if is_dataclass(contract) else contract
+            from ..core.manifest import _dump_contract
+            payload = _dump_contract(contract) if not isinstance(contract, dict) else contract
             source = yaml.safe_dump(
                 payload, sort_keys=False, allow_unicode=True)
             item.contract_ref = {

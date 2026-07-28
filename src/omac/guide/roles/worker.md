@@ -26,6 +26,16 @@
   `integration_gates` 和 coverage gate。
 - evidence artifact guide 的 verification schema。
 
+若 `work show.context.responsibility` 存在，它是当前节点的 typed 制品边界：
+
+- `evidence_mode: fixture` 表示用当前节点自带、完整可执行的确定性 fixture 证明工具或行为，
+  不得自行等待未声明的生产环境或下游制品。
+- `evidence_mode: artifact|live` 分别表示以已声明制品或真实运行事实为主要证据。
+- 只可消费 `consumes` 列出的 `{artifact_id, producer, evidence_mode}`；`producer` 必须是
+  `blocked_by` 的传递上游。当前节点只负责交付 `produces`，不得把下游节点产物当成自己的前置。
+- Reviewer 意见若要求未声明输入、非上游/下游产物，或让 fixture 节点提供 live evidence，
+  属于 contract boundary conflict；不要扩大实现范围，等待 OMAC 的 NeedsDecision 路由。
+
 ## 执行步骤
 
 1. 运行 `omac work show <issue-id> --output json`，完整读取 contract、上游 issue 链、

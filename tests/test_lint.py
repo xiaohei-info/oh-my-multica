@@ -1,6 +1,13 @@
 """core.lint:成员池、依赖引用、reviewer 规则、contract 硬门、环检测。"""
-from omac.core.lint import lint
-from omac.core.manifest import Contract, Manifest, Node
+from omac.core.lint import lint, lint_increment
+from omac.core.manifest import (
+    ConsumedArtifact,
+    Contract,
+    EvidenceMode,
+    Manifest,
+    Node,
+    ProducedArtifact,
+)
 
 POOL = {"alice", "bob"}
 
@@ -85,3 +92,84 @@ def test_valid_contract_passes_all_gates():
     """回归:补全 source_of_truth 的完整契约应零报错(硬门不误伤合法节点)。"""
     errs = lint(_manifest(_node("a", contract=_valid_contract())), POOL)
     assert errs == []
+
+
+def test_increment_does_not_revalidate_legacy_existing_boundary_shape():
+    existing = _manifest(_node(
+        "legacy",
+        contract=_valid_contract(produces={"legacy": "untyped"}),
+    ))
+    increment = _manifest(_node(
+        "new",
+        worker="bob",
+        blocked_by=["legacy"],
+        contract=_valid_contract(),
+    ))
+
+    assert lint_increment(increment, existing, POOL) == []
+
+
+def test_increment_consumer_rejects_ambiguous_existing_artifact_producers():
+    existing = _manifest(
+        _node(
+            "producer-a",
+            contract=_valid_contract(
+                evidence_mode=EvidenceMode.ARTIFACT,
+                produces=[ProducedArtifact("shared-output")],
+            ),
+        ),
+        _node(
+            "producer-b",
+            worker="bob",
+            contract=_valid_contract(
+                evidence_mode=EvidenceMode.ARTIFACT,
+                produces=[ProducedArtifact("shared-output")],
+            ),
+        ),
+    )
+    increment = _manifest(_node(
+        "consumer",
+        blocked_by=["producer-a", "producer-b"],
+        contract=_valid_contract(
+            evidence_mode=EvidenceMode.ARTIFACT,
+            consumes=[ConsumedArtifact(
+                artifact_id="shared-output",
+                producer="producer-a",
+                evidence_mode=EvidenceMode.ARTIFACT,
+            )],
+        ),
+    ))
+
+    errors = lint_increment(increment, existing, POOL)
+
+    assert any(
+        "artifact_id 'shared-output' has multiple producers" in error
+        and "producer-a, producer-b" in error
+        for error in errors
+    )
+
+
+def test_increment_ignores_unreferenced_legacy_duplicate_artifact_producers():
+    existing = _manifest(
+        _node(
+            "producer-a",
+            contract=_valid_contract(
+                evidence_mode=EvidenceMode.ARTIFACT,
+                produces=[ProducedArtifact("legacy-duplicate")],
+            ),
+        ),
+        _node(
+            "producer-b",
+            worker="bob",
+            contract=_valid_contract(
+                evidence_mode=EvidenceMode.ARTIFACT,
+                produces=[ProducedArtifact("legacy-duplicate")],
+            ),
+        ),
+    )
+    increment = _manifest(_node(
+        "unrelated",
+        contract=_valid_contract(evidence_mode=EvidenceMode.FIXTURE),
+    ))
+
+    assert lint_increment(increment, existing, POOL) == []

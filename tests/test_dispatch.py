@@ -16,7 +16,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from omac.core.manifest import Contract, Manifest, Node, load_manifest, save_manifest
+from omac.core.manifest import (
+    Contract,
+    EvidenceMode,
+    Manifest,
+    Node,
+    ProducedArtifact,
+    load_manifest,
+    save_manifest,
+)
 from omac.core.review_convergence import REVIEW_PROTOCOL_VERSION, open_blockers
 from omac.core.taskmeta import TaskKind
 from omac.engines import create_engine
@@ -181,6 +189,20 @@ class TestRenderIssueBody:
         assert "## Task summary" in body
         assert "Execution role" in body
         assert "任务摘要" not in body
+
+    def test_issue_body_renders_compact_responsibility_boundary(self):
+        contract = _full_contract()
+        contract.evidence_mode = EvidenceMode.FIXTURE
+        contract.produces = [ProducedArtifact("tooling-package")]
+        node = Node(id="a", worker="alice", title="Tooling", contract=contract)
+
+        body = render_issue_body(
+            node, contract, TaskKind.DEVELOP, "ISSUE-9", language="en")
+
+        assert "## Responsibility boundary" in body
+        assert "Evidence mode: `fixture`" in body
+        assert "Produces: `tooling-package`" in body
+        assert "non-upstream or downstream nodes" in body
 
     def test_briefing_lists_render_as_nested_markdown(self):
         n = Node(id="a", worker="alice", title="Add login", reviewer="bob",

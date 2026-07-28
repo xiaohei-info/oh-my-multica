@@ -14,6 +14,10 @@ from typing import Any, Dict, List, Set, Tuple
 from ..core import graph, logsetup
 from ..core.amendment import ensure_amendment_apply_complete
 from ..core.config import DEFAULT_RETRY
+from ..core.contract_boundaries import (
+    build_contract_boundary_decision,
+    contract_boundary_conflicts,
+)
 from ..core.evidence import validate_review_evidence, validate_worker_evidence
 from ..core.review_convergence import (
     build_review_obligations, review_subject_digest)
@@ -603,6 +607,34 @@ def collect_results(
             log.info(logsetup.EVT_VERDICT, kind=_DAG_KIND, node=key,
                      id=node.work_item_id, verdict=verdict)
             gate_errors = validate_review_evidence(node, item)
+            if verdict == "reject" and not gate_errors:
+                boundary_conflicts = contract_boundary_conflicts(
+                    manifest, node, item)
+                if boundary_conflicts:
+                    decision = build_contract_boundary_decision(
+                        item, node, boundary_conflicts)
+                    store.update_work_item_metadata(
+                        node.work_item_id,
+                        decision_required=decision,
+                        phase=TaskPhase.REVIEW,
+                    )
+                    store.update_status(
+                        node.work_item_id, WorkItemStatus.BLOCKED)
+                    set_node(manifest, key, status="blocked")
+                    failures[key] = ui(
+                        "Reviewer required inputs outside the typed node contract; "
+                        "operator decision is required before rework.",
+                        "Reviewer 要求了 typed node contract 边界之外的输入；"
+                        "继续返工前需要人工决策。",
+                    )
+                    log.info(
+                        logsetup.EVT_NEEDS_DECISION,
+                        kind=_DAG_KIND,
+                        node=key,
+                        id=node.work_item_id,
+                        gate="review-boundary",
+                    )
+                    continue
             if verdict == "pass-with-nits" and not gate_errors:
                 store.update_work_item_metadata(
                     node.work_item_id, phase=TaskPhase.AUTHORING,
