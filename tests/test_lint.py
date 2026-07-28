@@ -1,5 +1,5 @@
 """core.lint:成员池、依赖引用、reviewer 规则、contract 硬门、环检测。"""
-from omac.core.lint import lint
+from omac.core.lint import lint, lint_increment
 from omac.core.manifest import Contract, Manifest, Node
 
 POOL = {"alice", "bob"}
@@ -85,3 +85,18 @@ def test_valid_contract_passes_all_gates():
     """回归:补全 source_of_truth 的完整契约应零报错(硬门不误伤合法节点)。"""
     errs = lint(_manifest(_node("a", contract=_valid_contract())), POOL)
     assert errs == []
+
+
+def test_increment_does_not_revalidate_legacy_existing_boundary_shape():
+    existing = _manifest(_node(
+        "legacy",
+        contract=_valid_contract(produces={"legacy": "untyped"}),
+    ))
+    increment = _manifest(_node(
+        "new",
+        worker="bob",
+        blocked_by=["legacy"],
+        contract=_valid_contract(),
+    ))
+
+    assert lint_increment(increment, existing, POOL) == []

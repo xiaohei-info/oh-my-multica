@@ -1088,8 +1088,8 @@ class MulticaStore(WorkItemStore):
         return self.get_work_item(item_id)
 
     def set_node_contract(self, item_id: str, contract: Any):
-        from dataclasses import asdict, is_dataclass
-        payload = asdict(contract) if is_dataclass(contract) else contract
+        from ..core.manifest import _dump_contract
+        payload = _dump_contract(contract) if not isinstance(contract, dict) else contract
         source = yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
         ref = self._publish_payload_comment(item_id, "contract", source, ".yaml")
         self._set_metadata(item_id, CONTRACT_REF_KEY, ref)

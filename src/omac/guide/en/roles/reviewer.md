@@ -40,6 +40,10 @@ conflict or cannot be reproduced, do not infer pass.
   flows do not repeat Action IDs; only missing, unknown, or unreachable IDs are
   listed. The formal `review_obligations_ref` attachment is restored by
   `omac work show`; do not rely on an issue-body summary.
+- When `work show.context.responsibility` is present, judge the current node by
+  its `evidence_mode`, `consumes`, and `produces`. A fixture node proves itself
+  with complete executable fixtures; it must not be required to wait for an
+  undeclared live environment or downstream output.
 
 ## Finite coverage and regression
 
@@ -57,6 +61,14 @@ conflict or cannot be reproduced, do not infer pass.
   not `fixed` must remain in `blockers` with the same root and a classification
   matching `prior_blocker_results`; a root declared fixed cannot also remain a
   current blocker.
+- When a blocker requires another external input, add `required_inputs` entries
+  shaped as `{artifact_id, producer, evidence_mode}`. When it requires a
+  particular evidence class, add
+  `required_evidence_mode: fixture|artifact|live`. These fields describe the
+  boundary without copying artifact bodies. OMAC routes a
+  non-upstream/downstream input or fixture-to-live demand to
+  `contract-boundary-conflict` NeedsDecision instead of spending another Worker
+  rework round.
 - Keep `full_review_completed: true`, but OMAC also computes completeness from
   obligation and prior-blocker coverage. The boolean cannot hide omissions.
 

@@ -9,7 +9,15 @@ import yaml
 
 from omac.cli.main import main
 from omac.cli import exit_codes
-from omac.core.manifest import Contract, Manifest, Node, save_manifest
+from omac.core.manifest import (
+    ConsumedArtifact,
+    Contract,
+    EvidenceMode,
+    Manifest,
+    Node,
+    ProducedArtifact,
+    save_manifest,
+)
 from omac.core.taskmeta import TaskKind, TaskPhase
 from omac.engines import create_engine
 from omac.engines.models import (
@@ -83,6 +91,57 @@ def test_work_show_authoring_exposes_machine_gate_feedback_without_report():
     assert output["context"]["previous_review"] == {
         "comment": "machine gate: expected template is too generic",
     }
+
+
+def test_work_show_projects_compact_contract_responsibility():
+    store = _store()
+    item = _make_item(store, TaskKind.DEVELOP, TaskPhase.AUTHORING)
+    store.set_node_contract(item.id, Contract(
+        objective="tooling",
+        evidence_mode=EvidenceMode.FIXTURE,
+        produces=[ProducedArtifact("tooling-package")],
+        consumes=[ConsumedArtifact(
+            artifact_id="source-contracts",
+            producer="source-contracts",
+            evidence_mode=EvidenceMode.ARTIFACT,
+        )],
+    ))
+
+    output = build_show_output(
+        store.get_work_item(item.id), "worker:alice")
+
+    assert output["context"]["responsibility"] == {
+        "evidence_mode": "fixture",
+        "allowed_inputs": [{
+            "artifact_id": "source-contracts",
+            "producer": "source-contracts",
+            "evidence_mode": "artifact",
+        }],
+        "produces": ["tooling-package"],
+        "boundary_rule": (
+            "Only declared consumes are allowed external inputs; outputs from "
+            "non-upstream or downstream nodes are outside this contract."
+        ),
+    }
+
+
+def test_orchestrator_show_projects_boundary_schema_without_history_payloads():
+    store = _store()
+    item = _make_item(store, TaskKind.DECOMPOSE, TaskPhase.AUTHORING)
+
+    output = build_show_output(
+        item, "orchestrator:alice")
+
+    assert output["context"]["contract_boundary_schema"] == {
+        "evidence_mode": ["fixture", "artifact", "live"],
+        "produces": [{"artifact_id": "stable-artifact-id"}],
+        "consumes": [{
+            "artifact_id": "stable-artifact-id",
+            "producer": "upstream-node-id",
+            "evidence_mode": "artifact",
+        }],
+    }
+    assert "deliverable" not in output["context"]["contract_boundary_schema"]
 
 
 # amendment 与 decompose 一样含 authoring/review；final-acceptance 仅 authoring。

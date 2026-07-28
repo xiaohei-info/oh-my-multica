@@ -241,6 +241,20 @@ def test_orchestrator_consumes_machine_preflight_and_convergence_contract() -> N
     assert "output collisions" not in english
 
 
+def test_roles_define_typed_evidence_and_artifact_boundaries() -> None:
+    for language in ("cn", "en"):
+        worker = load_role_topic("worker", language=language)
+        reviewer = load_role_topic("reviewer", language=language)
+        orchestrator = load_role_topic("orchestrator", language=language)
+
+        for content in (worker, reviewer, orchestrator):
+            assert "evidence_mode" in content
+            assert "produces" in content
+            assert "consumes" in content
+        assert "required_inputs" in reviewer
+        assert "required_evidence_mode" in reviewer
+
+
 def test_workflow_explains_finite_review_coverage_and_ledger() -> None:
     chinese = load_topic("workflow")
     english = load_topic("workflow", language="en")

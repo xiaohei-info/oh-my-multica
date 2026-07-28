@@ -10,6 +10,13 @@ This file records public changes to oh-my-multica. The format follows
 
 ### Changed
 
+- Node contracts can optionally declare typed `evidence_mode`, `produces`, and
+  `consumes` boundaries. Manifest lint verifies canonical producers and
+  transitive upstream ownership, `work show` projects a compact responsibility
+  summary, and Reviewer demands for undeclared downstream artifacts or live
+  evidence from fixture nodes now stop as a bounded
+  `contract-boundary-conflict` decision instead of consuming Worker rework
+  rounds. Manifests that omit the new fields keep their previous behavior.
 - OMAC Web now groups collapsed DAG nodes by their exact visible dependency
   signature, draws every represented parent edge, and never double-counts one
   hidden node across summaries. Node detail reads now expose immediate loading,

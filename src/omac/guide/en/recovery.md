@@ -83,6 +83,7 @@ omac plan resume --plan-id p-xxxx
 | Signal | Inspect first | Usual action |
 |---|---|---|
 | `reviewer reject` | `report.blockers`, real diff, failed commands | Repair the node, then `omac node retry` |
+| `contract-boundary-conflict` | `decision_required.conflict_codes`, review-report reference, current contract `responsibility` | If the Reviewer crossed the boundary, preserve the contract, record the corrected fact, and `omac node retry` the same node. If the contract truly lacks an upstream input, amend it first and resume the same issue/PR at the approved stage. |
 | CI failure | CI log, `verification.commands` | Repair CI and retry; repair the contract or split if it is unsound |
 | Merge retries exhausted | PR base, conflict files, integration branch | Reassign and retry, or resolve the conflict then rerun |
 | `acceptance.max_rounds` exhausted | Failed-flow list, incremental manifest | Reduce scope, add nodes, or explicitly accept/abandon |

@@ -11,6 +11,8 @@ import hashlib
 import json
 from typing import Any
 
+from .contract_boundaries import review_boundary_report_errors
+
 from .acceptance_responsibility import (
     contributions,
     full_claims,
@@ -224,7 +226,7 @@ def validate_convergence_review(item: Any, verdict: str, report: Any) -> list[st
     if report.get("review_protocol") != REVIEW_PROTOCOL_VERSION:
         return [f"review_report.review_protocol must be {REVIEW_PROTOCOL_VERSION}"]
 
-    errors: list[str] = []
+    errors: list[str] = review_boundary_report_errors(report)
     obligations = getattr(item, "review_obligations", None)
     if not isinstance(obligations, list) or not obligations:
         obligations = build_review_obligations(item)

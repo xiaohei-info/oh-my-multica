@@ -32,6 +32,9 @@
   变更前/后的全部 flow 紧凑矩阵，以及历史校正的 contract/责任字段 digest、白名单 diff 和 reason。
   正常 flow 不复制全部 Action ID；只在缺失、未知或不可达时列异常 ID。完整 obligation 由
   `review_obligations_ref` 正式附件承载，必须通过 `omac work show ... --output json` 读取。
+- 若 `work show.context.responsibility` 存在，必须按 `evidence_mode`、`consumes`、
+  `produces` 判断当前节点的证据和制品边界。fixture 节点以完整可执行 fixture 证明，
+  不能被要求等待未声明的 live 环境或下游产物。
 
 ## 有限审查与跨轮回归
 
@@ -46,6 +49,11 @@
 - 同一 `root_cause_key` 每轮只能出现一次。历史 blocker 若不是 `fixed`，必须在
   `blockers` 中保留同一根因，且 classification 与 `prior_blocker_results` 状态一致；
   声明 `fixed` 的根因不得同时仍列为 blocker。
+- blocker 若要求新增外部输入，必须补充 `required_inputs`，每项为
+  `{artifact_id, producer, evidence_mode}`；若要求特定证据类别，补充
+  `required_evidence_mode: fixture|artifact|live`。这些字段只描述边界，不复制交付物正文。
+  OMAC 会把非上游/下游输入或 fixture→live 要求转为
+  `contract-boundary-conflict` NeedsDecision，而不是继续消耗 Worker 返工轮次。
 - `full_review_completed: true` 仍必须提交，但 OMAC 还会根据 obligation 与历史
   blocker 覆盖计算完整性；布尔声明不能覆盖缺项。
 

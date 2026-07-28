@@ -49,6 +49,17 @@ guide does not decide product facts.
   explicit typed IO contract, OMAC does not infer artifact producers or input
   materialization from generic flag names, current file existence, or
   `scope_paths`.
+- `work show.context.contract_boundary_schema` defines the optional typed IO
+  shape. When a node needs an explicit artifact boundary, declare
+  `evidence_mode: fixture|artifact|live`, stable
+  `produces[].artifact_id` values, and `consumes[]` entries shaped as
+  `{artifact_id, producer, evidence_mode}`. Fixture means the node owns complete
+  executable deterministic fixtures; it does not mean waiting for downstream
+  production artifacts.
+- Every consume producer must exist, declare the artifact, and be a transitive
+  upstream dependency. Do not invent `blocked_by` edges for coordination only.
+  Legacy manifests that omit these optional fields keep their existing runtime
+  semantics.
 - A machine preflight failure returns directly to authoring without consuming a
   Reviewer cycle. `review_comment` contains only a bounded summary; the complete
   structured findings are stored in an attachment. Before reworking, run the

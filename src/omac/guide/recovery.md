@@ -62,6 +62,7 @@ omac plan resume --plan-id p-xxxx
 | 报告信号 | 先检查 | 推荐动作 |
 |---|---|---|
 | `reviewer reject` | report.blockers、真实 diff、失败命令 | 修复同一节点后 `omac node retry` |
+| `contract-boundary-conflict` | `decision_required.conflict_codes`、review report 引用、当前 contract 的 `responsibility` | 若 Reviewer 要求越界，保留 contract 并给出纠正事实后对同一节点 `omac node retry`；若 contract 本身缺失真实上游输入，先 amendment，再按批准的恢复阶段续接同一 issue/PR。 |
 | CI 失败 | CI 日志、verification.commands | 修 CI 后 retry；若 contract 不合理则改 contract 或拆新节点 |
 | merge 回退耗尽 | PR base、冲突文件、集成分支 | 换 worker retry，或手工解决冲突后重跑 |
 | `acceptance.max_rounds` 耗尽 | fail 清单、增量 manifest | 降范围、补节点，或显式 accept/abandon |
