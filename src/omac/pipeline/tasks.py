@@ -10,10 +10,7 @@ issue body 取自 dispatch.render_issue_body(Human-first 模板),与 work show/s
 from __future__ import annotations
 
 import hashlib
-import json
 import re
-import secrets
-import time
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional
@@ -21,7 +18,6 @@ from typing import Any, Callable, Dict, List, Optional
 from ..core import logsetup
 from ..core.evidence import validate_review_evidence
 from ..core.manifest import Contract, _dump_contract, _load_contract
-from ..core.restart import RestartState, deliverable_identity
 from ..core.machine_feedback import (
     build_machine_feedback, machine_feedback_summary,
 )
@@ -57,26 +53,6 @@ class AuthoringTaskSpec:
     source_refs: List[Any] = field(default_factory=list)
     source_of_truth: Dict[str, str] = field(default_factory=dict)
     amendment_attempt: Optional[Dict[str, Any]] = None
-
-
-def _restart_request_digest(spec: AuthoringTaskSpec) -> str:
-    contract = spec.contract
-    if isinstance(contract, Contract):
-        contract = _dump_contract(contract)
-    payload = {
-        "kind": spec.kind.value,
-        "title": spec.title,
-        "dag_key": spec.dag_key,
-        "assignee": spec.assignee,
-        "description": spec.description,
-        "contract": contract,
-        "source_refs": spec.source_refs,
-        "source_of_truth": spec.source_of_truth,
-    }
-    return hashlib.sha256(json.dumps(
-        payload, ensure_ascii=False, sort_keys=True, default=str,
-        separators=(",", ":"),
-    ).encode("utf-8")).hexdigest()
 
 
 def _markdown_fence_for(text: str) -> str:
@@ -417,19 +393,14 @@ def create_authoring_task(engine, spec: AuthoringTaskSpec) -> WorkItem:
         worker=spec.assignee,
         kind=spec.kind,
     )
+    if spec.amendment_attempt is not None:
+        return finalize_authoring_shell(engine, item, spec)
     return refresh_authoring_task(engine, item.id, spec, item_snapshot=item)
 
 
-def refresh_authoring_task(
-    engine,
-    item_id: str,
-    spec: AuthoringTaskSpec,
-    *,
-    item_snapshot: Optional[WorkItem] = None,
-    restart: Optional[RestartState] = None,
-) -> WorkItem:
-    """先覆盖紧凑正文再完整读取，允许修复旧巨型 issue。"""
-    store = engine.store
+def _authoring_materialization(
+    engine, item_id: str, spec: AuthoringTaskSpec, item_snapshot: Optional[WorkItem],
+) -> tuple[str, List[Dict[str, Any]]]:
     env = _engine_env(engine)
     refs = normalize_source_refs(spec.source_refs, engine_env=env)
     refs = _externalize_large_sources(spec.source_of_truth, refs)
@@ -452,34 +423,169 @@ def refresh_authoring_task(
     if spec.source_of_truth:
         body += "\n\n" + _render_source_of_truth(
             spec.source_of_truth, refs, item_id, env, current_language())
-    if restart is not None:
-        store.guard_authoring_restart(
-            item_id,
-            generation=restart.generation,
-            owner_nonce=restart.owner_nonce,
+    return body, refs
+
+
+def _contract_payload(contract: Any) -> Any:
+    if isinstance(contract, Contract):
+        return _dump_contract(contract)
+    return contract
+
+
+def _attempt_identity_errors(
+    item: WorkItem,
+    spec: AuthoringTaskSpec,
+    *,
+    body: str,
+    refs: List[Dict[str, Any]],
+) -> List[str]:
+    expected_title = f"[DAG:{spec.dag_key}] {spec.title}"
+    checks = [
+        (item.title == expected_title, "title"),
+        (item.dag_key == spec.dag_key, "dag_key"),
+        (item.kind == TaskKind.AMENDMENT, "kind"),
+        (item.description == body, "description"),
+        (item.amendment_attempt == spec.amendment_attempt, "amendment_attempt"),
+        (item.source_refs == refs, "source_refs"),
+        (
+            _contract_payload(item.contract) == _contract_payload(spec.contract),
+            "contract",
+        ),
+    ]
+    return [name for matches, name in checks if not matches]
+
+
+def _shell_precondition_errors(
+    item: WorkItem,
+    spec: AuthoringTaskSpec,
+    *,
+    body: str,
+    refs: List[Dict[str, Any]],
+) -> List[str]:
+    expected_title = f"[DAG:{spec.dag_key}] {spec.title}"
+    checks = [
+        (item.title == expected_title, "title"),
+        (item.status == WorkItemStatus.TODO, "status"),
+        (item.phase == TaskPhase.AUTHORING, "phase"),
+        (not item.deliverable and not item.deliverable_ref, "deliverable"),
+        (item.dag_key in ("", spec.dag_key), "dag_key"),
+        (item.kind in (TaskKind.DEVELOP, TaskKind.AMENDMENT), "kind"),
+        (item.description in (spec.title, body), "description"),
+        (item.amendment_attempt in (None, spec.amendment_attempt), "amendment_attempt"),
+        (item.source_refs in ([], refs), "source_refs"),
+        (
+            item.contract is None
+            or _contract_payload(item.contract) == _contract_payload(spec.contract),
+            "contract",
+        ),
+    ]
+    return [name for matches, name in checks if not matches]
+
+
+def finalize_authoring_shell(
+    engine, item: WorkItem, spec: AuthoringTaskSpec,
+) -> WorkItem:
+    """幂等完成 deterministic amendment shell；完整前绝不派发。"""
+    if spec.kind != TaskKind.AMENDMENT or spec.amendment_attempt is None:
+        raise ValidationError("Deterministic shell finalization is amendment-only")
+    if engine.runtime.is_active(item.id):
+        raise NeedsDecision(
+            "Deterministic amendment shell already has an active Agent Run",
+            report={
+                "reason_code": "amendment-attempt-shell-active",
+                "item_id": item.id,
+                "dag_key": spec.dag_key,
+            },
         )
+    expected_title = f"[DAG:{spec.dag_key}] {spec.title}"
+    base_checks = [
+        (item.title == expected_title, "title"),
+        (item.status == WorkItemStatus.TODO, "status"),
+        (item.phase == TaskPhase.AUTHORING, "phase"),
+        (not item.deliverable and not item.deliverable_ref, "deliverable"),
+        (item.dag_key in ("", spec.dag_key), "dag_key"),
+        (item.kind in (TaskKind.DEVELOP, TaskKind.AMENDMENT), "kind"),
+        (item.amendment_attempt in (None, spec.amendment_attempt), "amendment_attempt"),
+    ]
+    base_errors = [name for matches, name in base_checks if not matches]
+    if base_errors:
+        raise NeedsDecision(
+            "Deterministic amendment shell cannot be safely finalized",
+            report={
+                "reason_code": "amendment-attempt-shell-conflict",
+                "item_id": item.id,
+                "dag_key": spec.dag_key,
+                "fields": base_errors,
+            },
+        )
+    body, refs = _authoring_materialization(engine, item.id, spec, item)
+    errors = _shell_precondition_errors(item, spec, body=body, refs=refs)
+    if errors:
+        raise NeedsDecision(
+            "Deterministic amendment shell cannot be safely finalized",
+            report={
+                "reason_code": "amendment-attempt-shell-conflict",
+                "item_id": item.id,
+                "dag_key": spec.dag_key,
+                "fields": errors,
+            },
+        )
+    store = engine.store
+    store.set_authoring_identity(
+        item.id, dag_key=spec.dag_key, kind=TaskKind.AMENDMENT)
+    if spec.contract is not None and item.contract is None:
+        store.set_node_contract(item.id, spec.contract)
+    store.update_work_item_metadata(
+        item.id,
+        worker=spec.assignee,
+        description=body,
+        source_refs=refs,
+        amendment_attempt=spec.amendment_attempt,
+        phase=TaskPhase.AUTHORING,
+    )
+    finalized = store.get_work_item(item.id)
+    errors = _attempt_identity_errors(finalized, spec, body=body, refs=refs)
+    if engine.runtime.is_active(item.id):
+        errors.append("active_run")
+    if finalized.status != WorkItemStatus.TODO:
+        errors.append("status")
+    if finalized.phase != TaskPhase.AUTHORING:
+        errors.append("phase")
+    if finalized.deliverable or finalized.deliverable_ref:
+        errors.append("deliverable")
+    if errors:
+        raise NeedsDecision(
+            "Deterministic amendment shell finalization did not converge",
+            report={
+                "reason_code": "amendment-attempt-shell-incomplete",
+                "item_id": item.id,
+                "dag_key": spec.dag_key,
+                "fields": sorted(set(errors)),
+            },
+        )
+    return finalized
+
+
+def refresh_authoring_task(
+    engine,
+    item_id: str,
+    spec: AuthoringTaskSpec,
+    *,
+    item_snapshot: Optional[WorkItem] = None,
+) -> WorkItem:
+    """先覆盖紧凑正文再完整读取，允许修复旧巨型 issue。"""
+    store = engine.store
+    body, refs = _authoring_materialization(
+        engine, item_id, spec, item_snapshot)
     if spec.contract is not None:
         store.set_node_contract(item_id, spec.contract)
-    if restart is not None:
-        store.guard_authoring_restart(
-            item_id,
-            generation=restart.generation,
-            owner_nonce=restart.owner_nonce,
-        )
-    refreshed = store.update_work_item_metadata(
+    return store.update_work_item_metadata(
         item_id,
         worker=spec.assignee,
         description=body,
         source_refs=refs,
         amendment_attempt=spec.amendment_attempt,
     )
-    if restart is not None:
-        store.guard_authoring_restart(
-            item_id,
-            generation=restart.generation,
-            owner_nonce=restart.owner_nonce,
-        )
-    return refreshed
 
 
 def run_task(
@@ -498,7 +604,6 @@ def run_task(
     dag_key: Optional[str] = None,
     resume_item_id: Optional[str] = None,
     resume_item_snapshot: Optional[WorkItem] = None,
-    restart_authoring: bool = False,
     amendment_attempt: Optional[Dict[str, Any]] = None,
     reuse_dag_key: bool = False,
     review_acceptance_doc: Any = None,
@@ -515,39 +620,6 @@ def run_task(
     store = engine.store
     runtime = engine.runtime
 
-    if restart_authoring and resume_item_id is None:
-        raise ValidationError(ui(
-            "--restart-authoring requires --resume-issue-id",
-            "--restart-authoring 必须与 --resume-issue-id 一起使用"))
-    if restart_authoring and kind != TaskKind.AMENDMENT:
-        raise ValidationError(ui(
-            "Authoring restart is supported only for amendment tasks",
-            "只有 amendment 任务支持重开 authoring"))
-    if restart_authoring and not store.capabilities.atomic_authoring_restart:
-        raise NeedsDecision(
-            ui(
-                "This engine cannot safely restart authoring on the same issue",
-                "当前引擎无法安全地在同一 issue 上重开 authoring"),
-            report={
-                "reason_code": "atomic-restart-unsupported",
-                "engine": store.config.engine_type,
-                "next_action": "Create a new amendment issue instead of resuming the old confirmation",
-            },
-        )
-    if (
-        restart_authoring
-        and not runtime.capabilities.stable_direct_run_identity
-    ):
-        raise NeedsDecision(
-            ui(
-                "This runtime cannot bind restart dispatch to a stable direct Run identity",
-                "当前 runtime 无法把 restart 派发绑定到稳定的 direct Run 身份"),
-            report={
-                "reason_code": "restart-run-identity-unsupported",
-                "engine": store.config.engine_type,
-            },
-        )
-
     title = payload.get("title") or f"{kind.value} task"
     task_key = dag_key or make_dag_key(kind, title=title, unique=True)
     contract = _payload_contract(payload.get("contract"))
@@ -563,140 +635,11 @@ def run_task(
         source_of_truth=source_of_truth,
         amendment_attempt=amendment_attempt,
     )
-    restart_ctx: Optional[RestartState] = None
     reused_created_item = False
 
     if resume_item_id is not None:
         item = resume_item_snapshot or store.get_work_item(resume_item_id)
-        if restart_authoring:
-            request_digest = _restart_request_digest(spec)
-            baseline_runs = runtime.list_runs(item.id)
-            existing_restart = item.authoring_restart
-            recovering_same_request = (
-                existing_restart is not None
-                and existing_restart.request_digest == request_digest
-            )
-            if (
-                any(run.active for run in baseline_runs)
-                and not recovering_same_request
-            ):
-                raise NeedsDecision(
-                    ui(
-                        f"Amendment {item.id} has an active Agent run; wait for it to finish before restarting authoring",
-                        f"amendment {item.id} 仍有活跃 Agent Run；等待其结束后再重开 authoring"),
-                    report={
-                        "item_id": item.id,
-                        "kind": kind.value,
-                        "phase": item.phase.value,
-                        "reason_code": "active-agent-run",
-                        "last_opinion": "active Agent run prevents authoring restart",
-                    },
-                )
-            now = time.time()
-            lease_seconds = max(
-                90,
-                int(store.config.polling_interval or 30) * 4,
-            )
-            candidate = RestartState(
-                generation=secrets.token_hex(16),
-                owner_nonce=secrets.token_hex(16),
-                request_digest=request_digest,
-                state="claimed",
-                base_kind=item.kind.value,
-                base_phase=item.phase.value,
-                base_status=item.status.value,
-                base_review_subject_digest=item.review_subject_digest or "",
-                base_deliverable_identity=deliverable_identity(item),
-                baseline_run_ids=(
-                    existing_restart.baseline_run_ids
-                    if recovering_same_request
-                    else tuple(
-                        run.id for run in baseline_runs if run.kind == "direct")
-                ),
-                lease_expires_at=now + lease_seconds,
-            )
-            claim = store.claim_authoring_restart(
-                item.id, candidate, now=now)
-            restart_ctx = claim.restart
-            if claim.confirmation_reused:
-                item = store.get_work_item(item.id)
-            elif not claim.acquired:
-                raise NeedsDecision(
-                    ui(
-                        f"Amendment restart generation {restart_ctx.generation} is owned by another process",
-                        f"amendment restart generation {restart_ctx.generation} 正由另一进程持有"),
-                    report={
-                        "item_id": item.id,
-                        "reason_code": "restart-claim-held",
-                        "generation": restart_ctx.generation,
-                        "state": restart_ctx.state,
-                        "lease_expires_at": restart_ctx.lease_expires_at,
-                    },
-                )
-            else:
-                post_claim_runs = runtime.list_runs(item.id)
-                unexpected = [
-                    run for run in post_claim_runs
-                    if run.kind == "direct"
-                    and run.id not in set(restart_ctx.baseline_run_ids)
-                ]
-                unexpected_active_non_direct = any(
-                    run.active and run.kind != "direct"
-                    for run in post_claim_runs
-                )
-                if (
-                    restart_ctx.state == "claimed"
-                    and (
-                        any(run.active for run in post_claim_runs)
-                        or unexpected
-                    )
-                ) or unexpected_active_non_direct:
-                    unknown = restart_ctx.evolve(
-                        state="unknown_partial",
-                        detail="run set changed after restart claim",
-                    )
-                    store.update_authoring_restart(
-                        item.id,
-                        generation=restart_ctx.generation,
-                        owner_nonce=restart_ctx.owner_nonce,
-                        state=unknown,
-                    )
-                    raise NeedsDecision(
-                        ui(
-                            "Agent Run state changed after the restart claim; no cleanup or dispatch is safe",
-                            "restart claim 后 Agent Run 状态发生变化；无法安全清理或派发"),
-                        report={
-                            "item_id": item.id,
-                            "reason_code": "restart-run-race",
-                            "generation": restart_ctx.generation,
-                            "outcome": "unknown_partial",
-                        },
-                    )
-                if restart_ctx.state == "claimed":
-                    item = store.restart_authoring(
-                        item.id,
-                        generation=restart_ctx.generation,
-                        owner_nonce=restart_ctx.owner_nonce,
-                    )
-                    restart_ctx = item.authoring_restart
-                else:
-                    item = store.get_work_item(item.id)
-                if restart_ctx is not None and restart_ctx.state == "cleaned":
-                    item = refresh_authoring_task(
-                        engine,
-                        item.id,
-                        spec,
-                        item_snapshot=item,
-                        restart=restart_ctx,
-                    )
-                    restart_ctx = store.update_authoring_restart(
-                        item.id,
-                        generation=restart_ctx.generation,
-                        owner_nonce=restart_ctx.owner_nonce,
-                        state=restart_ctx.evolve(state="refreshed"),
-                    )
-                    item = store.get_work_item(item.id)
-        elif (
+        if (
             item.status == WorkItemStatus.TODO
             and item.phase == TaskPhase.AUTHORING
             and not item.deliverable
@@ -721,24 +664,32 @@ def run_task(
                 if item is None:
                     raise
                 reused_created_item = True
-        elif item.amendment_attempt not in (None, amendment_attempt):
-            raise NeedsDecision(
-                ui(
-                    "The amendment attempt identity already belongs to different inputs",
-                    "该 amendment attempt 身份已绑定到不同输入"),
-                report={
-                    "reason_code": "amendment-attempt-identity-conflict",
-                    "item_id": item.id,
-                    "dag_key": task_key,
-                },
-            )
-        if item.description == spec.title:
-            item = refresh_authoring_task(
-                engine, item.id, spec, item_snapshot=item)
+        if reused_created_item and (
+            item.status == WorkItemStatus.TODO
+            and item.phase == TaskPhase.AUTHORING
+            and not item.deliverable
+            and not item.deliverable_ref
+        ):
+            item = finalize_authoring_shell(engine, item, spec)
+        elif reused_created_item:
+            body, refs = _authoring_materialization(
+                engine, item.id, spec, item)
+            errors = _attempt_identity_errors(
+                item, spec, body=body, refs=refs)
+            if errors:
+                raise NeedsDecision(
+                    "Existing amendment attempt has conflicting identity",
+                    report={
+                        "reason_code": "amendment-attempt-identity-conflict",
+                        "item_id": item.id,
+                        "dag_key": task_key,
+                        "fields": errors,
+                    },
+                )
         item_id = item.id
 
     explicit_resume = resume_item_id is not None or reused_created_item
-    resume_authoring_attempt_available = explicit_resume and not restart_authoring
+    resume_authoring_attempt_available = explicit_resume
 
     if (
         explicit_resume
@@ -795,7 +746,6 @@ def run_task(
     def _raise_completed_without_submit(
         *, reason_code: str = "completed-without-submit", role: str = "worker",
     ) -> None:
-        nonlocal restart_ctx
         decision_phase = (
             TaskPhase.REVIEW if role == "reviewer" else TaskPhase.AUTHORING
         )
@@ -812,14 +762,6 @@ def run_task(
             phase=decision_phase,
         )
         store.mark_blocked(item_id)
-        if restart_ctx is not None:
-            restart_ctx = store.update_authoring_restart(
-                item_id,
-                generation=restart_ctx.generation,
-                owner_nonce=restart_ctx.owner_nonce,
-                state=restart_ctx.evolve(
-                    state="needs_decision", detail=reason_code),
-            )
         log.info(
             logsetup.EVT_NEEDS_DECISION,
             kind=kind.value,
@@ -845,47 +787,14 @@ def run_task(
             },
         )
 
-    def _renew_restart_lease() -> None:
-        nonlocal restart_ctx
-        if restart_ctx is None or restart_ctx.state in {
-            "confirmation", "needs_decision", "unknown_partial",
-        }:
-            return
-        restart_ctx = store.update_authoring_restart(
-            item_id,
-            generation=restart_ctx.generation,
-            owner_nonce=restart_ctx.owner_nonce,
-            state=restart_ctx.evolve(
-                lease_expires_at=time.time() + max(
-                    90, int(store.config.polling_interval or 30) * 4),
-            ),
-        )
-
-    def _stop_restart(state: str, detail: str) -> None:
-        nonlocal restart_ctx
-        if restart_ctx is None:
-            return
-        restart_ctx = store.update_authoring_restart(
-            item_id,
-            generation=restart_ctx.generation,
-            owner_nonce=restart_ctx.owner_nonce,
-            state=restart_ctx.evolve(state=state, detail=detail),
-        )
-
-    def _wait_for_generation_run(
+    def _wait_for_dispatched_run(
         *,
         baseline_ids: set[str],
         predicate: Callable[[WorkItem], bool],
         role: str,
     ) -> tuple[WorkItem, Optional[str]]:
-        nonlocal restart_ctx
-        dispatch_scope = "restart" if restart_ctx is not None else "dispatch"
         invisible_polls = 0
-        observed_run_id = (
-            restart_ctx.reviewer_run_id
-            if restart_ctx is not None and role == "reviewer"
-            else restart_ctx.worker_run_id if restart_ctx is not None else None
-        )
+        observed_run_id = None
         while True:
             current = store.get_work_item(item_id)
             visible_runs = runtime.list_runs(item_id)
@@ -894,16 +803,13 @@ def run_task(
                 if run.kind != "direct" and run.active
             ]
             if active_non_direct:
-                _stop_restart(
-                    "unknown_partial", "active non-direct run during restart")
                 raise NeedsDecision(
                     ui(
-                        "A non-direct Agent Run became active during amendment restart",
-                        "amendment restart 期间出现了活跃的非 direct Agent Run"),
+                        "A non-direct Agent Run became active during direct dispatch",
+                        "direct 派发期间出现了活跃的非 direct Agent Run"),
                     report={
                         "item_id": item_id,
-                        "reason_code": f"{dispatch_scope}-run-race",
-                        "generation": restart_ctx.generation if restart_ctx else None,
+                        "reason_code": "dispatch-run-race",
                         "run_ids": [run.id for run in active_non_direct],
                         "outcome": "unknown_partial",
                     },
@@ -913,16 +819,13 @@ def run_task(
                 if run.kind == "direct" and run.id not in baseline_ids
             ]
             if len(new_direct) > 1:
-                _stop_restart(
-                    "unknown_partial", "multiple generation-owned direct runs")
                 raise NeedsDecision(
                     ui(
-                        "Multiple new direct Runs appeared for one restart generation",
-                        "同一个 restart generation 出现了多个新的 direct Run"),
+                        "Multiple new direct Runs appeared for one dispatch",
+                        "一次派发出现了多个新的 direct Run"),
                     report={
                         "item_id": item_id,
-                        "reason_code": f"{dispatch_scope}-multiple-runs",
-                        "generation": restart_ctx.generation if restart_ctx else None,
+                        "reason_code": "dispatch-multiple-runs",
                         "run_ids": [run.id for run in new_direct],
                         "outcome": "unknown_partial",
                     },
@@ -934,18 +837,6 @@ def run_task(
                 run = direct[0]
                 observed_run_id = run.id
                 invisible_polls = 0
-                if restart_ctx is not None:
-                    changes = (
-                        {"reviewer_run_id": run.id}
-                        if role == "reviewer"
-                        else {"worker_run_id": run.id}
-                    )
-                    restart_ctx = store.update_authoring_restart(
-                        item_id,
-                        generation=restart_ctx.generation,
-                        owner_nonce=restart_ctx.owner_nonce,
-                        state=restart_ctx.evolve(**changes),
-                    )
                 if predicate(current):
                     return current, observed_run_id
                 if run.terminal:
@@ -962,127 +853,20 @@ def run_task(
                     return current, observed_run_id
                 invisible_polls += 1
                 if invisible_polls >= _RUN_VISIBILITY_MAX_POLLS:
-                    _stop_restart(
-                        "unknown_partial", f"{role} run was not observable")
                     raise NeedsDecision(
                         ui(
-                            "The generation-owned Agent Run is still not visible; dispatch outcome is unknown",
-                            "generation 对应的 Agent Run 仍不可见；派发结果未知"),
+                            "The dispatched Agent Run is still not visible; dispatch outcome is unknown",
+                            "已派发的 Agent Run 仍不可见；派发结果未知"),
                         report={
                             "item_id": item_id,
-                            "reason_code": f"{dispatch_scope}-run-not-observed",
-                            "generation": restart_ctx.generation if restart_ctx else None,
+                            "reason_code": "dispatch-run-not-observed",
                             "role": role,
                             "outcome": "unknown_partial",
                         },
                     )
             poll()
-            _renew_restart_lease()
 
     def _dispatch_authoring_and_wait() -> WorkItem:
-        nonlocal restart_ctx
-        if restart_ctx is not None:
-            if restart_ctx.state not in {"refreshed", "dispatching"}:
-                current = store.get_work_item(item_id)
-                if current.phase != TaskPhase.AUTHORING:
-                    raise NeedsDecision(
-                        ui(
-                            "Restart recovery expected authoring before Worker dispatch",
-                            "restart 恢复在派发 Worker 前预期处于 authoring"),
-                        report={
-                            "item_id": item_id,
-                            "reason_code": "restart-phase-mismatch",
-                            "generation": restart_ctx.generation,
-                            "phase": current.phase.value,
-                        },
-                    )
-                worker_baseline = tuple(sorted(
-                    run.id for run in runtime.list_runs(item_id)
-                    if run.kind == "direct"))
-                restart_ctx = store.update_authoring_restart(
-                    item_id,
-                    generation=restart_ctx.generation,
-                    owner_nonce=restart_ctx.owner_nonce,
-                    state=restart_ctx.evolve(
-                        state="dispatching",
-                        baseline_run_ids=worker_baseline,
-                        reviewer_baseline_run_ids=(),
-                        worker_run_id=None,
-                        reviewer_run_id=None,
-                    ),
-                )
-            baseline = set(restart_ctx.baseline_run_ids)
-            existing = [
-                run for run in runtime.list_runs(item_id)
-                if run.kind == "direct" and run.id not in baseline
-            ]
-            if restart_ctx.state == "refreshed":
-                restart_ctx = store.update_authoring_restart(
-                    item_id,
-                    generation=restart_ctx.generation,
-                    owner_nonce=restart_ctx.owner_nonce,
-                    state=restart_ctx.evolve(state="dispatching"),
-                )
-            if restart_ctx.state == "dispatching" and not existing:
-                store.guard_authoring_restart(
-                    item_id,
-                    generation=restart_ctx.generation,
-                    owner_nonce=restart_ctx.owner_nonce,
-                )
-                store.mark_in_progress(item_id)
-                store.guard_authoring_restart(
-                    item_id,
-                    generation=restart_ctx.generation,
-                    owner_nonce=restart_ctx.owner_nonce,
-                )
-                store.clear_assignment(item_id)
-                store.guard_authoring_restart(
-                    item_id,
-                    generation=restart_ctx.generation,
-                    owner_nonce=restart_ctx.owner_nonce,
-                )
-                store.assign_work_item(item_id, assignee, "worker")
-                store.guard_authoring_restart(
-                    item_id,
-                    generation=restart_ctx.generation,
-                    owner_nonce=restart_ctx.owner_nonce,
-                )
-                runtime.wake_for_claim(item_id, assignee, "worker")
-                store.guard_authoring_restart(
-                    item_id,
-                    generation=restart_ctx.generation,
-                    owner_nonce=restart_ctx.owner_nonce,
-                )
-                log.info(
-                    logsetup.EVT_DISPATCH,
-                    kind=kind.value,
-                    id=item_id,
-                    worker=assignee,
-                    generation=restart_ctx.generation,
-                )
-            def fresh_submission(candidate: WorkItem) -> bool:
-                return (
-                    _produced(candidate)
-                    and candidate.deliverable_ref is not None
-                    and deliverable_identity(candidate)
-                    != restart_ctx.base_deliverable_identity
-                )
-
-            produced, run_id = _wait_for_generation_run(
-                baseline_ids=baseline,
-                predicate=fresh_submission,
-                role="worker",
-            )
-            restart_ctx = store.update_authoring_restart(
-                item_id,
-                generation=restart_ctx.generation,
-                owner_nonce=restart_ctx.owner_nonce,
-                state=restart_ctx.evolve(
-                    state="submitted", worker_run_id=run_id),
-            )
-            _raise_if_authoring_stopped(produced)
-            return produced
-
         baseline = None
         if runtime.capabilities.stable_direct_run_identity:
             baseline = {
@@ -1099,7 +883,7 @@ def run_task(
             worker=assignee,
         )
         if baseline is not None:
-            produced, _run_id = _wait_for_generation_run(
+            produced, _run_id = _wait_for_dispatched_run(
                 baseline_ids=baseline,
                 predicate=_produced,
                 role="worker",
@@ -1263,7 +1047,6 @@ def run_task(
         *,
         prepare_confirmation: bool = True,
     ) -> Dict[str, Any]:
-        nonlocal restart_ctx
         current = store.get_work_item(item_id)
         if current.review_comment or current.machine_feedback_ref:
             store.update_work_item_metadata(
@@ -1280,13 +1063,6 @@ def run_task(
             # 否则会出现 loop 已等待人工门、metadata 却仍停在 review 的竞态。
             store.update_work_item_metadata(
                 item_id, phase=TaskPhase.CONFIRMATION)
-        if restart_ctx is not None:
-            restart_ctx = store.update_authoring_restart(
-                item_id,
-                generation=restart_ctx.generation,
-                owner_nonce=restart_ctx.owner_nonce,
-                state=restart_ctx.evolve(state="confirmation"),
-            )
         log.info(logsetup.EVT_HUMAN_GATE_WAIT, kind=kind.value, id=item_id)
         if pause_at_confirmation:
             return {
@@ -1368,91 +1144,27 @@ def run_task(
                          max=review_limit)
                 reviewed = _restart_invalid_review(
                     store, item_id, subject_digest, evidence_errors)
-                if restart_ctx is not None:
-                    restart_ctx = store.update_authoring_restart(
-                        item_id,
-                        generation=restart_ctx.generation,
-                        owner_nonce=restart_ctx.owner_nonce,
-                        state=restart_ctx.evolve(
-                            state="submitted",
-                            reviewer_run_id=None,
-                        ),
-                    )
 
             store.mark_in_review(item_id)
-            if restart_ctx is not None:
-                recovering_review = restart_ctx.state == "reviewing"
-                if recovering_review:
-                    reviewer_baseline = set(
-                        restart_ctx.reviewer_baseline_run_ids)
-                else:
-                    reviewer_baseline = {
-                        run.id for run in runtime.list_runs(item_id)
-                        if run.kind == "direct"
-                    }
-                    restart_ctx = store.update_authoring_restart(
-                        item_id,
-                        generation=restart_ctx.generation,
-                        owner_nonce=restart_ctx.owner_nonce,
-                        state=restart_ctx.evolve(
-                            state="reviewing",
-                            baseline_run_ids=(),
-                            reviewer_baseline_run_ids=tuple(
-                                sorted(reviewer_baseline)),
-                        ),
-                    )
-                    store.guard_authoring_restart(
-                        item_id,
-                        generation=restart_ctx.generation,
-                        owner_nonce=restart_ctx.owner_nonce,
-                    )
-                    store.clear_assignment(item_id)
-                    store.guard_authoring_restart(
-                        item_id,
-                        generation=restart_ctx.generation,
-                        owner_nonce=restart_ctx.owner_nonce,
-                    )
-                    store.assign_work_item(item_id, reviewer, "reviewer")
-                    runtime.wake_for_claim(item_id, reviewer, "reviewer")
-                    log.info(
-                        logsetup.EVT_REVIEW_DISPATCH,
-                        kind=kind.value,
-                        id=item_id,
-                        reviewer=reviewer,
-                        generation=restart_ctx.generation,
-                    )
-                reviewed, reviewer_run_id = _wait_for_generation_run(
+            reviewer_baseline = None
+            if runtime.capabilities.stable_direct_run_identity:
+                reviewer_baseline = {
+                    run.id for run in runtime.list_runs(item_id)
+                    if run.kind == "direct"
+                }
+            store.assign_work_item(item_id, reviewer, "reviewer")
+            log.info(logsetup.EVT_REVIEW_DISPATCH, kind=kind.value, id=item_id,
+                     reviewer=reviewer)
+            runtime.wake(item_id, reviewer, "reviewer")
+            if reviewer_baseline is not None:
+                reviewed, _reviewer_run_id = _wait_for_dispatched_run(
                     baseline_ids=reviewer_baseline,
                     predicate=_has_review_verdict,
                     role="reviewer",
                 )
-                restart_ctx = store.update_authoring_restart(
-                    item_id,
-                    generation=restart_ctx.generation,
-                    owner_nonce=restart_ctx.owner_nonce,
-                    state=restart_ctx.evolve(
-                        reviewer_run_id=reviewer_run_id),
-                )
             else:
-                reviewer_baseline = None
-                if runtime.capabilities.stable_direct_run_identity:
-                    reviewer_baseline = {
-                        run.id for run in runtime.list_runs(item_id)
-                        if run.kind == "direct"
-                    }
-                store.assign_work_item(item_id, reviewer, "reviewer")
-                log.info(logsetup.EVT_REVIEW_DISPATCH, kind=kind.value, id=item_id,
-                         reviewer=reviewer)
-                runtime.wake(item_id, reviewer, "reviewer")
-                if reviewer_baseline is not None:
-                    reviewed, _reviewer_run_id = _wait_for_generation_run(
-                        baseline_ids=reviewer_baseline,
-                        predicate=_has_review_verdict,
-                        role="reviewer",
-                    )
-                else:
-                    reviewed = _poll_until(
-                        store, item_id, _has_review_verdict, poll)
+                reviewed = _poll_until(
+                    store, item_id, _has_review_verdict, poll)
 
         verdict = reviewed.review_verdict
         log.info(logsetup.EVT_VERDICT, kind=kind.value, id=item_id,

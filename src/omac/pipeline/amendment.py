@@ -59,17 +59,17 @@ def _attempt_context(
     manifest_path: str,
     *,
     report: str,
-    docs: list[str],
+    docs_snapshot: dict[str, Any],
     blocked_nodes: list[str],
     superseded_issue,
-) -> dict[str, str]:
+) -> dict[str, Any]:
     report_digest = hashlib.sha256(report.encode("utf-8")).hexdigest()
     manifest_digest = hashlib.sha256(
         Path(manifest_path).read_bytes()).hexdigest()
     request_digest = hashlib.sha256(json.dumps({
         "manifest_sha256": manifest_digest,
         "report_sha256": report_digest,
-        "docs": sorted(map(_portable_path, docs)),
+        "docs_sha256": docs_snapshot["docs_sha256"],
         "blocked_nodes": sorted(blocked_nodes),
         "supersedes_issue_id": superseded_issue.id,
     }, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
@@ -77,9 +77,81 @@ def _attempt_context(
         "schema": "omac.amendment-attempt/v1",
         "attempt_id": request_digest[:16],
         "request_digest": request_digest,
+        "manifest_sha256": manifest_digest,
         "report_sha256": report_digest,
+        "docs_sha256": docs_snapshot["docs_sha256"],
+        "docs_file_count": len(docs_snapshot["docs_files"]),
         "supersedes_issue_id": superseded_issue.id,
         "supersedes_issue_key": superseded_issue.identifier or "",
+    }
+
+
+def _read_document_bytes(path: Path) -> bytes:
+    try:
+        return path.read_bytes()
+    except OSError as exc:
+        raise ValidationError(
+            f"Could not read authoritative docs input {path}: {exc}") from exc
+
+
+def _reject_symlink_components(path: Path) -> None:
+    absolute = Path(os.path.abspath(path))
+    for component in (absolute, *absolute.parents):
+        if component.is_symlink():
+            raise ValidationError(
+                f"Authoritative docs input must not traverse a symlink: {path}")
+
+
+def _docs_snapshot(paths: list[str]) -> dict[str, Any]:
+    entries: dict[str, bytes] = {}
+    for raw_path in sorted(set(paths)):
+        root = Path(raw_path)
+        _reject_symlink_components(root)
+        try:
+            resolved = root.resolve(strict=True)
+        except OSError as exc:
+            raise ValidationError(
+                f"Could not resolve authoritative docs input {raw_path}: {exc}") from exc
+        root_label = _portable_path(str(resolved))
+        if resolved.is_file():
+            entries[root_label] = _read_document_bytes(resolved)
+            continue
+        if not resolved.is_dir():
+            raise ValidationError(
+                f"Authoritative docs input is not a regular file or directory: {raw_path}")
+        try:
+            descendants = sorted(resolved.rglob("*"), key=lambda path: path.as_posix())
+        except OSError as exc:
+            raise ValidationError(
+                f"Could not enumerate authoritative docs input {raw_path}: {exc}") from exc
+        for candidate in descendants:
+            if candidate.is_symlink():
+                raise ValidationError(
+                    f"Authoritative docs input contains a symlink: {candidate}")
+            if candidate.is_dir():
+                continue
+            if not candidate.is_file():
+                raise ValidationError(
+                    f"Authoritative docs input contains a non-regular file: {candidate}")
+            try:
+                relative = candidate.resolve(strict=True).relative_to(resolved)
+            except (OSError, ValueError) as exc:
+                raise ValidationError(
+                    f"Authoritative docs input escapes its root: {candidate}") from exc
+            logical_path = f"{root_label}/{relative.as_posix()}"
+            entries[logical_path] = _read_document_bytes(candidate)
+    if not entries:
+        raise ValidationError("Authoritative docs inputs contain no readable files")
+    digest = hashlib.sha256()
+    for logical_path, content in sorted(entries.items()):
+        encoded_path = logical_path.encode("utf-8")
+        digest.update(len(encoded_path).to_bytes(8, "big"))
+        digest.update(encoded_path)
+        digest.update(len(content).to_bytes(8, "big"))
+        digest.update(content)
+    return {
+        "docs_sha256": digest.hexdigest(),
+        "docs_files": sorted(entries),
     }
 
 
@@ -233,10 +305,7 @@ def propose_amendment(
         raise ValidationError(ui(
             "--new-attempt cannot be combined with --resume-issue-id or --restart-authoring",
             "--new-attempt 不能与 --resume-issue-id 或 --restart-authoring 同用"))
-    if restart_authoring and (
-        not engine.store.capabilities.atomic_authoring_restart
-        or not engine.runtime.capabilities.stable_direct_run_identity
-    ):
+    if restart_authoring:
         next_action = _new_attempt_command(
             manifest_path,
             report_file=report_file,
@@ -258,6 +327,7 @@ def propose_amendment(
         )
     report, docs = _validate_inputs(
         manifest_path, report_file, docs, blocked_nodes)
+    docs_snapshot = _docs_snapshot(docs)
     if not orchestrator:
         raise ValidationError("An Orchestrator agent is required")
     if not reviewers:
@@ -329,7 +399,7 @@ def propose_amendment(
         attempt = _attempt_context(
             manifest_path,
             report=report,
-            docs=docs,
+            docs_snapshot=docs_snapshot,
             blocked_nodes=blocked_nodes,
             superseded_issue=superseded,
         )
@@ -345,23 +415,11 @@ def propose_amendment(
             "kind": "amendment",
             "relation": "supersedes",
             "report_sha256": attempt["report_sha256"],
+            "docs_sha256": attempt["docs_sha256"],
         }
         if superseded.identifier:
             superseded_ref["issue_key"] = superseded.identifier
         source_refs = [superseded_ref]
-        existing = engine.store.find_work_item_by_dag_key(
-            engine.store.config.workspace_id, dag_key)
-        if existing is not None:
-            if existing.amendment_attempt not in (None, attempt):
-                raise NeedsDecision(
-                    "Amendment attempt identity conflict",
-                    report={
-                        "reason_code": "amendment-attempt-identity-conflict",
-                        "item_id": existing.id,
-                        "dag_key": dag_key,
-                    },
-                )
-            effective_resume_issue_id = existing.id
     elif resume_issue_id is None:
         existing = engine.store.find_work_item_by_dag_key(
             engine.store.config.workspace_id, dag_key)
@@ -407,7 +465,6 @@ def propose_amendment(
             source_refs=source_refs,
             dag_key=dag_key,
             resume_item_id=effective_resume_issue_id,
-            restart_authoring=restart_authoring,
             amendment_attempt=attempt,
             reuse_dag_key=new_attempt,
             review_acceptance_doc=acceptance,

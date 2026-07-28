@@ -11,24 +11,32 @@ import yaml
 from omac.core.contract_boundaries import responsibility_summary
 from omac.core.manifest import _load_contract
 from omac.core.manifest import Contract, EvidenceMode, ProducedArtifact
+from omac.core.taskmeta import TaskKind
 from omac.engines.models import (
     AgentRunObservation, EngineConfig, PullRequestReadinessFailure, PullRequestState,
 )
 from omac.engines.models import WorkItemStatus
 from omac.engines.multica import MulticaRuntime, MulticaStore
-from omac.errors import PlatformError, ValidationError
+from omac.errors import PlatformError
 
 
-def test_multica_restart_authoring_is_unsupported_and_writes_nothing(monkeypatch):
+def test_multica_finalizes_authoring_identity_with_existing_store_writes(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    writes = []
+    expected = SimpleNamespace(id="issue-1")
     monkeypatch.setattr(
-        store, "_run_multica",
-        lambda *_args: pytest.fail("unsupported restart must not access Multica"),
-    )
+        store, "_set_metadata",
+        lambda item_id, key, value: writes.append((item_id, key, value)))
+    monkeypatch.setattr(store, "get_work_item", lambda _item_id: expected)
 
-    with pytest.raises(ValidationError, match="does not support"):
-        store.restart_authoring(
-            "issue-1", generation="generation-1", owner_nonce="owner-1")
+    observed = store.set_authoring_identity(
+        "issue-1", dag_key="amend-project-attempt-abc", kind=TaskKind.AMENDMENT)
+
+    assert observed is expected
+    assert writes == [
+        ("issue-1", "dag_key", "amend-project-attempt-abc"),
+        ("issue-1", "kind", "amendment"),
+    ]
 
 
 def test_multica_empty_ref_tombstones_suppress_legacy_payloads(monkeypatch):
@@ -1321,18 +1329,6 @@ def test_multica_runtime_lists_typed_run_identity(monkeypatch):
         AgentRunObservation(id="run-1", kind="direct", status="completed"),
         AgentRunObservation(id="run-2", kind="comment", status="running"),
     ]
-
-
-def test_restart_capability_parity_is_explicit():
-    multica_store = MulticaStore(EngineConfig(
-        engine_type="multica", workspace_id="ws"))
-    mock_engine = __import__("omac.engines", fromlist=["create_engine"]).create_engine(
-        "mock", EngineConfig(engine_type="mock", workspace_id="ws"))
-
-    assert multica_store.capabilities.atomic_authoring_restart is False
-    assert MulticaRuntime(multica_store).capabilities.stable_direct_run_identity is True
-    assert mock_engine.store.capabilities.atomic_authoring_restart is True
-    assert mock_engine.runtime.capabilities.stable_direct_run_identity is True
 
 
 def test_multica_runtime_cancel_clears_stale_assignment_without_active_run(monkeypatch):

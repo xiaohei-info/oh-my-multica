@@ -183,10 +183,12 @@ def test_recovery_guide_explains_running_dag_amendment() -> None:
         assert "definition-only" in content
     assert "都要求已有 work item" in chinese
     assert "requires an existing work item" in english
-    assert "LWW metadata" in chinese
-    assert "LWW metadata" in english
+    assert "没有引擎提供真实原子" in chinese
+    assert "No current engine exposes a real atomic" in english
     assert "report digest" in chinese
     assert "report digest" in english
+    assert "docs digest" in chinese
+    assert "docs digest" in english
 
 
 def test_orchestrator_recovery_instructions_match_resume_stage_rules() -> None:

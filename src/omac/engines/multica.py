@@ -941,6 +941,13 @@ class MulticaStore(WorkItemStore):
                 f"Could not get issue {item_id}", f"获取 issue {item_id} 失败"))
         return self._issue_to_work_item(result, self.config.workspace_id)
 
+    def set_authoring_identity(
+        self, item_id: str, *, dag_key: str, kind: TaskKind,
+    ) -> WorkItem:
+        self._set_metadata(item_id, "dag_key", dag_key)
+        self._set_metadata(item_id, KIND_KEY, kind.value)
+        return self.get_work_item(item_id)
+
     def update_work_item_metadata(
         self,
         item_id: str,

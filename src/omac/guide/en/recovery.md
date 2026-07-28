@@ -135,11 +135,11 @@ omac dag amend propose .omac/project.yaml \
   with `--resume-issue-id <issue-id>` to preserve the same issue, delivery, and
   Reviewer history.
 - Plain `--resume-issue-id` preserves a valid Reviewer-pass confirmation and
-  creates no new Agent Run. `--restart-authoring` is available only when the
-  Store exposes a real atomic conditional claim/server lock and the Runtime
-  exposes stable direct Run identities. Multica has LWW metadata only, so it
-  fails closed with exit 20 before any issue write or Agent dispatch and returns
-  a `--new-attempt` command. A new attempt preserves the old confirmation as
+  creates no new Agent Run. No current engine exposes a real atomic conditional
+  restart/dispatch API. `--restart-authoring` remains only as a compatibility
+  entry point: it fails closed with exit 20 before any issue read, write, or
+  Agent dispatch and returns a `--new-attempt` command. OMAC keeps no speculative
+  generation/journal state machine. A new attempt preserves the old confirmation as
   audit history:
 
   ```bash
@@ -151,10 +151,11 @@ omac dag amend propose .omac/project.yaml \
     --supersedes-issue-id <old-issue-id>
   ```
 
-  The attempt identity binds the manifest, report digest, docs, blocked nodes,
+  The attempt identity binds the manifest, report digest, recursive docs-content
+  digest, blocked nodes,
   and superseded issue. A crash retry reuses the same issue; a different report
   digest creates a different attempt. Metadata and source refs record the
-  superseded issue, attempt id, and report digest. The old issue is never
+  superseded issue, attempt id, report digest, and docs digest. The old issue is never
   cleared, reopened, or automatically closed. The new issue follows the normal
   authoring → Reviewer → human-confirmation flow and still targets the original
   manifest and nodes.

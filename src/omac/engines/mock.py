@@ -12,7 +12,6 @@ import tempfile
 import time
 import json
 import subprocess
-import threading
 from typing import Any, Dict, List, Optional
 
 import yaml
@@ -20,17 +19,12 @@ from ..core.machine_feedback import (
     dump_machine_feedback, parse_machine_feedback,
 )
 from ..core.taskmeta import DELIVERY_CONTENT_KEY, TaskKind, TaskPhase
-from ..core.restart import (
-    TERMINAL_RESTART_STATES, RestartClaimResult, RestartState,
-    deliverable_identity,
-)
-from ..errors import NeedsDecision, ValidationError, WorkItemNotFoundError
+from ..errors import ValidationError, WorkItemNotFoundError
 from ..i18n import ui
 from .models import (
     AgentInfo, AgentProvisionSpec, AgentRunObservation, EngineConfig, ProjectInfo, RuntimeTarget,
     MergeCommandResult, PullRequestCheckResult, PullRequestObservation,
     PullRequestReadiness, PullRequestState, RuntimeCapabilities,
-    StoreCapabilities,
     WorkItem, WorkItemStatus, WorkspaceInfo,
 )
 from .runtime import AgentRuntime
@@ -69,7 +63,6 @@ _shared_pull_requests: Dict[str, PullRequestObservation] = {}
 _shared_runs: Dict[str, List[AgentRunObservation]] = {}
 _shared_next_run_id: int = 1
 _shared_active_assignments: Dict[str, tuple[str, str]] = {}
-_restart_claim_lock = threading.Lock()
 
 # 产出后进入评审阶段(而非直接 DONE)的 kind:与真实 work submit 的产出终态一致。
 # develop 走 pr_url→DONE;final-acceptance 有独立的 _accepted_results 真实 submit 分支。
@@ -191,13 +184,6 @@ class MockStore(WorkItemStore):
             cfg_extra.get("MOCK_AUTO_COMPLETE_DELAY", "2"))
         _shared_auto_merge_on_success = str(
             cfg_extra.get("MOCK_AUTO_MERGE_ON_SUCCESS", "false")).lower() == "true"
-
-    @property
-    def capabilities(self) -> StoreCapabilities:
-        return StoreCapabilities(
-            atomic_authoring_restart=True,
-            authoring_restart_mechanism="in-memory-lock",
-        )
 
     # ==================== 测试辅助(类级) ====================
 
@@ -705,6 +691,14 @@ class MockStore(WorkItemStore):
         self._auto_complete_check(item_id)
         return _shared_work_items[item_id]
 
+    def set_authoring_identity(
+        self, item_id: str, *, dag_key: str, kind: TaskKind,
+    ) -> WorkItem:
+        item = self.get_work_item(item_id)
+        item.dag_key = dag_key
+        item.kind = kind
+        return item
+
     def update_work_item_metadata(
         self,
         item_id: str,
@@ -892,205 +886,6 @@ class MockStore(WorkItemStore):
         item.decision_required = None
         item.review_subject_digest = None
         item.phase = TaskPhase.AUTHORING
-
-    def claim_authoring_restart(
-        self, item_id: str, candidate: RestartState, *, now: float,
-    ) -> RestartClaimResult:
-        with _restart_claim_lock:
-            item = self.get_work_item(item_id)
-            existing = item.authoring_restart
-            create_new_generation = existing is None
-            if existing is not None:
-                same_request = existing.request_digest == candidate.request_digest
-                if same_request and existing.state == "confirmation":
-                    return RestartClaimResult(
-                        existing, acquired=False, confirmation_reused=True)
-                if existing.state in TERMINAL_RESTART_STATES:
-                    if existing.state == "confirmation" and not same_request:
-                        create_new_generation = True
-                    else:
-                        return RestartClaimResult(existing, acquired=False)
-                elif same_request and existing.lease_expires_at <= now:
-                    resumed = existing.evolve(
-                        owner_nonce=candidate.owner_nonce,
-                        lease_expires_at=candidate.lease_expires_at,
-                    )
-                    item.authoring_restart = resumed
-                    return RestartClaimResult(resumed, acquired=True, resumed=True)
-                else:
-                    return RestartClaimResult(existing, acquired=False)
-
-            base_matches = create_new_generation and (
-                item.kind.value == candidate.base_kind
-                and item.phase.value == candidate.base_phase
-                and item.status.value == candidate.base_status
-                and item.review_subject_digest == candidate.base_review_subject_digest
-                and deliverable_identity(item) == candidate.base_deliverable_identity
-            )
-            if not base_matches or item.status != WorkItemStatus.IN_REVIEW:
-                raise NeedsDecision(
-                    "amendment restart base changed; inspect current confirmation before retry",
-                    report={
-                        "item_id": item_id,
-                        "reason_code": "restart-base-mismatch",
-                        "phase": item.phase.value,
-                        "status": item.status.value,
-                    },
-                )
-            item.authoring_restart = candidate
-            return RestartClaimResult(candidate, acquired=True)
-
-    def guard_authoring_restart(
-        self, item_id: str, *, generation: str, owner_nonce: str,
-    ) -> RestartState:
-        current = self.get_work_item(item_id).authoring_restart
-        if (
-            current is None
-            or current.generation != generation
-            or current.owner_nonce != owner_nonce
-        ):
-            raise NeedsDecision(
-                "amendment restart generation ownership changed",
-                report={
-                    "item_id": item_id,
-                    "reason_code": "restart-generation-conflict",
-                    "generation": generation,
-                },
-            )
-        return current
-
-    def update_authoring_restart(
-        self,
-        item_id: str,
-        *,
-        generation: str,
-        owner_nonce: str,
-        state: RestartState,
-    ) -> RestartState:
-        self.guard_authoring_restart(
-            item_id, generation=generation, owner_nonce=owner_nonce)
-        self.get_work_item(item_id).authoring_restart = state
-        observed = self.guard_authoring_restart(
-            item_id, generation=generation, owner_nonce=owner_nonce)
-        if observed != state:
-            raise NeedsDecision(
-                "amendment restart journal write was not preserved",
-                report={
-                    "item_id": item_id,
-                    "reason_code": "restart-journal-write-lost",
-                    "generation": generation,
-                    "outcome": "unknown_partial",
-                },
-            )
-        return observed
-
-    def restart_authoring(
-        self,
-        item_id: str,
-        *,
-        generation: str,
-        owner_nonce: str,
-    ) -> WorkItem:
-        claim = self.guard_authoring_restart(
-            item_id, generation=generation, owner_nonce=owner_nonce)
-        item = self.get_work_item(item_id)
-        if item.status == WorkItemStatus.DONE:
-            raise NeedsDecision(
-                ui(
-                    "The amendment confirmation was already applied; authoring cannot be restarted",
-                    "amendment confirmation 已经应用；不能重开 authoring"),
-                report={
-                    "item_id": item_id,
-                    "reason_code": "restart-base-mismatch",
-                    "phase": item.phase.value,
-                    "status": item.status.value,
-                },
-            )
-        clean_authoring = (
-            item.phase == TaskPhase.AUTHORING
-            and item.deliverable is None
-            and not item.deliverable_ref
-            and item.review_verdict is None
-            and not item.review_report_ref
-            and not item.review_ledger_ref
-            and not item.machine_feedback_ref
-            and not item.decision_required
-        )
-        if clean_authoring and claim.state in {
-            "claimed", "cleaned", "refreshed", "dispatching", "dispatched",
-        }:
-            item.status = WorkItemStatus.TODO
-            if claim.state == "claimed":
-                item.authoring_restart = claim.evolve(state="cleaned")
-            return item
-        if item.kind != TaskKind.AMENDMENT or item.phase != TaskPhase.CONFIRMATION:
-            raise NeedsDecision(
-                ui(
-                    "Only an amendment in human confirmation can restart authoring",
-                    "只有处于人工确认阶段的 amendment 才能重开 authoring"),
-                report={
-                    "item_id": item_id,
-                    "reason_code": "restart-base-mismatch",
-                    "phase": item.phase.value,
-                    "status": item.status.value,
-                },
-            )
-        partial_restart = (
-            item.review_subject_digest is None
-            and item.deliverable is None
-            and not item.deliverable_ref
-            and item.review_verdict is None
-        )
-        base_matches = (
-            item.status.value == claim.base_status
-            and item.review_subject_digest == claim.base_review_subject_digest
-            and deliverable_identity(item) == claim.base_deliverable_identity
-        )
-        if not partial_restart and not base_matches:
-            raise NeedsDecision(
-                ui(
-                    "Amendment confirmation changed before authoring restart; read it again and retry",
-                    "重开 authoring 前 amendment confirmation 已变化；请重新读取后再试"),
-                report={
-                    "item_id": item_id,
-                    "reason_code": "restart-base-mismatch",
-                    "phase": item.phase.value,
-                    "status": item.status.value,
-                },
-            )
-        if (
-            not partial_restart
-            and item.review_verdict not in {"pass", "pass-with-nits"}
-        ):
-            raise ValidationError(ui(
-                "Amendment authoring restart requires a Reviewer-pass confirmation",
-                "重开 amendment authoring 需要 Reviewer 已通过的 confirmation"))
-
-        item.deliverable = None
-        item.deliverable_ref = None
-        item.project_rules = None
-        item.project_rules_ref = None
-        item.verification = None
-        item.verification_ref = None
-        item.review_verdict = None
-        item.review_comment = None
-        item.review_report = None
-        item.review_report_ref = None
-        item.review_subject_digest = None
-        item.review_obligations = []
-        item.review_obligations_ref = None
-        item.review_ledger = None
-        item.review_ledger_ref = None
-        item.review_continuation = None
-        item.bounces.review = 0
-        item.decision_required = None
-        item.machine_feedback = None
-        item.machine_feedback_ref = None
-        item.phase = TaskPhase.AUTHORING
-        item.status = WorkItemStatus.TODO
-        _shared_assigned_items.pop(item_id, None)
-        item.authoring_restart = claim.evolve(state="cleaned")
-        return item
 
     def prepare_review_cycle(self, item_id: str, subject_digest: str) -> WorkItem:
         item = self.get_work_item(item_id)
