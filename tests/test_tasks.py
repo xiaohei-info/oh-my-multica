@@ -805,21 +805,86 @@ def test_reject_twice_then_pass():
     assert eng.store.get_comments(res["item_id"]) == []
 
 
-def test_exhausted_needs_decision():
+def test_amendment_review_budget_exhaustion_projects_decision_and_resumes():
     eng = _engine()
-    MockStore.set_kind_delivery("plan", {"plan": "计划正文"})
+    MockStore.set_kind_delivery("amendment", {"amendment": "schema: omac.dag-amendment/v1"})
     MockStore.set_review_rejects(99)  # 永远 reject
     with pytest.raises(NeedsDecision) as exc:
-        run_task(eng, TaskKind.PLAN, _payload(), "alice",
+        run_task(eng, TaskKind.AMENDMENT, _payload(), "alice",
                  reviewers=["bob"], max_revisions=3, poll=_poll)
     report = exc.value.report
     assert report["rounds"] == 3
     assert report["last_opinion"]
     assert report["item_id"]
-    assert report["kind"] == "plan"
+    assert report["kind"] == "amendment"
+    assert report["phase"] == "review"
+    assert report["gate"] == "review"
+    assert report["resume_issue_id"] == report["item_id"]
     # 全程同一 issue id
     assert len(eng.store.list_work_items("ws")) == 1
-    assert report["item_id"] == eng.store.list_work_items("ws")[0].id
+    item = eng.store.list_work_items("ws")[0]
+    assert report["item_id"] == item.id
+    assert item.status == WorkItemStatus.BLOCKED
+    assert item.phase == TaskPhase.REVIEW
+    assert item.decision_required == {
+        "schema": "omac.decision-required/v1",
+        "reason_code": "review-budget-exhausted",
+        "kind": "amendment",
+        "phase": "review",
+        "gate": "review",
+        "rounds": 3,
+        "resume_issue_id": item.id,
+        "review_ledger_ref": item.review_ledger_ref,
+    }
+    shown = build_show_output(item, "orchestrator:alice")
+    assert shown["context"]["decision_required"] == item.decision_required
+
+    MockStore.set_review_rejects(0)
+    resumed = run_task(
+        eng,
+        TaskKind.AMENDMENT,
+        _payload(),
+        "alice",
+        reviewers=["bob"],
+        max_revisions=4,
+        poll=_poll,
+        resume_item_id=item.id,
+    )
+    assert resumed["item_id"] == item.id
+    assert resumed["verdict"] == "pass"
+    assert eng.store.get_work_item(item.id).decision_required is None
+
+
+def test_machine_gate_budget_exhaustion_projects_blocked_decision():
+    eng = _engine()
+    MockStore.set_kind_delivery(
+        "amendment", {"amendment": "schema: omac.dag-amendment/v1"})
+
+    with pytest.raises(NeedsDecision) as exc:
+        run_task(
+            eng,
+            TaskKind.AMENDMENT,
+            _payload(),
+            "alice",
+            reviewers=["bob"],
+            max_revisions=1,
+            guard=lambda _item: ["proposal is not executable"],
+            poll=_poll,
+        )
+
+    item = eng.store.get_work_item(exc.value.report["item_id"])
+    assert item.status == WorkItemStatus.BLOCKED
+    assert item.phase == TaskPhase.REVIEW
+    assert item.decision_required == {
+        "schema": "omac.decision-required/v1",
+        "reason_code": "guard-budget-exhausted",
+        "kind": "amendment",
+        "phase": "review",
+        "gate": "guard",
+        "rounds": 1,
+        "resume_issue_id": item.id,
+        "machine_feedback_ref": item.machine_feedback_ref,
+    }
 
 
 def _exhausted_decompose_review(
@@ -966,6 +1031,9 @@ def test_final_pass_with_nits_exhaustion_can_continue_one_review_round():
         eng, 1, dag_key=item.dag_key,
         reason="operator approved final nits recheck")
     assert decision["mode"] == "review-only"
+    authorized = eng.store.get_work_item(item.id)
+    assert authorized.status == WorkItemStatus.IN_REVIEW
+    assert authorized.decision_required == {}
     MockStore.set_review_verdict("pass")
 
     resumed = _engine()

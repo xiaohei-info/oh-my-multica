@@ -46,6 +46,10 @@ omac plan resume --plan-id p-xxxx
 
 - `continue-review` 在同一 work item 上写入小型 `review_continuation` decision，绝对上限
   只增加一轮；它不清零 `review_bounce`，未消费上一轮授权时也拒绝继续叠加。
+- review 或 machine guard 的预算耗尽时，OMAC 会把同一 issue 投影为
+  `status=blocked`、`phase=review`，并写入有界的 `omac.decision-required/v1`
+  metadata（含 gate、轮次、resume issue ID 和已有证据引用）。完整问题仍由
+  review 或 machine-feedback 附件承载，不复制进 metadata。
 - exhausted reject 会通过 OMAC `reset_review` 和 status 恢复到 authoring/todo，让 producer
   先更新交付；final pass-with-nits 已有新交付时只开放下一 Reviewer round。
 - 该命令不修改 `.omac/config.yaml` 或 `retry.review`，因此不会为了单次人工决策制造项目
@@ -93,6 +97,10 @@ omac dag amend propose .omac/project.yaml \
   机器门，再交给独立 Reviewer。
 - Reviewer pass 后命令以 exit 20 停在 `confirmation`，不会自动应用。人工审阅生成的
   amendment 文件后再运行返回的 `omac dag amend accept ...` 命令。
+- amendment 的 review 或 machine guard 预算耗尽不是 confirmation。issue 会停在
+  `blocked/review` 并携带 `decision_required`；人工决定继续后，使用原
+  `omac dag amend propose ... --resume-issue-id <issue-id>` 命令续接同一 issue、交付与
+  Reviewer 历史，不创建新的 amendment issue。
 - accept 在 manifest 写锁内执行 CAS，并原子写入 manifest 定义与逐节点 apply ledger。
   Store 不与文件系统共享事务，因此这不是跨系统原子事务；ledger 以
   `pending/syncing/synced/observed_progress` 记录每个节点的补偿进度。进程崩溃后，重复 accept

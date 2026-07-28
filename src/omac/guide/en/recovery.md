@@ -64,6 +64,11 @@ omac plan resume --plan-id p-xxxx
   work item. It increases the absolute limit by one, never resets
   `review_bounce`, and refuses to stack another decision before the current one
   is consumed.
+- When the review or machine-guard budget is exhausted, OMAC projects the same
+  issue as `status=blocked`, `phase=review`, with bounded
+  `omac.decision-required/v1` metadata containing the gate, round count, resume
+  issue ID, and available evidence references. Complete findings remain in the
+  review or machine-feedback attachments instead of being copied into metadata.
 - An exhausted reject is restored through OMAC `reset_review` and todo status so
   the producer revises first. A final pass-with-nits delivery that was already
   revised proceeds directly to its next Reviewer round.
@@ -123,6 +128,11 @@ omac dag amend propose .omac/project.yaml \
 - Reviewer pass returns exit 20 in `confirmation`; it never applies automatically.
   Inspect the generated amendment and run the returned
   `omac dag amend accept ...` command.
+- Exhausted amendment review or machine-guard budgets are not confirmation. The
+  issue remains at `blocked/review` with `decision_required`; after an explicit
+  decision to continue, rerun the original `omac dag amend propose ...` command
+  with `--resume-issue-id <issue-id>` to preserve the same issue, delivery, and
+  Reviewer history.
 - Accept runs under the manifest write lock with CAS and atomically writes the
   manifest definition plus a per-node apply ledger. The Store and filesystem do
   not share a transaction, so this is not a cross-system atomic transaction.
