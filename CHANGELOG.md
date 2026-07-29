@@ -10,6 +10,8 @@ This file records public changes to oh-my-multica. The format follows
 
 ### Changed
 
+- Develop handoff and restart recovery now follow the current delivery review
+  subject, while Multica rerun errors observe for an already-created Run before retry.
 - Removed the speculative amendment restart generation/journal framework because
   no current engine offers atomic conditional restart/dispatch. The retained
   `--restart-authoring` flag fails closed before remote access and directs users
