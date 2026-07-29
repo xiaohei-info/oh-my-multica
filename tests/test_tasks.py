@@ -24,7 +24,9 @@ from omac.core.amendment import (
 )
 from omac.core.manifest import Contract, Manifest, Node
 from omac.core.review_convergence import REVIEW_PROTOCOL_VERSION, open_blockers
-from omac.core.taskmeta import Bounces, TaskKind, TaskPhase
+from omac.core.taskmeta import (
+    Bounces, TaskKind, TaskPhase, WorkerHandoffIntent,
+)
 from omac.engines import create_engine
 from omac.engines.mock import MockStore
 from omac.engines.models import (
@@ -2223,6 +2225,19 @@ _AMENDMENT_ACTIVITY_FIELD_CASES = [
     ("review_ledger", {"schema": "omac.review-ledger/v1"}, "review_ledger"),
     ("review_ledger_ref", {"attachment_id": "ledger"}, "review_ledger_ref"),
     ("review_continuation", {"authorized_rounds": 1}, "review_continuation"),
+    (
+        "worker_handoff",
+        WorkerHandoffIntent(
+            schema="omac.worker-handoff/v1",
+            state="pending",
+            target_worker="alice",
+            gate="review",
+            source_review_subject_digest="subject",
+            source_review_round=1,
+            target_review_bounce=1,
+        ),
+        "worker_handoff",
+    ),
     ("decision_required", {"reason": "human"}, "decision_required"),
     ("bounces", Bounces(worker=1), "bounces.worker"),
     ("bounces", Bounces(ci=1), "bounces.ci"),

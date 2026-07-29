@@ -35,7 +35,8 @@ from ..core.taskmeta import (
     REVIEW_REPORT_REF_KEY,
     REVIEW_SUBJECT_DIGEST_KEY,
     SOURCE_REFS_KEY, TaskKind, TaskPhase, VERIFICATION_REF_KEY, WORKER_BOUNCE_KEY,
-    parse_bounces, parse_kind, parse_phase,
+    WORKER_HANDOFF_KEY, WorkerHandoffIntent,
+    parse_bounces, parse_kind, parse_phase, parse_worker_handoff,
 )
 from ..errors import (
     AuthError, PlatformError, ValidationError, WorkItemNotFoundError,
@@ -72,7 +73,7 @@ _KNOWN_WORK_ITEM_METADATA_KEYS = {
     PROJECT_RULES_REF_KEY, REVIEW_BOUNCE_KEY, REVIEW_CONTINUATION_KEY,
     REVIEW_LEDGER_REF_KEY, REVIEW_OBLIGATIONS_KEY, REVIEW_OBLIGATIONS_REF_KEY,
     REVIEW_REPORT_REF_KEY, REVIEW_SUBJECT_DIGEST_KEY, SOURCE_REFS_KEY,
-    VERIFICATION_REF_KEY, WORKER_BOUNCE_KEY,
+    VERIFICATION_REF_KEY, WORKER_BOUNCE_KEY, WORKER_HANDOFF_KEY,
 }
 _KNOWN_ISSUE_FIELDS = {
     "id", "identifier", "title", "description", "status", "metadata",
@@ -777,6 +778,8 @@ class MulticaStore(WorkItemStore):
             review_continuation=(
                 review_continuation
                 if isinstance(review_continuation, dict) else None),
+            worker_handoff=parse_worker_handoff(
+                self._json_metadata(metadata, WORKER_HANDOFF_KEY)),
             decision_required=self._json_metadata(metadata, DECISION_REQUIRED_KEY),
             amendment_attempt=(
                 amendment_attempt if isinstance(amendment_attempt, dict) else None),
@@ -1025,6 +1028,7 @@ class MulticaStore(WorkItemStore):
         review_ledger: Optional[Dict[str, Any]] = None,
         review_ledger_source: Optional[str] = None,
         review_continuation: Optional[Dict[str, Any]] = None,
+        worker_handoff: Optional[WorkerHandoffIntent | Dict[str, Any]] = None,
         decision_required: Optional[Dict[str, Any]] = None,
         amendment_attempt: Optional[Dict[str, Any]] = None,
         phase: Optional[TaskPhase] = None,
@@ -1107,6 +1111,13 @@ class MulticaStore(WorkItemStore):
         if review_continuation is not None:
             self._set_metadata(
                 item_id, REVIEW_CONTINUATION_KEY, review_continuation)
+        if worker_handoff is not None:
+            value = (
+                worker_handoff.as_dict()
+                if isinstance(worker_handoff, WorkerHandoffIntent)
+                else worker_handoff
+            )
+            self._set_metadata(item_id, WORKER_HANDOFF_KEY, value)
         if review_subject_digest is not None:
             self._set_metadata(
                 item_id, REVIEW_SUBJECT_DIGEST_KEY, review_subject_digest)
