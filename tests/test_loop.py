@@ -22,7 +22,9 @@ from omac.core.manifest import (
     save_manifest,
 )
 from omac.core.review_convergence import (
-    REVIEW_PROTOCOL_VERSION, build_review_obligations, open_blockers)
+    REVIEW_PROTOCOL_VERSION, build_review_obligations, open_blockers,
+    review_subject_digest,
+)
 from omac.engines import create_engine
 from omac.engines.mock import MockRuntime, MockStore
 from omac.core.taskmeta import TaskPhase
@@ -1175,6 +1177,10 @@ class TestReviewerRejectBoundedFallback:
             artifacts={"pr_url": f"https://mock.example.com/pr/{item.id}"},
             verification={
                 "commands": [_business_command()],
+                "integration_gates": [{
+                    "name": "setup-gate",
+                    "commands": [_business_command()],
+                }],
                 "pr_base": "main",
                 "coverage": 90,
             },
@@ -1192,6 +1198,24 @@ class TestReviewerRejectBoundedFallback:
         eng.store.update_status(
             item.id, __import__("omac").engines.models.WorkItemStatus.IN_REVIEW)
         return manifest, eng, item
+
+    @staticmethod
+    def _submit_revision(eng, item, revision=2):
+        eng.store.update_work_item_metadata(
+            item.id,
+            artifacts={"pr_url": f"https://mock.example.com/pr/{item.id}-v{revision}"},
+            verification={
+                "commands": [_business_command()],
+                "integration_gates": [{
+                    "name": "revision-gate",
+                    "commands": [_business_command()],
+                }],
+                "pr_base": "main",
+                "coverage": 90,
+                "revision": revision,
+            },
+        )
+        eng.store.update_status(item.id, WorkItemStatus.DONE)
 
     def test_retry_review_zero_blocks_immediately(self, tmp_path):
         """retry.review=0 → 首次 reject 立即 blocked,review_bounce 保持 0。"""
@@ -1228,6 +1252,226 @@ class TestReviewerRejectBoundedFallback:
         assert got.status == WorkItemStatus.IN_PROGRESS
         assert got.review_verdict is None
         assert got.bounces.review == 1
+
+    def test_restart_new_delivery_without_assignee_prepares_and_assigns_reviewer(
+        self, tmp_path, monkeypatch,
+    ):
+        """reject 返工提交后 assignee 为空时，prepare 后必须 assign 再 wake。"""
+        from omac.engines import create_engine
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        eng.store.update_work_item_metadata(
+            item.id, review_obligations=build_review_obligations(item))
+        old_ledger = {
+            "schema": "omac.review-ledger/v1",
+            "cycles": [{
+                "round": 1,
+                "subject_digest": item.review_subject_digest,
+                "verdict": "reject",
+            }],
+            "blockers": [{
+                "blocker_id": "BLK-old",
+                "root_cause_key": "old-reject",
+                "status": "open",
+            }],
+        }
+        eng.store.update_work_item_metadata(
+            item.id,
+            review_report=_review_report(item, "reject"),
+            review_ledger=old_ledger,
+        )
+
+        tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        eng.store.clear_assignment(item.id)
+        self._submit_revision(eng, item)
+        manifest.nodes["a"].status = "in_progress"
+        save_manifest(manifest, path)
+
+        events = []
+        original_prepare = eng.store.prepare_review_cycle
+        original_assign = eng.store.assign_work_item
+
+        def prepare(item_id, subject_digest):
+            events.append("prepare")
+            return original_prepare(item_id, subject_digest)
+
+        def assign(item_id, assignee, role):
+            if role == "reviewer":
+                current = eng.store.get_work_item(item_id)
+                assert current.phase == TaskPhase.REVIEW
+                assert current.status == WorkItemStatus.IN_REVIEW
+                assert current.review_report is None
+                assert current.review_ledger is old_ledger
+                events.append("assign")
+            return original_assign(item_id, assignee, role)
+
+        def wake(item_id, agent, role):
+            if role == "reviewer":
+                events.append("wake")
+
+        monkeypatch.setattr(eng.store, "prepare_review_cycle", prepare)
+        monkeypatch.setattr(eng.store, "assign_work_item", assign)
+        monkeypatch.setattr(eng.runtime, "wake", wake)
+
+        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+
+        recovered = eng.store.get_work_item(item.id)
+        assert result.state == "running"
+        assert events == ["prepare", "assign", "wake"]
+        assert manifest.nodes["a"].status == "in_review"
+        assert recovered.phase == TaskPhase.REVIEW
+        assert recovered.review_verdict is None
+        assert recovered.review_report is None
+        assert recovered.review_ledger is old_ledger
+        assert recovered.review_subject_digest == review_subject_digest(
+            recovered, recovered.bounces.review + 1)
+
+    def test_reject_without_assignee_prepares_worker_before_assign_and_wake(
+        self, tmp_path, monkeypatch,
+    ):
+        """reject→worker 无 assignee 时，authoring/status 必须在 assign 前就绪。"""
+        from omac.engines import create_engine
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        eng.store.update_work_item_metadata(
+            item.id, review_obligations=build_review_obligations(item))
+        eng.store.update_work_item_metadata(
+            item.id, review_report=_review_report(item, "reject"))
+        eng.store.clear_assignment(item.id)
+
+        events = []
+        original_assign = eng.store.assign_work_item
+
+        def assign(item_id, assignee, role):
+            if role == "worker":
+                current = eng.store.get_work_item(item_id)
+                assert current.phase == TaskPhase.AUTHORING
+                assert current.status == WorkItemStatus.IN_PROGRESS
+                assert current.review_verdict is None
+                events.append("assign")
+            return original_assign(item_id, assignee, role)
+
+        def wake(item_id, agent, role):
+            if role == "worker":
+                events.append("wake")
+
+        monkeypatch.setattr(eng.store, "assign_work_item", assign)
+        monkeypatch.setattr(eng.runtime, "wake", wake)
+
+        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+
+        recovered = eng.store.get_work_item(item.id)
+        assert result.state == "running"
+        assert events == ["assign", "wake"]
+        assert manifest.nodes["a"].status == "in_progress"
+        assert recovered.review_verdict is None
+        assert recovered.bounces.review == 1
+
+    @pytest.mark.parametrize("stale_verdict", ["pass", "pass-with-nits", "reject"])
+    def test_stale_pass_cannot_merge_new_worker_delivery(
+        self, tmp_path, monkeypatch, stale_verdict,
+    ):
+        """in_progress 新交付不能消费旧 subject 的任何 review verdict。"""
+        from omac.engines import create_engine
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        eng.store.update_work_item_metadata(
+            item.id, review_obligations=build_review_obligations(item))
+        stale_subject = eng.store.get_work_item(item.id).review_subject_digest
+        eng.store.update_work_item_metadata(
+            item.id,
+            review_verdict=stale_verdict,
+            review_report=_review_report(item, stale_verdict),
+            phase=TaskPhase.AUTHORING,
+        )
+        self._submit_revision(eng, item)
+        manifest.nodes["a"].status = "in_progress"
+        save_manifest(manifest, path)
+        monkeypatch.setattr(
+            eng.store,
+            "request_pull_request_merge",
+            lambda *_args, **_kwargs: pytest.fail(
+                "stale pass must not request merge"),
+        )
+
+        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+
+        recovered = eng.store.get_work_item(item.id)
+        assert result.state == "running"
+        assert manifest.nodes["a"].status == "in_review"
+        assert recovered.status == WorkItemStatus.IN_REVIEW
+        assert recovered.review_verdict is None
+        assert recovered.review_subject_digest != stale_subject
+
+    def test_same_subject_active_reviewer_is_not_assigned_or_woken_again(
+        self, tmp_path, monkeypatch,
+    ):
+        """manifest 落后于 Store 时，同 subject 的活跃 reviewer 不得重派。"""
+        from omac.engines import create_engine
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        current = eng.store.get_work_item(item.id)
+        current.review_verdict = None
+        current.review_report = None
+        subject = current.review_subject_digest
+        reviewer_assignments = len([
+            entry for entry in eng.store.assign_log if entry[2] == "reviewer"])
+        manifest.nodes["a"].status = "in_progress"
+        save_manifest(manifest, path)
+        monkeypatch.setattr(
+            eng.store,
+            "assign_work_item",
+            lambda *_args, **_kwargs: pytest.fail(
+                "active reviewer must not be assigned again"),
+        )
+        monkeypatch.setattr(
+            eng.runtime,
+            "wake",
+            lambda *_args, **_kwargs: pytest.fail(
+                "active reviewer must not be woken again"),
+        )
+
+        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+
+        recovered = eng.store.get_work_item(item.id)
+        assert result.state == "running"
+        assert manifest.nodes["a"].status == "in_review"
+        assert recovered.review_subject_digest == subject
+        assert len([
+            entry for entry in eng.store.assign_log if entry[2] == "reviewer"
+        ]) == reviewer_assignments
+
+    def test_reject_rework_review_pass_merges_to_done(self):
+        """正常 reject→rework→review→pass→merge 完整收敛。"""
+        manifest = _manifest([
+            _node("a", reviewer="bob", contract=_contract()),
+        ])
+        path = _tmp_manifest_path(manifest)
+        eng = _engine()
+        MockStore.set_review_verdict_sequence(["reject", "pass"])
+
+        result = _loop_to_settle(eng.store, eng.runtime, manifest, path)
+
+        item = eng.store.get_work_item(manifest.nodes["a"].work_item_id)
+        assert result.state == "converged"
+        assert manifest.nodes["a"].status == "done"
+        assert manifest.nodes["a"].merged is True
+        assert item.status == WorkItemStatus.DONE
+        assert item.bounces.review == 1
+        assert [cycle["verdict"] for cycle in item.review_ledger["cycles"]] == [
+            "reject", "pass",
+        ]
+        assert len({
+            cycle["subject_digest"] for cycle in item.review_ledger["cycles"]
+        }) == 2
 
     def test_downstream_artifact_review_request_needs_decision_without_rework(self, tmp_path):
         from omac.engines import create_engine
@@ -1325,8 +1569,8 @@ class TestReviewerRejectBoundedFallback:
         assert got.decision_required is None
         assert got.bounces.review == 1
 
-    def test_pass_with_nits_accepts_worker_followup_without_second_review(self, tmp_path):
-        """pass-with-nits 只回 worker 修一次;worker 重交后直接 done,不再派 reviewer。"""
+    def test_pass_with_nits_worker_followup_requires_fresh_review(self, tmp_path):
+        """pass-with-nits 返工形成新 subject，必须 fresh review 后才能 merge。"""
         from omac.engines import create_engine
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
         path = str(tmp_path / "m.yaml")
@@ -1348,7 +1592,7 @@ class TestReviewerRejectBoundedFallback:
         assert got.status == WorkItemStatus.IN_PROGRESS
         assert got.review_verdict == "pass-with-nits"
         assert got.decision_required is None
-        assert got.bounces.review == 0
+        assert got.bounces.review == 1
 
         reviewer_dispatches_before_followup = len([
             entry for entry in eng.store.assign_log if entry[2] == "reviewer"])
@@ -1365,16 +1609,28 @@ class TestReviewerRejectBoundedFallback:
         eng.store.update_status(item.id, WorkItemStatus.DONE)
         second = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
 
-        assert second.state == "converged"
-        assert manifest.nodes["a"].status == "done"
-        assert "a" not in second.failed
+        assert second.state == "running"
+        assert manifest.nodes["a"].status == "in_review"
         reviewer_dispatches_after_followup = len([
             entry for entry in eng.store.assign_log if entry[2] == "reviewer"])
-        assert reviewer_dispatches_after_followup == reviewer_dispatches_before_followup
+        assert reviewer_dispatches_after_followup == reviewer_dispatches_before_followup + 1
         got = eng.store.get_work_item(item.id)
-        assert got.status == WorkItemStatus.DONE
+        assert got.status == WorkItemStatus.IN_REVIEW
         assert got.review_verdict is None
-        assert got.bounces.review == 0
+        eng.store.update_work_item_metadata(
+            item.id,
+            review_verdict="pass",
+            review_report=_review_report(got, "pass"),
+        )
+
+        third = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+
+        got = eng.store.get_work_item(item.id)
+        assert third.state == "converged"
+        assert manifest.nodes["a"].status == "done"
+        assert got.status == WorkItemStatus.DONE
+        assert got.review_verdict == "pass"
+        assert got.bounces.review == 1
 
     def test_pass_with_nits_cannot_bypass_obligation_evidence_gate(self, tmp_path):
         from omac.engines import create_engine
@@ -1555,8 +1811,15 @@ class TestReviewerRejectBoundedFallback:
         eng.store.update_work_item_metadata(
             item.id, review_verdict=None, review_report=None, review_comment=None,
             artifacts={"pr_url": f"https://mock.example.com/pr/{item.id}"},
-            verification={"commands": [_business_command()],
-                         "pr_base": "main", "coverage": 90})
+            verification={
+                "commands": [_business_command()],
+                "integration_gates": [{
+                    "name": "revision-gate",
+                    "commands": [_business_command()],
+                }],
+                "pr_base": "main",
+                "coverage": 90,
+            })
         eng.store.update_status(item.id, WorkItemStatus.DONE)
         tick(eng.store, eng.runtime, manifest, fpath, max_parallel=4)
         set_node(manifest, "a", status="in_review")
@@ -1626,8 +1889,15 @@ class TestReviewerRejectFallbackRollback:
         eng.store.update_work_item_metadata(
             item.id,
             artifacts={"pr_url": f"https://mock.example.com/pr/{item.id}"},
-            verification={"commands": [_business_command()],
-                         "pr_base": "main", "coverage": 90})
+            verification={
+                "commands": [_business_command()],
+                "integration_gates": [{
+                    "name": "setup-gate",
+                    "commands": [_business_command()],
+                }],
+                "pr_base": "main",
+                "coverage": 90,
+            })
         from omac.engines.models import WorkItemStatus
         eng.store.update_status(item.id, WorkItemStatus.DONE)
         tick(eng.store, eng.runtime, manifest, fpath, max_parallel=4)
