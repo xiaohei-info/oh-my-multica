@@ -383,6 +383,45 @@ def _review_projection_present(item) -> bool:
     )
 
 
+def _review_outcome_present(item) -> bool:
+    return bool(
+        item.review_verdict is not None
+        or item.review_comment not in {None, ""}
+        or item.machine_feedback not in (None, {})
+        or item.review_report is not None
+        or item.decision_required is not None
+    )
+
+
+def _dispatch_reviewer_after_invalid_worker_handoff(
+    store: WorkItemStore,
+    runtime: AgentRuntime,
+    manifest: Manifest,
+    key: str,
+) -> bool:
+    """保留 invalid intent，直到当前 delivery 的 fresh Reviewer 已幂等派发。"""
+    node = manifest.nodes[key]
+    item_id = node.work_item_id
+    current = store.get_work_item(item_id)
+    subject_digest = _review_subject_for_current_delivery(
+        manifest, key, current)
+    fresh_projection = (
+        current.phase == TaskPhase.REVIEW
+        and current.review_subject_digest == subject_digest
+        and not _review_outcome_present(current)
+    )
+    if not fresh_projection and (
+        current.phase != TaskPhase.AUTHORING
+        or _review_projection_present(current)
+    ):
+        store.reset_review(item_id)
+
+    dispatched = _dispatch_reviewer_for_current_subject(
+        store, runtime, manifest, key)
+    store.update_work_item_metadata(item_id, worker_handoff={})
+    return dispatched
+
+
 def _worker_handoff_is_resumable(
     manifest: Manifest, key: str, item,
 ) -> bool:
@@ -660,23 +699,9 @@ def collect_results(
 
         if item.worker_handoff is not None:
             if not _worker_handoff_is_resumable(manifest, key, item):
-                try:
-                    store.update_work_item_metadata(
-                        node.work_item_id, worker_handoff={})
-                    store.reset_review(node.work_item_id)
-                    _dispatch_reviewer_for_current_subject(
-                        store, runtime, manifest, key)
-                    set_node(manifest, key, status="in_review")
-                except PlatformError as exc:
-                    store.update_status(
-                        node.work_item_id, WorkItemStatus.BLOCKED)
-                    store.add_comment(node.work_item_id, ui(
-                        f"Failed to invalidate stale worker handoff: {exc}",
-                        f"失效过期 worker handoff 失败: {exc}"))
-                    set_node(manifest, key, status="blocked")
-                    failures[key] = ui(
-                        f"Failed to invalidate stale worker handoff: {exc}",
-                        f"失效过期 worker handoff 失败: {exc}")
+                _dispatch_reviewer_after_invalid_worker_handoff(
+                    store, runtime, manifest, key)
+                set_node(manifest, key, status="in_review")
                 continue
             _dispatch_worker_handoff(
                 store, runtime, manifest, key)
