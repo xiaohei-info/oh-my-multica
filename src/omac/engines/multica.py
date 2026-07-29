@@ -1217,6 +1217,7 @@ class MulticaStore(WorkItemStore):
         self._set_metadata(item_id, "review_verdict", "")
         self._set_metadata(item_id, "review_comment", "")
         self._set_metadata(item_id, MACHINE_FEEDBACK_REF_KEY, "{}")
+        self._set_metadata(item_id, REVIEW_REPORT_REF_KEY, "{}")
         self._set_metadata(item_id, DECISION_REQUIRED_KEY, "{}")
         self._set_metadata(item_id, REVIEW_SUBJECT_DIGEST_KEY, "")
         self._set_metadata(item_id, PHASE_KEY, TaskPhase.AUTHORING.value)
@@ -1428,6 +1429,13 @@ class MulticaRuntime(AgentRuntime):
                 not in _RERUNNABLE_DIRECT_RUN_STATUSES
             ):
                 return None
+        rerun_source = {
+            "id": str(latest["id"]) if latest.get("id") else None,
+            "agent_id": (
+                str(latest["agent_id"])
+                if latest.get("agent_id") else None
+            ),
+        }
         direct_run_ids = _direct_run_ids(runs)
         try:
             self._store._run_multica([
@@ -1438,9 +1446,39 @@ class MulticaRuntime(AgentRuntime):
                 observed_runs = self._issue_runs(item_id)
             except PlatformError:
                 raise rerun_error from None
-            if _direct_run_ids(observed_runs) - direct_run_ids:
+            source_id = rerun_source["id"]
+            if not source_id:
+                raise rerun_error from None
+            candidates = [
+                run for run in observed_runs
+                if (run.get("kind") or "direct") == "direct"
+                and run.get("id")
+                and str(run["id"]) not in direct_run_ids
+                and source_id in {
+                    str(parent_id)
+                    for parent_id in (
+                        run.get("retry_of_task_id"),
+                        run.get("parent_task_id"),
+                    )
+                    if parent_id
+                }
+            ]
+            if not candidates:
+                raise rerun_error from None
+            try:
+                resolved_agent_id = self._store._resolve_agent_id(agent)
+            except PlatformError:
+                raise rerun_error from None
+            if not resolved_agent_id:
+                raise rerun_error from None
+            expected_agent_id = str(resolved_agent_id)
+            if any(
+                run.get("agent_id")
+                and str(run["agent_id"]) == expected_agent_id
+                for run in candidates
+            ):
                 return None
-            raise
+            raise rerun_error from None
         return None
 
     def cancel(self, item_id: str) -> bool:
