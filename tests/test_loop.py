@@ -1371,6 +1371,112 @@ class TestReviewerRejectBoundedFallback:
         assert recovered.review_verdict is None
         assert recovered.bounces.review == 1
 
+    @pytest.mark.parametrize("verdict", ["reject", "pass-with-nits"])
+    @pytest.mark.parametrize("checkpoint", ["reset_review", "status", "assignment"])
+    def test_review_worker_handoff_recovers_each_restart_checkpoint(
+        self, tmp_path, monkeypatch, verdict, checkpoint,
+    ):
+        """review→worker 每个持久化 checkpoint 重启后只恢复一个正确 worker Run。"""
+        from omac.engines import create_engine
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        eng.store.update_work_item_metadata(
+            item.id, review_obligations=build_review_obligations(item))
+        eng.store.update_work_item_metadata(
+            item.id,
+            review_verdict=verdict,
+            review_report=_review_report(
+                item,
+                verdict,
+                nits=["follow up"] if verdict == "pass-with-nits" else None,
+            ),
+        )
+
+        runs_before_handoff = len(eng.runtime.list_runs(item.id))
+        original_reset_review = eng.store.reset_review
+        original_prepare_review_cycle = eng.store.prepare_review_cycle
+        original_update_status = eng.store.update_status
+        original_assign = eng.store.assign_work_item
+        crashed = False
+
+        def crash_once(name):
+            nonlocal crashed
+            if checkpoint == name and not crashed:
+                crashed = True
+                raise RuntimeError(f"simulated crash after {name}")
+
+        def reset_review(item_id):
+            original_reset_review(item_id)
+            crash_once("reset_review")
+
+        def prepare_review_cycle(item_id, subject_digest):
+            assert not subject_digest.startswith("worker-handoff:")
+            return original_prepare_review_cycle(item_id, subject_digest)
+
+        def update_status(item_id, status):
+            original_update_status(item_id, status)
+            if status is WorkItemStatus.IN_PROGRESS:
+                crash_once("status")
+
+        def assign(item_id, assignee, role):
+            if role == "worker":
+                current = eng.store.get_work_item(item_id)
+                assert current.phase is TaskPhase.AUTHORING
+                assert current.status is WorkItemStatus.IN_PROGRESS
+                assert current.review_verdict is None
+                assert current.review_report is None
+                assert current.review_subject_digest is None
+            original_assign(item_id, assignee, role)
+            if role == "worker":
+                crash_once("assignment")
+
+        monkeypatch.setattr(eng.store, "reset_review", reset_review)
+        monkeypatch.setattr(
+            eng.store, "prepare_review_cycle", prepare_review_cycle)
+        monkeypatch.setattr(eng.store, "update_status", update_status)
+        monkeypatch.setattr(eng.store, "assign_work_item", assign)
+
+        with pytest.raises(
+            RuntimeError, match=f"simulated crash after {checkpoint}",
+        ):
+            tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+
+        persisted = load_manifest(path)
+        assert persisted.nodes["a"].status == "in_review"
+
+        monkeypatch.setattr(eng.store, "reset_review", original_reset_review)
+        monkeypatch.setattr(eng.store, "update_status", original_update_status)
+
+        def assert_safe_assign(item_id, assignee, role):
+            if role == "worker":
+                current = eng.store.get_work_item(item_id)
+                assert current.phase is TaskPhase.AUTHORING
+                assert current.status is WorkItemStatus.IN_PROGRESS
+                assert current.review_verdict is None
+                assert current.review_report is None
+                assert current.review_subject_digest is None
+            return original_assign(item_id, assignee, role)
+
+        monkeypatch.setattr(eng.store, "assign_work_item", assert_safe_assign)
+
+        result = tick(
+            eng.store, eng.runtime, persisted, path, max_parallel=4,
+        )
+
+        recovered = eng.store.get_work_item(item.id)
+        assert result.state == "running"
+        assert persisted.nodes["a"].status == "in_progress"
+        assert recovered.phase is TaskPhase.AUTHORING
+        assert recovered.status is WorkItemStatus.IN_PROGRESS
+        assert recovered.review_verdict is None
+        assert recovered.review_report is None
+        assert recovered.review_subject_digest is None
+        assert recovered.bounces.review == 1
+        assert len(eng.runtime.list_runs(item.id)) == runs_before_handoff + 1
+        assert eng.store.assign_log[-1][2] == "worker"
+
     @pytest.mark.parametrize("stale_verdict", ["pass", "pass-with-nits", "reject"])
     def test_stale_pass_cannot_merge_new_worker_delivery(
         self, tmp_path, monkeypatch, stale_verdict,
@@ -1408,6 +1514,86 @@ class TestReviewerRejectBoundedFallback:
         assert recovered.status == WorkItemStatus.IN_REVIEW
         assert recovered.review_verdict is None
         assert recovered.review_subject_digest != stale_subject
+
+    @pytest.mark.parametrize("stale_verdict", ["pass", "pass-with-nits", "reject"])
+    def test_review_phase_stale_subject_dispatches_one_fresh_reviewer(
+        self, tmp_path, monkeypatch, stale_verdict,
+    ):
+        """REVIEW phase 遗留旧判定时，失效投影并只派一个 fresh reviewer。"""
+        from omac.engines import create_engine
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        current = eng.store.get_work_item(item.id)
+        old_subject = current.review_subject_digest
+        old_ledger = current.review_ledger
+        eng.store.update_work_item_metadata(
+            item.id,
+            review_obligations=build_review_obligations(current),
+            review_verdict=stale_verdict,
+            review_report=_review_report(
+                current,
+                stale_verdict,
+                nits=["old nit"] if stale_verdict == "pass-with-nits" else None,
+            ),
+            artifacts={"pr_url": f"https://mock.example.com/pr/{item.id}-fresh"},
+            verification={
+                "commands": [_business_command()],
+                "integration_gates": [{
+                    "name": "fresh-review",
+                    "commands": [_business_command()],
+                }],
+                "pr_base": "main",
+                "coverage": 91,
+                "revision": 2,
+            },
+        )
+        eng.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+        reviewer_assignments_before = len([
+            entry for entry in eng.store.assign_log if entry[2] == "reviewer"])
+        runs_before = len(eng.runtime.list_runs(item.id))
+        wakes = []
+        original_wake = eng.runtime.wake
+
+        def wake(item_id, agent, role):
+            if role == "reviewer":
+                wakes.append((item_id, agent))
+            return original_wake(item_id, agent, role)
+
+        monkeypatch.setattr(eng.runtime, "wake", wake)
+        monkeypatch.setattr(
+            loop,
+            "_complete_merge_if_confirmed",
+            lambda *_args, **_kwargs: pytest.fail(
+                "stale review subject must not enter merge"),
+        )
+
+        first = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+
+        recovered = eng.store.get_work_item(item.id)
+        assert first.state == "running"
+        assert manifest.nodes["a"].status == "in_review"
+        assert recovered.phase is TaskPhase.REVIEW
+        assert recovered.status is WorkItemStatus.IN_REVIEW
+        assert recovered.review_subject_digest != old_subject
+        assert recovered.review_verdict is None
+        assert recovered.review_report is None
+        assert recovered.review_ledger is old_ledger
+        assert len(eng.runtime.list_runs(item.id)) == runs_before + 1
+        assert len([
+            entry for entry in eng.store.assign_log if entry[2] == "reviewer"
+        ]) == reviewer_assignments_before + 1
+        assert wakes == [(item.id, "bob")]
+
+        second = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+
+        assert second.state == "running"
+        assert len(eng.runtime.list_runs(item.id)) == runs_before + 1
+        assert len([
+            entry for entry in eng.store.assign_log if entry[2] == "reviewer"
+        ]) == reviewer_assignments_before + 1
+        assert wakes == [(item.id, "bob")]
 
     def test_same_subject_active_reviewer_is_not_assigned_or_woken_again(
         self, tmp_path, monkeypatch,
@@ -1590,7 +1776,9 @@ class TestReviewerRejectBoundedFallback:
         assert manifest.nodes["a"].status == "in_progress"
         got = eng.store.get_work_item(item.id)
         assert got.status == WorkItemStatus.IN_PROGRESS
-        assert got.review_verdict == "pass-with-nits"
+        assert got.review_verdict is None
+        assert got.review_report is None
+        assert got.review_subject_digest is None
         assert got.decision_required is None
         assert got.bounces.review == 1
 

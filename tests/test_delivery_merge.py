@@ -559,6 +559,54 @@ class TestCollectResultsMerge:
         assert store.get_work_item(item.id).status is WorkItemStatus.BLOCKED
         assert store.get_work_item(item.id).bounces.merge == DEFAULT_RETRY["merge"]
 
+    @pytest.mark.parametrize("merge_request_state", [None, "requested", "intent"])
+    def test_merging_rechecks_current_review_subject_before_any_merge_effect(
+        self, tmp_path, monkeypatch, merge_request_state,
+    ):
+        """其他路径遗留 merging 时，最后安全门仍拒绝旧 subject 的 pass。"""
+        store = _store()
+        runtime = _runtime(store)
+        item = _review_passed_item(store)
+        old_subject = store.get_work_item(item.id).review_subject_digest
+        store.update_work_item_metadata(
+            item.id,
+            artifacts={"pr_url": "https://example.com/pr/2"},
+            verification={
+                "commands": [{"cmd": "pytest -q", "exit_code": 0}],
+                "revision": 2,
+            },
+        )
+        store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+        manifest = Manifest(meta={}, nodes={
+            "a": Node(
+                id="a", worker="alice", reviewer="bob",
+                work_item_id=item.id, status="merging",
+                merge_request_state=merge_request_state,
+            ),
+        })
+        path = _saved_manifest(tmp_path, manifest)
+        monkeypatch.setattr(
+            loop,
+            "run_merge_delivery",
+            lambda *_args, **_kwargs: pytest.fail(
+                "stale review subject must be rejected before merge delivery"),
+        )
+
+        failures = loop.collect_results(
+            store, runtime, manifest, path,
+            retry_limits=dict(DEFAULT_RETRY), config={},
+        )
+
+        recovered = store.get_work_item(item.id)
+        assert failures == {}
+        assert manifest.nodes["a"].status == "in_review"
+        assert recovered.status is WorkItemStatus.IN_REVIEW
+        assert recovered.phase is TaskPhase.REVIEW
+        assert recovered.review_subject_digest != old_subject
+        assert recovered.review_verdict is None
+        assert recovered.review_report is None
+        assert store.assign_log[-1][2] == "reviewer"
+
 
 # ── manifest 持久化:合入信息落盘 ──────────────────────────────────────────
 

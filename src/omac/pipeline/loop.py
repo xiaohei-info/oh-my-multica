@@ -22,11 +22,13 @@ from ..core.evidence import validate_review_evidence, validate_worker_evidence
 from ..core.review_convergence import (
     build_review_obligations, review_subject_digest)
 from ..core.retry_budget import consumed_bounces
+from ..core.stage_recovery import stage_recovery_subject
 from ..core.gitsync import commit_manifest
 from ..core.manifest import Manifest, save_manifest, set_node
 from ..pipeline.delivery import (
+    _resume_merge_bounce,
     advance_delivery, block_unproven_merge_request,
-    merge_request_state_is_valid, run_merge_delivery,
+    merge_bounce_attempt, merge_request_state_is_valid, run_merge_delivery,
 )
 from ..engines.models import PullRequestState, WorkItemStatus
 from ..engines.runtime import AgentRuntime
@@ -116,6 +118,36 @@ def _has_unreviewed_worker_delivery(node, item) -> bool:
 
 def _current_review_subject(item) -> str:
     return review_subject_digest(item, max(1, item.bounces.review + 1))
+
+
+def _review_subject_for_current_delivery(
+    manifest: Manifest, key: str, item,
+) -> str:
+    """返回当前 delivery 的合法 subject，兼容已接受 amendment 的 review recovery。"""
+    ledger = manifest.meta.get("amendment_apply")
+    entries = ledger.get("nodes") if isinstance(ledger, dict) else None
+    entry = entries.get(key) if isinstance(entries, dict) else None
+    expected = (
+        entry.get("expected_review_subject")
+        if isinstance(entry, dict) and entry.get("stage") == "review"
+        else None
+    )
+    if (
+        isinstance(expected, str)
+        and expected
+        and expected == stage_recovery_subject(manifest.nodes[key], item)
+    ):
+        return expected
+    return _current_review_subject(item)
+
+
+def _review_subject_is_current(
+    manifest: Manifest, key: str, item,
+) -> bool:
+    return (
+        item.review_subject_digest
+        == _review_subject_for_current_delivery(manifest, key, item)
+    )
 
 
 def _current_delivery_passed_review(item) -> bool:
@@ -212,17 +244,20 @@ def _resume_reviewer_run(store, runtime, node) -> bool:
 def _dispatch_reviewer_for_current_subject(
     store: WorkItemStore,
     runtime: AgentRuntime,
-    node,
+    manifest: Manifest,
+    key: str,
 ) -> bool:
     """幂等完成当前交付的 reviewer handoff；同 subject 不重置评审事实。"""
+    node = manifest.nodes[key]
     item_id = node.work_item_id
     current = store.get_work_item(item_id)
-    subject_digest = (
-        current.review_subject_digest
-        if current.phase == TaskPhase.REVIEW and current.review_subject_digest
-        else _current_review_subject(current)
-    )
-    if current.review_subject_digest != subject_digest:
+    subject_digest = _review_subject_for_current_delivery(
+        manifest, key, current)
+    subject_changed = current.review_subject_digest != subject_digest
+    if subject_changed:
+        # 先解除旧 subject 的 assignment；若随后崩溃，reviewer metadata 为空，
+        # restart 不会把旧 active Run 误认成新 subject 已派发。
+        store.clear_assignment(item_id)
         store.update_work_item_metadata(
             item_id,
             review_obligations=build_review_obligations(current),
@@ -230,7 +265,8 @@ def _dispatch_reviewer_for_current_subject(
         current = store.prepare_review_cycle(item_id, subject_digest)
 
     if (
-        current.phase == TaskPhase.REVIEW
+        not subject_changed
+        and current.phase == TaskPhase.REVIEW
         and current.status == WorkItemStatus.IN_REVIEW
         and current.reviewer == node.reviewer
         and runtime.is_active(item_id)
@@ -247,21 +283,70 @@ def _dispatch_worker_handoff(
     store: WorkItemStore,
     runtime: AgentRuntime,
     node,
+    *,
+    review_bounce: int | None = None,
 ) -> None:
-    """从 review 安全回到 worker；assign 可能立即启动 Run。"""
-    store.update_status(node.work_item_id, WorkItemStatus.IN_PROGRESS)
-    store.assign_work_item(node.work_item_id, node.worker, "worker")
-    runtime.wake(node.work_item_id, node.worker, "worker")
+    """幂等完成 review→worker handoff；assign 可能立即启动 Run。"""
+    item_id = node.work_item_id
+    current = store.get_work_item(item_id)
+    if review_bounce is not None and current.bounces.review < review_bounce:
+        store.update_work_item_metadata(
+            item_id, review_bounce=review_bounce)
+        current = store.get_work_item(item_id)
+
+    # reset_review 的接口契约负责一次性清除当前 review projection 并回 AUTHORING。
+    # handoff 不制造瞬时 review cycle，避免新增可崩溃的持久化中间态。
+    if (
+        current.phase != TaskPhase.AUTHORING
+        or current.review_verdict is not None
+        or current.review_comment not in {None, ""}
+        or current.machine_feedback not in (None, {})
+        or current.review_report is not None
+        or current.review_subject_digest is not None
+        or current.decision_required is not None
+    ):
+        store.reset_review(item_id)
+        current = store.get_work_item(item_id)
+
+    if current.status != WorkItemStatus.IN_PROGRESS:
+        store.update_status(item_id, WorkItemStatus.IN_PROGRESS)
+        current = store.get_work_item(item_id)
+    if (
+        current.phase != TaskPhase.AUTHORING
+        or current.status != WorkItemStatus.IN_PROGRESS
+        or current.review_verdict is not None
+        or current.review_report is not None
+        or current.review_subject_digest is not None
+    ):
+        raise PlatformError(
+            f"Worker handoff preparation did not persist for work item {item_id}")
+
+    # assign_work_item 自身负责观察当前 assignee 并幂等修复；同一 worker 的
+    # 重复 assign 不得创建第二个 Run，不同 assignee 则在正确 phase/status 下接棒。
+    store.assign_work_item(item_id, node.worker, "worker")
+    runtime.wake(item_id, node.worker, "worker")
 
 
 def _complete_merge_if_confirmed(
     store: WorkItemStore, runtime: AgentRuntime, manifest: Manifest, key: str,
     retry_limits: dict, config: dict, manifest_path: str,
 ) -> str:
+    node = manifest.nodes[key]
+    item = store.get_work_item(node.work_item_id)
+    if (
+        node.reviewer
+        and not _review_subject_is_current(
+            manifest, key, item,
+        )
+    ):
+        _dispatch_reviewer_for_current_subject(
+            store, runtime, manifest, key)
+        set_node(manifest, key, status="in_review")
+        save_manifest(manifest, manifest_path)
+        return "review"
     action = run_merge_delivery(
         config, manifest, key, store, runtime, retry_limits, manifest_path)
     if action == "pass":
-        node = manifest.nodes[key]
         store.update_status(node.work_item_id, WorkItemStatus.DONE)
         set_node(manifest, key, status="done")
         log.info(logsetup.EVT_NODE_DONE, kind=_DAG_KIND, node=key,
@@ -479,14 +564,38 @@ def collect_results(
 
         # worker handoff 已落平台、但 Runner 尚未来得及保存 manifest 时，
         # 以 Store 的 authoring phase 恢复 worker 路径；新 submit 仍要重过 review。
+        recovering_worker_handoff = (
+            node.status == "in_review"
+            and item.phase == TaskPhase.AUTHORING
+            and item.status in {
+                WorkItemStatus.IN_REVIEW, WorkItemStatus.IN_PROGRESS,
+            }
+        )
         if node.status == "in_review" and item.phase == TaskPhase.AUTHORING:
             set_node(manifest, key, status="in_progress")
+        if recovering_worker_handoff:
+            try:
+                _dispatch_worker_handoff(store, runtime, node)
+            except PlatformError as exc:
+                store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
+                store.add_comment(node.work_item_id, ui(
+                    f"Failed to resume worker handoff to {node.worker}: {exc}",
+                    f"恢复到 worker {node.worker} 的交接失败: {exc}"))
+                set_node(manifest, key, status="blocked")
+                failures[key] = ui(
+                    f"Failed to resume worker handoff to {node.worker}: {exc}",
+                    f"恢复到 worker {node.worker} 的交接失败: {exc}")
+            continue
 
         if (
             node.status == "in_progress"
+            and node.reviewer
             and item.phase == TaskPhase.REVIEW
-            and item.review_subject_digest
         ):
+            if not _review_subject_is_current(manifest, key, item):
+                pending_review.append(
+                    (key, node.work_item_id, node.reviewer))
+                continue
             if item.review_verdict:
                 set_node(manifest, key, status="in_review")
             else:
@@ -499,8 +608,7 @@ def collect_results(
             and item.status == WorkItemStatus.IN_REVIEW
             and getattr(item, "phase", TaskPhase.AUTHORING) == TaskPhase.AUTHORING
         ):
-            store.assign_work_item(node.work_item_id, node.worker, "worker")
-            store.update_status(node.work_item_id, WorkItemStatus.IN_PROGRESS)
+            _dispatch_worker_handoff(store, runtime, node)
             continue
 
         # ---- in_progress: worker 阶段回收 ----
@@ -639,6 +747,14 @@ def collect_results(
 
         # ---- in_review: reviewer 阶段回收 ----
         elif node.status == "in_review":
+            if (
+                node.reviewer
+                and item.phase == TaskPhase.REVIEW
+                and not _review_subject_is_current(manifest, key, item)
+            ):
+                pending_review.append(
+                    (key, node.work_item_id, node.reviewer))
+                continue
             verdict = item.review_verdict
             if not verdict:
                 if _reviewer_run_needs_resume(item):
@@ -709,12 +825,11 @@ def collect_results(
                     continue
             if verdict == "pass-with-nits" and not gate_errors:
                 cur_bounce = item.bounces.review
-                store.update_work_item_metadata(
-                    node.work_item_id, phase=TaskPhase.AUTHORING,
-                    review_comment="", machine_feedback={},
-                    review_bounce=cur_bounce + 1)
                 try:
-                    _dispatch_worker_handoff(store, runtime, node)
+                    _dispatch_worker_handoff(
+                        store, runtime, node,
+                        review_bounce=cur_bounce + 1,
+                    )
                     set_node(manifest, key, status="in_progress")
                     log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=key,
                              id=node.work_item_id, gate="review-nits")
@@ -769,13 +884,14 @@ def collect_results(
                 else:
                     # 有界「回到 worker」:先记回退计数并清除旧评审判定,再重新派发 worker。
                     # 派发失败时回滚回退计数并把节点标 blocked,避免卡在「已清判定/未派发」中间态。
-                    store.update_work_item_metadata(node.work_item_id, review_bounce=cur_bounce + 1)
-                    store.reset_review(node.work_item_id)
                     # 派发失败时回滚 review_bounce,避免把「未成功的回退」计为消耗;
                     # 这与 CI 回退路径(delivery.advance_delivery)的语义对称 ——
                     # 两者都是「计数只在派发成功时才真正消耗」。
                     try:
-                        _dispatch_worker_handoff(store, runtime, node)
+                        _dispatch_worker_handoff(
+                            store, runtime, node,
+                            review_bounce=cur_bounce + 1,
+                        )
                         set_node(manifest, key, status="in_progress")
                         log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=key,
                                  id=node.work_item_id, gate="review",
@@ -794,8 +910,22 @@ def collect_results(
                             f"回退到 worker {node.worker} 失败: {exc}")
 
         elif node.status == "merging":
-            merge_action = _complete_merge_if_confirmed(
-                store, runtime, manifest, key, limits, config or {}, manifest_path)
+            pending_attempt = merge_bounce_attempt(node.merge_request_state)
+            if pending_attempt is not None:
+                merge_action = _resume_merge_bounce(
+                    node,
+                    item,
+                    store,
+                    runtime,
+                    limits,
+                    manifest=manifest,
+                    manifest_path=manifest_path,
+                    attempt=pending_attempt,
+                )
+            else:
+                merge_action = _complete_merge_if_confirmed(
+                    store, runtime, manifest, key, limits,
+                    config or {}, manifest_path)
             if merge_action == "blocked":
                 failures[key] = ui(
                     "Merge outcome cannot be confirmed.",
@@ -808,7 +938,7 @@ def collect_results(
     for key, item_id, reviewer in pending_review:
         try:
             dispatched = _dispatch_reviewer_for_current_subject(
-                store, runtime, manifest.nodes[key])
+                store, runtime, manifest, key)
             set_node(manifest, key, status="in_review")
             if dispatched:
                 log.info(logsetup.EVT_REVIEW_DISPATCH, kind=_DAG_KIND, node=key,

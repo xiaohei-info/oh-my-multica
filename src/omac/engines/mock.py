@@ -883,6 +883,8 @@ class MockStore(WorkItemStore):
         item.review_comment = None
         item.machine_feedback = None
         item.machine_feedback_ref = None
+        item.review_report = None
+        item.review_report_ref = None
         item.decision_required = None
         item.review_subject_digest = None
         item.phase = TaskPhase.AUTHORING
