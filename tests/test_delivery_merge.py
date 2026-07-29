@@ -559,7 +559,10 @@ class TestCollectResultsMerge:
         assert store.get_work_item(item.id).status is WorkItemStatus.BLOCKED
         assert store.get_work_item(item.id).bounces.merge == DEFAULT_RETRY["merge"]
 
-    @pytest.mark.parametrize("merge_request_state", [None, "requested", "intent"])
+    @pytest.mark.parametrize(
+        "merge_request_state",
+        [None, "requested", "intent", "bounce_pending:1"],
+    )
     def test_merging_rechecks_current_review_subject_before_any_merge_effect(
         self, tmp_path, monkeypatch, merge_request_state,
     ):
