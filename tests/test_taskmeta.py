@@ -12,7 +12,9 @@ from unittest.mock import patch
 import pytest
 
 from omac.core import taskmeta
-from omac.core.taskmeta import Bounces, TaskKind, TaskPhase
+from omac.core.taskmeta import (
+    Bounces, TaskKind, TaskPhase, WorkerHandoffIntent,
+)
 from omac.engines.metadata_policy import assert_metadata_write_allowed
 from omac.engines.models import EngineConfig
 from omac.engines.mock import MockStore
@@ -110,6 +112,31 @@ def test_mock_review_continuation_roundtrip():
         item.id, review_continuation=continuation)
 
     assert store.get_work_item(item.id).review_continuation == continuation
+
+
+def _worker_handoff_intent():
+    return WorkerHandoffIntent(
+        schema="omac.worker-handoff/v1",
+        state="pending",
+        target_worker="alice",
+        gate="review",
+        source_review_subject_digest="subject-1",
+        source_review_round=1,
+        target_review_bounce=1,
+    )
+
+
+def test_mock_worker_handoff_roundtrip_and_clear():
+    store = MockStore(_mock_config())
+    item = store.create_work_item(
+        "ws", "t", "d", dag_key="a", worker="alice")
+    intent = _worker_handoff_intent()
+
+    store.update_work_item_metadata(item.id, worker_handoff=intent)
+    assert store.get_work_item(item.id).worker_handoff == intent
+
+    store.update_work_item_metadata(item.id, worker_handoff={})
+    assert store.get_work_item(item.id).worker_handoff is None
 
 
 # ==================== Multica(subprocess mock)写后读回 ====================
@@ -321,6 +348,24 @@ def test_multica_review_continuation_roundtrip():
 
     assert got.review_continuation == continuation
     assert fake.metadata[item.id]["review_continuation"] == continuation
+
+
+def test_multica_worker_handoff_roundtrip_and_clear():
+    store = _multica_store()
+    fake = _FakeMulticaProc()
+    intent = _worker_handoff_intent()
+
+    with patch("subprocess.run", side_effect=fake.run):
+        item = store.create_work_item(
+            "ws", "t", "d", dag_key="a", worker="alice")
+        store.update_work_item_metadata(item.id, worker_handoff=intent)
+        persisted = store.get_work_item(item.id)
+        store.update_work_item_metadata(item.id, worker_handoff={})
+        cleared = store.get_work_item(item.id)
+
+    assert persisted.worker_handoff == intent
+    assert cleared.worker_handoff is None
+    assert fake.metadata[item.id]["worker_handoff"] == {}
 
 
 def test_multica_review_report_uses_ref_not_nested_json_string():

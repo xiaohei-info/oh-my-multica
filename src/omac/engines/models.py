@@ -6,7 +6,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from ..core.taskmeta import Bounces, TaskKind, TaskPhase
+from ..core.taskmeta import (
+    Bounces, TaskKind, TaskPhase, WorkerHandoffIntent,
+)
 
 
 class WorkItemStatus(Enum):
@@ -189,6 +191,7 @@ class WorkItem:
     review_ledger: Optional[Dict[str, Any]] = None
     review_ledger_ref: Optional[Dict[str, Any]] = None
     review_continuation: Optional[Dict[str, Any]] = None
+    worker_handoff: Optional[WorkerHandoffIntent] = None
     decision_required: Optional[Dict[str, Any]] = None
     amendment_attempt: Optional[Dict[str, Any]] = None
 
