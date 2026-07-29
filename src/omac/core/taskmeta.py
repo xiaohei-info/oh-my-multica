@@ -94,6 +94,8 @@ REVIEW_OBLIGATIONS_REF_KEY = "review_obligations_ref"
 REVIEW_LEDGER_REF_KEY = "review_ledger_ref"
 MACHINE_FEEDBACK_REF_KEY = "machine_feedback_ref"
 REVIEW_CONTINUATION_KEY = "review_continuation"
+WORKER_HANDOFF_KEY = "worker_handoff"
+WORKER_HANDOFF_SCHEMA = "omac.worker-handoff/v1"
 DECISION_REQUIRED_KEY = "decision_required"
 DECISION_REQUIRED_SCHEMA = "omac.decision-required/v1"
 AMENDMENT_ATTEMPT_KEY = "amendment_attempt"
@@ -128,6 +130,45 @@ class Bounces:
 
     def total(self) -> int:
         return self.worker + self.ci + self.review + self.merge
+
+
+@dataclass(frozen=True)
+class WorkerHandoffIntent:
+    """持久化的 review→worker 交接意图；不承载附件或用户动作。"""
+
+    schema: Optional[str] = None
+    state: Optional[str] = None
+    target_worker: Optional[str] = None
+    gate: Optional[str] = None
+    source_review_subject_digest: Optional[str] = None
+    source_review_round: Optional[int] = None
+    target_review_bounce: Optional[int] = None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "schema": self.schema,
+            "state": self.state,
+            "target_worker": self.target_worker,
+            "gate": self.gate,
+            "source_review_subject_digest": self.source_review_subject_digest,
+            "source_review_round": self.source_review_round,
+            "target_review_bounce": self.target_review_bounce,
+        }
+
+    def is_complete(self) -> bool:
+        return bool(
+            self.schema == WORKER_HANDOFF_SCHEMA
+            and self.state == "pending"
+            and self.target_worker
+            and self.gate
+            and self.source_review_subject_digest
+            and isinstance(self.source_review_round, int)
+            and not isinstance(self.source_review_round, bool)
+            and self.source_review_round > 0
+            and isinstance(self.target_review_bounce, int)
+            and not isinstance(self.target_review_bounce, bool)
+            and self.target_review_bounce > 0
+        )
 
 
 # ==================== 解析(容错:旧数据缺字段走缺省) ====================
@@ -172,4 +213,33 @@ def parse_bounces(metadata: dict) -> Bounces:
         ci=parse_bounce(metadata.get(CI_BOUNCE_KEY)),
         review=parse_bounce(metadata.get(REVIEW_BOUNCE_KEY)),
         merge=parse_bounce(metadata.get(MERGE_BOUNCE_KEY)),
+    )
+
+
+def parse_worker_handoff(value: Any) -> Optional[WorkerHandoffIntent]:
+    """空值表示无 intent；非空畸形值保留为不完整 typed intent 供调用方失效。"""
+    if value in (None, "", {}):
+        return None
+    if isinstance(value, WorkerHandoffIntent):
+        return value
+    if not isinstance(value, dict):
+        return WorkerHandoffIntent()
+
+    def text_field(key: str) -> Optional[str]:
+        field = value.get(key)
+        return field if isinstance(field, str) and field else None
+
+    def int_field(key: str) -> Optional[int]:
+        field = value.get(key)
+        return field if isinstance(field, int) and not isinstance(field, bool) else None
+
+    return WorkerHandoffIntent(
+        schema=text_field("schema"),
+        state=text_field("state"),
+        target_worker=text_field("target_worker"),
+        gate=text_field("gate"),
+        source_review_subject_digest=text_field(
+            "source_review_subject_digest"),
+        source_review_round=int_field("source_review_round"),
+        target_review_bounce=int_field("target_review_bounce"),
     )

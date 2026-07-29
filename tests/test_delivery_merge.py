@@ -34,7 +34,9 @@ from omac.core.config import (
     resolve_retry,
 )
 from omac.core.manifest import Manifest, Node, load_manifest, save_manifest
-from omac.core.review_convergence import REVIEW_PROTOCOL_VERSION, open_blockers
+from omac.core.review_convergence import (
+    REVIEW_PROTOCOL_VERSION, open_blockers, review_subject_digest,
+)
 from omac.core.taskmeta import TaskPhase
 from omac.engines.mock import MockRuntime, MockStore
 from omac.engines.models import EngineConfig, WorkItem, WorkItemStatus
@@ -123,8 +125,11 @@ def _review_passed_item(store, reviewer="bob"):
         "ws", "node-a", "d", dag_key="a", worker="alice", reviewer=reviewer,
         initial_status=WorkItemStatus.IN_REVIEW)
     store.update_work_item_metadata(
+        item.id, artifacts={"pr_url": "https://example.com/pr/1"})
+    current = store.get_work_item(item.id)
+    store.prepare_review_cycle(item.id, review_subject_digest(current, 1))
+    store.update_work_item_metadata(
         item.id,
-        artifacts={"pr_url": "https://example.com/pr/1"},
         review_verdict="pass",
         review_report={
             "review_goals": ["check merge path"],
@@ -529,6 +534,12 @@ class TestCollectResultsMerge:
         script = _merge_script(tmp_path, "exit 1")
         cfg = _merge_config(script)
         for _ in range(DEFAULT_RETRY["merge"]):
+            current = store.get_work_item(item.id)
+            store.prepare_review_cycle(
+                item.id,
+                review_subject_digest(
+                    current, max(1, current.bounces.review + 1)),
+            )
             store.update_work_item_metadata(
                 item.id, review_verdict="pass",
                 review_report={
@@ -547,6 +558,132 @@ class TestCollectResultsMerge:
         assert manifest.nodes["a"].status == "blocked"
         assert store.get_work_item(item.id).status is WorkItemStatus.BLOCKED
         assert store.get_work_item(item.id).bounces.merge == DEFAULT_RETRY["merge"]
+
+    @pytest.mark.parametrize(
+        "merge_request_state",
+        [None, "requested", "intent", "bounce_pending:1"],
+    )
+    def test_merging_rechecks_current_review_subject_before_any_merge_effect(
+        self, tmp_path, monkeypatch, merge_request_state,
+    ):
+        """其他路径遗留 merging 时，最后安全门仍拒绝旧 subject 的 pass。"""
+        store = _store()
+        runtime = _runtime(store)
+        item = _review_passed_item(store)
+        old_subject = store.get_work_item(item.id).review_subject_digest
+        store.update_work_item_metadata(
+            item.id,
+            artifacts={"pr_url": "https://example.com/pr/2"},
+            verification={
+                "commands": [{"cmd": "pytest -q", "exit_code": 0}],
+                "revision": 2,
+            },
+        )
+        store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+        manifest = Manifest(meta={}, nodes={
+            "a": Node(
+                id="a", worker="alice", reviewer="bob",
+                work_item_id=item.id, status="merging",
+                merge_request_state=merge_request_state,
+            ),
+        })
+        path = _saved_manifest(tmp_path, manifest)
+        monkeypatch.setattr(
+            loop,
+            "run_merge_delivery",
+            lambda *_args, **_kwargs: pytest.fail(
+                "stale review subject must be rejected before merge delivery"),
+        )
+
+        failures = loop.collect_results(
+            store, runtime, manifest, path,
+            retry_limits=dict(DEFAULT_RETRY), config={},
+        )
+
+        recovered = store.get_work_item(item.id)
+        assert failures == {}
+        assert manifest.nodes["a"].status == "in_review"
+        assert recovered.status is WorkItemStatus.IN_REVIEW
+        assert recovered.phase is TaskPhase.REVIEW
+        assert recovered.review_subject_digest != old_subject
+        assert recovered.review_verdict is None
+        assert recovered.review_report is None
+        assert store.assign_log[-1][2] == "reviewer"
+
+    @pytest.mark.parametrize("merge_request_state", ["requested", "intent"])
+    def test_non_bounce_merge_marker_with_empty_projection_still_requires_review(
+        self, tmp_path, monkeypatch, merge_request_state,
+    ):
+        store = _store()
+        runtime = _runtime(store)
+        item = _review_passed_item(store)
+        store.reset_review(item.id)
+        store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
+        manifest = Manifest(meta={}, nodes={
+            "a": Node(
+                id="a", worker="alice", reviewer="bob",
+                work_item_id=item.id, status="merging",
+                merge_request_state=merge_request_state,
+            ),
+        })
+        path = _saved_manifest(tmp_path, manifest)
+        monkeypatch.setattr(
+            loop,
+            "run_merge_delivery",
+            lambda *_args, **_kwargs: pytest.fail(
+                "non-bounce merge marker must not bypass current-subject review"),
+        )
+
+        failures = loop.collect_results(
+            store, runtime, manifest, path,
+            retry_limits=dict(DEFAULT_RETRY), config={},
+        )
+
+        recovered = store.get_work_item(item.id)
+        assert failures == {}
+        assert manifest.nodes["a"].status == "in_review"
+        assert recovered.status is WorkItemStatus.IN_REVIEW
+        assert recovered.phase is TaskPhase.REVIEW
+        assert recovered.review_subject_digest
+        assert recovered.review_verdict is None
+        assert recovered.review_report is None
+        assert store.assign_log[-1][2] == "reviewer"
+
+    def test_bounce_pending_with_empty_projection_resumes_worker_handoff(
+        self, tmp_path,
+    ):
+        store = _store()
+        runtime = _runtime(store)
+        item = _review_passed_item(store)
+        store.update_work_item_metadata(item.id, merge_bounce=1)
+        store.reset_review(item.id)
+        store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
+        manifest = Manifest(meta={}, nodes={
+            "a": Node(
+                id="a", worker="alice", reviewer="bob",
+                work_item_id=item.id, status="merging",
+                merge_request_state="bounce_pending:1",
+            ),
+        })
+        path = _saved_manifest(tmp_path, manifest)
+        store.request_pull_request_merge = lambda *_args: pytest.fail(
+            "bounce recovery must not issue another merge request")
+
+        failures = loop.collect_results(
+            store, runtime, manifest, path,
+            retry_limits=dict(DEFAULT_RETRY), config={},
+        )
+
+        recovered = store.get_work_item(item.id)
+        assert failures == {}
+        assert manifest.nodes["a"].status == "in_progress"
+        assert manifest.nodes["a"].merge_request_state is None
+        assert recovered.status is WorkItemStatus.IN_PROGRESS
+        assert recovered.phase is TaskPhase.AUTHORING
+        assert recovered.review_subject_digest is None
+        assert recovered.review_verdict is None
+        assert recovered.review_report is None
+        assert store.assign_log[-1][2] == "worker"
 
 
 # ── manifest 持久化:合入信息落盘 ──────────────────────────────────────────

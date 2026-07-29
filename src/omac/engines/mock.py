@@ -18,7 +18,10 @@ import yaml
 from ..core.machine_feedback import (
     dump_machine_feedback, parse_machine_feedback,
 )
-from ..core.taskmeta import DELIVERY_CONTENT_KEY, TaskKind, TaskPhase
+from ..core.taskmeta import (
+    DELIVERY_CONTENT_KEY, TaskKind, TaskPhase, WorkerHandoffIntent,
+    parse_worker_handoff,
+)
 from ..errors import ValidationError, WorkItemNotFoundError
 from ..i18n import ui
 from .models import (
@@ -719,6 +722,7 @@ class MockStore(WorkItemStore):
         review_ledger: Optional[Dict[str, Any]] = None,
         review_ledger_source: Optional[str] = None,
         review_continuation: Optional[Dict[str, Any]] = None,
+        worker_handoff: Optional[WorkerHandoffIntent | Dict[str, Any]] = None,
         decision_required: Optional[Dict[str, Any]] = None,
         amendment_attempt: Optional[Dict[str, Any]] = None,
         phase: Optional[TaskPhase] = None,
@@ -798,6 +802,8 @@ class MockStore(WorkItemStore):
             }
         if review_continuation is not None:
             item.review_continuation = review_continuation or None
+        if worker_handoff is not None:
+            item.worker_handoff = parse_worker_handoff(worker_handoff)
         if decision_required is not None:
             item.decision_required = decision_required
         if amendment_attempt is not None:
@@ -883,6 +889,8 @@ class MockStore(WorkItemStore):
         item.review_comment = None
         item.machine_feedback = None
         item.machine_feedback_ref = None
+        item.review_report = None
+        item.review_report_ref = None
         item.decision_required = None
         item.review_subject_digest = None
         item.phase = TaskPhase.AUTHORING

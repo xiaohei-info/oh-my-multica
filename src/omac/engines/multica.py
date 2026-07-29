@@ -35,7 +35,8 @@ from ..core.taskmeta import (
     REVIEW_REPORT_REF_KEY,
     REVIEW_SUBJECT_DIGEST_KEY,
     SOURCE_REFS_KEY, TaskKind, TaskPhase, VERIFICATION_REF_KEY, WORKER_BOUNCE_KEY,
-    parse_bounces, parse_kind, parse_phase,
+    WORKER_HANDOFF_KEY, WorkerHandoffIntent,
+    parse_bounces, parse_kind, parse_phase, parse_worker_handoff,
 )
 from ..errors import (
     AuthError, PlatformError, ValidationError, WorkItemNotFoundError,
@@ -72,7 +73,7 @@ _KNOWN_WORK_ITEM_METADATA_KEYS = {
     PROJECT_RULES_REF_KEY, REVIEW_BOUNCE_KEY, REVIEW_CONTINUATION_KEY,
     REVIEW_LEDGER_REF_KEY, REVIEW_OBLIGATIONS_KEY, REVIEW_OBLIGATIONS_REF_KEY,
     REVIEW_REPORT_REF_KEY, REVIEW_SUBJECT_DIGEST_KEY, SOURCE_REFS_KEY,
-    VERIFICATION_REF_KEY, WORKER_BOUNCE_KEY,
+    VERIFICATION_REF_KEY, WORKER_BOUNCE_KEY, WORKER_HANDOFF_KEY,
 }
 _KNOWN_ISSUE_FIELDS = {
     "id", "identifier", "title", "description", "status", "metadata",
@@ -186,6 +187,14 @@ def _latest_run(runs: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
 def _latest_direct_run(runs: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     direct_runs = [run for run in runs if (run.get("kind") or "direct") == "direct"]
     return _latest_run(direct_runs)
+
+
+def _direct_run_ids(runs: List[Dict[str, Any]]) -> set[str]:
+    return {
+        str(run["id"])
+        for run in runs
+        if (run.get("kind") or "direct") == "direct" and run.get("id")
+    }
 
 
 def _is_not_found(message: str) -> bool:
@@ -769,6 +778,8 @@ class MulticaStore(WorkItemStore):
             review_continuation=(
                 review_continuation
                 if isinstance(review_continuation, dict) else None),
+            worker_handoff=parse_worker_handoff(
+                self._json_metadata(metadata, WORKER_HANDOFF_KEY)),
             decision_required=self._json_metadata(metadata, DECISION_REQUIRED_KEY),
             amendment_attempt=(
                 amendment_attempt if isinstance(amendment_attempt, dict) else None),
@@ -1017,6 +1028,7 @@ class MulticaStore(WorkItemStore):
         review_ledger: Optional[Dict[str, Any]] = None,
         review_ledger_source: Optional[str] = None,
         review_continuation: Optional[Dict[str, Any]] = None,
+        worker_handoff: Optional[WorkerHandoffIntent | Dict[str, Any]] = None,
         decision_required: Optional[Dict[str, Any]] = None,
         amendment_attempt: Optional[Dict[str, Any]] = None,
         phase: Optional[TaskPhase] = None,
@@ -1099,6 +1111,13 @@ class MulticaStore(WorkItemStore):
         if review_continuation is not None:
             self._set_metadata(
                 item_id, REVIEW_CONTINUATION_KEY, review_continuation)
+        if worker_handoff is not None:
+            value = (
+                worker_handoff.as_dict()
+                if isinstance(worker_handoff, WorkerHandoffIntent)
+                else worker_handoff
+            )
+            self._set_metadata(item_id, WORKER_HANDOFF_KEY, value)
         if review_subject_digest is not None:
             self._set_metadata(
                 item_id, REVIEW_SUBJECT_DIGEST_KEY, review_subject_digest)
@@ -1209,6 +1228,7 @@ class MulticaStore(WorkItemStore):
         self._set_metadata(item_id, "review_verdict", "")
         self._set_metadata(item_id, "review_comment", "")
         self._set_metadata(item_id, MACHINE_FEEDBACK_REF_KEY, "{}")
+        self._set_metadata(item_id, REVIEW_REPORT_REF_KEY, "{}")
         self._set_metadata(item_id, DECISION_REQUIRED_KEY, "{}")
         self._set_metadata(item_id, REVIEW_SUBJECT_DIGEST_KEY, "")
         self._set_metadata(item_id, PHASE_KEY, TaskPhase.AUTHORING.value)
@@ -1420,9 +1440,56 @@ class MulticaRuntime(AgentRuntime):
                 not in _RERUNNABLE_DIRECT_RUN_STATUSES
             ):
                 return None
-        self._store._run_multica([
-            "issue", "rerun", item_id, "--output", "json",
-        ])
+        rerun_source = {
+            "id": str(latest["id"]) if latest.get("id") else None,
+            "agent_id": (
+                str(latest["agent_id"])
+                if latest.get("agent_id") else None
+            ),
+        }
+        direct_run_ids = _direct_run_ids(runs)
+        try:
+            self._store._run_multica([
+                "issue", "rerun", item_id, "--output", "json",
+            ])
+        except PlatformError as rerun_error:
+            try:
+                observed_runs = self._issue_runs(item_id)
+            except PlatformError:
+                raise rerun_error from None
+            source_id = rerun_source["id"]
+            if not source_id:
+                raise rerun_error from None
+            candidates = [
+                run for run in observed_runs
+                if (run.get("kind") or "direct") == "direct"
+                and run.get("id")
+                and str(run["id"]) not in direct_run_ids
+                and source_id in {
+                    str(parent_id)
+                    for parent_id in (
+                        run.get("retry_of_task_id"),
+                        run.get("parent_task_id"),
+                    )
+                    if parent_id
+                }
+            ]
+            if not candidates:
+                raise rerun_error from None
+            try:
+                resolved_agent_id = self._store._resolve_agent_id(agent)
+            except PlatformError:
+                raise rerun_error from None
+            if not resolved_agent_id:
+                raise rerun_error from None
+            expected_agent_id = str(resolved_agent_id)
+            if any(
+                run.get("agent_id")
+                and str(run["agent_id"]) == expected_agent_id
+                for run in candidates
+            ):
+                return None
+            raise rerun_error from None
         return None
 
     def cancel(self, item_id: str) -> bool:
