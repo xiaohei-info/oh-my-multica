@@ -283,8 +283,8 @@ def test_show_output_structure(kind, phase):
         assert out["context"]["verification"]["coverage"] == 92
 
 
-def test_authoring_show_includes_previous_review_report():
-    """reject reset 后,下一轮 authoring 通过 work show 读取上轮评审上下文。"""
+def test_authoring_show_uses_review_ledger_after_current_projection_reset():
+    """reject reset 后旧 report 失效，worker 从 ledger 读取持久化返工义务。"""
     store = _store()
     item = _make_item(store, TaskKind.PLAN, TaskPhase.AUTHORING, with_contract=True)
     report = {
@@ -292,20 +292,45 @@ def test_authoring_show_includes_previous_review_report():
         "blockers": ["缺少积分体系的持久化方案"],
         "nits": ["补充排行榜刷新策略"],
     }
+    ledger = {
+        "schema": "omac.review-ledger/v1",
+        "cycles": [{
+            "round": 1,
+            "subject_digest": "review-subject-1",
+            "verdict": "reject",
+        }],
+        "blockers": [{
+            "blocker_id": "BLK-persistence",
+            "obligation_id": "dimension:structure",
+            "root_cause_key": "missing-persistence",
+            "summary": "缺少积分体系的持久化方案",
+            "required_fix": "补充积分持久化设计",
+            "status": "open",
+        }],
+    }
     store.update_work_item_metadata(
         item.id,
         phase=TaskPhase.REVIEW,
         review_verdict="reject",
         review_report=report,
         review_report_source="/tmp/omac-review-report.yaml",
+        review_ledger=ledger,
+        review_ledger_source="/tmp/omac-review-ledger.yaml",
     )
     store.reset_review(item.id)
 
     out = build_show_output(store.get_work_item(item.id), "worker:alice")
 
-    assert out["context"]["previous_review"]["verdict"] == "reject"
-    assert out["context"]["previous_review"]["report"] == report
-    assert out["context"]["previous_review"]["report_ref"]["filename"] == "omac-review-report.yaml"
+    assert "previous_review" not in out["context"]
+    assert out["context"]["required_closures"] == [{
+        "blocker_id": "BLK-persistence",
+        "obligation_id": "dimension:structure",
+        "root_cause_key": "missing-persistence",
+        "summary": "缺少积分体系的持久化方案",
+        "required_fix": "补充积分持久化设计",
+    }]
+    assert out["context"]["review_ledger_ref"]["filename"] == (
+        "omac-review-ledger.yaml")
 
 
 def test_authoring_show_includes_source_issue_refs():
