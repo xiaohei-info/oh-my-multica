@@ -26,9 +26,8 @@ from ..core.stage_recovery import stage_recovery_subject
 from ..core.gitsync import commit_manifest
 from ..core.manifest import Manifest, save_manifest, set_node
 from ..pipeline.delivery import (
-    _resume_merge_bounce,
     advance_delivery, block_unproven_merge_request,
-    merge_bounce_attempt, merge_request_state_is_valid, run_merge_delivery,
+    merge_request_state_is_valid, run_merge_delivery,
 )
 from ..engines.models import PullRequestState, WorkItemStatus
 from ..engines.runtime import AgentRuntime
@@ -910,22 +909,9 @@ def collect_results(
                             f"回退到 worker {node.worker} 失败: {exc}")
 
         elif node.status == "merging":
-            pending_attempt = merge_bounce_attempt(node.merge_request_state)
-            if pending_attempt is not None:
-                merge_action = _resume_merge_bounce(
-                    node,
-                    item,
-                    store,
-                    runtime,
-                    limits,
-                    manifest=manifest,
-                    manifest_path=manifest_path,
-                    attempt=pending_attempt,
-                )
-            else:
-                merge_action = _complete_merge_if_confirmed(
-                    store, runtime, manifest, key, limits,
-                    config or {}, manifest_path)
+            merge_action = _complete_merge_if_confirmed(
+                store, runtime, manifest, key, limits,
+                config or {}, manifest_path)
             if merge_action == "blocked":
                 failures[key] = ui(
                     "Merge outcome cannot be confirmed.",
