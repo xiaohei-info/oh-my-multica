@@ -108,9 +108,20 @@ def _has_unreviewed_worker_delivery(node, item) -> bool:
         and not node.merged
         and item.status == WorkItemStatus.DONE
         and item.phase == TaskPhase.AUTHORING
-        and not item.review_verdict
         and item.artifacts
         and item.verification
+        and not _current_delivery_passed_review(item)
+    )
+
+
+def _current_review_subject(item) -> str:
+    return review_subject_digest(item, max(1, item.bounces.review + 1))
+
+
+def _current_delivery_passed_review(item) -> bool:
+    return (
+        item.review_verdict in {"pass", "pass-with-nits"}
+        and item.review_subject_digest == _current_review_subject(item)
     )
 
 
@@ -196,6 +207,51 @@ def _resume_reviewer_run(store, runtime, node) -> bool:
     store.assign_work_item(item_id, node.reviewer, "reviewer")
     runtime.wake(item_id, node.reviewer, "reviewer")
     return True
+
+
+def _dispatch_reviewer_for_current_subject(
+    store: WorkItemStore,
+    runtime: AgentRuntime,
+    node,
+) -> bool:
+    """幂等完成当前交付的 reviewer handoff；同 subject 不重置评审事实。"""
+    item_id = node.work_item_id
+    current = store.get_work_item(item_id)
+    subject_digest = (
+        current.review_subject_digest
+        if current.phase == TaskPhase.REVIEW and current.review_subject_digest
+        else _current_review_subject(current)
+    )
+    if current.review_subject_digest != subject_digest:
+        store.update_work_item_metadata(
+            item_id,
+            review_obligations=build_review_obligations(current),
+        )
+        current = store.prepare_review_cycle(item_id, subject_digest)
+
+    if (
+        current.phase == TaskPhase.REVIEW
+        and current.status == WorkItemStatus.IN_REVIEW
+        and current.reviewer == node.reviewer
+        and runtime.is_active(item_id)
+    ):
+        return False
+
+    store.update_status(item_id, WorkItemStatus.IN_REVIEW)
+    store.assign_work_item(item_id, node.reviewer, "reviewer")
+    runtime.wake(item_id, node.reviewer, "reviewer")
+    return True
+
+
+def _dispatch_worker_handoff(
+    store: WorkItemStore,
+    runtime: AgentRuntime,
+    node,
+) -> None:
+    """从 review 安全回到 worker；assign 可能立即启动 Run。"""
+    store.update_status(node.work_item_id, WorkItemStatus.IN_PROGRESS)
+    store.assign_work_item(node.work_item_id, node.worker, "worker")
+    runtime.wake(node.work_item_id, node.worker, "worker")
 
 
 def _complete_merge_if_confirmed(
@@ -421,6 +477,23 @@ def collect_results(
         except Exception:
             continue
 
+        # worker handoff 已落平台、但 Runner 尚未来得及保存 manifest 时，
+        # 以 Store 的 authoring phase 恢复 worker 路径；新 submit 仍要重过 review。
+        if node.status == "in_review" and item.phase == TaskPhase.AUTHORING:
+            set_node(manifest, key, status="in_progress")
+
+        if (
+            node.status == "in_progress"
+            and item.phase == TaskPhase.REVIEW
+            and item.review_subject_digest
+        ):
+            if item.review_verdict:
+                set_node(manifest, key, status="in_review")
+            else:
+                pending_review.append(
+                    (key, node.work_item_id, node.reviewer))
+                continue
+
         if (
             node.status == "in_progress"
             and item.status == WorkItemStatus.IN_REVIEW
@@ -522,9 +595,8 @@ def collect_results(
                              id=node.work_item_id, reason=ui(
                                  "CI retry limit exhausted", "CI 回退上界已耗尽"))
                     continue
-                # CI 绿(或无可用 CI 而跳过):nits follow-up 已经由上一轮 reviewer 接受,
-                # worker 修完后直接进入 merge/done,不再浪费第二轮 reviewer。
-                if item.review_verdict == "pass-with-nits":
+                # 只有绑定当前 worker delivery subject 的通过结论才能进入 merge。
+                if _current_delivery_passed_review(item):
                     merge_action = _complete_merge_if_confirmed(
                         store, runtime, manifest, key, limits, config or {}, manifest_path)
                     if merge_action == "pass":
@@ -636,17 +708,19 @@ def collect_results(
                     )
                     continue
             if verdict == "pass-with-nits" and not gate_errors:
+                cur_bounce = item.bounces.review
                 store.update_work_item_metadata(
                     node.work_item_id, phase=TaskPhase.AUTHORING,
-                    review_comment="", machine_feedback={})
+                    review_comment="", machine_feedback={},
+                    review_bounce=cur_bounce + 1)
                 try:
-                    store.assign_work_item(node.work_item_id, node.worker, "worker")
-                    store.update_status(node.work_item_id, WorkItemStatus.IN_PROGRESS)
+                    _dispatch_worker_handoff(store, runtime, node)
                     set_node(manifest, key, status="in_progress")
                     log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=key,
                              id=node.work_item_id, gate="review-nits")
-                    runtime.wake(node.work_item_id, node.worker, "worker")
                 except PlatformError as exc:
+                    store.update_work_item_metadata(
+                        node.work_item_id, review_bounce=cur_bounce)
                     store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
                     store.add_comment(
                         node.work_item_id,
@@ -701,13 +775,11 @@ def collect_results(
                     # 这与 CI 回退路径(delivery.advance_delivery)的语义对称 ——
                     # 两者都是「计数只在派发成功时才真正消耗」。
                     try:
-                        store.assign_work_item(node.work_item_id, node.worker, "worker")
-                        store.update_status(node.work_item_id, WorkItemStatus.IN_PROGRESS)
+                        _dispatch_worker_handoff(store, runtime, node)
                         set_node(manifest, key, status="in_progress")
                         log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=key,
                                  id=node.work_item_id, gate="review",
                                  round=cur_bounce + 1, max=review_limit)
-                        runtime.wake(node.work_item_id, node.worker, "worker")
                     except PlatformError as exc:
                         store.update_work_item_metadata(node.work_item_id, review_bounce=cur_bounce)
                         store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
@@ -734,25 +806,13 @@ def collect_results(
 
     # ---- reviewer 阶段过渡(遍历后执行,避免改 manifest 影响遍历)----
     for key, item_id, reviewer in pending_review:
-        current = store.get_work_item(item_id)
-        subject_digest = review_subject_digest(
-            current, max(1, current.bounces.review + 1))
-        store.update_work_item_metadata(
-            item_id,
-            review_obligations=build_review_obligations(current),
-        )
-        store.prepare_review_cycle(item_id, subject_digest)
-        # 先把工单标 IN_REVIEW 再派发 reviewer,否则 mock 下 assign 内
-        # get_work_item 触发的 auto_complete 会先在 IN_PROGRESS(刚从
-        # CI 回落)走 deliverable 路径把 assigned 槽位清空,后续
-        # wake 的 auto_complete 找不到已派发项而无法置评审判定。
-        store.update_status(item_id, WorkItemStatus.IN_REVIEW)
-        store.assign_work_item(item_id, reviewer, "reviewer")
-        set_node(manifest, key, status="in_review")
-        log.info(logsetup.EVT_REVIEW_DISPATCH, kind=_DAG_KIND, node=key,
-                 id=item_id, reviewer=reviewer)
         try:
-            runtime.wake(item_id, reviewer, "reviewer")
+            dispatched = _dispatch_reviewer_for_current_subject(
+                store, runtime, manifest.nodes[key])
+            set_node(manifest, key, status="in_review")
+            if dispatched:
+                log.info(logsetup.EVT_REVIEW_DISPATCH, kind=_DAG_KIND, node=key,
+                         id=item_id, reviewer=reviewer)
         except PlatformError as exc:
             store.update_status(item_id, WorkItemStatus.BLOCKED)
             store.add_comment(item_id, ui(

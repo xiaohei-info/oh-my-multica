@@ -34,7 +34,9 @@ from omac.core.config import (
     resolve_retry,
 )
 from omac.core.manifest import Manifest, Node, load_manifest, save_manifest
-from omac.core.review_convergence import REVIEW_PROTOCOL_VERSION, open_blockers
+from omac.core.review_convergence import (
+    REVIEW_PROTOCOL_VERSION, open_blockers, review_subject_digest,
+)
 from omac.core.taskmeta import TaskPhase
 from omac.engines.mock import MockRuntime, MockStore
 from omac.engines.models import EngineConfig, WorkItem, WorkItemStatus
@@ -123,8 +125,11 @@ def _review_passed_item(store, reviewer="bob"):
         "ws", "node-a", "d", dag_key="a", worker="alice", reviewer=reviewer,
         initial_status=WorkItemStatus.IN_REVIEW)
     store.update_work_item_metadata(
+        item.id, artifacts={"pr_url": "https://example.com/pr/1"})
+    current = store.get_work_item(item.id)
+    store.prepare_review_cycle(item.id, review_subject_digest(current, 1))
+    store.update_work_item_metadata(
         item.id,
-        artifacts={"pr_url": "https://example.com/pr/1"},
         review_verdict="pass",
         review_report={
             "review_goals": ["check merge path"],
@@ -529,6 +534,12 @@ class TestCollectResultsMerge:
         script = _merge_script(tmp_path, "exit 1")
         cfg = _merge_config(script)
         for _ in range(DEFAULT_RETRY["merge"]):
+            current = store.get_work_item(item.id)
+            store.prepare_review_cycle(
+                item.id,
+                review_subject_digest(
+                    current, max(1, current.bounces.review + 1)),
+            )
             store.update_work_item_metadata(
                 item.id, review_verdict="pass",
                 review_report={
