@@ -332,8 +332,16 @@ def _complete_merge_if_confirmed(
 ) -> str:
     node = manifest.nodes[key]
     item = store.get_work_item(node.work_item_id)
+    recovering_merge_handoff = (
+        node.merge_request_state is not None
+        and item.phase == TaskPhase.AUTHORING
+        and item.review_verdict is None
+        and item.review_report is None
+        and item.review_subject_digest is None
+    )
     if (
         node.reviewer
+        and not recovering_merge_handoff
         and not _review_subject_is_current(
             manifest, key, item,
         )
