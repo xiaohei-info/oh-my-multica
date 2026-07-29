@@ -610,6 +610,81 @@ class TestCollectResultsMerge:
         assert recovered.review_report is None
         assert store.assign_log[-1][2] == "reviewer"
 
+    @pytest.mark.parametrize("merge_request_state", ["requested", "intent"])
+    def test_non_bounce_merge_marker_with_empty_projection_still_requires_review(
+        self, tmp_path, monkeypatch, merge_request_state,
+    ):
+        store = _store()
+        runtime = _runtime(store)
+        item = _review_passed_item(store)
+        store.reset_review(item.id)
+        store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
+        manifest = Manifest(meta={}, nodes={
+            "a": Node(
+                id="a", worker="alice", reviewer="bob",
+                work_item_id=item.id, status="merging",
+                merge_request_state=merge_request_state,
+            ),
+        })
+        path = _saved_manifest(tmp_path, manifest)
+        monkeypatch.setattr(
+            loop,
+            "run_merge_delivery",
+            lambda *_args, **_kwargs: pytest.fail(
+                "non-bounce merge marker must not bypass current-subject review"),
+        )
+
+        failures = loop.collect_results(
+            store, runtime, manifest, path,
+            retry_limits=dict(DEFAULT_RETRY), config={},
+        )
+
+        recovered = store.get_work_item(item.id)
+        assert failures == {}
+        assert manifest.nodes["a"].status == "in_review"
+        assert recovered.status is WorkItemStatus.IN_REVIEW
+        assert recovered.phase is TaskPhase.REVIEW
+        assert recovered.review_subject_digest
+        assert recovered.review_verdict is None
+        assert recovered.review_report is None
+        assert store.assign_log[-1][2] == "reviewer"
+
+    def test_bounce_pending_with_empty_projection_resumes_worker_handoff(
+        self, tmp_path,
+    ):
+        store = _store()
+        runtime = _runtime(store)
+        item = _review_passed_item(store)
+        store.update_work_item_metadata(item.id, merge_bounce=1)
+        store.reset_review(item.id)
+        store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
+        manifest = Manifest(meta={}, nodes={
+            "a": Node(
+                id="a", worker="alice", reviewer="bob",
+                work_item_id=item.id, status="merging",
+                merge_request_state="bounce_pending:1",
+            ),
+        })
+        path = _saved_manifest(tmp_path, manifest)
+        store.request_pull_request_merge = lambda *_args: pytest.fail(
+            "bounce recovery must not issue another merge request")
+
+        failures = loop.collect_results(
+            store, runtime, manifest, path,
+            retry_limits=dict(DEFAULT_RETRY), config={},
+        )
+
+        recovered = store.get_work_item(item.id)
+        assert failures == {}
+        assert manifest.nodes["a"].status == "in_progress"
+        assert manifest.nodes["a"].merge_request_state is None
+        assert recovered.status is WorkItemStatus.IN_PROGRESS
+        assert recovered.phase is TaskPhase.AUTHORING
+        assert recovered.review_subject_digest is None
+        assert recovered.review_verdict is None
+        assert recovered.review_report is None
+        assert store.assign_log[-1][2] == "worker"
+
 
 # ── manifest 持久化:合入信息落盘 ──────────────────────────────────────────
 

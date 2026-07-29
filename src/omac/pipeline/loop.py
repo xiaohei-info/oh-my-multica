@@ -27,7 +27,7 @@ from ..core.gitsync import commit_manifest
 from ..core.manifest import Manifest, save_manifest, set_node
 from ..pipeline.delivery import (
     advance_delivery, block_unproven_merge_request,
-    merge_request_state_is_valid, run_merge_delivery,
+    merge_bounce_attempt, merge_request_state_is_valid, run_merge_delivery,
 )
 from ..engines.models import PullRequestState, WorkItemStatus
 from ..engines.runtime import AgentRuntime
@@ -333,7 +333,7 @@ def _complete_merge_if_confirmed(
     node = manifest.nodes[key]
     item = store.get_work_item(node.work_item_id)
     recovering_merge_handoff = (
-        node.merge_request_state is not None
+        merge_bounce_attempt(node.merge_request_state) is not None
         and item.phase == TaskPhase.AUTHORING
         and item.review_verdict is None
         and item.review_report is None
