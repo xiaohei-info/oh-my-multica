@@ -887,11 +887,13 @@ def _dispatch(
             issue_key=getattr(item, "identifier", None),
             language=current_language(),
         )
-        store.update_work_item_metadata(
-            item.id,
-            description=body,
-            source_refs=source_refs,
-        )
+        metadata = {
+            "description": body,
+            "source_refs": source_refs,
+        }
+        if not is_new_item:
+            metadata["blocked_by"] = list(node.blocked_by)
+        store.update_work_item_metadata(item.id, **metadata)
 
         # fire-and-forget: assign worker + 标 in_progress + wake
         store.assign_work_item(node.work_item_id, worker, "worker")

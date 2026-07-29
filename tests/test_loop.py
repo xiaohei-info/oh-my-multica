@@ -28,6 +28,7 @@ from omac.engines.mock import MockRuntime, MockStore
 from omac.core.taskmeta import TaskPhase
 from omac.engines.models import EngineConfig, WorkItemStatus
 from omac.pipeline import loop
+from omac.pipeline.dispatch import build_show_output
 from omac.pipeline.loop import TickResult, tick
 
 
@@ -353,6 +354,150 @@ class TestHappyPath:
         assert f"omac work show {foundation_item.id}" not in item.description
         assert f"omac work show {data_item.id}" not in item.description
         assert "Abandoned setup" not in item.description
+
+    def test_reused_item_refreshes_manifest_dependencies_before_dispatch(
+        self, monkeypatch,
+    ):
+        eng = _engine(MOCK_AUTO_COMPLETE="false")
+        old_dependencies = [
+            "bootstrap-go",
+            "bootstrap-console",
+            "release-workspace-contract",
+        ]
+        new_dependency = "system-release-tooling-ownership-contract"
+        dependency_keys = [*old_dependencies, new_dependency]
+        dependency_nodes = []
+        dependency_items = {}
+        for key in dependency_keys:
+            dependency_item = eng.store.create_work_item(
+                "ws", key, f"Task {key}", dag_key=key, worker="alice")
+            eng.store.update_work_item_metadata(
+                dependency_item.id,
+                artifacts={"pr_url": f"https://example.test/pr/{key}"},
+            )
+            eng.store.update_status(dependency_item.id, WorkItemStatus.DONE)
+            dependency_items[key] = dependency_item
+            dependency = _node(key, title=key)
+            dependency.status = "done"
+            dependency.merged = True
+            dependency.merged_at = "2026-07-28T08:00:00Z"
+            dependency.work_item_id = dependency_item.id
+            dependency_nodes.append(dependency)
+
+        contract = _contract()
+        target = _node(
+            "release-artifact-tooling",
+            worker="alice",
+            reviewer="bob",
+            blocked_by=dependency_keys,
+            contract=contract,
+            title="Release artifact tooling",
+        )
+        reused = eng.store.create_work_item(
+            "ws",
+            target.title,
+            "stale issue body",
+            dag_key="oac-release/release-artifact-tooling",
+            worker="alice",
+            reviewer="bob",
+            blocked_by=old_dependencies,
+        )
+        eng.store.set_node_contract(reused.id, contract)
+        reused.source_refs = [
+            {
+                "label": f"Prerequisite implementation · {key}",
+                "issue_id": dependency_items[key].id,
+            }
+            for key in old_dependencies
+        ]
+        review_ledger = {
+            "schema": "omac.review-ledger/v1",
+            "cycles": [],
+            "blockers": [],
+        }
+        review_report = {"review_goals": ["preserve prior history"]}
+        reused.review_ledger = review_ledger
+        reused.review_report = review_report
+        reused.review_comment = "prior review history"
+        eng.store.add_comment(reused.id, "existing audit comment")
+        target.work_item_id = reused.id
+
+        manifest = _manifest([*dependency_nodes, target], meta={
+            "workspace_id": "ws",
+            "dag_key": "oac-release",
+        })
+        path = _tmp_manifest_path(manifest)
+        events = []
+        metadata_calls = []
+        original_update = eng.store.update_work_item_metadata
+        original_assign = eng.store.assign_work_item
+        original_status = eng.store.update_status
+
+        def update_metadata(item_id, **kwargs):
+            if item_id == reused.id:
+                events.append("metadata")
+                metadata_calls.append(kwargs)
+            return original_update(item_id, **kwargs)
+
+        def assign(item_id, assignee, role):
+            if item_id == reused.id:
+                events.append("assign")
+            return original_assign(item_id, assignee, role)
+
+        def update_status(item_id, status):
+            if item_id == reused.id:
+                events.append("status")
+            return original_status(item_id, status)
+
+        def wake(item_id, agent, role):
+            events.append("wake")
+            current = eng.store.get_work_item(item_id)
+            summary = build_show_output(current, f"{role}:{agent}")
+            assert current.blocked_by == dependency_keys
+            assert summary["task"]["blocked_by"] == dependency_keys
+            assert summary["context"]["source_issues"][-1]["issue_id"] == (
+                dependency_items[new_dependency].id
+            )
+            assert new_dependency in summary["context"]["issue_description"]
+
+        monkeypatch.setattr(eng.store, "update_work_item_metadata", update_metadata)
+        monkeypatch.setattr(eng.store, "assign_work_item", assign)
+        monkeypatch.setattr(eng.store, "update_status", update_status)
+        monkeypatch.setattr(
+            eng.store,
+            "set_node_contract",
+            lambda *_args, **_kwargs: pytest.fail(
+                "reused item must not republish its contract"),
+        )
+        monkeypatch.setattr(eng.runtime, "wake", wake)
+
+        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+
+        current = eng.store.get_work_item(reused.id)
+        summary = build_show_output(current, "worker:alice")
+        assert result.dispatched == [target.id]
+        assert events == ["metadata", "assign", "status", "wake"]
+        assert len(metadata_calls) == 1
+        assert set(metadata_calls[0]) == {
+            "blocked_by", "description", "source_refs",
+        }
+        assert "worker" not in metadata_calls[0]
+        assert "reviewer" not in metadata_calls[0]
+        assert current.worker == "alice"
+        assert current.reviewer == "bob"
+        assert current.review_ledger is review_ledger
+        assert current.review_report is review_report
+        assert current.review_comment == "prior review history"
+        assert summary["task"]["blocked_by"] == dependency_keys
+        assert summary["context"]["source_issues"][-1] == {
+            "label": (
+                "Prerequisite implementation · "
+                "system-release-tooling-ownership-contract"
+            ),
+            "issue_id": dependency_items[new_dependency].id,
+        }
+        assert eng.store.get_comments(reused.id) == ["existing audit comment"]
+        assert len(eng.runtime.list_runs(reused.id)) == 1
 
     def test_dispatch_develop_dag_key_includes_manifest_dag_suffix(self):
         """worker issue 的 DAG key 继承 plan/decompose 唯一后缀,避免不同流水线节点重名。"""
