@@ -103,6 +103,18 @@ def _proposal(*operations):
     }
 
 
+def _old_worker_handoff(worker="alice"):
+    return {
+        "schema": "omac.worker-handoff/v1",
+        "state": "pending",
+        "target_worker": worker,
+        "gate": "review",
+        "source_review_subject_digest": "old-review-subject",
+        "source_review_round": 1,
+        "target_review_bounce": 1,
+    }
+
+
 def _topology_manifest(tmp_path):
     path = tmp_path / "topology.yaml"
     path.write_text(yaml.safe_dump({
@@ -1891,7 +1903,7 @@ def test_contract_only_amendment_preserves_runtime_facts_and_resumes_review(tmp_
     assert got.status == WorkItemStatus.IN_REVIEW
 
 
-def _apply_exhausted_stage_amendment(tmp_path, stage):
+def _stage_amendment_with_handoff(tmp_path, stage):
     path = _manifest(tmp_path)
     engine = _engine()
     item = engine.store.create_work_item(
@@ -1904,6 +1916,7 @@ def _apply_exhausted_stage_amendment(tmp_path, stage):
         worker_bounce=3,
         review_bounce=4,
         merge_bounce=5,
+        worker_handoff=_old_worker_handoff(),
     )
     engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
     reviewed = build_reviewed_amendment(
@@ -1914,6 +1927,12 @@ def _apply_exhausted_stage_amendment(tmp_path, stage):
         reviewer_verdict="pass",
         acceptance=_responsibility_acceptance_doc(),
     )
+    return path, engine, item, reviewed
+
+
+def _apply_exhausted_stage_amendment(tmp_path, stage):
+    path, engine, item, reviewed = _stage_amendment_with_handoff(
+        tmp_path, stage)
     apply_amendment(
         str(path), reviewed, engine.store, {"alice", "bob", "charlie"},
         acceptance=_responsibility_acceptance_doc(),
@@ -1933,11 +1952,90 @@ def test_amendment_recovery_preserves_absolute_bounce_audit_and_records_fresh_bu
     assert got.bounces.worker == 3
     assert got.bounces.review == 4
     assert got.bounces.merge == 5
+    assert got.worker_handoff is None
     assert ledger["bounce_baseline"] == {
         "worker": 3,
         "review": 4,
         "merge": 5,
     }
+
+
+@pytest.mark.parametrize("stage", ("authoring", "review", "merging"))
+@pytest.mark.parametrize("checkpoint", ("before_clear", "after_clear"))
+def test_amendment_stage_recovery_retires_handoff_restart_safely(
+    tmp_path, monkeypatch, stage, checkpoint,
+):
+    """apply ledger 在 intent clear 写入前后崩溃都可重入并幂等收口。"""
+    path, engine, item, reviewed = _stage_amendment_with_handoff(
+        tmp_path, stage)
+    original_update = engine.store.update_work_item_metadata
+    crashed = False
+
+    def crash_at_clear(item_id, **metadata):
+        nonlocal crashed
+        if metadata.get("worker_handoff") == {} and not crashed:
+            crashed = True
+            if checkpoint == "before_clear":
+                raise RuntimeError("crash before stage handoff retirement")
+            result = original_update(item_id, **metadata)
+            raise RuntimeError("crash after stage handoff retirement")
+        return original_update(item_id, **metadata)
+
+    monkeypatch.setattr(
+        engine.store, "update_work_item_metadata", crash_at_clear)
+    with pytest.raises(RuntimeError, match="stage handoff retirement"):
+        apply_amendment(
+            str(path), reviewed, engine.store, {"alice", "bob", "charlie"},
+            acceptance=_responsibility_acceptance_doc(),
+        )
+
+    interrupted = load_manifest(str(path))
+    entry = interrupted.meta["amendment_apply"]["nodes"]["bootstrap"]
+    assert entry["state"] == "syncing"
+    assert (engine.store.get_work_item(item.id).worker_handoff is None) is (
+        checkpoint == "after_clear")
+
+    monkeypatch.setattr(
+        engine.store, "update_work_item_metadata", original_update)
+    result = apply_amendment(
+        str(path), reviewed, engine.store, {"alice", "bob", "charlie"},
+        acceptance=_responsibility_acceptance_doc(),
+    )
+    assert result["sync"]["synced"] == ["bootstrap"]
+    recovered = engine.store.get_work_item(item.id)
+    assert recovered.worker_handoff is None
+    assert load_manifest(str(path)).meta[
+        "amendment_apply"]["nodes"]["bootstrap"]["state"] == "synced"
+
+    apply_amendment(
+        str(path), reviewed, engine.store, {"alice", "bob", "charlie"},
+        acceptance=_responsibility_acceptance_doc(),
+    )
+    assert engine.store.get_work_item(item.id).worker_handoff is None
+
+
+def test_merging_stage_retires_handoff_before_contract_sync(
+    tmp_path, monkeypatch,
+):
+    """merging 不能先同步 contract 再遗留旧 handoff。"""
+    path, engine, item, reviewed = _stage_amendment_with_handoff(
+        tmp_path, "merging")
+    original_set_contract = engine.store.set_node_contract
+    observed = []
+
+    def assert_retired_before_contract(item_id, contract):
+        observed.append(engine.store.get_work_item(item_id).worker_handoff)
+        return original_set_contract(item_id, contract)
+
+    monkeypatch.setattr(
+        engine.store, "set_node_contract", assert_retired_before_contract)
+    apply_amendment(
+        str(path), reviewed, engine.store, {"alice", "bob", "charlie"},
+        acceptance=_responsibility_acceptance_doc(),
+    )
+
+    assert observed == [None]
+    assert engine.store.get_work_item(item.id).worker_handoff is None
 
 
 def test_review_recovery_uses_fresh_budget_without_erasing_absolute_history(
@@ -2128,6 +2226,7 @@ def test_merge_only_precondition_failure_does_not_modify_manifest(tmp_path):
         artifacts={"pr_url": "https://example.test/pr/1"},
         review_verdict="reject",
         review_report={"blockers": ["not ready"]},
+        worker_handoff=_old_worker_handoff(),
     )
     proposal = _proposal({"op": "resume", "node": "bootstrap", "stage": "merging"})
     reviewed = build_reviewed_amendment(
@@ -2138,6 +2237,7 @@ def test_merge_only_precondition_failure_does_not_modify_manifest(tmp_path):
         apply_amendment(str(path), reviewed, engine.store, {"alice", "bob", "charlie"})
 
     assert path.read_bytes() == original
+    assert engine.store.get_work_item(item.id).worker_handoff is not None
 
 
 def test_implementation_scope_change_requires_authoring_and_explicit_migration(tmp_path):

@@ -28,6 +28,18 @@ def _basic_nodes():
     ]
 
 
+def _old_worker_handoff(worker="bob"):
+    return {
+        "schema": "omac.worker-handoff/v1",
+        "state": "pending",
+        "target_worker": worker,
+        "gate": "review",
+        "source_review_subject_digest": "old-review-subject",
+        "source_review_round": 1,
+        "target_review_bounce": 1,
+    }
+
+
 # ---------------- show ----------------
 
 def test_show_missing_manifest_is_validation(tmp_path, capsys, monkeypatch):
@@ -175,6 +187,167 @@ def test_retry_reassignment_survives_reconcile_and_dispatches_new_worker(
     assert result.dispatched == ["b"]
     assert manifest.nodes["b"].status == "in_progress"
     assert engine.store.get_work_item(item.id).worker == "charlie"
+
+
+@pytest.mark.parametrize("replacement", [None, "charlie"])
+def test_retry_retires_old_handoff_and_waits_for_new_worker_submit(
+    tmp_path, capsys, monkeypatch, replacement,
+):
+    """显式 retry 退役旧 handoff；新 Worker 未交付前不能提前派 Reviewer。"""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OMAC_ENGINE", "mock")
+    monkeypatch.setenv("OMAC_WORKSPACE_ID", "ws-1")
+
+    from omac.engines import EngineConfig, create_engine
+    from omac.engines.models import WorkItemStatus
+    from omac.core.taskmeta import TaskPhase
+    from omac.pipeline.loop import tick
+
+    engine = create_engine(
+        "mock",
+        EngineConfig("mock", "ws-1", extra={"MOCK_AUTO_COMPLETE": "false"}),
+    )
+    item = engine.store.create_work_item(
+        "ws-1", "t", "d", "b", "bob", reviewer="alice")
+    engine.store.update_work_item_metadata(
+        item.id,
+        phase=TaskPhase.REVIEW,
+        review_verdict="reject",
+        review_subject_digest="old-review-subject",
+        worker_handoff=_old_worker_handoff(),
+    )
+    engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
+
+    import omac.cli.commands.node as node_mod
+    monkeypatch.setattr(node_mod, "create_engine", lambda *a, **kw: engine)
+    path = _write_manifest(tmp_path, [{
+        "id": "b",
+        "worker": "bob",
+        "reviewer": "alice",
+        "status": "blocked",
+        "work_item_id": item.id,
+    }])
+
+    command = ["node", "retry", path, "b"]
+    if replacement:
+        command.extend(["--worker", replacement])
+    assert main(command) == exit_codes.OK
+    capsys.readouterr()
+
+    expected_worker = replacement or "bob"
+    retried = engine.store.get_work_item(item.id)
+    assert retried.worker_handoff is None
+    assert retried.phase is TaskPhase.AUTHORING
+    assert retried.status is WorkItemStatus.TODO
+
+    manifest = load_manifest(path)
+    first = tick(engine.store, engine.runtime, manifest, path, max_parallel=1)
+    assert first.dispatched == ["b"]
+    assert engine.store.get_work_item(item.id).worker == expected_worker
+    reviewer_assignments = len([
+        entry for entry in engine.store.assign_log if entry[2] == "reviewer"
+    ])
+
+    second = tick(engine.store, engine.runtime, manifest, path, max_parallel=1)
+    assert second.state == "running"
+    assert manifest.nodes["b"].status == "in_progress"
+    assert len([
+        entry for entry in engine.store.assign_log if entry[2] == "reviewer"
+    ]) == reviewer_assignments
+
+    engine.store.update_work_item_metadata(
+        item.id,
+        artifacts={"pr_url": "https://mock.example.com/pr/retry"},
+        verification={"commands": []},
+    )
+    engine.store.update_status(item.id, WorkItemStatus.DONE)
+
+    third = tick(engine.store, engine.runtime, manifest, path, max_parallel=1)
+    reviewed = engine.store.get_work_item(item.id)
+    assert third.state == "running"
+    assert manifest.nodes["b"].status == "in_review"
+    assert reviewed.phase is TaskPhase.REVIEW
+    assert reviewed.status is WorkItemStatus.IN_REVIEW
+    assert len([
+        entry for entry in engine.store.assign_log if entry[2] == "reviewer"
+    ]) == reviewer_assignments + 1
+
+
+@pytest.mark.parametrize("replacement", [None, "charlie"])
+@pytest.mark.parametrize("checkpoint", ["before_clear", "after_clear"])
+def test_retry_handoff_retirement_is_restart_safe(
+    tmp_path, monkeypatch, replacement, checkpoint,
+):
+    """clear 写入前后崩溃都不提交半份 manifest，重复 retry 可幂等恢复。"""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OMAC_ENGINE", "mock")
+    monkeypatch.setenv("OMAC_WORKSPACE_ID", "ws-1")
+
+    from omac.engines import EngineConfig, create_engine
+    from omac.engines.models import WorkItemStatus
+    from omac.core.taskmeta import TaskPhase
+
+    engine = create_engine(
+        "mock",
+        EngineConfig("mock", "ws-1", extra={"MOCK_AUTO_COMPLETE": "false"}),
+    )
+    item = engine.store.create_work_item("ws-1", "t", "d", "b", "bob")
+    engine.store.update_work_item_metadata(
+        item.id,
+        phase=TaskPhase.REVIEW,
+        review_verdict="reject",
+        review_subject_digest="old-review-subject",
+        worker_handoff=_old_worker_handoff(),
+    )
+    engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
+
+    import omac.cli.commands.node as node_mod
+    monkeypatch.setattr(node_mod, "create_engine", lambda *a, **kw: engine)
+    path = _write_manifest(tmp_path, [{
+        "id": "b", "worker": "bob", "status": "blocked",
+        "work_item_id": item.id,
+    }])
+    original_update = engine.store.update_work_item_metadata
+    crashed = False
+
+    def crash_at_clear(item_id, **metadata):
+        nonlocal crashed
+        if metadata.get("worker_handoff") == {} and not crashed:
+            crashed = True
+            if checkpoint == "before_clear":
+                raise RuntimeError("crash before handoff retirement")
+            result = original_update(item_id, **metadata)
+            raise RuntimeError("crash after handoff retirement")
+        return original_update(item_id, **metadata)
+
+    monkeypatch.setattr(
+        engine.store, "update_work_item_metadata", crash_at_clear)
+    command = ["node", "retry", path, "b"]
+    if replacement:
+        command.extend(["--worker", replacement])
+
+    with pytest.raises(RuntimeError, match="handoff retirement"):
+        main(command)
+
+    interrupted_manifest = load_manifest(path)
+    assert interrupted_manifest.nodes["b"].status == "blocked"
+    assert interrupted_manifest.nodes["b"].worker == "bob"
+    interrupted_item = engine.store.get_work_item(item.id)
+    assert (interrupted_item.worker_handoff is None) is (
+        checkpoint == "after_clear")
+
+    monkeypatch.setattr(
+        engine.store, "update_work_item_metadata", original_update)
+    assert main(command) == exit_codes.OK
+    assert main(command) == exit_codes.OK
+
+    recovered_manifest = load_manifest(path)
+    recovered_item = engine.store.get_work_item(item.id)
+    assert recovered_manifest.nodes["b"].status == "todo"
+    assert recovered_manifest.nodes["b"].worker == (replacement or "bob")
+    assert recovered_item.worker_handoff is None
+    assert recovered_item.phase is TaskPhase.AUTHORING
+    assert recovered_item.status is WorkItemStatus.TODO
 
 
 def test_retry_platform_failure_keeps_manifest_unchanged(tmp_path, monkeypatch):

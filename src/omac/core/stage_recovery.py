@@ -87,6 +87,13 @@ def prepare_stage_recovery(
         return "no-work-item"
     item = store.get_work_item(node.work_item_id)
     validate_stage_recovery(item, stage)
+    # 显式 stage recovery 开启新的执行世代。旧 review→worker handoff 只属于
+    # 被 operator/amendment 取代的阶段，必须在任何可被 apply ledger 判定为
+    # reached 的 contract/phase/status 写入前先退役。clear 是幂等 metadata
+    # 写；若响应未知，重放 prepare_stage_recovery 仍会安全地再次清除。
+    if item.worker_handoff is not None:
+        store.update_work_item_metadata(
+            node.work_item_id, worker_handoff={})
     if sync_contract and node.contract is not None:
         store.set_node_contract(node.work_item_id, node.contract)
     if stage == "merging":
