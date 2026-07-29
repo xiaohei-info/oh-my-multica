@@ -1150,6 +1150,69 @@ def test_multica_runtime_reruns_failed_direct_run_once(monkeypatch):
     ]) == 1
 
 
+def test_multica_runtime_accepts_rerun_created_before_response_failure(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    calls = []
+    observations = iter([
+        [{"id": "run-failed", "status": "failed", "kind": "direct"}],
+        [{"id": "run-failed", "status": "failed", "kind": "direct"}],
+        [
+            {"id": "run-failed", "status": "failed", "kind": "direct"},
+            {"id": "run-retry", "status": "queued", "kind": "direct"},
+        ],
+    ])
+
+    def fake_run(args):
+        calls.append(args)
+        if args[:2] == ["issue", "runs"]:
+            return next(observations)
+        if args[:2] == ["issue", "rerun"]:
+            raise PlatformError("rerun response unavailable")
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+    runtime = MulticaRuntime(
+        store, active_observation_attempts=2,
+        active_observation_interval=0, sleeper=lambda _seconds: None)
+
+    runtime.wake("issue-1", "alice", "worker")
+
+    assert calls.count([
+        "issue", "rerun", "issue-1", "--output", "json",
+    ]) == 1
+
+
+def test_multica_runtime_preserves_rerun_error_when_no_run_was_created(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    calls = []
+    rerun_error = PlatformError("Invalid request: issue has no assignee")
+
+    def fake_run(args):
+        calls.append(args)
+        if args[:2] == ["issue", "runs"]:
+            return [{"id": "run-failed", "status": "failed", "kind": "direct"}]
+        if args[:2] == ["issue", "rerun"]:
+            raise rerun_error
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+    runtime = MulticaRuntime(
+        store, active_observation_attempts=2,
+        active_observation_interval=0, sleeper=lambda _seconds: None)
+
+    with pytest.raises(PlatformError, match="issue has no assignee") as exc_info:
+        runtime.wake("issue-1", "alice", "worker")
+
+    assert exc_info.value is rerun_error
+    assert calls.count([
+        "issue", "runs", "issue-1", "--output", "json",
+    ]) == 3
+    assert calls.count([
+        "issue", "rerun", "issue-1", "--output", "json",
+    ]) == 1
+    assert not any(args[:2] == ["issue", "assign"] for args in calls)
+
+
 def test_multica_runtime_cancel_interrupts_active_direct_run(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
     runtime = MulticaRuntime(store)

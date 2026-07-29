@@ -188,6 +188,14 @@ def _latest_direct_run(runs: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     return _latest_run(direct_runs)
 
 
+def _direct_run_ids(runs: List[Dict[str, Any]]) -> set[str]:
+    return {
+        str(run["id"])
+        for run in runs
+        if (run.get("kind") or "direct") == "direct" and run.get("id")
+    }
+
+
 def _is_not_found(message: str) -> bool:
     text = message.lower()
     return "not found" in text or "does not exist" in text or "404" in text
@@ -1420,9 +1428,19 @@ class MulticaRuntime(AgentRuntime):
                 not in _RERUNNABLE_DIRECT_RUN_STATUSES
             ):
                 return None
-        self._store._run_multica([
-            "issue", "rerun", item_id, "--output", "json",
-        ])
+        direct_run_ids = _direct_run_ids(runs)
+        try:
+            self._store._run_multica([
+                "issue", "rerun", item_id, "--output", "json",
+            ])
+        except PlatformError as rerun_error:
+            try:
+                observed_runs = self._issue_runs(item_id)
+            except PlatformError:
+                raise rerun_error from None
+            if _direct_run_ids(observed_runs) - direct_run_ids:
+                return None
+            raise
         return None
 
     def cancel(self, item_id: str) -> bool:
