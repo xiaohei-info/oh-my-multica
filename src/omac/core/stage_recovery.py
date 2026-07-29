@@ -38,6 +38,8 @@ def recovery_control_snapshot(item) -> dict:
         "review_verdict": getattr(item, "review_verdict", None),
         "review_subject_digest": getattr(item, "review_subject_digest", None),
         "contract_sha256": _stable_digest(contract_value),
+        "worker_handoff_pending": (
+            getattr(item, "worker_handoff", None) is not None),
     }
 
 
@@ -121,34 +123,41 @@ def classify_stage_recovery_observation(
 ) -> str:
     """返回 reached/safe/progressed，供 restart-safe 补偿决定是否写 Store。"""
     contract_matches = current.get("contract_sha256") == expected_contract_sha256
-    without_contract = {
-        key: value for key, value in current.items() if key != "contract_sha256"
+    recovery_independent = {
+        key: value for key, value in current.items()
+        if key not in {"contract_sha256", "worker_handoff_pending"}
     }
-    baseline_without_contract = {
-        key: value for key, value in baseline.items() if key != "contract_sha256"
+    baseline_recovery_independent = {
+        key: value for key, value in baseline.items()
+        if key not in {"contract_sha256", "worker_handoff_pending"}
     }
-    if stage == "merging" and (
-        contract_matches and without_contract == baseline_without_contract
-    ):
-        return "reached"
-    if stage == "review" and (
+    handoff_retired = not bool(current.get("worker_handoff_pending", False))
+    merging_target = (
+        contract_matches
+        and recovery_independent == baseline_recovery_independent
+    )
+    if stage == "merging" and merging_target:
+        return "reached" if handoff_retired else "safe"
+    review_target = (
         contract_matches
         and current.get("status") == WorkItemStatus.IN_REVIEW.value
         and current.get("phase") == TaskPhase.REVIEW.value
         and current.get("review_subject_digest") == expected_review_subject
-    ):
-        return "reached"
-    if stage == "authoring" and (
+    )
+    if stage == "review" and review_target:
+        return "reached" if handoff_retired else "safe"
+    authoring_target = (
         contract_matches
         and current.get("status") == WorkItemStatus.TODO.value
         and current.get("phase") == TaskPhase.AUTHORING.value
         and current.get("review_verdict") in {None, ""}
         and current.get("review_subject_digest") in {None, ""}
-    ):
-        return "reached"
+    )
+    if stage == "authoring" and authoring_target:
+        return "reached" if handoff_retired else "safe"
     if current == baseline:
         return "safe"
-    if without_contract == baseline_without_contract:
+    if recovery_independent == baseline_recovery_independent:
         return "safe"
     if stage == "review" and (
         current.get("status") == baseline.get("status")

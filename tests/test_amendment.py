@@ -31,6 +31,7 @@ from omac.core.manifest import (
     load_manifest,
     save_manifest,
 )
+from omac.core.review_convergence import review_subject_digest
 from omac.core.taskmeta import TaskKind, TaskPhase
 from omac.cli import exit_codes
 from omac.cli.main import main
@@ -1127,6 +1128,118 @@ def _merge_ready_responsibility_amendment(tmp_path):
         acceptance=_responsibility_acceptance_doc(),
     )
     return path, engine, item, reviewed
+
+
+def _presynced_merging_amendment_with_handoff(tmp_path):
+    """Store contract 已提前同步，但仍残留真实旧 handoff 的 pure merging。"""
+    path, engine, item, reviewed = _merge_ready_responsibility_amendment(
+        tmp_path)
+    amended = amendment_mod._apply_definition(
+        load_manifest(str(path)), reviewed)
+    engine.store.set_node_contract(
+        item.id, amended.nodes["bootstrap"].contract)
+    current = engine.store.get_work_item(item.id)
+    engine.store.prepare_review_cycle(
+        item.id,
+        review_subject_digest(
+            current, max(1, current.bounces.review + 1)),
+    )
+    engine.store.update_work_item_metadata(
+        item.id,
+        review_verdict="pass",
+        review_report={"blockers": []},
+        worker_handoff=_old_worker_handoff(),
+    )
+    engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
+    return path, engine, item, reviewed
+
+
+def test_presynced_pure_merging_retires_handoff_before_reached_and_tick(
+    tmp_path, monkeypatch,
+):
+    """预同步 contract 不能绕过 intent retirement，后续 tick 不得补 Reviewer。"""
+    path, engine, item, reviewed = _presynced_merging_amendment_with_handoff(
+        tmp_path)
+
+    result = apply_amendment(
+        str(path), reviewed, engine.store, {"alice", "bob", "charlie"},
+        acceptance=_responsibility_acceptance_doc(),
+    )
+
+    applied = load_manifest(str(path))
+    entry = applied.meta["amendment_apply"]["nodes"]["bootstrap"]
+    assert result["sync"]["synced"] == ["bootstrap"]
+    assert entry["state"] == "synced"
+    assert entry["observed"]["worker_handoff_pending"] is False
+    assert engine.store.get_work_item(item.id).worker_handoff is None
+
+    applied.nodes["closeout"].status = "abandoned"
+    save_manifest(applied, str(path))
+    monkeypatch.setattr(
+        loop,
+        "_dispatch_reviewer_for_current_subject",
+        lambda *_args, **_kwargs: pytest.fail(
+            "retired handoff must not turn pure merging back to Reviewer"),
+    )
+    monkeypatch.setattr(
+        loop, "run_merge_delivery", lambda *_args, **_kwargs: "pass")
+
+    tick_result = loop.tick(
+        engine.store, engine.runtime, applied, str(path), max_parallel=1)
+
+    assert tick_result.state == "converged"
+    assert applied.nodes["bootstrap"].status == "done"
+    assert engine.store.get_work_item(item.id).status is WorkItemStatus.DONE
+
+
+@pytest.mark.parametrize("checkpoint", ("before_clear", "after_clear"))
+def test_presynced_merging_handoff_retirement_crash_is_idempotent(
+    tmp_path, monkeypatch, checkpoint,
+):
+    """预同步 merging 在 clear 前/后崩溃都能重入，重复 apply 不回放副作用。"""
+    path, engine, item, reviewed = _presynced_merging_amendment_with_handoff(
+        tmp_path)
+    original_update = engine.store.update_work_item_metadata
+    crashed = False
+
+    def crash_at_clear(item_id, **metadata):
+        nonlocal crashed
+        if metadata.get("worker_handoff") == {} and not crashed:
+            crashed = True
+            if checkpoint == "before_clear":
+                raise RuntimeError("crash before presynced handoff retirement")
+            original_update(item_id, **metadata)
+            raise RuntimeError("crash after presynced handoff retirement")
+        return original_update(item_id, **metadata)
+
+    monkeypatch.setattr(
+        engine.store, "update_work_item_metadata", crash_at_clear)
+    with pytest.raises(RuntimeError, match="presynced handoff retirement"):
+        apply_amendment(
+            str(path), reviewed, engine.store, {"alice", "bob", "charlie"},
+            acceptance=_responsibility_acceptance_doc(),
+        )
+
+    interrupted = load_manifest(str(path))
+    assert interrupted.meta[
+        "amendment_apply"]["nodes"]["bootstrap"]["state"] == "syncing"
+    assert (engine.store.get_work_item(item.id).worker_handoff is None) is (
+        checkpoint == "after_clear")
+
+    monkeypatch.setattr(
+        engine.store, "update_work_item_metadata", original_update)
+    recovered = apply_amendment(
+        str(path), reviewed, engine.store, {"alice", "bob", "charlie"},
+        acceptance=_responsibility_acceptance_doc(),
+    )
+    repeated = apply_amendment(
+        str(path), reviewed, engine.store, {"alice", "bob", "charlie"},
+        acceptance=_responsibility_acceptance_doc(),
+    )
+
+    assert recovered["sync"]["synced"] == ["bootstrap"]
+    assert repeated["sync"]["already_complete"] == ["bootstrap"]
+    assert engine.store.get_work_item(item.id).worker_handoff is None
 
 
 def test_responsibility_merging_syncs_contract_without_replaying_delivery(tmp_path, monkeypatch):
