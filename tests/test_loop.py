@@ -1850,6 +1850,165 @@ class TestReviewerRejectBoundedFallback:
             entry for entry in eng.store.assign_log if entry[2] == "reviewer"
         ]) == reviewer_assignments_before + 1
 
+    @pytest.mark.parametrize("intent_kind", ["malformed", "stale"])
+    @pytest.mark.parametrize(
+        "checkpoint",
+        [
+            "before_reset", "reset", "reviewer_status",
+            "reviewer_assignment", "reviewer_wake", "intent_clear",
+        ],
+    )
+    def test_invalid_worker_handoff_keeps_intent_until_fresh_reviewer_dispatch(
+        self, tmp_path, monkeypatch, intent_kind, checkpoint,
+    ):
+        """invalid intent 的 fresh Reviewer 补偿在每个 checkpoint 都可幂等恢复。"""
+        from omac.engines import create_engine
+        from omac.errors import PlatformError
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        current = eng.store.get_work_item(item.id)
+        old_subject = current.review_subject_digest
+        ledger = {
+            "schema": "omac.review-ledger/v1",
+            "cycles": [{
+                "round": 1,
+                "subject_digest": old_subject,
+                "verdict": "reject",
+            }],
+            "blockers": [],
+        }
+        eng.store.update_work_item_metadata(
+            item.id,
+            review_obligations=build_review_obligations(current),
+            review_report=_review_report(current, "reject"),
+            review_ledger=ledger,
+        )
+        if intent_kind == "malformed":
+            intent = {
+                "schema": "omac.worker-handoff/v1",
+                "state": "pending",
+            }
+        else:
+            intent = {
+                "schema": "omac.worker-handoff/v1",
+                "state": "pending",
+                "target_worker": "alice",
+                "gate": "review",
+                "source_review_subject_digest": old_subject,
+                "source_review_round": 1,
+                "target_review_bounce": 1,
+            }
+        eng.store.update_work_item_metadata(
+            item.id, worker_handoff=intent)
+        if intent_kind == "stale":
+            eng.store.update_work_item_metadata(
+                item.id,
+                review_bounce=1,
+                artifacts={
+                    "pr_url": "https://mock.example.com/pr/stale-intent",
+                },
+            )
+
+        runs_before = len(eng.runtime.list_runs(item.id))
+        worker_assignments_before = len([
+            entry for entry in eng.store.assign_log if entry[2] == "worker"
+        ])
+        reviewer_assignments_before = len([
+            entry for entry in eng.store.assign_log if entry[2] == "reviewer"
+        ])
+        original_update_metadata = eng.store.update_work_item_metadata
+        original_reset_review = eng.store.reset_review
+        original_update_status = eng.store.update_status
+        original_assign = eng.store.assign_work_item
+        original_wake = eng.runtime.wake
+        crashed = False
+
+        def crash_once(name):
+            nonlocal crashed
+            if checkpoint != name or crashed:
+                return
+            crashed = True
+            error = (
+                PlatformError("simulated reviewer wake result unknown")
+                if name == "reviewer_wake"
+                else RuntimeError(f"simulated crash at {name}")
+            )
+            raise error
+
+        def update_metadata(item_id, **metadata):
+            result = original_update_metadata(item_id, **metadata)
+            if metadata.get("worker_handoff") == {}:
+                crash_once("intent_clear")
+            return result
+
+        def reset_review(item_id):
+            crash_once("before_reset")
+            original_reset_review(item_id)
+            crash_once("reset")
+
+        def update_status(item_id, status):
+            original_update_status(item_id, status)
+            if status is WorkItemStatus.IN_REVIEW:
+                crash_once("reviewer_status")
+
+        def assign(item_id, assignee, role):
+            original_assign(item_id, assignee, role)
+            if role == "reviewer":
+                crash_once("reviewer_assignment")
+
+        def wake(item_id, agent, role):
+            original_wake(item_id, agent, role)
+            if role == "reviewer":
+                crash_once("reviewer_wake")
+
+        monkeypatch.setattr(
+            eng.store, "update_work_item_metadata", update_metadata)
+        monkeypatch.setattr(eng.store, "reset_review", reset_review)
+        monkeypatch.setattr(eng.store, "update_status", update_status)
+        monkeypatch.setattr(eng.store, "assign_work_item", assign)
+        monkeypatch.setattr(eng.runtime, "wake", wake)
+
+        error_type = PlatformError if checkpoint == "reviewer_wake" else RuntimeError
+        with pytest.raises(error_type, match="simulated"):
+            tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+
+        interrupted = eng.store.get_work_item(item.id)
+        if checkpoint == "intent_clear":
+            assert interrupted.worker_handoff is None
+        else:
+            assert interrupted.worker_handoff is not None
+
+        monkeypatch.setattr(
+            eng.store, "update_work_item_metadata", original_update_metadata)
+        monkeypatch.setattr(eng.store, "reset_review", original_reset_review)
+        monkeypatch.setattr(eng.store, "update_status", original_update_status)
+        monkeypatch.setattr(eng.store, "assign_work_item", original_assign)
+        monkeypatch.setattr(eng.runtime, "wake", original_wake)
+        persisted = load_manifest(path)
+
+        first = tick(eng.store, eng.runtime, persisted, path, max_parallel=4)
+        second = tick(eng.store, eng.runtime, persisted, path, max_parallel=4)
+
+        recovered = eng.store.get_work_item(item.id)
+        assert first.state == "running"
+        assert second.state == "running"
+        assert persisted.nodes["a"].status == "in_review"
+        assert recovered.worker_handoff is None
+        assert recovered.phase is TaskPhase.REVIEW
+        assert recovered.status is WorkItemStatus.IN_REVIEW
+        assert recovered.review_verdict is None
+        assert recovered.review_report is None
+        assert recovered.review_ledger is ledger
+        assert len(eng.runtime.list_runs(item.id)) == runs_before + 1
+        assert len([
+            entry for entry in eng.store.assign_log if entry[2] == "worker"
+        ]) == worker_assignments_before
+        assert len([
+            entry for entry in eng.store.assign_log if entry[2] == "reviewer"
+        ]) == reviewer_assignments_before + 1
+
     @pytest.mark.parametrize("stale_verdict", ["pass", "pass-with-nits", "reject"])
     def test_stale_pass_cannot_merge_new_worker_delivery(
         self, tmp_path, monkeypatch, stale_verdict,
