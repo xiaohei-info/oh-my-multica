@@ -11,7 +11,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
-from ..core.taskmeta import TaskKind, TaskPhase
+from ..core.taskmeta import TaskKind, TaskPhase, WorkerHandoffIntent
 from .models import (
     EngineConfig, MergeCommandResult, ProjectInfo, PullRequestCheckResult,
     PullRequestObservation, PullRequestReadiness, PullRequestReadinessFailure,
@@ -134,6 +134,7 @@ class WorkItemStore(ABC):
         review_ledger: Optional[Dict[str, Any]] = None,
         review_ledger_source: Optional[str] = None,
         review_continuation: Optional[Dict[str, Any]] = None,
+        worker_handoff: Optional[WorkerHandoffIntent | Dict[str, Any]] = None,
         decision_required: Optional[Dict[str, Any]] = None,
         amendment_attempt: Optional[Dict[str, Any]] = None,
         phase: Optional[TaskPhase] = None,
@@ -154,6 +155,7 @@ class WorkItemStore(ABC):
           (pipeline 读当前值、+1、写回;Store 只存取不做状态机);
         - review_continuation:operator 明确授权的绝对 review round 上限；
           不清零 review_bounce，也不写项目配置。
+        - worker_handoff:有界的内部 review→worker 交接意图；空 dict 清除。
         - deliverable:按 kind 承载 plan/acceptance/manifest 等交付正文。
         - project_rules:plan 的项目级开发规范交付正文。
         - description:回填 Human-first issue 正文(顶部单一 bootstrap 嵌入真实 id)。

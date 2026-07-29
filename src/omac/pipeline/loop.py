@@ -35,7 +35,9 @@ from ..engines.store import WorkItemStore
 from ..errors import AuthError, PlatformError, WorkItemNotFoundError
 from ..i18n import current_language, ui
 from ..pipeline.dispatch import normalize_source_refs, render_issue_body
-from ..core.taskmeta import TaskKind, TaskPhase
+from ..core.taskmeta import (
+    WORKER_HANDOFF_SCHEMA, TaskKind, TaskPhase, WorkerHandoffIntent,
+)
 
 log = logsetup.get_logger(__name__)
 
@@ -119,10 +121,10 @@ def _current_review_subject(item) -> str:
     return review_subject_digest(item, max(1, item.bounces.review + 1))
 
 
-def _review_subject_for_current_delivery(
-    manifest: Manifest, key: str, item,
+def _review_subject_for_round(
+    manifest: Manifest, key: str, item, round_index: int,
 ) -> str:
-    """返回当前 delivery 的合法 subject，兼容已接受 amendment 的 review recovery。"""
+    """返回指定 round 的合法 subject，兼容已接受 amendment 的 review recovery。"""
     ledger = manifest.meta.get("amendment_apply")
     entries = ledger.get("nodes") if isinstance(ledger, dict) else None
     entry = entries.get(key) if isinstance(entries, dict) else None
@@ -137,7 +139,14 @@ def _review_subject_for_current_delivery(
         and expected == stage_recovery_subject(manifest.nodes[key], item)
     ):
         return expected
-    return _current_review_subject(item)
+    return review_subject_digest(item, round_index)
+
+
+def _review_subject_for_current_delivery(
+    manifest: Manifest, key: str, item,
+) -> str:
+    return _review_subject_for_round(
+        manifest, key, item, max(1, item.bounces.review + 1))
 
 
 def _review_subject_is_current(
@@ -281,17 +290,53 @@ def _dispatch_reviewer_for_current_subject(
 def _dispatch_worker_handoff(
     store: WorkItemStore,
     runtime: AgentRuntime,
-    node,
+    manifest: Manifest,
+    key: str,
     *,
     review_bounce: int | None = None,
+    gate: str | None = None,
 ) -> None:
     """幂等完成 review→worker handoff；assign 可能立即启动 Run。"""
+    node = manifest.nodes[key]
     item_id = node.work_item_id
     current = store.get_work_item(item_id)
-    if review_bounce is not None and current.bounces.review < review_bounce:
-        store.update_work_item_metadata(
-            item_id, review_bounce=review_bounce)
+    intent = current.worker_handoff
+    if intent is None:
+        if review_bounce is None or gate is None:
+            raise PlatformError(
+                f"Worker handoff intent is missing for work item {item_id}")
+        source_round = max(1, current.bounces.review + 1)
+        source_subject = current.review_subject_digest
+        if (
+            not source_subject
+            or source_subject != _review_subject_for_round(
+                manifest, key, current, source_round)
+        ):
+            raise PlatformError(
+                f"Worker handoff source is stale for work item {item_id}")
+        intent = WorkerHandoffIntent(
+            schema=WORKER_HANDOFF_SCHEMA,
+            state="pending",
+            target_worker=node.worker,
+            gate=gate,
+            source_review_subject_digest=source_subject,
+            source_review_round=source_round,
+            target_review_bounce=review_bounce,
+        )
+        store.update_work_item_metadata(item_id, worker_handoff=intent)
         current = store.get_work_item(item_id)
+
+    target_bounce = intent.target_review_bounce
+    if target_bounce is None:
+        raise PlatformError(
+            f"Worker handoff target bounce is missing for work item {item_id}")
+    if current.bounces.review < target_bounce:
+        store.update_work_item_metadata(
+            item_id, review_bounce=target_bounce)
+        current = store.get_work_item(item_id)
+    if current.bounces.review != target_bounce:
+        raise PlatformError(
+            f"Worker handoff bounce does not match for work item {item_id}")
 
     # reset_review 的接口契约负责一次性清除当前 review projection 并回 AUTHORING。
     # handoff 不制造瞬时 review cycle，避免新增可崩溃的持久化中间态。
@@ -322,8 +367,52 @@ def _dispatch_worker_handoff(
 
     # assign_work_item 自身负责观察当前 assignee 并幂等修复；同一 worker 的
     # 重复 assign 不得创建第二个 Run，不同 assignee 则在正确 phase/status 下接棒。
-    store.assign_work_item(item_id, node.worker, "worker")
-    runtime.wake(item_id, node.worker, "worker")
+    store.assign_work_item(item_id, intent.target_worker, "worker")
+    runtime.wake(item_id, intent.target_worker, "worker")
+    store.update_work_item_metadata(item_id, worker_handoff={})
+
+
+def _review_projection_present(item) -> bool:
+    return bool(
+        item.review_verdict is not None
+        or item.review_comment not in {None, ""}
+        or item.machine_feedback not in (None, {})
+        or item.review_report is not None
+        or item.review_subject_digest is not None
+        or item.decision_required is not None
+    )
+
+
+def _worker_handoff_is_resumable(
+    manifest: Manifest, key: str, item,
+) -> bool:
+    intent = item.worker_handoff
+    node = manifest.nodes[key]
+    if (
+        intent is None
+        or not intent.is_complete()
+        or intent.target_worker != node.worker
+        or intent.gate not in {"review", "review-nits"}
+        or intent.source_review_round != intent.target_review_bounce
+        or item.status not in {
+            WorkItemStatus.IN_REVIEW, WorkItemStatus.IN_PROGRESS,
+        }
+        or item.bounces.review not in {
+            intent.target_review_bounce - 1,
+            intent.target_review_bounce,
+        }
+        or _review_subject_for_round(
+            manifest, key, item, intent.source_review_round)
+        != intent.source_review_subject_digest
+    ):
+        return False
+    if _review_projection_present(item):
+        return bool(
+            item.phase == TaskPhase.REVIEW
+            and item.review_subject_digest
+            == intent.source_review_subject_digest
+        )
+    return item.phase == TaskPhase.AUTHORING
 
 
 def _complete_merge_if_confirmed(
@@ -569,30 +658,55 @@ def collect_results(
         except Exception:
             continue
 
-        # worker handoff 已落平台、但 Runner 尚未来得及保存 manifest 时，
-        # 以 Store 的 authoring phase 恢复 worker 路径；新 submit 仍要重过 review。
-        recovering_worker_handoff = (
-            node.status == "in_review"
-            and item.phase == TaskPhase.AUTHORING
-            and item.status in {
-                WorkItemStatus.IN_REVIEW, WorkItemStatus.IN_PROGRESS,
-            }
-        )
-        if node.status == "in_review" and item.phase == TaskPhase.AUTHORING:
+        if item.worker_handoff is not None:
+            if not _worker_handoff_is_resumable(manifest, key, item):
+                try:
+                    store.update_work_item_metadata(
+                        node.work_item_id, worker_handoff={})
+                    store.reset_review(node.work_item_id)
+                    _dispatch_reviewer_for_current_subject(
+                        store, runtime, manifest, key)
+                    set_node(manifest, key, status="in_review")
+                except PlatformError as exc:
+                    store.update_status(
+                        node.work_item_id, WorkItemStatus.BLOCKED)
+                    store.add_comment(node.work_item_id, ui(
+                        f"Failed to invalidate stale worker handoff: {exc}",
+                        f"失效过期 worker handoff 失败: {exc}"))
+                    set_node(manifest, key, status="blocked")
+                    failures[key] = ui(
+                        f"Failed to invalidate stale worker handoff: {exc}",
+                        f"失效过期 worker handoff 失败: {exc}")
+                continue
+            _dispatch_worker_handoff(
+                store, runtime, manifest, key)
             set_node(manifest, key, status="in_progress")
-        if recovering_worker_handoff:
-            try:
-                _dispatch_worker_handoff(store, runtime, node)
-            except PlatformError as exc:
-                store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
-                store.add_comment(node.work_item_id, ui(
-                    f"Failed to resume worker handoff to {node.worker}: {exc}",
-                    f"恢复到 worker {node.worker} 的交接失败: {exc}"))
-                set_node(manifest, key, status="blocked")
-                failures[key] = ui(
-                    f"Failed to resume worker handoff to {node.worker}: {exc}",
-                    f"恢复到 worker {node.worker} 的交接失败: {exc}")
             continue
+
+        if node.status == "in_review" and item.phase == TaskPhase.AUTHORING:
+            # 兼容旧版本 handoff，及 wake 成功、intent 已清但 manifest 尚未落盘
+            # 的最后窗口。只有 review projection 已完全清空时才可直达 worker；
+            # 否则按 stale delivery 失效旧判定并补 fresh Reviewer。
+            if (
+                item.status in {
+                    WorkItemStatus.IN_REVIEW, WorkItemStatus.IN_PROGRESS,
+                }
+                and not _review_projection_present(item)
+            ):
+                if item.status != WorkItemStatus.IN_PROGRESS:
+                    store.update_status(
+                        node.work_item_id, WorkItemStatus.IN_PROGRESS)
+                store.assign_work_item(
+                    node.work_item_id, node.worker, "worker")
+                runtime.wake(node.work_item_id, node.worker, "worker")
+                set_node(manifest, key, status="in_progress")
+                continue
+            if node.reviewer:
+                store.reset_review(node.work_item_id)
+                _dispatch_reviewer_for_current_subject(
+                    store, runtime, manifest, key)
+                set_node(manifest, key, status="in_review")
+                continue
 
         if (
             node.status == "in_progress"
@@ -615,7 +729,9 @@ def collect_results(
             and item.status == WorkItemStatus.IN_REVIEW
             and getattr(item, "phase", TaskPhase.AUTHORING) == TaskPhase.AUTHORING
         ):
-            _dispatch_worker_handoff(store, runtime, node)
+            store.update_status(node.work_item_id, WorkItemStatus.IN_PROGRESS)
+            store.assign_work_item(node.work_item_id, node.worker, "worker")
+            runtime.wake(node.work_item_id, node.worker, "worker")
             continue
 
         # ---- in_progress: worker 阶段回收 ----
@@ -832,27 +948,14 @@ def collect_results(
                     continue
             if verdict == "pass-with-nits" and not gate_errors:
                 cur_bounce = item.bounces.review
-                try:
-                    _dispatch_worker_handoff(
-                        store, runtime, node,
-                        review_bounce=cur_bounce + 1,
-                    )
-                    set_node(manifest, key, status="in_progress")
-                    log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=key,
-                             id=node.work_item_id, gate="review-nits")
-                except PlatformError as exc:
-                    store.update_work_item_metadata(
-                        node.work_item_id, review_bounce=cur_bounce)
-                    store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
-                    store.add_comment(
-                        node.work_item_id,
-                        ui(
-                            f"Failed to return nits to worker {node.worker}: {exc}",
-                            f"回退到 worker {node.worker} 处理 nits 失败: {exc}"))
-                    set_node(manifest, key, status="blocked")
-                    failures[key] = ui(
-                        f"Failed to return nits to worker {node.worker}: {exc}",
-                        f"回退到 worker {node.worker} 处理 nits 失败: {exc}")
+                _dispatch_worker_handoff(
+                    store, runtime, manifest, key,
+                    review_bounce=cur_bounce + 1,
+                    gate="review-nits",
+                )
+                set_node(manifest, key, status="in_progress")
+                log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=key,
+                         id=node.work_item_id, gate="review-nits")
                 continue
             if not gate_errors and verdict != "reject":
                 # reviewer pass → P4.2 自动 merge 门。命令与远端观察均由引擎适配器执行。
@@ -889,32 +992,17 @@ def collect_results(
                                  f"Review retry limit ({review_limit}) exhausted",
                                  f"评审回退上界({review_limit})已耗尽"))
                 else:
-                    # 有界「回到 worker」:先记回退计数并清除旧评审判定,再重新派发 worker。
-                    # 派发失败时回滚回退计数并把节点标 blocked,避免卡在「已清判定/未派发」中间态。
-                    # 派发失败时回滚 review_bounce,避免把「未成功的回退」计为消耗;
-                    # 这与 CI 回退路径(delivery.advance_delivery)的语义对称 ——
-                    # 两者都是「计数只在派发成功时才真正消耗」。
-                    try:
-                        _dispatch_worker_handoff(
-                            store, runtime, node,
-                            review_bounce=cur_bounce + 1,
-                        )
-                        set_node(manifest, key, status="in_progress")
-                        log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=key,
-                                 id=node.work_item_id, gate="review",
-                                 round=cur_bounce + 1, max=review_limit)
-                    except PlatformError as exc:
-                        store.update_work_item_metadata(node.work_item_id, review_bounce=cur_bounce)
-                        store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
-                        store.add_comment(
-                            node.work_item_id,
-                            ui(
-                                f"Failed to return to worker {node.worker}; retry count rolled back: {exc}",
-                                f"回退到 worker {node.worker} 失败(已回滚回退计数): {exc}"))
-                        set_node(manifest, key, status="blocked")
-                        failures[key] = ui(
-                            f"Failed to return to worker {node.worker}: {exc}",
-                            f"回退到 worker {node.worker} 失败: {exc}")
+                    # 有界「回到 worker」由持久化 intent 串起各 checkpoint；
+                    # 任一步结果未知都保留 intent 与绝对 bounce，交给 restart 幂等续跑。
+                    _dispatch_worker_handoff(
+                        store, runtime, manifest, key,
+                        review_bounce=cur_bounce + 1,
+                        gate="review",
+                    )
+                    set_node(manifest, key, status="in_progress")
+                    log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=key,
+                             id=node.work_item_id, gate="review",
+                             round=cur_bounce + 1, max=review_limit)
 
         elif node.status == "merging":
             merge_action = _complete_merge_if_confirmed(
