@@ -11,6 +11,7 @@ import os
 import tempfile
 
 import pytest
+import yaml
 
 from omac.core.manifest import (
     Contract,
@@ -219,6 +220,81 @@ def _loop_to_settle(store, runtime, manifest, path, max_rounds=50, max_parallel=
             break
     assert result is not None, "never ran a tick"
     return result
+
+
+def test_aiteam_834_legacy_delivery_requires_explicit_node_retry(
+    tmp_path, monkeypatch,
+):
+    """缺 immutable delivery identity 的旧返工不得猜证据或触发任何 Run。"""
+    engine = create_engine(
+        "mock", _config(MOCK_AUTO_COMPLETE="false"))
+    contract = _contract()
+    node = _node(
+        "platform-release-evidence-contract",
+        reviewer="bob",
+        contract=contract,
+    )
+    manifest = _manifest([node])
+    path = str(tmp_path / "open-agent-cluster.yaml")
+    save_manifest(manifest, path)
+
+    tick(engine.store, engine.runtime, manifest, path, max_parallel=1)
+    item = engine.store.get_work_item(node.work_item_id)
+    engine.store.set_node_contract(item.id, contract)
+    verification = {
+        "commands": [_business_command()],
+        "integration_gates": [{"name": "gate-1", "commands": []}],
+        "pr_base": "feature/v1",
+        "coverage": 100,
+    }
+    engine.store.update_work_item_metadata(
+        item.id,
+        artifacts={"pr_url": "https://github.com/acme/repo/pull/24"},
+        verification=verification,
+        verification_source=yaml.safe_dump(verification),
+        phase=TaskPhase.AUTHORING,
+        review_bounce=1,
+        review_ledger={
+            "schema": "omac.review-ledger/v1",
+            "cycles": [{
+                "round": 1,
+                "subject_digest": "rejected-subject",
+                "verdict": "reject",
+            }],
+            "blockers": [],
+        },
+    )
+    engine.store.update_status(item.id, WorkItemStatus.DONE)
+    engine.store.clear_assignment(item.id)
+    engine.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
+    node.status = "in_review"
+    save_manifest(manifest, path)
+
+    monkeypatch.setattr(
+        engine.runtime, "wake",
+        lambda *_args, **_kwargs: pytest.fail(
+            "legacy delivery must not rerun Worker or dispatch Reviewer"),
+    )
+    monkeypatch.setattr(
+        loop, "run_merge_delivery",
+        lambda *_args, **_kwargs: pytest.fail(
+            "legacy delivery must not enter merge"),
+    )
+
+    result = tick(
+        engine.store, engine.runtime, manifest, path, max_parallel=1)
+
+    current = engine.store.get_work_item(item.id)
+    retry = f"omac node retry {path} {node.id}"
+    assert result.state == "needs_decision"
+    assert result.failed == [node.id]
+    assert manifest.nodes[node.id].status == "blocked"
+    assert current.status is WorkItemStatus.BLOCKED
+    assert current.delivery_identity is None
+    assert current.decision_required["reason_code"] == (
+        "legacy-delivery-retry-required")
+    assert current.decision_required["next_action"] == retry
+    assert retry in result.report["next_actions"]
 
 
 # ==================== 1. happy path:多节点带依赖 → converged ====================
