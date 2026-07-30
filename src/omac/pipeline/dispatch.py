@@ -237,6 +237,23 @@ def _previous_review_context(item: Any) -> Optional[Dict[str, Any]]:
         previous["comment"] = comment
     return previous
 
+
+def _operator_retry_context(item: Any) -> Optional[Dict[str, Any]]:
+    """Expose an explicit retry as current execution fact, not persisted state."""
+    handoff = getattr(item, "worker_handoff", None)
+    gate = (
+        handoff.get("gate")
+        if isinstance(handoff, Mapping)
+        else getattr(handoff, "gate", None)
+    )
+    if gate != "operator-retry":
+        return None
+    return {
+        "gate": "operator-retry",
+        "requires_fresh_submission": True,
+        "previous_verification_is_baseline_only": True,
+    }
+
 def build_show_output(item: Any, identity: str, *, language: str = EN) -> Dict[str, Any]:
     """构建 work show 的 Agent-first 完整事实包。
 
@@ -316,7 +333,12 @@ def build_show_output(item: Any, identity: str, *, language: str = EN) -> Dict[s
     if amendment_attempt is not None:
         context["amendment_attempt"] = amendment_attempt
 
+    retry = None
+    if kind == TaskKind.DEVELOP and phase == TaskPhase.AUTHORING:
+        retry = _operator_retry_context(item)
     if phase == TaskPhase.AUTHORING:
+        if retry is not None:
+            context["retry"] = retry
         previous_review = _previous_review_context(item)
         if previous_review is not None:
             context["previous_review"] = previous_review
@@ -369,6 +391,9 @@ def build_show_output(item: Any, identity: str, *, language: str = EN) -> Dict[s
     if kind == TaskKind.DEVELOP and phase == TaskPhase.AUTHORING and issue_key:
         protocol += "\n" + t(
             "work.protocol.pr_link", language=language, issue_key=issue_key)
+    if retry is not None:
+        protocol += "\n" + t(
+            "work.protocol.operator_retry", language=language)
     submit = submit_template_for(kind, phase, item.id)
 
     return {
