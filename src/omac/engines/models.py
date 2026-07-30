@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, FrozenSet, List, Optional, Tuple, TypeAlias
 
 from ..core.taskmeta import (
     Bounces, DeliveryIdentity, TaskKind, TaskPhase, WorkerHandoffIntent,
@@ -19,6 +19,19 @@ class WorkItemStatus(Enum):
     DONE = "done"
     FAILED = "failed"
     BLOCKED = "blocked"
+
+
+class WorkItemPayload(Enum):
+    """Attachment-backed bodies that may be deferred during control observation."""
+
+    DELIVERABLE = "deliverable"
+    PROJECT_RULES = "project_rules"
+    VERIFICATION = "verification"
+    REVIEW_REPORT = "review_report"
+    REVIEW_LEDGER = "review_ledger"
+    REVIEW_OBLIGATIONS = "review_obligations"
+    MACHINE_FEEDBACK = "machine_feedback"
+    CONTRACT = "contract"
 
 
 class PullRequestState(Enum):
@@ -255,6 +268,29 @@ class WorkItem:
 
     def is_blocked(self) -> bool:
         return self.status == WorkItemStatus.BLOCKED
+
+
+@dataclass(frozen=True)
+class WorkItemControlProjection:
+    """Latest Issue control facts with attachment bodies explicitly deferred.
+
+    ``work_item`` contains the complete Issue envelope, status, phase, metadata,
+    payload references, identities, and unknown persisted fields. A payload in
+    ``deferred_payloads`` is declared by reference but has intentionally not
+    been downloaded; ``None`` therefore does not mean that the payload is absent.
+    """
+
+    work_item: WorkItem
+    deferred_payloads: frozenset[WorkItemPayload] = frozenset()
+
+    def has_payload(self, payload: WorkItemPayload) -> bool:
+        return (
+            payload in self.deferred_payloads
+            or getattr(self.work_item, payload.value, None) is not None
+        )
+
+
+WorkItemHydrationPlan: TypeAlias = FrozenSet[WorkItemPayload]
 
 
 @dataclass

@@ -19,6 +19,7 @@ import tempfile
 import time
 import uuid
 import zipfile
+from dataclasses import replace
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, TypeVar
 
@@ -44,12 +45,14 @@ from ..errors import (
 )
 from ..i18n import ui
 from .models import (
-    AgentInfo, AgentProvisionSpec, AgentRunObservation, EngineConfig, ProjectInfo, RuntimeTarget,
-    MergeCommandResult, PullRequestCheckResult, PullRequestObservation,
+    AgentInfo, AgentProvisionSpec, AgentRunObservation, EngineConfig,
+    ProjectInfo, RuntimeTarget, MergeCommandResult,
+    PullRequestCheckResult, PullRequestObservation,
     PullRequestReadiness, PullRequestReadinessFailure, RuntimeCapabilities,
     PullRequestReadinessFailureKind, PullRequestState,
-    SkillPackage, VerificationAttachmentObservation, WorkItem, WorkItemStatus,
-    WorkspaceInfo,
+    SkillPackage, VerificationAttachmentObservation, WorkItem,
+    WorkItemControlProjection, WorkItemHydrationPlan, WorkItemPayload,
+    WorkItemStatus, WorkspaceInfo,
 )
 from ..core.machine_feedback import (
     dump_machine_feedback, is_machine_feedback, parse_machine_feedback,
@@ -677,7 +680,10 @@ class MulticaStore(WorkItemStore):
             ),
         )
 
-    def _issue_to_work_item(self, issue_data: Dict, workspace_id: str) -> WorkItem:
+    def _issue_to_control_projection(
+        self, issue_data: Dict, workspace_id: str,
+    ) -> WorkItemControlProjection:
+        """Map one Issue envelope without downloading attachment-backed bodies."""
         metadata = issue_data.get("metadata", {})
         unknown_persisted_fields = {
             f"metadata.{key}": value
@@ -717,17 +723,12 @@ class MulticaStore(WorkItemStore):
         deliverable_ref_declared = DELIVERABLE_REF_KEY in metadata
         deliverable_ref = self._json_metadata(metadata, DELIVERABLE_REF_KEY)
         deliverable = None if deliverable_ref_declared else metadata.get(DELIVERABLE_KEY)
-        if isinstance(deliverable_ref, dict) and deliverable_ref:
-            deliverable = self._load_payload_comment(issue_data["id"], "deliverable", deliverable_ref)
 
         project_rules_ref_declared = PROJECT_RULES_REF_KEY in metadata
         project_rules_ref = self._json_metadata(metadata, PROJECT_RULES_REF_KEY)
         project_rules = (
             None if project_rules_ref_declared else metadata.get(PROJECT_RULES_KEY)
         )
-        if isinstance(project_rules_ref, dict) and project_rules_ref:
-            project_rules = self._load_payload_comment(
-                issue_data["id"], "project-rules", project_rules_ref)
 
         verification_ref_declared = VERIFICATION_REF_KEY in metadata
         review_report_ref_declared = REVIEW_REPORT_REF_KEY in metadata
@@ -741,94 +742,36 @@ class MulticaStore(WorkItemStore):
         machine_feedback_ref = self._json_metadata(
             metadata, MACHINE_FEEDBACK_REF_KEY)
         amendment_attempt = self._json_metadata(metadata, AMENDMENT_ATTEMPT_KEY)
-        review_obligations = None
-        if isinstance(review_obligations_ref, dict) and review_obligations_ref:
-            obligations_text = self._load_payload_comment(
-                issue_data["id"], "review-obligations", review_obligations_ref)
-            try:
-                review_obligations = yaml.safe_load(obligations_text)
-            except yaml.YAMLError:
-                review_obligations = None
-            if not isinstance(review_obligations, list):
-                raise PlatformError(ui(
-                    "Could not load the review obligations attachment referenced by "
-                    f"work item {issue_data['id']}. Restore a valid YAML/JSON "
-                    "review obligations list, then rerun "
-                    f"`omac work show {issue_data['id']} --output json`.",
-                    "无法读取或解析工作单元 "
-                    f"{issue_data['id']} 引用的 review obligations 附件。请恢复合法的 "
-                    "YAML/JSON obligations 列表，然后重新执行 "
-                    f"`omac work show {issue_data['id']} --output json`。"))
-        if review_obligations is None:
-            review_obligations = self._json_metadata(metadata, REVIEW_OBLIGATIONS_KEY)
+        review_obligations = self._json_metadata(metadata, REVIEW_OBLIGATIONS_KEY)
         contract_ref = self._json_metadata(metadata, CONTRACT_REF_KEY)
         source_refs = self._json_metadata(metadata, SOURCE_REFS_KEY)
         verification = None
-        if isinstance(verification_ref, dict) and verification_ref:
-            verification_text = self._load_payload_comment(issue_data["id"], "verification", verification_ref)
-            verification = parse_payload_text(verification_text)
-        if verification is None and not verification_ref_declared:
+        if not verification_ref_declared:
             legacy_verification = self._json_metadata(metadata, "verification")
             verification = legacy_verification if isinstance(legacy_verification, dict) else None
 
         review_report = None
-        if isinstance(review_report_ref, dict) and review_report_ref:
-            report_text = self._load_payload_comment(issue_data["id"], "review-report", review_report_ref)
-            review_report = parse_payload_text(report_text)
-        if review_report is None and not review_report_ref_declared:
+        if not review_report_ref_declared:
             legacy_report = self._json_metadata(metadata, "review_report")
             review_report = legacy_report if isinstance(legacy_report, dict) else None
 
-        review_ledger = None
-        if isinstance(review_ledger_ref, dict) and review_ledger_ref:
-            ledger_text = self._load_payload_comment(
-                issue_data["id"], "review-ledger", review_ledger_ref)
-            review_ledger = parse_payload_text(ledger_text)
-            if not isinstance(review_ledger, dict):
-                raise PlatformError(ui(
-                    "Could not load the review ledger attachment referenced by "
-                    f"work item {issue_data['id']}. Restore a valid YAML/JSON "
-                    "review ledger, then rerun "
-                    f"`omac work show {issue_data['id']} --output json`.",
-                    "无法读取或解析工作单元 "
-                    f"{issue_data['id']} 引用的 review ledger 附件。请恢复合法的 "
-                    "YAML/JSON 台账，然后重新执行 "
-                    f"`omac work show {issue_data['id']} --output json`。"))
-
-        machine_feedback = None
-        if isinstance(machine_feedback_ref, dict) and machine_feedback_ref:
-            feedback_text = self._load_payload_comment(
-                issue_data["id"], "machine-feedback", machine_feedback_ref)
-            machine_feedback = parse_payload_text(feedback_text)
-            expected_sha = machine_feedback_ref.get("sha256")
-            digest_matches = (
-                not expected_sha
-                or (
-                    isinstance(feedback_text, str)
-                    and hashlib.sha256(feedback_text.encode("utf-8")).hexdigest()
-                    == expected_sha
-                )
+        legacy_contract = self._json_metadata(metadata, "contract")
+        contract = legacy_contract if isinstance(legacy_contract, dict) else None
+        deferred_payloads = frozenset(
+            payload for payload, ref in (
+                (WorkItemPayload.DELIVERABLE, deliverable_ref),
+                (WorkItemPayload.PROJECT_RULES, project_rules_ref),
+                (WorkItemPayload.VERIFICATION, verification_ref),
+                (WorkItemPayload.REVIEW_REPORT, review_report_ref),
+                (WorkItemPayload.REVIEW_LEDGER, review_ledger_ref),
+                (WorkItemPayload.REVIEW_OBLIGATIONS, review_obligations_ref),
+                (WorkItemPayload.MACHINE_FEEDBACK, machine_feedback_ref),
+                (WorkItemPayload.CONTRACT, contract_ref),
             )
-            if not is_machine_feedback(machine_feedback) or not digest_matches:
-                raise PlatformError(ui(
-                    "Could not load the machine feedback attachment referenced by "
-                    f"work item {issue_data['id']}. Restore a valid "
-                    "omac.machine-feedback/v1 JSON attachment, then rerun "
-                    f"`omac work show {issue_data['id']} --output json`.",
-                    "无法读取或解析工作单元 "
-                    f"{issue_data['id']} 引用的 machine feedback attachment。"
-                    "请恢复合法的 omac.machine-feedback/v1 JSON 附件，然后重新执行 "
-                    f"`omac work show {issue_data['id']} --output json`。"))
+            if isinstance(ref, dict) and ref
+        )
 
-        contract = None
-        if isinstance(contract_ref, dict):
-            contract_text = self._load_payload_comment(issue_data["id"], "contract", contract_ref)
-            contract = parse_payload_text(contract_text)
-        if contract is None:
-            legacy_contract = self._json_metadata(metadata, "contract")
-            contract = legacy_contract if isinstance(legacy_contract, dict) else None
-
-        return WorkItem(
+        item = WorkItem(
             id=issue_data["id"],
             workspace_id=workspace_id,
             title=issue_data.get("title", ""),
@@ -847,7 +790,7 @@ class MulticaStore(WorkItemStore):
                 else None),
             review_verdict=self._optional_text_metadata(metadata, "review_verdict"),
             review_comment=self._optional_text_metadata(metadata, "review_comment"),
-            machine_feedback=machine_feedback,
+            machine_feedback=None,
             machine_feedback_ref=(
                 machine_feedback_ref
                 if isinstance(machine_feedback_ref, dict) and machine_feedback_ref
@@ -864,7 +807,7 @@ class MulticaStore(WorkItemStore):
                 review_obligations_ref
                 if isinstance(review_obligations_ref, dict) and review_obligations_ref
                 else None),
-            review_ledger=review_ledger,
+            review_ledger=None,
             review_ledger_ref=(
                 review_ledger_ref
                 if isinstance(review_ledger_ref, dict) and review_ledger_ref
@@ -899,6 +842,116 @@ class MulticaStore(WorkItemStore):
             platform_assignee_id=platform_assignee_id,
             unknown_persisted_fields=unknown_persisted_fields,
         )
+        return WorkItemControlProjection(item, deferred_payloads)
+
+    def hydrate_work_item_evidence(
+        self,
+        projection: WorkItemControlProjection,
+        plan: WorkItemHydrationPlan,
+    ) -> WorkItem:
+        item = projection.work_item
+        requested = plan & projection.deferred_payloads
+        updates: Dict[str, Any] = {}
+
+        def load(payload: WorkItemPayload, label: str, ref_name: str) -> Optional[str]:
+            if payload not in requested:
+                return None
+            ref = getattr(item, ref_name)
+            return self._load_payload_comment(item.id, label, ref)
+
+        deliverable = load(
+            WorkItemPayload.DELIVERABLE, "deliverable", "deliverable_ref")
+        if WorkItemPayload.DELIVERABLE in requested:
+            updates["deliverable"] = deliverable
+
+        project_rules = load(
+            WorkItemPayload.PROJECT_RULES, "project-rules", "project_rules_ref")
+        if WorkItemPayload.PROJECT_RULES in requested:
+            updates["project_rules"] = project_rules
+
+        verification_text = load(
+            WorkItemPayload.VERIFICATION, "verification", "verification_ref")
+        if WorkItemPayload.VERIFICATION in requested:
+            updates["verification"] = parse_payload_text(verification_text)
+
+        report_text = load(
+            WorkItemPayload.REVIEW_REPORT, "review-report", "review_report_ref")
+        if WorkItemPayload.REVIEW_REPORT in requested:
+            updates["review_report"] = parse_payload_text(report_text)
+
+        ledger_text = load(
+            WorkItemPayload.REVIEW_LEDGER, "review-ledger", "review_ledger_ref")
+        if WorkItemPayload.REVIEW_LEDGER in requested:
+            review_ledger = parse_payload_text(ledger_text)
+            if not isinstance(review_ledger, dict):
+                raise PlatformError(ui(
+                    "Could not load the review ledger attachment referenced by "
+                    f"work item {item.id}. Restore a valid YAML/JSON review ledger, "
+                    f"then rerun `omac work show {item.id} --output json`.",
+                    f"无法读取或解析工作单元 {item.id} 引用的 review ledger 附件。"
+                    "请恢复合法的 YAML/JSON 台账，然后重新执行 "
+                    f"`omac work show {item.id} --output json`。"))
+            updates["review_ledger"] = review_ledger
+
+        obligations_text = load(
+            WorkItemPayload.REVIEW_OBLIGATIONS,
+            "review-obligations",
+            "review_obligations_ref",
+        )
+        if WorkItemPayload.REVIEW_OBLIGATIONS in requested:
+            try:
+                review_obligations = yaml.safe_load(obligations_text)
+            except yaml.YAMLError:
+                review_obligations = None
+            if not isinstance(review_obligations, list):
+                raise PlatformError(ui(
+                    "Could not load the review obligations attachment referenced by "
+                    f"work item {item.id}. Restore a valid YAML/JSON review obligations "
+                    f"list, then rerun `omac work show {item.id} --output json`.",
+                    f"无法读取或解析工作单元 {item.id} 引用的 review obligations "
+                    "附件。请恢复合法的 YAML/JSON obligations 列表，然后重新执行 "
+                    f"`omac work show {item.id} --output json`。"))
+            updates["review_obligations"] = review_obligations
+
+        feedback_text = load(
+            WorkItemPayload.MACHINE_FEEDBACK,
+            "machine-feedback",
+            "machine_feedback_ref",
+        )
+        if WorkItemPayload.MACHINE_FEEDBACK in requested:
+            machine_feedback = parse_payload_text(feedback_text)
+            expected_sha = (item.machine_feedback_ref or {}).get("sha256")
+            digest_matches = (
+                not expected_sha
+                or (
+                    isinstance(feedback_text, str)
+                    and hashlib.sha256(feedback_text.encode("utf-8")).hexdigest()
+                    == expected_sha
+                )
+            )
+            if not is_machine_feedback(machine_feedback) or not digest_matches:
+                raise PlatformError(ui(
+                    "Could not load the machine feedback attachment referenced by "
+                    f"work item {item.id}. Restore a valid omac.machine-feedback/v1 "
+                    f"JSON attachment, then rerun `omac work show {item.id} --output json`.",
+                    f"无法读取或解析工作单元 {item.id} 引用的 machine feedback "
+                    "attachment。请恢复合法的 omac.machine-feedback/v1 JSON 附件，"
+                    f"然后重新执行 `omac work show {item.id} --output json`。"))
+            updates["machine_feedback"] = machine_feedback
+
+        contract_text = load(
+            WorkItemPayload.CONTRACT, "contract", "contract_ref")
+        if WorkItemPayload.CONTRACT in requested:
+            contract = parse_payload_text(contract_text)
+            if contract is not None:
+                updates["contract"] = contract
+
+        return replace(item, **updates) if updates else item
+
+    def _issue_to_work_item(self, issue_data: Dict, workspace_id: str) -> WorkItem:
+        projection = self._issue_to_control_projection(issue_data, workspace_id)
+        return self.hydrate_work_item_evidence(
+            projection, frozenset(WorkItemPayload))
 
     def _resolve_agent_id(self, agent_name: str) -> str:
         """agent 名 → id(assign 需要 id)。"""
@@ -1094,11 +1147,18 @@ class MulticaStore(WorkItemStore):
         ])
 
     def get_work_item(self, item_id: str) -> WorkItem:
+        projection = self.observe_work_item_control(item_id)
+        return self.hydrate_work_item_evidence(
+            projection, frozenset(WorkItemPayload))
+
+    def observe_work_item_control(
+        self, item_id: str,
+    ) -> WorkItemControlProjection:
         result = self._run_multica(["issue", "get", item_id, "--output", "json"])
         if not isinstance(result, dict):
             raise PlatformError(ui(
                 f"Could not get issue {item_id}", f"获取 issue {item_id} 失败"))
-        return self._issue_to_work_item(result, self.config.workspace_id)
+        return self._issue_to_control_projection(result, self.config.workspace_id)
 
     def set_authoring_identity(
         self, item_id: str, *, dag_key: str, kind: TaskKind,

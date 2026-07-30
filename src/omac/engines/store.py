@@ -17,7 +17,8 @@ from ..core.taskmeta import (
 from .models import (
     EngineConfig, MergeCommandResult, ProjectInfo, PullRequestCheckResult,
     PullRequestObservation, PullRequestReadiness, PullRequestReadinessFailure,
-    VerificationAttachmentObservation, WorkItem, WorkItemStatus, WorkspaceInfo,
+    VerificationAttachmentObservation, WorkItem, WorkItemControlProjection,
+    WorkItemHydrationPlan, WorkItemStatus, WorkspaceInfo,
 )
 
 
@@ -118,6 +119,29 @@ class WorkItemStore(ABC):
         契约:返回全部业务字段;写后读一致;id 不存在时抛异常
         (编排层 reconcile 据此清空 work_item_id 走新建)。
         """
+
+    def observe_work_item_control(
+        self, item_id: str,
+    ) -> WorkItemControlProjection:
+        """Read current control facts without promising attachment deferral.
+
+        Existing Store implementations remain compatible by falling back to the
+        complete ``get_work_item`` contract. Adapters with expensive payloads
+        should override this method and list every intentionally deferred body.
+        """
+        return WorkItemControlProjection(self.get_work_item(item_id))
+
+    def hydrate_work_item_evidence(
+        self,
+        projection: WorkItemControlProjection,
+        plan: WorkItemHydrationPlan,
+    ) -> WorkItem:
+        """Hydrate the evidence explicitly requested by ``plan``.
+
+        The compatibility fallback is already fully hydrated because
+        ``observe_work_item_control`` delegated to ``get_work_item``.
+        """
+        return projection.work_item
 
     @abstractmethod
     def update_work_item_metadata(
