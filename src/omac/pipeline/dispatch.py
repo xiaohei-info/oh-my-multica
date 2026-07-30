@@ -333,8 +333,10 @@ def build_show_output(item: Any, identity: str, *, language: str = EN) -> Dict[s
     if amendment_attempt is not None:
         context["amendment_attempt"] = amendment_attempt
 
-    if phase == TaskPhase.AUTHORING:
+    retry = None
+    if kind == TaskKind.DEVELOP and phase == TaskPhase.AUTHORING:
         retry = _operator_retry_context(item)
+    if phase == TaskPhase.AUTHORING:
         if retry is not None:
             context["retry"] = retry
         previous_review = _previous_review_context(item)
@@ -389,10 +391,9 @@ def build_show_output(item: Any, identity: str, *, language: str = EN) -> Dict[s
     if kind == TaskKind.DEVELOP and phase == TaskPhase.AUTHORING and issue_key:
         protocol += "\n" + t(
             "work.protocol.pr_link", language=language, issue_key=issue_key)
-    if kind == TaskKind.DEVELOP and phase == TaskPhase.AUTHORING:
-        if _operator_retry_context(item) is not None:
-            protocol += "\n" + t(
-                "work.protocol.operator_retry", language=language)
+    if retry is not None:
+        protocol += "\n" + t(
+            "work.protocol.operator_retry", language=language)
     submit = submit_template_for(kind, phase, item.id)
 
     return {
