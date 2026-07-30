@@ -273,6 +273,195 @@ def test_retry_retires_old_handoff_and_waits_for_new_worker_submit(
     ]) == reviewer_assignments + 1
 
 
+def test_retry_legacy_delivery_isolates_old_evidence_until_fresh_submit(
+    tmp_path, capsys, monkeypatch,
+):
+    """显式 retry 复用同一 PR，但旧附件不能满足新的 Worker generation。"""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OMAC_ENGINE", "mock")
+    monkeypatch.setenv("OMAC_WORKSPACE_ID", "ws-1")
+
+    from omac.engines import EngineConfig, create_engine
+    from omac.engines.models import PullRequestCheckResult, WorkItemStatus
+    from omac.core.taskmeta import TaskPhase
+    from omac.pipeline.dispatch import submit
+    from omac.pipeline.loop import tick
+
+    engine = create_engine(
+        "mock",
+        EngineConfig("mock", "ws-1", extra={"MOCK_AUTO_COMPLETE": "false"}),
+    )
+    contract = Contract(
+        objective="fix the rejected delivery",
+        acceptance=["works"],
+        non_goals=["no scope creep"],
+        verification_commands=["pytest -q"],
+        pr_base="main",
+        coverage_gate=0,
+    )
+    item = engine.store.create_work_item(
+        "ws-1", "t", "d", "b", "bob", reviewer="alice")
+    engine.store.set_node_contract(item.id, contract)
+    engine.store.assign_work_item(item.id, "bob", "worker")
+    old_pr = "https://github.com/acme/repo/pull/24"
+    old_verification = {
+        "commands": [{
+            "cmd": "pytest -q",
+            "exit_code": 0,
+            "business_tests": [{
+                "acceptance": "works",
+                "test": "tests/test_delivery.py::test_old",
+            }],
+        }],
+        "integration_gates": [{"name": "smoke", "commands": []}],
+        "pr_base": "main",
+        "coverage": 100,
+    }
+    engine.store.update_work_item_metadata(
+        item.id,
+        artifacts={"pr_url": old_pr},
+        verification=old_verification,
+        verification_source=yaml.safe_dump(old_verification),
+        phase=TaskPhase.AUTHORING,
+        review_bounce=1,
+        review_ledger={
+            "schema": "omac.review-ledger/v1",
+            "cycles": [{
+                "round": 1,
+                "subject_digest": "rejected-subject",
+                "verdict": "reject",
+            }],
+            "blockers": [],
+        },
+        decision_required={
+            "schema": "omac.decision-required/v1",
+            "reason_code": "legacy-delivery-retry-required",
+        },
+    )
+    engine.store.update_status(item.id, WorkItemStatus.DONE)
+    engine.store.clear_assignment(item.id)
+    engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
+    old_attachment = engine.store.get_work_item(item.id).verification_ref[
+        "attachment_id"]
+
+    import omac.cli.commands.node as node_mod
+    monkeypatch.setattr(node_mod, "create_engine", lambda *a, **kw: engine)
+    path = _write_manifest(tmp_path, [{
+        "id": "b",
+        "worker": "bob",
+        "reviewer": "alice",
+        "status": "blocked",
+        "work_item_id": item.id,
+        "contract": {
+            "objective": contract.objective,
+            "acceptance": contract.acceptance,
+            "non_goals": contract.non_goals,
+            "verification_commands": contract.verification_commands,
+            "pr_base": contract.pr_base,
+            "coverage_gate": contract.coverage_gate,
+        },
+    }])
+
+    runs_before_retry = len(engine.runtime.list_runs(item.id))
+    assignments_before_retry = len(engine.store.assign_log)
+    original_save = node_mod.save_manifest
+    crashed = False
+
+    def crash_before_manifest_save(manifest, manifest_path):
+        nonlocal crashed
+        if not crashed:
+            crashed = True
+            raise RuntimeError("crash before retry manifest save")
+        return original_save(manifest, manifest_path)
+
+    monkeypatch.setattr(node_mod, "save_manifest", crash_before_manifest_save)
+    with pytest.raises(RuntimeError, match="retry manifest save"):
+        main(["node", "retry", path, "b"])
+
+    assert load_manifest(path).nodes["b"].status == "blocked"
+    assert len(engine.runtime.list_runs(item.id)) == runs_before_retry
+    assert len(engine.store.assign_log) == assignments_before_retry
+
+    monkeypatch.setattr(node_mod, "save_manifest", original_save)
+    assert main(["node", "retry", path, "b"]) == exit_codes.OK
+    capsys.readouterr()
+
+    retried = engine.store.get_work_item(item.id)
+    assert retried.status is WorkItemStatus.TODO
+    assert retried.phase is TaskPhase.AUTHORING
+    assert retried.decision_required is None
+    assert retried.worker_handoff is not None
+    assert retried.worker_handoff.is_causally_bound()
+    assert retried.worker_handoff.baseline_verification_attachment_id == (
+        old_attachment)
+    assert retried.artifacts["pr_url"] == old_pr
+    assert retried.verification == old_verification
+
+    manifest = load_manifest(path)
+    assignments_before = len(engine.store.assign_log)
+    first = tick(engine.store, engine.runtime, manifest, path, max_parallel=1)
+    assert first.dispatched == ["b"]
+    assert [
+        entry[2] for entry in engine.store.assign_log[assignments_before:]
+    ] == ["worker"]
+
+    waiting = tick(
+        engine.store, engine.runtime, manifest, path, max_parallel=1)
+    assert waiting.state == "running"
+    assert not [
+        entry for entry in engine.store.assign_log[assignments_before:]
+        if entry[2] == "reviewer"
+    ]
+
+    verification_file = tmp_path / "verification.yaml"
+    fresh_verification = {
+        "commands": [{
+            "cmd": "pytest -q",
+            "exit_code": 0,
+            "business_tests": [{
+                "acceptance": "works",
+                "test": "tests/test_delivery.py::test_fresh",
+            }],
+        }],
+        "integration_gates": [{"name": "smoke", "commands": []}],
+        "pr_base": "main",
+        "coverage": 100,
+    }
+    verification_file.write_text(yaml.safe_dump(fresh_verification))
+    submit(
+        engine.store,
+        item.id,
+        pr_url=old_pr,
+        verification_file=str(verification_file),
+    )
+    ci_calls = 0
+
+    def pass_ci(_pr_url, *_args):
+        nonlocal ci_calls
+        ci_calls += 1
+        return PullRequestCheckResult(True, 0, "green")
+
+    monkeypatch.setattr(engine.store, "check_pull_request", pass_ci)
+    reviewed = tick(
+        engine.store,
+        engine.runtime,
+        manifest,
+        path,
+        max_parallel=1,
+        config={"ci": {"check_command": "gh pr checks {pr_url}"}},
+    )
+
+    current = engine.store.get_work_item(item.id)
+    assert reviewed.state == "running"
+    assert manifest.nodes["b"].status == "in_review"
+    assert current.delivery_identity is not None
+    assert current.delivery_identity.pr_url == old_pr
+    assert current.delivery_identity.verification_attachment_id != old_attachment
+    assert current.worker_handoff is None
+    assert current.phase is TaskPhase.REVIEW
+    assert ci_calls == 1
+
+
 @pytest.mark.parametrize("replacement", [None, "charlie"])
 @pytest.mark.parametrize("checkpoint", ["before_clear", "after_clear"])
 def test_retry_handoff_retirement_is_restart_safe(
