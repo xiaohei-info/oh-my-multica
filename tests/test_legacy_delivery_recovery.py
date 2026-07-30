@@ -9,6 +9,7 @@ import pytest
 import yaml
 
 from omac.core.manifest import Contract, Manifest, Node, save_manifest
+from omac.core.review_convergence import review_subject_digest
 from omac.core.taskmeta import TaskPhase
 from omac.engines import create_engine
 from omac.engines.models import (
@@ -61,7 +62,9 @@ def _verification():
     }
 
 
-def _legacy_completed_delivery(tmp_path, *, manifest_status="in_review"):
+def _legacy_completed_delivery(
+    tmp_path, *, manifest_status="in_review", submitted_head=True,
+):
     """构造 AITEAM-834 形状：旧交付已完成，但没有 identity/handoff。"""
     engine = create_engine("mock", _config())
     contract = _contract()
@@ -82,11 +85,12 @@ def _legacy_completed_delivery(tmp_path, *, manifest_status="in_review"):
     engine.store.set_node_contract(item.id, contract)
     pr_url = "https://mock.example.com/pr/24"
     verification = _verification()
+    artifacts = {"pr_url": pr_url}
+    if submitted_head:
+        artifacts["head_sha"] = hashlib.sha256(pr_url.encode()).hexdigest()
     engine.store.update_work_item_metadata(
         item.id,
-        artifacts={
-            "pr_url": pr_url,
-        },
+        artifacts=artifacts,
         verification=verification,
         verification_source=yaml.safe_dump(verification),
         phase=TaskPhase.AUTHORING,
@@ -107,11 +111,46 @@ def _legacy_completed_delivery(tmp_path, *, manifest_status="in_review"):
     engine.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
 
     current = engine.store.get_work_item(item.id)
+    current.verification_ref["created_at"] = "2026-07-30T01:31:42Z"
+    original_list_runs = engine.runtime.list_runs
+
+    def list_runs(item_id):
+        observed = []
+        for index, run in enumerate(original_list_runs(item_id)):
+            if run.id == "mock-run-1":
+                observed.append(replace(
+                    run,
+                    created_at="2026-07-30T01:23:28Z",
+                    updated_at="2026-07-30T01:31:49Z",
+                ))
+            else:
+                observed.append(replace(
+                    run,
+                    created_at=f"2026-07-30T01:{40 + index:02d}:00Z",
+                    updated_at=f"2026-07-30T01:{41 + index:02d}:00Z",
+                ))
+        return [
+            AgentRunObservation(
+                id="worker-before-reject", kind="direct", status="completed",
+                agent_id="mock-agent-alice",
+                created_at="2026-07-29T19:28:09Z",
+                updated_at="2026-07-29T19:49:17Z",
+            ),
+            AgentRunObservation(
+                id="reviewer-reject", kind="direct", status="completed",
+                agent_id="mock-agent-bob",
+                created_at="2026-07-30T01:03:51Z",
+                updated_at="2026-07-30T01:20:35Z",
+            ),
+            *observed,
+        ]
+
+    engine.runtime.list_runs = list_runs
     assert current.delivery_identity is None
     assert current.worker_handoff is None
     assert current.status is WorkItemStatus.IN_PROGRESS
     assert current.phase is TaskPhase.AUTHORING
-    assert len(engine.runtime.list_runs(item.id)) == 1
+    assert len(engine.runtime.list_runs(item.id)) == 3
     manifest.nodes[node.id].status = manifest_status
     save_manifest(manifest, path)
     return engine, manifest, path, current
@@ -168,6 +207,46 @@ def test_legacy_completed_delivery_is_sealed_then_uses_normal_review_path(
     assert [role for _, _, role in wakes] == ["reviewer"]
 
 
+def test_legacy_upgrade_refuses_current_remote_head_without_submitted_head(
+    tmp_path, monkeypatch,
+):
+    engine, manifest, path, item = _legacy_completed_delivery(
+        tmp_path, submitted_head=False)
+    monkeypatch.setattr(
+        engine.runtime,
+        "wake",
+        lambda *_args, **_kwargs: pytest.fail(
+            "missing submitted head must not dispatch Reviewer"),
+    )
+
+    with pytest.raises(PlatformError, match="submitted.*head|immutable.*head|HEAD"):
+        tick(engine.store, engine.runtime, manifest, path, max_parallel=4)
+
+    assert engine.store.get_work_item(item.id).delivery_identity is None
+
+
+def test_rejected_residual_delivery_cannot_be_resealed_before_new_worker_run(
+    tmp_path, monkeypatch,
+):
+    engine, manifest, path, item = _legacy_completed_delivery(tmp_path)
+    current = engine.store.get_work_item(item.id)
+    current.artifacts["head_sha"] = hashlib.sha256(
+        current.artifacts["pr_url"].encode()).hexdigest()
+    current.review_ledger["cycles"][-1]["subject_digest"] = (
+        review_subject_digest(current, 1))
+    monkeypatch.setattr(
+        engine.runtime,
+        "wake",
+        lambda *_args, **_kwargs: pytest.fail(
+            "rejected residual delivery must not dispatch Reviewer"),
+    )
+
+    with pytest.raises(PlatformError, match="reject|rework|new Worker|subject"):
+        tick(engine.store, engine.runtime, manifest, path, max_parallel=4)
+
+    assert engine.store.get_work_item(item.id).delivery_identity is None
+
+
 def test_legacy_seal_is_idempotent_across_reconcile_and_manifest_recovery(
     tmp_path, monkeypatch,
 ):
@@ -183,7 +262,7 @@ def test_legacy_seal_is_idempotent_across_reconcile_and_manifest_recovery(
     assert persisted_identity is not None
     assert engine.store.get_work_item(item.id).delivery_identity == persisted_identity
     assert [role for _, _, role in wakes] == ["reviewer"]
-    assert len(engine.runtime.list_runs(item.id)) == 2
+    assert len(engine.runtime.list_runs(item.id)) == 4
 
 
 def test_legacy_completed_delivery_still_runs_ci_before_reviewer(
@@ -254,9 +333,15 @@ def test_legacy_upgrade_fails_closed_with_multiple_target_worker_runs(
     current.verification_ref["created_at"] = "2026-07-30T01:31:42Z"
     monkeypatch.setattr(engine.runtime, "list_runs", lambda _item_id: [
         AgentRunObservation(
+            id="reviewer-reject", kind="direct", status="completed",
+            agent_id="mock-agent-bob",
+            created_at="2026-07-30T01:03:51Z",
+            updated_at="2026-07-30T01:20:35Z",
+        ),
+        AgentRunObservation(
             id="worker-old", kind="direct", status="completed",
             agent_id="mock-agent-alice",
-            created_at="2026-07-30T01:20:00Z",
+            created_at="2026-07-30T01:21:00Z",
             updated_at="2026-07-30T01:40:00Z",
         ),
         AgentRunObservation(
@@ -267,7 +352,7 @@ def test_legacy_upgrade_fails_closed_with_multiple_target_worker_runs(
         ),
     ])
 
-    with pytest.raises(PlatformError, match="unique|ambiguous|multiple"):
+    with pytest.raises(PlatformError, match="one post-review|observed 2"):
         tick(engine.store, engine.runtime, manifest, path, max_parallel=4)
 
     assert engine.store.get_work_item(item.id).delivery_identity is None
@@ -283,6 +368,12 @@ def test_legacy_upgrade_uses_attachment_to_select_one_of_historical_worker_runs(
             agent_id="mock-agent-alice",
             created_at="2026-07-29T19:28:09Z",
             updated_at="2026-07-29T19:49:17Z",
+        ),
+        AgentRunObservation(
+            id="reviewer-reject", kind="direct", status="completed",
+            agent_id="mock-agent-bob",
+            created_at="2026-07-30T01:03:51Z",
+            updated_at="2026-07-30T01:20:35Z",
         ),
         AgentRunObservation(
             id="mock-run-1", kind="direct", status="completed",
@@ -327,6 +418,12 @@ def test_legacy_upgrade_fails_closed_for_attachment_outside_run_window(
     engine, manifest, path, item = _legacy_completed_delivery(tmp_path)
     run = engine.runtime.list_runs(item.id)[0]
     monkeypatch.setattr(engine.runtime, "list_runs", lambda _item_id: [
+        AgentRunObservation(
+            id="reviewer-reject", kind="direct", status="completed",
+            agent_id="mock-agent-bob",
+            created_at="2026-07-30T01:03:51Z",
+            updated_at="2026-07-30T01:20:35Z",
+        ),
         replace(
             run,
             created_at="2026-07-30T01:30:00Z",
@@ -429,7 +526,7 @@ def test_crash_after_legacy_seal_before_reviewer_is_restart_safe(
     sealed = engine.store.get_work_item(item.id)
     assert sealed.delivery_identity is not None
     assert sealed.phase is TaskPhase.AUTHORING
-    assert len(engine.runtime.list_runs(item.id)) == 1
+    assert len(engine.runtime.list_runs(item.id)) == 3
 
     monkeypatch.setattr(engine.store, "update_work_item_metadata", original_update)
     wakes = _reviewer_wakes(engine, monkeypatch)
