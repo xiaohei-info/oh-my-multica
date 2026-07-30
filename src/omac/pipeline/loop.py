@@ -295,7 +295,7 @@ def _dispatch_worker_handoff(
     *,
     review_bounce: int | None = None,
     gate: str | None = None,
-) -> None:
+) -> str:
     """幂等完成 review→worker handoff；assign 可能立即启动 Run。"""
     node = manifest.nodes[key]
     item_id = node.work_item_id
@@ -368,8 +368,34 @@ def _dispatch_worker_handoff(
     # assign_work_item 自身负责观察当前 assignee 并幂等修复；同一 worker 的
     # 重复 assign 不得创建第二个 Run，不同 assignee 则在正确 phase/status 下接棒。
     store.assign_work_item(item_id, intent.target_worker, "worker")
-    runtime.wake(item_id, intent.target_worker, "worker")
+
+    # Multica 的 assignment、Run 和附件投影不是同一个原子写。assign 可能已
+    # 启动 Worker，而 Worker 又在 wake 前完成 submit。重新读取 delivery identity，
+    # 避免拿 assign 前的旧快照去 rerun 已完成的 Worker。
+    current = store.get_work_item(item_id)
+    if not _worker_handoff_delivery_is_current(
+        manifest, key, current, intent,
+    ):
+        _dispatch_reviewer_after_invalid_worker_handoff(
+            store, runtime, manifest, key)
+        return "review"
+
+    try:
+        runtime.wake(item_id, intent.target_worker, "worker")
+    except PlatformError:
+        # wake/rerun 的响应与 assignment 清理也可能交错。只有权威 delivery
+        # 已变化才能证明目标 Worker 已完成 handoff；否则保留 intent 并将
+        # 原错误抛给调用方，不能吞掉未知副作用或再次创建 Run。
+        current = store.get_work_item(item_id)
+        if not _worker_handoff_delivery_is_current(
+            manifest, key, current, intent,
+        ):
+            _dispatch_reviewer_after_invalid_worker_handoff(
+                store, runtime, manifest, key)
+            return "review"
+        raise
     store.update_work_item_metadata(item_id, worker_handoff={})
+    return "worker"
 
 
 def _review_projection_present(item) -> bool:
@@ -440,9 +466,8 @@ def _worker_handoff_is_resumable(
             intent.target_review_bounce - 1,
             intent.target_review_bounce,
         }
-        or _review_subject_for_round(
-            manifest, key, item, intent.source_review_round)
-        != intent.source_review_subject_digest
+        or not _worker_handoff_delivery_is_current(
+            manifest, key, item, intent)
     ):
         return False
     if _review_projection_present(item):
@@ -452,6 +477,22 @@ def _worker_handoff_is_resumable(
             == intent.source_review_subject_digest
         )
     return item.phase == TaskPhase.AUTHORING
+
+
+def _worker_handoff_delivery_is_current(
+    manifest: Manifest,
+    key: str,
+    item,
+    intent: WorkerHandoffIntent,
+) -> bool:
+    """只比较 handoff 所绑定的 delivery，不混入最终一致的平台状态投影。"""
+    return bool(
+        intent.source_review_round
+        and intent.source_review_subject_digest
+        and _review_subject_for_round(
+            manifest, key, item, intent.source_review_round)
+        == intent.source_review_subject_digest
+    )
 
 
 def _complete_merge_if_confirmed(
@@ -703,9 +744,12 @@ def collect_results(
                     store, runtime, manifest, key)
                 set_node(manifest, key, status="in_review")
                 continue
-            _dispatch_worker_handoff(
+            handoff = _dispatch_worker_handoff(
                 store, runtime, manifest, key)
-            set_node(manifest, key, status="in_progress")
+            set_node(
+                manifest, key,
+                status="in_review" if handoff == "review" else "in_progress",
+            )
             continue
 
         if node.status == "in_review" and item.phase == TaskPhase.AUTHORING:
@@ -973,12 +1017,17 @@ def collect_results(
                     continue
             if verdict == "pass-with-nits" and not gate_errors:
                 cur_bounce = item.bounces.review
-                _dispatch_worker_handoff(
+                handoff = _dispatch_worker_handoff(
                     store, runtime, manifest, key,
                     review_bounce=cur_bounce + 1,
                     gate="review-nits",
                 )
-                set_node(manifest, key, status="in_progress")
+                set_node(
+                    manifest, key,
+                    status=(
+                        "in_review" if handoff == "review" else "in_progress"
+                    ),
+                )
                 log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=key,
                          id=node.work_item_id, gate="review-nits")
                 continue
@@ -1019,12 +1068,17 @@ def collect_results(
                 else:
                     # 有界「回到 worker」由持久化 intent 串起各 checkpoint；
                     # 任一步结果未知都保留 intent 与绝对 bounce，交给 restart 幂等续跑。
-                    _dispatch_worker_handoff(
+                    handoff = _dispatch_worker_handoff(
                         store, runtime, manifest, key,
                         review_bounce=cur_bounce + 1,
                         gate="review",
                     )
-                    set_node(manifest, key, status="in_progress")
+                    set_node(
+                        manifest, key,
+                        status=(
+                            "in_review" if handoff == "review" else "in_progress"
+                        ),
+                    )
                     log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=key,
                              id=node.work_item_id, gate="review",
                              round=cur_bounce + 1, max=review_limit)

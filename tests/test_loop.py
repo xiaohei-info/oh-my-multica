@@ -1697,6 +1697,173 @@ class TestReviewerRejectBoundedFallback:
             entry for entry in eng.store.assign_log if entry[2] == "reviewer"
         ]) == reviewer_assignments_before + 1
 
+    def test_worker_handoff_rechecks_delivery_after_assignment_before_wake(
+        self, tmp_path, monkeypatch,
+    ):
+        """assign 后已提交的新 delivery 必须直接进入 Reviewer，不能 rerun Worker。"""
+        from omac.engines import create_engine
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        current = eng.store.get_work_item(item.id)
+        source_subject = current.review_subject_digest
+        eng.store.update_work_item_metadata(
+            item.id,
+            review_obligations=build_review_obligations(current),
+            review_report=_review_report(current, "reject"),
+        )
+
+        original_assign = eng.store.assign_work_item
+        original_wake = eng.runtime.wake
+        worker_assignments = 0
+        reviewer_wakes = 0
+
+        def assign(item_id, assignee, role):
+            nonlocal worker_assignments
+            result = original_assign(item_id, assignee, role)
+            if role == "worker":
+                worker_assignments += 1
+                self._submit_revision(eng, item, revision=2)
+                eng.store.clear_assignment(item_id)
+            return result
+
+        def wake(item_id, agent, role):
+            nonlocal reviewer_wakes
+            if role == "worker":
+                pytest.fail(
+                    "delivery submitted during assignment must not rerun Worker")
+            reviewer_wakes += 1
+            return original_wake(item_id, agent, role)
+
+        monkeypatch.setattr(eng.store, "assign_work_item", assign)
+        monkeypatch.setattr(eng.runtime, "wake", wake)
+
+        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+
+        recovered = eng.store.get_work_item(item.id)
+        assert result.state == "running"
+        assert manifest.nodes["a"].status == "in_review"
+        assert recovered.worker_handoff is None
+        assert recovered.phase is TaskPhase.REVIEW
+        assert recovered.status is WorkItemStatus.IN_REVIEW
+        assert recovered.review_subject_digest != source_subject
+        assert worker_assignments == 1
+        assert reviewer_wakes == 1
+
+    def test_worker_handoff_not_assigned_reobserves_submitted_delivery(
+        self, tmp_path, monkeypatch,
+    ):
+        """wake 报 not-assigned 后，若目标 Worker 已提交则收割并派 Reviewer。"""
+        from omac.engines import create_engine
+        from omac.errors import PlatformError
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        current = eng.store.get_work_item(item.id)
+        source_subject = current.review_subject_digest
+        eng.store.update_work_item_metadata(
+            item.id,
+            review_obligations=build_review_obligations(current),
+            review_report=_review_report(current, "reject"),
+        )
+
+        original_wake = eng.runtime.wake
+        worker_wakes = 0
+        reviewer_wakes = 0
+
+        def wake(item_id, agent, role):
+            nonlocal worker_wakes, reviewer_wakes
+            if role == "worker":
+                worker_wakes += 1
+                self._submit_revision(eng, item, revision=2)
+                eng.store.clear_assignment(item_id)
+                raise PlatformError(
+                    "Invalid request: issue is not assigned to an agent or squad")
+            reviewer_wakes += 1
+            return original_wake(item_id, agent, role)
+
+        monkeypatch.setattr(eng.runtime, "wake", wake)
+
+        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+
+        recovered = eng.store.get_work_item(item.id)
+        assert result.state == "running"
+        assert manifest.nodes["a"].status == "in_review"
+        assert recovered.worker_handoff is None
+        assert recovered.phase is TaskPhase.REVIEW
+        assert recovered.status is WorkItemStatus.IN_REVIEW
+        assert recovered.review_subject_digest != source_subject
+        assert worker_wakes == 1
+        assert reviewer_wakes == 1
+
+    def test_worker_handoff_delivery_check_ignores_stale_status_projection(
+        self, tmp_path, monkeypatch,
+    ):
+        """assignment 后状态回读陈旧时，只要 delivery 未变就继续原 handoff。"""
+        import copy
+
+        from omac.engines import create_engine
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        current = eng.store.get_work_item(item.id)
+        eng.store.update_work_item_metadata(
+            item.id,
+            review_obligations=build_review_obligations(current),
+            review_report=_review_report(current, "reject"),
+        )
+
+        original_assign = eng.store.assign_work_item
+        original_get = eng.store.get_work_item
+        original_wake = eng.runtime.wake
+        assignment_finished = False
+        stale_status_served = False
+        worker_wakes = 0
+        reviewer_wakes = 0
+
+        def assign(item_id, assignee, role):
+            nonlocal assignment_finished
+            result = original_assign(item_id, assignee, role)
+            if role == "worker":
+                assignment_finished = True
+            return result
+
+        def get_work_item(item_id):
+            nonlocal stale_status_served
+            observed = original_get(item_id)
+            if assignment_finished and not stale_status_served:
+                stale_status_served = True
+                stale = copy.copy(observed)
+                stale.status = WorkItemStatus.TODO
+                return stale
+            return observed
+
+        def wake(item_id, agent, role):
+            nonlocal worker_wakes, reviewer_wakes
+            if role == "worker":
+                worker_wakes += 1
+            else:
+                reviewer_wakes += 1
+            return original_wake(item_id, agent, role)
+
+        monkeypatch.setattr(eng.store, "assign_work_item", assign)
+        monkeypatch.setattr(eng.store, "get_work_item", get_work_item)
+        monkeypatch.setattr(eng.runtime, "wake", wake)
+
+        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+
+        recovered = original_get(item.id)
+        assert result.state == "running"
+        assert manifest.nodes["a"].status == "in_progress"
+        assert recovered.worker_handoff is None
+        assert recovered.phase is TaskPhase.AUTHORING
+        assert recovered.status is WorkItemStatus.IN_PROGRESS
+        assert worker_wakes == 1
+        assert reviewer_wakes == 0
+
     @pytest.mark.parametrize("changed_field", ["artifacts", "verification"])
     def test_stale_worker_handoff_dispatches_one_fresh_reviewer(
         self, tmp_path, monkeypatch, changed_field,
