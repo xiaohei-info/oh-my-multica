@@ -48,7 +48,7 @@ from .models import (
     MergeCommandResult, PullRequestCheckResult, PullRequestObservation,
     PullRequestReadiness, PullRequestReadinessFailure, RuntimeCapabilities,
     PullRequestReadinessFailureKind, PullRequestState,
-    SkillPackage, SubmissionActorIdentity, WorkItem, WorkItemStatus,
+    SkillPackage, VerificationAttachmentObservation, WorkItem, WorkItemStatus,
     WorkspaceInfo,
 )
 from ..core.machine_feedback import (
@@ -538,6 +538,27 @@ class MulticaStore(WorkItemStore):
             "后续 Agent 应通过 `omac work show <issue-id> --output json` 读取交接上下文；"
             "程序化引用见 issue metadata。\n")
 
+    def _download_attachment_bytes(
+        self, attachment_id: str, filename: Optional[str], *, label: str,
+    ) -> Optional[bytes]:
+        def download() -> Optional[bytes]:
+            with tempfile.TemporaryDirectory(prefix="omac-attachment-") as td:
+                self._run_multica([
+                    "attachment", "download", attachment_id,
+                    "--output-dir", td,
+                ], capture=True)
+                candidates = []
+                if filename:
+                    candidates.append(os.path.join(td, filename))
+                candidates.extend(os.path.join(td, p) for p in os.listdir(td))
+                for path in candidates:
+                    if os.path.isfile(path):
+                        with open(path, "rb") as f:
+                            return f.read()
+            return None
+
+        return self._run_idempotent_read(label, download)
+
     def _load_payload_comment(self, item_id: str, key: str, ref: Optional[Dict[str, Any]]) -> Optional[str]:
         if not ref:
             return None
@@ -569,24 +590,92 @@ class MulticaStore(WorkItemStore):
         if not attachment_id:
             return None
         filename = ref.get("filename")
-
-        def download() -> Optional[str]:
-            with tempfile.TemporaryDirectory(prefix="omac-attachment-") as td:
-                self._run_multica([
-                    "attachment", "download", attachment_id,
-                    "--output-dir", td,
-                ], capture=True)
-                candidates = []
-                if filename:
-                    candidates.append(os.path.join(td, filename))
-                candidates.extend(os.path.join(td, p) for p in os.listdir(td))
-                for path in candidates:
-                    if os.path.isfile(path):
-                        with open(path, "r", encoding="utf-8") as f:
-                            return f.read()
+        body = self._download_attachment_bytes(
+            str(attachment_id), filename, label="attachment download")
+        if body is None:
             return None
+        actual_sha = hashlib.sha256(body).hexdigest()
+        declared_sha = str(ref.get("sha256") or "").strip()
+        if declared_sha and actual_sha != declared_sha:
+            raise PlatformError(
+                f"Downloaded {key} attachment digest does not match declared "
+                f"SHA-256 for work item {item_id}")
+        try:
+            return body.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise PlatformError(
+                f"Downloaded {key} attachment is not valid UTF-8 for work item "
+                f"{item_id}") from exc
 
-        return self._run_idempotent_read("attachment download", download)
+    def observe_verification_attachment(
+        self, item_id: str, ref: Dict[str, Any],
+    ) -> VerificationAttachmentObservation:
+        attachment_id = str(ref.get("attachment_id") or "").strip()
+        comment_id = str(ref.get("comment_id") or "").strip()
+        if not attachment_id or not comment_id:
+            raise PlatformError(
+                f"Verification attachment identity is incomplete for work item {item_id}")
+        comments = self._run_multica([
+            "issue", "comment", "list", item_id,
+            "--thread", comment_id,
+            "--output", "json",
+            "--full",
+        ])
+        if not isinstance(comments, list):
+            raise PlatformError(
+                f"Verification comment observation is unavailable for work item {item_id}")
+        attachment: Optional[Dict[str, Any]] = None
+        for comment in comments:
+            if not isinstance(comment, dict) or str(comment.get("id") or "") != comment_id:
+                continue
+            for candidate in comment.get("attachments") or []:
+                if (
+                    isinstance(candidate, dict)
+                    and str(candidate.get("id") or "") == attachment_id
+                ):
+                    attachment = candidate
+                    break
+            if attachment is not None:
+                break
+        if attachment is None:
+            raise PlatformError(
+                f"Verification attachment {attachment_id} is not bound to comment "
+                f"{comment_id} for work item {item_id}")
+        body = self._download_attachment_bytes(
+            attachment_id,
+            str(attachment.get("filename") or ref.get("filename") or "") or None,
+            label="verification attachment observation",
+        )
+        if body is None:
+            raise PlatformError(
+                f"Verification attachment bytes are unavailable for work item {item_id}")
+        actual_sha = hashlib.sha256(body).hexdigest()
+        declared_sha = str(ref.get("sha256") or "").strip()
+        if declared_sha and declared_sha != actual_sha:
+            raise PlatformError(
+                f"Verification attachment digest mismatch for work item {item_id}")
+        return VerificationAttachmentObservation(
+            attachment_id=attachment_id,
+            comment_id=comment_id,
+            sha256=actual_sha,
+            content=body,
+            uploader_id=(
+                str(attachment.get("uploader_id"))
+                if attachment.get("uploader_id") else None
+            ),
+            uploader_type=(
+                str(attachment.get("uploader_type"))
+                if attachment.get("uploader_type") else None
+            ),
+            task_id=(
+                str(attachment.get("task_id"))
+                if attachment.get("task_id") else None
+            ),
+            created_at=(
+                str(attachment.get("created_at"))
+                if attachment.get("created_at") else None
+            ),
+        )
 
     def _issue_to_work_item(self, issue_data: Dict, workspace_id: str) -> WorkItem:
         metadata = issue_data.get("metadata", {})
@@ -823,35 +912,6 @@ class MulticaStore(WorkItemStore):
 
     def resolve_agent_id(self, agent_name: str) -> str:
         return self._resolve_agent_id(agent_name)
-
-    def current_submission_identity(
-        self, item_id: str,
-    ) -> Optional[SubmissionActorIdentity]:
-        agent_id = os.environ.get("MULTICA_AGENT_ID", "").strip()
-        agent_name = os.environ.get("MULTICA_AGENT_NAME", "").strip()
-        run_id = os.environ.get("MULTICA_TASK_ID", "").strip()
-        if not any((agent_id, agent_name, run_id)):
-            return None
-        if not all((agent_id, agent_name, run_id)):
-            raise PlatformError(
-                "Multica submit identity is incomplete; MULTICA_AGENT_ID, "
-                "MULTICA_AGENT_NAME, and MULTICA_TASK_ID must all be present")
-        runs = self._run_multica([
-            "issue", "runs", item_id, "--output", "json",
-        ])
-        matching = [
-            run for run in (runs if isinstance(runs, list) else [])
-            if isinstance(run, dict)
-            and str(run.get("id") or "") == run_id
-            and str(run.get("kind") or "direct").lower() == "direct"
-            and str(run.get("agent_id") or "") == agent_id
-        ]
-        if len(matching) != 1:
-            raise PlatformError(
-                "Current Multica submit actor/run does not match one direct Run "
-                f"for issue {item_id}")
-        return SubmissionActorIdentity(
-            agent_id=agent_id, agent_name=agent_name, run_id=run_id)
 
     # ==================== 成员池 ====================
 
@@ -1573,6 +1633,13 @@ class MulticaRuntime(AgentRuntime):
                 status=str(run.get("status") or "").lower(),
                 agent_id=(
                     str(run.get("agent_id")) if run.get("agent_id") else None
+                ),
+                created_at=(
+                    str(run.get("created_at")) if run.get("created_at") else None
+                ),
+                updated_at=(
+                    str(run.get("updated_at") or run.get("completed_at"))
+                    if run.get("updated_at") or run.get("completed_at") else None
                 ),
             )
             for run in runs

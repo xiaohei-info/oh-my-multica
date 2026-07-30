@@ -888,10 +888,10 @@ class TestSubmitPerKindPhase:
         assert got.verification_ref["filename"] == "omac-verification.yaml"
         assert got.status == WorkItemStatus.DONE
 
-    def test_develop_rework_submit_persists_causal_delivery_identity(
+    def test_develop_rework_submit_persists_candidate_without_sealing_identity(
         self, tmp_path, monkeypatch,
     ):
-        """返工 submit 必须绑定 generation、目标 Agent/Run、PR head 与附件。"""
+        """Agent submit 只写候选交付，因果 identity 由 controller 封装。"""
         from omac.core.taskmeta import WorkerHandoffIntent
 
         eng = _engine()
@@ -936,24 +936,14 @@ class TestSubmitPerKindPhase:
         )
 
         got = eng.store.get_work_item(item.id)
-        assert got.delivery_identity.as_dict() == {
-            "schema": "omac.delivery-identity/v1",
-            "handoff_generation": "handoff-generation-1",
-            "worker": "alice",
-            "agent_id": eng.store.resolve_agent_id("alice"),
-            "run_id": target_run.id,
-            "pr_url": "https://github.com/acme/snake/pull/1",
-            "pr_head_sha": "head-new",
-            "verification_sha256": got.verification_ref["sha256"],
-        }
+        assert got.delivery_identity is None
         assert got.artifacts["head_sha"] == "head-new"
 
-    def test_develop_rework_submit_rejects_old_or_other_actor_run(
+    def test_develop_rework_submit_does_not_trust_environment_actor_hints(
         self, tmp_path, monkeypatch,
     ):
-        """旧 Run/其他 actor 不能为当前 handoff 伪造 delivery identity。"""
+        """Agent 可覆盖的环境变量不会被封装为 delivery identity。"""
         from omac.core.taskmeta import WorkerHandoffIntent
-        from omac.engines.models import SubmissionActorIdentity
 
         eng = _engine()
         item = eng.store.create_work_item(
@@ -984,27 +974,20 @@ class TestSubmitPerKindPhase:
             lambda _pr_url: PullRequestReadiness(
                 is_draft=False, state="OPEN", head_sha="head-new"),
         )
-        monkeypatch.setattr(
-            eng.store,
-            "current_submission_identity",
-            lambda _item_id: SubmissionActorIdentity(
-                agent_id=eng.store.resolve_agent_id("bob"),
-                agent_name="bob",
-                run_id="run-old",
-            ),
-        )
+        monkeypatch.setenv("MULTICA_AGENT_ID", eng.store.resolve_agent_id("bob"))
+        monkeypatch.setenv("MULTICA_AGENT_NAME", "bob")
+        monkeypatch.setenv("MULTICA_TASK_ID", "run-old")
 
-        with pytest.raises(ValidationError, match="submission identity"):
-            dispatch_mod.submit(
-                eng.store,
-                item.id,
-                pr_url="https://github.com/acme/snake/pull/1",
-                verification_file=str(vfile),
-            )
+        dispatch_mod.submit(
+            eng.store,
+            item.id,
+            pr_url="https://github.com/acme/snake/pull/1",
+            verification_file=str(vfile),
+        )
 
         got = eng.store.get_work_item(item.id)
         assert got.delivery_identity is None
-        assert got.status == WorkItemStatus.TODO
+        assert got.status == WorkItemStatus.DONE
 
     def test_develop_authoring_content_rejected_atomic(self, tmp_path):
         eng = _engine()

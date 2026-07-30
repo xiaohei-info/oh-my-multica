@@ -20,17 +20,17 @@ from ..core.machine_feedback import (
     dump_machine_feedback, parse_machine_feedback,
 )
 from ..core.taskmeta import (
-    DELIVERY_CONTENT_KEY, DELIVERY_IDENTITY_SCHEMA, DeliveryIdentity, TaskKind,
+    DELIVERY_CONTENT_KEY, DeliveryIdentity, TaskKind,
     TaskPhase, WorkerHandoffIntent, parse_delivery_identity,
     parse_worker_handoff,
 )
-from ..errors import ValidationError, WorkItemNotFoundError
+from ..errors import PlatformError, ValidationError, WorkItemNotFoundError
 from ..i18n import ui
 from .models import (
     AgentInfo, AgentProvisionSpec, AgentRunObservation, EngineConfig, ProjectInfo, RuntimeTarget,
     MergeCommandResult, PullRequestCheckResult, PullRequestObservation,
     PullRequestReadiness, PullRequestState, RuntimeCapabilities,
-    SubmissionActorIdentity, WorkItem, WorkItemStatus, WorkspaceInfo,
+    VerificationAttachmentObservation, WorkItem, WorkItemStatus, WorkspaceInfo,
 )
 from .runtime import AgentRuntime
 from .store import WorkItemStore
@@ -68,6 +68,8 @@ _shared_pull_requests: Dict[str, PullRequestObservation] = {}
 _shared_runs: Dict[str, List[AgentRunObservation]] = {}
 _shared_next_run_id: int = 1
 _shared_active_assignments: Dict[str, tuple[str, str]] = {}
+_shared_attachment_bodies: Dict[str, bytes] = {}
+_shared_next_attachment_id: int = 1
 
 # 产出后进入评审阶段(而非直接 DONE)的 kind:与真实 work submit 的产出终态一致。
 # develop 走 pr_url→DONE;final-acceptance 有独立的 _accepted_results 真实 submit 分支。
@@ -228,6 +230,7 @@ class MockStore(WorkItemStore):
         global _accepted_results, _increments, _shared_projects
         global _shared_pull_requests
         global _shared_runs, _shared_next_run_id, _shared_active_assignments
+        global _shared_attachment_bodies, _shared_next_attachment_id
         _accepted_results = {}
         _increments = {}
         _shared_projects = {}
@@ -235,6 +238,8 @@ class MockStore(WorkItemStore):
         _shared_runs = {}
         _shared_next_run_id = 1
         _shared_active_assignments = {}
+        _shared_attachment_bodies = {}
+        _shared_next_attachment_id = 1
         _init_default_workspace()
 
     @classmethod
@@ -424,34 +429,31 @@ class MockStore(WorkItemStore):
                     item.verification = verification
                     verification_source = yaml.safe_dump(
                         verification, allow_unicode=True, sort_keys=False)
-                    verification_sha256 = hashlib.sha256(
-                        verification_source.encode("utf-8")).hexdigest()
-                    item.verification_ref = {
-                        "filename": "omac-verification.yaml",
-                        "bytes": len(verification_source.encode("utf-8")),
-                        "sha256": verification_sha256,
-                    }
-                    intent = item.worker_handoff
+                    global _shared_next_attachment_id
+                    attachment_id = (
+                        f"mock-attachment-{_shared_next_attachment_id}")
+                    _shared_next_attachment_id += 1
+                    body = verification_source.encode("utf-8")
+                    _shared_attachment_bodies[attachment_id] = body
                     latest_run = (_shared_runs.get(item_id) or [None])[-1]
-                    if (
-                        intent is not None
-                        and intent.is_causally_bound()
-                        and latest_run is not None
-                    ):
-                        if not intent.target_run_id:
-                            intent = replace(
-                                intent, target_run_id=latest_run.id)
-                            item.worker_handoff = intent
-                        item.delivery_identity = DeliveryIdentity(
-                            schema=DELIVERY_IDENTITY_SCHEMA,
-                            handoff_generation=intent.generation,
-                            worker=intent.target_worker,
-                            agent_id=intent.target_agent_id,
-                            run_id=intent.target_run_id,
-                            pr_url=pr_url,
-                            pr_head_sha=item.artifacts["head_sha"],
-                            verification_sha256=verification_sha256,
-                        )
+                    assignment = _shared_active_assignments.get(item_id)
+                    uploader_name = assignment[0] if assignment else None
+                    item.verification_ref = {
+                        "comment_id": f"mock-comment-{attachment_id}",
+                        "attachment_id": attachment_id,
+                        "filename": "omac-verification.yaml",
+                        "bytes": len(body),
+                        "sha256": hashlib.sha256(body).hexdigest(),
+                        "uploader_type": "agent" if uploader_name else "system",
+                        "uploader_id": (
+                            self.resolve_agent_id(uploader_name)
+                            if uploader_name else None
+                        ),
+                        "task_id": (
+                            latest_run.id if latest_run is not None else None
+                        ),
+                        "created_at": "2026-01-01T00:00:01Z",
+                    }
             _finish_mock_run(item_id)
             del _shared_assigned_items[item_id]
         elif item.status == WorkItemStatus.IN_REVIEW:
@@ -665,21 +667,6 @@ class MockStore(WorkItemStore):
             raise ValidationError(f"agent not found: {agent_name}")
         return f"mock-agent-{agent_name}"
 
-    def current_submission_identity(
-        self, item_id: str,
-    ) -> Optional[SubmissionActorIdentity]:
-        assignment = _shared_active_assignments.get(item_id)
-        runs = _shared_runs.get(item_id, [])
-        direct = [run for run in runs if run.kind == "direct"]
-        if not assignment or not direct:
-            return None
-        assignee, _role = assignment
-        return SubmissionActorIdentity(
-            agent_id=self.resolve_agent_id(assignee),
-            agent_name=assignee,
-            run_id=direct[-1].id,
-        )
-
     # ==================== 工作空间发现 ====================
 
     def list_workspaces(self) -> List[WorkspaceInfo]:
@@ -832,11 +819,29 @@ class MockStore(WorkItemStore):
         if verification is not None:
             item.verification = verification
         if verification_source is not None:
+            global _shared_next_attachment_id
+            attachment_id = f"mock-attachment-{_shared_next_attachment_id}"
+            _shared_next_attachment_id += 1
+            body = verification_source.encode("utf-8")
+            _shared_attachment_bodies[attachment_id] = body
+            runs = [
+                run for run in _shared_runs.get(item_id, [])
+                if run.kind == "direct"
+            ]
+            active_assignment = _shared_active_assignments.get(item_id)
+            uploader_name = active_assignment[0] if active_assignment else None
             item.verification_ref = {
+                "comment_id": f"mock-comment-{attachment_id}",
+                "attachment_id": attachment_id,
                 "filename": "omac-verification.yaml",
-                "bytes": len(verification_source.encode("utf-8")),
-                "sha256": hashlib.sha256(
-                    verification_source.encode("utf-8")).hexdigest(),
+                "bytes": len(body),
+                "sha256": hashlib.sha256(body).hexdigest(),
+                "uploader_type": "agent" if uploader_name else "system",
+                "uploader_id": (
+                    self.resolve_agent_id(uploader_name) if uploader_name else None
+                ),
+                "task_id": runs[-1].id if runs and uploader_name else None,
+                "created_at": "2026-01-01T00:00:01Z",
             }
         if review_report is not None:
             item.review_report = review_report
@@ -1072,6 +1077,29 @@ class MockStore(WorkItemStore):
             is_draft=False,
             state="OPEN",
             head_sha=hashlib.sha256(pr_url.encode("utf-8")).hexdigest(),
+        )
+
+    def observe_verification_attachment(
+        self, item_id: str, ref: Dict[str, Any],
+    ) -> VerificationAttachmentObservation:
+        self.get_work_item(item_id)
+        attachment_id = str(ref.get("attachment_id") or "")
+        comment_id = str(ref.get("comment_id") or "")
+        body = _shared_attachment_bodies.get(attachment_id)
+        if not attachment_id or not comment_id or body is None:
+            raise PlatformError("verification attachment observation is unavailable")
+        actual_sha = hashlib.sha256(body).hexdigest()
+        if ref.get("sha256") and ref.get("sha256") != actual_sha:
+            raise PlatformError("verification attachment digest mismatch")
+        return VerificationAttachmentObservation(
+            attachment_id=attachment_id,
+            comment_id=comment_id,
+            sha256=actual_sha,
+            content=body,
+            uploader_id=ref.get("uploader_id"),
+            uploader_type=ref.get("uploader_type"),
+            task_id=ref.get("task_id"),
+            created_at=ref.get("created_at"),
         )
 
     @property

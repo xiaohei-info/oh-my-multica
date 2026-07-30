@@ -148,6 +148,7 @@ class WorkerHandoffIntent:
     generation: Optional[str] = None
     target_agent_id: Optional[str] = None
     baseline_direct_run_ids: Tuple[str, ...] = ()
+    baseline_verification_attachment_id: Optional[str] = None
     target_run_id: Optional[str] = None
 
     def as_dict(self) -> dict[str, Any]:
@@ -162,6 +163,9 @@ class WorkerHandoffIntent:
             "generation": self.generation,
             "target_agent_id": self.target_agent_id,
             "baseline_direct_run_ids": list(self.baseline_direct_run_ids),
+            "baseline_verification_attachment_id": (
+                self.baseline_verification_attachment_id
+            ),
             "target_run_id": self.target_run_id,
         }
 
@@ -194,7 +198,7 @@ class WorkerHandoffIntent:
 
 @dataclass(frozen=True)
 class DeliveryIdentity:
-    """一次 develop submit 的持久因果身份。"""
+    """Controller 依据平台事实封装的持久交付因果身份。"""
 
     schema: Optional[str] = None
     handoff_generation: Optional[str] = None
@@ -204,6 +208,12 @@ class DeliveryIdentity:
     pr_url: Optional[str] = None
     pr_head_sha: Optional[str] = None
     verification_sha256: Optional[str] = None
+    verification_attachment_id: Optional[str] = None
+    verification_comment_id: Optional[str] = None
+    verification_uploader_id: Optional[str] = None
+    verification_uploader_type: Optional[str] = None
+    verification_task_id: Optional[str] = None
+    verification_created_at: Optional[str] = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -215,9 +225,23 @@ class DeliveryIdentity:
             "pr_url": self.pr_url,
             "pr_head_sha": self.pr_head_sha,
             "verification_sha256": self.verification_sha256,
+            "verification_attachment_id": self.verification_attachment_id,
+            "verification_comment_id": self.verification_comment_id,
+            "verification_uploader_id": self.verification_uploader_id,
+            "verification_uploader_type": self.verification_uploader_type,
+            "verification_task_id": self.verification_task_id,
+            "verification_created_at": self.verification_created_at,
         }
 
     def is_complete(self) -> bool:
+        attachment_actor_is_bound = bool(
+            self.verification_task_id
+            or (
+                self.verification_uploader_type == "agent"
+                and self.verification_uploader_id
+                and self.verification_created_at
+            )
+        )
         return bool(
             self.schema == DELIVERY_IDENTITY_SCHEMA
             and self.handoff_generation
@@ -227,6 +251,9 @@ class DeliveryIdentity:
             and self.pr_url
             and self.pr_head_sha
             and self.verification_sha256
+            and self.verification_attachment_id
+            and self.verification_comment_id
+            and attachment_actor_is_bound
         )
 
 
@@ -307,6 +334,8 @@ def parse_worker_handoff(value: Any) -> Optional[WorkerHandoffIntent]:
             run_id for run_id in value.get("baseline_direct_run_ids", [])
             if isinstance(run_id, str) and run_id
         ) if isinstance(value.get("baseline_direct_run_ids", []), list) else (),
+        baseline_verification_attachment_id=text_field(
+            "baseline_verification_attachment_id"),
         target_run_id=text_field("target_run_id"),
     )
 
@@ -332,4 +361,10 @@ def parse_delivery_identity(value: Any) -> Optional[DeliveryIdentity]:
         pr_url=text_field("pr_url"),
         pr_head_sha=text_field("pr_head_sha"),
         verification_sha256=text_field("verification_sha256"),
+        verification_attachment_id=text_field("verification_attachment_id"),
+        verification_comment_id=text_field("verification_comment_id"),
+        verification_uploader_id=text_field("verification_uploader_id"),
+        verification_uploader_type=text_field("verification_uploader_type"),
+        verification_task_id=text_field("verification_task_id"),
+        verification_created_at=text_field("verification_created_at"),
     )

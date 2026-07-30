@@ -17,7 +17,7 @@ from ..core.taskmeta import (
 from .models import (
     EngineConfig, MergeCommandResult, ProjectInfo, PullRequestCheckResult,
     PullRequestObservation, PullRequestReadiness, PullRequestReadinessFailure,
-    SubmissionActorIdentity, WorkItem, WorkItemStatus, WorkspaceInfo,
+    VerificationAttachmentObservation, WorkItem, WorkItemStatus, WorkspaceInfo,
 )
 
 
@@ -47,12 +47,6 @@ class WorkItemStore(ABC):
     @abstractmethod
     def resolve_agent_id(self, agent_name: str) -> str:
         """把稳定 Agent 名解析为平台身份；无法证明时抛 PlatformError。"""
-
-    @abstractmethod
-    def current_submission_identity(
-        self, item_id: str,
-    ) -> Optional[SubmissionActorIdentity]:
-        """返回平台认证的当前 submit actor/run；不在 Agent Run 中则返回 None。"""
 
     # ==================== 工作空间发现 ====================
 
@@ -275,6 +269,12 @@ class WorkItemStore(ABC):
         self, pr_url: str,
     ) -> PullRequestReadiness | PullRequestReadinessFailure:
         """读取 PR draft/open 事实，供 develop authoring 的交付前置门使用。"""
+
+    @abstractmethod
+    def observe_verification_attachment(
+        self, item_id: str, ref: Dict[str, Any],
+    ) -> VerificationAttachmentObservation:
+        """独立读取 verification 附件平台归属，并对下载字节重新计算摘要。"""
 
     # ==================== 便捷方法(基类实现) ====================
 

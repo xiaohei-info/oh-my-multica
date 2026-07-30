@@ -10,11 +10,10 @@ This file records public changes to oh-my-multica. The format follows
 
 ### Changed
 
-- Worker handoff recovery now rechecks the authoritative delivery identity after
-  assignment and after wake failures. If the target Worker already submitted a
-  new delivery, OMAC collects that result and dispatches the Reviewer instead
-  of rerunning an unassigned Issue; unknown assignment outcomes still fail
-  closed and retain the pending handoff intent.
+- Worker handoff recovery now binds candidate delivery to the platform-observed
+  target Run, attachment uploader/task facts, downloaded-byte digest, and remote
+  PR HEAD. A recovered delivery rejoins the normal evidence/CI/review path;
+  unknown assignment outcomes remain pending or fail closed without duplicate Runs.
 - Develop handoff and restart recovery now follow the current delivery review
   subject, while Multica rerun errors observe for an already-created Run before retry.
   Review resets clear the current report projection while preserving ledger/history,
