@@ -972,6 +972,9 @@ def collect_results(
             continue
 
         if _legacy_delivery_requires_retry(manifest, key, node, item):
+            if any(run.kind == "direct" and run.active
+                   for run in runtime.list_runs(node.work_item_id)):
+                continue
             retry = f"omac node retry {manifest_path} {key}"
             reason = ui(
                 "Legacy rework delivery lacks an immutable submitted head or "
@@ -981,21 +984,18 @@ def collect_results(
                 f"delivery identity。请运行 `{retry}`；旧 verification 和 "
                 "Reviewer verdict 不得复用。",
             )
-            store.update_work_item_metadata(
-                node.work_item_id,
-                decision_required={
-                    "schema": DECISION_REQUIRED_SCHEMA,
-                    "reason_code": "legacy-delivery-retry-required",
-                    "kind": TaskKind.DEVELOP.value,
-                    "phase": TaskPhase.AUTHORING.value,
-                    "gate": "delivery-identity",
-                    "resume_issue_id": node.work_item_id,
-                    "node_id": key,
-                    "next_action": retry,
-                },
-            )
-            store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
-            store.add_comment(node.work_item_id, reason)
+            decision = {
+                "schema": DECISION_REQUIRED_SCHEMA, "reason_code": "legacy-delivery-retry-required",
+                "kind": TaskKind.DEVELOP.value, "phase": TaskPhase.AUTHORING.value,
+                "gate": "delivery-identity", "resume_issue_id": node.work_item_id,
+                "node_id": key, "next_action": retry,
+            }
+            if item.decision_required != decision:
+                store.update_work_item_metadata(
+                    node.work_item_id, decision_required=decision)
+                store.add_comment(node.work_item_id, reason)
+            if item.status != WorkItemStatus.BLOCKED:
+                store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
             set_node(manifest, key, status="blocked")
             failures[key] = reason
             continue
