@@ -10,6 +10,9 @@ This file records public changes to oh-my-multica. The format follows
 
 ### Changed
 
+- `work show` now marks explicit operator retries as requiring a fresh
+  verification submission against the current PR HEAD, even when no code
+  change is needed; prior verification remains baseline-only evidence.
 - Worker handoff recovery now binds candidate delivery to the platform-observed
   target Run, attachment uploader/task facts, downloaded-byte digest, and remote
   PR HEAD. A recovered delivery rejoins the normal evidence/CI/review path;
