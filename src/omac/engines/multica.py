@@ -27,16 +27,17 @@ import yaml
 from ..core import logsetup
 from ..core.taskmeta import (
     AMENDMENT_ATTEMPT_KEY, CI_BOUNCE_KEY, CONTRACT_REF_KEY,
-    DECISION_REQUIRED_KEY, DELIVERABLE_KEY,
+    DECISION_REQUIRED_KEY, DELIVERY_IDENTITY_KEY, DELIVERABLE_KEY,
     DELIVERABLE_REF_KEY, KIND_KEY, MERGE_BOUNCE_KEY, PHASE_KEY,
     MACHINE_FEEDBACK_REF_KEY, PROJECT_RULES_KEY, PROJECT_RULES_REF_KEY, REVIEW_BOUNCE_KEY,
     REVIEW_CONTINUATION_KEY, REVIEW_LEDGER_REF_KEY, REVIEW_OBLIGATIONS_KEY,
     REVIEW_OBLIGATIONS_REF_KEY,
     REVIEW_REPORT_REF_KEY,
     REVIEW_SUBJECT_DIGEST_KEY,
-    SOURCE_REFS_KEY, TaskKind, TaskPhase, VERIFICATION_REF_KEY, WORKER_BOUNCE_KEY,
-    WORKER_HANDOFF_KEY, WorkerHandoffIntent,
-    parse_bounces, parse_kind, parse_phase, parse_worker_handoff,
+    SOURCE_REFS_KEY, DeliveryIdentity, TaskKind, TaskPhase,
+    VERIFICATION_REF_KEY, WORKER_BOUNCE_KEY, WORKER_HANDOFF_KEY,
+    WorkerHandoffIntent, parse_bounces, parse_delivery_identity, parse_kind,
+    parse_phase, parse_worker_handoff,
 )
 from ..errors import (
     AuthError, PlatformError, ValidationError, WorkItemNotFoundError,
@@ -47,7 +48,8 @@ from .models import (
     MergeCommandResult, PullRequestCheckResult, PullRequestObservation,
     PullRequestReadiness, PullRequestReadinessFailure, RuntimeCapabilities,
     PullRequestReadinessFailureKind, PullRequestState,
-    SkillPackage, WorkItem, WorkItemStatus, WorkspaceInfo,
+    SkillPackage, VerificationAttachmentObservation, WorkItem, WorkItemStatus,
+    WorkspaceInfo,
 )
 from ..core.machine_feedback import (
     dump_machine_feedback, is_machine_feedback, parse_machine_feedback,
@@ -58,7 +60,9 @@ from .metadata_policy import (
 from .runtime import AgentRuntime
 from .store import WorkItemStore
 
-MULTICA_PR_VIEW_FIELDS = "state,mergedAt,autoMergeRequest,mergeStateStatus"
+MULTICA_PR_VIEW_FIELDS = (
+    "state,mergedAt,autoMergeRequest,mergeStateStatus,headRefOid"
+)
 _MULTICA_READ_MAX_ATTEMPTS = 3
 _MULTICA_READ_INITIAL_DELAY = 1.0
 _ACTIVE_RUN_STATUSES = {"queued", "pending", "running", "dispatching"}
@@ -74,6 +78,7 @@ _KNOWN_WORK_ITEM_METADATA_KEYS = {
     REVIEW_LEDGER_REF_KEY, REVIEW_OBLIGATIONS_KEY, REVIEW_OBLIGATIONS_REF_KEY,
     REVIEW_REPORT_REF_KEY, REVIEW_SUBJECT_DIGEST_KEY, SOURCE_REFS_KEY,
     VERIFICATION_REF_KEY, WORKER_BOUNCE_KEY, WORKER_HANDOFF_KEY,
+    DELIVERY_IDENTITY_KEY,
 }
 _KNOWN_ISSUE_FIELDS = {
     "id", "identifier", "title", "description", "status", "metadata",
@@ -533,6 +538,27 @@ class MulticaStore(WorkItemStore):
             "后续 Agent 应通过 `omac work show <issue-id> --output json` 读取交接上下文；"
             "程序化引用见 issue metadata。\n")
 
+    def _download_attachment_bytes(
+        self, attachment_id: str, filename: Optional[str], *, label: str,
+    ) -> Optional[bytes]:
+        def download() -> Optional[bytes]:
+            with tempfile.TemporaryDirectory(prefix="omac-attachment-") as td:
+                self._run_multica([
+                    "attachment", "download", attachment_id,
+                    "--output-dir", td,
+                ], capture=True)
+                candidates = []
+                if filename:
+                    candidates.append(os.path.join(td, filename))
+                candidates.extend(os.path.join(td, p) for p in os.listdir(td))
+                for path in candidates:
+                    if os.path.isfile(path):
+                        with open(path, "rb") as f:
+                            return f.read()
+            return None
+
+        return self._run_idempotent_read(label, download)
+
     def _load_payload_comment(self, item_id: str, key: str, ref: Optional[Dict[str, Any]]) -> Optional[str]:
         if not ref:
             return None
@@ -564,24 +590,92 @@ class MulticaStore(WorkItemStore):
         if not attachment_id:
             return None
         filename = ref.get("filename")
-
-        def download() -> Optional[str]:
-            with tempfile.TemporaryDirectory(prefix="omac-attachment-") as td:
-                self._run_multica([
-                    "attachment", "download", attachment_id,
-                    "--output-dir", td,
-                ], capture=True)
-                candidates = []
-                if filename:
-                    candidates.append(os.path.join(td, filename))
-                candidates.extend(os.path.join(td, p) for p in os.listdir(td))
-                for path in candidates:
-                    if os.path.isfile(path):
-                        with open(path, "r", encoding="utf-8") as f:
-                            return f.read()
+        body = self._download_attachment_bytes(
+            str(attachment_id), filename, label="attachment download")
+        if body is None:
             return None
+        actual_sha = hashlib.sha256(body).hexdigest()
+        declared_sha = str(ref.get("sha256") or "").strip()
+        if declared_sha and actual_sha != declared_sha:
+            raise PlatformError(
+                f"Downloaded {key} attachment digest does not match declared "
+                f"SHA-256 for work item {item_id}")
+        try:
+            return body.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise PlatformError(
+                f"Downloaded {key} attachment is not valid UTF-8 for work item "
+                f"{item_id}") from exc
 
-        return self._run_idempotent_read("attachment download", download)
+    def observe_verification_attachment(
+        self, item_id: str, ref: Dict[str, Any],
+    ) -> VerificationAttachmentObservation:
+        attachment_id = str(ref.get("attachment_id") or "").strip()
+        comment_id = str(ref.get("comment_id") or "").strip()
+        if not attachment_id or not comment_id:
+            raise PlatformError(
+                f"Verification attachment identity is incomplete for work item {item_id}")
+        comments = self._run_multica([
+            "issue", "comment", "list", item_id,
+            "--thread", comment_id,
+            "--output", "json",
+            "--full",
+        ])
+        if not isinstance(comments, list):
+            raise PlatformError(
+                f"Verification comment observation is unavailable for work item {item_id}")
+        attachment: Optional[Dict[str, Any]] = None
+        for comment in comments:
+            if not isinstance(comment, dict) or str(comment.get("id") or "") != comment_id:
+                continue
+            for candidate in comment.get("attachments") or []:
+                if (
+                    isinstance(candidate, dict)
+                    and str(candidate.get("id") or "") == attachment_id
+                ):
+                    attachment = candidate
+                    break
+            if attachment is not None:
+                break
+        if attachment is None:
+            raise PlatformError(
+                f"Verification attachment {attachment_id} is not bound to comment "
+                f"{comment_id} for work item {item_id}")
+        body = self._download_attachment_bytes(
+            attachment_id,
+            str(attachment.get("filename") or ref.get("filename") or "") or None,
+            label="verification attachment observation",
+        )
+        if body is None:
+            raise PlatformError(
+                f"Verification attachment bytes are unavailable for work item {item_id}")
+        actual_sha = hashlib.sha256(body).hexdigest()
+        declared_sha = str(ref.get("sha256") or "").strip()
+        if declared_sha and declared_sha != actual_sha:
+            raise PlatformError(
+                f"Verification attachment digest mismatch for work item {item_id}")
+        return VerificationAttachmentObservation(
+            attachment_id=attachment_id,
+            comment_id=comment_id,
+            sha256=actual_sha,
+            content=body,
+            uploader_id=(
+                str(attachment.get("uploader_id"))
+                if attachment.get("uploader_id") else None
+            ),
+            uploader_type=(
+                str(attachment.get("uploader_type"))
+                if attachment.get("uploader_type") else None
+            ),
+            task_id=(
+                str(attachment.get("task_id"))
+                if attachment.get("task_id") else None
+            ),
+            created_at=(
+                str(attachment.get("created_at"))
+                if attachment.get("created_at") else None
+            ),
+        )
 
     def _issue_to_work_item(self, issue_data: Dict, workspace_id: str) -> WorkItem:
         metadata = issue_data.get("metadata", {})
@@ -780,6 +874,8 @@ class MulticaStore(WorkItemStore):
                 if isinstance(review_continuation, dict) else None),
             worker_handoff=parse_worker_handoff(
                 self._json_metadata(metadata, WORKER_HANDOFF_KEY)),
+            delivery_identity=parse_delivery_identity(
+                self._json_metadata(metadata, DELIVERY_IDENTITY_KEY)),
             decision_required=self._json_metadata(metadata, DECISION_REQUIRED_KEY),
             amendment_attempt=(
                 amendment_attempt if isinstance(amendment_attempt, dict) else None),
@@ -813,6 +909,9 @@ class MulticaStore(WorkItemStore):
                     return agent.get("id")
         raise PlatformError(
             f"agent '{agent_name}' not found in workspace {self.config.workspace_id}")
+
+    def resolve_agent_id(self, agent_name: str) -> str:
+        return self._resolve_agent_id(agent_name)
 
     # ==================== 成员池 ====================
 
@@ -1029,6 +1128,7 @@ class MulticaStore(WorkItemStore):
         review_ledger_source: Optional[str] = None,
         review_continuation: Optional[Dict[str, Any]] = None,
         worker_handoff: Optional[WorkerHandoffIntent | Dict[str, Any]] = None,
+        delivery_identity: Optional[DeliveryIdentity | Dict[str, Any]] = None,
         decision_required: Optional[Dict[str, Any]] = None,
         amendment_attempt: Optional[Dict[str, Any]] = None,
         phase: Optional[TaskPhase] = None,
@@ -1118,6 +1218,13 @@ class MulticaStore(WorkItemStore):
                 else worker_handoff
             )
             self._set_metadata(item_id, WORKER_HANDOFF_KEY, value)
+        if delivery_identity is not None:
+            value = (
+                delivery_identity.as_dict()
+                if isinstance(delivery_identity, DeliveryIdentity)
+                else delivery_identity
+            )
+            self._set_metadata(item_id, DELIVERY_IDENTITY_KEY, value)
         if review_subject_digest is not None:
             self._set_metadata(
                 item_id, REVIEW_SUBJECT_DIGEST_KEY, review_subject_digest)
@@ -1344,7 +1451,7 @@ class MulticaStore(WorkItemStore):
     ) -> PullRequestReadiness | PullRequestReadinessFailure:
         try:
             proc = subprocess.run(
-                ["gh", "pr", "view", pr_url, "--json", "isDraft,state"],
+                ["gh", "pr", "view", pr_url, "--json", "isDraft,state,headRefOid"],
                 capture_output=True, text=True, timeout=30)
         except FileNotFoundError as exc:
             return PullRequestReadinessFailure(
@@ -1366,11 +1473,16 @@ class MulticaStore(WorkItemStore):
                 PullRequestReadinessFailureKind.MALFORMED, "readiness payload is not an object")
         is_draft = payload.get("isDraft")
         state = payload.get("state")
-        if not isinstance(is_draft, bool) or not isinstance(state, str) or not state:
+        head_sha = payload.get("headRefOid")
+        if (
+            not isinstance(is_draft, bool)
+            or not isinstance(state, str) or not state
+            or not isinstance(head_sha, str) or not head_sha
+        ):
             return PullRequestReadinessFailure(
                 PullRequestReadinessFailureKind.MALFORMED,
-                "readiness payload is missing typed isDraft/state fields")
-        return PullRequestReadiness(is_draft, state)
+                "readiness payload is missing typed isDraft/state/headRefOid fields")
+        return PullRequestReadiness(is_draft, state, head_sha=head_sha)
 
 
 class MulticaRuntime(AgentRuntime):
@@ -1519,6 +1631,16 @@ class MulticaRuntime(AgentRuntime):
                 id=str(run.get("id")),
                 kind=str(run.get("kind") or "direct").lower(),
                 status=str(run.get("status") or "").lower(),
+                agent_id=(
+                    str(run.get("agent_id")) if run.get("agent_id") else None
+                ),
+                created_at=(
+                    str(run.get("created_at")) if run.get("created_at") else None
+                ),
+                updated_at=(
+                    str(run.get("updated_at") or run.get("completed_at"))
+                    if run.get("updated_at") or run.get("completed_at") else None
+                ),
             )
             for run in runs
             if isinstance(run, dict) and run.get("id")

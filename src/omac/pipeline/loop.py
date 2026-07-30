@@ -7,9 +7,14 @@
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import datetime
 from pathlib import Path
+import secrets
+import time
 from typing import Any, Dict, List, Set, Tuple
+
+import yaml
 
 from ..core import graph, logsetup
 from ..core.amendment import ensure_amendment_apply_complete
@@ -29,14 +34,18 @@ from ..pipeline.delivery import (
     advance_delivery, block_unproven_merge_request,
     merge_bounce_attempt, merge_request_state_is_valid, run_merge_delivery,
 )
-from ..engines.models import PullRequestState, WorkItemStatus
+from ..engines.models import (
+    PullRequestReadiness, PullRequestReadinessFailure, PullRequestState,
+    WorkItemStatus,
+)
 from ..engines.runtime import AgentRuntime
 from ..engines.store import WorkItemStore
 from ..errors import AuthError, PlatformError, WorkItemNotFoundError
 from ..i18n import current_language, ui
 from ..pipeline.dispatch import normalize_source_refs, render_issue_body
 from ..core.taskmeta import (
-    WORKER_HANDOFF_SCHEMA, TaskKind, TaskPhase, WorkerHandoffIntent,
+    DELIVERY_IDENTITY_SCHEMA, WORKER_HANDOFF_SCHEMA, DeliveryIdentity,
+    TaskKind, TaskPhase, WorkerHandoffIntent, parse_delivery_identity,
 )
 
 log = logsetup.get_logger(__name__)
@@ -59,6 +68,8 @@ _PLATFORM_TO_MANIFEST: Dict[str, str] = {
     "blocked": "blocked",
 }
 _MISSING_WORK_ITEM = object()
+_HANDOFF_OBSERVATION_ATTEMPTS = 3
+_HANDOFF_OBSERVATION_INTERVAL = 0.5
 
 
 def _project_root_from_manifest_path(manifest_path: str) -> str:
@@ -259,6 +270,7 @@ def _dispatch_reviewer_for_current_subject(
     node = manifest.nodes[key]
     item_id = node.work_item_id
     current = store.get_work_item(item_id)
+    _validate_controller_sealed_delivery(store, current)
     subject_digest = _review_subject_for_current_delivery(
         manifest, key, current)
     subject_changed = current.review_subject_digest != subject_digest
@@ -295,7 +307,7 @@ def _dispatch_worker_handoff(
     *,
     review_bounce: int | None = None,
     gate: str | None = None,
-) -> None:
+) -> str:
     """幂等完成 review→worker handoff；assign 可能立即启动 Run。"""
     node = manifest.nodes[key]
     item_id = node.work_item_id
@@ -314,6 +326,9 @@ def _dispatch_worker_handoff(
         ):
             raise PlatformError(
                 f"Worker handoff source is stale for work item {item_id}")
+        if not runtime.capabilities.stable_direct_run_identity:
+            raise PlatformError(
+                "Worker handoff requires stable direct Run identity support")
         intent = WorkerHandoffIntent(
             schema=WORKER_HANDOFF_SCHEMA,
             state="pending",
@@ -322,9 +337,29 @@ def _dispatch_worker_handoff(
             source_review_subject_digest=source_subject,
             source_review_round=source_round,
             target_review_bounce=review_bounce,
+            generation=f"handoff-{secrets.token_hex(8)}",
+            target_agent_id=store.resolve_agent_id(node.worker),
+            baseline_direct_run_ids=tuple(sorted(
+                run.id for run in runtime.list_runs(item_id)
+                if run.kind == "direct"
+            )),
+            baseline_verification_attachment_id=(
+                str((current.verification_ref or {}).get("attachment_id") or "")
+                or None
+            ),
         )
+        if current.delivery_identity is not None:
+            store.update_work_item_metadata(item_id, delivery_identity={})
         store.update_work_item_metadata(item_id, worker_handoff=intent)
         current = store.get_work_item(item_id)
+
+    if intent.is_causally_bound():
+        observation, intent = _observe_worker_handoff(
+            store, runtime, manifest, key, intent)
+        if observation == "complete":
+            return "ready"
+        if observation in {"waiting", "pending-submit"}:
+            return "waiting"
 
     target_bounce = intent.target_review_bounce
     if target_bounce is None:
@@ -365,11 +400,303 @@ def _dispatch_worker_handoff(
         raise PlatformError(
             f"Worker handoff preparation did not persist for work item {item_id}")
 
-    # assign_work_item 自身负责观察当前 assignee 并幂等修复；同一 worker 的
-    # 重复 assign 不得创建第二个 Run，不同 assignee 则在正确 phase/status 下接棒。
-    store.assign_work_item(item_id, intent.target_worker, "worker")
-    runtime.wake(item_id, intent.target_worker, "worker")
-    store.update_work_item_metadata(item_id, worker_handoff={})
+    observation, intent = _observe_worker_handoff(
+        store, runtime, manifest, key, intent)
+    if observation == "complete":
+        return "ready"
+    if observation in {"waiting", "pending-submit"}:
+        return "waiting"
+
+    # assign_work_item 自身负责观察当前 assignee并幂等修复。目标 Run 的
+    # 身份由后续只读观察绑定到持久 handoff，而不是由 assignment 成功猜测。
+    try:
+        store.assign_work_item(item_id, intent.target_worker, "worker")
+    except PlatformError as assign_error:
+        observation, intent = _observe_worker_handoff_bounded(
+            store, runtime, manifest, key, intent)
+        if observation == "complete":
+            return "ready"
+        if observation == "waiting":
+            return "waiting"
+        raise assign_error
+
+    observation, intent = _observe_worker_handoff_bounded(
+        store, runtime, manifest, key, intent)
+    if observation == "complete":
+        return "ready"
+    if observation in {"waiting", "pending-submit"}:
+        return "waiting"
+
+    try:
+        runtime.wake(item_id, intent.target_worker, "worker")
+    except PlatformError as wake_error:
+        observation, intent = _observe_worker_handoff_bounded(
+            store, runtime, manifest, key, intent)
+        if observation == "complete":
+            return "ready"
+        if observation == "waiting":
+            return "waiting"
+        raise wake_error
+
+    observation, intent = _observe_worker_handoff_bounded(
+        store, runtime, manifest, key, intent)
+    if observation == "complete":
+        return "ready"
+    if observation in {"waiting", "pending-submit"}:
+        return "waiting"
+    raise PlatformError(
+        f"Worker handoff dispatch outcome is unknown for work item {item_id}")
+
+
+def _observe_worker_handoff_bounded(
+    store: WorkItemStore,
+    runtime: AgentRuntime,
+    manifest: Manifest,
+    key: str,
+    intent: WorkerHandoffIntent,
+) -> tuple[str, WorkerHandoffIntent]:
+    """对最终一致的 Run/delivery 投影做有限只读观察。"""
+    observation = "missing"
+    for attempt in range(_HANDOFF_OBSERVATION_ATTEMPTS):
+        observation, intent = _observe_worker_handoff(
+            store, runtime, manifest, key, intent)
+        if observation not in {"missing", "pending-submit"}:
+            return observation, intent
+        if attempt + 1 < _HANDOFF_OBSERVATION_ATTEMPTS:
+            time.sleep(_HANDOFF_OBSERVATION_INTERVAL)
+    return observation, intent
+
+
+def _delivery_identity(item) -> DeliveryIdentity | None:
+    return parse_delivery_identity(getattr(item, "delivery_identity", None))
+
+
+def _parse_platform_time(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _attachment_is_causal_for_run(observation, run, agent_id: str) -> bool:
+    if observation.task_id:
+        return bool(
+            observation.task_id == run.id
+            and (
+                not observation.uploader_id
+                or observation.uploader_id == agent_id
+            )
+        )
+    created = _parse_platform_time(observation.created_at)
+    run_started = _parse_platform_time(run.created_at)
+    run_ended = _parse_platform_time(run.updated_at)
+    return bool(
+        observation.uploader_type == "agent"
+        and observation.uploader_id == agent_id
+        and created is not None
+        and run_started is not None
+        and run_ended is not None
+        and run_started <= created <= run_ended
+    )
+
+
+def _observe_delivery_projection(store: WorkItemStore, item):
+    artifacts = item.artifacts if isinstance(item.artifacts, dict) else {}
+    verification_ref = (
+        item.verification_ref if isinstance(item.verification_ref, dict) else {}
+    )
+    pr_url = str(artifacts.get("pr_url") or artifacts.get("pr") or "").strip()
+    submitted_head = str(artifacts.get("head_sha") or "").strip()
+    if not pr_url or not submitted_head or not verification_ref:
+        raise PlatformError(f"Worker delivery is incomplete for work item {item.id}")
+
+    attachment = store.observe_verification_attachment(item.id, verification_ref)
+    try:
+        attachment_verification = yaml.safe_load(
+            attachment.content.decode("utf-8"))
+    except (UnicodeDecodeError, yaml.YAMLError) as exc:
+        raise PlatformError(
+            f"Verification attachment cannot be parsed for work item {item.id}") from exc
+    if attachment_verification != item.verification:
+        raise PlatformError(
+            f"Parsed verification projection does not match downloaded attachment "
+            f"for work item {item.id}")
+
+    readiness = store.read_pull_request_readiness(pr_url)
+    if isinstance(readiness, PullRequestReadinessFailure):
+        raise PlatformError(
+            f"Remote PR HEAD observation failed for {pr_url}: {readiness.detail}")
+    if not isinstance(readiness, PullRequestReadiness) or not readiness.head_sha:
+        raise PlatformError(f"Remote PR HEAD is unavailable for {pr_url}")
+    if readiness.head_sha != submitted_head:
+        raise PlatformError(
+            f"Remote PR HEAD changed after Worker submit for {pr_url}: "
+            f"submitted={submitted_head}, current={readiness.head_sha}")
+    return attachment, pr_url, readiness.head_sha
+
+
+def _seal_worker_delivery(
+    store: WorkItemStore,
+    manifest: Manifest,
+    key: str,
+    current,
+    intent: WorkerHandoffIntent,
+    target_run,
+) -> DeliveryIdentity:
+    attachment, pr_url, remote_head = _observe_delivery_projection(
+        store, current)
+    if (
+        intent.baseline_verification_attachment_id
+        and attachment.attachment_id
+        == intent.baseline_verification_attachment_id
+    ):
+        raise PlatformError(
+            f"Worker handoff {intent.generation} did not create a new verification attachment")
+    if not _attachment_is_causal_for_run(
+        attachment, target_run, str(intent.target_agent_id),
+    ):
+        raise PlatformError(
+            f"Verification attachment is not causally bound to Worker Run "
+            f"{target_run.id}")
+    return DeliveryIdentity(
+        schema=DELIVERY_IDENTITY_SCHEMA,
+        handoff_generation=intent.generation,
+        worker=intent.target_worker,
+        agent_id=intent.target_agent_id,
+        run_id=target_run.id,
+        pr_url=pr_url,
+        pr_head_sha=remote_head,
+        verification_sha256=attachment.sha256,
+        verification_attachment_id=attachment.attachment_id,
+        verification_comment_id=attachment.comment_id,
+        verification_uploader_id=attachment.uploader_id,
+        verification_uploader_type=attachment.uploader_type,
+        verification_task_id=attachment.task_id,
+        verification_created_at=attachment.created_at,
+    )
+
+
+def _validate_controller_sealed_delivery(
+    store: WorkItemStore, item,
+) -> None:
+    identity = _delivery_identity(item)
+    if identity is None:
+        return
+    if not identity.is_complete():
+        raise PlatformError(
+            f"Controller-sealed delivery identity is incomplete for work item {item.id}")
+    attachment, pr_url, remote_head = _observe_delivery_projection(store, item)
+    if (
+        identity.pr_url != pr_url
+        or identity.pr_head_sha != remote_head
+        or identity.verification_attachment_id != attachment.attachment_id
+        or identity.verification_comment_id != attachment.comment_id
+    ):
+        raise PlatformError(
+            f"Current delivery projection does not match sealed identity for "
+            f"work item {item.id}")
+    if (
+        attachment.sha256 != identity.verification_sha256
+        or attachment.attachment_id != identity.verification_attachment_id
+        or attachment.comment_id != identity.verification_comment_id
+        or attachment.uploader_id != identity.verification_uploader_id
+        or attachment.uploader_type != identity.verification_uploader_type
+        or attachment.task_id != identity.verification_task_id
+        or attachment.created_at != identity.verification_created_at
+    ):
+        raise PlatformError(
+            f"Verification attachment no longer matches sealed identity for "
+            f"work item {item.id}")
+
+
+def _observe_worker_handoff(
+    store: WorkItemStore,
+    runtime: AgentRuntime,
+    manifest: Manifest,
+    key: str,
+    intent: WorkerHandoffIntent,
+) -> tuple[str, WorkerHandoffIntent]:
+    """只读观察 handoff 的 Run→submit 因果链。"""
+    item_id = manifest.nodes[key].work_item_id
+    current = store.get_work_item(item_id)
+    runs = runtime.list_runs(item_id)
+    direct_runs = [run for run in runs if run.kind == "direct"]
+    baseline = set(intent.baseline_direct_run_ids)
+
+    if not intent.is_causally_bound():
+        raise PlatformError(
+            f"Worker handoff lacks causal identity for work item {item_id}")
+
+    target_run = None
+    if intent.target_run_id:
+        matches = [run for run in direct_runs if run.id == intent.target_run_id]
+        if len(matches) > 1:
+            raise PlatformError(
+                f"Worker handoff target Run is ambiguous for work item {item_id}")
+        target_run = matches[0] if matches else None
+        if target_run is not None and target_run.agent_id != intent.target_agent_id:
+            raise PlatformError(
+                f"Worker handoff target Run actor mismatch for work item {item_id}")
+    else:
+        candidates = [
+            run for run in direct_runs
+            if run.id not in baseline
+            and run.agent_id == intent.target_agent_id
+        ]
+        wrong_actor = [
+            run for run in direct_runs
+            if run.id not in baseline
+            and run.agent_id != intent.target_agent_id
+        ]
+        if wrong_actor or len(candidates) > 1:
+            raise PlatformError(
+                f"Worker handoff observed non-causal direct Runs for work item {item_id}")
+        if candidates:
+            target_run = candidates[0]
+            intent = replace(intent, target_run_id=target_run.id)
+            store.update_work_item_metadata(item_id, worker_handoff=intent)
+
+    unexpected_direct_runs = [
+        run for run in direct_runs
+        if run.id not in baseline and run.id != intent.target_run_id
+    ]
+    if unexpected_direct_runs:
+        raise PlatformError(
+            f"Worker handoff observed non-causal direct Runs for work item {item_id}")
+
+    if target_run is None and any(run.active for run in runs):
+        return "waiting", intent
+    if target_run is not None:
+        if target_run.active:
+            return "waiting", intent
+        if not target_run.terminal:
+            return "missing", intent
+        if (
+            current.status != WorkItemStatus.DONE
+            or not isinstance(current.verification_ref, dict)
+            or not current.verification_ref
+            or not isinstance(current.artifacts, dict)
+            or not current.artifacts
+        ):
+            return "pending-submit", intent
+        sealed = _seal_worker_delivery(
+            store, manifest, key, current, intent, target_run)
+        existing = _delivery_identity(current)
+        if existing is not None and existing.as_dict() != sealed.as_dict():
+            raise PlatformError(
+                f"Persisted delivery identity does not match platform facts for "
+                f"handoff {intent.generation}")
+        store.update_work_item_metadata(item_id, delivery_identity=sealed)
+        persisted = _delivery_identity(store.get_work_item(item_id))
+        if persisted is None or persisted.as_dict() != sealed.as_dict():
+            raise PlatformError(
+                f"Controller-sealed delivery identity did not persist for "
+                f"handoff {intent.generation}")
+        store.update_work_item_metadata(item_id, worker_handoff={})
+        return "complete", intent
+    return "missing", intent
 
 
 def _review_projection_present(item) -> bool:
@@ -383,83 +710,13 @@ def _review_projection_present(item) -> bool:
     )
 
 
-def _review_outcome_present(item) -> bool:
-    return bool(
-        item.review_verdict is not None
-        or item.review_comment not in {None, ""}
-        or item.machine_feedback not in (None, {})
-        or item.review_report is not None
-        or item.decision_required is not None
-    )
-
-
-def _dispatch_reviewer_after_invalid_worker_handoff(
-    store: WorkItemStore,
-    runtime: AgentRuntime,
-    manifest: Manifest,
-    key: str,
-) -> bool:
-    """保留 invalid intent，直到当前 delivery 的 fresh Reviewer 已幂等派发。"""
-    node = manifest.nodes[key]
-    item_id = node.work_item_id
-    current = store.get_work_item(item_id)
-    subject_digest = _review_subject_for_current_delivery(
-        manifest, key, current)
-    fresh_projection = (
-        current.phase == TaskPhase.REVIEW
-        and current.review_subject_digest == subject_digest
-        and not _review_outcome_present(current)
-    )
-    if not fresh_projection and (
-        current.phase != TaskPhase.AUTHORING
-        or _review_projection_present(current)
-    ):
-        store.reset_review(item_id)
-
-    dispatched = _dispatch_reviewer_for_current_subject(
-        store, runtime, manifest, key)
-    store.update_work_item_metadata(item_id, worker_handoff={})
-    return dispatched
-
-
-def _worker_handoff_is_resumable(
-    manifest: Manifest, key: str, item,
-) -> bool:
-    intent = item.worker_handoff
-    node = manifest.nodes[key]
-    if (
-        intent is None
-        or not intent.is_complete()
-        or intent.target_worker != node.worker
-        or intent.gate not in {"review", "review-nits"}
-        or intent.source_review_round != intent.target_review_bounce
-        or item.status not in {
-            WorkItemStatus.IN_REVIEW, WorkItemStatus.IN_PROGRESS,
-        }
-        or item.bounces.review not in {
-            intent.target_review_bounce - 1,
-            intent.target_review_bounce,
-        }
-        or _review_subject_for_round(
-            manifest, key, item, intent.source_review_round)
-        != intent.source_review_subject_digest
-    ):
-        return False
-    if _review_projection_present(item):
-        return bool(
-            item.phase == TaskPhase.REVIEW
-            and item.review_subject_digest
-            == intent.source_review_subject_digest
-        )
-    return item.phase == TaskPhase.AUTHORING
-
-
 def _complete_merge_if_confirmed(
     store: WorkItemStore, runtime: AgentRuntime, manifest: Manifest, key: str,
     retry_limits: dict, config: dict, manifest_path: str,
 ) -> str:
     node = manifest.nodes[key]
     item = store.get_work_item(node.work_item_id)
+    _validate_controller_sealed_delivery(store, item)
     recovering_merge_handoff = (
         merge_bounce_attempt(node.merge_request_state) is not None
         and item.phase == TaskPhase.AUTHORING
@@ -698,15 +955,16 @@ def collect_results(
             continue
 
         if item.worker_handoff is not None:
-            if not _worker_handoff_is_resumable(manifest, key, item):
-                _dispatch_reviewer_after_invalid_worker_handoff(
-                    store, runtime, manifest, key)
-                set_node(manifest, key, status="in_review")
-                continue
-            _dispatch_worker_handoff(
+            if not item.worker_handoff.is_causally_bound():
+                raise PlatformError(
+                    f"Worker handoff for {node.work_item_id} predates causal "
+                    "delivery identity support; refusing to infer completion")
+            handoff = _dispatch_worker_handoff(
                 store, runtime, manifest, key)
             set_node(manifest, key, status="in_progress")
-            continue
+            if handoff != "ready":
+                continue
+            item = store.get_work_item(node.work_item_id)
 
         if node.status == "in_review" and item.phase == TaskPhase.AUTHORING:
             # 兼容旧版本 handoff，及 wake 成功、intent 已清但 manifest 尚未落盘
@@ -973,7 +1231,7 @@ def collect_results(
                     continue
             if verdict == "pass-with-nits" and not gate_errors:
                 cur_bounce = item.bounces.review
-                _dispatch_worker_handoff(
+                handoff = _dispatch_worker_handoff(
                     store, runtime, manifest, key,
                     review_bounce=cur_bounce + 1,
                     gate="review-nits",
@@ -1019,7 +1277,7 @@ def collect_results(
                 else:
                     # 有界「回到 worker」由持久化 intent 串起各 checkpoint；
                     # 任一步结果未知都保留 intent 与绝对 bounce，交给 restart 幂等续跑。
-                    _dispatch_worker_handoff(
+                    handoff = _dispatch_worker_handoff(
                         store, runtime, manifest, key,
                         review_bounce=cur_bounce + 1,
                         gate="review",

@@ -45,9 +45,15 @@ def recovery_control_snapshot(item) -> dict:
 
 def recovery_evidence_digest(item) -> str:
     """绑定不可由阶段恢复重写的既有代码交付证据。"""
+    delivery_identity = getattr(item, "delivery_identity", None)
     return _stable_digest({
         "artifacts": getattr(item, "artifacts", None),
         "verification": getattr(item, "verification", None),
+        "delivery_identity": (
+            delivery_identity.as_dict()
+            if hasattr(delivery_identity, "as_dict")
+            else delivery_identity
+        ),
     })
 
 
@@ -63,6 +69,23 @@ def validate_stage_recovery(item, stage: str) -> None:
     """验证阶段恢复前置；merging 只验证，不在此观察或发起 merge。"""
     if stage not in {"review", "authoring", "merging"}:
         raise ValueError(f"unknown recovery stage: {stage}")
+    identity = getattr(item, "delivery_identity", None)
+    if stage in {"review", "merging"} and identity is not None:
+        artifacts = item.artifacts if isinstance(item.artifacts, dict) else {}
+        verification_ref = (
+            item.verification_ref
+            if isinstance(item.verification_ref, dict) else {}
+        )
+        if not identity.is_complete() or (
+            identity.pr_url != (artifacts.get("pr_url") or artifacts.get("pr"))
+            or identity.pr_head_sha != artifacts.get("head_sha")
+            or identity.verification_attachment_id
+            != verification_ref.get("attachment_id")
+            or identity.verification_comment_id
+            != verification_ref.get("comment_id")
+        ):
+            raise ValueError(
+                f"{stage} recovery requires a valid controller-sealed delivery identity")
     if stage != "merging":
         return
     artifacts = item.artifacts if isinstance(item.artifacts, dict) else {}
@@ -96,6 +119,12 @@ def prepare_stage_recovery(
     if item.worker_handoff is not None:
         store.update_work_item_metadata(
             node.work_item_id, worker_handoff={})
+    if (
+        stage == "authoring"
+        and getattr(item, "delivery_identity", None) is not None
+    ):
+        store.update_work_item_metadata(
+            node.work_item_id, delivery_identity={})
     if sync_contract and node.contract is not None:
         store.set_node_contract(node.work_item_id, node.contract)
     if stage == "merging":

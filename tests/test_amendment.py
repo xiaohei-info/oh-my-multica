@@ -32,7 +32,10 @@ from omac.core.manifest import (
     save_manifest,
 )
 from omac.core.review_convergence import review_subject_digest
-from omac.core.taskmeta import TaskKind, TaskPhase
+from omac.core.stage_recovery import prepare_stage_recovery
+from omac.core.taskmeta import (
+    DELIVERY_IDENTITY_SCHEMA, DeliveryIdentity, TaskKind, TaskPhase,
+)
 from omac.cli import exit_codes
 from omac.cli.main import main
 from omac.engines import create_engine
@@ -43,6 +46,58 @@ from omac.pipeline import loop
 from omac.pipeline.delivery import run_merge_delivery
 from omac.pipeline.dispatch import submit
 from omac.pipeline.tasks import run_task
+
+
+@pytest.mark.parametrize("stage", ["review", "merging"])
+def test_review_and_merge_stage_recovery_preserve_delivery_identity(stage):
+    """不启动新 Worker generation 的恢复必须保留因果交付身份。"""
+    engine = create_engine(
+        "mock",
+        EngineConfig(engine_type="mock", workspace_id="mock-workspace"),
+    )
+    node = Node(id="a", worker="alice", reviewer="bob", contract=Contract())
+    item = engine.store.create_work_item(
+        "mock-workspace", "a", "a", dag_key="a", worker="alice",
+        reviewer="bob", kind=TaskKind.DEVELOP,
+    )
+    node.work_item_id = item.id
+    identity = DeliveryIdentity(
+        schema=DELIVERY_IDENTITY_SCHEMA,
+        handoff_generation="generation-1",
+        worker="alice",
+        agent_id="agent-alice",
+        run_id="run-1",
+        pr_url="https://github.com/acme/repo/pull/1",
+        pr_head_sha="head-1",
+        verification_sha256="verification-1",
+        verification_attachment_id="attachment-1",
+        verification_comment_id="comment-1",
+        verification_uploader_id="agent-alice",
+        verification_uploader_type="agent",
+        verification_task_id="run-1",
+        verification_created_at="2026-07-30T01:00:00Z",
+    )
+    engine.store.update_work_item_metadata(
+        item.id,
+        artifacts={"pr_url": identity.pr_url, "head_sha": identity.pr_head_sha},
+        verification={"commands": []},
+        verification_source="commands: []\n",
+        delivery_identity=identity,
+        review_verdict="pass" if stage == "merging" else "",
+    )
+    current = engine.store.get_work_item(item.id)
+    current.verification_ref.update({
+        "attachment_id": identity.verification_attachment_id,
+        "comment_id": identity.verification_comment_id,
+        "uploader_id": identity.verification_uploader_id,
+        "uploader_type": identity.verification_uploader_type,
+        "task_id": identity.verification_task_id,
+        "created_at": identity.verification_created_at,
+    })
+
+    prepare_stage_recovery(node, engine.store, stage)
+
+    assert engine.store.get_work_item(item.id).delivery_identity == identity
 
 
 def _engine():

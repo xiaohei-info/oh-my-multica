@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..core.taskmeta import (
-    Bounces, TaskKind, TaskPhase, WorkerHandoffIntent,
+    Bounces, DeliveryIdentity, TaskKind, TaskPhase, WorkerHandoffIntent,
 )
 
 
@@ -60,6 +60,7 @@ class PullRequestReadiness:
     """PR 是否可进入 CI/review 的远端读取结果。"""
     is_draft: bool
     state: str
+    head_sha: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -83,6 +84,9 @@ class AgentRunObservation:
     id: str
     kind: str
     status: str
+    agent_id: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
 
     @property
     def active(self) -> bool:
@@ -91,6 +95,20 @@ class AgentRunObservation:
     @property
     def terminal(self) -> bool:
         return self.status in {"completed", "failed", "cancelled"}
+
+
+@dataclass(frozen=True)
+class VerificationAttachmentObservation:
+    """平台权威的 verification 附件事实及实际下载内容身份。"""
+
+    attachment_id: str
+    comment_id: str
+    sha256: str
+    content: bytes = b""
+    uploader_id: Optional[str] = None
+    uploader_type: Optional[str] = None
+    task_id: Optional[str] = None
+    created_at: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -192,6 +210,7 @@ class WorkItem:
     review_ledger_ref: Optional[Dict[str, Any]] = None
     review_continuation: Optional[Dict[str, Any]] = None
     worker_handoff: Optional[WorkerHandoffIntent] = None
+    delivery_identity: Optional[DeliveryIdentity] = None
     decision_required: Optional[Dict[str, Any]] = None
     amendment_attempt: Optional[Dict[str, Any]] = None
 

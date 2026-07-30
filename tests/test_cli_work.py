@@ -888,6 +888,107 @@ class TestSubmitPerKindPhase:
         assert got.verification_ref["filename"] == "omac-verification.yaml"
         assert got.status == WorkItemStatus.DONE
 
+    def test_develop_rework_submit_persists_candidate_without_sealing_identity(
+        self, tmp_path, monkeypatch,
+    ):
+        """Agent submit 只写候选交付，因果 identity 由 controller 封装。"""
+        from omac.core.taskmeta import WorkerHandoffIntent
+
+        eng = _engine()
+        item = eng.store.create_work_item(
+            "mock-workspace", "t", "d", dag_key="a", worker="alice",
+            reviewer="bob", kind=dispatch_mod.TaskKind.DEVELOP,
+        )
+        eng.store.set_node_contract(item.id, CONTRACT)
+        eng.store.assign_work_item(item.id, "alice", "worker")
+        target_run = eng.runtime.list_runs(item.id)[-1]
+        intent = WorkerHandoffIntent(
+            schema="omac.worker-handoff/v1",
+            state="pending",
+            target_worker="alice",
+            gate="review",
+            source_review_subject_digest="subject-1",
+            source_review_round=1,
+            target_review_bounce=1,
+            generation="handoff-generation-1",
+            target_agent_id=eng.store.resolve_agent_id("alice"),
+            baseline_direct_run_ids=(),
+            target_run_id=target_run.id,
+        )
+        eng.store.update_work_item_metadata(
+            item.id, worker_handoff=intent, phase=TaskPhase.AUTHORING)
+        eng.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
+        vfile = tmp_path / "verification.yaml"
+        verification_source = yaml.safe_dump(_make_verification())
+        vfile.write_text(verification_source)
+        monkeypatch.setattr(
+            eng.store,
+            "read_pull_request_readiness",
+            lambda _pr_url: PullRequestReadiness(
+                is_draft=False, state="OPEN", head_sha="head-new"),
+        )
+
+        dispatch_mod.submit(
+            eng.store,
+            item.id,
+            pr_url="https://github.com/acme/snake/pull/1",
+            verification_file=str(vfile),
+        )
+
+        got = eng.store.get_work_item(item.id)
+        assert got.delivery_identity is None
+        assert got.artifacts["head_sha"] == "head-new"
+
+    def test_develop_rework_submit_does_not_trust_environment_actor_hints(
+        self, tmp_path, monkeypatch,
+    ):
+        """Agent 可覆盖的环境变量不会被封装为 delivery identity。"""
+        from omac.core.taskmeta import WorkerHandoffIntent
+
+        eng = _engine()
+        item = eng.store.create_work_item(
+            "mock-workspace", "t", "d", dag_key="a", worker="alice",
+            reviewer="bob", kind=dispatch_mod.TaskKind.DEVELOP,
+        )
+        eng.store.set_node_contract(item.id, CONTRACT)
+        intent = WorkerHandoffIntent(
+            schema="omac.worker-handoff/v1",
+            state="pending",
+            target_worker="alice",
+            gate="review",
+            source_review_subject_digest="subject-1",
+            source_review_round=1,
+            target_review_bounce=1,
+            generation="handoff-generation-1",
+            target_agent_id=eng.store.resolve_agent_id("alice"),
+            baseline_direct_run_ids=("run-old",),
+            target_run_id="run-new",
+        )
+        eng.store.update_work_item_metadata(
+            item.id, worker_handoff=intent, phase=TaskPhase.AUTHORING)
+        vfile = tmp_path / "verification.yaml"
+        vfile.write_text(yaml.safe_dump(_make_verification()))
+        monkeypatch.setattr(
+            eng.store,
+            "read_pull_request_readiness",
+            lambda _pr_url: PullRequestReadiness(
+                is_draft=False, state="OPEN", head_sha="head-new"),
+        )
+        monkeypatch.setenv("MULTICA_AGENT_ID", eng.store.resolve_agent_id("bob"))
+        monkeypatch.setenv("MULTICA_AGENT_NAME", "bob")
+        monkeypatch.setenv("MULTICA_TASK_ID", "run-old")
+
+        dispatch_mod.submit(
+            eng.store,
+            item.id,
+            pr_url="https://github.com/acme/snake/pull/1",
+            verification_file=str(vfile),
+        )
+
+        got = eng.store.get_work_item(item.id)
+        assert got.delivery_identity is None
+        assert got.status == WorkItemStatus.DONE
+
     def test_develop_authoring_content_rejected_atomic(self, tmp_path):
         eng = _engine()
         item = eng.store.create_work_item(

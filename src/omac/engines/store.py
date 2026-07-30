@@ -11,11 +11,13 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
-from ..core.taskmeta import TaskKind, TaskPhase, WorkerHandoffIntent
+from ..core.taskmeta import (
+    DeliveryIdentity, TaskKind, TaskPhase, WorkerHandoffIntent,
+)
 from .models import (
     EngineConfig, MergeCommandResult, ProjectInfo, PullRequestCheckResult,
     PullRequestObservation, PullRequestReadiness, PullRequestReadinessFailure,
-    WorkItem, WorkItemStatus, WorkspaceInfo,
+    VerificationAttachmentObservation, WorkItem, WorkItemStatus, WorkspaceInfo,
 )
 
 
@@ -41,6 +43,10 @@ class WorkItemStore(ABC):
         否则 lint 报 "not in agent pool"。平台若用 id 标识成员,内部做 name->id
         映射,此方法返回 name。
         """
+
+    @abstractmethod
+    def resolve_agent_id(self, agent_name: str) -> str:
+        """把稳定 Agent 名解析为平台身份；无法证明时抛 PlatformError。"""
 
     # ==================== 工作空间发现 ====================
 
@@ -135,6 +141,7 @@ class WorkItemStore(ABC):
         review_ledger_source: Optional[str] = None,
         review_continuation: Optional[Dict[str, Any]] = None,
         worker_handoff: Optional[WorkerHandoffIntent | Dict[str, Any]] = None,
+        delivery_identity: Optional[DeliveryIdentity | Dict[str, Any]] = None,
         decision_required: Optional[Dict[str, Any]] = None,
         amendment_attempt: Optional[Dict[str, Any]] = None,
         phase: Optional[TaskPhase] = None,
@@ -262,6 +269,12 @@ class WorkItemStore(ABC):
         self, pr_url: str,
     ) -> PullRequestReadiness | PullRequestReadinessFailure:
         """读取 PR draft/open 事实，供 develop authoring 的交付前置门使用。"""
+
+    @abstractmethod
+    def observe_verification_attachment(
+        self, item_id: str, ref: Dict[str, Any],
+    ) -> VerificationAttachmentObservation:
+        """独立读取 verification 附件平台归属，并对下载字节重新计算摘要。"""
 
     # ==================== 便捷方法(基类实现) ====================
 

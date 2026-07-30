@@ -777,6 +777,81 @@ def test_multica_payload_ref_downloads_known_attachment_without_comment_thread(m
     assert not any(args[:3] == ["issue", "comment", "list"] for args in calls)
 
 
+def test_multica_verification_download_rejects_declared_sha_mismatch(monkeypatch):
+    """verification ref 的声明摘要不能替代实际下载字节摘要。"""
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+
+    def fake_run(args, capture=True):
+        if args[:2] == ["attachment", "download"]:
+            output_dir = Path(args[args.index("--output-dir") + 1])
+            (output_dir / "verification.yaml").write_text("commands: []\n")
+            return None
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+
+    with pytest.raises(PlatformError, match="sha|SHA|digest"):
+        store._load_payload_comment("issue-1", "verification", {
+            "attachment_id": "attachment-1",
+            "filename": "verification.yaml",
+            "sha256": "0" * 64,
+        })
+
+
+def test_multica_observes_verification_platform_identity_and_actual_bytes(
+    monkeypatch,
+):
+    """Controller seal 使用 comment/attachment 平台事实，不读取 Agent env。"""
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    body = b"commands:\n  - command: pytest\n"
+    sha = __import__("hashlib").sha256(body).hexdigest()
+
+    def fake_run(args, capture=True):
+        if args[:3] == ["issue", "comment", "list"]:
+            return [{
+                "id": "comment-1",
+                "attachments": [{
+                    "id": "attachment-1",
+                    "filename": "verification.yaml",
+                    "uploader_type": "agent",
+                    "uploader_id": "agent-1",
+                    "task_id": "run-1",
+                    "created_at": "2026-07-30T01:00:00Z",
+                }],
+            }]
+        if args[:2] == ["attachment", "download"]:
+            output_dir = Path(args[args.index("--output-dir") + 1])
+            (output_dir / "verification.yaml").write_bytes(body)
+            return None
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+
+    observed = store.observe_verification_attachment("issue-1", {
+        "comment_id": "comment-1",
+        "attachment_id": "attachment-1",
+        "filename": "verification.yaml",
+        "sha256": sha,
+    })
+
+    assert observed.content == body
+    assert observed.sha256 == sha
+    assert observed.uploader_id == "agent-1"
+    assert observed.task_id == "run-1"
+
+
+def test_multica_environment_run_ids_are_not_authenticated_submit_identity(
+    monkeypatch,
+):
+    """Agent 可覆盖的环境变量不能暴露为 Store 的认证身份 API。"""
+    monkeypatch.setenv("MULTICA_AGENT_ID", "agent-1")
+    monkeypatch.setenv("MULTICA_AGENT_NAME", "alice")
+    monkeypatch.setenv("MULTICA_TASK_ID", "run-old")
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+
+    assert not hasattr(store, "current_submission_identity")
+
+
 def test_multica_project_rules_are_uploaded_and_read_through_ref(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
     writes = []
@@ -1231,6 +1306,56 @@ def test_multica_runtime_accepts_rerun_created_before_response_failure(monkeypat
     ]) == 1
 
 
+def test_multica_runtime_accepts_expected_run_after_not_assigned_rerun(
+    monkeypatch,
+):
+    """not-assigned 仅在观察到目标 Agent 的关联新 Run 后才可收敛。"""
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    calls = []
+    monkeypatch.setattr(store, "_resolve_agent_id", lambda name: "agent-expected")
+    observations = iter([
+        [{
+            "id": "run-failed", "status": "failed", "kind": "direct",
+            "agent_id": "agent-old",
+        }],
+        [{
+            "id": "run-failed", "status": "failed", "kind": "direct",
+            "agent_id": "agent-old",
+        }],
+        [
+            {
+                "id": "run-failed", "status": "failed", "kind": "direct",
+                "agent_id": "agent-old",
+            },
+            {
+                "id": "run-retry", "status": "queued", "kind": "direct",
+                "agent_id": "agent-expected",
+                "retry_of_task_id": "run-failed",
+            },
+        ],
+    ])
+
+    def fake_run(args):
+        calls.append(args)
+        if args[:2] == ["issue", "runs"]:
+            return next(observations)
+        if args[:2] == ["issue", "rerun"]:
+            raise PlatformError(
+                "Invalid request: issue is not assigned to an agent or squad")
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+    runtime = MulticaRuntime(
+        store, active_observation_attempts=2,
+        active_observation_interval=0, sleeper=lambda _seconds: None)
+
+    runtime.wake("issue-1", "alice", "worker")
+
+    assert calls.count([
+        "issue", "rerun", "issue-1", "--output", "json",
+    ]) == 1
+
+
 def test_multica_runtime_accepts_parented_rerun_before_response_failure(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
     monkeypatch.setattr(store, "_resolve_agent_id", lambda name: "agent-expected")
@@ -1641,13 +1766,17 @@ def test_multica_runtime_lists_typed_run_identity(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
     runtime = MulticaRuntime(store)
     monkeypatch.setattr(store, "_run_multica", lambda _args: [
-        {"id": "run-1", "kind": "direct", "status": "completed"},
-        {"id": "run-2", "kind": "comment", "status": "running"},
+        {"id": "run-1", "kind": "direct", "status": "completed",
+         "agent_id": "agent-1"},
+        {"id": "run-2", "kind": "comment", "status": "running",
+         "agent_id": "agent-2"},
     ])
 
     assert runtime.list_runs("issue-1") == [
-        AgentRunObservation(id="run-1", kind="direct", status="completed"),
-        AgentRunObservation(id="run-2", kind="comment", status="running"),
+        AgentRunObservation(
+            id="run-1", kind="direct", status="completed", agent_id="agent-1"),
+        AgentRunObservation(
+            id="run-2", kind="comment", status="running", agent_id="agent-2"),
     ]
 
 
@@ -2032,7 +2161,8 @@ def test_multica_pr_check_and_readiness_stay_in_adapter(monkeypatch):
     responses = iter([
         SimpleNamespace(returncode=0, stdout="checks ok", stderr=""),
         SimpleNamespace(returncode=0, stdout=json.dumps({
-            "isDraft": False, "state": "OPEN"}), stderr=""),
+            "isDraft": False, "state": "OPEN", "headRefOid": "head-1"}),
+            stderr=""),
     ])
 
     def run(args, **kwargs):
@@ -2049,14 +2179,17 @@ def test_multica_pr_check_and_readiness_stay_in_adapter(monkeypatch):
     assert check.succeeded is True
     assert readiness.is_draft is False
     assert readiness.state == "OPEN"
+    assert readiness.head_sha == "head-1"
     assert calls[0][0] == "gh pr checks https://github.com/acme/repo/pull/1"
-    assert calls[1][0][-1] == "isDraft,state"
+    assert calls[1][0][-1] == "isDraft,state,headRefOid"
 
 
 @pytest.mark.parametrize(
     "payload",
-    [None, {}, {"isDraft": None, "state": "OPEN"}, {"isDraft": False},
-     {"isDraft": "false", "state": "OPEN"}],
+    [None, {}, {"isDraft": None, "state": "OPEN", "headRefOid": "head"},
+     {"isDraft": False},
+     {"isDraft": "false", "state": "OPEN", "headRefOid": "head"},
+     {"isDraft": False, "state": "OPEN"}],
 )
 def test_multica_readiness_malformed_payload_fails_closed(monkeypatch, payload):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))

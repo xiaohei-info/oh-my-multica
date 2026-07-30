@@ -642,9 +642,9 @@ def _validate_amendment_authoring(amendment_file: str) -> str:
 
 def _validate_develop_authoring(
     store: WorkItemStore, pr_url: str, verification_file: str, item: WorkItem
-) -> Dict[str, Any]:
+) -> tuple[Dict[str, Any], Optional[PullRequestReadiness]]:
     """develop × authoring 左移校验:复用 P2.2 validate_worker_evidence。"""
-    _validate_pr_ready_for_handoff(store, pr_url)
+    readiness = _validate_pr_ready_for_handoff(store, pr_url)
     verification = _parse_structured(verification_file)
     node = _Node(_contract_from_item(item))
     probe = _Item(artifacts={"pr_url": pr_url}, verification=verification)
@@ -653,17 +653,19 @@ def _validate_develop_authoring(
         raise ValidationError(ui(
             "Verification evidence validation failed:\n  - " + "\n  - ".join(errors),
             "verification 证据校验失败:\n  - " + "\n  - ".join(errors)))
-    return verification
+    return verification, readiness
 
 
 def _is_github_pr_url(pr_url: str) -> bool:
     return isinstance(pr_url, str) and pr_url.startswith("https://github.com/") and "/pull/" in pr_url
 
 
-def _validate_pr_ready_for_handoff(store: WorkItemStore, pr_url: str) -> None:
+def _validate_pr_ready_for_handoff(
+    store: WorkItemStore, pr_url: str,
+) -> Optional[PullRequestReadiness]:
     """worker 交付前置门:GitHub PR 必须不是 draft,否则不进入 CI/review/merge。"""
     if not _is_github_pr_url(pr_url):
-        return
+        return None
     readiness = store.read_pull_request_readiness(pr_url)
     if isinstance(readiness, PullRequestReadinessFailure):
         if readiness.category == PullRequestReadinessFailureKind.MISSING_CLI:
@@ -701,6 +703,8 @@ def _validate_pr_ready_for_handoff(store: WorkItemStore, pr_url: str) -> None:
         raise ValidationError(ui(
             f"GitHub PR is not OPEN and cannot be delivered: {pr_url} (state={state})",
             f"GitHub PR 状态不是 OPEN,不能交付: {pr_url} (state={state})"))
+    return readiness
+
 
 def _validate_review(
     kind: TaskKind, verdict: str, report_file: str, item: WorkItem
@@ -870,12 +874,18 @@ def submit(
 
     # ---------- develop × authoring ----------
     if kind == TaskKind.DEVELOP and phase == TaskPhase.AUTHORING:
-        verification = _validate_develop_authoring(store, pr_url, verification_file, item)
+        verification, readiness = _validate_develop_authoring(
+            store, pr_url, verification_file, item)
+        verification_source = _read_text(verification_file)
+        pr_head_sha = readiness.head_sha if readiness is not None else None
+        artifacts = {"pr_url": pr_url}
+        if pr_head_sha:
+            artifacts["head_sha"] = pr_head_sha
         store.update_work_item_metadata(
             issue_id,
-            artifacts={"pr_url": pr_url},
+            artifacts=artifacts,
             verification=verification,
-            verification_source=_read_text(verification_file),
+            verification_source=verification_source,
         )
         store.update_status(issue_id, WorkItemStatus.DONE)
         return SubmitResult(kind, phase, "verification", WorkItemStatus.DONE)
