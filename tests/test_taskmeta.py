@@ -13,7 +13,8 @@ import pytest
 
 from omac.core import taskmeta
 from omac.core.taskmeta import (
-    Bounces, TaskKind, TaskPhase, WorkerHandoffIntent,
+    DELIVERY_IDENTITY_SCHEMA, Bounces, DeliveryIdentity, TaskKind, TaskPhase,
+    WorkerHandoffIntent,
 )
 from omac.engines.metadata_policy import assert_metadata_write_allowed
 from omac.engines.models import EngineConfig
@@ -123,6 +124,23 @@ def _worker_handoff_intent():
         source_review_subject_digest="subject-1",
         source_review_round=1,
         target_review_bounce=1,
+        generation="handoff-generation-1",
+        target_agent_id="agent-alice",
+        baseline_direct_run_ids=("run-old",),
+        target_run_id="run-new",
+    )
+
+
+def _delivery_identity():
+    return DeliveryIdentity(
+        schema=DELIVERY_IDENTITY_SCHEMA,
+        handoff_generation="handoff-generation-1",
+        worker="alice",
+        agent_id="agent-alice",
+        run_id="run-new",
+        pr_url="https://github.com/acme/repo/pull/1",
+        pr_head_sha="head-1",
+        verification_sha256="verification-1",
     )
 
 
@@ -137,6 +155,19 @@ def test_mock_worker_handoff_roundtrip_and_clear():
 
     store.update_work_item_metadata(item.id, worker_handoff={})
     assert store.get_work_item(item.id).worker_handoff is None
+
+
+def test_mock_delivery_identity_roundtrip_and_clear():
+    store = MockStore(_mock_config())
+    item = store.create_work_item(
+        "ws", "t", "d", dag_key="a", worker="alice")
+    identity = _delivery_identity()
+
+    store.update_work_item_metadata(item.id, delivery_identity=identity)
+    assert store.get_work_item(item.id).delivery_identity == identity
+
+    store.update_work_item_metadata(item.id, delivery_identity={})
+    assert store.get_work_item(item.id).delivery_identity is None
 
 
 # ==================== Multica(subprocess mock)写后读回 ====================
@@ -366,6 +397,24 @@ def test_multica_worker_handoff_roundtrip_and_clear():
     assert persisted.worker_handoff == intent
     assert cleared.worker_handoff is None
     assert fake.metadata[item.id]["worker_handoff"] == {}
+
+
+def test_multica_delivery_identity_roundtrip_and_clear():
+    store = _multica_store()
+    fake = _FakeMulticaProc()
+    identity = _delivery_identity()
+
+    with patch("subprocess.run", side_effect=fake.run):
+        item = store.create_work_item(
+            "ws", "t", "d", dag_key="a", worker="alice")
+        store.update_work_item_metadata(item.id, delivery_identity=identity)
+        persisted = store.get_work_item(item.id)
+        store.update_work_item_metadata(item.id, delivery_identity={})
+        cleared = store.get_work_item(item.id)
+
+    assert persisted.delivery_identity == identity
+    assert cleared.delivery_identity is None
+    assert fake.metadata[item.id]["delivery_identity"] == {}
 
 
 def test_multica_review_report_uses_ref_not_nested_json_string():

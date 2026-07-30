@@ -192,6 +192,11 @@ def review_subject_digest(item: Any, round_index: int) -> str:
         "project_rules": getattr(item, "project_rules", None),
         "artifacts": getattr(item, "artifacts", None),
         "verification": getattr(item, "verification", None),
+        "delivery_identity": (
+            getattr(item, "delivery_identity", None).as_dict()
+            if hasattr(getattr(item, "delivery_identity", None), "as_dict")
+            else getattr(item, "delivery_identity", None)
+        ),
     }
     encoded = json.dumps(
         payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
