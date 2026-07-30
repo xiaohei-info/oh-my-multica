@@ -1691,14 +1691,55 @@ def test_multica_runtime_lists_typed_run_identity(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
     runtime = MulticaRuntime(store)
     monkeypatch.setattr(store, "_run_multica", lambda _args: [
-        {"id": "run-1", "kind": "direct", "status": "completed"},
-        {"id": "run-2", "kind": "comment", "status": "running"},
+        {"id": "run-1", "kind": "direct", "status": "completed",
+         "agent_id": "agent-1"},
+        {"id": "run-2", "kind": "comment", "status": "running",
+         "agent_id": "agent-2"},
     ])
 
     assert runtime.list_runs("issue-1") == [
-        AgentRunObservation(id="run-1", kind="direct", status="completed"),
-        AgentRunObservation(id="run-2", kind="comment", status="running"),
+        AgentRunObservation(
+            id="run-1", kind="direct", status="completed", agent_id="agent-1"),
+        AgentRunObservation(
+            id="run-2", kind="comment", status="running", agent_id="agent-2"),
     ]
+
+
+def test_multica_submission_identity_is_bound_to_injected_direct_run(
+    monkeypatch,
+):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    monkeypatch.setenv("MULTICA_AGENT_ID", "agent-1")
+    monkeypatch.setenv("MULTICA_AGENT_NAME", "alice")
+    monkeypatch.setenv("MULTICA_TASK_ID", "run-1")
+    monkeypatch.setattr(store, "_run_multica", lambda _args: [{
+        "id": "run-1",
+        "kind": "direct",
+        "status": "running",
+        "agent_id": "agent-1",
+    }])
+
+    identity = store.current_submission_identity("issue-1")
+
+    assert identity.agent_id == "agent-1"
+    assert identity.agent_name == "alice"
+    assert identity.run_id == "run-1"
+
+
+def test_multica_submission_identity_rejects_unmatched_injected_run(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    monkeypatch.setenv("MULTICA_AGENT_ID", "agent-1")
+    monkeypatch.setenv("MULTICA_AGENT_NAME", "alice")
+    monkeypatch.setenv("MULTICA_TASK_ID", "run-current")
+    monkeypatch.setattr(store, "_run_multica", lambda _args: [{
+        "id": "run-old",
+        "kind": "direct",
+        "status": "completed",
+        "agent_id": "agent-1",
+    }])
+
+    with pytest.raises(PlatformError, match="does not match one direct Run"):
+        store.current_submission_identity("issue-1")
 
 
 def test_multica_runtime_cancel_clears_stale_assignment_without_active_run(monkeypatch):
@@ -2082,7 +2123,8 @@ def test_multica_pr_check_and_readiness_stay_in_adapter(monkeypatch):
     responses = iter([
         SimpleNamespace(returncode=0, stdout="checks ok", stderr=""),
         SimpleNamespace(returncode=0, stdout=json.dumps({
-            "isDraft": False, "state": "OPEN"}), stderr=""),
+            "isDraft": False, "state": "OPEN", "headRefOid": "head-1"}),
+            stderr=""),
     ])
 
     def run(args, **kwargs):
@@ -2099,14 +2141,17 @@ def test_multica_pr_check_and_readiness_stay_in_adapter(monkeypatch):
     assert check.succeeded is True
     assert readiness.is_draft is False
     assert readiness.state == "OPEN"
+    assert readiness.head_sha == "head-1"
     assert calls[0][0] == "gh pr checks https://github.com/acme/repo/pull/1"
-    assert calls[1][0][-1] == "isDraft,state"
+    assert calls[1][0][-1] == "isDraft,state,headRefOid"
 
 
 @pytest.mark.parametrize(
     "payload",
-    [None, {}, {"isDraft": None, "state": "OPEN"}, {"isDraft": False},
-     {"isDraft": "false", "state": "OPEN"}],
+    [None, {}, {"isDraft": None, "state": "OPEN", "headRefOid": "head"},
+     {"isDraft": False},
+     {"isDraft": "false", "state": "OPEN", "headRefOid": "head"},
+     {"isDraft": False, "state": "OPEN"}],
 )
 def test_multica_readiness_malformed_payload_fails_closed(monkeypatch, payload):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))

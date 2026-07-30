@@ -11,11 +11,13 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
-from ..core.taskmeta import TaskKind, TaskPhase, WorkerHandoffIntent
+from ..core.taskmeta import (
+    DeliveryIdentity, TaskKind, TaskPhase, WorkerHandoffIntent,
+)
 from .models import (
     EngineConfig, MergeCommandResult, ProjectInfo, PullRequestCheckResult,
     PullRequestObservation, PullRequestReadiness, PullRequestReadinessFailure,
-    WorkItem, WorkItemStatus, WorkspaceInfo,
+    SubmissionActorIdentity, WorkItem, WorkItemStatus, WorkspaceInfo,
 )
 
 
@@ -41,6 +43,16 @@ class WorkItemStore(ABC):
         否则 lint 报 "not in agent pool"。平台若用 id 标识成员,内部做 name->id
         映射,此方法返回 name。
         """
+
+    @abstractmethod
+    def resolve_agent_id(self, agent_name: str) -> str:
+        """把稳定 Agent 名解析为平台身份；无法证明时抛 PlatformError。"""
+
+    @abstractmethod
+    def current_submission_identity(
+        self, item_id: str,
+    ) -> Optional[SubmissionActorIdentity]:
+        """返回平台认证的当前 submit actor/run；不在 Agent Run 中则返回 None。"""
 
     # ==================== 工作空间发现 ====================
 
@@ -135,6 +147,7 @@ class WorkItemStore(ABC):
         review_ledger_source: Optional[str] = None,
         review_continuation: Optional[Dict[str, Any]] = None,
         worker_handoff: Optional[WorkerHandoffIntent | Dict[str, Any]] = None,
+        delivery_identity: Optional[DeliveryIdentity | Dict[str, Any]] = None,
         decision_required: Optional[Dict[str, Any]] = None,
         amendment_attempt: Optional[Dict[str, Any]] = None,
         phase: Optional[TaskPhase] = None,

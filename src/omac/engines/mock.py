@@ -12,6 +12,7 @@ import tempfile
 import time
 import json
 import subprocess
+from dataclasses import replace
 from typing import Any, Dict, List, Optional
 
 import yaml
@@ -19,7 +20,8 @@ from ..core.machine_feedback import (
     dump_machine_feedback, parse_machine_feedback,
 )
 from ..core.taskmeta import (
-    DELIVERY_CONTENT_KEY, TaskKind, TaskPhase, WorkerHandoffIntent,
+    DELIVERY_CONTENT_KEY, DELIVERY_IDENTITY_SCHEMA, DeliveryIdentity, TaskKind,
+    TaskPhase, WorkerHandoffIntent, parse_delivery_identity,
     parse_worker_handoff,
 )
 from ..errors import ValidationError, WorkItemNotFoundError
@@ -28,7 +30,7 @@ from .models import (
     AgentInfo, AgentProvisionSpec, AgentRunObservation, EngineConfig, ProjectInfo, RuntimeTarget,
     MergeCommandResult, PullRequestCheckResult, PullRequestObservation,
     PullRequestReadiness, PullRequestState, RuntimeCapabilities,
-    WorkItem, WorkItemStatus, WorkspaceInfo,
+    SubmissionActorIdentity, WorkItem, WorkItemStatus, WorkspaceInfo,
 )
 from .runtime import AgentRuntime
 from .store import WorkItemStore
@@ -80,7 +82,8 @@ def _finish_mock_run(item_id: str, status: str = "completed") -> None:
         return
     latest = runs[-1]
     runs[-1] = AgentRunObservation(
-        id=latest.id, kind=latest.kind, status=status)
+        id=latest.id, kind=latest.kind, status=status,
+        agent_id=latest.agent_id)
 
 
 def _init_default_workspace():
@@ -412,9 +415,43 @@ class MockStore(WorkItemStore):
                 # develop 及未知类型:直接 DONE + artifacts(pr_url 证据通道)。
                 item.status = WorkItemStatus.DONE
                 item.artifacts = dict(deliverable)
+                pr_url = item.artifacts.get("pr_url")
+                if pr_url:
+                    item.artifacts["head_sha"] = hashlib.sha256(
+                        pr_url.encode("utf-8")).hexdigest()
                 verification = self._mock_verification(item_id)
                 if verification is not None:
                     item.verification = verification
+                    verification_source = yaml.safe_dump(
+                        verification, allow_unicode=True, sort_keys=False)
+                    verification_sha256 = hashlib.sha256(
+                        verification_source.encode("utf-8")).hexdigest()
+                    item.verification_ref = {
+                        "filename": "omac-verification.yaml",
+                        "bytes": len(verification_source.encode("utf-8")),
+                        "sha256": verification_sha256,
+                    }
+                    intent = item.worker_handoff
+                    latest_run = (_shared_runs.get(item_id) or [None])[-1]
+                    if (
+                        intent is not None
+                        and intent.is_causally_bound()
+                        and latest_run is not None
+                    ):
+                        if not intent.target_run_id:
+                            intent = replace(
+                                intent, target_run_id=latest_run.id)
+                            item.worker_handoff = intent
+                        item.delivery_identity = DeliveryIdentity(
+                            schema=DELIVERY_IDENTITY_SCHEMA,
+                            handoff_generation=intent.generation,
+                            worker=intent.target_worker,
+                            agent_id=intent.target_agent_id,
+                            run_id=intent.target_run_id,
+                            pr_url=pr_url,
+                            pr_head_sha=item.artifacts["head_sha"],
+                            verification_sha256=verification_sha256,
+                        )
             _finish_mock_run(item_id)
             del _shared_assigned_items[item_id]
         elif item.status == WorkItemStatus.IN_REVIEW:
@@ -623,6 +660,26 @@ class MockStore(WorkItemStore):
     def list_members(self, workspace_id: str) -> List[str]:
         return _shared_members.get(workspace_id, ["alice", "bob", "charlie"])
 
+    def resolve_agent_id(self, agent_name: str) -> str:
+        if agent_name not in self.list_members(self.config.workspace_id):
+            raise ValidationError(f"agent not found: {agent_name}")
+        return f"mock-agent-{agent_name}"
+
+    def current_submission_identity(
+        self, item_id: str,
+    ) -> Optional[SubmissionActorIdentity]:
+        assignment = _shared_active_assignments.get(item_id)
+        runs = _shared_runs.get(item_id, [])
+        direct = [run for run in runs if run.kind == "direct"]
+        if not assignment or not direct:
+            return None
+        assignee, _role = assignment
+        return SubmissionActorIdentity(
+            agent_id=self.resolve_agent_id(assignee),
+            agent_name=assignee,
+            run_id=direct[-1].id,
+        )
+
     # ==================== 工作空间发现 ====================
 
     def list_workspaces(self) -> List[WorkspaceInfo]:
@@ -723,6 +780,7 @@ class MockStore(WorkItemStore):
         review_ledger_source: Optional[str] = None,
         review_continuation: Optional[Dict[str, Any]] = None,
         worker_handoff: Optional[WorkerHandoffIntent | Dict[str, Any]] = None,
+        delivery_identity: Optional[DeliveryIdentity | Dict[str, Any]] = None,
         decision_required: Optional[Dict[str, Any]] = None,
         amendment_attempt: Optional[Dict[str, Any]] = None,
         phase: Optional[TaskPhase] = None,
@@ -746,6 +804,8 @@ class MockStore(WorkItemStore):
             item.artifacts = artifacts
         if review_verdict is not None:
             item.review_verdict = review_verdict
+            if review_verdict:
+                self._complete_assigned_run(item_id, "reviewer")
         if review_comment is not None:
             item.review_comment = review_comment
         if machine_feedback is not None or machine_feedback_source is not None:
@@ -775,6 +835,8 @@ class MockStore(WorkItemStore):
             item.verification_ref = {
                 "filename": "omac-verification.yaml",
                 "bytes": len(verification_source.encode("utf-8")),
+                "sha256": hashlib.sha256(
+                    verification_source.encode("utf-8")).hexdigest(),
             }
         if review_report is not None:
             item.review_report = review_report
@@ -804,6 +866,8 @@ class MockStore(WorkItemStore):
             item.review_continuation = review_continuation or None
         if worker_handoff is not None:
             item.worker_handoff = parse_worker_handoff(worker_handoff)
+        if delivery_identity is not None:
+            item.delivery_identity = parse_delivery_identity(delivery_identity)
         if decision_required is not None:
             item.decision_required = decision_required
         if amendment_attempt is not None:
@@ -877,6 +941,20 @@ class MockStore(WorkItemStore):
     def update_status(self, item_id: str, status: WorkItemStatus):
         item = self.get_work_item(item_id)
         item.status = status
+        if status == WorkItemStatus.DONE:
+            self._complete_assigned_run(item_id, "worker")
+
+    @staticmethod
+    def _complete_assigned_run(item_id: str, role: str) -> None:
+        assignment = _shared_active_assignments.get(item_id)
+        if not assignment or assignment[1] != role:
+            return
+        runs = _shared_runs.get(item_id, [])
+        for index in range(len(runs) - 1, -1, -1):
+            run = runs[index]
+            if run.kind == "direct" and run.active:
+                runs[index] = replace(run, status="completed")
+                return
 
     def cancel_work_item(self, item_id: str) -> None:
         """内存态直接移除,模拟平台侧作废(get 后即不存在)。"""
@@ -930,6 +1008,7 @@ class MockStore(WorkItemStore):
                 id=f"mock-run-{_shared_next_run_id}",
                 kind="direct",
                 status="running",
+                agent_id=self.resolve_agent_id(assignee),
             )
             _shared_next_run_id += 1
             _shared_runs.setdefault(item_id, []).append(run)
@@ -989,7 +1068,11 @@ class MockStore(WorkItemStore):
             proc.returncode == 0, proc.returncode, output)
 
     def read_pull_request_readiness(self, pr_url: str) -> PullRequestReadiness:
-        return PullRequestReadiness(is_draft=False, state="OPEN")
+        return PullRequestReadiness(
+            is_draft=False,
+            state="OPEN",
+            head_sha=hashlib.sha256(pr_url.encode("utf-8")).hexdigest(),
+        )
 
     @property
     def assign_log(self):

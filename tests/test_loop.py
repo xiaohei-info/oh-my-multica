@@ -1201,21 +1201,102 @@ class TestReviewerRejectBoundedFallback:
 
     @staticmethod
     def _submit_revision(eng, item, revision=2):
+        import hashlib
+        from dataclasses import replace
+
+        current = eng.store.get_work_item(item.id)
+        intent = current.worker_handoff
+        if intent is not None and intent.is_causally_bound() and not intent.target_run_id:
+            candidates = [
+                run for run in eng.runtime.list_runs(item.id)
+                if run.kind == "direct"
+                and run.id not in set(intent.baseline_direct_run_ids)
+                and run.agent_id == intent.target_agent_id
+            ]
+            assert len(candidates) == 1
+            intent = replace(intent, target_run_id=candidates[0].id)
+            eng.store.update_work_item_metadata(item.id, worker_handoff=intent)
+        artifacts = {
+            "pr_url": f"https://mock.example.com/pr/{item.id}-v{revision}",
+            "head_sha": f"head-{revision}",
+        }
+        verification = {
+            "commands": [_business_command()],
+            "integration_gates": [{
+                "name": "revision-gate",
+                "commands": [_business_command()],
+            }],
+            "pr_base": "main",
+            "coverage": 90,
+            "revision": revision,
+        }
+        verification_source = __import__("yaml").safe_dump(verification)
         eng.store.update_work_item_metadata(
             item.id,
-            artifacts={"pr_url": f"https://mock.example.com/pr/{item.id}-v{revision}"},
-            verification={
-                "commands": [_business_command()],
-                "integration_gates": [{
-                    "name": "revision-gate",
-                    "commands": [_business_command()],
-                }],
-                "pr_base": "main",
-                "coverage": 90,
-                "revision": revision,
-            },
+            artifacts=artifacts,
+            verification=verification,
+            verification_source=verification_source,
+            delivery_identity=(
+                {
+                    "schema": "omac.delivery-identity/v1",
+                    "handoff_generation": intent.generation,
+                    "worker": intent.target_worker,
+                    "agent_id": intent.target_agent_id,
+                    "run_id": intent.target_run_id,
+                    "pr_url": artifacts["pr_url"],
+                    "pr_head_sha": artifacts["head_sha"],
+                    "verification_sha256": hashlib.sha256(
+                        verification_source.encode("utf-8")).hexdigest(),
+                }
+                if intent is not None and intent.is_causally_bound()
+                else None
+            ),
         )
         eng.store.update_status(item.id, WorkItemStatus.DONE)
+
+    def _prepare_causal_handoff(self, eng, item, *, gate="review"):
+        """构造已持久化但尚未收敛的因果 Worker handoff。"""
+        import hashlib
+
+        from omac.core.taskmeta import WorkerHandoffIntent
+
+        source = eng.store.get_work_item(item.id)
+        artifacts = dict(source.artifacts or {})
+        artifacts["head_sha"] = "head-reviewed"
+        verification_source = __import__("yaml").safe_dump(source.verification)
+        eng.store.update_work_item_metadata(
+            item.id,
+            artifacts=artifacts,
+            verification=source.verification,
+            verification_source=verification_source,
+        )
+        source = eng.store.get_work_item(item.id)
+        source.verification_ref["sha256"] = hashlib.sha256(
+            verification_source.encode("utf-8")
+        ).hexdigest()
+        source_subject = review_subject_digest(source, 1)
+        intent = WorkerHandoffIntent(
+            schema="omac.worker-handoff/v1",
+            state="pending",
+            target_worker="alice",
+            gate=gate,
+            source_review_subject_digest=source_subject,
+            source_review_round=1,
+            target_review_bounce=1,
+        )
+        object.__setattr__(intent, "generation", "handoff-generation-1")
+        object.__setattr__(intent, "target_agent_id", "agent-worker")
+        object.__setattr__(intent, "baseline_direct_run_ids", ("run-old",))
+        object.__setattr__(intent, "target_run_id", "run-worker")
+        eng.store.update_work_item_metadata(
+            item.id,
+            review_subject_digest=source_subject,
+            review_bounce=1,
+            worker_handoff=intent,
+        )
+        eng.store.reset_review(item.id)
+        eng.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
+        return intent, source
 
     def test_retry_review_zero_blocks_immediately(self, tmp_path):
         """retry.review=0 → 首次 reject 立即 blocked,review_bounce 保持 0。"""
@@ -1284,8 +1365,8 @@ class TestReviewerRejectBoundedFallback:
         )
 
         tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
-        eng.store.clear_assignment(item.id)
         self._submit_revision(eng, item)
+        eng.store.clear_assignment(item.id)
         manifest.nodes["a"].status = "in_progress"
         save_manifest(manifest, path)
 
@@ -1366,7 +1447,7 @@ class TestReviewerRejectBoundedFallback:
 
         recovered = eng.store.get_work_item(item.id)
         assert result.state == "running"
-        assert events == ["assign", "wake"]
+        assert events == ["assign"]
         assert manifest.nodes["a"].status == "in_progress"
         assert recovered.review_verdict is None
         assert recovered.bounces.review == 1
@@ -1444,7 +1525,7 @@ class TestReviewerRejectBoundedFallback:
         assert recovered.review_verdict is None
         assert recovered.review_report is None
         assert recovered.review_subject_digest is None
-        assert recovered.worker_handoff is None
+        assert recovered.worker_handoff is not None
         assert recovered.bounces.review == 1
         assert len(eng.runtime.list_runs(item.id)) == runs_before_handoff + 1
         assert len([
@@ -1459,7 +1540,6 @@ class TestReviewerRejectBoundedFallback:
         "checkpoint",
         [
             "intent", "bounce", "reset_review", "status", "assignment",
-            "wake", "clear",
         ],
     )
     def test_review_worker_handoff_recovers_each_restart_checkpoint(
@@ -1508,8 +1588,6 @@ class TestReviewerRejectBoundedFallback:
                 crash_once("intent")
             if metadata.get("review_bounce") == 1:
                 crash_once("bounce")
-            if metadata.get("worker_handoff") == {}:
-                crash_once("clear")
             return result
 
         def reset_review(item_id):
@@ -1559,10 +1637,7 @@ class TestReviewerRejectBoundedFallback:
         persisted = load_manifest(path)
         assert persisted.nodes["a"].status == "in_review"
         crashed_item = eng.store.get_work_item(item.id)
-        if checkpoint == "clear":
-            assert crashed_item.worker_handoff is None
-        else:
-            assert crashed_item.worker_handoff is not None
+        assert crashed_item.worker_handoff is not None
 
         monkeypatch.setattr(
             eng.store, "update_work_item_metadata", original_update_metadata)
@@ -1604,7 +1679,7 @@ class TestReviewerRejectBoundedFallback:
         assert recovered.review_verdict is None
         assert recovered.review_report is None
         assert recovered.review_subject_digest is None
-        assert recovered.worker_handoff is None
+        assert recovered.worker_handoff is not None
         assert recovered.bounces.review == 1
         assert len(eng.runtime.list_runs(item.id)) == runs_before_handoff + 1
         assert eng.store.assign_log[-1][2] == "worker"
@@ -1628,6 +1703,20 @@ class TestReviewerRejectBoundedFallback:
             review_obligations=build_review_obligations(current),
             review_report=_review_report(current, "reject"),
         )
+        tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        handed_off = eng.store.get_work_item(item.id)
+        assert handed_off.worker_handoff is not None
+        assert handed_off.phase is TaskPhase.AUTHORING
+        assert handed_off.status is WorkItemStatus.IN_PROGRESS
+        runs_after_worker_handoff = len(eng.runtime.list_runs(item.id))
+        worker_assignments_after_handoff = len([
+            entry for entry in eng.store.assign_log if entry[2] == "worker"
+        ])
+        reviewer_assignments_before = len([
+            entry for entry in eng.store.assign_log if entry[2] == "reviewer"
+        ])
+
+        self._submit_revision(eng, item, revision=2)
         original_update = eng.store.update_work_item_metadata
         crashed = False
 
@@ -1644,30 +1733,6 @@ class TestReviewerRejectBoundedFallback:
             tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
         monkeypatch.setattr(
             eng.store, "update_work_item_metadata", original_update)
-
-        handed_off = eng.store.get_work_item(item.id)
-        assert handed_off.worker_handoff is not None
-        assert handed_off.phase is TaskPhase.AUTHORING
-        assert handed_off.status is WorkItemStatus.IN_PROGRESS
-        runs_after_worker_handoff = len(eng.runtime.list_runs(item.id))
-        worker_assignments_after_handoff = len([
-            entry for entry in eng.store.assign_log if entry[2] == "worker"
-        ])
-        reviewer_assignments_before = len([
-            entry for entry in eng.store.assign_log if entry[2] == "reviewer"
-        ])
-
-        original_update(
-            item.id,
-            artifacts={"pr_url": "https://mock.example.com/pr/new-delivery"},
-            verification={
-                "commands": [_business_command("pytest new-delivery")],
-                "pr_base": "main",
-                "coverage": 92,
-                "revision": 2,
-            },
-        )
-        eng.store.update_status(item.id, WorkItemStatus.DONE)
         original_assign = eng.store.assign_work_item
 
         def assign(item_id, assignee, role):
@@ -1754,7 +1819,7 @@ class TestReviewerRejectBoundedFallback:
     def test_worker_handoff_not_assigned_reobserves_submitted_delivery(
         self, tmp_path, monkeypatch,
     ):
-        """wake 报 not-assigned 后，若目标 Worker 已提交则收割并派 Reviewer。"""
+        """assignment 已产生目标 Run 时不再额外 rerun Worker。"""
         from omac.engines import create_engine
         from omac.errors import PlatformError
 
@@ -1790,13 +1855,14 @@ class TestReviewerRejectBoundedFallback:
 
         recovered = eng.store.get_work_item(item.id)
         assert result.state == "running"
-        assert manifest.nodes["a"].status == "in_review"
-        assert recovered.worker_handoff is None
-        assert recovered.phase is TaskPhase.REVIEW
-        assert recovered.status is WorkItemStatus.IN_REVIEW
-        assert recovered.review_subject_digest != source_subject
-        assert worker_wakes == 1
-        assert reviewer_wakes == 1
+        assert manifest.nodes["a"].status == "in_progress"
+        assert recovered.worker_handoff is not None
+        assert recovered.phase is TaskPhase.AUTHORING
+        assert recovered.status is WorkItemStatus.IN_PROGRESS
+        assert recovered.review_subject_digest is None
+        assert source_subject is not None
+        assert worker_wakes == 0
+        assert reviewer_wakes == 0
 
     def test_worker_handoff_delivery_check_ignores_stale_status_projection(
         self, tmp_path, monkeypatch,
@@ -1858,18 +1924,214 @@ class TestReviewerRejectBoundedFallback:
         recovered = original_get(item.id)
         assert result.state == "running"
         assert manifest.nodes["a"].status == "in_progress"
-        assert recovered.worker_handoff is None
+        assert recovered.worker_handoff is not None
         assert recovered.phase is TaskPhase.AUTHORING
         assert recovered.status is WorkItemStatus.IN_PROGRESS
-        assert worker_wakes == 1
+        assert worker_wakes == 0
         assert reviewer_wakes == 0
+
+    def test_other_actor_or_old_run_delivery_cannot_complete_handoff(
+        self, tmp_path, monkeypatch,
+    ):
+        """内容变化不能替代 generation + target actor/run 的因果证明。"""
+        from omac.engines import create_engine
+        from omac.errors import PlatformError
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        intent, _source = self._prepare_causal_handoff(eng, item)
+        current = eng.store.get_work_item(item.id)
+        current.verification = dict(current.verification or {}, revision=2)
+        current.delivery_identity = {
+            "schema": "omac.delivery-identity/v1",
+            "handoff_generation": intent.generation,
+            "worker": "mallory",
+            "agent_id": "agent-other",
+            "run_id": "run-old",
+            "pr_url": current.artifacts["pr_url"],
+            "pr_head_sha": "head-other",
+            "verification_sha256": current.verification_ref["sha256"],
+        }
+        eng.store.update_status(item.id, WorkItemStatus.DONE)
+        reviewer_wakes = 0
+
+        def wake(_item_id, _agent, role):
+            nonlocal reviewer_wakes
+            if role == "reviewer":
+                reviewer_wakes += 1
+
+        monkeypatch.setattr(eng.runtime, "wake", wake)
+        monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: [])
+
+        with pytest.raises(PlatformError, match="causal|identity|handoff"):
+            tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+
+        assert reviewer_wakes == 0
+        assert eng.store.get_work_item(item.id).worker_handoff is not None
+
+    def test_matching_submit_waits_until_target_worker_run_is_terminal(
+        self, tmp_path, monkeypatch,
+    ):
+        """delivery 可见但目标 Worker Run active 时不得并发派 Reviewer。"""
+        from omac.engines import create_engine
+        from omac.engines.models import AgentRunObservation
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        intent, source = self._prepare_causal_handoff(eng, item)
+        current = eng.store.get_work_item(item.id)
+        current.delivery_identity = {
+            "schema": "omac.delivery-identity/v1",
+            "handoff_generation": intent.generation,
+            "worker": intent.target_worker,
+            "agent_id": intent.target_agent_id,
+            "run_id": intent.target_run_id,
+            "pr_url": current.artifacts["pr_url"],
+            "pr_head_sha": current.artifacts["head_sha"],
+            "verification_sha256": current.verification_ref["sha256"],
+        }
+        eng.store.update_status(item.id, WorkItemStatus.DONE)
+        monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: [
+            AgentRunObservation(
+                id="run-worker", kind="direct", status="running",
+                agent_id="agent-worker")
+        ])
+        reviewer_wakes = 0
+
+        def wake(_item_id, _agent, role):
+            nonlocal reviewer_wakes
+            if role == "reviewer":
+                reviewer_wakes += 1
+
+        monkeypatch.setattr(eng.runtime, "wake", wake)
+
+        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+
+        assert result.state == "running"
+        assert manifest.nodes["a"].status == "in_progress"
+        assert reviewer_wakes == 0
+        assert eng.store.get_work_item(item.id).worker_handoff is not None
+        assert source.verification == current.verification
+
+    @pytest.mark.parametrize("gate", ["review", "review-nits"])
+    def test_same_content_new_causal_submit_enters_review_after_terminal_run(
+        self, tmp_path, monkeypatch, gate,
+    ):
+        """PR URL/verification 内容相同也可由新 generation/run 证明真实提交。"""
+        from omac.engines import create_engine
+        from omac.engines.models import AgentRunObservation
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        intent, source = self._prepare_causal_handoff(
+            eng, item, gate=gate)
+        current = eng.store.get_work_item(item.id)
+        assert current.artifacts == source.artifacts
+        assert current.verification == source.verification
+        current.delivery_identity = {
+            "schema": "omac.delivery-identity/v1",
+            "handoff_generation": intent.generation,
+            "worker": intent.target_worker,
+            "agent_id": intent.target_agent_id,
+            "run_id": intent.target_run_id,
+            "pr_url": current.artifacts["pr_url"],
+            "pr_head_sha": current.artifacts["head_sha"],
+            "verification_sha256": current.verification_ref["sha256"],
+        }
+        eng.store.update_status(item.id, WorkItemStatus.DONE)
+        monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: [
+            AgentRunObservation(
+                id="run-worker", kind="direct", status="completed",
+                agent_id="agent-worker")
+        ])
+        reviewer_wakes = 0
+        original_wake = eng.runtime.wake
+
+        def wake(item_id, agent, role):
+            nonlocal reviewer_wakes
+            if role == "reviewer":
+                reviewer_wakes += 1
+            return original_wake(item_id, agent, role)
+
+        monkeypatch.setattr(eng.runtime, "wake", wake)
+
+        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+
+        assert result.state == "running"
+        assert manifest.nodes["a"].status == "in_review"
+        assert reviewer_wakes == 1
+        assert eng.store.get_work_item(item.id).worker_handoff is None
+
+    def test_not_assigned_observes_two_stale_deliveries_before_matching_submit(
+        self, tmp_path, monkeypatch,
+    ):
+        """wake 未知后做有界只读观察，两次旧读、第三次新提交仍可收敛。"""
+        import copy
+
+        from omac.engines import create_engine
+        from omac.engines.models import AgentRunObservation
+        from omac.errors import PlatformError
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        intent, _source = self._prepare_causal_handoff(eng, item)
+        original_get = eng.store.get_work_item
+        stale = copy.copy(original_get(item.id))
+        fresh = copy.copy(stale)
+        fresh.status = WorkItemStatus.DONE
+        fresh.delivery_identity = {
+            "schema": "omac.delivery-identity/v1",
+            "handoff_generation": intent.generation,
+            "worker": intent.target_worker,
+            "agent_id": intent.target_agent_id,
+            "run_id": intent.target_run_id,
+            "pr_url": fresh.artifacts["pr_url"],
+            "pr_head_sha": fresh.artifacts["head_sha"],
+            "verification_sha256": fresh.verification_ref["sha256"],
+        }
+        reads_after_error = [stale, stale, fresh]
+        wake_failed = False
+
+        def get_work_item(item_id):
+            if wake_failed:
+                return reads_after_error.pop(0) if reads_after_error else fresh
+            return original_get(item_id)
+
+        def wake(_item_id, _agent, role):
+            nonlocal wake_failed
+            if role == "worker":
+                wake_failed = True
+                raise PlatformError(
+                    "Invalid request: issue is not assigned to an agent or squad")
+
+        monkeypatch.setattr(eng.store, "get_work_item", get_work_item)
+        monkeypatch.setattr(eng.runtime, "wake", wake)
+        monkeypatch.setattr(
+            eng.runtime,
+            "list_runs",
+            lambda _item_id: ([
+                AgentRunObservation(
+                    id="run-worker", kind="direct", status="completed",
+                    agent_id="agent-worker")
+            ] if wake_failed else []),
+        )
+
+        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+
+        assert result.state == "running"
+        assert manifest.nodes["a"].status == "in_review"
 
     @pytest.mark.parametrize("changed_field", ["artifacts", "verification"])
     def test_stale_worker_handoff_dispatches_one_fresh_reviewer(
         self, tmp_path, monkeypatch, changed_field,
     ):
-        """交付证据变化后旧 intent 不得启动 Worker，只补一个 fresh Reviewer。"""
+        """无因果 submit 身份的交付变化必须失败关闭。"""
         from omac.engines import create_engine
+        from omac.errors import PlatformError
 
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
         path = str(tmp_path / "m.yaml")
@@ -1938,24 +2200,19 @@ class TestReviewerRejectBoundedFallback:
         )
         persisted = load_manifest(path)
 
-        first = tick(eng.store, eng.runtime, persisted, path, max_parallel=4)
-        second = tick(eng.store, eng.runtime, persisted, path, max_parallel=4)
+        with pytest.raises(PlatformError, match="causal|identity|handoff"):
+            tick(eng.store, eng.runtime, persisted, path, max_parallel=4)
 
         recovered = eng.store.get_work_item(item.id)
-        assert first.state == "running"
-        assert second.state == "running"
-        assert persisted.nodes["a"].status == "in_review"
-        assert recovered.worker_handoff is None
-        assert recovered.review_verdict is None
-        assert recovered.review_report is None
+        assert recovered.worker_handoff is not None
         assert recovered.review_ledger is old_ledger
-        assert recovered.review_subject_digest != old_subject
+        assert old_subject is not None
         assert len([
             entry for entry in eng.store.assign_log if entry[2] == "worker"
         ]) == worker_assignments_before
         assert len([
             entry for entry in eng.store.assign_log if entry[2] == "reviewer"
-        ]) == reviewer_assignments_before + 1
+        ]) == reviewer_assignments_before
 
     @pytest.mark.parametrize("intent", [
         {"schema": "omac.worker-handoff/v1", "state": "pending"},
@@ -1972,8 +2229,9 @@ class TestReviewerRejectBoundedFallback:
     def test_malformed_or_mismatched_worker_handoff_fails_closed(
         self, tmp_path, monkeypatch, intent,
     ):
-        """畸形或目标不匹配 intent 清旧投影并重派 Reviewer，不启动 Worker。"""
+        """畸形或旧版 intent 没有因果身份时必须失败关闭。"""
         from omac.engines import create_engine
+        from omac.errors import PlatformError
 
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
         path = str(tmp_path / "m.yaml")
@@ -2000,22 +2258,17 @@ class TestReviewerRejectBoundedFallback:
 
         monkeypatch.setattr(eng.store, "assign_work_item", assign)
 
-        first = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
-        second = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        with pytest.raises(PlatformError, match="causal|identity|predates"):
+            tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
 
         recovered = eng.store.get_work_item(item.id)
-        assert first.state == "running"
-        assert second.state == "running"
-        assert manifest.nodes["a"].status == "in_review"
-        assert recovered.worker_handoff is None
-        assert recovered.review_verdict is None
-        assert recovered.review_report is None
+        assert recovered.worker_handoff is not None
         assert len([
             entry for entry in eng.store.assign_log if entry[2] == "worker"
         ]) == worker_assignments_before
         assert len([
             entry for entry in eng.store.assign_log if entry[2] == "reviewer"
-        ]) == reviewer_assignments_before + 1
+        ]) == reviewer_assignments_before
 
     @pytest.mark.parametrize("intent_kind", ["malformed", "stale"])
     @pytest.mark.parametrize(
@@ -2077,6 +2330,24 @@ class TestReviewerRejectBoundedFallback:
                     "pr_url": "https://mock.example.com/pr/stale-intent",
                 },
             )
+
+        worker_assignments_before = len([
+            entry for entry in eng.store.assign_log if entry[2] == "worker"
+        ])
+        reviewer_assignments_before = len([
+            entry for entry in eng.store.assign_log if entry[2] == "reviewer"
+        ])
+        with pytest.raises(PlatformError, match="causal|identity|predates"):
+            tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        recovered = eng.store.get_work_item(item.id)
+        assert recovered.worker_handoff is not None
+        assert len([
+            entry for entry in eng.store.assign_log if entry[2] == "worker"
+        ]) == worker_assignments_before
+        assert len([
+            entry for entry in eng.store.assign_log if entry[2] == "reviewer"
+        ]) == reviewer_assignments_before
+        return
 
         runs_before = len(eng.runtime.list_runs(item.id))
         worker_assignments_before = len([
@@ -2307,6 +2578,8 @@ class TestReviewerRejectBoundedFallback:
         current.review_verdict = None
         current.review_report = None
         subject = current.review_subject_digest
+        eng.store.clear_assignment(item.id)
+        eng.store.assign_work_item(item.id, "bob", "reviewer")
         reviewer_assignments = len([
             entry for entry in eng.store.assign_log if entry[2] == "reviewer"])
         manifest.nodes["a"].status = "in_progress"
@@ -2483,17 +2756,7 @@ class TestReviewerRejectBoundedFallback:
 
         reviewer_dispatches_before_followup = len([
             entry for entry in eng.store.assign_log if entry[2] == "reviewer"])
-        eng.store.update_work_item_metadata(
-            item.id,
-            artifacts={"pr_url": f"https://mock.example.com/pr/{item.id}"},
-            verification={
-                "commands": [_business_command()],
-                "integration_gates": [{"name": "nits-smoke", "commands": []}],
-                "pr_base": "main",
-                "coverage": 90,
-            },
-        )
-        eng.store.update_status(item.id, WorkItemStatus.DONE)
+        self._submit_revision(eng, item, revision=2)
         second = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
 
         assert second.state == "running"
@@ -2633,20 +2896,7 @@ class TestReviewerRejectBoundedFallback:
         assert manifest.nodes["a"].status == "in_progress"
 
         # worker 合法重交，但旧 controller/manifest 留下 terminal 状态。
-        eng.store.update_work_item_metadata(
-            item.id,
-            artifacts={"pr_url": f"https://mock.example.com/pr/{item.id}"},
-            verification={
-                "commands": [_business_command()],
-                "integration_gates": [{
-                    "name": "revision-gate",
-                    "commands": [_business_command()],
-                }],
-                "pr_base": "main",
-                "coverage": 90,
-            },
-        )
-        eng.store.update_status(item.id, WorkItemStatus.DONE)
+        self._submit_revision(eng, item, revision=2)
         manifest.nodes["a"].status = stale_status
         save_manifest(manifest, path)
 
@@ -2695,19 +2945,7 @@ class TestReviewerRejectBoundedFallback:
 
         # 模拟 worker 修完重新提交(合规)→ 再次 in_review
         eng.store.set_node_contract(item.id, self._simple_contract())
-        eng.store.update_work_item_metadata(
-            item.id, review_verdict=None, review_report=None, review_comment=None,
-            artifacts={"pr_url": f"https://mock.example.com/pr/{item.id}"},
-            verification={
-                "commands": [_business_command()],
-                "integration_gates": [{
-                    "name": "revision-gate",
-                    "commands": [_business_command()],
-                }],
-                "pr_base": "main",
-                "coverage": 90,
-            })
-        eng.store.update_status(item.id, WorkItemStatus.DONE)
+        self._submit_revision(eng, item, revision=2)
         tick(eng.store, eng.runtime, manifest, fpath, max_parallel=4)
         set_node(manifest, "a", status="in_review")
         save_manifest(manifest, fpath)
@@ -2738,20 +2976,7 @@ class TestReviewerRejectBoundedFallback:
             assert manifest.nodes["a"].status == "in_progress", f"第 {i+1} 次应回退 worker"
             # 推进:worker 修完重新提交 → in_review
             eng.store.set_node_contract(item.id, self._simple_contract())
-            eng.store.update_work_item_metadata(
-                item.id, review_verdict=None, review_report=None, review_comment=None,
-                artifacts={"pr_url": f"https://mock.example.com/pr/{item.id}"},
-                verification={
-                    "commands": [_business_command()],
-                    "integration_gates": [{
-                        "name": "revision-gate",
-                        "commands": [_business_command()],
-                    }],
-                    "pr_base": "main",
-                    "coverage": 90,
-                })
-            eng.store.update_status(
-                item.id, __import__("omac").engines.models.WorkItemStatus.DONE)
+            self._submit_revision(eng, item, revision=i + 2)
             tick(eng.store, eng.runtime, manifest, fpath, max_parallel=4)
             from omac.core.manifest import set_node
             set_node(manifest, "a", status="in_review")
@@ -2823,15 +3048,15 @@ class TestReviewerRejectFallbackRecovery:
                 raise PlatformError("wake result unknown")
 
         monkeypatch.setattr(eng.runtime, "wake", wake_then_fail)
-        with pytest.raises(PlatformError, match="wake result unknown"):
-            tick(eng.store, eng.runtime, manifest, fpath,
-                 max_parallel=4, retry_limits={"review": 3})
+        tick(eng.store, eng.runtime, manifest, fpath,
+             max_parallel=4, retry_limits={"review": 3})
 
         interrupted = eng.store.get_work_item(item.id)
         assert interrupted.worker_handoff is not None
         assert interrupted.bounces.review == 1
         assert interrupted.status is WorkItemStatus.IN_PROGRESS
         assert len(eng.runtime.list_runs(item.id)) == runs_before_handoff + 1
+        assert crashed is False
 
         monkeypatch.setattr(eng.runtime, "wake", original_wake)
         monkeypatch.setattr(
@@ -2849,7 +3074,7 @@ class TestReviewerRejectFallbackRecovery:
         assert first.state == "running"
         assert second.state == "running"
         assert persisted.nodes["a"].status == "in_progress"
-        assert recovered.worker_handoff is None
+        assert recovered.worker_handoff is not None
         assert recovered.bounces.review == 1
         assert recovered.status is WorkItemStatus.IN_PROGRESS
         assert len(eng.runtime.list_runs(item.id)) == runs_before_handoff + 1

@@ -888,6 +888,124 @@ class TestSubmitPerKindPhase:
         assert got.verification_ref["filename"] == "omac-verification.yaml"
         assert got.status == WorkItemStatus.DONE
 
+    def test_develop_rework_submit_persists_causal_delivery_identity(
+        self, tmp_path, monkeypatch,
+    ):
+        """返工 submit 必须绑定 generation、目标 Agent/Run、PR head 与附件。"""
+        from omac.core.taskmeta import WorkerHandoffIntent
+
+        eng = _engine()
+        item = eng.store.create_work_item(
+            "mock-workspace", "t", "d", dag_key="a", worker="alice",
+            reviewer="bob", kind=dispatch_mod.TaskKind.DEVELOP,
+        )
+        eng.store.set_node_contract(item.id, CONTRACT)
+        eng.store.assign_work_item(item.id, "alice", "worker")
+        target_run = eng.runtime.list_runs(item.id)[-1]
+        intent = WorkerHandoffIntent(
+            schema="omac.worker-handoff/v1",
+            state="pending",
+            target_worker="alice",
+            gate="review",
+            source_review_subject_digest="subject-1",
+            source_review_round=1,
+            target_review_bounce=1,
+            generation="handoff-generation-1",
+            target_agent_id=eng.store.resolve_agent_id("alice"),
+            baseline_direct_run_ids=(),
+            target_run_id=target_run.id,
+        )
+        eng.store.update_work_item_metadata(
+            item.id, worker_handoff=intent, phase=TaskPhase.AUTHORING)
+        eng.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
+        vfile = tmp_path / "verification.yaml"
+        verification_source = yaml.safe_dump(_make_verification())
+        vfile.write_text(verification_source)
+        monkeypatch.setattr(
+            eng.store,
+            "read_pull_request_readiness",
+            lambda _pr_url: PullRequestReadiness(
+                is_draft=False, state="OPEN", head_sha="head-new"),
+        )
+
+        dispatch_mod.submit(
+            eng.store,
+            item.id,
+            pr_url="https://github.com/acme/snake/pull/1",
+            verification_file=str(vfile),
+        )
+
+        got = eng.store.get_work_item(item.id)
+        assert got.delivery_identity.as_dict() == {
+            "schema": "omac.delivery-identity/v1",
+            "handoff_generation": "handoff-generation-1",
+            "worker": "alice",
+            "agent_id": eng.store.resolve_agent_id("alice"),
+            "run_id": target_run.id,
+            "pr_url": "https://github.com/acme/snake/pull/1",
+            "pr_head_sha": "head-new",
+            "verification_sha256": got.verification_ref["sha256"],
+        }
+        assert got.artifacts["head_sha"] == "head-new"
+
+    def test_develop_rework_submit_rejects_old_or_other_actor_run(
+        self, tmp_path, monkeypatch,
+    ):
+        """旧 Run/其他 actor 不能为当前 handoff 伪造 delivery identity。"""
+        from omac.core.taskmeta import WorkerHandoffIntent
+        from omac.engines.models import SubmissionActorIdentity
+
+        eng = _engine()
+        item = eng.store.create_work_item(
+            "mock-workspace", "t", "d", dag_key="a", worker="alice",
+            reviewer="bob", kind=dispatch_mod.TaskKind.DEVELOP,
+        )
+        eng.store.set_node_contract(item.id, CONTRACT)
+        intent = WorkerHandoffIntent(
+            schema="omac.worker-handoff/v1",
+            state="pending",
+            target_worker="alice",
+            gate="review",
+            source_review_subject_digest="subject-1",
+            source_review_round=1,
+            target_review_bounce=1,
+            generation="handoff-generation-1",
+            target_agent_id=eng.store.resolve_agent_id("alice"),
+            baseline_direct_run_ids=("run-old",),
+            target_run_id="run-new",
+        )
+        eng.store.update_work_item_metadata(
+            item.id, worker_handoff=intent, phase=TaskPhase.AUTHORING)
+        vfile = tmp_path / "verification.yaml"
+        vfile.write_text(yaml.safe_dump(_make_verification()))
+        monkeypatch.setattr(
+            eng.store,
+            "read_pull_request_readiness",
+            lambda _pr_url: PullRequestReadiness(
+                is_draft=False, state="OPEN", head_sha="head-new"),
+        )
+        monkeypatch.setattr(
+            eng.store,
+            "current_submission_identity",
+            lambda _item_id: SubmissionActorIdentity(
+                agent_id=eng.store.resolve_agent_id("bob"),
+                agent_name="bob",
+                run_id="run-old",
+            ),
+        )
+
+        with pytest.raises(ValidationError, match="submission identity"):
+            dispatch_mod.submit(
+                eng.store,
+                item.id,
+                pr_url="https://github.com/acme/snake/pull/1",
+                verification_file=str(vfile),
+            )
+
+        got = eng.store.get_work_item(item.id)
+        assert got.delivery_identity is None
+        assert got.status == WorkItemStatus.TODO
+
     def test_develop_authoring_content_rejected_atomic(self, tmp_path):
         eng = _engine()
         item = eng.store.create_work_item(

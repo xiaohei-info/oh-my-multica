@@ -18,7 +18,7 @@ import re
 import secrets
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, Optional, Tuple
 
 
 # ==================== 枚举常量 ====================
@@ -96,6 +96,8 @@ MACHINE_FEEDBACK_REF_KEY = "machine_feedback_ref"
 REVIEW_CONTINUATION_KEY = "review_continuation"
 WORKER_HANDOFF_KEY = "worker_handoff"
 WORKER_HANDOFF_SCHEMA = "omac.worker-handoff/v1"
+DELIVERY_IDENTITY_KEY = "delivery_identity"
+DELIVERY_IDENTITY_SCHEMA = "omac.delivery-identity/v1"
 DECISION_REQUIRED_KEY = "decision_required"
 DECISION_REQUIRED_SCHEMA = "omac.decision-required/v1"
 AMENDMENT_ATTEMPT_KEY = "amendment_attempt"
@@ -143,6 +145,10 @@ class WorkerHandoffIntent:
     source_review_subject_digest: Optional[str] = None
     source_review_round: Optional[int] = None
     target_review_bounce: Optional[int] = None
+    generation: Optional[str] = None
+    target_agent_id: Optional[str] = None
+    baseline_direct_run_ids: Tuple[str, ...] = ()
+    target_run_id: Optional[str] = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -153,6 +159,10 @@ class WorkerHandoffIntent:
             "source_review_subject_digest": self.source_review_subject_digest,
             "source_review_round": self.source_review_round,
             "target_review_bounce": self.target_review_bounce,
+            "generation": self.generation,
+            "target_agent_id": self.target_agent_id,
+            "baseline_direct_run_ids": list(self.baseline_direct_run_ids),
+            "target_run_id": self.target_run_id,
         }
 
     def is_complete(self) -> bool:
@@ -168,6 +178,55 @@ class WorkerHandoffIntent:
             and isinstance(self.target_review_bounce, int)
             and not isinstance(self.target_review_bounce, bool)
             and self.target_review_bounce > 0
+        )
+
+    def is_causally_bound(self) -> bool:
+        return bool(
+            self.is_complete()
+            and self.generation
+            and self.target_agent_id
+            and all(
+                isinstance(run_id, str) and run_id
+                for run_id in self.baseline_direct_run_ids
+            )
+        )
+
+
+@dataclass(frozen=True)
+class DeliveryIdentity:
+    """一次 develop submit 的持久因果身份。"""
+
+    schema: Optional[str] = None
+    handoff_generation: Optional[str] = None
+    worker: Optional[str] = None
+    agent_id: Optional[str] = None
+    run_id: Optional[str] = None
+    pr_url: Optional[str] = None
+    pr_head_sha: Optional[str] = None
+    verification_sha256: Optional[str] = None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "schema": self.schema,
+            "handoff_generation": self.handoff_generation,
+            "worker": self.worker,
+            "agent_id": self.agent_id,
+            "run_id": self.run_id,
+            "pr_url": self.pr_url,
+            "pr_head_sha": self.pr_head_sha,
+            "verification_sha256": self.verification_sha256,
+        }
+
+    def is_complete(self) -> bool:
+        return bool(
+            self.schema == DELIVERY_IDENTITY_SCHEMA
+            and self.handoff_generation
+            and self.worker
+            and self.agent_id
+            and self.run_id
+            and self.pr_url
+            and self.pr_head_sha
+            and self.verification_sha256
         )
 
 
@@ -242,4 +301,35 @@ def parse_worker_handoff(value: Any) -> Optional[WorkerHandoffIntent]:
             "source_review_subject_digest"),
         source_review_round=int_field("source_review_round"),
         target_review_bounce=int_field("target_review_bounce"),
+        generation=text_field("generation"),
+        target_agent_id=text_field("target_agent_id"),
+        baseline_direct_run_ids=tuple(
+            run_id for run_id in value.get("baseline_direct_run_ids", [])
+            if isinstance(run_id, str) and run_id
+        ) if isinstance(value.get("baseline_direct_run_ids", []), list) else (),
+        target_run_id=text_field("target_run_id"),
+    )
+
+
+def parse_delivery_identity(value: Any) -> Optional[DeliveryIdentity]:
+    if value in (None, "", {}):
+        return None
+    if isinstance(value, DeliveryIdentity):
+        return value
+    if not isinstance(value, dict):
+        return DeliveryIdentity()
+
+    def text_field(key: str) -> Optional[str]:
+        field = value.get(key)
+        return field if isinstance(field, str) and field else None
+
+    return DeliveryIdentity(
+        schema=text_field("schema"),
+        handoff_generation=text_field("handoff_generation"),
+        worker=text_field("worker"),
+        agent_id=text_field("agent_id"),
+        run_id=text_field("run_id"),
+        pr_url=text_field("pr_url"),
+        pr_head_sha=text_field("pr_head_sha"),
+        verification_sha256=text_field("verification_sha256"),
     )

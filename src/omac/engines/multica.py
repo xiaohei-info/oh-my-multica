@@ -27,16 +27,17 @@ import yaml
 from ..core import logsetup
 from ..core.taskmeta import (
     AMENDMENT_ATTEMPT_KEY, CI_BOUNCE_KEY, CONTRACT_REF_KEY,
-    DECISION_REQUIRED_KEY, DELIVERABLE_KEY,
+    DECISION_REQUIRED_KEY, DELIVERY_IDENTITY_KEY, DELIVERABLE_KEY,
     DELIVERABLE_REF_KEY, KIND_KEY, MERGE_BOUNCE_KEY, PHASE_KEY,
     MACHINE_FEEDBACK_REF_KEY, PROJECT_RULES_KEY, PROJECT_RULES_REF_KEY, REVIEW_BOUNCE_KEY,
     REVIEW_CONTINUATION_KEY, REVIEW_LEDGER_REF_KEY, REVIEW_OBLIGATIONS_KEY,
     REVIEW_OBLIGATIONS_REF_KEY,
     REVIEW_REPORT_REF_KEY,
     REVIEW_SUBJECT_DIGEST_KEY,
-    SOURCE_REFS_KEY, TaskKind, TaskPhase, VERIFICATION_REF_KEY, WORKER_BOUNCE_KEY,
-    WORKER_HANDOFF_KEY, WorkerHandoffIntent,
-    parse_bounces, parse_kind, parse_phase, parse_worker_handoff,
+    SOURCE_REFS_KEY, DeliveryIdentity, TaskKind, TaskPhase,
+    VERIFICATION_REF_KEY, WORKER_BOUNCE_KEY, WORKER_HANDOFF_KEY,
+    WorkerHandoffIntent, parse_bounces, parse_delivery_identity, parse_kind,
+    parse_phase, parse_worker_handoff,
 )
 from ..errors import (
     AuthError, PlatformError, ValidationError, WorkItemNotFoundError,
@@ -47,7 +48,8 @@ from .models import (
     MergeCommandResult, PullRequestCheckResult, PullRequestObservation,
     PullRequestReadiness, PullRequestReadinessFailure, RuntimeCapabilities,
     PullRequestReadinessFailureKind, PullRequestState,
-    SkillPackage, WorkItem, WorkItemStatus, WorkspaceInfo,
+    SkillPackage, SubmissionActorIdentity, WorkItem, WorkItemStatus,
+    WorkspaceInfo,
 )
 from ..core.machine_feedback import (
     dump_machine_feedback, is_machine_feedback, parse_machine_feedback,
@@ -58,7 +60,9 @@ from .metadata_policy import (
 from .runtime import AgentRuntime
 from .store import WorkItemStore
 
-MULTICA_PR_VIEW_FIELDS = "state,mergedAt,autoMergeRequest,mergeStateStatus"
+MULTICA_PR_VIEW_FIELDS = (
+    "state,mergedAt,autoMergeRequest,mergeStateStatus,headRefOid"
+)
 _MULTICA_READ_MAX_ATTEMPTS = 3
 _MULTICA_READ_INITIAL_DELAY = 1.0
 _ACTIVE_RUN_STATUSES = {"queued", "pending", "running", "dispatching"}
@@ -74,6 +78,7 @@ _KNOWN_WORK_ITEM_METADATA_KEYS = {
     REVIEW_LEDGER_REF_KEY, REVIEW_OBLIGATIONS_KEY, REVIEW_OBLIGATIONS_REF_KEY,
     REVIEW_REPORT_REF_KEY, REVIEW_SUBJECT_DIGEST_KEY, SOURCE_REFS_KEY,
     VERIFICATION_REF_KEY, WORKER_BOUNCE_KEY, WORKER_HANDOFF_KEY,
+    DELIVERY_IDENTITY_KEY,
 }
 _KNOWN_ISSUE_FIELDS = {
     "id", "identifier", "title", "description", "status", "metadata",
@@ -780,6 +785,8 @@ class MulticaStore(WorkItemStore):
                 if isinstance(review_continuation, dict) else None),
             worker_handoff=parse_worker_handoff(
                 self._json_metadata(metadata, WORKER_HANDOFF_KEY)),
+            delivery_identity=parse_delivery_identity(
+                self._json_metadata(metadata, DELIVERY_IDENTITY_KEY)),
             decision_required=self._json_metadata(metadata, DECISION_REQUIRED_KEY),
             amendment_attempt=(
                 amendment_attempt if isinstance(amendment_attempt, dict) else None),
@@ -813,6 +820,38 @@ class MulticaStore(WorkItemStore):
                     return agent.get("id")
         raise PlatformError(
             f"agent '{agent_name}' not found in workspace {self.config.workspace_id}")
+
+    def resolve_agent_id(self, agent_name: str) -> str:
+        return self._resolve_agent_id(agent_name)
+
+    def current_submission_identity(
+        self, item_id: str,
+    ) -> Optional[SubmissionActorIdentity]:
+        agent_id = os.environ.get("MULTICA_AGENT_ID", "").strip()
+        agent_name = os.environ.get("MULTICA_AGENT_NAME", "").strip()
+        run_id = os.environ.get("MULTICA_TASK_ID", "").strip()
+        if not any((agent_id, agent_name, run_id)):
+            return None
+        if not all((agent_id, agent_name, run_id)):
+            raise PlatformError(
+                "Multica submit identity is incomplete; MULTICA_AGENT_ID, "
+                "MULTICA_AGENT_NAME, and MULTICA_TASK_ID must all be present")
+        runs = self._run_multica([
+            "issue", "runs", item_id, "--output", "json",
+        ])
+        matching = [
+            run for run in (runs if isinstance(runs, list) else [])
+            if isinstance(run, dict)
+            and str(run.get("id") or "") == run_id
+            and str(run.get("kind") or "direct").lower() == "direct"
+            and str(run.get("agent_id") or "") == agent_id
+        ]
+        if len(matching) != 1:
+            raise PlatformError(
+                "Current Multica submit actor/run does not match one direct Run "
+                f"for issue {item_id}")
+        return SubmissionActorIdentity(
+            agent_id=agent_id, agent_name=agent_name, run_id=run_id)
 
     # ==================== 成员池 ====================
 
@@ -1029,6 +1068,7 @@ class MulticaStore(WorkItemStore):
         review_ledger_source: Optional[str] = None,
         review_continuation: Optional[Dict[str, Any]] = None,
         worker_handoff: Optional[WorkerHandoffIntent | Dict[str, Any]] = None,
+        delivery_identity: Optional[DeliveryIdentity | Dict[str, Any]] = None,
         decision_required: Optional[Dict[str, Any]] = None,
         amendment_attempt: Optional[Dict[str, Any]] = None,
         phase: Optional[TaskPhase] = None,
@@ -1118,6 +1158,13 @@ class MulticaStore(WorkItemStore):
                 else worker_handoff
             )
             self._set_metadata(item_id, WORKER_HANDOFF_KEY, value)
+        if delivery_identity is not None:
+            value = (
+                delivery_identity.as_dict()
+                if isinstance(delivery_identity, DeliveryIdentity)
+                else delivery_identity
+            )
+            self._set_metadata(item_id, DELIVERY_IDENTITY_KEY, value)
         if review_subject_digest is not None:
             self._set_metadata(
                 item_id, REVIEW_SUBJECT_DIGEST_KEY, review_subject_digest)
@@ -1344,7 +1391,7 @@ class MulticaStore(WorkItemStore):
     ) -> PullRequestReadiness | PullRequestReadinessFailure:
         try:
             proc = subprocess.run(
-                ["gh", "pr", "view", pr_url, "--json", "isDraft,state"],
+                ["gh", "pr", "view", pr_url, "--json", "isDraft,state,headRefOid"],
                 capture_output=True, text=True, timeout=30)
         except FileNotFoundError as exc:
             return PullRequestReadinessFailure(
@@ -1366,11 +1413,16 @@ class MulticaStore(WorkItemStore):
                 PullRequestReadinessFailureKind.MALFORMED, "readiness payload is not an object")
         is_draft = payload.get("isDraft")
         state = payload.get("state")
-        if not isinstance(is_draft, bool) or not isinstance(state, str) or not state:
+        head_sha = payload.get("headRefOid")
+        if (
+            not isinstance(is_draft, bool)
+            or not isinstance(state, str) or not state
+            or not isinstance(head_sha, str) or not head_sha
+        ):
             return PullRequestReadinessFailure(
                 PullRequestReadinessFailureKind.MALFORMED,
-                "readiness payload is missing typed isDraft/state fields")
-        return PullRequestReadiness(is_draft, state)
+                "readiness payload is missing typed isDraft/state/headRefOid fields")
+        return PullRequestReadiness(is_draft, state, head_sha=head_sha)
 
 
 class MulticaRuntime(AgentRuntime):
@@ -1519,6 +1571,9 @@ class MulticaRuntime(AgentRuntime):
                 id=str(run.get("id")),
                 kind=str(run.get("kind") or "direct").lower(),
                 status=str(run.get("status") or "").lower(),
+                agent_id=(
+                    str(run.get("agent_id")) if run.get("agent_id") else None
+                ),
             )
             for run in runs
             if isinstance(run, dict) and run.get("id")
