@@ -10,6 +10,11 @@ This file records public changes to oh-my-multica. The format follows
 
 ### Changed
 
+- Legacy review-rework deliveries created before Controller-sealed delivery
+  identities are upgraded once from authoritative Worker Run, attachment bytes,
+  uploader/time/task attribution, and remote PR HEAD facts. Ambiguous or drifted
+  history fails closed; successful upgrades rejoin the existing evidence, CI,
+  review, and merge path without rerunning the Worker.
 - Worker handoff recovery now binds candidate delivery to the platform-observed
   target Run, attachment uploader/task facts, downloaded-byte digest, and remote
   PR HEAD. A recovered delivery rejoins the normal evidence/CI/review path;
