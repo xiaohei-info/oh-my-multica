@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import secrets
 from dataclasses import asdict
 from typing import Any
 
@@ -10,8 +11,8 @@ from ..output import add_output_flag, hint, print_json
 from ...core.config import ENV_ENGINE, ENV_WORKSPACE, load_config, resolve_engine_settings
 from ...core.manifest import MISSING_CONSUMES, load_manifest, save_manifest
 from ...core.graph import downstream_of
-from ...core.taskmeta import TaskKind
-from ...core.stage_recovery import prepare_stage_recovery
+from ...core.taskmeta import WORKER_HANDOFF_SCHEMA, TaskKind, WorkerHandoffIntent
+from ...core.stage_recovery import prepare_stage_recovery, stage_recovery_subject
 from ...engines import EngineConfig, create_engine
 from ...engines.models import PullRequestState, WorkItemStatus
 from ...errors import OmacError, ValidationError, WorkItemNotFoundError
@@ -238,9 +239,38 @@ def _cmd_retry(args) -> int:
     # 平台先写、本地后写：平台失败时不留下两边分叉的半完成 retry。
     if node.work_item_id and engine is not None:
         try:
+            current = engine.store.get_work_item(node.work_item_id)
+            handoff = None
+            has_delivery = bool(current.artifacts or current.verification)
+            if node.reviewer and current.bounces.review > 0 and has_delivery:
+                source_subject = (
+                    current.review_subject_digest
+                    or stage_recovery_subject(node, current)
+                )
+                handoff = WorkerHandoffIntent(
+                    schema=WORKER_HANDOFF_SCHEMA,
+                    state="pending",
+                    target_worker=node.worker,
+                    gate="operator-retry",
+                    source_review_subject_digest=source_subject,
+                    source_review_round=max(1, current.bounces.review),
+                    target_review_bounce=max(1, current.bounces.review),
+                    generation=f"handoff-{secrets.token_hex(8)}",
+                    target_agent_id=engine.store.resolve_agent_id(node.worker),
+                    baseline_direct_run_ids=tuple(sorted(
+                        run.id for run in engine.runtime.list_runs(current.id)
+                        if run.kind == "direct"
+                    )),
+                    baseline_verification_attachment_id=str(
+                        (current.verification_ref or {}).get("attachment_id") or ""
+                    ) or None,
+                )
             # 复用 DAG stage recovery 原语；清除旧 reviewer 判定并恢复
             # authoring/todo，同时保留 PR、verification 与历史附件。
             prepare_stage_recovery(node, engine.store, "authoring")
+            if handoff is not None:
+                engine.store.update_work_item_metadata(
+                    node.work_item_id, worker_handoff=handoff)
         except WorkItemNotFoundError:
             # mock 的跨进程恢复没有持久化 store；陈旧 work_item_id 与 reconcile
             # 的“平台工单不存在”语义相同。retry 仍保留 ID 以兼容输出契约，
