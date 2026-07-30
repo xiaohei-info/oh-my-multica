@@ -8,9 +8,11 @@
 - 不存在任何自动重试路径(blocked 节点在后续 tick 保持 blocked)
 """
 import os
+from pathlib import Path
 import tempfile
 
 import pytest
+import yaml
 
 from omac.core.manifest import (
     Contract,
@@ -219,6 +221,194 @@ def _loop_to_settle(store, runtime, manifest, path, max_rounds=50, max_parallel=
             break
     assert result is not None, "never ran a tick"
     return result
+
+
+def _aiteam_834_legacy_delivery(tmp_path):
+    engine = create_engine(
+        "mock", _config(MOCK_AUTO_COMPLETE="false"))
+    contract = _contract()
+    node = _node(
+        "platform-release-evidence-contract",
+        reviewer="bob",
+        contract=contract,
+    )
+    manifest = _manifest([node])
+    path = str(tmp_path / "open-agent-cluster.yaml")
+    save_manifest(manifest, path)
+
+    tick(engine.store, engine.runtime, manifest, path, max_parallel=1)
+    item = engine.store.get_work_item(node.work_item_id)
+    engine.store.set_node_contract(item.id, contract)
+    verification = {
+        "commands": [_business_command()],
+        "integration_gates": [{"name": "gate-1", "commands": []}],
+        "pr_base": "feature/v1",
+        "coverage": 100,
+    }
+    engine.store.update_work_item_metadata(
+        item.id,
+        artifacts={"pr_url": "https://github.com/acme/repo/pull/24"},
+        verification=verification,
+        verification_source=yaml.safe_dump(verification),
+        phase=TaskPhase.AUTHORING,
+        review_bounce=1,
+        review_ledger={
+            "schema": "omac.review-ledger/v1",
+            "cycles": [{
+                "round": 1,
+                "subject_digest": "rejected-subject",
+                "verdict": "reject",
+            }],
+            "blockers": [],
+        },
+    )
+    engine.store.update_status(item.id, WorkItemStatus.DONE)
+    engine.store.clear_assignment(item.id)
+    engine.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
+    node.status = "in_review"
+    save_manifest(manifest, path)
+    return engine, manifest, path, node, item
+
+
+def test_aiteam_834_legacy_delivery_requires_explicit_node_retry(
+    tmp_path, monkeypatch,
+):
+    """缺 immutable delivery identity 的旧返工不得猜证据或触发任何 Run。"""
+    engine, manifest, path, node, item = _aiteam_834_legacy_delivery(tmp_path)
+
+    monkeypatch.setattr(
+        engine.runtime, "wake",
+        lambda *_args, **_kwargs: pytest.fail(
+            "legacy delivery must not rerun Worker or dispatch Reviewer"),
+    )
+    monkeypatch.setattr(
+        loop, "run_merge_delivery",
+        lambda *_args, **_kwargs: pytest.fail(
+            "legacy delivery must not enter merge"),
+    )
+
+    result = tick(
+        engine.store, engine.runtime, manifest, path, max_parallel=1)
+
+    current = engine.store.get_work_item(item.id)
+    retry = f"omac node retry {path} {node.id}"
+    assert result.state == "needs_decision"
+    assert result.failed == [node.id]
+    assert manifest.nodes[node.id].status == "blocked"
+    assert current.status is WorkItemStatus.BLOCKED
+    assert current.delivery_identity is None
+    assert current.decision_required["reason_code"] == (
+        "legacy-delivery-retry-required")
+    assert current.decision_required["next_action"] == retry
+    assert retry in result.report["next_actions"]
+
+
+def test_legacy_detection_waits_for_active_direct_run_without_writes(
+    tmp_path, monkeypatch,
+):
+    engine, manifest, path, node, item = _aiteam_834_legacy_delivery(tmp_path)
+    engine.store.assign_work_item(item.id, node.worker, "worker")
+    assignments = len(engine.store.assign_log)
+    runs = list(engine.runtime.list_runs(item.id))
+    manifest_source = Path(path).read_text()
+
+    for name in (
+        "update_work_item_metadata", "update_status", "add_comment",
+        "assign_work_item", "clear_assignment",
+    ):
+        monkeypatch.setattr(
+            engine.store, name,
+            lambda *_args, _name=name, **_kwargs: pytest.fail(
+                f"active Worker must not trigger {_name}"),
+        )
+    monkeypatch.setattr(
+        engine.runtime, "wake",
+        lambda *_args, **_kwargs: pytest.fail(
+            "active Worker must not trigger Agent dispatch"),
+    )
+
+    result = tick(
+        engine.store, engine.runtime, manifest, path, max_parallel=1)
+
+    assert result.state == "running"
+    assert result.failed == []
+    assert result.dispatched == []
+    assert manifest.nodes[node.id].status == "in_review"
+    assert engine.store.get_work_item(item.id).decision_required is None
+    assert len(engine.store.assign_log) == assignments
+    assert engine.runtime.list_runs(item.id) == runs
+    assert Path(path).read_text() == manifest_source
+
+
+def test_legacy_detection_propagates_run_observation_failure(
+    tmp_path, monkeypatch,
+):
+    from omac.errors import PlatformError
+
+    engine, manifest, path, _, item = _aiteam_834_legacy_delivery(tmp_path)
+    monkeypatch.setattr(
+        engine.runtime, "list_runs",
+        lambda _item_id: (_ for _ in ()).throw(PlatformError("runs unavailable")),
+    )
+    monkeypatch.setattr(
+        engine.store, "update_work_item_metadata",
+        lambda *_args, **_kwargs: pytest.fail(
+            "run observation failure must precede decision writes"),
+    )
+
+    with pytest.raises(PlatformError, match="runs unavailable"):
+        tick(engine.store, engine.runtime, manifest, path, max_parallel=1)
+
+    assert engine.store.get_work_item(item.id).decision_required is None
+
+
+def test_legacy_decision_restart_does_not_duplicate_comment_or_dispatch(
+    tmp_path, monkeypatch,
+):
+    engine, manifest, path, node, item = _aiteam_834_legacy_delivery(tmp_path)
+    original_save = loop.save_manifest
+    crashed = False
+
+    def crash_before_manifest_save(current, current_path):
+        nonlocal crashed
+        if not crashed:
+            crashed = True
+            raise RuntimeError("crash before legacy decision manifest save")
+        return original_save(current, current_path)
+
+    monkeypatch.setattr(loop, "save_manifest", crash_before_manifest_save)
+    with pytest.raises(RuntimeError, match="legacy decision manifest save"):
+        tick(engine.store, engine.runtime, manifest, path, max_parallel=1)
+
+    assert len(engine.store.get_comments(item.id)) == 1
+    assert engine.store.get_work_item(item.id).status is WorkItemStatus.BLOCKED
+    assert load_manifest(path).nodes[node.id].status == "in_review"
+
+    monkeypatch.setattr(loop, "save_manifest", original_save)
+    for name in ("update_work_item_metadata", "update_status", "add_comment"):
+        monkeypatch.setattr(
+            engine.store, name,
+            lambda *_args, _name=name, **_kwargs: pytest.fail(
+                f"persisted decision must not repeat {_name}"),
+        )
+    monkeypatch.setattr(
+        engine.store, "assign_work_item",
+        lambda *_args, **_kwargs: pytest.fail(
+            "decision restart must not assign an Agent"),
+    )
+    monkeypatch.setattr(
+        engine.runtime, "wake",
+        lambda *_args, **_kwargs: pytest.fail(
+            "decision restart must not wake an Agent"),
+    )
+
+    restarted = load_manifest(path)
+    result = tick(
+        engine.store, engine.runtime, restarted, path, max_parallel=1)
+
+    assert result.state == "needs_decision"
+    assert restarted.nodes[node.id].status == "blocked"
+    assert len(engine.store.get_comments(item.id)) == 1
 
 
 # ==================== 1. happy path:多节点带依赖 → converged ====================

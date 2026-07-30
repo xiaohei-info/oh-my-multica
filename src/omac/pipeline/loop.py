@@ -44,8 +44,8 @@ from ..errors import AuthError, PlatformError, WorkItemNotFoundError
 from ..i18n import current_language, ui
 from ..pipeline.dispatch import normalize_source_refs, render_issue_body
 from ..core.taskmeta import (
-    DELIVERY_IDENTITY_SCHEMA, WORKER_HANDOFF_SCHEMA, DeliveryIdentity,
-    TaskKind, TaskPhase, WorkerHandoffIntent, parse_delivery_identity,
+    DECISION_REQUIRED_SCHEMA, DELIVERY_IDENTITY_SCHEMA, WORKER_HANDOFF_SCHEMA,
+    DeliveryIdentity, TaskKind, TaskPhase, WorkerHandoffIntent, parse_delivery_identity,
 )
 
 log = logsetup.get_logger(__name__)
@@ -710,6 +710,23 @@ def _review_projection_present(item) -> bool:
     )
 
 
+def _legacy_delivery_requires_retry(manifest, key, node, item) -> bool:
+    has_delivery = bool(
+        isinstance(item.artifacts, dict) and item.artifacts
+        or isinstance(item.verification, dict) and item.verification
+        or isinstance(item.verification_ref, dict) and item.verification_ref
+    )
+    return bool(
+        node.reviewer
+        and item.phase == TaskPhase.AUTHORING
+        and item.bounces.review > 0
+        and consumed_bounces(manifest, key, item, "review") == item.bounces.review
+        and item.worker_handoff is None
+        and _delivery_identity(item) is None
+        and has_delivery
+    )
+
+
 def _complete_merge_if_confirmed(
     store: WorkItemStore, runtime: AgentRuntime, manifest: Manifest, key: str,
     retry_limits: dict, config: dict, manifest_path: str,
@@ -952,6 +969,35 @@ def collect_results(
         try:
             item = store.get_work_item(node.work_item_id)
         except Exception:
+            continue
+
+        if _legacy_delivery_requires_retry(manifest, key, node, item):
+            if any(run.kind == "direct" and run.active
+                   for run in runtime.list_runs(node.work_item_id)):
+                continue
+            retry = f"omac node retry {manifest_path} {key}"
+            reason = ui(
+                "Legacy rework delivery lacks an immutable submitted head or "
+                f"controller-sealed delivery identity. Run `{retry}`; the old "
+                "verification and Reviewer verdict cannot be reused.",
+                "旧返工交付缺少不可变 submitted head 或 Controller 封存的 "
+                f"delivery identity。请运行 `{retry}`；旧 verification 和 "
+                "Reviewer verdict 不得复用。",
+            )
+            decision = {
+                "schema": DECISION_REQUIRED_SCHEMA, "reason_code": "legacy-delivery-retry-required",
+                "kind": TaskKind.DEVELOP.value, "phase": TaskPhase.AUTHORING.value,
+                "gate": "delivery-identity", "resume_issue_id": node.work_item_id,
+                "node_id": key, "next_action": retry,
+            }
+            if item.decision_required != decision:
+                store.update_work_item_metadata(
+                    node.work_item_id, decision_required=decision)
+                store.add_comment(node.work_item_id, reason)
+            if item.status != WorkItemStatus.BLOCKED:
+                store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
+            set_node(manifest, key, status="blocked")
+            failures[key] = reason
             continue
 
         if item.worker_handoff is not None:
