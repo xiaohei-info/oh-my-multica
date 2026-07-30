@@ -19,7 +19,7 @@ from omac.core.manifest import (
     save_manifest,
 )
 from omac.core.contract_boundaries import responsibility_summary
-from omac.core.taskmeta import TaskKind, TaskPhase
+from omac.core.taskmeta import TaskKind, TaskPhase, WorkerHandoffIntent
 from omac.engines import create_engine
 from omac.engines.models import (
     EngineConfig, PullRequestReadiness, PullRequestReadinessFailure, WorkItemStatus,
@@ -92,6 +92,53 @@ def test_work_show_authoring_exposes_machine_gate_feedback_without_report():
     assert output["context"]["previous_review"] == {
         "comment": "machine gate: expected template is too generic",
     }
+
+
+def test_work_show_operator_retry_requires_fresh_submission():
+    store = _store()
+    item = _make_item(store, TaskKind.DEVELOP, TaskPhase.AUTHORING)
+    store.update_work_item_metadata(
+        item.id,
+        worker_handoff=WorkerHandoffIntent(
+            schema="omac.worker-handoff/v1",
+            state="pending",
+            target_worker="alice",
+            gate="operator-retry",
+            generation="handoff-1",
+            target_agent_id="agent-alice",
+            baseline_direct_run_ids=("old-run",),
+            baseline_verification_attachment_id="old-verification",
+        ),
+    )
+
+    output = build_show_output(
+        store.get_work_item(item.id), "worker:alice", language="en")
+
+    assert output["context"]["retry"] == {
+        "gate": "operator-retry",
+        "requires_fresh_submission": True,
+        "previous_verification_is_baseline_only": True,
+    }
+    assert "Do not reuse or merely cite prior verification" in output["protocol"]
+    assert "Even when no code change is needed" in output["protocol"]
+    assert "omac work submit" in output["protocol"]
+
+    chinese = build_show_output(
+        store.get_work_item(item.id), "worker:alice", language="cn")
+    assert chinese["context"]["retry"] == output["context"]["retry"]
+    assert "禁止复用或仅引用旧 verification" in chinese["protocol"]
+    assert "即使代码无需修改" in chinese["protocol"]
+
+
+def test_work_show_normal_authoring_has_no_operator_retry_instruction():
+    store = _store()
+    item = _make_item(store, TaskKind.DEVELOP, TaskPhase.AUTHORING)
+
+    output = build_show_output(
+        store.get_work_item(item.id), "worker:alice", language="en")
+
+    assert "retry" not in output["context"]
+    assert "Do not reuse or merely cite prior verification" not in output["protocol"]
 
 
 def test_work_show_projects_compact_contract_responsibility():

@@ -61,6 +61,12 @@ _MESSAGES = {
             "so Multica can link the PR to this issue automatically. Delivery "
             "still works when the key is absent."
         ),
+        "work.protocol.operator_retry": (
+            "This execution follows an explicit operator retry. Do not reuse or "
+            "merely cite prior verification. Even when no code change is needed, "
+            "rerun the current contract verification against the current PR HEAD "
+            "and finish with the exact `omac work submit` command shown below."
+        ),
         "work.authority.current": "Current facts from work show",
         "work.authority.contract": "contract / previous_review",
         "work.authority.role": "role guide",
@@ -159,6 +165,7 @@ _MESSAGES = {
         "work.protocol.review": "独立复跑：覆盖全部 review_obligations，逐项处置历史 blocker，按 env_setup 搭建环境，重跑验证命令与集成测试，检查完整 diff，发现第一个 blocker 后继续审查并一次性报告本轮全部问题；只读共享状态，并依据 contract 与验收目标给出 verdict。",
         "work.protocol.control": "不要直接修改平台状态、负责人、metadata，也不要直接 rerun 或 cancel；所有写入只通过 OMAC。submit 成功就是本次执行的最后动作，立即停止，不再执行任何平台写操作。",
         "work.protocol.pr_link": "建议让 GitHub PR 的分支名、标题或正文包含 `{issue_key}`，这样 Multica 可以自动关联该 issue；缺失时仍可交付。",
+        "work.protocol.operator_retry": "本次执行来自显式 operator retry。禁止复用或仅引用旧 verification；即使代码无需修改，也必须针对当前 PR HEAD 重新执行本轮 contract 验证，并以如下精确的 `omac work submit` 命令完成提交。",
         "work.authority.current": "work show 当前实例事实",
         "work.authority.contract": "contract / previous_review",
         "work.authority.role": "role guide",
