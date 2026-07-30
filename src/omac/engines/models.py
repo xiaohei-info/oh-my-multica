@@ -85,6 +85,8 @@ class AgentRunObservation:
     kind: str
     status: str
     agent_id: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
 
     @property
     def active(self) -> bool:
@@ -96,19 +98,24 @@ class AgentRunObservation:
 
 
 @dataclass(frozen=True)
+class VerificationAttachmentObservation:
+    """平台权威的 verification 附件事实及实际下载内容身份。"""
+
+    attachment_id: str
+    comment_id: str
+    sha256: str
+    content: bytes = b""
+    uploader_id: Optional[str] = None
+    uploader_type: Optional[str] = None
+    task_id: Optional[str] = None
+    created_at: Optional[str] = None
+
+
+@dataclass(frozen=True)
 class RuntimeCapabilities:
     """Runtime observation/dispatch guarantees exposed to the pipeline."""
 
     stable_direct_run_identity: bool = False
-
-
-@dataclass(frozen=True)
-class SubmissionActorIdentity:
-    """由执行平台认证并注入给当前 submit 进程的 actor/run 身份。"""
-
-    agent_id: str
-    agent_name: str
-    run_id: str
 
 
 @dataclass

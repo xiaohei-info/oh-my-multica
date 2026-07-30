@@ -777,6 +777,81 @@ def test_multica_payload_ref_downloads_known_attachment_without_comment_thread(m
     assert not any(args[:3] == ["issue", "comment", "list"] for args in calls)
 
 
+def test_multica_verification_download_rejects_declared_sha_mismatch(monkeypatch):
+    """verification ref 的声明摘要不能替代实际下载字节摘要。"""
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+
+    def fake_run(args, capture=True):
+        if args[:2] == ["attachment", "download"]:
+            output_dir = Path(args[args.index("--output-dir") + 1])
+            (output_dir / "verification.yaml").write_text("commands: []\n")
+            return None
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+
+    with pytest.raises(PlatformError, match="sha|SHA|digest"):
+        store._load_payload_comment("issue-1", "verification", {
+            "attachment_id": "attachment-1",
+            "filename": "verification.yaml",
+            "sha256": "0" * 64,
+        })
+
+
+def test_multica_observes_verification_platform_identity_and_actual_bytes(
+    monkeypatch,
+):
+    """Controller seal 使用 comment/attachment 平台事实，不读取 Agent env。"""
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    body = b"commands:\n  - command: pytest\n"
+    sha = __import__("hashlib").sha256(body).hexdigest()
+
+    def fake_run(args, capture=True):
+        if args[:3] == ["issue", "comment", "list"]:
+            return [{
+                "id": "comment-1",
+                "attachments": [{
+                    "id": "attachment-1",
+                    "filename": "verification.yaml",
+                    "uploader_type": "agent",
+                    "uploader_id": "agent-1",
+                    "task_id": "run-1",
+                    "created_at": "2026-07-30T01:00:00Z",
+                }],
+            }]
+        if args[:2] == ["attachment", "download"]:
+            output_dir = Path(args[args.index("--output-dir") + 1])
+            (output_dir / "verification.yaml").write_bytes(body)
+            return None
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+
+    observed = store.observe_verification_attachment("issue-1", {
+        "comment_id": "comment-1",
+        "attachment_id": "attachment-1",
+        "filename": "verification.yaml",
+        "sha256": sha,
+    })
+
+    assert observed.content == body
+    assert observed.sha256 == sha
+    assert observed.uploader_id == "agent-1"
+    assert observed.task_id == "run-1"
+
+
+def test_multica_environment_run_ids_are_not_authenticated_submit_identity(
+    monkeypatch,
+):
+    """Agent 可覆盖的环境变量不能暴露为 Store 的认证身份 API。"""
+    monkeypatch.setenv("MULTICA_AGENT_ID", "agent-1")
+    monkeypatch.setenv("MULTICA_AGENT_NAME", "alice")
+    monkeypatch.setenv("MULTICA_TASK_ID", "run-old")
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+
+    assert not hasattr(store, "current_submission_identity")
+
+
 def test_multica_project_rules_are_uploaded_and_read_through_ref(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
     writes = []
@@ -1703,43 +1778,6 @@ def test_multica_runtime_lists_typed_run_identity(monkeypatch):
         AgentRunObservation(
             id="run-2", kind="comment", status="running", agent_id="agent-2"),
     ]
-
-
-def test_multica_submission_identity_is_bound_to_injected_direct_run(
-    monkeypatch,
-):
-    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
-    monkeypatch.setenv("MULTICA_AGENT_ID", "agent-1")
-    monkeypatch.setenv("MULTICA_AGENT_NAME", "alice")
-    monkeypatch.setenv("MULTICA_TASK_ID", "run-1")
-    monkeypatch.setattr(store, "_run_multica", lambda _args: [{
-        "id": "run-1",
-        "kind": "direct",
-        "status": "running",
-        "agent_id": "agent-1",
-    }])
-
-    identity = store.current_submission_identity("issue-1")
-
-    assert identity.agent_id == "agent-1"
-    assert identity.agent_name == "alice"
-    assert identity.run_id == "run-1"
-
-
-def test_multica_submission_identity_rejects_unmatched_injected_run(monkeypatch):
-    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
-    monkeypatch.setenv("MULTICA_AGENT_ID", "agent-1")
-    monkeypatch.setenv("MULTICA_AGENT_NAME", "alice")
-    monkeypatch.setenv("MULTICA_TASK_ID", "run-current")
-    monkeypatch.setattr(store, "_run_multica", lambda _args: [{
-        "id": "run-old",
-        "kind": "direct",
-        "status": "completed",
-        "agent_id": "agent-1",
-    }])
-
-    with pytest.raises(PlatformError, match="does not match one direct Run"):
-        store.current_submission_identity("issue-1")
 
 
 def test_multica_runtime_cancel_clears_stale_assignment_without_active_run(monkeypatch):
