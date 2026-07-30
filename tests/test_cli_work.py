@@ -120,13 +120,15 @@ def test_work_show_operator_retry_requires_fresh_submission():
         "previous_verification_is_baseline_only": True,
     }
     assert "Do not reuse or merely cite prior verification" in output["protocol"]
+    assert "baseline-only and cannot be used as evidence" in output["protocol"]
     assert "Even when no code change is needed" in output["protocol"]
     assert "omac work submit" in output["protocol"]
 
     chinese = build_show_output(
         store.get_work_item(item.id), "worker:alice", language="cn")
     assert chinese["context"]["retry"] == output["context"]["retry"]
-    assert "禁止复用或仅引用旧 verification" in chinese["protocol"]
+    assert "禁止复用或仅引用" in chinese["protocol"]
+    assert "旧 verification 仅作为 baseline，不能作为本轮证据" in chinese["protocol"]
     assert "即使代码无需修改" in chinese["protocol"]
 
 
@@ -139,6 +141,33 @@ def test_work_show_normal_authoring_has_no_operator_retry_instruction():
 
     assert "retry" not in output["context"]
     assert "Do not reuse or merely cite prior verification" not in output["protocol"]
+
+
+@pytest.mark.parametrize("kind", [
+    TaskKind.PLAN,
+    TaskKind.ACCEPTANCE,
+    TaskKind.DECOMPOSE,
+    TaskKind.AMENDMENT,
+    TaskKind.FINAL_ACCEPTANCE,
+])
+def test_work_show_operator_retry_is_develop_only(kind):
+    store = _store()
+    item = _make_item(store, kind, TaskPhase.AUTHORING)
+    store.update_work_item_metadata(
+        item.id,
+        worker_handoff=WorkerHandoffIntent(
+            schema="omac.worker-handoff/v1",
+            state="pending",
+            target_worker="alice",
+            gate="operator-retry",
+        ),
+    )
+
+    output = build_show_output(
+        store.get_work_item(item.id), "worker:alice", language="en")
+
+    assert "retry" not in output["context"]
+    assert "baseline-only" not in output["protocol"]
 
 
 def test_work_show_projects_compact_contract_responsibility():
