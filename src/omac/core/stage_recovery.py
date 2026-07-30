@@ -45,9 +45,15 @@ def recovery_control_snapshot(item) -> dict:
 
 def recovery_evidence_digest(item) -> str:
     """绑定不可由阶段恢复重写的既有代码交付证据。"""
+    delivery_identity = getattr(item, "delivery_identity", None)
     return _stable_digest({
         "artifacts": getattr(item, "artifacts", None),
         "verification": getattr(item, "verification", None),
+        "delivery_identity": (
+            delivery_identity.as_dict()
+            if hasattr(delivery_identity, "as_dict")
+            else delivery_identity
+        ),
     })
 
 
@@ -96,6 +102,9 @@ def prepare_stage_recovery(
     if item.worker_handoff is not None:
         store.update_work_item_metadata(
             node.work_item_id, worker_handoff={})
+    if getattr(item, "delivery_identity", None) is not None:
+        store.update_work_item_metadata(
+            node.work_item_id, delivery_identity={})
     if sync_contract and node.contract is not None:
         store.set_node_contract(node.work_item_id, node.contract)
     if stage == "merging":

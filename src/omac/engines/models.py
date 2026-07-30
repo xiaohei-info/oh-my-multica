@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..core.taskmeta import (
-    Bounces, TaskKind, TaskPhase, WorkerHandoffIntent,
+    Bounces, DeliveryIdentity, TaskKind, TaskPhase, WorkerHandoffIntent,
 )
 
 
@@ -60,6 +60,7 @@ class PullRequestReadiness:
     """PR 是否可进入 CI/review 的远端读取结果。"""
     is_draft: bool
     state: str
+    head_sha: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -83,6 +84,7 @@ class AgentRunObservation:
     id: str
     kind: str
     status: str
+    agent_id: Optional[str] = None
 
     @property
     def active(self) -> bool:
@@ -98,6 +100,15 @@ class RuntimeCapabilities:
     """Runtime observation/dispatch guarantees exposed to the pipeline."""
 
     stable_direct_run_identity: bool = False
+
+
+@dataclass(frozen=True)
+class SubmissionActorIdentity:
+    """由执行平台认证并注入给当前 submit 进程的 actor/run 身份。"""
+
+    agent_id: str
+    agent_name: str
+    run_id: str
 
 
 @dataclass
@@ -192,6 +203,7 @@ class WorkItem:
     review_ledger_ref: Optional[Dict[str, Any]] = None
     review_continuation: Optional[Dict[str, Any]] = None
     worker_handoff: Optional[WorkerHandoffIntent] = None
+    delivery_identity: Optional[DeliveryIdentity] = None
     decision_required: Optional[Dict[str, Any]] = None
     amendment_attempt: Optional[Dict[str, Any]] = None
 

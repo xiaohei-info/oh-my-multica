@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from copy import deepcopy
+import hashlib
 import json
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -32,7 +33,9 @@ from omac.core.review_convergence import (
     required_closures,
     review_state,
 )
-from omac.core.taskmeta import TaskKind, TaskPhase
+from omac.core.taskmeta import (
+    DELIVERY_IDENTITY_SCHEMA, DeliveryIdentity, TaskKind, TaskPhase,
+)
 from omac.engines.models import (
     PullRequestReadiness, PullRequestReadinessFailure,
     PullRequestReadinessFailureKind, WorkItem, WorkItemStatus,
@@ -642,9 +645,9 @@ def _validate_amendment_authoring(amendment_file: str) -> str:
 
 def _validate_develop_authoring(
     store: WorkItemStore, pr_url: str, verification_file: str, item: WorkItem
-) -> Dict[str, Any]:
+) -> tuple[Dict[str, Any], Optional[PullRequestReadiness]]:
     """develop × authoring 左移校验:复用 P2.2 validate_worker_evidence。"""
-    _validate_pr_ready_for_handoff(store, pr_url)
+    readiness = _validate_pr_ready_for_handoff(store, pr_url)
     verification = _parse_structured(verification_file)
     node = _Node(_contract_from_item(item))
     probe = _Item(artifacts={"pr_url": pr_url}, verification=verification)
@@ -653,17 +656,19 @@ def _validate_develop_authoring(
         raise ValidationError(ui(
             "Verification evidence validation failed:\n  - " + "\n  - ".join(errors),
             "verification 证据校验失败:\n  - " + "\n  - ".join(errors)))
-    return verification
+    return verification, readiness
 
 
 def _is_github_pr_url(pr_url: str) -> bool:
     return isinstance(pr_url, str) and pr_url.startswith("https://github.com/") and "/pull/" in pr_url
 
 
-def _validate_pr_ready_for_handoff(store: WorkItemStore, pr_url: str) -> None:
+def _validate_pr_ready_for_handoff(
+    store: WorkItemStore, pr_url: str,
+) -> Optional[PullRequestReadiness]:
     """worker 交付前置门:GitHub PR 必须不是 draft,否则不进入 CI/review/merge。"""
     if not _is_github_pr_url(pr_url):
-        return
+        return None
     readiness = store.read_pull_request_readiness(pr_url)
     if isinstance(readiness, PullRequestReadinessFailure):
         if readiness.category == PullRequestReadinessFailureKind.MISSING_CLI:
@@ -701,6 +706,60 @@ def _validate_pr_ready_for_handoff(store: WorkItemStore, pr_url: str) -> None:
         raise ValidationError(ui(
             f"GitHub PR is not OPEN and cannot be delivered: {pr_url} (state={state})",
             f"GitHub PR 状态不是 OPEN,不能交付: {pr_url} (state={state})"))
+    return readiness
+
+
+def _causal_delivery_identity(
+    store: WorkItemStore,
+    item: WorkItem,
+    *,
+    pr_url: str,
+    pr_head_sha: Optional[str],
+    verification_source: str,
+) -> Optional[DeliveryIdentity]:
+    intent = item.worker_handoff
+    if intent is None:
+        return None
+    if not intent.is_causally_bound():
+        raise ValidationError(ui(
+            "Worker handoff lacks a causal generation/actor/run baseline. "
+            "Keep the issue unchanged and rerun the OMAC controller after upgrading.",
+            "Worker handoff 缺少因果 generation/actor/run 基线。请保持 issue "
+            "不变，升级后重新运行 OMAC controller。"))
+    actor = store.current_submission_identity(item.id)
+    if actor is None:
+        raise ValidationError(ui(
+            "This rework submission must run inside the assigned Agent Run so "
+            "OMAC can verify MULTICA_AGENT_ID and MULTICA_TASK_ID.",
+            "本次返工提交必须在已分配的 Agent Run 内执行，以便 OMAC 校验 "
+            "MULTICA_AGENT_ID 与 MULTICA_TASK_ID。"))
+    errors = []
+    if actor.agent_name != intent.target_worker:
+        errors.append("submit actor is not the handoff target worker")
+    if actor.agent_id != intent.target_agent_id:
+        errors.append("submit agent id is not the handoff target agent")
+    if actor.run_id in set(intent.baseline_direct_run_ids):
+        errors.append("submit run predates the current handoff generation")
+    if intent.target_run_id and actor.run_id != intent.target_run_id:
+        errors.append("submit run does not match the handoff target run")
+    if not pr_head_sha:
+        errors.append("PR head SHA is unavailable")
+    if errors:
+        raise ValidationError(ui(
+            "Worker submission identity validation failed:\n  - "
+            + "\n  - ".join(errors),
+            "Worker 提交身份校验失败:\n  - " + "\n  - ".join(errors)))
+    return DeliveryIdentity(
+        schema=DELIVERY_IDENTITY_SCHEMA,
+        handoff_generation=intent.generation,
+        worker=intent.target_worker,
+        agent_id=actor.agent_id,
+        run_id=actor.run_id,
+        pr_url=pr_url,
+        pr_head_sha=pr_head_sha,
+        verification_sha256=hashlib.sha256(
+            verification_source.encode("utf-8")).hexdigest(),
+    )
 
 def _validate_review(
     kind: TaskKind, verdict: str, report_file: str, item: WorkItem
@@ -870,12 +929,26 @@ def submit(
 
     # ---------- develop × authoring ----------
     if kind == TaskKind.DEVELOP and phase == TaskPhase.AUTHORING:
-        verification = _validate_develop_authoring(store, pr_url, verification_file, item)
+        verification, readiness = _validate_develop_authoring(
+            store, pr_url, verification_file, item)
+        verification_source = _read_text(verification_file)
+        pr_head_sha = readiness.head_sha if readiness is not None else None
+        delivery_identity = _causal_delivery_identity(
+            store,
+            item,
+            pr_url=pr_url,
+            pr_head_sha=pr_head_sha,
+            verification_source=verification_source,
+        )
+        artifacts = {"pr_url": pr_url}
+        if pr_head_sha:
+            artifacts["head_sha"] = pr_head_sha
         store.update_work_item_metadata(
             issue_id,
-            artifacts={"pr_url": pr_url},
+            artifacts=artifacts,
             verification=verification,
-            verification_source=_read_text(verification_file),
+            verification_source=verification_source,
+            delivery_identity=delivery_identity,
         )
         store.update_status(issue_id, WorkItemStatus.DONE)
         return SubmitResult(kind, phase, "verification", WorkItemStatus.DONE)

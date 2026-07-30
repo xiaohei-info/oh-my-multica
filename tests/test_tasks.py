@@ -25,7 +25,8 @@ from omac.core.amendment import (
 from omac.core.manifest import Contract, Manifest, Node
 from omac.core.review_convergence import REVIEW_PROTOCOL_VERSION, open_blockers
 from omac.core.taskmeta import (
-    Bounces, TaskKind, TaskPhase, WorkerHandoffIntent,
+    DELIVERY_IDENTITY_SCHEMA, Bounces, DeliveryIdentity, TaskKind, TaskPhase,
+    WorkerHandoffIntent,
 )
 from omac.engines import create_engine
 from omac.engines.mock import MockStore
@@ -2237,6 +2238,20 @@ _AMENDMENT_ACTIVITY_FIELD_CASES = [
             target_review_bounce=1,
         ),
         "worker_handoff",
+    ),
+    (
+        "delivery_identity",
+        DeliveryIdentity(
+            schema=DELIVERY_IDENTITY_SCHEMA,
+            handoff_generation="generation-1",
+            worker="alice",
+            agent_id="agent-alice",
+            run_id="run-1",
+            pr_url="https://github.com/acme/repo/pull/1",
+            pr_head_sha="head-1",
+            verification_sha256="verification-1",
+        ),
+        "delivery_identity",
     ),
     ("decision_required", {"reason": "human"}, "decision_required"),
     ("bounces", Bounces(worker=1), "bounces.worker"),
