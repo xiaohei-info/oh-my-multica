@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
@@ -502,14 +503,35 @@ def _attachment_is_causal_for_run(observation, run, agent_id: str) -> bool:
     )
 
 
-def _observe_delivery_projection(store: WorkItemStore, item):
+def _attachment_time_matches_run(observation, run) -> bool:
+    """Run 暴露时间边界时，附件创建时间必须落在该执行窗口内。"""
+    if not run.created_at and not run.updated_at:
+        return True
+    created = _parse_platform_time(observation.created_at)
+    run_started = _parse_platform_time(run.created_at)
+    run_ended = _parse_platform_time(run.updated_at)
+    return bool(
+        created is not None
+        and run_started is not None
+        and run_ended is not None
+        and run_started <= created <= run_ended
+    )
+
+
+def _observe_delivery_projection(
+    store: WorkItemStore, item, *, allow_missing_submitted_head: bool = False,
+):
     artifacts = item.artifacts if isinstance(item.artifacts, dict) else {}
     verification_ref = (
         item.verification_ref if isinstance(item.verification_ref, dict) else {}
     )
     pr_url = str(artifacts.get("pr_url") or artifacts.get("pr") or "").strip()
     submitted_head = str(artifacts.get("head_sha") or "").strip()
-    if not pr_url or not submitted_head or not verification_ref:
+    if (
+        not pr_url
+        or (not submitted_head and not allow_missing_submitted_head)
+        or not verification_ref
+    ):
         raise PlatformError(f"Worker delivery is incomplete for work item {item.id}")
 
     attachment = store.observe_verification_attachment(item.id, verification_ref)
@@ -530,7 +552,7 @@ def _observe_delivery_projection(store: WorkItemStore, item):
             f"Remote PR HEAD observation failed for {pr_url}: {readiness.detail}")
     if not isinstance(readiness, PullRequestReadiness) or not readiness.head_sha:
         raise PlatformError(f"Remote PR HEAD is unavailable for {pr_url}")
-    if readiness.head_sha != submitted_head:
+    if submitted_head and readiness.head_sha != submitted_head:
         raise PlatformError(
             f"Remote PR HEAD changed after Worker submit for {pr_url}: "
             f"submitted={submitted_head}, current={readiness.head_sha}")
@@ -609,6 +631,184 @@ def _validate_controller_sealed_delivery(
         raise PlatformError(
             f"Verification attachment no longer matches sealed identity for "
             f"work item {item.id}")
+
+
+def _legacy_review_projection_is_clean(item) -> bool:
+    """Legacy authoring delivery 只能保留历史 ledger，不能夹带当前评审投影。"""
+    return not any((
+        item.review_verdict not in {None, ""},
+        item.review_comment not in {None, ""},
+        item.machine_feedback not in (None, {}),
+        item.machine_feedback_ref not in (None, {}),
+        item.review_report is not None,
+        item.review_report_ref not in (None, {}),
+        item.review_subject_digest not in {None, ""},
+        item.review_continuation not in (None, {}),
+        item.decision_required not in (None, {}),
+    ))
+
+
+def _is_legacy_completed_delivery(node, item) -> bool:
+    """仅识别 identity/handoff 协议上线前的已完成 Worker candidate。"""
+    has_candidate_projection = bool(
+        isinstance(item.artifacts, dict) and item.artifacts
+        or isinstance(item.verification, dict) and item.verification
+        or isinstance(item.verification_ref, dict) and item.verification_ref
+    )
+    return bool(
+        node.status in {"in_progress", "ci_check", "in_review"}
+        and item.status in {
+            WorkItemStatus.DONE,
+            WorkItemStatus.IN_PROGRESS,
+            WorkItemStatus.IN_REVIEW,
+        }
+        and item.phase == TaskPhase.AUTHORING
+        and item.worker_handoff is None
+        and _delivery_identity(item) is None
+        and item.bounces.review > 0
+        and item.platform_assignee_id is None
+        and not item.agent_run_finished_without_submit
+        and has_candidate_projection
+    )
+
+
+def _is_sealed_legacy_completed_delivery(item) -> bool:
+    identity = _delivery_identity(item)
+    return bool(
+        identity is not None
+        and identity.handoff_generation
+        and identity.handoff_generation.startswith("legacy-")
+        and item.worker_handoff is None
+        and item.status in {
+            WorkItemStatus.DONE,
+            WorkItemStatus.IN_PROGRESS,
+            WorkItemStatus.IN_REVIEW,
+        }
+        and item.phase == TaskPhase.AUTHORING
+        and item.platform_assignee_id is None
+    )
+
+
+def _legacy_delivery_generation(item, target_run, attachment, remote_head: str) -> str:
+    material = "\n".join((
+        str(item.id),
+        str(target_run.id),
+        str(attachment.attachment_id),
+        str(attachment.sha256),
+        remote_head,
+    ))
+    return f"legacy-{hashlib.sha256(material.encode('utf-8')).hexdigest()}"
+
+
+def _seal_legacy_completed_delivery(
+    store: WorkItemStore,
+    runtime: AgentRuntime,
+    node,
+    item,
+) -> Any:
+    """将升级前完成交付正规化为现有 Controller-sealed identity。
+
+    这里只封存平台权威因果事实，不执行 evidence/CI/Reviewer 决策。调用方
+    随后必须继续走正常 Worker DONE 结果收集路径。
+    """
+    if not runtime.capabilities.stable_direct_run_identity:
+        raise PlatformError(
+            "Legacy delivery upgrade requires stable direct Run identity support")
+    if not _legacy_review_projection_is_clean(item):
+        raise PlatformError(
+            f"Legacy delivery review projection is inconsistent for work item {item.id}")
+
+    artifacts = item.artifacts if isinstance(item.artifacts, dict) else {}
+    verification_ref = (
+        item.verification_ref if isinstance(item.verification_ref, dict) else {}
+    )
+    if not artifacts or not isinstance(item.verification, dict) or not verification_ref:
+        raise PlatformError(
+            f"Legacy Worker delivery is incomplete for work item {item.id}: "
+            "artifacts, verification, and verification_ref are required")
+
+    attachment, pr_url, remote_head = _observe_delivery_projection(
+        store, item, allow_missing_submitted_head=True)
+    worker_agent_id = store.resolve_agent_id(node.worker)
+    if (
+        attachment.uploader_type != "agent"
+        or attachment.uploader_id != worker_agent_id
+    ):
+        raise PlatformError(
+            f"Legacy verification attachment uploader does not match Worker for "
+            f"work item {item.id}")
+
+    runs = runtime.list_runs(item.id)
+    if any(run.active for run in runs):
+        raise PlatformError(
+            f"Legacy delivery has an active Agent Run for work item {item.id}")
+    worker_runs = [
+        run for run in runs
+        if run.kind == "direct"
+        and run.status == "completed"
+        and run.agent_id == worker_agent_id
+        and _attachment_is_causal_for_run(
+            attachment, run, worker_agent_id)
+        and _attachment_time_matches_run(attachment, run)
+    ]
+    if len(worker_runs) != 1:
+        raise PlatformError(
+            f"Legacy delivery requires one unique causal Worker Run for "
+            f"work item {item.id}; observed {len(worker_runs)}")
+    target_run = worker_runs[0]
+
+    sealed = DeliveryIdentity(
+        schema=DELIVERY_IDENTITY_SCHEMA,
+        handoff_generation=_legacy_delivery_generation(
+            item, target_run, attachment, remote_head),
+        worker=node.worker,
+        agent_id=worker_agent_id,
+        run_id=target_run.id,
+        pr_url=pr_url,
+        pr_head_sha=remote_head,
+        verification_sha256=attachment.sha256,
+        verification_attachment_id=attachment.attachment_id,
+        verification_comment_id=attachment.comment_id,
+        verification_uploader_id=attachment.uploader_id,
+        verification_uploader_type=attachment.uploader_type,
+        verification_task_id=attachment.task_id,
+        verification_created_at=attachment.created_at,
+    )
+    normalized_artifacts = dict(artifacts)
+    normalized_artifacts["head_sha"] = remote_head
+    store.update_work_item_metadata(
+        item.id,
+        artifacts=normalized_artifacts,
+        delivery_identity=sealed,
+    )
+    persisted = store.get_work_item(item.id)
+    identity = _delivery_identity(persisted)
+    if identity is None or identity.as_dict() != sealed.as_dict():
+        raise PlatformError(
+            f"Legacy delivery identity did not persist for work item {item.id}")
+    _validate_controller_sealed_delivery(store, persisted)
+    if persisted.status != WorkItemStatus.DONE:
+        store.update_status(item.id, WorkItemStatus.DONE)
+        persisted = store.get_work_item(item.id)
+    return persisted
+
+
+def _normalize_legacy_completed_delivery(
+    store: WorkItemStore,
+    runtime: AgentRuntime,
+    node,
+    item,
+) -> Any:
+    """幂等升级 legacy delivery；新协议数据不进入此路径。"""
+    if _is_sealed_legacy_completed_delivery(item):
+        _validate_controller_sealed_delivery(store, item)
+        if item.status != WorkItemStatus.DONE:
+            store.update_status(item.id, WorkItemStatus.DONE)
+            return store.get_work_item(item.id)
+        return item
+    if not _is_legacy_completed_delivery(node, item):
+        return item
+    return _seal_legacy_completed_delivery(store, runtime, node, item)
 
 
 def _observe_worker_handoff(
@@ -953,6 +1153,17 @@ def collect_results(
             item = store.get_work_item(node.work_item_id)
         except Exception:
             continue
+
+        legacy_delivery = (
+            _is_legacy_completed_delivery(node, item)
+            or _is_sealed_legacy_completed_delivery(item)
+        )
+        if legacy_delivery:
+            item = _normalize_legacy_completed_delivery(
+                store, runtime, node, item)
+            # Legacy manifest 可能仍停在 review/ci_check。封存只补因果事实；
+            # 状态统一回到现有 Worker DONE 结果收集入口，再过 evidence/CI。
+            set_node(manifest, key, status="in_progress")
 
         if item.worker_handoff is not None:
             if not item.worker_handoff.is_causally_bound():
