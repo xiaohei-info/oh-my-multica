@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import copy
+from dataclasses import replace
 import hashlib
 import json
 from pathlib import Path
+import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -28,6 +31,7 @@ from omac.engines.models import (
     PullRequestReadiness,
     PullRequestState,
     WorkItem,
+    WorkItemControlProjection,
     WorkItemPayload,
     WorkItemStatus,
 )
@@ -96,6 +100,107 @@ class _RemoteFixture:
         self.pr_observations += 1
         self.calls.append(("pr", pr_url))
         return PullRequestObservation(PullRequestState.UNKNOWN)
+
+
+class _ParallelHydrationStore:
+    """Read-only Store double with observable work-item hydration concurrency."""
+
+    def __init__(
+        self,
+        item_ids: list[str],
+        *,
+        delays: dict[str, float] | None = None,
+        fail_item_id: str | None = None,
+        shared_attachment_id: str | None = None,
+        safe_parallelism: int | None = None,
+    ):
+        self.delays = delays or {}
+        self.fail_item_id = fail_item_id
+        self.safe_parallelism = safe_parallelism
+        self.projections: dict[str, WorkItemControlProjection] = {}
+        self.hydration_plans: dict[str, frozenset[WorkItemPayload]] = {}
+        self.hydration_finished: list[str] = []
+        self.pr_observations = 0
+        self.active_hydrations = 0
+        self.max_active_hydrations = 0
+        self._lock = threading.Lock()
+        for item_id in item_ids:
+            attachment_id = shared_attachment_id or f"verification-{item_id}"
+            item = WorkItem(
+                id=item_id,
+                workspace_id="ws",
+                title=item_id,
+                description=item_id,
+                status=WorkItemStatus.DONE,
+                dag_key=item_id,
+                worker="worker",
+                reviewer="reviewer",
+                artifacts={
+                    "pr_url": f"https://github.com/acme/repo/pull/{item_id}",
+                    "head_sha": f"head-{item_id}",
+                },
+                verification_ref={"attachment_id": attachment_id},
+                contract_ref={"attachment_id": f"contract-{item_id}"},
+                phase=TaskPhase.AUTHORING,
+            )
+            self.projections[item_id] = WorkItemControlProjection(
+                item,
+                frozenset({
+                    WorkItemPayload.VERIFICATION,
+                    WorkItemPayload.CONTRACT,
+                }),
+            )
+
+    def evidence_hydration_parallelism(self, requested: int) -> int:
+        return requested if self.safe_parallelism is None else self.safe_parallelism
+
+    def observe_work_item_control(self, item_id: str) -> WorkItemControlProjection:
+        return self.projections[item_id]
+
+    def hydrate_work_item_evidence(
+        self,
+        projection: WorkItemControlProjection,
+        plan: frozenset[WorkItemPayload],
+    ) -> WorkItem:
+        item_id = projection.work_item.id
+        with self._lock:
+            self.active_hydrations += 1
+            self.max_active_hydrations = max(
+                self.max_active_hydrations, self.active_hydrations)
+            self.hydration_plans[item_id] = plan
+        try:
+            time.sleep(self.delays.get(item_id, 0.0))
+            if item_id == self.fail_item_id:
+                raise PlatformError(f"hydrate failed: {item_id}")
+            return replace(
+                projection.work_item,
+                verification={"item_id": item_id},
+                contract={"item_id": item_id},
+            )
+        finally:
+            with self._lock:
+                self.active_hydrations -= 1
+                self.hydration_finished.append(item_id)
+
+    def observe_pull_request(self, _pr_url: str) -> PullRequestObservation:
+        self.pr_observations += 1
+        return PullRequestObservation(PullRequestState.UNKNOWN)
+
+
+def _parallel_hydration_manifest(item_ids: list[str]) -> Manifest:
+    return Manifest(
+        meta={"name": "parallel-hydration"},
+        nodes={
+            item_id: Node(
+                id=item_id,
+                worker="worker",
+                reviewer="reviewer",
+                work_item_id=item_id,
+                status="in_progress",
+            )
+            for item_id in item_ids
+        },
+    )
 
 
 def _store(remote: _RemoteFixture) -> MulticaStore:
@@ -311,6 +416,128 @@ def _large_dag_fixture():
             ),
         )
     return issues, attachments, nodes
+
+
+def test_reconcile_hydrates_eight_work_items_with_bounded_parallelism():
+    item_ids = [f"item-{index}" for index in range(8)]
+    store = _ParallelHydrationStore(
+        item_ids,
+        delays={item_id: 0.12 for item_id in item_ids},
+    )
+    manifest = _parallel_hydration_manifest(item_ids)
+
+    started = time.monotonic()
+    observations, _ = loop._observe_reconcile_inputs(
+        store, manifest, max_parallel=4)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 0.55
+    assert store.max_active_hydrations == 4
+    assert list(observations) == item_ids
+    assert {
+        key: observation.work_item.verification["item_id"]
+        for key, observation in observations.items()
+    } == {item_id: item_id for item_id in item_ids}
+    assert all(
+        plan == frozenset({
+            WorkItemPayload.VERIFICATION,
+            WorkItemPayload.CONTRACT,
+        })
+        for plan in store.hydration_plans.values()
+    )
+
+
+def test_reconcile_hydration_completion_order_does_not_change_manifest_order():
+    item_ids = [f"item-{index}" for index in range(4)]
+    store = _ParallelHydrationStore(
+        item_ids,
+        delays={
+            "item-0": 0.12,
+            "item-1": 0.01,
+            "item-2": 0.08,
+            "item-3": 0.02,
+        },
+    )
+
+    observations, _ = loop._observe_reconcile_inputs(
+        store, _parallel_hydration_manifest(item_ids), max_parallel=4)
+
+    assert store.hydration_finished != item_ids
+    assert list(observations) == item_ids
+
+
+def test_reconcile_respects_store_serial_hydration_capability():
+    item_ids = [f"item-{index}" for index in range(4)]
+    store = _ParallelHydrationStore(
+        item_ids,
+        delays={item_id: 0.02 for item_id in item_ids},
+        safe_parallelism=1,
+    )
+
+    loop._observe_reconcile_inputs(
+        store, _parallel_hydration_manifest(item_ids), max_parallel=8)
+
+    assert store.max_active_hydrations == 1
+
+
+def test_reconcile_hydration_failure_precedes_pr_reads_and_candidate_writes(
+    tmp_path, monkeypatch,
+):
+    item_ids = [f"item-{index}" for index in range(8)]
+    store = _ParallelHydrationStore(
+        item_ids,
+        delays={item_id: 0.02 for item_id in item_ids},
+        fail_item_id="item-3",
+    )
+    manifest, path = _manifest_path(
+        tmp_path,
+        _parallel_hydration_manifest(item_ids).nodes,
+    )
+    monkeypatch.setattr(
+        loop, "_requires_pull_request_observation", lambda *_args: True)
+    candidate_calls = []
+    monkeypatch.setattr(
+        loop,
+        "_reconcile_candidate",
+        lambda *_args: candidate_calls.append(True),
+    )
+
+    with pytest.raises(PlatformError, match="hydrate failed: item-3"):
+        loop.reconcile_with_observations(
+            store, manifest, path, max_parallel=4)
+
+    assert store.pr_observations == 0
+    assert candidate_calls == []
+    assert load_manifest(path).nodes["item-0"].status == "in_progress"
+
+
+@pytest.mark.parametrize("item_ids", [[], ["item-0"]])
+def test_reconcile_hydration_handles_zero_or_one_work_item(item_ids):
+    store = _ParallelHydrationStore(item_ids)
+
+    observations, pull_requests = loop._observe_reconcile_inputs(
+        store, _parallel_hydration_manifest(item_ids), max_parallel=8)
+
+    assert list(observations) == item_ids
+    assert pull_requests == {}
+    assert store.max_active_hydrations == (1 if item_ids else 0)
+
+
+def test_reconcile_does_not_share_duplicate_attachment_refs_across_work_items():
+    item_ids = ["item-a", "item-b"]
+    store = _ParallelHydrationStore(
+        item_ids,
+        shared_attachment_id="shared-verification",
+    )
+
+    observations, _ = loop._observe_reconcile_inputs(
+        store, _parallel_hydration_manifest(item_ids), max_parallel=2)
+
+    assert set(store.hydration_plans) == set(item_ids)
+    assert observations["item-a"].work_item.verification == {
+        "item_id": "item-a"}
+    assert observations["item-b"].work_item.verification == {
+        "item_id": "item-b"}
 
 
 def test_146_node_reconcile_phase_reads_every_issue_and_hydrates_only_needed_evidence(
