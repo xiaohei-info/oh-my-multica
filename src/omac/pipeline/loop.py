@@ -1107,6 +1107,12 @@ def collect_results(
     in_review 节点:
       reviewer pass → merge(if configured) → done;reject → blocked(P4 前先 blocked)
     """
+    # Complete every fresh running-node read before the first lifecycle effect.
+    running_items = {
+        key: store.get_work_item(node.work_item_id)
+        for key, node in manifest.nodes.items()
+        if node.status in RUNNING_STATUSES and node.work_item_id
+    }
     failures: Dict[str, str] = {}
     pending_review: List[Tuple[str, str, str]] = []  # (key, item_id, reviewer)
 
@@ -1120,10 +1126,7 @@ def collect_results(
         if node.status not in RUNNING_STATUSES or not node.work_item_id:
             continue
 
-        try:
-            item = store.get_work_item(node.work_item_id)
-        except Exception:
-            continue
+        item = running_items[key]
 
         if _legacy_delivery_requires_retry(manifest, key, node, item):
             if any(run.kind == "direct" and run.active
