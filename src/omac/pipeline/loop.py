@@ -36,6 +36,7 @@ from ..pipeline.delivery import (
 )
 from ..engines.models import (
     PullRequestReadiness, PullRequestReadinessFailure, PullRequestState,
+    WorkItemControlProjection, WorkItemHydrationPlan, WorkItemPayload,
     WorkItemStatus,
 )
 from ..engines.runtime import AgentRuntime
@@ -70,6 +71,20 @@ _PLATFORM_TO_MANIFEST: Dict[str, str] = {
 _MISSING_WORK_ITEM = object()
 _HANDOFF_OBSERVATION_ATTEMPTS = 3
 _HANDOFF_OBSERVATION_INTERVAL = 0.5
+_WORKER_DELIVERY_PAYLOADS = frozenset({
+    WorkItemPayload.VERIFICATION,
+    WorkItemPayload.CONTRACT,
+})
+_REVIEW_CONFIRMATION_PAYLOADS = frozenset({
+    WorkItemPayload.DELIVERABLE,
+    WorkItemPayload.PROJECT_RULES,
+    WorkItemPayload.VERIFICATION,
+    WorkItemPayload.REVIEW_REPORT,
+    WorkItemPayload.REVIEW_LEDGER,
+    WorkItemPayload.REVIEW_OBLIGATIONS,
+    WorkItemPayload.MACHINE_FEEDBACK,
+    WorkItemPayload.CONTRACT,
+})
 
 
 def _project_root_from_manifest_path(manifest_path: str) -> str:
@@ -117,11 +132,25 @@ def _build_snapshot(manifest: Manifest) -> dict:
 
 def _has_unreviewed_worker_delivery(node, item) -> bool:
     """识别 worker 已交付、但 manifest 仍残留 terminal 状态的节点。"""
+    phase = getattr(item, "phase", TaskPhase.AUTHORING)
+    review_subject_changed = bool(
+        phase == TaskPhase.REVIEW
+        and item.review_subject_digest
+        and item.review_subject_digest != _current_review_subject(item)
+    )
+    delivery_identity_changed = bool(
+        phase == TaskPhase.REVIEW
+        and item.delivery_identity is not None
+        and not _control_matches_delivery_identity(item)
+    )
     return bool(
         node.reviewer
-        and not node.merged
         and item.status == WorkItemStatus.DONE
-        and item.phase == TaskPhase.AUTHORING
+        and (
+            phase == TaskPhase.AUTHORING
+            or review_subject_changed
+            or delivery_identity_changed
+        )
         and item.artifacts
         and item.verification
         and not _current_delivery_passed_review(item)
@@ -227,21 +256,146 @@ def _requires_pull_request_observation(node, item) -> bool:
     )
 
 
+def _control_matches_delivery_identity(item) -> bool:
+    identity = parse_delivery_identity(getattr(item, "delivery_identity", None))
+    if identity is None or not identity.is_complete():
+        return False
+    artifacts = item.artifacts if isinstance(item.artifacts, dict) else {}
+    verification_ref = (
+        item.verification_ref if isinstance(item.verification_ref, dict) else {}
+    )
+    declared_sha = str(verification_ref.get("sha256") or "").strip()
+    return bool(
+        identity.pr_url == (artifacts.get("pr_url") or artifacts.get("pr"))
+        and identity.pr_head_sha == artifacts.get("head_sha")
+        and identity.verification_attachment_id
+        == verification_ref.get("attachment_id")
+        and identity.verification_comment_id == verification_ref.get("comment_id")
+        and bool(declared_sha)
+        and identity.verification_sha256 == declared_sha
+    )
+
+
+def _confirmed_done_control_is_stable(
+    node, projection: WorkItemControlProjection,
+) -> bool:
+    """Recognize a closed delivery without trusting manifest status alone."""
+    item = projection.work_item
+    if (
+        node.status != "done"
+        or not _has_confirmed_merge(node)
+        or node.merge_request_state is not None
+        or item.worker_handoff is not None
+        or item.review_verdict == "reject"
+        or item.unknown_persisted_fields
+    ):
+        return False
+    return bool(
+        item.delivery_identity is not None
+        and _control_matches_delivery_identity(item)
+    )
+
+
+def _build_work_item_hydration_plan(
+    node, projection: WorkItemControlProjection,
+) -> WorkItemHydrationPlan:
+    """Plan only evidence required by the lifecycle decision for one node."""
+    if _confirmed_done_control_is_stable(node, projection):
+        return frozenset()
+
+    item = projection.work_item
+    payloads: Set[WorkItemPayload] = set()
+    has_delivery = bool(
+        isinstance(item.artifacts, dict) and item.artifacts
+        and projection.has_payload(WorkItemPayload.VERIFICATION)
+    )
+    authoring_delivery = bool(
+        item.status == WorkItemStatus.DONE
+        and item.phase == TaskPhase.AUTHORING
+        and has_delivery
+    )
+    manifest_allows_lifecycle_progress = (
+        node.status not in FAILED_STATUSES and node.status != "abandoned"
+    )
+    review_or_confirmation = bool(
+        node.status in {"in_review", "merging"}
+        or (
+            manifest_allows_lifecycle_progress
+            and item.phase == TaskPhase.REVIEW
+            and item.status in {
+                WorkItemStatus.IN_REVIEW,
+                WorkItemStatus.DONE,
+                WorkItemStatus.FAILED,
+                WorkItemStatus.BLOCKED,
+            }
+        )
+        or (
+            manifest_allows_lifecycle_progress
+            and item.review_verdict == "reject"
+        )
+        or (
+            node.status == "done"
+            and getattr(item, "kind", TaskKind.DEVELOP) == TaskKind.DEVELOP
+            and not _has_confirmed_merge(node)
+        )
+    )
+    delivery_drift = bool(
+        item.delivery_identity is not None
+        and not _control_matches_delivery_identity(item)
+    )
+
+    if item.worker_handoff is not None or authoring_delivery:
+        payloads.update(_WORKER_DELIVERY_PAYLOADS)
+    if review_or_confirmation:
+        payloads.update(_REVIEW_CONFIRMATION_PAYLOADS)
+    if delivery_drift:
+        payloads.update(
+            _REVIEW_CONFIRMATION_PAYLOADS
+            if item.phase == TaskPhase.REVIEW
+            else _WORKER_DELIVERY_PAYLOADS
+        )
+    return frozenset(payloads)
+
+
 def _observe_reconcile_inputs(
     store: WorkItemStore, manifest: Manifest,
 ) -> tuple[Dict[str, Any], Dict[str, Any]]:
-    """先完整读取一轮所需事实；此阶段禁止任何 manifest/平台写入。"""
+    """Observe controls for all nodes, plan hydration, then load required evidence."""
+    controls: Dict[str, Any] = {}
     items: Dict[str, Any] = {}
     pull_requests: Dict[str, Any] = {}
+
+    # Phase 1: every Issue control envelope is read before any attachment body.
     for key, node in manifest.nodes.items():
         if not node.work_item_id:
             continue
         try:
-            item = store.get_work_item(node.work_item_id)
+            projection = store.observe_work_item_control(node.work_item_id)
         except WorkItemNotFoundError:
+            controls[key] = _MISSING_WORK_ITEM
+            continue
+        controls[key] = projection
+
+    # Phase 2: the complete control snapshot produces an explicit hydration plan.
+    for key, node in manifest.nodes.items():
+        projection = controls.get(key)
+        if projection is None:
+            continue
+        if projection is _MISSING_WORK_ITEM:
             items[key] = _MISSING_WORK_ITEM
             continue
-        items[key] = item
+        plan = _build_work_item_hydration_plan(node, projection)
+        if plan:
+            items[key] = store.hydrate_work_item_evidence(projection, plan)
+        else:
+            items[key] = projection.work_item
+
+    # Phase 3: remote PR facts are read only after every required payload read
+    # succeeded, preserving the existing all-or-nothing reconcile observation.
+    for key, node in manifest.nodes.items():
+        item = items.get(key)
+        if item is None or item is _MISSING_WORK_ITEM:
+            continue
         if not _requires_pull_request_observation(node, item):
             continue
         pull_requests[key] = store.observe_pull_request(
@@ -953,6 +1107,12 @@ def collect_results(
     in_review 节点:
       reviewer pass → merge(if configured) → done;reject → blocked(P4 前先 blocked)
     """
+    # Complete every fresh running-node read before the first lifecycle effect.
+    running_items = {
+        key: store.get_work_item(node.work_item_id)
+        for key, node in manifest.nodes.items()
+        if node.status in RUNNING_STATUSES and node.work_item_id
+    }
     failures: Dict[str, str] = {}
     pending_review: List[Tuple[str, str, str]] = []  # (key, item_id, reviewer)
 
@@ -966,10 +1126,7 @@ def collect_results(
         if node.status not in RUNNING_STATUSES or not node.work_item_id:
             continue
 
-        try:
-            item = store.get_work_item(node.work_item_id)
-        except Exception:
-            continue
+        item = running_items[key]
 
         if _legacy_delivery_requires_retry(manifest, key, node, item):
             if any(run.kind == "direct" and run.active
