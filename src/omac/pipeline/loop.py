@@ -466,15 +466,19 @@ def _dispatch_worker_handoff(
         if review_bounce is None or gate is None:
             raise PlatformError(
                 f"Worker handoff intent is missing for work item {item_id}")
-        source_round = max(1, current.bounces.review + 1)
-        source_subject = current.review_subject_digest
-        if (
-            not source_subject
-            or source_subject != _review_subject_for_round(
-                manifest, key, current, source_round)
-        ):
-            raise PlatformError(
-                f"Worker handoff source is stale for work item {item_id}")
+        if gate == "explicit-dispatch":
+            source_round = max(1, current.bounces.review)
+            source_subject = stage_recovery_subject(node, current)
+        else:
+            source_round = max(1, current.bounces.review + 1)
+            source_subject = current.review_subject_digest
+            if (
+                not source_subject
+                or source_subject != _review_subject_for_round(
+                    manifest, key, current, source_round)
+            ):
+                raise PlatformError(
+                    f"Worker handoff source is stale for work item {item_id}")
         if not runtime.capabilities.stable_direct_run_identity:
             raise PlatformError(
                 "Worker handoff requires stable direct Run identity support")
@@ -1786,9 +1790,9 @@ def _dispatch(
 ) -> List[str]:
     """派发就绪节点(受 max_parallel - 进行中数约束)。
 
-    无 work_item_id → store.create_work_item + set_node_contract;
-    然后 assign worker + update_status(IN_PROGRESS) + runtime.wake;
-    work_item_id 回填 manifest。
+    无 work_item_id → 保留既有 create→assign→status→wake 首次派发；
+    已有 work_item_id → 先持久化/复用 WorkerHandoffIntent，再由统一的
+    handoff 路径补齐 status/assign/wake。work_item_id 回填 manifest。
     """
     workspace_id = store.config.workspace_id
     running_count = sum(
@@ -1842,7 +1846,29 @@ def _dispatch(
             metadata["blocked_by"] = list(node.blocked_by)
         store.update_work_item_metadata(item.id, **metadata)
 
-        # fire-and-forget: assign worker + 标 in_progress + wake
+        if not is_new_item:
+            handoff = _dispatch_worker_handoff(
+                store,
+                runtime,
+                manifest,
+                key,
+                review_bounce=item.bounces.review,
+                gate="explicit-dispatch",
+            )
+            set_node(manifest, key, status="in_progress")
+            log.info(
+                logsetup.EVT_DISPATCH,
+                kind=_DAG_KIND,
+                node=key,
+                id=node.work_item_id,
+                worker=worker,
+                handoff=handoff,
+            )
+            dispatched.append(key)
+            continue
+
+        # 新建 issue 的首次派发保持原有 create→assign→status→wake 语义；本 PR
+        # 不扩大首次 create issue 的幂等边界。
         store.assign_work_item(node.work_item_id, worker, "worker")
         store.update_status(node.work_item_id, WorkItemStatus.IN_PROGRESS)
         set_node(manifest, key, status="in_progress")

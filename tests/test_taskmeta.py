@@ -133,6 +133,18 @@ def _worker_handoff_intent():
     )
 
 
+def test_worker_handoff_allows_zero_review_bounce_for_explicit_dispatch():
+    intent = _worker_handoff_intent()
+    intent = WorkerHandoffIntent(**{
+        **intent.as_dict(),
+        "gate": "explicit-dispatch",
+        "target_review_bounce": 0,
+        "target_worker_bounce": 0,
+    })
+
+    assert intent.is_causally_bound()
+
+
 def _delivery_identity():
     return DeliveryIdentity(
         schema=DELIVERY_IDENTITY_SCHEMA,
