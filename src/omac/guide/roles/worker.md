@@ -54,7 +54,13 @@
 10. 运行全部 `verification_commands`、integration gates、相关全量测试和 coverage 检查；记录真实命令、退出码和摘要。每条 acceptance 必须通过成功命令下的 `business_tests` 指向具体测试标识。
 11. 创建或更新 PR，base 必须是 `contract.pr_base`。GitHub PR 必须 ready for review，不能是 draft。
 12. 编写 verification 文件，覆盖 commands、integration gates、coverage、`pr_base`、`business_tests`，以及需要环境准备时的 `env_setup`。
-13. 使用 `work show` 返回的 `submit` 提交原 PR URL 和 verification 文件。
+13. 使用 `work show` 返回的 `submit` 提交原 PR URL 和 verification 文件。`omac work submit`
+    可能长时间运行；若工具返回 `running/session`、没有最终 tool_result、输出不完整或结果未知，
+    必须等待或轮询同一次执行，直到拿到最终 tool_result。
+14. 只有最终 tool_result 明确给出退出码 0，且 JSON 为 `ok=true`、`terminal=true`、
+    `next_action=stop`，才可宣称提交成功。缺少任一事实时不得宣称提交成功或结束 Run；若终态是
+    validation error，必须修复后重新提交。确认成功后立即停止，不得再添加 issue comment，
+    也不得修改 status、assignee、rerun 或 cancel 状态。
 
 ## 完成条件
 
@@ -107,4 +113,6 @@
 `omac work submit <issue-id> --pr-url <PR> --verification-file <ev.yaml>`
 
 `work submit` 会检查 GitHub PR 的 draft 状态和 verification schema；draft PR 会被拒绝，
-不会进入 CI、review 或 merge。提交后由 OMAC loop 推进后续状态。
+不会进入 CI、review 或 merge。命令可能较慢；`running/session` 或缺少最终 tool_result 都不代表成功，
+必须等待或轮询到明确的退出码 0 与 `ok=true`、`terminal=true`、`next_action=stop`。
+提交后由 OMAC loop 推进后续状态。

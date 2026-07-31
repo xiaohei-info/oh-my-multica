@@ -212,6 +212,40 @@ def test_worker_role_has_tdd_and_evidence() -> None:
         assert item in content, f"worker missing execution anchor: {item}"
 
 
+def test_worker_role_requires_confirmed_terminal_submit_result() -> None:
+    """中英文 Worker guide 都必须阻止 Agent 猜测 submit 成功。"""
+    chinese = load_role_topic("worker")
+    english = load_role_topic("worker", language="en")
+
+    for item in (
+        "可能长时间运行",
+        "running/session",
+        "最终 tool_result",
+        "退出码 0",
+        'ok=true',
+        'terminal=true',
+        'next_action=stop',
+        "不得宣称提交成功",
+        "validation error",
+        "修复后重新提交",
+    ):
+        assert item in chinese, f"worker missing submit confirmation rule: {item}"
+
+    for item in (
+        "may run for a long time",
+        "running/session",
+        "final tool_result",
+        "exit code 0",
+        'ok=true',
+        'terminal=true',
+        'next_action=stop',
+        "must not claim submission succeeded",
+        "validation error",
+        "fix it and submit again",
+    ):
+        assert item in english, f"english worker missing submit confirmation rule: {item}"
+
+
 def test_reviewer_role_has_verdict_and_independent_checks() -> None:
     content = load_role_topic("reviewer")
     for item in [
