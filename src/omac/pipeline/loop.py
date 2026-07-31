@@ -1,8 +1,10 @@
 """pipeline/loop — 确定性单轮 tick(结果回收 → 就绪计算 → 派发)。
 
 设计文档 §7.3:sync → decide → dispatch,状态全在 manifest + 平台,幂等。
-硬性约束(§2.4):无自动重试——blocked 节点在后续 tick 保持 blocked,
-重试只经 `omac node retry` 显式决策。abandoned 上游视同依赖已满足(P1.4)。
+硬性约束(§2.4):业务失败无自动重试——blocked 节点在后续 tick 保持 blocked,
+重试只经 `omac node retry` 显式决策。明确 allowlist 的执行基础设施瞬时失败
+复用同一 Run 派发路径做一次有界恢复,不占业务 bounce。abandoned 上游视同
+依赖已满足(P1.4)。
 """
 from __future__ import annotations
 
@@ -10,6 +12,7 @@ import copy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
+import re
 import secrets
 import time
 from typing import Any, Dict, List, Set, Tuple
@@ -37,6 +40,7 @@ from ..pipeline.delivery import (
     merge_bounce_attempt, merge_request_state_is_valid, run_merge_delivery,
 )
 from ..engines.models import (
+    AgentRunObservation,
     PullRequestReadiness, PullRequestReadinessFailure, PullRequestState,
     WorkItemControlProjection, WorkItemHydrationPlan, WorkItemPayload,
     WorkItemStatus,
@@ -74,6 +78,8 @@ _MISSING_WORK_ITEM = object()
 _HANDOFF_OBSERVATION_ATTEMPTS = 3
 _HANDOFF_OBSERVATION_INTERVAL = 0.5
 _HANDOFF_TERMINAL_GRACE_SECONDS = 30
+_TRANSIENT_RUNTIME_MAX_RUNS = 2
+_TRANSIENT_RUNTIME_RETRY_BACKOFF_SECONDS = 1.0
 _WORKER_DELIVERY_PAYLOADS = frozenset({
     WorkItemPayload.VERIFICATION,
     WorkItemPayload.CONTRACT,
@@ -100,10 +106,78 @@ class _WorkerHandoffResult:
     delivery_identity: DeliveryIdentity | None = None
 
 
+@dataclass(frozen=True)
+class _TransientRunFailure:
+    run: AgentRunObservation
+    consecutive_runs: int
+
+    @property
+    def exhausted(self) -> bool:
+        return self.consecutive_runs >= _TRANSIENT_RUNTIME_MAX_RUNS
+
+
+def _is_retryable_transient_run_failure(run: AgentRunObservation) -> bool:
+    """Classify only explicit provider/transport failures as retryable."""
+    if run.status != "failed" or not run.error:
+        return False
+    error = run.error.lower()
+    return bool(
+        "model is at capacity" in error
+        or "selected model is at capacity" in error
+        or "overloaded" in error
+        or re.search(r"\b(?:429|502|503|504)\b", error)
+        or "connection timeout" in error
+        or "connect timeout" in error
+        or "read timeout" in error
+    )
+
+
+def _ordered_direct_runs(
+    runs: List[AgentRunObservation],
+) -> List[AgentRunObservation]:
+    indexed = [
+        (index, run) for index, run in enumerate(runs)
+        if run.kind == "direct"
+    ]
+    indexed.sort(
+        key=lambda pair: (
+            pair[1].created_at or pair[1].updated_at or "", -pair[0]
+        ),
+        reverse=True,
+    )
+    return [run for _index, run in indexed]
+
+
+def _latest_transient_run_failure(
+    runtime: AgentRuntime,
+    item_id: str,
+    agent_id: str,
+    *,
+    target_run_id: str | None = None,
+) -> _TransientRunFailure | None:
+    """Return the latest same-agent transient failure and its durable streak."""
+    direct_runs = _ordered_direct_runs(runtime.list_runs(item_id))
+    if not direct_runs:
+        return None
+    latest = direct_runs[0]
+    if target_run_id is not None and latest.id != target_run_id:
+        return None
+    if latest.agent_id != agent_id or not _is_retryable_transient_run_failure(latest):
+        return None
+    consecutive = 0
+    for run in direct_runs:
+        if run.agent_id != agent_id or not _is_retryable_transient_run_failure(run):
+            break
+        consecutive += 1
+    return _TransientRunFailure(latest, consecutive)
+
+
 def _resolved_worker_handoff_dispatch(
     result: _WorkerHandoffResult,
 ) -> _WorkerHandoffResult | None:
-    if result.state in {"complete", "finished-without-submit"}:
+    if result.state in {
+        "complete", "finished-without-submit", "transient-failure",
+    }:
         return result
     if result.state in {"waiting", "pending-submit"}:
         return replace(result, state="waiting")
@@ -477,6 +551,44 @@ def _resume_reviewer_run(store, runtime, node) -> bool:
     return True
 
 
+def _block_transient_runtime_retry_exhausted(
+    store: WorkItemStore,
+    manifest: Manifest,
+    manifest_path: str,
+    key: str,
+    item,
+    role: str,
+    failure: _TransientRunFailure,
+) -> str:
+    """Stop in the current business stage after bounded infrastructure retry."""
+    retry = f"omac node retry {manifest_path} {key}"
+    reason = ui(
+        f"{role.title()} infrastructure retry limit "
+        f"({_TRANSIENT_RUNTIME_MAX_RUNS} Runs) exhausted for Run "
+        f"{failure.run.id}. "
+        f"Run `{retry}` after the provider recovers.",
+        f"{role} 执行基础设施瞬时失败已达到上限"
+        f"({_TRANSIENT_RUNTIME_MAX_RUNS} 个 Run)，最新 Run 为 {failure.run.id}。"
+        f"请在 provider 恢复后执行 `{retry}`。",
+    )
+    decision = {
+        "schema": DECISION_REQUIRED_SCHEMA,
+        "reason_code": "transient-runtime-retry-exhausted",
+        "kind": TaskKind.DEVELOP.value,
+        "phase": item.phase.value,
+        "gate": role,
+        "resume_issue_id": item.id,
+        "node_id": key,
+        "run_id": failure.run.id,
+        "failure_class": "transient-provider-or-transport",
+        "next_action": retry,
+    }
+    store.update_work_item_metadata(item.id, decision_required=decision)
+    store.update_status(item.id, WorkItemStatus.BLOCKED)
+    set_node(manifest, key, status="blocked")
+    return reason
+
+
 def _dispatch_reviewer_for_current_subject(
     store: WorkItemStore,
     runtime: AgentRuntime,
@@ -715,6 +827,8 @@ def _next_worker_handoff_attempt(
     store: WorkItemStore,
     runtime: AgentRuntime,
     item,
+    *,
+    consume_business_bounce: bool = True,
 ) -> WorkerHandoffIntent:
     """Create one persisted retry generation after a terminal no-submit Run."""
     intent = item.worker_handoff
@@ -745,7 +859,10 @@ def _next_worker_handoff_attempt(
             str(verification_ref.get("attachment_id") or "") or None
         ),
         target_run_id=None,
-        target_worker_bounce=item.bounces.worker + 1,
+        target_worker_bounce=(
+            item.bounces.worker + 1
+            if consume_business_bounce else item.bounces.worker
+        ),
         terminal_observed_at=None,
     )
 
@@ -1103,6 +1220,9 @@ def _observe_worker_handoff(
             return _WorkerHandoffResult("waiting", intent, projection)
         if not target_run.terminal:
             return _WorkerHandoffResult("missing", intent, projection)
+        if _is_retryable_transient_run_failure(target_run):
+            return _WorkerHandoffResult(
+                "transient-failure", intent, projection)
         if not _worker_handoff_has_new_delivery(current, intent):
             state, intent = _observe_terminal_without_submit(
                 store, item_id, intent)
@@ -1506,7 +1626,41 @@ def collect_results(
                     "delivery identity support; refusing to infer completion")
             handoff = _dispatch_worker_handoff(
                 store, runtime, manifest, key, projection=projection)
-            if handoff.state == "finished-without-submit":
+            if handoff.state == "transient-failure":
+                failure = _latest_transient_run_failure(
+                    runtime,
+                    node.work_item_id,
+                    handoff.intent.target_agent_id,
+                    target_run_id=handoff.intent.target_run_id,
+                )
+                if failure is None:
+                    raise PlatformError(
+                        f"Transient Worker Run facts changed for work item "
+                        f"{node.work_item_id}")
+                if failure.exhausted:
+                    failures[key] = _block_transient_runtime_retry_exhausted(
+                        store, manifest, manifest_path, key, item,
+                        "worker", failure)
+                    continue
+                time.sleep(
+                    _TRANSIENT_RUNTIME_RETRY_BACKOFF_SECONDS
+                    * failure.consecutive_runs)
+                retry_intent = _next_worker_handoff_attempt(
+                    store, runtime, item, consume_business_bounce=False)
+                store.update_work_item_metadata(
+                    node.work_item_id, worker_handoff=retry_intent)
+                handoff = _dispatch_worker_handoff(
+                    store, runtime, manifest, key)
+                if handoff.state == "complete":
+                    item, worker_gate_errors = (
+                        _finalize_worker_handoff_delivery(
+                            store, node, handoff)
+                    )
+                    set_node(manifest, key, status="in_progress")
+                else:
+                    set_node(manifest, key, status="in_progress")
+                    continue
+            elif handoff.state == "finished-without-submit":
                 set_node(manifest, key, status="in_progress")
                 item = replace(
                     store.observe_work_item_control(
@@ -1758,6 +1912,44 @@ def collect_results(
                 continue
             verdict = item.review_verdict
             if not verdict:
+                if node.reviewer:
+                    reviewer_failure = _latest_transient_run_failure(
+                        runtime,
+                        node.work_item_id,
+                        store.resolve_agent_id(node.reviewer),
+                    )
+                    if reviewer_failure is not None:
+                        if reviewer_failure.exhausted:
+                            failures[key] = (
+                                _block_transient_runtime_retry_exhausted(
+                                    store, manifest, manifest_path, key, item,
+                                    "reviewer", reviewer_failure)
+                            )
+                            continue
+                        time.sleep(
+                            _TRANSIENT_RUNTIME_RETRY_BACKOFF_SECONDS
+                            * reviewer_failure.consecutive_runs)
+                        try:
+                            if _resume_reviewer_run(store, runtime, node):
+                                set_node(manifest, key, status="in_review")
+                                log.info(
+                                    logsetup.EVT_REVIEW_DISPATCH,
+                                    kind=_DAG_KIND,
+                                    node=key,
+                                    id=node.work_item_id,
+                                    reviewer=node.reviewer,
+                                    recovered=True,
+                                    infrastructure_retry=True,
+                                )
+                                continue
+                        except PlatformError as exc:
+                            store.update_status(
+                                node.work_item_id, WorkItemStatus.BLOCKED)
+                            set_node(manifest, key, status="blocked")
+                            failures[key] = ui(
+                                f"Failed to retry reviewer {node.reviewer}: {exc}",
+                                f"重试 reviewer {node.reviewer} 失败: {exc}")
+                            continue
                 if _reviewer_run_needs_resume(item):
                     try:
                         if _resume_reviewer_run(store, runtime, node):

@@ -85,7 +85,8 @@ def _finish_mock_run(item_id: str, status: str = "completed") -> None:
     latest = runs[-1]
     runs[-1] = AgentRunObservation(
         id=latest.id, kind=latest.kind, status=status,
-        agent_id=latest.agent_id)
+        agent_id=latest.agent_id, created_at=latest.created_at,
+        updated_at=latest.updated_at, error=latest.error)
 
 
 def _init_default_workspace():
