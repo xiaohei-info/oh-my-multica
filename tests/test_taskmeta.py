@@ -145,6 +145,40 @@ def test_worker_handoff_allows_zero_review_bounce_for_explicit_dispatch():
     assert intent.is_causally_bound()
 
 
+@pytest.mark.parametrize(
+    "gate", ["review", "review-nits", "operator-retry", "unknown-gate"],
+)
+def test_worker_handoff_rejects_zero_review_bounce_for_other_gates(gate):
+    intent = _worker_handoff_intent()
+    intent = WorkerHandoffIntent(**{
+        **intent.as_dict(),
+        "gate": gate,
+        "target_review_bounce": 0,
+    })
+
+    assert not intent.is_complete()
+    assert not intent.is_causally_bound()
+
+
+def test_worker_handoff_rejects_unknown_gate_with_positive_bounce():
+    intent = _worker_handoff_intent()
+    intent = WorkerHandoffIntent(**{
+        **intent.as_dict(),
+        "gate": "unknown-gate",
+    })
+
+    assert not intent.is_complete()
+    assert not intent.is_causally_bound()
+
+
+@pytest.mark.parametrize("gate", ["review", "review-nits", "operator-retry"])
+def test_worker_handoff_keeps_positive_bounce_compatibility(gate):
+    intent = _worker_handoff_intent()
+    intent = WorkerHandoffIntent(**{**intent.as_dict(), "gate": gate})
+
+    assert intent.is_causally_bound()
+
+
 def _delivery_identity():
     return DeliveryIdentity(
         schema=DELIVERY_IDENTITY_SCHEMA,
