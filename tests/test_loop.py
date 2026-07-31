@@ -8,6 +8,7 @@
 - 不存在任何自动重试路径(blocked 节点在后续 tick 保持 blocked)
 """
 import os
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import tempfile
@@ -31,7 +32,12 @@ from omac.core.review_convergence import (
 from omac.engines import create_engine
 from omac.engines.mock import MockRuntime, MockStore
 from omac.core.taskmeta import TaskPhase, WorkerHandoffIntent
-from omac.engines.models import AgentRunObservation, EngineConfig, WorkItemStatus
+from omac.engines.models import (
+    AgentRunObservation,
+    EngineConfig,
+    WorkItemControlProjection,
+    WorkItemStatus,
+)
 from omac.pipeline import loop
 from omac.pipeline.dispatch import build_show_output
 from omac.pipeline.loop import TickResult, tick
@@ -2762,6 +2768,93 @@ class TestReviewerRejectBoundedFallback:
         assert len([
             entry for entry in eng.store.assign_log if entry[2] == "reviewer"
         ]) == reviewer_assignments_before + 1
+
+    def test_review_handoff_rereads_one_stale_control_projection(
+        self, tmp_path, monkeypatch,
+    ):
+        """Multica metadata visibility lag gets one read-only retry before fail-close."""
+        from omac.engines import create_engine
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        current = eng.store.get_work_item(item.id)
+        expected_subject = current.review_subject_digest
+        assert expected_subject is not None
+        stale = replace(
+            current,
+            bounces=replace(
+                current.bounces,
+                review=current.bounces.review + 1,
+            ),
+        )
+        stale_projection = WorkItemControlProjection(stale)
+
+        result = loop._dispatch_worker_handoff(
+            eng.store,
+            eng.runtime,
+            manifest,
+            "a",
+            review_bounce=current.bounces.review + 1,
+            gate="review",
+            projection=stale_projection,
+        )
+
+        persisted = eng.store.get_work_item(item.id)
+        assert result.state == "waiting"
+        assert persisted.worker_handoff is not None
+        assert (
+            persisted.worker_handoff.source_review_subject_digest
+            == expected_subject
+        )
+
+    def test_review_handoff_persistent_stale_source_fails_before_writes(
+        self, tmp_path, monkeypatch,
+    ):
+        """A second stale observation remains a hard fail-closed boundary."""
+        from omac.engines import create_engine
+        from omac.errors import PlatformError
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        current = eng.store.get_work_item(item.id)
+        stale = replace(
+            current,
+            bounces=replace(
+                current.bounces,
+                review=current.bounces.review + 1,
+            ),
+        )
+        stale_projection = WorkItemControlProjection(stale)
+        monkeypatch.setattr(
+            eng.store,
+            "observe_work_item_control",
+            lambda _item_id: stale_projection,
+        )
+        for target, name in (
+            (eng.store, "update_work_item_metadata"),
+            (eng.store, "update_status"),
+            (eng.store, "assign_work_item"),
+            (eng.runtime, "wake"),
+        ):
+            monkeypatch.setattr(
+                target,
+                name,
+                lambda *_args, _name=name, **_kwargs: pytest.fail(
+                    f"persistent stale source must not call {_name}"),
+            )
+
+        with pytest.raises(PlatformError, match="source is stale"):
+            loop._dispatch_worker_handoff(
+                eng.store,
+                eng.runtime,
+                manifest,
+                "a",
+                review_bounce=current.bounces.review + 1,
+                gate="review",
+                projection=stale_projection,
+            )
 
     def test_worker_handoff_rechecks_delivery_after_assignment_before_wake(
         self, tmp_path, monkeypatch,
