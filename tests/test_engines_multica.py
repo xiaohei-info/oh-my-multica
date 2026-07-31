@@ -400,6 +400,36 @@ def test_direct_description_update_keeps_token_out_of_process_args(
     assert '"description": "compact body"' in observed["body"]
 
 
+def test_confirmed_merge_normalization_is_one_atomic_suppressed_update(
+    tmp_path, monkeypatch,
+):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        '{"server_url":"https://api.example.test","token":"secret-token"}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MULTICA_CONFIG_PATH", str(config_path))
+    observed = []
+
+    def run(args, **kwargs):
+        body_path = args[args.index("--data-binary") + 1].removeprefix("@")
+        observed.append(json.loads(Path(body_path).read_text(encoding="utf-8")))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("omac.engines.multica.subprocess.run", run)
+
+    store.normalize_confirmed_merge(
+        "8e6bd282-6039-41d2-aa00-969a0bf1554a")
+
+    assert observed == [{
+        "status": "done",
+        "assignee_type": None,
+        "assignee_id": None,
+        "suppress_run": True,
+    }]
+
+
 def test_multica_payload_upload_allows_process_owned_external_files(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
     calls = []

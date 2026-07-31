@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 from ..core.taskmeta import (
     DeliveryIdentity, TaskKind, TaskPhase, WorkerHandoffIntent,
 )
+from ..errors import PlatformError
 from .models import (
     EngineConfig, MergeCommandResult, ProjectInfo, PullRequestCheckResult,
     PullRequestObservation, PullRequestReadiness, PullRequestReadinessFailure,
@@ -261,6 +262,16 @@ class WorkItemStore(ABC):
     @abstractmethod
     def clear_assignment(self, item_id: str) -> None:
         """解除当前 Agent assignment，但保留 worker/review 交付和判定证据。"""
+
+    def normalize_confirmed_merge(self, item_id: str) -> None:
+        """Atomically project a confirmed merge as done and unassigned.
+
+        Adapters must implement this as one platform write. A sequential
+        status/assignment fallback is unsafe because an unknown first result
+        could leave a half-normalized execution projection.
+        """
+        raise PlatformError(
+            "WorkItemStore does not support atomic confirmed-merge normalization")
 
     # ==================== PR 合并闭环 ====================
 

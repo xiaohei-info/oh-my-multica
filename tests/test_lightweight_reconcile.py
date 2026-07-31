@@ -399,14 +399,19 @@ def test_collect_results_fresh_read_failure_precedes_all_cross_node_side_effects
 
 
 @pytest.mark.parametrize(
-    ("manifest_status", "merged", "merged_at"),
+    (
+        "manifest_status", "merged", "merged_at", "merge_request_state",
+        "expected_downloads",
+    ),
     [
-        ("blocked", False, None),
-        ("done", True, "2026-07-29T00:00:00Z"),
+        ("blocked", False, None, None, 2),
+        ("done", False, None, None, 4),
+        ("done", True, "2026-07-29T00:00:00Z", "requested", 4),
     ],
 )
 def test_stale_manifest_hydrates_new_platform_delivery_and_reenters_gate(
-    tmp_path, manifest_status, merged, merged_at,
+    tmp_path, manifest_status, merged, merged_at, merge_request_state,
+    expected_downloads,
 ):
     issue, attachments = _issue(
         "node-a", status="done", phase="authoring", review_verdict=None)
@@ -416,14 +421,15 @@ def test_stale_manifest_hydrates_new_platform_delivery_and_reenters_gate(
         "node-a": Node(
             id="node-a", worker="worker", reviewer="reviewer",
             work_item_id="node-a", status=manifest_status,
-            merged=merged, merged_at=merged_at),
+            merged=merged, merged_at=merged_at,
+            merge_request_state=merge_request_state),
     })
 
     assert loop.reconcile(store, manifest, path) is True
 
     assert manifest.nodes["node-a"].status == "in_progress"
     assert remote.issue_gets == 1
-    assert remote.attachment_downloads == 2
+    assert remote.attachment_downloads == expected_downloads
 
 
 def test_control_projection_preserves_unknown_fields_without_hydrating_payloads():
@@ -529,25 +535,14 @@ def test_new_head_cannot_reuse_old_verification_or_verdict():
     assert loop._current_delivery_passed_review(current) is False
 
 
-def test_legacy_confirmed_done_hydrates_new_review_phase_verification(
-    tmp_path,
+def test_confirmed_merge_ignores_platform_authoring_delivery_without_hydration(
+    tmp_path, monkeypatch,
 ):
     item_id = "node-a"
-    old_verification = {"commands": [{"cmd": "pytest old", "exit_code": 0}]}
-    old_item = WorkItem(
-        id=item_id, workspace_id="ws", title=item_id, description=item_id,
-        status=WorkItemStatus.DONE, dag_key=item_id, worker="worker",
-        reviewer="reviewer",
-        artifacts={"pr_url": "https://github.com/acme/repo/pull/1", "head_sha": "old-head"},
-        verification=old_verification,
-        phase=TaskPhase.REVIEW,
-    )
     issue, attachments = _issue(
         item_id,
         status="done",
-        phase="review",
-        review_verdict="pass",
-        review_subject=review_subject_digest(old_item, 1),
+        phase="authoring",
     )
     remote = _RemoteFixture({item_id: issue}, attachments)
     manifest, path = _manifest_path(tmp_path, {
@@ -562,14 +557,148 @@ def test_legacy_confirmed_done_hydrates_new_review_phase_verification(
         ),
     })
 
-    assert loop.reconcile(_store(remote), manifest, path) is True
+    wakes = []
+    runtime = SimpleNamespace(
+        wake=lambda *args: wakes.append(args),
+        list_runs=lambda _item_id: [],
+    )
+    monkeypatch.setattr(loop, "commit_manifest", lambda *args, **kwargs: None)
 
-    assert manifest.nodes[item_id].status == "in_progress"
+    result = loop.tick(
+        _store(remote), runtime, manifest, path, max_parallel=1, config={})
+
+    assert result.state == "converged"
+    assert manifest.nodes[item_id].status == "done"
     assert remote.issue_gets == 1
-    assert remote.attachment_downloads == 4
+    assert remote.attachment_downloads == 0
+    assert remote.pr_observations == 0
+    assert wakes == []
 
 
-def test_unknown_control_fact_disables_confirmed_done_fast_path():
+def test_incident_confirmed_merge_recovers_manifest_and_platform_idempotently(
+    tmp_path, monkeypatch,
+):
+    store = MockStore(EngineConfig(
+        engine_type="mock",
+        workspace_id="confirmed-merge-recovery",
+        extra={"MOCK_AUTO_COMPLETE": "false"},
+    ))
+    runtime = MockRuntime(store)
+    item = store.create_work_item(
+        "confirmed-merge-recovery",
+        "node-a",
+        "node-a",
+        dag_key="node-a",
+        worker="alice",
+        reviewer="bob",
+    )
+    store.update_work_item_metadata(
+        item.id,
+        phase=TaskPhase.REVIEW,
+        artifacts={"pr_url": "https://github.com/acme/repo/pull/1"},
+        verification={"commands": [{"cmd": "pytest -q", "exit_code": 0}]},
+    )
+    store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+    store.assign_work_item(item.id, "bob", "reviewer")
+    runs_before = list(runtime.list_runs(item.id))
+    manifest, path = _manifest_path(tmp_path, {
+        "node-a": Node(
+            id="node-a",
+            worker="alice",
+            reviewer="bob",
+            work_item_id=item.id,
+            status="in_progress",
+            merged=True,
+            merged_at="2026-07-30T00:00:00Z",
+        ),
+    })
+    normalizations = []
+    original_normalize = getattr(
+        store, "normalize_confirmed_merge", None)
+
+    def record_normalize(item_id):
+        normalizations.append(item_id)
+        assert original_normalize is not None
+        return original_normalize(item_id)
+
+    monkeypatch.setattr(
+        store, "normalize_confirmed_merge", record_normalize, raising=False)
+
+    assert loop.reconcile(store, manifest, path) is True
+
+    recovered = store.get_work_item(item.id)
+    assert manifest.nodes["node-a"].status == "done"
+    assert recovered.status is WorkItemStatus.DONE
+    assert recovered.platform_assignee_id is None
+    assert runtime.list_runs(item.id) == runs_before
+    assert normalizations == [item.id]
+
+    assert loop.reconcile(store, manifest, path) is False
+    assert normalizations == [item.id]
+    assert runtime.list_runs(item.id) == runs_before
+
+
+@pytest.mark.parametrize("outcome", ["failed", "unknown-after-commit"])
+def test_confirmed_merge_recovery_write_fails_closed_without_partial_platform_state(
+    tmp_path, monkeypatch, outcome,
+):
+    store = MockStore(EngineConfig(
+        engine_type="mock",
+        workspace_id=f"confirmed-merge-{outcome}",
+        extra={"MOCK_AUTO_COMPLETE": "false"},
+    ))
+    runtime = MockRuntime(store)
+    item = store.create_work_item(
+        store.config.workspace_id,
+        "node-a",
+        "node-a",
+        dag_key="node-a",
+        worker="alice",
+        reviewer="bob",
+    )
+    store.update_work_item_metadata(item.id, phase=TaskPhase.REVIEW)
+    store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+    store.assign_work_item(item.id, "bob", "reviewer")
+    runs_before = list(runtime.list_runs(item.id))
+    manifest, path = _manifest_path(tmp_path, {
+        "node-a": Node(
+            id="node-a",
+            worker="alice",
+            reviewer="bob",
+            work_item_id=item.id,
+            status="in_progress",
+            merged=True,
+            merged_at="2026-07-30T00:00:00Z",
+        ),
+    })
+    before_file = Path(path).read_bytes()
+    original_normalize = getattr(
+        store, "normalize_confirmed_merge", None)
+
+    def fail_normalize(item_id):
+        if outcome == "unknown-after-commit":
+            assert original_normalize is not None
+            original_normalize(item_id)
+        raise PlatformError("confirmed merge normalization outcome unknown")
+
+    monkeypatch.setattr(
+        store, "normalize_confirmed_merge", fail_normalize, raising=False)
+
+    with pytest.raises(PlatformError, match="normalization outcome unknown"):
+        loop.reconcile(store, manifest, path)
+
+    current = store.get_work_item(item.id)
+    platform_state = (current.status, current.platform_assignee_id)
+    assert platform_state in {
+        (WorkItemStatus.IN_REVIEW, "mock-agent-bob"),
+        (WorkItemStatus.DONE, None),
+    }
+    assert manifest.nodes["node-a"].status == "in_progress"
+    assert Path(path).read_bytes() == before_file
+    assert runtime.list_runs(item.id) == runs_before
+
+
+def test_unknown_control_fact_keeps_unconfirmed_done_on_fail_closed_hydration():
     item_id = "node-a"
     issue, attachments = _issue(
         item_id, status="done", phase="review", review_verdict="pass", unknown=True)
@@ -585,8 +714,6 @@ def test_unknown_control_fact_disables_confirmed_done_fast_path():
             reviewer="reviewer",
             work_item_id=item_id,
             status="done",
-            merged=True,
-            merged_at="2026-07-30T00:00:00Z",
         ),
         projection,
     )
@@ -596,7 +723,7 @@ def test_unknown_control_fact_disables_confirmed_done_fast_path():
     assert remote.attachment_downloads == 4
 
 
-def test_missing_attachment_digest_disables_confirmed_done_fast_path():
+def test_missing_attachment_digest_keeps_unconfirmed_done_on_fail_closed_hydration():
     item_id = "node-a"
     issue, attachments = _issue(
         item_id, status="done", phase="review", review_verdict="pass")
@@ -613,8 +740,6 @@ def test_missing_attachment_digest_disables_confirmed_done_fast_path():
             reviewer="reviewer",
             work_item_id=item_id,
             status="done",
-            merged=True,
-            merged_at="2026-07-30T00:00:00Z",
         ),
         projection,
     )
