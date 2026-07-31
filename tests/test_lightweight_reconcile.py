@@ -43,12 +43,18 @@ class _RemoteFixture:
         self.calls: list[tuple[str, str]] = []
         self.fail_attachment_id: str | None = None
         self.attachment_error: Exception | None = None
+        self.issue_get_hook = None
+        self.fail_issue_get_number: int | None = None
 
     def run(self, args, capture=True):
         if args[:2] == ["issue", "get"]:
             item_id = args[2]
             self.issue_gets += 1
             self.calls.append(("issue", item_id))
+            if self.issue_get_hook is not None:
+                self.issue_get_hook(item_id, self.issue_gets)
+            if self.issue_gets == self.fail_issue_get_number:
+                raise PlatformError(f"issue control refresh failed: {item_id}")
             return copy.deepcopy(self.issues[item_id])
         if args[:2] == ["attachment", "download"]:
             attachment_id = args[2]
@@ -343,7 +349,131 @@ def test_146_node_full_tick_reuses_reconcile_observations_for_collect(
         remote.issue_gets,
         remote.attachment_downloads,
         remote.pr_observations,
-    ) == (146, 18, 1)
+    ) == (154, 18, 1)
+
+
+def test_collect_refresh_catches_submit_during_serial_reconcile_scan(
+    tmp_path, monkeypatch,
+):
+    issues = {}
+    attachments = {}
+    nodes = {}
+    for item_id in ("node-a", "node-b"):
+        issue, bodies = _issue(
+            item_id, status="in_progress", phase="authoring")
+        issues[item_id] = issue
+        attachments.update(bodies)
+        nodes[item_id] = Node(
+            id=item_id,
+            worker="worker",
+            reviewer="reviewer",
+            work_item_id=item_id,
+            status="in_progress",
+        )
+    remote = _RemoteFixture(issues, attachments)
+    old_verification_id = issues["node-b"]["metadata"][
+        "verification_ref"]["attachment_id"]
+    new_body = yaml.safe_dump({
+        "commands": [{"cmd": "pytest fresh", "exit_code": 0}],
+        "integration_gates": [],
+        "coverage": 100,
+    }, sort_keys=False).encode()
+    new_ref, new_attachment = _ref(
+        "node-b", "verification-fresh", "verification-fresh.yaml", new_body)
+    attachments[new_ref["attachment_id"]] = new_attachment
+
+    def submit_node_b_during_refresh(item_id, issue_get_number):
+        if item_id != "node-a" or issue_get_number != 3:
+            return
+        issues["node-b"]["status"] = "done"
+        issues["node-b"]["metadata"]["verification_ref"] = new_ref
+
+    remote.issue_get_hook = submit_node_b_during_refresh
+    store = _store(remote)
+    manifest, path = _manifest_path(tmp_path, nodes)
+    wakes = []
+    runtime = SimpleNamespace(
+        wake=lambda item_id, worker, role: wakes.append((item_id, worker, role)),
+        list_runs=lambda _item_id: [],
+    )
+    monkeypatch.setattr(
+        loop,
+        "_dispatch_reviewer_for_current_subject",
+        lambda _store, _runtime, _manifest, key: wakes.append(
+            (key, "reviewer", "reviewer")) or True,
+    )
+    monkeypatch.setattr(loop, "commit_manifest", lambda *args, **kwargs: None)
+
+    result = loop.tick(
+        store, runtime, manifest, path, max_parallel=2, config={})
+
+    assert result.state == "running"
+    assert manifest.nodes["node-b"].status == "in_review"
+    assert ("node-b", "reviewer", "reviewer") in wakes
+    assert ("node-b", "worker", "worker") not in wakes
+    assert remote.issue_gets == 4
+    assert old_verification_id not in [
+        value for kind, value in remote.calls if kind == "attachment"
+    ]
+    assert new_ref["attachment_id"] in [
+        value for kind, value in remote.calls if kind == "attachment"
+    ]
+
+
+def test_collect_control_refresh_failure_precedes_all_lifecycle_side_effects(
+    tmp_path, monkeypatch,
+):
+    issues = {}
+    attachments = {}
+    nodes = {}
+    for item_id in ("node-a", "node-b"):
+        issue, bodies = _issue(
+            item_id, status="in_progress", phase="authoring")
+        issues[item_id] = issue
+        attachments.update(bodies)
+        nodes[item_id] = Node(
+            id=item_id,
+            worker="worker",
+            work_item_id=item_id,
+            status="in_progress",
+        )
+    remote = _RemoteFixture(issues, attachments)
+    remote.fail_issue_get_number = 4
+    store = _store(remote)
+    manifest, path = _manifest_path(tmp_path, nodes)
+    before_manifest = copy.deepcopy(manifest)
+    before_file = Path(path).read_bytes()
+    effects = []
+    runtime = SimpleNamespace(
+        wake=lambda *args: effects.append(("wake", args)),
+        list_runs=lambda _item_id: [],
+    )
+    for method_name in (
+        "normalize_confirmed_merge",
+        "update_status",
+        "update_work_item_metadata",
+        "assign_work_item",
+        "add_comment",
+        "reset_review",
+        "clear_assignment",
+        "request_pull_request_merge",
+    ):
+        monkeypatch.setattr(
+            store,
+            method_name,
+            lambda *args, _method=method_name, **kwargs: effects.append(
+                (_method, args, kwargs)),
+        )
+    monkeypatch.setattr(
+        loop, "commit_manifest", lambda *args, **kwargs: effects.append(
+            ("commit_manifest", args, kwargs)))
+
+    with pytest.raises(PlatformError, match="control refresh failed"):
+        loop.tick(store, runtime, manifest, path, max_parallel=2, config={})
+
+    assert effects == []
+    assert manifest == before_manifest
+    assert Path(path).read_bytes() == before_file
 
 
 def test_reconcile_observations_cover_collect_required_evidence(tmp_path):

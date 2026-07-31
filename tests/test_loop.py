@@ -8,6 +8,7 @@
 - 不存在任何自动重试路径(blocked 节点在后续 tick 保持 blocked)
 """
 import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import tempfile
 
@@ -1487,7 +1488,7 @@ class TestReviewerRejectBoundedFallback:
     def test_terminal_worker_handoff_without_submit_uses_bounded_worker_retry(
         self, tmp_path, monkeypatch,
     ):
-        """terminal target Run 无新 submit 时不能永久 pending。"""
+        """terminal target Run 跨 tick grace 后使用有界 worker retry。"""
         from omac.engines import create_engine
         from omac.engines.models import AgentRunObservation
 
@@ -1498,6 +1499,7 @@ class TestReviewerRejectBoundedFallback:
         original_assign = eng.store.assign_work_item
         retry_assignments = 0
         retry_run_visible = False
+        now = [datetime(2026, 7, 31, tzinfo=timezone.utc)]
 
         def assign(item_id, assignee, role):
             nonlocal retry_assignments, retry_run_visible
@@ -1522,6 +1524,7 @@ class TestReviewerRejectBoundedFallback:
                 ))
             return runs
 
+        monkeypatch.setattr(loop, "_utcnow", lambda: now[0])
         monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
         monkeypatch.setattr(eng.store, "assign_work_item", assign)
         monkeypatch.setattr(eng.runtime, "list_runs", list_runs)
@@ -1533,8 +1536,22 @@ class TestReviewerRejectBoundedFallback:
             path,
             retry_limits={"worker": 1},
         )
-        assignments_after_first = retry_assignments
+        after_grace_start = eng.store.get_work_item(item.id)
+        assert after_grace_start.bounces.worker == 0
+        assert after_grace_start.worker_handoff is not None
+        assert after_grace_start.worker_handoff.terminal_observed_at
+        assert retry_assignments == 0
+
+        now[0] += timedelta(seconds=loop._HANDOFF_TERMINAL_GRACE_SECONDS + 1)
         second = loop.collect_results(
+            eng.store,
+            eng.runtime,
+            manifest,
+            path,
+            retry_limits={"worker": 1},
+        )
+        assignments_after_retry = retry_assignments
+        third = loop.collect_results(
             eng.store,
             eng.runtime,
             manifest,
@@ -1545,12 +1562,14 @@ class TestReviewerRejectBoundedFallback:
         recovered = eng.store.get_work_item(item.id)
         assert first == {}
         assert second == {}
+        assert third == {}
         assert manifest.nodes["a"].status == "in_progress"
         assert recovered.bounces.worker == 1
         assert recovered.worker_handoff is not None
         assert recovered.worker_handoff.target_run_id == "run-worker-retry"
-        assert assignments_after_first == 1
-        assert retry_assignments == assignments_after_first
+        assert recovered.worker_handoff.target_worker_bounce == 1
+        assert assignments_after_retry == 1
+        assert retry_assignments == assignments_after_retry
 
     def test_terminal_worker_handoff_without_submit_blocks_when_budget_exhausted(
         self, tmp_path, monkeypatch,
@@ -1563,9 +1582,11 @@ class TestReviewerRejectBoundedFallback:
         path = str(tmp_path / "m.yaml")
         manifest, eng, item = self._setup_reject_node(eng, path)
         intent, _source = self._prepare_causal_handoff(eng, item)
+        now = [datetime(2026, 7, 31, tzinfo=timezone.utc)]
         worker_assignments_before = len([
             entry for entry in eng.store.assign_log if entry[2] == "worker"
         ])
+        monkeypatch.setattr(loop, "_utcnow", lambda: now[0])
         monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
         monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: [
             AgentRunObservation(
@@ -1576,13 +1597,19 @@ class TestReviewerRejectBoundedFallback:
             )
         ])
 
-        failures = loop.collect_results(
+        assert loop.collect_results(
             eng.store,
             eng.runtime,
             manifest,
             path,
             retry_limits={"worker": 0},
-        )
+        ) == {}
+        assert manifest.nodes["a"].status == "in_progress"
+
+        now[0] += timedelta(seconds=loop._HANDOFF_TERMINAL_GRACE_SECONDS + 1)
+        failures = loop.collect_results(
+            eng.store, eng.runtime, manifest, path,
+            retry_limits={"worker": 0})
 
         recovered = eng.store.get_work_item(item.id)
         assert "a" in failures
@@ -1597,8 +1624,6 @@ class TestReviewerRejectBoundedFallback:
         self, tmp_path, monkeypatch,
     ):
         """有限观察窗口内晚到的新 attachment 仍按 causal submit 收割。"""
-        import copy
-
         from omac.engines import create_engine
         from omac.engines.models import AgentRunObservation, PullRequestReadiness
 
@@ -1606,32 +1631,12 @@ class TestReviewerRejectBoundedFallback:
         path = str(tmp_path / "m.yaml")
         manifest, eng, item = self._setup_reject_node(eng, path)
         intent, _source = self._prepare_causal_handoff(eng, item)
-        original_get = eng.store.get_work_item
-        stale = copy.deepcopy(original_get(item.id))
-        self._submit_revision(eng, item, revision=2)
-        fresh = copy.deepcopy(original_get(item.id))
-        live = original_get(item.id)
-        live.artifacts = copy.deepcopy(stale.artifacts)
-        live.verification = copy.deepcopy(stale.verification)
-        live.verification_ref = copy.deepcopy(stale.verification_ref)
-        live.status = stale.status
-        reads = 0
+        now = [datetime(2026, 7, 31, tzinfo=timezone.utc)]
         worker_assignments_before = len([
             entry for entry in eng.store.assign_log if entry[2] == "worker"
         ])
-
-        def get_work_item(item_id):
-            nonlocal reads
-            reads += 1
-            if reads >= 5:
-                live.artifacts = copy.deepcopy(fresh.artifacts)
-                live.verification = copy.deepcopy(fresh.verification)
-                live.verification_ref = copy.deepcopy(fresh.verification_ref)
-                live.status = WorkItemStatus.DONE
-            return original_get(item_id)
-
+        monkeypatch.setattr(loop, "_utcnow", lambda: now[0])
         monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
-        monkeypatch.setattr(eng.store, "get_work_item", get_work_item)
         monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: [
             AgentRunObservation(
                 id=intent.target_run_id,
@@ -1640,26 +1645,119 @@ class TestReviewerRejectBoundedFallback:
                 agent_id=intent.target_agent_id,
             )
         ])
+
+        assert loop.collect_results(
+            eng.store, eng.runtime, manifest, path) == {}
+        assert eng.store.get_work_item(
+            item.id).worker_handoff.terminal_observed_at
+
+        self._submit_revision(eng, item, revision=2)
+        fresh = eng.store.get_work_item(item.id)
+        now[0] += timedelta(
+            seconds=max(1, loop._HANDOFF_TERMINAL_GRACE_SECONDS // 2))
         monkeypatch.setattr(
             eng.store,
             "read_pull_request_readiness",
             lambda _pr_url: PullRequestReadiness(
-                is_draft=False,
-                state="OPEN",
-                head_sha=fresh.artifacts["head_sha"],
-            ),
+                is_draft=False, state="OPEN",
+                head_sha=fresh.artifacts["head_sha"]),
         )
-
         failures = loop.collect_results(
             eng.store, eng.runtime, manifest, path)
 
-        recovered = original_get(item.id)
+        recovered = eng.store.get_work_item(item.id)
         assert failures == {}
         assert manifest.nodes["a"].status == "in_review"
         assert recovered.worker_handoff is None
         assert len([
             entry for entry in eng.store.assign_log if entry[2] == "worker"
         ]) == worker_assignments_before
+
+    def test_worker_retry_attempt_recovers_crash_between_intent_and_bounce(
+        self, tmp_path, monkeypatch,
+    ):
+        """retry intent 先落盘；重启从同 generation 收敛 bounce 后只派一次。"""
+        from omac.engines import create_engine
+        from omac.engines.models import AgentRunObservation
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        intent, _source = self._prepare_causal_handoff(eng, item)
+        now = [datetime(2026, 7, 31, tzinfo=timezone.utc)]
+        retry_run_visible = False
+        retry_assignments = 0
+        original_assign = eng.store.assign_work_item
+        original_update = eng.store.update_work_item_metadata
+
+        def list_runs(_item_id):
+            runs = [AgentRunObservation(
+                id=intent.target_run_id, kind="direct", status="completed",
+                agent_id=intent.target_agent_id)]
+            if retry_run_visible:
+                runs.append(AgentRunObservation(
+                    id="run-worker-retry", kind="direct", status="running",
+                    agent_id=intent.target_agent_id))
+            return runs
+
+        def assign(item_id, assignee, role):
+            nonlocal retry_run_visible, retry_assignments
+            if role == "worker":
+                retry_run_visible = True
+                retry_assignments += 1
+            return original_assign(item_id, assignee, role)
+
+        monkeypatch.setattr(loop, "_utcnow", lambda: now[0])
+        monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
+        monkeypatch.setattr(eng.runtime, "list_runs", list_runs)
+        monkeypatch.setattr(eng.store, "assign_work_item", assign)
+        assert loop.collect_results(
+            eng.store, eng.runtime, manifest, path,
+            retry_limits={"worker": 1}) == {}
+        now[0] += timedelta(seconds=loop._HANDOFF_TERMINAL_GRACE_SECONDS + 1)
+
+        crashed = False
+
+        def crash_after_retry_intent(item_id, **metadata):
+            nonlocal crashed
+            result = original_update(item_id, **metadata)
+            handoff = metadata.get("worker_handoff")
+            if (
+                getattr(handoff, "target_worker_bounce", None) == 1
+                and not crashed
+            ):
+                crashed = True
+                raise RuntimeError("crash after retry intent")
+            return result
+
+        monkeypatch.setattr(
+            eng.store, "update_work_item_metadata", crash_after_retry_intent)
+        with pytest.raises(RuntimeError, match="retry intent"):
+            loop.collect_results(
+                eng.store, eng.runtime, manifest, path,
+                retry_limits={"worker": 1})
+
+        interrupted = eng.store.get_work_item(item.id)
+        retry_generation = interrupted.worker_handoff.generation
+        assert interrupted.worker_handoff.target_worker_bounce == 1
+        assert interrupted.bounces.worker == 0
+        assert retry_assignments == 0
+
+        monkeypatch.setattr(
+            eng.store, "update_work_item_metadata", original_update)
+        assert loop.collect_results(
+            eng.store, eng.runtime, manifest, path,
+            retry_limits={"worker": 1}) == {}
+        assignments_after_restart = retry_assignments
+        assert loop.collect_results(
+            eng.store, eng.runtime, manifest, path,
+            retry_limits={"worker": 1}) == {}
+
+        recovered = eng.store.get_work_item(item.id)
+        assert recovered.worker_handoff.generation == retry_generation
+        assert recovered.bounces.worker == 1
+        assert assignments_after_restart == 1
+        assert retry_assignments == assignments_after_restart
 
     def test_retry_review_zero_blocks_immediately(self, tmp_path):
         """retry.review=0 → 首次 reject 立即 blocked,review_bounce 保持 0。"""

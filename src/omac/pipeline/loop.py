@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 import secrets
 import time
@@ -73,6 +73,7 @@ _PLATFORM_TO_MANIFEST: Dict[str, str] = {
 _MISSING_WORK_ITEM = object()
 _HANDOFF_OBSERVATION_ATTEMPTS = 3
 _HANDOFF_OBSERVATION_INTERVAL = 0.5
+_HANDOFF_TERMINAL_GRACE_SECONDS = 30
 _WORKER_DELIVERY_PAYLOADS = frozenset({
     WorkItemPayload.VERIFICATION,
     WorkItemPayload.CONTRACT,
@@ -345,6 +346,59 @@ def _build_work_item_hydration_plan(
     return frozenset(payloads)
 
 
+def _refresh_collect_observations(
+    store: WorkItemStore,
+    manifest: Manifest,
+    observations: Dict[str, WorkItemControlProjection | None],
+) -> Dict[str, WorkItemControlProjection | None]:
+    """Refresh all running controls, then hydrate only changed required refs."""
+    fresh: Dict[str, WorkItemControlProjection] = {}
+    for key, node in manifest.nodes.items():
+        if node.status in RUNNING_STATUSES and node.work_item_id:
+            fresh[key] = store.observe_work_item_control(node.work_item_id)
+
+    refreshed = dict(observations)
+    for key, projection in fresh.items():
+        node = manifest.nodes[key]
+        previous = observations.get(key)
+        required = _build_work_item_hydration_plan(node, projection)
+        deferred = set(projection.deferred_payloads)
+        updates: Dict[str, Any] = {}
+        hydrate: Set[WorkItemPayload] = set()
+        for payload in required:
+            if payload not in deferred:
+                continue
+            ref_name = f"{payload.value}_ref"
+            can_reuse = bool(
+                previous is not None
+                and payload not in previous.deferred_payloads
+                and getattr(previous.work_item, ref_name, None)
+                == getattr(projection.work_item, ref_name, None)
+            )
+            if can_reuse:
+                updates[payload.value] = getattr(
+                    previous.work_item, payload.value)
+                deferred.remove(payload)
+            else:
+                hydrate.add(payload)
+        if updates:
+            projection = replace(
+                projection,
+                work_item=replace(projection.work_item, **updates),
+                deferred_payloads=frozenset(deferred),
+            )
+        if hydrate:
+            item = store.hydrate_work_item_evidence(
+                projection, frozenset(hydrate))
+            projection = replace(
+                projection,
+                work_item=item,
+                deferred_payloads=projection.deferred_payloads - hydrate,
+            )
+        refreshed[key] = projection
+    return refreshed
+
+
 def _observe_reconcile_inputs(
     store: WorkItemStore, manifest: Manifest,
 ) -> tuple[Dict[str, Any], Dict[str, Any]]:
@@ -495,11 +549,23 @@ def _dispatch_worker_handoff(
                 str((current.verification_ref or {}).get("attachment_id") or "")
                 or None
             ),
+            target_worker_bounce=current.bounces.worker,
         )
         if current.delivery_identity is not None:
             store.update_work_item_metadata(item_id, delivery_identity={})
         store.update_work_item_metadata(item_id, worker_handoff=intent)
         current = store.get_work_item(item_id)
+
+    target_worker_bounce = intent.target_worker_bounce
+    if target_worker_bounce is not None:
+        if current.bounces.worker < target_worker_bounce:
+            store.update_work_item_metadata(
+                item_id, worker_bounce=target_worker_bounce)
+            current = store.get_work_item(item_id)
+        if current.bounces.worker != target_worker_bounce:
+            raise PlatformError(
+                f"Worker handoff bounce does not match retry attempt for "
+                f"work item {item_id}")
 
     if intent.is_causally_bound():
         observation, intent = _observe_worker_handoff(
@@ -511,7 +577,7 @@ def _dispatch_worker_handoff(
             return "ready"
         if observation == "finished-without-submit":
             return observation
-        if observation == "waiting":
+        if observation in {"waiting", "pending-submit"}:
             return "waiting"
 
     target_bounce = intent.target_review_bounce
@@ -571,7 +637,7 @@ def _dispatch_worker_handoff(
             return "ready"
         if observation == "finished-without-submit":
             return observation
-        if observation == "waiting":
+        if observation in {"waiting", "pending-submit"}:
             return "waiting"
         raise assign_error
 
@@ -581,7 +647,7 @@ def _dispatch_worker_handoff(
         return "ready"
     if observation == "finished-without-submit":
         return observation
-    if observation == "waiting":
+    if observation in {"waiting", "pending-submit"}:
         return "waiting"
 
     try:
@@ -593,7 +659,7 @@ def _dispatch_worker_handoff(
             return "ready"
         if observation == "finished-without-submit":
             return observation
-        if observation == "waiting":
+        if observation in {"waiting", "pending-submit"}:
             return "waiting"
         raise wake_error
 
@@ -603,7 +669,7 @@ def _dispatch_worker_handoff(
         return "ready"
     if observation == "finished-without-submit":
         return observation
-    if observation == "waiting":
+    if observation in {"waiting", "pending-submit"}:
         return "waiting"
     raise PlatformError(
         f"Worker handoff dispatch outcome is unknown for work item {item_id}")
@@ -625,8 +691,6 @@ def _observe_worker_handoff_bounded(
             return observation, intent
         if attempt + 1 < _HANDOFF_OBSERVATION_ATTEMPTS:
             time.sleep(_HANDOFF_OBSERVATION_INTERVAL)
-    if observation == "pending-submit":
-        return "finished-without-submit", intent
     return observation, intent
 
 
@@ -664,6 +728,8 @@ def _next_worker_handoff_attempt(
             str(verification_ref.get("attachment_id") or "") or None
         ),
         target_run_id=None,
+        target_worker_bounce=item.bounces.worker + 1,
+        terminal_observed_at=None,
     )
 
 
@@ -678,6 +744,33 @@ def _parse_platform_time(value: str | None) -> datetime | None:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _observe_terminal_without_submit(
+    store: WorkItemStore,
+    item_id: str,
+    intent: WorkerHandoffIntent,
+) -> tuple[str, WorkerHandoffIntent]:
+    observed_at = _parse_platform_time(intent.terminal_observed_at)
+    if (
+        intent.terminal_observed_at
+        and (observed_at is None or observed_at.tzinfo is None)
+    ):
+        raise PlatformError(
+            f"Worker handoff terminal observation is invalid for work item "
+            f"{item_id}")
+    if observed_at is None:
+        intent = replace(
+            intent, terminal_observed_at=_utcnow().isoformat())
+        store.update_work_item_metadata(item_id, worker_handoff=intent)
+        return "pending-submit", intent
+    if (_utcnow() - observed_at).total_seconds() < _HANDOFF_TERMINAL_GRACE_SECONDS:
+        return "pending-submit", intent
+    return "finished-without-submit", intent
 
 
 def _attachment_is_causal_for_run(observation, run, agent_id: str) -> bool:
@@ -880,7 +973,8 @@ def _observe_worker_handoff(
             or not isinstance(current.artifacts, dict)
             or not current.artifacts
         ):
-            return "pending-submit", intent
+            return _observe_terminal_without_submit(
+                store, item_id, intent)
         sealed = _seal_worker_delivery(
             store, manifest, key, current, intent, target_run)
         existing = _delivery_identity(current)
@@ -1206,6 +1300,8 @@ def collect_results(
             if node.status in RUNNING_STATUSES and node.work_item_id
         }
     else:
+        observations = _refresh_collect_observations(
+            store, manifest, observations)
         running_items = {}
         for key, node in manifest.nodes.items():
             if node.status not in RUNNING_STATUSES or not node.work_item_id:
@@ -1368,8 +1464,6 @@ def collect_results(
                             store.clear_assignment(node.work_item_id)
                             store.update_work_item_metadata(
                                 node.work_item_id,
-                                phase=TaskPhase.AUTHORING,
-                                worker_bounce=cur_bounce + 1,
                                 worker_handoff=retry_intent,
                             )
                             handoff = _dispatch_worker_handoff(
