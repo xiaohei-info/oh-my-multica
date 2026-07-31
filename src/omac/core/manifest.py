@@ -252,6 +252,22 @@ class Node:
         if isinstance(self.contract, dict):
             self.contract = _load_contract(self.contract)
 
+
+def confirmed_merge_is_closed(node: Node) -> bool:
+    """Return whether the node carries an active confirmed-merge closure."""
+    return bool(
+        node.merged
+        and node.merged_at
+        and node.merge_request_state is None
+    )
+
+
+def clear_confirmed_merge(node: Node) -> None:
+    """Explicitly retire merge closure before an operator-authorized reopen."""
+    node.merged = False
+    node.merged_at = None
+    node.merge_request_state = None
+
 @dataclass
 class Manifest:
     meta: dict

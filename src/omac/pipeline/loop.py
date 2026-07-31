@@ -29,7 +29,9 @@ from ..core.review_convergence import (
 from ..core.retry_budget import consumed_bounces
 from ..core.stage_recovery import stage_recovery_subject
 from ..core.gitsync import commit_manifest
-from ..core.manifest import Manifest, save_manifest, set_node
+from ..core.manifest import (
+    Manifest, confirmed_merge_is_closed, save_manifest, set_node,
+)
 from ..pipeline.delivery import (
     advance_delivery, block_unproven_merge_request,
     merge_bounce_attempt, merge_request_state_is_valid, run_merge_delivery,
@@ -132,6 +134,8 @@ def _build_snapshot(manifest: Manifest) -> dict:
 
 def _has_unreviewed_worker_delivery(node, item) -> bool:
     """识别 worker 已交付、但 manifest 仍残留 terminal 状态的节点。"""
+    if confirmed_merge_is_closed(node):
+        return False
     phase = getattr(item, "phase", TaskPhase.AUTHORING)
     review_subject_changed = bool(
         phase == TaskPhase.REVIEW
@@ -222,10 +226,6 @@ def _pull_request_state(observation) -> PullRequestState:
         return PullRequestState.UNKNOWN
 
 
-def _has_confirmed_merge(node) -> bool:
-    return bool(node.merged and node.merged_at)
-
-
 def _reviewer_run_needs_resume(item) -> bool:
     """仅在 REVIEW 阶段识别失联 reviewer run，绝不回退 worker 交付。"""
     return (
@@ -252,7 +252,7 @@ def _requires_pull_request_observation(node, item) -> bool:
     if not merge_request_state_is_valid(node.merge_request_state):
         return False
     return not (
-        _has_confirmed_merge(node) and node.merge_request_state is None
+        confirmed_merge_is_closed(node)
     )
 
 
@@ -276,31 +276,11 @@ def _control_matches_delivery_identity(item) -> bool:
     )
 
 
-def _confirmed_done_control_is_stable(
-    node, projection: WorkItemControlProjection,
-) -> bool:
-    """Recognize a closed delivery without trusting manifest status alone."""
-    item = projection.work_item
-    if (
-        node.status != "done"
-        or not _has_confirmed_merge(node)
-        or node.merge_request_state is not None
-        or item.worker_handoff is not None
-        or item.review_verdict == "reject"
-        or item.unknown_persisted_fields
-    ):
-        return False
-    return bool(
-        item.delivery_identity is not None
-        and _control_matches_delivery_identity(item)
-    )
-
-
 def _build_work_item_hydration_plan(
     node, projection: WorkItemControlProjection,
 ) -> WorkItemHydrationPlan:
     """Plan only evidence required by the lifecycle decision for one node."""
-    if _confirmed_done_control_is_stable(node, projection):
+    if confirmed_merge_is_closed(node):
         return frozenset()
 
     item = projection.work_item
@@ -336,7 +316,7 @@ def _build_work_item_hydration_plan(
         or (
             node.status == "done"
             and getattr(item, "kind", TaskKind.DEVELOP) == TaskKind.DEVELOP
-            and not _has_confirmed_merge(node)
+            and not confirmed_merge_is_closed(node)
         )
     )
     delivery_drift = bool(
@@ -955,17 +935,39 @@ def _reconcile_candidate(
     changed = False
     for key, node in manifest.nodes.items():
         if not node.work_item_id:
-            if node.status == "done":
+            if confirmed_merge_is_closed(node):
+                if node.status != "done":
+                    set_node(manifest, key, status="done")
+                    changed = True
+            elif node.status == "done":
                 set_node(manifest, key, status="blocked")
                 changed = True
             continue
         item = items[key]
         if item is _MISSING_WORK_ITEM:
-            if node.status == "done":
+            if confirmed_merge_is_closed(node):
+                if node.status != "done":
+                    set_node(manifest, key, status="done")
+                    changed = True
+            elif node.status == "done":
                 set_node(manifest, key, status="blocked")
                 changed = True
             elif node.status not in {"done", "abandoned"}:
                 set_node(manifest, key, work_item_id=None, status="todo")
+                changed = True
+            continue
+
+        # confirmed merge closure is the sole ordinary-reconcile terminal
+        # invariant. Explicit amendment/retry must retire it before any
+        # authoring/review recovery is eligible again.
+        if confirmed_merge_is_closed(node):
+            if (
+                item.status != WorkItemStatus.DONE
+                or item.platform_assignee_id is not None
+            ):
+                store.normalize_confirmed_merge(node.work_item_id)
+            if node.status != "done":
+                set_node(manifest, key, status="done")
                 changed = True
             continue
 
@@ -1021,7 +1023,7 @@ def _reconcile_candidate(
                         f"Historical merge request state {node.merge_request_state!r} is invalid.")
                     changed = True
                     continue
-                if _has_confirmed_merge(node) and node.merge_request_state is None:
+                if confirmed_merge_is_closed(node):
                     if item.status != WorkItemStatus.DONE:
                         store.update_status(node.work_item_id, WorkItemStatus.DONE)
                     continue
@@ -1540,7 +1542,7 @@ def _mark_downstream_blocked(
     newly_blocked: Set[str] = set()
     for key in downstream:
         node = manifest.nodes[key]
-        if node.status == "done" or (node.merged and node.merged_at):
+        if node.status == "done" or confirmed_merge_is_closed(node):
             if node.status != "done":
                 set_node(manifest, key, status="done")
             continue

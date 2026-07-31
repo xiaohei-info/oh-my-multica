@@ -996,10 +996,12 @@ class MockStore(WorkItemStore):
     def assign_work_item(self, item_id: str, assignee: str, role: str):
         global _shared_next_run_id
         item = self.get_work_item(item_id)
+        agent_id = self.resolve_agent_id(assignee)
         if role == "worker":
             item.worker = assignee
         elif role == "reviewer":
             item.reviewer = assignee
+        item.platform_assignee_id = agent_id
         assignment = (assignee, role)
         same_active_assignment = (
             item_id in _shared_assigned_items
@@ -1013,7 +1015,7 @@ class MockStore(WorkItemStore):
                 id=f"mock-run-{_shared_next_run_id}",
                 kind="direct",
                 status="running",
-                agent_id=self.resolve_agent_id(assignee),
+                agent_id=agent_id,
             )
             _shared_next_run_id += 1
             _shared_runs.setdefault(item_id, []).append(run)
@@ -1021,6 +1023,15 @@ class MockStore(WorkItemStore):
     def clear_assignment(self, item_id: str) -> None:
         item = self.get_work_item(item_id)
         item.reviewer = None
+        item.platform_assignee_id = None
+        _shared_assigned_items.pop(item_id, None)
+        _shared_active_assignments.pop(item_id, None)
+
+    def normalize_confirmed_merge(self, item_id: str) -> None:
+        """One in-memory mutation mirrors Multica's atomic issue update."""
+        item = self.get_work_item(item_id)
+        item.status = WorkItemStatus.DONE
+        item.platform_assignee_id = None
         _shared_assigned_items.pop(item_id, None)
         _shared_active_assignments.pop(item_id, None)
 

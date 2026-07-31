@@ -137,6 +137,28 @@ def test_retry_resets_to_todo_and_keeps_work_item_id(tmp_path, capsys, monkeypat
     assert m.nodes["b"].worker == "bob"        # 未改派
 
 
+def test_retry_explicitly_clears_confirmed_merge_closure(
+    tmp_path, capsys, monkeypatch,
+):
+    monkeypatch.chdir(tmp_path)
+    path = _write_manifest(tmp_path, [{
+        "id": "merged-node",
+        "worker": "bob",
+        "status": "done",
+        "work_item_id": "issue-merged",
+        "merged": True,
+        "merged_at": "2026-07-30T00:00:00Z",
+    }])
+
+    assert main(["node", "retry", path, "merged-node"]) == exit_codes.OK
+
+    node = load_manifest(path).nodes["merged-node"]
+    assert node.status == "todo"
+    assert node.merged is False
+    assert node.merged_at is None
+    assert node.merge_request_state is None
+
+
 def test_retry_reassignment_survives_reconcile_and_dispatches_new_worker(
     tmp_path, capsys, monkeypatch,
 ):
