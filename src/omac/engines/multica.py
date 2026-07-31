@@ -1168,7 +1168,12 @@ class MulticaStore(WorkItemStore):
     def observe_work_item_control(
         self, item_id: str,
     ) -> WorkItemControlProjection:
-        result = self._run_multica(["issue", "get", item_id, "--output", "json"])
+        result = self._run_idempotent_read(
+            "issue get",
+            lambda: self._run_multica([
+                "issue", "get", item_id, "--output", "json",
+            ]),
+        )
         if not isinstance(result, dict):
             raise PlatformError(ui(
                 f"Could not get issue {item_id}", f"获取 issue {item_id} 失败"))
