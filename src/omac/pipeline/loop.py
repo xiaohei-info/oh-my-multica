@@ -90,6 +90,26 @@ _REVIEW_CONFIRMATION_PAYLOADS = frozenset({
 })
 
 
+@dataclass(frozen=True)
+class _WorkerHandoffResult:
+    """One read-only handoff observation and an optional delivery candidate."""
+
+    state: str
+    intent: WorkerHandoffIntent
+    projection: WorkItemControlProjection | None = None
+    delivery_identity: DeliveryIdentity | None = None
+
+
+def _resolved_worker_handoff_dispatch(
+    result: _WorkerHandoffResult,
+) -> _WorkerHandoffResult | None:
+    if result.state in {"complete", "finished-without-submit"}:
+        return result
+    if result.state in {"waiting", "pending-submit"}:
+        return replace(result, state="waiting")
+    return None
+
+
 def _project_root_from_manifest_path(manifest_path: str) -> str:
     parent = Path(manifest_path).resolve().parent
     if parent.name == ".omac":
@@ -353,7 +373,10 @@ def _build_work_item_hydration_plan(
         item.worker_handoff is not None
         and _worker_handoff_has_new_delivery(item, item.worker_handoff)
     ):
-        payloads.update(_WORKER_DELIVERY_PAYLOADS)
+        # Handoff observation reads the verification attachment once together
+        # with its causal comment/Run facts.  Reconcile only preloads the other
+        # Worker evidence needed before that candidate can be committed.
+        payloads.add(WorkItemPayload.CONTRACT)
     elif item.worker_handoff is None and authoring_delivery:
         payloads.update(_WORKER_DELIVERY_PAYLOADS)
     if review_or_confirmation:
@@ -502,7 +525,7 @@ def _dispatch_worker_handoff(
     review_bounce: int | None = None,
     gate: str | None = None,
     projection: WorkItemControlProjection | None = None,
-) -> str:
+) -> _WorkerHandoffResult:
     """幂等完成 review→worker handoff；assign 可能立即启动 Run。"""
     node = manifest.nodes[key]
     item_id = node.work_item_id
@@ -573,17 +596,15 @@ def _dispatch_worker_handoff(
                 f"work item {item_id}")
 
     if intent.is_causally_bound():
-        observation, intent = _observe_worker_handoff(
+        result = _observe_worker_handoff(
             store, runtime, manifest, key, intent, projection=projection)
-        if observation == "pending-submit":
-            observation, intent = _observe_worker_handoff_bounded(
-                store, runtime, manifest, key, intent)
-        if observation == "complete":
-            return "ready"
-        if observation == "finished-without-submit":
-            return observation
-        if observation in {"waiting", "pending-submit"}:
-            return "waiting"
+        if result.state == "pending-submit":
+            result = _observe_worker_handoff_bounded(
+                store, runtime, manifest, key, result.intent)
+        intent = result.intent
+        resolved = _resolved_worker_handoff_dispatch(result)
+        if resolved is not None:
+            return resolved
 
     target_bounce = intent.target_review_bounce
     if target_bounce is None:
@@ -624,58 +645,49 @@ def _dispatch_worker_handoff(
         raise PlatformError(
             f"Worker handoff preparation did not persist for work item {item_id}")
 
-    observation, intent = _observe_worker_handoff(
+    result = _observe_worker_handoff(
         store, runtime, manifest, key, intent)
-    if observation == "complete":
-        return "ready"
-    if observation in {"waiting", "pending-submit"}:
-        return "waiting"
+    intent = result.intent
+    resolved = _resolved_worker_handoff_dispatch(result)
+    if resolved is not None:
+        return resolved
 
     # assign_work_item 自身负责观察当前 assignee并幂等修复。目标 Run 的
     # 身份由后续只读观察绑定到持久 handoff，而不是由 assignment 成功猜测。
     try:
         store.assign_work_item(item_id, intent.target_worker, "worker")
     except PlatformError as assign_error:
-        observation, intent = _observe_worker_handoff_bounded(
+        result = _observe_worker_handoff_bounded(
             store, runtime, manifest, key, intent)
-        if observation == "complete":
-            return "ready"
-        if observation == "finished-without-submit":
-            return observation
-        if observation in {"waiting", "pending-submit"}:
-            return "waiting"
+        intent = result.intent
+        resolved = _resolved_worker_handoff_dispatch(result)
+        if resolved is not None:
+            return resolved
         raise assign_error
 
-    observation, intent = _observe_worker_handoff_bounded(
+    result = _observe_worker_handoff_bounded(
         store, runtime, manifest, key, intent)
-    if observation == "complete":
-        return "ready"
-    if observation == "finished-without-submit":
-        return observation
-    if observation in {"waiting", "pending-submit"}:
-        return "waiting"
+    intent = result.intent
+    resolved = _resolved_worker_handoff_dispatch(result)
+    if resolved is not None:
+        return resolved
 
     try:
         runtime.wake(item_id, intent.target_worker, "worker")
     except PlatformError as wake_error:
-        observation, intent = _observe_worker_handoff_bounded(
+        result = _observe_worker_handoff_bounded(
             store, runtime, manifest, key, intent)
-        if observation == "complete":
-            return "ready"
-        if observation == "finished-without-submit":
-            return observation
-        if observation in {"waiting", "pending-submit"}:
-            return "waiting"
+        intent = result.intent
+        resolved = _resolved_worker_handoff_dispatch(result)
+        if resolved is not None:
+            return resolved
         raise wake_error
 
-    observation, intent = _observe_worker_handoff_bounded(
+    result = _observe_worker_handoff_bounded(
         store, runtime, manifest, key, intent)
-    if observation == "complete":
-        return "ready"
-    if observation == "finished-without-submit":
-        return observation
-    if observation in {"waiting", "pending-submit"}:
-        return "waiting"
+    resolved = _resolved_worker_handoff_dispatch(result)
+    if resolved is not None:
+        return resolved
     raise PlatformError(
         f"Worker handoff dispatch outcome is unknown for work item {item_id}")
 
@@ -686,17 +698,17 @@ def _observe_worker_handoff_bounded(
     manifest: Manifest,
     key: str,
     intent: WorkerHandoffIntent,
-) -> tuple[str, WorkerHandoffIntent]:
+) -> _WorkerHandoffResult:
     """对最终一致的 Run/delivery 投影做有限只读观察。"""
-    observation = "missing"
+    result = _WorkerHandoffResult("missing", intent)
     for attempt in range(_HANDOFF_OBSERVATION_ATTEMPTS):
-        observation, intent = _observe_worker_handoff(
-            store, runtime, manifest, key, intent)
-        if observation not in {"missing", "pending-submit"}:
-            return observation, intent
+        result = _observe_worker_handoff(
+            store, runtime, manifest, key, result.intent)
+        if result.state not in {"missing", "pending-submit"}:
+            return result
         if attempt + 1 < _HANDOFF_OBSERVATION_ATTEMPTS:
             time.sleep(_HANDOFF_OBSERVATION_INTERVAL)
-    return observation, intent
+    return result
 
 
 def _next_worker_handoff_attempt(
@@ -800,7 +812,7 @@ def _attachment_is_causal_for_run(observation, run, agent_id: str) -> bool:
     )
 
 
-def _observe_delivery_projection(store: WorkItemStore, item):
+def _observe_delivery_projection(store: WorkItemStore, item, attachment=None):
     artifacts = item.artifacts if isinstance(item.artifacts, dict) else {}
     verification_ref = (
         item.verification_ref if isinstance(item.verification_ref, dict) else {}
@@ -810,7 +822,8 @@ def _observe_delivery_projection(store: WorkItemStore, item):
     if not pr_url or not submitted_head or not verification_ref:
         raise PlatformError(f"Worker delivery is incomplete for work item {item.id}")
 
-    attachment = store.observe_verification_attachment(item.id, verification_ref)
+    attachment = attachment or store.observe_verification_attachment(
+        item.id, verification_ref)
     try:
         attachment_verification = yaml.safe_load(
             attachment.content.decode("utf-8"))
@@ -842,9 +855,11 @@ def _seal_worker_delivery(
     current,
     intent: WorkerHandoffIntent,
     target_run,
+    *,
+    attachment=None,
 ) -> DeliveryIdentity:
     attachment, pr_url, remote_head = _observe_delivery_projection(
-        store, current)
+        store, current, attachment)
     if (
         intent.baseline_verification_attachment_id
         and attachment.attachment_id
@@ -909,6 +924,120 @@ def _validate_controller_sealed_delivery(
             f"work item {item.id}")
 
 
+def _observe_handoff_verification(
+    store: WorkItemStore,
+    projection: WorkItemControlProjection,
+):
+    """Hydrate verification from the same attachment observation used to seal."""
+    item = projection.work_item
+    verification_ref = (
+        item.verification_ref if isinstance(item.verification_ref, dict) else {}
+    )
+    attachment = store.observe_verification_attachment(item.id, verification_ref)
+    try:
+        verification = yaml.safe_load(attachment.content.decode("utf-8"))
+    except (UnicodeDecodeError, yaml.YAMLError) as exc:
+        raise PlatformError(
+            f"Verification attachment cannot be parsed for work item {item.id}") from exc
+    if item.verification is not None and item.verification != verification:
+        raise PlatformError(
+            f"Parsed verification projection does not match downloaded attachment "
+            f"for work item {item.id}")
+    return (
+        replace(
+            projection,
+            work_item=replace(item, verification=verification),
+            deferred_payloads=(
+                projection.deferred_payloads - {WorkItemPayload.VERIFICATION}
+            ),
+        ),
+        attachment,
+    )
+
+
+def _control_matches_handoff_candidate(
+    item, intent: WorkerHandoffIntent, identity: DeliveryIdentity,
+) -> bool:
+    artifacts = item.artifacts if isinstance(item.artifacts, dict) else {}
+    verification_ref = (
+        item.verification_ref if isinstance(item.verification_ref, dict) else {}
+    )
+    current_intent = item.worker_handoff
+    same_causal_intent = bool(
+        current_intent is not None
+        and replace(current_intent, terminal_observed_at=None)
+        == replace(intent, terminal_observed_at=None)
+    )
+    return bool(
+        same_causal_intent
+        and _worker_handoff_has_new_delivery(item, intent)
+        and identity.pr_url == (artifacts.get("pr_url") or artifacts.get("pr"))
+        and identity.pr_head_sha == artifacts.get("head_sha")
+        and identity.verification_attachment_id
+        == verification_ref.get("attachment_id")
+        and identity.verification_comment_id == verification_ref.get("comment_id")
+        and identity.verification_sha256 == verification_ref.get("sha256")
+    )
+
+
+def _commit_worker_handoff_delivery(
+    store: WorkItemStore,
+    item_id: str,
+    result: _WorkerHandoffResult,
+) -> WorkItemControlProjection:
+    identity = result.delivery_identity
+    projection = result.projection
+    if identity is None or projection is None:
+        raise PlatformError(
+            f"Worker handoff delivery candidate is incomplete for work item {item_id}")
+    current = store.observe_work_item_control(item_id).work_item
+    if not _control_matches_handoff_candidate(current, result.intent, identity):
+        raise PlatformError(
+            f"Worker handoff delivery candidate changed before commit for "
+            f"work item {item_id}")
+    existing = _delivery_identity(current)
+    if existing is not None and existing.as_dict() != identity.as_dict():
+        raise PlatformError(
+            f"Persisted delivery identity does not match platform facts for "
+            f"handoff {result.intent.generation}")
+    if existing is None:
+        store.update_work_item_metadata(item_id, delivery_identity=identity)
+    persisted = _delivery_identity(
+        store.observe_work_item_control(item_id).work_item)
+    if persisted is None or persisted.as_dict() != identity.as_dict():
+        raise PlatformError(
+            f"Controller-sealed delivery identity did not persist for "
+            f"handoff {result.intent.generation}")
+    store.update_work_item_metadata(item_id, worker_handoff={})
+    return replace(
+        projection,
+        work_item=replace(
+            projection.work_item,
+            delivery_identity=identity,
+            worker_handoff=None,
+        ),
+    )
+
+
+def _finalize_worker_handoff_delivery(
+    store: WorkItemStore,
+    node,
+    result: _WorkerHandoffResult,
+) -> tuple[Any, list]:
+    if result.state != "complete" or result.projection is None:
+        raise PlatformError(
+            f"Worker handoff is not ready for work item {node.work_item_id}")
+    projection = _hydrate_worker_collect_evidence(
+        store, result.projection)
+    gate_errors = validate_worker_evidence(node, projection.work_item)
+    projection = _commit_worker_handoff_delivery(
+        store,
+        node.work_item_id,
+        replace(result, projection=projection),
+    )
+    return projection.work_item, gate_errors
+
+
 def _observe_worker_handoff(
     store: WorkItemStore,
     runtime: AgentRuntime,
@@ -917,7 +1046,7 @@ def _observe_worker_handoff(
     intent: WorkerHandoffIntent,
     *,
     projection: WorkItemControlProjection | None = None,
-) -> tuple[str, WorkerHandoffIntent]:
+) -> _WorkerHandoffResult:
     """只读观察 handoff 的 Run→submit 因果链。"""
     item_id = manifest.nodes[key].work_item_id
     projection = projection or store.observe_work_item_control(item_id)
@@ -968,38 +1097,36 @@ def _observe_worker_handoff(
             f"Worker handoff observed non-causal direct Runs for work item {item_id}")
 
     if target_run is None and any(run.active for run in runs):
-        return "waiting", intent
+        return _WorkerHandoffResult("waiting", intent, projection)
     if target_run is not None:
         if target_run.active:
-            return "waiting", intent
+            return _WorkerHandoffResult("waiting", intent, projection)
         if not target_run.terminal:
-            return "missing", intent
+            return _WorkerHandoffResult("missing", intent, projection)
         if not _worker_handoff_has_new_delivery(current, intent):
-            return _observe_terminal_without_submit(
+            state, intent = _observe_terminal_without_submit(
                 store, item_id, intent)
-        projection = _hydrate_work_item_payloads(
-            store,
-            projection,
-            frozenset({WorkItemPayload.VERIFICATION}),
-        )
+            return _WorkerHandoffResult(state, intent, projection)
+        projection, attachment = _observe_handoff_verification(
+            store, projection)
         current = projection.work_item
         sealed = _seal_worker_delivery(
-            store, manifest, key, current, intent, target_run)
+            store,
+            manifest,
+            key,
+            current,
+            intent,
+            target_run,
+            attachment=attachment,
+        )
         existing = _delivery_identity(current)
         if existing is not None and existing.as_dict() != sealed.as_dict():
             raise PlatformError(
                 f"Persisted delivery identity does not match platform facts for "
                 f"handoff {intent.generation}")
-        store.update_work_item_metadata(item_id, delivery_identity=sealed)
-        persisted = _delivery_identity(
-            store.observe_work_item_control(item_id).work_item)
-        if persisted is None or persisted.as_dict() != sealed.as_dict():
-            raise PlatformError(
-                f"Controller-sealed delivery identity did not persist for "
-                f"handoff {intent.generation}")
-        store.update_work_item_metadata(item_id, worker_handoff={})
-        return "complete", intent
-    return "missing", intent
+        return _WorkerHandoffResult(
+            "complete", intent, projection, sealed)
+    return _WorkerHandoffResult("missing", intent, projection)
 
 
 def _review_projection_present(item) -> bool:
@@ -1340,6 +1467,7 @@ def collect_results(
 
         projection = running_observations[key]
         item = projection.work_item
+        worker_gate_errors = None
 
         if _legacy_delivery_requires_retry(manifest, key, node, item):
             if any(run.kind == "direct" and run.active
@@ -1378,24 +1506,20 @@ def collect_results(
                     "delivery identity support; refusing to infer completion")
             handoff = _dispatch_worker_handoff(
                 store, runtime, manifest, key, projection=projection)
-            set_node(manifest, key, status="in_progress")
-            if handoff == "finished-without-submit":
+            if handoff.state == "finished-without-submit":
+                set_node(manifest, key, status="in_progress")
                 item = replace(
                     store.observe_work_item_control(
                         node.work_item_id).work_item,
                     agent_run_finished_without_submit=True,
                 )
-            elif handoff != "ready":
+            elif handoff.state != "complete":
+                set_node(manifest, key, status="in_progress")
                 continue
             else:
-                if not _worker_handoff_has_new_delivery(
-                    item, handoff_intent,
-                ):
-                    projection = store.observe_work_item_control(
-                        node.work_item_id)
-                projection = _hydrate_worker_collect_evidence(
-                    store, projection)
-                item = projection.work_item
+                item, worker_gate_errors = _finalize_worker_handoff_delivery(
+                    store, node, handoff)
+                set_node(manifest, key, status="in_progress")
 
         if node.status == "in_review" and item.phase == TaskPhase.AUTHORING:
             # 兼容旧版本 handoff，及 wake 成功、intent 已清但 manifest 尚未落盘
@@ -1499,13 +1623,11 @@ def collect_results(
                         )
                         handoff = _dispatch_worker_handoff(
                             store, runtime, manifest, key)
-                        if handoff == "ready":
-                            projection = _hydrate_worker_collect_evidence(
-                                store,
-                                store.observe_work_item_control(
-                                    node.work_item_id),
+                        if handoff.state == "complete":
+                            item, worker_gate_errors = (
+                                _finalize_worker_handoff_delivery(
+                                    store, node, handoff)
                             )
-                            item = projection.work_item
                         else:
                             set_node(manifest, key, status="in_progress")
                             log.info(
@@ -1541,7 +1663,11 @@ def collect_results(
             if item.status == WorkItemStatus.IN_PROGRESS:
                 continue
             if item.status == WorkItemStatus.DONE:
-                gate_errors = validate_worker_evidence(node, item)
+                gate_errors = (
+                    worker_gate_errors
+                    if worker_gate_errors is not None
+                    else validate_worker_evidence(node, item)
+                )
                 if gate_errors:
                     reason = "; ".join(gate_errors)
                     store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
@@ -1705,6 +1831,8 @@ def collect_results(
                     review_bounce=cur_bounce + 1,
                     gate="review-nits",
                 )
+                if handoff.state == "complete":
+                    _finalize_worker_handoff_delivery(store, node, handoff)
                 set_node(manifest, key, status="in_progress")
                 log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=key,
                          id=node.work_item_id, gate="review-nits")
@@ -1751,6 +1879,8 @@ def collect_results(
                         review_bounce=cur_bounce + 1,
                         gate="review",
                     )
+                    if handoff.state == "complete":
+                        _finalize_worker_handoff_delivery(store, node, handoff)
                     set_node(manifest, key, status="in_progress")
                     log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=key,
                              id=node.work_item_id, gate="review",
@@ -1936,7 +2066,7 @@ def _dispatch(
                 node=key,
                 id=node.work_item_id,
                 worker=worker,
-                handoff=handoff,
+                handoff=handoff.state,
             )
             dispatched.append(key)
             continue

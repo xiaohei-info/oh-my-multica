@@ -426,10 +426,10 @@ def test_terminal_worker_handoff_observation_downloads_no_attachments(tmp_path):
     remote.calls.clear()
 
     for _ in range(3):
-        state, observed_intent = loop._observe_worker_handoff(
+        result = loop._observe_worker_handoff(
             store, _terminal_runtime(), manifest, item_id, intent)
-        assert state == "pending-submit"
-        assert observed_intent == intent
+        assert result.state == "pending-submit"
+        assert result.intent == intent
 
     assert remote.issue_gets == 3
     assert remote.attachment_downloads == 0
@@ -472,14 +472,184 @@ def test_terminal_worker_handoff_late_submit_hydrates_only_worker_evidence(
     remote.attachment_downloads = 0
     remote.calls.clear()
 
-    state, _intent = loop._observe_worker_handoff(
+    result = loop._observe_worker_handoff(
         store, _terminal_runtime(), manifest, item_id, intent)
 
     downloaded = [value for kind, value in remote.calls if kind == "attachment"]
-    assert state == "complete"
-    assert len(downloaded) == 2
+    assert result.state == "complete"
+    assert result.delivery_identity is not None
+    assert len(downloaded) == 1
     assert set(downloaded) == {
         issue["metadata"]["verification_ref"]["attachment_id"]}
+    assert "delivery_identity" not in issue["metadata"]
+    assert issue["metadata"]["worker_handoff"] != {}
+
+
+def test_late_submit_contract_hydration_failure_keeps_handoff_uncommitted(
+    tmp_path, monkeypatch,
+):
+    item_id = "node-a"
+    issue, attachments = _issue(
+        item_id, status="in_progress", phase="authoring")
+    original_handoff = _worker_handoff(issue, item_id=item_id)
+    issue["metadata"]["worker_handoff"] = original_handoff
+    fresh_body = yaml.safe_dump({
+        "commands": [{"cmd": "pytest fresh", "exit_code": 0}],
+        "integration_gates": [],
+        "coverage": 100,
+    }, sort_keys=False).encode()
+    fresh_ref, fresh_attachment = _ref(
+        item_id, "verification-fresh", "verification-fresh.yaml", fresh_body)
+    attachments[fresh_ref["attachment_id"]] = fresh_attachment
+    remote = _RemoteFixture({item_id: issue}, attachments)
+    remote.fail_attachment_id = issue["metadata"]["contract_ref"][
+        "attachment_id"]
+
+    def submit_after_reconcile(_item_id, issue_get_number):
+        if issue_get_number == 2:
+            issue["status"] = "done"
+            issue["metadata"]["verification_ref"] = fresh_ref
+
+    remote.issue_get_hook = submit_after_reconcile
+    store = _store(remote)
+    store.read_pull_request_readiness = lambda _url: PullRequestReadiness(
+        False, "OPEN", head_sha=issue["metadata"]["artifacts"]["head_sha"])
+    writes = []
+
+    def update_metadata(_item_id, **metadata):
+        writes.append(copy.deepcopy(metadata))
+        for key, value in metadata.items():
+            issue["metadata"][key] = (
+                value.as_dict() if hasattr(value, "as_dict") else value)
+
+    monkeypatch.setattr(store, "update_work_item_metadata", update_metadata)
+    manifest, path = _manifest_path(tmp_path, {
+        item_id: Node(
+            id=item_id,
+            worker="worker",
+            reviewer="reviewer",
+            work_item_id=item_id,
+            status="in_progress",
+        ),
+    })
+
+    with pytest.raises(PlatformError, match="attachment read failed"):
+        loop.tick(
+            store,
+            _terminal_runtime(),
+            manifest,
+            path,
+            max_parallel=1,
+            config={},
+        )
+
+    assert "delivery_identity" not in issue["metadata"]
+    persisted_handoff = issue["metadata"]["worker_handoff"]
+    assert persisted_handoff["generation"] == original_handoff["generation"]
+    assert persisted_handoff["target_run_id"] == original_handoff["target_run_id"]
+    assert persisted_handoff["baseline_verification_attachment_id"] == (
+        original_handoff["baseline_verification_attachment_id"])
+    assert persisted_handoff["terminal_observed_at"]
+    assert not any("delivery_identity" in write for write in writes)
+    assert not any(write.get("worker_handoff") == {} for write in writes)
+    assert manifest.nodes[item_id].status == "in_progress"
+    downloaded = [value for kind, value in remote.calls if kind == "attachment"]
+    assert downloaded.count(fresh_ref["attachment_id"]) == 1
+    assert downloaded.count(remote.fail_attachment_id) == 1
+
+    remote.fail_attachment_id = None
+    remote.issue_get_hook = None
+    remote.calls.clear()
+    monkeypatch.setattr(loop, "validate_worker_evidence", lambda *_args: [])
+    monkeypatch.setattr(loop, "advance_delivery", lambda *_args, **_kwargs: "bounce")
+
+    loop.tick(
+        store,
+        _terminal_runtime(),
+        manifest,
+        path,
+        max_parallel=1,
+        config={},
+    )
+
+    assert issue["metadata"]["delivery_identity"]["handoff_generation"] == (
+        original_handoff["generation"])
+    assert issue["metadata"]["worker_handoff"] == {}
+    retried_downloads = [
+        value for kind, value in remote.calls if kind == "attachment"]
+    assert retried_downloads.count(fresh_ref["attachment_id"]) == 1
+    assert retried_downloads.count(
+        issue["metadata"]["contract_ref"]["attachment_id"]) == 1
+
+
+def test_late_submit_commits_handoff_only_after_complete_worker_evidence(
+    tmp_path, monkeypatch,
+):
+    item_id = "node-a"
+    issue, attachments = _issue(
+        item_id, status="in_progress", phase="authoring")
+    issue["metadata"]["worker_handoff"] = _worker_handoff(
+        issue, item_id=item_id)
+    fresh_body = yaml.safe_dump({
+        "commands": [{"cmd": "pytest fresh", "exit_code": 0}],
+        "integration_gates": [],
+        "coverage": 100,
+    }, sort_keys=False).encode()
+    fresh_ref, fresh_attachment = _ref(
+        item_id, "verification-fresh", "verification-fresh.yaml", fresh_body)
+    attachments[fresh_ref["attachment_id"]] = fresh_attachment
+    remote = _RemoteFixture({item_id: issue}, attachments)
+
+    def submit_after_reconcile(_item_id, issue_get_number):
+        if issue_get_number == 2:
+            issue["status"] = "done"
+            issue["metadata"]["verification_ref"] = fresh_ref
+
+    remote.issue_get_hook = submit_after_reconcile
+    store = _store(remote)
+    store.read_pull_request_readiness = lambda _url: PullRequestReadiness(
+        False, "OPEN", head_sha=issue["metadata"]["artifacts"]["head_sha"])
+
+    def update_metadata(_item_id, **metadata):
+        for key, value in metadata.items():
+            issue["metadata"][key] = (
+                value.as_dict() if hasattr(value, "as_dict") else value)
+
+    monkeypatch.setattr(store, "update_work_item_metadata", update_metadata)
+    evidence = []
+    monkeypatch.setattr(
+        loop,
+        "validate_worker_evidence",
+        lambda _node, item: evidence.append(item) or [],
+    )
+    monkeypatch.setattr(loop, "advance_delivery", lambda *_args, **_kwargs: "bounce")
+    manifest, path = _manifest_path(tmp_path, {
+        item_id: Node(
+            id=item_id,
+            worker="worker",
+            reviewer="reviewer",
+            work_item_id=item_id,
+            status="in_progress",
+        ),
+    })
+
+    loop.tick(
+        store,
+        _terminal_runtime(),
+        manifest,
+        path,
+        max_parallel=1,
+        config={},
+    )
+
+    assert issue["metadata"]["delivery_identity"]
+    assert issue["metadata"]["worker_handoff"] == {}
+    assert len(evidence) == 1
+    assert evidence[0].verification["commands"][0]["cmd"] == "pytest fresh"
+    assert evidence[0].contract["objective"] == "deliver"
+    downloaded = [value for kind, value in remote.calls if kind == "attachment"]
+    assert downloaded.count(fresh_ref["attachment_id"]) == 1
+    assert downloaded.count(issue["metadata"]["contract_ref"]["attachment_id"]) == 1
 
 
 def test_eight_terminal_worker_handoffs_use_zero_attachment_reads(tmp_path):
