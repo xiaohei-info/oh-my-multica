@@ -15,8 +15,14 @@ from omac.cli import exit_codes
 from omac.cli.main import main
 from omac.core.manifest import Manifest, Node, load_manifest, save_manifest
 from omac.core.review_convergence import review_subject_digest
-from omac.core.taskmeta import DELIVERY_IDENTITY_SCHEMA, DeliveryIdentity, TaskPhase
+from omac.core.taskmeta import (
+    DELIVERY_IDENTITY_SCHEMA,
+    DeliveryIdentity,
+    TaskPhase,
+    WorkerHandoffIntent,
+)
 from omac.engines.models import (
+    AgentRunObservation,
     EngineConfig,
     PullRequestObservation,
     PullRequestReadiness,
@@ -213,6 +219,50 @@ def _delivery_identity(issue: dict) -> dict:
     ).as_dict()
 
 
+def _worker_handoff(
+    issue: dict,
+    *,
+    item_id: str,
+    baseline_attachment_id: str | None = None,
+    terminal_observed_at: str | None = None,
+) -> dict:
+    verification_ref = issue["metadata"]["verification_ref"]
+    return WorkerHandoffIntent(
+        schema="omac.worker-handoff/v1",
+        state="pending",
+        target_worker="worker",
+        gate="review",
+        source_review_subject_digest=f"subject-{item_id}",
+        source_review_round=1,
+        target_review_bounce=1,
+        generation=f"handoff-{item_id}",
+        target_agent_id="agent-worker",
+        baseline_direct_run_ids=(f"run-old-{item_id}",),
+        baseline_verification_attachment_id=(
+            baseline_attachment_id
+            if baseline_attachment_id is not None
+            else verification_ref["attachment_id"]
+        ),
+        target_run_id="run-worker",
+        target_worker_bounce=0,
+        terminal_observed_at=terminal_observed_at,
+    ).as_dict()
+
+
+def _terminal_runtime():
+    return SimpleNamespace(
+        list_runs=lambda _item_id: [AgentRunObservation(
+            id="run-worker",
+            kind="direct",
+            status="completed",
+            agent_id="agent-worker",
+            created_at="2026-07-31T00:00:00Z",
+            updated_at="2026-07-31T00:01:00Z",
+        )],
+        wake=lambda *_args: pytest.fail("terminal handoff must not wake Worker"),
+    )
+
+
 def _large_dag_fixture():
     issues = {}
     attachments = {}
@@ -347,6 +397,181 @@ def test_146_node_full_tick_reuses_reconcile_observations_for_collect(
         remote.attachment_downloads,
         remote.pr_observations,
     ) == (146, 18, 1)
+
+
+def test_terminal_worker_handoff_observation_downloads_no_attachments(tmp_path):
+    item_id = "node-a"
+    issue, attachments = _issue(
+        item_id, status="in_progress", phase="authoring")
+    issue["metadata"]["worker_handoff"] = _worker_handoff(
+        issue,
+        item_id=item_id,
+        terminal_observed_at=loop._utcnow().isoformat(),
+    )
+    remote = _RemoteFixture({item_id: issue}, attachments)
+    store = _store(remote)
+    manifest, _path = _manifest_path(tmp_path, {
+        item_id: Node(
+            id=item_id,
+            worker="worker",
+            reviewer="reviewer",
+            work_item_id=item_id,
+            status="in_progress",
+        ),
+    })
+    intent = store.observe_work_item_control(
+        item_id).work_item.worker_handoff
+    remote.issue_gets = 0
+    remote.attachment_downloads = 0
+    remote.calls.clear()
+
+    for _ in range(3):
+        state, observed_intent = loop._observe_worker_handoff(
+            store, _terminal_runtime(), manifest, item_id, intent)
+        assert state == "pending-submit"
+        assert observed_intent == intent
+
+    assert remote.issue_gets == 3
+    assert remote.attachment_downloads == 0
+
+
+def test_terminal_worker_handoff_late_submit_hydrates_only_worker_evidence(
+    tmp_path, monkeypatch,
+):
+    item_id = "node-a"
+    issue, attachments = _issue(item_id, status="done", phase="authoring")
+    issue["metadata"]["worker_handoff"] = _worker_handoff(
+        issue,
+        item_id=item_id,
+        baseline_attachment_id="verification-before-worker",
+    )
+    remote = _RemoteFixture({item_id: issue}, attachments)
+    store = _store(remote)
+    manifest, _path = _manifest_path(tmp_path, {
+        item_id: Node(
+            id=item_id,
+            worker="worker",
+            reviewer="reviewer",
+            work_item_id=item_id,
+            status="in_progress",
+        ),
+    })
+    store.read_pull_request_readiness = lambda _url: PullRequestReadiness(
+        False, "OPEN", head_sha=issue["metadata"]["artifacts"]["head_sha"])
+
+    def update_metadata(_item_id, **metadata):
+        for key, value in metadata.items():
+            if hasattr(value, "as_dict"):
+                value = value.as_dict()
+            issue["metadata"][key] = value
+
+    monkeypatch.setattr(store, "update_work_item_metadata", update_metadata)
+    intent = store.observe_work_item_control(
+        item_id).work_item.worker_handoff
+    remote.issue_gets = 0
+    remote.attachment_downloads = 0
+    remote.calls.clear()
+
+    state, _intent = loop._observe_worker_handoff(
+        store, _terminal_runtime(), manifest, item_id, intent)
+
+    downloaded = [value for kind, value in remote.calls if kind == "attachment"]
+    assert state == "complete"
+    assert len(downloaded) == 2
+    assert set(downloaded) == {
+        issue["metadata"]["verification_ref"]["attachment_id"]}
+
+
+def test_eight_terminal_worker_handoffs_use_zero_attachment_reads(tmp_path):
+    issues = {}
+    attachments = {}
+    nodes = {}
+    observed_at = loop._utcnow().isoformat()
+    for index in range(8):
+        item_id = f"handoff-{index}"
+        issue, bodies = _issue(
+            item_id, status="in_progress", phase="authoring")
+        issue["metadata"]["worker_handoff"] = _worker_handoff(
+            issue,
+            item_id=item_id,
+            terminal_observed_at=observed_at,
+        )
+        issues[item_id] = issue
+        attachments.update(bodies)
+        nodes[item_id] = Node(
+            id=item_id,
+            worker="worker",
+            reviewer="reviewer",
+            work_item_id=item_id,
+            status="in_progress",
+        )
+    remote = _RemoteFixture(issues, attachments)
+    store = _store(remote)
+    manifest, path = _manifest_path(tmp_path, nodes)
+
+    result = loop.tick(
+        store,
+        _terminal_runtime(),
+        manifest,
+        path,
+        max_parallel=8,
+        config={},
+    )
+
+    assert result.state == "running"
+    assert remote.issue_gets == 32
+    assert remote.attachment_downloads == 0
+
+
+def test_worker_handoff_required_hydration_failure_is_fail_closed(
+    tmp_path, monkeypatch,
+):
+    item_id = "node-a"
+    issue, attachments = _issue(item_id, status="done", phase="authoring")
+    issue["metadata"]["worker_handoff"] = _worker_handoff(
+        issue,
+        item_id=item_id,
+        baseline_attachment_id="verification-before-worker",
+    )
+    remote = _RemoteFixture({item_id: issue}, attachments)
+    remote.fail_attachment_id = issue["metadata"]["verification_ref"][
+        "attachment_id"]
+    store = _store(remote)
+    manifest, path = _manifest_path(tmp_path, {
+        item_id: Node(
+            id=item_id,
+            worker="worker",
+            reviewer="reviewer",
+            work_item_id=item_id,
+            status="in_progress",
+        ),
+    })
+    effects = []
+    for method_name in (
+        "update_status",
+        "update_work_item_metadata",
+        "assign_work_item",
+        "clear_assignment",
+        "reset_review",
+    ):
+        monkeypatch.setattr(
+            store,
+            method_name,
+            lambda *args, _method=method_name, **kwargs: effects.append(
+                (_method, args, kwargs)),
+        )
+
+    with pytest.raises(PlatformError, match="attachment read failed"):
+        loop.tick(
+            store,
+            _terminal_runtime(),
+            manifest,
+            path,
+            max_parallel=1,
+            config={},
+        )
+
+    assert effects == []
 
 
 def test_146_node_late_submit_after_reconcile_is_collected_next_tick_without_wake(
