@@ -1484,6 +1484,183 @@ class TestReviewerRejectBoundedFallback:
         eng.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
         return intent, source
 
+    def test_terminal_worker_handoff_without_submit_uses_bounded_worker_retry(
+        self, tmp_path, monkeypatch,
+    ):
+        """terminal target Run 无新 submit 时不能永久 pending。"""
+        from omac.engines import create_engine
+        from omac.engines.models import AgentRunObservation
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        intent, _source = self._prepare_causal_handoff(eng, item)
+        original_assign = eng.store.assign_work_item
+        retry_assignments = 0
+        retry_run_visible = False
+
+        def assign(item_id, assignee, role):
+            nonlocal retry_assignments, retry_run_visible
+            if role == "worker":
+                retry_assignments += 1
+                retry_run_visible = True
+            return original_assign(item_id, assignee, role)
+
+        def list_runs(_item_id):
+            runs = [AgentRunObservation(
+                id=intent.target_run_id,
+                kind="direct",
+                status="completed",
+                agent_id=intent.target_agent_id,
+            )]
+            if retry_run_visible:
+                runs.append(AgentRunObservation(
+                    id="run-worker-retry",
+                    kind="direct",
+                    status="running",
+                    agent_id=intent.target_agent_id,
+                ))
+            return runs
+
+        monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
+        monkeypatch.setattr(eng.store, "assign_work_item", assign)
+        monkeypatch.setattr(eng.runtime, "list_runs", list_runs)
+
+        first = loop.collect_results(
+            eng.store,
+            eng.runtime,
+            manifest,
+            path,
+            retry_limits={"worker": 1},
+        )
+        assignments_after_first = retry_assignments
+        second = loop.collect_results(
+            eng.store,
+            eng.runtime,
+            manifest,
+            path,
+            retry_limits={"worker": 1},
+        )
+
+        recovered = eng.store.get_work_item(item.id)
+        assert first == {}
+        assert second == {}
+        assert manifest.nodes["a"].status == "in_progress"
+        assert recovered.bounces.worker == 1
+        assert recovered.worker_handoff is not None
+        assert recovered.worker_handoff.target_run_id == "run-worker-retry"
+        assert assignments_after_first == 1
+        assert retry_assignments == assignments_after_first
+
+    def test_terminal_worker_handoff_without_submit_blocks_when_budget_exhausted(
+        self, tmp_path, monkeypatch,
+    ):
+        """terminal no-submit 使用既有 worker=0 立即 blocked 语义。"""
+        from omac.engines import create_engine
+        from omac.engines.models import AgentRunObservation
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        intent, _source = self._prepare_causal_handoff(eng, item)
+        worker_assignments_before = len([
+            entry for entry in eng.store.assign_log if entry[2] == "worker"
+        ])
+        monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
+        monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: [
+            AgentRunObservation(
+                id=intent.target_run_id,
+                kind="direct",
+                status="completed",
+                agent_id=intent.target_agent_id,
+            )
+        ])
+
+        failures = loop.collect_results(
+            eng.store,
+            eng.runtime,
+            manifest,
+            path,
+            retry_limits={"worker": 0},
+        )
+
+        recovered = eng.store.get_work_item(item.id)
+        assert "a" in failures
+        assert manifest.nodes["a"].status == "blocked"
+        assert recovered.status is WorkItemStatus.BLOCKED
+        assert recovered.worker_handoff is None
+        assert len([
+            entry for entry in eng.store.assign_log if entry[2] == "worker"
+        ]) == worker_assignments_before
+
+    def test_terminal_worker_handoff_collects_submit_that_arrives_within_window(
+        self, tmp_path, monkeypatch,
+    ):
+        """有限观察窗口内晚到的新 attachment 仍按 causal submit 收割。"""
+        import copy
+
+        from omac.engines import create_engine
+        from omac.engines.models import AgentRunObservation, PullRequestReadiness
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        intent, _source = self._prepare_causal_handoff(eng, item)
+        original_get = eng.store.get_work_item
+        stale = copy.deepcopy(original_get(item.id))
+        self._submit_revision(eng, item, revision=2)
+        fresh = copy.deepcopy(original_get(item.id))
+        live = original_get(item.id)
+        live.artifacts = copy.deepcopy(stale.artifacts)
+        live.verification = copy.deepcopy(stale.verification)
+        live.verification_ref = copy.deepcopy(stale.verification_ref)
+        live.status = stale.status
+        reads = 0
+        worker_assignments_before = len([
+            entry for entry in eng.store.assign_log if entry[2] == "worker"
+        ])
+
+        def get_work_item(item_id):
+            nonlocal reads
+            reads += 1
+            if reads >= 5:
+                live.artifacts = copy.deepcopy(fresh.artifacts)
+                live.verification = copy.deepcopy(fresh.verification)
+                live.verification_ref = copy.deepcopy(fresh.verification_ref)
+                live.status = WorkItemStatus.DONE
+            return original_get(item_id)
+
+        monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
+        monkeypatch.setattr(eng.store, "get_work_item", get_work_item)
+        monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: [
+            AgentRunObservation(
+                id=intent.target_run_id,
+                kind="direct",
+                status="completed",
+                agent_id=intent.target_agent_id,
+            )
+        ])
+        monkeypatch.setattr(
+            eng.store,
+            "read_pull_request_readiness",
+            lambda _pr_url: PullRequestReadiness(
+                is_draft=False,
+                state="OPEN",
+                head_sha=fresh.artifacts["head_sha"],
+            ),
+        )
+
+        failures = loop.collect_results(
+            eng.store, eng.runtime, manifest, path)
+
+        recovered = original_get(item.id)
+        assert failures == {}
+        assert manifest.nodes["a"].status == "in_review"
+        assert recovered.worker_handoff is None
+        assert len([
+            entry for entry in eng.store.assign_log if entry[2] == "worker"
+        ]) == worker_assignments_before
+
     def test_retry_review_zero_blocks_immediately(self, tmp_path):
         """retry.review=0 → 首次 reject 立即 blocked,review_bounce 保持 0。"""
         from omac.engines import create_engine

@@ -504,9 +504,14 @@ def _dispatch_worker_handoff(
     if intent.is_causally_bound():
         observation, intent = _observe_worker_handoff(
             store, runtime, manifest, key, intent)
+        if observation == "pending-submit":
+            observation, intent = _observe_worker_handoff_bounded(
+                store, runtime, manifest, key, intent)
         if observation == "complete":
             return "ready"
-        if observation in {"waiting", "pending-submit"}:
+        if observation == "finished-without-submit":
+            return observation
+        if observation == "waiting":
             return "waiting"
 
     target_bounce = intent.target_review_bounce
@@ -564,6 +569,8 @@ def _dispatch_worker_handoff(
             store, runtime, manifest, key, intent)
         if observation == "complete":
             return "ready"
+        if observation == "finished-without-submit":
+            return observation
         if observation == "waiting":
             return "waiting"
         raise assign_error
@@ -572,7 +579,9 @@ def _dispatch_worker_handoff(
         store, runtime, manifest, key, intent)
     if observation == "complete":
         return "ready"
-    if observation in {"waiting", "pending-submit"}:
+    if observation == "finished-without-submit":
+        return observation
+    if observation == "waiting":
         return "waiting"
 
     try:
@@ -582,6 +591,8 @@ def _dispatch_worker_handoff(
             store, runtime, manifest, key, intent)
         if observation == "complete":
             return "ready"
+        if observation == "finished-without-submit":
+            return observation
         if observation == "waiting":
             return "waiting"
         raise wake_error
@@ -590,7 +601,9 @@ def _dispatch_worker_handoff(
         store, runtime, manifest, key, intent)
     if observation == "complete":
         return "ready"
-    if observation in {"waiting", "pending-submit"}:
+    if observation == "finished-without-submit":
+        return observation
+    if observation == "waiting":
         return "waiting"
     raise PlatformError(
         f"Worker handoff dispatch outcome is unknown for work item {item_id}")
@@ -612,7 +625,46 @@ def _observe_worker_handoff_bounded(
             return observation, intent
         if attempt + 1 < _HANDOFF_OBSERVATION_ATTEMPTS:
             time.sleep(_HANDOFF_OBSERVATION_INTERVAL)
+    if observation == "pending-submit":
+        return "finished-without-submit", intent
     return observation, intent
+
+
+def _next_worker_handoff_attempt(
+    store: WorkItemStore,
+    runtime: AgentRuntime,
+    item,
+) -> WorkerHandoffIntent:
+    """Create one persisted retry generation after a terminal no-submit Run."""
+    intent = item.worker_handoff
+    if intent is None or not intent.is_causally_bound():
+        raise PlatformError(
+            f"Worker handoff is not retryable for work item {item.id}")
+    direct_runs = [
+        run for run in runtime.list_runs(item.id) if run.kind == "direct"
+    ]
+    if any(run.active for run in direct_runs):
+        raise PlatformError(
+            f"Worker handoff still has an active Run for work item {item.id}")
+    allowed_run_ids = set(intent.baseline_direct_run_ids)
+    if intent.target_run_id:
+        allowed_run_ids.add(intent.target_run_id)
+    if any(run.id not in allowed_run_ids for run in direct_runs):
+        raise PlatformError(
+            f"Worker handoff observed an unexpected terminal Run for work item "
+            f"{item.id}")
+    verification_ref = (
+        item.verification_ref if isinstance(item.verification_ref, dict) else {}
+    )
+    return replace(
+        intent,
+        generation=f"handoff-{secrets.token_hex(8)}",
+        baseline_direct_run_ids=tuple(sorted(run.id for run in direct_runs)),
+        baseline_verification_attachment_id=(
+            str(verification_ref.get("attachment_id") or "") or None
+        ),
+        target_run_id=None,
+    )
 
 
 def _delivery_identity(item) -> DeliveryIdentity | None:
@@ -1222,9 +1274,15 @@ def collect_results(
             handoff = _dispatch_worker_handoff(
                 store, runtime, manifest, key)
             set_node(manifest, key, status="in_progress")
-            if handoff != "ready":
+            if handoff == "finished-without-submit":
+                item = replace(
+                    store.get_work_item(node.work_item_id),
+                    agent_run_finished_without_submit=True,
+                )
+            elif handoff != "ready":
                 continue
-            item = store.get_work_item(node.work_item_id)
+            else:
+                item = store.get_work_item(node.work_item_id)
 
         if node.status == "in_review" and item.phase == TaskPhase.AUTHORING:
             # 兼容旧版本 handoff，及 wake 成功、intent 已清但 manifest 尚未落盘
@@ -1288,6 +1346,10 @@ def collect_results(
                     "Worker run ended without delivery through `omac work submit`.",
                     "worker run 已结束但未通过 omac work submit 交付")
                 if worker_limit == 0 or consumed >= worker_limit:
+                    if item.worker_handoff is not None:
+                        store.clear_assignment(node.work_item_id)
+                        store.update_work_item_metadata(
+                            node.work_item_id, worker_handoff={})
                     store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
                     set_node(manifest, key, status="blocked")
                     failures[key] = ui(
@@ -1299,19 +1361,50 @@ def collect_results(
                                  f"Worker delivery retry limit ({worker_limit}) exhausted",
                                  f"worker 未交付回退上界({worker_limit})已耗尽"))
                 else:
-                    store.update_work_item_metadata(
-                        node.work_item_id,
-                        phase=TaskPhase.AUTHORING,
-                        worker_bounce=cur_bounce + 1,
-                    )
                     try:
-                        store.assign_work_item(node.work_item_id, node.worker, "worker")
-                        store.update_status(node.work_item_id, WorkItemStatus.IN_PROGRESS)
+                        if item.worker_handoff is not None:
+                            retry_intent = _next_worker_handoff_attempt(
+                                store, runtime, item)
+                            store.clear_assignment(node.work_item_id)
+                            store.update_work_item_metadata(
+                                node.work_item_id,
+                                phase=TaskPhase.AUTHORING,
+                                worker_bounce=cur_bounce + 1,
+                                worker_handoff=retry_intent,
+                            )
+                            handoff = _dispatch_worker_handoff(
+                                store, runtime, manifest, key)
+                            if handoff == "ready":
+                                item = store.get_work_item(node.work_item_id)
+                            else:
+                                set_node(manifest, key, status="in_progress")
+                                log.info(
+                                    logsetup.EVT_REVISION,
+                                    kind=_DAG_KIND,
+                                    node=key,
+                                    id=node.work_item_id,
+                                    gate="worker",
+                                    round=cur_bounce + 1,
+                                    max=worker_limit,
+                                )
+                                continue
+                        else:
+                            store.update_work_item_metadata(
+                                node.work_item_id,
+                                phase=TaskPhase.AUTHORING,
+                                worker_bounce=cur_bounce + 1,
+                            )
+                            store.assign_work_item(
+                                node.work_item_id, node.worker, "worker")
+                            store.update_status(
+                                node.work_item_id, WorkItemStatus.IN_PROGRESS)
                         set_node(manifest, key, status="in_progress")
                         log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=key,
                                  id=node.work_item_id, gate="worker",
                                  round=cur_bounce + 1, max=worker_limit)
-                        runtime.wake(node.work_item_id, node.worker, "worker")
+                        if item.worker_handoff is None:
+                            runtime.wake(
+                                node.work_item_id, node.worker, "worker")
                     except PlatformError as exc:
                         store.update_work_item_metadata(
                             node.work_item_id, worker_bounce=cur_bounce)
