@@ -858,8 +858,8 @@ def test_reconcile_does_not_swallow_programming_errors(tmp_path):
         loop.reconcile(store, manifest, str(tmp_path / "m.yaml"))
 
 class TestIdempotency:
-    def test_done_nodes_reused_no_duplicate_issues(self):
-        """tick 序列中途重建 loop,done 节点复用 work_item_id,不重复建。"""
+    def test_confirmed_merge_without_work_item_remains_closed(self):
+        """confirmed merge 不因平台投影缺失而重建或重新执行。"""
         nodes = [_node("a"), _node("b", blocked_by=["a"])]
         manifest = _manifest(nodes)
         path = _tmp_manifest_path(manifest)
@@ -877,19 +877,16 @@ class TestIdempotency:
         a_item_id = manifest.nodes["a"].work_item_id
         assert a_item_id is not None
 
-        # 重建 loop(store/runtime 是新的,但 work_items 在内存里丢失)
-        # 重建意味着对同一 manifest 文件继续——mock store 是内存的,
-        # 重建后 work_item_id 指向的 item 不存在 → reconcile 清空走新建
-        # 但 done 节点状态在 manifest 里保持 done,reconcile 不会动它(无 work_item_id 跳过)
+        # 重建 loop(store/runtime 是新的,但 work_items 在内存里丢失)。
         eng2 = _engine()
         # 手动清空 a 的 work_item_id 模拟「平台已无此 item」
-        # done 没有工作单元不再是有效的 develop 收口状态。
         from omac.core.manifest import set_node
         set_node(manifest, "a", work_item_id=None)
 
         r3 = tick(eng2.store, eng2.runtime, manifest, path)
-        # a 被 fail-closed 阻断，不能再作为无工作单元的 done 上游。
-        assert "a" in r3.failed
+        assert "a" in r3.done
+        assert manifest.nodes["a"].status == "done"
+        assert manifest.nodes["a"].work_item_id is None
         assert "a" not in r3.dispatched
 
     def test_full_run_idempotent_reload(self):
