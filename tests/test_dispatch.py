@@ -477,6 +477,8 @@ class TestDispatchLoopIntegration:
 
         manifest.nodes["a"].contract.scope_paths.append("package.json")
         manifest.nodes["a"].status = "todo"
+        eng.store.update_status(item_id, WorkItemStatus.DONE)
+        eng.store.clear_assignment(item_id)
         eng.store.update_status(item_id, WorkItemStatus.BLOCKED)
         tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
 

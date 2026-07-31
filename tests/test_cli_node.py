@@ -266,6 +266,10 @@ def test_retry_retires_old_handoff_and_waits_for_new_worker_submit(
     first = tick(engine.store, engine.runtime, manifest, path, max_parallel=1)
     assert first.dispatched == ["b"]
     assert engine.store.get_work_item(item.id).worker == expected_worker
+    first_handoff = engine.store.get_work_item(item.id).worker_handoff
+    assert first_handoff is not None
+    assert first_handoff.gate == "explicit-dispatch"
+    assert first_handoff.target_worker_bounce == 0
     reviewer_assignments = len([
         entry for entry in engine.store.assign_log if entry[2] == "reviewer"
     ])
@@ -277,12 +281,21 @@ def test_retry_retires_old_handoff_and_waits_for_new_worker_submit(
         entry for entry in engine.store.assign_log if entry[2] == "reviewer"
     ]) == reviewer_assignments
 
-    engine.store.update_work_item_metadata(
+    from omac.pipeline.dispatch import submit
+
+    verification_file = tmp_path / "verification-retry.yaml"
+    verification_file.write_text(yaml.safe_dump({
+        "commands": [],
+        "integration_gates": [],
+        "pr_base": "main",
+        "coverage": 100,
+    }))
+    submit(
+        engine.store,
         item.id,
-        artifacts={"pr_url": "https://mock.example.com/pr/retry"},
-        verification={"commands": []},
+        pr_url="https://github.com/acme/repo/pull/25",
+        verification_file=str(verification_file),
     )
-    engine.store.update_status(item.id, WorkItemStatus.DONE)
 
     third = tick(engine.store, engine.runtime, manifest, path, max_parallel=1)
     reviewed = engine.store.get_work_item(item.id)
@@ -414,15 +427,21 @@ def test_retry_legacy_delivery_isolates_old_evidence_until_fresh_submit(
     assert retried.decision_required is None
     assert retried.worker_handoff is not None
     assert retried.worker_handoff.is_causally_bound()
+    assert retried.worker_handoff.target_worker_bounce == retried.bounces.worker
     assert retried.worker_handoff.baseline_verification_attachment_id == (
         old_attachment)
     assert retried.artifacts["pr_url"] == old_pr
     assert retried.verification == old_verification
 
     manifest = load_manifest(path)
+    retry_generation = retried.worker_handoff.generation
     assignments_before = len(engine.store.assign_log)
     first = tick(engine.store, engine.runtime, manifest, path, max_parallel=1)
     assert first.dispatched == ["b"]
+    dispatched_handoff = engine.store.get_work_item(item.id).worker_handoff
+    assert dispatched_handoff is not None
+    assert dispatched_handoff.generation == retry_generation
+    assert dispatched_handoff.gate == "operator-retry"
     assert [
         entry[2] for entry in engine.store.assign_log[assignments_before:]
     ] == ["worker"]

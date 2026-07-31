@@ -2238,9 +2238,10 @@ def test_authoring_recovery_uses_fresh_worker_budget_without_erasing_history(tmp
     )
 
     got = engine.store.get_work_item(item.id)
-    assert failures == {}
-    assert manifest.nodes["bootstrap"].status == "in_progress"
-    assert got.bounces.worker == 4
+    assert "bootstrap" in failures
+    assert manifest.nodes["bootstrap"].status == "blocked"
+    assert got.bounces.worker == 3
+    assert got.decision_required["reason_code"] == "worker-retry-intent-required"
 
 
 def test_merging_recovery_uses_fresh_merge_budget_without_erasing_history(tmp_path):
@@ -2429,7 +2430,18 @@ def test_implementation_scope_change_requires_authoring_and_explicit_migration(t
     result = apply_amendment(str(path), reviewed, engine.store, {"alice", "bob", "charlie"})
 
     assert result["minimal_rerun"]["authoring"] == ["bootstrap"]
-    assert load_manifest(str(path)).nodes["bootstrap"].status == "todo"
+    manifest = load_manifest(str(path))
+    assert manifest.nodes["bootstrap"].status == "todo"
+    assert engine.store.get_work_item("1").worker_handoff is None
+
+    dispatched = loop.tick(
+        engine.store, engine.runtime, manifest, str(path), max_parallel=1)
+
+    handoff = engine.store.get_work_item("1").worker_handoff
+    assert dispatched.dispatched == ["bootstrap"]
+    assert handoff is not None
+    assert handoff.gate == "explicit-dispatch"
+    assert handoff.target_worker_bounce == 0
 
 
 def test_done_or_merged_node_cannot_be_rewritten_or_removed(tmp_path):

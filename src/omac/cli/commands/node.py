@@ -266,6 +266,7 @@ def _cmd_retry(args) -> int:
                     baseline_verification_attachment_id=str(
                         (current.verification_ref or {}).get("attachment_id") or ""
                     ) or None,
+                    target_worker_bounce=current.bounces.worker,
                 )
             # 复用 DAG stage recovery 原语；清除旧 reviewer 判定并恢复
             # authoring/todo，同时保留 PR、verification 与历史附件。

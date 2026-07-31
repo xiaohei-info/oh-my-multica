@@ -8,6 +8,7 @@
 - 不存在任何自动重试路径(blocked 节点在后续 tick 保持 blocked)
 """
 import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import tempfile
 
@@ -30,7 +31,7 @@ from omac.core.review_convergence import (
 from omac.engines import create_engine
 from omac.engines.mock import MockRuntime, MockStore
 from omac.core.taskmeta import TaskPhase
-from omac.engines.models import EngineConfig, WorkItemStatus
+from omac.engines.models import AgentRunObservation, EngineConfig, WorkItemStatus
 from omac.pipeline import loop
 from omac.pipeline.dispatch import build_show_output
 from omac.pipeline.loop import TickResult, tick
@@ -641,17 +642,6 @@ class TestHappyPath:
                 events.append("status")
             return original_status(item_id, status)
 
-        def wake(item_id, agent, role):
-            events.append("wake")
-            current = eng.store.get_work_item(item_id)
-            summary = build_show_output(current, f"{role}:{agent}")
-            assert current.blocked_by == dependency_keys
-            assert summary["task"]["blocked_by"] == dependency_keys
-            assert summary["context"]["source_issues"][-1]["issue_id"] == (
-                dependency_items[new_dependency].id
-            )
-            assert new_dependency in summary["context"]["issue_description"]
-
         monkeypatch.setattr(eng.store, "update_work_item_metadata", update_metadata)
         monkeypatch.setattr(eng.store, "assign_work_item", assign)
         monkeypatch.setattr(eng.store, "update_status", update_status)
@@ -661,25 +651,35 @@ class TestHappyPath:
             lambda *_args, **_kwargs: pytest.fail(
                 "reused item must not republish its contract"),
         )
-        monkeypatch.setattr(eng.runtime, "wake", wake)
+        monkeypatch.setattr(
+            eng.runtime,
+            "wake",
+            lambda *_args: pytest.fail(
+                "assignment-created Run must not also be woken"),
+        )
 
         result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
 
         current = eng.store.get_work_item(reused.id)
         summary = build_show_output(current, "worker:alice")
         assert result.dispatched == [target.id]
-        assert events == ["metadata", "assign", "status", "wake"]
-        assert len(metadata_calls) == 1
+        assert events == ["metadata", "metadata", "status", "assign", "metadata"]
+        assert len(metadata_calls) == 3
         assert set(metadata_calls[0]) == {
             "blocked_by", "description", "source_refs",
         }
+        assert set(metadata_calls[1]) == {"worker_handoff"}
+        assert set(metadata_calls[2]) == {"worker_handoff"}
         assert "worker" not in metadata_calls[0]
         assert "reviewer" not in metadata_calls[0]
+        assert current.worker_handoff is not None
+        assert current.worker_handoff.gate == "explicit-dispatch"
+        assert current.worker_handoff.target_run_id is not None
         assert current.worker == "alice"
         assert current.reviewer == "bob"
         assert current.review_ledger is review_ledger
-        assert current.review_report is review_report
-        assert current.review_comment == "prior review history"
+        assert current.review_report is None
+        assert current.review_comment is None
         assert summary["task"]["blocked_by"] == dependency_keys
         assert summary["context"]["source_issues"][-1] == {
             "label": (
@@ -690,6 +690,76 @@ class TestHappyPath:
         }
         assert eng.store.get_comments(reused.id) == ["existing audit comment"]
         assert len(eng.runtime.list_runs(reused.id)) == 1
+
+    def test_reused_todo_dispatch_recovers_same_intent_after_crash_before_wake(
+        self, monkeypatch,
+    ):
+        """同 assignee 不产生 Run 时，重启只能按持久 intent 补首次 wake。"""
+        eng = _engine(MOCK_AUTO_COMPLETE="false")
+        item = eng.store.create_work_item(
+            "ws", "a", "Task a", dag_key="a", worker="alice")
+        eng.store.assign_work_item(item.id, "alice", "worker")
+        eng.store.update_status(item.id, WorkItemStatus.DONE)
+        eng.store.update_status(item.id, WorkItemStatus.TODO)
+        old_runs = list(eng.runtime.list_runs(item.id))
+        assert len(old_runs) == 1 and old_runs[0].terminal
+
+        node = _node("a", worker="alice")
+        node.work_item_id = item.id
+        manifest = _manifest([node])
+        path = _tmp_manifest_path(manifest)
+
+        class CrashBeforeWakeRuntime(MockRuntime):
+            def __init__(self, store):
+                super().__init__(store)
+                self.runs = list(old_runs)
+                self.crash_before_wake = True
+                self.wake_calls = 0
+
+            def list_runs(self, item_id):  # noqa: ARG002
+                return list(self.runs)
+
+            def wake(self, item_id, agent, role):  # noqa: ARG002
+                self.wake_calls += 1
+                if self.crash_before_wake:
+                    raise RuntimeError("crash before first wake")
+                self.runs.append(AgentRunObservation(
+                    id="run-explicit-retry",
+                    kind="direct",
+                    status="running",
+                    agent_id=eng.store.resolve_agent_id(agent),
+                ))
+
+        runtime = CrashBeforeWakeRuntime(eng.store)
+        monkeypatch.setattr(loop, "_HANDOFF_OBSERVATION_INTERVAL", 0)
+
+        with pytest.raises(RuntimeError, match="crash before first wake"):
+            tick(eng.store, runtime, manifest, path, max_parallel=1)
+
+        interrupted = eng.store.get_work_item(item.id)
+        assert interrupted.status is WorkItemStatus.IN_PROGRESS
+        assert interrupted.worker_handoff is not None
+        assert interrupted.worker_handoff.gate == "explicit-dispatch"
+        assert interrupted.worker_handoff.target_worker_bounce == 0
+        generation = interrupted.worker_handoff.generation
+        assert len(runtime.runs) == 1
+
+        runtime.crash_before_wake = False
+        restarted = load_manifest(path)
+        recovered = tick(
+            eng.store, runtime, restarted, path, max_parallel=1)
+
+        current = eng.store.get_work_item(item.id)
+        assert recovered.state == "running"
+        assert restarted.nodes["a"].status == "in_progress"
+        assert current.worker_handoff is not None
+        assert current.worker_handoff.generation == generation
+        assert current.worker_handoff.target_run_id == "run-explicit-retry"
+        assert len(runtime.runs) == 2
+
+        tick(eng.store, runtime, restarted, path, max_parallel=1)
+        assert len(runtime.runs) == 2
+        assert runtime.wake_calls == 2
 
     def test_dispatch_develop_dag_key_includes_manifest_dag_suffix(self):
         """worker issue 的 DAG key 继承 plan/decompose 唯一后缀,避免不同流水线节点重名。"""
@@ -721,8 +791,8 @@ class TestHappyPath:
         assert len(result.dispatched) == 1
         assert len(result.running) == 1
 
-    def test_resume_tick_wakes_existing_in_progress_worker(self):
-        """resume 时已处于 in_progress 的节点也要幂等补唤醒执行面。"""
+    def test_resume_tick_does_not_redispatch_existing_in_progress_worker(self):
+        """无持久 handoff identity 时，旧 IN_PROGRESS 只能等待下轮观察。"""
         nodes = [_node("a")]
         manifest = _manifest(nodes)
         path = _tmp_manifest_path(manifest)
@@ -744,10 +814,54 @@ class TestHappyPath:
         result = tick(eng.store, runtime, manifest, path, max_parallel=1)
 
         assert result.state == "running"
-        assert runtime.calls == [(item_id, "alice", "worker")]
+        assert runtime.calls == []
 
-    def test_worker_completed_without_submit_bounces_back_to_worker(self):
-        """agent run 已终止但未 submit 时,同一 issue 转回 worker 继续处理。"""
+    @pytest.mark.parametrize(
+        ("manifest_status", "item_status"),
+        [
+            ("in_review", WorkItemStatus.IN_PROGRESS),
+            ("in_progress", WorkItemStatus.IN_REVIEW),
+        ],
+    )
+    def test_ambiguous_authoring_projection_without_handoff_never_dispatches(
+        self, manifest_status, item_status,
+    ):
+        nodes = [_node("a")]
+        manifest = _manifest(nodes)
+        path = _tmp_manifest_path(manifest)
+        eng = _engine(MOCK_AUTO_COMPLETE="false")
+
+        tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+        item_id = manifest.nodes["a"].work_item_id
+        item = eng.store.get_work_item(item_id)
+        item.phase = TaskPhase.AUTHORING
+        item.status = item_status
+        item.worker_handoff = None
+        manifest.nodes["a"].status = manifest_status
+        save_manifest(manifest, path)
+        assignments_before = len(eng.store.assign_log)
+
+        class RecordingRuntime(MockRuntime):
+            def __init__(self, store):
+                super().__init__(store)
+                self.calls = []
+
+            def wake(self, item_id, agent, role):
+                self.calls.append((item_id, agent, role))
+                super().wake(item_id, agent, role)
+
+        runtime = RecordingRuntime(eng.store)
+
+        failures = loop.collect_results(
+            eng.store, runtime, manifest, path)
+
+        assert failures == {}
+        assert manifest.nodes["a"].status == manifest_status
+        assert len(eng.store.assign_log) == assignments_before
+        assert runtime.calls == []
+
+    def test_worker_completed_without_submit_requires_explicit_retry_without_intent(self):
+        """无 handoff identity 的 no-submit 不得自动创建第二个 Worker Run。"""
         nodes = [_node("a")]
         manifest = _manifest(nodes)
         path = _tmp_manifest_path(manifest)
@@ -756,14 +870,18 @@ class TestHappyPath:
         tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
         item_id = manifest.nodes["a"].work_item_id
         eng.store.get_work_item(item_id).agent_run_finished_without_submit = True
+        assignments_before = len(eng.store.assign_log)
 
         result = tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
         item = eng.store.get_work_item(item_id)
 
-        assert item.status == WorkItemStatus.IN_PROGRESS
-        assert manifest.nodes["a"].status == "in_progress"
-        assert result.state == "running"
-        assert result.running == ["a"]
+        assert item.status == WorkItemStatus.BLOCKED
+        assert manifest.nodes["a"].status == "blocked"
+        assert result.state == "needs_decision"
+        assert item.bounces.worker == 0
+        assert item.decision_required["reason_code"] == "worker-retry-intent-required"
+        assert item.decision_required["next_action"].endswith(" a")
+        assert len(eng.store.assign_log) == assignments_before
 
     def test_worker_completed_without_submit_exhaustion_does_not_comment(self):
         """worker 未交付耗尽时不发平台评论,避免评论再次触发 agent run。"""
@@ -1483,6 +1601,280 @@ class TestReviewerRejectBoundedFallback:
         eng.store.reset_review(item.id)
         eng.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
         return intent, source
+
+    def test_terminal_worker_handoff_without_submit_uses_bounded_worker_retry(
+        self, tmp_path, monkeypatch,
+    ):
+        """terminal target Run 跨 tick grace 后使用有界 worker retry。"""
+        from omac.engines import create_engine
+        from omac.engines.models import AgentRunObservation
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        intent, _source = self._prepare_causal_handoff(eng, item)
+        original_assign = eng.store.assign_work_item
+        retry_assignments = 0
+        retry_run_visible = False
+        now = [datetime(2026, 7, 31, tzinfo=timezone.utc)]
+
+        def assign(item_id, assignee, role):
+            nonlocal retry_assignments, retry_run_visible
+            if role == "worker":
+                retry_assignments += 1
+                retry_run_visible = True
+            return original_assign(item_id, assignee, role)
+
+        def list_runs(_item_id):
+            runs = [AgentRunObservation(
+                id=intent.target_run_id,
+                kind="direct",
+                status="completed",
+                agent_id=intent.target_agent_id,
+            )]
+            if retry_run_visible:
+                runs.append(AgentRunObservation(
+                    id="run-worker-retry",
+                    kind="direct",
+                    status="running",
+                    agent_id=intent.target_agent_id,
+                ))
+            return runs
+
+        monkeypatch.setattr(loop, "_utcnow", lambda: now[0])
+        monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
+        monkeypatch.setattr(eng.store, "assign_work_item", assign)
+        monkeypatch.setattr(eng.runtime, "list_runs", list_runs)
+
+        first = loop.collect_results(
+            eng.store,
+            eng.runtime,
+            manifest,
+            path,
+            retry_limits={"worker": 1},
+        )
+        after_grace_start = eng.store.get_work_item(item.id)
+        assert after_grace_start.bounces.worker == 0
+        assert after_grace_start.worker_handoff is not None
+        assert after_grace_start.worker_handoff.terminal_observed_at
+        assert retry_assignments == 0
+
+        now[0] += timedelta(seconds=loop._HANDOFF_TERMINAL_GRACE_SECONDS + 1)
+        second = loop.collect_results(
+            eng.store,
+            eng.runtime,
+            manifest,
+            path,
+            retry_limits={"worker": 1},
+        )
+        assignments_after_retry = retry_assignments
+        third = loop.collect_results(
+            eng.store,
+            eng.runtime,
+            manifest,
+            path,
+            retry_limits={"worker": 1},
+        )
+
+        recovered = eng.store.get_work_item(item.id)
+        assert first == {}
+        assert second == {}
+        assert third == {}
+        assert manifest.nodes["a"].status == "in_progress"
+        assert recovered.bounces.worker == 1
+        assert recovered.worker_handoff is not None
+        assert recovered.worker_handoff.target_run_id == "run-worker-retry"
+        assert recovered.worker_handoff.target_worker_bounce == 1
+        assert assignments_after_retry == 1
+        assert retry_assignments == assignments_after_retry
+
+    def test_terminal_worker_handoff_without_submit_blocks_when_budget_exhausted(
+        self, tmp_path, monkeypatch,
+    ):
+        """terminal no-submit 使用既有 worker=0 立即 blocked 语义。"""
+        from omac.engines import create_engine
+        from omac.engines.models import AgentRunObservation
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        intent, _source = self._prepare_causal_handoff(eng, item)
+        now = [datetime(2026, 7, 31, tzinfo=timezone.utc)]
+        worker_assignments_before = len([
+            entry for entry in eng.store.assign_log if entry[2] == "worker"
+        ])
+        monkeypatch.setattr(loop, "_utcnow", lambda: now[0])
+        monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
+        monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: [
+            AgentRunObservation(
+                id=intent.target_run_id,
+                kind="direct",
+                status="completed",
+                agent_id=intent.target_agent_id,
+            )
+        ])
+
+        assert loop.collect_results(
+            eng.store,
+            eng.runtime,
+            manifest,
+            path,
+            retry_limits={"worker": 0},
+        ) == {}
+        assert manifest.nodes["a"].status == "in_progress"
+
+        now[0] += timedelta(seconds=loop._HANDOFF_TERMINAL_GRACE_SECONDS + 1)
+        failures = loop.collect_results(
+            eng.store, eng.runtime, manifest, path,
+            retry_limits={"worker": 0})
+
+        recovered = eng.store.get_work_item(item.id)
+        assert "a" in failures
+        assert manifest.nodes["a"].status == "blocked"
+        assert recovered.status is WorkItemStatus.BLOCKED
+        assert recovered.worker_handoff is None
+        assert len([
+            entry for entry in eng.store.assign_log if entry[2] == "worker"
+        ]) == worker_assignments_before
+
+    def test_terminal_worker_handoff_collects_submit_that_arrives_within_window(
+        self, tmp_path, monkeypatch,
+    ):
+        """有限观察窗口内晚到的新 attachment 仍按 causal submit 收割。"""
+        from omac.engines import create_engine
+        from omac.engines.models import AgentRunObservation, PullRequestReadiness
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        intent, _source = self._prepare_causal_handoff(eng, item)
+        now = [datetime(2026, 7, 31, tzinfo=timezone.utc)]
+        worker_assignments_before = len([
+            entry for entry in eng.store.assign_log if entry[2] == "worker"
+        ])
+        monkeypatch.setattr(loop, "_utcnow", lambda: now[0])
+        monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
+        monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: [
+            AgentRunObservation(
+                id=intent.target_run_id,
+                kind="direct",
+                status="completed",
+                agent_id=intent.target_agent_id,
+            )
+        ])
+
+        assert loop.collect_results(
+            eng.store, eng.runtime, manifest, path) == {}
+        assert eng.store.get_work_item(
+            item.id).worker_handoff.terminal_observed_at
+
+        self._submit_revision(eng, item, revision=2)
+        fresh = eng.store.get_work_item(item.id)
+        now[0] += timedelta(
+            seconds=max(1, loop._HANDOFF_TERMINAL_GRACE_SECONDS // 2))
+        monkeypatch.setattr(
+            eng.store,
+            "read_pull_request_readiness",
+            lambda _pr_url: PullRequestReadiness(
+                is_draft=False, state="OPEN",
+                head_sha=fresh.artifacts["head_sha"]),
+        )
+        failures = loop.collect_results(
+            eng.store, eng.runtime, manifest, path)
+
+        recovered = eng.store.get_work_item(item.id)
+        assert failures == {}
+        assert manifest.nodes["a"].status == "in_review"
+        assert recovered.worker_handoff is None
+        assert len([
+            entry for entry in eng.store.assign_log if entry[2] == "worker"
+        ]) == worker_assignments_before
+
+    def test_worker_retry_attempt_recovers_crash_between_intent_and_bounce(
+        self, tmp_path, monkeypatch,
+    ):
+        """retry intent 先落盘；重启从同 generation 收敛 bounce 后只派一次。"""
+        from omac.engines import create_engine
+        from omac.engines.models import AgentRunObservation
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        intent, _source = self._prepare_causal_handoff(eng, item)
+        now = [datetime(2026, 7, 31, tzinfo=timezone.utc)]
+        retry_run_visible = False
+        retry_assignments = 0
+        original_assign = eng.store.assign_work_item
+        original_update = eng.store.update_work_item_metadata
+
+        def list_runs(_item_id):
+            runs = [AgentRunObservation(
+                id=intent.target_run_id, kind="direct", status="completed",
+                agent_id=intent.target_agent_id)]
+            if retry_run_visible:
+                runs.append(AgentRunObservation(
+                    id="run-worker-retry", kind="direct", status="running",
+                    agent_id=intent.target_agent_id))
+            return runs
+
+        def assign(item_id, assignee, role):
+            nonlocal retry_run_visible, retry_assignments
+            if role == "worker":
+                retry_run_visible = True
+                retry_assignments += 1
+            return original_assign(item_id, assignee, role)
+
+        monkeypatch.setattr(loop, "_utcnow", lambda: now[0])
+        monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
+        monkeypatch.setattr(eng.runtime, "list_runs", list_runs)
+        monkeypatch.setattr(eng.store, "assign_work_item", assign)
+        assert loop.collect_results(
+            eng.store, eng.runtime, manifest, path,
+            retry_limits={"worker": 1}) == {}
+        now[0] += timedelta(seconds=loop._HANDOFF_TERMINAL_GRACE_SECONDS + 1)
+
+        crashed = False
+
+        def crash_after_retry_intent(item_id, **metadata):
+            nonlocal crashed
+            result = original_update(item_id, **metadata)
+            handoff = metadata.get("worker_handoff")
+            if (
+                getattr(handoff, "target_worker_bounce", None) == 1
+                and not crashed
+            ):
+                crashed = True
+                raise RuntimeError("crash after retry intent")
+            return result
+
+        monkeypatch.setattr(
+            eng.store, "update_work_item_metadata", crash_after_retry_intent)
+        with pytest.raises(RuntimeError, match="retry intent"):
+            loop.collect_results(
+                eng.store, eng.runtime, manifest, path,
+                retry_limits={"worker": 1})
+
+        interrupted = eng.store.get_work_item(item.id)
+        retry_generation = interrupted.worker_handoff.generation
+        assert interrupted.worker_handoff.target_worker_bounce == 1
+        assert interrupted.bounces.worker == 0
+        assert retry_assignments == 0
+
+        monkeypatch.setattr(
+            eng.store, "update_work_item_metadata", original_update)
+        assert loop.collect_results(
+            eng.store, eng.runtime, manifest, path,
+            retry_limits={"worker": 1}) == {}
+        assignments_after_restart = retry_assignments
+        assert loop.collect_results(
+            eng.store, eng.runtime, manifest, path,
+            retry_limits={"worker": 1}) == {}
+
+        recovered = eng.store.get_work_item(item.id)
+        assert recovered.worker_handoff.generation == retry_generation
+        assert recovered.bounces.worker == 1
+        assert assignments_after_restart == 1
+        assert retry_assignments == assignments_after_restart
 
     def test_retry_review_zero_blocks_immediately(self, tmp_path):
         """retry.review=0 → 首次 reject 立即 blocked,review_bounce 保持 0。"""
@@ -2802,6 +3194,55 @@ class TestReviewerRejectBoundedFallback:
         assert len([
             entry for entry in eng.store.assign_log if entry[2] == "reviewer"
         ]) == reviewer_assignments_before
+
+    def test_review_handoff_with_zero_bounce_has_no_lifecycle_side_effects(
+        self, tmp_path, monkeypatch,
+    ):
+        from omac.core.taskmeta import WorkerHandoffIntent
+        from omac.engines import create_engine
+        from omac.errors import PlatformError
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        current = eng.store.get_work_item(item.id)
+        intent = WorkerHandoffIntent(
+            schema="omac.worker-handoff/v1",
+            state="pending",
+            target_worker="alice",
+            gate="review",
+            source_review_subject_digest=current.review_subject_digest,
+            source_review_round=1,
+            target_review_bounce=0,
+            generation="handoff-malformed-zero-review-bounce",
+            target_agent_id=eng.store.resolve_agent_id("alice"),
+            baseline_direct_run_ids=tuple(sorted(
+                run.id for run in eng.runtime.list_runs(item.id)
+                if run.kind == "direct"
+            )),
+            baseline_verification_attachment_id=str(
+                (current.verification_ref or {}).get("attachment_id") or ""
+            ) or None,
+            target_worker_bounce=current.bounces.worker,
+        )
+        eng.store.update_work_item_metadata(item.id, worker_handoff=intent)
+
+        for target, name in (
+            (eng.store, "reset_review"),
+            (eng.store, "update_status"),
+            (eng.store, "assign_work_item"),
+            (eng.runtime, "wake"),
+        ):
+            monkeypatch.setattr(
+                target,
+                name,
+                lambda *_args, _name=name, **_kwargs: pytest.fail(
+                    f"malformed handoff must not call {_name}"),
+            )
+
+        with pytest.raises(PlatformError, match="causal identity"):
+            loop._dispatch_worker_handoff(
+                eng.store, eng.runtime, manifest, "a")
 
     @pytest.mark.parametrize("intent_kind", ["malformed", "stale"])
     @pytest.mark.parametrize(

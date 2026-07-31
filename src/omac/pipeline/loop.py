@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 import secrets
 import time
@@ -73,6 +73,7 @@ _PLATFORM_TO_MANIFEST: Dict[str, str] = {
 _MISSING_WORK_ITEM = object()
 _HANDOFF_OBSERVATION_ATTEMPTS = 3
 _HANDOFF_OBSERVATION_INTERVAL = 0.5
+_HANDOFF_TERMINAL_GRACE_SECONDS = 30
 _WORKER_DELIVERY_PAYLOADS = frozenset({
     WorkItemPayload.VERIFICATION,
     WorkItemPayload.CONTRACT,
@@ -465,15 +466,19 @@ def _dispatch_worker_handoff(
         if review_bounce is None or gate is None:
             raise PlatformError(
                 f"Worker handoff intent is missing for work item {item_id}")
-        source_round = max(1, current.bounces.review + 1)
-        source_subject = current.review_subject_digest
-        if (
-            not source_subject
-            or source_subject != _review_subject_for_round(
-                manifest, key, current, source_round)
-        ):
-            raise PlatformError(
-                f"Worker handoff source is stale for work item {item_id}")
+        if gate == "explicit-dispatch":
+            source_round = max(1, current.bounces.review)
+            source_subject = stage_recovery_subject(node, current)
+        else:
+            source_round = max(1, current.bounces.review + 1)
+            source_subject = current.review_subject_digest
+            if (
+                not source_subject
+                or source_subject != _review_subject_for_round(
+                    manifest, key, current, source_round)
+            ):
+                raise PlatformError(
+                    f"Worker handoff source is stale for work item {item_id}")
         if not runtime.capabilities.stable_direct_run_identity:
             raise PlatformError(
                 "Worker handoff requires stable direct Run identity support")
@@ -495,17 +500,38 @@ def _dispatch_worker_handoff(
                 str((current.verification_ref or {}).get("attachment_id") or "")
                 or None
             ),
+            target_worker_bounce=current.bounces.worker,
         )
         if current.delivery_identity is not None:
             store.update_work_item_metadata(item_id, delivery_identity={})
         store.update_work_item_metadata(item_id, worker_handoff=intent)
         current = store.get_work_item(item_id)
 
+    if not intent.is_causally_bound():
+        raise PlatformError(
+            f"Worker handoff lacks causal identity for work item {item_id}")
+
+    target_worker_bounce = intent.target_worker_bounce
+    if target_worker_bounce is not None:
+        if current.bounces.worker < target_worker_bounce:
+            store.update_work_item_metadata(
+                item_id, worker_bounce=target_worker_bounce)
+            current = store.get_work_item(item_id)
+        if current.bounces.worker != target_worker_bounce:
+            raise PlatformError(
+                f"Worker handoff bounce does not match retry attempt for "
+                f"work item {item_id}")
+
     if intent.is_causally_bound():
         observation, intent = _observe_worker_handoff(
             store, runtime, manifest, key, intent)
+        if observation == "pending-submit":
+            observation, intent = _observe_worker_handoff_bounded(
+                store, runtime, manifest, key, intent)
         if observation == "complete":
             return "ready"
+        if observation == "finished-without-submit":
+            return observation
         if observation in {"waiting", "pending-submit"}:
             return "waiting"
 
@@ -564,7 +590,9 @@ def _dispatch_worker_handoff(
             store, runtime, manifest, key, intent)
         if observation == "complete":
             return "ready"
-        if observation == "waiting":
+        if observation == "finished-without-submit":
+            return observation
+        if observation in {"waiting", "pending-submit"}:
             return "waiting"
         raise assign_error
 
@@ -572,6 +600,8 @@ def _dispatch_worker_handoff(
         store, runtime, manifest, key, intent)
     if observation == "complete":
         return "ready"
+    if observation == "finished-without-submit":
+        return observation
     if observation in {"waiting", "pending-submit"}:
         return "waiting"
 
@@ -582,7 +612,9 @@ def _dispatch_worker_handoff(
             store, runtime, manifest, key, intent)
         if observation == "complete":
             return "ready"
-        if observation == "waiting":
+        if observation == "finished-without-submit":
+            return observation
+        if observation in {"waiting", "pending-submit"}:
             return "waiting"
         raise wake_error
 
@@ -590,6 +622,8 @@ def _dispatch_worker_handoff(
         store, runtime, manifest, key, intent)
     if observation == "complete":
         return "ready"
+    if observation == "finished-without-submit":
+        return observation
     if observation in {"waiting", "pending-submit"}:
         return "waiting"
     raise PlatformError(
@@ -615,6 +649,45 @@ def _observe_worker_handoff_bounded(
     return observation, intent
 
 
+def _next_worker_handoff_attempt(
+    store: WorkItemStore,
+    runtime: AgentRuntime,
+    item,
+) -> WorkerHandoffIntent:
+    """Create one persisted retry generation after a terminal no-submit Run."""
+    intent = item.worker_handoff
+    if intent is None or not intent.is_causally_bound():
+        raise PlatformError(
+            f"Worker handoff is not retryable for work item {item.id}")
+    direct_runs = [
+        run for run in runtime.list_runs(item.id) if run.kind == "direct"
+    ]
+    if any(run.active for run in direct_runs):
+        raise PlatformError(
+            f"Worker handoff still has an active Run for work item {item.id}")
+    allowed_run_ids = set(intent.baseline_direct_run_ids)
+    if intent.target_run_id:
+        allowed_run_ids.add(intent.target_run_id)
+    if any(run.id not in allowed_run_ids for run in direct_runs):
+        raise PlatformError(
+            f"Worker handoff observed an unexpected terminal Run for work item "
+            f"{item.id}")
+    verification_ref = (
+        item.verification_ref if isinstance(item.verification_ref, dict) else {}
+    )
+    return replace(
+        intent,
+        generation=f"handoff-{secrets.token_hex(8)}",
+        baseline_direct_run_ids=tuple(sorted(run.id for run in direct_runs)),
+        baseline_verification_attachment_id=(
+            str(verification_ref.get("attachment_id") or "") or None
+        ),
+        target_run_id=None,
+        target_worker_bounce=item.bounces.worker + 1,
+        terminal_observed_at=None,
+    )
+
+
 def _delivery_identity(item) -> DeliveryIdentity | None:
     return parse_delivery_identity(getattr(item, "delivery_identity", None))
 
@@ -626,6 +699,33 @@ def _parse_platform_time(value: str | None) -> datetime | None:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _observe_terminal_without_submit(
+    store: WorkItemStore,
+    item_id: str,
+    intent: WorkerHandoffIntent,
+) -> tuple[str, WorkerHandoffIntent]:
+    observed_at = _parse_platform_time(intent.terminal_observed_at)
+    if (
+        intent.terminal_observed_at
+        and (observed_at is None or observed_at.tzinfo is None)
+    ):
+        raise PlatformError(
+            f"Worker handoff terminal observation is invalid for work item "
+            f"{item_id}")
+    if observed_at is None:
+        intent = replace(
+            intent, terminal_observed_at=_utcnow().isoformat())
+        store.update_work_item_metadata(item_id, worker_handoff=intent)
+        return "pending-submit", intent
+    if (_utcnow() - observed_at).total_seconds() < _HANDOFF_TERMINAL_GRACE_SECONDS:
+        return "pending-submit", intent
+    return "finished-without-submit", intent
 
 
 def _attachment_is_causal_for_run(observation, run, agent_id: str) -> bool:
@@ -828,7 +928,8 @@ def _observe_worker_handoff(
             or not isinstance(current.artifacts, dict)
             or not current.artifacts
         ):
-            return "pending-submit", intent
+            return _observe_terminal_without_submit(
+                store, item_id, intent)
         sealed = _seal_worker_delivery(
             store, manifest, key, current, intent, target_run)
         existing = _delivery_identity(current)
@@ -1125,6 +1226,7 @@ def collect_results(
     manifest_path: str,
     retry_limits: dict | None = None,
     config: dict | None = None,
+    observations: Dict[str, WorkItemControlProjection | None] | None = None,
 ) -> Dict[str, str]:
     """SYNC:回收进行中节点的结果。
 
@@ -1143,12 +1245,32 @@ def collect_results(
     in_review 节点:
       reviewer pass → merge(if configured) → done;reject → blocked(P4 前先 blocked)
     """
-    # Complete every fresh running-node read before the first lifecycle effect.
-    running_items = {
-        key: store.get_work_item(node.work_item_id)
-        for key, node in manifest.nodes.items()
-        if node.status in RUNNING_STATUSES and node.work_item_id
-    }
+    # Standalone callers retain the complete-read fallback.  ``tick`` passes
+    # the fresh, atomic reconcile observations so collection does not repeat
+    # the same Issue and attachment reads.
+    if observations is None:
+        running_items = {
+            key: store.get_work_item(node.work_item_id)
+            for key, node in manifest.nodes.items()
+            if node.status in RUNNING_STATUSES and node.work_item_id
+        }
+    else:
+        running_items = {}
+        for key, node in manifest.nodes.items():
+            if node.status not in RUNNING_STATUSES or not node.work_item_id:
+                continue
+            projection = observations.get(key)
+            if projection is None:
+                raise PlatformError(
+                    f"Fresh reconcile observation is missing for running node {key}")
+            required = _build_work_item_hydration_plan(node, projection)
+            missing = required & projection.deferred_payloads
+            if missing:
+                names = ", ".join(sorted(payload.value for payload in missing))
+                raise PlatformError(
+                    f"Fresh reconcile observation lacks collect evidence for "
+                    f"running node {key}: {names}")
+            running_items[key] = projection.work_item
     failures: Dict[str, str] = {}
     pending_review: List[Tuple[str, str, str]] = []  # (key, item_id, reviewer)
 
@@ -1201,9 +1323,15 @@ def collect_results(
             handoff = _dispatch_worker_handoff(
                 store, runtime, manifest, key)
             set_node(manifest, key, status="in_progress")
-            if handoff != "ready":
+            if handoff == "finished-without-submit":
+                item = replace(
+                    store.get_work_item(node.work_item_id),
+                    agent_run_finished_without_submit=True,
+                )
+            elif handoff != "ready":
                 continue
-            item = store.get_work_item(node.work_item_id)
+            else:
+                item = store.get_work_item(node.work_item_id)
 
         if node.status == "in_review" and item.phase == TaskPhase.AUTHORING:
             # 兼容旧版本 handoff，及 wake 成功、intent 已清但 manifest 尚未落盘
@@ -1215,13 +1343,6 @@ def collect_results(
                 }
                 and not _review_projection_present(item)
             ):
-                if item.status != WorkItemStatus.IN_PROGRESS:
-                    store.update_status(
-                        node.work_item_id, WorkItemStatus.IN_PROGRESS)
-                store.assign_work_item(
-                    node.work_item_id, node.worker, "worker")
-                runtime.wake(node.work_item_id, node.worker, "worker")
-                set_node(manifest, key, status="in_progress")
                 continue
             if node.reviewer:
                 store.reset_review(node.work_item_id)
@@ -1251,14 +1372,37 @@ def collect_results(
             and item.status == WorkItemStatus.IN_REVIEW
             and getattr(item, "phase", TaskPhase.AUTHORING) == TaskPhase.AUTHORING
         ):
-            store.update_status(node.work_item_id, WorkItemStatus.IN_PROGRESS)
-            store.assign_work_item(node.work_item_id, node.worker, "worker")
-            runtime.wake(node.work_item_id, node.worker, "worker")
             continue
 
         # ---- in_progress: worker 阶段回收 ----
         if node.status == "in_progress":
             if item.agent_run_finished_without_submit:
+                if item.worker_handoff is None:
+                    retry = f"omac node retry {manifest_path} {key}"
+                    reason = ui(
+                        "Worker run ended without a causal handoff delivery. "
+                        f"Run `{retry}` to authorize one explicit retry.",
+                        "worker run 已结束但没有因果 handoff 交付。"
+                        f"请运行 `{retry}` 显式授权一次重试。",
+                    )
+                    decision = {
+                        "schema": DECISION_REQUIRED_SCHEMA,
+                        "reason_code": "worker-retry-intent-required",
+                        "kind": TaskKind.DEVELOP.value,
+                        "phase": TaskPhase.AUTHORING.value,
+                        "gate": "worker",
+                        "resume_issue_id": node.work_item_id,
+                        "node_id": key,
+                        "next_action": retry,
+                    }
+                    if item.decision_required != decision:
+                        store.update_work_item_metadata(
+                            node.work_item_id, decision_required=decision)
+                    store.update_status(
+                        node.work_item_id, WorkItemStatus.BLOCKED)
+                    set_node(manifest, key, status="blocked")
+                    failures[key] = reason
+                    continue
                 worker_limit = limits.get("worker", DEFAULT_RETRY["worker"])
                 cur_bounce = item.bounces.worker
                 consumed = consumed_bounces(
@@ -1267,6 +1411,9 @@ def collect_results(
                     "Worker run ended without delivery through `omac work submit`.",
                     "worker run 已结束但未通过 omac work submit 交付")
                 if worker_limit == 0 or consumed >= worker_limit:
+                    store.clear_assignment(node.work_item_id)
+                    store.update_work_item_metadata(
+                        node.work_item_id, worker_handoff={})
                     store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
                     set_node(manifest, key, status="blocked")
                     failures[key] = ui(
@@ -1278,19 +1425,34 @@ def collect_results(
                                  f"Worker delivery retry limit ({worker_limit}) exhausted",
                                  f"worker 未交付回退上界({worker_limit})已耗尽"))
                 else:
-                    store.update_work_item_metadata(
-                        node.work_item_id,
-                        phase=TaskPhase.AUTHORING,
-                        worker_bounce=cur_bounce + 1,
-                    )
                     try:
-                        store.assign_work_item(node.work_item_id, node.worker, "worker")
-                        store.update_status(node.work_item_id, WorkItemStatus.IN_PROGRESS)
+                        retry_intent = _next_worker_handoff_attempt(
+                            store, runtime, item)
+                        store.clear_assignment(node.work_item_id)
+                        store.update_work_item_metadata(
+                            node.work_item_id,
+                            worker_handoff=retry_intent,
+                        )
+                        handoff = _dispatch_worker_handoff(
+                            store, runtime, manifest, key)
+                        if handoff == "ready":
+                            item = store.get_work_item(node.work_item_id)
+                        else:
+                            set_node(manifest, key, status="in_progress")
+                            log.info(
+                                logsetup.EVT_REVISION,
+                                kind=_DAG_KIND,
+                                node=key,
+                                id=node.work_item_id,
+                                gate="worker",
+                                round=cur_bounce + 1,
+                                max=worker_limit,
+                            )
+                            continue
                         set_node(manifest, key, status="in_progress")
                         log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=key,
                                  id=node.work_item_id, gate="worker",
                                  round=cur_bounce + 1, max=worker_limit)
-                        runtime.wake(node.work_item_id, node.worker, "worker")
                     except PlatformError as exc:
                         store.update_work_item_metadata(
                             node.work_item_id, worker_bounce=cur_bounce)
@@ -1308,7 +1470,6 @@ def collect_results(
                             f"回退到 worker {node.worker} 继续交付失败: {exc}")
                 continue
             if item.status == WorkItemStatus.IN_PROGRESS:
-                runtime.wake(node.work_item_id, node.worker, "worker")
                 continue
             if item.status == WorkItemStatus.DONE:
                 gate_errors = validate_worker_evidence(node, item)
@@ -1633,9 +1794,9 @@ def _dispatch(
 ) -> List[str]:
     """派发就绪节点(受 max_parallel - 进行中数约束)。
 
-    无 work_item_id → store.create_work_item + set_node_contract;
-    然后 assign worker + update_status(IN_PROGRESS) + runtime.wake;
-    work_item_id 回填 manifest。
+    无 work_item_id → 保留既有 create→assign→status→wake 首次派发；
+    已有 work_item_id → 先持久化/复用 WorkerHandoffIntent，再由统一的
+    handoff 路径补齐 status/assign/wake。work_item_id 回填 manifest。
     """
     workspace_id = store.config.workspace_id
     running_count = sum(
@@ -1689,7 +1850,29 @@ def _dispatch(
             metadata["blocked_by"] = list(node.blocked_by)
         store.update_work_item_metadata(item.id, **metadata)
 
-        # fire-and-forget: assign worker + 标 in_progress + wake
+        if not is_new_item:
+            handoff = _dispatch_worker_handoff(
+                store,
+                runtime,
+                manifest,
+                key,
+                review_bounce=item.bounces.review,
+                gate="explicit-dispatch",
+            )
+            set_node(manifest, key, status="in_progress")
+            log.info(
+                logsetup.EVT_DISPATCH,
+                kind=_DAG_KIND,
+                node=key,
+                id=node.work_item_id,
+                worker=worker,
+                handoff=handoff,
+            )
+            dispatched.append(key)
+            continue
+
+        # 新建 issue 的首次派发保持原有 create→assign→status→wake 语义；本 PR
+        # 不扩大首次 create issue 的幂等边界。
         store.assign_work_item(node.work_item_id, worker, "worker")
         store.update_status(node.work_item_id, WorkItemStatus.IN_PROGRESS)
         set_node(manifest, key, status="in_progress")
@@ -1771,11 +1954,13 @@ def tick(
     ensure_amendment_apply_complete(manifest, manifest_path)
 
     # 1. Reconcile: 平台状态同步回 manifest
-    reconcile(store, manifest, manifest_path)
+    reconcile_result = reconcile_with_observations(
+        store, manifest, manifest_path)
 
     # 2. SYNC: 回收进行中节点的结果
     new_failures = collect_results(store, runtime, manifest, manifest_path,
-                                   retry_limits=retry_limits, config=config)
+                                   retry_limits=retry_limits, config=config,
+                                   observations=reconcile_result.observations)
 
     # 3. 收集全部失败节点(含本轮新失败 + 历史已 blocked/failed)
     all_failed: Set[str] = set(new_failures.keys())

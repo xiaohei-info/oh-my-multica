@@ -150,6 +150,8 @@ class WorkerHandoffIntent:
     baseline_direct_run_ids: Tuple[str, ...] = ()
     baseline_verification_attachment_id: Optional[str] = None
     target_run_id: Optional[str] = None
+    target_worker_bounce: Optional[int] = None
+    terminal_observed_at: Optional[str] = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -167,21 +169,42 @@ class WorkerHandoffIntent:
                 self.baseline_verification_attachment_id
             ),
             "target_run_id": self.target_run_id,
+            "target_worker_bounce": self.target_worker_bounce,
+            "terminal_observed_at": self.terminal_observed_at,
         }
 
     def is_complete(self) -> bool:
+        review_bounce_is_int = (
+            isinstance(self.target_review_bounce, int)
+            and not isinstance(self.target_review_bounce, bool)
+        )
+        if self.gate == "explicit-dispatch":
+            review_bounce_valid = (
+                review_bounce_is_int and self.target_review_bounce >= 0
+            )
+        elif self.gate in {"review", "review-nits", "operator-retry"}:
+            review_bounce_valid = (
+                review_bounce_is_int and self.target_review_bounce > 0
+            )
+        else:
+            review_bounce_valid = False
         return bool(
             self.schema == WORKER_HANDOFF_SCHEMA
             and self.state == "pending"
             and self.target_worker
-            and self.gate
+            and review_bounce_valid
             and self.source_review_subject_digest
             and isinstance(self.source_review_round, int)
             and not isinstance(self.source_review_round, bool)
             and self.source_review_round > 0
-            and isinstance(self.target_review_bounce, int)
-            and not isinstance(self.target_review_bounce, bool)
-            and self.target_review_bounce > 0
+            and (
+                self.target_worker_bounce is None
+                or (
+                    isinstance(self.target_worker_bounce, int)
+                    and not isinstance(self.target_worker_bounce, bool)
+                    and self.target_worker_bounce >= 0
+                )
+            )
         )
 
     def is_causally_bound(self) -> bool:
@@ -337,6 +360,8 @@ def parse_worker_handoff(value: Any) -> Optional[WorkerHandoffIntent]:
         baseline_verification_attachment_id=text_field(
             "baseline_verification_attachment_id"),
         target_run_id=text_field("target_run_id"),
+        target_worker_bounce=int_field("target_worker_bounce"),
+        terminal_observed_at=text_field("terminal_observed_at"),
     )
 
 
