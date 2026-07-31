@@ -542,15 +542,38 @@ def _observe_reconcile_inputs(
     pull_requests: Dict[str, Any] = {}
 
     # Phase 1: every Issue control envelope is read before any attachment body.
-    for key, node in manifest.nodes.items():
-        if not node.work_item_id:
-            continue
+    # Adapters may explicitly allow bounded parallel reads; results remain an
+    # all-or-nothing barrier and are published in manifest order below.
+    control_jobs = [
+        (key, node.work_item_id)
+        for key, node in manifest.nodes.items()
+        if node.work_item_id
+    ]
+
+    def observe_control(job: Tuple[str, str]) -> Tuple[str, Any]:
+        key, item_id = job
         try:
-            projection = store.observe_work_item_control(node.work_item_id)
+            projection = store.observe_work_item_control(item_id)
         except WorkItemNotFoundError:
-            controls[key] = _MISSING_WORK_ITEM
-            continue
-        controls[key] = projection
+            projection = _MISSING_WORK_ITEM
+        return key, projection
+
+    if control_jobs:
+        requested_parallelism = max(1, max_parallel)
+        workers = max(1, min(
+            len(control_jobs),
+            requested_parallelism,
+            store.control_observation_parallelism(requested_parallelism),
+        ))
+        if workers == 1:
+            control_results = [observe_control(job) for job in control_jobs]
+        else:
+            with ThreadPoolExecutor(
+                max_workers=workers,
+                thread_name_prefix="omac-control",
+            ) as executor:
+                control_results = list(executor.map(observe_control, control_jobs))
+        controls = dict(control_results)
 
     # Phase 2: the complete control snapshot produces an explicit hydration plan.
     hydration_jobs: List[
