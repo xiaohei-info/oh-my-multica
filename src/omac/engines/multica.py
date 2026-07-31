@@ -958,6 +958,10 @@ class MulticaStore(WorkItemStore):
 
         return replace(item, **updates) if updates else item
 
+    def evidence_hydration_parallelism(self, requested: int) -> int:
+        """Multica payload reads use isolated subprocesses and temp dirs."""
+        return max(1, requested)
+
     def _issue_to_work_item(self, issue_data: Dict, workspace_id: str) -> WorkItem:
         projection = self._issue_to_control_projection(issue_data, workspace_id)
         return self.hydrate_work_item_evidence(
