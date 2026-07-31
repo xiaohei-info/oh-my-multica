@@ -110,17 +110,23 @@ class _ParallelHydrationStore:
         item_ids: list[str],
         *,
         delays: dict[str, float] | None = None,
+        control_delays: dict[str, float] | None = None,
         fail_item_id: str | None = None,
         shared_attachment_id: str | None = None,
         safe_parallelism: int | None = None,
+        safe_control_parallelism: int = 1,
     ):
         self.delays = delays or {}
+        self.control_delays = control_delays or {}
         self.fail_item_id = fail_item_id
         self.safe_parallelism = safe_parallelism
+        self.safe_control_parallelism = safe_control_parallelism
         self.projections: dict[str, WorkItemControlProjection] = {}
         self.hydration_plans: dict[str, frozenset[WorkItemPayload]] = {}
         self.hydration_finished: list[str] = []
         self.pr_observations = 0
+        self.active_controls = 0
+        self.max_active_controls = 0
         self.active_hydrations = 0
         self.max_active_hydrations = 0
         self._lock = threading.Lock()
@@ -154,8 +160,20 @@ class _ParallelHydrationStore:
     def evidence_hydration_parallelism(self, requested: int) -> int:
         return requested if self.safe_parallelism is None else self.safe_parallelism
 
+    def control_observation_parallelism(self, requested: int) -> int:
+        return min(requested, self.safe_control_parallelism)
+
     def observe_work_item_control(self, item_id: str) -> WorkItemControlProjection:
-        return self.projections[item_id]
+        with self._lock:
+            self.active_controls += 1
+            self.max_active_controls = max(
+                self.max_active_controls, self.active_controls)
+        try:
+            time.sleep(self.control_delays.get(item_id, 0.0))
+            return self.projections[item_id]
+        finally:
+            with self._lock:
+                self.active_controls -= 1
 
     def hydrate_work_item_evidence(
         self,
@@ -445,6 +463,40 @@ def test_reconcile_hydrates_eight_work_items_with_bounded_parallelism():
         })
         for plan in store.hydration_plans.values()
     )
+
+
+def test_reconcile_observes_controls_with_bounded_parallelism():
+    item_ids = [f"item-{index}" for index in range(8)]
+    store = _ParallelHydrationStore(
+        item_ids,
+        control_delays={item_id: 0.12 for item_id in item_ids},
+        safe_control_parallelism=4,
+    )
+    manifest = Manifest(
+        meta={"name": "parallel-controls"},
+        nodes={
+            item_id: Node(
+                id=item_id,
+                worker="worker",
+                reviewer="reviewer",
+                work_item_id=item_id,
+                status="done",
+                merged=True,
+                merged_at="2026-07-30T00:00:00Z",
+            )
+            for item_id in item_ids
+        },
+    )
+
+    started = time.monotonic()
+    observations, _ = loop._observe_reconcile_inputs(
+        store, manifest, max_parallel=4)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 0.55
+    assert store.max_active_controls == 4
+    assert list(observations) == item_ids
+    assert store.hydration_plans == {}
 
 
 def test_reconcile_hydration_completion_order_does_not_change_manifest_order():
