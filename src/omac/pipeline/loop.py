@@ -747,24 +747,13 @@ def _dispatch_worker_handoff(
             source_round = max(1, current.bounces.review)
             source_subject = stage_recovery_subject(node, current)
         else:
-            def review_source(item):
-                round_index = max(1, item.bounces.review + 1)
-                subject = item.review_subject_digest
-                valid = bool(
-                    subject
-                    and subject == _review_subject_for_round(
-                        manifest, key, item, round_index)
-                )
-                return round_index, subject, valid
-
-            source_round, source_subject, source_is_current = review_source(
-                current)
-            if not source_is_current:
-                projection = store.observe_work_item_control(item_id)
-                current = projection.work_item
-                source_round, source_subject, source_is_current = review_source(
-                    current)
-            if not source_is_current:
+            source_round = max(1, current.bounces.review + 1)
+            source_subject = current.review_subject_digest
+            if (
+                not source_subject
+                or source_subject != _review_subject_for_round(
+                    manifest, key, current, source_round)
+            ):
                 raise PlatformError(
                     f"Worker handoff source is stale for work item {item_id}")
         if not runtime.capabilities.stable_direct_run_identity:
@@ -2144,6 +2133,7 @@ def collect_results(
                     store, runtime, manifest, key,
                     review_bounce=cur_bounce + 1,
                     gate="review-nits",
+                    projection=projection,
                 )
                 if handoff.state == "complete":
                     _finalize_worker_handoff_delivery(store, node, handoff)
@@ -2192,6 +2182,7 @@ def collect_results(
                         store, runtime, manifest, key,
                         review_bounce=cur_bounce + 1,
                         gate="review",
+                        projection=projection,
                     )
                     if handoff.state == "complete":
                         _finalize_worker_handoff_delivery(store, node, handoff)
