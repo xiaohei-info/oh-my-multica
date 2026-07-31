@@ -223,6 +223,53 @@ def test_attachment_download_retry_logs_operation_attempt_delay_and_reason(
     })]
 
 
+def test_issue_control_read_retries_timeout_then_succeeds(monkeypatch):
+    delays = []
+    store = _store(delays.append)
+    attempts = 0
+
+    def run(args, capture=True):
+        nonlocal attempts
+        attempts += 1
+        assert args == ["issue", "get", "issue-1", "--output", "json"]
+        if attempts == 1:
+            raise PlatformError(
+                "Request timed out: the server did not respond in time."
+            )
+        return {"id": "issue-1"}
+
+    monkeypatch.setattr(store, "_run_multica", run)
+    monkeypatch.setattr(
+        store,
+        "_issue_to_control_projection",
+        lambda issue, workspace_id: (issue, workspace_id),
+    )
+
+    assert store.observe_work_item_control("issue-1") == (
+        {"id": "issue-1"}, "ws")
+    assert attempts == 2
+    assert delays == [1.0]
+
+
+def test_issue_control_read_does_not_retry_deterministic_error(monkeypatch):
+    delays = []
+    store = _store(delays.append)
+    attempts = 0
+
+    def run(_args, capture=True):
+        nonlocal attempts
+        attempts += 1
+        raise PlatformError("The requested resource was not found.")
+
+    monkeypatch.setattr(store, "_run_multica", run)
+
+    with pytest.raises(PlatformError, match="not found"):
+        store.observe_work_item_control("issue-1")
+
+    assert attempts == 1
+    assert delays == []
+
+
 def test_multica_write_operation_is_never_retried(monkeypatch):
     delays = []
     store = _store(delays.append)
