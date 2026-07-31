@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -37,6 +38,7 @@ class _RemoteFixture:
         self.pr_observations = 0
         self.calls: list[tuple[str, str]] = []
         self.fail_attachment_id: str | None = None
+        self.attachment_error: Exception | None = None
 
     def run(self, args, capture=True):
         if args[:2] == ["issue", "get"]:
@@ -49,7 +51,8 @@ class _RemoteFixture:
             self.attachment_downloads += 1
             self.calls.append(("attachment", attachment_id))
             if attachment_id == self.fail_attachment_id:
-                raise PlatformError(f"attachment read failed: {attachment_id}")
+                raise self.attachment_error or PlatformError(
+                    f"attachment read failed: {attachment_id}")
             filename, body = self.attachments[attachment_id]
             output_dir = Path(args[args.index("--output-dir") + 1])
             (output_dir / filename).write_bytes(body)
@@ -203,9 +206,7 @@ def _delivery_identity(issue: dict) -> dict:
     ).as_dict()
 
 
-def test_146_node_observation_reads_every_issue_but_hydrates_only_needed_evidence(
-    tmp_path,
-):
+def _large_dag_fixture():
     issues = {}
     attachments = {}
     nodes = {}
@@ -224,7 +225,8 @@ def test_146_node_observation_reads_every_issue_but_hydrates_only_needed_evidenc
         elif item_id == "confirm-0":
             issue_status, phase, manifest_status = "done", "review", "done"
         else:
-            issue_status, phase, manifest_status = "done", "authoring", "in_progress"
+            issue_status, phase, manifest_status = (
+                "in_progress", "authoring", "in_progress")
         issue, bodies = _issue(
             item_id, status=issue_status, phase=phase,
             review_verdict=(
@@ -235,6 +237,10 @@ def test_146_node_observation_reads_every_issue_but_hydrates_only_needed_evidenc
         issues[item_id] = issue
         if item_id.startswith("done-"):
             issue["metadata"]["delivery_identity"] = _delivery_identity(issue)
+        elif item_id.startswith("active-"):
+            stale_identity = _delivery_identity(issue)
+            stale_identity["pr_head_sha"] = f"stale-{item_id}"
+            issue["metadata"]["delivery_identity"] = stale_identity
         attachments.update(bodies)
         nodes[item_id] = Node(
             id=item_id,
@@ -247,6 +253,13 @@ def test_146_node_observation_reads_every_issue_but_hydrates_only_needed_evidenc
                 "2026-07-30T00:00:00Z" if item_id.startswith("done-") else None
             ),
         )
+    return issues, attachments, nodes
+
+
+def test_146_node_reconcile_phase_reads_every_issue_and_hydrates_only_needed_evidence(
+    tmp_path,
+):
+    issues, attachments, nodes = _large_dag_fixture()
     manifest, path = _manifest_path(tmp_path, nodes)
 
     legacy_remote = _RemoteFixture(issues, attachments)
@@ -274,6 +287,115 @@ def test_146_node_observation_reads_every_issue_but_hydrates_only_needed_evidenc
     assert all(kind == "attachment" for kind, _ in optimized_remote.calls[146:-1])
     assert optimized_remote.calls[-1][0] == "pr"
     assert load_manifest(path).nodes["active-0"].status == "in_progress"
+
+
+def test_146_node_full_tick_counts_reconcile_and_eight_running_fresh_reads(
+    tmp_path, monkeypatch,
+):
+    """Count one full tick through collect's initial fresh-read boundary.
+
+    Seven nodes start running and one historical done node is reopened to
+    ``merging`` by reconcile. The merge helper is stubbed so the count excludes
+    merge-internal re-observation and measures exactly the eight mandatory fresh
+    complete reads at the collect boundary.
+    """
+    issues, attachments, nodes = _large_dag_fixture()
+    remote = _RemoteFixture(issues, attachments)
+    store = _store(remote)
+    manifest, path = _manifest_path(tmp_path, nodes)
+    wakes = []
+    merges = []
+    runtime = SimpleNamespace(
+        wake=lambda item_id, worker, role: wakes.append((item_id, worker, role)),
+        list_runs=lambda _item_id: [],
+    )
+    monkeypatch.setattr(
+        loop,
+        "_complete_merge_if_confirmed",
+        lambda *_args, **_kwargs: merges.append(True) or "pending",
+    )
+
+    result = loop.tick(
+        store, runtime, manifest, path, max_parallel=8, config={})
+
+    assert result.state == "running"
+    assert len(wakes) == 7
+    assert merges == [True]
+    assert sum(
+        node.status in loop.RUNNING_STATUSES and node.work_item_id is not None
+        for node in manifest.nodes.values()
+    ) == 8
+    assert (
+        remote.issue_gets,
+        remote.attachment_downloads,
+        remote.pr_observations,
+    ) == (154, 50, 1)
+
+
+@pytest.mark.parametrize("failed_item_id", ["node-a", "node-b"])
+@pytest.mark.parametrize(
+    ("error_type", "message"),
+    [
+        (PlatformError, "platform attachment read failed"),
+        (ConnectionError, "network attachment read failed"),
+        (RuntimeError, "unknown attachment read failed"),
+    ],
+)
+def test_collect_results_fresh_read_failure_precedes_all_cross_node_side_effects(
+    tmp_path, monkeypatch, failed_item_id, error_type, message,
+):
+    issues = {}
+    attachments = {}
+    nodes = {}
+    for item_id in ("node-a", "node-b"):
+        issue, bodies = _issue(
+            item_id, status="in_progress", phase="authoring")
+        issues[item_id] = issue
+        attachments.update(bodies)
+        nodes[item_id] = Node(
+            id=item_id,
+            worker="worker",
+            work_item_id=item_id,
+            status="in_progress",
+        )
+    remote = _RemoteFixture(issues, attachments)
+    remote.fail_attachment_id = issues[failed_item_id]["metadata"][
+        "verification_ref"]["attachment_id"]
+    remote.attachment_error = error_type(message)
+    store = _store(remote)
+    manifest, path = _manifest_path(tmp_path, nodes)
+    before_manifest = copy.deepcopy(manifest)
+    before_file = Path(path).read_bytes()
+    before_issues = copy.deepcopy(remote.issues)
+    effects = []
+    runtime = SimpleNamespace(
+        wake=lambda *args: effects.append(("wake", args)),
+        list_runs=lambda _item_id: [],
+    )
+    for method_name in (
+        "update_status",
+        "update_work_item_metadata",
+        "assign_work_item",
+        "add_comment",
+        "reset_review",
+        "clear_assignment",
+        "request_pull_request_merge",
+    ):
+        monkeypatch.setattr(
+            store,
+            method_name,
+            lambda *args, _method=method_name, **kwargs: effects.append(
+                (_method, args, kwargs)),
+        )
+
+    with pytest.raises(error_type, match=message):
+        loop.collect_results(store, runtime, manifest, path, config={})
+
+    assert effects == []
+    assert remote.issue_gets == (1 if failed_item_id == "node-a" else 2)
+    assert manifest == before_manifest
+    assert Path(path).read_bytes() == before_file
+    assert remote.issues == before_issues
 
 
 @pytest.mark.parametrize(
