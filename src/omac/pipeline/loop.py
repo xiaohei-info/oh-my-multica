@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import copy
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -533,7 +534,7 @@ def _hydrate_work_item_payloads(
 
 
 def _observe_reconcile_inputs(
-    store: WorkItemStore, manifest: Manifest,
+    store: WorkItemStore, manifest: Manifest, max_parallel: int = 4,
 ) -> tuple[Dict[str, Any], Dict[str, Any]]:
     """Observe controls for all nodes, plan hydration, then load required evidence."""
     controls: Dict[str, Any] = {}
@@ -552,23 +553,58 @@ def _observe_reconcile_inputs(
         controls[key] = projection
 
     # Phase 2: the complete control snapshot produces an explicit hydration plan.
+    hydration_jobs: List[
+        Tuple[str, WorkItemControlProjection, WorkItemHydrationPlan]
+    ] = []
     for key, node in manifest.nodes.items():
         projection = controls.get(key)
         if projection is None:
             continue
         if projection is _MISSING_WORK_ITEM:
-            observations[key] = _MISSING_WORK_ITEM
             continue
         plan = _build_work_item_hydration_plan(node, projection)
         if plan:
-            item = store.hydrate_work_item_evidence(projection, plan)
-            observations[key] = replace(
-                projection,
-                work_item=item,
-                deferred_payloads=projection.deferred_payloads - plan,
-            )
+            hydration_jobs.append((key, projection, plan))
+
+    def hydrate(
+        job: Tuple[str, WorkItemControlProjection, WorkItemHydrationPlan],
+    ) -> Tuple[str, WorkItemControlProjection]:
+        key, projection, plan = job
+        item = store.hydrate_work_item_evidence(projection, plan)
+        return key, replace(
+            projection,
+            work_item=item,
+            deferred_payloads=projection.deferred_payloads - plan,
+        )
+
+    hydrated: Dict[str, WorkItemControlProjection] = {}
+    if hydration_jobs:
+        requested_parallelism = max(1, max_parallel)
+        workers = max(1, min(
+            len(hydration_jobs),
+            requested_parallelism,
+            store.evidence_hydration_parallelism(requested_parallelism),
+        ))
+        if workers == 1:
+            results = [hydrate(job) for job in hydration_jobs]
         else:
-            observations[key] = projection
+            with ThreadPoolExecutor(
+                max_workers=workers,
+                thread_name_prefix="omac-evidence",
+            ) as executor:
+                results = list(executor.map(hydrate, hydration_jobs))
+        hydrated = dict(results)
+
+    # Publish the complete read barrier in manifest order only after every
+    # required hydration succeeded. Completion order never affects decisions.
+    for key in manifest.nodes:
+        projection = controls.get(key)
+        if projection is None:
+            continue
+        if projection is _MISSING_WORK_ITEM:
+            observations[key] = _MISSING_WORK_ITEM
+        else:
+            observations[key] = hydrated.get(key, projection)
 
     # Phase 3: remote PR facts are read only after every required payload read
     # succeeded, preserving the existing all-or-nothing reconcile observation.
@@ -1382,6 +1418,7 @@ def reconcile_with_observations(
     store: WorkItemStore,
     manifest: Manifest,
     manifest_path: str,
+    max_parallel: int = 4,
 ) -> ReconcileResult:
     """逐节点拿 work_item_id 去平台核对真实状态,同步回 manifest。
 
@@ -1398,7 +1435,8 @@ def reconcile_with_observations(
     个节点的部分状态。
     """
     ensure_amendment_apply_complete(manifest, manifest_path)
-    observations, pull_requests = _observe_reconcile_inputs(store, manifest)
+    observations, pull_requests = _observe_reconcile_inputs(
+        store, manifest, max_parallel=max_parallel)
     candidate = copy.deepcopy(manifest)
     changed = _reconcile_candidate(
         store, candidate, manifest_path, observations, pull_requests)
@@ -1419,10 +1457,15 @@ def reconcile_with_observations(
     )
 
 
-def reconcile(store: WorkItemStore, manifest: Manifest, manifest_path: str) -> bool:
+def reconcile(
+    store: WorkItemStore,
+    manifest: Manifest,
+    manifest_path: str,
+    max_parallel: int = 4,
+) -> bool:
     """Compatibility entry point returning only whether manifest state changed."""
     return reconcile_with_observations(
-        store, manifest, manifest_path).changed
+        store, manifest, manifest_path, max_parallel=max_parallel).changed
 
 
 def _reconcile_candidate(
@@ -2415,7 +2458,7 @@ def tick(
 
     # 1. Reconcile: 平台状态同步回 manifest
     reconcile_result = reconcile_with_observations(
-        store, manifest, manifest_path)
+        store, manifest, manifest_path, max_parallel=max_parallel)
 
     # 2. SYNC: 回收进行中节点的结果
     new_failures = collect_results(store, runtime, manifest, manifest_path,
