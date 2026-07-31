@@ -107,13 +107,48 @@ class _WorkerHandoffResult:
 
 
 @dataclass(frozen=True)
-class _TransientRunFailure:
+class _RunFailure:
     run: AgentRunObservation
+    classification: str
     consecutive_runs: int
 
     @property
     def exhausted(self) -> bool:
-        return self.consecutive_runs >= _TRANSIENT_RUNTIME_MAX_RUNS
+        return (
+            self.classification == "transient"
+            and self.consecutive_runs >= _TRANSIENT_RUNTIME_MAX_RUNS
+        )
+
+
+_NONRETRYABLE_RUN_ERROR_PATTERNS = (
+    re.compile(r"\b(?:401|403)\b"),
+    re.compile(
+        r"\b(?:auth(?:entication|orization)?|unauthorized|forbidden|"
+        r"api key|access denied)\b"),
+    re.compile(r"\b(?:quota|credits?|billing)\b"),
+    re.compile(r"\brate[ -]?limit\s+(?:is\s+)?exhausted\b"),
+    re.compile(
+        r"\b(?:model\s+(?:does not exist|not found|missing|invalid)|"
+        r"invalid model|unknown model)\b"),
+    re.compile(
+        r"\b(?:security|safety|content|network security) policy\b|"
+        r"\bpolicy refusal\b"),
+    re.compile(
+        r"\b(?:security|safety|content|policy)\b.*"
+        r"\b(?:reject(?:ed)?|refus(?:ed|al)?|denied|blocked)\b"),
+    re.compile(
+        r"\b(?:business|validation|acceptance|contract)\b.*"
+        r"\b(?:fail(?:ed|ure)?|error|reject(?:ed)?)\b"),
+    re.compile(
+        r"\b(?:fail(?:ed|ure)?|error|reject(?:ed)?)\b.*"
+        r"\b(?:business|validation|acceptance|contract)\b"),
+    re.compile(r"\bunknown\b"),
+)
+_PROVIDER_TRANSPORT_CONTEXT = re.compile(
+    r"\b(?:provider|transport|upstream|gateway|server|service|model|http|network)\b")
+_TRANSIENT_RUN_ERROR_SIGNAL = re.compile(
+    r"\b(?:429|502|503|504)\b|\boverload(?:ed)?\b|"
+    r"\b(?:connection|connect|read) timeout\b")
 
 
 def _is_retryable_transient_run_failure(run: AgentRunObservation) -> bool:
@@ -121,14 +156,13 @@ def _is_retryable_transient_run_failure(run: AgentRunObservation) -> bool:
     if run.status != "failed" or not run.error:
         return False
     error = run.error.lower()
+    if any(pattern.search(error) for pattern in _NONRETRYABLE_RUN_ERROR_PATTERNS):
+        return False
+    if "model is at capacity" in error:
+        return True
     return bool(
-        "model is at capacity" in error
-        or "selected model is at capacity" in error
-        or "overloaded" in error
-        or re.search(r"\b(?:429|502|503|504)\b", error)
-        or "connection timeout" in error
-        or "connect timeout" in error
-        or "read timeout" in error
+        _PROVIDER_TRANSPORT_CONTEXT.search(error)
+        and _TRANSIENT_RUN_ERROR_SIGNAL.search(error)
     )
 
 
@@ -148,28 +182,32 @@ def _ordered_direct_runs(
     return [run for _index, run in indexed]
 
 
-def _latest_transient_run_failure(
+def _latest_run_failure(
     runtime: AgentRuntime,
     item_id: str,
     agent_id: str,
     *,
     target_run_id: str | None = None,
-) -> _TransientRunFailure | None:
-    """Return the latest same-agent transient failure and its durable streak."""
+) -> _RunFailure | None:
+    """Return the latest same-agent failed Run and its derived classification."""
     direct_runs = _ordered_direct_runs(runtime.list_runs(item_id))
     if not direct_runs:
+        return None
+    if any(run.agent_id == agent_id and run.active for run in direct_runs):
         return None
     latest = direct_runs[0]
     if target_run_id is not None and latest.id != target_run_id:
         return None
-    if latest.agent_id != agent_id or not _is_retryable_transient_run_failure(latest):
+    if latest.agent_id != agent_id or latest.status != "failed":
         return None
+    if not _is_retryable_transient_run_failure(latest):
+        return _RunFailure(latest, "nonretryable", 1)
     consecutive = 0
     for run in direct_runs:
         if run.agent_id != agent_id or not _is_retryable_transient_run_failure(run):
             break
         consecutive += 1
-    return _TransientRunFailure(latest, consecutive)
+    return _RunFailure(latest, "transient", consecutive)
 
 
 def _resolved_worker_handoff_dispatch(
@@ -177,6 +215,7 @@ def _resolved_worker_handoff_dispatch(
 ) -> _WorkerHandoffResult | None:
     if result.state in {
         "complete", "finished-without-submit", "transient-failure",
+        "nonretryable-failure",
     }:
         return result
     if result.state in {"waiting", "pending-submit"}:
@@ -551,36 +590,50 @@ def _resume_reviewer_run(store, runtime, node) -> bool:
     return True
 
 
-def _block_transient_runtime_retry_exhausted(
+def _block_runtime_failure(
     store: WorkItemStore,
     manifest: Manifest,
     manifest_path: str,
     key: str,
     item,
     role: str,
-    failure: _TransientRunFailure,
+    failure: _RunFailure,
 ) -> str:
-    """Stop in the current business stage after bounded infrastructure retry."""
+    """Stop in the current business stage without consuming business bounce."""
     retry = f"omac node retry {manifest_path} {key}"
-    reason = ui(
-        f"{role.title()} infrastructure retry limit "
-        f"({_TRANSIENT_RUNTIME_MAX_RUNS} Runs) exhausted for Run "
-        f"{failure.run.id}. "
-        f"Run `{retry}` after the provider recovers.",
-        f"{role} 执行基础设施瞬时失败已达到上限"
-        f"({_TRANSIENT_RUNTIME_MAX_RUNS} 个 Run)，最新 Run 为 {failure.run.id}。"
-        f"请在 provider 恢复后执行 `{retry}`。",
-    )
+    exhausted = failure.classification == "transient"
+    if exhausted:
+        reason_code = "transient-runtime-retry-exhausted"
+        failure_class = "transient-provider-or-transport"
+        reason = ui(
+            f"{role.title()} infrastructure retry limit "
+            f"({_TRANSIENT_RUNTIME_MAX_RUNS} Runs) exhausted for Run "
+            f"{failure.run.id}. Run `{retry}` after the provider recovers.",
+            f"{role} 执行基础设施瞬时失败已达到上限"
+            f"({_TRANSIENT_RUNTIME_MAX_RUNS} 个 Run)，最新 Run 为 "
+            f"{failure.run.id}。请在 provider 恢复后执行 `{retry}`。",
+        )
+    else:
+        reason_code = "nonretryable-runtime-failure"
+        failure_class = "nonretryable-agent-run"
+        reason = ui(
+            f"{role.title()} Run {failure.run.id} failed with a non-retryable "
+            f"or unknown error. Inspect it with `omac work show {item.id} "
+            "--output json` before an explicit operator decision.",
+            f"{role} Run {failure.run.id} 因不可重试或未知错误失败。"
+            f"请先执行 `omac work show {item.id} --output json` 检查，"
+            "再做显式人工决策。",
+        )
     decision = {
         "schema": DECISION_REQUIRED_SCHEMA,
-        "reason_code": "transient-runtime-retry-exhausted",
+        "reason_code": reason_code,
         "kind": TaskKind.DEVELOP.value,
         "phase": item.phase.value,
         "gate": role,
         "resume_issue_id": item.id,
         "node_id": key,
         "run_id": failure.run.id,
-        "failure_class": "transient-provider-or-transport",
+        "failure_class": failure_class,
         "next_action": retry,
     }
     store.update_work_item_metadata(item.id, decision_required=decision)
@@ -1220,9 +1273,14 @@ def _observe_worker_handoff(
             return _WorkerHandoffResult("waiting", intent, projection)
         if not target_run.terminal:
             return _WorkerHandoffResult("missing", intent, projection)
-        if _is_retryable_transient_run_failure(target_run):
+        if target_run.status == "failed":
+            state = (
+                "transient-failure"
+                if _is_retryable_transient_run_failure(target_run)
+                else "nonretryable-failure"
+            )
             return _WorkerHandoffResult(
-                "transient-failure", intent, projection)
+                state, intent, projection)
         if not _worker_handoff_has_new_delivery(current, intent):
             state, intent = _observe_terminal_without_submit(
                 store, item_id, intent)
@@ -1626,8 +1684,10 @@ def collect_results(
                     "delivery identity support; refusing to infer completion")
             handoff = _dispatch_worker_handoff(
                 store, runtime, manifest, key, projection=projection)
-            if handoff.state == "transient-failure":
-                failure = _latest_transient_run_failure(
+            if handoff.state in {
+                "transient-failure", "nonretryable-failure",
+            }:
+                failure = _latest_run_failure(
                     runtime,
                     node.work_item_id,
                     handoff.intent.target_agent_id,
@@ -1635,10 +1695,10 @@ def collect_results(
                 )
                 if failure is None:
                     raise PlatformError(
-                        f"Transient Worker Run facts changed for work item "
+                        f"Failed Worker Run facts changed for work item "
                         f"{node.work_item_id}")
-                if failure.exhausted:
-                    failures[key] = _block_transient_runtime_retry_exhausted(
+                if failure.classification == "nonretryable" or failure.exhausted:
+                    failures[key] = _block_runtime_failure(
                         store, manifest, manifest_path, key, item,
                         "worker", failure)
                     continue
@@ -1913,15 +1973,18 @@ def collect_results(
             verdict = item.review_verdict
             if not verdict:
                 if node.reviewer:
-                    reviewer_failure = _latest_transient_run_failure(
+                    reviewer_failure = _latest_run_failure(
                         runtime,
                         node.work_item_id,
                         store.resolve_agent_id(node.reviewer),
                     )
                     if reviewer_failure is not None:
-                        if reviewer_failure.exhausted:
+                        if (
+                            reviewer_failure.classification == "nonretryable"
+                            or reviewer_failure.exhausted
+                        ):
                             failures[key] = (
-                                _block_transient_runtime_retry_exhausted(
+                                _block_runtime_failure(
                                     store, manifest, manifest_path, key, item,
                                     "reviewer", reviewer_failure)
                             )
