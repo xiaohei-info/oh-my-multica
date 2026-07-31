@@ -120,49 +120,54 @@ class _RunFailure:
         )
 
 
-_NONRETRYABLE_RUN_ERROR_PATTERNS = (
-    re.compile(r"\b(?:401|403)\b"),
+_RETRYABLE_RUN_ERROR_SIGNATURES = (
     re.compile(
-        r"\b(?:auth(?:entication|orization)?|unauthorized|forbidden|"
-        r"api key|access denied)\b"),
-    re.compile(r"\b(?:quota|credits?|billing)\b"),
-    re.compile(r"\brate[ -]?limit\s+(?:is\s+)?exhausted\b"),
+        r"selected model is at capacity\. please try a different model\.?",
+        re.IGNORECASE,
+    ),
     re.compile(
-        r"\b(?:model\s+(?:does not exist|not found|missing|invalid)|"
-        r"invalid model|unknown model)\b"),
+        r"(?:hermes provider error:\s*)?our servers are currently overloaded"
+        r"(?:\.|\. please try again later\.?)?",
+        re.IGNORECASE,
+    ),
     re.compile(
-        r"\b(?:security|safety|content|network security) policy\b|"
-        r"\bpolicy refusal\b"),
+        r"(?:(?:provider|runtime|transport) (?:error|status)|"
+        r"hermes provider error):\s*(?:http\s+)?"
+        r"(?:429(?:\s+too many requests)?|502(?:\s+bad gateway)?|"
+        r"503(?:\s+service unavailable)?|504(?:\s+gateway timeout)?)\.?",
+        re.IGNORECASE,
+    ),
     re.compile(
-        r"\b(?:security|safety|content|policy)\b.*"
-        r"\b(?:reject(?:ed)?|refus(?:ed|al)?|denied|blocked)\b"),
+        r"(?:(?:provider|runtime|transport) (?:error|status)|"
+        r"hermes provider error):\s*"
+        r"(?:connection timeout(?: while opening provider stream)?|"
+        r"connect timeout|read timeout(?: while waiting for provider response)?)\.?",
+        re.IGNORECASE,
+    ),
     re.compile(
-        r"\b(?:business|validation|acceptance|contract)\b.*"
-        r"\b(?:fail(?:ed|ure)?|error|reject(?:ed)?)\b"),
+        r"(?:provider|runtime|transport) "
+        r"(?:connection|connect|read) timeout\.?",
+        re.IGNORECASE,
+    ),
     re.compile(
-        r"\b(?:fail(?:ed|ure)?|error|reject(?:ed)?)\b.*"
-        r"\b(?:business|validation|acceptance|contract)\b"),
-    re.compile(r"\bunknown\b"),
+        r"connection timeout while opening provider stream\.?",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"read timeout while waiting for provider response\.?",
+        re.IGNORECASE,
+    ),
 )
-_PROVIDER_TRANSPORT_CONTEXT = re.compile(
-    r"\b(?:provider|transport|upstream|gateway|server|service|model|http|network)\b")
-_TRANSIENT_RUN_ERROR_SIGNAL = re.compile(
-    r"\b(?:429|502|503|504)\b|\boverload(?:ed)?\b|"
-    r"\b(?:connection|connect|read) timeout\b")
 
 
 def _is_retryable_transient_run_failure(run: AgentRunObservation) -> bool:
     """Classify only explicit provider/transport failures as retryable."""
     if run.status != "failed" or not run.error:
         return False
-    error = run.error.lower()
-    if any(pattern.search(error) for pattern in _NONRETRYABLE_RUN_ERROR_PATTERNS):
-        return False
-    if "model is at capacity" in error:
-        return True
-    return bool(
-        _PROVIDER_TRANSPORT_CONTEXT.search(error)
-        and _TRANSIENT_RUN_ERROR_SIGNAL.search(error)
+    error = run.error.strip()
+    return any(
+        signature.fullmatch(error)
+        for signature in _RETRYABLE_RUN_ERROR_SIGNATURES
     )
 
 

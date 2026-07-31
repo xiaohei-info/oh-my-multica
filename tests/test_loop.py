@@ -941,13 +941,17 @@ def _transient_worker_handoff_fixture(tmp_path):
 
 @pytest.mark.parametrize("error", [
     "Selected model is at capacity. Please try a different model.",
-    "provider overloaded",
-    "HTTP 429 Too Many Requests",
-    "upstream returned 502 Bad Gateway",
-    "HTTP 503 Service Unavailable",
-    "gateway returned 504",
+    "Our servers are currently overloaded",
+    "Hermes provider error: Our servers are currently overloaded. Please try again later.",
+    "provider error: HTTP 429 Too Many Requests",
+    "transport status: HTTP 502 Bad Gateway",
+    "runtime status: 503 Service Unavailable",
+    "Hermes provider error: HTTP 504 Gateway Timeout",
     "connection timeout while opening provider stream",
     "read timeout while waiting for provider response",
+    "provider error: connection timeout",
+    "runtime status: read timeout",
+    "Hermes provider error: connect timeout",
 ])
 def test_transient_runtime_failure_allowlist(error):
     assert loop._is_retryable_transient_run_failure(AgentRunObservation(
@@ -973,6 +977,16 @@ def test_transient_runtime_failure_allowlist(error):
     "HTTP 401 Missing Authentication header; diagnostic text includes 429",
     "business validation failed: the acceptance case expects a read timeout",
     "unknown provider failure while documenting overloaded behavior",
+    "documentation example: provider overloaded",
+    "test assertion expected HTTP 503",
+    "review evidence quoted selected model is at capacity. Please try a different model.",
+    "API docs describe 429 responses",
+    "business text mentions provider overloaded as an example",
+    "business output documents that the provider is overloaded",
+    "test assertion expected HTTP 503 Service Unavailable from the provider",
+    "review evidence quotes: Selected model is at capacity. Please try a different model.",
+    "provider rejected the prompt because it discusses overloaded infrastructure",
+    "documentation for the HTTP API mentions 429 responses",
 ])
 def test_transient_runtime_failure_rejects_non_allowlisted_errors(error):
     assert not loop._is_retryable_transient_run_failure(AgentRunObservation(
@@ -1040,7 +1054,7 @@ def test_transient_worker_rerun_response_unknown_observes_created_run(
         tmp_path)
     runs = [AgentRunObservation(
         id="run-capacity-1", kind="direct", status="failed",
-        agent_id=agent_id, error="provider overloaded")]
+        agent_id=agent_id, error="Our servers are currently overloaded")]
     wake_calls = 0
 
     def wake(_item_id, _agent, _role):
@@ -1069,7 +1083,7 @@ def test_transient_worker_retry_is_restart_safe_and_does_not_duplicate_active_ru
         tmp_path)
     runs = [AgentRunObservation(
         id="run-capacity-1", kind="direct", status="failed",
-        agent_id=agent_id, error="HTTP 503 Service Unavailable")]
+        agent_id=agent_id, error="runtime status: HTTP 503 Service Unavailable")]
     wake_calls = 0
 
     def wake(_item_id, _agent, _role):
@@ -1098,11 +1112,11 @@ def test_consecutive_transient_worker_failures_stop_at_infrastructure_limit(
         AgentRunObservation(
             id="run-capacity-1", kind="direct", status="failed",
             agent_id=agent_id, created_at="2026-07-31T10:00:00Z",
-            error="provider overloaded"),
+            error="Our servers are currently overloaded"),
         AgentRunObservation(
             id="run-capacity-2", kind="direct", status="failed",
             agent_id=agent_id, created_at="2026-07-31T10:01:00Z",
-            error="HTTP 429 Too Many Requests"),
+            error="provider error: HTTP 429 Too Many Requests"),
     ]
     current = eng.store.get_work_item(item.id)
     eng.store.update_work_item_metadata(
@@ -1259,11 +1273,11 @@ def test_reviewer_transient_failures_stop_at_infrastructure_limit(
         AgentRunObservation(
             id="run-review-1", kind="direct", status="failed",
             agent_id=reviewer_id, created_at="2026-07-31T10:00:00Z",
-            error="provider overloaded"),
+            error="Our servers are currently overloaded"),
         AgentRunObservation(
             id="run-review-2", kind="direct", status="failed",
             agent_id=reviewer_id, created_at="2026-07-31T10:01:00Z",
-            error="provider HTTP 503 Service Unavailable"),
+            error="provider error: HTTP 503 Service Unavailable"),
     ]
     monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
     monkeypatch.setattr(
@@ -1290,15 +1304,15 @@ def test_reviewer_ignores_comment_run_and_never_retries_other_agent_failure(
         AgentRunObservation(
             id="run-review-old", kind="direct", status="failed",
             agent_id=reviewer_id, created_at="2026-07-31T10:00:00Z",
-            error="provider overloaded"),
+            error="Our servers are currently overloaded"),
         AgentRunObservation(
             id="run-other-agent", kind="direct", status="failed",
             agent_id="agent-other", created_at="2026-07-31T10:01:00Z",
-            error="provider overloaded"),
+            error="Our servers are currently overloaded"),
         AgentRunObservation(
             id="run-comment", kind="comment", status="failed",
             agent_id=reviewer_id, created_at="2026-07-31T10:02:00Z",
-            error="provider overloaded"),
+            error="Our servers are currently overloaded"),
     ]
     wake_calls = []
     monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
