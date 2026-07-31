@@ -2238,9 +2238,10 @@ def test_authoring_recovery_uses_fresh_worker_budget_without_erasing_history(tmp
     )
 
     got = engine.store.get_work_item(item.id)
-    assert failures == {}
-    assert manifest.nodes["bootstrap"].status == "in_progress"
-    assert got.bounces.worker == 4
+    assert "bootstrap" in failures
+    assert manifest.nodes["bootstrap"].status == "blocked"
+    assert got.bounces.worker == 3
+    assert got.decision_required["reason_code"] == "worker-retry-intent-required"
 
 
 def test_merging_recovery_uses_fresh_merge_budget_without_erasing_history(tmp_path):

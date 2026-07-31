@@ -346,59 +346,6 @@ def _build_work_item_hydration_plan(
     return frozenset(payloads)
 
 
-def _refresh_collect_observations(
-    store: WorkItemStore,
-    manifest: Manifest,
-    observations: Dict[str, WorkItemControlProjection | None],
-) -> Dict[str, WorkItemControlProjection | None]:
-    """Refresh all running controls, then hydrate only changed required refs."""
-    fresh: Dict[str, WorkItemControlProjection] = {}
-    for key, node in manifest.nodes.items():
-        if node.status in RUNNING_STATUSES and node.work_item_id:
-            fresh[key] = store.observe_work_item_control(node.work_item_id)
-
-    refreshed = dict(observations)
-    for key, projection in fresh.items():
-        node = manifest.nodes[key]
-        previous = observations.get(key)
-        required = _build_work_item_hydration_plan(node, projection)
-        deferred = set(projection.deferred_payloads)
-        updates: Dict[str, Any] = {}
-        hydrate: Set[WorkItemPayload] = set()
-        for payload in required:
-            if payload not in deferred:
-                continue
-            ref_name = f"{payload.value}_ref"
-            can_reuse = bool(
-                previous is not None
-                and payload not in previous.deferred_payloads
-                and getattr(previous.work_item, ref_name, None)
-                == getattr(projection.work_item, ref_name, None)
-            )
-            if can_reuse:
-                updates[payload.value] = getattr(
-                    previous.work_item, payload.value)
-                deferred.remove(payload)
-            else:
-                hydrate.add(payload)
-        if updates:
-            projection = replace(
-                projection,
-                work_item=replace(projection.work_item, **updates),
-                deferred_payloads=frozenset(deferred),
-            )
-        if hydrate:
-            item = store.hydrate_work_item_evidence(
-                projection, frozenset(hydrate))
-            projection = replace(
-                projection,
-                work_item=item,
-                deferred_payloads=projection.deferred_payloads - hydrate,
-            )
-        refreshed[key] = projection
-    return refreshed
-
-
 def _observe_reconcile_inputs(
     store: WorkItemStore, manifest: Manifest,
 ) -> tuple[Dict[str, Any], Dict[str, Any]]:
@@ -1300,8 +1247,6 @@ def collect_results(
             if node.status in RUNNING_STATUSES and node.work_item_id
         }
     else:
-        observations = _refresh_collect_observations(
-            store, manifest, observations)
         running_items = {}
         for key, node in manifest.nodes.items():
             if node.status not in RUNNING_STATUSES or not node.work_item_id:
@@ -1390,13 +1335,6 @@ def collect_results(
                 }
                 and not _review_projection_present(item)
             ):
-                if item.status != WorkItemStatus.IN_PROGRESS:
-                    store.update_status(
-                        node.work_item_id, WorkItemStatus.IN_PROGRESS)
-                store.assign_work_item(
-                    node.work_item_id, node.worker, "worker")
-                runtime.wake(node.work_item_id, node.worker, "worker")
-                set_node(manifest, key, status="in_progress")
                 continue
             if node.reviewer:
                 store.reset_review(node.work_item_id)
@@ -1426,14 +1364,37 @@ def collect_results(
             and item.status == WorkItemStatus.IN_REVIEW
             and getattr(item, "phase", TaskPhase.AUTHORING) == TaskPhase.AUTHORING
         ):
-            store.update_status(node.work_item_id, WorkItemStatus.IN_PROGRESS)
-            store.assign_work_item(node.work_item_id, node.worker, "worker")
-            runtime.wake(node.work_item_id, node.worker, "worker")
             continue
 
         # ---- in_progress: worker 阶段回收 ----
         if node.status == "in_progress":
             if item.agent_run_finished_without_submit:
+                if item.worker_handoff is None:
+                    retry = f"omac node retry {manifest_path} {key}"
+                    reason = ui(
+                        "Worker run ended without a causal handoff delivery. "
+                        f"Run `{retry}` to authorize one explicit retry.",
+                        "worker run 已结束但没有因果 handoff 交付。"
+                        f"请运行 `{retry}` 显式授权一次重试。",
+                    )
+                    decision = {
+                        "schema": DECISION_REQUIRED_SCHEMA,
+                        "reason_code": "worker-retry-intent-required",
+                        "kind": TaskKind.DEVELOP.value,
+                        "phase": TaskPhase.AUTHORING.value,
+                        "gate": "worker",
+                        "resume_issue_id": node.work_item_id,
+                        "node_id": key,
+                        "next_action": retry,
+                    }
+                    if item.decision_required != decision:
+                        store.update_work_item_metadata(
+                            node.work_item_id, decision_required=decision)
+                    store.update_status(
+                        node.work_item_id, WorkItemStatus.BLOCKED)
+                    set_node(manifest, key, status="blocked")
+                    failures[key] = reason
+                    continue
                 worker_limit = limits.get("worker", DEFAULT_RETRY["worker"])
                 cur_bounce = item.bounces.worker
                 consumed = consumed_bounces(
@@ -1442,10 +1403,9 @@ def collect_results(
                     "Worker run ended without delivery through `omac work submit`.",
                     "worker run 已结束但未通过 omac work submit 交付")
                 if worker_limit == 0 or consumed >= worker_limit:
-                    if item.worker_handoff is not None:
-                        store.clear_assignment(node.work_item_id)
-                        store.update_work_item_metadata(
-                            node.work_item_id, worker_handoff={})
+                    store.clear_assignment(node.work_item_id)
+                    store.update_work_item_metadata(
+                        node.work_item_id, worker_handoff={})
                     store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
                     set_node(manifest, key, status="blocked")
                     failures[key] = ui(
@@ -1458,47 +1418,33 @@ def collect_results(
                                  f"worker 未交付回退上界({worker_limit})已耗尽"))
                 else:
                     try:
-                        if item.worker_handoff is not None:
-                            retry_intent = _next_worker_handoff_attempt(
-                                store, runtime, item)
-                            store.clear_assignment(node.work_item_id)
-                            store.update_work_item_metadata(
-                                node.work_item_id,
-                                worker_handoff=retry_intent,
-                            )
-                            handoff = _dispatch_worker_handoff(
-                                store, runtime, manifest, key)
-                            if handoff == "ready":
-                                item = store.get_work_item(node.work_item_id)
-                            else:
-                                set_node(manifest, key, status="in_progress")
-                                log.info(
-                                    logsetup.EVT_REVISION,
-                                    kind=_DAG_KIND,
-                                    node=key,
-                                    id=node.work_item_id,
-                                    gate="worker",
-                                    round=cur_bounce + 1,
-                                    max=worker_limit,
-                                )
-                                continue
+                        retry_intent = _next_worker_handoff_attempt(
+                            store, runtime, item)
+                        store.clear_assignment(node.work_item_id)
+                        store.update_work_item_metadata(
+                            node.work_item_id,
+                            worker_handoff=retry_intent,
+                        )
+                        handoff = _dispatch_worker_handoff(
+                            store, runtime, manifest, key)
+                        if handoff == "ready":
+                            item = store.get_work_item(node.work_item_id)
                         else:
-                            store.update_work_item_metadata(
-                                node.work_item_id,
-                                phase=TaskPhase.AUTHORING,
-                                worker_bounce=cur_bounce + 1,
+                            set_node(manifest, key, status="in_progress")
+                            log.info(
+                                logsetup.EVT_REVISION,
+                                kind=_DAG_KIND,
+                                node=key,
+                                id=node.work_item_id,
+                                gate="worker",
+                                round=cur_bounce + 1,
+                                max=worker_limit,
                             )
-                            store.assign_work_item(
-                                node.work_item_id, node.worker, "worker")
-                            store.update_status(
-                                node.work_item_id, WorkItemStatus.IN_PROGRESS)
+                            continue
                         set_node(manifest, key, status="in_progress")
                         log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=key,
                                  id=node.work_item_id, gate="worker",
                                  round=cur_bounce + 1, max=worker_limit)
-                        if item.worker_handoff is None:
-                            runtime.wake(
-                                node.work_item_id, node.worker, "worker")
                     except PlatformError as exc:
                         store.update_work_item_metadata(
                             node.work_item_id, worker_bounce=cur_bounce)
@@ -1516,7 +1462,6 @@ def collect_results(
                             f"回退到 worker {node.worker} 继续交付失败: {exc}")
                 continue
             if item.status == WorkItemStatus.IN_PROGRESS:
-                runtime.wake(node.work_item_id, node.worker, "worker")
                 continue
             if item.status == WorkItemStatus.DONE:
                 gate_errors = validate_worker_evidence(node, item)
