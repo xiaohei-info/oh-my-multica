@@ -124,6 +124,14 @@ class TickResult:
     report: Dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class ReconcileResult:
+    """One atomic reconcile outcome and the exact observations that produced it."""
+
+    changed: bool
+    observations: Dict[str, WorkItemControlProjection | None]
+
+
 def _build_snapshot(manifest: Manifest) -> dict:
     """从 manifest 构建 graph 模块所需的 snapshot dict。"""
     return {
@@ -342,7 +350,7 @@ def _observe_reconcile_inputs(
 ) -> tuple[Dict[str, Any], Dict[str, Any]]:
     """Observe controls for all nodes, plan hydration, then load required evidence."""
     controls: Dict[str, Any] = {}
-    items: Dict[str, Any] = {}
+    observations: Dict[str, Any] = {}
     pull_requests: Dict[str, Any] = {}
 
     # Phase 1: every Issue control envelope is read before any attachment body.
@@ -362,25 +370,31 @@ def _observe_reconcile_inputs(
         if projection is None:
             continue
         if projection is _MISSING_WORK_ITEM:
-            items[key] = _MISSING_WORK_ITEM
+            observations[key] = _MISSING_WORK_ITEM
             continue
         plan = _build_work_item_hydration_plan(node, projection)
         if plan:
-            items[key] = store.hydrate_work_item_evidence(projection, plan)
+            item = store.hydrate_work_item_evidence(projection, plan)
+            observations[key] = replace(
+                projection,
+                work_item=item,
+                deferred_payloads=projection.deferred_payloads - plan,
+            )
         else:
-            items[key] = projection.work_item
+            observations[key] = projection
 
     # Phase 3: remote PR facts are read only after every required payload read
     # succeeded, preserving the existing all-or-nothing reconcile observation.
     for key, node in manifest.nodes.items():
-        item = items.get(key)
-        if item is None or item is _MISSING_WORK_ITEM:
+        observation = observations.get(key)
+        if observation is None or observation is _MISSING_WORK_ITEM:
             continue
+        item = observation.work_item
         if not _requires_pull_request_observation(node, item):
             continue
         pull_requests[key] = store.observe_pull_request(
             _pull_request_url(item))
-    return items, pull_requests
+    return observations, pull_requests
 
 
 def _resume_reviewer_run(store, runtime, node) -> bool:
@@ -899,7 +913,11 @@ def _complete_merge_if_confirmed(
 
 # ==================== reconcile ====================
 
-def reconcile(store: WorkItemStore, manifest: Manifest, manifest_path: str) -> bool:
+def reconcile_with_observations(
+    store: WorkItemStore,
+    manifest: Manifest,
+    manifest_path: str,
+) -> ReconcileResult:
     """逐节点拿 work_item_id 去平台核对真实状态,同步回 manifest。
 
     - work_item_id 指向的 item 平台不存在 → 清空 work_item_id,标 todo 走新建
@@ -915,21 +933,36 @@ def reconcile(store: WorkItemStore, manifest: Manifest, manifest_path: str) -> b
     个节点的部分状态。
     """
     ensure_amendment_apply_complete(manifest, manifest_path)
-    items, pull_requests = _observe_reconcile_inputs(store, manifest)
+    observations, pull_requests = _observe_reconcile_inputs(store, manifest)
     candidate = copy.deepcopy(manifest)
     changed = _reconcile_candidate(
-        store, candidate, manifest_path, items, pull_requests)
-    if not changed:
-        return False
-    save_manifest(candidate, manifest_path)
-    manifest.meta = candidate.meta
-    manifest.nodes = candidate.nodes
-    return True
+        store, candidate, manifest_path, observations, pull_requests)
+    if changed:
+        save_manifest(candidate, manifest_path)
+        manifest.meta = candidate.meta
+        manifest.nodes = candidate.nodes
+    return ReconcileResult(
+        changed=changed,
+        observations={
+            key: (
+                None
+                if observations.get(key) is _MISSING_WORK_ITEM
+                else observations.get(key)
+            )
+            for key in manifest.nodes
+        },
+    )
+
+
+def reconcile(store: WorkItemStore, manifest: Manifest, manifest_path: str) -> bool:
+    """Compatibility entry point returning only whether manifest state changed."""
+    return reconcile_with_observations(
+        store, manifest, manifest_path).changed
 
 
 def _reconcile_candidate(
     store: WorkItemStore, manifest: Manifest, manifest_path: str,
-    items: Dict[str, Any], pull_requests: Dict[str, Any],
+    observations: Dict[str, Any], pull_requests: Dict[str, Any],
 ) -> bool:
     """用已完整观察的事实计算候选；此阶段不得再执行平台读取。"""
     changed = False
@@ -943,8 +976,8 @@ def _reconcile_candidate(
                 set_node(manifest, key, status="blocked")
                 changed = True
             continue
-        item = items[key]
-        if item is _MISSING_WORK_ITEM:
+        observation = observations[key]
+        if observation is _MISSING_WORK_ITEM:
             if confirmed_merge_is_closed(node):
                 if node.status != "done":
                     set_node(manifest, key, status="done")
@@ -956,6 +989,7 @@ def _reconcile_candidate(
                 set_node(manifest, key, work_item_id=None, status="todo")
                 changed = True
             continue
+        item = observation.work_item
 
         # confirmed merge closure is the sole ordinary-reconcile terminal
         # invariant. Explicit amendment/retry must retire it before any

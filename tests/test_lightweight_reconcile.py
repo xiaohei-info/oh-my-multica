@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 import yaml
 
+from omac.cli import exit_codes
+from omac.cli.main import main
 from omac.core.manifest import Manifest, Node, load_manifest, save_manifest
 from omac.core.review_convergence import review_subject_digest
 from omac.core.taskmeta import DELIVERY_IDENTITY_SCHEMA, DeliveryIdentity, TaskPhase
@@ -26,6 +29,7 @@ from omac.engines.mock import MockRuntime, MockStore
 from omac.engines.multica import MulticaStore
 from omac.errors import PlatformError
 from omac.pipeline import loop
+from omac.pipeline.report import build_status_report
 from omac.pipeline.tasks import _pristine_amendment_activity_projection
 
 
@@ -287,6 +291,22 @@ def test_146_node_reconcile_phase_reads_every_issue_and_hydrates_only_needed_evi
     assert all(kind == "attachment" for kind, _ in optimized_remote.calls[146:-1])
     assert optimized_remote.calls[-1][0] == "pr"
     assert load_manifest(path).nodes["active-0"].status == "in_progress"
+
+
+def test_146_node_status_reuses_reconcile_observation_budget(tmp_path):
+    issues, attachments, nodes = _large_dag_fixture()
+    remote = _RemoteFixture(issues, attachments)
+    store = _store(remote)
+    manifest, path = _manifest_path(tmp_path, nodes)
+
+    report = build_status_report(manifest, store, path)
+
+    assert report["progress"]["total"] == 146
+    assert (
+        remote.issue_gets,
+        remote.attachment_downloads,
+        remote.pr_observations,
+    ) == (146, 18, 1)
 
 
 def test_146_node_full_tick_counts_reconcile_and_eight_running_fresh_reads(
@@ -568,11 +588,154 @@ def test_confirmed_merge_ignores_platform_authoring_delivery_without_hydration(
         _store(remote), runtime, manifest, path, max_parallel=1, config={})
 
     assert result.state == "converged"
-    assert manifest.nodes[item_id].status == "done"
+    assert load_manifest(path).nodes[item_id].status == "done"
     assert remote.issue_gets == 1
     assert remote.attachment_downloads == 0
     assert remote.pr_observations == 0
     assert wakes == []
+
+
+def test_cli_status_recovers_confirmed_merge_from_one_control_read_without_hydration(
+    tmp_path, monkeypatch, capsys,
+):
+    item_id = "node-a"
+    issue, attachments = _issue(
+        item_id,
+        status="in_review",
+        phase="authoring",
+    )
+    issue["assignee_id"] = "agent-reviewer"
+    remote = _RemoteFixture({item_id: issue}, attachments)
+    store = _store(remote)
+    normalizations = []
+
+    def normalize_confirmed_merge(observed_item_id):
+        normalizations.append(observed_item_id)
+        remote.issues[observed_item_id]["status"] = "done"
+        remote.issues[observed_item_id].pop("assignee_id", None)
+
+    monkeypatch.setattr(
+        store, "normalize_confirmed_merge", normalize_confirmed_merge)
+    manifest, path = _manifest_path(tmp_path, {
+        item_id: Node(
+            id=item_id,
+            worker="worker",
+            reviewer="reviewer",
+            work_item_id=item_id,
+            status="in_progress",
+            merged=True,
+            merged_at="2026-07-30T00:00:00Z",
+        ),
+    })
+
+    from omac.cli.commands import dag
+
+    monkeypatch.setattr(
+        dag,
+        "_assemble_engine",
+        lambda _args: (SimpleNamespace(store=store), store.config),
+    )
+
+    assert main(["dag", "status", path, "--output", "json"]) == exit_codes.OK
+    report = json.loads(capsys.readouterr().out)
+
+    assert report["progress"] == {
+        "total": 1,
+        "done": 1,
+        "running": 0,
+        "todo": 0,
+        "blocked": 0,
+        "failed": 0,
+        "abandoned": 0,
+        "converged": True,
+    }
+    assert load_manifest(path).nodes[item_id].status == "done"
+    assert remote.issues[item_id]["status"] == "done"
+    assert "assignee_id" not in remote.issues[item_id]
+    assert normalizations == [item_id]
+    assert (
+        remote.issue_gets,
+        remote.attachment_downloads,
+        remote.pr_observations,
+    ) == (1, 0, 0)
+
+
+def test_status_summary_preserves_deferred_verification_and_review_presence(
+    tmp_path,
+):
+    item_id = "node-a"
+    issue, attachments = _issue(
+        item_id,
+        status="blocked",
+        phase="review",
+        review_verdict="reject",
+    )
+    remote = _RemoteFixture({item_id: issue}, attachments)
+    manifest, path = _manifest_path(tmp_path, {
+        item_id: Node(
+            id=item_id,
+            worker="worker",
+            reviewer="reviewer",
+            work_item_id=item_id,
+            status="blocked",
+        ),
+    })
+
+    report = build_status_report(manifest, _store(remote), path)
+
+    summary = report["needs_decision"]["failed_nodes"][0][
+        "evidence_summary"]
+    assert summary["has_verification"] is True
+    assert summary["has_review"] is True
+    assert summary["review_verdict"] == "reject"
+    assert remote.issue_gets == 1
+    assert remote.attachment_downloads == 0
+
+
+def test_status_required_hydration_failure_produces_no_report_or_partial_write(
+    tmp_path, monkeypatch,
+):
+    item_id = "node-a"
+    issue, attachments = _issue(
+        item_id,
+        status="done",
+        phase="authoring",
+    )
+    remote = _RemoteFixture({item_id: issue}, attachments)
+    remote.fail_attachment_id = issue["metadata"]["verification_ref"][
+        "attachment_id"]
+    store = _store(remote)
+    effects = []
+    for method_name in (
+        "normalize_confirmed_merge",
+        "update_status",
+        "assign_work_item",
+        "clear_assignment",
+    ):
+        monkeypatch.setattr(
+            store,
+            method_name,
+            lambda *args, _method=method_name, **kwargs: effects.append(
+                (_method, args, kwargs)),
+        )
+    manifest, path = _manifest_path(tmp_path, {
+        item_id: Node(
+            id=item_id,
+            worker="worker",
+            reviewer="reviewer",
+            work_item_id=item_id,
+            status="blocked",
+        ),
+    })
+    before_manifest = copy.deepcopy(manifest)
+    before_file = Path(path).read_bytes()
+
+    with pytest.raises(PlatformError, match="attachment read failed"):
+        build_status_report(manifest, store, path)
+
+    assert effects == []
+    assert manifest == before_manifest
+    assert Path(path).read_bytes() == before_file
 
 
 def test_incident_confirmed_merge_recovers_manifest_and_platform_idempotently(

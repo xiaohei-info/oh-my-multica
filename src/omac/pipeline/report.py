@@ -10,6 +10,7 @@ dag run/tick 在 needs_decision 非空时 exit 20,report 结构完全相同。
 from __future__ import annotations
 
 from ..core.manifest import Manifest
+from ..engines.models import WorkItemPayload
 from ..engines.store import WorkItemStore
 from ..core import graph
 
@@ -88,7 +89,12 @@ def _node_row(node, item) -> dict:
     }
 
 
-def _build_failed_node(node, item, reason: str | None = None) -> dict:
+def _build_failed_node(
+    node,
+    item,
+    reason: str | None = None,
+    deferred_payloads=frozenset(),
+) -> dict:
     """单个失败/受阻节点详情(锁定结构)。reason 优先使用调用方传入的精确原因。"""
     pr_url = None
     evidence_summary = None
@@ -99,7 +105,14 @@ def _build_failed_node(node, item, reason: str | None = None) -> dict:
         evidence_summary = {
             "review_verdict": item.review_verdict,
             "review_comment": item.review_comment,
-            "has_verification": item.verification is not None,
+            "has_verification": (
+                item.verification is not None
+                or WorkItemPayload.VERIFICATION in deferred_payloads
+            ),
+            "has_review": (
+                item.review_report is not None
+                or WorkItemPayload.REVIEW_REPORT in deferred_payloads
+            ),
         }
 
     if reason is None:
@@ -157,14 +170,21 @@ def _build_needs_decision_from_items(
     failed_keys: set[str],
     items: dict,
     evidence: dict[str, str] | None = None,
+    deferred_payloads: dict | None = None,
 ) -> dict:
     """从调用方提供的 WorkItem 快照构建决策段，避免重复平台读取。"""
     evidence = evidence or {}
+    deferred_payloads = deferred_payloads or {}
     snapshot = _graph_snapshot(manifest)
     downstream = graph.downstream_of(snapshot, failed_keys)
     blocked_downstream = sorted(downstream)
     failed_nodes = [
-        _build_failed_node(manifest.nodes[key], items.get(key), reason=evidence.get(key))
+        _build_failed_node(
+            manifest.nodes[key],
+            items.get(key),
+            reason=evidence.get(key),
+            deferred_payloads=deferred_payloads.get(key, frozenset()),
+        )
         for key in sorted(failed_keys)
     ]
     next_actions = _next_actions(failed_nodes, manifest_path)
@@ -179,6 +199,7 @@ def _build_report_from_items(
     manifest: Manifest,
     manifest_path: str,
     items: dict,
+    deferred_payloads: dict | None = None,
 ) -> dict:
     """用已经取得的 item 快照构建稳定 schema；不拥有任何外部读取。"""
     total = len(manifest.nodes)
@@ -195,7 +216,13 @@ def _build_report_from_items(
     }
     needs_decision = (
         _build_needs_decision_from_items(
-            manifest, manifest_path, failed_keys, items, evidence=None)
+            manifest,
+            manifest_path,
+            failed_keys,
+            items,
+            evidence=None,
+            deferred_payloads=deferred_payloads,
+        )
         if failed_keys else None
     )
     return {
@@ -231,14 +258,23 @@ def build_status_report(
     """reconcile + 快照 → 结构化报告 dict(schema 由 *_KEYS 常量锁定)。
 
     1. reconcile:平台真实状态同步回 manifest(写回文件)
-    2. 精准取回 work item 缓存(pr_url / 证据摘要)
-    3. 构建 progress / nodes / needs_decision
+    2. 复用同轮 control/evidence observation(pr_url / 证据摘要)
+    3. 构建 progress / nodes / needs_decision，不再次读取平台
     """
-    from .loop import reconcile  # 延迟导入,避免与 loop 的循环依赖
-    reconcile(store, manifest, manifest_path)
-    items = _fetch_items(store, manifest)
+    from .loop import reconcile_with_observations  # 延迟导入,避免循环依赖
+    result = reconcile_with_observations(store, manifest, manifest_path)
+    items = {
+        key: observation.work_item if observation is not None else None
+        for key, observation in result.observations.items()
+    }
+    deferred_payloads = {
+        key: observation.deferred_payloads
+        for key, observation in result.observations.items()
+        if observation is not None
+    }
 
-    return _build_report_from_items(manifest, manifest_path, items)
+    return _build_report_from_items(
+        manifest, manifest_path, items, deferred_payloads)
 
 
 # ==================== table 渲染(给人看) ====================
