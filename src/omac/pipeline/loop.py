@@ -507,6 +507,10 @@ def _dispatch_worker_handoff(
         store.update_work_item_metadata(item_id, worker_handoff=intent)
         current = store.get_work_item(item_id)
 
+    if not intent.is_causally_bound():
+        raise PlatformError(
+            f"Worker handoff lacks causal identity for work item {item_id}")
+
     target_worker_bounce = intent.target_worker_bounce
     if target_worker_bounce is not None:
         if current.bounces.worker < target_worker_bounce:

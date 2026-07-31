@@ -3195,6 +3195,55 @@ class TestReviewerRejectBoundedFallback:
             entry for entry in eng.store.assign_log if entry[2] == "reviewer"
         ]) == reviewer_assignments_before
 
+    def test_review_handoff_with_zero_bounce_has_no_lifecycle_side_effects(
+        self, tmp_path, monkeypatch,
+    ):
+        from omac.core.taskmeta import WorkerHandoffIntent
+        from omac.engines import create_engine
+        from omac.errors import PlatformError
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        current = eng.store.get_work_item(item.id)
+        intent = WorkerHandoffIntent(
+            schema="omac.worker-handoff/v1",
+            state="pending",
+            target_worker="alice",
+            gate="review",
+            source_review_subject_digest=current.review_subject_digest,
+            source_review_round=1,
+            target_review_bounce=0,
+            generation="handoff-malformed-zero-review-bounce",
+            target_agent_id=eng.store.resolve_agent_id("alice"),
+            baseline_direct_run_ids=tuple(sorted(
+                run.id for run in eng.runtime.list_runs(item.id)
+                if run.kind == "direct"
+            )),
+            baseline_verification_attachment_id=str(
+                (current.verification_ref or {}).get("attachment_id") or ""
+            ) or None,
+            target_worker_bounce=current.bounces.worker,
+        )
+        eng.store.update_work_item_metadata(item.id, worker_handoff=intent)
+
+        for target, name in (
+            (eng.store, "reset_review"),
+            (eng.store, "update_status"),
+            (eng.store, "assign_work_item"),
+            (eng.runtime, "wake"),
+        ):
+            monkeypatch.setattr(
+                target,
+                name,
+                lambda *_args, _name=name, **_kwargs: pytest.fail(
+                    f"malformed handoff must not call {_name}"),
+            )
+
+        with pytest.raises(PlatformError, match="causal identity"):
+            loop._dispatch_worker_handoff(
+                eng.store, eng.runtime, manifest, "a")
+
     @pytest.mark.parametrize("intent_kind", ["malformed", "stale"])
     @pytest.mark.parametrize(
         "checkpoint",

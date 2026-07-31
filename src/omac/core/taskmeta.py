@@ -174,18 +174,29 @@ class WorkerHandoffIntent:
         }
 
     def is_complete(self) -> bool:
+        review_bounce_is_int = (
+            isinstance(self.target_review_bounce, int)
+            and not isinstance(self.target_review_bounce, bool)
+        )
+        if self.gate == "explicit-dispatch":
+            review_bounce_valid = (
+                review_bounce_is_int and self.target_review_bounce >= 0
+            )
+        elif self.gate in {"review", "review-nits", "operator-retry"}:
+            review_bounce_valid = (
+                review_bounce_is_int and self.target_review_bounce > 0
+            )
+        else:
+            review_bounce_valid = False
         return bool(
             self.schema == WORKER_HANDOFF_SCHEMA
             and self.state == "pending"
             and self.target_worker
-            and self.gate
+            and review_bounce_valid
             and self.source_review_subject_digest
             and isinstance(self.source_review_round, int)
             and not isinstance(self.source_review_round, bool)
             and self.source_review_round > 0
-            and isinstance(self.target_review_bounce, int)
-            and not isinstance(self.target_review_bounce, bool)
-            and self.target_review_bounce >= 0
             and (
                 self.target_worker_bounce is None
                 or (
