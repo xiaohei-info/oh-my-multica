@@ -185,7 +185,7 @@ class WorkerHandoffIntent:
             and self.source_review_round > 0
             and isinstance(self.target_review_bounce, int)
             and not isinstance(self.target_review_bounce, bool)
-            and self.target_review_bounce > 0
+            and self.target_review_bounce >= 0
             and (
                 self.target_worker_bounce is None
                 or (

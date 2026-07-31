@@ -31,7 +31,7 @@ from omac.core.review_convergence import (
 from omac.engines import create_engine
 from omac.engines.mock import MockRuntime, MockStore
 from omac.core.taskmeta import TaskPhase
-from omac.engines.models import EngineConfig, WorkItemStatus
+from omac.engines.models import AgentRunObservation, EngineConfig, WorkItemStatus
 from omac.pipeline import loop
 from omac.pipeline.dispatch import build_show_output
 from omac.pipeline.loop import TickResult, tick
@@ -642,17 +642,6 @@ class TestHappyPath:
                 events.append("status")
             return original_status(item_id, status)
 
-        def wake(item_id, agent, role):
-            events.append("wake")
-            current = eng.store.get_work_item(item_id)
-            summary = build_show_output(current, f"{role}:{agent}")
-            assert current.blocked_by == dependency_keys
-            assert summary["task"]["blocked_by"] == dependency_keys
-            assert summary["context"]["source_issues"][-1]["issue_id"] == (
-                dependency_items[new_dependency].id
-            )
-            assert new_dependency in summary["context"]["issue_description"]
-
         monkeypatch.setattr(eng.store, "update_work_item_metadata", update_metadata)
         monkeypatch.setattr(eng.store, "assign_work_item", assign)
         monkeypatch.setattr(eng.store, "update_status", update_status)
@@ -662,25 +651,35 @@ class TestHappyPath:
             lambda *_args, **_kwargs: pytest.fail(
                 "reused item must not republish its contract"),
         )
-        monkeypatch.setattr(eng.runtime, "wake", wake)
+        monkeypatch.setattr(
+            eng.runtime,
+            "wake",
+            lambda *_args: pytest.fail(
+                "assignment-created Run must not also be woken"),
+        )
 
         result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
 
         current = eng.store.get_work_item(reused.id)
         summary = build_show_output(current, "worker:alice")
         assert result.dispatched == [target.id]
-        assert events == ["metadata", "assign", "status", "wake"]
-        assert len(metadata_calls) == 1
+        assert events == ["metadata", "metadata", "status", "assign", "metadata"]
+        assert len(metadata_calls) == 3
         assert set(metadata_calls[0]) == {
             "blocked_by", "description", "source_refs",
         }
+        assert set(metadata_calls[1]) == {"worker_handoff"}
+        assert set(metadata_calls[2]) == {"worker_handoff"}
         assert "worker" not in metadata_calls[0]
         assert "reviewer" not in metadata_calls[0]
+        assert current.worker_handoff is not None
+        assert current.worker_handoff.gate == "explicit-dispatch"
+        assert current.worker_handoff.target_run_id is not None
         assert current.worker == "alice"
         assert current.reviewer == "bob"
         assert current.review_ledger is review_ledger
-        assert current.review_report is review_report
-        assert current.review_comment == "prior review history"
+        assert current.review_report is None
+        assert current.review_comment is None
         assert summary["task"]["blocked_by"] == dependency_keys
         assert summary["context"]["source_issues"][-1] == {
             "label": (
@@ -691,6 +690,76 @@ class TestHappyPath:
         }
         assert eng.store.get_comments(reused.id) == ["existing audit comment"]
         assert len(eng.runtime.list_runs(reused.id)) == 1
+
+    def test_reused_todo_dispatch_recovers_same_intent_after_crash_before_wake(
+        self, monkeypatch,
+    ):
+        """同 assignee 不产生 Run 时，重启只能按持久 intent 补首次 wake。"""
+        eng = _engine(MOCK_AUTO_COMPLETE="false")
+        item = eng.store.create_work_item(
+            "ws", "a", "Task a", dag_key="a", worker="alice")
+        eng.store.assign_work_item(item.id, "alice", "worker")
+        eng.store.update_status(item.id, WorkItemStatus.DONE)
+        eng.store.update_status(item.id, WorkItemStatus.TODO)
+        old_runs = list(eng.runtime.list_runs(item.id))
+        assert len(old_runs) == 1 and old_runs[0].terminal
+
+        node = _node("a", worker="alice")
+        node.work_item_id = item.id
+        manifest = _manifest([node])
+        path = _tmp_manifest_path(manifest)
+
+        class CrashBeforeWakeRuntime(MockRuntime):
+            def __init__(self, store):
+                super().__init__(store)
+                self.runs = list(old_runs)
+                self.crash_before_wake = True
+                self.wake_calls = 0
+
+            def list_runs(self, item_id):  # noqa: ARG002
+                return list(self.runs)
+
+            def wake(self, item_id, agent, role):  # noqa: ARG002
+                self.wake_calls += 1
+                if self.crash_before_wake:
+                    raise RuntimeError("crash before first wake")
+                self.runs.append(AgentRunObservation(
+                    id="run-explicit-retry",
+                    kind="direct",
+                    status="running",
+                    agent_id=eng.store.resolve_agent_id(agent),
+                ))
+
+        runtime = CrashBeforeWakeRuntime(eng.store)
+        monkeypatch.setattr(loop, "_HANDOFF_OBSERVATION_INTERVAL", 0)
+
+        with pytest.raises(RuntimeError, match="crash before first wake"):
+            tick(eng.store, runtime, manifest, path, max_parallel=1)
+
+        interrupted = eng.store.get_work_item(item.id)
+        assert interrupted.status is WorkItemStatus.IN_PROGRESS
+        assert interrupted.worker_handoff is not None
+        assert interrupted.worker_handoff.gate == "explicit-dispatch"
+        assert interrupted.worker_handoff.target_worker_bounce == 0
+        generation = interrupted.worker_handoff.generation
+        assert len(runtime.runs) == 1
+
+        runtime.crash_before_wake = False
+        restarted = load_manifest(path)
+        recovered = tick(
+            eng.store, runtime, restarted, path, max_parallel=1)
+
+        current = eng.store.get_work_item(item.id)
+        assert recovered.state == "running"
+        assert restarted.nodes["a"].status == "in_progress"
+        assert current.worker_handoff is not None
+        assert current.worker_handoff.generation == generation
+        assert current.worker_handoff.target_run_id == "run-explicit-retry"
+        assert len(runtime.runs) == 2
+
+        tick(eng.store, runtime, restarted, path, max_parallel=1)
+        assert len(runtime.runs) == 2
+        assert runtime.wake_calls == 2
 
     def test_dispatch_develop_dag_key_includes_manifest_dag_suffix(self):
         """worker issue 的 DAG key 继承 plan/decompose 唯一后缀,避免不同流水线节点重名。"""
