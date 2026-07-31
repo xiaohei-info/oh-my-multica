@@ -150,6 +150,8 @@ class WorkerHandoffIntent:
     baseline_direct_run_ids: Tuple[str, ...] = ()
     baseline_verification_attachment_id: Optional[str] = None
     target_run_id: Optional[str] = None
+    target_worker_bounce: Optional[int] = None
+    terminal_observed_at: Optional[str] = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -167,6 +169,8 @@ class WorkerHandoffIntent:
                 self.baseline_verification_attachment_id
             ),
             "target_run_id": self.target_run_id,
+            "target_worker_bounce": self.target_worker_bounce,
+            "terminal_observed_at": self.terminal_observed_at,
         }
 
     def is_complete(self) -> bool:
@@ -182,6 +186,14 @@ class WorkerHandoffIntent:
             and isinstance(self.target_review_bounce, int)
             and not isinstance(self.target_review_bounce, bool)
             and self.target_review_bounce > 0
+            and (
+                self.target_worker_bounce is None
+                or (
+                    isinstance(self.target_worker_bounce, int)
+                    and not isinstance(self.target_worker_bounce, bool)
+                    and self.target_worker_bounce >= 0
+                )
+            )
         )
 
     def is_causally_bound(self) -> bool:
@@ -337,6 +349,8 @@ def parse_worker_handoff(value: Any) -> Optional[WorkerHandoffIntent]:
         baseline_verification_attachment_id=text_field(
             "baseline_verification_attachment_id"),
         target_run_id=text_field("target_run_id"),
+        target_worker_bounce=int_field("target_worker_bounce"),
+        terminal_observed_at=text_field("terminal_observed_at"),
     )
 
 

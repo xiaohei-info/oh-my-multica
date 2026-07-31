@@ -128,6 +128,8 @@ def _worker_handoff_intent():
         target_agent_id="agent-alice",
         baseline_direct_run_ids=("run-old",),
         target_run_id="run-new",
+        target_worker_bounce=2,
+        terminal_observed_at="2026-07-31T06:30:00+00:00",
     )
 
 
