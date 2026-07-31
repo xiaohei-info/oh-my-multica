@@ -52,9 +52,17 @@ _MESSAGES = {
         ),
         "work.protocol.control": (
             "Do not edit platform status, assignee, metadata, rerun, or cancel "
-            "directly. Use OMAC as the only write path. Submitting successfully "
-            "is the final action; stop immediately and perform no further "
-            "platform writes."
+            "directly. Use OMAC as the only write path. `omac work submit` may "
+            "run for a long time. If the tool reports running/session, has no "
+            "final tool result, returns incomplete output, or leaves the result "
+            "unknown, wait or poll until it reaches a terminal result. Claim "
+            "success only when the final tool result has exit code 0 and JSON "
+            "contains `\"ok\": true`, `\"terminal\": true`, and "
+            "`\"next_action\": \"stop\"`. With an unknown result, you must not "
+            "claim success or end the run. If the terminal result is a "
+            "validation error, fix it and submit again. Submitting successfully "
+            "is the final action; stop "
+            "immediately and perform no further platform writes."
         ),
         "work.protocol.pr_link": (
             "Include `{issue_key}` in the GitHub PR branch name, title, or body "
@@ -165,7 +173,15 @@ _MESSAGES = {
         "work.protocol.develop": "推分支并开 PR（base=contract.pr_base，由 worker 创建，OMAC 不代建）。按 TDD 工作，把完整 flow claim 和 Action contribution 映射到成功命令下的具体业务测试，并提交结构化验证证据；trace ref 不产生验收义务；完整交付 contract，禁止骨架、占位和生产假数据兜底；不要手动修改 issue 状态、assignee、rerun 或 cancel 状态。",
         "work.protocol.final_acceptance": "以验收文档为清单做用户视角端到端走查，逐条记录 pass/fail 和证据。",
         "work.protocol.review": "独立复跑：覆盖全部 review_obligations，逐项处置历史 blocker，按 env_setup 搭建环境，重跑验证命令与集成测试，检查完整 diff，发现第一个 blocker 后继续审查并一次性报告本轮全部问题；只读共享状态，并依据 contract 与验收目标给出 verdict。",
-        "work.protocol.control": "不要直接修改平台状态、负责人、metadata，也不要直接 rerun 或 cancel；所有写入只通过 OMAC。submit 成功就是本次执行的最后动作，立即停止，不再执行任何平台写操作。",
+        "work.protocol.control": (
+            "不要直接修改平台状态、负责人、metadata，也不要直接 rerun 或 cancel；"
+            "所有写入只通过 OMAC。`omac work submit` 可能长时间运行。若工具返回 "
+            "running/session、没有最终 tool_result、输出不完整或结果未知，必须等待或轮询到终态。"
+            "只有最终 tool_result 明确给出退出码 0，且 JSON 包含 `\"ok\": true`、"
+            "`\"terminal\": true` 和 `\"next_action\": \"stop\"`，才可宣称成功。"
+            "结果未知时不得宣称成功或结束；validation error 必须修复后重新提交。"
+            "submit 成功就是本次执行的最后动作，立即停止，不再执行任何平台写操作。"
+        ),
         "work.protocol.pr_link": "建议让 GitHub PR 的分支名、标题或正文包含 `{issue_key}`，这样 Multica 可以自动关联该 issue；缺失时仍可交付。",
         "work.protocol.operator_retry": "本次执行来自显式 operator retry。旧 verification 仅作为 baseline，不能作为本轮证据，禁止复用或仅引用；即使代码无需修改，也必须针对当前 PR HEAD 重新执行本轮 contract 验证，并以如下精确的 `omac work submit` 命令完成提交。",
         "work.authority.current": "work show 当前实例事实",

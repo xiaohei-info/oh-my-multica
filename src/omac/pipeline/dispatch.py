@@ -177,6 +177,28 @@ GUIDE_REFS_BY_KIND_PHASE: Dict[Tuple[TaskKind, TaskPhase], List[str]] = {
 }
 
 
+SUBMIT_CONFIRMATION = {
+    "may_run_long": True,
+    "terminal_result_required": True,
+    "wait_when": [
+        "running",
+        "session",
+        "missing_tool_result",
+        "incomplete_output",
+        "unknown_result",
+    ],
+    "success_requires": {
+        "exit_code": 0,
+        "json": {
+            "ok": True,
+            "terminal": True,
+            "next_action": "stop",
+        },
+    },
+    "validation_error": "fix-and-resubmit",
+}
+
+
 def guide_refs_for(kind: TaskKind, phase: TaskPhase) -> List[str]:
     """返回当前任务所需 guide 命令的副本,防止调用方修改单一事实源。"""
     return list(GUIDE_REFS_BY_KIND_PHASE.get((kind, phase), []))
@@ -404,6 +426,7 @@ def build_show_output(item: Any, identity: str, *, language: str = EN) -> Dict[s
             "platform_writes": "omac-only",
             "submit_is_terminal": True,
             "post_submit_actions": [],
+            "submit_confirmation": deepcopy(SUBMIT_CONFIRMATION),
         },
         "submit": submit,
         "authority": authority_order(language),

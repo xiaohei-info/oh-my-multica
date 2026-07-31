@@ -86,6 +86,16 @@ artifact boundary:
 12. Write verification covering commands, integration gates, coverage, PR base,
     `business_tests`, and `env_setup` when environment preparation is required.
 13. Submit the original PR URL and verification file using the returned command.
+    `omac work submit` may run for a long time. If the tool reports
+    `running/session`, does not return a final tool_result, returns incomplete
+    output, or leaves the result unknown, wait or poll the same execution until
+    its final tool_result is available.
+14. Claim submission succeeded only when that final tool_result has exit code 0
+    and JSON `ok=true`, `terminal=true`, and `next_action=stop`. Without all of
+    those facts, you must not claim submission succeeded or end the run. If the
+    terminal result is a validation error, fix it and submit again. After a
+    confirmed success, stop immediately; do not comment on the issue or change
+    status, assignee, rerun, or cancellation state.
 
 ## Completion conditions
 
@@ -150,4 +160,6 @@ platform state yourself.
 `omac work submit <issue-id> --pr-url <PR> --verification-file <ev.yaml>`
 
 OMAC checks the PR is not a draft and validates verification before CI, review,
-or merge can continue.
+or merge can continue. The command can be slow; a running/session response or
+missing final tool_result is not success. Wait or poll until the explicit exit
+code 0 plus `ok=true`, `terminal=true`, and `next_action=stop` result arrives.
