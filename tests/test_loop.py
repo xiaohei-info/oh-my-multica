@@ -2769,44 +2769,49 @@ class TestReviewerRejectBoundedFallback:
             entry for entry in eng.store.assign_log if entry[2] == "reviewer"
         ]) == reviewer_assignments_before + 1
 
-    def test_review_handoff_rereads_one_stale_control_projection(
+    def test_review_verdict_handoff_uses_hydrated_reconcile_projection(
         self, tmp_path, monkeypatch,
     ):
-        """Multica metadata visibility lag gets one read-only retry before fail-close."""
+        """Review subject validation must use the already hydrated delivery snapshot."""
         from omac.engines import create_engine
+        from types import SimpleNamespace
 
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
         path = str(tmp_path / "m.yaml")
         manifest, eng, item = self._setup_reject_node(eng, path)
         current = eng.store.get_work_item(item.id)
-        expected_subject = current.review_subject_digest
-        assert expected_subject is not None
-        stale = replace(
-            current,
-            bounces=replace(
-                current.bounces,
-                review=current.bounces.review + 1,
-            ),
+        eng.store.update_work_item_metadata(
+            item.id,
+            review_obligations=build_review_obligations(current),
         )
-        stale_projection = WorkItemControlProjection(stale)
+        current = eng.store.get_work_item(item.id)
+        eng.store.update_work_item_metadata(
+            item.id,
+            review_report=_review_report(current, "reject"),
+        )
+        current = eng.store.get_work_item(item.id)
+        assert current.verification is not None
+        observed = WorkItemControlProjection(current)
+        calls = []
 
-        result = loop._dispatch_worker_handoff(
+        def dispatch(_store, _runtime, _manifest, _key, **kwargs):
+            projection = kwargs.get("projection")
+            assert projection is observed
+            assert projection.work_item.verification is current.verification
+            calls.append(True)
+            return SimpleNamespace(state="waiting")
+
+        monkeypatch.setattr(loop, "_dispatch_worker_handoff", dispatch)
+
+        loop.collect_results(
             eng.store,
             eng.runtime,
             manifest,
-            "a",
-            review_bounce=current.bounces.review + 1,
-            gate="review",
-            projection=stale_projection,
+            path,
+            observations={"a": observed},
         )
 
-        persisted = eng.store.get_work_item(item.id)
-        assert result.state == "waiting"
-        assert persisted.worker_handoff is not None
-        assert (
-            persisted.worker_handoff.source_review_subject_digest
-            == expected_subject
-        )
+        assert calls == [True]
 
     def test_review_handoff_persistent_stale_source_fails_before_writes(
         self, tmp_path, monkeypatch,
