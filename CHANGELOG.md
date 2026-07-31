@@ -10,6 +10,12 @@ This file records public changes to oh-my-multica. The format follows
 
 ### Changed
 
+- DAG recovery now separates explicit transient provider/transport failures
+  from business non-delivery. The same Worker or Reviewer may receive one
+  bounded, restart-safe rerun without consuming business bounce budget;
+  authentication, quota, missing-model, security-policy, business-validation,
+  and unknown failed Runs stop for a deterministic decision without entering
+  completed-without-submit business rework.
 - `work show` now marks explicit operator retries as requiring a fresh
   verification submission against the current PR HEAD, even when no code
   change is needed; prior verification remains baseline-only evidence.

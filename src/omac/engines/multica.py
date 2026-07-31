@@ -1723,6 +1723,7 @@ class MulticaRuntime(AgentRuntime):
                     str(run.get("updated_at") or run.get("completed_at"))
                     if run.get("updated_at") or run.get("completed_at") else None
                 ),
+                error=(str(run["error"]) if run.get("error") else None),
             )
             for run in runs
             if isinstance(run, dict) and run.get("id")

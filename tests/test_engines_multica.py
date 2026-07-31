@@ -1796,15 +1796,19 @@ def test_multica_runtime_lists_typed_run_identity(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
     runtime = MulticaRuntime(store)
     monkeypatch.setattr(store, "_run_multica", lambda _args: [
-        {"id": "run-1", "kind": "direct", "status": "completed",
-         "agent_id": "agent-1"},
+        {"id": "run-1", "kind": "direct", "status": "failed",
+         "agent_id": "agent-1", "attempt": 1, "max_attempts": 2,
+         "error": "Selected model is at capacity. Please try a different model.",
+         "failure_reason": "agent_error.model_not_found_or_unavailable",
+         "retry_of_task_id": "run-0"},
         {"id": "run-2", "kind": "comment", "status": "running",
          "agent_id": "agent-2"},
     ])
 
     assert runtime.list_runs("issue-1") == [
         AgentRunObservation(
-            id="run-1", kind="direct", status="completed", agent_id="agent-1"),
+            id="run-1", kind="direct", status="failed", agent_id="agent-1",
+            error="Selected model is at capacity. Please try a different model."),
         AgentRunObservation(
             id="run-2", kind="comment", status="running", agent_id="agent-2"),
     ]
