@@ -4,9 +4,8 @@
 - MulticaStore:issue create/get/metadata set/list/comment/update/assign
 - MulticaRuntime:assign 即唤醒(wake 为确认性 no-op)
 
-认证通常由 multica CLI 自管(~/.multica)。仅当旧巨型 issue 让 CLI 的
-ID resolver 在 description 修复前超时时，使用同一配置中的 token 对精确
-UUID 执行一次幂等 PUT；token 不进入日志、事件或持久化数据。
+认证通常由 multica CLI 自管(~/.multica)。需要精确 UUID 原子更新时，使用
+同一配置中的 token 执行幂等 PUT；token 不进入日志、事件或持久化数据。
 """
 from __future__ import annotations
 
@@ -323,16 +322,30 @@ class MulticaStore(WorkItemStore):
         description: str,
     ) -> None:
         """绕过 CLI 的 issue resolver，用精确 UUID 幂等修复 description。"""
+        self._put_issue_fields_direct(
+            item_id,
+            {"description": description},
+            operation="description recovery",
+        )
+
+    def _put_issue_fields_direct(
+        self,
+        item_id: str,
+        fields: Dict[str, Any],
+        *,
+        operation: str,
+    ) -> None:
+        """Use one exact-identity PUT for an atomic issue projection update."""
         try:
             parsed_id = uuid.UUID(item_id)
         except ValueError as exc:
             raise PlatformError(ui(
-                f"Direct description recovery requires a canonical issue UUID: {item_id}",
-                f"直接恢复 description 需要完整 issue UUID：{item_id}")) from exc
+                f"Direct {operation} requires a canonical issue UUID: {item_id}",
+                f"直接执行 {operation} 需要完整 issue UUID：{item_id}")) from exc
         if str(parsed_id) != item_id.lower():
             raise PlatformError(ui(
-                f"Direct description recovery requires a canonical issue UUID: {item_id}",
-                f"直接恢复 description 需要完整 issue UUID：{item_id}"))
+                f"Direct {operation} requires a canonical issue UUID: {item_id}",
+                f"直接执行 {operation} 需要完整 issue UUID：{item_id}"))
 
         config_path = os.path.expanduser(
             os.environ.get("MULTICA_CONFIG_PATH", "~/.multica/config.json"))
@@ -341,8 +354,8 @@ class MulticaStore(WorkItemStore):
                 cli_config = json.load(fh)
         except (OSError, json.JSONDecodeError) as exc:
             raise PlatformError(ui(
-                f"Could not read Multica auth config for description recovery: {exc}",
-                f"无法读取 Multica 认证配置以恢复 description：{exc}")) from exc
+                f"Could not read Multica auth config for {operation}: {exc}",
+                f"无法读取 Multica 认证配置以执行 {operation}：{exc}")) from exc
 
         token = str(cli_config.get("token") or "").strip()
         server_url = str(
@@ -352,8 +365,8 @@ class MulticaStore(WorkItemStore):
         ).rstrip("/")
         if not token or not server_url:
             raise PlatformError(ui(
-                "Multica token or server_url is missing for description recovery",
-                "description 恢复缺少 Multica token 或 server_url"))
+                f"Multica token or server_url is missing for {operation}",
+                f"{operation} 缺少 Multica token 或 server_url"))
 
         header_fd, header_path = tempfile.mkstemp(
             prefix="omac-multica-headers-", text=True)
@@ -368,10 +381,7 @@ class MulticaStore(WorkItemStore):
                     f"X-Workspace-ID: {self.config.workspace_id}\n"
                 )
             with os.fdopen(body_fd, "w", encoding="utf-8") as fh:
-                json.dump(
-                    {"description": description}, fh,
-                    ensure_ascii=False,
-                )
+                json.dump(fields, fh, ensure_ascii=False)
             try:
                 result = subprocess.run(
                     [
@@ -391,13 +401,13 @@ class MulticaStore(WorkItemStore):
                 )
             except FileNotFoundError as exc:
                 raise PlatformError(ui(
-                    "curl is required for direct Multica description recovery",
-                    "直接恢复 Multica description 需要 curl")) from exc
+                    f"curl is required for direct Multica {operation}",
+                    f"直接执行 Multica {operation} 需要 curl")) from exc
             if result.returncode != 0:
                 raise PlatformError(ui(
-                    f"Direct Multica description recovery failed: "
+                    f"Direct Multica {operation} failed: "
                     f"{(result.stderr or '').strip()}",
-                    f"直接恢复 Multica description 失败："
+                    f"直接执行 Multica {operation} 失败："
                     f"{(result.stderr or '').strip()}"))
         finally:
             for path in (header_path, body_path):
@@ -1435,6 +1445,18 @@ class MulticaStore(WorkItemStore):
     def clear_assignment(self, item_id: str) -> None:
         self._run_multica(["issue", "assign", item_id, "--unassign"])
         self._set_metadata(item_id, "reviewer", "")
+
+    def normalize_confirmed_merge(self, item_id: str) -> None:
+        self._put_issue_fields_direct(
+            item_id,
+            {
+                "status": "done",
+                "assignee_type": None,
+                "assignee_id": None,
+                "suppress_run": True,
+            },
+            operation="confirmed-merge normalization",
+        )
 
     def request_pull_request_merge(
         self, pr_url: str, command: str, timeout_seconds: int,

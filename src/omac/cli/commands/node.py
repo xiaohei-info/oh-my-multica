@@ -9,7 +9,9 @@ from typing import Any
 from .. import exit_codes
 from ..output import add_output_flag, hint, print_json
 from ...core.config import ENV_ENGINE, ENV_WORKSPACE, load_config, resolve_engine_settings
-from ...core.manifest import MISSING_CONSUMES, load_manifest, save_manifest
+from ...core.manifest import (
+    MISSING_CONSUMES, clear_confirmed_merge, load_manifest, save_manifest,
+)
 from ...core.graph import downstream_of
 from ...core.taskmeta import WORKER_HANDOFF_SCHEMA, TaskKind, WorkerHandoffIntent
 from ...core.stage_recovery import prepare_stage_recovery, stage_recovery_subject
@@ -279,7 +281,7 @@ def _cmd_retry(args) -> int:
 
     # 重置为 todo;work_item_id 保留(同一 issue 续用)。
     node.status = "todo"
-    node.merge_request_state = None
+    clear_confirmed_merge(node)
     save_manifest(manifest, args.manifest)
 
     print_json({
