@@ -722,8 +722,8 @@ class TestHappyPath:
         assert len(result.dispatched) == 1
         assert len(result.running) == 1
 
-    def test_resume_tick_wakes_existing_in_progress_worker(self):
-        """resume 时已处于 in_progress 的节点也要幂等补唤醒执行面。"""
+    def test_resume_tick_does_not_redispatch_existing_in_progress_worker(self):
+        """无持久 handoff identity 时，旧 IN_PROGRESS 只能等待下轮观察。"""
         nodes = [_node("a")]
         manifest = _manifest(nodes)
         path = _tmp_manifest_path(manifest)
@@ -745,10 +745,54 @@ class TestHappyPath:
         result = tick(eng.store, runtime, manifest, path, max_parallel=1)
 
         assert result.state == "running"
-        assert runtime.calls == [(item_id, "alice", "worker")]
+        assert runtime.calls == []
 
-    def test_worker_completed_without_submit_bounces_back_to_worker(self):
-        """agent run 已终止但未 submit 时,同一 issue 转回 worker 继续处理。"""
+    @pytest.mark.parametrize(
+        ("manifest_status", "item_status"),
+        [
+            ("in_review", WorkItemStatus.IN_PROGRESS),
+            ("in_progress", WorkItemStatus.IN_REVIEW),
+        ],
+    )
+    def test_ambiguous_authoring_projection_without_handoff_never_dispatches(
+        self, manifest_status, item_status,
+    ):
+        nodes = [_node("a")]
+        manifest = _manifest(nodes)
+        path = _tmp_manifest_path(manifest)
+        eng = _engine(MOCK_AUTO_COMPLETE="false")
+
+        tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+        item_id = manifest.nodes["a"].work_item_id
+        item = eng.store.get_work_item(item_id)
+        item.phase = TaskPhase.AUTHORING
+        item.status = item_status
+        item.worker_handoff = None
+        manifest.nodes["a"].status = manifest_status
+        save_manifest(manifest, path)
+        assignments_before = len(eng.store.assign_log)
+
+        class RecordingRuntime(MockRuntime):
+            def __init__(self, store):
+                super().__init__(store)
+                self.calls = []
+
+            def wake(self, item_id, agent, role):
+                self.calls.append((item_id, agent, role))
+                super().wake(item_id, agent, role)
+
+        runtime = RecordingRuntime(eng.store)
+
+        failures = loop.collect_results(
+            eng.store, runtime, manifest, path)
+
+        assert failures == {}
+        assert manifest.nodes["a"].status == manifest_status
+        assert len(eng.store.assign_log) == assignments_before
+        assert runtime.calls == []
+
+    def test_worker_completed_without_submit_requires_explicit_retry_without_intent(self):
+        """无 handoff identity 的 no-submit 不得自动创建第二个 Worker Run。"""
         nodes = [_node("a")]
         manifest = _manifest(nodes)
         path = _tmp_manifest_path(manifest)
@@ -757,14 +801,18 @@ class TestHappyPath:
         tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
         item_id = manifest.nodes["a"].work_item_id
         eng.store.get_work_item(item_id).agent_run_finished_without_submit = True
+        assignments_before = len(eng.store.assign_log)
 
         result = tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
         item = eng.store.get_work_item(item_id)
 
-        assert item.status == WorkItemStatus.IN_PROGRESS
-        assert manifest.nodes["a"].status == "in_progress"
-        assert result.state == "running"
-        assert result.running == ["a"]
+        assert item.status == WorkItemStatus.BLOCKED
+        assert manifest.nodes["a"].status == "blocked"
+        assert result.state == "needs_decision"
+        assert item.bounces.worker == 0
+        assert item.decision_required["reason_code"] == "worker-retry-intent-required"
+        assert item.decision_required["next_action"].endswith(" a")
+        assert len(eng.store.assign_log) == assignments_before
 
     def test_worker_completed_without_submit_exhaustion_does_not_comment(self):
         """worker 未交付耗尽时不发平台评论,避免评论再次触发 agent run。"""
