@@ -317,6 +317,26 @@ def test_show_output_structure(kind, phase):
         "platform_writes": "omac-only",
         "submit_is_terminal": True,
         "post_submit_actions": [],
+        "submit_confirmation": {
+            "may_run_long": True,
+            "terminal_result_required": True,
+            "wait_when": [
+                "running",
+                "session",
+                "missing_tool_result",
+                "incomplete_output",
+                "unknown_result",
+            ],
+            "success_requires": {
+                "exit_code": 0,
+                "json": {
+                    "ok": True,
+                    "terminal": True,
+                    "next_action": "stop",
+                },
+            },
+            "validation_error": "fix-and-resubmit",
+        },
     }
 
     # 任务标识
@@ -357,6 +377,58 @@ def test_show_output_structure(kind, phase):
         assert out["context"]["artifacts"] == {
             "pr_url": "https://example.test/pr/42"}
         assert out["context"]["verification"]["coverage"] == 92
+
+
+def test_worker_submit_success_requires_a_confirmed_terminal_tool_result():
+    """Worker 不能把仍在运行、缺 tool_result 或未知结果口头当成提交成功。"""
+    store = _store()
+    item = _make_item(store, TaskKind.DEVELOP, TaskPhase.AUTHORING)
+
+    english = build_show_output(item, f"worker:{item.worker}", language="en")
+    chinese = build_show_output(item, f"worker:{item.worker}", language="cn")
+
+    confirmation = english["control"]["submit_confirmation"]
+    assert confirmation["may_run_long"] is True
+    assert confirmation["terminal_result_required"] is True
+    assert confirmation["success_requires"] == {
+        "exit_code": 0,
+        "json": {"ok": True, "terminal": True, "next_action": "stop"},
+    }
+    assert confirmation["validation_error"] == "fix-and-resubmit"
+    for state in (
+        "running",
+        "session",
+        "missing_tool_result",
+        "incomplete_output",
+        "unknown_result",
+    ):
+        assert state in confirmation["wait_when"]
+
+    for phrase in (
+        "may run for a long time",
+        "wait or poll",
+        "final tool result",
+        "exit code 0",
+        '"ok": true',
+        '"terminal": true',
+        '"next_action": "stop"',
+        "must not claim success",
+        "fix it and submit again",
+    ):
+        assert phrase in english["protocol"].lower()
+
+    for phrase in (
+        "可能长时间运行",
+        "等待或轮询",
+        "最终 tool_result",
+        "退出码 0",
+        '"ok": true',
+        '"terminal": true',
+        '"next_action": "stop"',
+        "不得宣称成功",
+        "修复后重新提交",
+    ):
+        assert phrase in chinese["protocol"].lower()
 
 
 def test_authoring_show_uses_review_ledger_after_current_projection_reset():
