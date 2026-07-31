@@ -309,16 +309,10 @@ def test_146_node_status_reuses_reconcile_observation_budget(tmp_path):
     ) == (146, 18, 1)
 
 
-def test_146_node_full_tick_counts_reconcile_and_eight_running_fresh_reads(
+def test_146_node_full_tick_reuses_reconcile_observations_for_collect(
     tmp_path, monkeypatch,
 ):
-    """Count one full tick through collect's initial fresh-read boundary.
-
-    Seven nodes start running and one historical done node is reopened to
-    ``merging`` by reconcile. The merge helper is stubbed so the count excludes
-    merge-internal re-observation and measures exactly the eight mandatory fresh
-    complete reads at the collect boundary.
-    """
+    """A full tick must not repeat fresh reads already completed by reconcile."""
     issues, attachments, nodes = _large_dag_fixture()
     remote = _RemoteFixture(issues, attachments)
     store = _store(remote)
@@ -349,7 +343,111 @@ def test_146_node_full_tick_counts_reconcile_and_eight_running_fresh_reads(
         remote.issue_gets,
         remote.attachment_downloads,
         remote.pr_observations,
-    ) == (154, 50, 1)
+    ) == (146, 18, 1)
+
+
+def test_reconcile_observations_cover_collect_required_evidence(tmp_path):
+    issues, attachments, nodes = _large_dag_fixture()
+    remote = _RemoteFixture(issues, attachments)
+    store = _store(remote)
+    manifest, path = _manifest_path(tmp_path, nodes)
+
+    result = loop.reconcile_with_observations(store, manifest, path)
+
+    for key, node in manifest.nodes.items():
+        if node.status not in loop.RUNNING_STATUSES or not node.work_item_id:
+            continue
+        projection = result.observations[key]
+        assert projection is not None
+        required = loop._build_work_item_hydration_plan(node, projection)
+        assert required.isdisjoint(projection.deferred_payloads)
+
+
+def test_collect_results_without_observations_keeps_complete_read_fallback(
+    tmp_path,
+):
+    issue, attachments = _issue(
+        "node-a", status="in_progress", phase="authoring")
+    remote = _RemoteFixture({"node-a": issue}, attachments)
+    store = _store(remote)
+    manifest, path = _manifest_path(tmp_path, {
+        "node-a": Node(
+            id="node-a",
+            worker="worker",
+            work_item_id="node-a",
+            status="in_progress",
+        ),
+    })
+    wakes = []
+    runtime = SimpleNamespace(
+        wake=lambda *args: wakes.append(args),
+        list_runs=lambda _item_id: [],
+    )
+
+    assert loop.collect_results(
+        store, runtime, manifest, path, config={}) == {}
+
+    assert remote.issue_gets == 1
+    assert remote.attachment_downloads == 4
+    assert wakes == [("node-a", "worker", "worker")]
+
+
+def test_tick_required_hydration_failure_precedes_lifecycle_side_effects(
+    tmp_path, monkeypatch,
+):
+    issues = {}
+    attachments = {}
+    nodes = {}
+    for item_id in ("node-a", "node-b"):
+        issue, bodies = _issue(
+            item_id, status="done", phase="authoring")
+        issues[item_id] = issue
+        attachments.update(bodies)
+        nodes[item_id] = Node(
+            id=item_id,
+            worker="worker",
+            reviewer="reviewer",
+            work_item_id=item_id,
+            status="in_progress",
+        )
+    remote = _RemoteFixture(issues, attachments)
+    remote.fail_attachment_id = issues["node-b"]["metadata"][
+        "verification_ref"]["attachment_id"]
+    store = _store(remote)
+    manifest, path = _manifest_path(tmp_path, nodes)
+    before_manifest = copy.deepcopy(manifest)
+    before_file = Path(path).read_bytes()
+    effects = []
+    runtime = SimpleNamespace(
+        wake=lambda *args: effects.append(("wake", args)),
+        list_runs=lambda _item_id: [],
+    )
+    for method_name in (
+        "normalize_confirmed_merge",
+        "update_status",
+        "update_work_item_metadata",
+        "assign_work_item",
+        "add_comment",
+        "reset_review",
+        "clear_assignment",
+        "request_pull_request_merge",
+    ):
+        monkeypatch.setattr(
+            store,
+            method_name,
+            lambda *args, _method=method_name, **kwargs: effects.append(
+                (_method, args, kwargs)),
+        )
+    monkeypatch.setattr(
+        loop, "commit_manifest", lambda *args, **kwargs: effects.append(
+            ("commit_manifest", args, kwargs)))
+
+    with pytest.raises(PlatformError, match="attachment read failed"):
+        loop.tick(store, runtime, manifest, path, max_parallel=2, config={})
+
+    assert effects == []
+    assert manifest == before_manifest
+    assert Path(path).read_bytes() == before_file
 
 
 @pytest.mark.parametrize("failed_item_id", ["node-a", "node-b"])

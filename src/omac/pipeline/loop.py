@@ -1125,6 +1125,7 @@ def collect_results(
     manifest_path: str,
     retry_limits: dict | None = None,
     config: dict | None = None,
+    observations: Dict[str, WorkItemControlProjection | None] | None = None,
 ) -> Dict[str, str]:
     """SYNC:回收进行中节点的结果。
 
@@ -1143,12 +1144,32 @@ def collect_results(
     in_review 节点:
       reviewer pass → merge(if configured) → done;reject → blocked(P4 前先 blocked)
     """
-    # Complete every fresh running-node read before the first lifecycle effect.
-    running_items = {
-        key: store.get_work_item(node.work_item_id)
-        for key, node in manifest.nodes.items()
-        if node.status in RUNNING_STATUSES and node.work_item_id
-    }
+    # Standalone callers retain the complete-read fallback.  ``tick`` passes
+    # the fresh, atomic reconcile observations so collection does not repeat
+    # the same Issue and attachment reads.
+    if observations is None:
+        running_items = {
+            key: store.get_work_item(node.work_item_id)
+            for key, node in manifest.nodes.items()
+            if node.status in RUNNING_STATUSES and node.work_item_id
+        }
+    else:
+        running_items = {}
+        for key, node in manifest.nodes.items():
+            if node.status not in RUNNING_STATUSES or not node.work_item_id:
+                continue
+            projection = observations.get(key)
+            if projection is None:
+                raise PlatformError(
+                    f"Fresh reconcile observation is missing for running node {key}")
+            required = _build_work_item_hydration_plan(node, projection)
+            missing = required & projection.deferred_payloads
+            if missing:
+                names = ", ".join(sorted(payload.value for payload in missing))
+                raise PlatformError(
+                    f"Fresh reconcile observation lacks collect evidence for "
+                    f"running node {key}: {names}")
+            running_items[key] = projection.work_item
     failures: Dict[str, str] = {}
     pending_review: List[Tuple[str, str, str]] = []  # (key, item_id, reviewer)
 
@@ -1771,11 +1792,13 @@ def tick(
     ensure_amendment_apply_complete(manifest, manifest_path)
 
     # 1. Reconcile: 平台状态同步回 manifest
-    reconcile(store, manifest, manifest_path)
+    reconcile_result = reconcile_with_observations(
+        store, manifest, manifest_path)
 
     # 2. SYNC: 回收进行中节点的结果
     new_failures = collect_results(store, runtime, manifest, manifest_path,
-                                   retry_limits=retry_limits, config=config)
+                                   retry_limits=retry_limits, config=config,
+                                   observations=reconcile_result.observations)
 
     # 3. 收集全部失败节点(含本轮新失败 + 历史已 blocked/failed)
     all_failed: Set[str] = set(new_failures.keys())
