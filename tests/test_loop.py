@@ -30,7 +30,7 @@ from omac.core.review_convergence import (
 )
 from omac.engines import create_engine
 from omac.engines.mock import MockRuntime, MockStore
-from omac.core.taskmeta import TaskPhase
+from omac.core.taskmeta import TaskPhase, WorkerHandoffIntent
 from omac.engines.models import AgentRunObservation, EngineConfig, WorkItemStatus
 from omac.pipeline import loop
 from omac.pipeline.dispatch import build_show_output
@@ -904,6 +904,428 @@ class TestHappyPath:
         assert eng.store.get_comments(item_id) == []
 
 
+def _transient_worker_handoff_fixture(tmp_path):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    manifest = _manifest([_node("a", reviewer="bob", contract=_contract())])
+    path = str(tmp_path / "dag.yaml")
+    save_manifest(manifest, path)
+    tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+    item = eng.store.get_work_item(manifest.nodes["a"].work_item_id)
+    preserved_verification = {"marker": "preserve-existing-delivery"}
+    eng.store.update_work_item_metadata(
+        item.id,
+        verification=preserved_verification,
+        verification_source=yaml.safe_dump(preserved_verification),
+    )
+    item = eng.store.get_work_item(item.id)
+    agent_id = eng.store.resolve_agent_id("alice")
+    intent = WorkerHandoffIntent(
+        schema="omac.worker-handoff/v1",
+        state="pending",
+        target_worker="alice",
+        gate="explicit-dispatch",
+        source_review_subject_digest="authoring-subject",
+        source_review_round=1,
+        target_review_bounce=0,
+        generation="handoff-transient-1",
+        target_agent_id=agent_id,
+        baseline_direct_run_ids=(),
+        baseline_verification_attachment_id=(
+            item.verification_ref or {}).get("attachment_id"),
+        target_run_id="run-capacity-1",
+        target_worker_bounce=0,
+    )
+    eng.store.update_work_item_metadata(item.id, worker_handoff=intent)
+    return eng, manifest, path, item, agent_id
+
+
+@pytest.mark.parametrize("error", [
+    "Selected model is at capacity. Please try a different model.",
+    "Our servers are currently overloaded",
+    "Hermes provider error: Our servers are currently overloaded. Please try again later.",
+    "provider error: HTTP 429 Too Many Requests",
+    "transport status: HTTP 502 Bad Gateway",
+    "runtime status: 503 Service Unavailable",
+    "Hermes provider error: HTTP 504 Gateway Timeout",
+    "connection timeout while opening provider stream",
+    "read timeout while waiting for provider response",
+    "provider error: connection timeout",
+    "runtime status: read timeout",
+    "Hermes provider error: connect timeout",
+])
+def test_transient_runtime_failure_allowlist(error):
+    assert loop._is_retryable_transient_run_failure(AgentRunObservation(
+        id="run-1", kind="direct", status="failed", error=error))
+
+
+@pytest.mark.parametrize("error", [
+    "HTTP 401 Missing Authentication header",
+    "HTTP 403 Forbidden",
+    "quota exhausted for this account",
+    "billing credits exhausted",
+    "model does not exist",
+    "invalid model identifier",
+    "request rejected by network security policy",
+    "request refused by safety policy",
+    "business validation failed",
+    "acceptance failure: required behavior is missing",
+    "unknown provider failure",
+    "worker exited without submitting",
+    "request rejected by network security policy because the prompt contains the phrase read timeout",
+    "quota exhausted after an upstream connection timeout",
+    "model does not exist; request body mentioned HTTP 503 Service Unavailable",
+    "HTTP 401 Missing Authentication header; diagnostic text includes 429",
+    "business validation failed: the acceptance case expects a read timeout",
+    "unknown provider failure while documenting overloaded behavior",
+    "documentation example: provider overloaded",
+    "test assertion expected HTTP 503",
+    "review evidence quoted selected model is at capacity. Please try a different model.",
+    "API docs describe 429 responses",
+    "business text mentions provider overloaded as an example",
+    "business output documents that the provider is overloaded",
+    "test assertion expected HTTP 503 Service Unavailable from the provider",
+    "review evidence quotes: Selected model is at capacity. Please try a different model.",
+    "provider rejected the prompt because it discusses overloaded infrastructure",
+    "documentation for the HTTP API mentions 429 responses",
+])
+def test_transient_runtime_failure_rejects_non_allowlisted_errors(error):
+    assert not loop._is_retryable_transient_run_failure(AgentRunObservation(
+        id="run-1", kind="direct", status="failed", error=error))
+
+
+@pytest.mark.parametrize("error", [
+    "429",
+    "503",
+    "operation overloaded",
+    "read timeout",
+    "connection timeout",
+])
+def test_transient_runtime_failure_requires_provider_transport_context(error):
+    assert not loop._is_retryable_transient_run_failure(AgentRunObservation(
+        id="run-1", kind="direct", status="failed", error=error))
+
+
+def test_worker_capacity_failure_reruns_without_consuming_business_bounce(
+    tmp_path, monkeypatch,
+):
+    eng, manifest, path, item, agent_id = _transient_worker_handoff_fixture(
+        tmp_path)
+    runs = [AgentRunObservation(
+        id="run-capacity-1", kind="direct", status="failed",
+        agent_id=agent_id,
+        error="Selected model is at capacity. Please try a different model.",
+    )]
+    wake_calls = []
+
+    def wake(_item_id, _agent, role):
+        wake_calls.append(role)
+        runs.append(AgentRunObservation(
+            id="run-capacity-retry", kind="direct", status="running",
+            agent_id=agent_id))
+
+    monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
+    monkeypatch.setattr(eng.runtime, "wake", wake)
+
+    failures = loop.collect_results(
+        eng.store, eng.runtime, manifest, path,
+        retry_limits={"worker": 1, "review": 1},
+    )
+
+    current = eng.store.get_work_item(item.id)
+    assert failures == {}
+    assert wake_calls == ["worker"]
+    assert current.bounces.worker == 0
+    assert current.bounces.review == 0
+    assert current.phase is TaskPhase.AUTHORING
+    assert current.verification == item.verification
+    assert current.verification_ref == item.verification_ref
+    assert current.worker_handoff.target_run_id == "run-capacity-retry"
+    assert current.decision_required is None
+    assert manifest.nodes["a"].status == "in_progress"
+
+
+def test_transient_worker_rerun_response_unknown_observes_created_run(
+    tmp_path, monkeypatch,
+):
+    from omac.errors import PlatformError
+
+    eng, manifest, path, item, agent_id = _transient_worker_handoff_fixture(
+        tmp_path)
+    runs = [AgentRunObservation(
+        id="run-capacity-1", kind="direct", status="failed",
+        agent_id=agent_id, error="Our servers are currently overloaded")]
+    wake_calls = 0
+
+    def wake(_item_id, _agent, _role):
+        nonlocal wake_calls
+        wake_calls += 1
+        runs.append(AgentRunObservation(
+            id="run-capacity-retry", kind="direct", status="queued",
+            agent_id=agent_id))
+        raise PlatformError("rerun response unavailable")
+
+    monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
+    monkeypatch.setattr(eng.runtime, "wake", wake)
+
+    assert loop.collect_results(
+        eng.store, eng.runtime, manifest, path) == {}
+    assert wake_calls == 1
+    assert eng.store.get_work_item(
+        item.id).worker_handoff.target_run_id == "run-capacity-retry"
+
+
+def test_transient_worker_retry_is_restart_safe_and_does_not_duplicate_active_run(
+    tmp_path, monkeypatch,
+):
+    eng, manifest, path, item, agent_id = _transient_worker_handoff_fixture(
+        tmp_path)
+    runs = [AgentRunObservation(
+        id="run-capacity-1", kind="direct", status="failed",
+        agent_id=agent_id, error="runtime status: HTTP 503 Service Unavailable")]
+    wake_calls = 0
+
+    def wake(_item_id, _agent, _role):
+        nonlocal wake_calls
+        wake_calls += 1
+        runs.append(AgentRunObservation(
+            id="run-capacity-retry", kind="direct", status="running",
+            agent_id=agent_id))
+
+    monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
+    monkeypatch.setattr(eng.runtime, "wake", wake)
+
+    assert loop.collect_results(eng.store, eng.runtime, manifest, path) == {}
+    assert loop.collect_results(eng.store, eng.runtime, manifest, path) == {}
+    assert wake_calls == 1
+    assert eng.store.get_work_item(item.id).bounces.worker == 0
+
+
+def test_consecutive_transient_worker_failures_stop_at_infrastructure_limit(
+    tmp_path, monkeypatch,
+):
+    eng, manifest, path, item, agent_id = _transient_worker_handoff_fixture(
+        tmp_path)
+    runs = [
+        AgentRunObservation(
+            id="run-capacity-1", kind="direct", status="failed",
+            agent_id=agent_id, created_at="2026-07-31T10:00:00Z",
+            error="Our servers are currently overloaded"),
+        AgentRunObservation(
+            id="run-capacity-2", kind="direct", status="failed",
+            agent_id=agent_id, created_at="2026-07-31T10:01:00Z",
+            error="provider error: HTTP 429 Too Many Requests"),
+    ]
+    current = eng.store.get_work_item(item.id)
+    eng.store.update_work_item_metadata(
+        item.id,
+        worker_handoff=WorkerHandoffIntent(
+            **{
+                **current.worker_handoff.as_dict(),
+                "baseline_direct_run_ids": ("run-capacity-1",),
+                "target_run_id": "run-capacity-2",
+            }
+        ),
+    )
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
+    monkeypatch.setattr(
+        eng.runtime, "wake",
+        lambda *_args: pytest.fail("exhausted infrastructure retry must not wake"),
+    )
+
+    result = tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+    blocked = eng.store.get_work_item(item.id)
+
+    assert result.state == "needs_decision"
+    assert manifest.nodes["a"].status == "blocked"
+    assert blocked.status is WorkItemStatus.BLOCKED
+    assert blocked.phase is TaskPhase.AUTHORING
+    assert blocked.bounces.worker == 0
+    assert blocked.bounces.review == 0
+    assert blocked.decision_required["reason_code"] == (
+        "transient-runtime-retry-exhausted")
+
+
+def _reviewer_runtime_failure_fixture(tmp_path):
+    from omac.engines import mock as mock_engine
+
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    contract = _contract()
+    manifest = _manifest([_node("a", reviewer="bob", contract=contract)])
+    path = str(tmp_path / "dag.yaml")
+    save_manifest(manifest, path)
+    tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+    item = eng.store.get_work_item(manifest.nodes["a"].work_item_id)
+    eng.store.set_node_contract(item.id, manifest.nodes["a"].contract)
+    verification = eng.store._mock_verification(item.id)
+    eng.store.update_work_item_metadata(
+        item.id,
+        artifacts={"pr_url": "https://mock.example/pr/1", "head_sha": "head-1"},
+        verification=verification,
+        verification_source=yaml.safe_dump(verification),
+    )
+    mock_engine._finish_mock_run(item.id)
+    eng.store.update_status(item.id, WorkItemStatus.DONE)
+    tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+    current = eng.store.get_work_item(item.id)
+    reviewer_id = eng.store.resolve_agent_id("bob")
+    return eng, manifest, path, current, reviewer_id
+
+
+def test_reviewer_capacity_failure_reruns_without_review_bounce(
+    tmp_path, monkeypatch,
+):
+    eng, manifest, path, current, reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    runs = [AgentRunObservation(
+        id="run-review-capacity", kind="direct", status="failed",
+        agent_id=reviewer_id,
+        error="Selected model is at capacity. Please try a different model.",
+    )]
+    wake_calls = []
+
+    def wake(_item_id, _agent, role):
+        wake_calls.append(role)
+        runs.append(AgentRunObservation(
+            id="run-review-retry", kind="direct", status="running",
+            agent_id=reviewer_id))
+
+    monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
+    monkeypatch.setattr(eng.runtime, "wake", wake)
+
+    assert loop.collect_results(eng.store, eng.runtime, manifest, path) == {}
+    assert loop.collect_results(eng.store, eng.runtime, manifest, path) == {}
+    retried = eng.store.get_work_item(current.id)
+    assert wake_calls == ["reviewer"]
+    assert retried.phase is TaskPhase.REVIEW
+    assert retried.bounces.review == current.bounces.review == 0
+    assert retried.verification == current.verification
+    assert manifest.nodes["a"].status == "in_review"
+
+
+def test_nonretryable_worker_failure_blocks_without_business_bounce(
+    tmp_path, monkeypatch,
+):
+    eng, manifest, path, item, agent_id = _transient_worker_handoff_fixture(
+        tmp_path)
+    runs = [AgentRunObservation(
+        id="run-capacity-1", kind="direct", status="failed",
+        agent_id=agent_id,
+        error="request rejected by network security policy",
+    )]
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
+    monkeypatch.setattr(
+        eng.runtime, "wake",
+        lambda *_args: pytest.fail("nonretryable failure must not wake"),
+    )
+
+    result = tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+    blocked = eng.store.get_work_item(item.id)
+
+    assert result.state == "needs_decision"
+    assert manifest.nodes["a"].status == "blocked"
+    assert blocked.status is WorkItemStatus.BLOCKED
+    assert blocked.phase is TaskPhase.AUTHORING
+    assert blocked.verification == item.verification
+    assert blocked.verification_ref == item.verification_ref
+    assert blocked.bounces.worker == 0
+    assert blocked.bounces.review == 0
+    assert blocked.decision_required["reason_code"] == (
+        "nonretryable-runtime-failure")
+
+
+def test_nonretryable_reviewer_failure_blocks_without_review_bounce(
+    tmp_path, monkeypatch,
+):
+    eng, manifest, path, item, reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    runs = [AgentRunObservation(
+        id="run-review-policy", kind="direct", status="failed",
+        agent_id=reviewer_id,
+        error="HTTP 403 forbidden by provider safety policy",
+    )]
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
+    monkeypatch.setattr(
+        eng.runtime, "wake",
+        lambda *_args: pytest.fail("nonretryable reviewer must not wake"),
+    )
+
+    result = tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+    blocked = eng.store.get_work_item(item.id)
+
+    assert result.state == "needs_decision"
+    assert blocked.phase is TaskPhase.REVIEW
+    assert blocked.verification == item.verification
+    assert blocked.bounces.review == 0
+    assert blocked.decision_required["reason_code"] == (
+        "nonretryable-runtime-failure")
+
+
+def test_reviewer_transient_failures_stop_at_infrastructure_limit(
+    tmp_path, monkeypatch,
+):
+    eng, manifest, path, item, reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    runs = [
+        AgentRunObservation(
+            id="run-review-1", kind="direct", status="failed",
+            agent_id=reviewer_id, created_at="2026-07-31T10:00:00Z",
+            error="Our servers are currently overloaded"),
+        AgentRunObservation(
+            id="run-review-2", kind="direct", status="failed",
+            agent_id=reviewer_id, created_at="2026-07-31T10:01:00Z",
+            error="provider error: HTTP 503 Service Unavailable"),
+    ]
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
+    monkeypatch.setattr(
+        eng.runtime, "wake",
+        lambda *_args: pytest.fail("exhausted reviewer retry must not wake"),
+    )
+
+    result = tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+    blocked = eng.store.get_work_item(item.id)
+
+    assert result.state == "needs_decision"
+    assert blocked.phase is TaskPhase.REVIEW
+    assert blocked.bounces.review == 0
+    assert blocked.decision_required["reason_code"] == (
+        "transient-runtime-retry-exhausted")
+
+
+def test_reviewer_ignores_comment_run_and_never_retries_other_agent_failure(
+    tmp_path, monkeypatch,
+):
+    eng, manifest, path, item, reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    runs = [
+        AgentRunObservation(
+            id="run-review-old", kind="direct", status="failed",
+            agent_id=reviewer_id, created_at="2026-07-31T10:00:00Z",
+            error="Our servers are currently overloaded"),
+        AgentRunObservation(
+            id="run-other-agent", kind="direct", status="failed",
+            agent_id="agent-other", created_at="2026-07-31T10:01:00Z",
+            error="Our servers are currently overloaded"),
+        AgentRunObservation(
+            id="run-comment", kind="comment", status="failed",
+            agent_id=reviewer_id, created_at="2026-07-31T10:02:00Z",
+            error="Our servers are currently overloaded"),
+    ]
+    wake_calls = []
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
+    monkeypatch.setattr(
+        eng.runtime, "wake",
+        lambda *_args: wake_calls.append("wake"),
+    )
+
+    assert loop.collect_results(eng.store, eng.runtime, manifest, path) == {}
+    assert wake_calls == []
+    assert eng.store.get_work_item(item.id).bounces.review == 0
+
+
 # ==================== 2. 失败注入 → needs_decision ====================
 
 class TestFailureInjection:
@@ -1602,10 +2024,11 @@ class TestReviewerRejectBoundedFallback:
         eng.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
         return intent, source
 
+    @pytest.mark.parametrize("terminal_status", ["completed", "cancelled"])
     def test_terminal_worker_handoff_without_submit_uses_bounded_worker_retry(
-        self, tmp_path, monkeypatch,
+        self, tmp_path, monkeypatch, terminal_status,
     ):
-        """terminal target Run 跨 tick grace 后使用有界 worker retry。"""
+        """completed/cancelled no-submit 跨 grace 后使用业务 worker retry。"""
         from omac.engines import create_engine
         from omac.engines.models import AgentRunObservation
 
@@ -1629,7 +2052,7 @@ class TestReviewerRejectBoundedFallback:
             runs = [AgentRunObservation(
                 id=intent.target_run_id,
                 kind="direct",
-                status="completed",
+                status=terminal_status,
                 agent_id=intent.target_agent_id,
             )]
             if retry_run_visible:
