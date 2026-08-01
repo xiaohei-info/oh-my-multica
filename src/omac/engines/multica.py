@@ -1858,13 +1858,6 @@ class MulticaRuntime(AgentRuntime):
                 not in _RERUNNABLE_DIRECT_RUN_STATUSES
             ):
                 return None
-        rerun_source = {
-            "id": str(latest["id"]) if latest.get("id") else None,
-            "agent_id": (
-                str(latest["agent_id"])
-                if latest.get("agent_id") else None
-            ),
-        }
         direct_run_ids = _direct_run_ids(runs)
         try:
             self._store._run_multica([
@@ -1875,24 +1868,13 @@ class MulticaRuntime(AgentRuntime):
                 observed_runs = self._issue_runs(item_id)
             except PlatformError:
                 raise rerun_error from None
-            source_id = rerun_source["id"]
-            if not source_id:
-                raise rerun_error from None
             candidates = [
                 run for run in observed_runs
                 if (run.get("kind") or "direct") == "direct"
                 and run.get("id")
                 and str(run["id"]) not in direct_run_ids
-                and source_id in {
-                    str(parent_id)
-                    for parent_id in (
-                        run.get("retry_of_task_id"),
-                        run.get("parent_task_id"),
-                    )
-                    if parent_id
-                }
             ]
-            if not candidates:
+            if len(candidates) != 1:
                 raise rerun_error from None
             try:
                 resolved_agent_id = self._store._resolve_agent_id(agent)
@@ -1901,10 +1883,10 @@ class MulticaRuntime(AgentRuntime):
             if not resolved_agent_id:
                 raise rerun_error from None
             expected_agent_id = str(resolved_agent_id)
-            if any(
-                run.get("agent_id")
-                and str(run["agent_id"]) == expected_agent_id
-                for run in candidates
+            candidate_agent_id = candidates[0].get("agent_id")
+            if (
+                candidate_agent_id
+                and str(candidate_agent_id) == expected_agent_id
             ):
                 return None
             raise rerun_error from None
