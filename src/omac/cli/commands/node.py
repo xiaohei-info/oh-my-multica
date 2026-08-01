@@ -63,6 +63,10 @@ def register(parser):
     retry.add_argument("manifest", help="manifest 文件路径")
     retry.add_argument("node_key", help="节点 id")
     retry.add_argument("--worker", help="改派给另一个 worker")
+    retry.add_argument(
+        "--stage", choices=("authoring", "review"), default="authoring",
+        help="恢复阶段；默认 authoring，已有封存交付可显式恢复 review",
+    )
 
     accept = sub.add_parser("accept", help="人工接受已知风险,标记节点 done")
     accept.add_argument("manifest", help="manifest 文件路径")
@@ -226,6 +230,16 @@ def _validate_worker(manifest, node, new_worker: str, config: dict, engine) -> s
 def _cmd_retry(args) -> int:
     manifest = _load_or_raise(args.manifest)
     node = _require_node(manifest, args.node_key)
+    stage = args.stage
+
+    if stage == "review" and args.worker:
+        raise ValidationError(ui(
+            "--worker cannot be combined with --stage review",
+            "--worker 不能与 --stage review 同时使用"))
+    if stage == "review" and not node.reviewer:
+        raise ValidationError(ui(
+            f"Node {node.id} has no reviewer to resume",
+            f"节点 {node.id} 没有可恢复的 reviewer"))
 
     config = load_config()
     engine = _build_engine(config)
@@ -244,7 +258,12 @@ def _cmd_retry(args) -> int:
             current = engine.store.get_work_item(node.work_item_id)
             handoff = None
             has_delivery = bool(current.artifacts or current.verification)
-            if node.reviewer and current.bounces.review > 0 and has_delivery:
+            if (
+                stage == "authoring"
+                and node.reviewer
+                and current.bounces.review > 0
+                and has_delivery
+            ):
                 source_subject = (
                     current.review_subject_digest
                     or stage_recovery_subject(node, current)
@@ -269,8 +288,8 @@ def _cmd_retry(args) -> int:
                     target_worker_bounce=current.bounces.worker,
                 )
             # 复用 DAG stage recovery 原语；清除旧 reviewer 判定并恢复
-            # authoring/todo，同时保留 PR、verification 与历史附件。
-            prepare_stage_recovery(node, engine.store, "authoring")
+            # 指定阶段，同时保留 PR、verification 与历史附件。
+            prepare_stage_recovery(node, engine.store, stage)
             if handoff is not None:
                 engine.store.update_work_item_metadata(
                     node.work_item_id, worker_handoff=handoff)
@@ -280,20 +299,23 @@ def _cmd_retry(args) -> int:
             # 下一次 dag run 再由 reconcile 清空并重新建单。
             pass
 
-    # 重置为 todo;work_item_id 保留(同一 issue 续用)。
-    node.status = "todo"
+    # work_item_id 保留(同一 issue 续用)。
+    node.status = "in_review" if stage == "review" else "todo"
     clear_confirmed_merge(node)
     save_manifest(manifest, args.manifest)
 
     print_json({
         "node_key": node.id,
-        "status": "todo",
+        "status": node.status,
+        "stage": stage,
         "worker": node.worker,
         "work_item_id": node.work_item_id,
     })
     hint(ui(
-        f"Node {node.id} reset to todo. Run `omac dag run {args.manifest}` to continue.",
-        f"节点 {node.id} 已重置为 todo。运行 `omac dag run {args.manifest}` 续跑生效。"))
+        f"Node {node.id} resumed at {stage}. Run `omac dag run "
+        f"{args.manifest}` to continue.",
+        f"节点 {node.id} 已恢复到 {stage}。运行 `omac dag run "
+        f"{args.manifest}` 续跑生效。"))
     return exit_codes.OK
 
 

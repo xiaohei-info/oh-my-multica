@@ -137,6 +137,72 @@ def test_retry_resets_to_todo_and_keeps_work_item_id(tmp_path, capsys, monkeypat
     assert m.nodes["b"].worker == "bob"        # 未改派
 
 
+def test_retry_review_preserves_sealed_delivery_and_resumes_reviewer(
+    tmp_path, capsys, monkeypatch,
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OMAC_ENGINE", "mock")
+    monkeypatch.setenv("OMAC_WORKSPACE_ID", "ws-1")
+
+    from omac.core.taskmeta import TaskPhase
+    from omac.engines import EngineConfig, create_engine
+    from omac.engines.models import WorkItemStatus
+
+    engine = create_engine(
+        "mock",
+        EngineConfig("mock", "ws-1", extra={"MOCK_AUTO_COMPLETE": "false"}),
+    )
+    item = engine.store.create_work_item(
+        "ws-1", "t", "d", "b", "bob", reviewer="alice")
+    engine.store.update_work_item_metadata(
+        item.id,
+        phase=TaskPhase.REVIEW,
+        artifacts={"pr_url": "https://example.test/pr/1", "head_sha": "head-1"},
+        delivery_identity={
+            "schema": "omac.delivery-identity/v1",
+            "handoff_generation": "handoff-1",
+            "worker": "bob",
+            "agent_id": "agent-bob",
+            "run_id": "run-worker",
+            "pr_url": "https://example.test/pr/1",
+            "pr_head_sha": "head-1",
+            "verification_sha256": "sha-1",
+            "verification_attachment_id": "attachment-1",
+            "verification_comment_id": "comment-1",
+            "verification_uploader_id": "agent-bob",
+            "verification_uploader_type": "agent",
+            "verification_created_at": "2026-08-01T01:00:00Z",
+        },
+        review_verdict="reject",
+    )
+    engine.store.get_work_item(item.id).verification_ref = {
+        "attachment_id": "attachment-1", "comment_id": "comment-1",
+    }
+    engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
+
+    import omac.cli.commands.node as node_mod
+    monkeypatch.setattr(node_mod, "create_engine", lambda *a, **kw: engine)
+    path = _write_manifest(tmp_path, [{
+        "id": "b", "worker": "bob", "reviewer": "alice",
+        "status": "blocked", "work_item_id": item.id,
+    }])
+
+    assert main([
+        "node", "retry", path, "b", "--stage", "review",
+    ]) == exit_codes.OK
+    capsys.readouterr()
+
+    manifest = load_manifest(path)
+    resumed = engine.store.get_work_item(item.id)
+    assert manifest.nodes["b"].status == "in_review"
+    assert resumed.status is WorkItemStatus.IN_REVIEW
+    assert resumed.phase is TaskPhase.REVIEW
+    assert resumed.delivery_identity is not None
+    assert resumed.delivery_identity.run_id == "run-worker"
+    assert resumed.review_verdict is None
+    assert resumed.review_subject_digest
+
+
 def test_retry_explicitly_clears_confirmed_merge_closure(
     tmp_path, capsys, monkeypatch,
 ):
