@@ -342,6 +342,95 @@ def test_multica_reset_review_missing_clear_keys_writes_nothing(monkeypatch):
     store.reset_review("issue-1")
 
 
+_MISSING_METADATA = object()
+
+
+@pytest.mark.parametrize("key", [
+    MACHINE_FEEDBACK_REF_KEY,
+    REVIEW_REPORT_REF_KEY,
+    DECISION_REQUIRED_KEY,
+    REVIEWER_RUN_BASELINE_KEY,
+])
+@pytest.mark.parametrize(
+    "raw",
+    [_MISSING_METADATA, None, {}, "{}", "", "null"],
+    ids=["missing", "python-null", "dict", "json-dict", "empty-text", "json-null"],
+)
+def test_multica_reset_review_accepts_all_canonical_object_clear_values(
+    monkeypatch, key, raw,
+):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    metadata = {} if raw is _MISSING_METADATA else {key: raw}
+    monkeypatch.setattr(store, "_run_multica", lambda *_args, **_kwargs: {
+        "id": "issue-1",
+        "title": "review",
+        "description": "review",
+        "status": "todo",
+        "metadata": metadata,
+    })
+    monkeypatch.setattr(
+        store, "_set_metadata",
+        lambda *_args, **_kwargs: pytest.fail(
+            f"canonical clear value for {key} must not write"),
+    )
+
+    store.reset_review("issue-1")
+
+
+def test_multica_missing_report_ref_with_legacy_report_writes_shadow_tombstone(
+    monkeypatch,
+):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    metadata = {"review_report": {"verdict": "reject"}}
+    writes = []
+    monkeypatch.setattr(store, "_run_multica", lambda *_args, **_kwargs: {
+        "id": "issue-1",
+        "title": "review",
+        "description": "review",
+        "status": "todo",
+        "metadata": metadata,
+    })
+
+    def set_metadata(item_id, key, value):
+        writes.append((key, value))
+        metadata[key] = value
+
+    monkeypatch.setattr(store, "_set_metadata", set_metadata)
+
+    store.reset_review("issue-1")
+
+    assert writes == [(REVIEW_REPORT_REF_KEY, "{}")]
+
+
+@pytest.mark.parametrize("raw", [
+    "not-json",
+    '{"reason":"manual"}',
+    [],
+    ["unknown"],
+])
+def test_multica_non_clear_object_metadata_still_requires_reset(monkeypatch, raw):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    metadata = {DECISION_REQUIRED_KEY: raw}
+    writes = []
+    monkeypatch.setattr(store, "_run_multica", lambda *_args, **_kwargs: {
+        "id": "issue-1",
+        "title": "review",
+        "description": "review",
+        "status": "todo",
+        "metadata": metadata,
+    })
+
+    def set_metadata(item_id, key, value):
+        writes.append((key, value))
+        metadata[key] = value
+
+    monkeypatch.setattr(store, "_set_metadata", set_metadata)
+
+    store.reset_review("issue-1")
+
+    assert writes == [(DECISION_REQUIRED_KEY, "{}")]
+
+
 @pytest.mark.parametrize("verdict", ["pass", "reject"])
 def test_multica_prepare_same_completed_subject_preserves_review_evidence(
     monkeypatch, verdict,

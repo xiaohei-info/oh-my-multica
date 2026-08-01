@@ -122,6 +122,20 @@ _EMPTY_OBJECT_METADATA = frozenset({
 })
 
 
+def _decode_json_metadata_value(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    try:
+        return json.loads(value)
+    except Exception:
+        return {"raw": value} if value else None
+
+
+def _canonical_clear_object_metadata(value: Any) -> Any:
+    decoded = _decode_json_metadata_value(value)
+    return None if decoded in (None, {}) else decoded
+
+
 class _AttachmentBodyCache:
     """Bounded in-process LRU with one loader per immutable attachment key."""
 
@@ -525,12 +539,9 @@ class MulticaStore(WorkItemStore):
     @staticmethod
     def _json_metadata(metadata: Dict, key: str):
         value = metadata.get(key)
-        if isinstance(value, str):
-            try:
-                return json.loads(value)
-            except Exception:
-                return {"raw": value} if value else None
-        return value
+        if key in _EMPTY_OBJECT_METADATA:
+            return _canonical_clear_object_metadata(value)
+        return _decode_json_metadata_value(value)
 
     @staticmethod
     def _optional_text_metadata(metadata: Dict, key: str) -> Optional[str]:
@@ -862,8 +873,6 @@ class MulticaStore(WorkItemStore):
         machine_feedback_ref = self._json_metadata(
             metadata, MACHINE_FEEDBACK_REF_KEY)
         decision_required = self._json_metadata(metadata, DECISION_REQUIRED_KEY)
-        if decision_required == {}:
-            decision_required = None
         amendment_attempt = self._json_metadata(metadata, AMENDMENT_ATTEMPT_KEY)
         review_obligations = self._json_metadata(metadata, REVIEW_OBLIGATIONS_KEY)
         contract_ref = self._json_metadata(metadata, CONTRACT_REF_KEY)
@@ -1307,7 +1316,10 @@ class MulticaStore(WorkItemStore):
                 and metadata.get("review_report") not in (None, {}, "")
             ):
                 return False
-            return current in (None, {}, "{}") and target in (None, {}, "{}")
+            canonical_target = _canonical_clear_object_metadata(target)
+            if canonical_target is None:
+                return _canonical_clear_object_metadata(current) is None
+            return encode_metadata_value(current) == encode_metadata_value(target)
         if key == PHASE_KEY:
             return parse_phase(current) == parse_phase(target)
         return encode_metadata_value(current) == encode_metadata_value(target)
