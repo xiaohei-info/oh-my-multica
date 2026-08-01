@@ -146,59 +146,6 @@ def test_work_show_normal_authoring_has_no_operator_retry_instruction():
     assert "Do not reuse or merely cite prior verification" not in output["protocol"]
 
 
-def test_develop_review_protocol_limits_security_sensitive_verification():
-    store = _store()
-    item = _make_item(
-        store,
-        TaskKind.DEVELOP,
-        TaskPhase.REVIEW,
-        with_deliverable=True,
-        with_verification=True,
-    )
-
-    english = build_show_output(
-        item, f"reviewer:{item.reviewer}", language="en")["protocol"]
-    chinese = build_show_output(
-        item, f"reviewer:{item.reviewer}", language="cn")["protocol"]
-
-    for phrase in (
-        "authorized software-delivery review",
-        "contract/env_setup",
-        "local repository",
-        "file/test/line/digest",
-        "neutral expected-versus-actual behavior",
-        "do not copy, reconstruct, extend, or optimize",
-        "network probing",
-        "raw sensitive logs or payloads",
-        "evidence boundary or environment blocker",
-        "never fabricate a pass",
-    ):
-        assert phrase in english.lower()
-
-    for phrase in (
-        "授权的软件交付评审",
-        "contract/env_setup",
-        "本地仓库",
-        "file/test/line/digest",
-        "中性的 expected/actual 行为",
-        "不得复制、重构、扩展或优化",
-        "网络探测",
-        "原始敏感日志或载荷",
-        "证据边界或环境阻塞",
-        "不得伪造 pass",
-    ):
-        assert phrase in chinese
-
-    plan_review = _make_item(
-        store, TaskKind.PLAN, TaskPhase.REVIEW, dag_key="plan-review")
-    generic_protocol = build_show_output(
-        plan_review,
-        f"reviewer:{plan_review.reviewer}",
-        language="en",
-    )["protocol"]
-    assert "authorized software-delivery review" not in generic_protocol.lower()
-
-
 @pytest.mark.parametrize("kind", [
     TaskKind.PLAN,
     TaskKind.ACCEPTANCE,
@@ -323,6 +270,65 @@ COMBINATIONS = [
     (TaskKind.DEVELOP, TaskPhase.REVIEW),
     (TaskKind.FINAL_ACCEPTANCE, TaskPhase.AUTHORING),
 ]
+
+
+@pytest.mark.parametrize("kind,phase", COMBINATIONS, ids=[
+    f"{k.value}-{p.value}" for k, p in COMBINATIONS])
+def test_security_sensitive_protocol_is_develop_review_only(kind, phase):
+    store = _store()
+    item = _make_item(
+        store,
+        kind,
+        phase,
+        with_contract=(phase == TaskPhase.AUTHORING),
+        with_deliverable=(phase == TaskPhase.REVIEW),
+        with_verification=(kind == TaskKind.DEVELOP
+                           and phase == TaskPhase.REVIEW),
+    )
+    identity = (
+        f"worker:{item.worker}"
+        if phase == TaskPhase.AUTHORING
+        else f"reviewer:{item.reviewer}"
+    )
+
+    english = build_show_output(item, identity, language="en")["protocol"]
+    chinese = build_show_output(item, identity, language="cn")["protocol"]
+    is_develop_review = (
+        kind == TaskKind.DEVELOP and phase == TaskPhase.REVIEW)
+
+    has_english_guidance = (
+        "authorized software-delivery review" in english.lower())
+    has_chinese_guidance = "授权的软件交付评审" in chinese
+    assert has_english_guidance is is_develop_review
+    assert has_chinese_guidance is is_develop_review
+
+    if not is_develop_review:
+        return
+
+    for phrase in (
+        "including declared security-negative tests",
+        "outside that declared scope",
+        "do not initiate network probing",
+        "construct, extend, or optimize",
+        "summary, severity, impact, required_fix, and evidence",
+        "do not reproduce sensitive payloads, credentials, network targets, "
+        "or raw sensitive logs",
+        "evidence boundary or environment blocker",
+        "never fabricate a pass",
+    ):
+        assert phrase in english.lower()
+
+    for phrase in (
+        "已声明的安全负向测试",
+        "仍必须执行",
+        "只禁止 reviewer 在声明范围外自行增加网络探测",
+        "构造、扩展、优化",
+        "summary、severity、impact、required_fix 和 evidence",
+        "不得在 reasoning/report 中复现敏感 payload、凭证、网络目标或原始敏感日志",
+        "证据边界或环境阻塞",
+        "不得伪造 pass",
+    ):
+        assert phrase in chinese.lower()
 
 EXPECTED_GUIDE_REFS = {
     (TaskKind.PLAN, TaskPhase.AUTHORING): [

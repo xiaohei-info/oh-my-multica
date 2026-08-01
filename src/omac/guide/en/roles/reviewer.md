@@ -21,18 +21,17 @@ conflict or cannot be reproduced, do not infer pass.
 
 ## Security-sensitive content boundary
 
-- This is an authorized software-delivery review. Run only local repository
-  verification explicitly declared by `contract/env_setup`; do not expand the
-  target on your own.
-- For security-negative tests or material involving malicious inputs,
-  credentials, network targets, or attack payloads, report only
-  `file/test/line/digest` and neutral expected-versus-actual behavior.
-- Do not copy, reconstruct, extend, or optimize attack steps, payloads,
-  credentials, or targets. Do not perform network probing, exploitation,
-  bypass attempts, or extra offensive experiments.
-- Do not paste raw sensitive logs or payloads into reasoning or reports. If
-  required verification would expose sensitive content, report the evidence
-  boundary or environment blocker; never fabricate a pass.
+- This is an authorized software-delivery review. Run all local repository
+  verification explicitly declared by `contract/env_setup`, including declared
+  security-negative tests.
+- Outside that declared scope, do not initiate network probing or construct,
+  extend, or optimize exploitation, bypass, or other attack experiments.
+- Report every finding completely with summary, severity, impact, required_fix,
+  and evidence, but do not reproduce sensitive payloads,
+  credentials, network targets, or raw sensitive logs in reasoning or reports.
+- If required verification would expose sensitive content beyond what can be
+  safely summarized, report the evidence boundary or environment blocker; never
+  fabricate a pass.
 
 ## Authoritative inputs
 

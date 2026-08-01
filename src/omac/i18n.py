@@ -51,17 +51,17 @@ _MESSAGES = {
             "contract and acceptance goals."
         ),
         "work.protocol.review_safe_content": (
-            "This is an authorized software-delivery review. Run only local "
-            "repository verification explicitly declared by contract/env_setup. "
-            "For security-negative tests or material involving malicious inputs, "
-            "credentials, network targets, or attack payloads, report only "
-            "file/test/line/digest and neutral expected-versus-actual behavior; "
-            "do not copy, reconstruct, extend, or optimize attack steps, payloads, "
-            "credentials, or targets. Do not perform network probing, exploitation, "
-            "bypass attempts, or extra offensive experiments, and do not paste raw "
-            "sensitive logs or payloads into reasoning or reports. If required "
-            "verification would expose sensitive content, report the evidence "
-            "boundary or environment blocker; never fabricate a pass."
+            "This is an authorized software-delivery review. Run all local "
+            "repository verification explicitly declared by contract/env_setup, "
+            "including declared security-negative tests. Outside that declared "
+            "scope, do not initiate network probing or construct, extend, or "
+            "optimize exploitation, bypass, or other attack experiments. Report "
+            "every finding completely with summary, severity, impact, required_fix, "
+            "and evidence, but do not reproduce sensitive payloads, credentials, "
+            "network targets, or raw sensitive logs in reasoning or reports. If "
+            "required verification would expose sensitive content beyond what can "
+            "be safely summarized, report the evidence boundary or environment "
+            "blocker; never fabricate a pass."
         ),
         "work.protocol.control": (
             "Do not edit platform status, assignee, metadata, rerun, or cancel "
@@ -195,12 +195,13 @@ _MESSAGES = {
         "work.protocol.final_acceptance": "以验收文档为清单做用户视角端到端走查，逐条记录 pass/fail 和证据。",
         "work.protocol.review": "独立复跑：覆盖全部 review_obligations，逐项处置历史 blocker，按 env_setup 搭建环境，重跑验证命令与集成测试，检查完整 diff，发现第一个 blocker 后继续审查并一次性报告本轮全部问题；只读共享状态，并依据 contract 与验收目标给出 verdict。",
         "work.protocol.review_safe_content": (
-            "这是授权的软件交付评审。只执行 contract/env_setup 明确声明的本地仓库验证。"
-            "对于安全负向测试、恶意输入、凭证、网络目标或攻击载荷，只报告 "
-            "file/test/line/digest 和中性的 expected/actual 行为；不得复制、重构、"
-            "扩展或优化攻击步骤、载荷、凭证或目标。不得进行网络探测、利用、绕过或"
-            "额外攻击性实验，也不要把原始敏感日志或载荷整段放入 reasoning/report。"
-            "若必要验证会暴露敏感内容，报告证据边界或环境阻塞；不得伪造 pass。"
+            "这是授权的软件交付评审。contract/env_setup 明确声明的全部本地仓库验证"
+            "仍必须执行，包括已声明的安全负向测试。只禁止 Reviewer 在声明范围外"
+            "自行增加网络探测，或构造、扩展、优化利用、绕过等攻击实验。每个 finding "
+            "仍须完整报告 summary、severity、impact、required_fix 和 evidence，但不得在 "
+            "reasoning/report 中复现敏感 payload、凭证、网络目标或原始敏感日志。"
+            "若必要验证会暴露无法安全概述的敏感内容，报告证据边界或环境阻塞；"
+            "不得伪造 pass。"
         ),
         "work.protocol.control": (
             "不要直接修改平台状态、负责人、metadata，也不要直接 rerun 或 cancel；"
