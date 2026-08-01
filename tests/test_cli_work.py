@@ -405,7 +405,13 @@ def test_worker_submit_success_requires_a_confirmed_terminal_tool_result():
         assert state in confirmation["wait_when"]
 
     for phrase in (
+        "omac work show",
+        "omac work submit",
         "may run for a long time",
+        "empty or incomplete output",
+        "timeout/yield is not an empty result",
+        "sufficiently long wait/yield",
+        "retain and resume the continuation",
         "wait or poll",
         "final tool result",
         "exit code 0",
@@ -418,7 +424,13 @@ def test_worker_submit_success_requires_a_confirmed_terminal_tool_result():
         assert phrase in english["protocol"].lower()
 
     for phrase in (
+        "omac work show",
+        "omac work submit",
         "可能长时间运行",
+        "空输出或不完整输出",
+        "timeout/yield 不是空结果",
+        "足够长的 wait/yield",
+        "保留并恢复续接句柄",
         "等待或轮询",
         "最终 tool_result",
         "退出码 0",
