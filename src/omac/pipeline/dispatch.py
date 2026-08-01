@@ -96,9 +96,15 @@ def _next_action(kind: TaskKind, phase: TaskPhase, language: str) -> str:
     else:
         key = _AUTHORING_ACTION_KEYS.get(kind)
         action = t(key, language=language) if key else ""
+    safe_content = (
+        t("work.protocol.review_safe_content", language=language)
+        if kind == TaskKind.DEVELOP and phase == TaskPhase.REVIEW
+        else ""
+    )
     control = t("work.protocol.control", language=language)
     terminal = _command_terminal_protocol(language)
-    return "\n".join(part for part in (action, control, terminal) if part)
+    return "\n".join(
+        part for part in (action, safe_content, control, terminal) if part)
 
 
 def _command_terminal_protocol(language: str) -> str:

@@ -19,6 +19,20 @@ guide > workflow. Current deliverables, real diffs, contracts, setup, and
 verification outrank author claims. Historical review is context only. If facts
 conflict or cannot be reproduced, do not infer pass.
 
+## Security-sensitive content boundary
+
+- This is an authorized software-delivery review. Run all local repository
+  verification explicitly declared by `contract/env_setup`, including declared
+  security-negative tests.
+- Outside that declared scope, do not initiate network probing or construct,
+  extend, or optimize exploitation, bypass, or other attack experiments.
+- Report every finding completely with summary, severity, impact, required_fix,
+  and evidence, but do not reproduce sensitive payloads,
+  credentials, network targets, or raw sensitive logs in reasoning or reports.
+- If required verification would expose sensitive content beyond what can be
+  safely summarized, report the evidence boundary or environment blocker; never
+  fabricate a pass.
+
 ## Authoritative inputs
 
 - `work show` task, deliverable, `project_rules`, contract, env setup, upstream issues, submit
