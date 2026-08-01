@@ -32,6 +32,8 @@ from omac.core.review_convergence import (
 from omac.engines import create_engine
 from omac.engines.mock import MockRuntime, MockStore
 from omac.core.taskmeta import (
+    MACHINE_FEEDBACK_REF_KEY,
+    REVIEW_REPORT_REF_KEY,
     ReviewerRunBaseline,
     TaskPhase,
     WorkerHandoffIntent,
@@ -4169,6 +4171,297 @@ class TestReviewerRejectBoundedFallback:
         assert len([
             entry for entry in eng.store.assign_log if entry[2] == "reviewer"
         ]) == reviewer_assignments_before
+
+    def test_multica_cleared_decision_resumes_worker_handoff_after_restart(
+        self, tmp_path, monkeypatch,
+    ):
+        """Multica 的 {} 墓碑必须视为已 reset，重启后直接继续唯一派发。"""
+        from omac.engines import create_engine
+        from omac.engines.multica import MulticaStore
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        eng.store.update_work_item_metadata(
+            item.id, review_obligations=build_review_obligations(item))
+        eng.store.update_work_item_metadata(
+            item.id, review_report=_review_report(item, "reject"))
+
+        raw_cleared = {
+            "id": item.id,
+            "title": item.title,
+            "description": item.description,
+            "status": "in_progress",
+            "metadata": {
+                "dag_key": item.dag_key,
+                "kind": "develop",
+                "phase": "authoring",
+                "decision_required": "{}",
+            },
+        }
+        multica = MulticaStore(EngineConfig(
+            engine_type="multica", workspace_id="ws"))
+        original_reset = eng.store.reset_review
+        reset_calls = 0
+        crashed = False
+
+        def reset_review(item_id):
+            nonlocal reset_calls, crashed
+            reset_calls += 1
+            original_reset(item_id)
+            current = eng.store.get_work_item(item_id)
+            current.decision_required = multica._issue_to_control_projection(
+                raw_cleared, "ws").work_item.decision_required
+            if not crashed:
+                crashed = True
+                raise RuntimeError("simulated crash after multica reset")
+
+        runs = list(eng.runtime.list_runs(item.id))
+        events = []
+        worker_id = eng.store.resolve_agent_id("alice")
+
+        def assign(_item_id, _assignee, role):
+            assert role == "worker"
+            events.append("assign")
+
+        def wake(_item_id, _agent, role):
+            assert role == "worker"
+            events.append("wake")
+            runs.append(AgentRunObservation(
+                id="run-worker-after-reset", kind="direct", status="running",
+                agent_id=worker_id,
+            ))
+
+        monkeypatch.setattr(eng.store, "reset_review", reset_review)
+        monkeypatch.setattr(eng.store, "assign_work_item", assign)
+        monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
+        monkeypatch.setattr(eng.runtime, "wake", wake)
+        monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
+
+        with pytest.raises(RuntimeError, match="after multica reset"):
+            tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+
+        persisted = load_manifest(path)
+        first = tick(eng.store, eng.runtime, persisted, path, max_parallel=4)
+        second = tick(eng.store, eng.runtime, persisted, path, max_parallel=4)
+
+        recovered = eng.store.get_work_item(item.id)
+        assert first.state == "running"
+        assert second.state == "running"
+        assert reset_calls == 1
+        assert events == ["assign", "wake"]
+        assert recovered.phase is TaskPhase.AUTHORING
+        assert recovered.decision_required is None
+        assert recovered.worker_handoff is not None
+        assert recovered.worker_handoff.target_run_id == "run-worker-after-reset"
+
+    def test_worker_handoff_resets_residual_reviewer_baseline_before_assign(
+        self, tmp_path, monkeypatch,
+    ):
+        eng, manifest, _path, item, _agent_id = _transient_worker_handoff_fixture(
+            tmp_path)
+        current = eng.store.get_work_item(item.id)
+        baseline_run_ids = tuple(sorted(
+            run.id for run in eng.runtime.list_runs(item.id)
+            if run.kind == "direct"
+        ))
+        intent = replace(
+            current.worker_handoff,
+            target_run_id=None,
+            baseline_direct_run_ids=baseline_run_ids,
+        )
+        eng.store.update_work_item_metadata(
+            item.id,
+            worker_handoff=intent,
+            reviewer_run_baseline=ReviewerRunBaseline(
+                schema="omac.reviewer-run-baseline/v1",
+                subject_digest="old-subject",
+                target_reviewer="bob",
+                target_agent_id="reviewer-1",
+                cutoff_created_at="2026-08-01T00:00:00Z",
+                generation="review-old",
+                attempt=1,
+            ),
+        )
+        reset_calls = 0
+        original_reset = eng.store.reset_review
+
+        class AssignmentReached(Exception):
+            pass
+
+        def reset_review(item_id):
+            nonlocal reset_calls
+            reset_calls += 1
+            original_reset(item_id)
+
+        def assign(item_id, assignee, role):
+            assert eng.store.get_work_item(item_id).reviewer_run_baseline is None
+            raise AssignmentReached
+
+        monkeypatch.setattr(eng.store, "reset_review", reset_review)
+        monkeypatch.setattr(eng.store, "assign_work_item", assign)
+
+        with pytest.raises(AssignmentReached):
+            loop._dispatch_worker_handoff(
+                eng.store, eng.runtime, manifest, "a")
+
+        assert reset_calls == 1
+
+    def test_worker_handoff_final_check_blocks_baseline_drift_before_assign(
+        self, tmp_path, monkeypatch,
+    ):
+        eng, manifest, _path, item, _agent_id = _transient_worker_handoff_fixture(
+            tmp_path)
+        current = eng.store.get_work_item(item.id)
+        intent = replace(
+            current.worker_handoff,
+            target_run_id=None,
+            baseline_direct_run_ids=tuple(sorted(
+                run.id for run in eng.runtime.list_runs(item.id)
+                if run.kind == "direct"
+            )),
+        )
+        eng.store.update_work_item_metadata(item.id, worker_handoff=intent)
+        original_update = eng.store.update_work_item_metadata
+        drifted = False
+
+        def update(item_id, **metadata):
+            nonlocal drifted
+            result = original_update(item_id, **metadata)
+            if "description" in metadata and not drifted:
+                drifted = True
+                original_update(
+                    item_id,
+                    reviewer_run_baseline=ReviewerRunBaseline(
+                        schema="omac.reviewer-run-baseline/v1",
+                        subject_digest="drift-subject",
+                        target_reviewer="bob",
+                        target_agent_id="reviewer-1",
+                        cutoff_created_at="2026-08-01T00:00:00Z",
+                        generation="review-drift",
+                        attempt=1,
+                    ),
+                )
+            return result
+
+        monkeypatch.setattr(eng.store, "update_work_item_metadata", update)
+        monkeypatch.setattr(
+            eng.store, "assign_work_item",
+            lambda *_args, **_kwargs: pytest.fail(
+                "residual reviewer baseline must block assignment"),
+        )
+        monkeypatch.setattr(
+            eng.runtime, "wake",
+            lambda *_args, **_kwargs: pytest.fail(
+                "residual reviewer baseline must block wake"),
+        )
+        monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
+
+        result = loop._dispatch_worker_handoff(
+            eng.store, eng.runtime, manifest, "a")
+
+        assert result.state == "pending-preparation"
+        assert eng.store.get_work_item(item.id).reviewer_run_baseline is not None
+
+    @pytest.mark.parametrize(
+        ("key", "field"),
+        [
+            (MACHINE_FEEDBACK_REF_KEY, "machine_feedback_ref"),
+            (REVIEW_REPORT_REF_KEY, "review_report_ref"),
+        ],
+    )
+    @pytest.mark.parametrize("raw", [[], ["fact"]], ids=["empty-list", "list"])
+    def test_multica_invalid_review_ref_projection_is_not_clear(
+        self, key, field, raw,
+    ):
+        from omac.engines.multica import MulticaStore
+
+        store = MulticaStore(EngineConfig(
+            engine_type="multica", workspace_id="ws"))
+        item = store._issue_to_control_projection({
+            "id": "issue-1",
+            "title": "review",
+            "description": "review",
+            "status": "in_progress",
+            "metadata": {
+                "dag_key": "develop-a",
+                "kind": "develop",
+                "phase": "authoring",
+                key: raw,
+            },
+        }, "ws").work_item
+
+        assert getattr(item, field) is not None
+        assert not loop._review_projection_is_clear(item)
+
+    @pytest.mark.parametrize(
+        ("key", "field"),
+        [
+            (MACHINE_FEEDBACK_REF_KEY, "machine_feedback_ref"),
+            (REVIEW_REPORT_REF_KEY, "review_report_ref"),
+        ],
+    )
+    @pytest.mark.parametrize("raw", [[], ["fact"]], ids=["empty-list", "list"])
+    def test_worker_handoff_final_check_blocks_invalid_review_ref(
+        self, tmp_path, monkeypatch, key, field, raw,
+    ):
+        from omac.engines.multica import MulticaStore
+
+        eng, manifest, _path, item, _agent_id = _transient_worker_handoff_fixture(
+            tmp_path)
+        current = eng.store.get_work_item(item.id)
+        intent = replace(
+            current.worker_handoff,
+            target_run_id=None,
+            baseline_direct_run_ids=tuple(sorted(
+                run.id for run in eng.runtime.list_runs(item.id)
+                if run.kind == "direct"
+            )),
+        )
+        eng.store.update_work_item_metadata(item.id, worker_handoff=intent)
+        multica = MulticaStore(EngineConfig(
+            engine_type="multica", workspace_id="ws"))
+        projected = multica._issue_to_control_projection({
+            "id": item.id,
+            "title": item.title,
+            "description": item.description,
+            "status": "in_progress",
+            "metadata": {
+                "dag_key": item.dag_key,
+                "kind": "develop",
+                "phase": "authoring",
+                key: raw,
+            },
+        }, "ws").work_item
+        original_update = eng.store.update_work_item_metadata
+        drifted = False
+
+        def update(item_id, **metadata):
+            nonlocal drifted
+            result = original_update(item_id, **metadata)
+            if "description" in metadata and not drifted:
+                drifted = True
+                setattr(eng.store.get_work_item(item_id), field, getattr(projected, field))
+            return result
+
+        monkeypatch.setattr(eng.store, "update_work_item_metadata", update)
+        monkeypatch.setattr(
+            eng.store, "assign_work_item",
+            lambda *_args, **_kwargs: pytest.fail(
+                "invalid review ref must block assignment"),
+        )
+        monkeypatch.setattr(
+            eng.runtime, "wake",
+            lambda *_args, **_kwargs: pytest.fail(
+                "invalid review ref must block wake"),
+        )
+        monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
+
+        result = loop._dispatch_worker_handoff(
+            eng.store, eng.runtime, manifest, "a")
+
+        assert result.state == "pending-preparation"
+        assert getattr(eng.store.get_work_item(item.id), field) is not None
 
     @pytest.mark.parametrize("verdict", ["reject", "pass-with-nits"])
     @pytest.mark.parametrize(
