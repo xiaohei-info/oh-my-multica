@@ -103,6 +103,7 @@ class AgentRunObservation:
     updated_at: Optional[str] = None
     error: Optional[str] = None
     retry_of_run_id: Optional[str] = None
+    trigger_kind: Optional[str] = None
 
     @property
     def active(self) -> bool:

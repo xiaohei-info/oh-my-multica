@@ -2371,7 +2371,8 @@ def test_multica_runtime_lists_typed_run_identity(monkeypatch):
          "agent_id": "agent-1", "attempt": 1, "max_attempts": 2,
          "error": "Selected model is at capacity. Please try a different model.",
          "failure_reason": "agent_error.model_not_found_or_unavailable",
-         "retry_of_task_id": "run-0"},
+         "retry_of_task_id": "run-0",
+         "attribution": {"evidence": {"kind": "rerun"}}},
         {"id": "run-2", "kind": "comment", "status": "running",
          "agent_id": "agent-2"},
     ])
@@ -2380,7 +2381,7 @@ def test_multica_runtime_lists_typed_run_identity(monkeypatch):
         AgentRunObservation(
             id="run-1", kind="direct", status="failed", agent_id="agent-1",
             error="Selected model is at capacity. Please try a different model.",
-            retry_of_run_id="run-0"),
+            retry_of_run_id="run-0", trigger_kind="rerun"),
         AgentRunObservation(
             id="run-2", kind="comment", status="running", agent_id="agent-2"),
     ]

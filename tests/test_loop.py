@@ -2939,6 +2939,63 @@ def test_initial_reviewer_dispatch_crash_after_assignment_fails_closed(
             eng.store, eng.runtime, manifest, "a")
 
 
+@pytest.mark.parametrize(
+    "trigger_kind, accepted",
+    [("comment", False), ("rerun", True)],
+)
+def test_initial_reviewer_dispatch_recovery_requires_fresh_rerun(
+    tmp_path, monkeypatch, trigger_kind, accepted,
+):
+    from omac.engines import mock as mock_engine
+
+    eng, manifest, _path, item, reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    mock_engine._finish_mock_run(item.id)
+    eng.store.clear_assignment(item.id)
+    eng.store.update_work_item_metadata(item.id, reviewer_run_baseline={})
+    def crash_wake(*_args):
+        raise RuntimeError("dispatch crash")
+
+    monkeypatch.setattr(
+        eng.runtime,
+        "wake",
+        crash_wake,
+    )
+    with pytest.raises(RuntimeError, match="dispatch crash"):
+        loop._dispatch_reviewer_for_current_subject(
+            eng.store, eng.runtime, manifest, "a")
+
+    candidate = AgentRunObservation(
+        id=f"run-{trigger_kind}",
+        kind="direct",
+        status="running",
+        agent_id=reviewer_id,
+        created_at="2026-01-01T00:00:02Z",
+        trigger_kind=trigger_kind,
+    )
+    monkeypatch.setattr(
+        eng.runtime, "list_runs", lambda _item_id: [candidate])
+    monkeypatch.setattr(
+        eng.runtime,
+        "wake",
+        lambda *_args: pytest.fail("recovery must never rerun"),
+    )
+
+    if not accepted:
+        with pytest.raises(
+            loop._ReviewerDispatchUnresolved,
+            match="not a fresh rerun",
+        ):
+            loop._dispatch_reviewer_for_current_subject(
+                eng.store, eng.runtime, manifest, "a")
+        return
+
+    assert loop._dispatch_reviewer_for_current_subject(
+        eng.store, eng.runtime, manifest, "a") is False
+    recovered = eng.store.get_work_item(item.id)
+    assert recovered.reviewer_run_baseline.target_run_id == candidate.id
+
+
 def test_develop_reviewer_retry_assigns_without_resuming_old_session(
     tmp_path, monkeypatch,
 ):
@@ -6339,7 +6396,17 @@ class TestReviewerRejectBoundedFallback:
         current.review_report = None
         subject = current.review_subject_digest
         eng.store.clear_assignment(item.id)
-        eng.store.assign_work_item(item.id, "bob", "reviewer")
+        eng.store.assign_work_item(
+            item.id, "bob", "reviewer", start_run=False)
+        eng.runtime.wake(item.id, "bob", "reviewer")
+        active_run = eng.runtime.list_runs(item.id)[-1]
+        eng.store.update_work_item_metadata(
+            item.id,
+            reviewer_run_baseline=replace(
+                current.reviewer_run_baseline,
+                target_run_id=active_run.id,
+            ),
+        )
         reviewer_assignments = len([
             entry for entry in eng.store.assign_log if entry[2] == "reviewer"])
         manifest.nodes["a"].status = "in_progress"

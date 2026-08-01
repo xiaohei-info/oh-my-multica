@@ -88,7 +88,8 @@ def _finish_mock_run(item_id: str, status: str = "completed") -> None:
     runs[-1] = AgentRunObservation(
         id=latest.id, kind=latest.kind, status=status,
         agent_id=latest.agent_id, created_at=latest.created_at,
-        updated_at=datetime.now(timezone.utc).isoformat(), error=latest.error)
+        updated_at=datetime.now(timezone.utc).isoformat(), error=latest.error,
+        trigger_kind=latest.trigger_kind)
 
 
 def _init_default_workspace():
@@ -1032,13 +1033,15 @@ class MockStore(WorkItemStore):
         _shared_assigned_items[item_id] = time.time()
         _shared_active_assignments[item_id] = assignment
         if start_run and not same_active_assignment:
-            self._append_assigned_run(item_id, agent_id)
+            self._append_assigned_run(item_id, agent_id, "assignment")
             _shared_assignment_wake_pending.add(item_id)
         elif not start_run:
             _shared_assignment_wake_pending.discard(item_id)
 
     @staticmethod
-    def _append_assigned_run(item_id: str, agent_id: str) -> None:
+    def _append_assigned_run(
+        item_id: str, agent_id: str, trigger_kind: str,
+    ) -> None:
         global _shared_next_run_id
         _shared_runs.setdefault(item_id, []).append(AgentRunObservation(
             id=f"mock-run-{_shared_next_run_id}",
@@ -1046,14 +1049,17 @@ class MockStore(WorkItemStore):
             status="running",
             agent_id=agent_id,
             created_at=datetime.now(timezone.utc).isoformat(),
+            trigger_kind=trigger_kind,
         ))
         _shared_next_run_id += 1
 
-    def _start_assigned_run(self, item_id: str, agent_id: str) -> None:
+    def _start_assigned_run(
+        self, item_id: str, agent_id: str, trigger_kind: str,
+    ) -> None:
         runs = _shared_runs.setdefault(item_id, [])
         if any(run.active for run in runs):
             return
-        self._append_assigned_run(item_id, agent_id)
+        self._append_assigned_run(item_id, agent_id, trigger_kind)
 
     def clear_assignment(self, item_id: str) -> None:
         item = self.get_work_item(item_id)
@@ -1179,7 +1185,7 @@ class MockRuntime(AgentRuntime):
         if item.platform_assignee_id is None:
             item.platform_assignee_id = agent_id
             _shared_active_assignments[item_id] = (agent, role)
-        self._store._start_assigned_run(item_id, agent_id)
+        self._store._start_assigned_run(item_id, agent_id, "rerun")
 
     def cancel(self, item_id: str) -> bool:
         self._store.get_work_item(item_id)

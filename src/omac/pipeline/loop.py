@@ -1152,6 +1152,7 @@ def _dispatch_reviewer_for_current_subject(
 
     if (
         not subject_changed
+        and baseline.target_run_id is not None
         and current.phase == TaskPhase.REVIEW
         and current.status == WorkItemStatus.IN_REVIEW
         and current.reviewer == node.reviewer
@@ -1168,13 +1169,21 @@ def _dispatch_reviewer_for_current_subject(
     )
     if assignment_prepared:
         for attempt in range(_HANDOFF_OBSERVATION_ATTEMPTS):
+            runs = runtime.list_runs(item_id)
             observed = _observe_direct_run_attempt(
-                runtime.list_runs(item_id), reviewer_id,
+                runs, reviewer_id,
                 baseline_direct_run_ids=baseline.baseline_direct_run_ids,
                 cutoff_created_at=baseline.cutoff_created_at,
                 attempt=baseline.attempt,
             )
             if observed.state in {"active", "terminal"}:
+                target = next(
+                    (run for run in runs if run.id == observed.target_run_id),
+                    None,
+                )
+                if target is None or target.trigger_kind != "rerun":
+                    raise _ReviewerDispatchUnresolved(
+                        "post-baseline reviewer Run is not a fresh rerun")
                 store.update_work_item_metadata(
                     item_id, reviewer_run_baseline=replace(
                         baseline, target_run_id=observed.target_run_id))

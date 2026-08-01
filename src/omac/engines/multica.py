@@ -302,12 +302,18 @@ def _direct_run_ids(runs: List[Dict[str, Any]]) -> set[str]:
     }
 
 
-def _is_manual_rerun(run: Dict[str, Any]) -> bool:
+def _run_trigger_kind(run: Dict[str, Any]) -> str | None:
     attribution = run.get("attribution")
     if not isinstance(attribution, dict):
-        return False
+        return None
     evidence = attribution.get("evidence")
-    return isinstance(evidence, dict) and evidence.get("kind") == "rerun"
+    if not isinstance(evidence, dict) or not evidence.get("kind"):
+        return None
+    return str(evidence["kind"])
+
+
+def _is_manual_rerun(run: Dict[str, Any]) -> bool:
+    return _run_trigger_kind(run) == "rerun"
 
 
 def _is_not_found(message: str) -> bool:
@@ -1944,6 +1950,7 @@ class MulticaRuntime(AgentRuntime):
                     if run.get("retry_of_task_id") or run.get("parent_task_id")
                     else None
                 ),
+                trigger_kind=_run_trigger_kind(run),
             )
             for run in runs
             if isinstance(run, dict) and run.get("id")
