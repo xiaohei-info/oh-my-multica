@@ -146,6 +146,59 @@ def test_work_show_normal_authoring_has_no_operator_retry_instruction():
     assert "Do not reuse or merely cite prior verification" not in output["protocol"]
 
 
+def test_develop_review_protocol_limits_security_sensitive_verification():
+    store = _store()
+    item = _make_item(
+        store,
+        TaskKind.DEVELOP,
+        TaskPhase.REVIEW,
+        with_deliverable=True,
+        with_verification=True,
+    )
+
+    english = build_show_output(
+        item, f"reviewer:{item.reviewer}", language="en")["protocol"]
+    chinese = build_show_output(
+        item, f"reviewer:{item.reviewer}", language="cn")["protocol"]
+
+    for phrase in (
+        "authorized software-delivery review",
+        "contract/env_setup",
+        "local repository",
+        "file/test/line/digest",
+        "neutral expected-versus-actual behavior",
+        "do not copy, reconstruct, extend, or optimize",
+        "network probing",
+        "raw sensitive logs or payloads",
+        "evidence boundary or environment blocker",
+        "never fabricate a pass",
+    ):
+        assert phrase in english.lower()
+
+    for phrase in (
+        "授权的软件交付评审",
+        "contract/env_setup",
+        "本地仓库",
+        "file/test/line/digest",
+        "中性的 expected/actual 行为",
+        "不得复制、重构、扩展或优化",
+        "网络探测",
+        "原始敏感日志或载荷",
+        "证据边界或环境阻塞",
+        "不得伪造 pass",
+    ):
+        assert phrase in chinese
+
+    plan_review = _make_item(
+        store, TaskKind.PLAN, TaskPhase.REVIEW, dag_key="plan-review")
+    generic_protocol = build_show_output(
+        plan_review,
+        f"reviewer:{plan_review.reviewer}",
+        language="en",
+    )["protocol"]
+    assert "authorized software-delivery review" not in generic_protocol.lower()
+
+
 @pytest.mark.parametrize("kind", [
     TaskKind.PLAN,
     TaskKind.ACCEPTANCE,

@@ -257,6 +257,40 @@ def test_reviewer_role_has_verdict_and_independent_checks() -> None:
         assert item in content, f"reviewer missing review anchor: {item}"
 
 
+def test_reviewer_guides_limit_security_sensitive_review_behavior() -> None:
+    chinese = load_role_topic("reviewer")
+    english = " ".join(
+        load_role_topic("reviewer", language="en").lower().split())
+
+    for phrase in (
+        "授权的软件交付评审",
+        "contract/env_setup",
+        "本地仓库",
+        "file/test/line/digest",
+        "中性的 expected/actual 行为",
+        "不得复制、重构、扩展或优化",
+        "网络探测",
+        "原始敏感日志或载荷",
+        "证据边界或环境阻塞",
+        "不得伪造 pass",
+    ):
+        assert phrase in chinese
+
+    for phrase in (
+        "authorized software-delivery review",
+        "contract/env_setup",
+        "local repository",
+        "file/test/line/digest",
+        "neutral expected-versus-actual behavior",
+        "do not copy, reconstruct, extend, or optimize",
+        "network probing",
+        "raw sensitive logs or payloads",
+        "evidence boundary or environment blocker",
+        "never fabricate a pass",
+    ):
+        assert phrase in english
+
+
 def test_planner_and_orchestrator_require_complete_foundation_capabilities() -> None:
     planner = load_role_topic("planner")
     orchestrator = load_role_topic("orchestrator")

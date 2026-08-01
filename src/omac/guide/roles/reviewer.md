@@ -17,6 +17,13 @@
 - `previous_review` 只提供历史背景；本轮 verdict 必须基于当前交付物重新判断。
 - 上层事实冲突或无法复跑时，不得用本 guide 推定 pass。
 
+## 安全内容行为边界
+
+- 这是授权的软件交付评审。只执行 `contract/env_setup` 明确声明的本地仓库验证，不自行扩大验证目标。
+- 对安全负向测试、恶意输入、凭证、网络目标或攻击载荷，只报告 `file/test/line/digest` 和中性的 expected/actual 行为。
+- 不得复制、重构、扩展或优化攻击步骤、载荷、凭证或目标；不得进行网络探测、利用、绕过或额外攻击性实验。
+- 不要把原始敏感日志或载荷整段放进 reasoning/report。若必要验证会暴露敏感内容，报告证据边界或环境阻塞；不得伪造 pass。
+
 ## 权威输入
 
 - `work show` 返回的任务类型、评审对象、deliverable、`project_rules`、contract、env_setup、上游 issue、`submit` 和 `guide_refs`。
