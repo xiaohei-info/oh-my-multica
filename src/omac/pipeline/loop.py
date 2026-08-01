@@ -273,19 +273,39 @@ def _observe_direct_run_attempt(
                 continue
         expected.append(run)
     if target_run_id:
-        matches = [run for run in expected if run.id == target_run_id]
-        if (
-            len(matches) > 1
-            or (expected and expected[0].id != target_run_id)
-            or any(
-                run.id != target_run_id and not run.terminal
-                for run in expected
-            )
-        ):
+        by_id = {run.id: run for run in expected}
+        if len(by_id) != len(expected):
             return _DirectRunAttempt("unexpected", detail="ambiguous target Run")
-        if not matches:
+        latest = by_id.get(target_run_id)
+        if latest is None:
             return _DirectRunAttempt("missing", target_run_id)
-        latest = matches[0]
+        target_index = expected.index(latest)
+        if target_index:
+            chain_ids = {latest.id}
+            while True:
+                children = [
+                    run for run in expected[:target_index]
+                    if run.retry_of_run_id == latest.id
+                ]
+                if not children:
+                    break
+                if len(children) != 1 or not latest.terminal:
+                    return _DirectRunAttempt(
+                        "unexpected", detail="ambiguous target Run")
+                latest = children[0]
+                if latest.id in chain_ids:
+                    return _DirectRunAttempt(
+                        "unexpected", detail="ambiguous target Run")
+                chain_ids.add(latest.id)
+            if (
+                len(chain_ids) != target_index + 1
+                or expected[0].id != latest.id
+            ):
+                return _DirectRunAttempt(
+                    "unexpected", detail="ambiguous target Run")
+            target_run_id = latest.id
+        if any(run.id != target_run_id and not run.terminal for run in expected):
+            return _DirectRunAttempt("unexpected", detail="ambiguous target Run")
     else:
         if len(expected) > 1:
             return _DirectRunAttempt("unexpected", detail="ambiguous post-baseline Runs")

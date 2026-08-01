@@ -88,6 +88,64 @@ def _engine(**extra):
     return create_engine("mock", _config(**extra))
 
 
+def test_direct_run_observation_follows_one_platform_retry_chain():
+    observed = loop._observe_direct_run_attempt(
+        [
+            AgentRunObservation(
+                id="run-3", kind="direct", status="completed",
+                agent_id="agent-1", retry_of_run_id="run-2",
+            ),
+            AgentRunObservation(
+                id="run-2", kind="direct", status="failed",
+                agent_id="agent-1", retry_of_run_id="run-1",
+                error="read timeout while waiting for provider response",
+            ),
+            AgentRunObservation(
+                id="run-1", kind="direct", status="failed",
+                agent_id="agent-1",
+                error="read timeout while waiting for provider response",
+            ),
+        ],
+        "agent-1",
+        target_run_id="run-1",
+    )
+
+    assert observed.state == "terminal"
+    assert observed.target_run_id == "run-3"
+    assert observed.terminal is not None
+    assert observed.terminal.run.id == "run-3"
+
+
+def test_direct_run_observation_rejects_retry_chain_forks():
+    observed = loop._observe_direct_run_attempt(
+        [
+            AgentRunObservation(
+                id="run-3a", kind="direct", status="completed",
+                agent_id="agent-1", retry_of_run_id="run-2",
+            ),
+            AgentRunObservation(
+                id="run-3b", kind="direct", status="completed",
+                agent_id="agent-1", retry_of_run_id="run-2",
+            ),
+            AgentRunObservation(
+                id="run-2", kind="direct", status="failed",
+                agent_id="agent-1", retry_of_run_id="run-1",
+                error="read timeout while waiting for provider response",
+            ),
+            AgentRunObservation(
+                id="run-1", kind="direct", status="failed",
+                agent_id="agent-1",
+                error="read timeout while waiting for provider response",
+            ),
+        ],
+        "agent-1",
+        target_run_id="run-1",
+    )
+
+    assert observed.state == "unexpected"
+    assert observed.detail == "ambiguous target Run"
+
+
 def _contract(acceptance=None, verification_commands=None, integration_gates=None):
     return Contract(
         objective="do it",
