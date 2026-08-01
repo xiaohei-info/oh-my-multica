@@ -1,4 +1,8 @@
 import re
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -8,10 +12,14 @@ from omac.engines.multica import MulticaStore
 from omac.errors import AuthError, PlatformError
 
 
-def _store(sleeper):
+def _store(sleeper, *, attachment_cache_capacity=None):
+    kwargs = {}
+    if attachment_cache_capacity is not None:
+        kwargs["attachment_cache_capacity"] = attachment_cache_capacity
     return MulticaStore(
         EngineConfig(engine_type="multica", workspace_id="ws"),
         sleeper=sleeper,
+        **kwargs,
     )
 
 
@@ -20,6 +28,206 @@ def _load_attachment(store: MulticaStore) -> str | None:
         "attachment_id": "attachment-1",
         "filename": "review.yaml",
     })
+
+
+def _load_cached_attachment(
+    store: MulticaStore,
+    *,
+    attachment_id: str,
+    body: bytes,
+    filename: str = "review.yaml",
+    declared_bytes: int | None = None,
+) -> str | None:
+    return store._load_payload_comment("issue-1", "review-report", {
+        "attachment_id": attachment_id,
+        "filename": filename,
+        "sha256": sha256(body).hexdigest(),
+        "bytes": len(body) if declared_bytes is None else declared_bytes,
+    })
+
+
+def test_attachment_body_cache_reuses_validated_immutable_body(monkeypatch):
+    store = _store(lambda _delay: None)
+    body = b"verdict: pass\n"
+    downloads = 0
+
+    def run(args, capture=True):
+        nonlocal downloads
+        downloads += 1
+        output_dir = Path(args[args.index("--output-dir") + 1])
+        (output_dir / "review.yaml").write_bytes(body)
+
+    monkeypatch.setattr(store, "_run_multica", run)
+
+    assert _load_cached_attachment(
+        store, attachment_id="attachment-1", body=body,
+    ) == body.decode()
+    assert _load_cached_attachment(
+        store, attachment_id="attachment-1", body=body,
+    ) == body.decode()
+    assert downloads == 1
+
+
+def test_attachment_body_cache_does_not_reuse_different_expected_digest(
+        monkeypatch):
+    store = _store(lambda _delay: None)
+    bodies = [b"first\n", b"second\n"]
+    downloads = 0
+
+    def run(args, capture=True):
+        nonlocal downloads
+        body = bodies[downloads]
+        downloads += 1
+        output_dir = Path(args[args.index("--output-dir") + 1])
+        (output_dir / "review.yaml").write_bytes(body)
+
+    monkeypatch.setattr(store, "_run_multica", run)
+
+    assert _load_cached_attachment(
+        store, attachment_id="attachment-1", body=bodies[0],
+    ) == bodies[0].decode()
+    assert _load_cached_attachment(
+        store, attachment_id="attachment-1", body=bodies[1],
+    ) == bodies[1].decode()
+    assert downloads == 2
+
+
+def test_attachment_body_cache_does_not_reuse_different_declared_size(
+        monkeypatch):
+    store = _store(lambda _delay: None)
+    body = b"verdict: pass\n"
+    downloads = 0
+
+    def run(args, capture=True):
+        nonlocal downloads
+        downloads += 1
+        output_dir = Path(args[args.index("--output-dir") + 1])
+        (output_dir / "review.yaml").write_bytes(body)
+
+    monkeypatch.setattr(store, "_run_multica", run)
+
+    assert _load_cached_attachment(
+        store,
+        attachment_id="attachment-1",
+        body=body,
+        declared_bytes=len(body),
+    ) == body.decode()
+    assert _load_cached_attachment(
+        store,
+        attachment_id="attachment-1",
+        body=body,
+        declared_bytes=len(body) + 1,
+    ) == body.decode()
+    assert downloads == 2
+
+
+def test_attachment_body_cache_evicts_least_recently_used_entry(monkeypatch):
+    store = _store(lambda _delay: None, attachment_cache_capacity=2)
+    bodies = {
+        "attachment-1": b"one\n",
+        "attachment-2": b"two\n",
+        "attachment-3": b"three\n",
+    }
+    downloads = []
+
+    def run(args, capture=True):
+        attachment_id = args[2]
+        downloads.append(attachment_id)
+        output_dir = Path(args[args.index("--output-dir") + 1])
+        (output_dir / "review.yaml").write_bytes(bodies[attachment_id])
+
+    monkeypatch.setattr(store, "_run_multica", run)
+
+    for attachment_id in ("attachment-1", "attachment-2", "attachment-1",
+                          "attachment-3", "attachment-2"):
+        assert _load_cached_attachment(
+            store,
+            attachment_id=attachment_id,
+            body=bodies[attachment_id],
+        ) == bodies[attachment_id].decode()
+
+    assert downloads == [
+        "attachment-1", "attachment-2", "attachment-3", "attachment-2",
+    ]
+
+
+def test_attachment_body_cache_coalesces_concurrent_same_key_downloads(
+        monkeypatch):
+    store = _store(lambda _delay: None)
+    body = b"verdict: pass\n"
+    downloads = 0
+    downloads_lock = threading.Lock()
+
+    def run(args, capture=True):
+        nonlocal downloads
+        with downloads_lock:
+            downloads += 1
+        time.sleep(0.05)
+        output_dir = Path(args[args.index("--output-dir") + 1])
+        (output_dir / "review.yaml").write_bytes(body)
+
+    monkeypatch.setattr(store, "_run_multica", run)
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(executor.map(
+            lambda _index: _load_cached_attachment(
+                store, attachment_id="attachment-1", body=body,
+            ),
+            range(8),
+        ))
+
+    assert results == [body.decode()] * 8
+    assert downloads == 1
+
+
+def test_attachment_body_cache_does_not_cache_failed_read(monkeypatch):
+    store = _store(lambda _delay: None)
+    body = b"verdict: pass\n"
+    downloads = 0
+
+    def run(args, capture=True):
+        nonlocal downloads
+        downloads += 1
+        if downloads == 1:
+            raise PlatformError("unexpected deterministic failure")
+        output_dir = Path(args[args.index("--output-dir") + 1])
+        (output_dir / "review.yaml").write_bytes(body)
+
+    monkeypatch.setattr(store, "_run_multica", run)
+
+    with pytest.raises(PlatformError, match="unexpected deterministic failure"):
+        _load_cached_attachment(
+            store, attachment_id="attachment-1", body=body,
+        )
+    assert _load_cached_attachment(
+        store, attachment_id="attachment-1", body=body,
+    ) == body.decode()
+    assert downloads == 2
+
+
+def test_attachment_body_cache_does_not_cache_digest_mismatch(monkeypatch):
+    store = _store(lambda _delay: None)
+    expected = b"verdict: pass\n"
+    bodies = [b"tampered\n", expected]
+    downloads = 0
+
+    def run(args, capture=True):
+        nonlocal downloads
+        body = bodies[downloads]
+        downloads += 1
+        output_dir = Path(args[args.index("--output-dir") + 1])
+        (output_dir / "review.yaml").write_bytes(body)
+
+    monkeypatch.setattr(store, "_run_multica", run)
+
+    with pytest.raises(PlatformError, match="digest does not match"):
+        _load_cached_attachment(
+            store, attachment_id="attachment-1", body=expected,
+        )
+    assert _load_cached_attachment(
+        store, attachment_id="attachment-1", body=expected,
+    ) == expected.decode()
+    assert downloads == 2
 
 
 def test_attachment_download_retries_timeout_then_succeeds(monkeypatch):
