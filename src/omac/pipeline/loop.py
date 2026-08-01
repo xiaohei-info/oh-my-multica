@@ -901,19 +901,27 @@ def _reviewer_run_baseline_for_observation(
             and baseline.target_reviewer == reviewer
             and baseline.target_agent_id == reviewer_id
         ):
+            identity = _delivery_identity(item)
+            identity_cutoff = (
+                _parse_platform_time(identity.verification_created_at)
+                if identity is not None and identity.is_complete() else None
+            )
+            if identity_cutoff is None or identity_cutoff.tzinfo is None:
+                return None, (
+                    "the current delivery identity or verification time is unusable")
             if not baseline.cutoff_created_at:
-                identity = _delivery_identity(item)
-                cutoff = identity.verification_created_at if identity else None
-                if not cutoff:
-                    return None, "the persisted reviewer Run cutoff is missing"
                 baseline = replace(
-                    baseline, cutoff_created_at=cutoff,
+                    baseline, cutoff_created_at=identity.verification_created_at,
                     generation=f"review-{secrets.token_hex(8)}")
                 store.update_work_item_metadata(
                     item.id, reviewer_run_baseline=baseline)
-            return baseline if baseline.is_causally_bound() else None, (
-                None if baseline.is_causally_bound()
-                else "the persisted reviewer Run baseline is incomplete")
+            cutoff = _parse_platform_time(baseline.cutoff_created_at)
+            if cutoff is None or cutoff.tzinfo is None or cutoff != identity_cutoff:
+                return None, (
+                    "the persisted reviewer Run cutoff is unusable or mismatched")
+            if not baseline.is_causally_bound():
+                return None, "the persisted reviewer Run baseline is incomplete"
+            return baseline, None
         return None, "the persisted reviewer Run baseline is incomplete or stale"
 
     identity = _delivery_identity(item)

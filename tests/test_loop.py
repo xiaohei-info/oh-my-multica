@@ -1919,6 +1919,102 @@ def test_legacy_review_projection_without_delivery_time_fails_closed(
     assert blocked.bounces.review == 0
 
 
+@pytest.mark.parametrize(
+    "identity_created_at, baseline_created_at, incomplete_identity",
+    [
+        pytest.param(
+            "2026-08-01T01:00:00", None, False,
+            id="legacy-naive-identity-cutoff",
+        ),
+        pytest.param(
+            "not-a-time", None, False,
+            id="legacy-malformed-identity-cutoff",
+        ),
+        pytest.param(
+            "2026-08-01T01:00:00Z", "2026-08-01T01:00:00", False,
+            id="persisted-naive-cutoff",
+        ),
+        pytest.param(
+            "2026-08-01T01:00:00Z", "not-a-time", False,
+            id="persisted-malformed-cutoff",
+        ),
+        pytest.param(
+            "2026-08-01T01:00:00Z", "2026-08-01T01:00:01Z", False,
+            id="persisted-mismatched-cutoff",
+        ),
+        pytest.param(
+            "2026-08-01T01:00:00Z", "2026-08-01T01:00:00Z", True,
+            id="incomplete-delivery-identity",
+        ),
+    ],
+)
+def test_invalid_persisted_reviewer_cutoff_fails_closed_across_collects(
+    tmp_path, monkeypatch, identity_created_at, baseline_created_at,
+    incomplete_identity,
+):
+    eng, manifest, path, item, _reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    identity = replace(
+        item.delivery_identity,
+        verification_created_at=identity_created_at,
+        run_id=None if incomplete_identity else item.delivery_identity.run_id,
+    )
+    item.delivery_identity = identity
+    item.review_subject_digest = review_subject_digest(
+        item, max(1, item.bounces.review + 1))
+    item.reviewer_run_baseline = replace(
+        item.reviewer_run_baseline,
+        subject_digest=item.review_subject_digest,
+        cutoff_created_at=baseline_created_at,
+    )
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: [])
+    monkeypatch.setattr(
+        eng.runtime, "wake",
+        lambda *_args: pytest.fail("invalid reviewer cutoff must not wake"),
+    )
+
+    for attempt in range(3):
+        failures = loop.collect_results(
+            eng.store, eng.runtime, manifest, path)
+        blocked = eng.store.get_work_item(item.id)
+
+        if attempt == 0:
+            assert "a" in failures
+        assert blocked.status is WorkItemStatus.BLOCKED
+        assert blocked.decision_required["reason_code"] == (
+            "reviewer-run-baseline-unavailable")
+        assert manifest.nodes["a"].status == "blocked"
+        manifest = load_manifest(path)
+
+
+def test_persisted_reviewer_cutoff_accepts_equivalent_instant(tmp_path, monkeypatch):
+    eng, manifest, path, item, _reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    item.delivery_identity = replace(
+        item.delivery_identity,
+        verification_created_at="2026-08-01T01:00:00Z",
+    )
+    item.review_subject_digest = review_subject_digest(
+        item, max(1, item.bounces.review + 1))
+    item.reviewer_run_baseline = replace(
+        item.reviewer_run_baseline,
+        subject_digest=item.review_subject_digest,
+        cutoff_created_at="2026-08-01T09:00:00+08:00",
+    )
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: [])
+    monkeypatch.setattr(
+        eng.runtime, "wake",
+        lambda *_args: pytest.fail("equivalent cutoff must not wake"),
+    )
+
+    assert loop.collect_results(
+        eng.store, eng.runtime, manifest, path) == {}
+    current = eng.store.get_work_item(item.id)
+    assert current.status is WorkItemStatus.IN_REVIEW
+    assert current.decision_required is None
+    assert manifest.nodes["a"].status == "in_review"
+
+
 def test_reviewer_dispatch_rejects_naive_delivery_cutoff(tmp_path):
     """Sealed verification cutoff 必须带时区，不能把 TypeError 留到观察阶段。"""
     from omac.errors import PlatformError
