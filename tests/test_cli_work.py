@@ -271,6 +271,65 @@ COMBINATIONS = [
     (TaskKind.FINAL_ACCEPTANCE, TaskPhase.AUTHORING),
 ]
 
+
+@pytest.mark.parametrize("kind,phase", COMBINATIONS, ids=[
+    f"{k.value}-{p.value}" for k, p in COMBINATIONS])
+def test_security_sensitive_protocol_is_develop_review_only(kind, phase):
+    store = _store()
+    item = _make_item(
+        store,
+        kind,
+        phase,
+        with_contract=(phase == TaskPhase.AUTHORING),
+        with_deliverable=(phase == TaskPhase.REVIEW),
+        with_verification=(kind == TaskKind.DEVELOP
+                           and phase == TaskPhase.REVIEW),
+    )
+    identity = (
+        f"worker:{item.worker}"
+        if phase == TaskPhase.AUTHORING
+        else f"reviewer:{item.reviewer}"
+    )
+
+    english = build_show_output(item, identity, language="en")["protocol"]
+    chinese = build_show_output(item, identity, language="cn")["protocol"]
+    is_develop_review = (
+        kind == TaskKind.DEVELOP and phase == TaskPhase.REVIEW)
+
+    has_english_guidance = (
+        "authorized software-delivery review" in english.lower())
+    has_chinese_guidance = "授权的软件交付评审" in chinese
+    assert has_english_guidance is is_develop_review
+    assert has_chinese_guidance is is_develop_review
+
+    if not is_develop_review:
+        return
+
+    for phrase in (
+        "including declared security-negative tests",
+        "outside that declared scope",
+        "do not initiate network probing",
+        "construct, extend, or optimize",
+        "summary, severity, impact, required_fix, and evidence",
+        "do not reproduce sensitive payloads, credentials, network targets, "
+        "or raw sensitive logs",
+        "evidence boundary or environment blocker",
+        "never fabricate a pass",
+    ):
+        assert phrase in english.lower()
+
+    for phrase in (
+        "已声明的安全负向测试",
+        "仍必须执行",
+        "只禁止 reviewer 在声明范围外自行增加网络探测",
+        "构造、扩展、优化",
+        "summary、severity、impact、required_fix 和 evidence",
+        "不得在 reasoning/report 中复现敏感 payload、凭证、网络目标或原始敏感日志",
+        "证据边界或环境阻塞",
+        "不得伪造 pass",
+    ):
+        assert phrase in chinese.lower()
+
 EXPECTED_GUIDE_REFS = {
     (TaskKind.PLAN, TaskPhase.AUTHORING): [
         "omac guide role planner", "omac guide artifact design"],
