@@ -120,6 +120,7 @@ _EMPTY_OBJECT_METADATA = frozenset({
     MACHINE_FEEDBACK_REF_KEY, REVIEW_REPORT_REF_KEY,
     DECISION_REQUIRED_KEY, REVIEWER_RUN_BASELINE_KEY,
 })
+_INVALID_OBJECT_METADATA_SCHEMA = "omac.invalid-object-metadata/v1"
 
 
 def _decode_json_metadata_value(value: Any) -> Any:
@@ -131,9 +132,17 @@ def _decode_json_metadata_value(value: Any) -> Any:
         return {"raw": value} if value else None
 
 
-def _canonical_clear_object_metadata(value: Any) -> Any:
+def _project_object_metadata(value: Any) -> Any:
     decoded = _decode_json_metadata_value(value)
-    return None if decoded in (None, {}) else decoded
+    if decoded in (None, {}):
+        return None
+    if isinstance(decoded, dict):
+        return decoded
+    return {
+        "schema": _INVALID_OBJECT_METADATA_SCHEMA,
+        "decoded_type": type(decoded).__name__,
+        "value": decoded,
+    }
 
 
 class _AttachmentBodyCache:
@@ -540,7 +549,7 @@ class MulticaStore(WorkItemStore):
     def _json_metadata(metadata: Dict, key: str):
         value = metadata.get(key)
         if key in _EMPTY_OBJECT_METADATA:
-            return _canonical_clear_object_metadata(value)
+            return _project_object_metadata(value)
         return _decode_json_metadata_value(value)
 
     @staticmethod
@@ -924,13 +933,10 @@ class MulticaStore(WorkItemStore):
             review_comment=self._optional_text_metadata(metadata, "review_comment"),
             machine_feedback=None,
             machine_feedback_ref=(
-                machine_feedback_ref
-                if isinstance(machine_feedback_ref, dict) and machine_feedback_ref
-                else None),
+                machine_feedback_ref),
             review_report=review_report,
             review_report_ref=(
-                review_report_ref if isinstance(review_report_ref, dict) and review_report_ref
-                else None),
+                review_report_ref),
             review_subject_digest=self._optional_text_metadata(
                 metadata, REVIEW_SUBJECT_DIGEST_KEY),
             review_obligations=(
@@ -1316,9 +1322,9 @@ class MulticaStore(WorkItemStore):
                 and metadata.get("review_report") not in (None, {}, "")
             ):
                 return False
-            canonical_target = _canonical_clear_object_metadata(target)
+            canonical_target = _project_object_metadata(target)
             if canonical_target is None:
-                return _canonical_clear_object_metadata(current) is None
+                return _project_object_metadata(current) is None
             return encode_metadata_value(current) == encode_metadata_value(target)
         if key == PHASE_KEY:
             return parse_phase(current) == parse_phase(target)
