@@ -109,6 +109,10 @@ class _WorkerHandoffResult:
     delivery_identity: DeliveryIdentity | None = None
 
 
+class _WorkerHandoffCandidateChanged(Exception):
+    """Unsealed delivery changed between observation and controller commit."""
+
+
 @dataclass(frozen=True)
 class _HandoffPreparationResult:
     """One bounded authoritative observation of an idempotent preparation write."""
@@ -1787,11 +1791,15 @@ def _commit_worker_handoff_delivery(
         raise PlatformError(
             f"Worker handoff delivery candidate is incomplete for work item {item_id}")
     current = store.observe_work_item_control(item_id).work_item
+    existing = _delivery_identity(current)
     if not _control_matches_handoff_candidate(current, result.intent, identity):
+        if existing is None:
+            raise _WorkerHandoffCandidateChanged(
+                f"Worker handoff delivery candidate changed before commit for "
+                f"work item {item_id}")
         raise PlatformError(
             f"Worker handoff delivery candidate changed before commit for "
             f"work item {item_id}")
-    existing = _delivery_identity(current)
     if existing is not None and existing.as_dict() != identity.as_dict():
         raise PlatformError(
             f"Persisted delivery identity does not match platform facts for "
@@ -1832,6 +1840,27 @@ def _finalize_worker_handoff_delivery(
         replace(result, projection=projection),
     )
     return projection.work_item, gate_errors
+
+
+def _finalize_worker_handoff_or_defer(
+    store: WorkItemStore,
+    manifest: Manifest,
+    key: str,
+    node,
+    result: _WorkerHandoffResult,
+) -> tuple[Any, list] | None:
+    try:
+        return _finalize_worker_handoff_delivery(store, node, result)
+    except _WorkerHandoffCandidateChanged:
+        set_node(manifest, key, status="in_progress")
+        log.info(
+            "worker_handoff_delivery_deferred",
+            kind=_DAG_KIND,
+            node=key,
+            id=node.work_item_id,
+            reason="candidate-changed",
+        )
+        return None
 
 
 def _observe_worker_handoff(
@@ -2404,10 +2433,12 @@ def collect_results(
                 handoff = _dispatch_worker_handoff(
                     store, runtime, manifest, key)
                 if handoff.state == "complete":
-                    item, worker_gate_errors = (
-                        _finalize_worker_handoff_delivery(
-                            store, node, handoff)
+                    finalized = _finalize_worker_handoff_or_defer(
+                        store, manifest, key, node, handoff,
                     )
+                    if finalized is None:
+                        continue
+                    item, worker_gate_errors = finalized
                     set_node(manifest, key, status="in_progress")
                 else:
                     set_node(manifest, key, status="in_progress")
@@ -2428,8 +2459,11 @@ def collect_results(
                 set_node(manifest, key, status="in_progress")
                 continue
             else:
-                item, worker_gate_errors = _finalize_worker_handoff_delivery(
-                    store, node, handoff)
+                finalized = _finalize_worker_handoff_or_defer(
+                    store, manifest, key, node, handoff)
+                if finalized is None:
+                    continue
+                item, worker_gate_errors = finalized
                 set_node(manifest, key, status="in_progress")
 
         if node.status == "in_review" and item.phase == TaskPhase.AUTHORING:
@@ -2536,10 +2570,12 @@ def collect_results(
                         handoff = _dispatch_worker_handoff(
                             store, runtime, manifest, key)
                         if handoff.state == "complete":
-                            item, worker_gate_errors = (
-                                _finalize_worker_handoff_delivery(
-                                    store, node, handoff)
+                            finalized = _finalize_worker_handoff_or_defer(
+                                store, manifest, key, node, handoff,
                             )
+                            if finalized is None:
+                                continue
+                            item, worker_gate_errors = finalized
                         else:
                             set_node(manifest, key, status="in_progress")
                             log.info(
@@ -2857,7 +2893,8 @@ def collect_results(
                     projection=projection,
                 )
                 if handoff.state == "complete":
-                    _finalize_worker_handoff_delivery(store, node, handoff)
+                    _finalize_worker_handoff_or_defer(
+                        store, manifest, key, node, handoff)
                 set_node(manifest, key, status="in_progress")
                 log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=key,
                          id=node.work_item_id, gate="review-nits")
@@ -2898,7 +2935,8 @@ def collect_results(
                         projection=projection,
                     )
                     if handoff.state == "complete":
-                        _finalize_worker_handoff_delivery(store, node, handoff)
+                        _finalize_worker_handoff_or_defer(
+                            store, manifest, key, node, handoff)
                     set_node(manifest, key, status="in_progress")
                     log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=key,
                              id=node.work_item_id, gate="review",
