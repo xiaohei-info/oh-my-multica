@@ -213,10 +213,25 @@ class TestRenderIssueBody:
 
         assert command in first_screen
         assert "first action" in first_screen or "第一动作" in first_screen
+        assert (
+            "create, modify, or delete Issue state" in first_screen
+            or "创建、修改或删除 Issue 状态" in first_screen
+        )
+        assert (
+            "semantic boundary, not an exhaustive command list" in first_screen
+            or "语义边界，不是穷举命令清单" in first_screen
+        )
+        assert (
+            "Only read-only queries" in first_screen
+            or "只允许只读查询" in first_screen
+        )
         for forbidden in (
             "multica issue status", "multica issue assign",
             "multica issue comment", "multica issue metadata",
             "multica issue rerun", "multica issue cancel-task",
+            "multica issue update", "multica issue create",
+            "multica issue label", "multica issue property",
+            "multica issue reorder", "multica issue subscriber",
         ):
             assert forbidden in first_screen
         assert "omac work submit" in first_screen
@@ -366,6 +381,8 @@ class TestRenderIssueBody:
         body = render_issue_body(n, None, TaskKind.PLAN, "ID")
         assert "见 contract" not in body
         assert "# 贪吃蛇手游 计划" in body
+        assert "语义边界，不是穷举命令清单" not in body
+        assert "multica issue update" not in body
 
     def test_bootstrap_orders_work_show_first(self):
         """实例事实优先:issue 只给 work show,不要求先读静态 guide。"""
