@@ -113,6 +113,10 @@ class _WorkerHandoffCandidateChanged(Exception):
     """Unsealed delivery changed between observation and controller commit."""
 
 
+class _ReviewerDispatchUnresolved(PlatformError):
+    """A persisted reviewer assignment has no uniquely observable Run."""
+
+
 @dataclass(frozen=True)
 class _HandoffPreparationResult:
     """One bounded authoritative observation of an idempotent preparation write."""
@@ -1154,6 +1158,33 @@ def _dispatch_reviewer_for_current_subject(
         and runtime.is_active(item_id)
     ):
         return False
+
+    assignment_prepared = (
+        not subject_changed
+        and baseline.target_run_id is None
+        and current.phase == TaskPhase.REVIEW
+        and current.status == WorkItemStatus.IN_REVIEW
+        and current.reviewer == node.reviewer
+    )
+    if assignment_prepared:
+        for attempt in range(_HANDOFF_OBSERVATION_ATTEMPTS):
+            observed = _observe_direct_run_attempt(
+                runtime.list_runs(item_id), reviewer_id,
+                baseline_direct_run_ids=baseline.baseline_direct_run_ids,
+                cutoff_created_at=baseline.cutoff_created_at,
+                attempt=baseline.attempt,
+            )
+            if observed.state in {"active", "terminal"}:
+                store.update_work_item_metadata(
+                    item_id, reviewer_run_baseline=replace(
+                        baseline, target_run_id=observed.target_run_id))
+                return False
+            if observed.state == "unexpected":
+                raise _ReviewerDispatchUnresolved(observed.detail)
+            if attempt + 1 < _HANDOFF_OBSERVATION_ATTEMPTS:
+                time.sleep(_HANDOFF_OBSERVATION_INTERVAL)
+        raise _ReviewerDispatchUnresolved(
+            "persisted reviewer assignment has no uniquely observable target Run")
 
     _refresh_develop_issue_body(
         store, manifest, key, phase=TaskPhase.REVIEW)
@@ -2986,6 +3017,11 @@ def collect_results(
             if dispatched:
                 log.info(logsetup.EVT_REVIEW_DISPATCH, kind=_DAG_KIND, node=key,
                          id=item_id, reviewer=reviewer)
+        except _ReviewerDispatchUnresolved as exc:
+            failures[key] = _block_reviewer(
+                store, manifest, manifest_path, key,
+                store.get_work_item(item_id),
+                "reviewer-run-dispatch-unresolved", str(exc))
         except PlatformError as exc:
             failures[key] = _block_reviewer(
                 store, manifest, manifest_path, key,

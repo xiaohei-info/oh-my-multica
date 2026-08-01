@@ -69,6 +69,7 @@ _shared_pull_requests: Dict[str, PullRequestObservation] = {}
 _shared_runs: Dict[str, List[AgentRunObservation]] = {}
 _shared_next_run_id: int = 1
 _shared_active_assignments: Dict[str, tuple[str, str]] = {}
+_shared_assignment_wake_pending: set[str] = set()
 _shared_attachment_bodies: Dict[str, bytes] = {}
 _shared_next_attachment_id: int = 1
 
@@ -232,6 +233,7 @@ class MockStore(WorkItemStore):
         global _accepted_results, _increments, _shared_projects
         global _shared_pull_requests
         global _shared_runs, _shared_next_run_id, _shared_active_assignments
+        global _shared_assignment_wake_pending
         global _shared_attachment_bodies, _shared_next_attachment_id
         _accepted_results = {}
         _increments = {}
@@ -240,6 +242,7 @@ class MockStore(WorkItemStore):
         _shared_runs = {}
         _shared_next_run_id = 1
         _shared_active_assignments = {}
+        _shared_assignment_wake_pending = set()
         _shared_attachment_bodies = {}
         _shared_next_attachment_id = 1
         _init_default_workspace()
@@ -973,6 +976,8 @@ class MockStore(WorkItemStore):
         """内存态直接移除,模拟平台侧作废(get 后即不存在)。"""
         _shared_work_items.pop(item_id, None)
         _shared_assigned_items.pop(item_id, None)
+        _shared_active_assignments.pop(item_id, None)
+        _shared_assignment_wake_pending.discard(item_id)
 
     def reset_review(self, item_id: str):
         item = self.get_work_item(item_id)
@@ -1011,7 +1016,6 @@ class MockStore(WorkItemStore):
         *,
         start_run: bool = True,
     ):
-        global _shared_next_run_id
         item = self.get_work_item(item_id)
         agent_id = self.resolve_agent_id(assignee)
         if role == "worker":
@@ -1027,18 +1031,29 @@ class MockStore(WorkItemStore):
         _shared_assign_log.append((item_id, item.dag_key, role, time.time()))
         _shared_assigned_items[item_id] = time.time()
         _shared_active_assignments[item_id] = assignment
-        # Mock has no resumable session. Coalesce the explicit wake into the
-        # same synthetic Run while preserving the public assignment contract.
-        if not same_active_assignment:
-            run = AgentRunObservation(
-                id=f"mock-run-{_shared_next_run_id}",
-                kind="direct",
-                status="running",
-                agent_id=agent_id,
-                created_at=datetime.now(timezone.utc).isoformat(),
-            )
-            _shared_next_run_id += 1
-            _shared_runs.setdefault(item_id, []).append(run)
+        if start_run and not same_active_assignment:
+            self._append_assigned_run(item_id, agent_id)
+            _shared_assignment_wake_pending.add(item_id)
+        elif not start_run:
+            _shared_assignment_wake_pending.discard(item_id)
+
+    @staticmethod
+    def _append_assigned_run(item_id: str, agent_id: str) -> None:
+        global _shared_next_run_id
+        _shared_runs.setdefault(item_id, []).append(AgentRunObservation(
+            id=f"mock-run-{_shared_next_run_id}",
+            kind="direct",
+            status="running",
+            agent_id=agent_id,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        ))
+        _shared_next_run_id += 1
+
+    def _start_assigned_run(self, item_id: str, agent_id: str) -> None:
+        runs = _shared_runs.setdefault(item_id, [])
+        if any(run.active for run in runs):
+            return
+        self._append_assigned_run(item_id, agent_id)
 
     def clear_assignment(self, item_id: str) -> None:
         item = self.get_work_item(item_id)
@@ -1046,6 +1061,7 @@ class MockStore(WorkItemStore):
         item.platform_assignee_id = None
         _shared_assigned_items.pop(item_id, None)
         _shared_active_assignments.pop(item_id, None)
+        _shared_assignment_wake_pending.discard(item_id)
 
     def normalize_confirmed_merge(self, item_id: str) -> None:
         """One in-memory mutation mirrors Multica's atomic issue update."""
@@ -1054,6 +1070,7 @@ class MockStore(WorkItemStore):
         item.platform_assignee_id = None
         _shared_assigned_items.pop(item_id, None)
         _shared_active_assignments.pop(item_id, None)
+        _shared_assignment_wake_pending.discard(item_id)
 
     def request_pull_request_merge(
         self, pr_url: str, command: str, timeout_seconds: int,
@@ -1139,7 +1156,7 @@ class MockStore(WorkItemStore):
 
 
 class MockRuntime(AgentRuntime):
-    """执行面的内存实现:assign 即启动模拟计时(在 MockStore 内),wake 为确认性 no-op。"""
+    """执行面的内存实现:默认 assign 启动，静默 assign 由 wake 启动。"""
 
     def __init__(self, store: MockStore):
         self._store = store
@@ -1149,8 +1166,20 @@ class MockRuntime(AgentRuntime):
         return RuntimeCapabilities(stable_direct_run_identity=True)
 
     def wake(self, item_id: str, agent: str, role: str) -> None:
-        # MockStore.assign_work_item 已启动自动完成计时,这里只确认 item 存在。
-        self._store.get_work_item(item_id)
+        item = self._store.get_work_item(item_id)
+        agent_id = self._store.resolve_agent_id(agent)
+        if item_id in _shared_assignment_wake_pending:
+            _shared_assignment_wake_pending.discard(item_id)
+            return
+        if (
+            item.platform_assignee_id is not None
+            and item.platform_assignee_id != agent_id
+        ):
+            raise PlatformError("mock wake target does not match current assignment")
+        if item.platform_assignee_id is None:
+            item.platform_assignee_id = agent_id
+            _shared_active_assignments[item_id] = (agent, role)
+        self._store._start_assigned_run(item_id, agent_id)
 
     def cancel(self, item_id: str) -> bool:
         self._store.get_work_item(item_id)

@@ -2814,6 +2814,8 @@ def test_reviewer_dispatch_refreshes_reused_issue_with_control_protocol(
     eng, manifest, _path, item, _reviewer_id = (
         _reviewer_runtime_failure_fixture(tmp_path))
     eng.store.update_work_item_metadata(item.id, description="stale issue body")
+    eng.store.clear_assignment(item.id)
+    eng.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
     monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: [])
     monkeypatch.setattr(eng.runtime, "wake", lambda *_args: None)
 
@@ -2870,6 +2872,71 @@ def test_initial_develop_reviewer_handoff_assigns_without_starting_run(
     tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
 
     assert reviewer_calls == [{"start_run": False}]
+
+
+def test_mock_silent_assignment_defers_run_until_wake():
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = eng.store.create_work_item(
+        workspace_id="ws",
+        title="review",
+        description="review",
+        dag_key="review-a",
+        worker="alice",
+        reviewer="bob",
+    )
+
+    eng.store.assign_work_item(
+        item.id, "bob", "reviewer", start_run=False)
+    assert eng.runtime.list_runs(item.id) == []
+
+    eng.runtime.wake(item.id, "bob", "reviewer")
+    first = eng.runtime.list_runs(item.id)
+    assert len(first) == 1
+    assert first[0].active
+    assert first[0].agent_id == eng.store.resolve_agent_id("bob")
+
+    eng.runtime.wake(item.id, "bob", "reviewer")
+    assert eng.runtime.list_runs(item.id) == first
+
+
+def test_initial_reviewer_dispatch_crash_after_assignment_fails_closed(
+    tmp_path, monkeypatch,
+):
+    from omac.engines import mock as mock_engine
+
+    eng, manifest, _path, item, _reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    mock_engine._finish_mock_run(item.id)
+    eng.store.clear_assignment(item.id)
+    eng.store.update_work_item_metadata(item.id, reviewer_run_baseline={})
+
+    def crash_before_wake(*_args):
+        raise RuntimeError("crash after suppressed reviewer assignment")
+
+    monkeypatch.setattr(eng.runtime, "wake", crash_before_wake)
+    with pytest.raises(RuntimeError, match="suppressed reviewer assignment"):
+        loop._dispatch_reviewer_for_current_subject(
+            eng.store, eng.runtime, manifest, "a")
+
+    interrupted = eng.store.get_work_item(item.id)
+    assert interrupted.status is WorkItemStatus.IN_REVIEW
+    assert interrupted.phase is TaskPhase.REVIEW
+    assert interrupted.reviewer == "bob"
+    assert interrupted.reviewer_run_baseline.target_run_id is None
+    assert not eng.runtime.is_active(item.id)
+
+    monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        eng.runtime,
+        "wake",
+        lambda *_args: pytest.fail("restart must not rerun an ambiguous dispatch"),
+    )
+    with pytest.raises(
+        loop._ReviewerDispatchUnresolved,
+        match="no uniquely observable target Run",
+    ):
+        loop._dispatch_reviewer_for_current_subject(
+            eng.store, eng.runtime, manifest, "a")
 
 
 def test_develop_reviewer_retry_assigns_without_resuming_old_session(
