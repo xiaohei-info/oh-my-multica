@@ -17,6 +17,8 @@ import os
 import stat
 import pytest
 
+from conftest import seal_mock_delivery
+
 from omac.core.manifest import Manifest, Node
 from omac.core.config import DEFAULT_RETRY
 from omac.engines.models import EngineConfig, WorkItemStatus
@@ -65,11 +67,10 @@ def _worker_done_item(store, reviewer="bob"):
     item = store.create_work_item(
         "ws", "node-a", "d", dag_key="a", worker="alice", reviewer=reviewer,
         initial_status=WorkItemStatus.IN_PROGRESS)
-    store.update_work_item_metadata(
-        item.id,
-        artifacts={"pr_url": "https://example.com/pr/1"},
-        verification={"commands": [{"cmd": "pytest -q", "exit_code": 0, "summary": "ok"}],
-                      "integration_gates": [], "pr_base": "feature/v1", "coverage": 95})
+    seal_mock_delivery(
+        store, item.id, "https://example.com/pr/1",
+        {"commands": [{"cmd": "pytest -q", "exit_code": 0, "summary": "ok"}],
+         "integration_gates": [], "pr_base": "feature/v1", "coverage": 95})
     store.update_status(item.id, WorkItemStatus.DONE)
     return item
 
@@ -337,7 +338,9 @@ class TestCollectResultsCi:
         assert manifest.nodes["a"].status == "in_progress"
         assert store.get_work_item(item.id).bounces.ci == 1
         # worker 修后重交:重新置为 worker DONE
-        store.update_work_item_metadata(item.id, artifacts={"pr_url": "https://example.com/pr/1"})
+        seal_mock_delivery(
+            store, item.id, "https://example.com/pr/1",
+            store.get_work_item(item.id).verification)
         store.update_status(item.id, WorkItemStatus.DONE)
         manifest.nodes["a"].status = "in_progress"
         # 第 2 次:CI 绿 → in_review

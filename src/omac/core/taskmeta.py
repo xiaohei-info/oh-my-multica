@@ -229,7 +229,11 @@ class ReviewerRunBaseline:
     subject_digest: Optional[str] = None
     target_reviewer: Optional[str] = None
     target_agent_id: Optional[str] = None
+    cutoff_created_at: Optional[str] = None
+    generation: Optional[str] = None
+    attempt: int = 1
     baseline_direct_run_ids: Tuple[str, ...] = ()
+    target_run_id: Optional[str] = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -237,7 +241,11 @@ class ReviewerRunBaseline:
             "subject_digest": self.subject_digest,
             "target_reviewer": self.target_reviewer,
             "target_agent_id": self.target_agent_id,
+            "cutoff_created_at": self.cutoff_created_at,
+            "generation": self.generation,
+            "attempt": self.attempt,
             "baseline_direct_run_ids": list(self.baseline_direct_run_ids),
+            "target_run_id": self.target_run_id,
         }
 
     def is_causally_bound(self) -> bool:
@@ -246,6 +254,11 @@ class ReviewerRunBaseline:
             and self.subject_digest
             and self.target_reviewer
             and self.target_agent_id
+            and self.cutoff_created_at
+            and self.generation
+            and isinstance(self.attempt, int)
+            and not isinstance(self.attempt, bool)
+            and self.attempt > 0
             and all(
                 isinstance(run_id, str) and run_id
                 for run_id in self.baseline_direct_run_ids
@@ -417,10 +430,19 @@ def parse_reviewer_run_baseline(value: Any) -> Optional[ReviewerRunBaseline]:
         subject_digest=text_field("subject_digest"),
         target_reviewer=text_field("target_reviewer"),
         target_agent_id=text_field("target_agent_id"),
+        cutoff_created_at=text_field("cutoff_created_at"),
+        generation=text_field("generation"),
+        attempt=(
+            value.get("attempt")
+            if isinstance(value.get("attempt"), int)
+            and not isinstance(value.get("attempt"), bool)
+            else 1
+        ),
         baseline_direct_run_ids=tuple(
             run_id for run_id in baseline
             if isinstance(run_id, str) and run_id
         ) if isinstance(baseline, list) else (),
+        target_run_id=text_field("target_run_id"),
     )
 
 
