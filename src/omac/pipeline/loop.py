@@ -1071,6 +1071,8 @@ def _dispatch_reviewer_for_current_subject(
     ):
         return False
 
+    _refresh_develop_issue_body(
+        store, manifest, key, phase=TaskPhase.REVIEW)
     store.update_status(item_id, WorkItemStatus.IN_REVIEW)
     store.assign_work_item(item_id, node.reviewer, "reviewer")
     runtime.wake(item_id, node.reviewer, "reviewer")
@@ -1212,6 +1214,9 @@ def _dispatch_worker_handoff(
     resolved = _resolved_worker_handoff_dispatch(result)
     if resolved is not None:
         return resolved
+
+    _refresh_develop_issue_body(
+        store, manifest, key, phase=TaskPhase.AUTHORING)
 
     # assign_work_item 自身负责观察当前 assignee并幂等修复。目标 Run 的
     # 身份由后续只读观察绑定到持久 handoff，而不是由 assignment 成功猜测。
@@ -2763,6 +2768,26 @@ def _develop_source_refs(manifest: Manifest, node, engine_env) -> List[dict]:
     return refs
 
 
+def _refresh_develop_issue_body(
+    store: WorkItemStore, manifest: Manifest, key: str, *, phase: TaskPhase,
+) -> None:
+    node = manifest.nodes[key]
+    item = store.get_work_item(node.work_item_id)
+    env = _store_env(store)
+    refs = _develop_source_refs(manifest, node, env)
+    store.update_work_item_metadata(
+        item.id,
+        description=render_issue_body(
+            node, node.contract, TaskKind.DEVELOP, item.id,
+            source_refs=refs, engine_env=env,
+            issue_key=getattr(item, "identifier", None),
+            language=current_language(), phase=phase,
+        ),
+        source_refs=refs,
+        blocked_by=list(node.blocked_by),
+    )
+
+
 def _dispatch(
     store: WorkItemStore,
     runtime: AgentRuntime,
@@ -2812,23 +2837,6 @@ def _dispatch(
         if is_new_item:
             if node.contract is not None:
                 store.set_node_contract(item.id, node.contract)
-
-        env = _store_env(store)
-        source_refs = _develop_source_refs(manifest, node, env)
-        body = render_issue_body(
-            node, node.contract, TaskKind.DEVELOP, item.id,
-            source_refs=source_refs,
-            engine_env=env,
-            issue_key=getattr(item, "identifier", None),
-            language=current_language(),
-        )
-        metadata = {
-            "description": body,
-            "source_refs": source_refs,
-        }
-        if not is_new_item:
-            metadata["blocked_by"] = list(node.blocked_by)
-        store.update_work_item_metadata(item.id, **metadata)
 
         try:
             handoff = _dispatch_worker_handoff(

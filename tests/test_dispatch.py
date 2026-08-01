@@ -28,7 +28,7 @@ from omac.core.manifest import (
     save_manifest,
 )
 from omac.core.review_convergence import REVIEW_PROTOCOL_VERSION, open_blockers
-from omac.core.taskmeta import TaskKind
+from omac.core.taskmeta import TaskKind, TaskPhase
 from omac.engines import create_engine
 from omac.engines.models import EngineConfig, WorkItemStatus
 from omac.pipeline.dispatch import (
@@ -171,7 +171,7 @@ class TestRenderIssueBody:
                  contract=_full_contract())
         body = render_issue_body(n, n.contract, TaskKind.DEVELOP, "ISSUE-9")
         assert "ISSUE-9" in body
-        assert "Agent 入口" in body
+        assert "OMAC 控制的执行" in body
         assert "omac work show ISSUE-9 --output json" in body
         assert "omac work submit ISSUE-9" not in body
         assert "omac guide role worker" not in body
@@ -181,13 +181,74 @@ class TestRenderIssueBody:
         assert "## 完成标准" in body
         assert "硬约束" not in body
 
+    @pytest.mark.parametrize(
+        ("phase", "role_label"),
+        [
+            (TaskPhase.AUTHORING, "开发执行者"),
+            (TaskPhase.REVIEW, "独立评审者"),
+        ],
+    )
+    def test_develop_body_puts_omac_control_protocol_first(
+        self, phase, role_label,
+    ):
+        node = Node(
+            id="a", worker="alice", title="Add login", reviewer="bob",
+            contract=_full_contract(),
+        )
+        env = {
+            "OMAC_ENGINE": "multica",
+            "OMAC_WORKSPACE_ID": "ws-1",
+            "OMAC_PROJECT_ID": "project-1",
+        }
+
+        body = render_issue_body(
+            node, node.contract, TaskKind.DEVELOP, "ISSUE-9",
+            engine_env=env, phase=phase,
+        )
+        first_screen = body.split("# Add login", 1)[0]
+        command = (
+            "OMAC_ENGINE=multica OMAC_WORKSPACE_ID=ws-1 "
+            "OMAC_PROJECT_ID=project-1 omac work show ISSUE-9 --output json"
+        )
+
+        assert command in first_screen
+        assert "first action" in first_screen or "第一动作" in first_screen
+        assert (
+            "create, modify, or delete Issue state" in first_screen
+            or "创建、修改或删除 Issue 状态" in first_screen
+        )
+        assert (
+            "semantic boundary, not an exhaustive command list" in first_screen
+            or "语义边界，不是穷举命令清单" in first_screen
+        )
+        assert (
+            "Only read-only queries" in first_screen
+            or "只允许只读查询" in first_screen
+        )
+        for forbidden in (
+            "multica issue status", "multica issue assign",
+            "multica issue comment", "multica issue metadata",
+            "multica issue rerun", "multica issue cancel-task",
+            "multica issue update", "multica issue create",
+            "multica issue label", "multica issue property",
+            "multica issue reorder", "multica issue subscriber",
+        ):
+            assert forbidden in first_screen
+        assert "omac work submit" in first_screen
+        assert "delivery_identity" in first_screen
+        assert (
+            "manual attachments" in first_screen
+            or "已有手工附件" in first_screen
+        )
+        assert f"执行角色: {role_label}" in body
+
     def test_issue_body_supports_english_project_language(self):
         n = Node(id="a", worker="alice", title="Add login", reviewer="bob")
 
         body = render_issue_body(
             n, None, TaskKind.DEVELOP, "ISSUE-9", language="en")
 
-        assert "Agent entry" in body
+        assert "OMAC-controlled run" in body
         assert "## Task summary" in body
         assert "Execution role" in body
         assert "任务摘要" not in body
@@ -320,6 +381,8 @@ class TestRenderIssueBody:
         body = render_issue_body(n, None, TaskKind.PLAN, "ID")
         assert "见 contract" not in body
         assert "# 贪吃蛇手游 计划" in body
+        assert "语义边界，不是穷举命令清单" not in body
+        assert "multica issue update" not in body
 
     def test_bootstrap_orders_work_show_first(self):
         """实例事实优先:issue 只给 work show,不要求先读静态 guide。"""
@@ -336,13 +399,14 @@ class TestRenderIssueBody:
         assert "左移校验" not in body
         assert "不信任何自述" not in body
 
-    def test_worker_platform_rules_live_outside_human_issue(self):
+    def test_worker_platform_rules_are_visible_before_task_details(self):
         n = Node(id="n", worker="alice", title="开发")
         body = render_issue_body(n, None, TaskKind.DEVELOP, "ID")
-        assert "multica issue status" not in body
-        assert "multica issue assign" not in body
-        assert "multica issue rerun" not in body
-        assert "multica issue cancel-task" not in body
+        first_screen = body.split("# 开发", 1)[0]
+        assert "multica issue status" in first_screen
+        assert "multica issue assign" in first_screen
+        assert "multica issue rerun" in first_screen
+        assert "multica issue cancel-task" in first_screen
 
     def test_contract_summary_none_returns_fallback(self):
         """_contract_summary 在 contract=None 时应直接返回 fallback,作为占位的根。"""
@@ -476,6 +540,11 @@ class TestDispatchLoopIntegration:
         item_id = manifest.nodes["a"].work_item_id
         first_body = eng.store.get_work_item(item_id).description
         assert "package.json" not in first_body
+        eng.store.update_work_item_metadata(
+            item_id,
+            verification={"schema": "legacy-manual-verification"},
+            delivery_identity={},
+        )
 
         manifest.nodes["a"].contract.scope_paths.append("package.json")
         manifest.nodes["a"].status = "todo"
@@ -489,6 +558,11 @@ class TestDispatchLoopIntegration:
         assert manifest.nodes["a"].work_item_id == item_id
         assert "package.json" in refreshed.description
         assert "Primary code ownership" in refreshed.description
+        first_screen = refreshed.description.split("# Add login", 1)[0]
+        assert "first action" in first_screen or "第一动作" in first_screen
+        assert "multica issue metadata" in first_screen
+        assert "delivery_identity" in first_screen
+        assert refreshed.delivery_identity is None
         assert refreshed.status == WorkItemStatus.IN_PROGRESS
 
     def test_worker_submit_assigns_reviewer_without_handoff_comment(self):

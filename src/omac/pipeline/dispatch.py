@@ -1224,21 +1224,30 @@ def render_source_refs_section(
 
 
 def render_issue_body(node, contract, kind, issue_id, source_refs=None, engine_env=None,
-                      issue_key=None, language: str = CN):
+                      issue_key=None, language: str = CN,
+                      phase: TaskPhase = TaskPhase.AUTHORING):
     """渲染 Human-first issue body,顶部仅保留一个 Agent JSON 入口。"""
-    role = KIND_ROLE.get(kind, "worker")
+    role = "reviewer" if phase == TaskPhase.REVIEW else KIND_ROLE.get(kind, "worker")
     label = KIND_LABEL.get(kind, kind.value)
     title = getattr(node, "title", None) or getattr(node, "id", issue_id)
     env_prefix = _command_env_prefix(engine_env)
 
-    bootstrap = (
-        ui(
+    if kind == TaskKind.DEVELOP:
+        bootstrap = ui(
+            "> **OMAC-controlled run. Your first action must be exactly:**\n\n",
+            "> **OMAC 控制的执行。第一动作必须严格执行：**\n\n",
+            language=language,
+        ) + f"```bash\n{env_prefix}omac work show {issue_id} --output json\n```\n\n" + ui(
+            "> All `multica issue` write operations that create, modify, or delete Issue state are forbidden. This is a semantic boundary, not an exhaustive command list; forbidden examples include `multica issue status`, `multica issue assign`, `multica issue comment`, `multica issue metadata`, `multica issue rerun`, `multica issue cancel-task`, `multica issue update`, `multica issue create`, `multica issue label`, `multica issue property`, `multica issue reorder`, and `multica issue subscriber`. Only read-only queries, the exact `omac work show` command shown above, and the exact `omac work submit` command returned by work show are allowed. Existing manual attachments or verification without `delivery_identity` are unsealed and must also be sealed through that submit command.",
+            "> 禁止任何会创建、修改或删除 Issue 状态的 `multica issue` 写操作。这是语义边界，不是穷举命令清单；禁止示例包括 `multica issue status`、`multica issue assign`、`multica issue comment`、`multica issue metadata`、`multica issue rerun`、`multica issue cancel-task`、`multica issue update`、`multica issue create`、`multica issue label`、`multica issue property`、`multica issue reorder` 和 `multica issue subscriber`。只允许只读查询、上方给出的精确 `omac work show` 命令，以及 work show 返回的精确 `omac work submit` 命令；已有手工附件或 verification 但缺少 `delivery_identity` 时也必须通过该 submit 命令封存。",
+            language=language,
+        )
+    else:
+        bootstrap = ui(
             "> **Agent entry:** Read the authoritative JSON context for this task first.\n\n",
             "> **Agent 入口:** 先读取当前任务的权威 JSON 上下文。\n\n",
             language=language,
-        )
-        + f"```bash\n{env_prefix}omac work show {issue_id} --output json\n```"
-    )
+        ) + f"```bash\n{env_prefix}omac work show {issue_id} --output json\n```"
 
     kind_names = KIND_HUMAN_LABEL_EN if language == EN else KIND_HUMAN_LABEL
     role_names = ROLE_HUMAN_LABEL_EN if language == EN else ROLE_HUMAN_LABEL
