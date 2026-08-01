@@ -113,6 +113,13 @@ _REVIEW_CLEAR_METADATA = (
     (REVIEWER_RUN_BASELINE_KEY, "{}"),
     ("review_verdict", ""),
 )
+_EMPTY_TEXT_METADATA = frozenset({
+    "review_comment", "review_verdict", REVIEW_SUBJECT_DIGEST_KEY,
+})
+_EMPTY_OBJECT_METADATA = frozenset({
+    MACHINE_FEEDBACK_REF_KEY, REVIEW_REPORT_REF_KEY,
+    DECISION_REQUIRED_KEY, REVIEWER_RUN_BASELINE_KEY,
+})
 
 
 class _AttachmentBodyCache:
@@ -1272,9 +1279,7 @@ class MulticaStore(WorkItemStore):
             "--key", key, "--value", encoded,
         ])
 
-    def _apply_metadata_projection(
-        self, item_id: str, target: tuple[tuple[str, Any], ...],
-    ) -> None:
+    def _read_issue_metadata(self, item_id: str) -> tuple[Dict, Dict]:
         issue = self._run_idempotent_read(
             "issue get",
             lambda: self._run_multica([
@@ -1286,14 +1291,41 @@ class MulticaStore(WorkItemStore):
                 f"Could not read metadata for issue {item_id}",
                 f"无法读取 issue {item_id} 的 metadata",
             ))
-        current = issue["metadata"]
-        for key, value in target:
-            if key in current and (
-                encode_metadata_value(current[key]) == encode_metadata_value(value)
+        return issue, issue["metadata"]
+
+    @staticmethod
+    def _metadata_projection_matches(metadata: Dict, key: str, target: Any) -> bool:
+        current = metadata.get(key)
+        if key in _EMPTY_TEXT_METADATA:
+            current = "" if current in (None, "") else current
+            target = "" if target in (None, "") else target
+            return current == target
+        if key in _EMPTY_OBJECT_METADATA:
+            if (
+                key == REVIEW_REPORT_REF_KEY
+                and key not in metadata
+                and metadata.get("review_report") not in (None, {}, "")
             ):
+                return False
+            return current in (None, {}, "{}") and target in (None, {}, "{}")
+        if key == PHASE_KEY:
+            return parse_phase(current) == parse_phase(target)
+        return encode_metadata_value(current) == encode_metadata_value(target)
+
+    def _apply_metadata_projection(
+        self,
+        item_id: str,
+        target: tuple[tuple[str, Any], ...],
+        *,
+        metadata: Optional[Dict] = None,
+    ) -> None:
+        if metadata is None:
+            _, metadata = self._read_issue_metadata(item_id)
+        for key, value in target:
+            if self._metadata_projection_matches(metadata, key, value):
                 continue
             self._set_metadata(item_id, key, value)
-            current[key] = value
+            metadata[key] = value
 
     def get_work_item(self, item_id: str) -> WorkItem:
         projection = self.observe_work_item_control(item_id)
@@ -1563,11 +1595,19 @@ class MulticaStore(WorkItemStore):
         ))
 
     def prepare_review_cycle(self, item_id: str, subject_digest: str) -> WorkItem:
+        issue, metadata = self._read_issue_metadata(item_id)
+        current = self._issue_to_control_projection(
+            issue, self.config.workspace_id).work_item
+        if (
+            current.phase == TaskPhase.REVIEW
+            and current.review_subject_digest == subject_digest
+        ):
+            return self.get_work_item(item_id)
         self._apply_metadata_projection(item_id, (
             *_REVIEW_CLEAR_METADATA,
             (REVIEW_SUBJECT_DIGEST_KEY, subject_digest),
             (PHASE_KEY, TaskPhase.REVIEW.value),
-        ))
+        ), metadata=metadata)
         return self.get_work_item(item_id)
 
     def assign_work_item(self, item_id: str, assignee: str, role: str):
