@@ -23,7 +23,7 @@ from omac.core.contract_boundaries import (
     responsibility_summary,
 )
 from omac.core.lint import lint as lint_manifest, lint_increment
-from omac.core.manifest import _dump_contract, _load_contract, load_manifest
+from omac.core.manifest import Contract, _dump_contract, _load_contract, load_manifest
 from omac.core.project_rules import END_MARKER, START_MARKER
 from omac.core.review_convergence import (
     REVIEW_PROTOCOL_VERSION,
@@ -38,7 +38,7 @@ from omac.engines.models import (
     PullRequestReadinessFailureKind, WorkItem, WorkItemPayload, WorkItemStatus,
 )
 from omac.engines.store import WorkItemStore
-from omac.errors import ValidationError
+from omac.errors import AuthError, PlatformError, ValidationError
 from omac.i18n import CN, EN, t, ui
 
 
@@ -890,7 +890,39 @@ def _resolve_phase(item: WorkItem, declared: TaskPhase) -> TaskPhase:
     return declared
 
 
-def _load_submit_item(
+def _submit_payload_is_materialized(
+    payload: WorkItemPayload, value: Any,
+) -> bool:
+    if payload is WorkItemPayload.CONTRACT:
+        return isinstance(value, Contract) or (
+            isinstance(value, Mapping) and bool(value))
+    if payload in {WorkItemPayload.DELIVERABLE, WorkItemPayload.PROJECT_RULES}:
+        return isinstance(value, str) and bool(value.strip())
+    if payload is WorkItemPayload.REVIEW_OBLIGATIONS:
+        return isinstance(value, list)
+    if payload is WorkItemPayload.REVIEW_LEDGER:
+        return isinstance(value, Mapping)
+    return isinstance(value, Mapping) and bool(value)
+
+
+def _require_submit_payloads_materialized(
+    projection, plan: frozenset[WorkItemPayload], item: WorkItem,
+) -> None:
+    missing = [
+        payload.value
+        for payload in plan & projection.deferred_payloads
+        if not _submit_payload_is_materialized(
+            payload, getattr(item, payload.value, None))
+    ]
+    if missing:
+        raise PlatformError(ui(
+            "Could not hydrate required work item payloads: "
+            + ", ".join(sorted(missing)),
+            "无法物化 work item 必需附件: " + ", ".join(sorted(missing)),
+        ))
+
+
+def load_submit_context(
     store: WorkItemStore, issue_id: str,
 ) -> tuple[WorkItem, TaskKind, TaskPhase]:
     """Read one control snapshot, then hydrate only this submit path's evidence."""
@@ -901,8 +933,9 @@ def _load_submit_item(
     declared = _phase(
         control.phase.value if hasattr(control.phase, "value") else control.phase)
     phase = _resolve_phase(control, declared)
-    item = store.hydrate_work_item_evidence(
-        projection, submit_hydration_plan(kind, phase))
+    plan = submit_hydration_plan(kind, phase)
+    item = store.hydrate_work_item_evidence(projection, plan)
+    _require_submit_payloads_materialized(projection, plan, item)
     return item, kind, phase
 
 
@@ -944,6 +977,7 @@ def submit(
     acceptance_results_file: Optional[str] = None,
     agent_pool: Optional[Set[str]] = None,
     base_manifest: Optional[Any] = None,
+    read_errors_as_validation: bool = False,
 ) -> SubmitResult:
     """work submit 的核心入口。
 
@@ -955,7 +989,14 @@ def submit(
     lint_increment(含对既有+增量全集的依赖引用校验)替代 standalone lint。
     """
 
-    item, kind, phase = _load_submit_item(store, issue_id)
+    try:
+        item, kind, phase = load_submit_context(store, issue_id)
+    except (PlatformError, AuthError) as exc:
+        if not read_errors_as_validation:
+            raise
+        raise ValidationError(ui(
+            f"Could not read work item '{issue_id}': {exc}",
+            f"无法读取 work item '{issue_id}' —— {exc}")) from exc
 
     provided = {
         "plan_file": plan_file,

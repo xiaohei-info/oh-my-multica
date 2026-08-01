@@ -27,7 +27,7 @@ from omac.engines.models import (
     EngineConfig, PullRequestReadiness, PullRequestReadinessFailure,
     WorkItemControlProjection, WorkItemPayload, WorkItemStatus,
 )
-from omac.errors import PlatformError, ValidationError
+from omac.errors import AuthError, PlatformError, ValidationError
 from omac.pipeline import dispatch as dispatch_mod
 from omac.pipeline.dispatch import (
     SUBMIT_PARAM_SPECS,
@@ -1022,6 +1022,16 @@ def test_submit_hydration_plan_is_explicit_by_kind_and_phase(
     assert dispatch_mod.submit_hydration_plan(kind, phase) == frozenset(expected)
 
 
+def test_submit_hydration_registry_covers_every_supported_spec():
+    supported = {
+        (kind, phase)
+        for kind, phases in dispatch_mod.SPECS.items()
+        for phase in phases
+    }
+
+    assert set(dispatch_mod.SUBMIT_HYDRATION_BY_KIND_PHASE) == supported
+
+
 def test_develop_authoring_submit_ignores_unrelated_historical_attachments(
     tmp_path,
 ):
@@ -1088,6 +1098,38 @@ def test_cli_submit_does_not_preload_complete_work_item(
     assert store.hydration_plans == [frozenset({WorkItemPayload.CONTRACT})]
 
 
+@pytest.mark.parametrize("read_error", [
+    PlatformError("attachment service unavailable"),
+    AuthError("multica authentication expired"),
+])
+def test_cli_submit_preserves_work_item_read_failure_contract(
+    tmp_path, monkeypatch, capsys, read_error,
+):
+    class ReadFailureStore:
+        config = EngineConfig(
+            engine_type="multica", workspace_id="workspace-1")
+
+        def list_members(self, workspace_id):
+            return []
+
+        def observe_work_item_control(self, item_id):
+            raise read_error
+
+    monkeypatch.setattr(work_cmd, "_resolve_store", ReadFailureStore)
+
+    rc = main([
+        "work", "submit", "issue-1",
+        "--pr-url", "https://example.test/pr/42",
+        "--verification-file", str(tmp_path / "verification.yaml"),
+    ])
+
+    assert rc == exit_codes.VALIDATION
+    error = json.loads(capsys.readouterr().err)
+    assert error["error"]["exit_code"] == exit_codes.VALIDATION
+    assert error["error"]["message"] == (
+        f"Could not read work item 'issue-1': {read_error}")
+
+
 def test_review_submit_fails_closed_when_required_target_is_unavailable(
     tmp_path,
 ):
@@ -1118,6 +1160,28 @@ def test_review_submit_fails_closed_when_required_target_is_unavailable(
         )
 
     assert backing.get_work_item(item.id).review_verdict is None
+
+
+def test_submit_hydration_accepts_empty_review_obligations_and_ledger():
+    backing = _store()
+    item = backing.create_work_item(
+        "mock-workspace", "develop", "desc", dag_key="develop",
+        worker="alice", reviewer="bob", kind=TaskKind.DEVELOP,
+        initial_status=WorkItemStatus.IN_REVIEW,
+    )
+    backing.set_node_contract(item.id, CONTRACT)
+    backing.update_work_item_metadata(item.id, phase=TaskPhase.REVIEW)
+    item = backing.get_work_item(item.id)
+    item.review_obligations = []
+    item.review_ledger = {}
+    store = _SelectiveSubmitStore(backing, item)
+
+    hydrated, kind, phase = dispatch_mod.load_submit_context(store, item.id)
+
+    assert kind is TaskKind.DEVELOP
+    assert phase is TaskPhase.REVIEW
+    assert hydrated.review_obligations == []
+    assert hydrated.review_ledger == {}
 
 
 # ==================== 参数校验(直接调 dispatch.validate_params) ===========================
