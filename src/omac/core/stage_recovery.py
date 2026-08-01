@@ -129,6 +129,7 @@ def prepare_stage_recovery(
         store.set_node_contract(node.work_item_id, node.contract)
     if stage == "merging":
         return "delegated-to-run-merge-delivery"
+    store.clear_assignment(node.work_item_id)
     store.reset_review(node.work_item_id)
     if stage == "review":
         subject = expected_review_subject or stage_recovery_subject(
