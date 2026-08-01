@@ -33,14 +33,15 @@ from ..core.taskmeta import (
     DECISION_REQUIRED_KEY, DELIVERY_IDENTITY_KEY, DELIVERABLE_KEY,
     DELIVERABLE_REF_KEY, KIND_KEY, MERGE_BOUNCE_KEY, PHASE_KEY,
     MACHINE_FEEDBACK_REF_KEY, PROJECT_RULES_KEY, PROJECT_RULES_REF_KEY, REVIEW_BOUNCE_KEY,
-    REVIEW_CONTINUATION_KEY, REVIEW_LEDGER_REF_KEY, REVIEW_OBLIGATIONS_KEY,
+    REVIEW_CONTINUATION_KEY, REVIEWER_RUN_BASELINE_KEY,
+    REVIEW_LEDGER_REF_KEY, REVIEW_OBLIGATIONS_KEY,
     REVIEW_OBLIGATIONS_REF_KEY,
     REVIEW_REPORT_REF_KEY,
     REVIEW_SUBJECT_DIGEST_KEY,
-    SOURCE_REFS_KEY, DeliveryIdentity, TaskKind, TaskPhase,
+    SOURCE_REFS_KEY, DeliveryIdentity, ReviewerRunBaseline, TaskKind, TaskPhase,
     VERIFICATION_REF_KEY, WORKER_BOUNCE_KEY, WORKER_HANDOFF_KEY,
     WorkerHandoffIntent, parse_bounces, parse_delivery_identity, parse_kind,
-    parse_phase, parse_worker_handoff,
+    parse_phase, parse_reviewer_run_baseline, parse_worker_handoff,
 )
 from ..errors import (
     AuthError, PlatformError, ValidationError, WorkItemNotFoundError,
@@ -81,6 +82,7 @@ _KNOWN_WORK_ITEM_METADATA_KEYS = {
     DECISION_REQUIRED_KEY, DELIVERABLE_KEY, DELIVERABLE_REF_KEY, KIND_KEY,
     MACHINE_FEEDBACK_REF_KEY, MERGE_BOUNCE_KEY, PHASE_KEY, PROJECT_RULES_KEY,
     PROJECT_RULES_REF_KEY, REVIEW_BOUNCE_KEY, REVIEW_CONTINUATION_KEY,
+    REVIEWER_RUN_BASELINE_KEY,
     REVIEW_LEDGER_REF_KEY, REVIEW_OBLIGATIONS_KEY, REVIEW_OBLIGATIONS_REF_KEY,
     REVIEW_REPORT_REF_KEY, REVIEW_SUBJECT_DIGEST_KEY, SOURCE_REFS_KEY,
     VERIFICATION_REF_KEY, WORKER_BOUNCE_KEY, WORKER_HANDOFF_KEY,
@@ -835,6 +837,8 @@ class MulticaStore(WorkItemStore):
             metadata, REVIEW_OBLIGATIONS_REF_KEY)
         review_continuation = self._json_metadata(
             metadata, REVIEW_CONTINUATION_KEY)
+        reviewer_run_baseline = self._json_metadata(
+            metadata, REVIEWER_RUN_BASELINE_KEY)
         machine_feedback_ref = self._json_metadata(
             metadata, MACHINE_FEEDBACK_REF_KEY)
         amendment_attempt = self._json_metadata(metadata, AMENDMENT_ATTEMPT_KEY)
@@ -911,6 +915,8 @@ class MulticaStore(WorkItemStore):
             review_continuation=(
                 review_continuation
                 if isinstance(review_continuation, dict) else None),
+            reviewer_run_baseline=parse_reviewer_run_baseline(
+                reviewer_run_baseline),
             worker_handoff=parse_worker_handoff(
                 self._json_metadata(metadata, WORKER_HANDOFF_KEY)),
             delivery_identity=parse_delivery_identity(
@@ -1296,6 +1302,9 @@ class MulticaStore(WorkItemStore):
         review_ledger: Optional[Dict[str, Any]] = None,
         review_ledger_source: Optional[str] = None,
         review_continuation: Optional[Dict[str, Any]] = None,
+        reviewer_run_baseline: Optional[
+            ReviewerRunBaseline | Dict[str, Any]
+        ] = None,
         worker_handoff: Optional[WorkerHandoffIntent | Dict[str, Any]] = None,
         delivery_identity: Optional[DeliveryIdentity | Dict[str, Any]] = None,
         decision_required: Optional[Dict[str, Any]] = None,
@@ -1380,6 +1389,13 @@ class MulticaStore(WorkItemStore):
         if review_continuation is not None:
             self._set_metadata(
                 item_id, REVIEW_CONTINUATION_KEY, review_continuation)
+        if reviewer_run_baseline is not None:
+            value = (
+                reviewer_run_baseline.as_dict()
+                if isinstance(reviewer_run_baseline, ReviewerRunBaseline)
+                else reviewer_run_baseline
+            )
+            self._set_metadata(item_id, REVIEWER_RUN_BASELINE_KEY, value)
         if worker_handoff is not None:
             value = (
                 worker_handoff.as_dict()
@@ -1507,6 +1523,7 @@ class MulticaStore(WorkItemStore):
         self._set_metadata(item_id, REVIEW_REPORT_REF_KEY, "{}")
         self._set_metadata(item_id, DECISION_REQUIRED_KEY, "{}")
         self._set_metadata(item_id, REVIEW_SUBJECT_DIGEST_KEY, "")
+        self._set_metadata(item_id, REVIEWER_RUN_BASELINE_KEY, "{}")
         self._set_metadata(item_id, PHASE_KEY, TaskPhase.AUTHORING.value)
 
     def prepare_review_cycle(self, item_id: str, subject_digest: str) -> WorkItem:
@@ -1519,6 +1536,7 @@ class MulticaStore(WorkItemStore):
         self._set_metadata(item_id, REVIEW_REPORT_REF_KEY, "{}")
         self._set_metadata(item_id, DECISION_REQUIRED_KEY, "{}")
         self._set_metadata(item_id, REVIEW_SUBJECT_DIGEST_KEY, subject_digest)
+        self._set_metadata(item_id, REVIEWER_RUN_BASELINE_KEY, "{}")
         self._set_metadata(item_id, PHASE_KEY, TaskPhase.REVIEW.value)
         return self.get_work_item(item_id)
 

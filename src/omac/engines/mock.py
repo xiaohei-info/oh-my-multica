@@ -20,9 +20,9 @@ from ..core.machine_feedback import (
     dump_machine_feedback, parse_machine_feedback,
 )
 from ..core.taskmeta import (
-    DELIVERY_CONTENT_KEY, DeliveryIdentity, TaskKind,
+    DELIVERY_CONTENT_KEY, DeliveryIdentity, ReviewerRunBaseline, TaskKind,
     TaskPhase, WorkerHandoffIntent, parse_delivery_identity,
-    parse_worker_handoff,
+    parse_reviewer_run_baseline, parse_worker_handoff,
 )
 from ..errors import PlatformError, ValidationError, WorkItemNotFoundError
 from ..i18n import ui
@@ -767,6 +767,9 @@ class MockStore(WorkItemStore):
         review_ledger: Optional[Dict[str, Any]] = None,
         review_ledger_source: Optional[str] = None,
         review_continuation: Optional[Dict[str, Any]] = None,
+        reviewer_run_baseline: Optional[
+            ReviewerRunBaseline | Dict[str, Any]
+        ] = None,
         worker_handoff: Optional[WorkerHandoffIntent | Dict[str, Any]] = None,
         delivery_identity: Optional[DeliveryIdentity | Dict[str, Any]] = None,
         decision_required: Optional[Dict[str, Any]] = None,
@@ -870,6 +873,9 @@ class MockStore(WorkItemStore):
             }
         if review_continuation is not None:
             item.review_continuation = review_continuation or None
+        if reviewer_run_baseline is not None:
+            item.reviewer_run_baseline = parse_reviewer_run_baseline(
+                reviewer_run_baseline)
         if worker_handoff is not None:
             item.worker_handoff = parse_worker_handoff(worker_handoff)
         if delivery_identity is not None:
@@ -977,6 +983,7 @@ class MockStore(WorkItemStore):
         item.review_report_ref = None
         item.decision_required = None
         item.review_subject_digest = None
+        item.reviewer_run_baseline = None
         item.phase = TaskPhase.AUTHORING
 
     def prepare_review_cycle(self, item_id: str, subject_digest: str) -> WorkItem:
@@ -991,6 +998,7 @@ class MockStore(WorkItemStore):
         item.review_report_ref = None
         item.decision_required = None
         item.review_subject_digest = subject_digest
+        item.reviewer_run_baseline = None
         item.phase = TaskPhase.REVIEW
         return item
 
