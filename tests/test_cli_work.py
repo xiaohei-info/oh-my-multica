@@ -1,6 +1,7 @@
 """work show 的 kind × phase 事实包 + submit 模板/左移门/退出码。"""
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 
 import pytest
@@ -8,6 +9,7 @@ import yaml
 
 from omac.cli.main import main
 from omac.cli import exit_codes
+from omac.cli.commands import work as work_cmd
 from omac.core.manifest import (
     ConsumedArtifact,
     Contract,
@@ -22,9 +24,10 @@ from omac.core.contract_boundaries import responsibility_summary
 from omac.core.taskmeta import TaskKind, TaskPhase, WorkerHandoffIntent
 from omac.engines import create_engine
 from omac.engines.models import (
-    EngineConfig, PullRequestReadiness, PullRequestReadinessFailure, WorkItemStatus,
+    EngineConfig, PullRequestReadiness, PullRequestReadinessFailure,
+    WorkItemControlProjection, WorkItemPayload, WorkItemStatus,
 )
-from omac.errors import ValidationError
+from omac.errors import PlatformError, ValidationError
 from omac.pipeline import dispatch as dispatch_mod
 from omac.pipeline.dispatch import (
     SUBMIT_PARAM_SPECS,
@@ -925,6 +928,196 @@ def _make_review_report(integration_gates=True):
             "source_of_truth": ["docs/d.md"], "delivery_goal": "delivers",
         }]
     return report
+
+
+class _SelectiveSubmitStore:
+    """Expose control facts while making unrelated attachment reads fail loudly."""
+
+    def __init__(self, backing, item, *, fail_on=()):
+        self._backing = backing
+        self._source = deepcopy(item)
+        self.config = backing.config
+        self.fail_on = frozenset(fail_on)
+        self.observe_calls = 0
+        self.full_get_calls = 0
+        self.hydration_plans = []
+
+        control = deepcopy(item)
+        for payload in WorkItemPayload:
+            setattr(control, payload.value, None)
+        self._projection = WorkItemControlProjection(
+            control,
+            frozenset(WorkItemPayload),
+        )
+
+    def __getattr__(self, name):
+        return getattr(self._backing, name)
+
+    def get_work_item(self, item_id):
+        self.full_get_calls += 1
+        raise AssertionError("submit must not use complete work-item hydration")
+
+    def observe_work_item_control(self, item_id):
+        assert item_id == self._source.id
+        self.observe_calls += 1
+        return self._projection
+
+    def hydrate_work_item_evidence(self, projection, plan):
+        requested = frozenset(plan)
+        self.hydration_plans.append(requested)
+        unavailable = requested & self.fail_on
+        if unavailable:
+            names = ", ".join(sorted(payload.value for payload in unavailable))
+            raise PlatformError(f"attachment download timeout: {names}")
+        hydrated = deepcopy(projection.work_item)
+        for payload in requested:
+            setattr(hydrated, payload.value, deepcopy(
+                getattr(self._source, payload.value)))
+        return hydrated
+
+
+@pytest.mark.parametrize(("kind", "phase", "expected"), [
+    (TaskKind.DEVELOP, TaskPhase.AUTHORING, {WorkItemPayload.CONTRACT}),
+    (TaskKind.DEVELOP, TaskPhase.REVIEW, {
+        WorkItemPayload.CONTRACT,
+        WorkItemPayload.REVIEW_OBLIGATIONS,
+        WorkItemPayload.REVIEW_LEDGER,
+    }),
+    (TaskKind.PLAN, TaskPhase.AUTHORING, set()),
+    (TaskKind.PLAN, TaskPhase.REVIEW, {
+        WorkItemPayload.CONTRACT,
+        WorkItemPayload.DELIVERABLE,
+        WorkItemPayload.PROJECT_RULES,
+        WorkItemPayload.REVIEW_OBLIGATIONS,
+        WorkItemPayload.REVIEW_LEDGER,
+    }),
+    (TaskKind.ACCEPTANCE, TaskPhase.AUTHORING, set()),
+    (TaskKind.ACCEPTANCE, TaskPhase.REVIEW, {
+        WorkItemPayload.CONTRACT,
+        WorkItemPayload.DELIVERABLE,
+        WorkItemPayload.REVIEW_OBLIGATIONS,
+        WorkItemPayload.REVIEW_LEDGER,
+    }),
+    (TaskKind.DECOMPOSE, TaskPhase.AUTHORING, set()),
+    (TaskKind.DECOMPOSE, TaskPhase.REVIEW, {
+        WorkItemPayload.CONTRACT,
+        WorkItemPayload.DELIVERABLE,
+        WorkItemPayload.REVIEW_OBLIGATIONS,
+        WorkItemPayload.REVIEW_LEDGER,
+    }),
+    (TaskKind.AMENDMENT, TaskPhase.AUTHORING, set()),
+    (TaskKind.AMENDMENT, TaskPhase.REVIEW, {
+        WorkItemPayload.CONTRACT,
+        WorkItemPayload.DELIVERABLE,
+        WorkItemPayload.REVIEW_OBLIGATIONS,
+        WorkItemPayload.REVIEW_LEDGER,
+    }),
+    (TaskKind.FINAL_ACCEPTANCE, TaskPhase.AUTHORING, {
+        WorkItemPayload.CONTRACT,
+    }),
+])
+def test_submit_hydration_plan_is_explicit_by_kind_and_phase(
+    kind, phase, expected,
+):
+    assert dispatch_mod.submit_hydration_plan(kind, phase) == frozenset(expected)
+
+
+def test_develop_authoring_submit_ignores_unrelated_historical_attachments(
+    tmp_path,
+):
+    backing = _store()
+    item = backing.create_work_item(
+        "mock-workspace", "develop", "desc", dag_key="develop",
+        worker="alice", reviewer="bob", kind=TaskKind.DEVELOP,
+    )
+    backing.set_node_contract(item.id, CONTRACT)
+    item = backing.get_work_item(item.id)
+    store = _SelectiveSubmitStore(
+        backing,
+        item,
+        fail_on={
+            WorkItemPayload.VERIFICATION,
+            WorkItemPayload.REVIEW_REPORT,
+            WorkItemPayload.REVIEW_LEDGER,
+            WorkItemPayload.REVIEW_OBLIGATIONS,
+            WorkItemPayload.DELIVERABLE,
+            WorkItemPayload.PROJECT_RULES,
+        },
+    )
+    verification_file = tmp_path / "verification.yaml"
+    verification_file.write_text(yaml.safe_dump(_make_verification()))
+
+    result = dispatch_mod.submit(
+        store,
+        item.id,
+        pr_url="https://example.test/pr/42",
+        verification_file=str(verification_file),
+    )
+
+    assert result.advanced_to is WorkItemStatus.DONE
+    assert store.full_get_calls == 0
+    assert store.observe_calls == 1
+    assert store.hydration_plans == [frozenset({WorkItemPayload.CONTRACT})]
+    assert backing.get_work_item(item.id).verification is not None
+
+
+def test_cli_submit_does_not_preload_complete_work_item(
+    tmp_path, monkeypatch, capsys,
+):
+    backing = _store()
+    item = backing.create_work_item(
+        "mock-workspace", "develop", "desc", dag_key="develop",
+        worker="alice", reviewer="bob", kind=TaskKind.DEVELOP,
+    )
+    backing.set_node_contract(item.id, CONTRACT)
+    item = backing.get_work_item(item.id)
+    store = _SelectiveSubmitStore(backing, item)
+    monkeypatch.setattr(work_cmd, "_resolve_store", lambda: store)
+    verification_file = tmp_path / "verification.yaml"
+    verification_file.write_text(yaml.safe_dump(_make_verification()))
+
+    rc = main([
+        "work", "submit", item.id,
+        "--pr-url", "https://example.test/pr/42",
+        "--verification-file", str(verification_file),
+    ])
+
+    assert rc == exit_codes.OK, capsys.readouterr()
+    assert store.full_get_calls == 0
+    assert store.observe_calls == 1
+    assert store.hydration_plans == [frozenset({WorkItemPayload.CONTRACT})]
+
+
+def test_review_submit_fails_closed_when_required_target_is_unavailable(
+    tmp_path,
+):
+    backing = _store()
+    item = backing.create_work_item(
+        "mock-workspace", "plan", "desc", dag_key="plan",
+        worker="alice", reviewer="bob", kind=TaskKind.PLAN,
+        initial_status=WorkItemStatus.IN_REVIEW,
+    )
+    backing.update_work_item_metadata(
+        item.id,
+        phase=TaskPhase.REVIEW,
+        deliverable="# Plan\n",
+        project_rules="## Rules\n",
+    )
+    item = backing.get_work_item(item.id)
+    store = _SelectiveSubmitStore(
+        backing, item, fail_on={WorkItemPayload.DELIVERABLE})
+    report_file = tmp_path / "report.yaml"
+    report_file.write_text(yaml.safe_dump(_make_review_report()))
+
+    with pytest.raises(PlatformError, match="deliverable"):
+        dispatch_mod.submit(
+            store,
+            item.id,
+            verdict="pass",
+            report_file=str(report_file),
+        )
+
+    assert backing.get_work_item(item.id).review_verdict is None
 
 
 # ==================== 参数校验(直接调 dispatch.validate_params) ===========================
