@@ -302,6 +302,20 @@ def _direct_run_ids(runs: List[Dict[str, Any]]) -> set[str]:
     }
 
 
+def _run_trigger_kind(run: Dict[str, Any]) -> str | None:
+    attribution = run.get("attribution")
+    if not isinstance(attribution, dict):
+        return None
+    evidence = attribution.get("evidence")
+    if not isinstance(evidence, dict) or not evidence.get("kind"):
+        return None
+    return str(evidence["kind"])
+
+
+def _is_manual_rerun(run: Dict[str, Any]) -> bool:
+    return _run_trigger_kind(run) == "rerun"
+
+
 def _is_not_found(message: str) -> bool:
     text = message.lower()
     return "not found" in text or "does not exist" in text or "404" in text
@@ -1628,18 +1642,41 @@ class MulticaStore(WorkItemStore):
         ), metadata=metadata)
         return self.get_work_item(item_id)
 
-    def assign_work_item(self, item_id: str, assignee: str, role: str):
+    def assign_work_item(
+        self,
+        item_id: str,
+        assignee: str,
+        role: str,
+        *,
+        start_run: bool = True,
+    ):
         agent_id = self._resolve_agent_id(assignee)
-        current = self._run_multica(["issue", "get", item_id, "--output", "json"])
+        current = None
+        if start_run:
+            current = self._run_multica([
+                "issue", "get", item_id, "--output", "json",
+            ])
+        if role == "worker":
+            self.update_work_item_metadata(item_id, worker=assignee)
+        elif role == "reviewer":
+            self.update_work_item_metadata(item_id, reviewer=assignee)
+        if not start_run:
+            self._put_issue_fields_direct(
+                item_id,
+                {
+                    "assignee_type": "agent",
+                    "assignee_id": agent_id,
+                    "suppress_run": True,
+                },
+                operation="suppressed assignment",
+            )
+            return
+
         current_assignee_id = (
             str(current.get("assignee_id"))
             if isinstance(current, dict) and current.get("assignee_id")
             else None
         )
-        if role == "worker":
-            self.update_work_item_metadata(item_id, worker=assignee)
-        elif role == "reviewer":
-            self.update_work_item_metadata(item_id, reviewer=assignee)
         self._run_multica(["issue", "assign", item_id, "--to", agent_id])
         # 改派到不同 agent 时，Multica assignment 会创建 run，随后的 wake
         # 只需确认，避免再 rerun 一次。同一 assignee 的 assign 是幂等更新，
@@ -1773,12 +1810,8 @@ class MulticaStore(WorkItemStore):
 
 
 class MulticaRuntime(AgentRuntime):
-    """执行面:Multica 的「assign 即唤醒」——issue 被 assign 后,agent 所在机器的
-    daemon 自动认领任务并以 issue 内容为 prompt 拉起 agent CLI。
-
-    因此 wake 是确认性 no-op:只需数据面 assign 已生效(设计文档 §12.3)。
-    阶段交接(评审/回退)= 同一 issue 转派新 assignee,天然支持接力棒传递。
-    """
+    """执行面:默认 assignment 由 Multica 启动 Run；静默 assignment 则由 wake
+    在确认没有活跃 Run 后通过 issue rerun 显式启动。"""
 
     def __init__(
         self,
@@ -1839,13 +1872,6 @@ class MulticaRuntime(AgentRuntime):
                 not in _RERUNNABLE_DIRECT_RUN_STATUSES
             ):
                 return None
-        rerun_source = {
-            "id": str(latest["id"]) if latest.get("id") else None,
-            "agent_id": (
-                str(latest["agent_id"])
-                if latest.get("agent_id") else None
-            ),
-        }
         direct_run_ids = _direct_run_ids(runs)
         try:
             self._store._run_multica([
@@ -1856,24 +1882,14 @@ class MulticaRuntime(AgentRuntime):
                 observed_runs = self._issue_runs(item_id)
             except PlatformError:
                 raise rerun_error from None
-            source_id = rerun_source["id"]
-            if not source_id:
-                raise rerun_error from None
             candidates = [
                 run for run in observed_runs
                 if (run.get("kind") or "direct") == "direct"
                 and run.get("id")
                 and str(run["id"]) not in direct_run_ids
-                and source_id in {
-                    str(parent_id)
-                    for parent_id in (
-                        run.get("retry_of_task_id"),
-                        run.get("parent_task_id"),
-                    )
-                    if parent_id
-                }
+                and _is_manual_rerun(run)
             ]
-            if not candidates:
+            if len(candidates) != 1:
                 raise rerun_error from None
             try:
                 resolved_agent_id = self._store._resolve_agent_id(agent)
@@ -1882,10 +1898,10 @@ class MulticaRuntime(AgentRuntime):
             if not resolved_agent_id:
                 raise rerun_error from None
             expected_agent_id = str(resolved_agent_id)
-            if any(
-                run.get("agent_id")
-                and str(run["agent_id"]) == expected_agent_id
-                for run in candidates
+            candidate_agent_id = candidates[0].get("agent_id")
+            if (
+                candidate_agent_id
+                and str(candidate_agent_id) == expected_agent_id
             ):
                 return None
             raise rerun_error from None
@@ -1934,6 +1950,7 @@ class MulticaRuntime(AgentRuntime):
                     if run.get("retry_of_task_id") or run.get("parent_task_id")
                     else None
                 ),
+                trigger_kind=_run_trigger_kind(run),
             )
             for run in runs
             if isinstance(run, dict) and run.get("id")

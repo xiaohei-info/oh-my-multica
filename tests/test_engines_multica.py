@@ -1835,6 +1835,7 @@ def test_multica_runtime_accepts_rerun_created_before_response_failure(monkeypat
                 "id": "run-retry", "status": "queued", "kind": "direct",
                 "agent_id": "agent-expected",
                 "retry_of_task_id": "run-failed",
+                "attribution": {"evidence": {"kind": "rerun"}},
             },
         ],
     ])
@@ -1857,6 +1858,87 @@ def test_multica_runtime_accepts_rerun_created_before_response_failure(monkeypat
     assert calls.count([
         "issue", "rerun", "issue-1", "--output", "json",
     ]) == 1
+
+
+def test_multica_runtime_accepts_single_fresh_run_before_response_failure(
+    monkeypatch,
+):
+    """空 body rerun 创建的唯一新 direct Run 无 lineage 也可证明已生效。"""
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    rerun_error = PlatformError("rerun response unavailable")
+    monkeypatch.setattr(store, "_resolve_agent_id", lambda _name: "agent-expected")
+    observations = iter([
+        [{
+            "id": "run-failed", "status": "failed", "kind": "direct",
+            "agent_id": "agent-old",
+        }],
+        [{
+            "id": "run-failed", "status": "failed", "kind": "direct",
+            "agent_id": "agent-old",
+        }],
+        [
+            {
+                "id": "run-failed", "status": "failed", "kind": "direct",
+                "agent_id": "agent-old",
+            },
+            {
+                "id": "run-fresh", "status": "queued", "kind": "direct",
+                "agent_id": "agent-expected",
+                "attribution": {"evidence": {"kind": "rerun"}},
+            },
+        ],
+    ])
+
+    def fake_run(args):
+        if args[:2] == ["issue", "runs"]:
+            return next(observations)
+        if args[:2] == ["issue", "rerun"]:
+            raise rerun_error
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+    runtime = MulticaRuntime(
+        store, active_observation_attempts=2,
+        active_observation_interval=0, sleeper=lambda _seconds: None)
+
+    runtime.wake("issue-1", "alice", "worker")
+
+
+def test_multica_runtime_rejects_non_rerun_run_after_response_failure(
+    monkeypatch,
+):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    rerun_error = PlatformError("rerun response unavailable")
+    monkeypatch.setattr(store, "_resolve_agent_id", lambda _name: "agent-expected")
+    observations = iter([
+        [{"id": "run-failed", "status": "failed", "kind": "direct"}],
+        [{"id": "run-failed", "status": "failed", "kind": "direct"}],
+        [
+            {"id": "run-failed", "status": "failed", "kind": "direct"},
+            {
+                "id": "run-assignment", "status": "queued", "kind": "direct",
+                "agent_id": "agent-expected",
+                "attribution": {"evidence": {"kind": "issue_assignment"}},
+            },
+        ],
+    ])
+
+    def fake_run(args):
+        if args[:2] == ["issue", "runs"]:
+            return next(observations)
+        if args[:2] == ["issue", "rerun"]:
+            raise rerun_error
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+    runtime = MulticaRuntime(
+        store, active_observation_attempts=2,
+        active_observation_interval=0, sleeper=lambda _seconds: None)
+
+    with pytest.raises(PlatformError) as exc_info:
+        runtime.wake("issue-1", "alice", "worker")
+
+    assert exc_info.value is rerun_error
 
 
 def test_multica_runtime_accepts_expected_run_after_not_assigned_rerun(
@@ -1884,6 +1966,7 @@ def test_multica_runtime_accepts_expected_run_after_not_assigned_rerun(
                 "id": "run-retry", "status": "queued", "kind": "direct",
                 "agent_id": "agent-expected",
                 "retry_of_task_id": "run-failed",
+                "attribution": {"evidence": {"kind": "rerun"}},
             },
         ],
     ])
@@ -1930,6 +2013,7 @@ def test_multica_runtime_accepts_parented_rerun_before_response_failure(monkeypa
                 "id": "run-retry", "status": "queued", "kind": "direct",
                 "agent_id": "agent-expected",
                 "parent_task_id": "run-failed",
+                "attribution": {"evidence": {"kind": "rerun"}},
             },
         ],
     ])
@@ -1961,42 +2045,6 @@ def test_multica_runtime_preserves_rerun_error_for_wrong_agent_run(monkeypatch):
             {
                 "id": "run-other", "status": "queued", "kind": "direct",
                 "agent_id": "agent-other",
-                "retry_of_task_id": "run-failed",
-            },
-        ],
-    ])
-
-    def fake_run(args):
-        if args[:2] == ["issue", "runs"]:
-            return next(observations)
-        if args[:2] == ["issue", "rerun"]:
-            raise rerun_error
-        raise AssertionError(args)
-
-    monkeypatch.setattr(store, "_run_multica", fake_run)
-    runtime = MulticaRuntime(
-        store, active_observation_attempts=2,
-        active_observation_interval=0, sleeper=lambda _seconds: None)
-
-    with pytest.raises(PlatformError) as exc_info:
-        runtime.wake("issue-1", "alice", "worker")
-
-    assert exc_info.value is rerun_error
-
-
-def test_multica_runtime_preserves_rerun_error_for_other_parent(monkeypatch):
-    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
-    rerun_error = PlatformError("rerun response unavailable")
-    monkeypatch.setattr(store, "_resolve_agent_id", lambda name: "agent-expected")
-    observations = iter([
-        [{"id": "run-failed", "status": "failed", "kind": "direct"}],
-        [{"id": "run-failed", "status": "failed", "kind": "direct"}],
-        [
-            {"id": "run-failed", "status": "failed", "kind": "direct"},
-            {
-                "id": "run-other", "status": "queued", "kind": "direct",
-                "agent_id": "agent-expected",
-                "parent_task_id": "run-unrelated",
             },
         ],
     ])
@@ -2036,7 +2084,7 @@ def test_multica_runtime_preserves_rerun_error_for_unparented_concurrent_runs(
             },
             {
                 "id": "run-other", "status": "queued", "kind": "direct",
-                "agent_id": "agent-other",
+                "agent_id": "agent-expected",
             },
         ],
     ])
@@ -2323,7 +2371,8 @@ def test_multica_runtime_lists_typed_run_identity(monkeypatch):
          "agent_id": "agent-1", "attempt": 1, "max_attempts": 2,
          "error": "Selected model is at capacity. Please try a different model.",
          "failure_reason": "agent_error.model_not_found_or_unavailable",
-         "retry_of_task_id": "run-0"},
+         "retry_of_task_id": "run-0",
+         "attribution": {"evidence": {"kind": "rerun"}}},
         {"id": "run-2", "kind": "comment", "status": "running",
          "agent_id": "agent-2"},
     ])
@@ -2332,7 +2381,7 @@ def test_multica_runtime_lists_typed_run_identity(monkeypatch):
         AgentRunObservation(
             id="run-1", kind="direct", status="failed", agent_id="agent-1",
             error="Selected model is at capacity. Please try a different model.",
-            retry_of_run_id="run-0"),
+            retry_of_run_id="run-0", trigger_kind="rerun"),
         AgentRunObservation(
             id="run-2", kind="comment", status="running", agent_id="agent-2"),
     ]
@@ -2470,6 +2519,164 @@ def test_multica_runtime_does_not_rerun_fresh_failed_assignment(monkeypatch):
     runtime.wake("issue-1", "alice", "reviewer")
 
     assert calls.count(["issue", "rerun", "issue-1", "--output", "json"]) == 1
+
+
+def test_multica_silent_reviewer_assignment_uses_suppressed_update(
+    tmp_path, monkeypatch,
+):
+    """Reviewer identity is assigned without letting UpdateIssue resume a session."""
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    item_id = "8e6bd282-6039-41d2-aa00-969a0bf1554a"
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        '{"server_url":"https://api.example.test","token":"secret-token"}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MULTICA_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(store, "_resolve_agent_id", lambda _name: "agent-reviewer")
+    metadata = []
+    monkeypatch.setattr(
+        store,
+        "update_work_item_metadata",
+        lambda observed_id, **values: metadata.append((observed_id, values)),
+    )
+    payloads = []
+
+    def run(args, **_kwargs):
+        body_path = args[args.index("--data-binary") + 1].removeprefix("@")
+        payloads.append(json.loads(Path(body_path).read_text(encoding="utf-8")))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("omac.engines.multica.subprocess.run", run)
+
+    store.assign_work_item(
+        item_id, "hermes-reviewer", "reviewer", start_run=False)
+
+    assert metadata == [(item_id, {"reviewer": "hermes-reviewer"})]
+    assert payloads == [{
+        "assignee_type": "agent",
+        "assignee_id": "agent-reviewer",
+        "suppress_run": True,
+    }]
+    assert store._consume_assignment_wake_pending(item_id) is False
+
+
+def test_multica_silent_reviewer_assignment_then_wake_avoids_active_duplicate(
+    tmp_path, monkeypatch,
+):
+    """A silent handoff still lets runtime.wake preserve active-Run idempotency."""
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    item_id = "8e6bd282-6039-41d2-aa00-969a0bf1554a"
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        '{"server_url":"https://api.example.test","token":"secret-token"}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MULTICA_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(store, "_resolve_agent_id", lambda _name: "agent-reviewer")
+    monkeypatch.setattr(store, "update_work_item_metadata", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "omac.engines.multica.subprocess.run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0, stdout="", stderr=""),
+    )
+    calls = []
+
+    def run_multica(args, capture=True):
+        calls.append(args)
+        if args[:2] == ["issue", "runs"]:
+            return [{
+                "id": "review-run-1",
+                "status": "running",
+                "kind": "direct",
+                "agent_id": "agent-reviewer",
+                "created_at": "2026-08-01T01:00:00Z",
+            }]
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", run_multica)
+
+    store.assign_work_item(
+        item_id, "hermes-reviewer", "reviewer", start_run=False)
+    MulticaRuntime(store).wake(item_id, "hermes-reviewer", "reviewer")
+
+    assert not any(args[:2] == ["issue", "rerun"] for args in calls)
+
+
+def test_multica_silent_initial_reviewer_handoff_wakes_with_fresh_rerun(
+    tmp_path, monkeypatch,
+):
+    """The first reviewer Run is created by issue rerun without a task id."""
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    item_id = "8e6bd282-6039-41d2-aa00-969a0bf1554a"
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        '{"server_url":"https://api.example.test","token":"secret-token"}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MULTICA_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(store, "_resolve_agent_id", lambda _name: "agent-reviewer")
+    monkeypatch.setattr(store, "update_work_item_metadata", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "omac.engines.multica.subprocess.run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0, stdout="", stderr=""),
+    )
+    calls = []
+
+    def run_multica(args, capture=True):
+        calls.append(args)
+        if args[:2] == ["issue", "runs"]:
+            return [{
+                "id": "worker-run-1",
+                "status": "completed",
+                "kind": "direct",
+                "agent_id": "agent-worker",
+                "created_at": "2026-08-01T01:00:00Z",
+            }]
+        if args[:2] == ["issue", "rerun"]:
+            return {"id": "review-run-1", "status": "queued"}
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", run_multica)
+
+    store.assign_work_item(
+        item_id, "hermes-reviewer", "reviewer", start_run=False)
+    MulticaRuntime(
+        store, sleeper=lambda _seconds: None,
+        active_observation_attempts=1,
+    ).wake(item_id, "hermes-reviewer", "reviewer")
+
+    assert ["issue", "rerun", item_id, "--output", "json"] in calls
+    assert not any("--task-id" in args for args in calls)
+
+
+def test_multica_worker_assignment_keeps_existing_start_run_path(monkeypatch):
+    """The backward-compatible default still delegates run startup to assign."""
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    calls = []
+    monkeypatch.setattr(store, "_resolve_agent_id", lambda _name: "agent-worker")
+
+    def run(args, capture=True):
+        calls.append(args)
+        if args[:2] == ["issue", "get"]:
+            return {
+                "id": "issue-1",
+                "assignee_id": "old-agent",
+                "metadata": {"kind": "develop"},
+            }
+        if args[:3] == ["issue", "metadata", "set"]:
+            return None
+        if args[:2] == ["issue", "assign"]:
+            return {"id": "issue-1", "assignee_id": "agent-worker"}
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", run)
+
+    store.assign_work_item("issue-1", "alice", "worker")
+
+    assert ["issue", "assign", "issue-1", "--to", "agent-worker"] in calls
+    assert store._consume_assignment_wake_pending("issue-1") is True
 
 
 def test_multica_reviewer_metadata_failure_does_not_start_assignment(monkeypatch):
