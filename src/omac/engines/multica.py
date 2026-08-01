@@ -1849,32 +1849,94 @@ class MulticaRuntime(AgentRuntime):
             for run in runs
         )
 
+    @staticmethod
+    def _has_active_direct_run_for_agent(
+        runs: List[Dict[str, Any]], agent_id: str,
+    ) -> bool:
+        return any(
+            (run.get("kind") or "direct") == "direct"
+            and str(run.get("agent_id") or "") == agent_id
+            and (run.get("status") or "").lower() in _ACTIVE_RUN_STATUSES
+            for run in runs
+        )
+
+    @staticmethod
+    def _has_foreign_active_direct_run(
+        runs: List[Dict[str, Any]], agent_id: str,
+    ) -> bool:
+        return any(
+            (run.get("kind") or "direct") == "direct"
+            and str(run.get("agent_id") or "") != agent_id
+            and (run.get("status") or "").lower() in _ACTIVE_RUN_STATUSES
+            for run in runs
+        )
+
     def wake(self, item_id: str, agent: str, role: str) -> None:
         if self._store._consume_assignment_wake_pending(item_id):
             return None
+        strict_reviewer_handoff = role == "reviewer"
+        expected_agent_id: str | None = None
+        if strict_reviewer_handoff:
+            resolved_agent_id = self._store._resolve_agent_id(agent)
+            if not resolved_agent_id:
+                raise PlatformError(f"Could not resolve Multica agent {agent}")
+            expected_agent_id = str(resolved_agent_id)
         runs = self._issue_runs(item_id)
-        if self._has_active_run(runs):
-            return None
         latest = _latest_direct_run(runs)
-        if not latest or (
-            (latest.get("status") or "").lower()
-            not in _RERUNNABLE_DIRECT_RUN_STATUSES
-        ):
-            return None
-        for _attempt in range(1, self._active_observation_attempts):
-            self._sleeper(self._active_observation_interval)
-            runs = self._issue_runs(item_id)
+        if strict_reviewer_handoff:
+            if self._has_active_direct_run_for_agent(
+                runs, expected_agent_id,
+            ):
+                return None
+            for _attempt in range(1, self._active_observation_attempts):
+                if (
+                    latest
+                    and (latest.get("status") or "").lower()
+                    in _RERUNNABLE_DIRECT_RUN_STATUSES
+                    and not self._has_foreign_active_direct_run(
+                        runs, expected_agent_id)
+                ):
+                    break
+                self._sleeper(self._active_observation_interval)
+                runs = self._issue_runs(item_id)
+                if self._has_active_direct_run_for_agent(
+                    runs, expected_agent_id,
+                ):
+                    return None
+                latest = _latest_direct_run(runs)
+            if self._has_foreign_active_direct_run(
+                runs, expected_agent_id,
+            ):
+                raise PlatformError(
+                    f"Reviewer handoff for {item_id} is still waiting for the prior "
+                    "direct Run to finish")
+        else:
             if self._has_active_run(runs):
                 return None
-            latest = _latest_direct_run(runs)
             if not latest or (
                 (latest.get("status") or "").lower()
                 not in _RERUNNABLE_DIRECT_RUN_STATUSES
             ):
                 return None
+            for _attempt in range(1, self._active_observation_attempts):
+                self._sleeper(self._active_observation_interval)
+                runs = self._issue_runs(item_id)
+                if self._has_active_run(runs):
+                    return None
+                latest = _latest_direct_run(runs)
+                if not latest or (
+                    (latest.get("status") or "").lower()
+                    not in _RERUNNABLE_DIRECT_RUN_STATUSES
+                ):
+                    return None
+        if not latest or (
+            (latest.get("status") or "").lower()
+            not in _RERUNNABLE_DIRECT_RUN_STATUSES
+        ):
+            return None
         direct_run_ids = _direct_run_ids(runs)
         try:
-            self._store._run_multica([
+            rerun = self._store._run_multica([
                 "issue", "rerun", item_id, "--output", "json",
             ])
         except PlatformError as rerun_error:
@@ -1891,13 +1953,14 @@ class MulticaRuntime(AgentRuntime):
             ]
             if len(candidates) != 1:
                 raise rerun_error from None
-            try:
-                resolved_agent_id = self._store._resolve_agent_id(agent)
-            except PlatformError:
-                raise rerun_error from None
-            if not resolved_agent_id:
-                raise rerun_error from None
-            expected_agent_id = str(resolved_agent_id)
+            if expected_agent_id is None:
+                try:
+                    resolved_agent_id = self._store._resolve_agent_id(agent)
+                except PlatformError:
+                    raise rerun_error from None
+                if not resolved_agent_id:
+                    raise rerun_error from None
+                expected_agent_id = str(resolved_agent_id)
             candidate_agent_id = candidates[0].get("agent_id")
             if (
                 candidate_agent_id
@@ -1905,7 +1968,40 @@ class MulticaRuntime(AgentRuntime):
             ):
                 return None
             raise rerun_error from None
-        return None
+        if not strict_reviewer_handoff:
+            return None
+        if not isinstance(rerun, dict) or not rerun.get("id"):
+            raise PlatformError(
+                f"Multica rerun for {item_id} did not return a task identity")
+        task_id = str(rerun["id"])
+        response_agent_id = rerun.get("agent_id")
+        if (
+            response_agent_id
+            and str(response_agent_id) != expected_agent_id
+        ):
+            raise PlatformError(
+                f"Multica rerun {task_id} targets unexpected agent "
+                f"{response_agent_id}; expected {expected_agent_id}")
+        for attempt in range(self._active_observation_attempts):
+            observed_runs = self._issue_runs(item_id)
+            observed = next(
+                (run for run in observed_runs if str(run.get("id") or "") == task_id),
+                None,
+            )
+            if observed is not None:
+                if (
+                    (observed.get("kind") or "direct") != "direct"
+                    or str(observed.get("agent_id") or "") != expected_agent_id
+                    or not _is_manual_rerun(observed)
+                ):
+                    raise PlatformError(
+                        f"Multica rerun {task_id} is not the expected fresh "
+                        f"direct Run for agent {expected_agent_id}")
+                return None
+            if attempt + 1 < self._active_observation_attempts:
+                self._sleeper(self._active_observation_interval)
+        raise PlatformError(
+            f"Multica rerun {task_id} for {item_id} is not observable")
 
     def cancel(self, item_id: str) -> bool:
         runs = self._store._run_multica(["issue", "runs", item_id, "--output", "json"])
