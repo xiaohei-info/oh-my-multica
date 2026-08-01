@@ -13,6 +13,7 @@ import time
 import json
 import subprocess
 from dataclasses import replace
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import yaml
@@ -86,7 +87,7 @@ def _finish_mock_run(item_id: str, status: str = "completed") -> None:
     runs[-1] = AgentRunObservation(
         id=latest.id, kind=latest.kind, status=status,
         agent_id=latest.agent_id, created_at=latest.created_at,
-        updated_at=latest.updated_at, error=latest.error)
+        updated_at=datetime.now(timezone.utc).isoformat(), error=latest.error)
 
 
 def _init_default_workspace():
@@ -1025,6 +1026,7 @@ class MockStore(WorkItemStore):
                 kind="direct",
                 status="running",
                 agent_id=agent_id,
+                created_at=datetime.now(timezone.utc).isoformat(),
             )
             _shared_next_run_id += 1
             _shared_runs.setdefault(item_id, []).append(run)

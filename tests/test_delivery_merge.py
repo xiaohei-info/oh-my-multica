@@ -26,6 +26,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from conftest import seal_mock_delivery
+
 from omac.core.config import (
     DEFAULT_GITHUB_MERGE_COMMAND,
     DEFAULT_MOCK_MERGE_COMMAND,
@@ -124,8 +126,10 @@ def _review_passed_item(store, reviewer="bob"):
     item = store.create_work_item(
         "ws", "node-a", "d", dag_key="a", worker="alice", reviewer=reviewer,
         initial_status=WorkItemStatus.IN_REVIEW)
-    store.update_work_item_metadata(
-        item.id, artifacts={"pr_url": "https://example.com/pr/1"})
+    seal_mock_delivery(
+        store, item.id, "https://example.com/pr/1",
+        {"commands": [{"cmd": "pytest -q", "exit_code": 0}],
+         "integration_gates": [], "coverage": 100})
     current = store.get_work_item(item.id)
     store.prepare_review_cycle(item.id, review_subject_digest(current, 1))
     store.update_work_item_metadata(
@@ -439,7 +443,9 @@ class TestCollectResultsMerge:
         assert manifest.nodes["a"].status == "in_progress"
         assert store.get_work_item(item.id).review_verdict is None  # reset_review
         # worker 修后重交(新 PR),不重新 pass;重启 worker 阶段
-        store.update_work_item_metadata(item.id, artifacts={"pr_url": "https://example.com/pr/2"})
+        seal_mock_delivery(
+            store, item.id, "https://example.com/pr/2",
+            store.get_work_item(item.id).verification)
         store.update_status(item.id, WorkItemStatus.DONE)
         manifest.nodes["a"].status = "in_progress"
         mmod.save_manifest(manifest, path)
@@ -473,12 +479,10 @@ class TestCollectResultsMerge:
         item = store.create_work_item(
             "ws", "node-a", "d", dag_key="a", worker="alice", reviewer="bob",
             initial_status=WorkItemStatus.IN_PROGRESS)
-        store.update_work_item_metadata(
-            item.id,
-            artifacts={"pr_url": "https://example.com/pr/1"},
-            verification={"commands": [{"cmd": "pytest -q", "exit_code": 0, "summary": "ok"}],
-                          "integration_gates": [], "pr_base": "feature/v1",
-                          "coverage": 95})
+        seal_mock_delivery(
+            store, item.id, "https://example.com/pr/1",
+            {"commands": [{"cmd": "pytest -q", "exit_code": 0, "summary": "ok"}],
+             "integration_gates": [], "pr_base": "feature/v1", "coverage": 95})
         store.update_status(item.id, WorkItemStatus.DONE)
         manifest = Manifest(meta={}, nodes={
             "a": Node(id="a", worker="alice", reviewer="bob",
@@ -503,7 +507,9 @@ class TestCollectResultsMerge:
         assert store.get_work_item(item.id).review_verdict is None
         # worker 修完冲突:切 merge 为成功 + 新 PR,不重新 pass
         cfg["merge"]["command"] = f"sh {merge_ok} {{pr_url}}"
-        store.update_work_item_metadata(item.id, artifacts={"pr_url": "https://example.com/pr/2"})
+        seal_mock_delivery(
+            store, item.id, "https://example.com/pr/2",
+            store.get_work_item(item.id).verification)
         store.update_status(item.id, WorkItemStatus.DONE)
         manifest.nodes["a"].status = "in_progress"
         mmod.save_manifest(manifest, path)
@@ -571,14 +577,10 @@ class TestCollectResultsMerge:
         runtime = _runtime(store)
         item = _review_passed_item(store)
         old_subject = store.get_work_item(item.id).review_subject_digest
-        store.update_work_item_metadata(
-            item.id,
-            artifacts={"pr_url": "https://example.com/pr/2"},
-            verification={
-                "commands": [{"cmd": "pytest -q", "exit_code": 0}],
-                "revision": 2,
-            },
-        )
+        seal_mock_delivery(
+            store, item.id, "https://example.com/pr/2",
+            {"commands": [{"cmd": "pytest -q", "exit_code": 0}],
+             "revision": 2})
         store.update_status(item.id, WorkItemStatus.IN_REVIEW)
         manifest = Manifest(meta={}, nodes={
             "a": Node(
@@ -1252,8 +1254,9 @@ class TestMergeClosureRegression:
         assert len([entry for entry in store.assign_log if entry[2] == "worker"]) == worker_assignments
         assert requests == [old_pr]
 
-        store.update_work_item_metadata(
-            item.id, artifacts={"pr_url": new_pr})
+        seal_mock_delivery(
+            store, item.id, new_pr,
+            store.get_work_item(item.id).verification)
         store.update_status(item.id, WorkItemStatus.DONE)
         reviewing = loop.tick(
             store, resumed_runtime, persisted, path,
@@ -1648,11 +1651,10 @@ class TestMergeClosureRegression:
         runtime = _runtime(store)
         item = _review_passed_item(store)
         store.reset_review(item.id)
-        store.update_work_item_metadata(
-            item.id,
-            phase=TaskPhase.REVIEW,
-            verification={"commands": [{"command": "pytest", "exit_code": 0}]},
-        )
+        seal_mock_delivery(
+            store, item.id, store.get_work_item(item.id).artifacts["pr_url"],
+            {"commands": [{"command": "pytest", "exit_code": 0}]},
+            phase=TaskPhase.REVIEW)
         store.update_status(item.id, WorkItemStatus.IN_REVIEW)
         failed_review = store.get_work_item(item.id)
         failed_review.agent_run_failed = True
