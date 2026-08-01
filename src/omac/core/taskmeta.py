@@ -94,6 +94,8 @@ REVIEW_OBLIGATIONS_REF_KEY = "review_obligations_ref"
 REVIEW_LEDGER_REF_KEY = "review_ledger_ref"
 MACHINE_FEEDBACK_REF_KEY = "machine_feedback_ref"
 REVIEW_CONTINUATION_KEY = "review_continuation"
+REVIEWER_RUN_BASELINE_KEY = "reviewer_run_baseline"
+REVIEWER_RUN_BASELINE_SCHEMA = "omac.reviewer-run-baseline/v1"
 WORKER_HANDOFF_KEY = "worker_handoff"
 WORKER_HANDOFF_SCHEMA = "omac.worker-handoff/v1"
 DELIVERY_IDENTITY_KEY = "delivery_identity"
@@ -211,6 +213,38 @@ class WorkerHandoffIntent:
         return bool(
             self.is_complete()
             and self.generation
+            and self.target_agent_id
+            and all(
+                isinstance(run_id, str) and run_id
+                for run_id in self.baseline_direct_run_ids
+            )
+        )
+
+
+@dataclass(frozen=True)
+class ReviewerRunBaseline:
+    """当前 review subject 的 direct Run 因果边界，不承载评审状态。"""
+
+    schema: Optional[str] = None
+    subject_digest: Optional[str] = None
+    target_reviewer: Optional[str] = None
+    target_agent_id: Optional[str] = None
+    baseline_direct_run_ids: Tuple[str, ...] = ()
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "schema": self.schema,
+            "subject_digest": self.subject_digest,
+            "target_reviewer": self.target_reviewer,
+            "target_agent_id": self.target_agent_id,
+            "baseline_direct_run_ids": list(self.baseline_direct_run_ids),
+        }
+
+    def is_causally_bound(self) -> bool:
+        return bool(
+            self.schema == REVIEWER_RUN_BASELINE_SCHEMA
+            and self.subject_digest
+            and self.target_reviewer
             and self.target_agent_id
             and all(
                 isinstance(run_id, str) and run_id
@@ -362,6 +396,31 @@ def parse_worker_handoff(value: Any) -> Optional[WorkerHandoffIntent]:
         target_run_id=text_field("target_run_id"),
         target_worker_bounce=int_field("target_worker_bounce"),
         terminal_observed_at=text_field("terminal_observed_at"),
+    )
+
+
+def parse_reviewer_run_baseline(value: Any) -> Optional[ReviewerRunBaseline]:
+    if value in (None, "", {}):
+        return None
+    if isinstance(value, ReviewerRunBaseline):
+        return value
+    if not isinstance(value, dict):
+        return ReviewerRunBaseline()
+
+    def text_field(key: str) -> Optional[str]:
+        field = value.get(key)
+        return field if isinstance(field, str) and field else None
+
+    baseline = value.get("baseline_direct_run_ids", [])
+    return ReviewerRunBaseline(
+        schema=text_field("schema"),
+        subject_digest=text_field("subject_digest"),
+        target_reviewer=text_field("target_reviewer"),
+        target_agent_id=text_field("target_agent_id"),
+        baseline_direct_run_ids=tuple(
+            run_id for run_id in baseline
+            if isinstance(run_id, str) and run_id
+        ) if isinstance(baseline, list) else (),
     )
 
 

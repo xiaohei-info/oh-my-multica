@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import Any, Dict, FrozenSet, List, Optional, Tuple, TypeAlias
 
 from ..core.taskmeta import (
-    Bounces, DeliveryIdentity, TaskKind, TaskPhase, WorkerHandoffIntent,
+    Bounces, DeliveryIdentity, ReviewerRunBaseline, TaskKind, TaskPhase,
+    WorkerHandoffIntent,
 )
 
 
@@ -223,6 +224,7 @@ class WorkItem:
     review_ledger: Optional[Dict[str, Any]] = None
     review_ledger_ref: Optional[Dict[str, Any]] = None
     review_continuation: Optional[Dict[str, Any]] = None
+    reviewer_run_baseline: Optional[ReviewerRunBaseline] = None
     worker_handoff: Optional[WorkerHandoffIntent] = None
     delivery_identity: Optional[DeliveryIdentity] = None
     decision_required: Optional[Dict[str, Any]] = None
