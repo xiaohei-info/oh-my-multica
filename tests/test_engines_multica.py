@@ -2706,6 +2706,10 @@ def test_multica_silent_reviewer_assignment_uses_suppressed_update(
 
     monkeypatch.setattr("omac.engines.multica.subprocess.run", run)
 
+    # A worker assignment can leave this process-local fast-path marker behind
+    # when the controller observes the assignment-created Run before calling
+    # runtime.wake. The next silent reviewer assignment must retire it.
+    store._mark_assignment_wake_pending(item_id)
     store.assign_work_item(
         item_id, "hermes-reviewer", "reviewer", start_run=False)
 
