@@ -32,6 +32,8 @@ from omac.core.review_convergence import (
 from omac.engines import create_engine
 from omac.engines.mock import MockRuntime, MockStore
 from omac.core.taskmeta import (
+    MACHINE_FEEDBACK_REF_KEY,
+    REVIEW_REPORT_REF_KEY,
     ReviewerRunBaseline,
     TaskPhase,
     WorkerHandoffIntent,
@@ -4360,6 +4362,106 @@ class TestReviewerRejectBoundedFallback:
 
         assert result.state == "pending-preparation"
         assert eng.store.get_work_item(item.id).reviewer_run_baseline is not None
+
+    @pytest.mark.parametrize(
+        ("key", "field"),
+        [
+            (MACHINE_FEEDBACK_REF_KEY, "machine_feedback_ref"),
+            (REVIEW_REPORT_REF_KEY, "review_report_ref"),
+        ],
+    )
+    @pytest.mark.parametrize("raw", [[], ["fact"]], ids=["empty-list", "list"])
+    def test_multica_invalid_review_ref_projection_is_not_clear(
+        self, key, field, raw,
+    ):
+        from omac.engines.multica import MulticaStore
+
+        store = MulticaStore(EngineConfig(
+            engine_type="multica", workspace_id="ws"))
+        item = store._issue_to_control_projection({
+            "id": "issue-1",
+            "title": "review",
+            "description": "review",
+            "status": "in_progress",
+            "metadata": {
+                "dag_key": "develop-a",
+                "kind": "develop",
+                "phase": "authoring",
+                key: raw,
+            },
+        }, "ws").work_item
+
+        assert getattr(item, field) is not None
+        assert not loop._review_projection_is_clear(item)
+
+    @pytest.mark.parametrize(
+        ("key", "field"),
+        [
+            (MACHINE_FEEDBACK_REF_KEY, "machine_feedback_ref"),
+            (REVIEW_REPORT_REF_KEY, "review_report_ref"),
+        ],
+    )
+    @pytest.mark.parametrize("raw", [[], ["fact"]], ids=["empty-list", "list"])
+    def test_worker_handoff_final_check_blocks_invalid_review_ref(
+        self, tmp_path, monkeypatch, key, field, raw,
+    ):
+        from omac.engines.multica import MulticaStore
+
+        eng, manifest, _path, item, _agent_id = _transient_worker_handoff_fixture(
+            tmp_path)
+        current = eng.store.get_work_item(item.id)
+        intent = replace(
+            current.worker_handoff,
+            target_run_id=None,
+            baseline_direct_run_ids=tuple(sorted(
+                run.id for run in eng.runtime.list_runs(item.id)
+                if run.kind == "direct"
+            )),
+        )
+        eng.store.update_work_item_metadata(item.id, worker_handoff=intent)
+        multica = MulticaStore(EngineConfig(
+            engine_type="multica", workspace_id="ws"))
+        projected = multica._issue_to_control_projection({
+            "id": item.id,
+            "title": item.title,
+            "description": item.description,
+            "status": "in_progress",
+            "metadata": {
+                "dag_key": item.dag_key,
+                "kind": "develop",
+                "phase": "authoring",
+                key: raw,
+            },
+        }, "ws").work_item
+        original_update = eng.store.update_work_item_metadata
+        drifted = False
+
+        def update(item_id, **metadata):
+            nonlocal drifted
+            result = original_update(item_id, **metadata)
+            if "description" in metadata and not drifted:
+                drifted = True
+                setattr(eng.store.get_work_item(item_id), field, getattr(projected, field))
+            return result
+
+        monkeypatch.setattr(eng.store, "update_work_item_metadata", update)
+        monkeypatch.setattr(
+            eng.store, "assign_work_item",
+            lambda *_args, **_kwargs: pytest.fail(
+                "invalid review ref must block assignment"),
+        )
+        monkeypatch.setattr(
+            eng.runtime, "wake",
+            lambda *_args, **_kwargs: pytest.fail(
+                "invalid review ref must block wake"),
+        )
+        monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
+
+        result = loop._dispatch_worker_handoff(
+            eng.store, eng.runtime, manifest, "a")
+
+        assert result.state == "pending-preparation"
+        assert getattr(eng.store.get_work_item(item.id), field) is not None
 
     @pytest.mark.parametrize("verdict", ["reject", "pass-with-nits"])
     @pytest.mark.parametrize(

@@ -136,7 +136,11 @@ def test_multica_malformed_empty_decision_value_remains_fail_closed():
         },
     }, "ws").work_item
 
-    assert item.decision_required == []
+    assert item.decision_required == {
+        "schema": "omac.invalid-object-metadata/v1",
+        "decoded_type": "list",
+        "value": [],
+    }
     assert item.requires_decision
 
 
@@ -429,6 +433,60 @@ def test_multica_non_clear_object_metadata_still_requires_reset(monkeypatch, raw
     store.reset_review("issue-1")
 
     assert writes == [(DECISION_REQUIRED_KEY, "{}")]
+
+
+@pytest.mark.parametrize(
+    ("key", "field"),
+    [
+        (MACHINE_FEEDBACK_REF_KEY, "machine_feedback_ref"),
+        (REVIEW_REPORT_REF_KEY, "review_report_ref"),
+        (DECISION_REQUIRED_KEY, "decision_required"),
+        (REVIEWER_RUN_BASELINE_KEY, "reviewer_run_baseline"),
+    ],
+)
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "not-json",
+        {"attachment_id": "fact-1"},
+        [],
+        ["fact"],
+        '"fact"',
+        "7",
+        "true",
+    ],
+    ids=[
+        "malformed", "object", "empty-list", "list",
+        "string-scalar", "number-scalar", "bool-scalar",
+    ],
+)
+def test_multica_non_clear_object_metadata_projects_explicit_fact(key, field, raw):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    metadata = {key: raw}
+
+    canonical = store._json_metadata(metadata, key)
+    item = store._issue_to_control_projection({
+        "id": "issue-1",
+        "title": "review",
+        "description": "review",
+        "status": "in_progress",
+        "metadata": {
+            "dag_key": "develop-a",
+            "kind": "develop",
+            **metadata,
+        },
+    }, "ws").work_item
+
+    assert canonical is not None
+    assert getattr(item, field) is not None
+    if isinstance(raw, dict):
+        assert canonical == raw
+    elif raw == "not-json":
+        assert canonical == {"raw": raw}
+    else:
+        assert canonical["schema"] == "omac.invalid-object-metadata/v1"
+        assert canonical["decoded_type"]
+        assert "value" in canonical
 
 
 @pytest.mark.parametrize("verdict", ["pass", "reject"])
