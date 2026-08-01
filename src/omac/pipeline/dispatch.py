@@ -97,7 +97,13 @@ def _next_action(kind: TaskKind, phase: TaskPhase, language: str) -> str:
         key = _AUTHORING_ACTION_KEYS.get(kind)
         action = t(key, language=language) if key else ""
     control = t("work.protocol.control", language=language)
-    return f"{action}\n{control}" if action else control
+    terminal = _command_terminal_protocol(language)
+    return "\n".join(part for part in (action, control, terminal) if part)
+
+
+def _command_terminal_protocol(language: str) -> str:
+    """OMAC CLI 调用共享同一条终态判定，避免 show/submit 规则漂移。"""
+    return t("work.protocol.command_terminal", language=language)
 
 
 # ==================== submit 参数(单一事实源,防漂移) ====================
@@ -1237,7 +1243,9 @@ def render_issue_body(node, contract, kind, issue_id, source_refs=None, engine_e
             "> **OMAC-controlled run. Your first action must be exactly:**\n\n",
             "> **OMAC 控制的执行。第一动作必须严格执行：**\n\n",
             language=language,
-        ) + f"```bash\n{env_prefix}omac work show {issue_id} --output json\n```\n\n" + ui(
+        ) + f"```bash\n{env_prefix}omac work show {issue_id} --output json\n```\n\n" + (
+            f"> {_command_terminal_protocol(language)}\n\n"
+        ) + ui(
             "> All `multica issue` write operations that create, modify, or delete Issue state are forbidden. This is a semantic boundary, not an exhaustive command list; forbidden examples include `multica issue status`, `multica issue assign`, `multica issue comment`, `multica issue metadata`, `multica issue rerun`, `multica issue cancel-task`, `multica issue update`, `multica issue create`, `multica issue label`, `multica issue property`, `multica issue reorder`, and `multica issue subscriber`. Only read-only queries, the exact `omac work show` command shown above, and the exact `omac work submit` command returned by work show are allowed. Existing manual attachments or verification without `delivery_identity` are unsealed and must also be sealed through that submit command.",
             "> 禁止任何会创建、修改或删除 Issue 状态的 `multica issue` 写操作。这是语义边界，不是穷举命令清单；禁止示例包括 `multica issue status`、`multica issue assign`、`multica issue comment`、`multica issue metadata`、`multica issue rerun`、`multica issue cancel-task`、`multica issue update`、`multica issue create`、`multica issue label`、`multica issue property`、`multica issue reorder` 和 `multica issue subscriber`。只允许只读查询、上方给出的精确 `omac work show` 命令，以及 work show 返回的精确 `omac work submit` 命令；已有手工附件或 verification 但缺少 `delivery_identity` 时也必须通过该 submit 命令封存。",
             language=language,
