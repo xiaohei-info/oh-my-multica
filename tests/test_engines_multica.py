@@ -37,6 +37,23 @@ def test_multica_classifies_known_transient_transport_errors(message):
     assert store.is_transient_transport_error(PlatformError(message))
 
 
+def test_multica_list_runs_preserves_platform_retry_parent(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    runtime = MulticaRuntime(store)
+    monkeypatch.setattr(runtime, "_issue_runs", lambda _item_id: [{
+        "id": "run-2",
+        "kind": "direct",
+        "status": "running",
+        "agent_id": "agent-1",
+        "retry_of_task_id": "run-1",
+    }])
+
+    runs = runtime.list_runs("issue-1")
+
+    assert len(runs) == 1
+    assert runs[0].retry_of_run_id == "run-1"
+
+
 @pytest.mark.parametrize("message", [
     "HTTP 401 unauthorized",
     "HTTP 403 forbidden",
@@ -2314,7 +2331,8 @@ def test_multica_runtime_lists_typed_run_identity(monkeypatch):
     assert runtime.list_runs("issue-1") == [
         AgentRunObservation(
             id="run-1", kind="direct", status="failed", agent_id="agent-1",
-            error="Selected model is at capacity. Please try a different model."),
+            error="Selected model is at capacity. Please try a different model.",
+            retry_of_run_id="run-0"),
         AgentRunObservation(
             id="run-2", kind="comment", status="running", agent_id="agent-2"),
     ]
