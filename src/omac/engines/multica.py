@@ -105,6 +105,15 @@ _EMPTY_DEFAULT_ISSUE_ENVELOPE_FIELDS = {
 _ReadResult = TypeVar("_ReadResult")
 _AttachmentCacheKey = tuple[str, str, str, Optional[int]]
 
+_REVIEW_CLEAR_METADATA = (
+    ("review_comment", ""),
+    (MACHINE_FEEDBACK_REF_KEY, "{}"),
+    (REVIEW_REPORT_REF_KEY, "{}"),
+    (DECISION_REQUIRED_KEY, "{}"),
+    (REVIEWER_RUN_BASELINE_KEY, "{}"),
+    ("review_verdict", ""),
+)
+
 
 class _AttachmentBodyCache:
     """Bounded in-process LRU with one loader per immutable attachment key."""
@@ -845,6 +854,9 @@ class MulticaStore(WorkItemStore):
             metadata, REVIEWER_RUN_BASELINE_KEY)
         machine_feedback_ref = self._json_metadata(
             metadata, MACHINE_FEEDBACK_REF_KEY)
+        decision_required = self._json_metadata(metadata, DECISION_REQUIRED_KEY)
+        if decision_required == {}:
+            decision_required = None
         amendment_attempt = self._json_metadata(metadata, AMENDMENT_ATTEMPT_KEY)
         review_obligations = self._json_metadata(metadata, REVIEW_OBLIGATIONS_KEY)
         contract_ref = self._json_metadata(metadata, CONTRACT_REF_KEY)
@@ -925,7 +937,7 @@ class MulticaStore(WorkItemStore):
                 self._json_metadata(metadata, WORKER_HANDOFF_KEY)),
             delivery_identity=parse_delivery_identity(
                 self._json_metadata(metadata, DELIVERY_IDENTITY_KEY)),
-            decision_required=self._json_metadata(metadata, DECISION_REQUIRED_KEY),
+            decision_required=decision_required,
             amendment_attempt=(
                 amendment_attempt if isinstance(amendment_attempt, dict) else None),
             contract=contract,
@@ -1260,6 +1272,29 @@ class MulticaStore(WorkItemStore):
             "--key", key, "--value", encoded,
         ])
 
+    def _apply_metadata_projection(
+        self, item_id: str, target: tuple[tuple[str, Any], ...],
+    ) -> None:
+        issue = self._run_idempotent_read(
+            "issue get",
+            lambda: self._run_multica([
+                "issue", "get", item_id, "--output", "json",
+            ]),
+        )
+        if not isinstance(issue, dict) or not isinstance(issue.get("metadata"), dict):
+            raise PlatformError(ui(
+                f"Could not read metadata for issue {item_id}",
+                f"无法读取 issue {item_id} 的 metadata",
+            ))
+        current = issue["metadata"]
+        for key, value in target:
+            if key in current and (
+                encode_metadata_value(current[key]) == encode_metadata_value(value)
+            ):
+                continue
+            self._set_metadata(item_id, key, value)
+            current[key] = value
+
     def get_work_item(self, item_id: str) -> WorkItem:
         projection = self.observe_work_item_control(item_id)
         return self.hydrate_work_item_evidence(
@@ -1521,27 +1556,18 @@ class MulticaStore(WorkItemStore):
         self._run_multica(["issue", "status", item_id, "cancelled"])
 
     def reset_review(self, item_id: str):
-        self._set_metadata(item_id, "review_verdict", "")
-        self._set_metadata(item_id, "review_comment", "")
-        self._set_metadata(item_id, MACHINE_FEEDBACK_REF_KEY, "{}")
-        self._set_metadata(item_id, REVIEW_REPORT_REF_KEY, "{}")
-        self._set_metadata(item_id, DECISION_REQUIRED_KEY, "{}")
-        self._set_metadata(item_id, REVIEW_SUBJECT_DIGEST_KEY, "")
-        self._set_metadata(item_id, REVIEWER_RUN_BASELINE_KEY, "{}")
-        self._set_metadata(item_id, PHASE_KEY, TaskPhase.AUTHORING.value)
+        self._apply_metadata_projection(item_id, (
+            *_REVIEW_CLEAR_METADATA,
+            (REVIEW_SUBJECT_DIGEST_KEY, ""),
+            (PHASE_KEY, TaskPhase.AUTHORING.value),
+        ))
 
     def prepare_review_cycle(self, item_id: str, subject_digest: str) -> WorkItem:
-        item = self.get_work_item(item_id)
-        if item.review_subject_digest == subject_digest:
-            return item
-        self._set_metadata(item_id, "review_verdict", "")
-        self._set_metadata(item_id, "review_comment", "")
-        self._set_metadata(item_id, MACHINE_FEEDBACK_REF_KEY, "{}")
-        self._set_metadata(item_id, REVIEW_REPORT_REF_KEY, "{}")
-        self._set_metadata(item_id, DECISION_REQUIRED_KEY, "{}")
-        self._set_metadata(item_id, REVIEW_SUBJECT_DIGEST_KEY, subject_digest)
-        self._set_metadata(item_id, REVIEWER_RUN_BASELINE_KEY, "{}")
-        self._set_metadata(item_id, PHASE_KEY, TaskPhase.REVIEW.value)
+        self._apply_metadata_projection(item_id, (
+            *_REVIEW_CLEAR_METADATA,
+            (REVIEW_SUBJECT_DIGEST_KEY, subject_digest),
+            (PHASE_KEY, TaskPhase.REVIEW.value),
+        ))
         return self.get_work_item(item_id)
 
     def assign_work_item(self, item_id: str, assignee: str, role: str):

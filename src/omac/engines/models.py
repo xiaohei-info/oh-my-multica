@@ -260,6 +260,11 @@ class WorkItem:
     platform_assignee_id: Optional[str] = None
     unknown_persisted_fields: Dict[str, Any] = field(default_factory=dict)
 
+    @property
+    def requires_decision(self) -> bool:
+        """Empty platform tombstones are the same domain fact as no decision."""
+        return self.decision_required not in (None, {})
+
     def is_completed(self) -> bool:
         return self.status == WorkItemStatus.DONE
 

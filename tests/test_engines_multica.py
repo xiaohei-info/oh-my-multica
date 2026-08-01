@@ -11,7 +11,11 @@ import yaml
 from omac.core.contract_boundaries import responsibility_summary
 from omac.core.manifest import _load_contract
 from omac.core.manifest import Contract, EvidenceMode, ProducedArtifact
-from omac.core.taskmeta import REVIEW_LEDGER_REF_KEY, REVIEW_REPORT_REF_KEY, TaskKind
+from omac.core.taskmeta import (
+    DECISION_REQUIRED_KEY, MACHINE_FEEDBACK_REF_KEY, PHASE_KEY,
+    REVIEWER_RUN_BASELINE_KEY, REVIEW_LEDGER_REF_KEY, REVIEW_REPORT_REF_KEY,
+    REVIEW_SUBJECT_DIGEST_KEY, TaskKind,
+)
 from omac.engines.models import (
     AgentRunObservation, EngineConfig, PullRequestReadinessFailure, PullRequestState,
 )
@@ -89,6 +93,51 @@ def test_multica_empty_ref_tombstones_suppress_legacy_payloads(monkeypatch):
     assert item.verification_ref is None
     assert item.review_report is None
     assert item.review_report_ref is None
+
+
+def test_multica_empty_review_control_tombstones_are_canonical_absence():
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+
+    item = store._issue_to_control_projection({
+        "id": "issue-1",
+        "title": "review",
+        "description": "review",
+        "status": "in_progress",
+        "metadata": {
+            "dag_key": "develop-a",
+            "kind": "develop",
+            DECISION_REQUIRED_KEY: "{}",
+            MACHINE_FEEDBACK_REF_KEY: "{}",
+            REVIEW_REPORT_REF_KEY: "{}",
+            REVIEWER_RUN_BASELINE_KEY: "{}",
+            "worker_handoff": "{}",
+        },
+    }, "ws").work_item
+
+    assert item.decision_required is None
+    assert item.machine_feedback_ref is None
+    assert item.review_report_ref is None
+    assert item.reviewer_run_baseline is None
+    assert item.worker_handoff is None
+
+
+def test_multica_malformed_empty_decision_value_remains_fail_closed():
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+
+    item = store._issue_to_control_projection({
+        "id": "issue-1",
+        "title": "review",
+        "description": "review",
+        "status": "in_progress",
+        "metadata": {
+            "dag_key": "develop-a",
+            "kind": "develop",
+            DECISION_REQUIRED_KEY: "[]",
+        },
+    }, "ws").work_item
+
+    assert item.decision_required == []
+    assert item.requires_decision
 
 
 def test_multica_preserves_unknown_persisted_issue_facts_for_fail_closed_checks():
@@ -206,11 +255,13 @@ def test_multica_reset_review_clears_report_ref_without_touching_ledger_or_histo
         store, "_publish_payload_comment",
         lambda *_args: pytest.fail("reset_review must not publish attachments"),
     )
-    monkeypatch.setattr(
-        store, "_run_multica",
-        lambda *_args, **_kwargs: pytest.fail(
-            "reset_review must not add or delete historical attachments"),
-    )
+    monkeypatch.setattr(store, "_run_multica", lambda *_args, **_kwargs: {
+        "id": "issue-1",
+        "title": "review",
+        "description": "review",
+        "status": "in_review",
+        "metadata": metadata,
+    })
 
     store.reset_review("issue-1")
 
@@ -218,6 +269,161 @@ def test_multica_reset_review_clears_report_ref_without_touching_ledger_or_histo
     assert metadata[REVIEW_LEDGER_REF_KEY] is ledger_ref
     assert ("issue-1", REVIEW_REPORT_REF_KEY, "{}") in writes
     assert not any(key == REVIEW_LEDGER_REF_KEY for _item_id, key, _value in writes)
+
+
+def test_multica_reset_review_restart_writes_only_remaining_projection(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    metadata = {
+        "review_verdict": "reject",
+        "review_comment": "fix it",
+        MACHINE_FEEDBACK_REF_KEY: {"attachment_id": "feedback-1"},
+        REVIEW_REPORT_REF_KEY: {"attachment_id": "report-1"},
+        DECISION_REQUIRED_KEY: {"reason": "review"},
+        REVIEWER_RUN_BASELINE_KEY: {"schema": "old"},
+        REVIEW_SUBJECT_DIGEST_KEY: "subject-v1",
+        PHASE_KEY: "review",
+    }
+    writes = []
+    fail_once = {REVIEW_REPORT_REF_KEY}
+
+    monkeypatch.setattr(store, "_run_multica", lambda *_args, **_kwargs: {
+        "id": "issue-1",
+        "title": "review",
+        "description": "review",
+        "status": "in_review",
+        "metadata": metadata,
+    })
+
+    def set_metadata(item_id, key, value):
+        writes.append((key, value))
+        if key in fail_once:
+            fail_once.remove(key)
+            raise PlatformError("HTTP 503 Service Unavailable")
+        metadata[key] = value
+
+    monkeypatch.setattr(store, "_set_metadata", set_metadata)
+
+    with pytest.raises(PlatformError, match="503"):
+        store.reset_review("issue-1")
+    split = len(writes)
+
+    store.reset_review("issue-1")
+
+    assert writes[:split] == [
+        ("review_comment", ""),
+        (MACHINE_FEEDBACK_REF_KEY, "{}"),
+        (REVIEW_REPORT_REF_KEY, "{}"),
+    ]
+    assert writes[split:] == [
+        (REVIEW_REPORT_REF_KEY, "{}"),
+        (DECISION_REQUIRED_KEY, "{}"),
+        (REVIEWER_RUN_BASELINE_KEY, "{}"),
+        ("review_verdict", ""),
+        (REVIEW_SUBJECT_DIGEST_KEY, ""),
+        (PHASE_KEY, "authoring"),
+    ]
+
+
+def test_multica_reset_review_satisfied_projection_writes_nothing(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    metadata = {
+        "review_comment": "",
+        MACHINE_FEEDBACK_REF_KEY: {},
+        REVIEW_REPORT_REF_KEY: "{}",
+        DECISION_REQUIRED_KEY: {},
+        REVIEWER_RUN_BASELINE_KEY: "{}",
+        "review_verdict": "",
+        REVIEW_SUBJECT_DIGEST_KEY: "",
+        PHASE_KEY: "authoring",
+    }
+    monkeypatch.setattr(store, "_run_multica", lambda *_args, **_kwargs: {
+        "id": "issue-1",
+        "title": "review",
+        "description": "review",
+        "status": "todo",
+        "metadata": metadata,
+    })
+    monkeypatch.setattr(
+        store, "_set_metadata",
+        lambda *_args, **_kwargs: pytest.fail("satisfied projection must not write"),
+    )
+
+    store.reset_review("issue-1")
+
+
+def test_multica_prepare_review_cycle_writes_cleanup_then_phase_and_subject(
+    monkeypatch,
+):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    metadata = {
+        "dag_key": "develop-a",
+        "kind": "develop",
+        "review_verdict": "pass",
+        "review_comment": "old",
+        MACHINE_FEEDBACK_REF_KEY: {"attachment_id": "feedback-1"},
+        REVIEW_REPORT_REF_KEY: {"attachment_id": "report-1"},
+        DECISION_REQUIRED_KEY: {"reason": "old"},
+        REVIEWER_RUN_BASELINE_KEY: {"schema": "old"},
+        REVIEW_SUBJECT_DIGEST_KEY: "subject-v1",
+        PHASE_KEY: "authoring",
+    }
+    writes = []
+
+    def run(args, capture=True):
+        assert args[:2] == ["issue", "get"]
+        return {
+            "id": "issue-1",
+            "title": "review",
+            "description": "review",
+            "status": "in_review",
+            "metadata": metadata,
+        }
+
+    def set_metadata(item_id, key, value):
+        writes.append((key, value))
+        metadata[key] = value
+
+    monkeypatch.setattr(store, "_run_multica", run)
+    monkeypatch.setattr(store, "_set_metadata", set_metadata)
+
+    prepared = store.prepare_review_cycle("issue-1", "subject-v2")
+
+    assert writes == [
+        ("review_comment", ""),
+        (MACHINE_FEEDBACK_REF_KEY, "{}"),
+        (REVIEW_REPORT_REF_KEY, "{}"),
+        (DECISION_REQUIRED_KEY, "{}"),
+        (REVIEWER_RUN_BASELINE_KEY, "{}"),
+        ("review_verdict", ""),
+        (REVIEW_SUBJECT_DIGEST_KEY, "subject-v2"),
+        (PHASE_KEY, "review"),
+    ]
+    assert prepared.phase.value == "review"
+    assert prepared.review_subject_digest == "subject-v2"
+
+
+def test_multica_review_projection_propagates_hard_metadata_error(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    metadata = {
+        "review_verdict": "reject",
+        "review_comment": "old",
+        PHASE_KEY: "review",
+    }
+    monkeypatch.setattr(store, "_run_multica", lambda *_args, **_kwargs: {
+        "id": "issue-1",
+        "title": "review",
+        "description": "review",
+        "status": "in_review",
+        "metadata": metadata,
+    })
+    monkeypatch.setattr(
+        store, "_set_metadata",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            PlatformError("HTTP 403 forbidden")),
+    )
+
+    with pytest.raises(PlatformError, match="403"):
+        store.reset_review("issue-1")
 
 
 def test_multica_externalizes_machine_feedback_before_bounded_summary(monkeypatch):
