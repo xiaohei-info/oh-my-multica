@@ -5231,6 +5231,69 @@ class TestReviewerRejectBoundedFallback:
         with pytest.raises(PlatformError, match="projection|attachment"):
             tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
 
+    def test_delivery_candidate_change_defers_without_stopping_runner(
+        self, tmp_path, monkeypatch,
+    ):
+        """并发新交付只延后本节点，下一轮按最新事实重新封存。"""
+        from omac.engines import create_engine
+        from omac.engines.models import AgentRunObservation
+        from omac.pipeline import loop as loop_module
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        intent, _source = self._prepare_causal_handoff(eng, item)
+        self._submit_revision(eng, item)
+        monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: [
+            AgentRunObservation(
+                id=intent.target_run_id,
+                kind="direct",
+                status="completed",
+                agent_id=intent.target_agent_id,
+            )
+        ])
+
+        original_match = loop_module._control_matches_handoff_candidate
+        observations = 0
+
+        def candidate_changes_once(current, current_intent, identity):
+            nonlocal observations
+            observations += 1
+            if observations == 1:
+                return False
+            return original_match(current, current_intent, identity)
+
+        monkeypatch.setattr(
+            loop_module,
+            "_control_matches_handoff_candidate",
+            candidate_changes_once,
+        )
+        reviewer_assignments = len([
+            entry for entry in eng.store.assign_log if entry[2] == "reviewer"
+        ])
+
+        first = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+
+        deferred = eng.store.get_work_item(item.id)
+        assert first.state == "running"
+        assert manifest.nodes["a"].status == "in_progress"
+        assert deferred.worker_handoff is not None
+        assert deferred.delivery_identity is None
+        assert len([
+            entry for entry in eng.store.assign_log if entry[2] == "reviewer"
+        ]) == reviewer_assignments
+
+        second = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+
+        recovered = eng.store.get_work_item(item.id)
+        assert second.state == "running"
+        assert manifest.nodes["a"].status == "in_review"
+        assert recovered.worker_handoff is None
+        assert recovered.delivery_identity is not None
+        assert len([
+            entry for entry in eng.store.assign_log if entry[2] == "reviewer"
+        ]) == reviewer_assignments + 1
+
     def test_pr_head_is_rechecked_after_seal_before_reviewer_dispatch(
         self, tmp_path, monkeypatch,
     ):
