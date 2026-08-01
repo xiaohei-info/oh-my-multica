@@ -3215,6 +3215,136 @@ def test_reviewer_ignores_comment_run_and_never_retries_other_agent_failure(
 # ==================== 2. 失败注入 → needs_decision ====================
 
 class TestFailureInjection:
+    @staticmethod
+    def _blocked_manifest_with_formal_run(
+        tmp_path, *, role: str, run_status: str = "running",
+    ):
+        reviewer = "bob" if role == "reviewer" else None
+        active = _node("active", reviewer=reviewer, contract=_contract())
+        decision = _node("decision")
+        active.status = "blocked"
+        decision.status = "blocked"
+        manifest = _manifest([active, decision])
+        path = str(tmp_path / f"{role}-active.yaml")
+        eng = _engine(MOCK_AUTO_COMPLETE="false")
+        item = eng.store.create_work_item(
+            "ws", "active", "formal run", dag_key="active",
+            worker=active.worker, reviewer=reviewer,
+            initial_status=WorkItemStatus.BLOCKED,
+        )
+        active.work_item_id = item.id
+        agent = reviewer or active.worker
+        agent_id = eng.store.resolve_agent_id(agent)
+        run_id = f"run-{role}"
+        if role == "reviewer":
+            eng.store.update_work_item_metadata(
+                item.id,
+                phase=TaskPhase.REVIEW,
+                review_subject_digest="subject-1",
+                reviewer_run_baseline=ReviewerRunBaseline(
+                    schema="omac.reviewer-run-baseline/v1",
+                    subject_digest="subject-1",
+                    target_reviewer=reviewer,
+                    target_agent_id=agent_id,
+                    cutoff_created_at="2026-08-01T00:00:00Z",
+                    generation="review-1",
+                    target_run_id=run_id,
+                ),
+            )
+        else:
+            eng.store.update_work_item_metadata(
+                item.id,
+                phase=TaskPhase.AUTHORING,
+                worker_handoff=WorkerHandoffIntent(
+                    schema="omac.worker-handoff/v1",
+                    state="pending",
+                    target_worker=active.worker,
+                    gate="explicit-dispatch",
+                    source_review_subject_digest="operator-retry-1",
+                    source_review_round=1,
+                    target_review_bounce=0,
+                    generation="worker-1",
+                    target_agent_id=agent_id,
+                    target_run_id=run_id,
+                    target_worker_bounce=0,
+                ),
+            )
+        eng.store.clear_assignment(item.id)
+        runs = [AgentRunObservation(
+            id=run_id,
+            kind="direct",
+            status=run_status,
+            agent_id=agent_id,
+            created_at="2026-08-01T00:01:00Z",
+        )]
+        save_manifest(manifest, path)
+        return eng, manifest, path, runs
+
+    @pytest.mark.parametrize("role", ["worker", "reviewer"])
+    def test_formal_active_run_keeps_runner_alive_with_other_blocked_node(
+        self, tmp_path, monkeypatch, role,
+    ):
+        eng, manifest, path, runs = self._blocked_manifest_with_formal_run(
+            tmp_path, role=role)
+        monkeypatch.setattr(
+            loop, "reconcile_with_observations",
+            lambda *_args, **_kwargs: loop.ReconcileResult(False, {}),
+        )
+        monkeypatch.setattr(
+            loop, "collect_results", lambda *_args, **_kwargs: {})
+        monkeypatch.setattr(
+            eng.runtime, "list_runs", lambda _item_id: list(runs))
+
+        result = tick(eng.store, eng.runtime, manifest, path)
+
+        assert result.state == "running"
+        assert result.running == ["active"]
+        assert set(result.failed) == {"active", "decision"}
+        assert result.report == {}
+
+    def test_terminal_formal_run_does_not_hide_needs_decision(
+        self, tmp_path, monkeypatch,
+    ):
+        eng, manifest, path, runs = self._blocked_manifest_with_formal_run(
+            tmp_path, role="reviewer", run_status="completed")
+        monkeypatch.setattr(
+            loop, "reconcile_with_observations",
+            lambda *_args, **_kwargs: loop.ReconcileResult(False, {}),
+        )
+        monkeypatch.setattr(
+            loop, "collect_results", lambda *_args, **_kwargs: {})
+        monkeypatch.setattr(
+            eng.runtime, "list_runs", lambda _item_id: list(runs))
+
+        result = tick(eng.store, eng.runtime, manifest, path)
+
+        assert result.state == "needs_decision"
+        assert result.running == []
+        assert set(result.failed) == {"active", "decision"}
+        assert result.report
+
+    def test_foreign_active_run_does_not_hide_needs_decision(
+        self, tmp_path, monkeypatch,
+    ):
+        eng, manifest, path, runs = self._blocked_manifest_with_formal_run(
+            tmp_path, role="reviewer")
+        runs[0] = replace(
+            runs[0], agent_id=eng.store.resolve_agent_id("charlie"))
+        monkeypatch.setattr(
+            loop, "reconcile_with_observations",
+            lambda *_args, **_kwargs: loop.ReconcileResult(False, {}),
+        )
+        monkeypatch.setattr(
+            loop, "collect_results", lambda *_args, **_kwargs: {})
+        monkeypatch.setattr(
+            eng.runtime, "list_runs", lambda _item_id: list(runs))
+
+        result = tick(eng.store, eng.runtime, manifest, path)
+
+        assert result.state == "needs_decision"
+        assert result.running == []
+        assert result.report
+
     def test_failed_node_and_downstream_blocked(self):
         """a 失败 → a blocked,下游 b/c blocked,report 完整。"""
         nodes = [
