@@ -35,7 +35,7 @@ from omac.core.review_convergence import (
 from omac.core.taskmeta import TaskKind, TaskPhase
 from omac.engines.models import (
     PullRequestReadiness, PullRequestReadinessFailure,
-    PullRequestReadinessFailureKind, WorkItem, WorkItemStatus,
+    PullRequestReadinessFailureKind, WorkItem, WorkItemPayload, WorkItemStatus,
 )
 from omac.engines.store import WorkItemStore
 from omac.errors import ValidationError
@@ -137,6 +137,53 @@ SUBMIT_PARAMS_BY_KIND_PHASE: Dict[Tuple[TaskKind, TaskPhase], List[str]] = {
     (TaskKind.DEVELOP, TaskPhase.REVIEW): ["--verdict", "--report-file"],
     (TaskKind.FINAL_ACCEPTANCE, TaskPhase.AUTHORING): ["--acceptance-results-file"],
 }
+
+
+_REVIEW_BASIS = frozenset({
+    WorkItemPayload.CONTRACT,
+    WorkItemPayload.REVIEW_OBLIGATIONS,
+    WorkItemPayload.REVIEW_LEDGER,
+})
+
+SUBMIT_HYDRATION_BY_KIND_PHASE = {
+    (TaskKind.DEVELOP, TaskPhase.AUTHORING): frozenset({
+        WorkItemPayload.CONTRACT,
+    }),
+    (TaskKind.DEVELOP, TaskPhase.REVIEW): _REVIEW_BASIS,
+    (TaskKind.PLAN, TaskPhase.AUTHORING): frozenset(),
+    (TaskKind.PLAN, TaskPhase.REVIEW): _REVIEW_BASIS | frozenset({
+        WorkItemPayload.DELIVERABLE,
+        WorkItemPayload.PROJECT_RULES,
+    }),
+    (TaskKind.ACCEPTANCE, TaskPhase.AUTHORING): frozenset(),
+    (TaskKind.ACCEPTANCE, TaskPhase.REVIEW): _REVIEW_BASIS | frozenset({
+        WorkItemPayload.DELIVERABLE,
+    }),
+    (TaskKind.DECOMPOSE, TaskPhase.AUTHORING): frozenset(),
+    (TaskKind.DECOMPOSE, TaskPhase.REVIEW): _REVIEW_BASIS | frozenset({
+        WorkItemPayload.DELIVERABLE,
+    }),
+    (TaskKind.AMENDMENT, TaskPhase.AUTHORING): frozenset(),
+    (TaskKind.AMENDMENT, TaskPhase.REVIEW): _REVIEW_BASIS | frozenset({
+        WorkItemPayload.DELIVERABLE,
+    }),
+    (TaskKind.FINAL_ACCEPTANCE, TaskPhase.AUTHORING): frozenset({
+        WorkItemPayload.CONTRACT,
+    }),
+}
+
+
+def submit_hydration_plan(
+    kind: TaskKind, phase: TaskPhase,
+) -> frozenset[WorkItemPayload]:
+    """Return the attachment bodies required by one submit validation path."""
+    try:
+        return SUBMIT_HYDRATION_BY_KIND_PHASE[(kind, phase)]
+    except KeyError as exc:
+        raise ValidationError(ui(
+            f"Unsupported delivery combination: {kind.value} × {phase.value}",
+            f"未支持的交付组合: {kind.value} × {phase.value}",
+        )) from exc
 
 
 # Agent 消费内容的权威顺序。越靠前越具体、越接近当前实例。
@@ -843,6 +890,22 @@ def _resolve_phase(item: WorkItem, declared: TaskPhase) -> TaskPhase:
     return declared
 
 
+def _load_submit_item(
+    store: WorkItemStore, issue_id: str,
+) -> tuple[WorkItem, TaskKind, TaskPhase]:
+    """Read one control snapshot, then hydrate only this submit path's evidence."""
+    projection = store.observe_work_item_control(issue_id)
+    control = projection.work_item
+    kind = _kind(
+        control.kind.value if hasattr(control.kind, "value") else control.kind)
+    declared = _phase(
+        control.phase.value if hasattr(control.phase, "value") else control.phase)
+    phase = _resolve_phase(control, declared)
+    item = store.hydrate_work_item_evidence(
+        projection, submit_hydration_plan(kind, phase))
+    return item, kind, phase
+
+
 class SubmitResult:
     """submit 成功结果；phase 是本次提交阶段，next_phase 是推进后的阶段。"""
 
@@ -892,10 +955,7 @@ def submit(
     lint_increment(含对既有+增量全集的依赖引用校验)替代 standalone lint。
     """
 
-    item = store.get_work_item(issue_id)
-    kind = _kind(item.kind.value if hasattr(item.kind, "value") else item.kind)
-    raw_phase = _phase(item.phase.value if hasattr(item.phase, "value") else item.phase)
-    phase = _resolve_phase(item, raw_phase)
+    item, kind, phase = _load_submit_item(store, issue_id)
 
     provided = {
         "plan_file": plan_file,
