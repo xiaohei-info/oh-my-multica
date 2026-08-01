@@ -36,12 +36,13 @@ def _load_cached_attachment(
     attachment_id: str,
     body: bytes,
     filename: str = "review.yaml",
+    declared_bytes: int | None = None,
 ) -> str | None:
     return store._load_payload_comment("issue-1", "review-report", {
         "attachment_id": attachment_id,
         "filename": filename,
         "sha256": sha256(body).hexdigest(),
-        "bytes": len(body),
+        "bytes": len(body) if declared_bytes is None else declared_bytes,
     })
 
 
@@ -88,6 +89,35 @@ def test_attachment_body_cache_does_not_reuse_different_expected_digest(
     assert _load_cached_attachment(
         store, attachment_id="attachment-1", body=bodies[1],
     ) == bodies[1].decode()
+    assert downloads == 2
+
+
+def test_attachment_body_cache_does_not_reuse_different_declared_size(
+        monkeypatch):
+    store = _store(lambda _delay: None)
+    body = b"verdict: pass\n"
+    downloads = 0
+
+    def run(args, capture=True):
+        nonlocal downloads
+        downloads += 1
+        output_dir = Path(args[args.index("--output-dir") + 1])
+        (output_dir / "review.yaml").write_bytes(body)
+
+    monkeypatch.setattr(store, "_run_multica", run)
+
+    assert _load_cached_attachment(
+        store,
+        attachment_id="attachment-1",
+        body=body,
+        declared_bytes=len(body),
+    ) == body.decode()
+    assert _load_cached_attachment(
+        store,
+        attachment_id="attachment-1",
+        body=body,
+        declared_bytes=len(body) + 1,
+    ) == body.decode()
     assert downloads == 2
 
 
