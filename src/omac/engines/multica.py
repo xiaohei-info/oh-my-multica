@@ -1661,6 +1661,7 @@ class MulticaStore(WorkItemStore):
         elif role == "reviewer":
             self.update_work_item_metadata(item_id, reviewer=assignee)
         if not start_run:
+            self._pending_assignment_wakes.discard(item_id)
             self._put_issue_fields_direct(
                 item_id,
                 {
