@@ -2814,6 +2814,8 @@ def test_reviewer_dispatch_refreshes_reused_issue_with_control_protocol(
     eng, manifest, _path, item, _reviewer_id = (
         _reviewer_runtime_failure_fixture(tmp_path))
     eng.store.update_work_item_metadata(item.id, description="stale issue body")
+    eng.store.clear_assignment(item.id)
+    eng.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
     monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: [])
     monkeypatch.setattr(eng.runtime, "wake", lambda *_args: None)
 
@@ -2829,6 +2831,191 @@ def test_reviewer_dispatch_refreshes_reused_issue_with_control_protocol(
         "Execution role: Independent reviewer" in refreshed.description
         or "执行角色: 独立评审者" in refreshed.description
     )
+
+
+def test_initial_develop_reviewer_handoff_assigns_without_starting_run(
+    tmp_path, monkeypatch,
+):
+    import hashlib
+
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    manifest = _manifest([_node("a", reviewer="bob", contract=_contract())])
+    path = str(tmp_path / "dag.yaml")
+    save_manifest(manifest, path)
+    tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+    item = eng.store.get_work_item(manifest.nodes["a"].work_item_id)
+    eng.store.set_node_contract(item.id, manifest.nodes["a"].contract)
+    verification = eng.store._mock_verification(item.id)
+    eng.store.update_work_item_metadata(
+        item.id,
+        artifacts={
+            "pr_url": "https://mock.example/pr/1",
+            "head_sha": hashlib.sha256(
+                b"https://mock.example/pr/1").hexdigest(),
+        },
+        verification=verification,
+        verification_source=yaml.safe_dump(verification),
+    )
+    from omac.engines import mock as mock_engine
+    mock_engine._finish_mock_run(item.id)
+    eng.store.update_status(item.id, WorkItemStatus.DONE)
+    original_assign = eng.store.assign_work_item
+    reviewer_calls = []
+
+    def assign(item_id, assignee, role, **kwargs):
+        if role == "reviewer":
+            reviewer_calls.append(kwargs)
+        return original_assign(item_id, assignee, role, **kwargs)
+
+    monkeypatch.setattr(eng.store, "assign_work_item", assign)
+
+    tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+
+    assert reviewer_calls == [{"start_run": False}]
+
+
+def test_mock_silent_assignment_defers_run_until_wake():
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = eng.store.create_work_item(
+        workspace_id="ws",
+        title="review",
+        description="review",
+        dag_key="review-a",
+        worker="alice",
+        reviewer="bob",
+    )
+
+    eng.store.assign_work_item(
+        item.id, "bob", "reviewer", start_run=False)
+    assert eng.runtime.list_runs(item.id) == []
+
+    eng.runtime.wake(item.id, "bob", "reviewer")
+    first = eng.runtime.list_runs(item.id)
+    assert len(first) == 1
+    assert first[0].active
+    assert first[0].agent_id == eng.store.resolve_agent_id("bob")
+
+    eng.runtime.wake(item.id, "bob", "reviewer")
+    assert eng.runtime.list_runs(item.id) == first
+
+
+def test_initial_reviewer_dispatch_crash_after_assignment_fails_closed(
+    tmp_path, monkeypatch,
+):
+    from omac.engines import mock as mock_engine
+
+    eng, manifest, _path, item, _reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    mock_engine._finish_mock_run(item.id)
+    eng.store.clear_assignment(item.id)
+    eng.store.update_work_item_metadata(item.id, reviewer_run_baseline={})
+
+    def crash_before_wake(*_args):
+        raise RuntimeError("crash after suppressed reviewer assignment")
+
+    monkeypatch.setattr(eng.runtime, "wake", crash_before_wake)
+    with pytest.raises(RuntimeError, match="suppressed reviewer assignment"):
+        loop._dispatch_reviewer_for_current_subject(
+            eng.store, eng.runtime, manifest, "a")
+
+    interrupted = eng.store.get_work_item(item.id)
+    assert interrupted.status is WorkItemStatus.IN_REVIEW
+    assert interrupted.phase is TaskPhase.REVIEW
+    assert interrupted.reviewer == "bob"
+    assert interrupted.reviewer_run_baseline.target_run_id is None
+    assert not eng.runtime.is_active(item.id)
+
+    monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        eng.runtime,
+        "wake",
+        lambda *_args: pytest.fail("restart must not rerun an ambiguous dispatch"),
+    )
+    with pytest.raises(
+        loop._ReviewerDispatchUnresolved,
+        match="no uniquely observable target Run",
+    ):
+        loop._dispatch_reviewer_for_current_subject(
+            eng.store, eng.runtime, manifest, "a")
+
+
+@pytest.mark.parametrize(
+    "trigger_kind, accepted",
+    [("comment", False), ("rerun", True)],
+)
+def test_initial_reviewer_dispatch_recovery_requires_fresh_rerun(
+    tmp_path, monkeypatch, trigger_kind, accepted,
+):
+    from omac.engines import mock as mock_engine
+
+    eng, manifest, _path, item, reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    mock_engine._finish_mock_run(item.id)
+    eng.store.clear_assignment(item.id)
+    eng.store.update_work_item_metadata(item.id, reviewer_run_baseline={})
+    def crash_wake(*_args):
+        raise RuntimeError("dispatch crash")
+
+    monkeypatch.setattr(
+        eng.runtime,
+        "wake",
+        crash_wake,
+    )
+    with pytest.raises(RuntimeError, match="dispatch crash"):
+        loop._dispatch_reviewer_for_current_subject(
+            eng.store, eng.runtime, manifest, "a")
+
+    candidate = AgentRunObservation(
+        id=f"run-{trigger_kind}",
+        kind="direct",
+        status="running",
+        agent_id=reviewer_id,
+        created_at="2026-01-01T00:00:02Z",
+        trigger_kind=trigger_kind,
+    )
+    monkeypatch.setattr(
+        eng.runtime, "list_runs", lambda _item_id: [candidate])
+    monkeypatch.setattr(
+        eng.runtime,
+        "wake",
+        lambda *_args: pytest.fail("recovery must never rerun"),
+    )
+
+    if not accepted:
+        with pytest.raises(
+            loop._ReviewerDispatchUnresolved,
+            match="not a fresh rerun",
+        ):
+            loop._dispatch_reviewer_for_current_subject(
+                eng.store, eng.runtime, manifest, "a")
+        return
+
+    assert loop._dispatch_reviewer_for_current_subject(
+        eng.store, eng.runtime, manifest, "a") is False
+    recovered = eng.store.get_work_item(item.id)
+    assert recovered.reviewer_run_baseline.target_run_id == candidate.id
+
+
+def test_develop_reviewer_retry_assigns_without_resuming_old_session(
+    tmp_path, monkeypatch,
+):
+    eng, _manifest, _path, item, _reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    original_assign = eng.store.assign_work_item
+    reviewer_calls = []
+
+    def assign(item_id, assignee, role, **kwargs):
+        if role == "reviewer":
+            reviewer_calls.append(kwargs)
+        return original_assign(item_id, assignee, role, **kwargs)
+
+    monkeypatch.setattr(eng.store, "assign_work_item", assign)
+    monkeypatch.setattr(eng.runtime, "wake", lambda *_args: None)
+
+    assert loop._resume_reviewer_run(
+        eng.store, eng.runtime, _manifest.nodes["a"])
+
+    assert reviewer_calls == [{"start_run": False}]
 
 
 def test_reviewer_completed_without_verdict_is_bounded_by_run_attempts(
@@ -4244,7 +4431,7 @@ class TestReviewerRejectBoundedFallback:
             events.append("prepare")
             return original_prepare(item_id, subject_digest)
 
-        def assign(item_id, assignee, role):
+        def assign(item_id, assignee, role, **kwargs):
             if role == "reviewer":
                 current = eng.store.get_work_item(item_id)
                 assert current.phase == TaskPhase.REVIEW
@@ -4252,7 +4439,7 @@ class TestReviewerRejectBoundedFallback:
                 assert current.review_report is None
                 assert current.review_ledger is old_ledger
                 events.append("assign")
-            return original_assign(item_id, assignee, role)
+            return original_assign(item_id, assignee, role, **kwargs)
 
         def wake(item_id, agent, role):
             if role == "reviewer":
@@ -4892,10 +5079,10 @@ class TestReviewerRejectBoundedFallback:
             eng.store, "update_work_item_metadata", original_update)
         original_assign = eng.store.assign_work_item
 
-        def assign(item_id, assignee, role):
+        def assign(item_id, assignee, role, **kwargs):
             if role == "worker":
                 pytest.fail("new Worker delivery must not resume stale handoff")
-            return original_assign(item_id, assignee, role)
+            return original_assign(item_id, assignee, role, **kwargs)
 
         monkeypatch.setattr(eng.store, "assign_work_item", assign)
         persisted = load_manifest(path)
@@ -5033,9 +5220,9 @@ class TestReviewerRejectBoundedFallback:
         worker_assignments = 0
         reviewer_wakes = 0
 
-        def assign(item_id, assignee, role):
+        def assign(item_id, assignee, role, **kwargs):
             nonlocal worker_assignments
-            result = original_assign(item_id, assignee, role)
+            result = original_assign(item_id, assignee, role, **kwargs)
             if role == "worker":
                 from omac.engines.mock import _finish_mock_run
                 worker_assignments += 1
@@ -6209,7 +6396,17 @@ class TestReviewerRejectBoundedFallback:
         current.review_report = None
         subject = current.review_subject_digest
         eng.store.clear_assignment(item.id)
-        eng.store.assign_work_item(item.id, "bob", "reviewer")
+        eng.store.assign_work_item(
+            item.id, "bob", "reviewer", start_run=False)
+        eng.runtime.wake(item.id, "bob", "reviewer")
+        active_run = eng.runtime.list_runs(item.id)[-1]
+        eng.store.update_work_item_metadata(
+            item.id,
+            reviewer_run_baseline=replace(
+                current.reviewer_run_baseline,
+                target_run_id=active_run.id,
+            ),
+        )
         reviewer_assignments = len([
             entry for entry in eng.store.assign_log if entry[2] == "reviewer"])
         manifest.nodes["a"].status = "in_progress"
