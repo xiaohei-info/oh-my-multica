@@ -14,6 +14,8 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
+from conftest import seal_mock_delivery
+
 from omac.cli import exit_codes
 from omac.cli.main import main
 from omac.core.manifest import Manifest, Node, load_manifest, save_manifest
@@ -1873,16 +1875,9 @@ def test_tick_collects_delivery_persisted_after_reconcile_control_snapshot(
                 "integration_gates": [],
                 "coverage": 100,
             }
-            store.update_work_item_metadata(
-                item_id,
-                artifacts={
-                    "pr_url": "https://github.com/acme/repo/pull/1",
-                    "head_sha": "head-node-a",
-                },
-                verification=verification,
-                verification_source=yaml.safe_dump(verification),
-                phase=TaskPhase.AUTHORING,
-            )
+            seal_mock_delivery(
+                store, item_id, "https://github.com/acme/repo/pull/1",
+                verification, phase=TaskPhase.AUTHORING)
             store.update_status(item_id, WorkItemStatus.DONE)
             delivered = True
         return projection

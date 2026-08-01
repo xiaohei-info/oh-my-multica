@@ -31,10 +31,15 @@ from omac.core.review_convergence import (
 )
 from omac.engines import create_engine
 from omac.engines.mock import MockRuntime, MockStore
-from omac.core.taskmeta import TaskPhase, WorkerHandoffIntent
+from omac.core.taskmeta import (
+    ReviewerRunBaseline,
+    TaskPhase,
+    WorkerHandoffIntent,
+)
 from omac.engines.models import (
     AgentRunObservation,
     EngineConfig,
+    RuntimeCapabilities,
     WorkItemControlProjection,
     WorkItemStatus,
 )
@@ -268,6 +273,7 @@ def _aiteam_834_legacy_delivery(tmp_path):
             }],
             "blockers": [],
         },
+        worker_handoff={},
     )
     engine.store.update_status(item.id, WorkItemStatus.DONE)
     engine.store.clear_assignment(item.id)
@@ -875,6 +881,7 @@ class TestHappyPath:
 
         tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
         item_id = manifest.nodes["a"].work_item_id
+        eng.store.update_work_item_metadata(item_id, worker_handoff={})
         eng.store.get_work_item(item_id).agent_run_finished_without_submit = True
         assignments_before = len(eng.store.assign_log)
 
@@ -898,6 +905,7 @@ class TestHappyPath:
 
         tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
         item_id = manifest.nodes["a"].work_item_id
+        eng.store.update_work_item_metadata(item_id, worker_handoff={})
         eng.store.get_work_item(item_id).agent_run_finished_without_submit = True
 
         result = tick(
@@ -1051,6 +1059,207 @@ def test_worker_capacity_failure_reruns_without_consuming_business_bounce(
     assert manifest.nodes["a"].status == "in_progress"
 
 
+def test_initial_worker_capacity_failure_uses_causal_handoff_and_restarts_once(
+    tmp_path, monkeypatch,
+):
+    """首次派发也必须先持久化 Run 因果身份，再做瞬时失败恢复。"""
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    manifest = _manifest([_node("a", reviewer="bob", contract=_contract())])
+    path = str(tmp_path / "dag.yaml")
+    save_manifest(manifest, path)
+
+    tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+    item = eng.store.get_work_item(manifest.nodes["a"].work_item_id)
+    intent = item.worker_handoff
+    assert intent is not None
+    assert intent.gate == "explicit-dispatch"
+    assert intent.target_run_id is not None
+
+    runs = [AgentRunObservation(
+        id=intent.target_run_id,
+        kind="direct",
+        status="failed",
+        agent_id=intent.target_agent_id,
+        error="Selected model is at capacity. Please try a different model.",
+    )]
+    wake_calls = 0
+
+    def wake(_item_id, _agent, role):
+        nonlocal wake_calls
+        assert role == "worker"
+        wake_calls += 1
+        runs.append(AgentRunObservation(
+            id="run-initial-capacity-retry",
+            kind="direct",
+            status="running",
+            agent_id=intent.target_agent_id,
+        ))
+
+    monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
+    monkeypatch.setattr(eng.runtime, "wake", wake)
+
+    assert loop.collect_results(eng.store, eng.runtime, manifest, path) == {}
+    persisted = load_manifest(path)
+    assert loop.collect_results(
+        eng.store, eng.runtime, persisted, path) == {}
+
+    recovered = eng.store.get_work_item(item.id)
+    assert wake_calls == 1
+    assert recovered.worker_handoff is not None
+    assert recovered.worker_handoff.target_run_id == "run-initial-capacity-retry"
+    assert recovered.bounces.worker == 0
+    assert recovered.bounces.review == 0
+    assert persisted.nodes["a"].status == "in_progress"
+
+
+def test_legacy_initial_worker_capacity_failure_migrates_and_restarts_once(
+    tmp_path, monkeypatch,
+):
+    """旧首次派发无 handoff 时，只迁移唯一可证明的 transient Worker Run。"""
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    node = _node("a", reviewer="bob", contract=_contract())
+    item = eng.store.create_work_item(
+        "ws", "a", "Task a", dag_key="a", worker="alice", reviewer="bob")
+    item.created_at = "2026-08-01T00:59:00Z"
+    eng.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
+    node.status = "in_progress"
+    node.work_item_id = item.id
+    manifest = _manifest([node])
+    path = str(tmp_path / "dag.yaml")
+    save_manifest(manifest, path)
+    worker_id = eng.store.resolve_agent_id("alice")
+    runs = [AgentRunObservation(
+        id="run-legacy-capacity",
+        kind="direct",
+        status="failed",
+        agent_id=worker_id,
+        created_at="2026-08-01T01:00:00Z",
+        updated_at="2026-08-01T01:00:10Z",
+        error="Selected model is at capacity. Please try a different model.",
+    )]
+    wake_calls = 0
+
+    def wake(_item_id, _agent, role):
+        nonlocal wake_calls
+        assert role == "worker"
+        wake_calls += 1
+        runs.append(AgentRunObservation(
+            id="run-legacy-capacity-retry",
+            kind="direct",
+            status="running",
+            agent_id=worker_id,
+            created_at="2026-08-01T01:01:00Z",
+        ))
+
+    monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
+    monkeypatch.setattr(eng.runtime, "wake", wake)
+
+    assert loop.collect_results(eng.store, eng.runtime, manifest, path) == {}
+    restarted = load_manifest(path)
+    assert loop.collect_results(
+        eng.store, eng.runtime, restarted, path) == {}
+
+    recovered = eng.store.get_work_item(item.id)
+    assert wake_calls == 1
+    assert recovered.worker_handoff is not None
+    assert recovered.worker_handoff.gate == "explicit-dispatch"
+    assert recovered.worker_handoff.baseline_direct_run_ids == (
+        "run-legacy-capacity",)
+    assert recovered.worker_handoff.target_run_id == (
+        "run-legacy-capacity-retry")
+    assert recovered.bounces.worker == recovered.bounces.review == 0
+    assert recovered.decision_required is None
+    assert restarted.nodes["a"].status == "in_progress"
+
+
+def test_legacy_initial_worker_active_run_keeps_waiting_without_migration(
+    tmp_path, monkeypatch,
+):
+    """部署期间仍在执行的旧 Worker 保持原状态，不迁移、不阻塞、不重派。"""
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    node = _node("a", reviewer="bob", contract=_contract())
+    item = eng.store.create_work_item(
+        "ws", "a", "Task a", dag_key="a", worker="alice", reviewer="bob")
+    item.created_at = "2026-08-01T00:59:00Z"
+    eng.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
+    node.status = "in_progress"
+    node.work_item_id = item.id
+    manifest = _manifest([node])
+    path = str(tmp_path / "dag.yaml")
+    save_manifest(manifest, path)
+    worker_id = eng.store.resolve_agent_id("alice")
+    monkeypatch.setattr(
+        type(eng.runtime),
+        "capabilities",
+        property(lambda _self: RuntimeCapabilities()),
+    )
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: [
+        AgentRunObservation(
+            id="run-legacy-active",
+            kind="direct",
+            status="running",
+            agent_id=worker_id,
+            created_at="2026-08-01T01:00:00Z",
+        )
+    ])
+    monkeypatch.setattr(
+        eng.runtime,
+        "wake",
+        lambda *_args: pytest.fail("active legacy Worker 不得再次 wake"),
+    )
+
+    assert loop.collect_results(
+        eng.store, eng.runtime, manifest, path) == {}
+
+    current = eng.store.get_work_item(item.id)
+    assert current.status is WorkItemStatus.IN_PROGRESS
+    assert current.worker_handoff is None
+    assert current.decision_required is None
+    assert manifest.nodes["a"].status == "in_progress"
+
+
+def test_legacy_initial_worker_without_stable_run_identity_fails_closed(
+    tmp_path, monkeypatch,
+):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    node = _node("a", contract=_contract())
+    item = eng.store.create_work_item(
+        "ws", "a", "Task a", dag_key="a", worker="alice")
+    item.created_at = "2026-08-01T00:59:00Z"
+    eng.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
+    node.status = "in_progress"
+    node.work_item_id = item.id
+    manifest = _manifest([node])
+    path = str(tmp_path / "dag.yaml")
+    save_manifest(manifest, path)
+    monkeypatch.setattr(
+        type(eng.runtime),
+        "capabilities",
+        property(lambda _self: RuntimeCapabilities()),
+    )
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: [
+        AgentRunObservation(
+            id="run-legacy-capacity", kind="direct", status="failed",
+            agent_id=eng.store.resolve_agent_id("alice"),
+            created_at="2026-08-01T01:00:00Z",
+            updated_at="2026-08-01T01:00:10Z",
+            error="Selected model is at capacity. Please try a different model.",
+        )
+    ])
+
+    failures = loop.collect_results(
+        eng.store, eng.runtime, manifest, path)
+
+    current = eng.store.get_work_item(item.id)
+    assert "a" in failures
+    assert current.worker_handoff is None
+    assert current.status is WorkItemStatus.BLOCKED
+    assert current.decision_required["reason_code"] == (
+        "legacy-worker-handoff-migration-unproven")
+
+
 def test_transient_worker_rerun_response_unknown_observes_created_run(
     tmp_path, monkeypatch,
 ):
@@ -1130,7 +1339,7 @@ def test_consecutive_transient_worker_failures_stop_at_infrastructure_limit(
         worker_handoff=WorkerHandoffIntent(
             **{
                 **current.worker_handoff.as_dict(),
-                "baseline_direct_run_ids": ("run-capacity-1",),
+                "baseline_direct_run_ids": (),
                 "target_run_id": "run-capacity-2",
             }
         ),
@@ -1154,7 +1363,66 @@ def test_consecutive_transient_worker_failures_stop_at_infrastructure_limit(
         "transient-runtime-retry-exhausted")
 
 
+def test_worker_transient_count_excludes_handoff_baseline_history(
+    tmp_path, monkeypatch,
+):
+    """当前 handoff 第一次 transient 失败不能被历史同 agent 失败提前耗尽。"""
+    eng, manifest, path, item, agent_id = _transient_worker_handoff_fixture(
+        tmp_path)
+    runs = [
+        AgentRunObservation(
+            id="run-capacity-history", kind="direct", status="failed",
+            agent_id=agent_id, created_at="2026-08-01T00:59:00Z",
+            error="Our servers are currently overloaded"),
+        AgentRunObservation(
+            id="run-capacity-current", kind="direct", status="failed",
+            agent_id=agent_id, created_at="2026-08-01T01:00:00Z",
+            error="provider error: HTTP 503 Service Unavailable"),
+    ]
+    current = eng.store.get_work_item(item.id)
+    eng.store.update_work_item_metadata(
+        item.id,
+        worker_handoff=WorkerHandoffIntent(
+            **{
+                **current.worker_handoff.as_dict(),
+                "baseline_direct_run_ids": ("run-capacity-history",),
+                "target_run_id": "run-capacity-current",
+            }
+        ),
+    )
+    wake_calls = 0
+
+    def wake(_item_id, _agent, role):
+        nonlocal wake_calls
+        assert role == "worker"
+        wake_calls += 1
+        runs.append(AgentRunObservation(
+            id="run-capacity-current-retry",
+            kind="direct",
+            status="running",
+            agent_id=agent_id,
+            created_at="2026-08-01T01:01:00Z",
+        ))
+
+    monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
+    monkeypatch.setattr(eng.runtime, "wake", wake)
+
+    assert loop.collect_results(eng.store, eng.runtime, manifest, path) == {}
+
+    recovered = eng.store.get_work_item(item.id)
+    assert wake_calls == 1
+    assert recovered.status is WorkItemStatus.IN_PROGRESS
+    assert recovered.worker_handoff.baseline_direct_run_ids == (
+        "run-capacity-current", "run-capacity-history")
+    assert recovered.worker_handoff.target_run_id == (
+        "run-capacity-current-retry")
+    assert recovered.decision_required is None
+
+
 def _reviewer_runtime_failure_fixture(tmp_path):
+    import hashlib
+
     from omac.engines import mock as mock_engine
 
     eng = _engine(MOCK_AUTO_COMPLETE="false")
@@ -1168,7 +1436,11 @@ def _reviewer_runtime_failure_fixture(tmp_path):
     verification = eng.store._mock_verification(item.id)
     eng.store.update_work_item_metadata(
         item.id,
-        artifacts={"pr_url": "https://mock.example/pr/1", "head_sha": "head-1"},
+        artifacts={
+            "pr_url": "https://mock.example/pr/1",
+            "head_sha": hashlib.sha256(
+                b"https://mock.example/pr/1").hexdigest(),
+        },
         verification=verification,
         verification_source=yaml.safe_dump(verification),
     )
@@ -1187,7 +1459,7 @@ def test_reviewer_capacity_failure_reruns_without_review_bounce(
         _reviewer_runtime_failure_fixture(tmp_path))
     runs = [AgentRunObservation(
         id="run-review-capacity", kind="direct", status="failed",
-        agent_id=reviewer_id,
+        agent_id=reviewer_id, created_at="2026-08-01T01:01:00Z",
         error="Selected model is at capacity. Please try a different model.",
     )]
     wake_calls = []
@@ -1196,7 +1468,7 @@ def test_reviewer_capacity_failure_reruns_without_review_bounce(
         wake_calls.append(role)
         runs.append(AgentRunObservation(
             id="run-review-retry", kind="direct", status="running",
-            agent_id=reviewer_id))
+            agent_id=reviewer_id, created_at="2026-08-01T01:02:00Z"))
 
     monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
@@ -1210,6 +1482,614 @@ def test_reviewer_capacity_failure_reruns_without_review_bounce(
     assert retried.bounces.review == current.bounces.review == 0
     assert retried.verification == current.verification
     assert manifest.nodes["a"].status == "in_review"
+
+
+def test_reviewer_completed_without_verdict_restarts_once_from_runtime_facts(
+    tmp_path, monkeypatch,
+):
+    """Multica 保持 in_progress/review 时也必须识别 Reviewer 无提交终态。"""
+    eng, manifest, path, item, reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    eng.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
+    worker_id = eng.store.resolve_agent_id("alice")
+    runs = [
+        AgentRunObservation(
+            id="run-worker-old",
+            kind="direct",
+            status="completed",
+            agent_id=worker_id,
+            created_at="2026-08-01T01:00:00Z",
+        ),
+        AgentRunObservation(
+            id="run-reviewer-no-submit",
+            kind="direct",
+            status="completed",
+            agent_id=reviewer_id,
+            created_at="2026-08-01T01:01:00Z",
+            updated_at="2026-08-01T01:02:00Z",
+        ),
+    ]
+    wake_calls = 0
+
+    def wake(_item_id, _agent, role):
+        nonlocal wake_calls
+        assert role == "reviewer"
+        wake_calls += 1
+        runs.append(AgentRunObservation(
+            id="run-reviewer-retry",
+            kind="direct",
+            status="running",
+            agent_id=reviewer_id,
+            created_at="2026-08-01T01:02:00Z",
+        ))
+
+    monkeypatch.setattr(
+        loop, "_utcnow",
+        lambda: datetime(2026, 8, 1, 1, 3, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
+    monkeypatch.setattr(eng.runtime, "wake", wake)
+
+    assert loop.collect_results(eng.store, eng.runtime, manifest, path) == {}
+    persisted = load_manifest(path)
+    assert loop.collect_results(
+        eng.store, eng.runtime, persisted, path) == {}
+
+    recovered = eng.store.get_work_item(item.id)
+    assert wake_calls == 1
+    assert recovered.phase is TaskPhase.REVIEW
+    assert recovered.status is WorkItemStatus.IN_REVIEW
+    assert recovered.review_verdict is None
+    assert recovered.bounces.review == item.bounces.review == 0
+    assert persisted.nodes["a"].status == "in_review"
+
+
+def test_reviewer_completed_waits_for_late_verdict_within_grace(
+    tmp_path, monkeypatch,
+):
+    eng, manifest, path, item, reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    eng.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
+    runs = [AgentRunObservation(
+        id="run-reviewer-completed",
+        kind="direct",
+        status="completed",
+        agent_id=reviewer_id,
+        created_at="2026-08-01T01:01:00Z",
+        updated_at="2026-08-01T01:02:00Z",
+    )]
+    monkeypatch.setattr(
+        loop, "_utcnow",
+        lambda: datetime(2026, 8, 1, 1, 2, 10, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
+    monkeypatch.setattr(
+        eng.runtime,
+        "wake",
+        lambda *_args: pytest.fail("grace 内不得派发任何恢复 Run"),
+    )
+
+    assert loop.collect_results(
+        eng.store, eng.runtime, manifest, path) == {}
+    eng.store.update_work_item_metadata(item.id, review_verdict="pass")
+
+    current = eng.store.get_work_item(item.id)
+    assert current.review_verdict == "pass"
+    assert current.bounces.review == item.bounces.review == 0
+
+
+def test_reviewer_history_before_current_subject_is_not_no_submit(
+    tmp_path, monkeypatch,
+):
+    """当前 subject 的 Run 尚不可见时，不得消费同 reviewer 的历史终态。"""
+    eng, manifest, path, item, reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    baseline = item.reviewer_run_baseline
+    assert baseline is not None
+    assert baseline.baseline_direct_run_ids
+    visible_runs = [AgentRunObservation(
+        id=baseline.baseline_direct_run_ids[-1],
+        kind="direct",
+        status="completed",
+        agent_id=reviewer_id,
+        created_at="2026-08-01T00:00:00Z",
+        updated_at="2026-08-01T00:01:00Z",
+    )]
+    wake_calls = 0
+
+    def wake(_item_id, _agent, role):
+        nonlocal wake_calls
+        assert role == "reviewer"
+        wake_calls += 1
+        # 模拟 Multica 最终一致性：本次 subject 的新 Run 尚未出现在列表中。
+
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(visible_runs))
+    monkeypatch.setattr(eng.runtime, "wake", wake)
+
+    assert loop.collect_results(
+        eng.store, eng.runtime, manifest, path) == {}
+    current = eng.store.get_work_item(item.id)
+    assert wake_calls == 0
+    assert current.status is WorkItemStatus.IN_REVIEW
+    assert current.phase is TaskPhase.REVIEW
+    assert current.review_verdict is None
+    assert current.decision_required is None
+    assert manifest.nodes["a"].status == "in_review"
+
+
+def test_late_visible_reviewer_history_before_delivery_cutoff_is_ignored(
+    tmp_path, monkeypatch,
+):
+    """ID snapshot 漏掉的历史 Run 仍由稳定 delivery cutoff 排除。"""
+    eng, manifest, path, item, reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    cutoff = item.delivery_identity.verification_created_at
+    baseline = ReviewerRunBaseline(
+        schema="omac.reviewer-run-baseline/v1",
+        subject_digest=item.review_subject_digest,
+        target_reviewer="bob",
+        target_agent_id=reviewer_id,
+        cutoff_created_at=cutoff,
+        generation="review-dispatch-1",
+        attempt=1,
+        baseline_direct_run_ids=item.reviewer_run_baseline.baseline_direct_run_ids,
+    )
+    eng.store.update_work_item_metadata(
+        item.id, reviewer_run_baseline=baseline)
+    late_visible_history = AgentRunObservation(
+        id="run-reviewer-late-history",
+        kind="direct",
+        status="completed",
+        agent_id=reviewer_id,
+        created_at="2025-12-31T23:59:59Z",
+        updated_at="2026-01-01T00:00:00Z",
+    )
+    monkeypatch.setattr(
+        eng.runtime, "list_runs", lambda _item_id: [late_visible_history])
+    monkeypatch.setattr(
+        eng.runtime,
+        "wake",
+        lambda *_args: pytest.fail("delivery cutoff 前的历史 Run 不得触发 retry"),
+    )
+
+    assert loop.collect_results(
+        eng.store, eng.runtime, manifest, path) == {}
+
+    current = eng.store.get_work_item(item.id)
+    assert current.status is WorkItemStatus.IN_REVIEW
+    assert current.reviewer_run_baseline.target_run_id is None
+    assert current.decision_required is None
+    assert manifest.nodes["a"].status == "in_review"
+
+
+def test_reviewer_no_submit_retry_blocks_when_run_stays_invisible(
+    tmp_path, monkeypatch,
+):
+    """retry wake 成功但 bounded observation 不见 Run 时必须 fail closed。"""
+    eng, manifest, path, item, reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    cutoff = item.delivery_identity.verification_created_at
+    baseline = ReviewerRunBaseline(
+        schema="omac.reviewer-run-baseline/v1",
+        subject_digest=item.review_subject_digest,
+        target_reviewer="bob",
+        target_agent_id=reviewer_id,
+        cutoff_created_at=cutoff,
+        generation="review-dispatch-1",
+        attempt=1,
+        baseline_direct_run_ids=item.reviewer_run_baseline.baseline_direct_run_ids,
+    )
+    eng.store.update_work_item_metadata(
+        item.id, reviewer_run_baseline=baseline)
+    eng.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
+    initial = AgentRunObservation(
+        id="run-reviewer-no-submit",
+        kind="direct",
+        status="completed",
+        agent_id=reviewer_id,
+        created_at="2026-08-01T01:01:00Z",
+        updated_at="2026-08-01T01:01:10Z",
+    )
+    wake_calls = 0
+
+    def list_runs(_item_id):
+        return [initial]
+
+    def wake(_item_id, _agent, role):
+        nonlocal wake_calls
+        assert role == "reviewer"
+        wake_calls += 1
+
+    monkeypatch.setattr(
+        loop, "_utcnow",
+        lambda: datetime(2026, 8, 1, 1, 2, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(eng.runtime, "list_runs", list_runs)
+    monkeypatch.setattr(eng.runtime, "wake", wake)
+
+    failures = loop.collect_results(
+        eng.store, eng.runtime, manifest, path)
+    restarted = load_manifest(path)
+    loop.collect_results(
+        eng.store, eng.runtime, restarted, path)
+
+    recovered = eng.store.get_work_item(item.id)
+    assert "a" in failures
+    assert wake_calls == 1
+    assert recovered.reviewer_run_baseline.attempt == 2
+    assert recovered.reviewer_run_baseline.target_run_id is None
+    assert recovered.status is WorkItemStatus.BLOCKED
+    assert recovered.decision_required["reason_code"] == (
+        "reviewer-run-dispatch-unresolved")
+    assert restarted.nodes["a"].status == "blocked"
+
+
+def test_reviewer_no_submit_retry_crash_after_intent_fails_closed_on_restart(
+    tmp_path, monkeypatch,
+):
+    """retry intent 落盘后、wake 前崩溃，重启不得 wake 或永久等待。"""
+    eng, manifest, path, item, reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    cutoff = item.delivery_identity.verification_created_at
+    baseline = ReviewerRunBaseline(
+        schema="omac.reviewer-run-baseline/v1",
+        subject_digest=item.review_subject_digest,
+        target_reviewer="bob",
+        target_agent_id=reviewer_id,
+        cutoff_created_at=cutoff,
+        generation="review-dispatch-1",
+        attempt=1,
+        baseline_direct_run_ids=item.reviewer_run_baseline.baseline_direct_run_ids,
+    )
+    eng.store.update_work_item_metadata(
+        item.id, reviewer_run_baseline=baseline)
+    eng.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
+    initial = AgentRunObservation(
+        id="run-reviewer-no-submit",
+        kind="direct",
+        status="completed",
+        agent_id=reviewer_id,
+        created_at="2026-08-01T01:01:00Z",
+        updated_at="2026-08-01T01:01:10Z",
+    )
+    monkeypatch.setattr(
+        loop, "_utcnow",
+        lambda: datetime(2026, 8, 1, 1, 2, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        eng.runtime, "list_runs", lambda _item_id: [initial])
+    monkeypatch.setattr(
+        eng.runtime,
+        "wake",
+        lambda *_args: pytest.fail("crash checkpoint 前不得到达 wake"),
+    )
+    original_update = eng.store.update_work_item_metadata
+    crashed = False
+
+    def crash_after_retry_intent(item_id, **metadata):
+        nonlocal crashed
+        result = original_update(item_id, **metadata)
+        retry = metadata.get("reviewer_run_baseline")
+        if getattr(retry, "attempt", 0) == 2 and not crashed:
+            crashed = True
+            raise RuntimeError("crash after reviewer retry intent")
+        return result
+
+    monkeypatch.setattr(
+        eng.store, "update_work_item_metadata", crash_after_retry_intent)
+    with pytest.raises(RuntimeError, match="reviewer retry intent"):
+        loop.collect_results(eng.store, eng.runtime, manifest, path)
+
+    interrupted = eng.store.get_work_item(item.id)
+    assert interrupted.reviewer_run_baseline.attempt == 2
+    assert interrupted.reviewer_run_baseline.target_run_id is None
+
+    monkeypatch.setattr(
+        eng.store, "update_work_item_metadata", original_update)
+    wake_calls = 0
+
+    def wake_after_restart(*_args):
+        nonlocal wake_calls
+        wake_calls += 1
+
+    monkeypatch.setattr(eng.runtime, "wake", wake_after_restart)
+    restarted = load_manifest(path)
+    failures = loop.collect_results(
+        eng.store, eng.runtime, restarted, path)
+
+    recovered = eng.store.get_work_item(item.id)
+    assert "a" in failures
+    assert wake_calls == 0
+    assert recovered.status is WorkItemStatus.BLOCKED
+    assert recovered.decision_required["reason_code"] == (
+        "reviewer-run-dispatch-unresolved")
+
+
+def test_legacy_review_projection_uses_delivery_time_not_issue_update_time(
+    tmp_path, monkeypatch,
+):
+    """AITEAM-826:issue 晚更新不能吞掉当前 reviewer Run。"""
+    eng, manifest, path, item, reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    eng.store.update_work_item_metadata(item.id, reviewer_run_baseline={})
+    current = eng.store.get_work_item(item.id)
+    current.updated_at = "2026-07-31T16:09:39Z"
+    assert current.delivery_identity is not None
+    current.delivery_identity = replace(
+        current.delivery_identity,
+        verification_created_at="2026-07-31T16:07:00Z",
+    )
+    current.review_subject_digest = review_subject_digest(
+        current, max(1, current.bounces.review + 1))
+    runs = [
+        AgentRunObservation(
+            id="run-reviewer-history",
+            kind="direct",
+            status="completed",
+            agent_id=reviewer_id,
+            created_at="2026-07-31T16:06:30Z",
+            updated_at="2026-07-31T16:06:59Z",
+        ),
+        AgentRunObservation(
+            id="run-reviewer-current-subject",
+            kind="direct",
+            status="completed",
+            agent_id=reviewer_id,
+            created_at="2026-07-31T16:08:23Z",
+            updated_at="2026-07-31T16:08:50Z",
+        ),
+    ]
+    wake_calls = 0
+
+    def wake(_item_id, _agent, role):
+        nonlocal wake_calls
+        assert role == "reviewer"
+        wake_calls += 1
+        runs.append(AgentRunObservation(
+            id="run-reviewer-current-subject-retry",
+            kind="direct",
+            status="running",
+            agent_id=reviewer_id,
+            created_at="2026-07-31T16:10:01Z",
+        ))
+
+    monkeypatch.setattr(
+        loop, "_utcnow",
+        lambda: datetime(2026, 7, 31, 16, 10, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
+    monkeypatch.setattr(eng.runtime, "wake", wake)
+
+    assert loop.collect_results(
+        eng.store, eng.runtime, manifest, path) == {}
+
+    recovered = eng.store.get_work_item(item.id)
+    assert wake_calls == 1
+    assert recovered.reviewer_run_baseline is not None
+    assert recovered.reviewer_run_baseline.baseline_direct_run_ids == (
+        "run-reviewer-current-subject", "run-reviewer-history")
+    assert recovered.reviewer_run_baseline.attempt == 2
+    assert recovered.reviewer_run_baseline.target_run_id == (
+        "run-reviewer-current-subject-retry")
+    assert recovered.bounces.review == 0
+    assert manifest.nodes["a"].status == "in_review"
+
+
+def test_legacy_review_projection_without_delivery_time_fails_closed(
+    tmp_path, monkeypatch,
+):
+    eng, manifest, path, item, reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    eng.store.update_work_item_metadata(
+        item.id,
+        reviewer_run_baseline={},
+        delivery_identity={},
+    )
+    current = eng.store.get_work_item(item.id)
+    current.review_subject_digest = review_subject_digest(
+        current, max(1, current.bounces.review + 1))
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: [
+        AgentRunObservation(
+            id="run-reviewer-ambiguous",
+            kind="direct",
+            status="completed",
+            agent_id=reviewer_id,
+            created_at="2026-07-31T16:08:23Z",
+            updated_at="2026-07-31T16:08:50Z",
+        )
+    ])
+    monkeypatch.setattr(
+        eng.runtime,
+        "wake",
+        lambda *_args: pytest.fail("缺少 delivery cutoff 时不得猜测重派"),
+    )
+
+    failures = loop.collect_results(
+        eng.store, eng.runtime, manifest, path)
+    blocked = eng.store.get_work_item(item.id)
+
+    assert "a" in failures
+    assert manifest.nodes["a"].status == "blocked"
+    assert blocked.status is WorkItemStatus.BLOCKED
+    assert blocked.decision_required["reason_code"] == (
+        "reviewer-run-baseline-unavailable")
+    assert blocked.bounces.review == 0
+
+
+@pytest.mark.parametrize(
+    "identity_created_at, baseline_created_at, incomplete_identity",
+    [
+        pytest.param(
+            "2026-08-01T01:00:00", None, False,
+            id="legacy-naive-identity-cutoff",
+        ),
+        pytest.param(
+            "not-a-time", None, False,
+            id="legacy-malformed-identity-cutoff",
+        ),
+        pytest.param(
+            "2026-08-01T01:00:00Z", "2026-08-01T01:00:00", False,
+            id="persisted-naive-cutoff",
+        ),
+        pytest.param(
+            "2026-08-01T01:00:00Z", "not-a-time", False,
+            id="persisted-malformed-cutoff",
+        ),
+        pytest.param(
+            "2026-08-01T01:00:00Z", "2026-08-01T01:00:01Z", False,
+            id="persisted-mismatched-cutoff",
+        ),
+        pytest.param(
+            "2026-08-01T01:00:00Z", "2026-08-01T01:00:00Z", True,
+            id="incomplete-delivery-identity",
+        ),
+    ],
+)
+def test_invalid_persisted_reviewer_cutoff_fails_closed_across_collects(
+    tmp_path, monkeypatch, identity_created_at, baseline_created_at,
+    incomplete_identity,
+):
+    eng, manifest, path, item, _reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    identity = replace(
+        item.delivery_identity,
+        verification_created_at=identity_created_at,
+        run_id=None if incomplete_identity else item.delivery_identity.run_id,
+    )
+    item.delivery_identity = identity
+    item.review_subject_digest = review_subject_digest(
+        item, max(1, item.bounces.review + 1))
+    item.reviewer_run_baseline = replace(
+        item.reviewer_run_baseline,
+        subject_digest=item.review_subject_digest,
+        cutoff_created_at=baseline_created_at,
+    )
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: [])
+    monkeypatch.setattr(
+        eng.runtime, "wake",
+        lambda *_args: pytest.fail("invalid reviewer cutoff must not wake"),
+    )
+
+    for attempt in range(3):
+        failures = loop.collect_results(
+            eng.store, eng.runtime, manifest, path)
+        blocked = eng.store.get_work_item(item.id)
+
+        if attempt == 0:
+            assert "a" in failures
+        assert blocked.status is WorkItemStatus.BLOCKED
+        assert blocked.decision_required["reason_code"] == (
+            "reviewer-run-baseline-unavailable")
+        assert manifest.nodes["a"].status == "blocked"
+        manifest = load_manifest(path)
+
+
+def test_persisted_reviewer_cutoff_accepts_equivalent_instant(tmp_path, monkeypatch):
+    eng, manifest, path, item, _reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    item.delivery_identity = replace(
+        item.delivery_identity,
+        verification_created_at="2026-08-01T01:00:00Z",
+    )
+    item.review_subject_digest = review_subject_digest(
+        item, max(1, item.bounces.review + 1))
+    item.reviewer_run_baseline = replace(
+        item.reviewer_run_baseline,
+        subject_digest=item.review_subject_digest,
+        cutoff_created_at="2026-08-01T09:00:00+08:00",
+    )
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: [])
+    monkeypatch.setattr(
+        eng.runtime, "wake",
+        lambda *_args: pytest.fail("equivalent cutoff must not wake"),
+    )
+
+    assert loop.collect_results(
+        eng.store, eng.runtime, manifest, path) == {}
+    current = eng.store.get_work_item(item.id)
+    assert current.status is WorkItemStatus.IN_REVIEW
+    assert current.decision_required is None
+    assert manifest.nodes["a"].status == "in_review"
+
+
+def test_reviewer_dispatch_rejects_naive_delivery_cutoff(tmp_path):
+    """Sealed verification cutoff 必须带时区，不能把 TypeError 留到观察阶段。"""
+    from omac.errors import PlatformError
+
+    eng, manifest, _path, item, _reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    current = eng.store.get_work_item(item.id)
+    naive = "2026-01-01T00:00:01"
+    current.verification_ref["created_at"] = naive
+    current.delivery_identity = replace(
+        current.delivery_identity, verification_created_at=naive)
+    current.reviewer_run_baseline = None
+
+    with pytest.raises(PlatformError, match="verification time"):
+        loop._dispatch_reviewer_for_current_subject(
+            eng.store, eng.runtime, manifest, "a")
+
+
+def test_reviewer_completed_without_verdict_is_bounded_by_run_attempts(
+    tmp_path, monkeypatch,
+):
+    """Reviewer 连续无结构化提交不能无限重派，也不消耗业务 bounce。"""
+    eng, manifest, path, item, reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    eng.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
+    runs = [
+        AgentRunObservation(
+            id="run-reviewer-no-submit-1",
+            kind="direct",
+            status="completed",
+            agent_id=reviewer_id,
+            created_at="2026-08-01T01:01:00Z",
+            updated_at="2026-08-01T01:01:30Z",
+        ),
+        AgentRunObservation(
+            id="run-reviewer-no-submit-2",
+            kind="direct",
+            status="completed",
+            agent_id=reviewer_id,
+            created_at="2026-08-01T01:02:00Z",
+            updated_at="2026-08-01T01:02:30Z",
+        ),
+    ]
+    baseline = eng.store.get_work_item(item.id).reviewer_run_baseline
+    eng.store.update_work_item_metadata(
+        item.id,
+        reviewer_run_baseline=replace(
+            baseline,
+            generation="review-attempt-2",
+            attempt=2,
+            baseline_direct_run_ids=("run-reviewer-no-submit-1",),
+            target_run_id="run-reviewer-no-submit-2",
+        ),
+    )
+    monkeypatch.setattr(
+        loop, "_utcnow",
+        lambda: datetime(2026, 8, 1, 1, 3, 1, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
+    monkeypatch.setattr(
+        eng.runtime,
+        "wake",
+        lambda *_args: pytest.fail("exhausted reviewer retry must not wake"),
+    )
+
+    result = tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+    blocked = eng.store.get_work_item(item.id)
+
+    assert result.state == "needs_decision"
+    assert manifest.nodes["a"].status == "blocked"
+    assert blocked.status is WorkItemStatus.BLOCKED
+    assert blocked.phase is TaskPhase.REVIEW
+    assert blocked.bounces.review == 0
+    assert blocked.decision_required["reason_code"] == (
+        "reviewer-run-no-submit-retry-exhausted")
 
 
 def test_nonretryable_worker_failure_blocks_without_business_bounce(
@@ -1250,7 +2130,7 @@ def test_nonretryable_reviewer_failure_blocks_without_review_bounce(
         _reviewer_runtime_failure_fixture(tmp_path))
     runs = [AgentRunObservation(
         id="run-review-policy", kind="direct", status="failed",
-        agent_id=reviewer_id,
+        agent_id=reviewer_id, created_at="2026-08-01T01:01:00Z",
         error="HTTP 403 forbidden by provider safety policy",
     )]
     monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
@@ -1285,6 +2165,17 @@ def test_reviewer_transient_failures_stop_at_infrastructure_limit(
             agent_id=reviewer_id, created_at="2026-07-31T10:01:00Z",
             error="provider error: HTTP 503 Service Unavailable"),
     ]
+    baseline = eng.store.get_work_item(item.id).reviewer_run_baseline
+    eng.store.update_work_item_metadata(
+        item.id,
+        reviewer_run_baseline=replace(
+            baseline,
+            generation="review-attempt-2",
+            attempt=2,
+            baseline_direct_run_ids=("run-review-1",),
+            target_run_id="run-review-2",
+        ),
+    )
     monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
     monkeypatch.setattr(
         eng.runtime, "wake",
@@ -1306,9 +2197,13 @@ def test_reviewer_ignores_comment_run_and_never_retries_other_agent_failure(
 ):
     eng, manifest, path, item, reviewer_id = (
         _reviewer_runtime_failure_fixture(tmp_path))
+    baseline = item.reviewer_run_baseline
+    assert baseline is not None
+    assert baseline.baseline_direct_run_ids
     runs = [
         AgentRunObservation(
-            id="run-review-old", kind="direct", status="failed",
+            id=baseline.baseline_direct_run_ids[-1],
+            kind="direct", status="failed",
             agent_id=reviewer_id, created_at="2026-07-31T10:00:00Z",
             error="Our servers are currently overloaded"),
         AgentRunObservation(
@@ -1471,7 +2366,7 @@ class TestReviewerHandoff:
 
     def test_with_reviewer_goes_through_in_review(self):
         """有 reviewer 节点:worker 完成 → in_review → reviewer pass → done。"""
-        nodes = [_node("a", reviewer="bob")]
+        nodes = [_node("a", reviewer="bob", contract=_contract())]
         manifest = _manifest(nodes)
         path = _tmp_manifest_path(manifest)
         eng = _engine()
@@ -1486,7 +2381,7 @@ class TestReviewerHandoff:
 
     def test_reviewer_handoff_assigns_reviewer(self):
         """有 reviewer 节点:collect_results 把 issue 转派给 reviewer。"""
-        nodes = [_node("a", reviewer="bob")]
+        nodes = [_node("a", reviewer="bob", contract=_contract())]
         manifest = _manifest(nodes)
         path = _tmp_manifest_path(manifest)
         eng = _engine()
@@ -1654,49 +2549,6 @@ class TestContractEvidence:
         assert result.state == "converged"
         assert "a" in result.done
 
-    def test_first_unreviewed_delivery_recovers_from_stale_blocked_manifest(self):
-        """首次 worker 合法补交时，旧 blocked manifest 也必须重新进入 reviewer gate。"""
-        nodes = [_node("a", reviewer="bob", contract=_contract())]
-        manifest = _manifest(nodes)
-        path = _tmp_manifest_path(manifest)
-        eng = _engine(MOCK_AUTO_COMPLETE="false")
-
-        item = eng.store.create_work_item(
-            "ws", "a", "d", dag_key="a", worker="alice", reviewer="bob",
-        )
-        eng.store.set_node_contract(item.id, _contract())
-        eng.store.update_work_item_metadata(
-            item.id,
-            artifacts={"pr_url": f"https://mock.example.com/pr/{item.id}"},
-            verification={
-                "commands": [_business_command()],
-                "integration_gates": [{
-                    "name": "gate-1",
-                    "commands": [{"cmd": "pytest tests/int", "exit_code": 0}],
-                    "metrics": {"route_coverage": 100},
-                    "artifacts": ["coverage.xml"],
-                    "source_of_truth": ["docs/d.md"],
-                    "delivery_goal": "delivers",
-                }],
-                "env_setup": ["mock: integration env ready"],
-                "pr_base": "feature/v1",
-                "coverage": 90,
-            },
-        )
-        eng.store.update_status(item.id, WorkItemStatus.DONE)
-        manifest.nodes["a"].work_item_id = item.id
-        manifest.nodes["a"].status = "blocked"
-        save_manifest(manifest, path)
-
-        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
-
-        got = eng.store.get_work_item(item.id)
-        assert result.state == "running"
-        assert manifest.nodes["a"].status == "in_review"
-        assert got.status == WorkItemStatus.IN_REVIEW
-        assert got.phase == TaskPhase.REVIEW
-
-
 # ==================== 8. 证据门回归测试(reviewer 要求) ====================
 
 class TestEvidenceGateRegression:
@@ -1782,52 +2634,6 @@ class TestEvidenceGateRegression:
         node_a = next(n for n in result.report["failed_nodes"] if n["key"] == "a")
         assert "coverage" in node_a["reason"].lower() or "below gate" in node_a["reason"].lower()
 
-    def test_valid_evidence_with_reviewer_enters_in_review(self):
-        """worker DONE + 合规证据 + reviewer → in_review + assign reviewer + wake。"""
-        contract = _contract()
-        nodes = [_node("a", reviewer="bob", contract=contract)]
-        manifest = _manifest(nodes)
-        path = _tmp_manifest_path(manifest)
-        eng = _engine(MOCK_AUTO_COMPLETE="false")
-
-        item = self._manual_done_item(
-            eng, "a", reviewer="bob", contract=contract,
-            artifacts={"pr_url": "https://x/pr/1"},
-            verification={
-                "commands": [_business_command()],
-                "integration_gates": [{
-                    "name": "gate-1",
-                    "commands": [{"cmd": "pytest tests/int", "exit_code": 0}],
-                    "metrics": {"route_coverage": 100},
-                    "artifacts": ["coverage.xml"],
-                    "source_of_truth": ["docs/d.md"],
-                    "delivery_goal": "delivers",
-                }],
-                "env_setup": ["mock: integration env ready"],
-                "pr_base": "feature/v1",
-                "coverage": 95,
-                "env_setup": ["mock: provision integration env for gate-1"],
-            },
-        )
-
-        manifest.nodes["a"].work_item_id = item.id
-        manifest.nodes["a"].status = "in_progress"
-        save_manifest(manifest, path)
-
-        result = tick(eng.store, eng.runtime, manifest, path)
-
-        # 证据门过 → 转 in_review(有 reviewer)
-        assert manifest.nodes["a"].status == "in_review"
-        assert "a" in result.running  # in_review 属于 running
-        # reviewer 已分配
-        got = eng.store.get_work_item(item.id)
-        assert got.reviewer == "bob"
-        assert got.phase == TaskPhase.REVIEW
-        assert got.review_subject_digest
-        assert got.review_obligations
-        # assign_log 含 reviewer 分配
-        assert any(role == "reviewer" for _, _, role, _ in eng.store.assign_log)
-
     def test_valid_evidence_without_reviewer_direct_done(self):
         """worker DONE + 合规证据 + 无 reviewer → 直接 done。"""
         contract = _contract()
@@ -1892,6 +2698,8 @@ class TestReviewerRejectBoundedFallback:
 
     def _setup_reject_node(self, eng, path, key="a", worker="alice", reviewer="bob",
                            contract=None):
+        import hashlib
+
         from omac.core.manifest import Manifest, Node
         contract = contract or self._simple_contract()
         node = Node(id=key, worker=worker, reviewer=reviewer, title=key,
@@ -1905,18 +2713,24 @@ class TestReviewerRejectBoundedFallback:
         # 手动模拟 worker 合规提交(DONE + 过证据门),让节点进入 in_review
         item = eng.store.get_work_item(manifest.nodes[key].work_item_id)
         eng.store.set_node_contract(item.id, contract)
+        verification = {
+            "commands": [_business_command()],
+            "integration_gates": [{
+                "name": "setup-gate",
+                "commands": [_business_command()],
+            }],
+            "pr_base": "main",
+            "coverage": 90,
+        }
+        pr_url = f"https://mock.example.com/pr/{item.id}"
         eng.store.update_work_item_metadata(
             item.id,
-            artifacts={"pr_url": f"https://mock.example.com/pr/{item.id}"},
-            verification={
-                "commands": [_business_command()],
-                "integration_gates": [{
-                    "name": "setup-gate",
-                    "commands": [_business_command()],
-                }],
-                "pr_base": "main",
-                "coverage": 90,
+            artifacts={
+                "pr_url": pr_url,
+                "head_sha": hashlib.sha256(pr_url.encode("utf-8")).hexdigest(),
             },
+            verification=verification,
+            verification_source=yaml.safe_dump(verification),
         )
         eng.store.update_status(item.id, __import__("omac").engines.models.WorkItemStatus.DONE)
 
@@ -2025,6 +2839,7 @@ class TestReviewerRejectBoundedFallback:
             review_subject_digest=source_subject,
             review_bounce=1,
             worker_handoff=intent,
+            delivery_identity={},
         )
         eng.store.reset_review(item.id)
         eng.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
@@ -2116,6 +2931,81 @@ class TestReviewerRejectBoundedFallback:
         assert recovered.worker_handoff.target_worker_bounce == 1
         assert assignments_after_retry == 1
         assert retry_assignments == assignments_after_retry
+
+    def test_multica_like_terminal_worker_handoff_recovers_without_run_flags(
+        self, tmp_path, monkeypatch,
+    ):
+        """平台保持 in_review/authoring 时，Run 事实仍驱动 grace 后恢复。"""
+        from omac.engines import create_engine
+        from omac.engines.models import AgentRunObservation
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        intent, _source = self._prepare_causal_handoff(eng, item)
+        eng.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+        assert eng.store.get_work_item(item.id).phase is TaskPhase.AUTHORING
+        assert not eng.store.get_work_item(item.id).agent_run_failed
+        assert not eng.store.get_work_item(
+            item.id).agent_run_finished_without_submit
+
+        now = [datetime(2026, 8, 1, tzinfo=timezone.utc)]
+        retry_run_visible = False
+        wake_calls = 0
+
+        def list_runs(_item_id):
+            runs = [AgentRunObservation(
+                id=intent.target_run_id,
+                kind="direct",
+                status="completed",
+                agent_id=intent.target_agent_id,
+                created_at="2026-08-01T00:00:00Z",
+            )]
+            if retry_run_visible:
+                runs.append(AgentRunObservation(
+                    id="run-worker-multica-retry",
+                    kind="direct",
+                    status="running",
+                    agent_id=intent.target_agent_id,
+                    created_at="2026-08-01T00:01:00Z",
+                ))
+            return runs
+
+        def wake(_item_id, _agent, role):
+            nonlocal retry_run_visible, wake_calls
+            assert role == "worker"
+            wake_calls += 1
+            retry_run_visible = True
+
+        monkeypatch.setattr(loop, "_utcnow", lambda: now[0])
+        monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
+        monkeypatch.setattr(eng.runtime, "list_runs", list_runs)
+        monkeypatch.setattr(eng.runtime, "wake", wake)
+
+        assert loop.collect_results(
+            eng.store, eng.runtime, manifest, path,
+            retry_limits={"worker": 1},
+        ) == {}
+        now[0] += timedelta(seconds=loop._HANDOFF_TERMINAL_GRACE_SECONDS + 1)
+        assert loop.collect_results(
+            eng.store, eng.runtime, manifest, path,
+            retry_limits={"worker": 1},
+        ) == {}
+        persisted = load_manifest(path)
+        assert loop.collect_results(
+            eng.store, eng.runtime, persisted, path,
+            retry_limits={"worker": 1},
+        ) == {}
+
+        recovered = eng.store.get_work_item(item.id)
+        assert wake_calls == 1
+        assert recovered.worker_handoff is not None
+        assert recovered.worker_handoff.target_run_id == (
+            "run-worker-multica-retry")
+        assert recovered.bounces.worker == 1
+        assert recovered.agent_run_failed is False
+        assert recovered.agent_run_finished_without_submit is False
+        assert persisted.nodes["a"].status == "in_progress"
 
     def test_terminal_worker_handoff_without_submit_blocks_when_budget_exhausted(
         self, tmp_path, monkeypatch,
@@ -3177,8 +4067,8 @@ class TestReviewerRejectBoundedFallback:
         assert result.state == "needs_decision"
         assert manifest.nodes["a"].status == "blocked"
         assert any(
-            "HEAD" in comment or "head" in comment
-            for comment in eng.store.get_comments(item.id)
+            "HEAD" in failed["reason"] or "head" in failed["reason"]
+            for failed in result.report["failed_nodes"]
         )
 
     def test_empty_command_candidate_returns_to_normal_evidence_gate(
@@ -3942,9 +4832,8 @@ class TestReviewerRejectBoundedFallback:
             entry for entry in eng.store.assign_log if entry[2] == "reviewer"
         ]) == reviewer_assignments_before + 1
 
-    @pytest.mark.parametrize("stale_verdict", ["pass", "pass-with-nits", "reject"])
-    def test_stale_pass_cannot_merge_new_worker_delivery(
-        self, tmp_path, monkeypatch, stale_verdict,
+    def test_stale_pass_without_sealed_identity_fails_closed(
+        self, tmp_path, monkeypatch,
     ):
         """in_progress 新交付不能消费旧 subject 的任何 review verdict。"""
         from omac.engines import create_engine
@@ -3957,11 +4846,12 @@ class TestReviewerRejectBoundedFallback:
         stale_subject = eng.store.get_work_item(item.id).review_subject_digest
         eng.store.update_work_item_metadata(
             item.id,
-            review_verdict=stale_verdict,
-            review_report=_review_report(item, stale_verdict),
+            review_verdict="pass",
+            review_report=_review_report(item, "pass"),
             phase=TaskPhase.AUTHORING,
         )
         self._submit_revision(eng, item)
+        eng.store.update_work_item_metadata(item.id, delivery_identity={})
         manifest.nodes["a"].status = "in_progress"
         save_manifest(manifest, path)
         monkeypatch.setattr(
@@ -3974,91 +4864,13 @@ class TestReviewerRejectBoundedFallback:
         result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
 
         recovered = eng.store.get_work_item(item.id)
-        assert result.state == "running"
-        assert manifest.nodes["a"].status == "in_review"
-        assert recovered.status == WorkItemStatus.IN_REVIEW
+        assert result.state == "needs_decision"
+        assert manifest.nodes["a"].status == "blocked"
+        assert recovered.status == WorkItemStatus.BLOCKED
         assert recovered.review_verdict is None
         assert recovered.review_subject_digest != stale_subject
-
-    @pytest.mark.parametrize("stale_verdict", ["pass", "pass-with-nits", "reject"])
-    def test_review_phase_stale_subject_dispatches_one_fresh_reviewer(
-        self, tmp_path, monkeypatch, stale_verdict,
-    ):
-        """REVIEW phase 遗留旧判定时，失效投影并只派一个 fresh reviewer。"""
-        from omac.engines import create_engine
-
-        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
-        path = str(tmp_path / "m.yaml")
-        manifest, eng, item = self._setup_reject_node(eng, path)
-        current = eng.store.get_work_item(item.id)
-        old_subject = current.review_subject_digest
-        old_ledger = current.review_ledger
-        eng.store.update_work_item_metadata(
-            item.id,
-            review_obligations=build_review_obligations(current),
-            review_verdict=stale_verdict,
-            review_report=_review_report(
-                current,
-                stale_verdict,
-                nits=["old nit"] if stale_verdict == "pass-with-nits" else None,
-            ),
-            artifacts={"pr_url": f"https://mock.example.com/pr/{item.id}-fresh"},
-            verification={
-                "commands": [_business_command()],
-                "integration_gates": [{
-                    "name": "fresh-review",
-                    "commands": [_business_command()],
-                }],
-                "pr_base": "main",
-                "coverage": 91,
-                "revision": 2,
-            },
-        )
-        eng.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
-        reviewer_assignments_before = len([
-            entry for entry in eng.store.assign_log if entry[2] == "reviewer"])
-        runs_before = len(eng.runtime.list_runs(item.id))
-        wakes = []
-        original_wake = eng.runtime.wake
-
-        def wake(item_id, agent, role):
-            if role == "reviewer":
-                wakes.append((item_id, agent))
-            return original_wake(item_id, agent, role)
-
-        monkeypatch.setattr(eng.runtime, "wake", wake)
-        monkeypatch.setattr(
-            loop,
-            "_complete_merge_if_confirmed",
-            lambda *_args, **_kwargs: pytest.fail(
-                "stale review subject must not enter merge"),
-        )
-
-        first = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
-
-        recovered = eng.store.get_work_item(item.id)
-        assert first.state == "running"
-        assert manifest.nodes["a"].status == "in_review"
-        assert recovered.phase is TaskPhase.REVIEW
-        assert recovered.status is WorkItemStatus.IN_REVIEW
-        assert recovered.review_subject_digest != old_subject
-        assert recovered.review_verdict is None
-        assert recovered.review_report is None
-        assert recovered.review_ledger is old_ledger
-        assert len(eng.runtime.list_runs(item.id)) == runs_before + 1
-        assert len([
-            entry for entry in eng.store.assign_log if entry[2] == "reviewer"
-        ]) == reviewer_assignments_before + 1
-        assert wakes == [(item.id, "bob")]
-
-        second = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
-
-        assert second.state == "running"
-        assert len(eng.runtime.list_runs(item.id)) == runs_before + 1
-        assert len([
-            entry for entry in eng.store.assign_log if entry[2] == "reviewer"
-        ]) == reviewer_assignments_before + 1
-        assert wakes == [(item.id, "bob")]
+        assert recovered.decision_required["reason_code"] == (
+            "reviewer-run-baseline-unavailable")
 
     def test_same_subject_active_reviewer_is_not_assigned_or_woken_again(
         self, tmp_path, monkeypatch,
@@ -4490,6 +5302,8 @@ class TestReviewerRejectFallbackRecovery:
         )
 
     def _setup_reject_node(self, eng, fpath, key="a", worker="alice", reviewer="bob"):
+        import hashlib
+
         from omac.core.manifest import Manifest, Node, set_node
         contract = self._simple_contract()
         node = Node(id=key, worker=worker, reviewer=reviewer, title=key,
@@ -4500,18 +5314,25 @@ class TestReviewerRejectFallbackRecovery:
         tick(eng.store, eng.runtime, manifest, fpath, max_parallel=4)
         item = eng.store.get_work_item(manifest.nodes[key].work_item_id)
         eng.store.set_node_contract(item.id, contract)
+        verification = {
+            "commands": [_business_command()],
+            "integration_gates": [{
+                "name": "setup-gate",
+                "commands": [_business_command()],
+            }],
+            "pr_base": "main",
+            "coverage": 90,
+        }
+        pr_url = f"https://mock.example.com/pr/{item.id}"
         eng.store.update_work_item_metadata(
             item.id,
-            artifacts={"pr_url": f"https://mock.example.com/pr/{item.id}"},
-            verification={
-                "commands": [_business_command()],
-                "integration_gates": [{
-                    "name": "setup-gate",
-                    "commands": [_business_command()],
-                }],
-                "pr_base": "main",
-                "coverage": 90,
-            })
+            artifacts={
+                "pr_url": pr_url,
+                "head_sha": hashlib.sha256(pr_url.encode("utf-8")).hexdigest(),
+            },
+            verification=verification,
+            verification_source=yaml.safe_dump(verification),
+        )
         from omac.engines.models import WorkItemStatus
         eng.store.update_status(item.id, WorkItemStatus.DONE)
         tick(eng.store, eng.runtime, manifest, fpath, max_parallel=4)

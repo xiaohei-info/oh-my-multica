@@ -52,8 +52,10 @@ from ..errors import AuthError, PlatformError, WorkItemNotFoundError
 from ..i18n import current_language, ui
 from ..pipeline.dispatch import normalize_source_refs, render_issue_body
 from ..core.taskmeta import (
-    DECISION_REQUIRED_SCHEMA, DELIVERY_IDENTITY_SCHEMA, WORKER_HANDOFF_SCHEMA,
-    DeliveryIdentity, TaskKind, TaskPhase, WorkerHandoffIntent, parse_delivery_identity,
+    DECISION_REQUIRED_SCHEMA, DELIVERY_IDENTITY_SCHEMA,
+    REVIEWER_RUN_BASELINE_SCHEMA, WORKER_HANDOFF_SCHEMA,
+    DeliveryIdentity, ReviewerRunBaseline, TaskKind, TaskPhase,
+    WorkerHandoffIntent, parse_delivery_identity,
 )
 
 log = logsetup.get_logger(__name__)
@@ -119,6 +121,23 @@ class _RunFailure:
             self.classification == "transient"
             and self.consecutive_runs >= _TRANSIENT_RUNTIME_MAX_RUNS
         )
+
+
+@dataclass(frozen=True)
+class _ExpectedTerminalRun:
+    """Latest terminal direct Run for one causally bounded agent dispatch."""
+
+    run: AgentRunObservation
+    outcome: str
+    consecutive_runs: int
+
+
+@dataclass(frozen=True)
+class _DirectRunAttempt:
+    state: str
+    target_run_id: str | None = None
+    terminal: _ExpectedTerminalRun | None = None
+    detail: str = ""
 
 
 _RETRYABLE_RUN_ERROR_SIGNATURES = (
@@ -193,34 +212,113 @@ def _latest_run_failure(
     item_id: str,
     agent_id: str,
     *,
+    baseline_direct_run_ids: Tuple[str, ...] = (),
     target_run_id: str | None = None,
 ) -> _RunFailure | None:
-    """Return the latest same-agent failed Run and its derived classification."""
-    direct_runs = _ordered_direct_runs(runtime.list_runs(item_id))
-    if not direct_runs:
+    """Return the latest expected failed Run and its derived classification."""
+    observed = _observe_direct_run_attempt(
+        runtime.list_runs(item_id),
+        agent_id,
+        baseline_direct_run_ids=baseline_direct_run_ids,
+        target_run_id=target_run_id,
+    )
+    terminal = observed.terminal
+    if terminal is None or terminal.outcome == "finished-without-submit":
         return None
-    if any(run.agent_id == agent_id and run.active for run in direct_runs):
-        return None
-    latest = direct_runs[0]
-    if target_run_id is not None and latest.id != target_run_id:
-        return None
-    if latest.agent_id != agent_id or latest.status != "failed":
-        return None
-    if not _is_retryable_transient_run_failure(latest):
-        return _RunFailure(latest, "nonretryable", 1)
+    classification = (
+        "transient"
+        if terminal.outcome == "transient-failure"
+        else "nonretryable"
+    )
+    return _RunFailure(
+        terminal.run, classification, terminal.consecutive_runs)
+
+
+def _observe_direct_run_attempt(
+    runs: List[AgentRunObservation],
+    agent_id: str,
+    *,
+    baseline_direct_run_ids: Tuple[str, ...] = (),
+    cutoff_created_at: str | None = None,
+    target_run_id: str | None = None,
+    attempt: int = 1,
+) -> _DirectRunAttempt:
+    """Bind and classify one causal direct-Run attempt."""
+    baseline = set(baseline_direct_run_ids)
+    cutoff = _parse_platform_time(cutoff_created_at)
+    expected = []
+    for run in _ordered_direct_runs(runs):
+        if run.agent_id != agent_id or run.id in baseline:
+            continue
+        if cutoff_created_at:
+            created = _parse_platform_time(run.created_at)
+            if created is None or created.tzinfo is None:
+                return _DirectRunAttempt(
+                    "unexpected", detail=f"Run {run.id} has no usable creation time")
+            if cutoff is None or cutoff.tzinfo is None:
+                return _DirectRunAttempt("unexpected", detail="invalid Run cutoff")
+            if created <= cutoff:
+                continue
+        expected.append(run)
+    if target_run_id:
+        matches = [run for run in expected if run.id == target_run_id]
+        if (
+            len(matches) > 1
+            or (expected and expected[0].id != target_run_id)
+            or any(
+                run.id != target_run_id and not run.terminal
+                for run in expected
+            )
+        ):
+            return _DirectRunAttempt("unexpected", detail="ambiguous target Run")
+        if not matches:
+            return _DirectRunAttempt("missing", target_run_id)
+        latest = matches[0]
+    else:
+        if len(expected) > 1:
+            return _DirectRunAttempt("unexpected", detail="ambiguous post-baseline Runs")
+        if not expected:
+            return _DirectRunAttempt("missing")
+        latest = expected[0]
+        target_run_id = latest.id
+    if latest.active:
+        return _DirectRunAttempt("active", target_run_id)
+    if not latest.terminal:
+        return _DirectRunAttempt("missing", target_run_id)
+    if latest.status == "failed":
+        outcome = (
+            "transient-failure"
+            if _is_retryable_transient_run_failure(latest)
+            else "nonretryable-failure"
+        )
+    else:
+        outcome = "finished-without-submit"
+
     consecutive = 0
-    for run in direct_runs:
-        if run.agent_id != agent_id or not _is_retryable_transient_run_failure(run):
+    for run in expected:
+        if not run.terminal:
+            break
+        if outcome == "transient-failure":
+            matches = _is_retryable_transient_run_failure(run)
+        elif outcome == "nonretryable-failure":
+            matches = (
+                run.status == "failed"
+                and not _is_retryable_transient_run_failure(run)
+            )
+        else:
+            matches = run.status in {"completed", "cancelled"}
+        if not matches:
             break
         consecutive += 1
-    return _RunFailure(latest, "transient", consecutive)
+    terminal = _ExpectedTerminalRun(latest, outcome, max(consecutive, attempt))
+    return _DirectRunAttempt("terminal", target_run_id, terminal)
 
 
 def _resolved_worker_handoff_dispatch(
     result: _WorkerHandoffResult,
 ) -> _WorkerHandoffResult | None:
     if result.state in {
-        "complete", "finished-without-submit", "transient-failure",
+        "complete", "complete-unsealed", "finished-without-submit", "transient-failure",
         "nonretryable-failure",
     }:
         return result
@@ -706,6 +804,199 @@ def _block_runtime_failure(
     return reason
 
 
+def _block_reviewer(
+    store: WorkItemStore,
+    manifest: Manifest,
+    manifest_path: str,
+    key: str,
+    item,
+    reason_code: str,
+    detail: str,
+    run_id: str | None = None,
+) -> str:
+    retry = f"omac node retry {manifest_path} {key}"
+    reason = ui(
+        f"Reviewer recovery is unsafe: {detail}. Inspect the Runs, then use "
+        f"`{retry}` after an explicit operator decision.",
+        f"reviewer 恢复不安全：{detail}。请检查 Runs，并在人工决策后执行 "
+        f"`{retry}`。",
+    )
+    decision = {
+        "schema": DECISION_REQUIRED_SCHEMA,
+        "reason_code": reason_code,
+        "kind": TaskKind.DEVELOP.value,
+        "phase": TaskPhase.REVIEW.value,
+        "gate": "reviewer",
+        "resume_issue_id": item.id,
+        "node_id": key,
+        "failure_class": "unproven-reviewer-run-causality",
+        "next_action": retry,
+    }
+    if run_id:
+        decision["run_id"] = run_id
+    store.update_work_item_metadata(item.id, decision_required=decision)
+    store.update_status(item.id, WorkItemStatus.BLOCKED)
+    set_node(manifest, key, status="blocked")
+    return reason
+
+
+def _reviewer_no_submit_grace_state(
+    store: WorkItemStore,
+    runtime: AgentRuntime,
+    item,
+    baseline: ReviewerRunBaseline,
+    terminal: _ExpectedTerminalRun,
+) -> str:
+    """Return submitted, waiting, elapsed, or unavailable without mutating runs."""
+    observed = terminal
+    for attempt in range(_HANDOFF_OBSERVATION_ATTEMPTS):
+        fresh = store.observe_work_item_control(item.id).work_item
+        if fresh.review_verdict:
+            return "submitted"
+
+        ended_at = _parse_platform_time(observed.run.updated_at)
+        if observed.run.updated_at and (
+            ended_at is None or ended_at.tzinfo is None
+        ):
+            return "unavailable"
+        if ended_at is not None:
+            age = (_utcnow() - ended_at).total_seconds()
+            if age < 0:
+                return "unavailable"
+            return (
+                "elapsed"
+                if age >= _HANDOFF_TERMINAL_GRACE_SECONDS
+                else "waiting"
+            )
+
+        if attempt + 1 >= _HANDOFF_OBSERVATION_ATTEMPTS:
+            break
+        time.sleep(_HANDOFF_OBSERVATION_INTERVAL)
+        refreshed = _observe_direct_run_attempt(
+            runtime.list_runs(item.id),
+            baseline.target_agent_id,
+            baseline_direct_run_ids=baseline.baseline_direct_run_ids,
+            cutoff_created_at=baseline.cutoff_created_at,
+            target_run_id=baseline.target_run_id,
+            attempt=baseline.attempt,
+        )
+        if refreshed.state != "terminal":
+            return "waiting"
+        observed = refreshed.terminal
+    return "unavailable"
+
+
+def _reviewer_run_baseline_for_observation(
+    store: WorkItemStore,
+    runtime: AgentRuntime,
+    item,
+    reviewer: str,
+    reviewer_id: str,
+) -> tuple[ReviewerRunBaseline | None, str | None]:
+    """Load the baseline, or derive it from the sealed delivery's creation time."""
+    baseline = item.reviewer_run_baseline
+    if baseline is not None:
+        if (
+            baseline.subject_digest == item.review_subject_digest
+            and baseline.target_reviewer == reviewer
+            and baseline.target_agent_id == reviewer_id
+        ):
+            identity = _delivery_identity(item)
+            identity_cutoff = (
+                _parse_platform_time(identity.verification_created_at)
+                if identity is not None and identity.is_complete() else None
+            )
+            if identity_cutoff is None or identity_cutoff.tzinfo is None:
+                return None, (
+                    "the current delivery identity or verification time is unusable")
+            if not baseline.cutoff_created_at:
+                baseline = replace(
+                    baseline, cutoff_created_at=identity.verification_created_at,
+                    generation=f"review-{secrets.token_hex(8)}")
+                store.update_work_item_metadata(
+                    item.id, reviewer_run_baseline=baseline)
+            cutoff = _parse_platform_time(baseline.cutoff_created_at)
+            if cutoff is None or cutoff.tzinfo is None or cutoff != identity_cutoff:
+                return None, (
+                    "the persisted reviewer Run cutoff is unusable or mismatched")
+            if not baseline.is_causally_bound():
+                return None, "the persisted reviewer Run baseline is incomplete"
+            return baseline, None
+        return None, "the persisted reviewer Run baseline is incomplete or stale"
+
+    identity = _delivery_identity(item)
+    if identity is None or not identity.is_complete():
+        return None, "the current delivery identity is missing or incomplete"
+    cutoff = _parse_platform_time(identity.verification_created_at)
+    if (
+        not item.review_subject_digest
+        or cutoff is None
+        or cutoff.tzinfo is None
+        or not runtime.capabilities.stable_direct_run_identity
+    ):
+        return None, (
+            "the sealed delivery verification time or stable Run identity "
+            "support is unavailable")
+
+    direct_runs = [
+        run for run in runtime.list_runs(item.id)
+        if run.kind == "direct" and run.agent_id == reviewer_id
+    ]
+    historical_ids = []
+    for run in direct_runs:
+        created_at = _parse_platform_time(run.created_at)
+        if created_at is None or created_at.tzinfo is None:
+            return None, f"Reviewer Run {run.id} has no usable creation time"
+        if created_at <= cutoff:
+            historical_ids.append(run.id)
+    baseline = ReviewerRunBaseline(
+        schema=REVIEWER_RUN_BASELINE_SCHEMA,
+        subject_digest=item.review_subject_digest,
+        target_reviewer=reviewer,
+        target_agent_id=reviewer_id,
+        cutoff_created_at=identity.verification_created_at,
+        generation=f"review-{secrets.token_hex(8)}",
+        baseline_direct_run_ids=tuple(sorted(historical_ids)),
+    )
+    store.update_work_item_metadata(
+        item.id, reviewer_run_baseline=baseline)
+    return baseline, None
+
+
+def _retry_reviewer_attempt(store, runtime, node, item, baseline) -> str | None:
+    runs = runtime.list_runs(item.id)
+    retry = replace(
+        baseline,
+        generation=f"review-{secrets.token_hex(8)}",
+        attempt=baseline.attempt + 1,
+        baseline_direct_run_ids=tuple(sorted(
+            run.id for run in runs if run.kind == "direct")),
+        target_run_id=None,
+    )
+    store.update_work_item_metadata(item.id, reviewer_run_baseline=retry)
+    wake_error = None
+    try:
+        _resume_reviewer_run(store, runtime, node)
+    except PlatformError as exc:
+        wake_error = str(exc)
+    for attempt in range(_HANDOFF_OBSERVATION_ATTEMPTS):
+        observed = _observe_direct_run_attempt(
+            runtime.list_runs(item.id), retry.target_agent_id,
+            baseline_direct_run_ids=retry.baseline_direct_run_ids,
+            cutoff_created_at=retry.cutoff_created_at,
+            attempt=retry.attempt)
+        if observed.state in {"active", "terminal"}:
+            store.update_work_item_metadata(
+                item.id, reviewer_run_baseline=replace(
+                    retry, target_run_id=observed.target_run_id))
+            return None
+        if observed.state == "unexpected":
+            return observed.detail
+        if attempt + 1 < _HANDOFF_OBSERVATION_ATTEMPTS:
+            time.sleep(_HANDOFF_OBSERVATION_INTERVAL)
+    return wake_error or "retry generation has no uniquely observable target Run"
+
+
 def _dispatch_reviewer_for_current_subject(
     store: WorkItemStore,
     runtime: AgentRuntime,
@@ -729,6 +1020,47 @@ def _dispatch_reviewer_for_current_subject(
             review_obligations=build_review_obligations(current),
         )
         current = store.prepare_review_cycle(item_id, subject_digest)
+
+    reviewer_id = store.resolve_agent_id(node.reviewer)
+    baseline = current.reviewer_run_baseline
+    if (
+        baseline is None
+        or not baseline.is_causally_bound()
+        or baseline.subject_digest != subject_digest
+        or baseline.target_reviewer != node.reviewer
+        or baseline.target_agent_id != reviewer_id
+    ):
+        if not runtime.capabilities.stable_direct_run_identity:
+            raise PlatformError(
+                "Reviewer recovery requires stable direct Run identity support")
+        identity = _delivery_identity(current)
+        cutoff = (
+            _parse_platform_time(identity.verification_created_at)
+            if identity is not None else None
+        )
+        if (
+            identity is None
+            or not identity.is_complete()
+            or cutoff is None
+            or cutoff.tzinfo is None
+        ):
+            raise PlatformError(
+                "Reviewer dispatch requires a sealed delivery verification time")
+        baseline = ReviewerRunBaseline(
+            schema=REVIEWER_RUN_BASELINE_SCHEMA,
+            subject_digest=subject_digest,
+            target_reviewer=node.reviewer,
+            target_agent_id=reviewer_id,
+            cutoff_created_at=identity.verification_created_at,
+            generation=f"review-{secrets.token_hex(8)}",
+            baseline_direct_run_ids=tuple(sorted(
+                run.id for run in runtime.list_runs(item_id)
+                if run.kind == "direct"
+            )),
+        )
+        store.update_work_item_metadata(
+            item_id, reviewer_run_baseline=baseline)
+        current = store.get_work_item(item_id)
 
     if (
         not subject_changed
@@ -1286,57 +1618,32 @@ def _observe_worker_handoff(
     projection = projection or store.observe_work_item_control(item_id)
     current = projection.work_item
     runs = runtime.list_runs(item_id)
-    direct_runs = [run for run in runs if run.kind == "direct"]
     baseline = set(intent.baseline_direct_run_ids)
 
     if not intent.is_causally_bound():
         raise PlatformError(
             f"Worker handoff lacks causal identity for work item {item_id}")
 
-    target_run = None
-    if intent.target_run_id:
-        matches = [run for run in direct_runs if run.id == intent.target_run_id]
-        if len(matches) > 1:
-            raise PlatformError(
-                f"Worker handoff target Run is ambiguous for work item {item_id}")
-        target_run = matches[0] if matches else None
-        if target_run is not None and target_run.agent_id != intent.target_agent_id:
-            raise PlatformError(
-                f"Worker handoff target Run actor mismatch for work item {item_id}")
-    else:
-        candidates = [
-            run for run in direct_runs
-            if run.id not in baseline
-            and run.agent_id == intent.target_agent_id
-        ]
-        wrong_actor = [
-            run for run in direct_runs
-            if run.id not in baseline
-            and run.agent_id != intent.target_agent_id
-        ]
-        if wrong_actor or len(candidates) > 1:
-            raise PlatformError(
-                f"Worker handoff observed non-causal direct Runs for work item {item_id}")
-        if candidates:
-            target_run = candidates[0]
-            intent = replace(intent, target_run_id=target_run.id)
-            store.update_work_item_metadata(item_id, worker_handoff=intent)
-
-    unexpected_direct_runs = [
-        run for run in direct_runs
-        if run.id not in baseline and run.id != intent.target_run_id
-    ]
-    if unexpected_direct_runs:
+    if any(
+        run.kind == "direct" and run.id not in baseline
+        and run.agent_id != intent.target_agent_id
+        for run in runs
+    ):
         raise PlatformError(
             f"Worker handoff observed non-causal direct Runs for work item {item_id}")
-
-    if target_run is None and any(run.active for run in runs):
+    observed = _observe_direct_run_attempt(
+        runs, intent.target_agent_id,
+        baseline_direct_run_ids=intent.baseline_direct_run_ids,
+        target_run_id=intent.target_run_id)
+    if observed.state == "unexpected":
+        raise PlatformError(observed.detail)
+    if observed.target_run_id and observed.target_run_id != intent.target_run_id:
+        intent = replace(intent, target_run_id=observed.target_run_id)
+        store.update_work_item_metadata(item_id, worker_handoff=intent)
+    if observed.state == "active":
         return _WorkerHandoffResult("waiting", intent, projection)
-    if target_run is not None:
-        if target_run.active:
-            return _WorkerHandoffResult("waiting", intent, projection)
-        if not target_run.terminal:
-            return _WorkerHandoffResult("missing", intent, projection)
+    if observed.state == "terminal":
+        target_run = observed.terminal.run
         if target_run.status == "failed":
             state = (
                 "transient-failure"
@@ -1345,6 +1652,15 @@ def _observe_worker_handoff(
             )
             return _WorkerHandoffResult(
                 state, intent, projection)
+        if (
+            manifest.nodes[key].reviewer is None
+            and manifest.nodes[key].contract is None
+            and current.status == WorkItemStatus.DONE
+            and isinstance(current.artifacts, dict)
+            and current.artifacts
+        ):
+            return _WorkerHandoffResult(
+                "complete-unsealed", intent, projection)
         if not _worker_handoff_has_new_delivery(current, intent):
             state, intent = _observe_terminal_without_submit(
                 store, item_id, intent)
@@ -1380,6 +1696,66 @@ def _review_projection_present(item) -> bool:
         or item.review_subject_digest is not None
         or item.decision_required is not None
     )
+
+
+def _recover_legacy_initial_worker(store, runtime, manifest, key, item, path):
+    node = manifest.nodes[key]
+    if not (
+        node.status == "in_progress"
+        and item.status == WorkItemStatus.IN_PROGRESS
+        and item.phase == TaskPhase.AUTHORING
+        and item.worker_handoff is None
+        and not item.agent_run_failed
+        and not item.agent_run_finished_without_submit
+    ):
+        return item, None
+    runs = runtime.list_runs(item.id)
+    if not runs:
+        return item, None
+    stable_ids = bool(getattr(
+        getattr(runtime, "capabilities", None),
+        "stable_direct_run_identity", False))
+    has_facts = bool(
+        not stable_ids or item.bounces.worker or item.bounces.review
+        or item.artifacts or item.verification or item.verification_ref
+        or _delivery_identity(item) or _review_projection_present(item)
+        or item.reviewer_run_baseline or item.review_obligations
+        or item.review_ledger or item.review_continuation)
+    worker_id = store.resolve_agent_id(node.worker)
+    wrong_actor = any(
+        run.kind == "direct" and run.agent_id != worker_id for run in runs)
+    observed = _observe_direct_run_attempt(
+        runs, worker_id, cutoff_created_at=item.created_at)
+    if not wrong_actor and observed.state == "active":
+        return item, None
+    if (
+        not has_facts and not wrong_actor and observed.state == "terminal"
+        and observed.terminal.outcome == "transient-failure"
+        and observed.terminal.consecutive_runs == 1
+    ):
+        intent = WorkerHandoffIntent(
+            schema=WORKER_HANDOFF_SCHEMA, state="pending",
+            target_worker=node.worker, gate="explicit-dispatch",
+            source_review_subject_digest=stage_recovery_subject(node, item),
+            source_review_round=1, target_review_bounce=0,
+            generation=f"handoff-{secrets.token_hex(8)}",
+            target_agent_id=worker_id, target_run_id=observed.target_run_id,
+            target_worker_bounce=0)
+        store.update_work_item_metadata(item.id, worker_handoff=intent)
+        return store.observe_work_item_control(item.id).work_item, None
+    retry = f"omac node retry {path} {key}"
+    reason = ui(
+        f"Legacy Worker Run causality is unsafe; inspect Runs, then use `{retry}`.",
+        f"旧版 Worker Run 因果关系不安全；请检查 Runs 后执行 `{retry}`。")
+    store.update_work_item_metadata(item.id, decision_required={
+        "schema": DECISION_REQUIRED_SCHEMA,
+        "reason_code": "legacy-worker-handoff-migration-unproven",
+        "kind": TaskKind.DEVELOP.value, "phase": TaskPhase.AUTHORING.value,
+        "gate": "worker", "resume_issue_id": item.id, "node_id": key,
+        "next_action": retry})
+    store.update_status(item.id, WorkItemStatus.BLOCKED)
+    set_node(manifest, key, status="blocked")
+    return item, reason
 
 
 def _legacy_delivery_requires_retry(manifest, key, node, item) -> bool:
@@ -1747,6 +2123,12 @@ def collect_results(
             failures[key] = reason
             continue
 
+        item, legacy_failure = _recover_legacy_initial_worker(
+            store, runtime, manifest, key, item, manifest_path)
+        if legacy_failure:
+            failures[key] = legacy_failure
+            continue
+
         if item.worker_handoff is not None:
             handoff_intent = item.worker_handoff
             if not handoff_intent.is_causally_bound():
@@ -1762,6 +2144,8 @@ def collect_results(
                     runtime,
                     node.work_item_id,
                     handoff.intent.target_agent_id,
+                    baseline_direct_run_ids=(
+                        handoff.intent.baseline_direct_run_ids),
                     target_run_id=handoff.intent.target_run_id,
                 )
                 if failure is None:
@@ -1769,9 +2153,18 @@ def collect_results(
                         f"Failed Worker Run facts changed for work item "
                         f"{node.work_item_id}")
                 if failure.classification == "nonretryable" or failure.exhausted:
-                    failures[key] = _block_runtime_failure(
+                    reason = _block_runtime_failure(
                         store, manifest, manifest_path, key, item,
                         "worker", failure)
+                    failures[key] = reason
+                    log.info(
+                        logsetup.EVT_NODE_FAILED,
+                        kind=_DAG_KIND,
+                        node=key,
+                        id=node.work_item_id,
+                        reason=reason,
+                        run_id=failure.run.id,
+                    )
                     continue
                 time.sleep(
                     _TRANSIENT_RUNTIME_RETRY_BACKOFF_SECONDS
@@ -1798,6 +2191,11 @@ def collect_results(
                         node.work_item_id).work_item,
                     agent_run_finished_without_submit=True,
                 )
+            elif handoff.state == "complete-unsealed":
+                store.update_work_item_metadata(
+                    node.work_item_id, worker_handoff={})
+                item = handoff.projection.work_item
+                set_node(manifest, key, status="in_progress")
             elif handoff.state != "complete":
                 set_node(manifest, key, status="in_progress")
                 continue
@@ -1844,6 +2242,7 @@ def collect_results(
             node.status == "in_progress"
             and item.status == WorkItemStatus.IN_REVIEW
             and getattr(item, "phase", TaskPhase.AUTHORING) == TaskPhase.AUTHORING
+            and item.worker_handoff is None
         ):
             continue
 
@@ -2044,12 +2443,53 @@ def collect_results(
             verdict = item.review_verdict
             if not verdict:
                 if node.reviewer:
-                    reviewer_failure = _latest_run_failure(
-                        runtime,
-                        node.work_item_id,
-                        store.resolve_agent_id(node.reviewer),
+                    reviewer_id = store.resolve_agent_id(node.reviewer)
+                    baseline, baseline_error = (
+                        _reviewer_run_baseline_for_observation(
+                            store, runtime, item, node.reviewer, reviewer_id)
                     )
-                    if reviewer_failure is not None:
+                    if baseline_error is not None:
+                        failures[key] = _block_reviewer(
+                            store, manifest, manifest_path, key, item,
+                            "reviewer-run-baseline-unavailable", baseline_error)
+                        continue
+                    observed = _observe_direct_run_attempt(
+                        runtime.list_runs(node.work_item_id), reviewer_id,
+                        baseline_direct_run_ids=baseline.baseline_direct_run_ids,
+                        cutoff_created_at=baseline.cutoff_created_at,
+                        target_run_id=baseline.target_run_id,
+                        attempt=baseline.attempt)
+                    if observed.state == "unexpected":
+                        failures[key] = _block_reviewer(
+                            store, manifest, manifest_path, key, item,
+                            "reviewer-run-baseline-unavailable", observed.detail)
+                        continue
+                    if observed.target_run_id != baseline.target_run_id:
+                        baseline = replace(
+                            baseline, target_run_id=observed.target_run_id)
+                        store.update_work_item_metadata(
+                            item.id, reviewer_run_baseline=baseline)
+                    if (
+                        observed.state == "missing" and baseline.attempt > 1
+                        and baseline.target_run_id is None
+                    ):
+                        failures[key] = _block_reviewer(
+                            store, manifest, manifest_path, key, item,
+                            "reviewer-run-dispatch-unresolved",
+                            "persisted retry generation has no target Run")
+                        continue
+                    reviewer_terminal = observed.terminal
+                    retry_kind = None
+                    if reviewer_terminal and reviewer_terminal.outcome != "finished-without-submit":
+                        reviewer_failure = _RunFailure(
+                            reviewer_terminal.run,
+                            (
+                                "transient"
+                                if reviewer_terminal.outcome == "transient-failure"
+                                else "nonretryable"
+                            ),
+                            reviewer_terminal.consecutive_runs,
+                        )
                         if (
                             reviewer_failure.classification == "nonretryable"
                             or reviewer_failure.exhausted
@@ -2060,30 +2500,46 @@ def collect_results(
                                     "reviewer", reviewer_failure)
                             )
                             continue
-                        time.sleep(
-                            _TRANSIENT_RUNTIME_RETRY_BACKOFF_SECONDS
-                            * reviewer_failure.consecutive_runs)
-                        try:
-                            if _resume_reviewer_run(store, runtime, node):
-                                set_node(manifest, key, status="in_review")
-                                log.info(
-                                    logsetup.EVT_REVIEW_DISPATCH,
-                                    kind=_DAG_KIND,
-                                    node=key,
-                                    id=node.work_item_id,
-                                    reviewer=node.reviewer,
-                                    recovered=True,
-                                    infrastructure_retry=True,
-                                )
-                                continue
-                        except PlatformError as exc:
-                            store.update_status(
-                                node.work_item_id, WorkItemStatus.BLOCKED)
-                            set_node(manifest, key, status="blocked")
-                            failures[key] = ui(
-                                f"Failed to retry reviewer {node.reviewer}: {exc}",
-                                f"重试 reviewer {node.reviewer} 失败: {exc}")
+                        time.sleep(_TRANSIENT_RUNTIME_RETRY_BACKOFF_SECONDS)
+                        retry_kind = "infrastructure_retry"
+                    elif reviewer_terminal:
+                        grace_state = _reviewer_no_submit_grace_state(
+                            store, runtime, item, baseline, reviewer_terminal)
+                        if grace_state in {"submitted", "waiting"}:
                             continue
+                        if grace_state == "unavailable":
+                            failures[key] = _block_reviewer(
+                                store, manifest, manifest_path, key, item,
+                                "reviewer-run-terminal-time-unavailable",
+                                "terminal timestamp is unavailable",
+                                reviewer_terminal.run.id)
+                            continue
+                        if (
+                            reviewer_terminal.consecutive_runs
+                            >= _TRANSIENT_RUNTIME_MAX_RUNS
+                        ):
+                            failures[key] = _block_reviewer(
+                                store, manifest, manifest_path, key, item,
+                                "reviewer-run-no-submit-retry-exhausted",
+                                "reviewer exhausted no-submit attempts",
+                                reviewer_terminal.run.id)
+                            continue
+                        retry_kind = "finished_without_submit"
+                    if retry_kind:
+                        retry_error = _retry_reviewer_attempt(
+                            store, runtime, node, item, baseline)
+                        if retry_error:
+                            failures[key] = _block_reviewer(
+                                store, manifest, manifest_path, key, item,
+                                "reviewer-run-dispatch-unresolved", retry_error)
+                            continue
+                        set_node(manifest, key, status="in_review")
+                        log.info(
+                            logsetup.EVT_REVIEW_DISPATCH, kind=_DAG_KIND,
+                            node=key, id=node.work_item_id,
+                            reviewer=node.reviewer, recovered=True,
+                            **{retry_kind: True})
+                        continue
                 if _reviewer_run_needs_resume(item):
                     try:
                         if _resume_reviewer_run(store, runtime, node):
@@ -2236,16 +2692,10 @@ def collect_results(
                 log.info(logsetup.EVT_REVIEW_DISPATCH, kind=_DAG_KIND, node=key,
                          id=item_id, reviewer=reviewer)
         except PlatformError as exc:
-            store.update_status(item_id, WorkItemStatus.BLOCKED)
-            store.add_comment(item_id, ui(
-                f"Failed to wake reviewer {reviewer}: {exc}",
-                f"唤醒 reviewer {reviewer} 失败: {exc}"))
-            set_node(manifest, key, status="blocked")
-            failures[key] = ui(
-                f"Failed to wake reviewer {reviewer}", f"唤醒 reviewer {reviewer} 失败")
-            log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
-                     id=item_id, reason=ui(
-                         f"Failed to wake reviewer {reviewer}", f"唤醒 reviewer {reviewer} 失败"))
+            failures[key] = _block_reviewer(
+                store, manifest, manifest_path, key,
+                store.get_work_item(item_id),
+                "reviewer-run-baseline-unavailable", str(exc))
 
     if failures or pending_review:
         save_manifest(manifest, manifest_path)
@@ -2321,9 +2771,9 @@ def _dispatch(
 ) -> List[str]:
     """派发就绪节点(受 max_parallel - 进行中数约束)。
 
-    无 work_item_id → 保留既有 create→assign→status→wake 首次派发；
-    已有 work_item_id → 先持久化/复用 WorkerHandoffIntent，再由统一的
-    handoff 路径补齐 status/assign/wake。work_item_id 回填 manifest。
+    无 work_item_id 时先创建并回填 manifest；新建与复用 issue 随后都先
+    持久化/复用 WorkerHandoffIntent，再由统一 handoff 路径补齐
+    status/assign/wake。
     """
     workspace_id = store.config.workspace_id
     running_count = sum(
@@ -2378,7 +2828,7 @@ def _dispatch(
             metadata["blocked_by"] = list(node.blocked_by)
         store.update_work_item_metadata(item.id, **metadata)
 
-        if not is_new_item:
+        try:
             handoff = _dispatch_worker_handoff(
                 store,
                 runtime,
@@ -2387,26 +2837,6 @@ def _dispatch(
                 review_bounce=item.bounces.review,
                 gate="explicit-dispatch",
             )
-            set_node(manifest, key, status="in_progress")
-            log.info(
-                logsetup.EVT_DISPATCH,
-                kind=_DAG_KIND,
-                node=key,
-                id=node.work_item_id,
-                worker=worker,
-                handoff=handoff.state,
-            )
-            dispatched.append(key)
-            continue
-
-        # 新建 issue 的首次派发保持原有 create→assign→status→wake 语义；本 PR
-        # 不扩大首次 create issue 的幂等边界。
-        store.assign_work_item(node.work_item_id, worker, "worker")
-        store.update_status(node.work_item_id, WorkItemStatus.IN_PROGRESS)
-        set_node(manifest, key, status="in_progress")
-
-        try:
-            runtime.wake(node.work_item_id, worker, "worker")
         except PlatformError as exc:
             store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
             store.add_comment(node.work_item_id, ui(
@@ -2418,8 +2848,9 @@ def _dispatch(
                          f"Failed to wake worker {worker}", f"唤醒 worker {worker} 失败"))
             continue
 
+        set_node(manifest, key, status="in_progress")
         log.info(logsetup.EVT_DISPATCH, kind=_DAG_KIND, node=key,
-                 id=node.work_item_id, worker=worker)
+                 id=node.work_item_id, worker=worker, handoff=handoff.state)
         dispatched.append(key)
 
     if dispatched:
