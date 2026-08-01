@@ -675,15 +675,15 @@ class TestHappyPath:
         current = eng.store.get_work_item(reused.id)
         summary = build_show_output(current, "worker:alice")
         assert result.dispatched == [target.id]
-        assert events == ["metadata", "metadata", "status", "assign", "metadata"]
+        assert events == ["metadata", "status", "metadata", "assign", "metadata"]
         assert len(metadata_calls) == 3
-        assert set(metadata_calls[0]) == {
+        assert set(metadata_calls[0]) == {"worker_handoff"}
+        assert set(metadata_calls[1]) == {
             "blocked_by", "description", "source_refs",
         }
-        assert set(metadata_calls[1]) == {"worker_handoff"}
         assert set(metadata_calls[2]) == {"worker_handoff"}
-        assert "worker" not in metadata_calls[0]
-        assert "reviewer" not in metadata_calls[0]
+        assert "worker" not in metadata_calls[1]
+        assert "reviewer" not in metadata_calls[1]
         assert current.worker_handoff is not None
         assert current.worker_handoff.gate == "explicit-dispatch"
         assert current.worker_handoff.target_run_id is not None
@@ -827,6 +827,128 @@ class TestHappyPath:
 
         assert result.state == "running"
         assert runtime.calls == []
+
+    def test_active_worker_handoff_reconcile_does_not_refresh_issue_body(
+        self, monkeypatch,
+    ):
+        manifest = _manifest([_node("a")])
+        path = _tmp_manifest_path(manifest)
+        eng = _engine(MOCK_AUTO_COMPLETE="false")
+        tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+        body_updates = 0
+        original_update = eng.store.update_work_item_metadata
+
+        def update(item_id, **kwargs):
+            nonlocal body_updates
+            if "description" in kwargs:
+                body_updates += 1
+            return original_update(item_id, **kwargs)
+
+        monkeypatch.setattr(eng.store, "update_work_item_metadata", update)
+
+        tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+        tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+
+        assert body_updates == 0
+
+    def test_first_worker_wake_refreshes_issue_body_exactly_once(
+        self, monkeypatch,
+    ):
+        manifest = _manifest([_node("a")])
+        path = _tmp_manifest_path(manifest)
+        eng = _engine(MOCK_AUTO_COMPLETE="false")
+        runs = []
+        body_updates = 0
+        wake_calls = 0
+        original_update = eng.store.update_work_item_metadata
+
+        def update(item_id, **kwargs):
+            nonlocal body_updates
+            if "description" in kwargs:
+                body_updates += 1
+            return original_update(item_id, **kwargs)
+
+        def assign(item_id, assignee, role):
+            item = eng.store.get_work_item(item_id)
+            item.worker = assignee
+            item.platform_assignee_id = eng.store.resolve_agent_id(assignee)
+
+        def wake(_item_id, agent, role):
+            nonlocal wake_calls
+            wake_calls += 1
+            runs.append(AgentRunObservation(
+                id="run-worker-1", kind="direct", status="running",
+                agent_id=eng.store.resolve_agent_id(agent),
+            ))
+
+        monkeypatch.setattr(eng.store, "update_work_item_metadata", update)
+        monkeypatch.setattr(eng.store, "assign_work_item", assign)
+        monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
+        monkeypatch.setattr(eng.runtime, "wake", wake)
+
+        tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+
+        assert body_updates == 1
+        assert wake_calls == 1
+
+    def test_delayed_visible_worker_run_does_not_refresh_issue_body(
+        self, monkeypatch,
+    ):
+        eng = _engine(MOCK_AUTO_COMPLETE="false")
+        node = _node("a")
+        item = eng.store.create_work_item(
+            "ws", "a", "stale body", dag_key="a", worker="alice")
+        eng.store.set_node_contract(item.id, node.contract)
+        eng.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
+        node.work_item_id = item.id
+        node.status = "in_progress"
+        manifest = _manifest([node])
+        agent_id = eng.store.resolve_agent_id("alice")
+        intent = WorkerHandoffIntent(
+            schema="omac.worker-handoff/v1", state="pending",
+            target_worker="alice", gate="explicit-dispatch",
+            source_review_subject_digest="authoring-subject",
+            source_review_round=1, target_review_bounce=0,
+            generation="handoff-delayed-visible",
+            target_agent_id=agent_id, target_worker_bounce=0,
+        )
+        eng.store.update_work_item_metadata(item.id, worker_handoff=intent)
+        list_calls = 0
+        body_updates = 0
+        original_update = eng.store.update_work_item_metadata
+
+        def list_runs(_item_id):
+            nonlocal list_calls
+            list_calls += 1
+            if list_calls == 1:
+                return []
+            return [AgentRunObservation(
+                id="run-worker-delayed", kind="direct", status="running",
+                agent_id=agent_id,
+            )]
+
+        def update(item_id, **kwargs):
+            nonlocal body_updates
+            if "description" in kwargs:
+                body_updates += 1
+            return original_update(item_id, **kwargs)
+
+        monkeypatch.setattr(eng.runtime, "list_runs", list_runs)
+        monkeypatch.setattr(eng.store, "update_work_item_metadata", update)
+        monkeypatch.setattr(
+            eng.store, "assign_work_item",
+            lambda *_args: pytest.fail("visible Run must not assign again"),
+        )
+        monkeypatch.setattr(
+            eng.runtime, "wake",
+            lambda *_args: pytest.fail("visible Run must not wake again"),
+        )
+
+        result = loop._dispatch_worker_handoff(
+            eng.store, eng.runtime, manifest, "a")
+
+        assert result.state == "waiting"
+        assert body_updates == 0
 
     @pytest.mark.parametrize(
         ("manifest_status", "item_status"),
@@ -2106,6 +2228,29 @@ def test_reviewer_dispatch_rejects_naive_delivery_cutoff(tmp_path):
     with pytest.raises(PlatformError, match="verification time"):
         loop._dispatch_reviewer_for_current_subject(
             eng.store, eng.runtime, manifest, "a")
+
+
+def test_reviewer_dispatch_refreshes_reused_issue_with_control_protocol(
+    tmp_path, monkeypatch,
+):
+    eng, manifest, _path, item, _reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    eng.store.update_work_item_metadata(item.id, description="stale issue body")
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: [])
+    monkeypatch.setattr(eng.runtime, "wake", lambda *_args: None)
+
+    loop._dispatch_reviewer_for_current_subject(
+        eng.store, eng.runtime, manifest, "a")
+
+    refreshed = eng.store.get_work_item(item.id)
+    first_screen = refreshed.description.split("# ", 1)[0]
+    assert "omac work show" in first_screen
+    assert "multica issue comment" in first_screen
+    assert "omac work submit" in first_screen
+    assert (
+        "Execution role: Independent reviewer" in refreshed.description
+        or "执行角色: 独立评审者" in refreshed.description
+    )
 
 
 def test_reviewer_completed_without_verdict_is_bounded_by_run_attempts(
@@ -4978,6 +5123,14 @@ class TestReviewerRejectBoundedFallback:
             lambda *_args, **_kwargs: pytest.fail(
                 "active reviewer must not be woken again"),
         )
+        original_update = eng.store.update_work_item_metadata
+
+        def update(item_id, **kwargs):
+            if "description" in kwargs:
+                pytest.fail("active reviewer must not refresh issue body")
+            return original_update(item_id, **kwargs)
+
+        monkeypatch.setattr(eng.store, "update_work_item_metadata", update)
 
         result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
 

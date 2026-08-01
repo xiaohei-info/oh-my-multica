@@ -1224,21 +1224,30 @@ def render_source_refs_section(
 
 
 def render_issue_body(node, contract, kind, issue_id, source_refs=None, engine_env=None,
-                      issue_key=None, language: str = CN):
+                      issue_key=None, language: str = CN,
+                      phase: TaskPhase = TaskPhase.AUTHORING):
     """渲染 Human-first issue body,顶部仅保留一个 Agent JSON 入口。"""
-    role = KIND_ROLE.get(kind, "worker")
+    role = "reviewer" if phase == TaskPhase.REVIEW else KIND_ROLE.get(kind, "worker")
     label = KIND_LABEL.get(kind, kind.value)
     title = getattr(node, "title", None) or getattr(node, "id", issue_id)
     env_prefix = _command_env_prefix(engine_env)
 
-    bootstrap = (
-        ui(
+    if kind == TaskKind.DEVELOP:
+        bootstrap = ui(
+            "> **OMAC-controlled run. Your first action must be exactly:**\n\n",
+            "> **OMAC 控制的执行。第一动作必须严格执行：**\n\n",
+            language=language,
+        ) + f"```bash\n{env_prefix}omac work show {issue_id} --output json\n```\n\n" + ui(
+            "> Do not run `multica issue status`, `multica issue assign`, `multica issue comment`, `multica issue metadata`, `multica issue rerun`, or `multica issue cancel-task`. The only successful delivery is the exact `omac work submit` command returned by work show. Existing manual attachments or verification without `delivery_identity` are unsealed and must also be sealed through that command.",
+            "> 禁止运行 `multica issue status`、`multica issue assign`、`multica issue comment`、`multica issue metadata`、`multica issue rerun`、`multica issue cancel-task`。唯一成功交付方式是 work show 返回的精确 `omac work submit` 命令；已有手工附件或 verification 但缺少 `delivery_identity` 时也必须通过该命令封存。",
+            language=language,
+        )
+    else:
+        bootstrap = ui(
             "> **Agent entry:** Read the authoritative JSON context for this task first.\n\n",
             "> **Agent 入口:** 先读取当前任务的权威 JSON 上下文。\n\n",
             language=language,
-        )
-        + f"```bash\n{env_prefix}omac work show {issue_id} --output json\n```"
-    )
+        ) + f"```bash\n{env_prefix}omac work show {issue_id} --output json\n```"
 
     kind_names = KIND_HUMAN_LABEL_EN if language == EN else KIND_HUMAN_LABEL
     role_names = ROLE_HUMAN_LABEL_EN if language == EN else ROLE_HUMAN_LABEL
