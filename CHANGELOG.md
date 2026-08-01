@@ -10,6 +10,9 @@ This file records public changes to oh-my-multica. The format follows
 
 ### Changed
 
+- `work submit` now observes control facts once and hydrates only the attachment
+  bodies required by its exact kind and phase, so stale historical evidence
+  downloads cannot block a fresh authoring submission.
 - DAG `pass-with-nits` rework now consumes the same bounded review budget as
   reject and review-evidence failures. Exhausted nits stop for an explicit
   decision without clearing Reviewer evidence, while an authorized review
