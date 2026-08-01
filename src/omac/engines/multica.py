@@ -101,7 +101,7 @@ _EMPTY_DEFAULT_ISSUE_ENVELOPE_FIELDS = {
 }
 
 _ReadResult = TypeVar("_ReadResult")
-_AttachmentCacheKey = tuple[str, str, str]
+_AttachmentCacheKey = tuple[str, str, str, Optional[int]]
 
 
 class _AttachmentBodyCache:
@@ -619,6 +619,7 @@ class MulticaStore(WorkItemStore):
         *,
         label: str,
         expected_sha256: str = "",
+        expected_bytes: Optional[int] = None,
     ) -> Optional[bytes]:
         def download() -> Optional[bytes]:
             with tempfile.TemporaryDirectory(prefix="omac-attachment-") as td:
@@ -637,7 +638,7 @@ class MulticaStore(WorkItemStore):
             return None
 
         expected_sha256 = expected_sha256.strip().lower()
-        key = (attachment_id, expected_sha256, filename or "")
+        key = (attachment_id, expected_sha256, filename or "", expected_bytes)
         return self._attachment_bodies.get_or_load(
             key,
             lambda: self._run_idempotent_read(label, download),
@@ -683,6 +684,9 @@ class MulticaStore(WorkItemStore):
             filename,
             label="attachment download",
             expected_sha256=declared_sha,
+            expected_bytes=(
+                ref.get("bytes") if isinstance(ref.get("bytes"), int) else None
+            ),
         )
         if body is None:
             return None
@@ -738,6 +742,9 @@ class MulticaStore(WorkItemStore):
             str(attachment.get("filename") or ref.get("filename") or "") or None,
             label="verification attachment observation",
             expected_sha256=declared_sha,
+            expected_bytes=(
+                ref.get("bytes") if isinstance(ref.get("bytes"), int) else None
+            ),
         )
         if body is None:
             raise PlatformError(
