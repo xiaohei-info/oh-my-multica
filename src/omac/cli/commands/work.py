@@ -225,11 +225,7 @@ def _render_table(output: dict, language: str) -> None:
 
 def _submit(args) -> int:
     """work submit 入口:调 dispatch 左移门,ValidationError → exit 5。"""
-    try:
-        item = _get_item(args.issue_id)
-    except ValidationError:
-        raise
-    store = _resolve_store_for(item)
+    store = _resolve_store()
     agent_pool = set(store.list_members(store.config.workspace_id))
     result = submit(
         store,
@@ -245,6 +241,7 @@ def _submit(args) -> int:
         report_file=args.report_file,
         acceptance_results_file=args.acceptance_results_file,
         agent_pool=agent_pool,
+        read_errors_as_validation=True,
     )
     target = (
         result.advanced_to.value
@@ -300,21 +297,6 @@ def _submit(args) -> int:
     else:
         print(message)
     return exit_codes.OK
-
-
-def _get_item(issue_id: str):
-    store = _resolve_store()
-    try:
-        return store.get_work_item(issue_id)
-    except Exception as e:
-        raise ValidationError(ui(
-            f"Could not read work item '{issue_id}': {e}",
-            f"无法读取 work item '{issue_id}' —— {e}"))
-
-
-def _resolve_store_for(item) -> object:
-    """submit 与 show 共用同一引擎/工作空间上下文,保证读写同源。"""
-    return _resolve_store()
 
 
 def _run_show(args) -> int:

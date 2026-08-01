@@ -14,7 +14,7 @@ from omac.core.manifest import Contract, EvidenceMode, ProducedArtifact
 from omac.core.taskmeta import (
     DECISION_REQUIRED_KEY, MACHINE_FEEDBACK_REF_KEY, PHASE_KEY,
     REVIEWER_RUN_BASELINE_KEY, REVIEW_LEDGER_REF_KEY, REVIEW_REPORT_REF_KEY,
-    REVIEW_SUBJECT_DIGEST_KEY, TaskKind,
+    REVIEW_SUBJECT_DIGEST_KEY, TaskKind, TaskPhase,
 )
 from omac.engines.models import (
     AgentRunObservation, EngineConfig, PullRequestReadinessFailure, PullRequestState,
@@ -22,6 +22,7 @@ from omac.engines.models import (
 from omac.engines.models import WorkItemStatus
 from omac.engines.multica import MulticaRuntime, MulticaStore
 from omac.errors import PlatformError
+from omac.pipeline import dispatch as dispatch_mod
 
 
 @pytest.mark.parametrize("message", [
@@ -1594,6 +1595,58 @@ def test_multica_reads_contract_from_ref_before_legacy_inline(monkeypatch):
 
     assert item.contract["objective"] == "来自 ref"
     assert item.contract["verification_commands"] == ["pytest -q"]
+
+
+@pytest.mark.parametrize(("phase", "status"), [
+    (TaskPhase.AUTHORING, "todo"),
+    (TaskPhase.REVIEW, "in_review"),
+])
+def test_submit_fails_closed_when_deferred_multica_contract_body_is_missing(
+    tmp_path, monkeypatch, phase, status,
+):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    projection = store._issue_to_control_projection({
+        "id": "issue-1",
+        "title": "develop",
+        "description": "develop",
+        "status": status,
+        "metadata": {
+            "dag_key": "develop-a",
+            "kind": "develop",
+            "phase": phase.value,
+            "contract_ref": {
+                "comment_id": "contract-comment",
+                "attachment_id": "contract-attachment",
+            },
+        },
+    }, "ws")
+    monkeypatch.setattr(
+        store, "observe_work_item_control", lambda _item_id: projection)
+    monkeypatch.setattr(store, "_load_payload_comment", lambda *_args: None)
+    monkeypatch.setattr(store, "update_work_item_metadata", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(store, "update_status", lambda *_args, **_kwargs: None)
+
+    if phase is TaskPhase.AUTHORING:
+        verification = tmp_path / "verification.yaml"
+        verification.write_text("{}")
+        call = lambda: dispatch_mod.submit(
+            store,
+            "issue-1",
+            pr_url="https://example.test/pr/42",
+            verification_file=str(verification),
+        )
+    else:
+        report = tmp_path / "report.yaml"
+        report.write_text("full_review_completed: true\n")
+        call = lambda: dispatch_mod.submit(
+            store,
+            "issue-1",
+            verdict="pass",
+            report_file=str(report),
+        )
+
+    with pytest.raises(PlatformError, match="contract"):
+        call()
 
 
 def test_multica_readback_keeps_explicit_null_consumes_invalid(monkeypatch):
