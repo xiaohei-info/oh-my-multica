@@ -1174,6 +1174,81 @@ def test_legacy_initial_worker_capacity_failure_migrates_and_restarts_once(
     assert restarted.nodes["a"].status == "in_progress"
 
 
+def test_legacy_initial_worker_migration_replaces_stale_control_snapshot(
+    tmp_path, monkeypatch,
+):
+    """同轮迁移必须用新 WorkItem 继续 handoff，不能复用旧 control snapshot。"""
+    import copy
+
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    node = _node("a", reviewer="bob", contract=_contract())
+    item = eng.store.create_work_item(
+        "ws", "a", "Task a", dag_key="a", worker="alice", reviewer="bob")
+    item.created_at = "2026-08-01T00:59:00Z"
+    eng.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
+    node.status = "in_progress"
+    node.work_item_id = item.id
+    manifest = _manifest([node])
+    path = str(tmp_path / "dag.yaml")
+    save_manifest(manifest, path)
+    worker_id = eng.store.resolve_agent_id("alice")
+    runs = [AgentRunObservation(
+        id="run-legacy-capacity",
+        kind="direct",
+        status="failed",
+        agent_id=worker_id,
+        created_at="2026-08-01T01:00:00Z",
+        updated_at="2026-08-01T01:00:10Z",
+        error="Selected model is at capacity. Please try a different model.",
+    )]
+    wake_calls = 0
+
+    def wake(_item_id, _agent, role):
+        nonlocal wake_calls
+        assert role == "worker"
+        wake_calls += 1
+        runs.append(AgentRunObservation(
+            id="run-legacy-capacity-retry",
+            kind="direct",
+            status="running",
+            agent_id=worker_id,
+            created_at="2026-08-01T01:01:00Z",
+        ))
+
+    monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
+    monkeypatch.setattr(eng.runtime, "wake", wake)
+    stale = WorkItemControlProjection(copy.deepcopy(item))
+
+    assert loop.collect_results(
+        eng.store,
+        eng.runtime,
+        manifest,
+        path,
+        observations={"a": stale},
+    ) == {}
+    assert loop.collect_results(
+        eng.store,
+        eng.runtime,
+        manifest,
+        path,
+        observations={
+            "a": WorkItemControlProjection(
+                copy.deepcopy(eng.store.get_work_item(item.id)))
+        },
+    ) == {}
+
+    recovered = eng.store.get_work_item(item.id)
+    assert wake_calls == 1
+    assert recovered.worker_handoff is not None
+    assert recovered.worker_handoff.baseline_direct_run_ids == (
+        "run-legacy-capacity",)
+    assert recovered.worker_handoff.target_run_id == (
+        "run-legacy-capacity-retry")
+    assert recovered.bounces.worker == recovered.bounces.review == 0
+    assert recovered.decision_required is None
+
+
 def test_legacy_initial_worker_active_run_keeps_waiting_without_migration(
     tmp_path, monkeypatch,
 ):

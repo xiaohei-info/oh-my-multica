@@ -2128,6 +2128,8 @@ def collect_results(
         if legacy_failure:
             failures[key] = legacy_failure
             continue
+        if item is not projection.work_item:
+            projection = replace(projection, work_item=item)
 
         if item.worker_handoff is not None:
             handoff_intent = item.worker_handoff
