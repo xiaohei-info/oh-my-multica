@@ -241,6 +241,7 @@ def _submit(args) -> int:
         report_file=args.report_file,
         acceptance_results_file=args.acceptance_results_file,
         agent_pool=agent_pool,
+        read_errors_as_validation=True,
     )
     target = (
         result.advanced_to.value
