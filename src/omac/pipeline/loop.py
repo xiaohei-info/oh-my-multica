@@ -16,7 +16,7 @@ from pathlib import Path
 import re
 import secrets
 import time
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any, Callable, Dict, List, Set, Tuple
 
 import yaml
 
@@ -1149,9 +1149,17 @@ def _dispatch_worker_handoff(
     target_worker_bounce = intent.target_worker_bounce
     if target_worker_bounce is not None:
         if current.bounces.worker < target_worker_bounce:
-            store.update_work_item_metadata(
-                item_id, worker_bounce=target_worker_bounce)
-            projection = store.observe_work_item_control(item_id)
+            projection = _apply_observed_handoff_preparation_write(
+                store,
+                item_id,
+                lambda: store.update_work_item_metadata(
+                    item_id, worker_bounce=target_worker_bounce),
+                lambda item: item.bounces.worker == target_worker_bounce,
+                "worker bounce",
+            )
+            if projection is None:
+                return _WorkerHandoffResult(
+                    "pending-preparation", intent)
             current = projection.work_item
         if current.bounces.worker != target_worker_bounce:
             raise PlatformError(
@@ -1174,9 +1182,17 @@ def _dispatch_worker_handoff(
         raise PlatformError(
             f"Worker handoff target bounce is missing for work item {item_id}")
     if current.bounces.review < target_bounce:
-        store.update_work_item_metadata(
-            item_id, review_bounce=target_bounce)
-        current = store.observe_work_item_control(item_id).work_item
+        projection = _apply_observed_handoff_preparation_write(
+            store,
+            item_id,
+            lambda: store.update_work_item_metadata(
+                item_id, review_bounce=target_bounce),
+            lambda item: item.bounces.review == target_bounce,
+            "review bounce",
+        )
+        if projection is None:
+            return _WorkerHandoffResult("pending-preparation", intent)
+        current = projection.work_item
     if current.bounces.review != target_bounce:
         raise PlatformError(
             f"Worker handoff bounce does not match for work item {item_id}")
@@ -1192,12 +1208,28 @@ def _dispatch_worker_handoff(
         or current.review_subject_digest is not None
         or current.decision_required is not None
     ):
-        store.reset_review(item_id)
-        current = store.observe_work_item_control(item_id).work_item
+        projection = _apply_observed_handoff_preparation_write(
+            store,
+            item_id,
+            lambda: store.reset_review(item_id),
+            _worker_handoff_review_is_reset,
+            "review reset",
+        )
+        if projection is None:
+            return _WorkerHandoffResult("pending-preparation", intent)
+        current = projection.work_item
 
     if current.status != WorkItemStatus.IN_PROGRESS:
-        store.update_status(item_id, WorkItemStatus.IN_PROGRESS)
-        current = store.observe_work_item_control(item_id).work_item
+        projection = _apply_observed_handoff_preparation_write(
+            store,
+            item_id,
+            lambda: store.update_status(item_id, WorkItemStatus.IN_PROGRESS),
+            lambda item: item.status == WorkItemStatus.IN_PROGRESS,
+            "in-progress status",
+        )
+        if projection is None:
+            return _WorkerHandoffResult("pending-preparation", intent)
+        current = projection.work_item
     if (
         current.phase != TaskPhase.AUTHORING
         or current.status != WorkItemStatus.IN_PROGRESS
@@ -1256,6 +1288,56 @@ def _dispatch_worker_handoff(
         return resolved
     raise PlatformError(
         f"Worker handoff dispatch outcome is unknown for work item {item_id}")
+
+
+def _worker_handoff_review_is_reset(item) -> bool:
+    return bool(
+        item.phase == TaskPhase.AUTHORING
+        and item.review_verdict is None
+        and item.review_comment in {None, ""}
+        and item.machine_feedback in (None, {})
+        and item.review_report is None
+        and item.review_subject_digest is None
+        and item.decision_required is None
+        and item.reviewer_run_baseline is None
+    )
+
+
+def _apply_observed_handoff_preparation_write(
+    store: WorkItemStore,
+    item_id: str,
+    write: Callable[[], Any],
+    is_applied: Callable[[Any], bool],
+    operation: str,
+) -> WorkItemControlProjection | None:
+    """Apply one idempotent preparation write and prove its outcome.
+
+    A recognized transport failure is not success and not a business failure.
+    The authoritative control projection decides whether this step completed;
+    an unavailable or non-matching projection leaves the persisted handoff
+    intent pending for the next reconcile.
+    """
+    outcome_unknown = False
+    try:
+        write()
+    except PlatformError as exc:
+        if not store.is_transient_transport_error(exc):
+            raise
+        outcome_unknown = True
+
+    try:
+        projection = store.observe_work_item_control(item_id)
+    except PlatformError as exc:
+        if store.is_transient_transport_error(exc):
+            return None
+        raise
+
+    if is_applied(projection.work_item):
+        return projection
+    if outcome_unknown:
+        return None
+    raise PlatformError(
+        f"Worker handoff {operation} did not persist for work item {item_id}")
 
 
 def _observe_worker_handoff_bounded(
@@ -2810,6 +2892,7 @@ def _dispatch(
     to_dispatch = ready[:slots]
 
     dispatched: List[str] = []
+    manifest_changed = False
     for key in to_dispatch:
         node = manifest.nodes[key]
         worker = node.worker
@@ -2828,6 +2911,7 @@ def _dispatch(
                 blocked_by=list(node.blocked_by),
             )
             set_node(manifest, key, work_item_id=item.id)
+            manifest_changed = True
         else:
             item = store.observe_work_item_control(
                 node.work_item_id).work_item
@@ -2848,22 +2932,47 @@ def _dispatch(
                 gate="explicit-dispatch",
             )
         except PlatformError as exc:
+            if store.is_transient_transport_error(exc):
+                set_node(manifest, key, status="in_progress")
+                manifest_changed = True
+                log.warning(
+                    "worker_handoff_preparation_pending",
+                    kind=_DAG_KIND,
+                    node=key,
+                    id=node.work_item_id,
+                    worker=worker,
+                )
+                continue
             store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
             store.add_comment(node.work_item_id, ui(
                 f"Failed to wake worker {worker}: {exc}",
                 f"唤醒 worker {worker} 失败: {exc}"))
             set_node(manifest, key, status="blocked")
+            manifest_changed = True
             log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
                      id=node.work_item_id, reason=ui(
                          f"Failed to wake worker {worker}", f"唤醒 worker {worker} 失败"))
             continue
 
+        if handoff.state == "pending-preparation":
+            set_node(manifest, key, status="in_progress")
+            manifest_changed = True
+            log.warning(
+                "worker_handoff_preparation_pending",
+                kind=_DAG_KIND,
+                node=key,
+                id=node.work_item_id,
+                worker=worker,
+            )
+            continue
+
         set_node(manifest, key, status="in_progress")
+        manifest_changed = True
         log.info(logsetup.EVT_DISPATCH, kind=_DAG_KIND, node=key,
                  id=node.work_item_id, worker=worker, handoff=handoff.state)
         dispatched.append(key)
 
-    if dispatched:
+    if manifest_changed:
         save_manifest(manifest, manifest_path)
 
     return dispatched
