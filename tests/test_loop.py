@@ -4253,6 +4253,114 @@ class TestReviewerRejectBoundedFallback:
         assert recovered.worker_handoff is not None
         assert recovered.worker_handoff.target_run_id == "run-worker-after-reset"
 
+    def test_worker_handoff_resets_residual_reviewer_baseline_before_assign(
+        self, tmp_path, monkeypatch,
+    ):
+        eng, manifest, _path, item, _agent_id = _transient_worker_handoff_fixture(
+            tmp_path)
+        current = eng.store.get_work_item(item.id)
+        baseline_run_ids = tuple(sorted(
+            run.id for run in eng.runtime.list_runs(item.id)
+            if run.kind == "direct"
+        ))
+        intent = replace(
+            current.worker_handoff,
+            target_run_id=None,
+            baseline_direct_run_ids=baseline_run_ids,
+        )
+        eng.store.update_work_item_metadata(
+            item.id,
+            worker_handoff=intent,
+            reviewer_run_baseline=ReviewerRunBaseline(
+                schema="omac.reviewer-run-baseline/v1",
+                subject_digest="old-subject",
+                target_reviewer="bob",
+                target_agent_id="reviewer-1",
+                cutoff_created_at="2026-08-01T00:00:00Z",
+                generation="review-old",
+                attempt=1,
+            ),
+        )
+        reset_calls = 0
+        original_reset = eng.store.reset_review
+
+        class AssignmentReached(Exception):
+            pass
+
+        def reset_review(item_id):
+            nonlocal reset_calls
+            reset_calls += 1
+            original_reset(item_id)
+
+        def assign(item_id, assignee, role):
+            assert eng.store.get_work_item(item_id).reviewer_run_baseline is None
+            raise AssignmentReached
+
+        monkeypatch.setattr(eng.store, "reset_review", reset_review)
+        monkeypatch.setattr(eng.store, "assign_work_item", assign)
+
+        with pytest.raises(AssignmentReached):
+            loop._dispatch_worker_handoff(
+                eng.store, eng.runtime, manifest, "a")
+
+        assert reset_calls == 1
+
+    def test_worker_handoff_final_check_blocks_baseline_drift_before_assign(
+        self, tmp_path, monkeypatch,
+    ):
+        eng, manifest, _path, item, _agent_id = _transient_worker_handoff_fixture(
+            tmp_path)
+        current = eng.store.get_work_item(item.id)
+        intent = replace(
+            current.worker_handoff,
+            target_run_id=None,
+            baseline_direct_run_ids=tuple(sorted(
+                run.id for run in eng.runtime.list_runs(item.id)
+                if run.kind == "direct"
+            )),
+        )
+        eng.store.update_work_item_metadata(item.id, worker_handoff=intent)
+        original_update = eng.store.update_work_item_metadata
+        drifted = False
+
+        def update(item_id, **metadata):
+            nonlocal drifted
+            result = original_update(item_id, **metadata)
+            if "description" in metadata and not drifted:
+                drifted = True
+                original_update(
+                    item_id,
+                    reviewer_run_baseline=ReviewerRunBaseline(
+                        schema="omac.reviewer-run-baseline/v1",
+                        subject_digest="drift-subject",
+                        target_reviewer="bob",
+                        target_agent_id="reviewer-1",
+                        cutoff_created_at="2026-08-01T00:00:00Z",
+                        generation="review-drift",
+                        attempt=1,
+                    ),
+                )
+            return result
+
+        monkeypatch.setattr(eng.store, "update_work_item_metadata", update)
+        monkeypatch.setattr(
+            eng.store, "assign_work_item",
+            lambda *_args, **_kwargs: pytest.fail(
+                "residual reviewer baseline must block assignment"),
+        )
+        monkeypatch.setattr(
+            eng.runtime, "wake",
+            lambda *_args, **_kwargs: pytest.fail(
+                "residual reviewer baseline must block wake"),
+        )
+        monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
+
+        result = loop._dispatch_worker_handoff(
+            eng.store, eng.runtime, manifest, "a")
+
+        assert result.state == "pending-preparation"
+        assert eng.store.get_work_item(item.id).reviewer_run_baseline is not None
+
     @pytest.mark.parametrize("verdict", ["reject", "pass-with-nits"])
     @pytest.mark.parametrize(
         "checkpoint",

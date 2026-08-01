@@ -1250,15 +1250,7 @@ def _dispatch_worker_handoff(
 
     # reset_review 的接口契约负责一次性清除当前 review projection 并回 AUTHORING。
     # handoff 不制造瞬时 review cycle，避免新增可崩溃的持久化中间态。
-    if (
-        current.phase != TaskPhase.AUTHORING
-        or current.review_verdict is not None
-        or current.review_comment not in {None, ""}
-        or current.machine_feedback not in (None, {})
-        or current.review_report is not None
-        or current.review_subject_digest is not None
-        or current.requires_decision
-    ):
+    if not _worker_handoff_review_is_reset(current):
         preparation = _apply_observed_handoff_preparation_write(
             store,
             item_id,
@@ -1282,11 +1274,8 @@ def _dispatch_worker_handoff(
         projection = preparation.projection
         current = projection.work_item
     if (
-        current.phase != TaskPhase.AUTHORING
-        or current.status != WorkItemStatus.IN_PROGRESS
-        or current.review_verdict is not None
-        or current.review_report is not None
-        or current.review_subject_digest is not None
+        current.status != WorkItemStatus.IN_PROGRESS
+        or not _worker_handoff_review_is_reset(current)
     ):
         raise PlatformError(
             f"Worker handoff preparation did not persist for work item {item_id}")
@@ -1316,6 +1305,18 @@ def _dispatch_worker_handoff(
         lambda: store.update_work_item_metadata(
             body_item_id, **body_metadata),
         lambda item: _develop_issue_body_matches(item, body_metadata),
+    )
+    if preparation.state == "pending":
+        return _WorkerHandoffResult("pending-preparation", intent)
+
+    preparation = _observe_handoff_preparation_bounded(
+        store,
+        item_id,
+        lambda item: (
+            item.status == WorkItemStatus.IN_PROGRESS
+            and _worker_handoff_review_is_reset(item)
+            and _develop_issue_body_matches(item, body_metadata)
+        ),
     )
     if preparation.state == "pending":
         return _WorkerHandoffResult("pending-preparation", intent)
@@ -1360,16 +1361,24 @@ def _dispatch_worker_handoff(
         f"Worker handoff dispatch outcome is unknown for work item {item_id}")
 
 
-def _worker_handoff_review_is_reset(item) -> bool:
+def _review_projection_is_clear(item) -> bool:
     return bool(
-        item.phase == TaskPhase.AUTHORING
-        and item.review_verdict is None
+        item.review_verdict is None
         and item.review_comment in {None, ""}
         and item.machine_feedback in (None, {})
+        and item.machine_feedback_ref is None
         and item.review_report is None
+        and item.review_report_ref is None
         and item.review_subject_digest is None
         and not item.requires_decision
         and item.reviewer_run_baseline is None
+    )
+
+
+def _worker_handoff_review_is_reset(item) -> bool:
+    return bool(
+        item.phase == TaskPhase.AUTHORING
+        and _review_projection_is_clear(item)
     )
 
 
@@ -1858,14 +1867,7 @@ def _observe_worker_handoff(
 
 
 def _review_projection_present(item) -> bool:
-    return bool(
-        item.review_verdict is not None
-        or item.review_comment not in {None, ""}
-        or item.machine_feedback not in (None, {})
-        or item.review_report is not None
-        or item.review_subject_digest is not None
-        or item.requires_decision
-    )
+    return not _review_projection_is_clear(item)
 
 
 def _recover_legacy_initial_worker(store, runtime, manifest, key, item, path):
