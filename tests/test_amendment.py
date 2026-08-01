@@ -100,6 +100,28 @@ def test_review_and_merge_stage_recovery_preserve_delivery_identity(stage):
     assert engine.store.get_work_item(item.id).delivery_identity == identity
 
 
+@pytest.mark.parametrize("stage", ["authoring", "review"])
+def test_stage_recovery_retires_the_previous_assignment(stage):
+    engine = create_engine(
+        "mock",
+        EngineConfig(engine_type="mock", workspace_id="mock-workspace"),
+    )
+    node = Node(id="a", worker="alice", reviewer="bob", contract=Contract())
+    item = engine.store.create_work_item(
+        "mock-workspace", "a", "a", dag_key="a", worker="alice",
+        reviewer="bob", kind=TaskKind.DEVELOP,
+    )
+    node.work_item_id = item.id
+    current = engine.store.get_work_item(item.id)
+    current.platform_assignee_id = "agent-from-previous-stage"
+
+    prepare_stage_recovery(node, engine.store, stage)
+
+    recovered = engine.store.get_work_item(item.id)
+    assert recovered.platform_assignee_id is None
+    assert recovered.reviewer is None
+
+
 def _engine():
     return create_engine("mock", EngineConfig(
         engine_type="mock",
