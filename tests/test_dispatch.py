@@ -213,6 +213,41 @@ class TestRenderIssueBody:
 
         assert command in first_screen
         assert "first action" in first_screen or "第一动作" in first_screen
+        assert "omac work show" in first_screen
+        assert "omac work submit" in first_screen
+        assert (
+            "may run for a long time" in first_screen
+            or "可能长时间运行" in first_screen
+        )
+        assert "running/session" in first_screen
+        assert (
+            "final tool result" in first_screen
+            or "最终 tool_result" in first_screen
+        )
+        assert (
+            "empty or incomplete output" in first_screen
+            or "空输出或不完整输出" in first_screen
+        )
+        assert (
+            "wait or poll" in first_screen
+            or "等待或轮询" in first_screen
+        )
+        assert (
+            "terminal exit code" in first_screen
+            or "终态退出码" in first_screen
+        )
+        assert (
+            "sufficiently long wait/yield" in first_screen
+            or "足够长的 wait/yield" in first_screen
+        )
+        assert (
+            "retain and resume the continuation" in first_screen
+            or "保留并恢复续接句柄" in first_screen
+        )
+        assert (
+            "timeout/yield is not an empty result" in first_screen
+            or "timeout/yield 不是空结果" in first_screen
+        )
         assert (
             "create, modify, or delete Issue state" in first_screen
             or "创建、修改或删除 Issue 状态" in first_screen
@@ -249,6 +284,8 @@ class TestRenderIssueBody:
             n, None, TaskKind.DEVELOP, "ISSUE-9", language="en")
 
         assert "OMAC-controlled run" in body
+        assert "Both `omac work show` and `omac work submit` may run for a long time" in body
+        assert "timeout/yield is not an empty result" in body
         assert "## Task summary" in body
         assert "Execution role" in body
         assert "任务摘要" not in body
@@ -383,6 +420,7 @@ class TestRenderIssueBody:
         assert "# 贪吃蛇手游 计划" in body
         assert "语义边界，不是穷举命令清单" not in body
         assert "multica issue update" not in body
+        assert "timeout/yield 不是空结果" not in body
 
     def test_bootstrap_orders_work_show_first(self):
         """实例事实优先:issue 只给 work show,不要求先读静态 guide。"""

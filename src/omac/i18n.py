@@ -52,17 +52,25 @@ _MESSAGES = {
         ),
         "work.protocol.control": (
             "Do not edit platform status, assignee, metadata, rerun, or cancel "
-            "directly. Use OMAC as the only write path. `omac work submit` may "
-            "run for a long time. If the tool reports running/session, has no "
-            "final tool result, returns incomplete output, or leaves the result "
-            "unknown, wait or poll until it reaches a terminal result. Claim "
-            "success only when the final tool result has exit code 0 and JSON "
-            "contains `\"ok\": true`, `\"terminal\": true`, and "
+            "directly. Use OMAC as the only write path."
+        ),
+        "work.protocol.command_terminal": (
+            "Both `omac work show` and `omac work submit` may run for a long time. "
+            "Treat every tool invocation as incomplete until its final tool result "
+            "and terminal exit code are available. If the tool reports "
+            "running/session, has no final tool result, or returns empty or "
+            "incomplete output, wait or poll until terminal. Use a sufficiently "
+            "long wait/yield or retain and resume the continuation; this is a "
+            "general terminal-state rule, not a requirement for a specific tool "
+            "API. A timeout/yield is not an empty result and does not authorize "
+            "stopping. Continue after `omac work show` only when exit code 0 and "
+            "parseable JSON are available. Claim `omac work submit` success only "
+            "when the final tool result has exit code 0 and JSON contains "
+            "`\"ok\": true`, `\"terminal\": true`, and "
             "`\"next_action\": \"stop\"`. With an unknown result, you must not "
-            "claim success or end the run. If the terminal result is a "
-            "validation error, fix it and submit again. Submitting successfully "
-            "is the final action; stop "
-            "immediately and perform no further platform writes."
+            "claim success or end the run. If the terminal result is a validation "
+            "error, fix it and submit again. Submitting successfully is the final "
+            "action; stop immediately and perform no further platform writes."
         ),
         "work.protocol.pr_link": (
             "Include `{issue_key}` in the GitHub PR branch name, title, or body "
@@ -175,12 +183,19 @@ _MESSAGES = {
         "work.protocol.review": "独立复跑：覆盖全部 review_obligations，逐项处置历史 blocker，按 env_setup 搭建环境，重跑验证命令与集成测试，检查完整 diff，发现第一个 blocker 后继续审查并一次性报告本轮全部问题；只读共享状态，并依据 contract 与验收目标给出 verdict。",
         "work.protocol.control": (
             "不要直接修改平台状态、负责人、metadata，也不要直接 rerun 或 cancel；"
-            "所有写入只通过 OMAC。`omac work submit` 可能长时间运行。若工具返回 "
-            "running/session、没有最终 tool_result、输出不完整或结果未知，必须等待或轮询到终态。"
-            "只有最终 tool_result 明确给出退出码 0，且 JSON 包含 `\"ok\": true`、"
-            "`\"terminal\": true` 和 `\"next_action\": \"stop\"`，才可宣称成功。"
-            "结果未知时不得宣称成功或结束；validation error 必须修复后重新提交。"
-            "submit 成功就是本次执行的最后动作，立即停止，不再执行任何平台写操作。"
+            "所有写入只通过 OMAC。"
+        ),
+        "work.protocol.command_terminal": (
+            "`omac work show` 和 `omac work submit` 都可能长时间运行。任何工具调用在"
+            "拿到最终 tool_result 和终态退出码前都不完整。若工具返回 running/session、"
+            "缺少最终 tool_result、出现空输出或不完整输出，必须等待或轮询到终态。"
+            "使用足够长的 wait/yield，或保留并恢复续接句柄；这是通用终态规则，不绑定"
+            "某个具体工具 API。timeout/yield 不是空结果，也不允许据此停止。"
+            "`omac work show` 只有在退出码 0 且得到可解析 JSON 后才能继续。"
+            "`omac work submit` 只有在最终 tool_result 明确给出退出码 0，且 JSON 包含 "
+            "`\"ok\": true`、`\"terminal\": true` 和 `\"next_action\": \"stop\"` 时"
+            "才可宣称成功。结果未知时不得宣称成功或结束；validation error 必须修复后"
+            "重新提交。submit 成功就是本次执行的最后动作，立即停止，不再执行任何平台写入。"
         ),
         "work.protocol.pr_link": "建议让 GitHub PR 的分支名、标题或正文包含 `{issue_key}`，这样 Multica 可以自动关联该 issue；缺失时仍可交付。",
         "work.protocol.operator_retry": "本次执行来自显式 operator retry。旧 verification 仅作为 baseline，不能作为本轮证据，禁止复用或仅引用；即使代码无需修改，也必须针对当前 PR HEAD 重新执行本轮 contract 验证，并以如下精确的 `omac work submit` 命令完成提交。",
