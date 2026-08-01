@@ -3951,6 +3951,177 @@ class TestReviewerRejectBoundedFallback:
         assert any("retry limit" in c for c in eng.store.get_comments(item.id))
         assert result.state == "needs_decision"
 
+    def test_pass_with_nits_at_review_limit_needs_decision_without_handoff(
+        self, tmp_path, monkeypatch,
+    ):
+        """final nits 保留 Reviewer 事实并交人决策，不能绕过 review budget。"""
+        from omac.engines import create_engine
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        report = _review_report(
+            item, "pass-with-nits", nits=["operator decision required"])
+        eng.store.update_work_item_metadata(
+            item.id,
+            review_bounce=9,
+            review_verdict="pass-with-nits",
+            review_report=report,
+        )
+        current = eng.store.get_work_item(item.id)
+        eng.store.update_work_item_metadata(
+            item.id,
+            review_subject_digest=review_subject_digest(current, 10),
+        )
+        worker_assignments = len([
+            entry for entry in eng.store.assign_log if entry[2] == "worker"
+        ])
+        runs_before = len(eng.runtime.list_runs(item.id))
+        monkeypatch.setattr(
+            loop,
+            "_dispatch_worker_handoff",
+            lambda *_args, **_kwargs: pytest.fail(
+                "exhausted pass-with-nits must not dispatch worker handoff"),
+        )
+
+        result = tick(
+            eng.store,
+            eng.runtime,
+            manifest,
+            path,
+            max_parallel=4,
+            retry_limits={"review": 9},
+        )
+
+        got = eng.store.get_work_item(item.id)
+        assert result.state == "needs_decision"
+        assert manifest.nodes["a"].status == "blocked"
+        assert got.status == WorkItemStatus.BLOCKED
+        assert got.bounces.review == 9
+        assert got.review_verdict == "pass-with-nits"
+        assert got.review_report == report
+        assert got.worker_handoff is None
+        assert len([
+            entry for entry in eng.store.assign_log if entry[2] == "worker"
+        ]) == worker_assignments
+        assert len(eng.runtime.list_runs(item.id)) == runs_before
+        assert got.decision_required == {
+            "schema": "omac.decision-required/v1",
+            "reason_code": "review-nits-budget-exhausted",
+            "kind": "develop",
+            "phase": "review",
+            "gate": "review-nits",
+            "rounds": 9,
+            "consumed": 9,
+            "limit": 9,
+            "resume_issue_id": item.id,
+            "node_id": "a",
+            "verdict": "pass-with-nits",
+        }
+
+    def test_pass_with_nits_below_review_limit_dispatches_fresh_review(
+        self, tmp_path,
+    ):
+        """未耗尽时 nits 仍回 Worker，bounce +1，重交后必须 fresh review。"""
+        from omac.engines import create_engine
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        eng.store.update_work_item_metadata(
+            item.id,
+            review_bounce=1,
+            review_verdict="pass-with-nits",
+            review_report=_review_report(
+                item, "pass-with-nits", nits=["follow up"]),
+        )
+        current = eng.store.get_work_item(item.id)
+        eng.store.update_work_item_metadata(
+            item.id,
+            review_subject_digest=review_subject_digest(current, 2),
+        )
+
+        first = tick(
+            eng.store,
+            eng.runtime,
+            manifest,
+            path,
+            max_parallel=4,
+            retry_limits={"review": 2},
+        )
+
+        got = eng.store.get_work_item(item.id)
+        assert first.state == "running"
+        assert manifest.nodes["a"].status == "in_progress"
+        assert got.bounces.review == 2
+        assert got.review_verdict is None
+        assert got.review_report is None
+
+        reviewer_assignments = len([
+            entry for entry in eng.store.assign_log if entry[2] == "reviewer"
+        ])
+        self._submit_revision(eng, item, revision=2)
+        second = tick(
+            eng.store,
+            eng.runtime,
+            manifest,
+            path,
+            max_parallel=4,
+            retry_limits={"review": 2},
+        )
+
+        assert second.state == "running"
+        assert manifest.nodes["a"].status == "in_review"
+        assert len([
+            entry for entry in eng.store.assign_log if entry[2] == "reviewer"
+        ]) == reviewer_assignments + 1
+
+    def test_review_continuation_authorizes_pass_with_nits_rework(
+        self, tmp_path,
+    ):
+        """显式 continuation 扩大绝对上限后允许 final nits 再返工一轮。"""
+        from omac.engines import create_engine
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        eng.store.update_work_item_metadata(
+            item.id,
+            review_bounce=9,
+            review_continuation={
+                "schema": "omac.review-continuation/v1",
+                "stage": "develop",
+                "mode": "producer-rework",
+                "authorized_through_round": 10,
+                "decision_count": 1,
+                "reason": "operator approved one additional review round",
+            },
+            review_verdict="pass-with-nits",
+            review_report=_review_report(
+                item, "pass-with-nits", nits=["authorized follow up"]),
+        )
+        current = eng.store.get_work_item(item.id)
+        eng.store.update_work_item_metadata(
+            item.id,
+            review_subject_digest=review_subject_digest(current, 10),
+        )
+
+        result = tick(
+            eng.store,
+            eng.runtime,
+            manifest,
+            path,
+            max_parallel=4,
+            retry_limits={"review": 9},
+        )
+
+        got = eng.store.get_work_item(item.id)
+        assert result.state == "running"
+        assert manifest.nodes["a"].status == "in_progress"
+        assert got.status == WorkItemStatus.IN_PROGRESS
+        assert got.bounces.review == 10
+        assert got.review_verdict is None
+
     def test_valid_reject_report_still_bounces_worker(self, tmp_path):
         """结构合法的 reject report 是业务拒绝,不能因为证据合法就把节点置 done。"""
         from omac.engines import create_engine
