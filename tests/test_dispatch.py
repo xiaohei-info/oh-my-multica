@@ -11,10 +11,12 @@
   驱动一个节点走完 develop→review→done,证明 Agent-first 闭环在接口层成立
 """
 import os
+import hashlib
 import tempfile
 from types import SimpleNamespace
 
 import pytest
+import yaml
 
 from omac.core.manifest import (
     Contract,
@@ -479,6 +481,7 @@ class TestDispatchLoopIntegration:
         manifest.nodes["a"].status = "todo"
         eng.store.update_status(item_id, WorkItemStatus.DONE)
         eng.store.clear_assignment(item_id)
+        eng.store.update_work_item_metadata(item_id, worker_handoff={})
         eng.store.update_status(item_id, WorkItemStatus.BLOCKED)
         tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
 
@@ -535,29 +538,35 @@ class TestDispatchLoopIntegration:
         assert f"omac work show {item_id} --output json" in item.description
 
         # 2) 手动扮演 worker:写入可通过证据门的 verification
+        verification = {
+            "commands": [{"cmd": "pytest -q", "exit_code": 0,
+                          "summary": "pass",
+                          "business_tests": [{
+                              "acceptance": "可登录",
+                              "test": "tests/test_login.py::test_user_can_login",
+                          }]}],
+            "integration_gates": [{
+                "name": "login-gate",
+                "commands": [{"cmd": "pytest -q", "exit_code": 0,
+                              "summary": "pass"}],
+                "metrics": {"route_coverage": 100},
+                "artifacts": ["coverage.xml"],
+                "source_of_truth": ["docs/login.md"],
+                "delivery_goal": "端到端登录",
+            }],
+            "pr_base": "feature/v1",
+            "coverage": 95,
+            "env_setup": ["Mock env: login-gate"],
+        }
+        pr_url = "https://mock.example.com/pr/1"
         eng.store.update_work_item_metadata(
             item_id,
-            artifacts={"pr_url": "https://mock.example.com/pr/1"},
-            verification={
-                "commands": [{"cmd": "pytest -q", "exit_code": 0,
-                              "summary": "pass",
-                              "business_tests": [{
-                                  "acceptance": "可登录",
-                                  "test": "tests/test_login.py::test_user_can_login",
-                              }]}],
-                "integration_gates": [{
-                    "name": "login-gate",
-                    "commands": [{"cmd": "pytest -q", "exit_code": 0,
-                                  "summary": "pass"}],
-                    "metrics": {"route_coverage": 100},
-                    "artifacts": ["coverage.xml"],
-                    "source_of_truth": ["docs/login.md"],
-                    "delivery_goal": "端到端登录",
-                }],
-                "pr_base": "feature/v1",
-                "coverage": 95,
-                "env_setup": ["Mock env: login-gate"],
+            artifacts={
+                "pr_url": pr_url,
+                "head_sha": hashlib.sha256(pr_url.encode("utf-8")).hexdigest(),
             },
+            verification=verification,
+            verification_source=yaml.safe_dump(verification),
         )
         eng.store.update_status(item_id, WorkItemStatus.DONE)
         tick(eng.store, eng.runtime, manifest, path, max_parallel=4)

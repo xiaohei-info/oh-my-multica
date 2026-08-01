@@ -13,7 +13,8 @@ import pytest
 
 from omac.core import taskmeta
 from omac.core.taskmeta import (
-    DELIVERY_IDENTITY_SCHEMA, Bounces, DeliveryIdentity, TaskKind, TaskPhase,
+    DELIVERY_IDENTITY_SCHEMA, REVIEWER_RUN_BASELINE_SCHEMA, Bounces,
+    DeliveryIdentity, ReviewerRunBaseline, TaskKind, TaskPhase,
     WorkerHandoffIntent,
 )
 from omac.engines.metadata_policy import assert_metadata_write_allowed
@@ -113,6 +114,30 @@ def test_mock_review_continuation_roundtrip():
         item.id, review_continuation=continuation)
 
     assert store.get_work_item(item.id).review_continuation == continuation
+
+
+def _reviewer_run_baseline():
+    return ReviewerRunBaseline(
+        schema=REVIEWER_RUN_BASELINE_SCHEMA,
+        subject_digest="subject-1",
+        target_reviewer="bob",
+        target_agent_id="agent-bob",
+        baseline_direct_run_ids=("run-worker", "run-old-reviewer"),
+    )
+
+
+def test_mock_reviewer_run_baseline_roundtrip_and_clear():
+    store = MockStore(_mock_config())
+    item = store.create_work_item(
+        "ws", "t", "d", dag_key="a", worker="alice")
+    baseline = _reviewer_run_baseline()
+
+    store.update_work_item_metadata(
+        item.id, reviewer_run_baseline=baseline)
+    assert store.get_work_item(item.id).reviewer_run_baseline == baseline
+
+    store.update_work_item_metadata(item.id, reviewer_run_baseline={})
+    assert store.get_work_item(item.id).reviewer_run_baseline is None
 
 
 def _worker_handoff_intent():
@@ -427,6 +452,26 @@ def test_multica_review_continuation_roundtrip():
 
     assert got.review_continuation == continuation
     assert fake.metadata[item.id]["review_continuation"] == continuation
+
+
+def test_multica_reviewer_run_baseline_roundtrip_and_clear():
+    store = _multica_store()
+    fake = _FakeMulticaProc()
+    baseline = _reviewer_run_baseline()
+
+    with patch("subprocess.run", side_effect=fake.run):
+        item = store.create_work_item(
+            "ws", "t", "d", dag_key="a", worker="alice")
+        store.update_work_item_metadata(
+            item.id, reviewer_run_baseline=baseline)
+        persisted = store.get_work_item(item.id)
+        store.update_work_item_metadata(
+            item.id, reviewer_run_baseline={})
+        cleared = store.get_work_item(item.id)
+
+    assert persisted.reviewer_run_baseline == baseline
+    assert fake.metadata[item.id]["reviewer_run_baseline"] == {}
+    assert cleared.reviewer_run_baseline is None
 
 
 def test_multica_worker_handoff_roundtrip_and_clear():

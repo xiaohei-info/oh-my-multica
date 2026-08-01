@@ -25,7 +25,8 @@ from omac.core.amendment import (
 from omac.core.manifest import Contract, Manifest, Node
 from omac.core.review_convergence import REVIEW_PROTOCOL_VERSION, open_blockers
 from omac.core.taskmeta import (
-    DELIVERY_IDENTITY_SCHEMA, Bounces, DeliveryIdentity, TaskKind, TaskPhase,
+    DELIVERY_IDENTITY_SCHEMA, REVIEWER_RUN_BASELINE_SCHEMA, Bounces,
+    DeliveryIdentity, ReviewerRunBaseline, TaskKind, TaskPhase,
     WorkerHandoffIntent,
 )
 from omac.engines import create_engine
@@ -2226,6 +2227,17 @@ _AMENDMENT_ACTIVITY_FIELD_CASES = [
     ("review_ledger", {"schema": "omac.review-ledger/v1"}, "review_ledger"),
     ("review_ledger_ref", {"attachment_id": "ledger"}, "review_ledger_ref"),
     ("review_continuation", {"authorized_rounds": 1}, "review_continuation"),
+    (
+        "reviewer_run_baseline",
+        ReviewerRunBaseline(
+            schema=REVIEWER_RUN_BASELINE_SCHEMA,
+            subject_digest="subject",
+            target_reviewer="bob",
+            target_agent_id="agent-bob",
+            baseline_direct_run_ids=("run-old",),
+        ),
+        "reviewer_run_baseline",
+    ),
     (
         "worker_handoff",
         WorkerHandoffIntent(
