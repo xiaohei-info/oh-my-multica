@@ -1257,7 +1257,7 @@ def _dispatch_worker_handoff(
         or current.machine_feedback not in (None, {})
         or current.review_report is not None
         or current.review_subject_digest is not None
-        or current.decision_required is not None
+        or current.requires_decision
     ):
         preparation = _apply_observed_handoff_preparation_write(
             store,
@@ -1368,7 +1368,7 @@ def _worker_handoff_review_is_reset(item) -> bool:
         and item.machine_feedback in (None, {})
         and item.review_report is None
         and item.review_subject_digest is None
-        and item.decision_required is None
+        and not item.requires_decision
         and item.reviewer_run_baseline is None
     )
 
@@ -1864,7 +1864,7 @@ def _review_projection_present(item) -> bool:
         or item.machine_feedback not in (None, {})
         or item.review_report is not None
         or item.review_subject_digest is not None
-        or item.decision_required is not None
+        or item.requires_decision
     )
 
 
