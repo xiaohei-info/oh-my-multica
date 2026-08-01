@@ -257,8 +257,8 @@ class TestRenderIssueBody:
             or "语义边界，不是穷举命令清单" in first_screen
         )
         assert (
-            "Only read-only queries" in first_screen
-            or "只允许只读查询" in first_screen
+            "use read-only Issue queries only when required" in first_screen
+            or "确有需要时使用只读 Issue 查询" in first_screen
         )
         for forbidden in (
             "multica issue status", "multica issue assign",
@@ -276,6 +276,64 @@ class TestRenderIssueBody:
             or "已有手工附件" in first_screen
         )
         assert f"执行角色: {role_label}" in body
+
+    @pytest.mark.parametrize("phase", [TaskPhase.AUTHORING, TaskPhase.REVIEW])
+    @pytest.mark.parametrize(
+        ("language", "blocked_query", "blocked_analysis", "allowed_after"),
+        [
+            (
+                "en",
+                "do not run any other Issue query",
+                "do not analyze the task content",
+                "After work show succeeds, use read-only Issue queries only when required by the returned context",
+            ),
+            (
+                "cn",
+                "不得执行任何其他 Issue 查询",
+                "不得开始分析任务内容",
+                "work show 成功后，只能在返回上下文确有需要时使用只读 Issue 查询",
+            ),
+        ],
+    )
+    def test_develop_body_gates_all_issue_queries_and_analysis_on_work_show(
+        self, phase, language, blocked_query, blocked_analysis, allowed_after,
+    ):
+        node = Node(id="a", worker="alice", title="Add login", reviewer="bob")
+
+        body = render_issue_body(
+            node, None, TaskKind.DEVELOP, "ISSUE-9",
+            language=language, phase=phase,
+        )
+        first_screen = body.split("# Add login", 1)[0]
+
+        assert blocked_query in first_screen
+        assert blocked_analysis in first_screen
+        assert "multica issue get" in first_screen
+        assert "multica issue comment list" in first_screen
+        assert "metadata" in first_screen
+        assert "exit code 0" in first_screen or "退出码 0" in first_screen
+        assert "parseable JSON" in first_screen or "可解析 JSON" in first_screen
+        assert allowed_after in first_screen
+        assert "exact `omac work submit` command returned by work show" in first_screen or (
+            "work show 返回的精确 `omac work submit` 命令" in first_screen
+        )
+        assert "create, modify, or delete Issue state" in first_screen or (
+            "创建、修改或删除 Issue 状态" in first_screen
+        )
+
+    @pytest.mark.parametrize("kind", [kind for kind in TaskKind if kind != TaskKind.DEVELOP])
+    def test_non_develop_body_keeps_existing_generic_bootstrap(self, kind):
+        node = Node(id="n", worker="alice", title="Generic task")
+
+        body = render_issue_body(node, None, kind, "ISSUE-9", language="en")
+        first_screen = body.split("# Generic task", 1)[0]
+
+        assert "Agent entry" in first_screen
+        assert "Read the authoritative JSON context for this task first" in first_screen
+        assert "omac work show ISSUE-9 --output json" in first_screen
+        assert "do not run any other Issue query" not in first_screen
+        assert "multica issue get" not in first_screen
+        assert "omac work submit" not in first_screen
 
     def test_issue_body_supports_english_project_language(self):
         n = Node(id="a", worker="alice", title="Add login", reviewer="bob")
