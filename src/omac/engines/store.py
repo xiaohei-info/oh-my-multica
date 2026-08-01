@@ -144,6 +144,14 @@ class WorkItemStore(ABC):
         """
         return projection.work_item
 
+    def control_observation_parallelism(self, requested: int) -> int:
+        """Return safe cross-work-item control read parallelism.
+
+        Stores remain serial unless an adapter explicitly guarantees that
+        independent ``observe_work_item_control`` calls are thread-safe.
+        """
+        return 1
+
     def evidence_hydration_parallelism(self, requested: int) -> int:
         """Return safe cross-work-item evidence read parallelism.
 
