@@ -15,9 +15,12 @@ import os
 import re
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
 import zipfile
+from collections import OrderedDict
+from concurrent.futures import Future
 from dataclasses import replace
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, TypeVar
@@ -67,6 +70,7 @@ MULTICA_PR_VIEW_FIELDS = (
 )
 _MULTICA_READ_MAX_ATTEMPTS = 3
 _MULTICA_READ_INITIAL_DELAY = 1.0
+_ATTACHMENT_BODY_CACHE_CAPACITY = 64
 _ACTIVE_RUN_STATUSES = {"queued", "pending", "running", "dispatching"}
 _RERUNNABLE_DIRECT_RUN_STATUSES = {"failed", "cancelled", "completed"}
 _KNOWN_WORK_ITEM_METADATA_KEYS = {
@@ -97,6 +101,59 @@ _EMPTY_DEFAULT_ISSUE_ENVELOPE_FIELDS = {
 }
 
 _ReadResult = TypeVar("_ReadResult")
+_AttachmentCacheKey = tuple[str, str, str]
+
+
+class _AttachmentBodyCache:
+    """Bounded in-process LRU with one loader per immutable attachment key."""
+
+    def __init__(self, capacity: int):
+        if capacity < 1:
+            raise ValueError("attachment_cache_capacity must be at least 1")
+        self._capacity = capacity
+        self._entries: OrderedDict[_AttachmentCacheKey, bytes] = OrderedDict()
+        self._inflight: Dict[_AttachmentCacheKey, Future[Optional[bytes]]] = {}
+        self._lock = threading.Lock()
+
+    def get_or_load(
+        self,
+        key: _AttachmentCacheKey,
+        load: Callable[[], Optional[bytes]],
+        *,
+        cacheable: Callable[[bytes], bool],
+    ) -> Optional[bytes]:
+        with self._lock:
+            cached = self._entries.get(key)
+            if cached is not None:
+                self._entries.move_to_end(key)
+                return cached
+            future = self._inflight.get(key)
+            owner = future is None
+            if owner:
+                future = Future()
+                self._inflight[key] = future
+
+        if not owner:
+            return future.result()
+
+        try:
+            body = load()
+        except BaseException as exc:
+            with self._lock:
+                self._inflight.pop(key, None)
+            future.set_exception(exc)
+            raise
+
+        should_cache = body is not None and cacheable(body)
+        with self._lock:
+            self._inflight.pop(key, None)
+            if should_cache:
+                self._entries[key] = body
+                self._entries.move_to_end(key)
+                while len(self._entries) > self._capacity:
+                    self._entries.popitem(last=False)
+        future.set_result(body)
+        return body
 
 
 class _TransientReadFailure(str, Enum):
@@ -216,10 +273,14 @@ class MulticaStore(WorkItemStore):
         self,
         config: EngineConfig,
         sleeper: Callable[[float], None] = time.sleep,
+        *,
+        attachment_cache_capacity: int = _ATTACHMENT_BODY_CACHE_CAPACITY,
     ):
         super().__init__(config)
         self._sleep = sleeper
         self._pending_assignment_wakes: set[str] = set()
+        self._attachment_bodies = _AttachmentBodyCache(
+            attachment_cache_capacity)
 
     def _mark_assignment_wake_pending(self, item_id: str) -> None:
         self._pending_assignment_wakes.add(item_id)
@@ -552,7 +613,12 @@ class MulticaStore(WorkItemStore):
             "程序化引用见 issue metadata。\n")
 
     def _download_attachment_bytes(
-        self, attachment_id: str, filename: Optional[str], *, label: str,
+        self,
+        attachment_id: str,
+        filename: Optional[str],
+        *,
+        label: str,
+        expected_sha256: str = "",
     ) -> Optional[bytes]:
         def download() -> Optional[bytes]:
             with tempfile.TemporaryDirectory(prefix="omac-attachment-") as td:
@@ -570,7 +636,15 @@ class MulticaStore(WorkItemStore):
                             return f.read()
             return None
 
-        return self._run_idempotent_read(label, download)
+        expected_sha256 = expected_sha256.strip().lower()
+        key = (attachment_id, expected_sha256, filename or "")
+        return self._attachment_bodies.get_or_load(
+            key,
+            lambda: self._run_idempotent_read(label, download),
+            cacheable=lambda body: bool(expected_sha256) and (
+                hashlib.sha256(body).hexdigest() == expected_sha256
+            ),
+        )
 
     def _load_payload_comment(self, item_id: str, key: str, ref: Optional[Dict[str, Any]]) -> Optional[str]:
         if not ref:
@@ -603,12 +677,16 @@ class MulticaStore(WorkItemStore):
         if not attachment_id:
             return None
         filename = ref.get("filename")
+        declared_sha = str(ref.get("sha256") or "").strip()
         body = self._download_attachment_bytes(
-            str(attachment_id), filename, label="attachment download")
+            str(attachment_id),
+            filename,
+            label="attachment download",
+            expected_sha256=declared_sha,
+        )
         if body is None:
             return None
         actual_sha = hashlib.sha256(body).hexdigest()
-        declared_sha = str(ref.get("sha256") or "").strip()
         if declared_sha and actual_sha != declared_sha:
             raise PlatformError(
                 f"Downloaded {key} attachment digest does not match declared "
@@ -654,16 +732,17 @@ class MulticaStore(WorkItemStore):
             raise PlatformError(
                 f"Verification attachment {attachment_id} is not bound to comment "
                 f"{comment_id} for work item {item_id}")
+        declared_sha = str(ref.get("sha256") or "").strip()
         body = self._download_attachment_bytes(
             attachment_id,
             str(attachment.get("filename") or ref.get("filename") or "") or None,
             label="verification attachment observation",
+            expected_sha256=declared_sha,
         )
         if body is None:
             raise PlatformError(
                 f"Verification attachment bytes are unavailable for work item {item_id}")
         actual_sha = hashlib.sha256(body).hexdigest()
-        declared_sha = str(ref.get("sha256") or "").strip()
         if declared_sha and declared_sha != actual_sha:
             raise PlatformError(
                 f"Verification attachment digest mismatch for work item {item_id}")
