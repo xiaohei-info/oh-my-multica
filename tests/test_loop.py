@@ -424,6 +424,524 @@ def test_legacy_decision_restart_does_not_duplicate_comment_or_dispatch(
     assert len(engine.store.get_comments(item.id)) == 1
 
 
+def _pending_handoff_preparation_fixture(tmp_path):
+    engine = _engine(MOCK_AUTO_COMPLETE="false")
+    node = _node("handoff-preparation", contract=_contract())
+    item = engine.store.create_work_item(
+        "ws",
+        node.title or node.id,
+        "stale review projection",
+        dag_key=node.id,
+        worker=node.worker,
+        reviewer=node.reviewer,
+    )
+    engine.store.update_work_item_metadata(
+        item.id,
+        phase=TaskPhase.REVIEW,
+        review_verdict="reject",
+        review_comment="stale blocker",
+        review_subject_digest="stale-review-subject",
+    )
+    engine.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+    node.work_item_id = item.id
+    manifest = _manifest([node])
+    path = str(tmp_path / "handoff-preparation.yaml")
+    save_manifest(manifest, path)
+    return engine, manifest, path, node, item
+
+
+def test_handoff_preparation_timeout_after_apply_observes_and_dispatches(
+    tmp_path, monkeypatch,
+):
+    """A timed-out idempotent write may be accepted only after authority confirms it."""
+    from omac.errors import PlatformError
+
+    engine, manifest, path, node, item = _pending_handoff_preparation_fixture(
+        tmp_path)
+    original_reset = engine.store.reset_review
+    reset_calls = 0
+
+    def reset_then_timeout(item_id):
+        nonlocal reset_calls
+        reset_calls += 1
+        original_reset(item_id)
+        raise PlatformError("Request timed out: server did not respond")
+
+    monkeypatch.setattr(engine.store, "reset_review", reset_then_timeout)
+    monkeypatch.setattr(
+        engine.store,
+        "is_transient_transport_error",
+        lambda _error: True,
+        raising=False,
+    )
+
+    dispatched = loop._dispatch(
+        engine.store, engine.runtime, manifest, path, [node.id], 1)
+
+    current = engine.store.get_work_item(item.id)
+    assert dispatched == [node.id]
+    assert reset_calls == 1
+    assert manifest.nodes[node.id].status == "in_progress"
+    assert current.status is WorkItemStatus.IN_PROGRESS
+    assert current.phase is TaskPhase.AUTHORING
+    assert current.review_verdict is None
+    assert current.worker_handoff is not None
+    assert len(engine.runtime.list_runs(item.id)) == 1
+    assert engine.store.get_comments(item.id) == []
+
+
+def test_handoff_intent_timeout_after_apply_confirms_same_generation(
+    tmp_path, monkeypatch,
+):
+    from omac.errors import PlatformError
+
+    engine, manifest, path, node, item = _pending_handoff_preparation_fixture(
+        tmp_path)
+    original_update = engine.store.update_work_item_metadata
+    attempted = []
+
+    def update_then_timeout(item_id, **metadata):
+        intent = metadata.get("worker_handoff")
+        result = original_update(item_id, **metadata)
+        if intent is not None and not attempted:
+            attempted.append(intent)
+            raise PlatformError("Request timed out: server did not respond")
+        return result
+
+    monkeypatch.setattr(
+        engine.store, "update_work_item_metadata", update_then_timeout)
+    monkeypatch.setattr(
+        engine.store, "is_transient_transport_error", lambda _error: True)
+
+    dispatched = loop._dispatch(
+        engine.store, engine.runtime, manifest, path, [node.id], 1)
+
+    current = engine.store.get_work_item(item.id)
+    assert dispatched == [node.id]
+    assert current.worker_handoff is not None
+    assert current.worker_handoff.generation == attempted[0].generation
+    assert len(engine.runtime.list_runs(item.id)) == 1
+    assert engine.store.get_comments(item.id) == []
+
+
+def test_handoff_intent_timeout_before_apply_keeps_manifest_retryable(
+    tmp_path, monkeypatch,
+):
+    from omac.errors import PlatformError
+
+    engine, manifest, path, node, item = _pending_handoff_preparation_fixture(
+        tmp_path)
+    original_update = engine.store.update_work_item_metadata
+    original_bounces = engine.store.get_work_item(item.id).bounces
+    attempted = []
+
+    def timeout_before_intent(item_id, **metadata):
+        intent = metadata.get("worker_handoff")
+        if intent is not None and not attempted:
+            attempted.append(intent)
+            raise PlatformError("Request timed out: server did not respond")
+        return original_update(item_id, **metadata)
+
+    monkeypatch.setattr(
+        engine.store, "update_work_item_metadata", timeout_before_intent)
+    monkeypatch.setattr(
+        engine.store, "is_transient_transport_error", lambda _error: True)
+
+    first = loop._dispatch(
+        engine.store, engine.runtime, manifest, path, [node.id], 1)
+
+    interrupted = engine.store.get_work_item(item.id)
+    assert first == []
+    assert manifest.nodes[node.id].status == "todo"
+    assert interrupted.worker_handoff is None
+    assert interrupted.bounces == original_bounces
+    assert engine.runtime.list_runs(item.id) == []
+    assert engine.store.get_comments(item.id) == []
+
+    monkeypatch.setattr(
+        engine.store, "update_work_item_metadata", original_update)
+    restarted = load_manifest(path)
+    result = tick(
+        engine.store, engine.runtime, restarted, path, max_parallel=1)
+
+    recovered = engine.store.get_work_item(item.id)
+    assert result.state == "running"
+    assert recovered.worker_handoff is not None
+    assert recovered.worker_handoff.generation != attempted[0].generation
+    assert len(engine.runtime.list_runs(item.id)) == 1
+
+
+def test_handoff_intent_read_failure_keeps_todo_and_reuses_persisted_intent(
+    tmp_path, monkeypatch,
+):
+    from omac.errors import PlatformError
+
+    engine, manifest, path, node, item = _pending_handoff_preparation_fixture(
+        tmp_path)
+    original_update = engine.store.update_work_item_metadata
+    original_observe = engine.store.observe_work_item_control
+    attempted = []
+    intent_written = False
+
+    def persist_intent(item_id, **metadata):
+        nonlocal intent_written
+        result = original_update(item_id, **metadata)
+        intent = metadata.get("worker_handoff")
+        if intent is not None and not attempted:
+            attempted.append(intent)
+            intent_written = True
+        return result
+
+    def unreadable_after_intent(item_id):
+        if intent_written:
+            raise PlatformError("Request timed out: server did not respond")
+        return original_observe(item_id)
+
+    monkeypatch.setattr(engine.store, "update_work_item_metadata", persist_intent)
+    monkeypatch.setattr(
+        engine.store, "observe_work_item_control", unreadable_after_intent)
+    monkeypatch.setattr(
+        engine.store, "is_transient_transport_error", lambda _error: True)
+    monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
+
+    first = loop._dispatch(
+        engine.store, engine.runtime, manifest, path, [node.id], 1)
+
+    assert first == []
+    assert manifest.nodes[node.id].status == "todo"
+    assert engine.runtime.list_runs(item.id) == []
+    assert engine.store.get_comments(item.id) == []
+
+    monkeypatch.setattr(engine.store, "observe_work_item_control", original_observe)
+    monkeypatch.setattr(
+        engine.store, "update_work_item_metadata", original_update)
+    persisted = engine.store.get_work_item(item.id).worker_handoff
+    assert persisted is not None
+    assert persisted.generation == attempted[0].generation
+
+    restarted = load_manifest(path)
+    result = tick(
+        engine.store, engine.runtime, restarted, path, max_parallel=1)
+
+    recovered = engine.store.get_work_item(item.id)
+    assert result.state == "running"
+    assert recovered.worker_handoff.generation == attempted[0].generation
+    assert len(engine.runtime.list_runs(item.id)) == 1
+
+
+def test_handoff_preparation_timeout_before_apply_stays_pending_and_restarts(
+    tmp_path, monkeypatch,
+):
+    """An unconfirmed preparation keeps its intent and creates no duplicate Run."""
+    from omac.errors import PlatformError
+
+    engine, manifest, path, node, item = _pending_handoff_preparation_fixture(
+        tmp_path)
+    original_reset = engine.store.reset_review
+    original_bounces = engine.store.get_work_item(item.id).bounces
+
+    monkeypatch.setattr(
+        engine.store,
+        "reset_review",
+        lambda _item_id: (_ for _ in ()).throw(
+            PlatformError("Request timed out: server did not respond")),
+    )
+    monkeypatch.setattr(
+        engine.store,
+        "is_transient_transport_error",
+        lambda _error: True,
+        raising=False,
+    )
+
+    first = loop._dispatch(
+        engine.store, engine.runtime, manifest, path, [node.id], 1)
+
+    interrupted = engine.store.get_work_item(item.id)
+    assert first == []
+    assert manifest.nodes[node.id].status == "in_progress"
+    assert interrupted.status is WorkItemStatus.IN_REVIEW
+    assert interrupted.phase is TaskPhase.REVIEW
+    assert interrupted.worker_handoff is not None
+    assert interrupted.bounces == original_bounces
+    assert engine.runtime.list_runs(item.id) == []
+    assert engine.store.get_comments(item.id) == []
+
+    monkeypatch.setattr(engine.store, "reset_review", original_reset)
+    restarted = load_manifest(path)
+    second = tick(
+        engine.store, engine.runtime, restarted, path, max_parallel=1)
+    third = tick(
+        engine.store, engine.runtime, restarted, path, max_parallel=1)
+
+    recovered = engine.store.get_work_item(item.id)
+    assert second.state == "running"
+    assert third.state == "running"
+    assert recovered.status is WorkItemStatus.IN_PROGRESS
+    assert recovered.phase is TaskPhase.AUTHORING
+    assert len(engine.runtime.list_runs(item.id)) == 1
+    assert len([
+        entry for entry in engine.store.assign_log
+        if entry[0] == item.id and entry[2] == "worker"
+    ]) == 1
+
+
+def test_handoff_preparation_hard_error_still_blocks(tmp_path, monkeypatch):
+    from omac.errors import PlatformError
+
+    engine, manifest, path, node, item = _pending_handoff_preparation_fixture(
+        tmp_path)
+    monkeypatch.setattr(
+        engine.store,
+        "reset_review",
+        lambda _item_id: (_ for _ in ()).throw(
+            PlatformError("validation rejected: invalid metadata")),
+    )
+    monkeypatch.setattr(
+        engine.store,
+        "is_transient_transport_error",
+        lambda _error: False,
+        raising=False,
+    )
+
+    dispatched = loop._dispatch(
+        engine.store, engine.runtime, manifest, path, [node.id], 1)
+
+    current = engine.store.get_work_item(item.id)
+    assert dispatched == []
+    assert manifest.nodes[node.id].status == "blocked"
+    assert current.status is WorkItemStatus.BLOCKED
+    assert current.worker_handoff is not None
+    assert engine.runtime.list_runs(item.id) == []
+    assert len(engine.store.get_comments(item.id)) == 1
+
+
+def test_handoff_successful_write_observes_stale_projection_until_converged(
+    tmp_path, monkeypatch,
+):
+    engine, manifest, path, node, item = _pending_handoff_preparation_fixture(
+        tmp_path)
+    original_reset = engine.store.reset_review
+    original_observe = engine.store.observe_work_item_control
+    stale = WorkItemControlProjection(replace(
+        original_observe(item.id).work_item))
+    stale_reads = 0
+    reset_applied = False
+
+    def reset(item_id):
+        nonlocal reset_applied
+        original_reset(item_id)
+        reset_applied = True
+
+    def observe(item_id):
+        nonlocal stale_reads
+        if reset_applied and stale_reads < 2:
+            stale_reads += 1
+            return stale
+        return original_observe(item_id)
+
+    monkeypatch.setattr(engine.store, "reset_review", reset)
+    monkeypatch.setattr(engine.store, "observe_work_item_control", observe)
+    monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
+
+    dispatched = loop._dispatch(
+        engine.store, engine.runtime, manifest, path, [node.id], 1)
+
+    assert dispatched == [node.id]
+    assert stale_reads == 2
+    assert len(engine.runtime.list_runs(item.id)) == 1
+    assert engine.store.get_comments(item.id) == []
+
+
+def test_handoff_successful_write_stays_pending_when_projection_never_converges(
+    tmp_path, monkeypatch,
+):
+    engine, manifest, path, node, item = _pending_handoff_preparation_fixture(
+        tmp_path)
+    original_reset = engine.store.reset_review
+    original_observe = engine.store.observe_work_item_control
+    stale = WorkItemControlProjection(replace(
+        original_observe(item.id).work_item))
+    reset_applied = False
+
+    def reset(item_id):
+        nonlocal reset_applied
+        original_reset(item_id)
+        reset_applied = True
+
+    def observe(item_id):
+        if reset_applied:
+            return stale
+        return original_observe(item_id)
+
+    monkeypatch.setattr(engine.store, "reset_review", reset)
+    monkeypatch.setattr(engine.store, "observe_work_item_control", observe)
+    monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
+
+    first = loop._dispatch(
+        engine.store, engine.runtime, manifest, path, [node.id], 1)
+
+    assert first == []
+    assert manifest.nodes[node.id].status == "in_progress"
+    assert engine.runtime.list_runs(item.id) == []
+    assert engine.store.get_comments(item.id) == []
+
+    monkeypatch.setattr(engine.store, "observe_work_item_control", original_observe)
+    restarted = load_manifest(path)
+    result = tick(
+        engine.store, engine.runtime, restarted, path, max_parallel=1)
+
+    assert result.state == "running"
+    assert len(engine.runtime.list_runs(item.id)) == 1
+
+
+def _set_stale_handoff_body_facts(engine, item):
+    engine.store.update_work_item_metadata(
+        item.id,
+        source_refs=[{"label": "stale", "issue_id": "old"}],
+        blocked_by=["stale-dependency"],
+    )
+
+
+def test_handoff_body_partial_apply_stays_pending_and_restarts(
+    tmp_path, monkeypatch,
+):
+    from omac.errors import PlatformError
+
+    engine, manifest, path, node, item = _pending_handoff_preparation_fixture(
+        tmp_path)
+    manifest.meta["source_issues"] = ["plan-current"]
+    _set_stale_handoff_body_facts(engine, item)
+    original_update = engine.store.update_work_item_metadata
+    body_attempted = False
+
+    def partially_apply_body(item_id, **metadata):
+        nonlocal body_attempted
+        if "description" in metadata and not body_attempted:
+            body_attempted = True
+            original_update(item_id, description=metadata["description"])
+            raise PlatformError("Request timed out: server did not respond")
+        return original_update(item_id, **metadata)
+
+    monkeypatch.setattr(
+        engine.store, "update_work_item_metadata", partially_apply_body)
+    monkeypatch.setattr(
+        engine.store, "is_transient_transport_error", lambda _error: True)
+    monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
+
+    first = loop._dispatch(
+        engine.store, engine.runtime, manifest, path, [node.id], 1)
+
+    interrupted = engine.store.get_work_item(item.id)
+    stale_source_refs = list(interrupted.source_refs)
+    assert first == []
+    assert manifest.nodes[node.id].status == "in_progress"
+    assert interrupted.worker_handoff is not None
+    assert interrupted.source_refs == [
+        {"label": "stale", "issue_id": "old"}]
+    assert interrupted.blocked_by == ["stale-dependency"]
+    assert engine.runtime.list_runs(item.id) == []
+    assert engine.store.get_comments(item.id) == []
+
+    monkeypatch.setattr(
+        engine.store, "update_work_item_metadata", original_update)
+    restarted = load_manifest(path)
+    result = tick(
+        engine.store, engine.runtime, restarted, path, max_parallel=1)
+
+    assert result.state == "running"
+    recovered = engine.store.get_work_item(item.id)
+    assert recovered.source_refs != stale_source_refs
+    assert recovered.blocked_by == []
+    assert len(engine.runtime.list_runs(item.id)) == 1
+
+
+def test_handoff_body_timeout_after_full_apply_observes_and_dispatches(
+    tmp_path, monkeypatch,
+):
+    from omac.errors import PlatformError
+
+    engine, manifest, path, node, item = _pending_handoff_preparation_fixture(
+        tmp_path)
+    manifest.meta["source_issues"] = ["plan-current"]
+    _set_stale_handoff_body_facts(engine, item)
+    original_update = engine.store.update_work_item_metadata
+    body_attempted = False
+
+    def apply_body_then_timeout(item_id, **metadata):
+        nonlocal body_attempted
+        result = original_update(item_id, **metadata)
+        if "description" in metadata and not body_attempted:
+            body_attempted = True
+            raise PlatformError("Request timed out: server did not respond")
+        return result
+
+    monkeypatch.setattr(
+        engine.store, "update_work_item_metadata", apply_body_then_timeout)
+    monkeypatch.setattr(
+        engine.store, "is_transient_transport_error", lambda _error: True)
+
+    dispatched = loop._dispatch(
+        engine.store, engine.runtime, manifest, path, [node.id], 1)
+
+    current = engine.store.get_work_item(item.id)
+    assert dispatched == [node.id]
+    assert current.source_refs != [
+        {"label": "stale", "issue_id": "old"}]
+    assert current.blocked_by == []
+    assert len(engine.runtime.list_runs(item.id)) == 1
+
+
+def test_handoff_body_read_failure_stays_pending_and_restarts(
+    tmp_path, monkeypatch,
+):
+    from omac.errors import PlatformError
+
+    engine, manifest, path, node, item = _pending_handoff_preparation_fixture(
+        tmp_path)
+    manifest.meta["source_issues"] = ["plan-current"]
+    _set_stale_handoff_body_facts(engine, item)
+    original_update = engine.store.update_work_item_metadata
+    original_observe = engine.store.observe_work_item_control
+    body_applied = False
+
+    def apply_body(item_id, **metadata):
+        nonlocal body_applied
+        result = original_update(item_id, **metadata)
+        if "description" in metadata:
+            body_applied = True
+        return result
+
+    def unreadable_body(item_id):
+        if body_applied:
+            raise PlatformError("Request timed out: server did not respond")
+        return original_observe(item_id)
+
+    monkeypatch.setattr(engine.store, "update_work_item_metadata", apply_body)
+    monkeypatch.setattr(
+        engine.store, "observe_work_item_control", unreadable_body)
+    monkeypatch.setattr(
+        engine.store, "is_transient_transport_error", lambda _error: True)
+    monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
+
+    first = loop._dispatch(
+        engine.store, engine.runtime, manifest, path, [node.id], 1)
+
+    assert first == []
+    assert manifest.nodes[node.id].status == "in_progress"
+    assert engine.runtime.list_runs(item.id) == []
+    assert engine.store.get_comments(item.id) == []
+
+    monkeypatch.setattr(engine.store, "observe_work_item_control", original_observe)
+    monkeypatch.setattr(
+        engine.store, "update_work_item_metadata", original_update)
+    restarted = load_manifest(path)
+    result = tick(
+        engine.store, engine.runtime, restarted, path, max_parallel=1)
+
+    assert result.state == "running"
+    assert len(engine.runtime.list_runs(item.id)) == 1
+
+
 # ==================== 1. happy path:多节点带依赖 → converged ====================
 
 class TestHappyPath:
