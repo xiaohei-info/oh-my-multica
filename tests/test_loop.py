@@ -2831,6 +2831,69 @@ def test_reviewer_dispatch_refreshes_reused_issue_with_control_protocol(
     )
 
 
+def test_initial_develop_reviewer_handoff_assigns_without_starting_run(
+    tmp_path, monkeypatch,
+):
+    import hashlib
+
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    manifest = _manifest([_node("a", reviewer="bob", contract=_contract())])
+    path = str(tmp_path / "dag.yaml")
+    save_manifest(manifest, path)
+    tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+    item = eng.store.get_work_item(manifest.nodes["a"].work_item_id)
+    eng.store.set_node_contract(item.id, manifest.nodes["a"].contract)
+    verification = eng.store._mock_verification(item.id)
+    eng.store.update_work_item_metadata(
+        item.id,
+        artifacts={
+            "pr_url": "https://mock.example/pr/1",
+            "head_sha": hashlib.sha256(
+                b"https://mock.example/pr/1").hexdigest(),
+        },
+        verification=verification,
+        verification_source=yaml.safe_dump(verification),
+    )
+    from omac.engines import mock as mock_engine
+    mock_engine._finish_mock_run(item.id)
+    eng.store.update_status(item.id, WorkItemStatus.DONE)
+    original_assign = eng.store.assign_work_item
+    reviewer_calls = []
+
+    def assign(item_id, assignee, role, **kwargs):
+        if role == "reviewer":
+            reviewer_calls.append(kwargs)
+        return original_assign(item_id, assignee, role, **kwargs)
+
+    monkeypatch.setattr(eng.store, "assign_work_item", assign)
+
+    tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+
+    assert reviewer_calls == [{"start_run": False}]
+
+
+def test_develop_reviewer_retry_assigns_without_resuming_old_session(
+    tmp_path, monkeypatch,
+):
+    eng, _manifest, _path, item, _reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    original_assign = eng.store.assign_work_item
+    reviewer_calls = []
+
+    def assign(item_id, assignee, role, **kwargs):
+        if role == "reviewer":
+            reviewer_calls.append(kwargs)
+        return original_assign(item_id, assignee, role, **kwargs)
+
+    monkeypatch.setattr(eng.store, "assign_work_item", assign)
+    monkeypatch.setattr(eng.runtime, "wake", lambda *_args: None)
+
+    assert loop._resume_reviewer_run(
+        eng.store, eng.runtime, _manifest.nodes["a"])
+
+    assert reviewer_calls == [{"start_run": False}]
+
+
 def test_reviewer_completed_without_verdict_is_bounded_by_run_attempts(
     tmp_path, monkeypatch,
 ):
@@ -4244,7 +4307,7 @@ class TestReviewerRejectBoundedFallback:
             events.append("prepare")
             return original_prepare(item_id, subject_digest)
 
-        def assign(item_id, assignee, role):
+        def assign(item_id, assignee, role, **kwargs):
             if role == "reviewer":
                 current = eng.store.get_work_item(item_id)
                 assert current.phase == TaskPhase.REVIEW
@@ -4252,7 +4315,7 @@ class TestReviewerRejectBoundedFallback:
                 assert current.review_report is None
                 assert current.review_ledger is old_ledger
                 events.append("assign")
-            return original_assign(item_id, assignee, role)
+            return original_assign(item_id, assignee, role, **kwargs)
 
         def wake(item_id, agent, role):
             if role == "reviewer":
@@ -4892,10 +4955,10 @@ class TestReviewerRejectBoundedFallback:
             eng.store, "update_work_item_metadata", original_update)
         original_assign = eng.store.assign_work_item
 
-        def assign(item_id, assignee, role):
+        def assign(item_id, assignee, role, **kwargs):
             if role == "worker":
                 pytest.fail("new Worker delivery must not resume stale handoff")
-            return original_assign(item_id, assignee, role)
+            return original_assign(item_id, assignee, role, **kwargs)
 
         monkeypatch.setattr(eng.store, "assign_work_item", assign)
         persisted = load_manifest(path)
@@ -5033,9 +5096,9 @@ class TestReviewerRejectBoundedFallback:
         worker_assignments = 0
         reviewer_wakes = 0
 
-        def assign(item_id, assignee, role):
+        def assign(item_id, assignee, role, **kwargs):
             nonlocal worker_assignments
-            result = original_assign(item_id, assignee, role)
+            result = original_assign(item_id, assignee, role, **kwargs)
             if role == "worker":
                 from omac.engines.mock import _finish_mock_run
                 worker_assignments += 1

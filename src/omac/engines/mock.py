@@ -1003,7 +1003,14 @@ class MockStore(WorkItemStore):
         item.phase = TaskPhase.REVIEW
         return item
 
-    def assign_work_item(self, item_id: str, assignee: str, role: str):
+    def assign_work_item(
+        self,
+        item_id: str,
+        assignee: str,
+        role: str,
+        *,
+        start_run: bool = True,
+    ):
         global _shared_next_run_id
         item = self.get_work_item(item_id)
         agent_id = self.resolve_agent_id(assignee)
@@ -1020,6 +1027,8 @@ class MockStore(WorkItemStore):
         _shared_assign_log.append((item_id, item.dag_key, role, time.time()))
         _shared_assigned_items[item_id] = time.time()
         _shared_active_assignments[item_id] = assignment
+        # Mock has no resumable session. Coalesce the explicit wake into the
+        # same synthetic Run while preserving the public assignment contract.
         if not same_active_assignment:
             run = AgentRunObservation(
                 id=f"mock-run-{_shared_next_run_id}",

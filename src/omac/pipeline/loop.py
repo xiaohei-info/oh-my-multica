@@ -779,7 +779,8 @@ def _resume_reviewer_run(store, runtime, node) -> bool:
         return False
     item_id = node.work_item_id
     store.update_status(item_id, WorkItemStatus.IN_REVIEW)
-    store.assign_work_item(item_id, node.reviewer, "reviewer")
+    store.assign_work_item(
+        item_id, node.reviewer, "reviewer", start_run=False)
     runtime.wake(item_id, node.reviewer, "reviewer")
     return True
 
@@ -1157,7 +1158,8 @@ def _dispatch_reviewer_for_current_subject(
     _refresh_develop_issue_body(
         store, manifest, key, phase=TaskPhase.REVIEW)
     store.update_status(item_id, WorkItemStatus.IN_REVIEW)
-    store.assign_work_item(item_id, node.reviewer, "reviewer")
+    store.assign_work_item(
+        item_id, node.reviewer, "reviewer", start_run=False)
     runtime.wake(item_id, node.reviewer, "reviewer")
     return True
 

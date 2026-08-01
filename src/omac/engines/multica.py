@@ -1628,18 +1628,41 @@ class MulticaStore(WorkItemStore):
         ), metadata=metadata)
         return self.get_work_item(item_id)
 
-    def assign_work_item(self, item_id: str, assignee: str, role: str):
+    def assign_work_item(
+        self,
+        item_id: str,
+        assignee: str,
+        role: str,
+        *,
+        start_run: bool = True,
+    ):
         agent_id = self._resolve_agent_id(assignee)
-        current = self._run_multica(["issue", "get", item_id, "--output", "json"])
+        current = None
+        if start_run:
+            current = self._run_multica([
+                "issue", "get", item_id, "--output", "json",
+            ])
+        if role == "worker":
+            self.update_work_item_metadata(item_id, worker=assignee)
+        elif role == "reviewer":
+            self.update_work_item_metadata(item_id, reviewer=assignee)
+        if not start_run:
+            self._put_issue_fields_direct(
+                item_id,
+                {
+                    "assignee_type": "agent",
+                    "assignee_id": agent_id,
+                    "suppress_run": True,
+                },
+                operation="suppressed assignment",
+            )
+            return
+
         current_assignee_id = (
             str(current.get("assignee_id"))
             if isinstance(current, dict) and current.get("assignee_id")
             else None
         )
-        if role == "worker":
-            self.update_work_item_metadata(item_id, worker=assignee)
-        elif role == "reviewer":
-            self.update_work_item_metadata(item_id, reviewer=assignee)
         self._run_multica(["issue", "assign", item_id, "--to", agent_id])
         # 改派到不同 agent 时，Multica assignment 会创建 run，随后的 wake
         # 只需确认，避免再 rerun 一次。同一 assignee 的 assign 是幂等更新，
@@ -1773,12 +1796,8 @@ class MulticaStore(WorkItemStore):
 
 
 class MulticaRuntime(AgentRuntime):
-    """执行面:Multica 的「assign 即唤醒」——issue 被 assign 后,agent 所在机器的
-    daemon 自动认领任务并以 issue 内容为 prompt 拉起 agent CLI。
-
-    因此 wake 是确认性 no-op:只需数据面 assign 已生效(设计文档 §12.3)。
-    阶段交接(评审/回退)= 同一 issue 转派新 assignee,天然支持接力棒传递。
-    """
+    """执行面:默认 assignment 由 Multica 启动 Run；静默 assignment 则由 wake
+    在确认没有活跃 Run 后通过 issue rerun 显式启动。"""
 
     def __init__(
         self,
