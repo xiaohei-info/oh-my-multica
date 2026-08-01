@@ -20,6 +20,30 @@ from omac.engines.multica import MulticaRuntime, MulticaStore
 from omac.errors import PlatformError
 
 
+@pytest.mark.parametrize("message", [
+    "Request timed out: the server did not respond in time.",
+    "context deadline exceeded",
+    "HTTP 503 Service Unavailable",
+    "connection reset by peer",
+])
+def test_multica_classifies_known_transient_transport_errors(message):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+
+    assert store.is_transient_transport_error(PlatformError(message))
+
+
+@pytest.mark.parametrize("message", [
+    "HTTP 401 unauthorized",
+    "HTTP 403 forbidden",
+    "validation rejected: invalid metadata",
+    "issue not found",
+])
+def test_multica_rejects_hard_errors_as_transient_transport(message):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+
+    assert not store.is_transient_transport_error(PlatformError(message))
+
+
 def test_multica_finalizes_authoring_identity_with_existing_store_writes(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
     writes = []

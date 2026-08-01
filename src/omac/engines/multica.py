@@ -326,6 +326,10 @@ class MulticaStore(WorkItemStore):
                 self._sleep(delay)
         raise AssertionError("bounded read retry loop must return or raise")
 
+    def is_transient_transport_error(self, error: PlatformError) -> bool:
+        """Classify only the existing strict Multica transport allowlist."""
+        return _transient_read_failure(str(error)) is not None
+
     def _run_multica(self, args: List[str], capture=True) -> Any:
         """调用 multica CLI。
 

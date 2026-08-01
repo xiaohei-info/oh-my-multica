@@ -161,6 +161,16 @@ class WorkItemStore(ABC):
         """
         return 1
 
+    def is_transient_transport_error(self, error: PlatformError) -> bool:
+        """Return whether a platform operation has a retryable unknown outcome.
+
+        Stores fail closed by default.  Adapters may recognize only transport
+        failures for which an authoritative read can safely determine whether
+        an idempotent write took effect.  Authentication, validation, missing
+        resources, and explicit platform rejection must return ``False``.
+        """
+        return False
+
     @abstractmethod
     def update_work_item_metadata(
         self,

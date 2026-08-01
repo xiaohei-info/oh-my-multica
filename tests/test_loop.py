@@ -424,6 +424,201 @@ def test_legacy_decision_restart_does_not_duplicate_comment_or_dispatch(
     assert len(engine.store.get_comments(item.id)) == 1
 
 
+def _pending_handoff_preparation_fixture(tmp_path):
+    engine = _engine(MOCK_AUTO_COMPLETE="false")
+    node = _node("handoff-preparation", contract=_contract())
+    item = engine.store.create_work_item(
+        "ws",
+        node.title or node.id,
+        "stale review projection",
+        dag_key=node.id,
+        worker=node.worker,
+        reviewer=node.reviewer,
+    )
+    engine.store.update_work_item_metadata(
+        item.id,
+        phase=TaskPhase.REVIEW,
+        review_verdict="reject",
+        review_comment="stale blocker",
+        review_subject_digest="stale-review-subject",
+    )
+    engine.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+    node.work_item_id = item.id
+    manifest = _manifest([node])
+    path = str(tmp_path / "handoff-preparation.yaml")
+    save_manifest(manifest, path)
+    return engine, manifest, path, node, item
+
+
+def test_handoff_preparation_timeout_after_apply_observes_and_dispatches(
+    tmp_path, monkeypatch,
+):
+    """A timed-out idempotent write may be accepted only after authority confirms it."""
+    from omac.errors import PlatformError
+
+    engine, manifest, path, node, item = _pending_handoff_preparation_fixture(
+        tmp_path)
+    original_reset = engine.store.reset_review
+    reset_calls = 0
+
+    def reset_then_timeout(item_id):
+        nonlocal reset_calls
+        reset_calls += 1
+        original_reset(item_id)
+        raise PlatformError("Request timed out: server did not respond")
+
+    monkeypatch.setattr(engine.store, "reset_review", reset_then_timeout)
+    monkeypatch.setattr(
+        engine.store,
+        "is_transient_transport_error",
+        lambda _error: True,
+        raising=False,
+    )
+
+    dispatched = loop._dispatch(
+        engine.store, engine.runtime, manifest, path, [node.id], 1)
+
+    current = engine.store.get_work_item(item.id)
+    assert dispatched == [node.id]
+    assert reset_calls == 1
+    assert manifest.nodes[node.id].status == "in_progress"
+    assert current.status is WorkItemStatus.IN_PROGRESS
+    assert current.phase is TaskPhase.AUTHORING
+    assert current.review_verdict is None
+    assert current.worker_handoff is not None
+    assert len(engine.runtime.list_runs(item.id)) == 1
+    assert engine.store.get_comments(item.id) == []
+
+
+def test_handoff_preparation_timeout_before_apply_stays_pending_and_restarts(
+    tmp_path, monkeypatch,
+):
+    """An unconfirmed preparation keeps its intent and creates no duplicate Run."""
+    from omac.errors import PlatformError
+
+    engine, manifest, path, node, item = _pending_handoff_preparation_fixture(
+        tmp_path)
+    original_reset = engine.store.reset_review
+    original_bounces = engine.store.get_work_item(item.id).bounces
+
+    monkeypatch.setattr(
+        engine.store,
+        "reset_review",
+        lambda _item_id: (_ for _ in ()).throw(
+            PlatformError("Request timed out: server did not respond")),
+    )
+    monkeypatch.setattr(
+        engine.store,
+        "is_transient_transport_error",
+        lambda _error: True,
+        raising=False,
+    )
+
+    first = loop._dispatch(
+        engine.store, engine.runtime, manifest, path, [node.id], 1)
+
+    interrupted = engine.store.get_work_item(item.id)
+    assert first == []
+    assert manifest.nodes[node.id].status == "in_progress"
+    assert interrupted.status is WorkItemStatus.IN_REVIEW
+    assert interrupted.phase is TaskPhase.REVIEW
+    assert interrupted.worker_handoff is not None
+    assert interrupted.bounces == original_bounces
+    assert engine.runtime.list_runs(item.id) == []
+    assert engine.store.get_comments(item.id) == []
+
+    monkeypatch.setattr(engine.store, "reset_review", original_reset)
+    restarted = load_manifest(path)
+    second = tick(
+        engine.store, engine.runtime, restarted, path, max_parallel=1)
+    third = tick(
+        engine.store, engine.runtime, restarted, path, max_parallel=1)
+
+    recovered = engine.store.get_work_item(item.id)
+    assert second.state == "running"
+    assert third.state == "running"
+    assert recovered.status is WorkItemStatus.IN_PROGRESS
+    assert recovered.phase is TaskPhase.AUTHORING
+    assert len(engine.runtime.list_runs(item.id)) == 1
+    assert len([
+        entry for entry in engine.store.assign_log
+        if entry[0] == item.id and entry[2] == "worker"
+    ]) == 1
+
+
+def test_handoff_preparation_hard_error_still_blocks(tmp_path, monkeypatch):
+    from omac.errors import PlatformError
+
+    engine, manifest, path, node, item = _pending_handoff_preparation_fixture(
+        tmp_path)
+    monkeypatch.setattr(
+        engine.store,
+        "reset_review",
+        lambda _item_id: (_ for _ in ()).throw(
+            PlatformError("validation rejected: invalid metadata")),
+    )
+    monkeypatch.setattr(
+        engine.store,
+        "is_transient_transport_error",
+        lambda _error: False,
+        raising=False,
+    )
+
+    dispatched = loop._dispatch(
+        engine.store, engine.runtime, manifest, path, [node.id], 1)
+
+    current = engine.store.get_work_item(item.id)
+    assert dispatched == []
+    assert manifest.nodes[node.id].status == "blocked"
+    assert current.status is WorkItemStatus.BLOCKED
+    assert current.worker_handoff is not None
+    assert engine.runtime.list_runs(item.id) == []
+    assert len(engine.store.get_comments(item.id)) == 1
+
+
+def test_handoff_body_refresh_timeout_stays_pending_and_restarts(
+    tmp_path, monkeypatch,
+):
+    """Any transient failure before assignment preserves the same handoff intent."""
+    from omac.errors import PlatformError
+
+    engine, manifest, path, node, item = _pending_handoff_preparation_fixture(
+        tmp_path)
+    original_refresh = loop._refresh_develop_issue_body
+    monkeypatch.setattr(
+        engine.store,
+        "is_transient_transport_error",
+        lambda _error: True,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        loop,
+        "_refresh_develop_issue_body",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            PlatformError("Request timed out: server did not respond")),
+    )
+
+    first = loop._dispatch(
+        engine.store, engine.runtime, manifest, path, [node.id], 1)
+
+    interrupted = engine.store.get_work_item(item.id)
+    assert first == []
+    assert manifest.nodes[node.id].status == "in_progress"
+    assert interrupted.status is WorkItemStatus.IN_PROGRESS
+    assert interrupted.phase is TaskPhase.AUTHORING
+    assert interrupted.worker_handoff is not None
+    assert engine.runtime.list_runs(item.id) == []
+    assert engine.store.get_comments(item.id) == []
+
+    monkeypatch.setattr(loop, "_refresh_develop_issue_body", original_refresh)
+    restarted = load_manifest(path)
+    result = tick(
+        engine.store, engine.runtime, restarted, path, max_parallel=1)
+
+    assert result.state == "running"
+    assert len(engine.runtime.list_runs(item.id)) == 1
+
+
 # ==================== 1. happy path:多节点带依赖 → converged ====================
 
 class TestHappyPath:
