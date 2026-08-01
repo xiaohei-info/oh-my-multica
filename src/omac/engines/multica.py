@@ -302,6 +302,14 @@ def _direct_run_ids(runs: List[Dict[str, Any]]) -> set[str]:
     }
 
 
+def _is_manual_rerun(run: Dict[str, Any]) -> bool:
+    attribution = run.get("attribution")
+    if not isinstance(attribution, dict):
+        return False
+    evidence = attribution.get("evidence")
+    return isinstance(evidence, dict) and evidence.get("kind") == "rerun"
+
+
 def _is_not_found(message: str) -> bool:
     text = message.lower()
     return "not found" in text or "does not exist" in text or "404" in text
@@ -1873,6 +1881,7 @@ class MulticaRuntime(AgentRuntime):
                 if (run.get("kind") or "direct") == "direct"
                 and run.get("id")
                 and str(run["id"]) not in direct_run_ids
+                and _is_manual_rerun(run)
             ]
             if len(candidates) != 1:
                 raise rerun_error from None

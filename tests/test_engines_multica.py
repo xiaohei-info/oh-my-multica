@@ -1835,6 +1835,7 @@ def test_multica_runtime_accepts_rerun_created_before_response_failure(monkeypat
                 "id": "run-retry", "status": "queued", "kind": "direct",
                 "agent_id": "agent-expected",
                 "retry_of_task_id": "run-failed",
+                "attribution": {"evidence": {"kind": "rerun"}},
             },
         ],
     ])
@@ -1883,6 +1884,7 @@ def test_multica_runtime_accepts_single_fresh_run_before_response_failure(
             {
                 "id": "run-fresh", "status": "queued", "kind": "direct",
                 "agent_id": "agent-expected",
+                "attribution": {"evidence": {"kind": "rerun"}},
             },
         ],
     ])
@@ -1900,6 +1902,43 @@ def test_multica_runtime_accepts_single_fresh_run_before_response_failure(
         active_observation_interval=0, sleeper=lambda _seconds: None)
 
     runtime.wake("issue-1", "alice", "worker")
+
+
+def test_multica_runtime_rejects_non_rerun_run_after_response_failure(
+    monkeypatch,
+):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    rerun_error = PlatformError("rerun response unavailable")
+    monkeypatch.setattr(store, "_resolve_agent_id", lambda _name: "agent-expected")
+    observations = iter([
+        [{"id": "run-failed", "status": "failed", "kind": "direct"}],
+        [{"id": "run-failed", "status": "failed", "kind": "direct"}],
+        [
+            {"id": "run-failed", "status": "failed", "kind": "direct"},
+            {
+                "id": "run-assignment", "status": "queued", "kind": "direct",
+                "agent_id": "agent-expected",
+                "attribution": {"evidence": {"kind": "issue_assignment"}},
+            },
+        ],
+    ])
+
+    def fake_run(args):
+        if args[:2] == ["issue", "runs"]:
+            return next(observations)
+        if args[:2] == ["issue", "rerun"]:
+            raise rerun_error
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+    runtime = MulticaRuntime(
+        store, active_observation_attempts=2,
+        active_observation_interval=0, sleeper=lambda _seconds: None)
+
+    with pytest.raises(PlatformError) as exc_info:
+        runtime.wake("issue-1", "alice", "worker")
+
+    assert exc_info.value is rerun_error
 
 
 def test_multica_runtime_accepts_expected_run_after_not_assigned_rerun(
@@ -1927,6 +1966,7 @@ def test_multica_runtime_accepts_expected_run_after_not_assigned_rerun(
                 "id": "run-retry", "status": "queued", "kind": "direct",
                 "agent_id": "agent-expected",
                 "retry_of_task_id": "run-failed",
+                "attribution": {"evidence": {"kind": "rerun"}},
             },
         ],
     ])
@@ -1973,6 +2013,7 @@ def test_multica_runtime_accepts_parented_rerun_before_response_failure(monkeypa
                 "id": "run-retry", "status": "queued", "kind": "direct",
                 "agent_id": "agent-expected",
                 "parent_task_id": "run-failed",
+                "attribution": {"evidence": {"kind": "rerun"}},
             },
         ],
     ])
