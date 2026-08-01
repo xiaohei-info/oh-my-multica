@@ -10,6 +10,10 @@ This file records public changes to oh-my-multica. The format follows
 
 ### Changed
 
+- DAG `pass-with-nits` rework now consumes the same bounded review budget as
+  reject and review-evidence failures. Exhausted nits stop for an explicit
+  decision without clearing Reviewer evidence, while an authorized review
+  continuation still grants exactly the persisted additional round.
 - DAG recovery now separates explicit transient provider/transport failures
   from business non-delivery. The same Worker or Reviewer may receive one
   bounded, restart-safe rerun without consuming business bounce budget;

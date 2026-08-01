@@ -30,7 +30,7 @@ from ..core.contract_boundaries import (
 from ..core.evidence import validate_review_evidence, validate_worker_evidence
 from ..core.review_convergence import (
     build_review_obligations, review_subject_digest)
-from ..core.retry_budget import consumed_bounces
+from ..core.retry_budget import consumed_bounces, review_rework_budget
 from ..core.stage_recovery import stage_recovery_subject
 from ..core.gitsync import commit_manifest
 from ..core.manifest import (
@@ -846,6 +846,57 @@ def _block_reviewer(
     store.update_status(item.id, WorkItemStatus.BLOCKED)
     set_node(manifest, key, status="blocked")
     return reason
+
+
+def _block_review_rework_budget(
+    store: WorkItemStore,
+    manifest: Manifest,
+    key: str,
+    item,
+    budget,
+    *,
+    gate: str,
+    reason: str,
+) -> str:
+    """Preserve Reviewer facts and project an exhausted rework decision."""
+    decision = {
+        "schema": DECISION_REQUIRED_SCHEMA,
+        "reason_code": f"{gate}-budget-exhausted",
+        "kind": TaskKind.DEVELOP.value,
+        "phase": TaskPhase.REVIEW.value,
+        "gate": gate,
+        "rounds": budget.current_round,
+        "consumed": budget.consumed,
+        "limit": budget.authorized_through_round,
+        "resume_issue_id": item.id,
+        "node_id": key,
+        "verdict": item.review_verdict,
+    }
+    for field in ("review_report_ref", "review_ledger_ref"):
+        value = getattr(item, field, None)
+        if isinstance(value, dict) and value:
+            decision[field] = value
+    store.update_work_item_metadata(item.id, decision_required=decision)
+    store.update_status(item.id, WorkItemStatus.BLOCKED)
+    store.add_comment(item.id, ui(
+        f"Review retry limit ({budget.authorized_through_round}) exhausted: {reason}",
+        f"评审回退上界({budget.authorized_through_round})已耗尽: {reason}",
+    ))
+    set_node(manifest, key, status="blocked")
+    log.info(
+        logsetup.EVT_NEEDS_DECISION,
+        kind=_DAG_KIND,
+        node=key,
+        id=item.id,
+        gate=gate,
+        rounds=budget.current_round,
+        consumed=budget.consumed,
+        max=budget.authorized_through_round,
+    )
+    return ui(
+        f"Review rework limit {budget.authorized_through_round} exhausted: {reason}",
+        f"评审返工上界 {budget.authorized_through_round} 已耗尽: {reason}",
+    )
 
 
 def _reviewer_no_submit_grace_state(
@@ -2755,6 +2806,10 @@ def collect_results(
             log.info(logsetup.EVT_VERDICT, kind=_DAG_KIND, node=key,
                      id=node.work_item_id, verdict=verdict)
             gate_errors = validate_review_evidence(node, item)
+            configured_review_limit = limits.get(
+                "review", DEFAULT_RETRY["review"])
+            rework_budget = review_rework_budget(
+                manifest, key, item, configured_review_limit)
             if verdict == "reject" and not gate_errors:
                 boundary_conflicts = contract_boundary_conflicts(
                     manifest, node, item)
@@ -2784,10 +2839,20 @@ def collect_results(
                     )
                     continue
             if verdict == "pass-with-nits" and not gate_errors:
-                cur_bounce = item.bounces.review
+                if not rework_budget.allows_rework:
+                    failures[key] = _block_review_rework_budget(
+                        store,
+                        manifest,
+                        key,
+                        item,
+                        rework_budget,
+                        gate="review-nits",
+                        reason="reviewer returned pass-with-nits",
+                    )
+                    continue
                 handoff = _dispatch_worker_handoff(
                     store, runtime, manifest, key,
-                    review_bounce=cur_bounce + 1,
+                    review_bounce=rework_budget.next_round,
                     gate="review-nits",
                     projection=projection,
                 )
@@ -2812,31 +2877,23 @@ def collect_results(
             else:
                 # reviewer reject 或评审证据不合格:有界「回到 worker」回退,
                 # 受 retry_limits["review"] 约束。
-                review_limit = limits.get("review", DEFAULT_RETRY["review"])
-                cur_bounce = item.bounces.review
-                consumed = consumed_bounces(
-                    manifest, key, item, "review")
                 reason = "; ".join(gate_errors) if gate_errors else "reviewer reject"
-                if review_limit == 0 or consumed >= review_limit:
-                    store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
-                    store.add_comment(node.work_item_id, ui(
-                        f"Review evidence retry limit ({review_limit}) exhausted: {reason}",
-                        f"评审证据门上界({review_limit})已耗尽: {reason}"))
-                    set_node(manifest, key, status="blocked")
-                    failures[key] = ui(
-                        f"Review evidence gate failed; retry limit {review_limit} exhausted: {reason}",
-                        f"评审证据门未通过(回退上界 {review_limit} 已耗尽): {reason}")
-                    log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
-                             id=node.work_item_id,
-                             reason=ui(
-                                 f"Review retry limit ({review_limit}) exhausted",
-                                 f"评审回退上界({review_limit})已耗尽"))
+                if not rework_budget.allows_rework:
+                    failures[key] = _block_review_rework_budget(
+                        store,
+                        manifest,
+                        key,
+                        item,
+                        rework_budget,
+                        gate=("review-evidence" if gate_errors else "review"),
+                        reason=reason,
+                    )
                 else:
                     # 有界「回到 worker」由持久化 intent 串起各 checkpoint；
                     # 任一步结果未知都保留 intent 与绝对 bounce，交给 restart 幂等续跑。
                     handoff = _dispatch_worker_handoff(
                         store, runtime, manifest, key,
-                        review_bounce=cur_bounce + 1,
+                        review_bounce=rework_budget.next_round,
                         gate="review",
                         projection=projection,
                     )
@@ -2845,7 +2902,8 @@ def collect_results(
                     set_node(manifest, key, status="in_progress")
                     log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=key,
                              id=node.work_item_id, gate="review",
-                             round=cur_bounce + 1, max=review_limit)
+                             round=rework_budget.next_round,
+                             max=rework_budget.authorized_through_round)
 
         elif node.status == "merging":
             merge_action = _complete_merge_if_confirmed(
