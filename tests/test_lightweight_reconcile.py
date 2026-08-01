@@ -625,6 +625,24 @@ def test_146_node_reconcile_phase_reads_every_issue_and_hydrates_only_needed_evi
     assert load_manifest(path).nodes["active-0"].status == "in_progress"
 
 
+def test_146_node_reconcile_reuses_immutable_attachment_bodies_across_ticks(
+    tmp_path,
+):
+    issues, attachments, nodes = _large_dag_fixture()
+    manifest, _path = _manifest_path(tmp_path, nodes)
+    remote = _RemoteFixture(issues, attachments)
+    store = _store(remote)
+
+    loop._observe_reconcile_inputs(store, manifest)
+    first_tick_downloads = remote.attachment_downloads
+    loop._observe_reconcile_inputs(store, manifest)
+
+    assert first_tick_downloads == 18
+    assert remote.attachment_downloads == first_tick_downloads
+    assert remote.issue_gets == 292
+    assert remote.pr_observations == 2
+
+
 def test_146_node_status_reuses_reconcile_observation_budget(tmp_path):
     issues, attachments, nodes = _large_dag_fixture()
     remote = _RemoteFixture(issues, attachments)
@@ -856,7 +874,9 @@ def test_late_submit_contract_hydration_failure_keeps_handoff_uncommitted(
     assert issue["metadata"]["worker_handoff"] == {}
     retried_downloads = [
         value for kind, value in remote.calls if kind == "attachment"]
-    assert retried_downloads.count(fresh_ref["attachment_id"]) == 1
+    # The valid immutable verification body survived the failed reconcile;
+    # only the failed contract download is retried on the next tick.
+    assert retried_downloads.count(fresh_ref["attachment_id"]) == 0
     assert retried_downloads.count(
         issue["metadata"]["contract_ref"]["attachment_id"]) == 1
 
