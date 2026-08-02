@@ -2520,6 +2520,9 @@ def test_multica_runtime_lists_typed_run_identity(monkeypatch):
          "attribution": {"evidence": {"kind": "rerun"}}},
         {"id": "run-2", "kind": "comment", "status": "running",
          "agent_id": "agent-2"},
+        {"id": "run-3", "kind": "direct", "status": "running",
+         "agent_id": "agent-3",
+         "attribution": {"evidence": {"kind": "issue_assignment"}}},
     ])
 
     assert runtime.list_runs("issue-1") == [
@@ -2529,6 +2532,9 @@ def test_multica_runtime_lists_typed_run_identity(monkeypatch):
             retry_of_run_id="run-0", trigger_kind="rerun"),
         AgentRunObservation(
             id="run-2", kind="comment", status="running", agent_id="agent-2"),
+        AgentRunObservation(
+            id="run-3", kind="direct", status="running", agent_id="agent-3",
+            trigger_kind="issue_assignment"),
     ]
 
 

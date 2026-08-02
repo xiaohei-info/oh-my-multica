@@ -352,19 +352,19 @@ def _observe_direct_run_attempt(
     return _DirectRunAttempt("terminal", target_run_id, terminal)
 
 
-def _fresh_reviewer_rerun_target(
+def _formal_reviewer_dispatch_target(
     runs: List[AgentRunObservation],
     observed: _DirectRunAttempt,
 ) -> tuple[AgentRunObservation | None, str | None]:
-    """Return the one formally rerun Reviewer target shared by all recovery paths."""
+    """Return the one formal Reviewer dispatch shared by recovery paths."""
     if observed.state not in {"active", "terminal"}:
         return None, observed.detail or "no uniquely observable target Run"
     target = next(
         (run for run in runs if run.id == observed.target_run_id),
         None,
     )
-    if target is None or target.trigger_kind != "rerun":
-        return None, "post-baseline reviewer Run is not a fresh rerun"
+    if target is None or target.trigger_kind not in {"issue_assignment", "rerun"}:
+        return None, "post-baseline reviewer Run is not a formal reviewer dispatch"
     return target, None
 
 
@@ -1293,7 +1293,7 @@ def _dispatch_reviewer_for_current_subject(
                 attempt=baseline.attempt,
             )
             if observed.state in {"active", "terminal"}:
-                _target, target_error = _fresh_reviewer_rerun_target(
+                _target, target_error = _formal_reviewer_dispatch_target(
                     runs, observed)
                 if target_error is not None:
                     raise _ReviewerDispatchUnresolved(target_error)

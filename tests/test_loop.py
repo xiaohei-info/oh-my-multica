@@ -3083,9 +3083,15 @@ def test_initial_reviewer_dispatch_crash_after_assignment_fails_closed(
 
 @pytest.mark.parametrize(
     "trigger_kind, accepted",
-    [("comment", False), ("rerun", True)],
+    [
+        ("issue_assignment", True),
+        ("rerun", True),
+        ("comment", False),
+        ("manual", False),
+        (None, False),
+    ],
 )
-def test_initial_reviewer_dispatch_recovery_requires_fresh_rerun(
+def test_initial_reviewer_dispatch_recovery_requires_formal_dispatch(
     tmp_path, monkeypatch, trigger_kind, accepted,
 ):
     from omac.engines import mock as mock_engine
@@ -3126,7 +3132,7 @@ def test_initial_reviewer_dispatch_recovery_requires_fresh_rerun(
     if not accepted:
         with pytest.raises(
             loop._ReviewerDispatchUnresolved,
-            match="not a fresh rerun",
+            match="not a formal reviewer dispatch",
         ):
             loop._dispatch_reviewer_for_current_subject(
                 eng.store, eng.runtime, manifest, "a")
