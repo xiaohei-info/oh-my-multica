@@ -3277,17 +3277,18 @@ def _maybe_unblock(manifest: Manifest, manifest_path: str) -> bool:
 
 
 def _active_formal_run_nodes(
-    store: WorkItemStore,
     runtime: AgentRuntime,
     manifest: Manifest,
+    observations: Dict[str, WorkItemControlProjection | None],
 ) -> List[str]:
-    """Return nodes whose persisted handoff identity proves an active Run."""
+    """Use the reconcile snapshot to prove causally bound active Runs."""
     active = []
     for key, node in manifest.nodes.items():
-        if not node.work_item_id:
+        projection = observations.get(key)
+        if not node.work_item_id or projection is None:
             continue
-        item = store.observe_work_item_control(node.work_item_id).work_item
-        if item.dag_key != key:
+        item = projection.work_item
+        if item.id != node.work_item_id or item.dag_key != key:
             continue
         attempt = None
         if item.phase == TaskPhase.AUTHORING:
@@ -3391,7 +3392,8 @@ def tick(
     # foreground controller while a causally bound formal Run is still active.
     # This read-only proof runs only on the otherwise-terminal aggregation path.
     if failed_keys and not running:
-        running = _active_formal_run_nodes(store, runtime, manifest)
+        running = _active_formal_run_nodes(
+            runtime, manifest, reconcile_result.observations)
 
     # 状态判定:running 优先(有正式运行继续协调),其次 needs_decision(有失败),
     # 最后 converged(全部 done)

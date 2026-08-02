@@ -3233,6 +3233,12 @@ class TestFailureInjection:
             initial_status=WorkItemStatus.BLOCKED,
         )
         active.work_item_id = item.id
+        decision_item = eng.store.create_work_item(
+            "ws", "decision", "caller decision", dag_key="decision",
+            worker=decision.worker,
+            initial_status=WorkItemStatus.BLOCKED,
+        )
+        decision.work_item_id = decision_item.id
         agent = reviewer or active.worker
         agent_id = eng.store.resolve_agent_id(agent)
         run_id = f"run-{role}"
@@ -3270,6 +3276,10 @@ class TestFailureInjection:
                 ),
             )
         eng.store.clear_assignment(item.id)
+        observations = {
+            "active": eng.store.observe_work_item_control(item.id),
+            "decision": eng.store.observe_work_item_control(decision_item.id),
+        }
         runs = [AgentRunObservation(
             id=run_id,
             kind="direct",
@@ -3278,22 +3288,34 @@ class TestFailureInjection:
             created_at="2026-08-01T00:01:00Z",
         )]
         save_manifest(manifest, path)
-        return eng, manifest, path, runs
+        return eng, manifest, path, runs, observations
 
     @pytest.mark.parametrize("role", ["worker", "reviewer"])
     def test_formal_active_run_keeps_runner_alive_with_other_blocked_node(
         self, tmp_path, monkeypatch, role,
     ):
-        eng, manifest, path, runs = self._blocked_manifest_with_formal_run(
-            tmp_path, role=role)
+        eng, manifest, path, runs, observations = (
+            self._blocked_manifest_with_formal_run(tmp_path, role=role)
+        )
+        run_reads = []
         monkeypatch.setattr(
             loop, "reconcile_with_observations",
-            lambda *_args, **_kwargs: loop.ReconcileResult(False, {}),
+            lambda *_args, **_kwargs: loop.ReconcileResult(
+                False, observations),
         )
         monkeypatch.setattr(
             loop, "collect_results", lambda *_args, **_kwargs: {})
+        def list_runs(item_id):
+            run_reads.append(item_id)
+            return list(runs)
+
+        monkeypatch.setattr(eng.runtime, "list_runs", list_runs)
         monkeypatch.setattr(
-            eng.runtime, "list_runs", lambda _item_id: list(runs))
+            eng.store,
+            "observe_work_item_control",
+            lambda _item_id: pytest.fail(
+                "tick must reuse reconcile observations"),
+        )
 
         result = tick(eng.store, eng.runtime, manifest, path)
 
@@ -3301,20 +3323,34 @@ class TestFailureInjection:
         assert result.running == ["active"]
         assert set(result.failed) == {"active", "decision"}
         assert result.report == {}
+        assert run_reads == [manifest.nodes["active"].work_item_id]
 
     def test_terminal_formal_run_does_not_hide_needs_decision(
         self, tmp_path, monkeypatch,
     ):
-        eng, manifest, path, runs = self._blocked_manifest_with_formal_run(
-            tmp_path, role="reviewer", run_status="completed")
+        eng, manifest, path, runs, observations = (
+            self._blocked_manifest_with_formal_run(
+                tmp_path, role="reviewer", run_status="completed")
+        )
+        run_reads = []
         monkeypatch.setattr(
             loop, "reconcile_with_observations",
-            lambda *_args, **_kwargs: loop.ReconcileResult(False, {}),
+            lambda *_args, **_kwargs: loop.ReconcileResult(
+                False, observations),
         )
         monkeypatch.setattr(
             loop, "collect_results", lambda *_args, **_kwargs: {})
+        def list_runs(item_id):
+            run_reads.append(item_id)
+            return list(runs)
+
+        monkeypatch.setattr(eng.runtime, "list_runs", list_runs)
         monkeypatch.setattr(
-            eng.runtime, "list_runs", lambda _item_id: list(runs))
+            eng.store,
+            "observe_work_item_control",
+            lambda _item_id: pytest.fail(
+                "tick must reuse reconcile observations"),
+        )
 
         result = tick(eng.store, eng.runtime, manifest, path)
 
@@ -3322,28 +3358,43 @@ class TestFailureInjection:
         assert result.running == []
         assert set(result.failed) == {"active", "decision"}
         assert result.report
+        assert run_reads == [manifest.nodes["active"].work_item_id]
 
     def test_foreign_active_run_does_not_hide_needs_decision(
         self, tmp_path, monkeypatch,
     ):
-        eng, manifest, path, runs = self._blocked_manifest_with_formal_run(
-            tmp_path, role="reviewer")
+        eng, manifest, path, runs, observations = (
+            self._blocked_manifest_with_formal_run(
+                tmp_path, role="reviewer")
+        )
+        run_reads = []
         runs[0] = replace(
             runs[0], agent_id=eng.store.resolve_agent_id("charlie"))
         monkeypatch.setattr(
             loop, "reconcile_with_observations",
-            lambda *_args, **_kwargs: loop.ReconcileResult(False, {}),
+            lambda *_args, **_kwargs: loop.ReconcileResult(
+                False, observations),
         )
         monkeypatch.setattr(
             loop, "collect_results", lambda *_args, **_kwargs: {})
+        def list_runs(item_id):
+            run_reads.append(item_id)
+            return list(runs)
+
+        monkeypatch.setattr(eng.runtime, "list_runs", list_runs)
         monkeypatch.setattr(
-            eng.runtime, "list_runs", lambda _item_id: list(runs))
+            eng.store,
+            "observe_work_item_control",
+            lambda _item_id: pytest.fail(
+                "tick must reuse reconcile observations"),
+        )
 
         result = tick(eng.store, eng.runtime, manifest, path)
 
         assert result.state == "needs_decision"
         assert result.running == []
         assert result.report
+        assert run_reads == [manifest.nodes["active"].work_item_id]
 
     def test_failed_node_and_downstream_blocked(self):
         """a 失败 → a blocked,下游 b/c blocked,report 完整。"""
