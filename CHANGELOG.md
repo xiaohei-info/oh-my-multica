@@ -10,6 +10,9 @@ This file records public changes to oh-my-multica. The format follows
 
 ### Changed
 
+- Directory-backed plan and amendment sources now inventory every file tracked
+  by the current Git revision instead of local untracked or ignored files, so
+  remote Agents can reproduce the exact authoritative docs digest.
 - Review rework now stops on semantic non-convergence instead of consuming a
   large configured retry budget. The existing blocker ledger derives stalled,
   scope-expanding, and ten-cycle-exhausted decisions; infrastructure retries
