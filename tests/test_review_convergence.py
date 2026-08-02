@@ -7,6 +7,7 @@ from omac.core.review_convergence import (
     REVIEW_PROTOCOL_VERSION,
     advance_review_ledger,
     build_review_obligations,
+    review_convergence_decision,
     review_state,
     validate_convergence_review,
 )
@@ -578,6 +579,98 @@ def test_unchanged_blocker_counts_once_per_review_cycle():
 
     assert ledger["blockers"][0]["seen_count"] == 2
     assert review_state(ledger)["mode"] == "normal"
+
+
+def _decision_ledger(
+    open_counts, *, new_counts=None, obligation_ids=("dimension:structure",),
+):
+    new_counts = new_counts or [0] * len(open_counts)
+    return {
+        "schema": "omac.review-ledger/v1",
+        "cycles": [
+            {
+                "round": index,
+                "new_count": new_counts[index - 1],
+                "fixed_count": 0,
+                "regressed_count": 0,
+                "open_count": open_count,
+            }
+            for index, open_count in enumerate(open_counts, start=1)
+        ],
+        "blockers": [
+            {
+                "blocker_id": f"BLK-{index}",
+                "root_cause_key": f"root-{index}",
+                "obligation_id": obligation_id,
+                "status": "open",
+                "first_seen_round": 1,
+                "last_seen_round": len(open_counts),
+                "seen_count": len(open_counts),
+            }
+            for index, obligation_id in enumerate(obligation_ids, start=1)
+        ],
+    }
+
+
+def test_review_convergence_allows_healthy_progress_before_decision_window():
+    ledger = _decision_ledger([4, 3, 2, 1])
+
+    assert review_convergence_decision(ledger) is None
+
+
+def test_review_convergence_stops_after_two_non_reducing_transitions():
+    ledger = _decision_ledger([4, 3, 2, 2, 2])
+
+    decision = review_convergence_decision(ledger)
+
+    assert decision["reason_code"] == "review-convergence-stalled"
+    assert decision["mode"] == "stalled"
+    assert decision["cycle_count"] == 5
+    assert decision["non_reducing_streak"] == 2
+    state = review_state(ledger)
+    assert state["mode"] == "stalled"
+    assert state["decision"] == decision
+
+
+def test_review_convergence_stops_when_late_review_expands_scope():
+    ledger = _decision_ledger([4, 3, 2, 1, 2], new_counts=[0, 0, 0, 0, 1])
+    ledger["blockers"][0]["first_seen_round"] = 5
+
+    decision = review_convergence_decision(ledger)
+
+    assert decision["reason_code"] == "review-convergence-scope-expanding"
+    assert decision["mode"] == "scope-expanding"
+    assert decision["late_root_cause_keys"] == ["root-1"]
+
+
+def test_review_convergence_stops_for_three_open_responsibility_dimensions():
+    ledger = _decision_ledger(
+        [5, 4, 3, 3, 3],
+        obligation_ids=(
+            "dimension:authority",
+            "dimension:structure",
+            "dimension:ownership",
+        ),
+    )
+
+    decision = review_convergence_decision(ledger)
+
+    assert decision["reason_code"] == "review-convergence-scope-expanding"
+    assert decision["obligation_dimensions"] == [
+        "dimension:authority",
+        "dimension:ownership",
+        "dimension:structure",
+    ]
+
+
+def test_review_convergence_has_unconditional_ten_cycle_stop():
+    ledger = _decision_ledger([10, 9, 8, 7, 6, 5, 4, 3, 2, 1])
+
+    decision = review_convergence_decision(ledger)
+
+    assert decision["reason_code"] == "review-convergence-exhausted"
+    assert decision["mode"] == "exhausted"
+    assert decision["cycle_count"] == 10
 
 
 def _store():

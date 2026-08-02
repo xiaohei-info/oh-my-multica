@@ -21,7 +21,10 @@ from ..core.manifest import Contract, _dump_contract, _load_contract
 from ..core.machine_feedback import (
     build_machine_feedback, machine_feedback_summary,
 )
-from ..core.review_convergence import build_review_obligations
+from ..core.review_convergence import (
+    build_review_convergence_decision, build_review_obligations,
+    review_convergence_decision,
+)
 from ..core.review_continuation import authorized_review_limit
 from ..core.review_preflight import run_review_preflight
 from ..core.taskmeta import (
@@ -1365,6 +1368,38 @@ def run_task(
                  verdict=verdict, round=round_index)
         if verdict == "pass":
             return _finish_after_review("pass", round_index, delivery)
+
+        if verdict == "reject":
+            convergence = review_convergence_decision(reviewed.review_ledger)
+            if convergence is not None:
+                decision = build_review_convergence_decision(
+                    reviewed,
+                    convergence,
+                    kind=kind.value,
+                    recommended_action="reconsider-task-boundary",
+                )
+                store.update_work_item_metadata(
+                    item_id,
+                    decision_required=decision,
+                    phase=TaskPhase.REVIEW,
+                )
+                store.mark_blocked(item_id)
+                log.info(
+                    logsetup.EVT_NEEDS_DECISION,
+                    kind=kind.value,
+                    id=item_id,
+                    gate="review-convergence",
+                    rounds=convergence["cycle_count"],
+                    mode=convergence["mode"],
+                )
+                raise NeedsDecision(
+                    ui(
+                        f"{kind.value} review is not converging within the "
+                        "current task boundary.",
+                        f"{kind.value} 评审无法在当前任务边界内收敛。",
+                    ),
+                    report=decision,
+                )
 
         if verdict == "pass-with-nits":
             log.info(logsetup.EVT_REVISION, kind=kind.value, id=item_id,
