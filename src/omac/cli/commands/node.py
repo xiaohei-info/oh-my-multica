@@ -269,7 +269,7 @@ def _recover_delayed_reviewer_submission(
     # agent, strict cutoff, baseline exclusion, usable time, and uniqueness.
     from ...pipeline.loop import (
         _delayed_reviewer_recovery_marker_error,
-        _fresh_reviewer_rerun_target,
+        _formal_reviewer_dispatch_target,
         _observe_direct_run_attempt,
     )
 
@@ -289,7 +289,7 @@ def _recover_delayed_reviewer_submission(
         target_run_id=baseline.target_run_id,
         attempt=baseline.attempt,
     )
-    _target, target_error = _fresh_reviewer_rerun_target(runs, observed)
+    _target, target_error = _formal_reviewer_dispatch_target(runs, observed)
     if target_error is not None:
         raise unsafe(target_error)
 
