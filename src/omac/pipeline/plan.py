@@ -38,6 +38,7 @@ from ..core.gitsync import commit_files, ensure_config_synced, ensure_files_clea
 from ..core.lint import lint
 from ..core.manifest import loads_manifest, save_manifest
 from ..core.project_rules import read_agents_snapshot, write_project_rules
+from ..core.repository_files import revision_directory_files
 from ..core.review_continuation import (
     authorized_review_limit, build_review_continuation,
 )
@@ -156,23 +157,16 @@ def _describe_design_directory(path: str, *, language: str | None = None) -> str
             f"Design directory must be inside the current repository: {path}",
             f"设计文档目录必须位于当前仓库内:{path}")) from exc
 
-    files = sorted(candidate for candidate in directory.rglob("*") if candidate.is_file())
+    files = revision_directory_files(directory, repository_root=repository_root)
     if not files:
         raise ValidationError(ui(
             f"Design directory contains no files: {path}",
             f"设计文档目录中没有文件:{path}"))
 
     entries = []
-    for candidate in files:
-        resolved = candidate.resolve()
-        try:
-            relative_path = resolved.relative_to(repository_root).as_posix()
-        except ValueError as exc:
-            raise ValidationError(ui(
-                f"Design directory contains a file outside the repository: {candidate}",
-                f"设计文档目录包含仓库外文件:{candidate}")) from exc
-        digest = hashlib.sha256(resolved.read_bytes()).hexdigest()
-        entries.append(f"- `{relative_path}` sha256=`{digest}`")
+    for source in files:
+        digest = hashlib.sha256(source.content).hexdigest()
+        entries.append(f"- `{source.logical_path}` sha256=`{digest}`")
 
     revision = _repository_revision(repository_root)
     instructions = ui(
