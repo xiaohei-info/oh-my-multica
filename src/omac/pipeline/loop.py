@@ -32,10 +32,11 @@ from ..core.review_convergence import (
     build_review_convergence_decision, build_review_obligations,
     review_convergence_decision, review_subject_digest)
 from ..core.retry_budget import consumed_bounces, review_rework_budget
-from ..core.stage_recovery import stage_recovery_subject
+from ..core.stage_recovery import stage_recovery_subject, validate_stage_recovery
 from ..core.gitsync import commit_manifest
 from ..core.manifest import (
-    Manifest, confirmed_merge_is_closed, save_manifest, set_node,
+    Manifest, _dump_contract, confirmed_merge_is_closed, save_manifest,
+    set_node,
 )
 from ..pipeline.delivery import (
     advance_delivery, block_unproven_merge_request,
@@ -351,6 +352,22 @@ def _observe_direct_run_attempt(
     return _DirectRunAttempt("terminal", target_run_id, terminal)
 
 
+def _fresh_reviewer_rerun_target(
+    runs: List[AgentRunObservation],
+    observed: _DirectRunAttempt,
+) -> tuple[AgentRunObservation | None, str | None]:
+    """Return the one formally rerun Reviewer target shared by all recovery paths."""
+    if observed.state not in {"active", "terminal"}:
+        return None, observed.detail or "no uniquely observable target Run"
+    target = next(
+        (run for run in runs if run.id == observed.target_run_id),
+        None,
+    )
+    if target is None or target.trigger_kind != "rerun":
+        return None, "post-baseline reviewer Run is not a fresh rerun"
+    return target, None
+
+
 def _resolved_worker_handoff_dispatch(
     result: _WorkerHandoffResult,
 ) -> _WorkerHandoffResult | None:
@@ -484,6 +501,65 @@ def _review_subject_is_current(
         item.review_subject_digest
         == _review_subject_for_current_delivery(manifest, key, item)
     )
+
+
+def _delayed_reviewer_recovery_marker_error(
+    manifest: Manifest,
+    key: str,
+    item,
+    reviewer: str,
+    reviewer_id: str,
+    *,
+    require_target: bool,
+) -> str | None:
+    """Validate the dedicated delayed-Run marker against current authority."""
+    decision = item.decision_required
+    if not (
+        isinstance(decision, dict)
+        and decision.get("reason_code") == "reviewer-run-baseline-unavailable"
+        and decision.get("phase") == TaskPhase.REVIEW.value
+        and decision.get("resume_issue_id") == item.id
+        and decision.get("node_id") in {None, key}
+    ):
+        return "the persisted recovery decision does not identify this review"
+
+    baseline = item.reviewer_run_baseline
+    if baseline is None or not baseline.is_causally_bound():
+        return "the persisted reviewer Run baseline is incomplete"
+    if require_target and not baseline.target_run_id:
+        return "the persisted reviewer Run baseline has no target Run"
+
+    authoritative_subject = _review_subject_for_current_delivery(
+        manifest, key, item)
+    if (
+        authoritative_subject != item.review_subject_digest
+        or authoritative_subject != baseline.subject_digest
+        or baseline.target_reviewer != reviewer
+        or baseline.target_agent_id != reviewer_id
+    ):
+        return "the authoritative review subject or reviewer identity does not match"
+
+    item_contract = item.contract
+    if item_contract is not None and not isinstance(item_contract, dict):
+        item_contract = _dump_contract(item_contract)
+    node_contract = (
+        _dump_contract(manifest.nodes[key].contract)
+        if manifest.nodes[key].contract else None
+    )
+    if item_contract != node_contract:
+        return "the manifest and persisted node contracts do not match"
+
+    try:
+        validate_stage_recovery(item, TaskPhase.REVIEW.value)
+    except ValueError as exc:
+        return str(exc)
+    identity = item.delivery_identity
+    if (
+        identity is None
+        or identity.verification_created_at != baseline.cutoff_created_at
+    ):
+        return "the delivery identity does not match the reviewer Run cutoff"
+    return None
 
 
 def _current_delivery_passed_review(item) -> bool:
@@ -1217,13 +1293,10 @@ def _dispatch_reviewer_for_current_subject(
                 attempt=baseline.attempt,
             )
             if observed.state in {"active", "terminal"}:
-                target = next(
-                    (run for run in runs if run.id == observed.target_run_id),
-                    None,
-                )
-                if target is None or target.trigger_kind != "rerun":
-                    raise _ReviewerDispatchUnresolved(
-                        "post-baseline reviewer Run is not a fresh rerun")
+                _target, target_error = _fresh_reviewer_rerun_target(
+                    runs, observed)
+                if target_error is not None:
+                    raise _ReviewerDispatchUnresolved(target_error)
                 store.update_work_item_metadata(
                     item_id, reviewer_run_baseline=replace(
                         baseline, target_run_id=observed.target_run_id))
@@ -2940,6 +3013,30 @@ def collect_results(
                              id=node.work_item_id, reason=ui(
                                  "Reviewer is missing review_verdict", "reviewer 缺 review_verdict"))
                 continue
+
+            decision = item.decision_required
+            if (
+                isinstance(decision, dict)
+                and decision.get("reason_code")
+                == "reviewer-run-baseline-unavailable"
+            ):
+                reviewer_id = store.resolve_agent_id(node.reviewer)
+                marker_error = _delayed_reviewer_recovery_marker_error(
+                    manifest, key, item, node.reviewer, reviewer_id,
+                    require_target=True,
+                )
+                if marker_error is not None:
+                    failures[key] = _block_reviewer(
+                        store, manifest, manifest_path, key, item,
+                        "reviewer-run-baseline-unavailable", marker_error)
+                    continue
+                # The dedicated decision is the durable recovery marker. Only
+                # the Runner that is about to consume this exact verdict clears
+                # it. An unknown write result stops this tick; restart either
+                # retries the marker clear or observes it cleared and consumes
+                # the still-preserved verdict normally.
+                store.update_work_item_metadata(
+                    item.id, decision_required={})
 
             log.info(logsetup.EVT_VERDICT, kind=_DAG_KIND, node=key,
                      id=node.work_item_id, verdict=verdict)
