@@ -74,6 +74,7 @@ _MULTICA_READ_INITIAL_DELAY = 1.0
 _ATTACHMENT_BODY_CACHE_CAPACITY = 64
 _ACTIVE_RUN_STATUSES = {"queued", "pending", "running", "dispatching"}
 _RERUNNABLE_DIRECT_RUN_STATUSES = {"failed", "cancelled", "completed"}
+_KNOWN_RUN_STATUSES = _ACTIVE_RUN_STATUSES | _RERUNNABLE_DIRECT_RUN_STATUSES
 _KNOWN_WORK_ITEM_METADATA_KEYS = {
     "dag_key", "worker", "reviewer", "blocked_by", "wave", "artifacts",
     "verification", "review_verdict", "review_comment", "review_report",
@@ -1840,8 +1841,20 @@ class MulticaRuntime(AgentRuntime):
             "issue", "runs", item_id, "--output", "json",
         ])
         if not isinstance(runs, list):
-            return []
-        return [run for run in runs if isinstance(run, dict)]
+            raise PlatformError("Malformed Multica run payload: expected a list")
+        validated = []
+        for run in runs:
+            if not isinstance(run, dict):
+                raise PlatformError("Malformed Multica run payload: expected objects")
+            run_id = run.get("id")
+            status = run.get("status")
+            if not isinstance(run_id, str) or not run_id:
+                raise PlatformError("Malformed Multica run payload: missing run id")
+            if not isinstance(status, str) or status.lower() not in _KNOWN_RUN_STATUSES:
+                raise PlatformError(
+                    f"Malformed Multica run payload: unknown status for {run_id}")
+            validated.append(run)
+        return validated
 
     @staticmethod
     def _has_active_run(runs: List[Dict[str, Any]]) -> bool:

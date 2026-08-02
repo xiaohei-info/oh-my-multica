@@ -2532,6 +2532,22 @@ def test_multica_runtime_lists_typed_run_identity(monkeypatch):
     ]
 
 
+@pytest.mark.parametrize("payload", [
+    None,
+    {"data": []},
+    ["not-a-run"],
+    [{"status": "running"}],
+    [{"id": "run-1"}],
+])
+def test_multica_runtime_rejects_malformed_run_payload(monkeypatch, payload):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    runtime = MulticaRuntime(store)
+    monkeypatch.setattr(store, "_run_multica", lambda _args: payload)
+
+    with pytest.raises(PlatformError, match="run payload"):
+        runtime.list_runs("issue-1")
+
+
 def test_multica_runtime_cancel_clears_stale_assignment_without_active_run(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
     runtime = MulticaRuntime(store)
