@@ -1926,6 +1926,31 @@ def test_docs_digest_is_recursive_order_independent_and_content_bound(tmp_path):
     assert changed_attempt["attempt_id"] != first_attempt["attempt_id"]
 
 
+def test_docs_digest_uses_only_git_tracked_files_for_revision_snapshot(tmp_path):
+    project_root = tmp_path / "project"
+    docs = project_root / "docs"
+    docs.mkdir(parents=True)
+    (docs / "design.md").write_text("authoritative design")
+    (docs / ".DS_Store").write_bytes(b"local desktop metadata")
+    subprocess.run(["git", "init", "-q"], cwd=project_root, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=project_root, check=True)
+    subprocess.run(
+        ["git", "config", "user.name", "Test"],
+        cwd=project_root, check=True)
+    subprocess.run(
+        ["git", "add", "docs/design.md"], cwd=project_root, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "authoritative docs"],
+        cwd=project_root, check=True)
+
+    snapshot = amendment_pipeline._docs_snapshot(
+        [str(docs)], project_root=project_root)
+
+    assert snapshot["docs_files"] == ["docs/design.md"]
+
+
 @pytest.mark.parametrize("link_at_root", [False, True])
 def test_docs_digest_rejects_symlinks_and_path_escape(tmp_path, link_at_root):
     outside = tmp_path / "outside.md"

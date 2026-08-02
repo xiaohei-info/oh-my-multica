@@ -17,6 +17,7 @@ from ..core.amendment import (
     apply_amendment, build_reviewed_amendment, parse_proposal, validate_proposal,
 )
 from ..core.manifest import Contract, load_manifest
+from ..core.repository_files import revision_directory_files
 from ..core.taskmeta import TaskKind, TaskPhase
 from ..engines.models import WorkItemStatus
 from ..errors import NeedsDecision, PlatformError, ValidationError
@@ -151,11 +152,8 @@ def _docs_snapshot(
         if not resolved.is_dir():
             raise ValidationError(
                 f"Authoritative docs input is not a regular file or directory: {raw_path}")
-        try:
-            descendants = sorted(resolved.rglob("*"), key=lambda path: path.as_posix())
-        except OSError as exc:
-            raise ValidationError(
-                f"Could not enumerate authoritative docs input {raw_path}: {exc}") from exc
+        descendants = revision_directory_files(
+            resolved, repository_root=project_root)
         for candidate in descendants:
             if candidate.is_symlink():
                 raise ValidationError(
