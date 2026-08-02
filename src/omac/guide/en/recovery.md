@@ -283,6 +283,16 @@ integrations whose remaining work can ship independently.
 - Final acceptance still has failures after `acceptance.max_rounds`: the report
   retains the failure list.
 
+The review ledger counts submitted semantic reviews only; provider capacity,
+transport, and attachment-read retries do not consume review cycles. The first
+four semantic cycles may rework normally. From cycle five, two consecutive
+non-reducing blocker transitions, a new root cause, or at least three open
+responsibility dimensions stop Worker redispatch and produce a
+`review-convergence-*` decision. Ten cycles are an unconditional stop. The
+decision requests a task-boundary reconsideration; for develop nodes the
+Orchestrator proposes a DAG amendment, while OMAC never rewrites the DAG
+implicitly.
+
 ## Failure isolation
 
 - Hard-dependent downstream nodes become blocked and are not dispatched.
