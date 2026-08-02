@@ -305,8 +305,9 @@ def test_retry_review_preserves_sealed_delivery_and_resumes_reviewer(
     assert resumed.review_subject_digest
 
 
-def test_retry_review_recovers_delayed_visible_run_and_preserves_reject(
-    tmp_path, capsys, monkeypatch,
+@pytest.mark.parametrize("trigger_kind", ["issue_assignment", "rerun"])
+def test_retry_review_recovers_delayed_visible_dispatch_and_preserves_reject(
+    tmp_path, capsys, monkeypatch, trigger_kind,
 ):
     """显式 review retry 只绑定已存在 Run，不清除当前 subject 的报告。"""
     from omac.core.taskmeta import TaskPhase
@@ -322,7 +323,7 @@ def test_retry_review_recovers_delayed_visible_run_and_preserves_reject(
         agent_id=reviewer_id,
         created_at="2026-08-02T13:34:35Z",
         updated_at="2026-08-02T13:35:00Z",
-        trigger_kind="rerun",
+        trigger_kind=trigger_kind,
     )
     original_list_runs = engine.runtime.list_runs
     original_assign = engine.store.assign_work_item
@@ -376,7 +377,8 @@ def test_retry_review_recovers_delayed_visible_run_and_preserves_reject(
     "case",
     [
         "missing", "ambiguous", "foreign", "stale", "missing-time",
-        "comment-trigger", "manual-trigger", "subject-mismatch",
+        "assignment-ambiguous", "assignment-foreign", "assignment-stale",
+        "comment-trigger", "manual-trigger", "missing-trigger", "subject-mismatch",
         "identity-mismatch", "pr-head-drift", "verification-drift",
         "contract-drift",
     ],
@@ -408,8 +410,28 @@ def test_retry_review_delayed_run_recovery_fails_closed(
         "foreign": [replace(matching, agent_id="agent-foreign")],
         "stale": [replace(matching, created_at="2026-08-02T13:29:59Z")],
         "missing-time": [replace(matching, created_at=None)],
+        "assignment-ambiguous": [
+            replace(matching, trigger_kind="issue_assignment"),
+            replace(
+                matching,
+                id="run-reviewer-assignment-second",
+                created_at="2026-08-02T13:34:36Z",
+                trigger_kind="issue_assignment",
+            ),
+        ],
+        "assignment-foreign": [replace(
+            matching,
+            agent_id="agent-foreign",
+            trigger_kind="issue_assignment",
+        )],
+        "assignment-stale": [replace(
+            matching,
+            created_at="2026-08-02T13:29:59Z",
+            trigger_kind="issue_assignment",
+        )],
         "comment-trigger": [replace(matching, trigger_kind="comment")],
         "manual-trigger": [replace(matching, trigger_kind="manual")],
+        "missing-trigger": [replace(matching, trigger_kind=None)],
         "subject-mismatch": [matching],
         "identity-mismatch": [matching],
         "pr-head-drift": [matching],
