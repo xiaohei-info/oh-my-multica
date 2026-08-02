@@ -387,7 +387,8 @@ def _store_env(store: WorkItemStore) -> dict:
 class TickResult:
     """单轮 tick 的结果。
 
-    state: converged(全部 done) | running(有进行中节点) | needs_decision(有失败且无进行中)
+    state: converged(全部 done) | running(有进行中节点或正式活跃 Run) |
+           needs_decision(有失败且无正式活跃 Run)
     report: 仅 needs_decision 时有内容——失败节点 + 证据摘要 + 受阻下游
     """
     state: str
@@ -3275,6 +3276,57 @@ def _maybe_unblock(manifest: Manifest, manifest_path: str) -> bool:
     return changed
 
 
+def _active_formal_run_nodes(
+    runtime: AgentRuntime,
+    manifest: Manifest,
+    observations: Dict[str, WorkItemControlProjection | None],
+) -> List[str]:
+    """Use the reconcile snapshot to prove causally bound active Runs."""
+    active = []
+    for key, node in manifest.nodes.items():
+        projection = observations.get(key)
+        if not node.work_item_id or projection is None:
+            continue
+        item = projection.work_item
+        if item.id != node.work_item_id or item.dag_key != key:
+            continue
+        attempt = None
+        if item.phase == TaskPhase.AUTHORING:
+            intent = item.worker_handoff
+            if (
+                intent is not None
+                and intent.is_causally_bound()
+                and intent.target_run_id
+                and intent.target_worker == node.worker
+            ):
+                attempt = _observe_direct_run_attempt(
+                    runtime.list_runs(item.id),
+                    intent.target_agent_id,
+                    baseline_direct_run_ids=intent.baseline_direct_run_ids,
+                    target_run_id=intent.target_run_id,
+                )
+        elif item.phase == TaskPhase.REVIEW:
+            baseline = item.reviewer_run_baseline
+            if (
+                baseline is not None
+                and baseline.is_causally_bound()
+                and baseline.target_run_id
+                and baseline.subject_digest == item.review_subject_digest
+                and baseline.target_reviewer == node.reviewer
+            ):
+                attempt = _observe_direct_run_attempt(
+                    runtime.list_runs(item.id),
+                    baseline.target_agent_id,
+                    baseline_direct_run_ids=baseline.baseline_direct_run_ids,
+                    cutoff_created_at=baseline.cutoff_created_at,
+                    target_run_id=baseline.target_run_id,
+                    attempt=baseline.attempt,
+                )
+        if attempt is not None and attempt.state == "active":
+            active.append(key)
+    return active
+
+
 def tick(
     store: WorkItemStore,
     runtime: AgentRuntime,
@@ -3336,7 +3388,14 @@ def tick(
     running = [k for k, n in manifest.nodes.items() if n.status in RUNNING_STATUSES]
     failed_keys = [k for k, n in manifest.nodes.items() if n.status in FAILED_STATUSES]
 
-    # 状态判定:running 优先(有在飞节点继续推进),其次 needs_decision(有失败),
+    # blocked/needs_decision remains authoritative, but it must not stop the
+    # foreground controller while a causally bound formal Run is still active.
+    # This read-only proof runs only on the otherwise-terminal aggregation path.
+    if failed_keys and not running:
+        running = _active_formal_run_nodes(
+            runtime, manifest, reconcile_result.observations)
+
+    # 状态判定:running 优先(有正式运行继续协调),其次 needs_decision(有失败),
     # 最后 converged(全部 done)
     if running:
         state = "running"
