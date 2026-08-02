@@ -1901,6 +1901,62 @@ def test_new_attempt_allows_blocked_decision_required_without_active_run(
     assert old_after.decision_required["reason_code"] == "completed-without-submit"
 
 
+def test_new_attempt_allows_platform_finalized_decision_required_without_active_run(
+        tmp_path, monkeypatch):
+    path = _manifest(tmp_path)
+    report = tmp_path / "report.md"
+    report.write_text("replacement attempt")
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "design.md").write_text("authoritative design")
+    engine = _engine()
+    old = engine.store.create_work_item(
+        "ws", "failed amendment", "authority conflict", "amend-old", "alice",
+        kind=TaskKind.AMENDMENT)
+    old.identifier = "AITEAM-843"
+    engine.store.update_work_item_metadata(
+        old.id,
+        phase=TaskPhase.AUTHORING,
+        decision_required={
+            "schema": DECISION_REQUIRED_SCHEMA,
+            "reason_code": "completed-without-submit",
+            "kind": "amendment",
+            "phase": "authoring",
+            "resume_issue_id": old.id,
+        },
+    )
+    engine.store.update_status(old.id, WorkItemStatus.DONE)
+
+    def fake_run_task(_engine, _kind, payload, _assignee, **kwargs):
+        issue = engine.store.create_work_item(
+            "ws", payload["title"], payload["description"], kwargs["dag_key"],
+            "alice", reviewer="bob", kind=TaskKind.AMENDMENT)
+        engine.store.update_work_item_metadata(
+            issue.id,
+            amendment_attempt=kwargs["amendment_attempt"],
+            source_refs=kwargs["source_refs"],
+            deliverable=_proposal(_contract_update()),
+            review_verdict="pass",
+            phase=TaskPhase.CONFIRMATION,
+        )
+        engine.store.update_status(issue.id, WorkItemStatus.IN_REVIEW)
+        return {"item_id": issue.id, "delivery": {
+            "amendment": _proposal(_contract_update())}}
+
+    monkeypatch.setattr(amendment_pipeline, "run_task", fake_run_task)
+
+    result = amendment_pipeline.propose_amendment(
+        engine, str(path), report_file=str(report), docs=[str(docs)],
+        blocked_nodes=["bootstrap"], orchestrator="alice",
+        reviewers=["bob"], max_revisions=1, new_attempt=True,
+        supersedes_issue_id=old.id)
+
+    assert result["issue_id"] != old.id
+    old_after = engine.store.get_work_item(old.id)
+    assert old_after.status == WorkItemStatus.DONE
+    assert old_after.decision_required["reason_code"] == "completed-without-submit"
+
+
 def test_new_attempt_rejects_blocked_attempt_with_active_run(tmp_path):
     path = _manifest(tmp_path)
     report = tmp_path / "report.md"
@@ -1945,6 +2001,18 @@ def test_new_attempt_rejects_incomplete_decision_required(tmp_path):
         decision_required={"schema": DECISION_REQUIRED_SCHEMA},
     )
     engine.store.update_status(old.id, WorkItemStatus.BLOCKED)
+
+    with pytest.raises(ValidationError, match="terminal amendment"):
+        amendment_pipeline._validate_superseded_amendment(
+            engine, engine.store.get_work_item(old.id))
+
+
+def test_new_attempt_rejects_done_without_decision_required():
+    engine = _engine()
+    old = engine.store.create_work_item(
+        "ws", "completed amendment", "no failed-closed decision",
+        "amend-old", "alice", kind=TaskKind.AMENDMENT)
+    engine.store.update_status(old.id, WorkItemStatus.DONE)
 
     with pytest.raises(ValidationError, match="terminal amendment"):
         amendment_pipeline._validate_superseded_amendment(

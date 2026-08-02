@@ -93,8 +93,8 @@ def _validate_superseded_amendment(engine: Any, item: Any) -> None:
         and item.review_verdict == "pass"
     )
     decision = getattr(item, "decision_required", None)
-    blocked_decision = (
-        item.status == WorkItemStatus.BLOCKED
+    failed_closed_decision = (
+        item.status in {WorkItemStatus.BLOCKED, WorkItemStatus.DONE}
         and isinstance(decision, dict)
         and decision.get("schema") == DECISION_REQUIRED_SCHEMA
         and isinstance(decision.get("reason_code"), str)
@@ -103,10 +103,11 @@ def _validate_superseded_amendment(engine: Any, item: Any) -> None:
         and decision.get("phase") == item.phase.value
         and decision.get("resume_issue_id") == item.id
     )
-    if not (pass_confirmation or blocked_decision):
+    if not (pass_confirmation or failed_closed_decision):
         raise ValidationError(
             "--supersedes-issue-id must reference a terminal amendment: "
-            "Reviewer-pass human confirmation or blocked decision-required")
+            "Reviewer-pass human confirmation or failed-closed "
+            "decision-required")
     runs = engine.runtime.list_runs(item.id)
     active_runs = [run for run in runs if run.active]
     if active_runs:

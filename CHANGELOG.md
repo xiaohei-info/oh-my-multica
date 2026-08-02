@@ -11,8 +11,10 @@ This file records public changes to oh-my-multica. The format follows
 ### Changed
 
 - A new DAG amendment attempt may now supersede either a Reviewer-pass human
-  confirmation or a blocked decision-required amendment with no active Agent
-  Run; all active or non-terminal amendment states still fail closed.
+  confirmation or a failed-closed decision-required amendment with no active
+  Agent Run. The latter accepts both the original blocked state and Multica's
+  terminal done projection; ordinary done items and all active or non-terminal
+  amendment states still fail closed.
 - Directory-backed plan and amendment sources now inventory every file tracked
   by the current Git revision instead of local untracked or ignored files, so
   remote Agents can reproduce the exact authoritative docs digest.
