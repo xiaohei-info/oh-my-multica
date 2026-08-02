@@ -19,11 +19,12 @@ from .acceptance_responsibility import (
     responsibility_matrix,
 )
 from .manifest import loads_manifest
-from .taskmeta import TaskKind
+from .taskmeta import DECISION_REQUIRED_SCHEMA, TaskKind, TaskPhase
 
 
 REVIEW_PROTOCOL_VERSION = "omac.review/v2"
 REVIEW_LEDGER_SCHEMA = "omac.review-ledger/v1"
+REVIEW_CONVERGENCE_DECISION_SCHEMA = "omac.review-convergence-decision/v1"
 
 _BASE_OBLIGATIONS = (
     ("dimension:authority", "Authoritative inputs and source references"),
@@ -70,6 +71,123 @@ def required_closures(ledger: Any) -> list[dict]:
         {field: blocker.get(field) for field in fields}
         for blocker in _open_blockers(ledger)
     ]
+
+
+def review_convergence_decision(
+    ledger: Any,
+    *,
+    minimum_cycles: int = 5,
+    hard_limit: int = 10,
+) -> dict | None:
+    """Return a fail-closed task-boundary decision for non-converging review.
+
+    Infrastructure retries are not ledger cycles.  This policy consumes only
+    validated semantic Reviewer reports already persisted in the ledger.
+    """
+    if not isinstance(ledger, dict):
+        return None
+    cycles = [cycle for cycle in ledger.get("cycles", []) if isinstance(cycle, dict)]
+    if not cycles:
+        return None
+
+    open_records = _open_blockers(ledger)
+    if not open_records:
+        return None
+    cycle_count = len(cycles)
+    open_ids = sorted(
+        record.get("blocker_id") for record in open_records
+        if isinstance(record.get("blocker_id"), str)
+        and record.get("blocker_id")
+    )
+    open_roots = sorted(
+        record.get("root_cause_key") for record in open_records
+        if isinstance(record.get("root_cause_key"), str)
+        and record.get("root_cause_key")
+    )
+    dimensions = sorted({
+        record.get("obligation_id") for record in open_records
+        if isinstance(record.get("obligation_id"), str)
+        and record.get("obligation_id", "").startswith("dimension:")
+    })
+    late_roots = sorted({
+        record.get("root_cause_key") for record in open_records
+        if isinstance(record.get("root_cause_key"), str)
+        and record.get("root_cause_key")
+        and isinstance(record.get("first_seen_round"), int)
+        and record["first_seen_round"] >= minimum_cycles
+    })
+
+    non_reducing_streak = 0
+    for previous, current in reversed(list(zip(cycles, cycles[1:]))):
+        previous_open = previous.get("open_count")
+        current_open = current.get("open_count")
+        if not isinstance(previous_open, int) or not isinstance(current_open, int):
+            break
+        if current_open < previous_open:
+            break
+        non_reducing_streak += 1
+
+    common = {
+        "schema": REVIEW_CONVERGENCE_DECISION_SCHEMA,
+        "cycle_count": cycle_count,
+        "open_blocker_count": len(open_ids),
+        "open_blocker_ids": open_ids,
+        "open_root_cause_keys": open_roots,
+        "obligation_dimensions": dimensions,
+        "late_root_cause_keys": late_roots,
+        "non_reducing_streak": non_reducing_streak,
+    }
+    if cycle_count >= hard_limit:
+        return {
+            **common,
+            "mode": "exhausted",
+            "reason_code": "review-convergence-exhausted",
+        }
+    if cycle_count < minimum_cycles:
+        return None
+    if cycles[-1].get("new_count", 0) > 0 or len(dimensions) >= 3:
+        return {
+            **common,
+            "mode": "scope-expanding",
+            "reason_code": "review-convergence-scope-expanding",
+        }
+    if non_reducing_streak >= 2:
+        return {
+            **common,
+            "mode": "stalled",
+            "reason_code": "review-convergence-stalled",
+        }
+    return None
+
+
+def build_review_convergence_decision(
+    item: Any,
+    convergence: dict,
+    *,
+    kind: str,
+    recommended_action: str,
+    node_id: str | None = None,
+) -> dict:
+    """Build the single persisted decision projection for all review loops."""
+    decision = {
+        "schema": DECISION_REQUIRED_SCHEMA,
+        "reason_code": convergence["reason_code"],
+        "kind": kind,
+        "phase": TaskPhase.REVIEW.value,
+        "gate": "review-convergence",
+        "rounds": convergence["cycle_count"],
+        "resume_issue_id": item.id,
+        "verdict": item.review_verdict,
+        "recommended_action": recommended_action,
+        "convergence": convergence,
+    }
+    if node_id is not None:
+        decision["node_id"] = node_id
+    for field in ("contract_ref", "review_report_ref", "review_ledger_ref"):
+        value = getattr(item, field, None)
+        if isinstance(value, dict) and value:
+            decision[field] = value
+    return decision
 
 
 def build_review_obligations(
@@ -539,6 +657,14 @@ def review_state(ledger: Any) -> dict:
             record.get("blocker_id") for record in open_records
             if record.get("blocker_id")),
     }
+    decision = review_convergence_decision(ledger)
+    if decision is not None:
+        state.update({
+            "mode": decision["mode"],
+            "reason": decision["reason_code"],
+            "decision": decision,
+        })
+        return state
     if cycles and cycles[-1].get("regressed_count", 0) > 0:
         state.update({
             "mode": "convergence-audit",

@@ -29,7 +29,8 @@ from ..core.contract_boundaries import (
 )
 from ..core.evidence import validate_review_evidence, validate_worker_evidence
 from ..core.review_convergence import (
-    build_review_obligations, review_subject_digest)
+    build_review_convergence_decision, build_review_obligations,
+    review_convergence_decision, review_subject_digest)
 from ..core.retry_budget import consumed_bounces, review_rework_budget
 from ..core.stage_recovery import stage_recovery_subject
 from ..core.gitsync import commit_manifest
@@ -926,6 +927,44 @@ def _block_review_rework_budget(
     return ui(
         f"Review rework limit {budget.authorized_through_round} exhausted: {reason}",
         f"评审返工上界 {budget.authorized_through_round} 已耗尽: {reason}",
+    )
+
+
+def _block_review_non_convergence(
+    store: WorkItemStore,
+    manifest: Manifest,
+    key: str,
+    item,
+    convergence: dict,
+) -> str:
+    """Stop semantic retries and preserve the ledger for DAG amendment."""
+    decision = build_review_convergence_decision(
+        item,
+        convergence,
+        kind=TaskKind.DEVELOP.value,
+        node_id=key,
+        recommended_action="dag-amendment",
+    )
+    store.update_work_item_metadata(
+        item.id,
+        decision_required=decision,
+        phase=TaskPhase.REVIEW,
+    )
+    store.update_status(item.id, WorkItemStatus.BLOCKED)
+    set_node(manifest, key, status="blocked")
+    log.info(
+        logsetup.EVT_NEEDS_DECISION,
+        kind=_DAG_KIND,
+        node=key,
+        id=item.id,
+        gate="review-convergence",
+        rounds=convergence["cycle_count"],
+        mode=convergence["mode"],
+    )
+    return ui(
+        "Review is not converging within the current node boundary; "
+        "a DAG amendment is required.",
+        "评审无法在当前节点边界内收敛；需要 DAG amendment 重新拆分。",
     )
 
 
@@ -2936,6 +2975,11 @@ def collect_results(
                         id=node.work_item_id,
                         gate="review-boundary",
                     )
+                    continue
+                convergence = review_convergence_decision(item.review_ledger)
+                if convergence is not None:
+                    failures[key] = _block_review_non_convergence(
+                        store, manifest, key, item, convergence)
                     continue
             if verdict == "pass-with-nits" and not gate_errors:
                 if not rework_budget.allows_rework:

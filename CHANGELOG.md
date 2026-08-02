@@ -10,6 +10,11 @@ This file records public changes to oh-my-multica. The format follows
 
 ### Changed
 
+- Review rework now stops on semantic non-convergence instead of consuming a
+  large configured retry budget. The existing blocker ledger derives stalled,
+  scope-expanding, and ten-cycle-exhausted decisions; infrastructure retries
+  remain outside that budget, and develop nodes request a reviewed DAG amendment
+  without OMAC rewriting topology automatically.
 - `work submit` now observes control facts once and hydrates only the attachment
   bodies required by its exact kind and phase, so stale historical evidence
   downloads cannot block a fresh authoring submission.

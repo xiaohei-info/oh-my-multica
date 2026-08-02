@@ -27,7 +27,7 @@ from omac.core.manifest import (
 )
 from omac.core.review_convergence import (
     REVIEW_PROTOCOL_VERSION, build_review_obligations, open_blockers,
-    review_subject_digest,
+    review_convergence_decision, review_subject_digest,
 )
 from omac.engines import create_engine
 from omac.engines.mock import MockRuntime, MockStore
@@ -46,7 +46,7 @@ from omac.engines.models import (
     WorkItemStatus,
 )
 from omac.pipeline import loop
-from omac.pipeline.dispatch import build_show_output
+from omac.pipeline.dispatch import build_show_output, submit as submit_work
 from omac.pipeline.loop import TickResult, tick
 
 
@@ -4376,6 +4376,90 @@ class TestReviewerRejectBoundedFallback:
         assert got.bounces.review == 0
         assert any("retry limit" in c for c in eng.store.get_comments(item.id))
         assert result.state == "needs_decision"
+
+    def test_non_converging_review_blocks_before_another_worker_handoff(
+        self, tmp_path, monkeypatch,
+    ):
+        """Semantic non-convergence must request decomposition, not bounce 5."""
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        current = eng.store.get_work_item(item.id)
+        current.review_ledger = {
+            "schema": "omac.review-ledger/v1",
+            "cycles": [
+                {
+                    "round": round_index,
+                    "subject_digest": f"subject-{round_index}",
+                    "report_digest": f"report-{round_index}",
+                    "verdict": "reject",
+                    "new_count": 0,
+                    "fixed_count": 0,
+                    "regressed_count": 0,
+                    "unchanged_count": 1,
+                    "open_count": open_count,
+                    "prior_open_blocker_ids": ["BLK-core"],
+                    "open_blocker_ids": ["BLK-core"],
+                    "reported_blocker_ids": ["BLK-core"],
+                }
+                for round_index, open_count in enumerate((4, 3, 1, 1), start=1)
+            ],
+            "blockers": [{
+                "blocker_id": "BLK-core",
+                "root_cause_key": "core-acceptance",
+                "obligation_id": "dimension:structure",
+                "summary": "core contract is incomplete",
+                "evidence": "the same invariant still fails",
+                "required_fix": "close the contract root",
+                "status": "open",
+                "classification": "unchanged",
+                "first_seen_round": 1,
+                "last_seen_round": 4,
+                "seen_count": 4,
+            }],
+        }
+        eng.store.update_work_item_metadata(
+            item.id, review_ledger=current.review_ledger)
+        current = eng.store.get_work_item(item.id)
+        report = _review_report(current, "reject")
+        report["prior_blocker_results"][0]["status"] = "unchanged"
+        report["blockers"][0]["classification"] = "unchanged"
+        report_path = tmp_path / "review.yaml"
+        report_path.write_text(yaml.safe_dump(report))
+        submit_work(
+            eng.store, item.id, verdict="reject", report_file=str(report_path))
+        submitted = eng.store.get_work_item(item.id)
+        assert len(submitted.review_ledger["cycles"]) == 5
+        convergence = review_convergence_decision(submitted.review_ledger)
+        assert convergence is not None, submitted.review_ledger
+        assert convergence[
+            "reason_code"] == "review-convergence-stalled"
+
+        monkeypatch.setattr(
+            loop,
+            "_dispatch_worker_handoff",
+            lambda *_args, **_kwargs: pytest.fail(
+                "non-converging review must not dispatch another worker"),
+        )
+
+        result = tick(
+            eng.store,
+            eng.runtime,
+            manifest,
+            path,
+            max_parallel=4,
+            retry_limits={"review": 20},
+        )
+
+        blocked = eng.store.get_work_item(item.id)
+        assert result.state == "needs_decision"
+        assert manifest.nodes["a"].status == "blocked"
+        assert blocked.status is WorkItemStatus.BLOCKED
+        assert blocked.bounces.review == 0
+        assert blocked.decision_required["reason_code"] == (
+            "review-convergence-stalled")
+        assert blocked.decision_required["recommended_action"] == "dag-amendment"
+        assert blocked.decision_required["convergence"]["cycle_count"] == 5
 
     def test_pass_with_nits_at_review_limit_needs_decision_without_handoff(
         self, tmp_path, monkeypatch,

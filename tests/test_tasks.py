@@ -1462,6 +1462,33 @@ def test_final_reject_does_not_start_unreviewed_producer_revision():
     assert item.bounces.review == 1
 
 
+def test_non_converging_review_stops_before_configured_twenty_round_limit():
+    """A wide retry budget must not hide a task-boundary mismatch."""
+    eng = _engine()
+    MockStore.set_review_rejects(99)
+
+    with pytest.raises(NeedsDecision) as exc:
+        run_task(
+            eng,
+            TaskKind.PLAN,
+            _payload(),
+            "alice",
+            reviewers=["bob"],
+            max_revisions=20,
+            poll=_poll,
+        )
+
+    item = eng.store.list_work_items("ws")[0]
+    assert exc.value.report["reason_code"] == (
+        "review-convergence-scope-expanding")
+    assert exc.value.report["rounds"] == 5
+    assert item.status is WorkItemStatus.BLOCKED
+    assert item.bounces.review == 4
+    assert item.decision_required["recommended_action"] == (
+        "reconsider-task-boundary")
+    assert len(item.review_ledger["cycles"]) == 5
+
+
 def test_resume_uses_persisted_review_bounce_limit():
     """平台状态滞后为 in_progress 时也必须收割 verdict 和 review_bounce。"""
     eng = _engine(MOCK_AUTO_COMPLETE="false")
