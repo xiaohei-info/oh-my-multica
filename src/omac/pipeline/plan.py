@@ -164,16 +164,9 @@ def _describe_design_directory(path: str, *, language: str | None = None) -> str
             f"设计文档目录中没有文件:{path}"))
 
     entries = []
-    for candidate in files:
-        resolved = candidate.resolve()
-        try:
-            relative_path = resolved.relative_to(repository_root).as_posix()
-        except ValueError as exc:
-            raise ValidationError(ui(
-                f"Design directory contains a file outside the repository: {candidate}",
-                f"设计文档目录包含仓库外文件:{candidate}")) from exc
-        digest = hashlib.sha256(resolved.read_bytes()).hexdigest()
-        entries.append(f"- `{relative_path}` sha256=`{digest}`")
+    for source in files:
+        digest = hashlib.sha256(source.content).hexdigest()
+        entries.append(f"- `{source.logical_path}` sha256=`{digest}`")
 
     revision = _repository_revision(repository_root)
     instructions = ui(

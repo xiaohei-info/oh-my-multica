@@ -152,19 +152,9 @@ def _docs_snapshot(
         if not resolved.is_dir():
             raise ValidationError(
                 f"Authoritative docs input is not a regular file or directory: {raw_path}")
-        descendants = revision_directory_files(
-            resolved, repository_root=project_root)
-        for candidate in descendants:
-            if candidate.is_symlink():
-                raise ValidationError(
-                    f"Authoritative docs input contains a symlink: {candidate}")
-            if candidate.is_dir():
-                continue
-            if not candidate.is_file():
-                raise ValidationError(
-                    f"Authoritative docs input contains a non-regular file: {candidate}")
-            logical_path = _project_logical_path(candidate, project_root)
-            entries[logical_path] = _read_document_bytes(candidate)
+        for source in revision_directory_files(
+                resolved, repository_root=project_root):
+            entries[source.logical_path] = source.content
     if not entries:
         raise ValidationError("Authoritative docs inputs contain no readable files")
     digest = hashlib.sha256()

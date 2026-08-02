@@ -1951,6 +1951,49 @@ def test_docs_digest_uses_only_git_tracked_files_for_revision_snapshot(tmp_path)
     assert snapshot["docs_files"] == ["docs/design.md"]
 
 
+def test_docs_digest_treats_git_directory_path_as_literal(tmp_path):
+    project_root = tmp_path / "project"
+    selected = project_root / "docs*"
+    leaked = project_root / "docs-other"
+    selected.mkdir(parents=True)
+    leaked.mkdir()
+    (selected / "design.md").write_text("selected")
+    (leaked / "leak.md").write_text("must not leak")
+    subprocess.run(["git", "init", "-q"], cwd=project_root, check=True)
+    subprocess.run(["git", "add", "."], cwd=project_root, check=True)
+    subprocess.run(
+        ["git", "-c", "user.email=test@example.com",
+         "-c", "user.name=Test", "commit", "-qm", "authoritative docs"],
+        cwd=project_root, check=True)
+
+    snapshot = amendment_pipeline._docs_snapshot(
+        [str(selected)], project_root=project_root)
+
+    assert snapshot["docs_files"] == ["docs*/design.md"]
+
+
+def test_docs_digest_reads_revision_blob_instead_of_dirty_worktree(tmp_path):
+    project_root = tmp_path / "project"
+    docs = project_root / "docs"
+    docs.mkdir(parents=True)
+    design = docs / "design.md"
+    design.write_text("revision v1")
+    subprocess.run(["git", "init", "-q"], cwd=project_root, check=True)
+    subprocess.run(["git", "add", "docs/design.md"], cwd=project_root, check=True)
+    subprocess.run(
+        ["git", "-c", "user.email=test@example.com",
+         "-c", "user.name=Test", "commit", "-qm", "authoritative docs"],
+        cwd=project_root, check=True)
+    expected = amendment_pipeline._docs_snapshot(
+        [str(docs)], project_root=project_root)
+
+    design.write_text("dirty worktree v2")
+    actual = amendment_pipeline._docs_snapshot(
+        [str(docs)], project_root=project_root)
+
+    assert actual == expected
+
+
 @pytest.mark.parametrize("link_at_root", [False, True])
 def test_docs_digest_rejects_symlinks_and_path_escape(tmp_path, link_at_root):
     outside = tmp_path / "outside.md"

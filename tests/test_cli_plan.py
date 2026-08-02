@@ -744,6 +744,26 @@ def test_doc_directory_uses_only_git_tracked_files_for_revision_source_set(
     assert ".DS_Store" not in source_set
 
 
+def test_doc_directory_rejects_tracked_symlink(tmp_path, monkeypatch):
+    from omac.errors import ValidationError
+    from omac.pipeline.plan import _read_file
+
+    monkeypatch.chdir(tmp_path)
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "design.md").write_text("authoritative design", encoding="utf-8")
+    (docs / "alias.md").symlink_to("design.md")
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", "docs"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "-c", "user.email=test@example.com",
+         "-c", "user.name=Test", "commit", "-qm", "authoritative docs"],
+        cwd=tmp_path, check=True)
+
+    with pytest.raises(ValidationError, match="symlink"):
+        _read_file("docs", language="cn")
+
+
 def test_resume_doc_pipeline_restarts_and_reuses_acceptance_issue(
         tmp_path, monkeypatch):
     """--doc 恢复复用原 acceptance issue，并外置大型验收产物。"""
