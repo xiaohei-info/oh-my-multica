@@ -237,16 +237,9 @@ def _recover_delayed_reviewer_submission(
 ) -> bool:
     """Bind a delayed-visible Reviewer Run without replaying either role."""
     decision = current.decision_required
-    baseline = current.reviewer_run_baseline
-    initial_recovery = bool(
+    if not (
         isinstance(decision, dict)
         and decision.get("reason_code") == "reviewer-run-baseline-unavailable"
-    )
-    replay_recovery = bool(
-        not decision and baseline is not None and baseline.target_run_id
-    )
-    if not (
-        (initial_recovery or replay_recovery)
         and current.review_verdict in {"pass", "pass-with-nits", "reject"}
         and isinstance(current.review_report, dict)
         and current.review_report
@@ -268,13 +261,14 @@ def _recover_delayed_reviewer_submission(
             f"Agent Run。请检查 issue Runs 后重试 `{retry}`。",
         ))
 
-    if initial_recovery and (
+    if (
         decision.get("phase") != TaskPhase.REVIEW.value
         or decision.get("resume_issue_id") != current.id
         or decision.get("node_id") not in {None, node.id}
     ):
         raise unsafe("the persisted recovery decision does not identify this review")
 
+    baseline = current.reviewer_run_baseline
     if baseline is None or not baseline.is_causally_bound():
         raise unsafe("the persisted reviewer Run baseline is incomplete")
     reviewer_id = engine.store.resolve_agent_id(node.reviewer)

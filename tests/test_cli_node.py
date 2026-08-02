@@ -502,7 +502,7 @@ def test_retry_review_delayed_run_recovery_fails_closed(
 
 @pytest.mark.parametrize(
     "checkpoint",
-    ["baseline", "status", "manifest", "decision"],
+    ["baseline", "status", "manifest", "before-decision-clear"],
 )
 def test_retry_review_delayed_run_recovery_is_restart_safe(
     tmp_path, capsys, monkeypatch, checkpoint,
@@ -544,36 +544,36 @@ def test_retry_review_delayed_run_recovery_is_restart_safe(
     original_save_manifest = node_mod.save_manifest
     crashed = False
 
-    def crash_after(name):
+    def crash(name):
         nonlocal crashed
         if checkpoint == name and not crashed:
             crashed = True
-            raise RuntimeError(f"crash after {name}")
+            raise RuntimeError(f"crash at {name}")
 
     def update_metadata(target_item_id, **metadata):
+        if metadata.get("decision_required") == {}:
+            crash("before-decision-clear")
         result = original_update_metadata(target_item_id, **metadata)
         if "reviewer_run_baseline" in metadata:
-            crash_after("baseline")
-        if metadata.get("decision_required") == {}:
-            crash_after("decision")
+            crash("baseline")
         return result
 
     def update_status(target_item_id, status):
         result = original_update_status(target_item_id, status)
         if status is WorkItemStatus.IN_REVIEW:
-            crash_after("status")
+            crash("status")
         return result
 
     def save(manifest, manifest_path):
         result = original_save_manifest(manifest, manifest_path)
-        crash_after("manifest")
+        crash("manifest")
         return result
 
     monkeypatch.setattr(engine.store, "update_work_item_metadata", update_metadata)
     monkeypatch.setattr(engine.store, "update_status", update_status)
     monkeypatch.setattr(node_mod, "save_manifest", save)
 
-    with pytest.raises(RuntimeError, match=f"crash after {checkpoint}"):
+    with pytest.raises(RuntimeError, match=f"crash at {checkpoint}"):
         main(["node", "retry", path, "b", "--stage", "review"])
 
     monkeypatch.setattr(
@@ -581,11 +581,6 @@ def test_retry_review_delayed_run_recovery_is_restart_safe(
     monkeypatch.setattr(engine.store, "update_status", original_update_status)
     monkeypatch.setattr(node_mod, "save_manifest", original_save_manifest)
 
-    assert main([
-        "node", "retry", path, "b", "--stage", "review",
-    ]) == exit_codes.OK
-    capsys.readouterr()
-    # A third identical retry is also a no-op recovery, not a normal reset.
     assert main([
         "node", "retry", path, "b", "--stage", "review",
     ]) == exit_codes.OK
@@ -601,6 +596,52 @@ def test_retry_review_delayed_run_recovery_is_restart_safe(
     assert recovered.review_report_ref is not None
     assert not recovered.decision_required
     assert recovered.reviewer_run_baseline.target_run_id == candidate.id
+
+
+def test_retry_completed_review_without_decision_resets_for_fresh_reviewer(
+    tmp_path, capsys, monkeypatch,
+):
+    """空 decision 的 completed review 是普通 retry，不能复用旧 verdict。"""
+    from dataclasses import replace
+
+    from omac.core.taskmeta import TaskPhase
+    from omac.engines.models import WorkItemStatus
+
+    engine, path, item_id, _reviewer_id, _subject, _report = (
+        _delayed_reviewer_retry_fixture(tmp_path, monkeypatch))
+    current = engine.store.get_work_item(item_id)
+    engine.store.update_work_item_metadata(
+        item_id,
+        reviewer_run_baseline=replace(
+            current.reviewer_run_baseline,
+            target_run_id="normal-completed-review-run",
+        ),
+        decision_required={},
+    )
+    engine.store.update_status(item_id, WorkItemStatus.IN_REVIEW)
+    manifest = load_manifest(path)
+    manifest.nodes["b"].status = "in_review"
+    save_manifest(manifest, path)
+    monkeypatch.setattr(
+        engine.runtime,
+        "list_runs",
+        lambda _item_id: pytest.fail(
+            "ordinary completed review retry must not bind an old Run"),
+    )
+
+    assert main([
+        "node", "retry", path, "b", "--stage", "review",
+    ]) == exit_codes.OK
+    capsys.readouterr()
+
+    resumed = engine.store.get_work_item(item_id)
+    assert load_manifest(path).nodes["b"].status == "in_review"
+    assert resumed.status is WorkItemStatus.IN_REVIEW
+    assert resumed.phase is TaskPhase.REVIEW
+    assert resumed.review_verdict is None
+    assert resumed.review_report is None
+    assert resumed.review_report_ref is None
+    assert resumed.reviewer_run_baseline is None
 
 
 def test_retry_review_without_submitted_report_keeps_normal_retry_semantics(
