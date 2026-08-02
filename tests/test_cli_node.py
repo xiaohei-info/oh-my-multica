@@ -355,7 +355,8 @@ def test_retry_review_recovers_delayed_visible_run_and_preserves_reject(
     assert resumed.review_verdict == "reject"
     assert resumed.review_report == report
     assert resumed.review_report_ref is not None
-    assert not resumed.decision_required
+    assert resumed.decision_required["reason_code"] == (
+        "reviewer-run-baseline-unavailable")
     assert resumed.reviewer_run_baseline.target_run_id == candidate.id
 
     # A fresh controller process consumes the already submitted reject rather
@@ -502,7 +503,7 @@ def test_retry_review_delayed_run_recovery_fails_closed(
 
 @pytest.mark.parametrize(
     "checkpoint",
-    ["baseline", "status", "manifest", "before-decision-clear"],
+    ["baseline", "status", "manifest"],
 )
 def test_retry_review_delayed_run_recovery_is_restart_safe(
     tmp_path, capsys, monkeypatch, checkpoint,
@@ -551,8 +552,6 @@ def test_retry_review_delayed_run_recovery_is_restart_safe(
             raise RuntimeError(f"crash at {name}")
 
     def update_metadata(target_item_id, **metadata):
-        if metadata.get("decision_required") == {}:
-            crash("before-decision-clear")
         result = original_update_metadata(target_item_id, **metadata)
         if "reviewer_run_baseline" in metadata:
             crash("baseline")
@@ -585,6 +584,10 @@ def test_retry_review_delayed_run_recovery_is_restart_safe(
         "node", "retry", path, "b", "--stage", "review",
     ]) == exit_codes.OK
     capsys.readouterr()
+    assert main([
+        "node", "retry", path, "b", "--stage", "review",
+    ]) == exit_codes.OK
+    capsys.readouterr()
 
     recovered = engine.store.get_work_item(item_id)
     assert load_manifest(path).nodes["b"].status == "in_review"
@@ -594,7 +597,8 @@ def test_retry_review_delayed_run_recovery_is_restart_safe(
     assert recovered.review_verdict == "reject"
     assert recovered.review_report == report
     assert recovered.review_report_ref is not None
-    assert not recovered.decision_required
+    assert recovered.decision_required["reason_code"] == (
+        "reviewer-run-baseline-unavailable")
     assert recovered.reviewer_run_baseline.target_run_id == candidate.id
 
 

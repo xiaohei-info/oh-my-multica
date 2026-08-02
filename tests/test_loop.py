@@ -2227,6 +2227,148 @@ def _reviewer_runtime_failure_fixture(tmp_path):
     return eng, manifest, path, current, reviewer_id
 
 
+def _delayed_reviewer_verdict_fixture(tmp_path, verdict):
+    eng, manifest, path, item, reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    runs = list(eng.runtime.list_runs(item.id))
+    target_run_id = runs[-1].id
+    report = _review_report(item, verdict)
+    eng.store.update_work_item_metadata(
+        item.id,
+        review_verdict=verdict,
+        review_report=report,
+        review_report_source=yaml.safe_dump(report),
+        reviewer_run_baseline=replace(
+            item.reviewer_run_baseline,
+            target_run_id=target_run_id,
+        ),
+        decision_required={
+            "schema": "omac.decision-required/v1",
+            "reason_code": "reviewer-run-baseline-unavailable",
+            "kind": "develop",
+            "phase": "review",
+            "gate": "reviewer",
+            "resume_issue_id": item.id,
+            "node_id": "a",
+            "failure_class": "unproven-reviewer-run-causality",
+            "next_action": f"omac node retry {path} a --stage review",
+        },
+    )
+    eng.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+    manifest.nodes["a"].status = "in_review"
+    save_manifest(manifest, path)
+    return eng, manifest, path, item.id, target_run_id, report
+
+
+@pytest.mark.parametrize("verdict", ["pass", "reject"])
+def test_runner_clears_delayed_reviewer_decision_before_consuming_verdict(
+    tmp_path, monkeypatch, verdict,
+):
+    """decision clear 响应未知后，restart 继续消费同一 pass/reject。"""
+    from omac.errors import PlatformError
+
+    eng, manifest, path, item_id, target_run_id, report = (
+        _delayed_reviewer_verdict_fixture(tmp_path, verdict))
+    runs_before = list(eng.runtime.list_runs(item_id))
+    assignments_before = len(eng.store.assign_log)
+    original_update = eng.store.update_work_item_metadata
+    original_assign = eng.store.assign_work_item
+    original_wake = eng.runtime.wake
+    failed = False
+
+    def update(target_item_id, **metadata):
+        nonlocal failed
+        result = original_update(target_item_id, **metadata)
+        if metadata.get("decision_required") == {} and not failed:
+            failed = True
+            raise PlatformError("decision clear response unknown")
+        return result
+
+    monkeypatch.setattr(eng.store, "update_work_item_metadata", update)
+    monkeypatch.setattr(
+        eng.store,
+        "assign_work_item",
+        lambda *_args, **_kwargs: pytest.fail(
+            "unknown decision clear must stop before assignment"),
+    )
+    monkeypatch.setattr(
+        eng.runtime,
+        "wake",
+        lambda *_args, **_kwargs: pytest.fail(
+            "unknown decision clear must stop before wake"),
+    )
+
+    with pytest.raises(PlatformError, match="decision clear response unknown"):
+        loop.collect_results(eng.store, eng.runtime, manifest, path)
+
+    interrupted = eng.store.get_work_item(item_id)
+    assert not interrupted.decision_required
+    assert interrupted.review_verdict == verdict
+    assert interrupted.review_report == report
+    assert interrupted.reviewer_run_baseline.target_run_id == target_run_id
+    assert eng.runtime.list_runs(item_id) == runs_before
+    assert len(eng.store.assign_log) == assignments_before
+
+    monkeypatch.setattr(eng.store, "update_work_item_metadata", original_update)
+    monkeypatch.setattr(eng.store, "assign_work_item", original_assign)
+    monkeypatch.setattr(eng.runtime, "wake", original_wake)
+
+    assert loop.collect_results(eng.store, eng.runtime, manifest, path) == {}
+    recovered = eng.store.get_work_item(item_id)
+    assert not recovered.decision_required
+    if verdict == "reject":
+        assert manifest.nodes["a"].status == "in_progress"
+        assert recovered.bounces.review == 1
+    else:
+        assert manifest.nodes["a"].status in {"merging", "done"}
+    reviewer_assignments = [
+        entry for entry in eng.store.assign_log[assignments_before:]
+        if entry[2] == "reviewer"
+    ]
+    assert reviewer_assignments == []
+
+
+def test_runner_preserves_invalid_delayed_reviewer_decision(
+    tmp_path, monkeypatch,
+):
+    """Runner 不得清除或消费不再绑定当前 subject 的专用 decision。"""
+    eng, manifest, path, item_id, _target_run_id, report = (
+        _delayed_reviewer_verdict_fixture(tmp_path, "pass"))
+    current = eng.store.get_work_item(item_id)
+    eng.store.update_work_item_metadata(
+        item_id,
+        reviewer_run_baseline=replace(
+            current.reviewer_run_baseline,
+            subject_digest="stale-subject",
+        ),
+    )
+    assignments_before = len(eng.store.assign_log)
+    monkeypatch.setattr(
+        eng.store,
+        "assign_work_item",
+        lambda *_args, **_kwargs: pytest.fail(
+            "invalid marker must fail before assignment"),
+    )
+    monkeypatch.setattr(
+        eng.runtime,
+        "wake",
+        lambda *_args, **_kwargs: pytest.fail(
+            "invalid marker must fail before wake"),
+    )
+
+    failures = loop.collect_results(eng.store, eng.runtime, manifest, path)
+
+    blocked = eng.store.get_work_item(item_id)
+    assert "a" in failures
+    assert manifest.nodes["a"].status == "blocked"
+    assert blocked.status is WorkItemStatus.BLOCKED
+    assert blocked.decision_required["reason_code"] == (
+        "reviewer-run-baseline-unavailable")
+    assert blocked.review_verdict == "pass"
+    assert blocked.review_report == report
+    assert len(eng.store.assign_log) == assignments_before
+
+
 def test_reviewer_capacity_failure_reruns_without_review_bounce(
     tmp_path, monkeypatch,
 ):

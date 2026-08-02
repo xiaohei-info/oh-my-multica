@@ -10,15 +10,14 @@ from .. import exit_codes
 from ..output import add_output_flag, hint, print_json
 from ...core.config import ENV_ENGINE, ENV_WORKSPACE, load_config, resolve_engine_settings
 from ...core.manifest import (
-    MISSING_CONSUMES, _dump_contract, clear_confirmed_merge, load_manifest,
-    save_manifest,
+    MISSING_CONSUMES, clear_confirmed_merge, load_manifest, save_manifest,
 )
 from ...core.graph import downstream_of
 from ...core.taskmeta import (
     WORKER_HANDOFF_SCHEMA, TaskKind, TaskPhase, WorkerHandoffIntent,
 )
 from ...core.stage_recovery import (
-    prepare_stage_recovery, stage_recovery_subject, validate_stage_recovery,
+    prepare_stage_recovery, stage_recovery_subject,
 )
 from ...engines import EngineConfig, create_engine
 from ...engines.models import PullRequestState, WorkItemStatus
@@ -261,55 +260,25 @@ def _recover_delayed_reviewer_submission(
             f"Agent Run。请检查 issue Runs 后重试 `{retry}`。",
         ))
 
-    if (
-        decision.get("phase") != TaskPhase.REVIEW.value
-        or decision.get("resume_issue_id") != current.id
-        or decision.get("node_id") not in {None, node.id}
-    ):
-        raise unsafe("the persisted recovery decision does not identify this review")
-
     baseline = current.reviewer_run_baseline
-    if baseline is None or not baseline.is_causally_bound():
-        raise unsafe("the persisted reviewer Run baseline is incomplete")
     reviewer_id = engine.store.resolve_agent_id(node.reviewer)
-    from ...pipeline.loop import _review_subject_for_current_delivery
-
-    authoritative_subject = _review_subject_for_current_delivery(
-        manifest, node_key, current)
-    if (
-        authoritative_subject != current.review_subject_digest
-        or authoritative_subject != baseline.subject_digest
-        or baseline.target_reviewer != node.reviewer
-        or baseline.target_agent_id != reviewer_id
-    ):
-        raise unsafe(
-            "the authoritative review subject or reviewer identity does not match")
-
-    item_contract = current.contract
-    if item_contract is not None and not isinstance(item_contract, dict):
-        item_contract = _dump_contract(item_contract)
-    node_contract = _dump_contract(node.contract) if node.contract else None
-    if item_contract != node_contract:
-        raise unsafe("the manifest and persisted node contracts do not match")
-
-    try:
-        validate_stage_recovery(current, TaskPhase.REVIEW.value)
-    except ValueError as exc:
-        raise unsafe(str(exc)) from exc
-    identity = current.delivery_identity
-    if (
-        identity is None
-        or identity.verification_created_at != baseline.cutoff_created_at
-    ):
-        raise unsafe("the delivery identity does not match the reviewer Run cutoff")
     if not engine.runtime.capabilities.stable_direct_run_identity:
         raise unsafe("stable direct Run identity is unavailable")
 
     # Reuse the controller's direct-Run matcher. It proves direct kind, target
     # agent, strict cutoff, baseline exclusion, usable time, and uniqueness.
     from ...pipeline.loop import (
-        _fresh_reviewer_rerun_target, _observe_direct_run_attempt,
+        _delayed_reviewer_recovery_marker_error,
+        _fresh_reviewer_rerun_target,
+        _observe_direct_run_attempt,
     )
+
+    marker_error = _delayed_reviewer_recovery_marker_error(
+        manifest, node_key, current, node.reviewer, reviewer_id,
+        require_target=False,
+    )
+    if marker_error is not None:
+        raise unsafe(marker_error)
 
     runs = engine.runtime.list_runs(current.id)
     observed = _observe_direct_run_attempt(
@@ -360,7 +329,6 @@ def _cmd_retry(args) -> int:
     # 被阻塞后重试时，下一次虽然会重新指派 worker，work show / work submit
     # 仍会按 reviewer 协议解释旧 phase，worker 无法正式交付。
     # 平台先写、本地后写：平台失败时不留下两边分叉的半完成 retry。
-    delayed_review_decision = False
     if node.work_item_id and engine is not None:
         try:
             current = engine.store.get_work_item(node.work_item_id)
@@ -370,8 +338,6 @@ def _cmd_retry(args) -> int:
                     manifest, args.node_key, node, engine, current,
                     args.manifest)
             )
-            delayed_review_decision = bool(
-                delayed_review_recovered and current.decision_required)
             handoff = None
             has_delivery = bool(current.artifacts or current.verification)
             if (
@@ -420,13 +386,6 @@ def _cmd_retry(args) -> int:
     node.status = "in_review" if stage == "review" else "todo"
     clear_confirmed_merge(node)
     save_manifest(manifest, args.manifest)
-    if (
-        node.work_item_id
-        and engine is not None
-        and delayed_review_decision
-    ):
-        engine.store.update_work_item_metadata(
-            node.work_item_id, decision_required={})
 
     print_json({
         "node_key": node.id,
