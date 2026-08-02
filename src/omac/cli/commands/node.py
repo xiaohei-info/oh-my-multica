@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 import secrets
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from typing import Any
 
 from .. import exit_codes
@@ -13,8 +13,12 @@ from ...core.manifest import (
     MISSING_CONSUMES, clear_confirmed_merge, load_manifest, save_manifest,
 )
 from ...core.graph import downstream_of
-from ...core.taskmeta import WORKER_HANDOFF_SCHEMA, TaskKind, WorkerHandoffIntent
-from ...core.stage_recovery import prepare_stage_recovery, stage_recovery_subject
+from ...core.taskmeta import (
+    WORKER_HANDOFF_SCHEMA, TaskKind, TaskPhase, WorkerHandoffIntent,
+)
+from ...core.stage_recovery import (
+    prepare_stage_recovery, stage_recovery_subject, validate_stage_recovery,
+)
 from ...engines import EngineConfig, create_engine
 from ...engines.models import PullRequestState, WorkItemStatus
 from ...errors import OmacError, ValidationError, WorkItemNotFoundError
@@ -227,6 +231,92 @@ def _validate_worker(manifest, node, new_worker: str, config: dict, engine) -> s
     return new_worker
 
 
+def _recover_delayed_reviewer_submission(
+    node, engine, current, manifest_path: str,
+) -> bool:
+    """Bind a delayed-visible Reviewer Run without replaying either role."""
+    decision = current.decision_required
+    if not (
+        isinstance(decision, dict)
+        and decision.get("reason_code") == "reviewer-run-baseline-unavailable"
+        and current.review_verdict in {"pass", "pass-with-nits", "reject"}
+        and isinstance(current.review_report, dict)
+        and current.review_report
+        and isinstance(current.review_report_ref, dict)
+        and current.review_report_ref
+    ):
+        return False
+
+    retry = f"omac node retry {manifest_path} {node.id} --stage review"
+
+    def unsafe(detail: str) -> ValidationError:
+        return ValidationError(ui(
+            "Cannot recover the submitted Reviewer result because its Run "
+            f"causality is not unique: {detail}. The existing decision and "
+            f"review report were preserved; no Agent Run was started. Inspect "
+            f"the issue Runs, then retry with `{retry}`.",
+            "无法恢复已提交的 Reviewer 结果，因为 Run 因果关系不唯一："
+            f"{detail}。现有 decision 与 review report 已保留，且没有启动 "
+            f"Agent Run。请检查 issue Runs 后重试 `{retry}`。",
+        ))
+
+    if (
+        decision.get("phase") != TaskPhase.REVIEW.value
+        or decision.get("resume_issue_id") != current.id
+        or decision.get("node_id") not in {None, node.id}
+    ):
+        raise unsafe("the persisted recovery decision does not identify this review")
+
+    baseline = current.reviewer_run_baseline
+    if baseline is None or not baseline.is_causally_bound():
+        raise unsafe("the persisted reviewer Run baseline is incomplete")
+    reviewer_id = engine.store.resolve_agent_id(node.reviewer)
+    if (
+        current.review_subject_digest != baseline.subject_digest
+        or baseline.target_reviewer != node.reviewer
+        or baseline.target_agent_id != reviewer_id
+    ):
+        raise unsafe("the review subject or reviewer identity does not match")
+
+    try:
+        validate_stage_recovery(current, TaskPhase.REVIEW.value)
+    except ValueError as exc:
+        raise unsafe(str(exc)) from exc
+    identity = current.delivery_identity
+    if (
+        identity is None
+        or identity.verification_created_at != baseline.cutoff_created_at
+    ):
+        raise unsafe("the delivery identity does not match the reviewer Run cutoff")
+    if not engine.runtime.capabilities.stable_direct_run_identity:
+        raise unsafe("stable direct Run identity is unavailable")
+
+    # Reuse the controller's direct-Run matcher. It proves direct kind, target
+    # agent, strict cutoff, baseline exclusion, usable time, and uniqueness.
+    from ...pipeline.loop import _observe_direct_run_attempt
+
+    observed = _observe_direct_run_attempt(
+        engine.runtime.list_runs(current.id),
+        reviewer_id,
+        baseline_direct_run_ids=baseline.baseline_direct_run_ids,
+        cutoff_created_at=baseline.cutoff_created_at,
+        target_run_id=baseline.target_run_id,
+        attempt=baseline.attempt,
+    )
+    if observed.state not in {"active", "terminal"}:
+        raise unsafe(observed.detail or "no unique post-baseline Reviewer Run exists")
+
+    engine.store.update_work_item_metadata(
+        current.id,
+        reviewer_run_baseline=replace(
+            baseline, target_run_id=observed.target_run_id),
+        phase=TaskPhase.REVIEW,
+    )
+    engine.store.update_status(current.id, WorkItemStatus.IN_REVIEW)
+    engine.store.update_work_item_metadata(current.id, decision_required={})
+    return True
+
+
 def _cmd_retry(args) -> int:
     manifest = _load_or_raise(args.manifest)
     node = _require_node(manifest, args.node_key)
@@ -256,6 +346,11 @@ def _cmd_retry(args) -> int:
     if node.work_item_id and engine is not None:
         try:
             current = engine.store.get_work_item(node.work_item_id)
+            delayed_review_recovered = (
+                stage == "review"
+                and _recover_delayed_reviewer_submission(
+                    node, engine, current, args.manifest)
+            )
             handoff = None
             has_delivery = bool(current.artifacts or current.verification)
             if (
@@ -287,12 +382,13 @@ def _cmd_retry(args) -> int:
                     ) or None,
                     target_worker_bounce=current.bounces.worker,
                 )
-            # 复用 DAG stage recovery 原语；清除旧 reviewer 判定并恢复
-            # 指定阶段，同时保留 PR、verification 与历史附件。
-            prepare_stage_recovery(node, engine.store, stage)
-            if handoff is not None:
-                engine.store.update_work_item_metadata(
-                    node.work_item_id, worker_handoff=handoff)
+            if not delayed_review_recovered:
+                # 复用 DAG stage recovery 原语；清除旧 reviewer 判定并恢复
+                # 指定阶段，同时保留 PR、verification 与历史附件。
+                prepare_stage_recovery(node, engine.store, stage)
+                if handoff is not None:
+                    engine.store.update_work_item_metadata(
+                        node.work_item_id, worker_handoff=handoff)
         except WorkItemNotFoundError:
             # mock 的跨进程恢复没有持久化 store；陈旧 work_item_id 与 reconcile
             # 的“平台工单不存在”语义相同。retry 仍保留 ID 以兼容输出契约，

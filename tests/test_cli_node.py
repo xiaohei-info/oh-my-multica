@@ -40,6 +40,108 @@ def _old_worker_handoff(worker="bob"):
     }
 
 
+def _delayed_reviewer_retry_fixture(tmp_path, monkeypatch):
+    """Build the persisted state from a Reviewer Run hidden at first observe."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OMAC_ENGINE", "mock")
+    monkeypatch.setenv("OMAC_WORKSPACE_ID", "ws-1")
+
+    from omac.core.review_convergence import review_subject_digest
+    from omac.core.taskmeta import TaskPhase
+    from omac.engines import EngineConfig, create_engine
+    from omac.engines.models import WorkItemStatus
+
+    engine = create_engine(
+        "mock",
+        EngineConfig("mock", "ws-1", extra={"MOCK_AUTO_COMPLETE": "false"}),
+    )
+    item = engine.store.create_work_item(
+        "ws-1", "t", "d", "b", "bob", reviewer="alice")
+    verification = {
+        "commands": [],
+        "integration_gates": [],
+        "pr_base": "main",
+        "coverage": 100,
+    }
+    verification_ref = {
+        "attachment_id": "attachment-1",
+        "comment_id": "comment-1",
+        "created_at": "2026-08-02T13:30:00Z",
+    }
+    engine.store.update_work_item_metadata(
+        item.id,
+        phase=TaskPhase.REVIEW,
+        artifacts={"pr_url": "https://example.test/pr/1", "head_sha": "head-1"},
+        verification=verification,
+        delivery_identity={
+            "schema": "omac.delivery-identity/v1",
+            "handoff_generation": "handoff-1",
+            "worker": "bob",
+            "agent_id": "agent-bob",
+            "run_id": "run-worker",
+            "pr_url": "https://example.test/pr/1",
+            "pr_head_sha": "head-1",
+            "verification_sha256": "sha-1",
+            "verification_attachment_id": "attachment-1",
+            "verification_comment_id": "comment-1",
+            "verification_uploader_id": "agent-bob",
+            "verification_uploader_type": "agent",
+            "verification_created_at": "2026-08-02T13:30:00Z",
+        },
+    )
+    current = engine.store.get_work_item(item.id)
+    current.verification_ref = verification_ref
+    subject = review_subject_digest(current, 1)
+    reviewer_id = engine.store.resolve_agent_id("alice")
+    report = {
+        "full_review_completed": True,
+        "blockers": ["repair the rejected delivery"],
+        "nits": [],
+    }
+    engine.store.update_work_item_metadata(
+        item.id,
+        review_subject_digest=subject,
+        review_verdict="reject",
+        review_report=report,
+        review_report_source=yaml.safe_dump(report),
+        reviewer_run_baseline={
+            "schema": "omac.reviewer-run-baseline/v1",
+            "subject_digest": subject,
+            "target_reviewer": "alice",
+            "target_agent_id": reviewer_id,
+            "cutoff_created_at": "2026-08-02T13:30:00Z",
+            "generation": "review-hidden-run",
+            "attempt": 1,
+            "baseline_direct_run_ids": ["run-worker"],
+            "target_run_id": None,
+        },
+        decision_required={
+            "schema": "omac.decision-required/v1",
+            "reason_code": "reviewer-run-baseline-unavailable",
+            "kind": "develop",
+            "phase": "review",
+            "gate": "reviewer",
+            "resume_issue_id": item.id,
+            "node_id": "b",
+            "failure_class": "unproven-reviewer-run-causality",
+            "next_action": "omac node retry m.yaml b",
+        },
+    )
+    engine.store.clear_assignment(item.id)
+    engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
+
+    import omac.cli.commands.node as node_mod
+    monkeypatch.setattr(node_mod, "create_engine", lambda *a, **kw: engine)
+    path = _write_manifest(tmp_path, [{
+        "id": "b",
+        "worker": "bob",
+        "reviewer": "alice",
+        "status": "blocked",
+        "work_item_id": item.id,
+    }])
+    return engine, path, item.id, reviewer_id, subject, report
+
+
 # ---------------- show ----------------
 
 def test_show_missing_manifest_is_validation(tmp_path, capsys, monkeypatch):
@@ -201,6 +303,191 @@ def test_retry_review_preserves_sealed_delivery_and_resumes_reviewer(
     assert resumed.delivery_identity.run_id == "run-worker"
     assert resumed.review_verdict is None
     assert resumed.review_subject_digest
+
+
+def test_retry_review_recovers_delayed_visible_run_and_preserves_reject(
+    tmp_path, capsys, monkeypatch,
+):
+    """显式 review retry 只绑定已存在 Run，不清除当前 subject 的报告。"""
+    from omac.core.taskmeta import TaskPhase
+    from omac.engines.models import AgentRunObservation, WorkItemStatus
+    from omac.pipeline.loop import tick
+
+    engine, path, item_id, reviewer_id, subject, report = (
+        _delayed_reviewer_retry_fixture(tmp_path, monkeypatch))
+    candidate = AgentRunObservation(
+        id="ae2e1a1d-65e4-402c-90b5-61e4c8389d9a",
+        kind="direct",
+        status="completed",
+        agent_id=reviewer_id,
+        created_at="2026-08-02T13:34:35Z",
+        updated_at="2026-08-02T13:35:00Z",
+    )
+    original_list_runs = engine.runtime.list_runs
+    original_assign = engine.store.assign_work_item
+    original_wake = engine.runtime.wake
+    monkeypatch.setattr(
+        engine.runtime, "list_runs", lambda _item_id: [candidate])
+    monkeypatch.setattr(
+        engine.store,
+        "assign_work_item",
+        lambda *_args, **_kwargs: pytest.fail(
+            "causal retry must not assign an Agent"),
+    )
+    monkeypatch.setattr(
+        engine.runtime,
+        "wake",
+        lambda *_args, **_kwargs: pytest.fail(
+            "causal retry must not create or rerun an Agent Run"),
+    )
+
+    assert main([
+        "node", "retry", path, "b", "--stage", "review",
+    ]) == exit_codes.OK
+    capsys.readouterr()
+
+    resumed = engine.store.get_work_item(item_id)
+    assert load_manifest(path).nodes["b"].status == "in_review"
+    assert resumed.status is WorkItemStatus.IN_REVIEW
+    assert resumed.phase is TaskPhase.REVIEW
+    assert resumed.review_subject_digest == subject
+    assert resumed.review_verdict == "reject"
+    assert resumed.review_report == report
+    assert resumed.review_report_ref is not None
+    assert not resumed.decision_required
+    assert resumed.reviewer_run_baseline.target_run_id == candidate.id
+
+    # A fresh controller process consumes the already submitted reject rather
+    # than dispatching another Reviewer or replaying the Worker delivery.
+    monkeypatch.setattr(engine.runtime, "list_runs", original_list_runs)
+    monkeypatch.setattr(engine.store, "assign_work_item", original_assign)
+    monkeypatch.setattr(engine.runtime, "wake", original_wake)
+    manifest = load_manifest(path)
+    tick(engine.store, engine.runtime, manifest, path, max_parallel=1)
+    consumed = engine.store.get_work_item(item_id)
+    assert manifest.nodes["b"].status == "in_progress"
+    assert consumed.bounces.review == 1
+    assert consumed.phase is TaskPhase.AUTHORING
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "missing", "ambiguous", "foreign", "stale", "missing-time",
+        "subject-mismatch", "identity-mismatch",
+    ],
+)
+def test_retry_review_delayed_run_recovery_fails_closed(
+    tmp_path, capsys, monkeypatch, case,
+):
+    """不能唯一证明 Run 因果关系时保留 decision，且不产生平台执行副作用。"""
+    from dataclasses import replace
+
+    from omac.engines.models import AgentRunObservation, WorkItemStatus
+
+    engine, path, item_id, reviewer_id, subject, report = (
+        _delayed_reviewer_retry_fixture(tmp_path, monkeypatch))
+    matching = AgentRunObservation(
+        id="run-reviewer-current",
+        kind="direct",
+        status="completed",
+        agent_id=reviewer_id,
+        created_at="2026-08-02T13:34:35Z",
+    )
+    runs = {
+        "missing": [],
+        "ambiguous": [
+            matching,
+            replace(matching, id="run-reviewer-second", created_at="2026-08-02T13:34:36Z"),
+        ],
+        "foreign": [replace(matching, agent_id="agent-foreign")],
+        "stale": [replace(matching, created_at="2026-08-02T13:29:59Z")],
+        "missing-time": [replace(matching, created_at=None)],
+        "subject-mismatch": [matching],
+        "identity-mismatch": [matching],
+    }[case]
+    if case == "subject-mismatch":
+        current = engine.store.get_work_item(item_id)
+        engine.store.update_work_item_metadata(
+            item_id,
+            reviewer_run_baseline=replace(
+                current.reviewer_run_baseline,
+                subject_digest="different-subject",
+            ),
+        )
+    if case == "identity-mismatch":
+        current = engine.store.get_work_item(item_id)
+        engine.store.update_work_item_metadata(
+            item_id,
+            delivery_identity=replace(
+                current.delivery_identity,
+                verification_created_at="2026-08-02T13:31:00Z",
+            ),
+        )
+    before = engine.store.get_work_item(item_id)
+    decision = dict(before.decision_required)
+    baseline = before.reviewer_run_baseline
+    assignments = len(engine.store.assign_log)
+    monkeypatch.setattr(engine.runtime, "list_runs", lambda _item_id: list(runs))
+    monkeypatch.setattr(
+        engine.store,
+        "assign_work_item",
+        lambda *_args, **_kwargs: pytest.fail(
+            "failed-closed recovery must not assign"),
+    )
+    monkeypatch.setattr(
+        engine.runtime,
+        "wake",
+        lambda *_args, **_kwargs: pytest.fail(
+            "failed-closed recovery must not wake"),
+    )
+
+    assert main([
+        "node", "retry", path, "b", "--stage", "review",
+    ]) == exit_codes.VALIDATION
+    capsys.readouterr()
+
+    current = engine.store.get_work_item(item_id)
+    assert load_manifest(path).nodes["b"].status == "blocked"
+    assert current.status is WorkItemStatus.BLOCKED
+    assert current.decision_required == decision
+    assert current.reviewer_run_baseline == baseline
+    assert current.review_subject_digest == subject
+    assert current.review_verdict == "reject"
+    assert current.review_report == report
+    assert len(engine.store.assign_log) == assignments
+
+
+def test_retry_review_without_submitted_report_keeps_normal_retry_semantics(
+    tmp_path, capsys, monkeypatch,
+):
+    """无结构化报告时仍是普通 review retry，不尝试绑定历史 Run。"""
+    from omac.core.taskmeta import TaskPhase
+    from omac.engines.models import WorkItemStatus
+
+    engine, path, item_id, _reviewer_id, _subject, _report = (
+        _delayed_reviewer_retry_fixture(tmp_path, monkeypatch))
+    current = engine.store.get_work_item(item_id)
+    current.review_report = None
+    current.review_report_ref = None
+    monkeypatch.setattr(
+        engine.runtime,
+        "list_runs",
+        lambda _item_id: pytest.fail(
+            "ordinary review retry must not inspect delayed Run recovery"),
+    )
+
+    assert main([
+        "node", "retry", path, "b", "--stage", "review",
+    ]) == exit_codes.OK
+    capsys.readouterr()
+
+    resumed = engine.store.get_work_item(item_id)
+    assert resumed.status is WorkItemStatus.IN_REVIEW
+    assert resumed.phase is TaskPhase.REVIEW
+    assert resumed.review_verdict is None
+    assert resumed.review_report is None
+    assert resumed.reviewer_run_baseline is None
 
 
 def test_retry_explicitly_clears_confirmed_merge_closure(
