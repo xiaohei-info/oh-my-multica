@@ -72,7 +72,11 @@ MULTICA_PR_VIEW_FIELDS = (
 _MULTICA_READ_MAX_ATTEMPTS = 3
 _MULTICA_READ_INITIAL_DELAY = 1.0
 _ATTACHMENT_BODY_CACHE_CAPACITY = 64
-_ACTIVE_RUN_STATUSES = {"queued", "pending", "running", "dispatching"}
+# Current Multica task states plus legacy aliases still returned by older APIs.
+_ACTIVE_RUN_STATUSES = {
+    "queued", "pending", "dispatched", "running", "dispatching",
+    "waiting_local_directory", "deferred",
+}
 _RERUNNABLE_DIRECT_RUN_STATUSES = {"failed", "cancelled", "completed"}
 _KNOWN_RUN_STATUSES = _ACTIVE_RUN_STATUSES | _RERUNNABLE_DIRECT_RUN_STATUSES
 _KNOWN_WORK_ITEM_METADATA_KEYS = {
@@ -1852,7 +1856,8 @@ class MulticaRuntime(AgentRuntime):
                 raise PlatformError("Malformed Multica run payload: missing run id")
             if not isinstance(status, str) or status.lower() not in _KNOWN_RUN_STATUSES:
                 raise PlatformError(
-                    f"Malformed Multica run payload: unknown status for {run_id}")
+                    f"Malformed Multica run payload: unknown status {status!r} "
+                    f"for {run_id}")
             validated.append(run)
         return validated
 
