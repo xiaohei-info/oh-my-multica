@@ -351,6 +351,22 @@ def _observe_direct_run_attempt(
     return _DirectRunAttempt("terminal", target_run_id, terminal)
 
 
+def _fresh_reviewer_rerun_target(
+    runs: List[AgentRunObservation],
+    observed: _DirectRunAttempt,
+) -> tuple[AgentRunObservation | None, str | None]:
+    """Return the one formally rerun Reviewer target shared by all recovery paths."""
+    if observed.state not in {"active", "terminal"}:
+        return None, observed.detail or "no uniquely observable target Run"
+    target = next(
+        (run for run in runs if run.id == observed.target_run_id),
+        None,
+    )
+    if target is None or target.trigger_kind != "rerun":
+        return None, "post-baseline reviewer Run is not a fresh rerun"
+    return target, None
+
+
 def _resolved_worker_handoff_dispatch(
     result: _WorkerHandoffResult,
 ) -> _WorkerHandoffResult | None:
@@ -1217,13 +1233,10 @@ def _dispatch_reviewer_for_current_subject(
                 attempt=baseline.attempt,
             )
             if observed.state in {"active", "terminal"}:
-                target = next(
-                    (run for run in runs if run.id == observed.target_run_id),
-                    None,
-                )
-                if target is None or target.trigger_kind != "rerun":
-                    raise _ReviewerDispatchUnresolved(
-                        "post-baseline reviewer Run is not a fresh rerun")
+                _target, target_error = _fresh_reviewer_rerun_target(
+                    runs, observed)
+                if target_error is not None:
+                    raise _ReviewerDispatchUnresolved(target_error)
                 store.update_work_item_metadata(
                     item_id, reviewer_run_baseline=replace(
                         baseline, target_run_id=observed.target_run_id))

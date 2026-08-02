@@ -322,6 +322,7 @@ def test_retry_review_recovers_delayed_visible_run_and_preserves_reject(
         agent_id=reviewer_id,
         created_at="2026-08-02T13:34:35Z",
         updated_at="2026-08-02T13:35:00Z",
+        trigger_kind="rerun",
     )
     original_list_runs = engine.runtime.list_runs
     original_assign = engine.store.assign_work_item
@@ -374,7 +375,9 @@ def test_retry_review_recovers_delayed_visible_run_and_preserves_reject(
     "case",
     [
         "missing", "ambiguous", "foreign", "stale", "missing-time",
-        "subject-mismatch", "identity-mismatch",
+        "comment-trigger", "manual-trigger", "subject-mismatch",
+        "identity-mismatch", "pr-head-drift", "verification-drift",
+        "contract-drift",
     ],
 )
 def test_retry_review_delayed_run_recovery_fails_closed(
@@ -393,6 +396,7 @@ def test_retry_review_delayed_run_recovery_fails_closed(
         status="completed",
         agent_id=reviewer_id,
         created_at="2026-08-02T13:34:35Z",
+        trigger_kind="rerun",
     )
     runs = {
         "missing": [],
@@ -403,8 +407,13 @@ def test_retry_review_delayed_run_recovery_fails_closed(
         "foreign": [replace(matching, agent_id="agent-foreign")],
         "stale": [replace(matching, created_at="2026-08-02T13:29:59Z")],
         "missing-time": [replace(matching, created_at=None)],
+        "comment-trigger": [replace(matching, trigger_kind="comment")],
+        "manual-trigger": [replace(matching, trigger_kind="manual")],
         "subject-mismatch": [matching],
         "identity-mismatch": [matching],
+        "pr-head-drift": [matching],
+        "verification-drift": [matching],
+        "contract-drift": [matching],
     }[case]
     if case == "subject-mismatch":
         current = engine.store.get_work_item(item_id)
@@ -424,6 +433,39 @@ def test_retry_review_delayed_run_recovery_fails_closed(
                 verification_created_at="2026-08-02T13:31:00Z",
             ),
         )
+    if case == "pr-head-drift":
+        current = engine.store.get_work_item(item_id)
+        engine.store.update_work_item_metadata(
+            item_id,
+            artifacts={
+                "pr_url": "https://example.test/pr/1",
+                "head_sha": "head-2",
+            },
+            delivery_identity=replace(
+                current.delivery_identity,
+                pr_head_sha="head-2",
+            ),
+        )
+    if case == "verification-drift":
+        current = engine.store.get_work_item(item_id)
+        changed_verification = dict(current.verification)
+        changed_verification["coverage"] = 99
+        engine.store.update_work_item_metadata(
+            item_id,
+            verification=changed_verification,
+            delivery_identity=replace(
+                current.delivery_identity,
+                verification_sha256="sha-2",
+            ),
+        )
+    if case == "contract-drift":
+        manifest = load_manifest(path)
+        manifest.nodes["b"].contract = Contract(
+            objective="changed contract",
+            acceptance=["changed contract works"],
+            verification_commands=["pytest -q"],
+        )
+        save_manifest(manifest, path)
     before = engine.store.get_work_item(item_id)
     decision = dict(before.decision_required)
     baseline = before.reviewer_run_baseline
@@ -456,6 +498,109 @@ def test_retry_review_delayed_run_recovery_fails_closed(
     assert current.review_verdict == "reject"
     assert current.review_report == report
     assert len(engine.store.assign_log) == assignments
+
+
+@pytest.mark.parametrize(
+    "checkpoint",
+    ["baseline", "status", "manifest", "decision"],
+)
+def test_retry_review_delayed_run_recovery_is_restart_safe(
+    tmp_path, capsys, monkeypatch, checkpoint,
+):
+    """每个持久化断点崩溃后，重复 retry 只补齐同一恢复事实。"""
+    from omac.core.taskmeta import TaskPhase
+    from omac.engines.models import AgentRunObservation, WorkItemStatus
+
+    engine, path, item_id, reviewer_id, subject, report = (
+        _delayed_reviewer_retry_fixture(tmp_path, monkeypatch))
+    candidate = AgentRunObservation(
+        id="run-reviewer-delayed",
+        kind="direct",
+        status="completed",
+        agent_id=reviewer_id,
+        created_at="2026-08-02T13:34:35Z",
+        updated_at="2026-08-02T13:35:00Z",
+        trigger_kind="rerun",
+    )
+    monkeypatch.setattr(
+        engine.runtime, "list_runs", lambda _item_id: [candidate])
+    monkeypatch.setattr(
+        engine.store,
+        "assign_work_item",
+        lambda *_args, **_kwargs: pytest.fail(
+            "restart-safe recovery must not assign"),
+    )
+    monkeypatch.setattr(
+        engine.runtime,
+        "wake",
+        lambda *_args, **_kwargs: pytest.fail(
+            "restart-safe recovery must not wake"),
+    )
+
+    import omac.cli.commands.node as node_mod
+
+    original_update_metadata = engine.store.update_work_item_metadata
+    original_update_status = engine.store.update_status
+    original_save_manifest = node_mod.save_manifest
+    crashed = False
+
+    def crash_after(name):
+        nonlocal crashed
+        if checkpoint == name and not crashed:
+            crashed = True
+            raise RuntimeError(f"crash after {name}")
+
+    def update_metadata(target_item_id, **metadata):
+        result = original_update_metadata(target_item_id, **metadata)
+        if "reviewer_run_baseline" in metadata:
+            crash_after("baseline")
+        if metadata.get("decision_required") == {}:
+            crash_after("decision")
+        return result
+
+    def update_status(target_item_id, status):
+        result = original_update_status(target_item_id, status)
+        if status is WorkItemStatus.IN_REVIEW:
+            crash_after("status")
+        return result
+
+    def save(manifest, manifest_path):
+        result = original_save_manifest(manifest, manifest_path)
+        crash_after("manifest")
+        return result
+
+    monkeypatch.setattr(engine.store, "update_work_item_metadata", update_metadata)
+    monkeypatch.setattr(engine.store, "update_status", update_status)
+    monkeypatch.setattr(node_mod, "save_manifest", save)
+
+    with pytest.raises(RuntimeError, match=f"crash after {checkpoint}"):
+        main(["node", "retry", path, "b", "--stage", "review"])
+
+    monkeypatch.setattr(
+        engine.store, "update_work_item_metadata", original_update_metadata)
+    monkeypatch.setattr(engine.store, "update_status", original_update_status)
+    monkeypatch.setattr(node_mod, "save_manifest", original_save_manifest)
+
+    assert main([
+        "node", "retry", path, "b", "--stage", "review",
+    ]) == exit_codes.OK
+    capsys.readouterr()
+    # A third identical retry is also a no-op recovery, not a normal reset.
+    assert main([
+        "node", "retry", path, "b", "--stage", "review",
+    ]) == exit_codes.OK
+    capsys.readouterr()
+
+    recovered = engine.store.get_work_item(item_id)
+    assert load_manifest(path).nodes["b"].status == "in_review"
+    assert recovered.status is WorkItemStatus.IN_REVIEW
+    assert recovered.phase is TaskPhase.REVIEW
+    assert recovered.review_subject_digest == subject
+    assert recovered.review_verdict == "reject"
+    assert recovered.review_report == report
+    assert recovered.review_report_ref is not None
+    assert not recovered.decision_required
+    assert recovered.reviewer_run_baseline.target_run_id == candidate.id
 
 
 def test_retry_review_without_submitted_report_keeps_normal_retry_semantics(
