@@ -97,18 +97,28 @@ def _validate_superseded_amendment(engine: Any, item: Any) -> None:
         item.status == WorkItemStatus.BLOCKED
         and isinstance(decision, dict)
         and decision.get("schema") == DECISION_REQUIRED_SCHEMA
+        and isinstance(decision.get("reason_code"), str)
+        and bool(decision["reason_code"].strip())
+        and decision.get("kind") == TaskKind.AMENDMENT.value
+        and decision.get("phase") == item.phase.value
+        and decision.get("resume_issue_id") == item.id
     )
     if not (pass_confirmation or blocked_decision):
         raise ValidationError(
             "--supersedes-issue-id must reference a terminal amendment: "
             "Reviewer-pass human confirmation or blocked decision-required")
-    active_runs = [
-        run for run in engine.runtime.list_runs(item.id) if run.active
-    ]
+    runs = engine.runtime.list_runs(item.id)
+    active_runs = [run for run in runs if run.active]
     if active_runs:
         raise ValidationError(
             "--supersedes-issue-id amendment still has an active Agent Run: "
             + ", ".join(run.id for run in active_runs))
+    unknown_runs = [run for run in runs if not run.terminal]
+    if unknown_runs:
+        raise ValidationError(
+            "--supersedes-issue-id amendment Runs are not explicitly terminal: "
+            + ", ".join(
+                f"{run.id}={run.status or '(missing)'}" for run in unknown_runs))
 
 
 def _read_document_bytes(path: Path) -> bytes:

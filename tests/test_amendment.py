@@ -41,7 +41,9 @@ from omac.cli import exit_codes
 from omac.cli.main import main
 from omac.engines import create_engine
 from omac.engines.mock import MockStore
-from omac.engines.models import EngineConfig, WorkItem, WorkItemStatus
+from omac.engines.models import (
+    AgentRunObservation, EngineConfig, WorkItem, WorkItemStatus,
+)
 from omac.errors import NeedsDecision, ValidationError
 from omac.pipeline import loop
 from omac.pipeline.delivery import run_merge_delivery
@@ -1930,6 +1932,50 @@ def test_new_attempt_rejects_blocked_attempt_with_active_run(tmp_path):
             blocked_nodes=["bootstrap"], orchestrator="alice",
             reviewers=["bob"], max_revisions=1, new_attempt=True,
             supersedes_issue_id=old.id)
+
+
+def test_new_attempt_rejects_incomplete_decision_required(tmp_path):
+    engine = _engine()
+    old = engine.store.create_work_item(
+        "ws", "failed amendment", "authority conflict", "amend-old", "alice",
+        kind=TaskKind.AMENDMENT)
+    engine.store.update_work_item_metadata(
+        old.id,
+        phase=TaskPhase.AUTHORING,
+        decision_required={"schema": DECISION_REQUIRED_SCHEMA},
+    )
+    engine.store.update_status(old.id, WorkItemStatus.BLOCKED)
+
+    with pytest.raises(ValidationError, match="terminal amendment"):
+        amendment_pipeline._validate_superseded_amendment(
+            engine, engine.store.get_work_item(old.id))
+
+
+def test_new_attempt_rejects_unknown_run_status(tmp_path, monkeypatch):
+    engine = _engine()
+    old = engine.store.create_work_item(
+        "ws", "failed amendment", "authority conflict", "amend-old", "alice",
+        kind=TaskKind.AMENDMENT)
+    engine.store.update_work_item_metadata(
+        old.id,
+        phase=TaskPhase.AUTHORING,
+        decision_required={
+            "schema": DECISION_REQUIRED_SCHEMA,
+            "reason_code": "completed-without-submit",
+            "kind": "amendment",
+            "phase": "authoring",
+            "resume_issue_id": old.id,
+        },
+    )
+    engine.store.update_status(old.id, WorkItemStatus.BLOCKED)
+    monkeypatch.setattr(engine.runtime, "list_runs", lambda _item_id: [
+        AgentRunObservation(
+            id="run-unknown", kind="direct", status="mystery"),
+    ])
+
+    with pytest.raises(ValidationError, match="explicitly terminal"):
+        amendment_pipeline._validate_superseded_amendment(
+            engine, engine.store.get_work_item(old.id))
 
 
 def test_different_report_digest_creates_different_attempt_identity(
