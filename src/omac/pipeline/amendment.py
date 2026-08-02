@@ -18,7 +18,7 @@ from ..core.amendment import (
 )
 from ..core.manifest import Contract, load_manifest
 from ..core.repository_files import revision_directory_files
-from ..core.taskmeta import TaskKind, TaskPhase
+from ..core.taskmeta import DECISION_REQUIRED_SCHEMA, TaskKind, TaskPhase
 from ..engines.models import WorkItemStatus
 from ..errors import NeedsDecision, PlatformError, ValidationError
 from ..i18n import ui
@@ -85,6 +85,30 @@ def _attempt_context(
         "supersedes_issue_id": superseded_issue.id,
         "supersedes_issue_key": superseded_issue.identifier or "",
     }
+
+
+def _validate_superseded_amendment(engine: Any, item: Any) -> None:
+    pass_confirmation = (
+        item.phase == TaskPhase.CONFIRMATION
+        and item.review_verdict == "pass"
+    )
+    decision = getattr(item, "decision_required", None)
+    blocked_decision = (
+        item.status == WorkItemStatus.BLOCKED
+        and isinstance(decision, dict)
+        and decision.get("schema") == DECISION_REQUIRED_SCHEMA
+    )
+    if not (pass_confirmation or blocked_decision):
+        raise ValidationError(
+            "--supersedes-issue-id must reference a terminal amendment: "
+            "Reviewer-pass human confirmation or blocked decision-required")
+    active_runs = [
+        run for run in engine.runtime.list_runs(item.id) if run.active
+    ]
+    if active_runs:
+        raise ValidationError(
+            "--supersedes-issue-id amendment still has an active Agent Run: "
+            + ", ".join(run.id for run in active_runs))
 
 
 def _read_document_bytes(path: Path) -> bytes:
@@ -409,13 +433,7 @@ def propose_amendment(
         superseded = engine.store.get_work_item(supersedes_issue_id)
         if superseded.kind != TaskKind.AMENDMENT:
             raise ValidationError("--supersedes-issue-id must reference an amendment issue")
-        if (
-            superseded.phase != TaskPhase.CONFIRMATION
-            or superseded.review_verdict != "pass"
-        ):
-            raise ValidationError(
-                "--supersedes-issue-id must reference a Reviewer-pass amendment "
-                "in human confirmation")
+        _validate_superseded_amendment(engine, superseded)
         attempt = _attempt_context(
             manifest_path,
             report=report,

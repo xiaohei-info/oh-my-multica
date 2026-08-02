@@ -34,7 +34,8 @@ from omac.core.manifest import (
 from omac.core.review_convergence import review_subject_digest
 from omac.core.stage_recovery import prepare_stage_recovery
 from omac.core.taskmeta import (
-    DELIVERY_IDENTITY_SCHEMA, DeliveryIdentity, TaskKind, TaskPhase,
+    DECISION_REQUIRED_SCHEMA, DELIVERY_IDENTITY_SCHEMA, DeliveryIdentity,
+    TaskKind, TaskPhase,
 )
 from omac.cli import exit_codes
 from omac.cli.main import main
@@ -1822,7 +1823,7 @@ def test_new_attempt_is_auditable_idempotent_and_preserves_old_issue(
     assert old_after.review_verdict == old_before.review_verdict
 
 
-def test_new_attempt_requires_superseded_human_confirmation(tmp_path):
+def test_new_attempt_rejects_non_terminal_superseded_amendment(tmp_path):
     path = _manifest(tmp_path)
     report = tmp_path / "report.md"
     report.write_text("new attempt")
@@ -1834,7 +1835,96 @@ def test_new_attempt_requires_superseded_human_confirmation(tmp_path):
         "ws", "old amendment", "still authoring", "amend-old", "alice",
         kind=TaskKind.AMENDMENT)
 
-    with pytest.raises(ValidationError, match="human confirmation"):
+    with pytest.raises(ValidationError, match="terminal"):
+        amendment_pipeline.propose_amendment(
+            engine, str(path), report_file=str(report), docs=[str(docs)],
+            blocked_nodes=["bootstrap"], orchestrator="alice",
+            reviewers=["bob"], max_revisions=1, new_attempt=True,
+            supersedes_issue_id=old.id)
+
+
+def test_new_attempt_allows_blocked_decision_required_without_active_run(
+        tmp_path, monkeypatch):
+    path = _manifest(tmp_path)
+    report = tmp_path / "report.md"
+    report.write_text("replacement attempt")
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "design.md").write_text("authoritative design")
+    engine = _engine()
+    old = engine.store.create_work_item(
+        "ws", "failed amendment", "authority conflict", "amend-old", "alice",
+        kind=TaskKind.AMENDMENT)
+    old.identifier = "AITEAM-843"
+    engine.store.update_work_item_metadata(
+        old.id,
+        phase=TaskPhase.AUTHORING,
+        decision_required={
+            "schema": DECISION_REQUIRED_SCHEMA,
+            "reason_code": "completed-without-submit",
+            "kind": "amendment",
+            "phase": "authoring",
+            "resume_issue_id": old.id,
+        },
+    )
+    engine.store.update_status(old.id, WorkItemStatus.BLOCKED)
+
+    def fake_run_task(_engine, _kind, payload, _assignee, **kwargs):
+        issue = engine.store.create_work_item(
+            "ws", payload["title"], payload["description"], kwargs["dag_key"],
+            "alice", reviewer="bob", kind=TaskKind.AMENDMENT)
+        engine.store.update_work_item_metadata(
+            issue.id,
+            amendment_attempt=kwargs["amendment_attempt"],
+            source_refs=kwargs["source_refs"],
+            deliverable=_proposal(_contract_update()),
+            review_verdict="pass",
+            phase=TaskPhase.CONFIRMATION,
+        )
+        engine.store.update_status(issue.id, WorkItemStatus.IN_REVIEW)
+        return {"item_id": issue.id, "delivery": {
+            "amendment": _proposal(_contract_update())}}
+
+    monkeypatch.setattr(amendment_pipeline, "run_task", fake_run_task)
+
+    result = amendment_pipeline.propose_amendment(
+        engine, str(path), report_file=str(report), docs=[str(docs)],
+        blocked_nodes=["bootstrap"], orchestrator="alice",
+        reviewers=["bob"], max_revisions=1, new_attempt=True,
+        supersedes_issue_id=old.id)
+
+    assert result["issue_id"] != old.id
+    old_after = engine.store.get_work_item(old.id)
+    assert old_after.status == WorkItemStatus.BLOCKED
+    assert old_after.decision_required["reason_code"] == "completed-without-submit"
+
+
+def test_new_attempt_rejects_blocked_attempt_with_active_run(tmp_path):
+    path = _manifest(tmp_path)
+    report = tmp_path / "report.md"
+    report.write_text("replacement attempt")
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "design.md").write_text("authoritative design")
+    engine = _engine()
+    old = engine.store.create_work_item(
+        "ws", "failed amendment", "authority conflict", "amend-old", "alice",
+        kind=TaskKind.AMENDMENT)
+    engine.store.update_work_item_metadata(
+        old.id,
+        phase=TaskPhase.AUTHORING,
+        decision_required={
+            "schema": DECISION_REQUIRED_SCHEMA,
+            "reason_code": "completed-without-submit",
+            "kind": "amendment",
+            "phase": "authoring",
+            "resume_issue_id": old.id,
+        },
+    )
+    engine.store.update_status(old.id, WorkItemStatus.BLOCKED)
+    engine.store.assign_work_item(old.id, "alice", "worker")
+
+    with pytest.raises(ValidationError, match="active Agent Run"):
         amendment_pipeline.propose_amendment(
             engine, str(path), report_file=str(report), docs=[str(docs)],
             blocked_nodes=["bootstrap"], orchestrator="alice",
