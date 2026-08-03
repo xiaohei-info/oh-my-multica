@@ -352,11 +352,11 @@ def _observe_direct_run_attempt(
     return _DirectRunAttempt("terminal", target_run_id, terminal)
 
 
-def _formal_reviewer_dispatch_target(
+def _formal_dispatch_target(
     runs: List[AgentRunObservation],
     observed: _DirectRunAttempt,
 ) -> tuple[AgentRunObservation | None, str | None]:
-    """Return the one formal Reviewer dispatch shared by recovery paths."""
+    """Return the one formal assignment/rerun dispatch shared by recovery paths."""
     if observed.state not in {"active", "terminal"}:
         return None, observed.detail or "no uniquely observable target Run"
     target = next(
@@ -364,7 +364,7 @@ def _formal_reviewer_dispatch_target(
         None,
     )
     if target is None or target.trigger_kind not in {"issue_assignment", "rerun"}:
-        return None, "post-baseline reviewer Run is not a formal reviewer dispatch"
+        return None, "post-baseline Run is not a formal assignment/rerun dispatch"
     return target, None
 
 
@@ -1293,7 +1293,7 @@ def _dispatch_reviewer_for_current_subject(
                 attempt=baseline.attempt,
             )
             if observed.state in {"active", "terminal"}:
-                _target, target_error = _formal_reviewer_dispatch_target(
+                _target, target_error = _formal_dispatch_target(
                     runs, observed)
                 if target_error is not None:
                     raise _ReviewerDispatchUnresolved(target_error)
@@ -3438,6 +3438,7 @@ def _active_formal_run_nodes(
         if item.decision_required:
             continue
         attempt = None
+        runs = None
         if item.phase == TaskPhase.AUTHORING:
             intent = item.worker_handoff
             if (
@@ -3445,8 +3446,9 @@ def _active_formal_run_nodes(
                 and intent.is_causally_bound()
                 and intent.target_worker == node.worker
             ):
+                runs = runtime.list_runs(item.id)
                 attempt = _observe_direct_run_attempt(
-                    runtime.list_runs(item.id),
+                    runs,
                     intent.target_agent_id,
                     baseline_direct_run_ids=intent.baseline_direct_run_ids,
                     target_run_id=intent.target_run_id,
@@ -3459,20 +3461,25 @@ def _active_formal_run_nodes(
                 and baseline.subject_digest == item.review_subject_digest
                 and baseline.target_reviewer == node.reviewer
             ):
+                runs = runtime.list_runs(item.id)
                 attempt = _observe_direct_run_attempt(
-                    runtime.list_runs(item.id),
+                    runs,
                     baseline.target_agent_id,
                     baseline_direct_run_ids=baseline.baseline_direct_run_ids,
                     cutoff_created_at=baseline.cutoff_created_at,
                     target_run_id=baseline.target_run_id,
                     attempt=baseline.attempt,
                 )
-        if attempt is not None and attempt.state == "active":
+        if attempt is None or runs is None or attempt.state != "active":
+            continue
+        _target, target_error = _formal_dispatch_target(runs, attempt)
+        if target_error is None:
             active.append(key)
     return active
 
 
 def _restore_active_formal_run_stages(
+    store: WorkItemStore,
     runtime: AgentRuntime,
     manifest: Manifest,
     manifest_path: str,
@@ -3480,17 +3487,26 @@ def _restore_active_formal_run_stages(
 ) -> None:
     """Restore blocked manifest projections while their formal Run is active."""
     active = _active_formal_run_nodes(runtime, manifest, observations)
-    changed = False
+    restored: Dict[str, tuple[str, WorkItemControlProjection]] = {}
     for key in active:
         node = manifest.nodes[key]
         if node.status not in FAILED_STATUSES:
             continue
-        item = observations[key].work_item
+        projection = observations[key]
+        item = projection.work_item
         status = (
             "in_review" if item.phase == TaskPhase.REVIEW else "in_progress")
+        collect_node = replace(node, status=status)
+        plan = _build_work_item_hydration_plan(collect_node, projection)
+        restored[key] = (
+            status,
+            _hydrate_work_item_payloads(store, projection, plan),
+        )
+
+    for key, (status, projection) in restored.items():
+        observations[key] = projection
         set_node(manifest, key, status=status)
-        changed = True
-    if changed:
+    if restored:
         save_manifest(manifest, manifest_path)
 
 
@@ -3522,7 +3538,7 @@ def tick(
     # causally bound stage. Restore only that stage; unrelated decisions remain
     # blocked and no Agent is assigned or woken here.
     _restore_active_formal_run_stages(
-        runtime, manifest, manifest_path, reconcile_result.observations)
+        store, runtime, manifest, manifest_path, reconcile_result.observations)
 
     # 2. SYNC: 回收进行中节点的结果
     new_failures = collect_results(store, runtime, manifest, manifest_path,
