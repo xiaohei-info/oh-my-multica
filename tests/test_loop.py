@@ -24,6 +24,7 @@ from omac.core.manifest import (
     ProducedArtifact,
     load_manifest,
     save_manifest,
+    set_node,
 )
 from omac.core.review_convergence import (
     REVIEW_PROTOCOL_VERSION, build_review_obligations, open_blockers,
@@ -43,6 +44,7 @@ from omac.engines.models import (
     EngineConfig,
     RuntimeCapabilities,
     WorkItemControlProjection,
+    WorkItemPayload,
     WorkItemStatus,
 )
 from omac.pipeline import loop
@@ -4295,6 +4297,45 @@ class TestReviewerRejectBoundedFallback:
         eng.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
         return intent, source
 
+    @staticmethod
+    def _stalled_review_ledger(cycle_count=3):
+        blocker_id = "BLK-core"
+        return {
+            "schema": "omac.review-ledger/v1",
+            "cycles": [
+                {
+                    "round": round_index,
+                    "subject_digest": f"subject-{round_index}",
+                    "report_digest": f"report-{round_index}",
+                    "verdict": "reject",
+                    "new_count": 1 if round_index == 1 else 0,
+                    "fixed_count": 0,
+                    "regressed_count": 0,
+                    "unchanged_count": 0 if round_index == 1 else 1,
+                    "open_count": 1,
+                    "prior_open_blocker_ids": (
+                        [] if round_index == 1 else [blocker_id]
+                    ),
+                    "open_blocker_ids": [blocker_id],
+                    "reported_blocker_ids": [blocker_id],
+                }
+                for round_index in range(1, cycle_count + 1)
+            ],
+            "blockers": [{
+                "blocker_id": blocker_id,
+                "root_cause_key": "core-acceptance",
+                "obligation_id": "dimension:structure",
+                "summary": "core contract is incomplete",
+                "evidence": "the same invariant still fails",
+                "required_fix": "close the contract root",
+                "status": "open",
+                "classification": "unchanged",
+                "first_seen_round": 1,
+                "last_seen_round": cycle_count,
+                "seen_count": cycle_count,
+            }],
+        }
+
     @pytest.mark.parametrize("terminal_status", ["completed", "cancelled"])
     def test_terminal_worker_handoff_without_submit_uses_bounded_worker_retry(
         self, tmp_path, monkeypatch, terminal_status,
@@ -4664,46 +4705,17 @@ class TestReviewerRejectBoundedFallback:
     def test_non_converging_review_blocks_before_another_worker_handoff(
         self, tmp_path, monkeypatch,
     ):
-        """Semantic non-convergence must request decomposition, not bounce 5."""
+        """Two failed reworks stop at cycle 3, before another handoff."""
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
         path = str(tmp_path / "m.yaml")
         manifest, eng, item = self._setup_reject_node(eng, path)
         current = eng.store.get_work_item(item.id)
-        current.review_ledger = {
-            "schema": "omac.review-ledger/v1",
-            "cycles": [
-                {
-                    "round": round_index,
-                    "subject_digest": f"subject-{round_index}",
-                    "report_digest": f"report-{round_index}",
-                    "verdict": "reject",
-                    "new_count": 0,
-                    "fixed_count": 0,
-                    "regressed_count": 0,
-                    "unchanged_count": 1,
-                    "open_count": open_count,
-                    "prior_open_blocker_ids": ["BLK-core"],
-                    "open_blocker_ids": ["BLK-core"],
-                    "reported_blocker_ids": ["BLK-core"],
-                }
-                for round_index, open_count in enumerate((4, 3, 1, 1), start=1)
-            ],
-            "blockers": [{
-                "blocker_id": "BLK-core",
-                "root_cause_key": "core-acceptance",
-                "obligation_id": "dimension:structure",
-                "summary": "core contract is incomplete",
-                "evidence": "the same invariant still fails",
-                "required_fix": "close the contract root",
-                "status": "open",
-                "classification": "unchanged",
-                "first_seen_round": 1,
-                "last_seen_round": 4,
-                "seen_count": 4,
-            }],
-        }
+        current.review_ledger = self._stalled_review_ledger(2)
         eng.store.update_work_item_metadata(
-            item.id, review_ledger=current.review_ledger)
+            item.id, review_ledger=current.review_ledger, review_bounce=2)
+        current = eng.store.get_work_item(item.id)
+        eng.store.prepare_review_cycle(
+            item.id, review_subject_digest(current, 3))
         current = eng.store.get_work_item(item.id)
         report = _review_report(current, "reject")
         report["prior_blocker_results"][0]["status"] = "unchanged"
@@ -4713,7 +4725,7 @@ class TestReviewerRejectBoundedFallback:
         submit_work(
             eng.store, item.id, verdict="reject", report_file=str(report_path))
         submitted = eng.store.get_work_item(item.id)
-        assert len(submitted.review_ledger["cycles"]) == 5
+        assert len(submitted.review_ledger["cycles"]) == 3
         convergence = review_convergence_decision(submitted.review_ledger)
         assert convergence is not None, submitted.review_ledger
         assert convergence[
@@ -4739,11 +4751,122 @@ class TestReviewerRejectBoundedFallback:
         assert result.state == "needs_decision"
         assert manifest.nodes["a"].status == "blocked"
         assert blocked.status is WorkItemStatus.BLOCKED
-        assert blocked.bounces.review == 0
+        assert blocked.bounces.review == 2
         assert blocked.decision_required["reason_code"] == (
             "review-convergence-stalled")
         assert blocked.decision_required["recommended_action"] == "dag-amendment"
-        assert blocked.decision_required["convergence"]["cycle_count"] == 5
+        assert blocked.decision_required["convergence"]["cycle_count"] == 3
+
+    @pytest.mark.parametrize("terminal_observed", [False, True])
+    def test_restart_consumes_convergence_before_existing_worker_handoff(
+        self, tmp_path, monkeypatch, terminal_observed,
+    ):
+        """Pending and finished handoffs are retired by the same decision."""
+        from dataclasses import replace
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        intent, _source = self._prepare_causal_handoff(eng, item)
+        if terminal_observed:
+            intent = replace(
+                intent,
+                terminal_observed_at="2026-08-03T00:00:00+00:00",
+            )
+            eng.store.update_work_item_metadata(
+                item.id, worker_handoff=intent)
+            eng.store.get_work_item(
+                item.id).agent_run_finished_without_submit = True
+        eng.store.update_work_item_metadata(
+            item.id, review_ledger=self._stalled_review_ledger())
+        set_node(manifest, "a", status="in_progress")
+        save_manifest(manifest, path)
+
+        assignments_before = list(eng.store.assign_log)
+        runs_before = list(eng.runtime.list_runs(item.id))
+        decision_writes = 0
+        blocked_writes = 0
+        original_update = eng.store.update_work_item_metadata
+        original_status = eng.store.update_status
+
+        def update(item_id, **metadata):
+            nonlocal decision_writes
+            decision = metadata.get("decision_required")
+            if isinstance(decision, dict) and decision.get(
+                "reason_code") == "review-convergence-stalled":
+                decision_writes += 1
+            return original_update(item_id, **metadata)
+
+        def update_status(item_id, status):
+            nonlocal blocked_writes
+            if status is WorkItemStatus.BLOCKED:
+                blocked_writes += 1
+            return original_status(item_id, status)
+
+        monkeypatch.setattr(eng.store, "update_work_item_metadata", update)
+        monkeypatch.setattr(eng.store, "update_status", update_status)
+        monkeypatch.setattr(
+            loop,
+            "_dispatch_worker_handoff",
+            lambda *_args, **_kwargs: pytest.fail(
+                "convergence decision must precede handoff observation/retry"),
+        )
+
+        first = tick(eng.store, eng.runtime, manifest, path)
+        persisted = load_manifest(path)
+        second = tick(eng.store, eng.runtime, persisted, path)
+
+        blocked = eng.store.get_work_item(item.id)
+        assert first.state == "needs_decision"
+        assert second.state == "needs_decision"
+        assert persisted.nodes["a"].status == "blocked"
+        assert blocked.status is WorkItemStatus.BLOCKED
+        assert blocked.decision_required["reason_code"] == (
+            "review-convergence-stalled")
+        assert blocked.worker_handoff == intent
+        assert decision_writes == 1
+        assert blocked_writes == 1
+        assert eng.store.assign_log == assignments_before
+        assert eng.runtime.list_runs(item.id) == runs_before
+
+    @pytest.mark.parametrize(
+        ("round_index", "requires_ledger"),
+        [(1, False), (3, True)],
+    )
+    def test_review_handoff_hydration_plan_requires_authoritative_ledger(
+        self, tmp_path, round_index, requires_ledger,
+    ):
+        """No recovery threshold may bypass the authoritative ledger."""
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        intent, _source = self._prepare_causal_handoff(eng, item)
+        set_node(manifest, "a", status="in_progress")
+        eng.store.update_work_item_metadata(
+            item.id,
+            worker_handoff=replace(
+                intent,
+                source_review_round=round_index,
+                target_review_bounce=round_index,
+            ),
+        )
+        current = eng.store.get_work_item(item.id)
+        current.review_ledger = None
+        current.review_ledger_ref = {
+            "attachment_id": "review-ledger-attachment",
+            "sha256": "a" * 64,
+        }
+        projection = WorkItemControlProjection(
+            current,
+            deferred_payloads=frozenset({WorkItemPayload.REVIEW_LEDGER}),
+        )
+
+        plan = loop._build_work_item_hydration_plan(
+            manifest.nodes["a"], projection)
+
+        assert (
+            WorkItemPayload.REVIEW_LEDGER in plan
+        ) is requires_ledger
 
     def test_pass_with_nits_at_review_limit_needs_decision_without_handoff(
         self, tmp_path, monkeypatch,

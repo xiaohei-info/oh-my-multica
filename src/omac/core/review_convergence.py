@@ -25,6 +25,7 @@ from .taskmeta import DECISION_REQUIRED_SCHEMA, TaskKind, TaskPhase
 REVIEW_PROTOCOL_VERSION = "omac.review/v2"
 REVIEW_LEDGER_SCHEMA = "omac.review-ledger/v1"
 REVIEW_CONVERGENCE_DECISION_SCHEMA = "omac.review-convergence-decision/v1"
+REVIEW_CONVERGENCE_EARLIEST_CYCLE = 3
 
 _BASE_OBLIGATIONS = (
     ("dimension:authority", "Authoritative inputs and source references"),
@@ -114,7 +115,15 @@ def review_convergence_decision(
         if isinstance(record.get("root_cause_key"), str)
         and record.get("root_cause_key")
         and isinstance(record.get("first_seen_round"), int)
-        and record["first_seen_round"] >= minimum_cycles
+        and record["first_seen_round"] > minimum_cycles
+    })
+
+    unchanged_blocker_ids = sorted({
+        record.get("blocker_id") for record in open_records
+        if isinstance(record.get("blocker_id"), str)
+        and record.get("blocker_id")
+        and record.get("classification") == "unchanged"
+        and int(record.get("seen_count", 0)) >= 3
     })
 
     non_reducing_streak = 0
@@ -135,6 +144,7 @@ def review_convergence_decision(
         "open_root_cause_keys": open_roots,
         "obligation_dimensions": dimensions,
         "late_root_cause_keys": late_roots,
+        "unchanged_blocker_ids": unchanged_blocker_ids,
         "non_reducing_streak": non_reducing_streak,
     }
     if cycle_count >= hard_limit:
@@ -143,15 +153,16 @@ def review_convergence_decision(
             "mode": "exhausted",
             "reason_code": "review-convergence-exhausted",
         }
-    if cycle_count < minimum_cycles:
-        return None
-    if cycles[-1].get("new_count", 0) > 0 or len(dimensions) >= 3:
+    if (
+        cycle_count >= REVIEW_CONVERGENCE_EARLIEST_CYCLE
+        and len(dimensions) >= 3
+    ) or late_roots:
         return {
             **common,
             "mode": "scope-expanding",
             "reason_code": "review-convergence-scope-expanding",
         }
-    if non_reducing_streak >= 2:
+    if unchanged_blocker_ids:
         return {
             **common,
             "mode": "stalled",
@@ -660,32 +671,10 @@ def review_state(ledger: Any) -> dict:
     decision = review_convergence_decision(ledger)
     if decision is not None:
         state.update({
-            "mode": decision["mode"],
+            # Keep the public work-show mode stable.  The structured decision
+            # carries the specific stalled/scope-expanding/exhausted reason.
+            "mode": "convergence-audit",
             "reason": decision["reason_code"],
             "decision": decision,
-        })
-        return state
-    if cycles and cycles[-1].get("regressed_count", 0) > 0:
-        state.update({
-            "mode": "convergence-audit",
-            "reason": "a previously fixed blocker regressed",
-        })
-        return state
-    if any(
-        record.get("classification") == "unchanged"
-        and int(record.get("seen_count", 0)) >= 3
-        for record in open_records
-    ):
-        state.update({
-            "mode": "convergence-audit",
-            "reason": "a blocker remained unchanged across two rework cycles",
-        })
-        return state
-    if len(cycles) >= 2 and all(
-        cycle.get("new_count", 0) > 0 for cycle in cycles[-2:]
-    ):
-        state.update({
-            "mode": "convergence-audit",
-            "reason": "new blockers appeared in two consecutive review cycles",
         })
     return state

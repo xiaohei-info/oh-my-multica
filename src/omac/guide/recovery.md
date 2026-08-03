@@ -215,11 +215,12 @@ worker、按现有 blocker 修复，或把过粗节点拆成语义等价的小�
 - 总控验收超过 `acceptance.max_rounds` 仍有 fail：报告保留未通过项清单。
 
 Review ledger 只记录已提交的语义评审，不记录 provider 过载、网络超时或附件读取等
-基础设施重试。前 4 个语义 cycle 正常返工；从第 5 个 cycle 开始，连续两次没有减少
-open blocker、出现新的 root cause，或仍有至少 3 个独立责任维度时，OMAC 停止继续派发
-Worker 并生成 `review-convergence-*` 决策。达到 10 个 cycle 时无条件停止。该决策只要求
-重新考虑任务边界；develop 节点由 Orchestrator 提出 DAG amendment，OMAC 不会隐藏地
-重写 DAG。
+基础设施重试。`review_convergence_decision` 是唯一收敛权威：同一 blocker 经两次返工仍
+保持 `unchanged` 时在第 3 个 cycle 停止；从第 3 个 cycle 起同时存在至少 3 个独立责任维度时
+停止；第 5 个 cycle 之后首次出现新的 root cause 时标记 scope expanding；达到第 10 个
+cycle 时无条件停止。OMAC 会在再次派发 Worker 前持久化 `review-convergence-*` 决策。
+该决策只要求重新考虑任务边界；develop 节点由 Orchestrator 提出 DAG amendment，OMAC
+不会隐藏地重写 DAG。
 
 ## 失败隔离
 

@@ -29,6 +29,7 @@ from ..core.contract_boundaries import (
 )
 from ..core.evidence import validate_review_evidence, validate_worker_evidence
 from ..core.review_convergence import (
+    REVIEW_CONVERGENCE_EARLIEST_CYCLE,
     build_review_convergence_decision, build_review_obligations,
     review_convergence_decision, review_subject_digest)
 from ..core.retry_budget import consumed_bounces, review_rework_budget
@@ -102,6 +103,7 @@ _REVIEW_CONFIRMATION_PAYLOADS = frozenset({
 _STRUCTURED_RECOVERY_PAYLOADS = (
     (WorkItemPayload.VERIFICATION, "verification_ref"),
     (WorkItemPayload.REVIEW_REPORT, "review_report_ref"),
+    (WorkItemPayload.REVIEW_LEDGER, "review_ledger_ref"),
     (WorkItemPayload.CONTRACT, "contract_ref"),
 )
 
@@ -715,6 +717,18 @@ def _build_work_item_hydration_plan(
         payloads.add(WorkItemPayload.CONTRACT)
     elif item.worker_handoff is None and authoring_delivery:
         payloads.update(_WORKER_DELIVERY_PAYLOADS)
+    if (
+        item.worker_handoff is not None
+        and item.worker_handoff.gate in {"review", "review-nits"}
+        and max(
+            item.worker_handoff.source_review_round or 0,
+            item.worker_handoff.target_review_bounce or 0,
+        ) >= REVIEW_CONVERGENCE_EARLIEST_CYCLE
+    ):
+        # The ledger is the only convergence authority.  The core exports the
+        # earliest possible decision cycle so recovery does not duplicate the
+        # policy while cycles 1-2 retain the zero-attachment fast path.
+        payloads.add(WorkItemPayload.REVIEW_LEDGER)
     if review_or_confirmation:
         payloads.update(_REVIEW_CONFIRMATION_PAYLOADS)
     if delivery_drift:
@@ -1050,13 +1064,19 @@ def _block_review_non_convergence(
         node_id=key,
         recommended_action="dag-amendment",
     )
-    store.update_work_item_metadata(
-        item.id,
-        decision_required=decision,
-        phase=TaskPhase.REVIEW,
-    )
-    store.update_status(item.id, WorkItemStatus.BLOCKED)
-    set_node(manifest, key, status="blocked")
+    if (
+        item.decision_required != decision
+        or item.phase != TaskPhase.REVIEW
+    ):
+        store.update_work_item_metadata(
+            item.id,
+            decision_required=decision,
+            phase=TaskPhase.REVIEW,
+        )
+    if item.status != WorkItemStatus.BLOCKED:
+        store.update_status(item.id, WorkItemStatus.BLOCKED)
+    if manifest.nodes[key].status != "blocked":
+        set_node(manifest, key, status="blocked")
     log.info(
         logsetup.EVT_NEEDS_DECISION,
         kind=_DAG_KIND,
@@ -2552,6 +2572,22 @@ def collect_results(
         projection = running_observations[key]
         item = projection.work_item
         worker_gate_errors = None
+
+        # A persisted review handoff belongs to the review ledger that created
+        # it.  Re-evaluate the one authoritative convergence policy before
+        # observing, retrying, assigning, or waking that handoff.  Explicit
+        # operator/amendment dispatches use a different gate and are not
+        # reinterpreted as stale review rework.
+        handoff_intent = item.worker_handoff
+        if (
+            handoff_intent is not None
+            and handoff_intent.gate in {"review", "review-nits"}
+        ):
+            convergence = review_convergence_decision(item.review_ledger)
+            if convergence is not None:
+                failures[key] = _block_review_non_convergence(
+                    store, manifest, key, item, convergence)
+                continue
 
         if _legacy_delivery_requires_retry(manifest, key, node, item):
             if any(run.kind == "direct" and run.active

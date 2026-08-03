@@ -507,10 +507,10 @@ def test_reappearing_closed_root_cause_is_classified_as_regression():
     assert record["status"] == "open"
     assert record["classification"] == "regressed"
     assert ledger["cycles"][-1]["regressed_count"] == 1
-    assert review_state(ledger)["mode"] == "convergence-audit"
+    assert review_state(ledger)["mode"] == "normal"
 
 
-def test_two_rounds_with_new_blockers_trigger_convergence_audit():
+def test_two_early_rounds_with_new_blockers_do_not_invent_a_decision():
     item = _item()
     obligations = build_review_obligations(item)
     ledger = None
@@ -532,8 +532,14 @@ def test_two_rounds_with_new_blockers_trigger_convergence_audit():
             subject_digest=f"v{round_index}", round_index=round_index)
 
     state = review_state(ledger)
-    assert state["mode"] == "convergence-audit"
-    assert state["reason"] == "new blockers appeared in two consecutive review cycles"
+    assert state == {
+        "mode": "normal",
+        "reason": None,
+        "cycle_count": 2,
+        "open_blocker_count": 2,
+        "open_blocker_ids": sorted(
+            blocker["blocker_id"] for blocker in ledger["blockers"]),
+    }
 
 
 def test_unchanged_blocker_counts_once_per_review_cycle():
@@ -583,8 +589,14 @@ def test_unchanged_blocker_counts_once_per_review_cycle():
 
 def _decision_ledger(
     open_counts, *, new_counts=None, obligation_ids=("dimension:structure",),
+    first_seen_rounds=None, classifications=None,
 ):
     new_counts = new_counts or [0] * len(open_counts)
+    first_seen_rounds = first_seen_rounds or [1] * len(obligation_ids)
+    classifications = classifications or ["unchanged"] * len(obligation_ids)
+    blocker_ids = [
+        f"BLK-{index}" for index in range(1, len(obligation_ids) + 1)
+    ]
     return {
         "schema": "omac.review-ledger/v1",
         "cycles": [
@@ -593,7 +605,11 @@ def _decision_ledger(
                 "new_count": new_counts[index - 1],
                 "fixed_count": 0,
                 "regressed_count": 0,
+                "unchanged_count": (
+                    len(blocker_ids) if index > 1 else 0
+                ),
                 "open_count": open_count,
+                "open_blocker_ids": blocker_ids,
             }
             for index, open_count in enumerate(open_counts, start=1)
         ],
@@ -603,38 +619,48 @@ def _decision_ledger(
                 "root_cause_key": f"root-{index}",
                 "obligation_id": obligation_id,
                 "status": "open",
-                "first_seen_round": 1,
+                "classification": classifications[index - 1],
+                "first_seen_round": first_seen_rounds[index - 1],
                 "last_seen_round": len(open_counts),
-                "seen_count": len(open_counts),
+                "seen_count": (
+                    len(open_counts) - first_seen_rounds[index - 1] + 1
+                ),
             }
             for index, obligation_id in enumerate(obligation_ids, start=1)
         ],
     }
 
 
-def test_review_convergence_allows_healthy_progress_before_decision_window():
-    ledger = _decision_ledger([4, 3, 2, 1])
+def test_review_convergence_allows_healthy_progress_without_policy_signal():
+    ledger = _decision_ledger(
+        [4, 3, 2, 1], classifications=["deeper"])
 
     assert review_convergence_decision(ledger) is None
+    assert review_state(ledger)["mode"] == "normal"
 
 
-def test_review_convergence_stops_after_two_non_reducing_transitions():
-    ledger = _decision_ledger([4, 3, 2, 2, 2])
+def test_review_convergence_stops_at_cycle_three_for_same_unchanged_blocker():
+    ledger = _decision_ledger([1, 1, 1])
 
     decision = review_convergence_decision(ledger)
 
     assert decision["reason_code"] == "review-convergence-stalled"
     assert decision["mode"] == "stalled"
-    assert decision["cycle_count"] == 5
+    assert decision["cycle_count"] == 3
     assert decision["non_reducing_streak"] == 2
+    assert decision["unchanged_blocker_ids"] == ["BLK-1"]
     state = review_state(ledger)
-    assert state["mode"] == "stalled"
+    assert state["mode"] == "convergence-audit"
     assert state["decision"] == decision
 
 
 def test_review_convergence_stops_when_late_review_expands_scope():
-    ledger = _decision_ledger([4, 3, 2, 1, 2], new_counts=[0, 0, 0, 0, 1])
-    ledger["blockers"][0]["first_seen_round"] = 5
+    ledger = _decision_ledger(
+        [4, 3, 2, 1, 1, 2],
+        new_counts=[0, 0, 0, 0, 0, 1],
+        first_seen_rounds=[6],
+        classifications=["new"],
+    )
 
     decision = review_convergence_decision(ledger)
 
@@ -645,12 +671,13 @@ def test_review_convergence_stops_when_late_review_expands_scope():
 
 def test_review_convergence_stops_for_three_open_responsibility_dimensions():
     ledger = _decision_ledger(
-        [5, 4, 3, 3, 3],
+        [3, 3, 3],
         obligation_ids=(
             "dimension:authority",
             "dimension:structure",
             "dimension:ownership",
         ),
+        classifications=("new", "new", "new"),
     )
 
     decision = review_convergence_decision(ledger)
@@ -661,10 +688,14 @@ def test_review_convergence_stops_for_three_open_responsibility_dimensions():
         "dimension:ownership",
         "dimension:structure",
     ]
+    assert decision["cycle_count"] == 3
 
 
 def test_review_convergence_has_unconditional_ten_cycle_stop():
-    ledger = _decision_ledger([10, 9, 8, 7, 6, 5, 4, 3, 2, 1])
+    ledger = _decision_ledger(
+        [10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
+        classifications=["deeper"],
+    )
 
     decision = review_convergence_decision(ledger)
 
@@ -739,7 +770,7 @@ def test_authoring_show_exposes_required_closures_and_convergence_mode():
 
     output = dispatch.build_show_output(item, "worker:alice")
 
-    assert output["context"]["review_state"]["mode"] == "convergence-audit"
+    assert output["context"]["review_state"]["mode"] == "normal"
     assert output["context"]["required_closures"] == [{
         "blocker_id": "BLK-old",
         "obligation_id": "dimension:evidence",
