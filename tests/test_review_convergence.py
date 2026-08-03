@@ -10,6 +10,7 @@ from omac.core.review_convergence import (
     review_convergence_decision,
     review_state,
     validate_convergence_review,
+    validate_review_ledger,
 )
 from omac.core.taskmeta import TaskKind, TaskPhase, WorkerHandoffIntent
 from omac.engines.mock import MockStore
@@ -703,6 +704,57 @@ def test_review_convergence_has_unconditional_ten_cycle_stop():
     assert decision["reason_code"] == "review-convergence-exhausted"
     assert decision["mode"] == "exhausted"
     assert decision["cycle_count"] == 10
+
+
+@pytest.mark.parametrize("ledger", [
+    {},
+    {"schema": "future.review-ledger/v9", "cycles": [], "blockers": []},
+    {"schema": "omac.review-ledger/v1", "cycles": {}, "blockers": []},
+    {"schema": "omac.review-ledger/v1", "cycles": [], "blockers": {}},
+    {"schema": "omac.review-ledger/v1", "cycles": ["bad"], "blockers": []},
+    {"schema": "omac.review-ledger/v1", "cycles": [], "blockers": ["bad"]},
+    {
+        "schema": "omac.review-ledger/v1",
+        "cycles": [{"round": "3"}],
+        "blockers": [],
+    },
+    {
+        "schema": "omac.review-ledger/v1",
+        "cycles": [{
+            "round": 1, "new_count": 0, "fixed_count": 0,
+            "regressed_count": 0, "unchanged_count": 0, "open_count": 1,
+        }],
+        "blockers": [{
+            "blocker_id": "BLK-1", "root_cause_key": "root-1",
+            "obligation_id": "dimension:structure", "status": "open",
+            "classification": "unchanged", "first_seen_round": 1,
+            "last_seen_round": 1,
+        }],
+    },
+], ids=[
+    "empty", "wrong-schema", "wrong-cycles-type", "wrong-blockers-type",
+    "wrong-cycle-entry", "wrong-blocker-entry", "partial-cycle",
+    "partial-blocker",
+])
+def test_review_ledger_validation_rejects_noncanonical_persisted_facts(ledger):
+    with pytest.raises(ValueError, match="review ledger"):
+        validate_review_ledger(ledger)
+
+
+def test_review_ledger_validation_requires_expected_source_round():
+    ledger = {
+        "schema": "omac.review-ledger/v1",
+        "cycles": [{"round": 2, "open_count": 1}],
+        "blockers": [{
+            "blocker_id": "BLK-1", "root_cause_key": "root-1",
+            "obligation_id": "dimension:structure", "status": "open",
+            "classification": "deeper", "first_seen_round": 1,
+            "seen_count": 2,
+        }],
+    }
+
+    with pytest.raises(ValueError, match="latest round must be 3"):
+        validate_review_ledger(ledger, expected_round=3)
 
 
 def _store():

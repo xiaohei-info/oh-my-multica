@@ -4808,6 +4808,9 @@ class TestReviewerRejectBoundedFallback:
         path = str(tmp_path / "m.yaml")
         manifest, eng, item = self._setup_reject_node(eng, path)
         intent, _source = self._prepare_causal_handoff(eng, item)
+        intent = replace(
+            intent, source_review_round=3, target_review_bounce=3)
+        eng.store.update_work_item_metadata(item.id, worker_handoff=intent)
         if terminal_observed:
             intent = replace(
                 intent,
@@ -4907,6 +4910,113 @@ class TestReviewerRejectBoundedFallback:
         assert (
             WorkItemPayload.REVIEW_LEDGER in plan
         ) is requires_ledger
+
+    @pytest.mark.parametrize("invalid_ledger", [
+        {},
+        {"schema": "future.review-ledger/v9", "cycles": [], "blockers": []},
+        {"schema": "omac.review-ledger/v1", "cycles": {}, "blockers": []},
+        {"schema": "omac.review-ledger/v1", "cycles": [], "blockers": {}},
+        {"schema": "omac.review-ledger/v1", "cycles": ["bad"], "blockers": []},
+        {"schema": "omac.review-ledger/v1", "cycles": [], "blockers": ["bad"]},
+        {
+            "schema": "omac.review-ledger/v1",
+            "cycles": [{"round": 1}],
+            "blockers": [],
+        },
+        {
+            "schema": "omac.review-ledger/v1",
+            "cycles": [{"round": 3, "open_count": 1}],
+            "blockers": [{
+                "blocker_id": "BLK-1", "root_cause_key": "root-1",
+                "obligation_id": "dimension:structure", "status": "open",
+                "classification": "deeper", "first_seen_round": 1,
+            }],
+        },
+    ])
+    def test_invalid_hydrated_review_ledger_fails_before_handoff_side_effects(
+        self, tmp_path, monkeypatch, invalid_ledger,
+    ):
+        """A parseable deferred ledger is still untrusted until canonical validation."""
+        from omac.errors import PlatformError
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        intent, _source = self._prepare_causal_handoff(eng, item)
+        intent = replace(
+            intent, source_review_round=3, target_review_bounce=3)
+        eng.store.update_work_item_metadata(item.id, worker_handoff=intent)
+        current = eng.store.get_work_item(item.id)
+        current.review_ledger = None
+        current.review_ledger_ref = {
+            "attachment_id": "review-ledger", "sha256": "a" * 64}
+        set_node(manifest, "a", status="in_progress")
+        save_manifest(manifest, path)
+        deferred = WorkItemControlProjection(
+            current,
+            deferred_payloads=frozenset({WorkItemPayload.REVIEW_LEDGER}),
+        )
+
+        monkeypatch.setattr(
+            eng.store, "observe_work_item_control", lambda _item_id: deferred)
+        monkeypatch.setattr(
+            eng.store,
+            "hydrate_work_item_evidence",
+            lambda projection, _plan: replace(
+                projection.work_item, review_ledger=invalid_ledger),
+        )
+        before = Path(path).read_bytes()
+        assignments = list(eng.store.assign_log)
+        for target, name in (
+            (eng.store, "update_work_item_metadata"),
+            (eng.store, "update_status"),
+            (eng.store, "assign_work_item"),
+            (eng.runtime, "wake"),
+        ):
+            monkeypatch.setattr(
+                target, name,
+                lambda *_args, _name=name, **_kwargs: pytest.fail(
+                    f"invalid ledger must not call {_name}"),
+            )
+
+        for current_manifest in (manifest, load_manifest(path)):
+            with pytest.raises(PlatformError, match="review ledger"):
+                tick(eng.store, eng.runtime, current_manifest, path)
+            assert current_manifest.nodes["a"].status == "in_progress"
+            assert Path(path).read_bytes() == before
+            assert eng.store.assign_log == assignments
+            persisted = eng.store.get_work_item(item.id)
+            assert persisted.status is WorkItemStatus.IN_PROGRESS
+            assert persisted.worker_handoff == intent
+            assert persisted.review_ledger is None
+            assert persisted.review_ledger_ref == current.review_ledger_ref
+
+    def test_valid_nonconverging_review_ledger_continues_handoff_retry(
+        self, tmp_path, monkeypatch,
+    ):
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        intent, _source = self._prepare_causal_handoff(eng, item)
+        intent = replace(
+            intent, source_review_round=3, target_review_bounce=3)
+        ledger = self._stalled_review_ledger()
+        ledger["blockers"][0]["classification"] = "deeper"
+        eng.store.update_work_item_metadata(
+            item.id, worker_handoff=intent, review_ledger=ledger)
+        set_node(manifest, "a", status="in_progress")
+        calls = []
+
+        def dispatch(*_args, **_kwargs):
+            calls.append(True)
+            return loop._WorkerHandoffResult("waiting", intent)
+
+        monkeypatch.setattr(loop, "_dispatch_worker_handoff", dispatch)
+
+        assert loop.collect_results(
+            eng.store, eng.runtime, manifest, path) == {}
+        assert calls == [True]
+        assert manifest.nodes["a"].status == "in_progress"
 
     def test_pass_with_nits_at_review_limit_needs_decision_without_handoff(
         self, tmp_path, monkeypatch,
@@ -7627,6 +7737,11 @@ class TestReviewerRejectBoundedFallback:
             tick(eng.store, eng.runtime, manifest, fpath, max_parallel=4)
             got = eng.store.get_work_item(item.id)
             assert manifest.nodes["a"].status == "in_progress", f"第 {i+1} 次应回退 worker"
+            if i == 2:
+                ledger = self._stalled_review_ledger()
+                ledger["blockers"][0]["classification"] = "deeper"
+                eng.store.update_work_item_metadata(
+                    item.id, review_ledger=ledger)
             # 推进:worker 修完重新提交 → in_review
             eng.store.set_node_contract(item.id, self._simple_contract())
             self._submit_revision(eng, item, revision=i + 2)

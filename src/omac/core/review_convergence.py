@@ -39,6 +39,60 @@ _BASE_OBLIGATIONS = (
 _RESULT_STATUSES = {"pass", "fail"}
 _PRIOR_STATUSES = {"fixed", "unchanged", "deeper", "regressed"}
 _BLOCKER_CLASSIFICATIONS = {"new", "unchanged", "deeper", "regressed"}
+_LEDGER_BLOCKER_CLASSIFICATIONS = _BLOCKER_CLASSIFICATIONS | {"fixed"}
+_LEDGER_BLOCKER_STATUSES = {"open", "fixed"}
+
+
+def validate_review_ledger(
+    ledger: Any,
+    *,
+    expected_round: int | None = None,
+) -> dict:
+    """Validate only facts consumed by the convergence decision boundary."""
+    if not isinstance(ledger, dict):
+        raise ValueError("review ledger must be an object")
+    if ledger.get("schema") != REVIEW_LEDGER_SCHEMA:
+        raise ValueError(f"review ledger schema must be {REVIEW_LEDGER_SCHEMA}")
+    cycles = ledger.get("cycles")
+    blockers = ledger.get("blockers")
+    if not isinstance(cycles, list):
+        raise ValueError("review ledger cycles must be a list")
+    if not isinstance(blockers, list):
+        raise ValueError("review ledger blockers must be a list")
+    for index, cycle in enumerate(cycles):
+        path = f"cycles[{index}]"
+        if not isinstance(cycle, dict):
+            raise ValueError(f"review ledger {path} must be an object")
+        for field in ("round", "open_count"):
+            value = cycle.get(field)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(
+                    f"review ledger {path}.{field} must be a non-negative integer")
+    if expected_round is not None and (
+        not cycles or cycles[-1]["round"] != expected_round
+    ):
+        raise ValueError(f"review ledger latest round must be {expected_round}")
+    for index, blocker in enumerate(blockers):
+        path = f"blockers[{index}]"
+        if not isinstance(blocker, dict):
+            raise ValueError(f"review ledger {path} must be an object")
+        for field in ("blocker_id", "root_cause_key", "obligation_id"):
+            value = blocker.get(field)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(
+                    f"review ledger {path}.{field} must be a non-empty string")
+        status = blocker.get("status")
+        classification = blocker.get("classification")
+        if status not in _LEDGER_BLOCKER_STATUSES:
+            raise ValueError(f"review ledger {path}.status is invalid")
+        if classification not in _LEDGER_BLOCKER_CLASSIFICATIONS:
+            raise ValueError(f"review ledger {path}.classification is invalid")
+        for field in ("first_seen_round", "seen_count"):
+            value = blocker.get(field)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(
+                    f"review ledger {path}.{field} must be a non-negative integer")
+    return ledger
 
 
 def _contract_value(contract: Any, name: str, default):

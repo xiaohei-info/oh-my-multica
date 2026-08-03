@@ -31,7 +31,8 @@ from ..core.evidence import validate_review_evidence, validate_worker_evidence
 from ..core.review_convergence import (
     REVIEW_CONVERGENCE_EARLIEST_CYCLE,
     build_review_convergence_decision, build_review_obligations,
-    review_convergence_decision, review_subject_digest)
+    review_convergence_decision, review_subject_digest,
+    validate_review_ledger)
 from ..core.retry_budget import consumed_bounces, review_rework_budget
 from ..core.stage_recovery import stage_recovery_subject, validate_stage_recovery
 from ..core.gitsync import commit_manifest
@@ -121,6 +122,24 @@ class _WorkerHandoffResult:
 
 class _WorkerHandoffCandidateChanged(Exception):
     """Unsealed delivery changed between observation and controller commit."""
+
+
+def _validated_handoff_review_ledger(item, handoff_intent) -> dict | None:
+    expected_round = handoff_intent.source_review_round
+    if max(
+        expected_round or 0,
+        handoff_intent.target_review_bounce or 0,
+    ) < REVIEW_CONVERGENCE_EARLIEST_CYCLE:
+        return item.review_ledger
+    try:
+        return validate_review_ledger(item.review_ledger, expected_round=expected_round)
+    except ValueError as exc:
+        raise PlatformError(ui(
+            f"Invalid review ledger for work item {item.id}: {exc}. Restore it, then rerun "
+            f"`omac work show {item.id} --output json`.",
+            f"工作单元 {item.id} 的 review ledger 无效：{exc}。请恢复后重新执行 "
+            f"`omac work show {item.id} --output json`。",
+        )) from exc
 
 
 class _ReviewerDispatchUnresolved(PlatformError):
@@ -2607,7 +2626,9 @@ def collect_results(
             handoff_intent is not None
             and handoff_intent.gate in {"review", "review-nits"}
         ):
-            convergence = review_convergence_decision(item.review_ledger)
+            review_ledger = _validated_handoff_review_ledger(
+                item, handoff_intent)
+            convergence = review_convergence_decision(review_ledger)
             if convergence is not None:
                 failures[key] = _block_review_non_convergence(
                     store, manifest, key, item, convergence)
