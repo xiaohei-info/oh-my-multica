@@ -481,7 +481,10 @@ class MockStore(WorkItemStore):
                 "full_review_completed": True,
                 "acceptance_mapping": [],
                 "blockers": [],
-                "nits": [],
+                "nits": (
+                    ["Mock: apply the non-blocking follow-up"]
+                    if item.review_verdict == "pass-with-nits" else []
+                ),
             }
             if item.review_obligations:
                 from ..core.review_convergence import advance_review_ledger
@@ -558,6 +561,10 @@ class MockStore(WorkItemStore):
 
         contract = _shared_contracts_by_item_id.get(item_id)
         item = _shared_work_items[item_id]
+        nits = (
+            ["Mock: apply the non-blocking follow-up"]
+            if verdict == "pass-with-nits" else []
+        )
         obligations = list(item.review_obligations or [])
         if contract is None or not isinstance(contract, _Contract):
             if not obligations:
@@ -595,7 +602,7 @@ class MockStore(WorkItemStore):
                     "evidence": "Mock finite review found a blocker",
                     "required_fix": "Mock author must revise the deliverable",
                 }] if failed_id else []),
-                "nits": [],
+                "nits": nits,
             }
         if not obligations:
             obligations = []
@@ -659,7 +666,7 @@ class MockStore(WorkItemStore):
                 "evidence": "Mock finite review found a blocker",
                 "required_fix": "Mock author must revise the deliverable",
             }] if failed_id else []),
-            "nits": [],
+            "nits": nits,
         })
         return report
 
@@ -855,9 +862,16 @@ class MockStore(WorkItemStore):
         if review_report is not None:
             item.review_report = review_report
         if review_report_source is not None:
+            attachment_id = f"mock-attachment-{_shared_next_attachment_id}"
+            _shared_next_attachment_id += 1
+            body = review_report_source.encode("utf-8")
+            _shared_attachment_bodies[attachment_id] = body
             item.review_report_ref = {
+                "comment_id": f"mock-comment-{attachment_id}",
+                "attachment_id": attachment_id,
                 "filename": "omac-review-report.yaml",
-                "bytes": len(review_report_source.encode("utf-8")),
+                "bytes": len(body),
+                "sha256": hashlib.sha256(body).hexdigest(),
             }
         if review_subject_digest is not None:
             item.review_subject_digest = review_subject_digest or None

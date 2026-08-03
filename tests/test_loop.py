@@ -4130,6 +4130,11 @@ class TestReviewerRejectBoundedFallback:
             verification_source.encode("utf-8")
         ).hexdigest()
         source_subject = review_subject_digest(source, 1)
+        source_verdict = "pass-with-nits" if gate == "review-nits" else None
+        source_feedback = (
+            {"verdict": "pass-with-nits", "nits": ["follow up"]}
+            if gate == "review-nits" else None
+        )
         intent = WorkerHandoffIntent(
             schema="omac.worker-handoff/v1",
             state="pending",
@@ -4137,6 +4142,8 @@ class TestReviewerRejectBoundedFallback:
             gate=gate,
             source_review_subject_digest=source_subject,
             source_review_round=1,
+            source_review_verdict=source_verdict,
+            source_review_feedback=source_feedback,
             target_review_bounce=1,
         )
         object.__setattr__(intent, "generation", "handoff-generation-1")
@@ -5405,11 +5412,15 @@ class TestReviewerRejectBoundedFallback:
         assert persisted.nodes["a"].status == "in_review"
         crashed_item = eng.store.get_work_item(item.id)
         assert crashed_item.worker_handoff is not None
-        assert crashed_item.worker_handoff.source_review_feedback[
-            "verdict"] == verdict
         if verdict == "pass-with-nits":
+            assert crashed_item.worker_handoff.source_review_verdict == (
+                "pass-with-nits")
+            assert crashed_item.worker_handoff.source_review_feedback[
+                "verdict"] == verdict
             assert crashed_item.worker_handoff.source_review_feedback[
                 "nits"] == ["follow up"]
+        else:
+            assert crashed_item.worker_handoff.source_review_feedback is None
 
         monkeypatch.setattr(
             eng.store, "update_work_item_metadata", original_update_metadata)
@@ -5452,8 +5463,11 @@ class TestReviewerRejectBoundedFallback:
         assert recovered.review_report is None
         assert recovered.review_subject_digest is None
         assert recovered.worker_handoff is not None
-        assert recovered.worker_handoff.source_review_feedback[
-            "verdict"] == verdict
+        if verdict == "pass-with-nits":
+            assert recovered.worker_handoff.source_review_feedback[
+                "verdict"] == verdict
+        else:
+            assert recovered.worker_handoff.source_review_feedback is None
         assert recovered.bounces.review == 1
         assert len(eng.runtime.list_runs(item.id)) == runs_before_handoff + 1
         assert eng.store.assign_log[-1][2] == "worker"
