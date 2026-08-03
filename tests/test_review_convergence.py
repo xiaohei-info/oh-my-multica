@@ -816,10 +816,14 @@ def test_authoring_show_does_not_expose_uncoupled_review_nits_feedback():
         source_review_subject_digest="subject-1",
         source_review_round=1,
         source_review_verdict="pass-with-nits",
-        source_review_feedback={
-            "verdict": "pass-with-nits",
-            "nits": ["follow up"],
-        },
+            source_review_feedback={
+                "verdict": "pass-with-nits",
+                "nits": ["follow up"],
+                "report_ref": {
+                    "attachment_id": "review-report-1",
+                    "sha256": "a" * 64,
+                },
+            },
         target_review_bounce=1,
     )
     assert item.worker_handoff.is_complete()

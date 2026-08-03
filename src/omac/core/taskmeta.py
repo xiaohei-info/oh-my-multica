@@ -471,8 +471,7 @@ def review_nits_feedback_is_complete(value: Any) -> bool:
         return False
     if any(not isinstance(nit, str) or not nit.strip() for nit in nits):
         return False
-    report_ref = value.get("report_ref")
-    return report_ref is None or exact_review_report_ref(report_ref)
+    return exact_review_report_ref(value.get("report_ref"))
 
 
 def parse_reviewer_run_baseline(value: Any) -> Optional[ReviewerRunBaseline]:
