@@ -621,6 +621,48 @@ def test_show_cli_json_output(tmp_path, monkeypatch, capsys):
     assert data["submit"].startswith(f"omac work submit {item.id}")
 
 
+def test_work_show_legacy_convergence_snapshot_returns_structured_exit_20(
+    aiteam_849_legacy_snapshot, monkeypatch, capsys,
+):
+    snapshot = aiteam_849_legacy_snapshot["work_item"]
+    store = _store()
+    item = store.create_work_item(
+        "mock-workspace",
+        "legacy convergence snapshot",
+        "redacted production snapshot",
+        dag_key=snapshot["dag_key"],
+        worker=snapshot["worker_handoff"]["target_worker"],
+        reviewer="reviewer-redacted",
+        kind=TaskKind(snapshot["kind"]),
+        initial_status=WorkItemStatus(snapshot["status"]),
+    )
+    store.update_work_item_metadata(
+        item.id,
+        phase=TaskPhase(snapshot["phase"]),
+        worker_bounce=snapshot["bounces"]["worker"],
+        ci_bounce=snapshot["bounces"]["ci"],
+        review_bounce=snapshot["bounces"]["review"],
+        merge_bounce=snapshot["bounces"]["merge"],
+        decision_required=snapshot["decision_required"],
+        review_ledger=snapshot["review_ledger"],
+        worker_handoff=snapshot["worker_handoff"],
+    )
+    monkeypatch.setattr(work_cmd, "_resolve_store", lambda: store)
+
+    assert main(["work", "show", item.id, "--output", "json"]) == (
+        exit_codes.NEEDS_DECISION
+    )
+    captured = capsys.readouterr()
+    output = json.loads(captured.out)
+    assert output["ok"] is False
+    assert output["decision_required"]["reason_code"] == (
+        "review-convergence-ledger-unverifiable"
+    )
+    assert output["exit_code"] == exit_codes.NEEDS_DECISION
+    assert output["next_action"].startswith("omac dag amend propose ")
+    assert "Traceback" not in captured.err
+
+
 def test_show_cli_defaults_to_agent_json(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     main(["config", "set", "engine", "mock"])

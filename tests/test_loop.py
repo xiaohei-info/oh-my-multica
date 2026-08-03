@@ -300,6 +300,129 @@ def _loop_to_settle(store, runtime, manifest, path, max_rounds=50, max_parallel=
     return result
 
 
+def _legacy_convergence_handoff_case(tmp_path, aiteam_849_legacy_snapshot):
+    snapshot = aiteam_849_legacy_snapshot["work_item"]
+    engine = create_engine(
+        "mock", _config(MOCK_AUTO_COMPLETE="false")
+    )
+    node = _node(
+        snapshot["dag_key"],
+        worker=snapshot["worker_handoff"]["target_worker"],
+        reviewer="bob",
+        contract=_contract(),
+    )
+    manifest = _manifest([node])
+    path = str(tmp_path / "open-agent-cluster.yaml")
+    save_manifest(manifest, path)
+    item = engine.store.create_work_item(
+        "ws",
+        "legacy convergence snapshot",
+        "redacted production snapshot",
+        dag_key=node.id,
+        worker=node.worker,
+        reviewer=node.reviewer,
+        initial_status=WorkItemStatus(snapshot["status"]),
+    )
+    node.work_item_id = item.id
+    node.status = "in_progress"
+    engine.store.update_work_item_metadata(
+        item.id,
+        phase=TaskPhase(snapshot["phase"]),
+        worker_bounce=snapshot["bounces"]["worker"],
+        review_bounce=snapshot["bounces"]["review"],
+        review_ledger=snapshot["review_ledger"],
+        worker_handoff=snapshot["worker_handoff"],
+    )
+    save_manifest(manifest, path)
+    return engine, manifest, path, node, item
+
+
+def test_pending_legacy_review_handoff_is_blocked_before_assign_or_wake(
+    tmp_path, monkeypatch, aiteam_849_legacy_snapshot,
+):
+    engine, manifest, _path, node, _item = _legacy_convergence_handoff_case(
+        tmp_path, aiteam_849_legacy_snapshot,
+    )
+
+    writes = []
+    for target, name in (
+        (engine.store, "update_work_item_metadata"),
+        (engine.store, "update_status"),
+        (engine.store, "assign_work_item"),
+        (engine.store, "reset_review"),
+        (engine.runtime, "wake"),
+    ):
+        monkeypatch.setattr(
+            target,
+            name,
+            lambda *_args, _name=name, **_kwargs: writes.append(_name),
+        )
+
+    result = loop._dispatch_worker_handoff(
+        engine.store, engine.runtime, manifest, node.id,
+    )
+
+    assert result.state == "needs-decision"
+    assert result.decision["reason_code"] == (
+        "review-convergence-ledger-unverifiable"
+    )
+    assert writes == []
+
+
+def test_runner_persists_legacy_convergence_decision_once_without_dispatch(
+    tmp_path, monkeypatch, aiteam_849_legacy_snapshot,
+):
+    engine, manifest, path, node, item = _legacy_convergence_handoff_case(
+        tmp_path, aiteam_849_legacy_snapshot,
+    )
+    decision_writes = []
+    original_update = engine.store.update_work_item_metadata
+
+    def record_update(item_id, **metadata):
+        if "decision_required" in metadata:
+            decision_writes.append(deepcopy(metadata["decision_required"]))
+        return original_update(item_id, **metadata)
+
+    monkeypatch.setattr(engine.store, "update_work_item_metadata", record_update)
+    monkeypatch.setattr(
+        engine.store,
+        "assign_work_item",
+        lambda *_args, **_kwargs: pytest.fail("legacy decision must not assign"),
+    )
+    monkeypatch.setattr(
+        engine.runtime,
+        "wake",
+        lambda *_args, **_kwargs: pytest.fail("legacy decision must not wake"),
+    )
+
+    first = tick(engine.store, engine.runtime, manifest, path, max_parallel=1)
+    persisted = engine.store.get_work_item(item.id).decision_required
+    second = tick(engine.store, engine.runtime, manifest, path, max_parallel=1)
+
+    from types import SimpleNamespace
+    from omac.cli.commands import dag as dag_cmd
+    from omac.errors import NeedsDecision
+
+    monkeypatch.setattr(dag_cmd, "_assemble_engine", lambda _args: (engine, None))
+    monkeypatch.setattr(dag_cmd, "ensure_config_synced", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(dag_cmd, "load_config", lambda _path: {})
+    monkeypatch.setattr(dag_cmd, "_emit", lambda *_args, **_kwargs: None)
+    args = SimpleNamespace(
+        manifest=path, max_parallel=1, max_rounds=None, max_minutes=None,
+        output="json",
+    )
+    with pytest.raises(NeedsDecision) as runner_exit:
+        dag_cmd._loop_or_single_locked(args, single_round=False)
+
+    assert first.state == "needs_decision"
+    assert second.state == "needs_decision"
+    assert runner_exit.value.exit_code == 20
+    assert persisted["reason_code"] == "review-convergence-ledger-unverifiable"
+    assert persisted["next_action"].startswith("omac dag amend propose ")
+    assert decision_writes == [persisted]
+    assert engine.runtime.list_runs(item.id) == []
+
+
 def _aiteam_834_legacy_delivery(tmp_path):
     engine = create_engine(
         "mock", _config(MOCK_AUTO_COMPLETE="false"))
@@ -5871,7 +5994,7 @@ class TestReviewerRejectBoundedFallback:
         )
         observations["active"] = eng.store.observe_work_item_control(item_id)
         events = []
-        original_decision = loop.review_convergence_decision
+        original_resolution = loop.resolve_convergence
         original_save = loop.save_manifest
         original_update = eng.store.update_work_item_metadata
         original_status = eng.store.update_status
@@ -5895,9 +6018,9 @@ class TestReviewerRejectBoundedFallback:
                 "convergence-blocked restore must not wake"),
         )
 
-        def decide(ledger):
+        def decide(ledger, **kwargs):
             events.append("decision")
-            return original_decision(ledger)
+            return original_resolution(ledger, **kwargs)
 
         def save(current_manifest, current_path):
             events.append(f"manifest:{current_manifest.nodes['active'].status}")
@@ -5911,7 +6034,7 @@ class TestReviewerRejectBoundedFallback:
             events.append(f"store:status:{status.value}")
             return original_status(item_id, status)
 
-        monkeypatch.setattr(loop, "review_convergence_decision", decide)
+        monkeypatch.setattr(loop, "resolve_convergence", decide)
         monkeypatch.setattr(loop, "save_manifest", save)
         monkeypatch.setattr(eng.store, "update_work_item_metadata", update)
         monkeypatch.setattr(eng.store, "update_status", update_status)

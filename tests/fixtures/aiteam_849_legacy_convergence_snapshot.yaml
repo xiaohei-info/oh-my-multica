@@ -1,0 +1,79 @@
+schema: omac.test-legacy-convergence-snapshot/v1
+source:
+  issue_key: AITEAM-849
+  captured_at: 2026-08-03
+  redacted: true
+work_item:
+  identifier: AITEAM-849
+  dag_key: contracts-platform-resource-schema
+  status: in_progress
+  kind: develop
+  phase: authoring
+  bounces:
+    worker: 14
+    ci: 0
+    review: 3
+    merge: 0
+  decision_required: {}
+  review_ledger:
+    schema: omac.review-ledger/v1
+    cycles:
+      - round: 1
+        subject_digest: subject-round-1
+        verdict: reject
+        new_count: 1
+        fixed_count: 0
+        regressed_count: 0
+        unchanged_count: 0
+        open_count: 1
+        prior_open_blocker_ids: []
+        open_blocker_ids: [BLK-legacy]
+        reported_blocker_ids: [BLK-legacy]
+      - round: 2
+        subject_digest: subject-round-2
+        verdict: reject
+        new_count: 0
+        fixed_count: 0
+        regressed_count: 0
+        unchanged_count: 1
+        open_count: 1
+        prior_open_blocker_ids: [BLK-legacy]
+        open_blocker_ids: [BLK-legacy]
+        reported_blocker_ids: [BLK-legacy]
+      - round: 3
+        subject_digest: subject-round-3
+        verdict: reject
+        new_count: 0
+        fixed_count: 0
+        regressed_count: 0
+        unchanged_count: 1
+        open_count: 1
+        prior_open_blocker_ids: [BLK-legacy]
+        open_blocker_ids: [BLK-legacy]
+        reported_blocker_ids: [BLK-legacy]
+    blockers:
+      - blocker_id: BLK-legacy
+        root_cause_key: redacted-legacy-root-cause
+        obligation_id: dimension:structure
+        status: open
+        classification: unchanged
+        first_seen_round: 1
+        last_seen_round: 3
+        seen_count: 3
+  worker_handoff:
+    schema: omac.worker-handoff/v1
+    state: pending
+    target_worker: worker-redacted
+    gate: review
+    source_review_subject_digest: subject-round-3
+    source_review_round: 3
+    source_review_verdict: reject
+    source_review_feedback: null
+    target_review_bounce: 3
+    generation: handoff-redacted
+    target_agent_id: agent-redacted
+    baseline_direct_run_ids: [run-redacted-1, run-redacted-2]
+    baseline_verification_attachment_id: attachment-redacted
+    target_run_id: null
+    target_worker_bounce: 14
+    terminal_observed_at: null
