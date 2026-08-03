@@ -198,8 +198,36 @@ def _validate_common_blockers(
         if expected_last > cycle_count or blocker["last_seen_round"] != expected_last:
             raise ValueError(
                 f"review ledger {path}.last_seen_round must match cycle history")
+        if status == "fixed":
+            allowed_classifications = {"fixed"}
+        elif rounds == [cycle_count]:
+            allowed_classifications = {"new"}
+        elif cycle_count - 1 in rounds:
+            allowed_classifications = {"unchanged", "deeper"}
+        else:
+            allowed_classifications = {"regressed"}
+        if classification not in allowed_classifications:
+            raise ValueError(
+                f"review ledger {path}.classification must match cycle history")
     if blocker_ids != set(open_rounds):
         raise ValueError("review ledger blocker summary must match cycle blocker IDs")
+    if cycles:
+        latest = cycles[-1]
+        for classification in ("new", "fixed", "regressed", "unchanged"):
+            expected = sum(
+                blocker["last_seen_round"] == latest["round"]
+                and blocker["classification"] == classification
+                for blocker in blockers)
+            field = f"{classification}_count"
+            if latest[field] != expected:
+                raise ValueError(
+                    f"review ledger latest {field} classification count must "
+                    "match blocker summary")
+    for index, cycle in enumerate(cycles):
+        has_open_blockers = bool(cycle["open_blocker_ids"])
+        if (cycle["verdict"] == "reject") != has_open_blockers:
+            raise ValueError(
+                f"review ledger cycles[{index}].verdict must match open blockers")
 
 
 def _validate_blocker_facts_schema(cycles: list[Any]) -> None:
