@@ -2538,6 +2538,64 @@ def test_multica_runtime_lists_typed_run_identity(monkeypatch):
     ]
 
 
+@pytest.mark.parametrize(
+    "status",
+    ["queued", "dispatched", "running", "waiting_local_directory", "deferred"],
+)
+def test_multica_runtime_treats_current_nonterminal_statuses_as_active(
+    monkeypatch, status,
+):
+    """Multica v0.4.16 task-runs 非终态必须保持 active。"""
+    payload = [{
+        "id": "b8e84b2e-ab15-40e2-a67a-7245cac713c0",
+        "kind": "direct",
+        "status": status,
+        "agent_id": "0deb1d04-7ed4-4c63-b808-ae7f2b3e7276",
+        "created_at": "2026-08-02T23:40:05Z",
+        "dispatched_at": "2026-08-02T23:40:05.348Z",
+        "started_at": None,
+        "completed_at": None,
+    }]
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    runtime = MulticaRuntime(store)
+    monkeypatch.setattr(store, "_run_multica", lambda _args: payload)
+
+    assert runtime.is_active("issue-1") is True
+    observed = runtime.list_runs("issue-1")
+    assert len(observed) == 1
+    assert observed[0].status == status
+    assert observed[0].active is True
+    assert observed[0].terminal is False
+
+
+@pytest.mark.parametrize("status", ["completed", "failed", "cancelled"])
+def test_multica_runtime_preserves_terminal_status_semantics(monkeypatch, status):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    runtime = MulticaRuntime(store)
+    monkeypatch.setattr(store, "_run_multica", lambda _args: [{
+        "id": f"run-{status}", "kind": "direct", "status": status,
+    }])
+
+    assert runtime.is_active("issue-1") is False
+    observed = runtime.list_runs("issue-1")
+    assert observed[0].active is False
+    assert observed[0].terminal is True
+
+
+def test_multica_runtime_unknown_status_reports_raw_value(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    runtime = MulticaRuntime(store)
+    monkeypatch.setattr(store, "_run_multica", lambda _args: [{
+        "id": "run-future", "kind": "direct", "status": "future_transition",
+    }])
+
+    with pytest.raises(
+        PlatformError,
+        match="unknown status 'future_transition' for run-future",
+    ):
+        runtime.list_runs("issue-1")
+
+
 @pytest.mark.parametrize("payload", [
     None,
     {"data": []},
