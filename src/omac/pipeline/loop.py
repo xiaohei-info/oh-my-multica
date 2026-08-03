@@ -99,6 +99,11 @@ _REVIEW_CONFIRMATION_PAYLOADS = frozenset({
     WorkItemPayload.MACHINE_FEEDBACK,
     WorkItemPayload.CONTRACT,
 })
+_STRUCTURED_RECOVERY_PAYLOADS = (
+    (WorkItemPayload.VERIFICATION, "verification_ref"),
+    (WorkItemPayload.REVIEW_REPORT, "review_report_ref"),
+    (WorkItemPayload.CONTRACT, "contract_ref"),
+)
 
 
 @dataclass(frozen=True)
@@ -743,6 +748,30 @@ def _hydrate_work_item_payloads(
         work_item=item,
         deferred_payloads=projection.deferred_payloads - plan,
     )
+
+
+def _validate_structured_recovery_payloads(
+    projection: WorkItemControlProjection,
+    requested: WorkItemHydrationPlan,
+) -> None:
+    """Fail closed when referenced collect evidence is not a non-empty mapping."""
+    item = projection.work_item
+    for payload, ref_name in _STRUCTURED_RECOVERY_PAYLOADS:
+        ref = getattr(item, ref_name, None)
+        if payload not in requested or not ref:
+            continue
+        value = getattr(item, payload.value, None)
+        if isinstance(value, dict) and value:
+            continue
+        attachment_id = str(ref.get("attachment_id") or "unknown")
+        raise PlatformError(ui(
+            f"Referenced {payload.value} attachment {attachment_id} for work "
+            f"item {item.id} did not parse as a non-empty YAML/JSON mapping. "
+            "Restore a valid structured attachment before retrying DAG recovery.",
+            f"工作单元 {item.id} 引用的 {payload.value} 附件 {attachment_id} "
+            "无法解析为非空 YAML/JSON 映射。请恢复合法的结构化附件后再重试 "
+            "DAG 恢复。",
+        ))
 
 
 def _observe_reconcile_inputs(
@@ -3498,9 +3527,12 @@ def _restore_active_formal_run_stages(
             "in_review" if item.phase == TaskPhase.REVIEW else "in_progress")
         collect_node = replace(node, status=status)
         plan = _build_work_item_hydration_plan(collect_node, projection)
+        hydrated = _hydrate_work_item_payloads(store, projection, plan)
+        _validate_structured_recovery_payloads(
+            hydrated, plan & projection.deferred_payloads)
         restored[key] = (
             status,
-            _hydrate_work_item_payloads(store, projection, plan),
+            hydrated,
         )
 
     for key, (status, projection) in restored.items():
