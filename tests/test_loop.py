@@ -3623,6 +3623,13 @@ class TestFailureInjection:
             "wrong-phase",
             "wrong-node",
             "wrong-resume-issue",
+            "wrong-gate",
+            "missing-gate",
+            "wrong-failure-class",
+            "missing-failure-class",
+            "wrong-next-action",
+            "missing-next-action",
+            "operator-decision-extra",
             "wrong-subject",
             "stale-authoritative-subject",
             "contract-mismatch",
@@ -3660,6 +3667,20 @@ class TestFailureInjection:
             decision["node_id"] = "other"
         elif invalid_case == "wrong-resume-issue":
             decision["resume_issue_id"] = "other-issue"
+        elif invalid_case == "wrong-gate":
+            decision["gate"] = "human-confirmation"
+        elif invalid_case == "missing-gate":
+            decision.pop("gate")
+        elif invalid_case == "wrong-failure-class":
+            decision["failure_class"] = "operator-product-decision"
+        elif invalid_case == "missing-failure-class":
+            decision.pop("failure_class")
+        elif invalid_case == "wrong-next-action":
+            decision["next_action"] = "wait for product owner"
+        elif invalid_case == "missing-next-action":
+            decision.pop("next_action")
+        elif invalid_case == "operator-decision-extra":
+            decision["operator_decision"] = True
         elif invalid_case == "wrong-subject":
             baseline = replace(baseline, subject_digest="stale-subject")
         elif invalid_case == "stale-authoritative-subject":
