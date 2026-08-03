@@ -1,8 +1,13 @@
+from copy import deepcopy
+import json
 from types import SimpleNamespace
 
 import pytest
 import yaml
 
+from omac.cli import exit_codes
+from omac.cli.commands import work as work_cmd
+from omac.cli.main import main
 from omac.core import review_convergence as review_mod
 from omac.core.review_convergence import (
     REVIEW_PROTOCOL_VERSION,
@@ -16,7 +21,7 @@ from omac.core.review_convergence import (
 from omac.core.taskmeta import TaskKind, TaskPhase, WorkerHandoffIntent
 from omac.engines.mock import MockStore
 from omac.engines.models import EngineConfig, WorkItemStatus
-from omac.errors import ValidationError
+from omac.errors import NeedsDecision, ValidationError
 from omac.pipeline import dispatch
 from omac.pipeline.dispatch import submit as submit_work
 from omac.engines import create_engine
@@ -1622,6 +1627,125 @@ def test_review_submit_updates_ledger_before_exposing_verdict(tmp_path):
     assert current.review_ledger["cycles"][0]["subject_digest"] == "subject-v1"
     assert current.review_ledger["cycles"][0]["new_count"] == 1
     assert current.review_ledger["blockers"][0]["root_cause_key"] == "command-target"
+
+
+def _legacy_two_cycle_review_case(tmp_path):
+    store = _store()
+    item = store.create_work_item(
+        "ws", "review", "review", dag_key="review-1", worker="alice",
+        reviewer="bob", kind=TaskKind.DECOMPOSE,
+        initial_status=WorkItemStatus.IN_REVIEW,
+    )
+    item.phase = TaskPhase.REVIEW
+    item.deliverable = "nodes: []"
+    item.review_subject_digest = "subject-v3"
+    item.review_obligations = build_review_obligations(item)
+    ledger = _decision_ledger([1, 1])
+    for cycle in ledger["cycles"]:
+        cycle.pop("blocker_facts_schema")
+        cycle.pop("blocker_facts")
+    store.update_work_item_metadata(
+        item.id,
+        review_ledger=ledger,
+        review_bounce=2,
+    )
+    blocker = ledger["blockers"][0]
+    report = _report(
+        item.review_obligations,
+        prior=[{
+            "blocker_id": blocker["blocker_id"],
+            "status": "unchanged",
+            "evidence": "the same task boundary still cannot close the blocker",
+        }],
+        failed={blocker["obligation_id"]},
+        blockers=[{
+            "root_cause_key": blocker["root_cause_key"],
+            "obligation_id": blocker["obligation_id"],
+            "classification": "unchanged",
+            "summary": "the same blocker remains open",
+            "evidence": "the current node boundary is still insufficient",
+            "required_fix": "split the work into independently reviewable nodes",
+        }],
+    )
+    report_path = tmp_path / "review.yaml"
+    report_path.write_text(yaml.safe_dump(report))
+    return store, item, report_path
+
+
+def test_legacy_two_cycle_ledger_requires_stable_decision_before_third_submit(
+    tmp_path, monkeypatch,
+):
+    store, item, report_path = _legacy_two_cycle_review_case(tmp_path)
+    before = deepcopy(store.get_work_item(item.id))
+    writes = []
+    original_update = store.update_work_item_metadata
+    original_status = store.update_status
+
+    def record_update(*args, **kwargs):
+        writes.append(("metadata", args, kwargs))
+        return original_update(*args, **kwargs)
+
+    def record_status(*args, **kwargs):
+        writes.append(("status", args, kwargs))
+        return original_status(*args, **kwargs)
+
+    monkeypatch.setattr(store, "update_work_item_metadata", record_update)
+    monkeypatch.setattr(store, "update_status", record_status)
+
+    decisions = []
+    for _ in range(2):
+        with pytest.raises(NeedsDecision) as exc:
+            dispatch.submit(
+                store,
+                item.id,
+                verdict="reject",
+                report_file=str(report_path),
+            )
+        decisions.append(exc.value.report)
+
+    assert decisions[0] == decisions[1]
+    assert decisions[0]["reason_code"] == (
+        "review-convergence-ledger-unverifiable")
+    assert decisions[0]["convergence"]["mode"] == (
+        "unverifiable-legacy-ledger")
+    assert decisions[0]["next_action"].startswith("omac dag amend propose ")
+    assert writes == []
+    after = store.get_work_item(item.id)
+    assert after.review_ledger == before.review_ledger
+    assert after.review_report == before.review_report
+    assert after.review_verdict == before.review_verdict
+    assert after.decision_required == before.decision_required
+    assert after.status == before.status
+
+
+def test_legacy_two_cycle_cli_returns_repeatable_exit_20_without_writes(
+    tmp_path, monkeypatch, capsys,
+):
+    store, item, report_path = _legacy_two_cycle_review_case(tmp_path)
+    before = deepcopy(store.get_work_item(item.id))
+    writes = []
+    monkeypatch.setattr(work_cmd, "_resolve_store", lambda: store)
+    for name in ("update_work_item_metadata", "update_status", "assign_work_item"):
+        monkeypatch.setattr(
+            store, name,
+            lambda *_args, _name=name, **_kwargs: writes.append(_name),
+        )
+
+    decisions = []
+    for _ in range(2):
+        assert main([
+            "work", "submit", item.id, "--verdict", "reject",
+            "--report-file", str(report_path),
+        ]) == exit_codes.NEEDS_DECISION
+        captured = capsys.readouterr()
+        decisions.append(json.loads(captured.out))
+        assert "omac dag amend propose" in captured.err
+
+    assert decisions[0] == decisions[1]
+    assert decisions[0]["reason_code"] == (
+        "review-convergence-ledger-unverifiable")
+    assert writes == []
+    assert store.get_work_item(item.id) == before
 
 
 def test_v2_review_submit_rejects_legacy_report_before_metadata_write(tmp_path):
