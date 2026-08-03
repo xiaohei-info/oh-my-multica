@@ -752,6 +752,66 @@ def test_corrupt_legacy_ledger_is_invalid(
     assert resolution.state is ResolutionState.INVALID
 
 
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda ledger: ledger["cycles"][1].__setitem__("subject_digest", ""),
+        lambda ledger: ledger["cycles"][1].__setitem__("verdict", "banana"),
+        lambda ledger: ledger["cycles"][1].__setitem__("round", 3),
+        lambda ledger: ledger["cycles"][1].__setitem__("new_count", 2),
+        lambda ledger: ledger["cycles"][1].__setitem__("fixed_count", 1),
+        lambda ledger: ledger["cycles"][1].__setitem__("regressed_count", 1),
+        lambda ledger: ledger["cycles"][1].__setitem__("unchanged_count", 2),
+        lambda ledger: ledger["cycles"][1].__setitem__(
+            "reported_blocker_ids", []),
+        lambda ledger: ledger["blockers"][0].__setitem__("obligation_id", ""),
+        lambda ledger: ledger["blockers"][0].__setitem__("status", "banana"),
+        lambda ledger: ledger["blockers"][0].__setitem__(
+            "classification", "banana"),
+        lambda ledger: ledger["blockers"][0].__setitem__(
+            "first_seen_round", 4),
+        lambda ledger: ledger["blockers"][0].__setitem__(
+            "last_seen_round", 4),
+        lambda ledger: ledger["blockers"][0].update({
+            "first_seen_round": 2, "last_seen_round": 1,
+        }),
+        lambda ledger: ledger["blockers"][0].__setitem__("seen_count", 99),
+        lambda ledger: ledger["blockers"].append(
+            deepcopy(ledger["blockers"][0])),
+    ],
+    ids=[
+        "empty-subject-digest",
+        "invalid-verdict",
+        "non-sequential-round",
+        "impossible-new-count",
+        "impossible-fixed-count",
+        "impossible-regressed-count",
+        "impossible-unchanged-count",
+        "reported-open-id-mismatch",
+        "empty-obligation-id",
+        "invalid-summary-status",
+        "invalid-summary-classification",
+        "first-seen-after-ledger",
+        "last-seen-after-ledger",
+        "last-seen-before-first-seen",
+        "impossible-seen-count",
+        "duplicate-summary-blocker-id",
+    ],
+)
+def test_legacy_shared_field_mutations_are_invalid(
+    aiteam_849_legacy_snapshot, mutate,
+):
+    ledger = deepcopy(aiteam_849_legacy_snapshot["work_item"]["review_ledger"])
+    mutate(ledger)
+
+    with pytest.raises(ValueError) as exc_info:
+        validate_review_ledger(ledger, expected_round=3)
+    assert not isinstance(exc_info.value, LegacyReviewLedgerUnverifiable)
+    assert resolve_convergence(
+        _item(ledger=ledger), expected_round=3,
+    ).state is ResolutionState.INVALID
+
+
 @pytest.mark.parametrize("cycle_count", [1, 2])
 def test_legacy_cycles_before_decision_boundary_keep_fast_path(cycle_count):
     ledger = _stalled_canonical_ledger(with_facts=False)
@@ -783,6 +843,8 @@ def _with_cycle_blocker_facts(ledger):
     prior_open_ids = set()
     for cycle in ledger["cycles"]:
         open_ids = set(cycle["open_blocker_ids"])
+        cycle.setdefault("subject_digest", f"subject-{cycle['round']}")
+        cycle.setdefault("verdict", "reject" if open_ids else "pass")
         facts = []
         for blocker_id in sorted(prior_open_ids - open_ids):
             previous = current[blocker_id]
@@ -1118,6 +1180,8 @@ def _stalled_canonical_ledger(*, with_facts=True):
         "cycles": [
             {
                 "round": round_index,
+                "subject_digest": f"subject-{round_index}",
+                "verdict": "reject",
                 "new_count": 1 if round_index == 1 else 0,
                 "fixed_count": 0,
                 "regressed_count": 0,
