@@ -2430,21 +2430,49 @@ def test_runner_clears_delayed_reviewer_decision_before_consuming_verdict(
     assert reviewer_assignments == []
 
 
+@pytest.mark.parametrize(
+    "invalid_case",
+    [
+        "stale-subject",
+        "wrong-gate",
+        "missing-failure-class",
+        "operator-decision-extra",
+    ],
+)
 def test_runner_preserves_invalid_delayed_reviewer_decision(
-    tmp_path, monkeypatch,
+    tmp_path, monkeypatch, invalid_case,
 ):
-    """Runner 不得清除或消费不再绑定当前 subject 的专用 decision。"""
+    """Runner 不得清除、消费或重写非 canonical 专用 decision。"""
     eng, manifest, path, item_id, _target_run_id, report = (
         _delayed_reviewer_verdict_fixture(tmp_path, "pass"))
     current = eng.store.get_work_item(item_id)
-    eng.store.update_work_item_metadata(
-        item_id,
-        reviewer_run_baseline=replace(
+    decision = dict(current.decision_required)
+    metadata = {}
+    if invalid_case == "stale-subject":
+        metadata["reviewer_run_baseline"] = replace(
             current.reviewer_run_baseline,
             subject_digest="stale-subject",
-        ),
-    )
+        )
+    elif invalid_case == "wrong-gate":
+        decision["gate"] = "human-confirmation"
+    elif invalid_case == "missing-failure-class":
+        decision.pop("failure_class")
+    else:
+        decision["operator_decision"] = True
+    metadata["decision_required"] = decision
+    eng.store.update_work_item_metadata(item_id, **metadata)
+    eng.store.update_status(item_id, WorkItemStatus.BLOCKED)
+
     assignments_before = len(eng.store.assign_log)
+    decision_writes = []
+    original_update = eng.store.update_work_item_metadata
+
+    def update(target_item_id, **updated):
+        if "decision_required" in updated:
+            decision_writes.append(updated["decision_required"])
+        return original_update(target_item_id, **updated)
+
+    monkeypatch.setattr(eng.store, "update_work_item_metadata", update)
     monkeypatch.setattr(
         eng.store,
         "assign_work_item",
@@ -2464,11 +2492,11 @@ def test_runner_preserves_invalid_delayed_reviewer_decision(
     assert "a" in failures
     assert manifest.nodes["a"].status == "blocked"
     assert blocked.status is WorkItemStatus.BLOCKED
-    assert blocked.decision_required["reason_code"] == (
-        "reviewer-run-baseline-unavailable")
+    assert blocked.decision_required == decision
     assert blocked.review_verdict == "pass"
     assert blocked.review_report == report
     assert len(eng.store.assign_log) == assignments_before
+    assert decision_writes == []
 
 
 def test_reviewer_capacity_failure_reruns_without_review_bounce(
@@ -3356,6 +3384,55 @@ def test_nonretryable_worker_failure_blocks_without_business_bounce(
     assert blocked.bounces.review == 0
     assert blocked.decision_required["reason_code"] == (
         "nonretryable-runtime-failure")
+
+
+def test_worker_runtime_failure_next_action_recovers_authoring(
+    tmp_path, monkeypatch, capsys,
+):
+    """Worker runtime decision 的可执行命令不得把节点切到 review。"""
+    from shlex import split
+
+    from omac.cli import exit_codes
+    from omac.cli.main import main
+
+    eng, manifest, path, item, agent_id = _transient_worker_handoff_fixture(
+        tmp_path)
+    runs = [AgentRunObservation(
+        id="run-capacity-1", kind="direct", status="failed",
+        agent_id=agent_id,
+        error="request rejected by network security policy",
+    )]
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
+    monkeypatch.setattr(
+        eng.runtime,
+        "wake",
+        lambda *_args: pytest.fail("runtime decision must not wake"),
+    )
+
+    result = tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+    blocked = eng.store.get_work_item(item.id)
+    next_action = blocked.decision_required["next_action"]
+
+    assert result.state == "needs_decision"
+    assert blocked.phase is TaskPhase.AUTHORING
+    assert blocked.worker_handoff is not None
+    assert "--stage review" not in next_action
+
+    monkeypatch.setenv("OMAC_ENGINE", "mock")
+    monkeypatch.setenv("OMAC_WORKSPACE_ID", "ws")
+    import omac.cli.commands.node as node_mod
+    monkeypatch.setattr(node_mod, "create_engine", lambda *_args, **_kwargs: eng)
+
+    command = split(next_action)
+    assert command[0] == "omac"
+    assert main(command[1:]) == exit_codes.OK
+    capsys.readouterr()
+
+    recovered = eng.store.get_work_item(item.id)
+    assert recovered.phase is TaskPhase.AUTHORING
+    assert recovered.status is WorkItemStatus.TODO
+    assert recovered.worker_handoff == blocked.worker_handoff
+    assert load_manifest(path).nodes["a"].status == "todo"
 
 
 def test_nonretryable_reviewer_failure_blocks_without_review_bounce(

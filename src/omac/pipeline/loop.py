@@ -983,7 +983,7 @@ def _block_runtime_failure(
     failure: _RunFailure,
 ) -> str:
     """Stop in the current business stage without consuming business bounce."""
-    retry = f"omac node retry {manifest_path} {key} --stage review"
+    retry = f"omac node retry {manifest_path} {key}"
     exhausted = failure.classification == "transient"
     if exhausted:
         reason_code = "transient-runtime-retry-exhausted"
@@ -3145,9 +3145,13 @@ def collect_results(
                     require_target=True,
                 )
                 if marker_error is not None:
-                    failures[key] = _block_reviewer(
-                        store, manifest, manifest_path, key, item,
-                        "reviewer-run-baseline-unavailable", marker_error)
+                    if item.status != WorkItemStatus.BLOCKED:
+                        store.update_status(item.id, WorkItemStatus.BLOCKED)
+                    set_node(manifest, key, status="blocked")
+                    failures[key] = ui(
+                        f"Reviewer recovery is unsafe: {marker_error}.",
+                        f"reviewer 恢复不安全：{marker_error}。",
+                    )
                     continue
                 # The dedicated decision is the durable recovery marker. Only
                 # the Runner that is about to consume this exact verdict clears
