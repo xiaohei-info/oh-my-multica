@@ -11,11 +11,12 @@ from omac.core.review_convergence import (
     review_state,
     validate_convergence_review,
 )
-from omac.core.taskmeta import TaskKind, TaskPhase
+from omac.core.taskmeta import TaskKind, TaskPhase, WorkerHandoffIntent
 from omac.engines.mock import MockStore
 from omac.engines.models import EngineConfig, WorkItemStatus
 from omac.errors import ValidationError
 from omac.pipeline import dispatch
+from omac.pipeline.dispatch import submit as submit_work
 from omac.engines import create_engine
 from omac.pipeline.tasks import run_task
 from omac.core.acceptance import load_acceptance_doc
@@ -747,6 +748,151 @@ def test_authoring_show_exposes_required_closures_and_convergence_mode():
         "summary": "release trust is incomplete",
         "required_fix": "verify the signed handoff",
     }]
+    assert "previous_review" not in output["context"]
+
+
+def test_authoring_show_does_not_bind_feedback_from_non_review_handoff():
+    store = _store()
+    item = store.create_work_item(
+        "ws", "authoring", "authoring", dag_key="review-1", worker="alice",
+        kind=TaskKind.DEVELOP,
+    )
+    item.worker_handoff = WorkerHandoffIntent(
+        schema="omac.worker-handoff/v1",
+        state="pending",
+        target_worker="alice",
+        gate="explicit-dispatch",
+        source_review_subject_digest="stage-recovery",
+        source_review_round=1,
+        source_review_feedback={
+            "verdict": "pass-with-nits",
+            "nits": ["stale feedback"],
+        },
+        target_review_bounce=0,
+    )
+
+    output = dispatch.build_show_output(item, "worker:alice")
+
+    assert "previous_review" not in output["context"]
+
+
+def test_authoring_show_does_not_expose_malformed_review_nits_feedback():
+    store = _store()
+    item = store.create_work_item(
+        "ws", "authoring", "authoring", dag_key="review-1", worker="alice",
+        kind=TaskKind.DEVELOP,
+    )
+    item.worker_handoff = WorkerHandoffIntent(
+        schema="omac.worker-handoff/v1",
+        state="pending",
+        target_worker="alice",
+        gate="review-nits",
+        source_review_subject_digest="subject-1",
+        source_review_round=1,
+        source_review_verdict="pass-with-nits",
+        source_review_feedback={
+            "verdict": "pass-with-nits",
+            "nits": [],
+        },
+        target_review_bounce=1,
+    )
+
+    output = dispatch.build_show_output(item, "worker:alice")
+
+    assert "previous_review" not in output["context"]
+
+
+def test_authoring_show_does_not_expose_uncoupled_review_nits_feedback():
+    store = _store()
+    item = store.create_work_item(
+        "ws", "authoring", "authoring", dag_key="review-1", worker="alice",
+        kind=TaskKind.DEVELOP,
+    )
+    item.worker_handoff = WorkerHandoffIntent(
+        schema="omac.worker-handoff/v1",
+        state="pending",
+        target_worker="alice",
+        gate="review-nits",
+        source_review_subject_digest="subject-1",
+        source_review_round=1,
+        source_review_verdict="pass-with-nits",
+            source_review_feedback={
+                "verdict": "pass-with-nits",
+                "nits": ["follow up"],
+                "report_ref": {
+                    "attachment_id": "review-report-1",
+                    "sha256": "a" * 64,
+                },
+            },
+        target_review_bounce=1,
+    )
+    assert item.worker_handoff.is_complete()
+    assert not item.worker_handoff.is_causally_bound()
+
+    output = dispatch.build_show_output(item, "worker:alice")
+
+    assert "previous_review" not in output["context"]
+
+
+def test_pass_with_nits_requires_at_least_one_actionable_nit():
+    item = _item()
+    obligations = build_review_obligations(item)
+    item.review_obligations = obligations
+    report = _report(obligations)
+
+    errors = validate_convergence_review(item, "pass-with-nits", report)
+
+    assert errors == [
+        "review_report pass-with-nits verdict requires at least one non-empty nit"
+    ]
+
+
+@pytest.mark.parametrize("nits", [[""], ["ok", "  "], ["ok", 1]])
+def test_review_report_rejects_malformed_nits(nits):
+    item = _item()
+    obligations = build_review_obligations(item)
+    item.review_obligations = obligations
+    report = _report(obligations)
+    report["nits"] = nits
+
+    errors = validate_convergence_review(item, "pass-with-nits", report)
+
+    assert any("review_report.nits" in error for error in errors)
+
+
+def test_review_submit_rejects_empty_pass_with_nits_without_state_change(
+    tmp_path,
+):
+    store = _store()
+    item = store.create_work_item(
+        "ws", "review", "review", dag_key="review-1", worker="alice",
+        reviewer="bob", kind=TaskKind.DECOMPOSE,
+        initial_status=WorkItemStatus.IN_REVIEW,
+    )
+    item.phase = TaskPhase.REVIEW
+    item.deliverable = "nodes: []"
+    item.review_subject_digest = "subject-v1"
+    item.review_obligations = build_review_obligations(item)
+    report = _report(item.review_obligations)
+    report_path = tmp_path / "review.yaml"
+    report_path.write_text(yaml.safe_dump(report))
+
+    with pytest.raises(
+        ValidationError,
+        match="pass-with-nits verdict requires at least one non-empty nit",
+    ):
+        submit_work(
+            store,
+            item.id,
+            verdict="pass-with-nits",
+            report_file=str(report_path),
+        )
+
+    current = store.get_work_item(item.id)
+    assert current.review_verdict is None
+    assert current.review_report is None
+    assert current.worker_handoff is None
+    assert current.bounces.review == 0
 
 
 def test_review_submit_updates_ledger_before_exposing_verdict(tmp_path):
