@@ -142,6 +142,11 @@ def _validated_handoff_review_ledger(item, handoff_intent) -> dict | None:
         )) from exc
 
 
+def _review_handoff_convergence(item, handoff_intent) -> dict | None:
+    return review_convergence_decision(
+        _validated_handoff_review_ledger(item, handoff_intent))
+
+
 class _ReviewerDispatchUnresolved(PlatformError):
     """A persisted reviewer assignment has no uniquely observable Run."""
 
@@ -2626,9 +2631,7 @@ def collect_results(
             handoff_intent is not None
             and handoff_intent.gate in {"review", "review-nits"}
         ):
-            review_ledger = _validated_handoff_review_ledger(
-                item, handoff_intent)
-            convergence = review_convergence_decision(review_ledger)
+            convergence = _review_handoff_convergence(item, handoff_intent)
             if convergence is not None:
                 failures[key] = _block_review_non_convergence(
                     store, manifest, key, item, convergence)
@@ -3594,10 +3597,11 @@ def _restore_active_formal_run_stages(
     manifest: Manifest,
     manifest_path: str,
     observations: Dict[str, WorkItemControlProjection | None],
-) -> None:
+) -> Dict[str, tuple[WorkItemControlProjection, dict]]:
     """Restore blocked manifest projections while their formal Run is active."""
     active = _active_formal_run_nodes(runtime, manifest, observations)
     restored: Dict[str, tuple[str, WorkItemControlProjection]] = {}
+    blocked: Dict[str, tuple[WorkItemControlProjection, dict]] = {}
     for key in active:
         node = manifest.nodes[key]
         if node.status not in FAILED_STATUSES:
@@ -3616,8 +3620,11 @@ def _restore_active_formal_run_stages(
             handoff_intent is not None
             and handoff_intent.gate in {"review", "review-nits"}
         ):
-            _validated_handoff_review_ledger(
+            convergence = _review_handoff_convergence(
                 hydrated.work_item, handoff_intent)
+            if convergence is not None:
+                blocked[key] = (hydrated, convergence)
+                continue
         restored[key] = (
             status,
             hydrated,
@@ -3628,6 +3635,7 @@ def _restore_active_formal_run_stages(
         set_node(manifest, key, status=status)
     if restored:
         save_manifest(manifest, manifest_path)
+    return blocked
 
 
 def tick(
@@ -3657,13 +3665,20 @@ def tick(
     # A graph-level blocked projection must not hide an already-dispatched,
     # causally bound stage. Restore only that stage; unrelated decisions remain
     # blocked and no Agent is assigned or woken here.
-    _restore_active_formal_run_stages(
+    convergence_blocks = _restore_active_formal_run_stages(
         store, runtime, manifest, manifest_path, reconcile_result.observations)
 
     # 2. SYNC: 回收进行中节点的结果
-    new_failures = collect_results(store, runtime, manifest, manifest_path,
-                                   retry_limits=retry_limits, config=config,
-                                   observations=reconcile_result.observations)
+    new_failures = {
+        key: _block_review_non_convergence(
+            store, manifest, key, projection.work_item, convergence)
+        for key, (projection, convergence) in convergence_blocks.items()
+    }
+    new_failures.update(collect_results(
+        store, runtime, manifest, manifest_path,
+        retry_limits=retry_limits, config=config,
+        observations=reconcile_result.observations,
+    ))
 
     # 3. 收集全部失败节点(含本轮新失败 + 历史已 blocked/failed)
     all_failed: Set[str] = set(new_failures.keys())

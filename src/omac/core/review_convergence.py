@@ -91,11 +91,21 @@ def validate_review_ledger(
             raise ValueError(f"review ledger {path}.status is invalid")
         if classification not in _LEDGER_BLOCKER_CLASSIFICATIONS:
             raise ValueError(f"review ledger {path}.classification is invalid")
-        for field in ("first_seen_round", "seen_count"):
-            value = blocker.get(field)
-            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        first_seen_round = blocker.get("first_seen_round")
+        seen_count = blocker.get("seen_count")
+        for field, value in (
+            ("first_seen_round", first_seen_round),
+            ("seen_count", seen_count),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                 raise ValueError(
-                    f"review ledger {path}.{field} must be a non-negative integer")
+                    f"review ledger {path}.{field} must be a positive integer")
+        if first_seen_round > len(cycles):
+            raise ValueError(
+                f"review ledger {path}.first_seen_round exceeds persisted cycles")
+        if seen_count > len(cycles) - first_seen_round + 1:
+            raise ValueError(
+                f"review ledger {path}.seen_count exceeds persisted cycles")
     return ledger
 
 

@@ -4927,6 +4927,127 @@ class TestReviewerRejectBoundedFallback:
         assert eng.store.assign_log == assignments_before
         assert eng.runtime.list_runs(item.id) == runs_before
 
+    def test_active_worker_restore_consumes_convergence_before_any_write(
+        self, tmp_path, monkeypatch,
+    ):
+        """An active Run cannot publish in_progress before its decision."""
+        eng, manifest, path, runs, observations = (
+            TestFailureInjection._blocked_manifest_with_formal_run(
+                tmp_path, role="worker")
+        )
+        item_id = manifest.nodes["active"].work_item_id
+        current = eng.store.get_work_item(item_id)
+        intent = replace(
+            current.worker_handoff,
+            gate="review",
+            source_review_round=3,
+            target_review_bounce=3,
+        )
+        eng.store.update_work_item_metadata(
+            item_id,
+            worker_handoff=intent,
+            review_ledger=self._stalled_review_ledger(),
+        )
+        observations["active"] = eng.store.observe_work_item_control(item_id)
+        events = []
+        original_decision = loop.review_convergence_decision
+        original_save = loop.save_manifest
+        original_update = eng.store.update_work_item_metadata
+        original_status = eng.store.update_status
+
+        monkeypatch.setattr(
+            loop,
+            "reconcile_with_observations",
+            lambda *_args, **_kwargs: loop.ReconcileResult(False, observations),
+        )
+        monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
+        monkeypatch.setattr(
+            eng.store,
+            "assign_work_item",
+            lambda *_args, **_kwargs: pytest.fail(
+                "convergence-blocked restore must not assign"),
+        )
+        monkeypatch.setattr(
+            eng.runtime,
+            "wake",
+            lambda *_args, **_kwargs: pytest.fail(
+                "convergence-blocked restore must not wake"),
+        )
+
+        def decide(ledger):
+            events.append("decision")
+            return original_decision(ledger)
+
+        def save(current_manifest, current_path):
+            events.append(f"manifest:{current_manifest.nodes['active'].status}")
+            return original_save(current_manifest, current_path)
+
+        def update(item_id, **metadata):
+            events.append("store:update-metadata")
+            return original_update(item_id, **metadata)
+
+        def update_status(item_id, status):
+            events.append(f"store:status:{status.value}")
+            return original_status(item_id, status)
+
+        monkeypatch.setattr(loop, "review_convergence_decision", decide)
+        monkeypatch.setattr(loop, "save_manifest", save)
+        monkeypatch.setattr(eng.store, "update_work_item_metadata", update)
+        monkeypatch.setattr(eng.store, "update_status", update_status)
+
+        result = tick(eng.store, eng.runtime, manifest, path)
+
+        blocked = eng.store.get_work_item(item_id)
+        assert events[0] == "decision"
+        assert "manifest:in_progress" not in events
+        assert result.state == "needs_decision"
+        assert manifest.nodes["active"].status == "blocked"
+        assert blocked.decision_required["reason_code"] == (
+            "review-convergence-stalled")
+
+    def test_impossible_ledger_count_fails_before_worker_handoff_side_effects(
+        self, tmp_path, monkeypatch,
+    ):
+        """A persisted blocker cannot have a zero semantic observation count."""
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        intent, _source = self._prepare_causal_handoff(eng, item)
+        intent = replace(
+            intent, source_review_round=3, target_review_bounce=3)
+        ledger = self._stalled_review_ledger()
+        ledger["blockers"][0]["seen_count"] = 0
+        eng.store.update_work_item_metadata(
+            item.id, worker_handoff=intent, review_ledger=ledger)
+        set_node(manifest, "a", status="in_progress")
+        save_manifest(manifest, path)
+        before = Path(path).read_bytes()
+
+        monkeypatch.setattr(
+            loop,
+            "_dispatch_worker_handoff",
+            lambda *_args, **_kwargs: pytest.fail(
+                "invalid ledger must not reach worker handoff"),
+        )
+        for target, name in (
+            (eng.store, "update_work_item_metadata"),
+            (eng.store, "update_status"),
+            (eng.store, "assign_work_item"),
+            (eng.runtime, "wake"),
+        ):
+            monkeypatch.setattr(
+                target,
+                name,
+                lambda *_args, _name=name, **_kwargs: pytest.fail(
+                    f"invalid ledger must not call {_name}"),
+            )
+
+        with pytest.raises(PlatformError, match="seen_count"):
+            tick(eng.store, eng.runtime, manifest, path)
+
+        assert manifest.nodes["a"].status == "in_progress"
+        assert Path(path).read_bytes() == before
+
     @pytest.mark.parametrize(
         ("round_index", "requires_ledger"),
         [(1, False), (3, True)],

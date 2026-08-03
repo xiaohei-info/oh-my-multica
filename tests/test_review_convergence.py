@@ -768,6 +768,20 @@ def test_review_ledger_validation_rejects_truncated_cycle_history():
         validate_review_ledger(ledger, expected_round=10)
 
 
+@pytest.mark.parametrize(("field", "value"), [
+    ("seen_count", 0),
+    ("seen_count", 4),
+    ("first_seen_round", 0),
+    ("first_seen_round", 4),
+])
+def test_review_ledger_validation_rejects_impossible_blocker_counts(field, value):
+    ledger = _decision_ledger([1, 1, 1])
+    ledger["blockers"][0][field] = value
+
+    with pytest.raises(ValueError, match=field):
+        validate_review_ledger(ledger, expected_round=3)
+
+
 def _store():
     MockStore.reset()
     return MockStore(EngineConfig(engine_type="mock", workspace_id="ws"))
