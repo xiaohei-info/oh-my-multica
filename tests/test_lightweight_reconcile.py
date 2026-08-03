@@ -23,6 +23,7 @@ from omac.core.review_convergence import review_subject_digest
 from omac.core.taskmeta import (
     DELIVERY_IDENTITY_SCHEMA,
     DeliveryIdentity,
+    ReviewerRunBaseline,
     TaskPhase,
     WorkerHandoffIntent,
 )
@@ -1799,6 +1800,94 @@ def test_required_attachment_failure_is_atomic_after_all_control_reads(tmp_path)
     assert [kind for kind, _ in remote.calls[:2]] == ["issue", "issue"]
     assert manifest.nodes["node-a"].status == "blocked"
     assert manifest.nodes["node-b"].status == "blocked"
+    assert Path(path).read_bytes() == before
+
+
+def _deferred_active_reviewer_fixture(tmp_path):
+    item_id = "node-a"
+    subject = "subject-current"
+    issue, attachments = _issue(
+        item_id,
+        status="in_review",
+        phase="review",
+        review_verdict="reject",
+        review_subject=subject,
+    )
+    issue["metadata"]["delivery_identity"] = _delivery_identity(issue)
+    issue["metadata"]["reviewer_run_baseline"] = ReviewerRunBaseline(
+        schema="omac.reviewer-run-baseline/v1",
+        subject_digest=subject,
+        target_reviewer="reviewer",
+        target_agent_id="agent-reviewer",
+        cutoff_created_at="2026-08-03T00:00:00Z",
+        generation="review-1",
+    ).as_dict()
+    remote = _RemoteFixture({item_id: issue}, attachments)
+    store = _store(remote)
+    projection = store.observe_work_item_control(item_id)
+    manifest, path = _manifest_path(tmp_path, {
+        item_id: Node(
+            id=item_id,
+            worker="worker",
+            reviewer="reviewer",
+            work_item_id=item_id,
+            status="blocked",
+        ),
+    })
+    runs = [AgentRunObservation(
+        id="run-reviewer",
+        kind="direct",
+        status="running",
+        agent_id="agent-reviewer",
+        created_at="2026-08-03T00:00:01Z",
+        trigger_kind="issue_assignment",
+    )]
+    runtime = SimpleNamespace(
+        list_runs=lambda _item_id: list(runs),
+        wake=lambda *_args: pytest.fail("recovery must not wake an Agent"),
+    )
+    return store, remote, runtime, manifest, path, projection
+
+
+def test_active_reviewer_restore_rehydrates_real_multica_deferred_evidence(
+    tmp_path,
+):
+    store, remote, runtime, manifest, path, projection = (
+        _deferred_active_reviewer_fixture(tmp_path)
+    )
+    observations = {"node-a": projection}
+    required = loop._REVIEW_CONFIRMATION_PAYLOADS
+    assert required & projection.deferred_payloads
+
+    loop._restore_active_formal_run_stages(
+        store, runtime, manifest, path, observations)
+
+    restored = observations["node-a"]
+    assert manifest.nodes["node-a"].status == "in_review"
+    assert required.isdisjoint(restored.deferred_payloads)
+    assert restored.work_item.verification is not None
+    assert restored.work_item.review_report is not None
+    assert restored.work_item.contract is not None
+    assert remote.attachment_downloads == 4
+    assert load_manifest(path).nodes["node-a"].status == "in_review"
+
+
+def test_active_reviewer_restore_hydration_failure_keeps_manifest_blocked(
+    tmp_path,
+):
+    store, remote, runtime, manifest, path, projection = (
+        _deferred_active_reviewer_fixture(tmp_path)
+    )
+    observations = {"node-a": projection}
+    remote.fail_attachment_id = projection.work_item.contract_ref["attachment_id"]
+    before = Path(path).read_bytes()
+
+    with pytest.raises(PlatformError, match="attachment read failed"):
+        loop._restore_active_formal_run_stages(
+            store, runtime, manifest, path, observations)
+
+    assert manifest.nodes["node-a"].status == "blocked"
+    assert observations["node-a"] is projection
     assert Path(path).read_bytes() == before
 
 
