@@ -26,8 +26,11 @@ from omac.core.lint import lint as lint_manifest, lint_increment
 from omac.core.manifest import Contract, _dump_contract, _load_contract, load_manifest
 from omac.core.project_rules import END_MARKER, START_MARKER
 from omac.core.review_convergence import (
+    REVIEW_CONVERGENCE_DECISION_SCHEMA,
+    REVIEW_CONVERGENCE_EARLIEST_CYCLE,
     REVIEW_PROTOCOL_VERSION,
     advance_review_ledger,
+    build_review_convergence_decision,
     open_blockers,
     required_closures,
     review_state,
@@ -38,7 +41,7 @@ from omac.engines.models import (
     PullRequestReadinessFailureKind, WorkItem, WorkItemPayload, WorkItemStatus,
 )
 from omac.engines.store import WorkItemStore
-from omac.errors import AuthError, PlatformError, ValidationError
+from omac.errors import AuthError, NeedsDecision, PlatformError, ValidationError
 from omac.i18n import CN, EN, t, ui
 
 
@@ -1075,13 +1078,41 @@ def submit(
         report = _validate_review(kind, verdict, report_file, item)
         metadata: Dict[str, Any] = {}
         if getattr(item, "review_obligations", None):
-            ledger = advance_review_ledger(
-                getattr(item, "review_ledger", None),
-                report,
-                verdict=verdict,
-                subject_digest=item.review_subject_digest or "unknown",
-                round_index=max(1, item.bounces.review + 1),
-            )
+            try:
+                ledger = advance_review_ledger(
+                    getattr(item, "review_ledger", None),
+                    report,
+                    verdict=verdict,
+                    subject_digest=item.review_subject_digest or "unknown",
+                    round_index=max(1, item.bounces.review + 1),
+                )
+            except ValueError as exc:
+                current = getattr(item, "review_ledger", None)
+                cycles = current.get("cycles", []) if isinstance(current, dict) else []
+                if len(cycles) < REVIEW_CONVERGENCE_EARLIEST_CYCLE - 1:
+                    raise
+                node_id = getattr(item, "dag_key", None)
+                next_action = (
+                    "omac dag amend propose <manifest> --report-file <report> "
+                    "--docs <docs>"
+                    f"{' --blocked-node ' + node_id if node_id else ''} --output json"
+                )
+                convergence = {
+                    "schema": REVIEW_CONVERGENCE_DECISION_SCHEMA,
+                    "mode": "unverifiable-legacy-ledger",
+                    "reason_code": "review-convergence-ledger-unverifiable",
+                    "cycle_count": len(cycles),
+                }
+                decision = build_review_convergence_decision(
+                    item, convergence, kind=kind.value, node_id=node_id,
+                    recommended_action="dag-amendment")
+                decision["next_action"] = next_action
+                raise NeedsDecision(ui(
+                    f"Review history cannot be verified: {exc}. Re-split the task "
+                    f"with `{next_action}`; do not retry or rewrite legacy facts.",
+                    f"无法验证历史 review facts：{exc}。请用 `{next_action}` 重新拆分任务；"
+                    "不要重试或改写 legacy facts。",
+                ), report=decision) from exc
             metadata.update({
                 "review_ledger": ledger,
                 "review_ledger_source": yaml.safe_dump(

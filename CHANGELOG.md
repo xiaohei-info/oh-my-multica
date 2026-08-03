@@ -23,11 +23,13 @@ This file records public changes to oh-my-multica. The format follows
 - Directory-backed plan and amendment sources now inventory every file tracked
   by the current Git revision instead of local untracked or ignored files, so
   remote Agents can reproduce the exact authoritative docs digest.
-- Review rework now stops on semantic non-convergence instead of consuming a
-  large configured retry budget. The existing blocker ledger derives stalled,
-  scope-expanding, and ten-cycle-exhausted decisions; infrastructure retries
-  remain outside that budget, and develop nodes request a reviewed DAG amendment
-  without OMAC rewriting topology automatically.
+- Review rework now has one convergence authority for both `review_state` and
+  Runner control. The same blocker surviving two rework cycles stops at cycle
+  three, three open responsibility dimensions stop from cycle three, root causes
+  first seen after cycle five mark expanding scope, and cycle ten is an
+  unconditional stop. Existing pending or completed-without-submit Worker
+  handoffs are blocked before another assign/wake; infrastructure retries remain
+  outside the semantic ledger.
 - `work submit` now observes control facts once and hydrates only the attachment
   bodies required by its exact kind and phase, so stale historical evidence
   downloads cannot block a fresh authoring submission.
@@ -89,9 +91,10 @@ This file records public changes to oh-my-multica. The format follows
   for Reviewer recheck, refuses active Agent runs without cancelling them, and
   avoids changing project `retry.review` or the reviewed Git revision.
 - New review cycles use finite `review_obligations`, a persistent cross-cycle
-  blocker ledger, structured prior-blocker regression results, and automatic
-  convergence-audit signaling. Legacy in-flight review reports remain readable
-  until OMAC prepares their next review subject.
+  blocker ledger, and structured prior-blocker regression results. `review_state`
+  is a projection of the same persisted convergence decision consumed by the
+  Runner. Legacy in-flight review reports remain readable until OMAC prepares
+  their next review subject.
 - Deterministic manifest preflight now limits itself to mechanically certain
   facts, including invalid shell syntax and bare Go local package targets. In
   the absence of an explicit typed IO contract, generic command flags, current

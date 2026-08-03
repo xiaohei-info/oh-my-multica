@@ -284,14 +284,15 @@ integrations whose remaining work can ship independently.
   retains the failure list.
 
 The review ledger counts submitted semantic reviews only; provider capacity,
-transport, and attachment-read retries do not consume review cycles. The first
-four semantic cycles may rework normally. From cycle five, two consecutive
-non-reducing blocker transitions, a new root cause, or at least three open
-responsibility dimensions stop Worker redispatch and produce a
-`review-convergence-*` decision. Ten cycles are an unconditional stop. The
-decision requests a task-boundary reconsideration; for develop nodes the
-Orchestrator proposes a DAG amendment, while OMAC never rewrites the DAG
-implicitly.
+transport, and attachment-read retries do not consume review cycles.
+`review_convergence_decision` is the single convergence authority: the same
+blocker remaining `unchanged` through two rework cycles stops at cycle three;
+three open responsibility dimensions stop from cycle three; a root cause first seen
+after cycle five marks expanding scope; and cycle ten is an unconditional stop.
+OMAC persists the `review-convergence-*` decision before another Worker
+dispatch. The decision requests a task-boundary reconsideration; for develop
+nodes the Orchestrator proposes a DAG amendment, while OMAC never rewrites the
+DAG implicitly.
 
 ## Failure isolation
 

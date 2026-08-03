@@ -55,9 +55,10 @@
   所有 `business-action` 的 contribution 闭包，以及 full owner 的传递依赖是否覆盖全部贡献节点。
 - `review_state.mode=normal` 时按 `required_closures` 逐项关闭并对完整 manifest
   做影响分析。
-- `review_state.mode=convergence-audit` 时禁止继续逐条补丁式修复。先按
-  `root_cause_key` 归并历史问题，审计整条 ownership、artifact、执行和 evidence
-  链，再一次性修改所有受影响节点和验证命令。
+- `review_state.mode=convergence-audit` 直接投影权威
+  `review_convergence_decision`；具体原因由 `review_state.decision.mode` 的
+  `stalled|scope-expanding|exhausted` 表达。此时 OMAC 停止当前节点返工并要求 DAG
+  amendment；不得把它解释成一次新的 Worker 补丁轮次。
 - 修复必须保留稳定 blocker 身份，并为每项 closure 提供可独立复验的证据。
 
 ## 执行步骤

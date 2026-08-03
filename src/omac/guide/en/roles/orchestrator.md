@@ -77,10 +77,11 @@ guide does not decide product facts.
   every contribution owner.
 - In `review_state.mode=normal`, close every `required_closures` item and review
   the full manifest impact.
-- In `review_state.mode=convergence-audit`, stop patching findings one at a
-  time. Group history by `root_cause_key`, audit the complete ownership,
-  artifact, execution, and evidence chain, then repair every affected node and
-  verification command together.
+- `review_state.mode=convergence-audit` directly projects the authoritative
+  `review_convergence_decision`; `review_state.decision.mode` carries the
+  specific `stalled|scope-expanding|exhausted` reason. OMAC stops rework for
+  the current node and requires a DAG amendment; do not interpret it as another
+  Worker patch round.
 - Preserve blocker identity and provide independently reproducible closure
   evidence.
 

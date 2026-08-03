@@ -29,8 +29,10 @@ from ..core.contract_boundaries import (
 )
 from ..core.evidence import validate_review_evidence, validate_worker_evidence
 from ..core.review_convergence import (
+    REVIEW_CONVERGENCE_EARLIEST_CYCLE,
     build_review_convergence_decision, build_review_obligations,
-    review_convergence_decision, review_subject_digest)
+    review_convergence_decision, review_subject_digest,
+    validate_review_ledger)
 from ..core.retry_budget import consumed_bounces, review_rework_budget
 from ..core.stage_recovery import stage_recovery_subject, validate_stage_recovery
 from ..core.gitsync import commit_manifest
@@ -103,6 +105,7 @@ _REVIEW_CONFIRMATION_PAYLOADS = frozenset({
 _STRUCTURED_RECOVERY_PAYLOADS = (
     (WorkItemPayload.VERIFICATION, "verification_ref"),
     (WorkItemPayload.REVIEW_REPORT, "review_report_ref"),
+    (WorkItemPayload.REVIEW_LEDGER, "review_ledger_ref"),
     (WorkItemPayload.CONTRACT, "contract_ref"),
 )
 
@@ -119,6 +122,29 @@ class _WorkerHandoffResult:
 
 class _WorkerHandoffCandidateChanged(Exception):
     """Unsealed delivery changed between observation and controller commit."""
+
+
+def _validated_handoff_review_ledger(item, handoff_intent) -> dict | None:
+    expected_round = handoff_intent.source_review_round
+    if max(
+        expected_round or 0,
+        handoff_intent.target_review_bounce or 0,
+    ) < REVIEW_CONVERGENCE_EARLIEST_CYCLE:
+        return item.review_ledger
+    try:
+        return validate_review_ledger(item.review_ledger, expected_round=expected_round)
+    except ValueError as exc:
+        raise PlatformError(ui(
+            f"Invalid review ledger for work item {item.id}: {exc}. Restore it, then rerun "
+            f"`omac work show {item.id} --output json`.",
+            f"工作单元 {item.id} 的 review ledger 无效：{exc}。请恢复后重新执行 "
+            f"`omac work show {item.id} --output json`。",
+        )) from exc
+
+
+def _review_handoff_convergence(item, handoff_intent) -> dict | None:
+    return review_convergence_decision(
+        _validated_handoff_review_ledger(item, handoff_intent))
 
 
 class _ReviewerDispatchUnresolved(PlatformError):
@@ -866,6 +892,18 @@ def _build_work_item_hydration_plan(
         payloads.add(WorkItemPayload.CONTRACT)
     elif item.worker_handoff is None and authoring_delivery:
         payloads.update(_WORKER_DELIVERY_PAYLOADS)
+    if (
+        item.worker_handoff is not None
+        and item.worker_handoff.gate in {"review", "review-nits"}
+        and max(
+            item.worker_handoff.source_review_round or 0,
+            item.worker_handoff.target_review_bounce or 0,
+        ) >= REVIEW_CONVERGENCE_EARLIEST_CYCLE
+    ):
+        # The ledger is the only convergence authority.  The core exports the
+        # earliest possible decision cycle so recovery does not duplicate the
+        # policy while cycles 1-2 retain the zero-attachment fast path.
+        payloads.add(WorkItemPayload.REVIEW_LEDGER)
     if review_or_confirmation:
         payloads.update(_REVIEW_CONFIRMATION_PAYLOADS)
     if delivery_drift:
@@ -1190,13 +1228,19 @@ def _block_review_non_convergence(
         node_id=key,
         recommended_action="dag-amendment",
     )
-    store.update_work_item_metadata(
-        item.id,
-        decision_required=decision,
-        phase=TaskPhase.REVIEW,
-    )
-    store.update_status(item.id, WorkItemStatus.BLOCKED)
-    set_node(manifest, key, status="blocked")
+    if (
+        item.decision_required != decision
+        or item.phase != TaskPhase.REVIEW
+    ):
+        store.update_work_item_metadata(
+            item.id,
+            decision_required=decision,
+            phase=TaskPhase.REVIEW,
+        )
+    if item.status != WorkItemStatus.BLOCKED:
+        store.update_status(item.id, WorkItemStatus.BLOCKED)
+    if manifest.nodes[key].status != "blocked":
+        set_node(manifest, key, status="blocked")
     log.info(
         logsetup.EVT_NEEDS_DECISION,
         kind=_DAG_KIND,
@@ -2716,6 +2760,22 @@ def collect_results(
         item = projection.work_item
         worker_gate_errors = None
 
+        # A persisted review handoff belongs to the review ledger that created
+        # it.  Re-evaluate the one authoritative convergence policy before
+        # observing, retrying, assigning, or waking that handoff.  Explicit
+        # operator/amendment dispatches use a different gate and are not
+        # reinterpreted as stale review rework.
+        handoff_intent = item.worker_handoff
+        if (
+            handoff_intent is not None
+            and handoff_intent.gate in {"review", "review-nits"}
+        ):
+            convergence = _review_handoff_convergence(item, handoff_intent)
+            if convergence is not None:
+                failures[key] = _block_review_non_convergence(
+                    store, manifest, key, item, convergence)
+                continue
+
         if _legacy_delivery_requires_retry(manifest, key, node, item):
             if any(run.kind == "direct" and run.active
                    for run in runtime.list_runs(node.work_item_id)):
@@ -3699,11 +3759,12 @@ def _restore_active_formal_run_stages(
     manifest: Manifest,
     manifest_path: str,
     observations: Dict[str, WorkItemControlProjection | None],
-) -> None:
+) -> Dict[str, tuple[WorkItemControlProjection, dict]]:
     """Restore blocked manifest projections while their formal Run is active."""
     active = _active_formal_run_nodes(
         store, runtime, manifest, manifest_path, observations)
     restored: Dict[str, tuple[str, WorkItemControlProjection, bool]] = {}
+    blocked: Dict[str, tuple[WorkItemControlProjection, dict]] = {}
     for key in active:
         node = manifest.nodes[key]
         if node.status not in FAILED_STATUSES:
@@ -3717,6 +3778,16 @@ def _restore_active_formal_run_stages(
         hydrated = _hydrate_work_item_payloads(store, projection, plan)
         _validate_structured_recovery_payloads(
             hydrated, plan & projection.deferred_payloads)
+        handoff_intent = hydrated.work_item.worker_handoff
+        if (
+            handoff_intent is not None
+            and handoff_intent.gate in {"review", "review-nits"}
+        ):
+            convergence = _review_handoff_convergence(
+                hydrated.work_item, handoff_intent)
+            if convergence is not None:
+                blocked[key] = (hydrated, convergence)
+                continue
         clear_provisional_decision = bool(item.decision_required)
         if clear_provisional_decision:
             reviewer_id = store.resolve_agent_id(node.reviewer)
@@ -3765,6 +3836,7 @@ def _restore_active_formal_run_stages(
         set_node(manifest, key, status=status)
     if committed:
         save_manifest(manifest, manifest_path)
+    return blocked
 
 
 def tick(
@@ -3794,13 +3866,20 @@ def tick(
     # A graph-level blocked projection must not hide an already-dispatched,
     # causally bound stage. Restore only that stage; unrelated decisions remain
     # blocked and no Agent is assigned or woken here.
-    _restore_active_formal_run_stages(
+    convergence_blocks = _restore_active_formal_run_stages(
         store, runtime, manifest, manifest_path, reconcile_result.observations)
 
     # 2. SYNC: 回收进行中节点的结果
-    new_failures = collect_results(store, runtime, manifest, manifest_path,
-                                   retry_limits=retry_limits, config=config,
-                                   observations=reconcile_result.observations)
+    new_failures = {
+        key: _block_review_non_convergence(
+            store, manifest, key, projection.work_item, convergence)
+        for key, (projection, convergence) in convergence_blocks.items()
+    }
+    new_failures.update(collect_results(
+        store, runtime, manifest, manifest_path,
+        retry_limits=retry_limits, config=config,
+        observations=reconcile_result.observations,
+    ))
 
     # 3. 收集全部失败节点(含本轮新失败 + 历史已 blocked/failed)
     all_failed: Set[str] = set(new_failures.keys())
