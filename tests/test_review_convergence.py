@@ -23,6 +23,7 @@ from omac.engines.mock import MockStore
 from omac.engines.models import EngineConfig, WorkItemStatus
 from omac.errors import NeedsDecision, ValidationError
 from omac.pipeline import dispatch
+from omac.pipeline.convergence import ResolutionState, resolve_convergence
 from omac.pipeline.dispatch import submit as submit_work
 from omac.engines import create_engine
 from omac.pipeline.tasks import run_task
@@ -716,6 +717,29 @@ def test_legacy_cycle_without_blocker_facts_fails_closed():
         validate_review_ledger(ledger, expected_round=3)
     with pytest.raises(ValueError, match="blocker facts"):
         review_convergence_decision(ledger)
+
+
+@pytest.mark.parametrize("cycle_count", [1, 2])
+def test_legacy_cycles_before_decision_boundary_keep_fast_path(cycle_count):
+    ledger = _stalled_canonical_ledger(with_facts=False)
+    ledger["cycles"] = ledger["cycles"][:cycle_count]
+
+    resolution = resolve_convergence(_item(ledger=ledger))
+
+    assert resolution.state is ResolutionState.VALID
+    assert resolution.convergence is None
+
+
+def test_new_schema_resolves_without_legacy_decision():
+    ledger = _stalled_canonical_ledger(with_facts=True)
+    item = _item(ledger=ledger)
+    item.id = "item-1"
+    item.review_verdict = "reject"
+
+    resolution = resolve_convergence(item)
+
+    assert resolution.state is ResolutionState.NEEDS_DECISION
+    assert resolution.convergence["reason_code"] == "review-convergence-stalled"
 
 
 def _with_cycle_blocker_facts(ledger):

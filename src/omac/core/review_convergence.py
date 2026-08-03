@@ -28,6 +28,10 @@ REVIEW_CYCLE_BLOCKER_FACTS_SCHEMA = "omac.review-cycle-blocker-facts/v1"
 REVIEW_CONVERGENCE_DECISION_SCHEMA = "omac.review-convergence-decision/v1"
 REVIEW_CONVERGENCE_EARLIEST_CYCLE = 3
 
+
+class LegacyReviewLedgerUnverifiable(ValueError):
+    """A legacy cycle lacks immutable blocker facts required for verification."""
+
 _BASE_OBLIGATIONS = (
     ("dimension:authority", "Authoritative inputs and source references"),
     ("dimension:structure", "Structure, schema, dependency, and completeness"),
@@ -90,7 +94,7 @@ def _canonical_cycle_projection(
                 f"review ledger {path}.round must be {expected_cycle_round}")
 
         if cycle.get("blocker_facts_schema") != REVIEW_CYCLE_BLOCKER_FACTS_SCHEMA:
-            raise ValueError(
+            raise LegacyReviewLedgerUnverifiable(
                 f"review ledger {path} blocker facts schema must be "
                 f"{REVIEW_CYCLE_BLOCKER_FACTS_SCHEMA}")
         blocker_facts = cycle.get("blocker_facts")

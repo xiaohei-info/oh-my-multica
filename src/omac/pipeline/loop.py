@@ -30,9 +30,7 @@ from ..core.contract_boundaries import (
 from ..core.evidence import validate_review_evidence, validate_worker_evidence
 from ..core.review_convergence import (
     REVIEW_CONVERGENCE_EARLIEST_CYCLE,
-    build_review_convergence_decision, build_review_obligations,
-    review_convergence_decision, review_subject_digest,
-    validate_review_ledger)
+    build_review_obligations, review_subject_digest)
 from ..core.retry_budget import consumed_bounces, review_rework_budget
 from ..core.stage_recovery import stage_recovery_subject, validate_stage_recovery
 from ..core.gitsync import commit_manifest
@@ -54,6 +52,10 @@ from ..engines.runtime import AgentRuntime
 from ..engines.store import WorkItemStore
 from ..errors import AuthError, PlatformError, WorkItemNotFoundError
 from ..i18n import current_language, ui
+from .convergence import (
+    ConvergenceResolution, ResolutionState, persist_decision,
+    resolve_convergence,
+)
 from ..pipeline.dispatch import normalize_source_refs, render_issue_body
 from ..core.taskmeta import (
     DECISION_REQUIRED_SCHEMA, DELIVERY_IDENTITY_SCHEMA,
@@ -118,33 +120,19 @@ class _WorkerHandoffResult:
     intent: WorkerHandoffIntent | None
     projection: WorkItemControlProjection | None = None
     delivery_identity: DeliveryIdentity | None = None
+    decision: dict | None = None
 
 
 class _WorkerHandoffCandidateChanged(Exception):
     """Unsealed delivery changed between observation and controller commit."""
 
 
-def _validated_handoff_review_ledger(item, handoff_intent) -> dict | None:
-    expected_round = handoff_intent.source_review_round
-    if max(
-        expected_round or 0,
-        handoff_intent.target_review_bounce or 0,
-    ) < REVIEW_CONVERGENCE_EARLIEST_CYCLE:
-        return item.review_ledger
-    try:
-        return validate_review_ledger(item.review_ledger, expected_round=expected_round)
-    except ValueError as exc:
-        raise PlatformError(ui(
-            f"Invalid review ledger for work item {item.id}: {exc}. Restore it, then rerun "
-            f"`omac work show {item.id} --output json`.",
-            f"工作单元 {item.id} 的 review ledger 无效：{exc}。请恢复后重新执行 "
-            f"`omac work show {item.id} --output json`。",
-        )) from exc
-
-
-def _review_handoff_convergence(item, handoff_intent) -> dict | None:
-    return review_convergence_decision(
-        _validated_handoff_review_ledger(item, handoff_intent))
+def _resolve_handoff_review_convergence(item, handoff_intent, node_id=None):
+    resolution = resolve_convergence(
+        item, expected_round=handoff_intent.source_review_round,
+        kind=TaskKind.DEVELOP.value, node_id=node_id)
+    resolution.raise_if_invalid(PlatformError, item.id)
+    return resolution
 
 
 class _ReviewerDispatchUnresolved(PlatformError):
@@ -405,7 +393,7 @@ def _resolved_worker_handoff_dispatch(
 ) -> _WorkerHandoffResult | None:
     if result.state in {
         "complete", "complete-unsealed", "finished-without-submit", "transient-failure",
-        "nonretryable-failure",
+        "nonretryable-failure", "needs-decision",
     }:
         return result
     if result.state in {"waiting", "pending-submit"}:
@@ -1218,27 +1206,10 @@ def _block_review_non_convergence(
     manifest: Manifest,
     key: str,
     item,
-    convergence: dict,
+    resolution: ConvergenceResolution,
 ) -> str:
     """Stop semantic retries and preserve the ledger for DAG amendment."""
-    decision = build_review_convergence_decision(
-        item,
-        convergence,
-        kind=TaskKind.DEVELOP.value,
-        node_id=key,
-        recommended_action="dag-amendment",
-    )
-    if (
-        item.decision_required != decision
-        or item.phase != TaskPhase.REVIEW
-    ):
-        store.update_work_item_metadata(
-            item.id,
-            decision_required=decision,
-            phase=TaskPhase.REVIEW,
-        )
-    if item.status != WorkItemStatus.BLOCKED:
-        store.update_status(item.id, WorkItemStatus.BLOCKED)
+    persist_decision(store, item, resolution)
     if manifest.nodes[key].status != "blocked":
         set_node(manifest, key, status="blocked")
     log.info(
@@ -1247,8 +1218,8 @@ def _block_review_non_convergence(
         node=key,
         id=item.id,
         gate="review-convergence",
-        rounds=convergence["cycle_count"],
-        mode=convergence["mode"],
+        rounds=resolution.convergence["cycle_count"],
+        mode=resolution.convergence["mode"],
     )
     return ui(
         "Review is not converging within the current node boundary; "
@@ -1547,6 +1518,15 @@ def _dispatch_worker_handoff(
         projection or store.observe_work_item_control(item_id)
     ).work_item
     intent = current.worker_handoff
+    if intent is not None and intent.gate in {"review", "review-nits"}:
+        resolution = _resolve_handoff_review_convergence(current, intent, key)
+        if resolution.state is ResolutionState.NEEDS_DECISION:
+            return _WorkerHandoffResult(
+                "needs-decision",
+                intent,
+                projection,
+                decision=resolution.decision,
+            )
     if intent is None:
         if review_bounce is None or gate is None:
             raise PlatformError(
@@ -2770,10 +2750,11 @@ def collect_results(
             handoff_intent is not None
             and handoff_intent.gate in {"review", "review-nits"}
         ):
-            convergence = _review_handoff_convergence(item, handoff_intent)
-            if convergence is not None:
+            resolution = _resolve_handoff_review_convergence(
+                item, handoff_intent, key)
+            if resolution.state is ResolutionState.NEEDS_DECISION:
                 failures[key] = _block_review_non_convergence(
-                    store, manifest, key, item, convergence)
+                    store, manifest, key, item, resolution)
                 continue
 
         if _legacy_delivery_requires_retry(manifest, key, node, item):
@@ -3336,10 +3317,11 @@ def collect_results(
                         gate="review-boundary",
                     )
                     continue
-                convergence = review_convergence_decision(item.review_ledger)
-                if convergence is not None:
+                resolution = resolve_convergence(item, node_id=key)
+                resolution.raise_if_invalid(PlatformError, item.id)
+                if resolution.state is ResolutionState.NEEDS_DECISION:
                     failures[key] = _block_review_non_convergence(
-                        store, manifest, key, item, convergence)
+                        store, manifest, key, item, resolution)
                     continue
             if verdict == "pass-with-nits" and not gate_errors:
                 if not rework_budget.allows_rework:
@@ -3759,17 +3741,42 @@ def _restore_active_formal_run_stages(
     manifest: Manifest,
     manifest_path: str,
     observations: Dict[str, WorkItemControlProjection | None],
-) -> Dict[str, tuple[WorkItemControlProjection, dict]]:
+) -> Dict[str, tuple[WorkItemControlProjection, ConvergenceResolution]]:
     """Restore blocked manifest projections while their formal Run is active."""
+    prepared = dict(observations)
+    blocked: Dict[
+        str, tuple[WorkItemControlProjection, ConvergenceResolution]
+    ] = {}
+    for key, node in manifest.nodes.items():
+        projection = prepared.get(key)
+        if node.status not in FAILED_STATUSES or projection is None:
+            continue
+        item = projection.work_item
+        intent = item.worker_handoff
+        if intent is None or intent.gate not in {"review", "review-nits"}:
+            continue
+        collect_node = replace(node, status="in_progress")
+        plan = _build_work_item_hydration_plan(collect_node, projection)
+        hydrated = _hydrate_work_item_payloads(store, projection, plan)
+        _validate_structured_recovery_payloads(
+            hydrated, plan & projection.deferred_payloads)
+        resolution = _resolve_handoff_review_convergence(
+            hydrated.work_item, intent, key)
+        if resolution.state is ResolutionState.NEEDS_DECISION:
+            blocked[key] = (hydrated, resolution)
+            continue
+        prepared[key] = hydrated
+
     active = _active_formal_run_nodes(
-        store, runtime, manifest, manifest_path, observations)
+        store, runtime, manifest, manifest_path, prepared)
     restored: Dict[str, tuple[str, WorkItemControlProjection, bool]] = {}
-    blocked: Dict[str, tuple[WorkItemControlProjection, dict]] = {}
     for key in active:
+        if key in blocked:
+            continue
         node = manifest.nodes[key]
         if node.status not in FAILED_STATUSES:
             continue
-        projection = observations[key]
+        projection = prepared[key]
         item = projection.work_item
         status = (
             "in_review" if item.phase == TaskPhase.REVIEW else "in_progress")
@@ -3783,10 +3790,10 @@ def _restore_active_formal_run_stages(
             handoff_intent is not None
             and handoff_intent.gate in {"review", "review-nits"}
         ):
-            convergence = _review_handoff_convergence(
-                hydrated.work_item, handoff_intent)
-            if convergence is not None:
-                blocked[key] = (hydrated, convergence)
+            resolution = _resolve_handoff_review_convergence(
+                hydrated.work_item, handoff_intent, key)
+            if resolution.state is ResolutionState.NEEDS_DECISION:
+                blocked[key] = (hydrated, resolution)
                 continue
         clear_provisional_decision = bool(item.decision_required)
         if clear_provisional_decision:
@@ -3872,8 +3879,8 @@ def tick(
     # 2. SYNC: 回收进行中节点的结果
     new_failures = {
         key: _block_review_non_convergence(
-            store, manifest, key, projection.work_item, convergence)
-        for key, (projection, convergence) in convergence_blocks.items()
+            store, manifest, key, projection.work_item, resolution)
+        for key, (projection, resolution) in convergence_blocks.items()
     }
     new_failures.update(collect_results(
         store, runtime, manifest, manifest_path,
