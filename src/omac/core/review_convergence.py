@@ -24,6 +24,7 @@ from .taskmeta import DECISION_REQUIRED_SCHEMA, TaskKind, TaskPhase
 
 REVIEW_PROTOCOL_VERSION = "omac.review/v2"
 REVIEW_LEDGER_SCHEMA = "omac.review-ledger/v1"
+REVIEW_CYCLE_BLOCKER_FACTS_SCHEMA = "omac.review-cycle-blocker-facts/v1"
 REVIEW_CONVERGENCE_DECISION_SCHEMA = "omac.review-convergence-decision/v1"
 REVIEW_CONVERGENCE_EARLIEST_CYCLE = 3
 
@@ -42,18 +43,43 @@ _BLOCKER_CLASSIFICATIONS = {"new", "unchanged", "deeper", "regressed"}
 _LEDGER_BLOCKER_CLASSIFICATIONS = _BLOCKER_CLASSIFICATIONS | {"fixed"}
 _LEDGER_BLOCKER_STATUSES = {"open", "fixed"}
 
+_BLOCKER_FACT_FIELDS = (
+    "blocker_id",
+    "root_cause_key",
+    "obligation_id",
+    "summary",
+    "evidence",
+    "required_fix",
+    "status",
+    "classification",
+)
+_BLOCKER_SUMMARY_FIELDS = _BLOCKER_FACT_FIELDS + (
+    "first_seen_round",
+    "last_seen_round",
+    "seen_count",
+    "last_evidence",
+)
+
 
 def _canonical_cycle_projection(
     cycles: list[Any],
-) -> tuple[list[set[str]], int] | None:
-    """Validate canonical cycle facts and return blocker sightings/current open IDs."""
-    cycle_open_blocker_ids: list[set[str] | None] = []
-    has_canonical_cycle_ids = False
+) -> list[dict]:
+    """Fold immutable cycle blocker facts into the current blocker summary."""
+    projection_by_id: dict[str, dict] = {}
+    blocker_id_by_root: dict[str, str] = {}
+    prior_open_ids: set[str] = set()
     for index, cycle in enumerate(cycles):
         path = f"cycles[{index}]"
         if not isinstance(cycle, dict):
             raise ValueError(f"review ledger {path} must be an object")
-        for field in ("round", "open_count"):
+        for field in (
+            "round",
+            "new_count",
+            "fixed_count",
+            "regressed_count",
+            "unchanged_count",
+            "open_count",
+        ):
             value = cycle.get(field)
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise ValueError(
@@ -63,6 +89,153 @@ def _canonical_cycle_projection(
             raise ValueError(
                 f"review ledger {path}.round must be {expected_cycle_round}")
 
+        if cycle.get("blocker_facts_schema") != REVIEW_CYCLE_BLOCKER_FACTS_SCHEMA:
+            raise ValueError(
+                f"review ledger {path} blocker facts schema must be "
+                f"{REVIEW_CYCLE_BLOCKER_FACTS_SCHEMA}")
+        blocker_facts = cycle.get("blocker_facts")
+        if not isinstance(blocker_facts, list):
+            raise ValueError(f"review ledger {path}.blocker_facts must be a list")
+
+        obligation_results = cycle.get("obligation_results")
+        if not isinstance(obligation_results, dict):
+            raise ValueError(
+                f"review ledger {path}.obligation_results must be an object")
+        for obligation_id, status in obligation_results.items():
+            if not isinstance(obligation_id, str) or not obligation_id.strip():
+                raise ValueError(
+                    f"review ledger {path}.obligation_results IDs must be "
+                    "non-empty strings")
+            if status not in _RESULT_STATUSES:
+                raise ValueError(
+                    f"review ledger {path}.obligation_results status is invalid")
+
+        fact_ids: set[str] = set()
+        open_fact_ids: set[str] = set()
+        fixed_fact_ids: set[str] = set()
+        classifications: dict[str, int] = {
+            classification: 0 for classification in _BLOCKER_CLASSIFICATIONS
+        }
+        open_obligation_ids: set[str] = set()
+        for fact_index, fact in enumerate(blocker_facts):
+            fact_path = f"{path}.blocker_facts[{fact_index}]"
+            if not isinstance(fact, dict):
+                raise ValueError(f"review ledger {fact_path} must be an object")
+            for field in _BLOCKER_FACT_FIELDS[:6]:
+                value = fact.get(field)
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError(
+                        f"review ledger {fact_path}.{field} must be a "
+                        "non-empty string")
+            blocker_id = fact["blocker_id"]
+            root_cause_key = fact["root_cause_key"]
+            if blocker_id in fact_ids:
+                raise ValueError(
+                    f"review ledger {path}.blocker_facts must contain unique "
+                    "blocker_id values")
+            fact_ids.add(blocker_id)
+            known_id = blocker_id_by_root.get(root_cause_key)
+            if known_id is not None and known_id != blocker_id:
+                raise ValueError(
+                    f"review ledger {fact_path}.root_cause_key changed identity")
+            blocker_id_by_root[root_cause_key] = blocker_id
+
+            status = fact.get("status")
+            classification = fact.get("classification")
+            if status not in _LEDGER_BLOCKER_STATUSES:
+                raise ValueError(f"review ledger {fact_path}.status is invalid")
+            if classification not in _LEDGER_BLOCKER_CLASSIFICATIONS:
+                raise ValueError(
+                    f"review ledger {fact_path}.classification is invalid")
+            previous = projection_by_id.get(blocker_id)
+            if previous is not None and previous["root_cause_key"] != root_cause_key:
+                raise ValueError(
+                    f"review ledger {fact_path}.root_cause_key changed for blocker_id")
+            if status == "fixed":
+                if previous is None or previous["status"] != "open":
+                    raise ValueError(
+                        f"review ledger {fact_path}.status cannot fix a non-open blocker")
+                if classification != "fixed":
+                    raise ValueError(
+                        f"review ledger {fact_path}.classification must be fixed")
+                fixed_fact_ids.add(blocker_id)
+            else:
+                if previous is None and classification != "new":
+                    raise ValueError(
+                        f"review ledger {fact_path}.classification must be new")
+                if previous is not None and previous["status"] == "fixed":
+                    if classification != "regressed":
+                        raise ValueError(
+                            f"review ledger {fact_path}.classification must be regressed")
+                elif previous is not None and classification not in {
+                    "unchanged", "deeper",
+                }:
+                    raise ValueError(
+                        f"review ledger {fact_path}.classification must be "
+                        "unchanged or deeper")
+                open_fact_ids.add(blocker_id)
+                open_obligation_ids.add(fact["obligation_id"])
+                classifications[classification] += 1
+
+            last_evidence = fact.get("last_evidence")
+            if last_evidence is not None and (
+                not isinstance(last_evidence, str) or not last_evidence.strip()
+            ):
+                raise ValueError(
+                    f"review ledger {fact_path}.last_evidence must be a "
+                    "non-empty string")
+            if classification in {"unchanged", "deeper", "fixed"} and not last_evidence:
+                raise ValueError(
+                    f"review ledger {fact_path}.last_evidence is required")
+
+            first_seen_round = (
+                previous["first_seen_round"] if previous is not None
+                else cycle["round"]
+            )
+            seen_count = previous["seen_count"] if previous is not None else 0
+            if status == "open":
+                seen_count += 1
+            record = {field: fact[field] for field in _BLOCKER_FACT_FIELDS}
+            record.update({
+                "first_seen_round": first_seen_round,
+                "last_seen_round": cycle["round"],
+                "seen_count": seen_count,
+            })
+            if last_evidence is not None:
+                record["last_evidence"] = last_evidence
+            elif previous is not None and "last_evidence" in previous:
+                record["last_evidence"] = previous["last_evidence"]
+            projection_by_id[blocker_id] = record
+
+        current_open_ids = {
+            blocker_id for blocker_id, blocker in projection_by_id.items()
+            if blocker["status"] == "open"
+        }
+        if open_fact_ids != current_open_ids:
+            raise ValueError(
+                f"review ledger {path}.blocker_facts must disposition every "
+                "currently open blocker")
+        failed_obligation_ids = {
+            obligation_id for obligation_id, status in obligation_results.items()
+            if status == "fail"
+        }
+        if open_obligation_ids != failed_obligation_ids:
+            raise ValueError(
+                f"review ledger {path}.blocker_facts obligation_id values must "
+                "exactly match failed obligation_results")
+
+        expected_counts = {
+            "new_count": classifications["new"],
+            "fixed_count": len(fixed_fact_ids),
+            "regressed_count": classifications["regressed"],
+            "unchanged_count": classifications["unchanged"],
+            "open_count": len(current_open_ids),
+        }
+        for field, expected in expected_counts.items():
+            if cycle[field] != expected:
+                raise ValueError(
+                    f"review ledger {path}.{field} must exactly match blocker facts")
+
         ids_by_field: dict[str, set[str]] = {}
         for field in (
             "prior_open_blocker_ids",
@@ -70,8 +243,6 @@ def _canonical_cycle_projection(
             "reported_blocker_ids",
         ):
             values = cycle.get(field)
-            if values is None:
-                continue
             if not isinstance(values, list):
                 raise ValueError(f"review ledger {path}.{field} must be a list")
             ids: set[str] = set()
@@ -86,116 +257,27 @@ def _canonical_cycle_projection(
                 ids.add(value)
             ids_by_field[field] = ids
 
-        prior_open_ids = ids_by_field.get("prior_open_blocker_ids")
-        open_ids = ids_by_field.get("open_blocker_ids")
-        reported_ids = ids_by_field.get("reported_blocker_ids")
-        if open_ids is not None:
-            has_canonical_cycle_ids = True
-            if len(open_ids) != cycle["open_count"]:
-                raise ValueError(
-                    f"review ledger {path}.open_count must exactly match "
-                    "open_blocker_ids")
-        if reported_ids is not None:
-            has_canonical_cycle_ids = True
-        if prior_open_ids is not None:
-            has_canonical_cycle_ids = True
-
-        cycle_open_blocker_ids.append(open_ids)
-
-    if not has_canonical_cycle_ids:
-        return None
-    for index, open_ids in enumerate(cycle_open_blocker_ids):
-        if open_ids is None:
+        if ids_by_field["prior_open_blocker_ids"] != prior_open_ids:
             raise ValueError(
-                f"review ledger cycles[{index}].open_blocker_ids is required "
-                "for canonical cycle history")
-        cycle = cycles[index]
-        expected_prior_open_ids = (
-            set() if index == 0 else cycle_open_blocker_ids[index - 1]
-        )
-        prior_open_ids = cycle.get("prior_open_blocker_ids")
-        if (
-            not isinstance(prior_open_ids, list)
-            or set(prior_open_ids) != expected_prior_open_ids
-        ):
-            raise ValueError(
-                f"review ledger cycles[{index}].prior_open_blocker_ids must "
+                f"review ledger {path}.prior_open_blocker_ids must "
                 "exactly match the previous cycle open_blocker_ids")
-        reported_ids = cycle.get("reported_blocker_ids")
-        if not isinstance(reported_ids, list) or set(reported_ids) != open_ids:
+        if ids_by_field["open_blocker_ids"] != current_open_ids:
             raise ValueError(
-                f"review ledger cycles[{index}].reported_blocker_ids must "
-                "exactly match open_blocker_ids")
-    latest_unchanged_count = cycles[-1].get("unchanged_count", 0) if cycles else 0
-    if (
-        isinstance(latest_unchanged_count, bool)
-        or not isinstance(latest_unchanged_count, int)
-        or latest_unchanged_count < 0
-    ):
-        raise ValueError(
-            "review ledger latest cycle unchanged_count must be a "
-            "non-negative integer")
-    return [set(ids) for ids in cycle_open_blocker_ids], latest_unchanged_count
-
-
-def _canonical_blocker_projection(
-    cycle_open_blocker_ids: list[set[str]],
-    latest_unchanged_count: int,
-) -> list[dict]:
-    sighting_rounds_by_blocker_id: dict[str, list[int]] = {}
-    for round_index, blocker_ids in enumerate(cycle_open_blocker_ids, start=1):
-        for blocker_id in blocker_ids:
-            sighting_rounds_by_blocker_id.setdefault(blocker_id, []).append(
-                round_index)
-    latest_round = len(cycle_open_blocker_ids)
-    latest_open_ids = cycle_open_blocker_ids[-1] if cycle_open_blocker_ids else set()
-    previous_open_ids = (
-        cycle_open_blocker_ids[-2] if len(cycle_open_blocker_ids) > 1 else set()
-    )
-    continuing_ids = latest_open_ids & previous_open_ids
-    if latest_unchanged_count > len(continuing_ids):
-        raise ValueError(
-            "review ledger latest cycle unchanged_count exceeds continuing "
-            "open blockers")
-    if latest_unchanged_count not in {0, len(continuing_ids)}:
-        raise ValueError(
-            "review ledger latest cycle cannot exactly project blocker "
-            "classification from unchanged_count")
-    continuing_classification = (
-        "unchanged" if latest_unchanged_count else "deeper"
-    )
-
-    projection = []
-    for blocker_id, sighting_rounds in sighting_rounds_by_blocker_id.items():
-        if blocker_id not in latest_open_ids:
-            classification = "fixed"
-        elif sighting_rounds[0] == latest_round:
-            classification = "new"
-        elif blocker_id not in previous_open_ids:
-            classification = "regressed"
-        else:
-            classification = continuing_classification
-        projection.append({
-            "blocker_id": blocker_id,
-            "seen_count": len(sighting_rounds),
-            "first_seen_round": sighting_rounds[0],
-            "status": "open" if blocker_id in latest_open_ids else "fixed",
-            "classification": classification,
-        })
-    return sorted(projection, key=lambda record: record["blocker_id"])
+                f"review ledger {path}.open_blocker_ids must exactly match "
+                "blocker facts")
+        if ids_by_field["reported_blocker_ids"] != open_fact_ids:
+            raise ValueError(
+                f"review ledger {path}.reported_blocker_ids must exactly match "
+                "reported blocker facts")
+        prior_open_ids = current_open_ids
+    return sorted(projection_by_id.values(), key=lambda record: record["blocker_id"])
 
 
 def _persisted_blocker_projection(blockers: list[dict]) -> list[dict]:
-    return sorted((
-        {
-            "blocker_id": blocker["blocker_id"],
-            "seen_count": blocker["seen_count"],
-            "first_seen_round": blocker["first_seen_round"],
-            "status": blocker["status"],
-            "classification": blocker["classification"],
-        }
-        for blocker in blockers
-    ), key=lambda record: record["blocker_id"])
+    return sorted(({
+        field: blocker[field]
+        for field in _BLOCKER_SUMMARY_FIELDS if field in blocker
+    } for blocker in blockers), key=lambda record: record.get("blocker_id", ""))
 
 
 def validate_review_ledger(
@@ -214,11 +296,12 @@ def validate_review_ledger(
         raise ValueError("review ledger cycles must be a list")
     if not isinstance(blockers, list):
         raise ValueError("review ledger blockers must be a list")
-    canonical_cycles = _canonical_cycle_projection(cycles)
     if expected_round is not None and (
-        not cycles or cycles[-1]["round"] != expected_round
+        not cycles or not isinstance(cycles[-1], dict)
+        or cycles[-1].get("round") != expected_round
     ):
         raise ValueError(f"review ledger latest round must be {expected_round}")
+    canonical_projection = _canonical_cycle_projection(cycles)
     for index, blocker in enumerate(blockers):
         path = f"blockers[{index}]"
         if not isinstance(blocker, dict):
@@ -243,26 +326,23 @@ def validate_review_ledger(
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                 raise ValueError(
                     f"review ledger {path}.{field} must be a positive integer")
-        if canonical_cycles is None:
-            if first_seen_round > len(cycles):
-                raise ValueError(
-                    f"review ledger {path}.first_seen_round exceeds "
-                    "persisted cycles")
-            if seen_count > len(cycles) - first_seen_round + 1:
-                raise ValueError(
-                    f"review ledger {path}.seen_count exceeds persisted cycles")
-    if canonical_cycles is not None:
-        cycle_open_blocker_ids, latest_unchanged_count = canonical_cycles
-        canonical_projection = _canonical_blocker_projection(
-            cycle_open_blocker_ids,
-            latest_unchanged_count,
-        )
-        persisted_projection = _persisted_blocker_projection(blockers)
-        if persisted_projection != canonical_projection:
-            raise ValueError(
-                "review ledger blocker projection must exactly match canonical "
-                "cycles for blocker_id, seen_count, first_seen_round, status, "
-                "and classification")
+    persisted_projection = _persisted_blocker_projection(blockers)
+    if persisted_projection != canonical_projection:
+        persisted_by_id = {
+            blocker.get("blocker_id"): blocker for blocker in persisted_projection
+        }
+        for expected in canonical_projection:
+            actual = persisted_by_id.get(expected["blocker_id"])
+            if actual is None:
+                break
+            for field in _BLOCKER_SUMMARY_FIELDS:
+                if actual.get(field) != expected.get(field):
+                    raise ValueError(
+                        f"review ledger blocker summary {field} must exactly "
+                        "match canonical cycle blocker facts")
+        raise ValueError(
+            "review ledger blocker summary must exactly match canonical cycle "
+            "blocker facts")
     return ledger
 
 
@@ -315,6 +395,9 @@ def review_convergence_decision(
     cycles = [cycle for cycle in ledger.get("cycles", []) if isinstance(cycle, dict)]
     if not cycles:
         return None
+    if len(cycles) < REVIEW_CONVERGENCE_EARLIEST_CYCLE:
+        return None
+    validate_review_ledger(ledger)
 
     open_records = _open_blockers(ledger)
     if not open_records:
@@ -782,6 +865,7 @@ def advance_review_ledger(
     current.setdefault("cycles", [])
     current.setdefault("blockers", [])
     if current["cycles"]:
+        validate_review_ledger(current)
         latest = current["cycles"][-1]
         if (
             latest.get("subject_digest") == subject_digest
@@ -789,6 +873,8 @@ def advance_review_ledger(
             and latest.get("report_digest") == report_digest
         ):
             return current
+    cycle_round = len(current["cycles"]) + 1
+
     prior_open_ids = sorted(
         record.get("blocker_id") for record in current["blockers"]
         if isinstance(record, dict) and record.get("status") == "open"
@@ -802,32 +888,26 @@ def advance_review_ledger(
         for record in current["blockers"] if isinstance(record, dict)
     }
 
-    fixed_count = 0
-    unchanged_count = 0
-    unresolved_prior_ids = set()
-    for result in report.get("prior_blocker_results", []):
-        if not isinstance(result, dict):
+    prior_results = {
+        result.get("blocker_id"): result
+        for result in report.get("prior_blocker_results", [])
+        if isinstance(result, dict) and result.get("blocker_id")
+    }
+    blocker_facts = []
+    for blocker_id, result in prior_results.items():
+        if result.get("status") != "fixed":
             continue
-        record = records_by_id.get(result.get("blocker_id"))
+        record = records_by_id.get(blocker_id)
         if record is None:
             continue
-        status = result.get("status")
-        record["last_seen_round"] = round_index
-        record["last_evidence"] = result.get("evidence")
-        if status == "fixed":
-            record["status"] = "fixed"
-            record["classification"] = "fixed"
-            fixed_count += 1
-        else:
-            record["status"] = "open"
-            record["classification"] = status
-            unresolved_prior_ids.add(record["blocker_id"])
-            if status == "unchanged":
-                unchanged_count += 1
+        blocker_facts.append({
+            field: record[field] for field in _BLOCKER_FACT_FIELDS[:6]
+        } | {
+            "status": "fixed",
+            "classification": "fixed",
+            "last_evidence": result.get("evidence"),
+        })
 
-    new_count = 0
-    regressed_count = 0
-    touched_ids = set()
     for blocker in report.get("blockers", []):
         if not isinstance(blocker, dict):
             continue
@@ -836,63 +916,64 @@ def advance_review_ledger(
             continue
         record = records_by_root.get(root)
         if record is None:
-            record = {
-                "blocker_id": _blocker_id(root),
-                "root_cause_key": root,
-                "first_seen_round": round_index,
-                "seen_count": 0,
-            }
-            current["blockers"].append(record)
-            records_by_root[root] = record
-            records_by_id[record["blocker_id"]] = record
+            blocker_id = _blocker_id(root)
             classification = "new"
-            new_count += 1
         elif record.get("status") == "fixed":
+            blocker_id = record["blocker_id"]
             classification = "regressed"
-            regressed_count += 1
         else:
+            blocker_id = record["blocker_id"]
             classification = blocker.get("classification") or "unchanged"
             if classification == "new":
                 classification = "deeper"
-        record.update({
+        fact = {
+            "blocker_id": blocker_id,
+            "root_cause_key": root,
             "obligation_id": blocker.get("obligation_id"),
             "summary": blocker.get("summary"),
             "evidence": blocker.get("evidence"),
             "required_fix": blocker.get("required_fix"),
             "status": "open",
             "classification": classification,
-            "last_seen_round": round_index,
-            "seen_count": int(record.get("seen_count", 0)) + 1,
-        })
-        touched_ids.add(record["blocker_id"])
-
-    for blocker_id in unresolved_prior_ids - touched_ids:
-        record = records_by_id[blocker_id]
-        record["seen_count"] = int(record.get("seen_count", 1)) + 1
+        }
+        prior_result = prior_results.get(blocker_id)
+        if prior_result is not None:
+            fact["last_evidence"] = prior_result.get("evidence")
+        blocker_facts.append(fact)
 
     open_ids = sorted(
-        record.get("blocker_id") for record in current["blockers"]
-        if record.get("status") == "open" and record.get("blocker_id"))
+        fact["blocker_id"] for fact in blocker_facts
+        if fact["status"] == "open")
     obligation_results = {
         result.get("obligation_id"): result.get("status")
         for result in report.get("obligation_results", [])
         if isinstance(result, dict) and result.get("obligation_id")
     }
-    current["cycles"].append({
-        "round": round_index,
+    cycle = {
+        "round": cycle_round,
         "subject_digest": subject_digest,
         "report_digest": report_digest,
         "verdict": verdict,
         "obligation_results": obligation_results,
-        "new_count": new_count,
-        "fixed_count": fixed_count,
-        "regressed_count": regressed_count,
-        "unchanged_count": unchanged_count,
+        "new_count": sum(
+            fact["classification"] == "new" for fact in blocker_facts),
+        "fixed_count": sum(
+            fact["status"] == "fixed" for fact in blocker_facts),
+        "regressed_count": sum(
+            fact["classification"] == "regressed" for fact in blocker_facts),
+        "unchanged_count": sum(
+            fact["classification"] == "unchanged" for fact in blocker_facts),
         "open_count": len(open_ids),
         "prior_open_blocker_ids": prior_open_ids,
         "open_blocker_ids": open_ids,
-        "reported_blocker_ids": sorted(touched_ids),
-    })
+        "reported_blocker_ids": open_ids,
+        "blocker_facts_schema": REVIEW_CYCLE_BLOCKER_FACTS_SCHEMA,
+        "blocker_facts": sorted(
+            blocker_facts, key=lambda fact: fact["blocker_id"]),
+    }
+    current["cycles"].append(cycle)
+    current["blockers"] = _canonical_cycle_projection(current["cycles"])
+    validate_review_ledger(current, expected_round=cycle_round)
     return current
 
 

@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
+from omac.core import review_convergence as review_mod
 from omac.core.review_convergence import (
     REVIEW_PROTOCOL_VERSION,
     advance_review_ledger,
@@ -425,9 +426,15 @@ def test_ledger_same_subject_and_verdict_with_different_report_advances():
     second = rejected_report("root-b")
     ledger = advance_review_ledger(
         None, first, verdict="reject", subject_digest="same", round_index=1)
+    blocker_id = ledger["blockers"][0]["blocker_id"]
+    second["prior_blocker_results"] = [{
+        "blocker_id": blocker_id,
+        "status": "fixed",
+        "evidence": "root-a is fixed",
+    }]
 
     ledger = advance_review_ledger(
-        ledger, second, verdict="reject", subject_digest="same", round_index=1)
+        ledger, second, verdict="reject", subject_digest="same", round_index=2)
 
     assert len(ledger["cycles"]) == 2
     assert {record["root_cause_key"] for record in ledger["blockers"]} == {
@@ -516,9 +523,15 @@ def test_two_early_rounds_with_new_blockers_do_not_invent_a_decision():
     item = _item()
     obligations = build_review_obligations(item)
     ledger = None
+    prior_blocker_id = None
     for round_index, root in enumerate(("root-a", "root-b"), start=1):
         report = _report(
             obligations,
+            prior=([] if prior_blocker_id is None else [{
+                "blocker_id": prior_blocker_id,
+                "status": "fixed",
+                "evidence": "the prior root is fixed",
+            }]),
             failed={"dimension:structure"},
             blockers=[{
                 "root_cause_key": root,
@@ -532,15 +545,18 @@ def test_two_early_rounds_with_new_blockers_do_not_invent_a_decision():
         ledger = advance_review_ledger(
             ledger, report, verdict="reject",
             subject_digest=f"v{round_index}", round_index=round_index)
+        prior_blocker_id = next(
+            blocker["blocker_id"] for blocker in ledger["blockers"]
+            if blocker["status"] == "open"
+        )
 
     state = review_state(ledger)
     assert state == {
         "mode": "normal",
         "reason": None,
         "cycle_count": 2,
-        "open_blocker_count": 2,
-        "open_blocker_ids": sorted(
-            blocker["blocker_id"] for blocker in ledger["blockers"]),
+        "open_blocker_count": 1,
+        "open_blocker_ids": [prior_blocker_id],
     }
 
 
@@ -589,52 +605,250 @@ def test_unchanged_blocker_counts_once_per_review_cycle():
     assert review_state(ledger)["mode"] == "normal"
 
 
+def _production_multi_blocker_ledger(
+    classifications_by_round,
+    *,
+    obligation_ids=(
+        "dimension:structure",
+        "dimension:execution",
+        "dimension:ownership",
+    ),
+):
+    item = _item()
+    obligations = build_review_obligations(item)
+    roots = ("root-a", "root-b", "root-c")
+    ledger = None
+    for round_index, classifications in enumerate(
+        classifications_by_round, start=1,
+    ):
+        prior = []
+        if ledger is not None:
+            records = {
+                record["root_cause_key"]: record
+                for record in ledger["blockers"]
+            }
+            prior = [
+                {
+                    "blocker_id": records[root]["blocker_id"],
+                    "status": classification,
+                    "evidence": f"round {round_index} still shows {root}",
+                }
+                for root, classification in zip(roots, classifications)
+            ]
+        blockers = [
+            {
+                "root_cause_key": root,
+                "obligation_id": obligation_id,
+                "classification": classification,
+                "summary": f"{root} remains open",
+                "evidence": f"round {round_index} evidence for {root}",
+                "required_fix": f"fix {root}",
+            }
+            for root, obligation_id, classification in zip(
+                roots, obligation_ids, classifications,
+            )
+        ]
+        report = _report(
+            obligations,
+            prior=prior,
+            failed=set(obligation_ids),
+            blockers=blockers,
+        )
+        item.review_ledger = ledger
+        item.review_obligations = obligations
+        assert validate_convergence_review(item, "reject", report) == []
+        ledger = advance_review_ledger(
+            ledger,
+            report,
+            verdict="reject",
+            subject_digest=f"v{round_index}",
+            round_index=round_index,
+        )
+    return ledger
+
+
+def test_writer_and_validator_accept_mixed_unchanged_and_deeper_blockers():
+    ledger = _production_multi_blocker_ledger([
+        ("new", "new", "new"),
+        ("unchanged", "deeper", "deeper"),
+        ("unchanged", "deeper", "deeper"),
+    ], obligation_ids=("dimension:structure",) * 3)
+
+    assert validate_review_ledger(ledger, expected_round=3) is ledger
+    decision = review_convergence_decision(ledger)
+    assert decision["reason_code"] == "review-convergence-stalled"
+    assert decision["unchanged_blocker_ids"] == [
+        next(
+            blocker["blocker_id"] for blocker in ledger["blockers"]
+            if blocker["root_cause_key"] == "root-a"
+        )
+    ]
+
+
+def test_obligation_id_cannot_override_cycle_blocker_facts():
+    ledger = _production_multi_blocker_ledger([
+        ("new", "new", "new"),
+        ("deeper", "deeper", "deeper"),
+        ("deeper", "deeper", "deeper"),
+    ])
+    assert validate_review_ledger(ledger, expected_round=3) is ledger
+    assert review_convergence_decision(ledger)["reason_code"] == (
+        "review-convergence-scope-expanding"
+    )
+    for index, blocker in enumerate(ledger["blockers"]):
+        blocker["obligation_id"] = f"acceptance:forged-{index}"
+
+    with pytest.raises(ValueError, match="obligation_id"):
+        validate_review_ledger(ledger, expected_round=3)
+    with pytest.raises(ValueError, match="obligation_id"):
+        review_convergence_decision(ledger)
+
+
+def test_legacy_cycle_without_blocker_facts_fails_closed():
+    ledger = _stalled_canonical_ledger(with_facts=False)
+
+    with pytest.raises(ValueError, match="blocker facts"):
+        validate_review_ledger(ledger, expected_round=3)
+    with pytest.raises(ValueError, match="blocker facts"):
+        review_convergence_decision(ledger)
+
+
+def _with_cycle_blocker_facts(ledger):
+    records = {
+        record["blocker_id"]: record for record in ledger["blockers"]
+    }
+    current = {}
+    prior_open_ids = set()
+    for cycle in ledger["cycles"]:
+        open_ids = set(cycle["open_blocker_ids"])
+        facts = []
+        for blocker_id in sorted(prior_open_ids - open_ids):
+            previous = current[blocker_id]
+            facts.append({
+                field: previous[field]
+                for field in review_mod._BLOCKER_FACT_FIELDS[:6]
+            } | {
+                "status": "fixed",
+                "classification": "fixed",
+                "last_evidence": f"fixed in round {cycle['round']}",
+            })
+        for blocker_id in sorted(open_ids):
+            source = records.setdefault(blocker_id, {
+                "blocker_id": blocker_id,
+                "root_cause_key": f"root-{blocker_id.removeprefix('BLK-')}",
+                "obligation_id": "dimension:structure",
+                "status": "open",
+                "classification": "new",
+            })
+            previous = current.get(blocker_id)
+            if previous is None:
+                classification = "new"
+            elif previous["status"] == "fixed":
+                classification = "regressed"
+            else:
+                classification = (
+                    "unchanged"
+                    if source.get("classification") == "unchanged"
+                    else "deeper"
+                )
+            fact = {
+                "blocker_id": blocker_id,
+                "root_cause_key": source["root_cause_key"],
+                "obligation_id": source["obligation_id"],
+                "summary": source.get("summary", blocker_id),
+                "evidence": source.get("evidence", f"evidence for {blocker_id}"),
+                "required_fix": source.get("required_fix", f"fix {blocker_id}"),
+                "status": "open",
+                "classification": classification,
+            }
+            if previous is not None and previous["status"] == "open":
+                fact["last_evidence"] = f"still open in round {cycle['round']}"
+            facts.append(fact)
+        cycle["blocker_facts_schema"] = (
+            review_mod.REVIEW_CYCLE_BLOCKER_FACTS_SCHEMA
+        )
+        cycle["blocker_facts"] = facts
+        cycle["prior_open_blocker_ids"] = sorted(prior_open_ids)
+        cycle["open_blocker_ids"] = sorted(open_ids)
+        cycle["reported_blocker_ids"] = sorted(open_ids)
+        cycle["new_count"] = sum(
+            fact["classification"] == "new" for fact in facts)
+        cycle["fixed_count"] = sum(
+            fact["status"] == "fixed" for fact in facts)
+        cycle["regressed_count"] = sum(
+            fact["classification"] == "regressed" for fact in facts)
+        cycle["unchanged_count"] = sum(
+            fact["classification"] == "unchanged" for fact in facts)
+        cycle["open_count"] = len(open_ids)
+        cycle["obligation_results"] = {
+            fact["obligation_id"]: "fail"
+            for fact in facts if fact["status"] == "open"
+        }
+        current_ledger = {
+            "schema": "omac.review-ledger/v1",
+            "cycles": ledger["cycles"][:cycle["round"]],
+            "blockers": [],
+        }
+        current = {
+            blocker["blocker_id"]: blocker
+            for blocker in review_mod._canonical_cycle_projection(
+                current_ledger["cycles"])
+        }
+        prior_open_ids = open_ids
+    ledger["blockers"] = sorted(current.values(), key=lambda item: item["blocker_id"])
+    return ledger
+
+
 def _decision_ledger(
     open_counts, *, new_counts=None, obligation_ids=("dimension:structure",),
     first_seen_rounds=None, classifications=None,
 ):
-    new_counts = new_counts or [0] * len(open_counts)
-    first_seen_rounds = first_seen_rounds or [1] * len(obligation_ids)
-    classifications = classifications or ["unchanged"] * len(obligation_ids)
-    blocker_ids = [
-        f"BLK-{index}" for index in range(1, len(obligation_ids) + 1)
+    del new_counts, first_seen_rounds
+    final_classifications = classifications or ["unchanged"]
+    max_open_count = max(open_counts)
+    blockers = [
+        {
+            "blocker_id": f"BLK-{index}",
+            "root_cause_key": f"root-{index}",
+            "obligation_id": obligation_ids[(index - 1) % len(obligation_ids)],
+            "status": "open",
+            "classification": final_classifications[
+                (index - 1) % len(final_classifications)
+            ],
+            "first_seen_round": 1,
+            "last_seen_round": len(open_counts),
+            "seen_count": len(open_counts),
+        }
+        for index in range(1, max_open_count + 1)
     ]
-    return {
+    cycles = []
+    previous_ids = set()
+    next_id = 1
+    active_ids = set()
+    for round_index, open_count in enumerate(open_counts, start=1):
+        while len(active_ids) < open_count:
+            active_ids.add(f"BLK-{next_id}")
+            next_id += 1
+        while len(active_ids) > open_count:
+            active_ids.remove(sorted(active_ids)[-1])
+        cycles.append({
+            "round": round_index,
+            "new_count": len(active_ids - previous_ids),
+            "fixed_count": len(previous_ids - active_ids),
+            "regressed_count": 0,
+            "unchanged_count": 0,
+            "open_count": open_count,
+            "prior_open_blocker_ids": sorted(previous_ids),
+            "open_blocker_ids": sorted(active_ids),
+            "reported_blocker_ids": sorted(active_ids),
+        })
+        previous_ids = set(active_ids)
+    ledger = {
         "schema": "omac.review-ledger/v1",
-        "cycles": [
-            {
-                "round": index,
-                "new_count": new_counts[index - 1],
-                "fixed_count": 0,
-                "regressed_count": 0,
-                "unchanged_count": (
-                    len(blocker_ids) if index > 1 else 0
-                ),
-                "open_count": open_count,
-                "prior_open_blocker_ids": (
-                    [] if index == 1 else blocker_ids
-                ),
-                "open_blocker_ids": blocker_ids,
-                "reported_blocker_ids": blocker_ids,
-            }
-            for index, open_count in enumerate(open_counts, start=1)
-        ],
-        "blockers": [
-            {
-                "blocker_id": f"BLK-{index}",
-                "root_cause_key": f"root-{index}",
-                "obligation_id": obligation_id,
-                "status": "open",
-                "classification": classifications[index - 1],
-                "first_seen_round": first_seen_rounds[index - 1],
-                "last_seen_round": len(open_counts),
-                "seen_count": (
-                    len(open_counts) - first_seen_rounds[index - 1] + 1
-                ),
-            }
-            for index, obligation_id in enumerate(obligation_ids, start=1)
-        ],
+        "cycles": cycles,
+        "blockers": blockers,
     }
+    return _with_cycle_blocker_facts(ledger)
 
 
 def test_review_convergence_allows_healthy_progress_without_policy_signal():
@@ -672,7 +886,7 @@ def test_review_convergence_stops_when_late_review_expands_scope():
 
     assert decision["reason_code"] == "review-convergence-scope-expanding"
     assert decision["mode"] == "scope-expanding"
-    assert decision["late_root_cause_keys"] == ["root-1"]
+    assert decision["late_root_cause_keys"] == ["root-5"]
 
 
 def test_review_convergence_stops_for_three_open_responsibility_dimensions():
@@ -773,7 +987,7 @@ def test_review_ledger_validation_rejects_truncated_cycle_history():
 
 
 def _interleaved_canonical_ledger():
-    return {
+    return _with_cycle_blocker_facts({
         "schema": "omac.review-ledger/v1",
         "cycles": [
             {
@@ -832,12 +1046,12 @@ def _interleaved_canonical_ledger():
                 "seen_count": 1,
             },
         ],
-    }
+    })
 
 
-def _stalled_canonical_ledger():
+def _stalled_canonical_ledger(*, with_facts=True):
     blocker_id = "BLK-core"
-    return {
+    ledger = {
         "schema": "omac.review-ledger/v1",
         "cycles": [
             {
@@ -866,11 +1080,12 @@ def _stalled_canonical_ledger():
             "seen_count": 3,
         }],
     }
+    return _with_cycle_blocker_facts(ledger) if with_facts else ledger
 
 
 def _late_canonical_ledger():
     blocker_id = "BLK-late"
-    return {
+    return _with_cycle_blocker_facts({
         "schema": "omac.review-ledger/v1",
         "cycles": [
             {
@@ -906,12 +1121,12 @@ def _late_canonical_ledger():
             "last_seen_round": 6,
             "seen_count": 1,
         }],
-    }
+    })
 
 
 def _closed_reopened_canonical_ledger():
     blocker_id = "BLK-reopened"
-    return {
+    return _with_cycle_blocker_facts({
         "schema": "omac.review-ledger/v1",
         "cycles": [
             {
@@ -958,7 +1173,7 @@ def _closed_reopened_canonical_ledger():
             "last_seen_round": 3,
             "seen_count": 2,
         }],
-    }
+    })
 
 
 @pytest.mark.parametrize(("blocker_id", "seen_count"), [
@@ -992,7 +1207,7 @@ def test_review_ledger_validation_rejects_cycle_id_underreport():
     cycle["reported_blocker_ids"].remove("BLK-core")
     ledger["blockers"][0]["seen_count"] = 2
 
-    with pytest.raises(ValueError, match="open_count"):
+    with pytest.raises(ValueError, match="open_blocker_ids"):
         validate_review_ledger(ledger, expected_round=3)
 
 
@@ -1024,7 +1239,7 @@ def test_review_ledger_validation_rejects_reported_blocker_not_open():
         "classification": "fixed",
     })
 
-    with pytest.raises(ValueError, match="reported_blocker_ids"):
+    with pytest.raises(ValueError, match="open_count"):
         validate_review_ledger(ledger, expected_round=3)
 
 
@@ -1087,7 +1302,7 @@ def test_review_ledger_validation_rejects_fixed_status_with_open_classification(
         "classification": "unchanged",
     })
 
-    with pytest.raises(ValueError, match="classification"):
+    with pytest.raises(ValueError, match="fixed_count"):
         validate_review_ledger(ledger, expected_round=3)
 
 

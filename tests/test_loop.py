@@ -29,8 +29,8 @@ from omac.core.manifest import (
     set_node,
 )
 from omac.core.review_convergence import (
-    REVIEW_PROTOCOL_VERSION, build_review_obligations, open_blockers,
-    review_convergence_decision, review_subject_digest,
+    REVIEW_PROTOCOL_VERSION, advance_review_ledger, build_review_obligations,
+    open_blockers, review_convergence_decision, review_subject_digest,
 )
 from omac.engines import create_engine
 from omac.engines.mock import MockRuntime, MockStore
@@ -5286,77 +5286,71 @@ class TestReviewerRejectBoundedFallback:
         return intent, source
 
     @staticmethod
-    def _stalled_review_ledger(cycle_count=3):
-        blocker_id = "BLK-core"
-        return {
-            "schema": "omac.review-ledger/v1",
-            "cycles": [
-                {
-                    "round": round_index,
-                    "subject_digest": f"subject-{round_index}",
-                    "report_digest": f"report-{round_index}",
-                    "verdict": "reject",
-                    "new_count": 1 if round_index == 1 else 0,
-                    "fixed_count": 0,
-                    "regressed_count": 0,
-                    "unchanged_count": 0 if round_index == 1 else 1,
-                    "open_count": 1,
-                    "prior_open_blocker_ids": (
-                        [] if round_index == 1 else [blocker_id]
-                    ),
-                    "open_blocker_ids": [blocker_id],
-                    "reported_blocker_ids": [blocker_id],
-                }
-                for round_index in range(1, cycle_count + 1)
-            ],
-            "blockers": [{
-                "blocker_id": blocker_id,
-                "root_cause_key": "core-acceptance",
-                "obligation_id": "dimension:structure",
-                "summary": "core contract is incomplete",
-                "evidence": "the same invariant still fails",
-                "required_fix": "close the contract root",
-                "status": "open",
-                "classification": "unchanged",
-                "first_seen_round": 1,
-                "last_seen_round": cycle_count,
-                "seen_count": cycle_count,
-            }],
-        }
+    def _stalled_review_ledger(cycle_count=3, *, classification="unchanged"):
+        ledger = None
+        blocker_id = None
+        for round_index in range(1, cycle_count + 1):
+            current_classification = (
+                "new" if round_index == 1 else classification)
+            report = {
+                "obligation_results": [{
+                    "obligation_id": "dimension:structure",
+                    "status": "fail",
+                    "evidence": "the same invariant still fails",
+                }],
+                "prior_blocker_results": ([] if blocker_id is None else [{
+                    "blocker_id": blocker_id,
+                    "status": current_classification,
+                    "evidence": "the same invariant still fails",
+                }]),
+                "blockers": [{
+                    "root_cause_key": "core-acceptance",
+                    "obligation_id": "dimension:structure",
+                    "summary": "core contract is incomplete",
+                    "evidence": "the same invariant still fails",
+                    "required_fix": "close the contract root",
+                    "classification": current_classification,
+                }],
+            }
+            ledger = advance_review_ledger(
+                ledger,
+                report,
+                verdict="reject",
+                subject_digest=f"subject-{round_index}",
+                round_index=round_index,
+            )
+            blocker_id = ledger["blockers"][0]["blocker_id"]
+        return ledger
 
     @staticmethod
     def _late_scope_expanding_review_ledger():
-        blocker_id = "BLK-late"
-        return {
-            "schema": "omac.review-ledger/v1",
-            "cycles": [
-                {
-                    "round": round_index,
-                    "open_count": 0,
-                    "open_blocker_ids": [],
-                    "reported_blocker_ids": [],
-                }
-                for round_index in range(1, 6)
-            ] + [{
-                "round": 6,
-                "open_count": 1,
-                "open_blocker_ids": [blocker_id],
-                "reported_blocker_ids": [blocker_id],
-            }],
-            "blockers": [{
-                "blocker_id": blocker_id,
-                "root_cause_key": "late-scope",
-                "obligation_id": "dimension:structure",
-                "summary": "late scope appeared",
-                "evidence": "cycle six introduced a new root",
-                "required_fix": "reconsider the task boundary",
-                "status": "open",
-                "classification": "new",
-                "first_seen_round": 6,
-                "last_seen_round": 6,
-                "seen_count": 1,
-            }],
-        }
+        ledger = None
+        for round_index in range(1, 7):
+            has_blocker = round_index == 6
+            report = {
+                "obligation_results": [{
+                    "obligation_id": "dimension:structure",
+                    "status": "fail" if has_blocker else "pass",
+                    "evidence": "cycle boundary checked",
+                }],
+                "prior_blocker_results": [],
+                "blockers": ([] if not has_blocker else [{
+                    "root_cause_key": "late-scope",
+                    "obligation_id": "dimension:structure",
+                    "summary": "late scope appeared",
+                    "evidence": "cycle six introduced a new root",
+                    "required_fix": "reconsider the task boundary",
+                    "classification": "new",
+                }]),
+            }
+            ledger = advance_review_ledger(
+                ledger,
+                report,
+                verdict="reject" if has_blocker else "pass",
+                subject_digest=f"subject-{round_index}",
+                round_index=round_index,
+            )
+        return ledger
 
     @pytest.mark.parametrize("terminal_status", ["completed", "cancelled"])
     def test_terminal_worker_handoff_without_submit_uses_bounded_worker_retry(
@@ -6231,9 +6225,7 @@ class TestReviewerRejectBoundedFallback:
         intent, _source = self._prepare_causal_handoff(eng, item)
         intent = replace(
             intent, source_review_round=3, target_review_bounce=3)
-        ledger = self._stalled_review_ledger()
-        ledger["blockers"][0]["classification"] = "deeper"
-        ledger["cycles"][-1]["unchanged_count"] = 0
+        ledger = self._stalled_review_ledger(classification="deeper")
         eng.store.update_work_item_metadata(
             item.id, worker_handoff=intent, review_ledger=ledger)
         set_node(manifest, "a", status="in_progress")
@@ -8970,9 +8962,7 @@ class TestReviewerRejectBoundedFallback:
             got = eng.store.get_work_item(item.id)
             assert manifest.nodes["a"].status == "in_progress", f"第 {i+1} 次应回退 worker"
             if i == 2:
-                ledger = self._stalled_review_ledger()
-                ledger["blockers"][0]["classification"] = "deeper"
-                ledger["cycles"][-1]["unchanged_count"] = 0
+                ledger = self._stalled_review_ledger(classification="deeper")
                 eng.store.update_work_item_metadata(
                     item.id, review_ledger=ledger)
             # 推进:worker 修完重新提交 → in_review
