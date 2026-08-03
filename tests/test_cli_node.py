@@ -1,4 +1,5 @@
 """cli.node: show / retry / abandon —— exit 20 后的显式决策工具(§7.5)。"""
+from copy import deepcopy
 import os
 
 import pytest
@@ -520,6 +521,67 @@ def test_retry_review_delayed_run_recovery_fails_closed(
     assert current.review_subject_digest == subject
     assert current.review_verdict == "reject"
     assert current.review_report == report
+    assert len(engine.store.assign_log) == assignments
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "missing-reason-code",
+        "tampered-reason-code",
+        "non-object",
+        "unknown-existing-decision",
+    ],
+)
+def test_retry_review_preserves_noncanonical_existing_decision(
+    tmp_path, capsys, monkeypatch, case,
+):
+    """任何非 canonical 已有 decision 都必须原样失败关闭。"""
+    from omac.engines.models import WorkItemStatus
+
+    engine, path, item_id, _reviewer_id, subject, report = (
+        _delayed_reviewer_retry_fixture(tmp_path, monkeypatch))
+    current = engine.store.get_work_item(item_id)
+    decision = deepcopy(current.decision_required)
+    if case == "missing-reason-code":
+        decision.pop("reason_code")
+    elif case == "tampered-reason-code":
+        decision["reason_code"] = "reviewer-run-baseline-unavailable-tampered"
+    elif case == "non-object":
+        decision = ["reviewer-run-baseline-unavailable"]
+    else:
+        decision = {
+            "schema": "omac.decision-required/v1",
+            "reason_code": "guard-budget-exhausted",
+        }
+    engine.store.update_work_item_metadata(
+        item_id, decision_required=decision)
+    assignments = len(engine.store.assign_log)
+    monkeypatch.setattr(
+        engine.store,
+        "assign_work_item",
+        lambda *_args, **_kwargs: pytest.fail(
+            "noncanonical decision must not assign"),
+    )
+    monkeypatch.setattr(
+        engine.runtime,
+        "wake",
+        lambda *_args, **_kwargs: pytest.fail(
+            "noncanonical decision must not wake"),
+    )
+
+    assert main([
+        "node", "retry", path, "b", "--stage", "review",
+    ]) == exit_codes.VALIDATION
+    capsys.readouterr()
+
+    blocked = engine.store.get_work_item(item_id)
+    assert load_manifest(path).nodes["b"].status == "blocked"
+    assert blocked.status is WorkItemStatus.BLOCKED
+    assert blocked.decision_required == decision
+    assert blocked.review_subject_digest == subject
+    assert blocked.review_verdict == "reject"
+    assert blocked.review_report == report
     assert len(engine.store.assign_log) == assignments
 
 

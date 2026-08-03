@@ -235,16 +235,23 @@ def _recover_delayed_reviewer_submission(
     manifest, node_key: str, node, engine, current, manifest_path: str,
 ) -> bool:
     """Bind a delayed-visible Reviewer Run without replaying either role."""
-    decision = current.decision_required
-    if not (
-        isinstance(decision, dict)
-        and decision.get("reason_code") == "reviewer-run-baseline-unavailable"
-        and current.review_verdict in {"pass", "pass-with-nits", "reject"}
+    from ...pipeline.loop import (
+        _classify_reviewer_recovery_decision,
+        _delayed_reviewer_recovery_marker_error,
+        _formal_dispatch_target,
+        _observe_direct_run_attempt,
+    )
+
+    decision_class = _classify_reviewer_recovery_decision(
+        manifest_path, node_key, current)
+    has_submitted_review = (
+        current.review_verdict in {"pass", "pass-with-nits", "reject"}
         and isinstance(current.review_report, dict)
         and current.review_report
         and isinstance(current.review_report_ref, dict)
         and current.review_report_ref
-    ):
+    )
+    if not has_submitted_review:
         return False
 
     retry = f"omac node retry {manifest_path} {node.id} --stage review"
@@ -260,6 +267,12 @@ def _recover_delayed_reviewer_submission(
             f"Agent Run。请检查 issue Runs 后重试 `{retry}`。",
         ))
 
+    if decision_class == "other":
+        raise unsafe(
+            "the persisted recovery decision does not identify this review")
+    if decision_class != "canonical-baseline-unavailable":
+        return False
+
     baseline = current.reviewer_run_baseline
     reviewer_id = engine.store.resolve_agent_id(node.reviewer)
     if not engine.runtime.capabilities.stable_direct_run_identity:
@@ -267,12 +280,6 @@ def _recover_delayed_reviewer_submission(
 
     # Reuse the controller's direct-Run matcher. It proves direct kind, target
     # agent, strict cutoff, baseline exclusion, usable time, and uniqueness.
-    from ...pipeline.loop import (
-        _delayed_reviewer_recovery_marker_error,
-        _formal_dispatch_target,
-        _observe_direct_run_attempt,
-    )
-
     marker_error = _delayed_reviewer_recovery_marker_error(
         manifest, manifest_path, node_key, current,
         node.reviewer, reviewer_id,

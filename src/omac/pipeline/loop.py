@@ -564,6 +564,24 @@ def _provisional_reviewer_decision_variants(
     return tuple(variants)
 
 
+def _classify_reviewer_recovery_decision(
+    manifest_path: str,
+    key: str,
+    item,
+) -> str:
+    """Classify the persisted decision without trusting any marker field."""
+    decision = item.decision_required
+    if decision in (None, {}):
+        return "absent"
+    if any(
+        decision == expected
+        for expected in _provisional_reviewer_decision_variants(
+            manifest_path, key, item)
+    ):
+        return "canonical-baseline-unavailable"
+    return "other"
+
+
 def _provisional_reviewer_recovery_marker_error(
     manifest: Manifest,
     manifest_path: str,
@@ -573,11 +591,9 @@ def _provisional_reviewer_recovery_marker_error(
     reviewer_id: str,
 ) -> str | None:
     """Validate the control facts that make one reviewer decision provisional."""
-    decision = item.decision_required
-    expected_decisions = _provisional_reviewer_decision_variants(
-        manifest_path, key, item)
     if not (
-        any(decision == expected for expected in expected_decisions)
+        _classify_reviewer_recovery_decision(manifest_path, key, item)
+        == "canonical-baseline-unavailable"
         and item.kind == TaskKind.DEVELOP
         and item.phase == TaskPhase.REVIEW
     ):
@@ -3132,12 +3148,9 @@ def collect_results(
                                  "Reviewer is missing review_verdict", "reviewer 缺 review_verdict"))
                 continue
 
-            decision = item.decision_required
-            if (
-                isinstance(decision, dict)
-                and decision.get("reason_code")
-                == "reviewer-run-baseline-unavailable"
-            ):
+            decision_class = _classify_reviewer_recovery_decision(
+                manifest_path, key, item)
+            if decision_class != "absent":
                 reviewer_id = store.resolve_agent_id(node.reviewer)
                 marker_error = _delayed_reviewer_recovery_marker_error(
                     manifest, manifest_path, key, item,

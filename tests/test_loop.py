@@ -7,6 +7,7 @@
 - 无 reviewer 节点也必须经远端 MERGED + mergedAt 门;有 reviewer 先经 in_review
 - 不存在任何自动重试路径(blocked 节点在后续 tick 保持 blocked)
 """
+from copy import deepcopy
 import os
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -2496,6 +2497,73 @@ def test_runner_preserves_invalid_delayed_reviewer_decision(
     assert blocked.review_verdict == "pass"
     assert blocked.review_report == report
     assert len(eng.store.assign_log) == assignments_before
+    assert decision_writes == []
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "missing-reason-code",
+        "tampered-reason-code",
+        "non-object",
+        "unknown-existing-decision",
+    ],
+)
+def test_runner_preserves_noncanonical_existing_reviewer_decision(
+    tmp_path, monkeypatch, case,
+):
+    """Runner 只能消费精确 canonical 的 reviewer 恢复 decision。"""
+    eng, manifest, path, item_id, _target_run_id, report = (
+        _delayed_reviewer_verdict_fixture(tmp_path, "reject"))
+    current = eng.store.get_work_item(item_id)
+    decision = deepcopy(current.decision_required)
+    if case == "missing-reason-code":
+        decision.pop("reason_code")
+    elif case == "tampered-reason-code":
+        decision["reason_code"] = "reviewer-run-baseline-unavailable-tampered"
+    elif case == "non-object":
+        decision = ["reviewer-run-baseline-unavailable"]
+    else:
+        decision = {
+            "schema": "omac.decision-required/v1",
+            "reason_code": "guard-budget-exhausted",
+        }
+    eng.store.update_work_item_metadata(
+        item_id, decision_required=decision)
+    eng.store.update_status(item_id, WorkItemStatus.BLOCKED)
+    assignments = len(eng.store.assign_log)
+    decision_writes = []
+    original_update = eng.store.update_work_item_metadata
+
+    def update(target_item_id, **updated):
+        if "decision_required" in updated:
+            decision_writes.append(updated["decision_required"])
+        return original_update(target_item_id, **updated)
+
+    monkeypatch.setattr(eng.store, "update_work_item_metadata", update)
+    monkeypatch.setattr(
+        eng.store,
+        "assign_work_item",
+        lambda *_args, **_kwargs: pytest.fail(
+            "noncanonical decision must fail before assignment"),
+    )
+    monkeypatch.setattr(
+        eng.runtime,
+        "wake",
+        lambda *_args, **_kwargs: pytest.fail(
+            "noncanonical decision must fail before wake"),
+    )
+
+    failures = loop.collect_results(eng.store, eng.runtime, manifest, path)
+
+    blocked = eng.store.get_work_item(item_id)
+    assert "a" in failures
+    assert manifest.nodes["a"].status == "blocked"
+    assert blocked.status is WorkItemStatus.BLOCKED
+    assert blocked.decision_required == decision
+    assert blocked.review_verdict == "reject"
+    assert blocked.review_report == report
+    assert len(eng.store.assign_log) == assignments
     assert decision_writes == []
 
 
