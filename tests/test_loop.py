@@ -3552,8 +3552,9 @@ class TestFailureInjection:
         assert manifest.nodes["active"].status == "in_progress"
         assert manifest.nodes["decision"].status == "blocked"
 
-    def test_recovered_active_reviewer_completion_is_consumed_as_rework(
-        self, tmp_path,
+    @pytest.mark.parametrize("verdict", ["reject", "pass-with-nits"])
+    def test_recovered_active_reviewer_completion_preserves_rework_context(
+        self, tmp_path, verdict,
     ):
         from omac.engines import mock as mock_engine
 
@@ -3586,12 +3587,18 @@ class TestFailureInjection:
         ]) == reviewer_assignments
 
         current = eng.store.get_work_item(item.id)
-        report = _review_report(current, "reject")
-        eng.store.update_work_item_metadata(
+        nits = (
+            ["tighten the recovery assertion"]
+            if verdict == "pass-with-nits" else None
+        )
+        report = _review_report(current, verdict, nits=nits)
+        report_path = tmp_path / f"{verdict}-review.yaml"
+        report_path.write_text(yaml.safe_dump(report))
+        submit_work(
+            eng.store,
             item.id,
-            review_verdict="reject",
-            review_report=report,
-            review_report_source=yaml.safe_dump(report),
+            verdict=verdict,
+            report_file=str(report_path),
         )
         mock_engine._finish_mock_run(item.id)
 
@@ -3602,6 +3609,25 @@ class TestFailureInjection:
         assert manifest.nodes["a"].status == "in_progress"
         assert recovered.phase is TaskPhase.AUTHORING
         assert recovered.bounces.review == 1
+        show = build_show_output(recovered, "worker:alice")
+        if verdict == "pass-with-nits":
+            assert show["context"]["previous_review"] == {
+                "verdict": "pass-with-nits",
+                "report_ref": recovered.worker_handoff.source_review_feedback[
+                    "report_ref"],
+                "nits": nits,
+            }
+            assert "required_closures" not in show["context"]
+        else:
+            assert "previous_review" not in show["context"]
+            assert show["context"]["required_closures"] == [{
+                "blocker_id": recovered.review_ledger["blockers"][0][
+                    "blocker_id"],
+                "obligation_id": "dimension:structure",
+                "root_cause_key": "core-acceptance",
+                "summary": "核心验收未满足",
+                "required_fix": "修复核心验收路径",
+            }]
         assert len([
             entry for entry in eng.store.assign_log if entry[2] == "reviewer"
         ]) == reviewer_assignments
@@ -4266,6 +4292,18 @@ class TestReviewerRejectBoundedFallback:
             verification_source.encode("utf-8")
         ).hexdigest()
         source_subject = review_subject_digest(source, 1)
+        source_verdict = "pass-with-nits" if gate == "review-nits" else None
+        source_feedback = (
+            {
+                "verdict": "pass-with-nits",
+                "nits": ["follow up"],
+                "report_ref": {
+                    "attachment_id": "review-report-1",
+                    "sha256": "a" * 64,
+                },
+            }
+            if gate == "review-nits" else None
+        )
         intent = WorkerHandoffIntent(
             schema="omac.worker-handoff/v1",
             state="pending",
@@ -4273,6 +4311,8 @@ class TestReviewerRejectBoundedFallback:
             gate=gate,
             source_review_subject_digest=source_subject,
             source_review_round=1,
+            source_review_verdict=source_verdict,
+            source_review_feedback=source_feedback,
             target_review_bounce=1,
         )
         object.__setattr__(intent, "generation", "handoff-generation-1")
@@ -4822,12 +4862,14 @@ class TestReviewerRejectBoundedFallback:
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
         path = str(tmp_path / "m.yaml")
         manifest, eng, item = self._setup_reject_node(eng, path)
+        report = _review_report(
+            item, "pass-with-nits", nits=["follow up"])
         eng.store.update_work_item_metadata(
             item.id,
             review_bounce=1,
             review_verdict="pass-with-nits",
-            review_report=_review_report(
-                item, "pass-with-nits", nits=["follow up"]),
+            review_report=report,
+            review_report_source=yaml.safe_dump(report),
         )
         current = eng.store.get_work_item(item.id)
         eng.store.update_work_item_metadata(
@@ -4850,6 +4892,13 @@ class TestReviewerRejectBoundedFallback:
         assert got.bounces.review == 2
         assert got.review_verdict is None
         assert got.review_report is None
+        show = build_show_output(got, "worker:alice")
+        assert show["context"]["previous_review"] == {
+            "verdict": "pass-with-nits",
+            "report_ref": got.worker_handoff.source_review_feedback[
+                "report_ref"],
+            "nits": ["follow up"],
+        }
 
         reviewer_assignments = len([
             entry for entry in eng.store.assign_log if entry[2] == "reviewer"
@@ -4866,9 +4915,83 @@ class TestReviewerRejectBoundedFallback:
 
         assert second.state == "running"
         assert manifest.nodes["a"].status == "in_review"
+        assert eng.store.get_work_item(item.id).worker_handoff is None
         assert len([
             entry for entry in eng.store.assign_log if entry[2] == "reviewer"
         ]) == reviewer_assignments + 1
+
+    @pytest.mark.parametrize(
+        "report_ref",
+        [
+            pytest.param(None, id="legacy-inline-only"),
+            pytest.param({
+                "attachment_id": "",
+                "sha256": "a" * 64,
+            }, id="wrong-attachment"),
+            pytest.param({
+                "attachment_id": "review-1",
+                "sha256": "not-a-sha",
+            }, id="wrong-sha"),
+        ],
+    )
+    def test_review_nits_missing_exact_report_ref_has_zero_side_effects(
+        self, tmp_path, monkeypatch, report_ref,
+    ):
+        from omac.engines import create_engine
+        from omac.errors import PlatformError
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        report = _review_report(
+            item, "pass-with-nits", nits=["follow up"])
+        eng.store.update_work_item_metadata(
+            item.id,
+            review_verdict="pass-with-nits",
+            review_report=report,
+        )
+        current = eng.store.get_work_item(item.id)
+        current.review_report_ref = report_ref
+        before = {
+            "status": current.status,
+            "phase": current.phase,
+            "review_bounce": current.bounces.review,
+            "review_verdict": current.review_verdict,
+            "review_report": current.review_report,
+            "worker_handoff": current.worker_handoff,
+            "assignments": list(eng.store.assign_log),
+            "runs": list(eng.runtime.list_runs(item.id)),
+        }
+
+        def unexpected_write(*_args, **_kwargs):
+            pytest.fail("invalid review-nits source must not write or dispatch")
+
+        monkeypatch.setattr(
+            eng.store, "update_work_item_metadata", unexpected_write)
+        monkeypatch.setattr(eng.store, "reset_review", unexpected_write)
+        monkeypatch.setattr(eng.store, "update_status", unexpected_write)
+        monkeypatch.setattr(eng.store, "assign_work_item", unexpected_write)
+        monkeypatch.setattr(eng.runtime, "wake", unexpected_write)
+        monkeypatch.setattr(eng.runtime, "list_runs", unexpected_write)
+
+        with pytest.raises(PlatformError, match="review report ref|feedback"):
+            loop._dispatch_worker_handoff(
+                eng.store,
+                eng.runtime,
+                manifest,
+                "a",
+                review_bounce=1,
+                gate="review-nits",
+            )
+
+        after = eng.store.get_work_item(item.id)
+        assert after.status is before["status"]
+        assert after.phase is before["phase"]
+        assert after.bounces.review == before["review_bounce"]
+        assert after.review_verdict == before["review_verdict"]
+        assert after.review_report == before["review_report"]
+        assert after.worker_handoff is before["worker_handoff"]
+        assert eng.store.assign_log == before["assignments"]
 
     def test_review_continuation_authorizes_pass_with_nits_rework(
         self, tmp_path,
@@ -4879,6 +5002,8 @@ class TestReviewerRejectBoundedFallback:
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
         path = str(tmp_path / "m.yaml")
         manifest, eng, item = self._setup_reject_node(eng, path)
+        report = _review_report(
+            item, "pass-with-nits", nits=["authorized follow up"])
         eng.store.update_work_item_metadata(
             item.id,
             review_bounce=9,
@@ -4891,8 +5016,8 @@ class TestReviewerRejectBoundedFallback:
                 "reason": "operator approved one additional review round",
             },
             review_verdict="pass-with-nits",
-            review_report=_review_report(
-                item, "pass-with-nits", nits=["authorized follow up"]),
+            review_report=report,
+            review_report_source=yaml.safe_dump(report),
         )
         current = eng.store.get_work_item(item.id)
         eng.store.update_work_item_metadata(
@@ -5446,13 +5571,18 @@ class TestReviewerRejectBoundedFallback:
         manifest, eng, item = self._setup_reject_node(eng, path)
         eng.store.update_work_item_metadata(
             item.id, review_obligations=build_review_obligations(item))
+        report = _review_report(
+            item,
+            verdict,
+            nits=["follow up"] if verdict == "pass-with-nits" else None,
+        )
         eng.store.update_work_item_metadata(
             item.id,
             review_verdict=verdict,
-            review_report=_review_report(
-                item,
-                verdict,
-                nits=["follow up"] if verdict == "pass-with-nits" else None,
+            review_report=report,
+            review_report_source=(
+                yaml.safe_dump(report)
+                if verdict == "pass-with-nits" else None
             ),
         )
 
@@ -5531,6 +5661,15 @@ class TestReviewerRejectBoundedFallback:
         assert persisted.nodes["a"].status == "in_review"
         crashed_item = eng.store.get_work_item(item.id)
         assert crashed_item.worker_handoff is not None
+        if verdict == "pass-with-nits":
+            assert crashed_item.worker_handoff.source_review_verdict == (
+                "pass-with-nits")
+            assert crashed_item.worker_handoff.source_review_feedback[
+                "verdict"] == verdict
+            assert crashed_item.worker_handoff.source_review_feedback[
+                "nits"] == ["follow up"]
+        else:
+            assert crashed_item.worker_handoff.source_review_feedback is None
 
         monkeypatch.setattr(
             eng.store, "update_work_item_metadata", original_update_metadata)
@@ -5573,6 +5712,11 @@ class TestReviewerRejectBoundedFallback:
         assert recovered.review_report is None
         assert recovered.review_subject_digest is None
         assert recovered.worker_handoff is not None
+        if verdict == "pass-with-nits":
+            assert recovered.worker_handoff.source_review_feedback[
+                "verdict"] == verdict
+        else:
+            assert recovered.worker_handoff.source_review_feedback is None
         assert recovered.bounces.review == 1
         assert len(eng.runtime.list_runs(item.id)) == runs_before_handoff + 1
         assert eng.store.assign_log[-1][2] == "worker"
@@ -7119,11 +7263,13 @@ class TestReviewerRejectBoundedFallback:
         manifest, eng, item = self._setup_reject_node(eng, path)
         eng.store.update_work_item_metadata(
             item.id, review_obligations=build_review_obligations(item))
+        report = _review_report(
+            item, "pass-with-nits", nits=["建议后续优化"])
         eng.store.update_work_item_metadata(
             item.id,
             review_verdict="pass-with-nits",
-            review_report=_review_report(
-                item, "pass-with-nits", nits=["建议后续优化"]),
+            review_report=report,
+            review_report_source=yaml.safe_dump(report),
         )
 
         first = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
