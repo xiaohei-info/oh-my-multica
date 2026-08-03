@@ -230,6 +230,31 @@ def test_mock_worker_handoff_roundtrip_and_clear():
     assert store.get_work_item(item.id).worker_handoff is None
 
 
+def test_mock_worker_handoff_roundtrips_source_review_feedback():
+    store = MockStore(_mock_config())
+    item = store.create_work_item(
+        "ws", "t", "d", dag_key="a", worker="alice")
+    feedback = {
+        "verdict": "pass-with-nits",
+        "report_ref": {
+            "attachment_id": "review-1",
+            "sha256": "review-sha",
+        },
+        "nits": ["name the exact compatibility fixture"],
+    }
+    payload = {
+        **_worker_handoff_intent().as_dict(),
+        "source_review_feedback": feedback,
+    }
+
+    store.update_work_item_metadata(item.id, worker_handoff=payload)
+
+    persisted = store.get_work_item(item.id).worker_handoff
+    assert persisted is not None
+    assert persisted.source_review_feedback == feedback
+    assert persisted.as_dict()["source_review_feedback"] == feedback
+
+
 def test_mock_delivery_identity_roundtrip_and_clear():
     store = MockStore(_mock_config())
     item = store.create_work_item(
@@ -490,6 +515,34 @@ def test_multica_worker_handoff_roundtrip_and_clear():
     assert persisted.worker_handoff == intent
     assert cleared.worker_handoff is None
     assert fake.metadata[item.id]["worker_handoff"] == {}
+
+
+def test_multica_worker_handoff_roundtrips_source_review_feedback():
+    store = _multica_store()
+    fake = _FakeMulticaProc()
+    feedback = {
+        "verdict": "pass-with-nits",
+        "report_ref": {
+            "attachment_id": "review-1",
+            "sha256": "review-sha",
+        },
+        "nits": ["name the exact compatibility fixture"],
+    }
+    payload = {
+        **_worker_handoff_intent().as_dict(),
+        "source_review_feedback": feedback,
+    }
+
+    with patch("subprocess.run", side_effect=fake.run):
+        item = store.create_work_item(
+            "ws", "t", "d", dag_key="a", worker="alice")
+        store.update_work_item_metadata(item.id, worker_handoff=payload)
+        persisted = store.get_work_item(item.id).worker_handoff
+
+    assert persisted is not None
+    assert persisted.source_review_feedback == feedback
+    assert fake.metadata[item.id]["worker_handoff"][
+        "source_review_feedback"] == feedback
 
 
 def test_multica_delivery_identity_roundtrip_and_clear():

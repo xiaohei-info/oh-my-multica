@@ -1351,6 +1351,18 @@ def _dispatch_worker_handoff(
             ):
                 raise PlatformError(
                     f"Worker handoff source is stale for work item {item_id}")
+        source_feedback = None
+        if gate in {"review", "review-nits"}:
+            source_feedback = {"verdict": current.review_verdict}
+            if isinstance(current.review_report_ref, dict):
+                source_feedback["report_ref"] = dict(current.review_report_ref)
+            report = current.review_report
+            if isinstance(report, dict):
+                nits = report.get("nits")
+                if isinstance(nits, list):
+                    source_feedback["nits"] = [
+                        nit for nit in nits if isinstance(nit, str) and nit
+                    ]
         if not runtime.capabilities.stable_direct_run_identity:
             raise PlatformError(
                 "Worker handoff requires stable direct Run identity support")
@@ -1371,6 +1383,7 @@ def _dispatch_worker_handoff(
             gate=gate,
             source_review_subject_digest=source_subject,
             source_review_round=source_round,
+            source_review_feedback=source_feedback,
             target_review_bounce=review_bounce,
             generation=f"handoff-{secrets.token_hex(8)}",
             target_agent_id=target_agent_id,

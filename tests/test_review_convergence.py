@@ -11,7 +11,7 @@ from omac.core.review_convergence import (
     review_state,
     validate_convergence_review,
 )
-from omac.core.taskmeta import TaskKind, TaskPhase
+from omac.core.taskmeta import TaskKind, TaskPhase, WorkerHandoffIntent
 from omac.engines.mock import MockStore
 from omac.engines.models import EngineConfig, WorkItemStatus
 from omac.errors import ValidationError
@@ -736,6 +736,22 @@ def test_authoring_show_exposes_required_closures_and_convergence_mode():
             "required_fix": "verify the signed handoff",
         }],
     }
+    item.worker_handoff = WorkerHandoffIntent(
+        schema="omac.worker-handoff/v1",
+        state="pending",
+        target_worker="alice",
+        gate="review",
+        source_review_subject_digest="subject-2",
+        source_review_round=2,
+        source_review_feedback={
+            "verdict": "reject",
+            "report_ref": {
+                "attachment_id": "review-report-2",
+                "sha256": "review-report-sha",
+            },
+        },
+        target_review_bounce=2,
+    )
 
     output = dispatch.build_show_output(item, "worker:alice")
 
@@ -747,6 +763,38 @@ def test_authoring_show_exposes_required_closures_and_convergence_mode():
         "summary": "release trust is incomplete",
         "required_fix": "verify the signed handoff",
     }]
+    assert output["context"]["previous_review"] == {
+        "verdict": "reject",
+        "report_ref": {
+            "attachment_id": "review-report-2",
+            "sha256": "review-report-sha",
+        },
+    }
+
+
+def test_authoring_show_does_not_bind_feedback_from_non_review_handoff():
+    store = _store()
+    item = store.create_work_item(
+        "ws", "authoring", "authoring", dag_key="review-1", worker="alice",
+        kind=TaskKind.DEVELOP,
+    )
+    item.worker_handoff = WorkerHandoffIntent(
+        schema="omac.worker-handoff/v1",
+        state="pending",
+        target_worker="alice",
+        gate="explicit-dispatch",
+        source_review_subject_digest="stage-recovery",
+        source_review_round=1,
+        source_review_feedback={
+            "verdict": "pass-with-nits",
+            "nits": ["stale feedback"],
+        },
+        target_review_bounce=0,
+    )
+
+    output = dispatch.build_show_output(item, "worker:alice")
+
+    assert "previous_review" not in output["context"]
 
 
 def test_review_submit_updates_ledger_before_exposing_verdict(tmp_path):
