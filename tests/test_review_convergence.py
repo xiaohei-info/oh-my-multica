@@ -10,6 +10,7 @@ from omac.cli.commands import work as work_cmd
 from omac.cli.main import main
 from omac.core import review_convergence as review_mod
 from omac.core.review_convergence import (
+    LegacyReviewLedgerUnverifiable,
     REVIEW_PROTOCOL_VERSION,
     advance_review_ledger,
     build_review_obligations,
@@ -717,6 +718,38 @@ def test_legacy_cycle_without_blocker_facts_fails_closed():
         validate_review_ledger(ledger, expected_round=3)
     with pytest.raises(ValueError, match="blocker facts"):
         review_convergence_decision(ledger)
+
+
+@pytest.mark.parametrize(
+    "corrupt",
+    [
+        lambda ledger: ledger["cycles"][0].__setitem__(
+            "prior_open_blocker_ids", "BLK-legacy"),
+        lambda ledger: ledger["cycles"][0].__setitem__(
+            "blocker_facts_schema", "wrong/v0"),
+        lambda ledger: ledger["blockers"][0].__setitem__("root_cause_key", ""),
+        lambda ledger: ledger["cycles"][-1]["open_blocker_ids"].append(
+            ledger["cycles"][-1]["open_blocker_ids"][0]),
+    ],
+    ids=[
+        "damaged-cycle-field",
+        "wrong-blocker-facts-schema",
+        "empty-summary-root-cause",
+        "duplicate-open-blocker-id",
+    ],
+)
+def test_corrupt_legacy_ledger_is_invalid(
+    aiteam_849_legacy_snapshot, corrupt,
+):
+    ledger = deepcopy(aiteam_849_legacy_snapshot["work_item"]["review_ledger"])
+    corrupt(ledger)
+
+    with pytest.raises(ValueError) as exc_info:
+        validate_review_ledger(ledger, expected_round=3)
+    assert not isinstance(exc_info.value, LegacyReviewLedgerUnverifiable)
+
+    resolution = resolve_convergence(_item(ledger=ledger), expected_round=3)
+    assert resolution.state is ResolutionState.INVALID
 
 
 @pytest.mark.parametrize("cycle_count", [1, 2])

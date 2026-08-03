@@ -72,27 +72,6 @@ class ConvergenceResolution:
             output["submit"] = None
 
 
-def _legacy_unverifiable(ledger: dict) -> bool:
-    cycles, blockers = ledger.get("cycles"), ledger.get("blockers")
-    if not isinstance(cycles, list) or not cycles or not isinstance(blockers, list):
-        return False
-    latest = cycles[-1]
-    if not isinstance(latest, dict) or not isinstance(latest.get("open_blocker_ids"), list):
-        return False
-    persisted_open = {
-        blocker.get("blocker_id") for blocker in blockers
-        if isinstance(blocker, dict) and blocker.get("status") == "open"
-    }
-    if any(
-        isinstance(blocker, dict)
-        and blocker.get("status") == "open"
-        and blocker.get("classification") == "fixed"
-        for blocker in blockers
-    ):
-        return False
-    return persisted_open == set(latest["open_blocker_ids"])
-
-
 def _next_action(node_id: str | None) -> str:
     command = "omac dag amend propose <manifest> --report-file <report> --docs <docs>"
     if node_id:
@@ -121,9 +100,6 @@ def resolve_convergence(
         validated = validate_review_ledger(ledger, expected_round=expected_round)
         convergence = review_convergence_decision(validated)
     except LegacyReviewLedgerUnverifiable as exc:
-        error = str(exc)
-        if not isinstance(ledger, dict) or not _legacy_unverifiable(ledger):
-            return ConvergenceResolution(ResolutionState.INVALID, error=error)
         convergence = {
             "schema": REVIEW_CONVERGENCE_DECISION_SCHEMA,
             "mode": "unverifiable-legacy-ledger",

@@ -65,6 +65,56 @@ _BLOCKER_SUMMARY_FIELDS = _BLOCKER_FACT_FIELDS + (
 )
 
 
+def _validate_cycle_common(cycles: list[Any]) -> None:
+    """Validate cycle structure shared by legacy and current ledgers."""
+    prior_open_ids: set[str] = set()
+    for index, cycle in enumerate(cycles):
+        path = f"cycles[{index}]"
+        if not isinstance(cycle, dict):
+            raise ValueError(f"review ledger {path} must be an object")
+        for field in (
+            "round", "new_count", "fixed_count", "regressed_count",
+            "unchanged_count", "open_count",
+        ):
+            value = cycle.get(field)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(
+                    f"review ledger {path}.{field} must be a non-negative integer")
+        if cycle["round"] != index + 1:
+            raise ValueError(f"review ledger {path}.round must be {index + 1}")
+        ids_by_field: dict[str, set[str]] = {}
+        for field in (
+            "prior_open_blocker_ids", "open_blocker_ids", "reported_blocker_ids",
+        ):
+            values = cycle.get(field)
+            if not isinstance(values, list):
+                raise ValueError(f"review ledger {path}.{field} must be a list")
+            if any(not isinstance(value, str) or not value.strip() for value in values):
+                raise ValueError(
+                    f"review ledger {path}.{field} must contain non-empty strings")
+            if len(values) != len(set(values)):
+                raise ValueError(f"review ledger {path}.{field} must contain unique IDs")
+            ids_by_field[field] = set(values)
+        if ids_by_field["prior_open_blocker_ids"] != prior_open_ids:
+            raise ValueError(
+                f"review ledger {path}.prior_open_blocker_ids must exactly "
+                "match the previous cycle open_blocker_ids")
+        if cycle["open_count"] != len(ids_by_field["open_blocker_ids"]):
+            raise ValueError(
+                f"review ledger {path}.open_count must match open_blocker_ids")
+        prior_open_ids = ids_by_field["open_blocker_ids"]
+        has_schema = "blocker_facts_schema" in cycle
+        has_facts = "blocker_facts" in cycle
+        if has_schema != has_facts:
+            raise ValueError(f"review ledger {path} blocker facts fields are incomplete")
+        if has_schema and cycle["blocker_facts_schema"] != REVIEW_CYCLE_BLOCKER_FACTS_SCHEMA:
+            raise ValueError(
+                f"review ledger {path} blocker facts schema must be "
+                f"{REVIEW_CYCLE_BLOCKER_FACTS_SCHEMA}")
+        if has_facts and not isinstance(cycle["blocker_facts"], list):
+            raise ValueError(f"review ledger {path}.blocker_facts must be a list")
+
+
 def _canonical_cycle_projection(
     cycles: list[Any],
 ) -> list[dict]:
@@ -74,32 +124,11 @@ def _canonical_cycle_projection(
     prior_open_ids: set[str] = set()
     for index, cycle in enumerate(cycles):
         path = f"cycles[{index}]"
-        if not isinstance(cycle, dict):
-            raise ValueError(f"review ledger {path} must be an object")
-        for field in (
-            "round",
-            "new_count",
-            "fixed_count",
-            "regressed_count",
-            "unchanged_count",
-            "open_count",
-        ):
-            value = cycle.get(field)
-            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-                raise ValueError(
-                    f"review ledger {path}.{field} must be a non-negative integer")
-        expected_cycle_round = index + 1
-        if cycle["round"] != expected_cycle_round:
-            raise ValueError(
-                f"review ledger {path}.round must be {expected_cycle_round}")
-
-        if cycle.get("blocker_facts_schema") != REVIEW_CYCLE_BLOCKER_FACTS_SCHEMA:
+        if "blocker_facts" not in cycle:
             raise LegacyReviewLedgerUnverifiable(
                 f"review ledger {path} blocker facts schema must be "
                 f"{REVIEW_CYCLE_BLOCKER_FACTS_SCHEMA}")
-        blocker_facts = cycle.get("blocker_facts")
-        if not isinstance(blocker_facts, list):
-            raise ValueError(f"review ledger {path}.blocker_facts must be a list")
+        blocker_facts = cycle["blocker_facts"]
 
         obligation_results = cycle.get("obligation_results")
         if not isinstance(obligation_results, dict):
@@ -240,26 +269,11 @@ def _canonical_cycle_projection(
                 raise ValueError(
                     f"review ledger {path}.{field} must exactly match blocker facts")
 
-        ids_by_field: dict[str, set[str]] = {}
-        for field in (
-            "prior_open_blocker_ids",
-            "open_blocker_ids",
-            "reported_blocker_ids",
-        ):
-            values = cycle.get(field)
-            if not isinstance(values, list):
-                raise ValueError(f"review ledger {path}.{field} must be a list")
-            ids: set[str] = set()
-            for value in values:
-                if not isinstance(value, str) or not value.strip():
-                    raise ValueError(
-                        f"review ledger {path}.{field} must contain "
-                        "non-empty strings")
-                if value in ids:
-                    raise ValueError(
-                        f"review ledger {path}.{field} must contain unique IDs")
-                ids.add(value)
-            ids_by_field[field] = ids
+        ids_by_field = {
+            field: set(cycle[field]) for field in (
+                "prior_open_blocker_ids", "open_blocker_ids", "reported_blocker_ids",
+            )
+        }
 
         if ids_by_field["prior_open_blocker_ids"] != prior_open_ids:
             raise ValueError(
@@ -305,7 +319,12 @@ def validate_review_ledger(
         or cycles[-1].get("round") != expected_round
     ):
         raise ValueError(f"review ledger latest round must be {expected_round}")
-    canonical_projection = _canonical_cycle_projection(cycles)
+    _validate_cycle_common(cycles)
+    legacy_missing_facts = any("blocker_facts" not in cycle for cycle in cycles)
+    canonical_projection = (
+        None if legacy_missing_facts else _canonical_cycle_projection(cycles)
+    )
+    blocker_ids: set[str] = set()
     for index, blocker in enumerate(blockers):
         path = f"blockers[{index}]"
         if not isinstance(blocker, dict):
@@ -315,21 +334,39 @@ def validate_review_ledger(
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(
                     f"review ledger {path}.{field} must be a non-empty string")
+        if blocker["blocker_id"] in blocker_ids:
+            raise ValueError("review ledger blockers must contain unique blocker_id values")
+        blocker_ids.add(blocker["blocker_id"])
         status = blocker.get("status")
         classification = blocker.get("classification")
         if status not in _LEDGER_BLOCKER_STATUSES:
             raise ValueError(f"review ledger {path}.status is invalid")
         if classification not in _LEDGER_BLOCKER_CLASSIFICATIONS:
             raise ValueError(f"review ledger {path}.classification is invalid")
-        first_seen_round = blocker.get("first_seen_round")
-        seen_count = blocker.get("seen_count")
         for field, value in (
-            ("first_seen_round", first_seen_round),
-            ("seen_count", seen_count),
+            ("first_seen_round", blocker.get("first_seen_round")),
+            ("last_seen_round", blocker.get("last_seen_round")),
+            ("seen_count", blocker.get("seen_count")),
         ):
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                 raise ValueError(
                     f"review ledger {path}.{field} must be a positive integer")
+    if legacy_missing_facts:
+        if any(
+            (blocker["status"] == "fixed") !=
+            (blocker["classification"] == "fixed")
+            for blocker in blockers
+        ):
+            raise ValueError(
+                "review ledger blocker status and classification disagree")
+        latest_open_ids = set(cycles[-1]["open_blocker_ids"])
+        summary_open_ids = {
+            blocker["blocker_id"] for blocker in blockers if blocker["status"] == "open"
+        }
+        if latest_open_ids != summary_open_ids:
+            raise ValueError(
+                "review ledger open blocker summary must match latest cycle")
+        _canonical_cycle_projection(cycles)
     persisted_projection = _persisted_blocker_projection(blockers)
     if persisted_projection != canonical_projection:
         persisted_by_id = {
@@ -976,6 +1013,7 @@ def advance_review_ledger(
             blocker_facts, key=lambda fact: fact["blocker_id"]),
     }
     current["cycles"].append(cycle)
+    _validate_cycle_common(current["cycles"])
     current["blockers"] = _canonical_cycle_projection(current["cycles"])
     validate_review_ledger(current, expected_round=cycle_round)
     return current
