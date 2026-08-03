@@ -3552,8 +3552,9 @@ class TestFailureInjection:
         assert manifest.nodes["active"].status == "in_progress"
         assert manifest.nodes["decision"].status == "blocked"
 
-    def test_recovered_active_reviewer_completion_is_consumed_as_rework(
-        self, tmp_path,
+    @pytest.mark.parametrize("verdict", ["reject", "pass-with-nits"])
+    def test_recovered_active_reviewer_completion_preserves_rework_context(
+        self, tmp_path, verdict,
     ):
         from omac.engines import mock as mock_engine
 
@@ -3586,12 +3587,18 @@ class TestFailureInjection:
         ]) == reviewer_assignments
 
         current = eng.store.get_work_item(item.id)
-        report = _review_report(current, "reject")
-        eng.store.update_work_item_metadata(
+        nits = (
+            ["tighten the recovery assertion"]
+            if verdict == "pass-with-nits" else None
+        )
+        report = _review_report(current, verdict, nits=nits)
+        report_path = tmp_path / f"{verdict}-review.yaml"
+        report_path.write_text(yaml.safe_dump(report))
+        submit_work(
+            eng.store,
             item.id,
-            review_verdict="reject",
-            review_report=report,
-            review_report_source=yaml.safe_dump(report),
+            verdict=verdict,
+            report_file=str(report_path),
         )
         mock_engine._finish_mock_run(item.id)
 
@@ -3602,6 +3609,25 @@ class TestFailureInjection:
         assert manifest.nodes["a"].status == "in_progress"
         assert recovered.phase is TaskPhase.AUTHORING
         assert recovered.bounces.review == 1
+        show = build_show_output(recovered, "worker:alice")
+        if verdict == "pass-with-nits":
+            assert show["context"]["previous_review"] == {
+                "verdict": "pass-with-nits",
+                "report_ref": recovered.worker_handoff.source_review_feedback[
+                    "report_ref"],
+                "nits": nits,
+            }
+            assert "required_closures" not in show["context"]
+        else:
+            assert "previous_review" not in show["context"]
+            assert show["context"]["required_closures"] == [{
+                "blocker_id": recovered.review_ledger["blockers"][0][
+                    "blocker_id"],
+                "obligation_id": "dimension:structure",
+                "root_cause_key": "core-acceptance",
+                "summary": "核心验收未满足",
+                "required_fix": "修复核心验收路径",
+            }]
         assert len([
             entry for entry in eng.store.assign_log if entry[2] == "reviewer"
         ]) == reviewer_assignments
