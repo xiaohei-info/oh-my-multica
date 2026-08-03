@@ -230,27 +230,79 @@ def _validate_common_blockers(
                 f"review ledger cycles[{index}].verdict must match open blockers")
 
 
+def _validate_cycle_blocker_facts(cycle: dict, path: str) -> tuple[dict, list]:
+    obligation_results = cycle.get("obligation_results")
+    if not isinstance(obligation_results, dict):
+        raise ValueError(f"review ledger {path}.obligation_results must be an object")
+    for obligation_id, status in obligation_results.items():
+        if not isinstance(obligation_id, str) or not obligation_id.strip():
+            raise ValueError(
+                f"review ledger {path}.obligation_results IDs must be non-empty strings")
+        if status not in _RESULT_STATUSES:
+            raise ValueError(
+                f"review ledger {path}.obligation_results status is invalid")
+    blocker_facts = cycle["blocker_facts"]
+    fact_ids: set[str] = set()
+    for fact_index, fact in enumerate(blocker_facts):
+        fact_path = f"{path}.blocker_facts[{fact_index}]"
+        if not isinstance(fact, dict):
+            raise ValueError(f"review ledger {fact_path} must be an object")
+        for field in _BLOCKER_FACT_FIELDS[:6]:
+            value = fact.get(field)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(
+                    f"review ledger {fact_path}.{field} must be a non-empty string")
+        blocker_id = fact["blocker_id"]
+        if blocker_id in fact_ids:
+            raise ValueError(
+                f"review ledger {path}.blocker_facts must contain unique blocker_id values")
+        fact_ids.add(blocker_id)
+        status = fact.get("status")
+        classification = fact.get("classification")
+        if status not in _LEDGER_BLOCKER_STATUSES:
+            raise ValueError(f"review ledger {fact_path}.status is invalid")
+        if classification not in _LEDGER_BLOCKER_CLASSIFICATIONS:
+            raise ValueError(f"review ledger {fact_path}.classification is invalid")
+        last_evidence = fact.get("last_evidence")
+        if last_evidence is not None and (
+            not isinstance(last_evidence, str) or not last_evidence.strip()
+        ):
+            raise ValueError(
+                f"review ledger {fact_path}.last_evidence must be a non-empty string")
+        if classification in {"unchanged", "deeper", "fixed"} and not last_evidence:
+            raise ValueError(f"review ledger {fact_path}.last_evidence is required")
+    return obligation_results, blocker_facts
+
+
 def _validate_blocker_facts_schema(cycles: list[Any]) -> None:
-    """Phase B: require a supported immutable blocker-facts envelope."""
-    missing_path = None
+    """Phase B: validate present facts before reporting legacy omissions."""
+    missing_paths = []
+    errors = []
     for index, cycle in enumerate(cycles):
         path = f"cycles[{index}]"
         has_schema = "blocker_facts_schema" in cycle
         has_facts = "blocker_facts" in cycle
         if not has_schema and not has_facts:
-            missing_path = missing_path or path
+            missing_paths.append(path)
             continue
-        if has_schema != has_facts:
-            raise ValueError(f"review ledger {path} blocker facts fields are incomplete")
-        if cycle["blocker_facts_schema"] != REVIEW_CYCLE_BLOCKER_FACTS_SCHEMA:
-            raise ValueError(
-                f"review ledger {path} blocker facts schema must be "
-                f"{REVIEW_CYCLE_BLOCKER_FACTS_SCHEMA}")
-        if not isinstance(cycle["blocker_facts"], list):
-            raise ValueError(f"review ledger {path}.blocker_facts must be a list")
-    if missing_path is not None:
+        try:
+            if has_schema != has_facts:
+                raise ValueError(
+                    f"review ledger {path} blocker facts fields are incomplete")
+            if cycle["blocker_facts_schema"] != REVIEW_CYCLE_BLOCKER_FACTS_SCHEMA:
+                raise ValueError(
+                    f"review ledger {path} blocker facts schema must be "
+                    f"{REVIEW_CYCLE_BLOCKER_FACTS_SCHEMA}")
+            if not isinstance(cycle["blocker_facts"], list):
+                raise ValueError(f"review ledger {path}.blocker_facts must be a list")
+            _validate_cycle_blocker_facts(cycle, path)
+        except ValueError as exc:
+            errors.append(str(exc))
+    if errors:
+        raise ValueError("; ".join(errors))
+    if missing_paths:
         raise LegacyReviewLedgerUnverifiable(
-            f"review ledger {missing_path} blocker facts schema must be "
+            f"review ledger {missing_paths[0]} blocker facts schema must be "
             f"{REVIEW_CYCLE_BLOCKER_FACTS_SCHEMA}")
 
 
@@ -263,22 +315,8 @@ def _canonical_cycle_projection(
     prior_open_ids: set[str] = set()
     for index, cycle in enumerate(cycles):
         path = f"cycles[{index}]"
-        blocker_facts = cycle["blocker_facts"]
+        obligation_results, blocker_facts = _validate_cycle_blocker_facts(cycle, path)
 
-        obligation_results = cycle.get("obligation_results")
-        if not isinstance(obligation_results, dict):
-            raise ValueError(
-                f"review ledger {path}.obligation_results must be an object")
-        for obligation_id, status in obligation_results.items():
-            if not isinstance(obligation_id, str) or not obligation_id.strip():
-                raise ValueError(
-                    f"review ledger {path}.obligation_results IDs must be "
-                    "non-empty strings")
-            if status not in _RESULT_STATUSES:
-                raise ValueError(
-                    f"review ledger {path}.obligation_results status is invalid")
-
-        fact_ids: set[str] = set()
         open_fact_ids: set[str] = set()
         fixed_fact_ids: set[str] = set()
         classifications: dict[str, int] = {
@@ -287,34 +325,16 @@ def _canonical_cycle_projection(
         open_obligation_ids: set[str] = set()
         for fact_index, fact in enumerate(blocker_facts):
             fact_path = f"{path}.blocker_facts[{fact_index}]"
-            if not isinstance(fact, dict):
-                raise ValueError(f"review ledger {fact_path} must be an object")
-            for field in _BLOCKER_FACT_FIELDS[:6]:
-                value = fact.get(field)
-                if not isinstance(value, str) or not value.strip():
-                    raise ValueError(
-                        f"review ledger {fact_path}.{field} must be a "
-                        "non-empty string")
             blocker_id = fact["blocker_id"]
             root_cause_key = fact["root_cause_key"]
-            if blocker_id in fact_ids:
-                raise ValueError(
-                    f"review ledger {path}.blocker_facts must contain unique "
-                    "blocker_id values")
-            fact_ids.add(blocker_id)
             known_id = blocker_id_by_root.get(root_cause_key)
             if known_id is not None and known_id != blocker_id:
                 raise ValueError(
                     f"review ledger {fact_path}.root_cause_key changed identity")
             blocker_id_by_root[root_cause_key] = blocker_id
 
-            status = fact.get("status")
-            classification = fact.get("classification")
-            if status not in _LEDGER_BLOCKER_STATUSES:
-                raise ValueError(f"review ledger {fact_path}.status is invalid")
-            if classification not in _LEDGER_BLOCKER_CLASSIFICATIONS:
-                raise ValueError(
-                    f"review ledger {fact_path}.classification is invalid")
+            status = fact["status"]
+            classification = fact["classification"]
             previous = projection_by_id.get(blocker_id)
             if previous is not None and previous["root_cause_key"] != root_cause_key:
                 raise ValueError(
@@ -346,16 +366,6 @@ def _canonical_cycle_projection(
                 classifications[classification] += 1
 
             last_evidence = fact.get("last_evidence")
-            if last_evidence is not None and (
-                not isinstance(last_evidence, str) or not last_evidence.strip()
-            ):
-                raise ValueError(
-                    f"review ledger {fact_path}.last_evidence must be a "
-                    "non-empty string")
-            if classification in {"unchanged", "deeper", "fixed"} and not last_evidence:
-                raise ValueError(
-                    f"review ledger {fact_path}.last_evidence is required")
-
             first_seen_round = (
                 previous["first_seen_round"] if previous is not None
                 else cycle["round"]

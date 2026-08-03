@@ -1425,6 +1425,41 @@ def test_legacy_empty_ledger_verdict_contract(verdict, valid):
         assert not isinstance(exc_info.value, LegacyReviewLedgerUnverifiable)
 
 
+@pytest.mark.parametrize(("missing_index", "corrupt_index", "corrupt"), [
+    (
+        0, 2,
+        lambda cycle: cycle["blocker_facts"][0].__setitem__("status", "banana"),
+    ),
+    (
+        1, 0,
+        lambda cycle: cycle.__setitem__("obligation_results", []),
+    ),
+    (
+        2, 1,
+        lambda cycle: cycle["blocker_facts"].append(
+            deepcopy(cycle["blocker_facts"][0])),
+    ),
+], ids=[
+    "missing-first-corrupt-last-fact",
+    "missing-middle-corrupt-first-obligations",
+    "missing-last-corrupt-middle-duplicate",
+])
+def test_legacy_missing_facts_does_not_mask_present_cycle_corruption(
+    missing_index, corrupt_index, corrupt,
+):
+    ledger = _stalled_canonical_ledger()
+    ledger["cycles"][missing_index].pop("blocker_facts_schema")
+    ledger["cycles"][missing_index].pop("blocker_facts")
+    corrupt(ledger["cycles"][corrupt_index])
+
+    with pytest.raises(ValueError) as exc_info:
+        validate_review_ledger(ledger, expected_round=3)
+    assert not isinstance(exc_info.value, LegacyReviewLedgerUnverifiable)
+    assert resolve_convergence(
+        _item(ledger=ledger), expected_round=3,
+    ).state is ResolutionState.INVALID
+
+
 @pytest.mark.parametrize(("blocker_id", "seen_count"), [
     ("BLK-core", 2),
     ("BLK-interleaved", 2),
