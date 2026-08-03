@@ -57,7 +57,8 @@ from ..core.taskmeta import (
     DECISION_REQUIRED_SCHEMA, DELIVERY_IDENTITY_SCHEMA,
     REVIEWER_RUN_BASELINE_SCHEMA, WORKER_HANDOFF_SCHEMA,
     DeliveryIdentity, ReviewerRunBaseline, TaskKind, TaskPhase,
-    WorkerHandoffIntent, parse_delivery_identity,
+    WorkerHandoffIntent, exact_review_report_ref, parse_delivery_identity,
+    review_nits_feedback_is_complete,
 )
 
 log = logsetup.get_logger(__name__)
@@ -1419,6 +1420,27 @@ def _dispatch_worker_handoff(
             ):
                 raise PlatformError(
                     f"Worker handoff source is stale for work item {item_id}")
+        source_verdict = (
+            current.review_verdict
+            if gate in {"review", "review-nits"} else None
+        )
+        source_feedback = None
+        if gate == "review-nits":
+            source_feedback = {"verdict": source_verdict}
+            if not exact_review_report_ref(current.review_report_ref):
+                raise PlatformError(
+                    f"Worker handoff review report ref is invalid for "
+                    f"work item {item_id}")
+            source_feedback["report_ref"] = dict(current.review_report_ref)
+            report = current.review_report
+            if isinstance(report, dict):
+                nits = report.get("nits")
+                if isinstance(nits, list):
+                    source_feedback["nits"] = list(nits)
+            if not review_nits_feedback_is_complete(source_feedback):
+                raise PlatformError(
+                    f"Worker handoff requires actionable pass-with-nits feedback "
+                    f"for work item {item_id}")
         if not runtime.capabilities.stable_direct_run_identity:
             raise PlatformError(
                 "Worker handoff requires stable direct Run identity support")
@@ -1439,6 +1461,8 @@ def _dispatch_worker_handoff(
             gate=gate,
             source_review_subject_digest=source_subject,
             source_review_round=source_round,
+            source_review_verdict=source_verdict,
+            source_review_feedback=source_feedback,
             target_review_bounce=review_bounce,
             generation=f"handoff-{secrets.token_hex(8)}",
             target_agent_id=target_agent_id,

@@ -196,12 +196,101 @@ def test_worker_handoff_rejects_unknown_gate_with_positive_bounce():
     assert not intent.is_causally_bound()
 
 
-@pytest.mark.parametrize("gate", ["review", "review-nits", "operator-retry"])
+@pytest.mark.parametrize("gate", ["review", "operator-retry"])
 def test_worker_handoff_keeps_positive_bounce_compatibility(gate):
     intent = _worker_handoff_intent()
     intent = WorkerHandoffIntent(**{**intent.as_dict(), "gate": gate})
 
     assert intent.is_causally_bound()
+
+
+def _review_nits_handoff_payload(**feedback_updates):
+    feedback = {
+        "verdict": "pass-with-nits",
+        "nits": ["name the exact compatibility fixture"],
+        "report_ref": {
+            "attachment_id": "review-1",
+            "sha256": "a" * 64,
+        },
+    }
+    feedback.update(feedback_updates)
+    return {
+        **_worker_handoff_intent().as_dict(),
+        "gate": "review-nits",
+        "source_review_verdict": "pass-with-nits",
+        "source_review_feedback": feedback,
+    }
+
+
+def test_worker_handoff_accepts_complete_review_nits_feedback():
+    intent = taskmeta.parse_worker_handoff(_review_nits_handoff_payload())
+
+    assert intent is not None
+    assert intent.is_complete()
+    assert intent.is_causally_bound()
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param(
+            {**_review_nits_handoff_payload(), "source_review_feedback": None},
+            id="missing-feedback",
+        ),
+        pytest.param(
+            {**_review_nits_handoff_payload(), "source_review_verdict": "reject"},
+            id="source-verdict-mismatch",
+        ),
+        pytest.param(
+            _review_nits_handoff_payload(verdict="reject"),
+            id="feedback-verdict-mismatch",
+        ),
+        pytest.param(
+            _review_nits_handoff_payload(nits=[]),
+            id="empty-nits",
+        ),
+        pytest.param(
+            _review_nits_handoff_payload(nits=["ok", ""]),
+            id="blank-nit",
+        ),
+        pytest.param(
+            _review_nits_handoff_payload(nits=["ok", 1]),
+            id="non-string-nit",
+        ),
+        pytest.param(
+            _review_nits_handoff_payload(extra="unknown"),
+            id="unknown-feedback-field",
+        ),
+        pytest.param(
+            _review_nits_handoff_payload(report_ref=None),
+            id="missing-report-ref",
+        ),
+        pytest.param(
+            _review_nits_handoff_payload(report_ref={
+                "attachment_id": "",
+                "sha256": "a" * 64,
+            }),
+            id="missing-report-attachment",
+        ),
+        pytest.param(
+            _review_nits_handoff_payload(report_ref={"attachment_id": "review-1"}),
+            id="partial-report-ref",
+        ),
+        pytest.param(
+            _review_nits_handoff_payload(report_ref={
+                "attachment_id": "review-1",
+                "sha256": "not-a-sha",
+            }),
+            id="malformed-report-ref",
+        ),
+    ],
+)
+def test_worker_handoff_rejects_incomplete_review_nits_feedback(payload):
+    intent = taskmeta.parse_worker_handoff(payload)
+
+    assert intent is not None
+    assert not intent.is_complete()
+    assert not intent.is_causally_bound()
 
 
 def _delivery_identity():
@@ -228,6 +317,77 @@ def test_mock_worker_handoff_roundtrip_and_clear():
 
     store.update_work_item_metadata(item.id, worker_handoff={})
     assert store.get_work_item(item.id).worker_handoff is None
+
+
+def test_mock_worker_handoff_roundtrips_source_review_feedback():
+    store = MockStore(_mock_config())
+    item = store.create_work_item(
+        "ws", "t", "d", dag_key="a", worker="alice")
+    feedback = {
+        "verdict": "pass-with-nits",
+        "report_ref": {
+            "attachment_id": "review-1",
+            "sha256": "a" * 64,
+        },
+        "nits": ["name the exact compatibility fixture"],
+    }
+    payload = {
+        **_worker_handoff_intent().as_dict(),
+        "gate": "review-nits",
+        "source_review_verdict": "pass-with-nits",
+        "source_review_feedback": feedback,
+    }
+
+    store.update_work_item_metadata(item.id, worker_handoff=payload)
+
+    persisted = store.get_work_item(item.id).worker_handoff
+    assert persisted is not None
+    assert persisted.source_review_feedback == feedback
+    assert persisted.as_dict()["source_review_feedback"] == feedback
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        pytest.param({"source_review_feedback": None}, id="missing"),
+        pytest.param({"source_review_verdict": "reject"}, id="mismatch"),
+        pytest.param({"feedback_updates": {"nits": []}}, id="empty-nits"),
+        pytest.param(
+            {"feedback_updates": {"report_ref": None}},
+            id="missing-report-ref",
+        ),
+        pytest.param(
+            {"feedback_updates": {"report_ref": {
+                "attachment_id": "",
+                "sha256": "a" * 64,
+            }}},
+            id="wrong-report-attachment",
+        ),
+        pytest.param(
+            {"feedback_updates": {"report_ref": {
+                "attachment_id": "review-1",
+                "sha256": "not-a-sha",
+            }}},
+            id="wrong-report-sha",
+        ),
+        pytest.param({"feedback_updates": {"unknown": True}}, id="malformed"),
+    ],
+)
+def test_mock_worker_handoff_roundtrips_invalid_review_nits_fail_closed(updates):
+    store = MockStore(_mock_config())
+    item = store.create_work_item(
+        "ws", "t", "d", dag_key="a", worker="alice")
+    case = dict(updates)
+    payload = _review_nits_handoff_payload(
+        **case.pop("feedback_updates", {}))
+    payload.update(case)
+
+    store.update_work_item_metadata(item.id, worker_handoff=payload)
+
+    persisted = store.get_work_item(item.id).worker_handoff
+    assert persisted is not None
+    assert not persisted.is_complete()
+    assert not persisted.is_causally_bound()
 
 
 def test_mock_delivery_identity_roundtrip_and_clear():
@@ -490,6 +650,84 @@ def test_multica_worker_handoff_roundtrip_and_clear():
     assert persisted.worker_handoff == intent
     assert cleared.worker_handoff is None
     assert fake.metadata[item.id]["worker_handoff"] == {}
+
+
+def test_multica_worker_handoff_roundtrips_source_review_feedback():
+    store = _multica_store()
+    fake = _FakeMulticaProc()
+    feedback = {
+        "verdict": "pass-with-nits",
+        "report_ref": {
+            "attachment_id": "review-1",
+            "sha256": "a" * 64,
+        },
+        "nits": ["name the exact compatibility fixture"],
+    }
+    payload = {
+        **_worker_handoff_intent().as_dict(),
+        "gate": "review-nits",
+        "source_review_verdict": "pass-with-nits",
+        "source_review_feedback": feedback,
+    }
+
+    with patch("subprocess.run", side_effect=fake.run):
+        item = store.create_work_item(
+            "ws", "t", "d", dag_key="a", worker="alice")
+        store.update_work_item_metadata(item.id, worker_handoff=payload)
+        persisted = store.get_work_item(item.id).worker_handoff
+
+    assert persisted is not None
+    assert persisted.source_review_feedback == feedback
+    assert fake.metadata[item.id]["worker_handoff"][
+        "source_review_feedback"] == feedback
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        pytest.param({"source_review_feedback": None}, id="missing"),
+        pytest.param({"source_review_verdict": "reject"}, id="mismatch"),
+        pytest.param({"feedback_updates": {"nits": []}}, id="empty-nits"),
+        pytest.param(
+            {"feedback_updates": {"report_ref": None}},
+            id="missing-report-ref",
+        ),
+        pytest.param(
+            {"feedback_updates": {"report_ref": {
+                "attachment_id": "",
+                "sha256": "a" * 64,
+            }}},
+            id="wrong-report-attachment",
+        ),
+        pytest.param(
+            {"feedback_updates": {"report_ref": {
+                "attachment_id": "review-1",
+                "sha256": "not-a-sha",
+            }}},
+            id="wrong-report-sha",
+        ),
+        pytest.param({"feedback_updates": {"unknown": True}}, id="malformed"),
+    ],
+)
+def test_multica_worker_handoff_roundtrips_invalid_review_nits_fail_closed(
+    updates,
+):
+    store = _multica_store()
+    fake = _FakeMulticaProc()
+    case = dict(updates)
+    payload = _review_nits_handoff_payload(
+        **case.pop("feedback_updates", {}))
+    payload.update(case)
+
+    with patch("subprocess.run", side_effect=fake.run):
+        item = store.create_work_item(
+            "ws", "t", "d", dag_key="a", worker="alice")
+        store.update_work_item_metadata(item.id, worker_handoff=payload)
+        persisted = store.get_work_item(item.id).worker_handoff
+
+    assert persisted is not None
+    assert not persisted.is_complete()
+    assert not persisted.is_causally_bound()
 
 
 def test_multica_delivery_identity_roundtrip_and_clear():

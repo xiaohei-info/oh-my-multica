@@ -350,6 +350,22 @@ def validate_convergence_review(item: Any, verdict: str, report: Any) -> list[st
         return [f"review_report.review_protocol must be {REVIEW_PROTOCOL_VERSION}"]
 
     errors: list[str] = review_boundary_report_errors(report)
+    nits = report.get("nits")
+    valid_nits = []
+    if nits is None and verdict != "pass-with-nits":
+        pass
+    elif not isinstance(nits, list):
+        errors.append("review_report.nits must be a list")
+    else:
+        for index, nit in enumerate(nits):
+            if not isinstance(nit, str) or not nit.strip():
+                errors.append(
+                    f"review_report.nits[{index}] must be a non-empty string")
+            else:
+                valid_nits.append(nit)
+    if verdict == "pass-with-nits" and not valid_nits:
+        errors.append(
+            "review_report pass-with-nits verdict requires at least one non-empty nit")
     obligations = getattr(item, "review_obligations", None)
     if not isinstance(obligations, list) or not obligations:
         obligations = build_review_obligations(item)
