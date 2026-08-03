@@ -908,6 +908,49 @@ def test_review_ledger_validation_accepts_exact_interleaved_seen_counts():
     assert validate_review_ledger(ledger, expected_round=3) is ledger
 
 
+def test_review_ledger_validation_rejects_cycle_id_underreport():
+    ledger = _interleaved_canonical_ledger()
+    cycle = ledger["cycles"][1]
+    cycle["open_blocker_ids"].remove("BLK-core")
+    cycle["reported_blocker_ids"].remove("BLK-core")
+    ledger["blockers"][0]["seen_count"] = 2
+
+    with pytest.raises(ValueError, match="open_count"):
+        validate_review_ledger(ledger, expected_round=3)
+
+
+@pytest.mark.parametrize(
+    "field", ["open_blocker_ids", "reported_blocker_ids"])
+def test_review_ledger_validation_rejects_duplicate_cycle_ids(field):
+    ledger = _interleaved_canonical_ledger()
+    ledger["cycles"][0][field].append("BLK-core")
+
+    with pytest.raises(ValueError, match=field):
+        validate_review_ledger(ledger, expected_round=3)
+
+
+def test_review_ledger_validation_rejects_open_count_mismatch():
+    ledger = _interleaved_canonical_ledger()
+    ledger["cycles"][0]["open_count"] = 2
+
+    with pytest.raises(ValueError, match="open_count"):
+        validate_review_ledger(ledger, expected_round=3)
+
+
+def test_review_ledger_validation_rejects_reported_blocker_not_open():
+    ledger = _interleaved_canonical_ledger()
+    latest = ledger["cycles"][-1]
+    latest["open_count"] = 0
+    latest["open_blocker_ids"] = []
+    ledger["blockers"][0].update({
+        "status": "fixed",
+        "classification": "fixed",
+    })
+
+    with pytest.raises(ValueError, match="reported_blocker_ids"):
+        validate_review_ledger(ledger, expected_round=3)
+
+
 def test_review_ledger_validation_rejects_forged_first_seen_round():
     ledger = _late_canonical_ledger()
     ledger["blockers"][0]["first_seen_round"] = 1

@@ -43,6 +43,78 @@ _LEDGER_BLOCKER_CLASSIFICATIONS = _BLOCKER_CLASSIFICATIONS | {"fixed"}
 _LEDGER_BLOCKER_STATUSES = {"open", "fixed"}
 
 
+def _canonical_cycle_projection(
+    cycles: list[Any],
+) -> tuple[list[set[str]], set[str]] | None:
+    """Validate canonical cycle facts and return blocker sightings/current open IDs."""
+    cycle_blocker_ids: list[set[str]] = []
+    cycle_open_blocker_ids: list[set[str] | None] = []
+    has_canonical_cycle_ids = False
+    for index, cycle in enumerate(cycles):
+        path = f"cycles[{index}]"
+        if not isinstance(cycle, dict):
+            raise ValueError(f"review ledger {path} must be an object")
+        for field in ("round", "open_count"):
+            value = cycle.get(field)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(
+                    f"review ledger {path}.{field} must be a non-negative integer")
+        expected_cycle_round = index + 1
+        if cycle["round"] != expected_cycle_round:
+            raise ValueError(
+                f"review ledger {path}.round must be {expected_cycle_round}")
+
+        ids_by_field: dict[str, set[str]] = {}
+        for field in (
+            "prior_open_blocker_ids",
+            "open_blocker_ids",
+            "reported_blocker_ids",
+        ):
+            values = cycle.get(field)
+            if values is None:
+                continue
+            if not isinstance(values, list):
+                raise ValueError(f"review ledger {path}.{field} must be a list")
+            ids: set[str] = set()
+            for value in values:
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError(
+                        f"review ledger {path}.{field} must contain "
+                        "non-empty strings")
+                if value in ids:
+                    raise ValueError(
+                        f"review ledger {path}.{field} must contain unique IDs")
+                ids.add(value)
+            ids_by_field[field] = ids
+
+        open_ids = ids_by_field.get("open_blocker_ids")
+        reported_ids = ids_by_field.get("reported_blocker_ids")
+        if open_ids is not None:
+            has_canonical_cycle_ids = True
+            if len(open_ids) != cycle["open_count"]:
+                raise ValueError(
+                    f"review ledger {path}.open_count must exactly match "
+                    "open_blocker_ids")
+        if reported_ids is not None:
+            has_canonical_cycle_ids = True
+            if open_ids is not None and not reported_ids <= open_ids:
+                raise ValueError(
+                    f"review ledger {path}.reported_blocker_ids must be a "
+                    "subset of open_blocker_ids")
+
+        cycle_open_blocker_ids.append(open_ids)
+        cycle_blocker_ids.append((open_ids or set()) | (reported_ids or set()))
+
+    if not has_canonical_cycle_ids:
+        return None
+    for index, open_ids in enumerate(cycle_open_blocker_ids):
+        if open_ids is None:
+            raise ValueError(
+                f"review ledger cycles[{index}].open_blocker_ids is required "
+                "for canonical cycle history")
+    return cycle_blocker_ids, cycle_open_blocker_ids[-1] if cycles else set()
+
+
 def _canonical_blocker_projection(
     cycle_blocker_ids: list[set[str]],
     latest_open_blocker_ids: set[str],
@@ -94,41 +166,7 @@ def validate_review_ledger(
         raise ValueError("review ledger cycles must be a list")
     if not isinstance(blockers, list):
         raise ValueError("review ledger blockers must be a list")
-    cycle_blocker_ids = []
-    cycle_open_blocker_ids = []
-    has_canonical_cycle_ids = False
-    for index, cycle in enumerate(cycles):
-        path = f"cycles[{index}]"
-        if not isinstance(cycle, dict):
-            raise ValueError(f"review ledger {path} must be an object")
-        for field in ("round", "open_count"):
-            value = cycle.get(field)
-            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-                raise ValueError(
-                    f"review ledger {path}.{field} must be a non-negative integer")
-        expected_cycle_round = index + 1
-        if cycle["round"] != expected_cycle_round:
-            raise ValueError(
-                f"review ledger {path}.round must be {expected_cycle_round}")
-        persisted_ids = set()
-        open_ids = set()
-        for field in ("open_blocker_ids", "reported_blocker_ids"):
-            values = cycle.get(field)
-            if values is None:
-                continue
-            has_canonical_cycle_ids = True
-            if not isinstance(values, list):
-                raise ValueError(f"review ledger {path}.{field} must be a list")
-            for value in values:
-                if not isinstance(value, str) or not value.strip():
-                    raise ValueError(
-                        f"review ledger {path}.{field} must contain "
-                        "non-empty strings")
-                persisted_ids.add(value)
-                if field == "open_blocker_ids":
-                    open_ids.add(value)
-        cycle_blocker_ids.append(persisted_ids)
-        cycle_open_blocker_ids.append(open_ids)
+    canonical_cycles = _canonical_cycle_projection(cycles)
     if expected_round is not None and (
         not cycles or cycles[-1]["round"] != expected_round
     ):
@@ -157,7 +195,7 @@ def validate_review_ledger(
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                 raise ValueError(
                     f"review ledger {path}.{field} must be a positive integer")
-        if not has_canonical_cycle_ids:
+        if canonical_cycles is None:
             if first_seen_round > len(cycles):
                 raise ValueError(
                     f"review ledger {path}.first_seen_round exceeds "
@@ -165,10 +203,11 @@ def validate_review_ledger(
             if seen_count > len(cycles) - first_seen_round + 1:
                 raise ValueError(
                     f"review ledger {path}.seen_count exceeds persisted cycles")
-    if has_canonical_cycle_ids:
+    if canonical_cycles is not None:
+        cycle_blocker_ids, latest_open_blocker_ids = canonical_cycles
         canonical_projection = _canonical_blocker_projection(
             cycle_blocker_ids,
-            cycle_open_blocker_ids[-1] if cycle_open_blocker_ids else set(),
+            latest_open_blocker_ids,
         )
         persisted_projection = _persisted_blocker_projection(blockers)
         if persisted_projection != canonical_projection:

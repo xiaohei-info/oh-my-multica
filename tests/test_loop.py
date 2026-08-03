@@ -4303,8 +4303,48 @@ class TestFailureInjection:
         assert eng.store.assign_log == assignments_before
         assert runs == runs_before
 
+    @pytest.mark.parametrize("invalid_ledger", [
+        {
+            "schema": "future.review-ledger/v9",
+            "cycles": [{"round": 3, "open_count": 1}],
+            "blockers": [],
+        },
+        {
+            "schema": "omac.review-ledger/v1",
+            "cycles": [
+                {
+                    "round": 1,
+                    "open_count": 1,
+                    "open_blocker_ids": ["BLK-core"],
+                    "reported_blocker_ids": ["BLK-core"],
+                },
+                {
+                    "round": 2,
+                    "open_count": 1,
+                    "open_blocker_ids": [],
+                    "reported_blocker_ids": [],
+                },
+                {
+                    "round": 3,
+                    "open_count": 1,
+                    "open_blocker_ids": ["BLK-core"],
+                    "reported_blocker_ids": ["BLK-core"],
+                },
+            ],
+            "blockers": [{
+                "blocker_id": "BLK-core",
+                "root_cause_key": "core-acceptance",
+                "obligation_id": "dimension:structure",
+                "status": "open",
+                "classification": "unchanged",
+                "first_seen_round": 1,
+                "last_seen_round": 3,
+                "seen_count": 2,
+            }],
+        },
+    ], ids=["wrong-schema", "cycle-id-underreport"])
     def test_active_worker_restore_validates_deferred_ledger_before_manifest_write(
-        self, tmp_path, monkeypatch,
+        self, tmp_path, monkeypatch, invalid_ledger,
     ):
         eng, manifest, path, runs, observations = (
             self._blocked_manifest_with_formal_run(tmp_path, role="worker")
@@ -4342,12 +4382,26 @@ class TestFailureInjection:
             "hydrate_work_item_evidence",
             lambda projection, _plan: replace(
                 projection.work_item,
-                review_ledger={
-                    "schema": "future.review-ledger/v9",
-                    "cycles": [{"round": 3, "open_count": 1}],
-                    "blockers": [],
-                },
+                review_ledger=invalid_ledger,
             ),
+        )
+        for target, name in (
+            (eng.store, "update_work_item_metadata"),
+            (eng.store, "update_status"),
+            (eng.store, "assign_work_item"),
+            (eng.runtime, "wake"),
+        ):
+            monkeypatch.setattr(
+                target,
+                name,
+                lambda *_args, _name=name, **_kwargs: pytest.fail(
+                    f"invalid ledger restore must not call {_name}"),
+            )
+        monkeypatch.setattr(
+            loop,
+            "save_manifest",
+            lambda *_args, **_kwargs: pytest.fail(
+                "invalid ledger restore must not save manifest"),
         )
 
         with pytest.raises(PlatformError, match="review ledger"):
@@ -5892,8 +5946,12 @@ class TestReviewerRejectBoundedFallback:
         assert manifest.nodes["a"].status == "in_progress"
         assert Path(path).read_bytes() == before
 
-    @pytest.mark.parametrize(
-        "forgery", ["first-seen-round", "current-status"])
+    @pytest.mark.parametrize("forgery", [
+        "first-seen-round",
+        "current-status",
+        "cycle-id-underreport",
+        "latest-reported-not-open",
+    ])
     def test_forged_blocker_projection_fails_before_worker_handoff_side_effects(
         self, tmp_path, monkeypatch, forgery,
     ):
@@ -5906,9 +5964,23 @@ class TestReviewerRejectBoundedFallback:
             round_index = 6
             ledger = self._late_scope_expanding_review_ledger()
             ledger["blockers"][0]["first_seen_round"] = 1
+        elif forgery == "current-status":
+            round_index = 3
+            ledger = self._stalled_review_ledger()
+            ledger["blockers"][0].update({
+                "status": "fixed",
+                "classification": "fixed",
+            })
+        elif forgery == "cycle-id-underreport":
+            round_index = 3
+            ledger = self._stalled_review_ledger()
+            ledger["cycles"][1]["open_blocker_ids"] = []
+            ledger["cycles"][1]["reported_blocker_ids"] = []
+            ledger["blockers"][0]["seen_count"] = 2
         else:
             round_index = 3
             ledger = self._stalled_review_ledger()
+            ledger["cycles"][-1]["open_blocker_ids"] = []
             ledger["blockers"][0].update({
                 "status": "fixed",
                 "classification": "fixed",
@@ -5942,6 +6014,12 @@ class TestReviewerRejectBoundedFallback:
                 lambda *_args, _name=name, **_kwargs: pytest.fail(
                     f"forged blocker projection must not call {_name}"),
             )
+        monkeypatch.setattr(
+            loop,
+            "save_manifest",
+            lambda *_args, **_kwargs: pytest.fail(
+                "forged blocker projection must not save manifest"),
+        )
 
         with pytest.raises(PlatformError, match="review ledger"):
             tick(eng.store, eng.runtime, manifest, path)
