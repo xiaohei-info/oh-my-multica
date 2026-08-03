@@ -768,6 +768,78 @@ def test_review_ledger_validation_rejects_truncated_cycle_history():
         validate_review_ledger(ledger, expected_round=10)
 
 
+def _interleaved_canonical_ledger():
+    return {
+        "schema": "omac.review-ledger/v1",
+        "cycles": [
+            {
+                "round": 1,
+                "open_count": 1,
+                "open_blocker_ids": ["BLK-core"],
+                "reported_blocker_ids": ["BLK-core"],
+            },
+            {
+                "round": 2,
+                "open_count": 2,
+                "open_blocker_ids": ["BLK-core", "BLK-interleaved"],
+                "reported_blocker_ids": ["BLK-core", "BLK-interleaved"],
+            },
+            {
+                "round": 3,
+                "open_count": 1,
+                "open_blocker_ids": ["BLK-core"],
+                "reported_blocker_ids": ["BLK-core"],
+            },
+        ],
+        "blockers": [
+            {
+                "blocker_id": "BLK-core",
+                "root_cause_key": "root-core",
+                "obligation_id": "dimension:structure",
+                "status": "open",
+                "classification": "unchanged",
+                "first_seen_round": 1,
+                "last_seen_round": 3,
+                "seen_count": 3,
+            },
+            {
+                "blocker_id": "BLK-interleaved",
+                "root_cause_key": "root-interleaved",
+                "obligation_id": "dimension:evidence",
+                "status": "fixed",
+                "classification": "fixed",
+                "first_seen_round": 2,
+                "last_seen_round": 3,
+                "seen_count": 1,
+            },
+        ],
+    }
+
+
+@pytest.mark.parametrize(("blocker_id", "seen_count"), [
+    ("BLK-core", 2),
+    ("BLK-interleaved", 2),
+], ids=["underreported", "overreported-interleaved"])
+def test_review_ledger_validation_requires_exact_canonical_seen_count(
+    blocker_id, seen_count,
+):
+    ledger = _interleaved_canonical_ledger()
+    blocker = next(
+        record for record in ledger["blockers"]
+        if record["blocker_id"] == blocker_id
+    )
+    blocker["seen_count"] = seen_count
+
+    with pytest.raises(ValueError, match="seen_count"):
+        validate_review_ledger(ledger, expected_round=3)
+
+
+def test_review_ledger_validation_accepts_exact_interleaved_seen_counts():
+    ledger = _interleaved_canonical_ledger()
+
+    assert validate_review_ledger(ledger, expected_round=3) is ledger
+
+
 @pytest.mark.parametrize(("field", "value"), [
     ("seen_count", 0),
     ("seen_count", 4),

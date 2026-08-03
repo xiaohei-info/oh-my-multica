@@ -59,6 +59,8 @@ def validate_review_ledger(
         raise ValueError("review ledger cycles must be a list")
     if not isinstance(blockers, list):
         raise ValueError("review ledger blockers must be a list")
+    cycle_blocker_ids = []
+    has_canonical_cycle_ids = False
     for index, cycle in enumerate(cycles):
         path = f"cycles[{index}]"
         if not isinstance(cycle, dict):
@@ -72,6 +74,21 @@ def validate_review_ledger(
         if cycle["round"] != expected_cycle_round:
             raise ValueError(
                 f"review ledger {path}.round must be {expected_cycle_round}")
+        persisted_ids = set()
+        for field in ("open_blocker_ids", "reported_blocker_ids"):
+            values = cycle.get(field)
+            if values is None:
+                continue
+            has_canonical_cycle_ids = True
+            if not isinstance(values, list):
+                raise ValueError(f"review ledger {path}.{field} must be a list")
+            for value in values:
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError(
+                        f"review ledger {path}.{field} must contain "
+                        "non-empty strings")
+                persisted_ids.add(value)
+        cycle_blocker_ids.append(persisted_ids)
     if expected_round is not None and (
         not cycles or cycles[-1]["round"] != expected_round
     ):
@@ -106,6 +123,15 @@ def validate_review_ledger(
         if seen_count > len(cycles) - first_seen_round + 1:
             raise ValueError(
                 f"review ledger {path}.seen_count exceeds persisted cycles")
+        if has_canonical_cycle_ids:
+            actual_seen_count = sum(
+                blocker["blocker_id"] in persisted_ids
+                for persisted_ids in cycle_blocker_ids
+            )
+            if seen_count != actual_seen_count:
+                raise ValueError(
+                    f"review ledger {path}.seen_count must equal "
+                    f"{actual_seen_count} persisted cycle sightings")
     return ledger
 
 

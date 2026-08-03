@@ -5818,7 +5818,7 @@ class TestReviewerRejectBoundedFallback:
     def test_impossible_ledger_count_fails_before_worker_handoff_side_effects(
         self, tmp_path, monkeypatch,
     ):
-        """A persisted blocker cannot have a zero semantic observation count."""
+        """Canonical cycle sightings and seen_count must agree exactly."""
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
         path = str(tmp_path / "m.yaml")
         manifest, eng, item = self._setup_reject_node(eng, path)
@@ -5826,7 +5826,7 @@ class TestReviewerRejectBoundedFallback:
         intent = replace(
             intent, source_review_round=3, target_review_bounce=3)
         ledger = self._stalled_review_ledger()
-        ledger["blockers"][0]["seen_count"] = 0
+        ledger["blockers"][0]["seen_count"] = 2
         eng.store.update_work_item_metadata(
             item.id, worker_handoff=intent, review_ledger=ledger)
         set_node(manifest, "a", status="in_progress")
