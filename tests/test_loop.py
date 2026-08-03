@@ -7,6 +7,7 @@
 - 无 reviewer 节点也必须经远端 MERGED + mergedAt 门;有 reviewer 先经 in_review
 - 不存在任何自动重试路径(blocked 节点在后续 tick 保持 blocked)
 """
+from copy import deepcopy
 import os
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -22,6 +23,7 @@ from omac.core.manifest import (
     Manifest,
     Node,
     ProducedArtifact,
+    _dump_contract,
     load_manifest,
     save_manifest,
     set_node,
@@ -2230,6 +2232,105 @@ def _reviewer_runtime_failure_fixture(tmp_path):
     return eng, manifest, path, current, reviewer_id
 
 
+def _provisional_reviewer_decision_fixture(
+    tmp_path,
+    *,
+    trigger_kind="issue_assignment",
+    run_status="running",
+):
+    eng, manifest, path, current, reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    cutoff = "2026-08-03T00:00:00Z"
+    identity = replace(
+        current.delivery_identity,
+        verification_created_at=cutoff,
+    )
+    subject = loop._review_subject_for_current_delivery(
+        manifest, "a", replace(current, delivery_identity=identity))
+    baseline = replace(
+        current.reviewer_run_baseline,
+        subject_digest=subject,
+        target_reviewer="bob",
+        target_agent_id=reviewer_id,
+        cutoff_created_at=cutoff,
+        target_run_id=None,
+    )
+    decision = {
+        "schema": "omac.decision-required/v1",
+        "reason_code": "reviewer-run-baseline-unavailable",
+        "kind": "develop",
+        "phase": "review",
+        "gate": "reviewer",
+        "resume_issue_id": current.id,
+        "node_id": "a",
+        "failure_class": "unproven-reviewer-run-causality",
+        "next_action": f"omac node retry {path} a --stage review",
+    }
+    eng.store.update_work_item_metadata(
+        current.id,
+        review_subject_digest=subject,
+        reviewer_run_baseline=baseline,
+        delivery_identity=identity,
+        decision_required=decision,
+    )
+    eng.store.update_status(current.id, WorkItemStatus.BLOCKED)
+    manifest.nodes["a"].status = "blocked"
+    save_manifest(manifest, path)
+
+    runs = list(eng.runtime.list_runs(current.id))
+    reviewer_run_index = next(
+        index for index, run in enumerate(runs)
+        if run.agent_id == reviewer_id and run.id not in baseline.baseline_direct_run_ids
+    )
+    runs[reviewer_run_index] = replace(
+        runs[reviewer_run_index],
+        status=run_status,
+        created_at="2026-08-03T00:00:01Z",
+        trigger_kind=trigger_kind,
+    )
+    return (
+        eng,
+        manifest,
+        path,
+        eng.store.get_work_item(current.id),
+        reviewer_id,
+        runs,
+        runs[reviewer_run_index].id,
+    )
+
+
+def _multica_deferred_reviewer_projection(item):
+    from omac.engines.multica import MulticaStore
+
+    multica = MulticaStore(EngineConfig(
+        engine_type="multica", workspace_id="ws"))
+    projection = multica._issue_to_control_projection({
+        "id": item.id,
+        "title": item.title,
+        "description": item.description,
+        "status": "blocked",
+        "metadata": {
+            "dag_key": item.dag_key,
+            "kind": "develop",
+            "phase": "review",
+            "worker": item.worker,
+            "reviewer": item.reviewer,
+            "artifacts": item.artifacts,
+            "verification_ref": item.verification_ref,
+            "review_subject_digest": item.review_subject_digest,
+            "reviewer_run_baseline": item.reviewer_run_baseline.as_dict(),
+            "delivery_identity": item.delivery_identity.as_dict(),
+            "decision_required": item.decision_required,
+            "contract_ref": item.contract_ref,
+        },
+    }, "ws")
+    assert projection.deferred_payloads == frozenset({
+        WorkItemPayload.VERIFICATION,
+        WorkItemPayload.CONTRACT,
+    })
+    return projection
+
+
 def _delayed_reviewer_verdict_fixture(tmp_path, verdict):
     eng, manifest, path, item, reviewer_id = (
         _reviewer_runtime_failure_fixture(tmp_path))
@@ -2331,21 +2432,49 @@ def test_runner_clears_delayed_reviewer_decision_before_consuming_verdict(
     assert reviewer_assignments == []
 
 
+@pytest.mark.parametrize(
+    "invalid_case",
+    [
+        "stale-subject",
+        "wrong-gate",
+        "missing-failure-class",
+        "operator-decision-extra",
+    ],
+)
 def test_runner_preserves_invalid_delayed_reviewer_decision(
-    tmp_path, monkeypatch,
+    tmp_path, monkeypatch, invalid_case,
 ):
-    """Runner 不得清除或消费不再绑定当前 subject 的专用 decision。"""
+    """Runner 不得清除、消费或重写非 canonical 专用 decision。"""
     eng, manifest, path, item_id, _target_run_id, report = (
         _delayed_reviewer_verdict_fixture(tmp_path, "pass"))
     current = eng.store.get_work_item(item_id)
-    eng.store.update_work_item_metadata(
-        item_id,
-        reviewer_run_baseline=replace(
+    decision = dict(current.decision_required)
+    metadata = {}
+    if invalid_case == "stale-subject":
+        metadata["reviewer_run_baseline"] = replace(
             current.reviewer_run_baseline,
             subject_digest="stale-subject",
-        ),
-    )
+        )
+    elif invalid_case == "wrong-gate":
+        decision["gate"] = "human-confirmation"
+    elif invalid_case == "missing-failure-class":
+        decision.pop("failure_class")
+    else:
+        decision["operator_decision"] = True
+    metadata["decision_required"] = decision
+    eng.store.update_work_item_metadata(item_id, **metadata)
+    eng.store.update_status(item_id, WorkItemStatus.BLOCKED)
+
     assignments_before = len(eng.store.assign_log)
+    decision_writes = []
+    original_update = eng.store.update_work_item_metadata
+
+    def update(target_item_id, **updated):
+        if "decision_required" in updated:
+            decision_writes.append(updated["decision_required"])
+        return original_update(target_item_id, **updated)
+
+    monkeypatch.setattr(eng.store, "update_work_item_metadata", update)
     monkeypatch.setattr(
         eng.store,
         "assign_work_item",
@@ -2365,11 +2494,143 @@ def test_runner_preserves_invalid_delayed_reviewer_decision(
     assert "a" in failures
     assert manifest.nodes["a"].status == "blocked"
     assert blocked.status is WorkItemStatus.BLOCKED
-    assert blocked.decision_required["reason_code"] == (
-        "reviewer-run-baseline-unavailable")
+    assert blocked.decision_required == decision
     assert blocked.review_verdict == "pass"
     assert blocked.review_report == report
     assert len(eng.store.assign_log) == assignments_before
+    assert decision_writes == []
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "missing-reason-code",
+        "tampered-reason-code",
+        "non-object",
+        "unknown-existing-decision",
+    ],
+)
+def test_runner_preserves_noncanonical_existing_reviewer_decision(
+    tmp_path, monkeypatch, case,
+):
+    """Runner 只能消费精确 canonical 的 reviewer 恢复 decision。"""
+    eng, manifest, path, item_id, _target_run_id, report = (
+        _delayed_reviewer_verdict_fixture(tmp_path, "reject"))
+    current = eng.store.get_work_item(item_id)
+    decision = deepcopy(current.decision_required)
+    if case == "missing-reason-code":
+        decision.pop("reason_code")
+    elif case == "tampered-reason-code":
+        decision["reason_code"] = "reviewer-run-baseline-unavailable-tampered"
+    elif case == "non-object":
+        decision = ["reviewer-run-baseline-unavailable"]
+    else:
+        decision = {
+            "schema": "omac.decision-required/v1",
+            "reason_code": "guard-budget-exhausted",
+        }
+    eng.store.update_work_item_metadata(
+        item_id, decision_required=decision)
+    eng.store.update_status(item_id, WorkItemStatus.BLOCKED)
+    assignments = len(eng.store.assign_log)
+    decision_writes = []
+    original_update = eng.store.update_work_item_metadata
+
+    def update(target_item_id, **updated):
+        if "decision_required" in updated:
+            decision_writes.append(updated["decision_required"])
+        return original_update(target_item_id, **updated)
+
+    monkeypatch.setattr(eng.store, "update_work_item_metadata", update)
+    monkeypatch.setattr(
+        eng.store,
+        "assign_work_item",
+        lambda *_args, **_kwargs: pytest.fail(
+            "noncanonical decision must fail before assignment"),
+    )
+    monkeypatch.setattr(
+        eng.runtime,
+        "wake",
+        lambda *_args, **_kwargs: pytest.fail(
+            "noncanonical decision must fail before wake"),
+    )
+
+    failures = loop.collect_results(eng.store, eng.runtime, manifest, path)
+
+    blocked = eng.store.get_work_item(item_id)
+    assert "a" in failures
+    assert manifest.nodes["a"].status == "blocked"
+    assert blocked.status is WorkItemStatus.BLOCKED
+    assert blocked.decision_required == decision
+    assert blocked.review_verdict == "reject"
+    assert blocked.review_report == report
+    assert len(eng.store.assign_log) == assignments
+    assert decision_writes == []
+
+
+def test_runner_classifies_decision_before_reviewer_no_submit_recovery(
+    tmp_path, monkeypatch,
+):
+    """A formal no-submit Run cannot bypass an existing unknown decision."""
+    eng, manifest, path, item, reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    current = eng.store.get_work_item(item.id)
+    baseline = current.reviewer_run_baseline
+    decision = {
+        "schema": "omac.decision-required/v1",
+        "reason_code": "guard-budget-exhausted",
+    }
+    eng.store.update_work_item_metadata(
+        item.id, decision_required=decision)
+    eng.store.update_status(item.id, WorkItemStatus.BLOCKED)
+
+    runs = [
+        replace(
+            run,
+            status="completed",
+            updated_at="2026-08-01T01:01:30Z",
+            trigger_kind="issue_assignment",
+        ) if (
+            run.agent_id == reviewer_id
+            and run.id not in baseline.baseline_direct_run_ids
+        ) else run
+        for run in eng.runtime.list_runs(item.id)
+    ]
+    assign_calls = []
+    wake_calls = []
+
+    def assign(*args, **kwargs):
+        assign_calls.append((args, kwargs))
+
+    def wake(_item_id, _agent, _role):
+        wake_calls.append((_item_id, _agent, _role))
+        runs.append(AgentRunObservation(
+            id="run-reviewer-retry",
+            kind="direct",
+            status="running",
+            agent_id=reviewer_id,
+            created_at="2026-08-01T01:02:00Z",
+            trigger_kind="rerun",
+        ))
+
+    monkeypatch.setattr(
+        loop, "_utcnow",
+        lambda: datetime(2026, 8, 1, 1, 3, 1, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
+    monkeypatch.setattr(eng.store, "assign_work_item", assign)
+    monkeypatch.setattr(eng.runtime, "wake", wake)
+
+    failures = loop.collect_results(eng.store, eng.runtime, manifest, path)
+
+    blocked = eng.store.get_work_item(item.id)
+    assert "a" in failures
+    assert manifest.nodes["a"].status == "blocked"
+    assert blocked.status is WorkItemStatus.BLOCKED
+    assert blocked.decision_required == decision
+    assert blocked.reviewer_run_baseline == baseline
+    assert assign_calls == []
+    assert wake_calls == []
 
 
 def test_reviewer_capacity_failure_reruns_without_review_bounce(
@@ -3259,6 +3520,55 @@ def test_nonretryable_worker_failure_blocks_without_business_bounce(
         "nonretryable-runtime-failure")
 
 
+def test_worker_runtime_failure_next_action_recovers_authoring(
+    tmp_path, monkeypatch, capsys,
+):
+    """Worker runtime decision 的可执行命令不得把节点切到 review。"""
+    from shlex import split
+
+    from omac.cli import exit_codes
+    from omac.cli.main import main
+
+    eng, manifest, path, item, agent_id = _transient_worker_handoff_fixture(
+        tmp_path)
+    runs = [AgentRunObservation(
+        id="run-capacity-1", kind="direct", status="failed",
+        agent_id=agent_id,
+        error="request rejected by network security policy",
+    )]
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
+    monkeypatch.setattr(
+        eng.runtime,
+        "wake",
+        lambda *_args: pytest.fail("runtime decision must not wake"),
+    )
+
+    result = tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+    blocked = eng.store.get_work_item(item.id)
+    next_action = blocked.decision_required["next_action"]
+
+    assert result.state == "needs_decision"
+    assert blocked.phase is TaskPhase.AUTHORING
+    assert blocked.worker_handoff is not None
+    assert "--stage review" not in next_action
+
+    monkeypatch.setenv("OMAC_ENGINE", "mock")
+    monkeypatch.setenv("OMAC_WORKSPACE_ID", "ws")
+    import omac.cli.commands.node as node_mod
+    monkeypatch.setattr(node_mod, "create_engine", lambda *_args, **_kwargs: eng)
+
+    command = split(next_action)
+    assert command[0] == "omac"
+    assert main(command[1:]) == exit_codes.OK
+    capsys.readouterr()
+
+    recovered = eng.store.get_work_item(item.id)
+    assert recovered.phase is TaskPhase.AUTHORING
+    assert recovered.status is WorkItemStatus.TODO
+    assert recovered.worker_handoff == blocked.worker_handoff
+    assert load_manifest(path).nodes["a"].status == "todo"
+
+
 def test_nonretryable_reviewer_failure_blocks_without_review_bounce(
     tmp_path, monkeypatch,
 ):
@@ -3284,6 +3594,58 @@ def test_nonretryable_reviewer_failure_blocks_without_review_bounce(
     assert blocked.bounces.review == 0
     assert blocked.decision_required["reason_code"] == (
         "nonretryable-runtime-failure")
+
+
+def test_reviewer_runtime_failure_next_action_recovers_review(
+    tmp_path, monkeypatch, capsys,
+):
+    """Reviewer runtime retry must stay in review and preserve its delivery."""
+    from shlex import split
+
+    from omac.cli import exit_codes
+    from omac.cli.main import main
+
+    eng, manifest, path, item, reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    runs = [AgentRunObservation(
+        id="run-review-policy",
+        kind="direct",
+        status="failed",
+        agent_id=reviewer_id,
+        created_at="2026-08-01T01:01:00Z",
+        error="HTTP 403 forbidden by provider safety policy",
+    )]
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
+    monkeypatch.setattr(
+        eng.runtime,
+        "wake",
+        lambda *_args: pytest.fail("runtime decision must not wake"),
+    )
+
+    result = tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+    blocked = eng.store.get_work_item(item.id)
+    next_action = blocked.decision_required["next_action"]
+
+    assert result.state == "needs_decision"
+    assert blocked.phase is TaskPhase.REVIEW
+    assert next_action.endswith(" --stage review")
+
+    monkeypatch.setenv("OMAC_ENGINE", "mock")
+    monkeypatch.setenv("OMAC_WORKSPACE_ID", "ws")
+    import omac.cli.commands.node as node_mod
+    monkeypatch.setattr(node_mod, "create_engine", lambda *_args, **_kwargs: eng)
+
+    command = split(next_action)
+    assert command[0] == "omac"
+    assert main(command[1:]) == exit_codes.OK
+    capsys.readouterr()
+
+    recovered = eng.store.get_work_item(item.id)
+    assert recovered.phase is TaskPhase.REVIEW
+    assert recovered.status is WorkItemStatus.IN_REVIEW
+    assert recovered.review_subject_digest is not None
+    assert recovered.reviewer_run_baseline is None
+    assert load_manifest(path).nodes["a"].status == "in_review"
 
 
 def test_reviewer_transient_failures_stop_at_infrastructure_limit(
@@ -3440,6 +3802,454 @@ class TestFailureInjection:
         )]
         save_manifest(manifest, path)
         return eng, manifest, path, runs, observations
+
+    @pytest.mark.parametrize("trigger_kind", ["issue_assignment", "rerun"])
+    def test_provisional_reviewer_decision_is_cleared_by_unique_formal_run(
+        self, tmp_path, monkeypatch, trigger_kind,
+    ):
+        (
+            eng, manifest, path, item, _reviewer_id, runs, target_run_id,
+        ) = _provisional_reviewer_decision_fixture(
+            tmp_path, trigger_kind=trigger_kind)
+        projection = _multica_deferred_reviewer_projection(item)
+        hydrated_payloads = []
+
+        monkeypatch.setattr(
+            loop,
+            "reconcile_with_observations",
+            lambda *_args, **_kwargs: loop.ReconcileResult(
+                False, {"a": projection}),
+        )
+        monkeypatch.setattr(
+            eng.runtime, "list_runs", lambda _item_id: list(runs))
+
+        def hydrate(observed, plan):
+            hydrated_payloads.append(plan)
+            current = eng.store.get_work_item(observed.work_item.id)
+            return replace(
+                observed.work_item,
+                verification=current.verification,
+                contract=_dump_contract(current.contract),
+            )
+
+        monkeypatch.setattr(
+            eng.store, "hydrate_work_item_evidence", hydrate)
+        monkeypatch.setattr(
+            eng.store,
+            "assign_work_item",
+            lambda *_args, **_kwargs: pytest.fail(
+                "provisional decision recovery must not assign"),
+        )
+        monkeypatch.setattr(
+            eng.runtime,
+            "wake",
+            lambda *_args, **_kwargs: pytest.fail(
+                "provisional decision recovery must not wake"),
+        )
+
+        result = tick(eng.store, eng.runtime, manifest, path)
+
+        recovered = eng.store.get_work_item(item.id)
+        assert result.state == "running"
+        assert result.running == ["a"]
+        assert result.failed == []
+        assert manifest.nodes["a"].status == "in_review"
+        assert not recovered.decision_required
+        assert recovered.reviewer_run_baseline.target_run_id == target_run_id
+        assert hydrated_payloads == [frozenset({
+            WorkItemPayload.VERIFICATION,
+            WorkItemPayload.CONTRACT,
+        })]
+
+        restarted = load_manifest(path)
+        monkeypatch.setattr(
+            loop,
+            "reconcile_with_observations",
+            lambda *_args, **_kwargs: loop.ReconcileResult(False, {
+                "a": WorkItemControlProjection(
+                    eng.store.get_work_item(item.id)),
+            }),
+        )
+        second = tick(eng.store, eng.runtime, restarted, path)
+
+        assert second.state == "running"
+        assert restarted.nodes["a"].status == "in_review"
+        assert not eng.store.get_work_item(item.id).decision_required
+
+    @pytest.mark.parametrize(
+        "invalid_case",
+        [
+            "malformed-decision",
+            "wrong-schema",
+            "unknown-reason",
+            "wrong-kind",
+            "wrong-phase",
+            "wrong-node",
+            "wrong-resume-issue",
+            "wrong-gate",
+            "missing-gate",
+            "wrong-failure-class",
+            "missing-failure-class",
+            "wrong-next-action",
+            "missing-next-action",
+            "operator-decision-extra",
+            "wrong-subject",
+            "stale-authoritative-subject",
+            "contract-mismatch",
+            "delivery-cutoff-mismatch",
+            "wrong-agent",
+            "stale-run",
+            "ambiguous-run",
+            "comment-run",
+            "manual-run",
+            "missing-trigger",
+            "terminal-failure",
+        ],
+    )
+    def test_invalid_provisional_reviewer_decision_stays_blocked(
+        self, tmp_path, monkeypatch, invalid_case,
+    ):
+        (
+            eng, manifest, path, item, reviewer_id, runs, _target_run_id,
+        ) = _provisional_reviewer_decision_fixture(tmp_path)
+        current = eng.store.get_work_item(item.id)
+        decision = dict(current.decision_required)
+        baseline = current.reviewer_run_baseline
+
+        if invalid_case == "malformed-decision":
+            decision = ["not-an-object"]
+        elif invalid_case == "wrong-schema":
+            decision["schema"] = "omac.decision-required/v2"
+        elif invalid_case == "unknown-reason":
+            decision["reason_code"] = "operator-product-decision"
+        elif invalid_case == "wrong-kind":
+            decision["kind"] = "acceptance"
+        elif invalid_case == "wrong-phase":
+            decision["phase"] = "authoring"
+        elif invalid_case == "wrong-node":
+            decision["node_id"] = "other"
+        elif invalid_case == "wrong-resume-issue":
+            decision["resume_issue_id"] = "other-issue"
+        elif invalid_case == "wrong-gate":
+            decision["gate"] = "human-confirmation"
+        elif invalid_case == "missing-gate":
+            decision.pop("gate")
+        elif invalid_case == "wrong-failure-class":
+            decision["failure_class"] = "operator-product-decision"
+        elif invalid_case == "missing-failure-class":
+            decision.pop("failure_class")
+        elif invalid_case == "wrong-next-action":
+            decision["next_action"] = "wait for product owner"
+        elif invalid_case == "missing-next-action":
+            decision.pop("next_action")
+        elif invalid_case == "operator-decision-extra":
+            decision["operator_decision"] = True
+        elif invalid_case == "wrong-subject":
+            baseline = replace(baseline, subject_digest="stale-subject")
+        elif invalid_case == "stale-authoritative-subject":
+            baseline = replace(baseline, subject_digest="stale-subject")
+            eng.store.update_work_item_metadata(
+                item.id, review_subject_digest="stale-subject")
+        elif invalid_case == "contract-mismatch":
+            current.contract = {"schema": "wrong-contract/v1"}
+        elif invalid_case == "delivery-cutoff-mismatch":
+            eng.store.update_work_item_metadata(
+                item.id,
+                delivery_identity=replace(
+                    current.delivery_identity,
+                    verification_created_at="2026-08-03T00:00:02Z",
+                ),
+            )
+        elif invalid_case == "wrong-agent":
+            runs[0] = replace(runs[0], agent_id="foreign-agent")
+            for index, run in enumerate(runs):
+                if run.agent_id == reviewer_id:
+                    runs[index] = replace(run, agent_id="foreign-agent")
+        elif invalid_case == "stale-run":
+            runs[:] = [
+                replace(run, created_at="2026-08-02T23:59:59Z")
+                if run.agent_id == reviewer_id else run
+                for run in runs
+            ]
+        elif invalid_case == "ambiguous-run":
+            runs.append(AgentRunObservation(
+                id="run-reviewer-ambiguous",
+                kind="direct",
+                status="running",
+                agent_id=reviewer_id,
+                created_at="2026-08-03T00:00:02Z",
+                trigger_kind="issue_assignment",
+            ))
+        elif invalid_case in {"comment-run", "manual-run", "missing-trigger"}:
+            trigger = {
+                "comment-run": "comment",
+                "manual-run": "manual",
+                "missing-trigger": None,
+            }[invalid_case]
+            runs[:] = [
+                replace(run, trigger_kind=trigger)
+                if run.agent_id == reviewer_id else run
+                for run in runs
+            ]
+        elif invalid_case == "terminal-failure":
+            runs[:] = [
+                replace(run, status="failed", error="reviewer failed")
+                if run.agent_id == reviewer_id else run
+                for run in runs
+            ]
+
+        eng.store.update_work_item_metadata(
+            item.id,
+            reviewer_run_baseline=baseline,
+            decision_required=decision,
+        )
+        projection = eng.store.observe_work_item_control(item.id)
+        clear_calls = []
+        original_update = eng.store.update_work_item_metadata
+
+        def update(item_id, **metadata):
+            if metadata.get("decision_required") == {}:
+                clear_calls.append(item_id)
+            return original_update(item_id, **metadata)
+
+        monkeypatch.setattr(
+            loop,
+            "reconcile_with_observations",
+            lambda *_args, **_kwargs: loop.ReconcileResult(
+                False, {"a": projection}),
+        )
+        monkeypatch.setattr(
+            eng.runtime, "list_runs", lambda _item_id: list(runs))
+        monkeypatch.setattr(
+            eng.store, "update_work_item_metadata", update)
+        monkeypatch.setattr(
+            eng.store,
+            "assign_work_item",
+            lambda *_args, **_kwargs: pytest.fail(
+                "invalid provisional decision must not assign"),
+        )
+        monkeypatch.setattr(
+            eng.runtime,
+            "wake",
+            lambda *_args, **_kwargs: pytest.fail(
+                "invalid provisional decision must not wake"),
+        )
+
+        result = tick(eng.store, eng.runtime, manifest, path)
+
+        assert result.state == "needs_decision"
+        assert result.running == []
+        assert result.failed == ["a"]
+        assert manifest.nodes["a"].status == "blocked"
+        assert eng.store.get_work_item(item.id).decision_required == decision
+        assert clear_calls == []
+
+    @pytest.mark.parametrize("failure_mode", ["download", "malformed"])
+    def test_provisional_decision_hydration_failure_has_zero_writes(
+        self, tmp_path, monkeypatch, failure_mode,
+    ):
+        (
+            eng, manifest, path, item, _reviewer_id, runs, _target_run_id,
+        ) = _provisional_reviewer_decision_fixture(tmp_path)
+        projection = _multica_deferred_reviewer_projection(item)
+        decision = dict(item.decision_required)
+        original_file = Path(path).read_bytes()
+        clear_calls = []
+        original_update = eng.store.update_work_item_metadata
+
+        def update(item_id, **metadata):
+            if metadata.get("decision_required") == {}:
+                clear_calls.append(item_id)
+            return original_update(item_id, **metadata)
+
+        def hydrate(observed, _plan):
+            if failure_mode == "download":
+                raise PlatformError("attachment download failed")
+            current = eng.store.get_work_item(observed.work_item.id)
+            return replace(
+                observed.work_item,
+                verification=current.verification,
+                contract=None,
+            )
+
+        monkeypatch.setattr(
+            loop,
+            "reconcile_with_observations",
+            lambda *_args, **_kwargs: loop.ReconcileResult(
+                False, {"a": projection}),
+        )
+        monkeypatch.setattr(
+            eng.runtime, "list_runs", lambda _item_id: list(runs))
+        monkeypatch.setattr(
+            eng.store, "hydrate_work_item_evidence", hydrate)
+        monkeypatch.setattr(
+            eng.store, "update_work_item_metadata", update)
+        monkeypatch.setattr(
+            eng.store,
+            "assign_work_item",
+            lambda *_args, **_kwargs: pytest.fail(
+                "hydration failure must not assign"),
+        )
+        monkeypatch.setattr(
+            eng.runtime,
+            "wake",
+            lambda *_args, **_kwargs: pytest.fail(
+                "hydration failure must not wake"),
+        )
+
+        with pytest.raises(PlatformError):
+            tick(eng.store, eng.runtime, manifest, path)
+
+        assert manifest.nodes["a"].status == "blocked"
+        assert eng.store.get_work_item(item.id).decision_required == decision
+        assert Path(path).read_bytes() == original_file
+        assert clear_calls == []
+
+    @pytest.mark.parametrize(
+        "crash_point",
+        ["clear-response-unknown", "status-response-unknown", "manifest-save"],
+    )
+    def test_provisional_decision_clear_is_restart_safe(
+        self, tmp_path, monkeypatch, crash_point,
+    ):
+        (
+            eng, manifest, path, item, _reviewer_id, runs, target_run_id,
+        ) = _provisional_reviewer_decision_fixture(tmp_path)
+        projection = eng.store.observe_work_item_control(item.id)
+        assignments_before = list(eng.store.assign_log)
+        original_update = eng.store.update_work_item_metadata
+        original_update_status = eng.store.update_status
+        original_save = loop.save_manifest
+        crashed = False
+
+        def update(item_id, **metadata):
+            nonlocal crashed
+            result = original_update(item_id, **metadata)
+            if (
+                crash_point == "clear-response-unknown"
+                and metadata.get("decision_required") == {}
+                and not crashed
+            ):
+                crashed = True
+                raise PlatformError("decision clear response unknown")
+            return result
+
+        def update_status(item_id, status):
+            nonlocal crashed
+            result = original_update_status(item_id, status)
+            if (
+                crash_point == "status-response-unknown"
+                and status is WorkItemStatus.IN_REVIEW
+                and not crashed
+            ):
+                crashed = True
+                raise PlatformError("review status response unknown")
+            return result
+
+        def save(current, target):
+            nonlocal crashed
+            if crash_point == "manifest-save" and not crashed:
+                crashed = True
+                raise RuntimeError("crash before manifest save")
+            return original_save(current, target)
+
+        monkeypatch.setattr(
+            loop,
+            "reconcile_with_observations",
+            lambda *_args, **_kwargs: loop.ReconcileResult(
+                False, {"a": projection}),
+        )
+        monkeypatch.setattr(
+            eng.runtime, "list_runs", lambda _item_id: list(runs))
+        monkeypatch.setattr(
+            eng.store, "update_work_item_metadata", update)
+        monkeypatch.setattr(eng.store, "update_status", update_status)
+        monkeypatch.setattr(loop, "save_manifest", save)
+        monkeypatch.setattr(
+            eng.store,
+            "assign_work_item",
+            lambda *_args, **_kwargs: pytest.fail(
+                "decision recovery must not assign"),
+        )
+        monkeypatch.setattr(
+            eng.runtime,
+            "wake",
+            lambda *_args, **_kwargs: pytest.fail(
+                "decision recovery must not wake"),
+        )
+
+        error_type = (
+            PlatformError
+            if crash_point != "manifest-save"
+            else RuntimeError
+        )
+        with pytest.raises(error_type):
+            tick(eng.store, eng.runtime, manifest, path)
+
+        assert not eng.store.get_work_item(item.id).decision_required
+        persisted = load_manifest(path)
+        assert persisted.nodes["a"].status == "blocked"
+
+        monkeypatch.setattr(
+            eng.store, "update_work_item_metadata", original_update)
+        monkeypatch.setattr(
+            eng.store, "update_status", original_update_status)
+        monkeypatch.setattr(loop, "save_manifest", original_save)
+        monkeypatch.setattr(
+            loop,
+            "reconcile_with_observations",
+            lambda *_args, **_kwargs: loop.ReconcileResult(
+                False, {"a": eng.store.observe_work_item_control(item.id)}),
+        )
+
+        recovered = tick(eng.store, eng.runtime, persisted, path)
+
+        current = eng.store.get_work_item(item.id)
+        assert recovered.state == "running"
+        assert persisted.nodes["a"].status == "in_review"
+        assert current.reviewer_run_baseline.target_run_id == target_run_id
+        assert eng.store.assign_log == assignments_before
+
+    def test_provisional_reviewer_completion_is_collected_after_restoration(
+        self, tmp_path, monkeypatch,
+    ):
+        from omac.engines import mock as mock_engine
+
+        (
+            eng, manifest, path, item, reviewer_id, runs, target_run_id,
+        ) = _provisional_reviewer_decision_fixture(tmp_path)
+        original_list_runs = eng.runtime.list_runs
+        monkeypatch.setattr(
+            eng.runtime, "list_runs", lambda _item_id: list(runs))
+
+        first = tick(eng.store, eng.runtime, manifest, path)
+
+        assert first.state == "running"
+        current = eng.store.get_work_item(item.id)
+        assert current.reviewer_run_baseline.target_run_id == target_run_id
+        report = _review_report(current, "reject")
+        eng.store.update_work_item_metadata(
+            item.id,
+            review_verdict="reject",
+            review_report=report,
+            review_report_source=yaml.safe_dump(report),
+        )
+        runs[:] = [
+            replace(run, status="completed")
+            if run.id == target_run_id else run
+            for run in runs
+        ]
+        mock_engine._finish_mock_run(item.id)
+        monkeypatch.setattr(eng.runtime, "list_runs", original_list_runs)
+
+        second = tick(eng.store, eng.runtime, manifest, path)
+
+        recovered = eng.store.get_work_item(item.id)
+        assert second.state == "running"
+        assert manifest.nodes["a"].status == "in_progress"
+        assert recovered.phase is TaskPhase.AUTHORING
+        assert recovered.bounces.review == 1
+        assert not recovered.decision_required
 
     @pytest.mark.parametrize("role", ["worker", "reviewer"])
     @pytest.mark.parametrize("trigger_kind", ["issue_assignment", "rerun"])

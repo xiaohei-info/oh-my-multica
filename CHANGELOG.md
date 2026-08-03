@@ -10,6 +10,11 @@ This file records public changes to oh-my-multica. The format follows
 
 ### Changed
 
+- A blocked DAG review with the dedicated delayed-Run causality decision now
+  resumes automatically when one later-visible formal Reviewer Run proves the
+  original baseline. OMAC hydrates and validates the current review evidence
+  before clearing only that provisional decision; all operator/product
+  decisions and ambiguous, stale, malformed, or non-formal Runs remain blocked.
 - A new DAG amendment attempt may now supersede either a Reviewer-pass human
   confirmation or a failed-closed decision-required amendment with no active
   Agent Run. The latter accepts both the original blocked state and Multica's

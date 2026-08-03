@@ -535,51 +535,164 @@ def _review_subject_is_current(
     )
 
 
-def _delayed_reviewer_recovery_marker_error(
+def _node_retry_action(
+    manifest_path: str,
+    key: str,
+    phase: TaskPhase,
+) -> str:
+    """Route an explicit retry from the business phase that failed."""
+    retry = f"omac node retry {manifest_path} {key}"
+    if phase == TaskPhase.REVIEW:
+        retry += " --stage review"
+    return retry
+
+
+def _reviewer_recovery_decision(
+    manifest_path: str,
+    key: str,
+    item,
+    reason_code: str,
+    *,
+    run_id: str | None = None,
+) -> dict:
+    """Build the one canonical reviewer recovery decision marker."""
+    decision = {
+        "schema": DECISION_REQUIRED_SCHEMA,
+        "reason_code": reason_code,
+        "kind": TaskKind.DEVELOP.value,
+        "phase": TaskPhase.REVIEW.value,
+        "gate": "reviewer",
+        "resume_issue_id": item.id,
+        "node_id": key,
+        "failure_class": "unproven-reviewer-run-causality",
+        "next_action": _node_retry_action(
+            manifest_path, key, TaskPhase.REVIEW),
+    }
+    if run_id:
+        decision["run_id"] = run_id
+    return decision
+
+
+def _provisional_reviewer_decision_variants(
+    manifest_path: str,
+    key: str,
+    item,
+) -> tuple[dict, ...]:
+    """Return exact current and documented legacy marker shapes."""
+    canonical = _reviewer_recovery_decision(
+        manifest_path,
+        key,
+        item,
+        "reviewer-run-baseline-unavailable",
+    )
+    path_spellings = {manifest_path, str(Path(manifest_path).resolve())}
+    try:
+        path_spellings.add(str(
+            Path(manifest_path).resolve().relative_to(Path.cwd().resolve())
+        ))
+    except ValueError:
+        pass
+    variants = []
+    for path_value in sorted(path_spellings):
+        for stage_suffix in (" --stage review", ""):
+            variant = dict(canonical)
+            variant["next_action"] = (
+                f"omac node retry {path_value} {key}{stage_suffix}"
+            )
+            variants.append(variant)
+    return tuple(variants)
+
+
+def _reviewer_runtime_failure_decision_variants(
+    manifest_path: str,
+    key: str,
+    item,
+) -> tuple[dict, ...]:
+    """Return exact current and legacy explicit Reviewer retry decisions."""
+    decision = item.decision_required
+    if not isinstance(decision, dict):
+        return ()
+    failure_classes = {
+        "transient-runtime-retry-exhausted": "transient-provider-or-transport",
+        "nonretryable-runtime-failure": "nonretryable-agent-run",
+    }
+    reason_code = decision.get("reason_code")
+    failure_class = failure_classes.get(reason_code)
+    run_id = decision.get("run_id")
+    if failure_class is None or not isinstance(run_id, str) or not run_id:
+        return ()
+
+    expected = {
+        "schema": DECISION_REQUIRED_SCHEMA,
+        "reason_code": reason_code,
+        "kind": TaskKind.DEVELOP.value,
+        "phase": TaskPhase.REVIEW.value,
+        "gate": "reviewer",
+        "resume_issue_id": item.id,
+        "node_id": key,
+        "run_id": run_id,
+        "failure_class": failure_class,
+        "next_action": _node_retry_action(
+            manifest_path, key, TaskPhase.REVIEW),
+    }
+    variants = [expected]
+    legacy = dict(expected)
+    legacy["next_action"] = f"omac node retry {manifest_path} {key}"
+    variants.append(legacy)
+    return tuple(variants)
+
+
+def _classify_reviewer_recovery_decision(
+    manifest_path: str,
+    key: str,
+    item,
+) -> str:
+    """Classify the persisted decision without trusting any marker field."""
+    decision = item.decision_required
+    if decision in (None, {}):
+        return "absent"
+    if any(
+        decision == expected
+        for expected in _provisional_reviewer_decision_variants(
+            manifest_path, key, item)
+    ):
+        return "canonical-baseline-unavailable"
+    if any(
+        decision == expected
+        for expected in _reviewer_runtime_failure_decision_variants(
+            manifest_path, key, item)
+    ):
+        return "explicit-review-retry"
+    return "other"
+
+
+def _provisional_reviewer_recovery_marker_error(
     manifest: Manifest,
+    manifest_path: str,
     key: str,
     item,
     reviewer: str,
     reviewer_id: str,
-    *,
-    require_target: bool,
 ) -> str | None:
-    """Validate the dedicated delayed-Run marker against current authority."""
-    decision = item.decision_required
+    """Validate the control facts that make one reviewer decision provisional."""
     if not (
-        isinstance(decision, dict)
-        and decision.get("reason_code") == "reviewer-run-baseline-unavailable"
-        and decision.get("phase") == TaskPhase.REVIEW.value
-        and decision.get("resume_issue_id") == item.id
-        and decision.get("node_id") in {None, key}
+        _classify_reviewer_recovery_decision(manifest_path, key, item)
+        == "canonical-baseline-unavailable"
+        and item.kind == TaskKind.DEVELOP
+        and item.phase == TaskPhase.REVIEW
     ):
         return "the persisted recovery decision does not identify this review"
 
     baseline = item.reviewer_run_baseline
     if baseline is None or not baseline.is_causally_bound():
         return "the persisted reviewer Run baseline is incomplete"
-    if require_target and not baseline.target_run_id:
-        return "the persisted reviewer Run baseline has no target Run"
 
-    authoritative_subject = _review_subject_for_current_delivery(
-        manifest, key, item)
     if (
-        authoritative_subject != item.review_subject_digest
-        or authoritative_subject != baseline.subject_digest
+        item.review_subject_digest != baseline.subject_digest
         or baseline.target_reviewer != reviewer
         or baseline.target_agent_id != reviewer_id
     ):
-        return "the authoritative review subject or reviewer identity does not match"
-
-    item_contract = item.contract
-    if item_contract is not None and not isinstance(item_contract, dict):
-        item_contract = _dump_contract(item_contract)
-    node_contract = (
-        _dump_contract(manifest.nodes[key].contract)
-        if manifest.nodes[key].contract else None
-    )
-    if item_contract != node_contract:
-        return "the manifest and persisted node contracts do not match"
+        return "the persisted review subject or reviewer identity does not match"
 
     try:
         validate_stage_recovery(item, TaskPhase.REVIEW.value)
@@ -591,6 +704,43 @@ def _delayed_reviewer_recovery_marker_error(
         or identity.verification_created_at != baseline.cutoff_created_at
     ):
         return "the delivery identity does not match the reviewer Run cutoff"
+    return None
+
+
+def _delayed_reviewer_recovery_marker_error(
+    manifest: Manifest,
+    manifest_path: str,
+    key: str,
+    item,
+    reviewer: str,
+    reviewer_id: str,
+    *,
+    require_target: bool,
+) -> str | None:
+    """Validate the dedicated delayed-Run marker against hydrated authority."""
+    marker_error = _provisional_reviewer_recovery_marker_error(
+        manifest, manifest_path, key, item, reviewer, reviewer_id)
+    if marker_error is not None:
+        return marker_error
+
+    baseline = item.reviewer_run_baseline
+    if require_target and not baseline.target_run_id:
+        return "the persisted reviewer Run baseline has no target Run"
+
+    authoritative_subject = _review_subject_for_current_delivery(
+        manifest, key, item)
+    if authoritative_subject != item.review_subject_digest:
+        return "the authoritative review subject does not match"
+
+    item_contract = item.contract
+    if item_contract is not None and not isinstance(item_contract, dict):
+        item_contract = _dump_contract(item_contract)
+    node_contract = (
+        _dump_contract(manifest.nodes[key].contract)
+        if manifest.nodes[key].contract else None
+    )
+    if item_contract != node_contract:
+        return "the manifest and persisted node contracts do not match"
     return None
 
 
@@ -945,7 +1095,7 @@ def _block_runtime_failure(
     failure: _RunFailure,
 ) -> str:
     """Stop in the current business stage without consuming business bounce."""
-    retry = f"omac node retry {manifest_path} {key}"
+    retry = _node_retry_action(manifest_path, key, item.phase)
     exhausted = failure.classification == "transient"
     if exhausted:
         reason_code = "transient-runtime-retry-exhausted"
@@ -997,26 +1147,15 @@ def _block_reviewer(
     detail: str,
     run_id: str | None = None,
 ) -> str:
-    retry = f"omac node retry {manifest_path} {key}"
+    retry = _node_retry_action(manifest_path, key, TaskPhase.REVIEW)
     reason = ui(
         f"Reviewer recovery is unsafe: {detail}. Inspect the Runs, then use "
         f"`{retry}` after an explicit operator decision.",
         f"reviewer 恢复不安全：{detail}。请检查 Runs，并在人工决策后执行 "
         f"`{retry}`。",
     )
-    decision = {
-        "schema": DECISION_REQUIRED_SCHEMA,
-        "reason_code": reason_code,
-        "kind": TaskKind.DEVELOP.value,
-        "phase": TaskPhase.REVIEW.value,
-        "gate": "reviewer",
-        "resume_issue_id": item.id,
-        "node_id": key,
-        "failure_class": "unproven-reviewer-run-causality",
-        "next_action": retry,
-    }
-    if run_id:
-        decision["run_id"] = run_id
+    decision = _reviewer_recovery_decision(
+        manifest_path, key, item, reason_code, run_id=run_id)
     store.update_work_item_metadata(item.id, decision_required=decision)
     store.update_status(item.id, WorkItemStatus.BLOCKED)
     set_node(manifest, key, status="blocked")
@@ -2984,6 +3123,17 @@ def collect_results(
 
         # ---- in_review: reviewer 阶段回收 ----
         elif node.status == "in_review":
+            decision_class = _classify_reviewer_recovery_decision(
+                manifest_path, key, item)
+            if decision_class in {"other", "explicit-review-retry"}:
+                if item.status != WorkItemStatus.BLOCKED:
+                    store.update_status(item.id, WorkItemStatus.BLOCKED)
+                set_node(manifest, key, status="blocked")
+                failures[key] = ui(
+                    "Reviewer recovery is blocked by the existing decision.",
+                    "reviewer 恢复被现有 decision 阻塞。",
+                )
+                continue
             if (
                 node.reviewer
                 and item.phase == TaskPhase.REVIEW
@@ -3127,21 +3277,21 @@ def collect_results(
                                  "Reviewer is missing review_verdict", "reviewer 缺 review_verdict"))
                 continue
 
-            decision = item.decision_required
-            if (
-                isinstance(decision, dict)
-                and decision.get("reason_code")
-                == "reviewer-run-baseline-unavailable"
-            ):
+            if decision_class == "canonical-baseline-unavailable":
                 reviewer_id = store.resolve_agent_id(node.reviewer)
                 marker_error = _delayed_reviewer_recovery_marker_error(
-                    manifest, key, item, node.reviewer, reviewer_id,
+                    manifest, manifest_path, key, item,
+                    node.reviewer, reviewer_id,
                     require_target=True,
                 )
                 if marker_error is not None:
-                    failures[key] = _block_reviewer(
-                        store, manifest, manifest_path, key, item,
-                        "reviewer-run-baseline-unavailable", marker_error)
+                    if item.status != WorkItemStatus.BLOCKED:
+                        store.update_status(item.id, WorkItemStatus.BLOCKED)
+                    set_node(manifest, key, status="blocked")
+                    failures[key] = ui(
+                        f"Reviewer recovery is unsafe: {marker_error}.",
+                        f"reviewer 恢复不安全：{marker_error}。",
+                    )
                     continue
                 # The dedicated decision is the durable recovery marker. Only
                 # the Runner that is about to consume this exact verdict clears
@@ -3533,8 +3683,10 @@ def _maybe_unblock(manifest: Manifest, manifest_path: str) -> bool:
 
 
 def _active_formal_run_nodes(
+    store: WorkItemStore,
     runtime: AgentRuntime,
     manifest: Manifest,
+    manifest_path: str,
     observations: Dict[str, WorkItemControlProjection | None],
 ) -> List[str]:
     """Use the reconcile snapshot to prove causally bound active Runs."""
@@ -3549,7 +3701,17 @@ def _active_formal_run_nodes(
         if item.id != node.work_item_id or item.dag_key != key:
             continue
         if item.decision_required:
-            continue
+            if item.phase != TaskPhase.REVIEW or not node.reviewer:
+                continue
+            try:
+                reviewer_id = store.resolve_agent_id(node.reviewer)
+            except PlatformError:
+                continue
+            if _provisional_reviewer_recovery_marker_error(
+                manifest, manifest_path, key, item,
+                node.reviewer, reviewer_id,
+            ) is not None:
+                continue
         attempt = None
         runs = None
         if item.phase == TaskPhase.AUTHORING:
@@ -3599,8 +3761,9 @@ def _restore_active_formal_run_stages(
     observations: Dict[str, WorkItemControlProjection | None],
 ) -> Dict[str, tuple[WorkItemControlProjection, dict]]:
     """Restore blocked manifest projections while their formal Run is active."""
-    active = _active_formal_run_nodes(runtime, manifest, observations)
-    restored: Dict[str, tuple[str, WorkItemControlProjection]] = {}
+    active = _active_formal_run_nodes(
+        store, runtime, manifest, manifest_path, observations)
+    restored: Dict[str, tuple[str, WorkItemControlProjection, bool]] = {}
     blocked: Dict[str, tuple[WorkItemControlProjection, dict]] = {}
     for key in active:
         node = manifest.nodes[key]
@@ -3625,15 +3788,53 @@ def _restore_active_formal_run_stages(
             if convergence is not None:
                 blocked[key] = (hydrated, convergence)
                 continue
+        clear_provisional_decision = bool(item.decision_required)
+        if clear_provisional_decision:
+            reviewer_id = store.resolve_agent_id(node.reviewer)
+            if _delayed_reviewer_recovery_marker_error(
+                manifest,
+                manifest_path,
+                key,
+                hydrated.work_item,
+                node.reviewer,
+                reviewer_id,
+                require_target=False,
+            ) is not None:
+                continue
         restored[key] = (
             status,
             hydrated,
+            clear_provisional_decision,
         )
 
-    for key, (status, projection) in restored.items():
+    committed: Dict[str, tuple[str, WorkItemControlProjection]] = {}
+    for key, (status, projection, clear_decision) in restored.items():
+        if clear_decision:
+            cleared = store.update_work_item_metadata(
+                projection.work_item.id, decision_required={})
+            if cleared.requires_decision:
+                raise PlatformError(
+                    f"Provisional reviewer decision for work item "
+                    f"{projection.work_item.id} was not cleared")
+            projection = WorkItemControlProjection(cleared)
+        expected_status = (
+            WorkItemStatus.IN_REVIEW
+            if status == "in_review"
+            else WorkItemStatus.IN_PROGRESS
+        )
+        if projection.work_item.status != expected_status:
+            store.update_status(projection.work_item.id, expected_status)
+            projection = replace(
+                projection,
+                work_item=replace(
+                    projection.work_item, status=expected_status),
+            )
+        committed[key] = (status, projection)
+
+    for key, (status, projection) in committed.items():
         observations[key] = projection
         set_node(manifest, key, status=status)
-    if restored:
+    if committed:
         save_manifest(manifest, manifest_path)
     return blocked
 
