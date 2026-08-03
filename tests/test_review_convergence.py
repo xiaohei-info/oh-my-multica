@@ -1460,6 +1460,63 @@ def test_legacy_missing_facts_does_not_mask_present_cycle_corruption(
     ).state is ResolutionState.INVALID
 
 
+def _corrupt_present_cycle_facts(cycle, corruption):
+    fact = cycle["blocker_facts"][0]
+    if corruption == "obligation-verdict":
+        cycle["obligation_results"][fact["obligation_id"]] = "pass"
+    elif corruption == "cycle-blocker-id":
+        fact["blocker_id"] = "BLK-foreign"
+    elif corruption == "classification-history":
+        fact["classification"] = "new"
+    else:
+        fact["root_cause_key"] = "forged-root"
+
+
+@pytest.mark.parametrize("missing_index", [0, 1, 2], ids=[
+    "missing-first", "missing-middle", "missing-last",
+])
+@pytest.mark.parametrize("corruption", [
+    "obligation-verdict",
+    "cycle-blocker-id",
+    "classification-history",
+    "root-cause-identity",
+])
+def test_legacy_missing_facts_does_not_mask_present_cross_field_corruption(
+    missing_index, corruption,
+):
+    ledger = _stalled_canonical_ledger()
+    corrupt_index = 1 if missing_index != 1 else 2
+    ledger["cycles"][missing_index].pop("blocker_facts_schema")
+    ledger["cycles"][missing_index].pop("blocker_facts")
+    _corrupt_present_cycle_facts(ledger["cycles"][corrupt_index], corruption)
+
+    with pytest.raises(ValueError) as exc_info:
+        validate_review_ledger(ledger, expected_round=3)
+    assert not isinstance(exc_info.value, LegacyReviewLedgerUnverifiable)
+    assert resolve_convergence(
+        _item(ledger=ledger), expected_round=3,
+    ).state is ResolutionState.INVALID
+
+
+@pytest.mark.parametrize(("missing_index", "present_shape"), [
+    (0, "mixed-unchanged-deeper"),
+    (2, "all-new"),
+])
+def test_legacy_missing_facts_accepts_valid_present_fact_relationships(
+    missing_index, present_shape,
+):
+    ledger = _production_multi_blocker_ledger([
+        ("new", "new", "new"),
+        ("unchanged", "deeper", "deeper"),
+        ("unchanged", "deeper", "deeper"),
+    ], obligation_ids=("dimension:structure",) * 3)
+    ledger["cycles"][missing_index].pop("blocker_facts_schema")
+    ledger["cycles"][missing_index].pop("blocker_facts")
+
+    with pytest.raises(LegacyReviewLedgerUnverifiable):
+        validate_review_ledger(ledger, expected_round=3)
+
+
 @pytest.mark.parametrize(("blocker_id", "seen_count"), [
     ("BLK-core", 2),
     ("BLK-interleaved", 2),
