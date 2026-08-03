@@ -68,6 +68,10 @@ def validate_review_ledger(
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise ValueError(
                     f"review ledger {path}.{field} must be a non-negative integer")
+        expected_cycle_round = index + 1
+        if cycle["round"] != expected_cycle_round:
+            raise ValueError(
+                f"review ledger {path}.round must be {expected_cycle_round}")
     if expected_round is not None and (
         not cycles or cycles[-1]["round"] != expected_round
     ):

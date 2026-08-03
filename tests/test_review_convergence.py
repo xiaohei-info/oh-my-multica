@@ -744,7 +744,10 @@ def test_review_ledger_validation_rejects_noncanonical_persisted_facts(ledger):
 def test_review_ledger_validation_requires_expected_source_round():
     ledger = {
         "schema": "omac.review-ledger/v1",
-        "cycles": [{"round": 2, "open_count": 1}],
+        "cycles": [
+            {"round": 1, "open_count": 1},
+            {"round": 2, "open_count": 1},
+        ],
         "blockers": [{
             "blocker_id": "BLK-1", "root_cause_key": "root-1",
             "obligation_id": "dimension:structure", "status": "open",
@@ -755,6 +758,14 @@ def test_review_ledger_validation_requires_expected_source_round():
 
     with pytest.raises(ValueError, match="latest round must be 3"):
         validate_review_ledger(ledger, expected_round=3)
+
+
+def test_review_ledger_validation_rejects_truncated_cycle_history():
+    ledger = _decision_ledger([1], classifications=["deeper"])
+    ledger["cycles"][0]["round"] = 10
+
+    with pytest.raises(ValueError, match="review ledger"):
+        validate_review_ledger(ledger, expected_round=10)
 
 
 def _store():

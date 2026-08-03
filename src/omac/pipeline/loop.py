@@ -3611,6 +3611,13 @@ def _restore_active_formal_run_stages(
         hydrated = _hydrate_work_item_payloads(store, projection, plan)
         _validate_structured_recovery_payloads(
             hydrated, plan & projection.deferred_payloads)
+        handoff_intent = hydrated.work_item.worker_handoff
+        if (
+            handoff_intent is not None
+            and handoff_intent.gate in {"review", "review-nits"}
+        ):
+            _validated_handoff_review_ledger(
+                hydrated.work_item, handoff_intent)
         restored[key] = (
             status,
             hydrated,

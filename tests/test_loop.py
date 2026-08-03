@@ -47,6 +47,7 @@ from omac.engines.models import (
     WorkItemPayload,
     WorkItemStatus,
 )
+from omac.errors import PlatformError
 from omac.pipeline import loop
 from omac.pipeline.dispatch import build_show_output, submit as submit_work
 from omac.pipeline.loop import TickResult, tick
@@ -3492,6 +3493,60 @@ class TestFailureInjection:
         assert eng.store.assign_log == assignments_before
         assert runs == runs_before
 
+    def test_active_worker_restore_validates_deferred_ledger_before_manifest_write(
+        self, tmp_path, monkeypatch,
+    ):
+        eng, manifest, path, runs, observations = (
+            self._blocked_manifest_with_formal_run(tmp_path, role="worker")
+        )
+        item_id = manifest.nodes["active"].work_item_id
+        current = eng.store.get_work_item(item_id)
+        intent = replace(
+            current.worker_handoff,
+            gate="review",
+            source_review_round=3,
+            target_review_bounce=3,
+        )
+        eng.store.update_work_item_metadata(item_id, worker_handoff=intent)
+        current = eng.store.get_work_item(item_id)
+        current.review_ledger = None
+        current.review_ledger_ref = {
+            "attachment_id": "review-ledger",
+            "sha256": "a" * 64,
+        }
+        deferred = WorkItemControlProjection(
+            current,
+            deferred_payloads=frozenset({WorkItemPayload.REVIEW_LEDGER}),
+        )
+        observations["active"] = deferred
+        before = Path(path).read_bytes()
+
+        monkeypatch.setattr(
+            loop,
+            "reconcile_with_observations",
+            lambda *_args, **_kwargs: loop.ReconcileResult(False, observations),
+        )
+        monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
+        monkeypatch.setattr(
+            eng.store,
+            "hydrate_work_item_evidence",
+            lambda projection, _plan: replace(
+                projection.work_item,
+                review_ledger={
+                    "schema": "future.review-ledger/v9",
+                    "cycles": [{"round": 3, "open_count": 1}],
+                    "blockers": [],
+                },
+            ),
+        )
+
+        with pytest.raises(PlatformError, match="review ledger"):
+            tick(eng.store, eng.runtime, manifest, path)
+
+        assert manifest.nodes["active"].status == "blocked"
+        assert observations["active"] is deferred
+        assert Path(path).read_bytes() == before
+
     @pytest.mark.parametrize("role", ["worker", "reviewer"])
     @pytest.mark.parametrize("trigger_kind", ["comment", "manual", None])
     def test_nonformal_active_run_cannot_restore_blocked_stage(
@@ -4990,6 +5045,43 @@ class TestReviewerRejectBoundedFallback:
             assert persisted.worker_handoff == intent
             assert persisted.review_ledger is None
             assert persisted.review_ledger_ref == current.review_ledger_ref
+
+    def test_truncated_review_ledger_fails_before_runner_handoff(
+        self, tmp_path, monkeypatch,
+    ):
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        intent, _source = self._prepare_causal_handoff(eng, item)
+        intent = replace(
+            intent, source_review_round=10, target_review_bounce=10)
+        ledger = self._stalled_review_ledger(1)
+        ledger["cycles"][0]["round"] = 10
+        ledger["blockers"][0].update({
+            "classification": "deeper",
+            "last_seen_round": 10,
+            "seen_count": 1,
+        })
+        eng.store.update_work_item_metadata(
+            item.id, worker_handoff=intent, review_ledger=ledger)
+        set_node(manifest, "a", status="in_progress")
+        save_manifest(manifest, path)
+        before = Path(path).read_bytes()
+        assignments = list(eng.store.assign_log)
+
+        monkeypatch.setattr(
+            loop,
+            "_dispatch_worker_handoff",
+            lambda *_args, **_kwargs: pytest.fail(
+                "truncated cycle history must not reach handoff dispatch"),
+        )
+
+        with pytest.raises(PlatformError, match="review ledger"):
+            tick(eng.store, eng.runtime, manifest, path)
+
+        assert manifest.nodes["a"].status == "in_progress"
+        assert Path(path).read_bytes() == before
+        assert eng.store.assign_log == assignments
 
     def test_valid_nonconverging_review_ledger_continues_handoff_retry(
         self, tmp_path, monkeypatch,
