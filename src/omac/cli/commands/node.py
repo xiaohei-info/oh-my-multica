@@ -274,7 +274,8 @@ def _recover_delayed_reviewer_submission(
     )
 
     marker_error = _delayed_reviewer_recovery_marker_error(
-        manifest, node_key, current, node.reviewer, reviewer_id,
+        manifest, manifest_path, node_key, current,
+        node.reviewer, reviewer_id,
         require_target=False,
     )
     if marker_error is not None:

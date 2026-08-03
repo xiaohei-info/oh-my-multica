@@ -534,6 +534,36 @@ def _reviewer_recovery_decision(
     return decision
 
 
+def _provisional_reviewer_decision_variants(
+    manifest_path: str,
+    key: str,
+    item,
+) -> tuple[dict, ...]:
+    """Return exact current and documented legacy marker shapes."""
+    canonical = _reviewer_recovery_decision(
+        manifest_path,
+        key,
+        item,
+        "reviewer-run-baseline-unavailable",
+    )
+    path_spellings = {manifest_path, str(Path(manifest_path).resolve())}
+    try:
+        path_spellings.add(str(
+            Path(manifest_path).resolve().relative_to(Path.cwd().resolve())
+        ))
+    except ValueError:
+        pass
+    variants = []
+    for path_value in sorted(path_spellings):
+        for stage_suffix in (" --stage review", ""):
+            variant = dict(canonical)
+            variant["next_action"] = (
+                f"omac node retry {path_value} {key}{stage_suffix}"
+            )
+            variants.append(variant)
+    return tuple(variants)
+
+
 def _provisional_reviewer_recovery_marker_error(
     manifest: Manifest,
     manifest_path: str,
@@ -544,14 +574,10 @@ def _provisional_reviewer_recovery_marker_error(
 ) -> str | None:
     """Validate the control facts that make one reviewer decision provisional."""
     decision = item.decision_required
-    expected_decision = _reviewer_recovery_decision(
-        manifest_path,
-        key,
-        item,
-        "reviewer-run-baseline-unavailable",
-    )
+    expected_decisions = _provisional_reviewer_decision_variants(
+        manifest_path, key, item)
     if not (
-        decision == expected_decision
+        any(decision == expected for expected in expected_decisions)
         and item.kind == TaskKind.DEVELOP
         and item.phase == TaskPhase.REVIEW
     ):
