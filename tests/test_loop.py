@@ -2567,6 +2567,71 @@ def test_runner_preserves_noncanonical_existing_reviewer_decision(
     assert decision_writes == []
 
 
+def test_runner_classifies_decision_before_reviewer_no_submit_recovery(
+    tmp_path, monkeypatch,
+):
+    """A formal no-submit Run cannot bypass an existing unknown decision."""
+    eng, manifest, path, item, reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    current = eng.store.get_work_item(item.id)
+    baseline = current.reviewer_run_baseline
+    decision = {
+        "schema": "omac.decision-required/v1",
+        "reason_code": "guard-budget-exhausted",
+    }
+    eng.store.update_work_item_metadata(
+        item.id, decision_required=decision)
+    eng.store.update_status(item.id, WorkItemStatus.BLOCKED)
+
+    runs = [
+        replace(
+            run,
+            status="completed",
+            updated_at="2026-08-01T01:01:30Z",
+            trigger_kind="issue_assignment",
+        ) if (
+            run.agent_id == reviewer_id
+            and run.id not in baseline.baseline_direct_run_ids
+        ) else run
+        for run in eng.runtime.list_runs(item.id)
+    ]
+    assign_calls = []
+    wake_calls = []
+
+    def assign(*args, **kwargs):
+        assign_calls.append((args, kwargs))
+
+    def wake(_item_id, _agent, _role):
+        wake_calls.append((_item_id, _agent, _role))
+        runs.append(AgentRunObservation(
+            id="run-reviewer-retry",
+            kind="direct",
+            status="running",
+            agent_id=reviewer_id,
+            created_at="2026-08-01T01:02:00Z",
+            trigger_kind="rerun",
+        ))
+
+    monkeypatch.setattr(
+        loop, "_utcnow",
+        lambda: datetime(2026, 8, 1, 1, 3, 1, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
+    monkeypatch.setattr(eng.store, "assign_work_item", assign)
+    monkeypatch.setattr(eng.runtime, "wake", wake)
+
+    failures = loop.collect_results(eng.store, eng.runtime, manifest, path)
+
+    blocked = eng.store.get_work_item(item.id)
+    assert "a" in failures
+    assert manifest.nodes["a"].status == "blocked"
+    assert blocked.status is WorkItemStatus.BLOCKED
+    assert blocked.decision_required == decision
+    assert blocked.reviewer_run_baseline == baseline
+    assert assign_calls == []
+    assert wake_calls == []
+
+
 def test_reviewer_capacity_failure_reruns_without_review_bounce(
     tmp_path, monkeypatch,
 ):
@@ -3528,6 +3593,58 @@ def test_nonretryable_reviewer_failure_blocks_without_review_bounce(
     assert blocked.bounces.review == 0
     assert blocked.decision_required["reason_code"] == (
         "nonretryable-runtime-failure")
+
+
+def test_reviewer_runtime_failure_next_action_recovers_review(
+    tmp_path, monkeypatch, capsys,
+):
+    """Reviewer runtime retry must stay in review and preserve its delivery."""
+    from shlex import split
+
+    from omac.cli import exit_codes
+    from omac.cli.main import main
+
+    eng, manifest, path, item, reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    runs = [AgentRunObservation(
+        id="run-review-policy",
+        kind="direct",
+        status="failed",
+        agent_id=reviewer_id,
+        created_at="2026-08-01T01:01:00Z",
+        error="HTTP 403 forbidden by provider safety policy",
+    )]
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
+    monkeypatch.setattr(
+        eng.runtime,
+        "wake",
+        lambda *_args: pytest.fail("runtime decision must not wake"),
+    )
+
+    result = tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+    blocked = eng.store.get_work_item(item.id)
+    next_action = blocked.decision_required["next_action"]
+
+    assert result.state == "needs_decision"
+    assert blocked.phase is TaskPhase.REVIEW
+    assert next_action.endswith(" --stage review")
+
+    monkeypatch.setenv("OMAC_ENGINE", "mock")
+    monkeypatch.setenv("OMAC_WORKSPACE_ID", "ws")
+    import omac.cli.commands.node as node_mod
+    monkeypatch.setattr(node_mod, "create_engine", lambda *_args, **_kwargs: eng)
+
+    command = split(next_action)
+    assert command[0] == "omac"
+    assert main(command[1:]) == exit_codes.OK
+    capsys.readouterr()
+
+    recovered = eng.store.get_work_item(item.id)
+    assert recovered.phase is TaskPhase.REVIEW
+    assert recovered.status is WorkItemStatus.IN_REVIEW
+    assert recovered.review_subject_digest is not None
+    assert recovered.reviewer_run_baseline is None
+    assert load_manifest(path).nodes["a"].status == "in_review"
 
 
 def test_reviewer_transient_failures_stop_at_infrastructure_limit(

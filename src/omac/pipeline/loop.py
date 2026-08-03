@@ -509,6 +509,18 @@ def _review_subject_is_current(
     )
 
 
+def _node_retry_action(
+    manifest_path: str,
+    key: str,
+    phase: TaskPhase,
+) -> str:
+    """Route an explicit retry from the business phase that failed."""
+    retry = f"omac node retry {manifest_path} {key}"
+    if phase == TaskPhase.REVIEW:
+        retry += " --stage review"
+    return retry
+
+
 def _reviewer_recovery_decision(
     manifest_path: str,
     key: str,
@@ -527,7 +539,8 @@ def _reviewer_recovery_decision(
         "resume_issue_id": item.id,
         "node_id": key,
         "failure_class": "unproven-reviewer-run-causality",
-        "next_action": f"omac node retry {manifest_path} {key} --stage review",
+        "next_action": _node_retry_action(
+            manifest_path, key, TaskPhase.REVIEW),
     }
     if run_id:
         decision["run_id"] = run_id
@@ -564,6 +577,45 @@ def _provisional_reviewer_decision_variants(
     return tuple(variants)
 
 
+def _reviewer_runtime_failure_decision_variants(
+    manifest_path: str,
+    key: str,
+    item,
+) -> tuple[dict, ...]:
+    """Return exact current and legacy explicit Reviewer retry decisions."""
+    decision = item.decision_required
+    if not isinstance(decision, dict):
+        return ()
+    failure_classes = {
+        "transient-runtime-retry-exhausted": "transient-provider-or-transport",
+        "nonretryable-runtime-failure": "nonretryable-agent-run",
+    }
+    reason_code = decision.get("reason_code")
+    failure_class = failure_classes.get(reason_code)
+    run_id = decision.get("run_id")
+    if failure_class is None or not isinstance(run_id, str) or not run_id:
+        return ()
+
+    expected = {
+        "schema": DECISION_REQUIRED_SCHEMA,
+        "reason_code": reason_code,
+        "kind": TaskKind.DEVELOP.value,
+        "phase": TaskPhase.REVIEW.value,
+        "gate": "reviewer",
+        "resume_issue_id": item.id,
+        "node_id": key,
+        "run_id": run_id,
+        "failure_class": failure_class,
+        "next_action": _node_retry_action(
+            manifest_path, key, TaskPhase.REVIEW),
+    }
+    variants = [expected]
+    legacy = dict(expected)
+    legacy["next_action"] = f"omac node retry {manifest_path} {key}"
+    variants.append(legacy)
+    return tuple(variants)
+
+
 def _classify_reviewer_recovery_decision(
     manifest_path: str,
     key: str,
@@ -579,6 +631,12 @@ def _classify_reviewer_recovery_decision(
             manifest_path, key, item)
     ):
         return "canonical-baseline-unavailable"
+    if any(
+        decision == expected
+        for expected in _reviewer_runtime_failure_decision_variants(
+            manifest_path, key, item)
+    ):
+        return "explicit-review-retry"
     return "other"
 
 
@@ -999,7 +1057,7 @@ def _block_runtime_failure(
     failure: _RunFailure,
 ) -> str:
     """Stop in the current business stage without consuming business bounce."""
-    retry = f"omac node retry {manifest_path} {key}"
+    retry = _node_retry_action(manifest_path, key, item.phase)
     exhausted = failure.classification == "transient"
     if exhausted:
         reason_code = "transient-runtime-retry-exhausted"
@@ -1051,7 +1109,7 @@ def _block_reviewer(
     detail: str,
     run_id: str | None = None,
 ) -> str:
-    retry = f"omac node retry {manifest_path} {key}"
+    retry = _node_retry_action(manifest_path, key, TaskPhase.REVIEW)
     reason = ui(
         f"Reviewer recovery is unsafe: {detail}. Inspect the Runs, then use "
         f"`{retry}` after an explicit operator decision.",
@@ -3005,6 +3063,17 @@ def collect_results(
 
         # ---- in_review: reviewer 阶段回收 ----
         elif node.status == "in_review":
+            decision_class = _classify_reviewer_recovery_decision(
+                manifest_path, key, item)
+            if decision_class in {"other", "explicit-review-retry"}:
+                if item.status != WorkItemStatus.BLOCKED:
+                    store.update_status(item.id, WorkItemStatus.BLOCKED)
+                set_node(manifest, key, status="blocked")
+                failures[key] = ui(
+                    "Reviewer recovery is blocked by the existing decision.",
+                    "reviewer 恢复被现有 decision 阻塞。",
+                )
+                continue
             if (
                 node.reviewer
                 and item.phase == TaskPhase.REVIEW
@@ -3148,9 +3217,7 @@ def collect_results(
                                  "Reviewer is missing review_verdict", "reviewer 缺 review_verdict"))
                 continue
 
-            decision_class = _classify_reviewer_recovery_decision(
-                manifest_path, key, item)
-            if decision_class != "absent":
+            if decision_class == "canonical-baseline-unavailable":
                 reviewer_id = store.resolve_agent_id(node.reviewer)
                 marker_error = _delayed_reviewer_recovery_marker_error(
                     manifest, manifest_path, key, item,

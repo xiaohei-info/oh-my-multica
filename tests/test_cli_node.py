@@ -585,6 +585,53 @@ def test_retry_review_preserves_noncanonical_existing_decision(
     assert len(engine.store.assign_log) == assignments
 
 
+def test_retry_review_classifies_decision_before_submitted_evidence(
+    tmp_path, capsys, monkeypatch,
+):
+    """Reviewer evidence incomplete must not bypass decision classification."""
+    from omac.engines.models import WorkItemStatus
+
+    engine, path, item_id, _reviewer_id, subject, _report = (
+        _delayed_reviewer_retry_fixture(tmp_path, monkeypatch))
+    current = engine.store.get_work_item(item_id)
+    decision = {
+        "schema": "omac.decision-required/v1",
+        "reason_code": "guard-budget-exhausted",
+    }
+    current.review_report = None
+    current.review_report_ref = None
+    engine.store.update_work_item_metadata(
+        item_id, decision_required=decision)
+    assignments = len(engine.store.assign_log)
+    monkeypatch.setattr(
+        engine.store,
+        "assign_work_item",
+        lambda *_args, **_kwargs: pytest.fail(
+            "incomplete evidence must not bypass the existing decision"),
+    )
+    monkeypatch.setattr(
+        engine.runtime,
+        "wake",
+        lambda *_args, **_kwargs: pytest.fail(
+            "incomplete evidence must not start a Reviewer Run"),
+    )
+
+    assert main([
+        "node", "retry", path, "b", "--stage", "review",
+    ]) == exit_codes.VALIDATION
+    capsys.readouterr()
+
+    blocked = engine.store.get_work_item(item_id)
+    assert load_manifest(path).nodes["b"].status == "blocked"
+    assert blocked.status is WorkItemStatus.BLOCKED
+    assert blocked.decision_required == decision
+    assert blocked.review_subject_digest == subject
+    assert blocked.review_verdict == "reject"
+    assert blocked.review_report is None
+    assert blocked.review_report_ref is None
+    assert len(engine.store.assign_log) == assignments
+
+
 @pytest.mark.parametrize(
     "checkpoint",
     ["baseline", "status", "manifest"],

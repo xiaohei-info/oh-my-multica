@@ -244,16 +244,6 @@ def _recover_delayed_reviewer_submission(
 
     decision_class = _classify_reviewer_recovery_decision(
         manifest_path, node_key, current)
-    has_submitted_review = (
-        current.review_verdict in {"pass", "pass-with-nits", "reject"}
-        and isinstance(current.review_report, dict)
-        and current.review_report
-        and isinstance(current.review_report_ref, dict)
-        and current.review_report_ref
-    )
-    if not has_submitted_review:
-        return False
-
     retry = f"omac node retry {manifest_path} {node.id} --stage review"
 
     def unsafe(detail: str) -> ValidationError:
@@ -270,7 +260,19 @@ def _recover_delayed_reviewer_submission(
     if decision_class == "other":
         raise unsafe(
             "the persisted recovery decision does not identify this review")
+    if decision_class == "explicit-review-retry":
+        return False
     if decision_class != "canonical-baseline-unavailable":
+        return False
+
+    has_submitted_review = (
+        current.review_verdict in {"pass", "pass-with-nits", "reject"}
+        and isinstance(current.review_report, dict)
+        and current.review_report
+        and isinstance(current.review_report_ref, dict)
+        and current.review_report_ref
+    )
+    if not has_submitted_review:
         return False
 
     baseline = current.reviewer_run_baseline
