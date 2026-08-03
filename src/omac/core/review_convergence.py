@@ -45,9 +45,8 @@ _LEDGER_BLOCKER_STATUSES = {"open", "fixed"}
 
 def _canonical_cycle_projection(
     cycles: list[Any],
-) -> tuple[list[set[str]], set[str]] | None:
+) -> tuple[list[set[str]], int] | None:
     """Validate canonical cycle facts and return blocker sightings/current open IDs."""
-    cycle_blocker_ids: list[set[str]] = []
     cycle_open_blocker_ids: list[set[str] | None] = []
     has_canonical_cycle_ids = False
     for index, cycle in enumerate(cycles):
@@ -87,6 +86,7 @@ def _canonical_cycle_projection(
                 ids.add(value)
             ids_by_field[field] = ids
 
+        prior_open_ids = ids_by_field.get("prior_open_blocker_ids")
         open_ids = ids_by_field.get("open_blocker_ids")
         reported_ids = ids_by_field.get("reported_blocker_ids")
         if open_ids is not None:
@@ -97,13 +97,10 @@ def _canonical_cycle_projection(
                     "open_blocker_ids")
         if reported_ids is not None:
             has_canonical_cycle_ids = True
-            if open_ids is not None and not reported_ids <= open_ids:
-                raise ValueError(
-                    f"review ledger {path}.reported_blocker_ids must be a "
-                    "subset of open_blocker_ids")
+        if prior_open_ids is not None:
+            has_canonical_cycle_ids = True
 
         cycle_open_blocker_ids.append(open_ids)
-        cycle_blocker_ids.append((open_ids or set()) | (reported_ids or set()))
 
     if not has_canonical_cycle_ids:
         return None
@@ -112,30 +109,80 @@ def _canonical_cycle_projection(
             raise ValueError(
                 f"review ledger cycles[{index}].open_blocker_ids is required "
                 "for canonical cycle history")
-    return cycle_blocker_ids, cycle_open_blocker_ids[-1] if cycles else set()
+        cycle = cycles[index]
+        expected_prior_open_ids = (
+            set() if index == 0 else cycle_open_blocker_ids[index - 1]
+        )
+        prior_open_ids = cycle.get("prior_open_blocker_ids")
+        if (
+            not isinstance(prior_open_ids, list)
+            or set(prior_open_ids) != expected_prior_open_ids
+        ):
+            raise ValueError(
+                f"review ledger cycles[{index}].prior_open_blocker_ids must "
+                "exactly match the previous cycle open_blocker_ids")
+        reported_ids = cycle.get("reported_blocker_ids")
+        if not isinstance(reported_ids, list) or set(reported_ids) != open_ids:
+            raise ValueError(
+                f"review ledger cycles[{index}].reported_blocker_ids must "
+                "exactly match open_blocker_ids")
+    latest_unchanged_count = cycles[-1].get("unchanged_count", 0) if cycles else 0
+    if (
+        isinstance(latest_unchanged_count, bool)
+        or not isinstance(latest_unchanged_count, int)
+        or latest_unchanged_count < 0
+    ):
+        raise ValueError(
+            "review ledger latest cycle unchanged_count must be a "
+            "non-negative integer")
+    return [set(ids) for ids in cycle_open_blocker_ids], latest_unchanged_count
 
 
 def _canonical_blocker_projection(
-    cycle_blocker_ids: list[set[str]],
-    latest_open_blocker_ids: set[str],
+    cycle_open_blocker_ids: list[set[str]],
+    latest_unchanged_count: int,
 ) -> list[dict]:
     sighting_rounds_by_blocker_id: dict[str, list[int]] = {}
-    for round_index, blocker_ids in enumerate(cycle_blocker_ids, start=1):
+    for round_index, blocker_ids in enumerate(cycle_open_blocker_ids, start=1):
         for blocker_id in blocker_ids:
             sighting_rounds_by_blocker_id.setdefault(blocker_id, []).append(
                 round_index)
-    return sorted((
-        {
+    latest_round = len(cycle_open_blocker_ids)
+    latest_open_ids = cycle_open_blocker_ids[-1] if cycle_open_blocker_ids else set()
+    previous_open_ids = (
+        cycle_open_blocker_ids[-2] if len(cycle_open_blocker_ids) > 1 else set()
+    )
+    continuing_ids = latest_open_ids & previous_open_ids
+    if latest_unchanged_count > len(continuing_ids):
+        raise ValueError(
+            "review ledger latest cycle unchanged_count exceeds continuing "
+            "open blockers")
+    if latest_unchanged_count not in {0, len(continuing_ids)}:
+        raise ValueError(
+            "review ledger latest cycle cannot exactly project blocker "
+            "classification from unchanged_count")
+    continuing_classification = (
+        "unchanged" if latest_unchanged_count else "deeper"
+    )
+
+    projection = []
+    for blocker_id, sighting_rounds in sighting_rounds_by_blocker_id.items():
+        if blocker_id not in latest_open_ids:
+            classification = "fixed"
+        elif sighting_rounds[0] == latest_round:
+            classification = "new"
+        elif blocker_id not in previous_open_ids:
+            classification = "regressed"
+        else:
+            classification = continuing_classification
+        projection.append({
             "blocker_id": blocker_id,
             "seen_count": len(sighting_rounds),
             "first_seen_round": sighting_rounds[0],
-            "status": (
-                "open" if blocker_id in latest_open_blocker_ids else "fixed"
-            ),
-        }
-        for blocker_id, sighting_rounds
-        in sighting_rounds_by_blocker_id.items()
-    ), key=lambda record: record["blocker_id"])
+            "status": "open" if blocker_id in latest_open_ids else "fixed",
+            "classification": classification,
+        })
+    return sorted(projection, key=lambda record: record["blocker_id"])
 
 
 def _persisted_blocker_projection(blockers: list[dict]) -> list[dict]:
@@ -145,6 +192,7 @@ def _persisted_blocker_projection(blockers: list[dict]) -> list[dict]:
             "seen_count": blocker["seen_count"],
             "first_seen_round": blocker["first_seen_round"],
             "status": blocker["status"],
+            "classification": blocker["classification"],
         }
         for blocker in blockers
     ), key=lambda record: record["blocker_id"])
@@ -204,16 +252,17 @@ def validate_review_ledger(
                 raise ValueError(
                     f"review ledger {path}.seen_count exceeds persisted cycles")
     if canonical_cycles is not None:
-        cycle_blocker_ids, latest_open_blocker_ids = canonical_cycles
+        cycle_open_blocker_ids, latest_unchanged_count = canonical_cycles
         canonical_projection = _canonical_blocker_projection(
-            cycle_blocker_ids,
-            latest_open_blocker_ids,
+            cycle_open_blocker_ids,
+            latest_unchanged_count,
         )
         persisted_projection = _persisted_blocker_projection(blockers)
         if persisted_projection != canonical_projection:
             raise ValueError(
                 "review ledger blocker projection must exactly match canonical "
-                "cycles for blocker_id, seen_count, first_seen_round, and status")
+                "cycles for blocker_id, seen_count, first_seen_round, status, "
+                "and classification")
     return ledger
 
 

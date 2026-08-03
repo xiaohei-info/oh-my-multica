@@ -4342,7 +4342,36 @@ class TestFailureInjection:
                 "seen_count": 2,
             }],
         },
-    ], ids=["wrong-schema", "cycle-id-underreport"])
+        {
+            "schema": "omac.review-ledger/v1",
+            "cycles": [
+                {
+                    "round": round_index,
+                    "new_count": 1 if round_index == 1 else 0,
+                    "fixed_count": 0,
+                    "regressed_count": 0,
+                    "unchanged_count": 0 if round_index == 1 else 1,
+                    "open_count": 1,
+                    "prior_open_blocker_ids": (
+                        [] if round_index == 1 else ["BLK-core"]
+                    ),
+                    "open_blocker_ids": ["BLK-core"],
+                    "reported_blocker_ids": ["BLK-core"],
+                }
+                for round_index in range(1, 4)
+            ],
+            "blockers": [{
+                "blocker_id": "BLK-core",
+                "root_cause_key": "core-acceptance",
+                "obligation_id": "dimension:structure",
+                "status": "open",
+                "classification": "fixed",
+                "first_seen_round": 1,
+                "last_seen_round": 3,
+                "seen_count": 3,
+            }],
+        },
+    ], ids=["wrong-schema", "cycle-id-underreport", "open-fixed"])
     def test_active_worker_restore_validates_deferred_ledger_before_manifest_write(
         self, tmp_path, monkeypatch, invalid_ledger,
     ):
@@ -5949,6 +5978,8 @@ class TestReviewerRejectBoundedFallback:
     @pytest.mark.parametrize("forgery", [
         "first-seen-round",
         "current-status",
+        "current-classification-fixed",
+        "current-classification-deeper",
         "cycle-id-underreport",
         "latest-reported-not-open",
     ])
@@ -5971,6 +6002,14 @@ class TestReviewerRejectBoundedFallback:
                 "status": "fixed",
                 "classification": "fixed",
             })
+        elif forgery == "current-classification-fixed":
+            round_index = 3
+            ledger = self._stalled_review_ledger()
+            ledger["blockers"][0]["classification"] = "fixed"
+        elif forgery == "current-classification-deeper":
+            round_index = 3
+            ledger = self._stalled_review_ledger()
+            ledger["blockers"][0]["classification"] = "deeper"
         elif forgery == "cycle-id-underreport":
             round_index = 3
             ledger = self._stalled_review_ledger()
@@ -6194,6 +6233,7 @@ class TestReviewerRejectBoundedFallback:
             intent, source_review_round=3, target_review_bounce=3)
         ledger = self._stalled_review_ledger()
         ledger["blockers"][0]["classification"] = "deeper"
+        ledger["cycles"][-1]["unchanged_count"] = 0
         eng.store.update_work_item_metadata(
             item.id, worker_handoff=intent, review_ledger=ledger)
         set_node(manifest, "a", status="in_progress")
@@ -8932,6 +8972,7 @@ class TestReviewerRejectBoundedFallback:
             if i == 2:
                 ledger = self._stalled_review_ledger()
                 ledger["blockers"][0]["classification"] = "deeper"
+                ledger["cycles"][-1]["unchanged_count"] = 0
                 eng.store.update_work_item_metadata(
                     item.id, review_ledger=ledger)
             # 推进:worker 修完重新提交 → in_review

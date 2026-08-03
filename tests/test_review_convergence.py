@@ -611,7 +611,11 @@ def _decision_ledger(
                     len(blocker_ids) if index > 1 else 0
                 ),
                 "open_count": open_count,
+                "prior_open_blocker_ids": (
+                    [] if index == 1 else blocker_ids
+                ),
                 "open_blocker_ids": blocker_ids,
+                "reported_blocker_ids": blocker_ids,
             }
             for index, open_count in enumerate(open_counts, start=1)
         ],
@@ -774,19 +778,34 @@ def _interleaved_canonical_ledger():
         "cycles": [
             {
                 "round": 1,
+                "new_count": 1,
+                "fixed_count": 0,
+                "regressed_count": 0,
+                "unchanged_count": 0,
                 "open_count": 1,
+                "prior_open_blocker_ids": [],
                 "open_blocker_ids": ["BLK-core"],
                 "reported_blocker_ids": ["BLK-core"],
             },
             {
                 "round": 2,
+                "new_count": 1,
+                "fixed_count": 0,
+                "regressed_count": 0,
+                "unchanged_count": 1,
                 "open_count": 2,
+                "prior_open_blocker_ids": ["BLK-core"],
                 "open_blocker_ids": ["BLK-core", "BLK-interleaved"],
                 "reported_blocker_ids": ["BLK-core", "BLK-interleaved"],
             },
             {
                 "round": 3,
+                "new_count": 0,
+                "fixed_count": 1,
+                "regressed_count": 0,
+                "unchanged_count": 1,
                 "open_count": 1,
+                "prior_open_blocker_ids": ["BLK-core", "BLK-interleaved"],
                 "open_blocker_ids": ["BLK-core"],
                 "reported_blocker_ids": ["BLK-core"],
             },
@@ -816,6 +835,39 @@ def _interleaved_canonical_ledger():
     }
 
 
+def _stalled_canonical_ledger():
+    blocker_id = "BLK-core"
+    return {
+        "schema": "omac.review-ledger/v1",
+        "cycles": [
+            {
+                "round": round_index,
+                "new_count": 1 if round_index == 1 else 0,
+                "fixed_count": 0,
+                "regressed_count": 0,
+                "unchanged_count": 0 if round_index == 1 else 1,
+                "open_count": 1,
+                "prior_open_blocker_ids": (
+                    [] if round_index == 1 else [blocker_id]
+                ),
+                "open_blocker_ids": [blocker_id],
+                "reported_blocker_ids": [blocker_id],
+            }
+            for round_index in range(1, 4)
+        ],
+        "blockers": [{
+            "blocker_id": blocker_id,
+            "root_cause_key": "root-core",
+            "obligation_id": "dimension:structure",
+            "status": "open",
+            "classification": "unchanged",
+            "first_seen_round": 1,
+            "last_seen_round": 3,
+            "seen_count": 3,
+        }],
+    }
+
+
 def _late_canonical_ledger():
     blocker_id = "BLK-late"
     return {
@@ -823,14 +875,24 @@ def _late_canonical_ledger():
         "cycles": [
             {
                 "round": round_index,
+                "new_count": 0,
+                "fixed_count": 0,
+                "regressed_count": 0,
+                "unchanged_count": 0,
                 "open_count": 0,
+                "prior_open_blocker_ids": [],
                 "open_blocker_ids": [],
                 "reported_blocker_ids": [],
             }
             for round_index in range(1, 6)
         ] + [{
             "round": 6,
+            "new_count": 1,
+            "fixed_count": 0,
+            "regressed_count": 0,
+            "unchanged_count": 0,
             "open_count": 1,
+            "prior_open_blocker_ids": [],
             "open_blocker_ids": [blocker_id],
             "reported_blocker_ids": [blocker_id],
         }],
@@ -854,19 +916,34 @@ def _closed_reopened_canonical_ledger():
         "cycles": [
             {
                 "round": 1,
+                "new_count": 1,
+                "fixed_count": 0,
+                "regressed_count": 0,
+                "unchanged_count": 0,
                 "open_count": 1,
+                "prior_open_blocker_ids": [],
                 "open_blocker_ids": [blocker_id],
                 "reported_blocker_ids": [blocker_id],
             },
             {
                 "round": 2,
+                "new_count": 0,
+                "fixed_count": 1,
+                "regressed_count": 0,
+                "unchanged_count": 0,
                 "open_count": 0,
+                "prior_open_blocker_ids": [blocker_id],
                 "open_blocker_ids": [],
                 "reported_blocker_ids": [],
             },
             {
                 "round": 3,
+                "new_count": 0,
+                "fixed_count": 0,
+                "regressed_count": 1,
+                "unchanged_count": 0,
                 "open_count": 1,
+                "prior_open_blocker_ids": [],
                 "open_blocker_ids": [blocker_id],
                 "reported_blocker_ids": [blocker_id],
             },
@@ -982,6 +1059,62 @@ def test_review_ledger_validation_accepts_exact_canonical_projection(
     assert validate_review_ledger(
         ledger, expected_round=len(ledger["cycles"])
     ) is ledger
+
+
+@pytest.mark.parametrize("classification", [None, "fixed", "deeper"])
+def test_review_ledger_validation_rejects_missing_or_forged_classification(
+    classification,
+):
+    ledger = _stalled_canonical_ledger()
+    ledger["blockers"][0]["classification"] = classification
+
+    with pytest.raises(ValueError, match="classification"):
+        validate_review_ledger(ledger, expected_round=3)
+
+
+def test_review_ledger_validation_rejects_fixed_status_with_open_classification():
+    ledger = _stalled_canonical_ledger()
+    latest = ledger["cycles"][-1]
+    latest.update({
+        "fixed_count": 1,
+        "unchanged_count": 0,
+        "open_count": 0,
+        "open_blocker_ids": [],
+        "reported_blocker_ids": [],
+    })
+    ledger["blockers"][0].update({
+        "status": "fixed",
+        "classification": "unchanged",
+    })
+
+    with pytest.raises(ValueError, match="classification"):
+        validate_review_ledger(ledger, expected_round=3)
+
+
+@pytest.mark.parametrize("field", [
+    "prior_open_blocker_ids",
+    "reported_blocker_ids",
+])
+def test_review_ledger_validation_requires_exact_cycle_blocker_sets(field):
+    ledger = _stalled_canonical_ledger()
+    ledger["cycles"][-1][field] = []
+
+    with pytest.raises(ValueError, match=field):
+        validate_review_ledger(ledger, expected_round=3)
+
+
+def test_review_ledger_validation_accepts_canonical_status_classification_pairs():
+    ledgers = [
+        _stalled_canonical_ledger(),
+        _late_canonical_ledger(),
+        _closed_reopened_canonical_ledger(),
+        _interleaved_canonical_ledger(),
+    ]
+
+    for ledger in ledgers:
+        assert validate_review_ledger(
+            ledger, expected_round=len(ledger["cycles"])
+        ) is ledger
 
 
 @pytest.mark.parametrize("mutation", ["missing", "extra"])
