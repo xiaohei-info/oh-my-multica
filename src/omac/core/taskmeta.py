@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 import secrets
+from copy import deepcopy
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Optional, Tuple
@@ -138,7 +139,7 @@ class Bounces:
 
 @dataclass(frozen=True)
 class WorkerHandoffIntent:
-    """持久化的 review→worker 交接意图；不承载附件或用户动作。"""
+    """持久化的 review→worker 交接意图；只引用源评审，不复制完整报告。"""
 
     schema: Optional[str] = None
     state: Optional[str] = None
@@ -146,6 +147,7 @@ class WorkerHandoffIntent:
     gate: Optional[str] = None
     source_review_subject_digest: Optional[str] = None
     source_review_round: Optional[int] = None
+    source_review_feedback: Optional[dict[str, Any]] = None
     target_review_bounce: Optional[int] = None
     generation: Optional[str] = None
     target_agent_id: Optional[str] = None
@@ -163,6 +165,7 @@ class WorkerHandoffIntent:
             "gate": self.gate,
             "source_review_subject_digest": self.source_review_subject_digest,
             "source_review_round": self.source_review_round,
+            "source_review_feedback": deepcopy(self.source_review_feedback),
             "target_review_bounce": self.target_review_bounce,
             "generation": self.generation,
             "target_agent_id": self.target_agent_id,
@@ -397,6 +400,12 @@ def parse_worker_handoff(value: Any) -> Optional[WorkerHandoffIntent]:
         source_review_subject_digest=text_field(
             "source_review_subject_digest"),
         source_review_round=int_field("source_review_round"),
+        source_review_feedback=(
+            deepcopy(value["source_review_feedback"])
+            if isinstance(value.get("source_review_feedback"), dict)
+            and value["source_review_feedback"]
+            else None
+        ),
         target_review_bounce=int_field("target_review_bounce"),
         generation=text_field("generation"),
         target_agent_id=text_field("target_agent_id"),

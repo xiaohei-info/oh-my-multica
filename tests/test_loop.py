@@ -4686,12 +4686,14 @@ class TestReviewerRejectBoundedFallback:
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
         path = str(tmp_path / "m.yaml")
         manifest, eng, item = self._setup_reject_node(eng, path)
+        report = _review_report(
+            item, "pass-with-nits", nits=["follow up"])
         eng.store.update_work_item_metadata(
             item.id,
             review_bounce=1,
             review_verdict="pass-with-nits",
-            review_report=_review_report(
-                item, "pass-with-nits", nits=["follow up"]),
+            review_report=report,
+            review_report_source=yaml.safe_dump(report),
         )
         current = eng.store.get_work_item(item.id)
         eng.store.update_work_item_metadata(
@@ -4714,6 +4716,13 @@ class TestReviewerRejectBoundedFallback:
         assert got.bounces.review == 2
         assert got.review_verdict is None
         assert got.review_report is None
+        show = build_show_output(got, "worker:alice")
+        assert show["context"]["previous_review"] == {
+            "verdict": "pass-with-nits",
+            "report_ref": got.worker_handoff.source_review_feedback[
+                "report_ref"],
+            "nits": ["follow up"],
+        }
 
         reviewer_assignments = len([
             entry for entry in eng.store.assign_log if entry[2] == "reviewer"
@@ -4730,6 +4739,7 @@ class TestReviewerRejectBoundedFallback:
 
         assert second.state == "running"
         assert manifest.nodes["a"].status == "in_review"
+        assert eng.store.get_work_item(item.id).worker_handoff is None
         assert len([
             entry for entry in eng.store.assign_log if entry[2] == "reviewer"
         ]) == reviewer_assignments + 1
@@ -5395,6 +5405,11 @@ class TestReviewerRejectBoundedFallback:
         assert persisted.nodes["a"].status == "in_review"
         crashed_item = eng.store.get_work_item(item.id)
         assert crashed_item.worker_handoff is not None
+        assert crashed_item.worker_handoff.source_review_feedback[
+            "verdict"] == verdict
+        if verdict == "pass-with-nits":
+            assert crashed_item.worker_handoff.source_review_feedback[
+                "nits"] == ["follow up"]
 
         monkeypatch.setattr(
             eng.store, "update_work_item_metadata", original_update_metadata)
@@ -5437,6 +5452,8 @@ class TestReviewerRejectBoundedFallback:
         assert recovered.review_report is None
         assert recovered.review_subject_digest is None
         assert recovered.worker_handoff is not None
+        assert recovered.worker_handoff.source_review_feedback[
+            "verdict"] == verdict
         assert recovered.bounces.review == 1
         assert len(eng.runtime.list_runs(item.id)) == runs_before_handoff + 1
         assert eng.store.assign_log[-1][2] == "worker"
