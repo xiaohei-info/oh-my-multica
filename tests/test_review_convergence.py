@@ -816,6 +816,74 @@ def _interleaved_canonical_ledger():
     }
 
 
+def _late_canonical_ledger():
+    blocker_id = "BLK-late"
+    return {
+        "schema": "omac.review-ledger/v1",
+        "cycles": [
+            {
+                "round": round_index,
+                "open_count": 0,
+                "open_blocker_ids": [],
+                "reported_blocker_ids": [],
+            }
+            for round_index in range(1, 6)
+        ] + [{
+            "round": 6,
+            "open_count": 1,
+            "open_blocker_ids": [blocker_id],
+            "reported_blocker_ids": [blocker_id],
+        }],
+        "blockers": [{
+            "blocker_id": blocker_id,
+            "root_cause_key": "root-late",
+            "obligation_id": "dimension:structure",
+            "status": "open",
+            "classification": "new",
+            "first_seen_round": 6,
+            "last_seen_round": 6,
+            "seen_count": 1,
+        }],
+    }
+
+
+def _closed_reopened_canonical_ledger():
+    blocker_id = "BLK-reopened"
+    return {
+        "schema": "omac.review-ledger/v1",
+        "cycles": [
+            {
+                "round": 1,
+                "open_count": 1,
+                "open_blocker_ids": [blocker_id],
+                "reported_blocker_ids": [blocker_id],
+            },
+            {
+                "round": 2,
+                "open_count": 0,
+                "open_blocker_ids": [],
+                "reported_blocker_ids": [],
+            },
+            {
+                "round": 3,
+                "open_count": 1,
+                "open_blocker_ids": [blocker_id],
+                "reported_blocker_ids": [blocker_id],
+            },
+        ],
+        "blockers": [{
+            "blocker_id": blocker_id,
+            "root_cause_key": "root-reopened",
+            "obligation_id": "dimension:regression",
+            "status": "open",
+            "classification": "regressed",
+            "first_seen_round": 1,
+            "last_seen_round": 3,
+            "seen_count": 2,
+        }],
+    }
+
+
 @pytest.mark.parametrize(("blocker_id", "seen_count"), [
     ("BLK-core", 2),
     ("BLK-interleaved", 2),
@@ -838,6 +906,60 @@ def test_review_ledger_validation_accepts_exact_interleaved_seen_counts():
     ledger = _interleaved_canonical_ledger()
 
     assert validate_review_ledger(ledger, expected_round=3) is ledger
+
+
+def test_review_ledger_validation_rejects_forged_first_seen_round():
+    ledger = _late_canonical_ledger()
+    ledger["blockers"][0]["first_seen_round"] = 1
+
+    with pytest.raises(ValueError, match="first_seen_round"):
+        validate_review_ledger(ledger, expected_round=6)
+
+
+def test_review_ledger_validation_rejects_forged_current_status():
+    ledger = _decision_ledger([1, 1, 1])
+    ledger["blockers"][0].update({
+        "status": "fixed",
+        "classification": "fixed",
+    })
+
+    with pytest.raises(ValueError, match="status"):
+        validate_review_ledger(ledger, expected_round=3)
+
+
+@pytest.mark.parametrize("ledger_factory", [
+    _interleaved_canonical_ledger,
+    _closed_reopened_canonical_ledger,
+], ids=["interleaved-open-reported", "closed-reopened"])
+def test_review_ledger_validation_accepts_exact_canonical_projection(
+    ledger_factory,
+):
+    ledger = ledger_factory()
+
+    assert validate_review_ledger(
+        ledger, expected_round=len(ledger["cycles"])
+    ) is ledger
+
+
+@pytest.mark.parametrize("mutation", ["missing", "extra"])
+def test_review_ledger_validation_requires_exact_canonical_blocker_set(mutation):
+    ledger = _interleaved_canonical_ledger()
+    if mutation == "missing":
+        ledger["blockers"].pop()
+    else:
+        ledger["blockers"].append({
+            "blocker_id": "BLK-extra",
+            "root_cause_key": "root-extra",
+            "obligation_id": "dimension:ownership",
+            "status": "fixed",
+            "classification": "fixed",
+            "first_seen_round": 1,
+            "last_seen_round": 3,
+            "seen_count": 1,
+        })
+
+    with pytest.raises(ValueError, match="blocker"):
+        validate_review_ledger(ledger, expected_round=3)
 
 
 @pytest.mark.parametrize(("field", "value"), [

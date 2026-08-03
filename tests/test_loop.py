@@ -5241,6 +5241,40 @@ class TestReviewerRejectBoundedFallback:
             }],
         }
 
+    @staticmethod
+    def _late_scope_expanding_review_ledger():
+        blocker_id = "BLK-late"
+        return {
+            "schema": "omac.review-ledger/v1",
+            "cycles": [
+                {
+                    "round": round_index,
+                    "open_count": 0,
+                    "open_blocker_ids": [],
+                    "reported_blocker_ids": [],
+                }
+                for round_index in range(1, 6)
+            ] + [{
+                "round": 6,
+                "open_count": 1,
+                "open_blocker_ids": [blocker_id],
+                "reported_blocker_ids": [blocker_id],
+            }],
+            "blockers": [{
+                "blocker_id": blocker_id,
+                "root_cause_key": "late-scope",
+                "obligation_id": "dimension:structure",
+                "summary": "late scope appeared",
+                "evidence": "cycle six introduced a new root",
+                "required_fix": "reconsider the task boundary",
+                "status": "open",
+                "classification": "new",
+                "first_seen_round": 6,
+                "last_seen_round": 6,
+                "seen_count": 1,
+            }],
+        }
+
     @pytest.mark.parametrize("terminal_status", ["completed", "cancelled"])
     def test_terminal_worker_handoff_without_submit_uses_bounded_worker_retry(
         self, tmp_path, monkeypatch, terminal_status,
@@ -5853,6 +5887,63 @@ class TestReviewerRejectBoundedFallback:
             )
 
         with pytest.raises(PlatformError, match="seen_count"):
+            tick(eng.store, eng.runtime, manifest, path)
+
+        assert manifest.nodes["a"].status == "in_progress"
+        assert Path(path).read_bytes() == before
+
+    @pytest.mark.parametrize(
+        "forgery", ["first-seen-round", "current-status"])
+    def test_forged_blocker_projection_fails_before_worker_handoff_side_effects(
+        self, tmp_path, monkeypatch, forgery,
+    ):
+        """Canonical cycle facts cannot be reinterpreted by blocker fields."""
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        intent, _source = self._prepare_causal_handoff(eng, item)
+        if forgery == "first-seen-round":
+            round_index = 6
+            ledger = self._late_scope_expanding_review_ledger()
+            ledger["blockers"][0]["first_seen_round"] = 1
+        else:
+            round_index = 3
+            ledger = self._stalled_review_ledger()
+            ledger["blockers"][0].update({
+                "status": "fixed",
+                "classification": "fixed",
+            })
+        intent = replace(
+            intent,
+            source_review_round=round_index,
+            target_review_bounce=round_index,
+        )
+        eng.store.update_work_item_metadata(
+            item.id, worker_handoff=intent, review_ledger=ledger)
+        set_node(manifest, "a", status="in_progress")
+        save_manifest(manifest, path)
+        before = Path(path).read_bytes()
+
+        monkeypatch.setattr(
+            loop,
+            "_dispatch_worker_handoff",
+            lambda *_args, **_kwargs: pytest.fail(
+                "forged blocker projection must not reach worker handoff"),
+        )
+        for target, name in (
+            (eng.store, "update_work_item_metadata"),
+            (eng.store, "update_status"),
+            (eng.store, "assign_work_item"),
+            (eng.runtime, "wake"),
+        ):
+            monkeypatch.setattr(
+                target,
+                name,
+                lambda *_args, _name=name, **_kwargs: pytest.fail(
+                    f"forged blocker projection must not call {_name}"),
+            )
+
+        with pytest.raises(PlatformError, match="review ledger"):
             tick(eng.store, eng.runtime, manifest, path)
 
         assert manifest.nodes["a"].status == "in_progress"
