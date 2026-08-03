@@ -303,7 +303,10 @@ def _previous_review_context(item: Any) -> Optional[Dict[str, Any]]:
     comment = getattr(item, "review_comment", None)
     if not report and not report_ref and not comment:
         handoff = getattr(item, "worker_handoff", None)
-        if getattr(handoff, "gate", None) not in {"review", "review-nits"}:
+        if (
+            getattr(handoff, "gate", None) != "review-nits"
+            or not handoff.is_causally_bound()
+        ):
             return None
         feedback = getattr(handoff, "source_review_feedback", None)
         if not isinstance(feedback, dict) or not feedback:

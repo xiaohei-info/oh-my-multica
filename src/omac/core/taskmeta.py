@@ -147,6 +147,7 @@ class WorkerHandoffIntent:
     gate: Optional[str] = None
     source_review_subject_digest: Optional[str] = None
     source_review_round: Optional[int] = None
+    source_review_verdict: Optional[str] = None
     source_review_feedback: Optional[dict[str, Any]] = None
     target_review_bounce: Optional[int] = None
     generation: Optional[str] = None
@@ -165,6 +166,7 @@ class WorkerHandoffIntent:
             "gate": self.gate,
             "source_review_subject_digest": self.source_review_subject_digest,
             "source_review_round": self.source_review_round,
+            "source_review_verdict": self.source_review_verdict,
             "source_review_feedback": deepcopy(self.source_review_feedback),
             "target_review_bounce": self.target_review_bounce,
             "generation": self.generation,
@@ -193,6 +195,13 @@ class WorkerHandoffIntent:
             )
         else:
             review_bounce_valid = False
+        feedback_valid = self.source_review_feedback is None
+        if self.gate == "review-nits":
+            feedback_valid = bool(
+                self.source_review_verdict == "pass-with-nits"
+                and review_nits_feedback_is_complete(
+                    self.source_review_feedback)
+            )
         return bool(
             self.schema == WORKER_HANDOFF_SCHEMA
             and self.state == "pending"
@@ -202,6 +211,7 @@ class WorkerHandoffIntent:
             and isinstance(self.source_review_round, int)
             and not isinstance(self.source_review_round, bool)
             and self.source_review_round > 0
+            and feedback_valid
             and (
                 self.target_worker_bounce is None
                 or (
@@ -400,6 +410,7 @@ def parse_worker_handoff(value: Any) -> Optional[WorkerHandoffIntent]:
         source_review_subject_digest=text_field(
             "source_review_subject_digest"),
         source_review_round=int_field("source_review_round"),
+        source_review_verdict=text_field("source_review_verdict"),
         source_review_feedback=(
             deepcopy(value["source_review_feedback"])
             if isinstance(value.get("source_review_feedback"), dict)
@@ -419,6 +430,49 @@ def parse_worker_handoff(value: Any) -> Optional[WorkerHandoffIntent]:
         target_worker_bounce=int_field("target_worker_bounce"),
         terminal_observed_at=text_field("terminal_observed_at"),
     )
+
+
+_REVIEW_FEEDBACK_FIELDS = frozenset({"verdict", "nits", "report_ref"})
+_REVIEW_REPORT_REF_FIELDS = frozenset({
+    "comment_id", "attachment_id", "sha256", "bytes", "filename",
+})
+
+
+def exact_review_report_ref(value: Any) -> bool:
+    """Return whether a review report ref is downloadable and integrity-bound."""
+    if not isinstance(value, dict) or not value:
+        return False
+    if set(value) - _REVIEW_REPORT_REF_FIELDS:
+        return False
+    attachment_id = value.get("attachment_id")
+    sha256 = value.get("sha256")
+    if not isinstance(attachment_id, str) or not attachment_id.strip():
+        return False
+    if not isinstance(sha256, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", sha256):
+        return False
+    for key in ("comment_id", "filename"):
+        field = value.get(key)
+        if field is not None and (not isinstance(field, str) or not field.strip()):
+            return False
+    size = value.get("bytes")
+    return size is None or (
+        isinstance(size, int) and not isinstance(size, bool) and size >= 0
+    )
+
+
+def review_nits_feedback_is_complete(value: Any) -> bool:
+    """Validate the compact source feedback owned by one review-nits handoff."""
+    if not isinstance(value, dict) or set(value) - _REVIEW_FEEDBACK_FIELDS:
+        return False
+    if value.get("verdict") != "pass-with-nits":
+        return False
+    nits = value.get("nits")
+    if not isinstance(nits, list) or not nits:
+        return False
+    if any(not isinstance(nit, str) or not nit.strip() for nit in nits):
+        return False
+    report_ref = value.get("report_ref")
+    return report_ref is None or exact_review_report_ref(report_ref)
 
 
 def parse_reviewer_run_baseline(value: Any) -> Optional[ReviewerRunBaseline]:
