@@ -1803,9 +1803,8 @@ def test_required_attachment_failure_is_atomic_after_all_control_reads(tmp_path)
     assert Path(path).read_bytes() == before
 
 
-def _deferred_active_reviewer_fixture(tmp_path):
-    item_id = "node-a"
-    subject = "subject-current"
+def _deferred_active_reviewer_issue(item_id):
+    subject = f"subject-{item_id}"
     issue, attachments = _issue(
         item_id,
         status="in_review",
@@ -1820,42 +1819,82 @@ def _deferred_active_reviewer_fixture(tmp_path):
         target_reviewer="reviewer",
         target_agent_id="agent-reviewer",
         cutoff_created_at="2026-08-03T00:00:00Z",
-        generation="review-1",
+        generation=f"review-{item_id}",
     ).as_dict()
-    remote = _RemoteFixture({item_id: issue}, attachments)
-    store = _store(remote)
-    projection = store.observe_work_item_control(item_id)
-    manifest, path = _manifest_path(tmp_path, {
-        item_id: Node(
-            id=item_id,
-            worker="worker",
-            reviewer="reviewer",
-            work_item_id=item_id,
-            status="blocked",
-        ),
-    })
-    runs = [AgentRunObservation(
-        id="run-reviewer",
+    node = Node(
+        id=item_id,
+        worker="worker",
+        reviewer="reviewer",
+        work_item_id=item_id,
+        status="blocked",
+    )
+    run = AgentRunObservation(
+        id=f"run-{item_id}",
         kind="direct",
         status="running",
         agent_id="agent-reviewer",
         created_at="2026-08-03T00:00:01Z",
         trigger_kind="issue_assignment",
-    )]
-    runtime = SimpleNamespace(
-        list_runs=lambda _item_id: list(runs),
-        wake=lambda *_args: pytest.fail("recovery must not wake an Agent"),
     )
-    return store, remote, runtime, manifest, path, projection
+    return issue, attachments, node, run
+
+
+def _deferred_active_reviewer_fixture(tmp_path, item_ids=("node-a",)):
+    issues = {}
+    attachments = {}
+    nodes = {}
+    runs = {}
+    for item_id in item_ids:
+        issue, item_attachments, node, run = (
+            _deferred_active_reviewer_issue(item_id)
+        )
+        issues[item_id] = issue
+        attachments.update(item_attachments)
+        nodes[item_id] = node
+        runs[item_id] = [run]
+
+    remote = _RemoteFixture(issues, attachments)
+    store = _store(remote)
+    observations = {
+        item_id: store.observe_work_item_control(item_id)
+        for item_id in item_ids
+    }
+    manifest, path = _manifest_path(tmp_path, nodes)
+    dispatches = {"assign": [], "wake": []}
+    store.assign_work_item = lambda *args, **kwargs: dispatches["assign"].append(
+        (args, kwargs))
+    runtime = SimpleNamespace(
+        list_runs=lambda item_id: list(runs[item_id]),
+        wake=lambda *args, **kwargs: dispatches["wake"].append((args, kwargs)),
+    )
+    return store, remote, runtime, manifest, path, observations, dispatches
+
+
+def _replace_deferred_payload(
+    remote, projection, payload: WorkItemPayload, body: bytes,
+):
+    ref_name = f"{payload.value}_ref"
+    ref = getattr(projection.work_item, ref_name)
+    updated_ref = {
+        **ref,
+        "sha256": hashlib.sha256(body).hexdigest(),
+        "bytes": len(body),
+    }
+    remote.attachments[ref["attachment_id"]] = (ref["filename"], body)
+    remote.issues[projection.work_item.id]["metadata"][ref_name] = updated_ref
+    return replace(
+        projection,
+        work_item=replace(projection.work_item, **{ref_name: updated_ref}),
+    )
 
 
 def test_active_reviewer_restore_rehydrates_real_multica_deferred_evidence(
     tmp_path,
 ):
-    store, remote, runtime, manifest, path, projection = (
+    store, remote, runtime, manifest, path, observations, dispatches = (
         _deferred_active_reviewer_fixture(tmp_path)
     )
-    observations = {"node-a": projection}
+    projection = observations["node-a"]
     required = loop._REVIEW_CONFIRMATION_PAYLOADS
     assert required & projection.deferred_payloads
 
@@ -1870,15 +1909,16 @@ def test_active_reviewer_restore_rehydrates_real_multica_deferred_evidence(
     assert restored.work_item.contract is not None
     assert remote.attachment_downloads == 4
     assert load_manifest(path).nodes["node-a"].status == "in_review"
+    assert dispatches == {"assign": [], "wake": []}
 
 
 def test_active_reviewer_restore_hydration_failure_keeps_manifest_blocked(
     tmp_path,
 ):
-    store, remote, runtime, manifest, path, projection = (
+    store, remote, runtime, manifest, path, observations, dispatches = (
         _deferred_active_reviewer_fixture(tmp_path)
     )
-    observations = {"node-a": projection}
+    projection = observations["node-a"]
     remote.fail_attachment_id = projection.work_item.contract_ref["attachment_id"]
     before = Path(path).read_bytes()
 
@@ -1889,6 +1929,95 @@ def test_active_reviewer_restore_hydration_failure_keeps_manifest_blocked(
     assert manifest.nodes["node-a"].status == "blocked"
     assert observations["node-a"] is projection
     assert Path(path).read_bytes() == before
+    assert dispatches == {"assign": [], "wake": []}
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        WorkItemPayload.VERIFICATION,
+        WorkItemPayload.REVIEW_REPORT,
+        WorkItemPayload.CONTRACT,
+    ],
+)
+@pytest.mark.parametrize(
+    "body",
+    [b"[unterminated", b"[]\n", b"{}\n"],
+    ids=["malformed", "wrong-type", "empty"],
+)
+def test_active_reviewer_restore_rejects_invalid_structured_payload_atomically(
+    tmp_path, payload, body,
+):
+    store, remote, runtime, manifest, path, observations, dispatches = (
+        _deferred_active_reviewer_fixture(tmp_path)
+    )
+    original = observations["node-a"]
+    observations["node-a"] = _replace_deferred_payload(
+        remote, original, payload, body)
+    invalid = observations["node-a"]
+    before = Path(path).read_bytes()
+
+    for current_manifest in (manifest, load_manifest(path)):
+        with pytest.raises(PlatformError, match=payload.value):
+            loop._restore_active_formal_run_stages(
+                store, runtime, current_manifest, path, observations)
+
+        assert current_manifest.nodes["node-a"].status == "blocked"
+        assert observations["node-a"] is invalid
+        assert Path(path).read_bytes() == before
+        assert dispatches == {"assign": [], "wake": []}
+
+
+def test_active_reviewer_restore_is_globally_atomic_across_candidates_and_restart(
+    tmp_path,
+):
+    store, remote, runtime, manifest, path, observations, dispatches = (
+        _deferred_active_reviewer_fixture(tmp_path, ("node-a", "node-b"))
+    )
+    originals = dict(observations)
+    observations["node-b"] = _replace_deferred_payload(
+        remote,
+        observations["node-b"],
+        WorkItemPayload.REVIEW_REPORT,
+        b"[unterminated",
+    )
+    invalid_b = observations["node-b"]
+    before = Path(path).read_bytes()
+
+    with pytest.raises(PlatformError, match="review_report"):
+        loop._restore_active_formal_run_stages(
+            store, runtime, manifest, path, observations)
+
+    assert manifest.nodes["node-a"].status == "blocked"
+    assert manifest.nodes["node-b"].status == "blocked"
+    assert observations["node-a"] is originals["node-a"]
+    assert observations["node-b"] is invalid_b
+    assert Path(path).read_bytes() == before
+    assert dispatches == {"assign": [], "wake": []}
+
+    valid_report = yaml.safe_dump({
+        "full_review_completed": True,
+        "review_goals": ["verify current delivery"],
+        "blockers": [],
+    }, sort_keys=False).encode()
+    observations["node-b"] = _replace_deferred_payload(
+        remote,
+        observations["node-b"],
+        WorkItemPayload.REVIEW_REPORT,
+        valid_report,
+    )
+    restarted = load_manifest(path)
+
+    loop._restore_active_formal_run_stages(
+        store, runtime, restarted, path, observations)
+
+    assert all(node.status == "in_review" for node in restarted.nodes.values())
+    assert all(
+        loop._REVIEW_CONFIRMATION_PAYLOADS.isdisjoint(
+            projection.deferred_payloads)
+        for projection in observations.values()
+    )
+    assert dispatches == {"assign": [], "wake": []}
 
 
 def test_full_get_work_item_still_hydrates_every_referenced_payload():
