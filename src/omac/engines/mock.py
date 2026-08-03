@@ -1047,7 +1047,7 @@ class MockStore(WorkItemStore):
         _shared_assigned_items[item_id] = time.time()
         _shared_active_assignments[item_id] = assignment
         if start_run and not same_active_assignment:
-            self._append_assigned_run(item_id, agent_id, "assignment")
+            self._append_assigned_run(item_id, agent_id, "issue_assignment")
             _shared_assignment_wake_pending.add(item_id)
         elif not start_run:
             _shared_assignment_wake_pending.discard(item_id)

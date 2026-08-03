@@ -100,6 +100,11 @@ _REVIEW_CONFIRMATION_PAYLOADS = frozenset({
     WorkItemPayload.MACHINE_FEEDBACK,
     WorkItemPayload.CONTRACT,
 })
+_STRUCTURED_RECOVERY_PAYLOADS = (
+    (WorkItemPayload.VERIFICATION, "verification_ref"),
+    (WorkItemPayload.REVIEW_REPORT, "review_report_ref"),
+    (WorkItemPayload.CONTRACT, "contract_ref"),
+)
 
 
 @dataclass(frozen=True)
@@ -353,11 +358,11 @@ def _observe_direct_run_attempt(
     return _DirectRunAttempt("terminal", target_run_id, terminal)
 
 
-def _formal_reviewer_dispatch_target(
+def _formal_dispatch_target(
     runs: List[AgentRunObservation],
     observed: _DirectRunAttempt,
 ) -> tuple[AgentRunObservation | None, str | None]:
-    """Return the one formal Reviewer dispatch shared by recovery paths."""
+    """Return the one formal assignment/rerun dispatch shared by recovery paths."""
     if observed.state not in {"active", "terminal"}:
         return None, observed.detail or "no uniquely observable target Run"
     target = next(
@@ -365,7 +370,7 @@ def _formal_reviewer_dispatch_target(
         None,
     )
     if target is None or target.trigger_kind not in {"issue_assignment", "rerun"}:
-        return None, "post-baseline reviewer Run is not a formal reviewer dispatch"
+        return None, "post-baseline Run is not a formal assignment/rerun dispatch"
     return target, None
 
 
@@ -744,6 +749,30 @@ def _hydrate_work_item_payloads(
         work_item=item,
         deferred_payloads=projection.deferred_payloads - plan,
     )
+
+
+def _validate_structured_recovery_payloads(
+    projection: WorkItemControlProjection,
+    requested: WorkItemHydrationPlan,
+) -> None:
+    """Fail closed when referenced collect evidence is not a non-empty mapping."""
+    item = projection.work_item
+    for payload, ref_name in _STRUCTURED_RECOVERY_PAYLOADS:
+        ref = getattr(item, ref_name, None)
+        if payload not in requested or not ref:
+            continue
+        value = getattr(item, payload.value, None)
+        if isinstance(value, dict) and value:
+            continue
+        attachment_id = str(ref.get("attachment_id") or "unknown")
+        raise PlatformError(ui(
+            f"Referenced {payload.value} attachment {attachment_id} for work "
+            f"item {item.id} did not parse as a non-empty YAML/JSON mapping. "
+            "Restore a valid structured attachment before retrying DAG recovery.",
+            f"工作单元 {item.id} 引用的 {payload.value} 附件 {attachment_id} "
+            "无法解析为非空 YAML/JSON 映射。请恢复合法的结构化附件后再重试 "
+            "DAG 恢复。",
+        ))
 
 
 def _observe_reconcile_inputs(
@@ -1294,7 +1323,7 @@ def _dispatch_reviewer_for_current_subject(
                 attempt=baseline.attempt,
             )
             if observed.state in {"active", "terminal"}:
-                _target, target_error = _formal_reviewer_dispatch_target(
+                _target, target_error = _formal_dispatch_target(
                     runs, observed)
                 if target_error is not None:
                     raise _ReviewerDispatchUnresolved(target_error)
@@ -3225,6 +3254,8 @@ def _mark_downstream_blocked(
             if node.status != "done":
                 set_node(manifest, key, status="done")
             continue
+        if node.status in RUNNING_STATUSES:
+            continue
         if node.status not in TERMINAL_STATUSES:
             set_node(manifest, key, status="blocked")
             newly_blocked.add(key)
@@ -3450,23 +3481,28 @@ def _active_formal_run_nodes(
     """Use the reconcile snapshot to prove causally bound active Runs."""
     active = []
     for key, node in manifest.nodes.items():
+        if node.status not in FAILED_STATUSES:
+            continue
         projection = observations.get(key)
         if not node.work_item_id or projection is None:
             continue
         item = projection.work_item
         if item.id != node.work_item_id or item.dag_key != key:
             continue
+        if item.decision_required:
+            continue
         attempt = None
+        runs = None
         if item.phase == TaskPhase.AUTHORING:
             intent = item.worker_handoff
             if (
                 intent is not None
                 and intent.is_causally_bound()
-                and intent.target_run_id
                 and intent.target_worker == node.worker
             ):
+                runs = runtime.list_runs(item.id)
                 attempt = _observe_direct_run_attempt(
-                    runtime.list_runs(item.id),
+                    runs,
                     intent.target_agent_id,
                     baseline_direct_run_ids=intent.baseline_direct_run_ids,
                     target_run_id=intent.target_run_id,
@@ -3476,21 +3512,59 @@ def _active_formal_run_nodes(
             if (
                 baseline is not None
                 and baseline.is_causally_bound()
-                and baseline.target_run_id
                 and baseline.subject_digest == item.review_subject_digest
                 and baseline.target_reviewer == node.reviewer
             ):
+                runs = runtime.list_runs(item.id)
                 attempt = _observe_direct_run_attempt(
-                    runtime.list_runs(item.id),
+                    runs,
                     baseline.target_agent_id,
                     baseline_direct_run_ids=baseline.baseline_direct_run_ids,
                     cutoff_created_at=baseline.cutoff_created_at,
                     target_run_id=baseline.target_run_id,
                     attempt=baseline.attempt,
                 )
-        if attempt is not None and attempt.state == "active":
+        if attempt is None or runs is None or attempt.state != "active":
+            continue
+        _target, target_error = _formal_dispatch_target(runs, attempt)
+        if target_error is None:
             active.append(key)
     return active
+
+
+def _restore_active_formal_run_stages(
+    store: WorkItemStore,
+    runtime: AgentRuntime,
+    manifest: Manifest,
+    manifest_path: str,
+    observations: Dict[str, WorkItemControlProjection | None],
+) -> None:
+    """Restore blocked manifest projections while their formal Run is active."""
+    active = _active_formal_run_nodes(runtime, manifest, observations)
+    restored: Dict[str, tuple[str, WorkItemControlProjection]] = {}
+    for key in active:
+        node = manifest.nodes[key]
+        if node.status not in FAILED_STATUSES:
+            continue
+        projection = observations[key]
+        item = projection.work_item
+        status = (
+            "in_review" if item.phase == TaskPhase.REVIEW else "in_progress")
+        collect_node = replace(node, status=status)
+        plan = _build_work_item_hydration_plan(collect_node, projection)
+        hydrated = _hydrate_work_item_payloads(store, projection, plan)
+        _validate_structured_recovery_payloads(
+            hydrated, plan & projection.deferred_payloads)
+        restored[key] = (
+            status,
+            hydrated,
+        )
+
+    for key, (status, projection) in restored.items():
+        observations[key] = projection
+        set_node(manifest, key, status=status)
+    if restored:
+        save_manifest(manifest, manifest_path)
 
 
 def tick(
@@ -3516,6 +3590,12 @@ def tick(
     # 1. Reconcile: 平台状态同步回 manifest
     reconcile_result = reconcile_with_observations(
         store, manifest, manifest_path, max_parallel=max_parallel)
+
+    # A graph-level blocked projection must not hide an already-dispatched,
+    # causally bound stage. Restore only that stage; unrelated decisions remain
+    # blocked and no Agent is assigned or woken here.
+    _restore_active_formal_run_stages(
+        store, runtime, manifest, manifest_path, reconcile_result.observations)
 
     # 2. SYNC: 回收进行中节点的结果
     new_failures = collect_results(store, runtime, manifest, manifest_path,
@@ -3553,13 +3633,6 @@ def tick(
     done = [k for k, n in manifest.nodes.items() if n.status == "done"]
     running = [k for k, n in manifest.nodes.items() if n.status in RUNNING_STATUSES]
     failed_keys = [k for k, n in manifest.nodes.items() if n.status in FAILED_STATUSES]
-
-    # blocked/needs_decision remains authoritative, but it must not stop the
-    # foreground controller while a causally bound formal Run is still active.
-    # This read-only proof runs only on the otherwise-terminal aggregation path.
-    if failed_keys and not running:
-        running = _active_formal_run_nodes(
-            runtime, manifest, reconcile_result.observations)
 
     # 状态判定:running 优先(有正式运行继续协调),其次 needs_decision(有失败),
     # 最后 converged(全部 done)
