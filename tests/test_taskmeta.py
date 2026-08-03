@@ -262,6 +262,17 @@ def test_worker_handoff_accepts_complete_review_nits_feedback():
             id="unknown-feedback-field",
         ),
         pytest.param(
+            _review_nits_handoff_payload(report_ref=None),
+            id="missing-report-ref",
+        ),
+        pytest.param(
+            _review_nits_handoff_payload(report_ref={
+                "attachment_id": "",
+                "sha256": "a" * 64,
+            }),
+            id="missing-report-attachment",
+        ),
+        pytest.param(
             _review_nits_handoff_payload(report_ref={"attachment_id": "review-1"}),
             id="partial-report-ref",
         ),
@@ -341,6 +352,24 @@ def test_mock_worker_handoff_roundtrips_source_review_feedback():
         pytest.param({"source_review_feedback": None}, id="missing"),
         pytest.param({"source_review_verdict": "reject"}, id="mismatch"),
         pytest.param({"feedback_updates": {"nits": []}}, id="empty-nits"),
+        pytest.param(
+            {"feedback_updates": {"report_ref": None}},
+            id="missing-report-ref",
+        ),
+        pytest.param(
+            {"feedback_updates": {"report_ref": {
+                "attachment_id": "",
+                "sha256": "a" * 64,
+            }}},
+            id="wrong-report-attachment",
+        ),
+        pytest.param(
+            {"feedback_updates": {"report_ref": {
+                "attachment_id": "review-1",
+                "sha256": "not-a-sha",
+            }}},
+            id="wrong-report-sha",
+        ),
         pytest.param({"feedback_updates": {"unknown": True}}, id="malformed"),
     ],
 )
@@ -659,6 +688,24 @@ def test_multica_worker_handoff_roundtrips_source_review_feedback():
         pytest.param({"source_review_feedback": None}, id="missing"),
         pytest.param({"source_review_verdict": "reject"}, id="mismatch"),
         pytest.param({"feedback_updates": {"nits": []}}, id="empty-nits"),
+        pytest.param(
+            {"feedback_updates": {"report_ref": None}},
+            id="missing-report-ref",
+        ),
+        pytest.param(
+            {"feedback_updates": {"report_ref": {
+                "attachment_id": "",
+                "sha256": "a" * 64,
+            }}},
+            id="wrong-report-attachment",
+        ),
+        pytest.param(
+            {"feedback_updates": {"report_ref": {
+                "attachment_id": "review-1",
+                "sha256": "not-a-sha",
+            }}},
+            id="wrong-report-sha",
+        ),
         pytest.param({"feedback_updates": {"unknown": True}}, id="malformed"),
     ],
 )

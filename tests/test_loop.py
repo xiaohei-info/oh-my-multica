@@ -4294,7 +4294,14 @@ class TestReviewerRejectBoundedFallback:
         source_subject = review_subject_digest(source, 1)
         source_verdict = "pass-with-nits" if gate == "review-nits" else None
         source_feedback = (
-            {"verdict": "pass-with-nits", "nits": ["follow up"]}
+            {
+                "verdict": "pass-with-nits",
+                "nits": ["follow up"],
+                "report_ref": {
+                    "attachment_id": "review-report-1",
+                    "sha256": "a" * 64,
+                },
+            }
             if gate == "review-nits" else None
         )
         intent = WorkerHandoffIntent(
@@ -4913,6 +4920,79 @@ class TestReviewerRejectBoundedFallback:
             entry for entry in eng.store.assign_log if entry[2] == "reviewer"
         ]) == reviewer_assignments + 1
 
+    @pytest.mark.parametrize(
+        "report_ref",
+        [
+            pytest.param(None, id="legacy-inline-only"),
+            pytest.param({
+                "attachment_id": "",
+                "sha256": "a" * 64,
+            }, id="wrong-attachment"),
+            pytest.param({
+                "attachment_id": "review-1",
+                "sha256": "not-a-sha",
+            }, id="wrong-sha"),
+        ],
+    )
+    def test_review_nits_missing_exact_report_ref_has_zero_side_effects(
+        self, tmp_path, monkeypatch, report_ref,
+    ):
+        from omac.engines import create_engine
+        from omac.errors import PlatformError
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        report = _review_report(
+            item, "pass-with-nits", nits=["follow up"])
+        eng.store.update_work_item_metadata(
+            item.id,
+            review_verdict="pass-with-nits",
+            review_report=report,
+        )
+        current = eng.store.get_work_item(item.id)
+        current.review_report_ref = report_ref
+        before = {
+            "status": current.status,
+            "phase": current.phase,
+            "review_bounce": current.bounces.review,
+            "review_verdict": current.review_verdict,
+            "review_report": current.review_report,
+            "worker_handoff": current.worker_handoff,
+            "assignments": list(eng.store.assign_log),
+            "runs": list(eng.runtime.list_runs(item.id)),
+        }
+
+        def unexpected_write(*_args, **_kwargs):
+            pytest.fail("invalid review-nits source must not write or dispatch")
+
+        monkeypatch.setattr(
+            eng.store, "update_work_item_metadata", unexpected_write)
+        monkeypatch.setattr(eng.store, "reset_review", unexpected_write)
+        monkeypatch.setattr(eng.store, "update_status", unexpected_write)
+        monkeypatch.setattr(eng.store, "assign_work_item", unexpected_write)
+        monkeypatch.setattr(eng.runtime, "wake", unexpected_write)
+        monkeypatch.setattr(eng.runtime, "list_runs", unexpected_write)
+
+        with pytest.raises(PlatformError, match="review report ref|feedback"):
+            loop._dispatch_worker_handoff(
+                eng.store,
+                eng.runtime,
+                manifest,
+                "a",
+                review_bounce=1,
+                gate="review-nits",
+            )
+
+        after = eng.store.get_work_item(item.id)
+        assert after.status is before["status"]
+        assert after.phase is before["phase"]
+        assert after.bounces.review == before["review_bounce"]
+        assert after.review_verdict == before["review_verdict"]
+        assert after.review_report == before["review_report"]
+        assert after.worker_handoff is before["worker_handoff"]
+        assert eng.store.assign_log == before["assignments"]
+
     def test_review_continuation_authorizes_pass_with_nits_rework(
         self, tmp_path,
     ):
@@ -4922,6 +5002,8 @@ class TestReviewerRejectBoundedFallback:
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
         path = str(tmp_path / "m.yaml")
         manifest, eng, item = self._setup_reject_node(eng, path)
+        report = _review_report(
+            item, "pass-with-nits", nits=["authorized follow up"])
         eng.store.update_work_item_metadata(
             item.id,
             review_bounce=9,
@@ -4934,8 +5016,8 @@ class TestReviewerRejectBoundedFallback:
                 "reason": "operator approved one additional review round",
             },
             review_verdict="pass-with-nits",
-            review_report=_review_report(
-                item, "pass-with-nits", nits=["authorized follow up"]),
+            review_report=report,
+            review_report_source=yaml.safe_dump(report),
         )
         current = eng.store.get_work_item(item.id)
         eng.store.update_work_item_metadata(
@@ -5489,13 +5571,18 @@ class TestReviewerRejectBoundedFallback:
         manifest, eng, item = self._setup_reject_node(eng, path)
         eng.store.update_work_item_metadata(
             item.id, review_obligations=build_review_obligations(item))
+        report = _review_report(
+            item,
+            verdict,
+            nits=["follow up"] if verdict == "pass-with-nits" else None,
+        )
         eng.store.update_work_item_metadata(
             item.id,
             review_verdict=verdict,
-            review_report=_review_report(
-                item,
-                verdict,
-                nits=["follow up"] if verdict == "pass-with-nits" else None,
+            review_report=report,
+            review_report_source=(
+                yaml.safe_dump(report)
+                if verdict == "pass-with-nits" else None
             ),
         )
 
@@ -7176,11 +7263,13 @@ class TestReviewerRejectBoundedFallback:
         manifest, eng, item = self._setup_reject_node(eng, path)
         eng.store.update_work_item_metadata(
             item.id, review_obligations=build_review_obligations(item))
+        report = _review_report(
+            item, "pass-with-nits", nits=["建议后续优化"])
         eng.store.update_work_item_metadata(
             item.id,
             review_verdict="pass-with-nits",
-            review_report=_review_report(
-                item, "pass-with-nits", nits=["建议后续优化"]),
+            review_report=report,
+            review_report_source=yaml.safe_dump(report),
         )
 
         first = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)

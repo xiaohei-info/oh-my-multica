@@ -1388,12 +1388,11 @@ def _dispatch_worker_handoff(
         source_feedback = None
         if gate == "review-nits":
             source_feedback = {"verdict": source_verdict}
-            if current.review_report_ref is not None:
-                if not exact_review_report_ref(current.review_report_ref):
-                    raise PlatformError(
-                        f"Worker handoff review report ref is invalid for "
-                        f"work item {item_id}")
-                source_feedback["report_ref"] = dict(current.review_report_ref)
+            if not exact_review_report_ref(current.review_report_ref):
+                raise PlatformError(
+                    f"Worker handoff review report ref is invalid for "
+                    f"work item {item_id}")
+            source_feedback["report_ref"] = dict(current.review_report_ref)
             report = current.review_report
             if isinstance(report, dict):
                 nits = report.get("nits")
