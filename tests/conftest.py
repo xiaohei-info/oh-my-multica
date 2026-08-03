@@ -1,5 +1,6 @@
 import os
 import sys
+from pathlib import Path
 
 import hashlib
 import yaml
@@ -19,6 +20,14 @@ def _reset_mock_state():
     # (MockStore.__init__ 会按 config.extra 重设全局 delay,而 extra 取自 env)。
     os.environ["MOCK_AUTO_COMPLETE_DELAY"] = "0"
     yield
+
+
+@pytest.fixture
+def aiteam_849_legacy_snapshot():
+    path = Path(__file__).parent / "fixtures" / (
+        "aiteam_849_legacy_convergence_snapshot.yaml"
+    )
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
 def seal_mock_delivery(store, item_id, pr_url, verification, *, phase=None):

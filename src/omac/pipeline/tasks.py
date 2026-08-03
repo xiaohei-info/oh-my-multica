@@ -22,8 +22,7 @@ from ..core.machine_feedback import (
     build_machine_feedback, machine_feedback_summary,
 )
 from ..core.review_convergence import (
-    build_review_convergence_decision, build_review_obligations,
-    review_convergence_decision,
+    build_review_obligations,
 )
 from ..core.review_continuation import authorized_review_limit
 from ..core.review_preflight import run_review_preflight
@@ -34,6 +33,7 @@ from ..core.taskmeta import (
 from ..engines.models import WorkItem, WorkItemStatus
 from ..errors import NeedsDecision, PlatformError, ValidationError
 from ..i18n import current_language, ui
+from .convergence import ResolutionState, persist_decision, resolve_convergence
 from .dispatch import normalize_source_refs, render_issue_body
 
 log = logsetup.get_logger(__name__)
@@ -1370,27 +1370,19 @@ def run_task(
             return _finish_after_review("pass", round_index, delivery)
 
         if verdict == "reject":
-            convergence = review_convergence_decision(reviewed.review_ledger)
-            if convergence is not None:
-                decision = build_review_convergence_decision(
-                    reviewed,
-                    convergence,
-                    kind=kind.value,
-                    recommended_action="reconsider-task-boundary",
-                )
-                store.update_work_item_metadata(
-                    item_id,
-                    decision_required=decision,
-                    phase=TaskPhase.REVIEW,
-                )
-                store.mark_blocked(item_id)
+            resolution = resolve_convergence(
+                reviewed, kind=kind.value,
+                recommended_action="reconsider-task-boundary")
+            resolution.raise_if_invalid(PlatformError, item_id)
+            if resolution.state is ResolutionState.NEEDS_DECISION:
+                decision = persist_decision(store, reviewed, resolution)
                 log.info(
                     logsetup.EVT_NEEDS_DECISION,
                     kind=kind.value,
                     id=item_id,
                     gate="review-convergence",
-                    rounds=convergence["cycle_count"],
-                    mode=convergence["mode"],
+                    rounds=resolution.convergence["cycle_count"],
+                    mode=resolution.convergence["mode"],
                 )
                 raise NeedsDecision(
                     ui(

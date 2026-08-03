@@ -10,6 +10,7 @@ from omac.cli.commands import work as work_cmd
 from omac.cli.main import main
 from omac.core import review_convergence as review_mod
 from omac.core.review_convergence import (
+    LegacyReviewLedgerUnverifiable,
     REVIEW_PROTOCOL_VERSION,
     advance_review_ledger,
     build_review_obligations,
@@ -23,6 +24,7 @@ from omac.engines.mock import MockStore
 from omac.engines.models import EngineConfig, WorkItemStatus
 from omac.errors import NeedsDecision, ValidationError
 from omac.pipeline import dispatch
+from omac.pipeline.convergence import ResolutionState, resolve_convergence
 from omac.pipeline.dispatch import submit as submit_work
 from omac.engines import create_engine
 from omac.pipeline.tasks import run_task
@@ -718,6 +720,121 @@ def test_legacy_cycle_without_blocker_facts_fails_closed():
         review_convergence_decision(ledger)
 
 
+@pytest.mark.parametrize(
+    "corrupt",
+    [
+        lambda ledger: ledger["cycles"][0].__setitem__(
+            "prior_open_blocker_ids", "BLK-legacy"),
+        lambda ledger: ledger["cycles"][0].__setitem__(
+            "blocker_facts_schema", "wrong/v0"),
+        lambda ledger: ledger["blockers"][0].__setitem__("root_cause_key", ""),
+        lambda ledger: ledger["cycles"][-1]["open_blocker_ids"].append(
+            ledger["cycles"][-1]["open_blocker_ids"][0]),
+    ],
+    ids=[
+        "damaged-cycle-field",
+        "wrong-blocker-facts-schema",
+        "empty-summary-root-cause",
+        "duplicate-open-blocker-id",
+    ],
+)
+def test_corrupt_legacy_ledger_is_invalid(
+    aiteam_849_legacy_snapshot, corrupt,
+):
+    ledger = deepcopy(aiteam_849_legacy_snapshot["work_item"]["review_ledger"])
+    corrupt(ledger)
+
+    with pytest.raises(ValueError) as exc_info:
+        validate_review_ledger(ledger, expected_round=3)
+    assert not isinstance(exc_info.value, LegacyReviewLedgerUnverifiable)
+
+    resolution = resolve_convergence(_item(ledger=ledger), expected_round=3)
+    assert resolution.state is ResolutionState.INVALID
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda ledger: ledger["cycles"][1].__setitem__("subject_digest", ""),
+        lambda ledger: ledger["cycles"][1].__setitem__("verdict", "banana"),
+        lambda ledger: ledger["cycles"][1].__setitem__("round", 3),
+        lambda ledger: ledger["cycles"][1].__setitem__("new_count", 2),
+        lambda ledger: ledger["cycles"][1].__setitem__("fixed_count", 1),
+        lambda ledger: ledger["cycles"][1].__setitem__("regressed_count", 1),
+        lambda ledger: ledger["cycles"][1].__setitem__("unchanged_count", 2),
+        lambda ledger: ledger["cycles"][1].__setitem__(
+            "reported_blocker_ids", []),
+        lambda ledger: ledger["blockers"][0].__setitem__("obligation_id", ""),
+        lambda ledger: ledger["blockers"][0].__setitem__("status", "banana"),
+        lambda ledger: ledger["blockers"][0].__setitem__(
+            "classification", "banana"),
+        lambda ledger: ledger["blockers"][0].__setitem__(
+            "first_seen_round", 4),
+        lambda ledger: ledger["blockers"][0].__setitem__(
+            "last_seen_round", 4),
+        lambda ledger: ledger["blockers"][0].update({
+            "first_seen_round": 2, "last_seen_round": 1,
+        }),
+        lambda ledger: ledger["blockers"][0].__setitem__("seen_count", 99),
+        lambda ledger: ledger["blockers"].append(
+            deepcopy(ledger["blockers"][0])),
+    ],
+    ids=[
+        "empty-subject-digest",
+        "invalid-verdict",
+        "non-sequential-round",
+        "impossible-new-count",
+        "impossible-fixed-count",
+        "impossible-regressed-count",
+        "impossible-unchanged-count",
+        "reported-open-id-mismatch",
+        "empty-obligation-id",
+        "invalid-summary-status",
+        "invalid-summary-classification",
+        "first-seen-after-ledger",
+        "last-seen-after-ledger",
+        "last-seen-before-first-seen",
+        "impossible-seen-count",
+        "duplicate-summary-blocker-id",
+    ],
+)
+def test_legacy_shared_field_mutations_are_invalid(
+    aiteam_849_legacy_snapshot, mutate,
+):
+    ledger = deepcopy(aiteam_849_legacy_snapshot["work_item"]["review_ledger"])
+    mutate(ledger)
+
+    with pytest.raises(ValueError) as exc_info:
+        validate_review_ledger(ledger, expected_round=3)
+    assert not isinstance(exc_info.value, LegacyReviewLedgerUnverifiable)
+    assert resolve_convergence(
+        _item(ledger=ledger), expected_round=3,
+    ).state is ResolutionState.INVALID
+
+
+@pytest.mark.parametrize("cycle_count", [1, 2])
+def test_legacy_cycles_before_decision_boundary_keep_fast_path(cycle_count):
+    ledger = _stalled_canonical_ledger(with_facts=False)
+    ledger["cycles"] = ledger["cycles"][:cycle_count]
+
+    resolution = resolve_convergence(_item(ledger=ledger))
+
+    assert resolution.state is ResolutionState.VALID
+    assert resolution.convergence is None
+
+
+def test_new_schema_resolves_without_legacy_decision():
+    ledger = _stalled_canonical_ledger(with_facts=True)
+    item = _item(ledger=ledger)
+    item.id = "item-1"
+    item.review_verdict = "reject"
+
+    resolution = resolve_convergence(item)
+
+    assert resolution.state is ResolutionState.NEEDS_DECISION
+    assert resolution.convergence["reason_code"] == "review-convergence-stalled"
+
+
 def _with_cycle_blocker_facts(ledger):
     records = {
         record["blocker_id"]: record for record in ledger["blockers"]
@@ -726,6 +843,8 @@ def _with_cycle_blocker_facts(ledger):
     prior_open_ids = set()
     for cycle in ledger["cycles"]:
         open_ids = set(cycle["open_blocker_ids"])
+        cycle.setdefault("subject_digest", f"subject-{cycle['round']}")
+        cycle.setdefault("verdict", "reject" if open_ids else "pass")
         facts = []
         for blocker_id in sorted(prior_open_ids - open_ids):
             previous = current[blocker_id]
@@ -1061,6 +1180,8 @@ def _stalled_canonical_ledger(*, with_facts=True):
         "cycles": [
             {
                 "round": round_index,
+                "subject_digest": f"subject-{round_index}",
+                "verdict": "reject",
                 "new_count": 1 if round_index == 1 else 0,
                 "fixed_count": 0,
                 "regressed_count": 0,
@@ -1179,6 +1300,221 @@ def _closed_reopened_canonical_ledger():
             "seen_count": 2,
         }],
     })
+
+
+def _without_blocker_facts(ledger):
+    ledger = deepcopy(ledger)
+    for cycle in ledger["cycles"]:
+        cycle.pop("blocker_facts_schema", None)
+        cycle.pop("blocker_facts", None)
+    return ledger
+
+
+def _empty_legacy_ledger(verdict):
+    return {
+        "schema": "omac.review-ledger/v1",
+        "cycles": [{
+            "round": round_index,
+            "subject_digest": f"empty-{round_index}",
+            "verdict": verdict if round_index == 3 else "pass",
+            "new_count": 0,
+            "fixed_count": 0,
+            "regressed_count": 0,
+            "unchanged_count": 0,
+            "open_count": 0,
+            "prior_open_blocker_ids": [],
+            "open_blocker_ids": [],
+            "reported_blocker_ids": [],
+        } for round_index in range(1, 4)],
+        "blockers": [],
+    }
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda ledger: ledger["cycles"][-1].__setitem__("unchanged_count", 0),
+    lambda ledger: ledger["blockers"][0].__setitem__(
+        "classification", "deeper"),
+], ids=["stale-unchanged-count", "stale-summary-classification"])
+def test_legacy_latest_classification_count_mismatch_is_invalid(
+    aiteam_849_legacy_snapshot, mutate,
+):
+    ledger = deepcopy(aiteam_849_legacy_snapshot["work_item"]["review_ledger"])
+    mutate(ledger)
+
+    with pytest.raises(ValueError) as exc_info:
+        validate_review_ledger(ledger, expected_round=3)
+    assert not isinstance(exc_info.value, LegacyReviewLedgerUnverifiable)
+
+
+@pytest.mark.parametrize("ledger_factory", [
+    lambda: _stalled_canonical_ledger(with_facts=False),
+    lambda: _without_blocker_facts(
+        _decision_ledger([1, 1, 1], classifications=["deeper"])),
+    lambda: _without_blocker_facts(_late_canonical_ledger()),
+    lambda: _without_blocker_facts(_closed_reopened_canonical_ledger()),
+    lambda: _without_blocker_facts(_interleaved_canonical_ledger()),
+], ids=["unchanged", "deeper", "new", "regressed", "fixed"])
+def test_legacy_classification_history_accepts_review_contract(ledger_factory):
+    ledger = ledger_factory()
+
+    with pytest.raises(LegacyReviewLedgerUnverifiable):
+        validate_review_ledger(ledger, expected_round=len(ledger["cycles"]))
+
+
+@pytest.mark.parametrize(("ledger_factory", "classification", "counts"), [
+    (
+        lambda: _stalled_canonical_ledger(with_facts=False),
+        "new", {"new_count": 1, "unchanged_count": 0},
+    ),
+    (
+        lambda: _stalled_canonical_ledger(with_facts=False),
+        "regressed", {"regressed_count": 1, "unchanged_count": 0},
+    ),
+    (
+        lambda: _without_blocker_facts(_late_canonical_ledger()),
+        "unchanged", {"new_count": 0, "unchanged_count": 1},
+    ),
+    (
+        lambda: _without_blocker_facts(_late_canonical_ledger()),
+        "deeper", {"new_count": 0},
+    ),
+    (
+        lambda: _without_blocker_facts(_closed_reopened_canonical_ledger()),
+        "unchanged", {"regressed_count": 0, "unchanged_count": 1},
+    ),
+], ids=[
+    "repeated-as-new", "continuing-as-regressed", "new-as-unchanged",
+    "new-as-deeper", "regressed-as-unchanged",
+])
+def test_legacy_classification_history_rejects_invalid_combinations(
+    ledger_factory, classification, counts,
+):
+    ledger = ledger_factory()
+    ledger["blockers"][0]["classification"] = classification
+    ledger["cycles"][-1].update(counts)
+
+    with pytest.raises(ValueError) as exc_info:
+        validate_review_ledger(ledger, expected_round=len(ledger["cycles"]))
+    assert not isinstance(exc_info.value, LegacyReviewLedgerUnverifiable)
+
+
+@pytest.mark.parametrize("verdict", ["pass", "pass-with-nits"])
+def test_legacy_pass_verdict_with_open_blockers_is_invalid(
+    aiteam_849_legacy_snapshot, verdict,
+):
+    ledger = deepcopy(aiteam_849_legacy_snapshot["work_item"]["review_ledger"])
+    ledger["cycles"][-1]["verdict"] = verdict
+
+    with pytest.raises(ValueError) as exc_info:
+        validate_review_ledger(ledger, expected_round=3)
+    assert not isinstance(exc_info.value, LegacyReviewLedgerUnverifiable)
+
+
+@pytest.mark.parametrize(("verdict", "valid"), [
+    ("pass", True),
+    ("pass-with-nits", True),
+    ("reject", False),
+])
+def test_legacy_empty_ledger_verdict_contract(verdict, valid):
+    ledger = _empty_legacy_ledger(verdict)
+    expected = LegacyReviewLedgerUnverifiable if valid else ValueError
+
+    with pytest.raises(expected) as exc_info:
+        validate_review_ledger(ledger, expected_round=3)
+    if not valid:
+        assert not isinstance(exc_info.value, LegacyReviewLedgerUnverifiable)
+
+
+@pytest.mark.parametrize(("missing_index", "corrupt_index", "corrupt"), [
+    (
+        0, 2,
+        lambda cycle: cycle["blocker_facts"][0].__setitem__("status", "banana"),
+    ),
+    (
+        1, 0,
+        lambda cycle: cycle.__setitem__("obligation_results", []),
+    ),
+    (
+        2, 1,
+        lambda cycle: cycle["blocker_facts"].append(
+            deepcopy(cycle["blocker_facts"][0])),
+    ),
+], ids=[
+    "missing-first-corrupt-last-fact",
+    "missing-middle-corrupt-first-obligations",
+    "missing-last-corrupt-middle-duplicate",
+])
+def test_legacy_missing_facts_does_not_mask_present_cycle_corruption(
+    missing_index, corrupt_index, corrupt,
+):
+    ledger = _stalled_canonical_ledger()
+    ledger["cycles"][missing_index].pop("blocker_facts_schema")
+    ledger["cycles"][missing_index].pop("blocker_facts")
+    corrupt(ledger["cycles"][corrupt_index])
+
+    with pytest.raises(ValueError) as exc_info:
+        validate_review_ledger(ledger, expected_round=3)
+    assert not isinstance(exc_info.value, LegacyReviewLedgerUnverifiable)
+    assert resolve_convergence(
+        _item(ledger=ledger), expected_round=3,
+    ).state is ResolutionState.INVALID
+
+
+def _corrupt_present_cycle_facts(cycle, corruption):
+    fact = cycle["blocker_facts"][0]
+    if corruption == "obligation-verdict":
+        cycle["obligation_results"][fact["obligation_id"]] = "pass"
+    elif corruption == "cycle-blocker-id":
+        fact["blocker_id"] = "BLK-foreign"
+    elif corruption == "classification-history":
+        fact["classification"] = "new"
+    else:
+        fact["root_cause_key"] = "forged-root"
+
+
+@pytest.mark.parametrize("missing_index", [0, 1, 2], ids=[
+    "missing-first", "missing-middle", "missing-last",
+])
+@pytest.mark.parametrize("corruption", [
+    "obligation-verdict",
+    "cycle-blocker-id",
+    "classification-history",
+    "root-cause-identity",
+])
+def test_legacy_missing_facts_does_not_mask_present_cross_field_corruption(
+    missing_index, corruption,
+):
+    ledger = _stalled_canonical_ledger()
+    corrupt_index = 1 if missing_index != 1 else 2
+    ledger["cycles"][missing_index].pop("blocker_facts_schema")
+    ledger["cycles"][missing_index].pop("blocker_facts")
+    _corrupt_present_cycle_facts(ledger["cycles"][corrupt_index], corruption)
+
+    with pytest.raises(ValueError) as exc_info:
+        validate_review_ledger(ledger, expected_round=3)
+    assert not isinstance(exc_info.value, LegacyReviewLedgerUnverifiable)
+    assert resolve_convergence(
+        _item(ledger=ledger), expected_round=3,
+    ).state is ResolutionState.INVALID
+
+
+@pytest.mark.parametrize(("missing_index", "present_shape"), [
+    (0, "mixed-unchanged-deeper"),
+    (2, "all-new"),
+])
+def test_legacy_missing_facts_accepts_valid_present_fact_relationships(
+    missing_index, present_shape,
+):
+    ledger = _production_multi_blocker_ledger([
+        ("new", "new", "new"),
+        ("unchanged", "deeper", "deeper"),
+        ("unchanged", "deeper", "deeper"),
+    ], obligation_ids=("dimension:structure",) * 3)
+    ledger["cycles"][missing_index].pop("blocker_facts_schema")
+    ledger["cycles"][missing_index].pop("blocker_facts")
+
+    with pytest.raises(LegacyReviewLedgerUnverifiable):
+        validate_review_ledger(ledger, expected_round=3)
 
 
 @pytest.mark.parametrize(("blocker_id", "seen_count"), [

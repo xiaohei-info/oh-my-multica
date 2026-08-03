@@ -321,7 +321,7 @@ def _run_show(args) -> int:
         print_json(output)
     else:
         _render_table(output, language)
-    return exit_codes.OK
+    return output.get("exit_code", exit_codes.OK)
 
 
 def _run_read(args) -> int:
