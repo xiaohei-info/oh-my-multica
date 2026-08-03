@@ -26,10 +26,11 @@ from omac.core.manifest import (
     _dump_contract,
     load_manifest,
     save_manifest,
+    set_node,
 )
 from omac.core.review_convergence import (
-    REVIEW_PROTOCOL_VERSION, build_review_obligations, open_blockers,
-    review_convergence_decision, review_subject_digest,
+    REVIEW_PROTOCOL_VERSION, advance_review_ledger, build_review_obligations,
+    open_blockers, review_convergence_decision, review_subject_digest,
 )
 from omac.engines import create_engine
 from omac.engines.mock import MockRuntime, MockStore
@@ -4302,6 +4303,143 @@ class TestFailureInjection:
         assert eng.store.assign_log == assignments_before
         assert runs == runs_before
 
+    @pytest.mark.parametrize("invalid_ledger", [
+        {
+            "schema": "future.review-ledger/v9",
+            "cycles": [{"round": 3, "open_count": 1}],
+            "blockers": [],
+        },
+        {
+            "schema": "omac.review-ledger/v1",
+            "cycles": [
+                {
+                    "round": 1,
+                    "open_count": 1,
+                    "open_blocker_ids": ["BLK-core"],
+                    "reported_blocker_ids": ["BLK-core"],
+                },
+                {
+                    "round": 2,
+                    "open_count": 1,
+                    "open_blocker_ids": [],
+                    "reported_blocker_ids": [],
+                },
+                {
+                    "round": 3,
+                    "open_count": 1,
+                    "open_blocker_ids": ["BLK-core"],
+                    "reported_blocker_ids": ["BLK-core"],
+                },
+            ],
+            "blockers": [{
+                "blocker_id": "BLK-core",
+                "root_cause_key": "core-acceptance",
+                "obligation_id": "dimension:structure",
+                "status": "open",
+                "classification": "unchanged",
+                "first_seen_round": 1,
+                "last_seen_round": 3,
+                "seen_count": 2,
+            }],
+        },
+        {
+            "schema": "omac.review-ledger/v1",
+            "cycles": [
+                {
+                    "round": round_index,
+                    "new_count": 1 if round_index == 1 else 0,
+                    "fixed_count": 0,
+                    "regressed_count": 0,
+                    "unchanged_count": 0 if round_index == 1 else 1,
+                    "open_count": 1,
+                    "prior_open_blocker_ids": (
+                        [] if round_index == 1 else ["BLK-core"]
+                    ),
+                    "open_blocker_ids": ["BLK-core"],
+                    "reported_blocker_ids": ["BLK-core"],
+                }
+                for round_index in range(1, 4)
+            ],
+            "blockers": [{
+                "blocker_id": "BLK-core",
+                "root_cause_key": "core-acceptance",
+                "obligation_id": "dimension:structure",
+                "status": "open",
+                "classification": "fixed",
+                "first_seen_round": 1,
+                "last_seen_round": 3,
+                "seen_count": 3,
+            }],
+        },
+    ], ids=["wrong-schema", "cycle-id-underreport", "open-fixed"])
+    def test_active_worker_restore_validates_deferred_ledger_before_manifest_write(
+        self, tmp_path, monkeypatch, invalid_ledger,
+    ):
+        eng, manifest, path, runs, observations = (
+            self._blocked_manifest_with_formal_run(tmp_path, role="worker")
+        )
+        item_id = manifest.nodes["active"].work_item_id
+        current = eng.store.get_work_item(item_id)
+        intent = replace(
+            current.worker_handoff,
+            gate="review",
+            source_review_round=3,
+            target_review_bounce=3,
+        )
+        eng.store.update_work_item_metadata(item_id, worker_handoff=intent)
+        current = eng.store.get_work_item(item_id)
+        current.review_ledger = None
+        current.review_ledger_ref = {
+            "attachment_id": "review-ledger",
+            "sha256": "a" * 64,
+        }
+        deferred = WorkItemControlProjection(
+            current,
+            deferred_payloads=frozenset({WorkItemPayload.REVIEW_LEDGER}),
+        )
+        observations["active"] = deferred
+        before = Path(path).read_bytes()
+
+        monkeypatch.setattr(
+            loop,
+            "reconcile_with_observations",
+            lambda *_args, **_kwargs: loop.ReconcileResult(False, observations),
+        )
+        monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
+        monkeypatch.setattr(
+            eng.store,
+            "hydrate_work_item_evidence",
+            lambda projection, _plan: replace(
+                projection.work_item,
+                review_ledger=invalid_ledger,
+            ),
+        )
+        for target, name in (
+            (eng.store, "update_work_item_metadata"),
+            (eng.store, "update_status"),
+            (eng.store, "assign_work_item"),
+            (eng.runtime, "wake"),
+        ):
+            monkeypatch.setattr(
+                target,
+                name,
+                lambda *_args, _name=name, **_kwargs: pytest.fail(
+                    f"invalid ledger restore must not call {_name}"),
+            )
+        monkeypatch.setattr(
+            loop,
+            "save_manifest",
+            lambda *_args, **_kwargs: pytest.fail(
+                "invalid ledger restore must not save manifest"),
+        )
+
+        with pytest.raises(PlatformError, match="review ledger"):
+            tick(eng.store, eng.runtime, manifest, path)
+
+        assert manifest.nodes["active"].status == "blocked"
+        assert observations["active"] is deferred
+        assert Path(path).read_bytes() == before
+
     @pytest.mark.parametrize("role", ["worker", "reviewer"])
     @pytest.mark.parametrize("trigger_kind", ["comment", "manual", None])
     def test_nonformal_active_run_cannot_restore_blocked_stage(
@@ -5147,6 +5285,73 @@ class TestReviewerRejectBoundedFallback:
         eng.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
         return intent, source
 
+    @staticmethod
+    def _stalled_review_ledger(cycle_count=3, *, classification="unchanged"):
+        ledger = None
+        blocker_id = None
+        for round_index in range(1, cycle_count + 1):
+            current_classification = (
+                "new" if round_index == 1 else classification)
+            report = {
+                "obligation_results": [{
+                    "obligation_id": "dimension:structure",
+                    "status": "fail",
+                    "evidence": "the same invariant still fails",
+                }],
+                "prior_blocker_results": ([] if blocker_id is None else [{
+                    "blocker_id": blocker_id,
+                    "status": current_classification,
+                    "evidence": "the same invariant still fails",
+                }]),
+                "blockers": [{
+                    "root_cause_key": "core-acceptance",
+                    "obligation_id": "dimension:structure",
+                    "summary": "core contract is incomplete",
+                    "evidence": "the same invariant still fails",
+                    "required_fix": "close the contract root",
+                    "classification": current_classification,
+                }],
+            }
+            ledger = advance_review_ledger(
+                ledger,
+                report,
+                verdict="reject",
+                subject_digest=f"subject-{round_index}",
+                round_index=round_index,
+            )
+            blocker_id = ledger["blockers"][0]["blocker_id"]
+        return ledger
+
+    @staticmethod
+    def _late_scope_expanding_review_ledger():
+        ledger = None
+        for round_index in range(1, 7):
+            has_blocker = round_index == 6
+            report = {
+                "obligation_results": [{
+                    "obligation_id": "dimension:structure",
+                    "status": "fail" if has_blocker else "pass",
+                    "evidence": "cycle boundary checked",
+                }],
+                "prior_blocker_results": [],
+                "blockers": ([] if not has_blocker else [{
+                    "root_cause_key": "late-scope",
+                    "obligation_id": "dimension:structure",
+                    "summary": "late scope appeared",
+                    "evidence": "cycle six introduced a new root",
+                    "required_fix": "reconsider the task boundary",
+                    "classification": "new",
+                }]),
+            }
+            ledger = advance_review_ledger(
+                ledger,
+                report,
+                verdict="reject" if has_blocker else "pass",
+                subject_digest=f"subject-{round_index}",
+                round_index=round_index,
+            )
+        return ledger
+
     @pytest.mark.parametrize("terminal_status", ["completed", "cancelled"])
     def test_terminal_worker_handoff_without_submit_uses_bounded_worker_retry(
         self, tmp_path, monkeypatch, terminal_status,
@@ -5516,46 +5721,17 @@ class TestReviewerRejectBoundedFallback:
     def test_non_converging_review_blocks_before_another_worker_handoff(
         self, tmp_path, monkeypatch,
     ):
-        """Semantic non-convergence must request decomposition, not bounce 5."""
+        """Two failed reworks stop at cycle 3, before another handoff."""
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
         path = str(tmp_path / "m.yaml")
         manifest, eng, item = self._setup_reject_node(eng, path)
         current = eng.store.get_work_item(item.id)
-        current.review_ledger = {
-            "schema": "omac.review-ledger/v1",
-            "cycles": [
-                {
-                    "round": round_index,
-                    "subject_digest": f"subject-{round_index}",
-                    "report_digest": f"report-{round_index}",
-                    "verdict": "reject",
-                    "new_count": 0,
-                    "fixed_count": 0,
-                    "regressed_count": 0,
-                    "unchanged_count": 1,
-                    "open_count": open_count,
-                    "prior_open_blocker_ids": ["BLK-core"],
-                    "open_blocker_ids": ["BLK-core"],
-                    "reported_blocker_ids": ["BLK-core"],
-                }
-                for round_index, open_count in enumerate((4, 3, 1, 1), start=1)
-            ],
-            "blockers": [{
-                "blocker_id": "BLK-core",
-                "root_cause_key": "core-acceptance",
-                "obligation_id": "dimension:structure",
-                "summary": "core contract is incomplete",
-                "evidence": "the same invariant still fails",
-                "required_fix": "close the contract root",
-                "status": "open",
-                "classification": "unchanged",
-                "first_seen_round": 1,
-                "last_seen_round": 4,
-                "seen_count": 4,
-            }],
-        }
+        current.review_ledger = self._stalled_review_ledger(2)
         eng.store.update_work_item_metadata(
-            item.id, review_ledger=current.review_ledger)
+            item.id, review_ledger=current.review_ledger, review_bounce=2)
+        current = eng.store.get_work_item(item.id)
+        eng.store.prepare_review_cycle(
+            item.id, review_subject_digest(current, 3))
         current = eng.store.get_work_item(item.id)
         report = _review_report(current, "reject")
         report["prior_blocker_results"][0]["status"] = "unchanged"
@@ -5565,7 +5741,7 @@ class TestReviewerRejectBoundedFallback:
         submit_work(
             eng.store, item.id, verdict="reject", report_file=str(report_path))
         submitted = eng.store.get_work_item(item.id)
-        assert len(submitted.review_ledger["cycles"]) == 5
+        assert len(submitted.review_ledger["cycles"]) == 3
         convergence = review_convergence_decision(submitted.review_ledger)
         assert convergence is not None, submitted.review_ledger
         assert convergence[
@@ -5591,11 +5767,480 @@ class TestReviewerRejectBoundedFallback:
         assert result.state == "needs_decision"
         assert manifest.nodes["a"].status == "blocked"
         assert blocked.status is WorkItemStatus.BLOCKED
-        assert blocked.bounces.review == 0
+        assert blocked.bounces.review == 2
         assert blocked.decision_required["reason_code"] == (
             "review-convergence-stalled")
         assert blocked.decision_required["recommended_action"] == "dag-amendment"
-        assert blocked.decision_required["convergence"]["cycle_count"] == 5
+        assert blocked.decision_required["convergence"]["cycle_count"] == 3
+
+    @pytest.mark.parametrize("terminal_observed", [False, True])
+    def test_restart_consumes_convergence_before_existing_worker_handoff(
+        self, tmp_path, monkeypatch, terminal_observed,
+    ):
+        """Pending and finished handoffs are retired by the same decision."""
+        from dataclasses import replace
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        intent, _source = self._prepare_causal_handoff(eng, item)
+        intent = replace(
+            intent, source_review_round=3, target_review_bounce=3)
+        eng.store.update_work_item_metadata(item.id, worker_handoff=intent)
+        if terminal_observed:
+            intent = replace(
+                intent,
+                terminal_observed_at="2026-08-03T00:00:00+00:00",
+            )
+            eng.store.update_work_item_metadata(
+                item.id, worker_handoff=intent)
+            eng.store.get_work_item(
+                item.id).agent_run_finished_without_submit = True
+        eng.store.update_work_item_metadata(
+            item.id, review_ledger=self._stalled_review_ledger())
+        set_node(manifest, "a", status="in_progress")
+        save_manifest(manifest, path)
+
+        assignments_before = list(eng.store.assign_log)
+        runs_before = list(eng.runtime.list_runs(item.id))
+        decision_writes = 0
+        blocked_writes = 0
+        original_update = eng.store.update_work_item_metadata
+        original_status = eng.store.update_status
+
+        def update(item_id, **metadata):
+            nonlocal decision_writes
+            decision = metadata.get("decision_required")
+            if isinstance(decision, dict) and decision.get(
+                "reason_code") == "review-convergence-stalled":
+                decision_writes += 1
+            return original_update(item_id, **metadata)
+
+        def update_status(item_id, status):
+            nonlocal blocked_writes
+            if status is WorkItemStatus.BLOCKED:
+                blocked_writes += 1
+            return original_status(item_id, status)
+
+        monkeypatch.setattr(eng.store, "update_work_item_metadata", update)
+        monkeypatch.setattr(eng.store, "update_status", update_status)
+        monkeypatch.setattr(
+            loop,
+            "_dispatch_worker_handoff",
+            lambda *_args, **_kwargs: pytest.fail(
+                "convergence decision must precede handoff observation/retry"),
+        )
+
+        first = tick(eng.store, eng.runtime, manifest, path)
+        persisted = load_manifest(path)
+        second = tick(eng.store, eng.runtime, persisted, path)
+
+        blocked = eng.store.get_work_item(item.id)
+        assert first.state == "needs_decision"
+        assert second.state == "needs_decision"
+        assert persisted.nodes["a"].status == "blocked"
+        assert blocked.status is WorkItemStatus.BLOCKED
+        assert blocked.decision_required["reason_code"] == (
+            "review-convergence-stalled")
+        assert blocked.worker_handoff == intent
+        assert decision_writes == 1
+        assert blocked_writes == 1
+        assert eng.store.assign_log == assignments_before
+        assert eng.runtime.list_runs(item.id) == runs_before
+
+    def test_active_worker_restore_consumes_convergence_before_any_write(
+        self, tmp_path, monkeypatch,
+    ):
+        """An active Run cannot publish in_progress before its decision."""
+        eng, manifest, path, runs, observations = (
+            TestFailureInjection._blocked_manifest_with_formal_run(
+                tmp_path, role="worker")
+        )
+        item_id = manifest.nodes["active"].work_item_id
+        current = eng.store.get_work_item(item_id)
+        intent = replace(
+            current.worker_handoff,
+            gate="review",
+            source_review_round=3,
+            target_review_bounce=3,
+        )
+        eng.store.update_work_item_metadata(
+            item_id,
+            worker_handoff=intent,
+            review_ledger=self._stalled_review_ledger(),
+        )
+        observations["active"] = eng.store.observe_work_item_control(item_id)
+        events = []
+        original_decision = loop.review_convergence_decision
+        original_save = loop.save_manifest
+        original_update = eng.store.update_work_item_metadata
+        original_status = eng.store.update_status
+
+        monkeypatch.setattr(
+            loop,
+            "reconcile_with_observations",
+            lambda *_args, **_kwargs: loop.ReconcileResult(False, observations),
+        )
+        monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
+        monkeypatch.setattr(
+            eng.store,
+            "assign_work_item",
+            lambda *_args, **_kwargs: pytest.fail(
+                "convergence-blocked restore must not assign"),
+        )
+        monkeypatch.setattr(
+            eng.runtime,
+            "wake",
+            lambda *_args, **_kwargs: pytest.fail(
+                "convergence-blocked restore must not wake"),
+        )
+
+        def decide(ledger):
+            events.append("decision")
+            return original_decision(ledger)
+
+        def save(current_manifest, current_path):
+            events.append(f"manifest:{current_manifest.nodes['active'].status}")
+            return original_save(current_manifest, current_path)
+
+        def update(item_id, **metadata):
+            events.append("store:update-metadata")
+            return original_update(item_id, **metadata)
+
+        def update_status(item_id, status):
+            events.append(f"store:status:{status.value}")
+            return original_status(item_id, status)
+
+        monkeypatch.setattr(loop, "review_convergence_decision", decide)
+        monkeypatch.setattr(loop, "save_manifest", save)
+        monkeypatch.setattr(eng.store, "update_work_item_metadata", update)
+        monkeypatch.setattr(eng.store, "update_status", update_status)
+
+        result = tick(eng.store, eng.runtime, manifest, path)
+
+        blocked = eng.store.get_work_item(item_id)
+        assert events[0] == "decision"
+        assert "manifest:in_progress" not in events
+        assert result.state == "needs_decision"
+        assert manifest.nodes["active"].status == "blocked"
+        assert blocked.decision_required["reason_code"] == (
+            "review-convergence-stalled")
+
+    def test_impossible_ledger_count_fails_before_worker_handoff_side_effects(
+        self, tmp_path, monkeypatch,
+    ):
+        """Canonical cycle sightings and seen_count must agree exactly."""
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        intent, _source = self._prepare_causal_handoff(eng, item)
+        intent = replace(
+            intent, source_review_round=3, target_review_bounce=3)
+        ledger = self._stalled_review_ledger()
+        ledger["blockers"][0]["seen_count"] = 2
+        eng.store.update_work_item_metadata(
+            item.id, worker_handoff=intent, review_ledger=ledger)
+        set_node(manifest, "a", status="in_progress")
+        save_manifest(manifest, path)
+        before = Path(path).read_bytes()
+
+        monkeypatch.setattr(
+            loop,
+            "_dispatch_worker_handoff",
+            lambda *_args, **_kwargs: pytest.fail(
+                "invalid ledger must not reach worker handoff"),
+        )
+        for target, name in (
+            (eng.store, "update_work_item_metadata"),
+            (eng.store, "update_status"),
+            (eng.store, "assign_work_item"),
+            (eng.runtime, "wake"),
+        ):
+            monkeypatch.setattr(
+                target,
+                name,
+                lambda *_args, _name=name, **_kwargs: pytest.fail(
+                    f"invalid ledger must not call {_name}"),
+            )
+
+        with pytest.raises(PlatformError, match="seen_count"):
+            tick(eng.store, eng.runtime, manifest, path)
+
+        assert manifest.nodes["a"].status == "in_progress"
+        assert Path(path).read_bytes() == before
+
+    @pytest.mark.parametrize("forgery", [
+        "first-seen-round",
+        "current-status",
+        "current-classification-fixed",
+        "current-classification-deeper",
+        "cycle-id-underreport",
+        "latest-reported-not-open",
+    ])
+    def test_forged_blocker_projection_fails_before_worker_handoff_side_effects(
+        self, tmp_path, monkeypatch, forgery,
+    ):
+        """Canonical cycle facts cannot be reinterpreted by blocker fields."""
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        intent, _source = self._prepare_causal_handoff(eng, item)
+        if forgery == "first-seen-round":
+            round_index = 6
+            ledger = self._late_scope_expanding_review_ledger()
+            ledger["blockers"][0]["first_seen_round"] = 1
+        elif forgery == "current-status":
+            round_index = 3
+            ledger = self._stalled_review_ledger()
+            ledger["blockers"][0].update({
+                "status": "fixed",
+                "classification": "fixed",
+            })
+        elif forgery == "current-classification-fixed":
+            round_index = 3
+            ledger = self._stalled_review_ledger()
+            ledger["blockers"][0]["classification"] = "fixed"
+        elif forgery == "current-classification-deeper":
+            round_index = 3
+            ledger = self._stalled_review_ledger()
+            ledger["blockers"][0]["classification"] = "deeper"
+        elif forgery == "cycle-id-underreport":
+            round_index = 3
+            ledger = self._stalled_review_ledger()
+            ledger["cycles"][1]["open_blocker_ids"] = []
+            ledger["cycles"][1]["reported_blocker_ids"] = []
+            ledger["blockers"][0]["seen_count"] = 2
+        else:
+            round_index = 3
+            ledger = self._stalled_review_ledger()
+            ledger["cycles"][-1]["open_blocker_ids"] = []
+            ledger["blockers"][0].update({
+                "status": "fixed",
+                "classification": "fixed",
+            })
+        intent = replace(
+            intent,
+            source_review_round=round_index,
+            target_review_bounce=round_index,
+        )
+        eng.store.update_work_item_metadata(
+            item.id, worker_handoff=intent, review_ledger=ledger)
+        set_node(manifest, "a", status="in_progress")
+        save_manifest(manifest, path)
+        before = Path(path).read_bytes()
+
+        monkeypatch.setattr(
+            loop,
+            "_dispatch_worker_handoff",
+            lambda *_args, **_kwargs: pytest.fail(
+                "forged blocker projection must not reach worker handoff"),
+        )
+        for target, name in (
+            (eng.store, "update_work_item_metadata"),
+            (eng.store, "update_status"),
+            (eng.store, "assign_work_item"),
+            (eng.runtime, "wake"),
+        ):
+            monkeypatch.setattr(
+                target,
+                name,
+                lambda *_args, _name=name, **_kwargs: pytest.fail(
+                    f"forged blocker projection must not call {_name}"),
+            )
+        monkeypatch.setattr(
+            loop,
+            "save_manifest",
+            lambda *_args, **_kwargs: pytest.fail(
+                "forged blocker projection must not save manifest"),
+        )
+
+        with pytest.raises(PlatformError, match="review ledger"):
+            tick(eng.store, eng.runtime, manifest, path)
+
+        assert manifest.nodes["a"].status == "in_progress"
+        assert Path(path).read_bytes() == before
+
+    @pytest.mark.parametrize(
+        ("round_index", "requires_ledger"),
+        [(1, False), (3, True)],
+    )
+    def test_review_handoff_hydration_plan_requires_authoritative_ledger(
+        self, tmp_path, round_index, requires_ledger,
+    ):
+        """No recovery threshold may bypass the authoritative ledger."""
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        intent, _source = self._prepare_causal_handoff(eng, item)
+        set_node(manifest, "a", status="in_progress")
+        eng.store.update_work_item_metadata(
+            item.id,
+            worker_handoff=replace(
+                intent,
+                source_review_round=round_index,
+                target_review_bounce=round_index,
+            ),
+        )
+        current = eng.store.get_work_item(item.id)
+        current.review_ledger = None
+        current.review_ledger_ref = {
+            "attachment_id": "review-ledger-attachment",
+            "sha256": "a" * 64,
+        }
+        projection = WorkItemControlProjection(
+            current,
+            deferred_payloads=frozenset({WorkItemPayload.REVIEW_LEDGER}),
+        )
+
+        plan = loop._build_work_item_hydration_plan(
+            manifest.nodes["a"], projection)
+
+        assert (
+            WorkItemPayload.REVIEW_LEDGER in plan
+        ) is requires_ledger
+
+    @pytest.mark.parametrize("invalid_ledger", [
+        {},
+        {"schema": "future.review-ledger/v9", "cycles": [], "blockers": []},
+        {"schema": "omac.review-ledger/v1", "cycles": {}, "blockers": []},
+        {"schema": "omac.review-ledger/v1", "cycles": [], "blockers": {}},
+        {"schema": "omac.review-ledger/v1", "cycles": ["bad"], "blockers": []},
+        {"schema": "omac.review-ledger/v1", "cycles": [], "blockers": ["bad"]},
+        {
+            "schema": "omac.review-ledger/v1",
+            "cycles": [{"round": 1}],
+            "blockers": [],
+        },
+        {
+            "schema": "omac.review-ledger/v1",
+            "cycles": [{"round": 3, "open_count": 1}],
+            "blockers": [{
+                "blocker_id": "BLK-1", "root_cause_key": "root-1",
+                "obligation_id": "dimension:structure", "status": "open",
+                "classification": "deeper", "first_seen_round": 1,
+            }],
+        },
+    ])
+    def test_invalid_hydrated_review_ledger_fails_before_handoff_side_effects(
+        self, tmp_path, monkeypatch, invalid_ledger,
+    ):
+        """A parseable deferred ledger is still untrusted until canonical validation."""
+        from omac.errors import PlatformError
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        intent, _source = self._prepare_causal_handoff(eng, item)
+        intent = replace(
+            intent, source_review_round=3, target_review_bounce=3)
+        eng.store.update_work_item_metadata(item.id, worker_handoff=intent)
+        current = eng.store.get_work_item(item.id)
+        current.review_ledger = None
+        current.review_ledger_ref = {
+            "attachment_id": "review-ledger", "sha256": "a" * 64}
+        set_node(manifest, "a", status="in_progress")
+        save_manifest(manifest, path)
+        deferred = WorkItemControlProjection(
+            current,
+            deferred_payloads=frozenset({WorkItemPayload.REVIEW_LEDGER}),
+        )
+
+        monkeypatch.setattr(
+            eng.store, "observe_work_item_control", lambda _item_id: deferred)
+        monkeypatch.setattr(
+            eng.store,
+            "hydrate_work_item_evidence",
+            lambda projection, _plan: replace(
+                projection.work_item, review_ledger=invalid_ledger),
+        )
+        before = Path(path).read_bytes()
+        assignments = list(eng.store.assign_log)
+        for target, name in (
+            (eng.store, "update_work_item_metadata"),
+            (eng.store, "update_status"),
+            (eng.store, "assign_work_item"),
+            (eng.runtime, "wake"),
+        ):
+            monkeypatch.setattr(
+                target, name,
+                lambda *_args, _name=name, **_kwargs: pytest.fail(
+                    f"invalid ledger must not call {_name}"),
+            )
+
+        for current_manifest in (manifest, load_manifest(path)):
+            with pytest.raises(PlatformError, match="review ledger"):
+                tick(eng.store, eng.runtime, current_manifest, path)
+            assert current_manifest.nodes["a"].status == "in_progress"
+            assert Path(path).read_bytes() == before
+            assert eng.store.assign_log == assignments
+            persisted = eng.store.get_work_item(item.id)
+            assert persisted.status is WorkItemStatus.IN_PROGRESS
+            assert persisted.worker_handoff == intent
+            assert persisted.review_ledger is None
+            assert persisted.review_ledger_ref == current.review_ledger_ref
+
+    def test_truncated_review_ledger_fails_before_runner_handoff(
+        self, tmp_path, monkeypatch,
+    ):
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        intent, _source = self._prepare_causal_handoff(eng, item)
+        intent = replace(
+            intent, source_review_round=10, target_review_bounce=10)
+        ledger = self._stalled_review_ledger(1)
+        ledger["cycles"][0]["round"] = 10
+        ledger["blockers"][0].update({
+            "classification": "deeper",
+            "last_seen_round": 10,
+            "seen_count": 1,
+        })
+        eng.store.update_work_item_metadata(
+            item.id, worker_handoff=intent, review_ledger=ledger)
+        set_node(manifest, "a", status="in_progress")
+        save_manifest(manifest, path)
+        before = Path(path).read_bytes()
+        assignments = list(eng.store.assign_log)
+
+        monkeypatch.setattr(
+            loop,
+            "_dispatch_worker_handoff",
+            lambda *_args, **_kwargs: pytest.fail(
+                "truncated cycle history must not reach handoff dispatch"),
+        )
+
+        with pytest.raises(PlatformError, match="review ledger"):
+            tick(eng.store, eng.runtime, manifest, path)
+
+        assert manifest.nodes["a"].status == "in_progress"
+        assert Path(path).read_bytes() == before
+        assert eng.store.assign_log == assignments
+
+    def test_valid_nonconverging_review_ledger_continues_handoff_retry(
+        self, tmp_path, monkeypatch,
+    ):
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        intent, _source = self._prepare_causal_handoff(eng, item)
+        intent = replace(
+            intent, source_review_round=3, target_review_bounce=3)
+        ledger = self._stalled_review_ledger(classification="deeper")
+        eng.store.update_work_item_metadata(
+            item.id, worker_handoff=intent, review_ledger=ledger)
+        set_node(manifest, "a", status="in_progress")
+        calls = []
+
+        def dispatch(*_args, **_kwargs):
+            calls.append(True)
+            return loop._WorkerHandoffResult("waiting", intent)
+
+        monkeypatch.setattr(loop, "_dispatch_worker_handoff", dispatch)
+
+        assert loop.collect_results(
+            eng.store, eng.runtime, manifest, path) == {}
+        assert calls == [True]
+        assert manifest.nodes["a"].status == "in_progress"
 
     def test_pass_with_nits_at_review_limit_needs_decision_without_handoff(
         self, tmp_path, monkeypatch,
@@ -8316,6 +8961,10 @@ class TestReviewerRejectBoundedFallback:
             tick(eng.store, eng.runtime, manifest, fpath, max_parallel=4)
             got = eng.store.get_work_item(item.id)
             assert manifest.nodes["a"].status == "in_progress", f"第 {i+1} 次应回退 worker"
+            if i == 2:
+                ledger = self._stalled_review_ledger(classification="deeper")
+                eng.store.update_work_item_metadata(
+                    item.id, review_ledger=ledger)
             # 推进:worker 修完重新提交 → in_review
             eng.store.set_node_contract(item.id, self._simple_contract())
             self._submit_revision(eng, item, revision=i + 2)

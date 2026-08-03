@@ -92,9 +92,11 @@ For a dispatched task, do not pre-read every guide. Read `guide_refs` from
 - Every review has finite `review_obligations`. Cross-cycle blockers live in a
   review ledger with stable root-cause identity and explicit fixed, unchanged,
   deeper, regressed, or new classification.
-- Repeated new blockers or a regression switches `review_state` to
-  `convergence-audit`, requiring root-cause closure instead of unlimited normal
-  bounce cycles.
+- `review_state` only projects the authoritative
+  `review_convergence_decision`. Its public mode remains `convergence-audit`;
+  `review_state.decision.mode` carries the specific `stalled`,
+  `scope-expanding`, or `exhausted` reason. A decision stops rework for the
+  current node and requires an explicit DAG amendment instead of another bounce.
 - After plan, acceptance, or decompose review budget is exhausted, a Human can
   authorize one round with `omac plan continue-review --dag-key <stage-key>`.
   The `review_continuation` decision is persisted on the platform work item,

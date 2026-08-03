@@ -9,7 +9,7 @@ from ._stub import not_implemented
 from ...core import config as config_mod
 from ...engines import create_engine
 from ...engines.models import EngineConfig, WorkItemStatus
-from ...errors import OmacError, ValidationError
+from ...errors import NeedsDecision, OmacError, ValidationError
 from ...i18n import resolve_language, t, ui
 from ...pipeline.dispatch import (
     SUBMIT_PARAM_SPECS,
@@ -227,22 +227,26 @@ def _submit(args) -> int:
     """work submit 入口:调 dispatch 左移门,ValidationError → exit 5。"""
     store = _resolve_store()
     agent_pool = set(store.list_members(store.config.workspace_id))
-    result = submit(
-        store,
-        args.issue_id,
-        plan_file=args.plan_file,
-        project_rules_file=args.project_rules_file,
-        acceptance_file=args.acceptance_file,
-        manifest_file=args.manifest_file,
-        amendment_file=args.amendment_file,
-        pr_url=args.pr_url,
-        verification_file=args.verification_file,
-        verdict=args.verdict,
-        report_file=args.report_file,
-        acceptance_results_file=args.acceptance_results_file,
-        agent_pool=agent_pool,
-        read_errors_as_validation=True,
-    )
+    try:
+        result = submit(
+            store,
+            args.issue_id,
+            plan_file=args.plan_file,
+            project_rules_file=args.project_rules_file,
+            acceptance_file=args.acceptance_file,
+            manifest_file=args.manifest_file,
+            amendment_file=args.amendment_file,
+            pr_url=args.pr_url,
+            verification_file=args.verification_file,
+            verdict=args.verdict,
+            report_file=args.report_file,
+            acceptance_results_file=args.acceptance_results_file,
+            agent_pool=agent_pool,
+            read_errors_as_validation=True,
+        )
+    except NeedsDecision as exc:
+        print_json(exc.report)
+        raise
     target = (
         result.advanced_to.value
         if hasattr(result.advanced_to, "value")
