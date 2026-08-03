@@ -3132,7 +3132,7 @@ def test_initial_reviewer_dispatch_recovery_requires_formal_dispatch(
     if not accepted:
         with pytest.raises(
             loop._ReviewerDispatchUnresolved,
-            match="not a formal reviewer dispatch",
+            match="not a formal assignment/rerun dispatch",
         ):
             loop._dispatch_reviewer_for_current_subject(
                 eng.store, eng.runtime, manifest, "a")
@@ -3366,6 +3366,7 @@ class TestFailureInjection:
     @staticmethod
     def _blocked_manifest_with_formal_run(
         tmp_path, *, role: str, run_status: str = "running",
+        trigger_kind: str | None = "issue_assignment",
     ):
         reviewer = "bob" if role == "reviewer" else None
         active = _node("active", reviewer=reviewer, contract=_contract())
@@ -3402,7 +3403,6 @@ class TestFailureInjection:
                     target_agent_id=agent_id,
                     cutoff_created_at="2026-08-01T00:00:00Z",
                     generation="review-1",
-                    target_run_id=run_id,
                 ),
             )
         else:
@@ -3419,7 +3419,6 @@ class TestFailureInjection:
                     target_review_bounce=0,
                     generation="worker-1",
                     target_agent_id=agent_id,
-                    target_run_id=run_id,
                     target_worker_bounce=0,
                 ),
             )
@@ -3434,16 +3433,19 @@ class TestFailureInjection:
             status=run_status,
             agent_id=agent_id,
             created_at="2026-08-01T00:01:00Z",
+            trigger_kind=trigger_kind,
         )]
         save_manifest(manifest, path)
         return eng, manifest, path, runs, observations
 
     @pytest.mark.parametrize("role", ["worker", "reviewer"])
+    @pytest.mark.parametrize("trigger_kind", ["issue_assignment", "rerun"])
     def test_formal_active_run_keeps_runner_alive_with_other_blocked_node(
-        self, tmp_path, monkeypatch, role,
+        self, tmp_path, monkeypatch, role, trigger_kind,
     ):
         eng, manifest, path, runs, observations = (
-            self._blocked_manifest_with_formal_run(tmp_path, role=role)
+            self._blocked_manifest_with_formal_run(
+                tmp_path, role=role, trigger_kind=trigger_kind)
         )
         run_reads = []
         monkeypatch.setattr(
@@ -3464,14 +3466,148 @@ class TestFailureInjection:
             lambda _item_id: pytest.fail(
                 "tick must reuse reconcile observations"),
         )
+        assignments_before = list(eng.store.assign_log)
+        runs_before = list(runs)
 
         result = tick(eng.store, eng.runtime, manifest, path)
 
         assert result.state == "running"
         assert result.running == ["active"]
-        assert set(result.failed) == {"active", "decision"}
+        assert result.failed == ["decision"]
         assert result.report == {}
         assert run_reads == [manifest.nodes["active"].work_item_id]
+        assert manifest.nodes["active"].status == (
+            "in_review" if role == "reviewer" else "in_progress")
+        assert eng.store.assign_log == assignments_before
+        assert runs == runs_before
+
+        restarted = load_manifest(path)
+        second = tick(eng.store, eng.runtime, restarted, path)
+
+        assert second.state == "running"
+        assert second.running == ["active"]
+        assert second.failed == ["decision"]
+        assert eng.store.assign_log == assignments_before
+        assert runs == runs_before
+
+    @pytest.mark.parametrize("role", ["worker", "reviewer"])
+    @pytest.mark.parametrize("trigger_kind", ["comment", "manual", None])
+    def test_nonformal_active_run_cannot_restore_blocked_stage(
+        self, tmp_path, monkeypatch, role, trigger_kind,
+    ):
+        eng, manifest, path, runs, observations = (
+            self._blocked_manifest_with_formal_run(
+                tmp_path, role=role, trigger_kind=trigger_kind)
+        )
+        monkeypatch.setattr(
+            loop, "reconcile_with_observations",
+            lambda *_args, **_kwargs: loop.ReconcileResult(
+                False, observations),
+        )
+        monkeypatch.setattr(
+            loop, "collect_results", lambda *_args, **_kwargs: {})
+        monkeypatch.setattr(
+            eng.runtime, "list_runs", lambda _item_id: list(runs))
+        assignments_before = list(eng.store.assign_log)
+
+        result = tick(eng.store, eng.runtime, manifest, path)
+
+        assert result.state == "needs_decision"
+        assert result.running == []
+        assert set(result.failed) == {"active", "decision"}
+        assert manifest.nodes["active"].status == "blocked"
+        assert eng.store.assign_log == assignments_before
+
+        restarted = load_manifest(path)
+        second = tick(eng.store, eng.runtime, restarted, path)
+
+        assert second.state == "needs_decision"
+        assert second.running == []
+        assert set(second.failed) == {"active", "decision"}
+        assert eng.store.assign_log == assignments_before
+
+    def test_active_worker_is_not_cascade_blocked_with_blocked_downstream(
+        self, tmp_path, monkeypatch,
+    ):
+        eng, manifest, path, runs, observations = (
+            self._blocked_manifest_with_formal_run(tmp_path, role="worker")
+        )
+        manifest.nodes["decision"].blocked_by = ["active"]
+        save_manifest(manifest, path)
+        monkeypatch.setattr(
+            loop, "reconcile_with_observations",
+            lambda *_args, **_kwargs: loop.ReconcileResult(
+                False, observations),
+        )
+        monkeypatch.setattr(
+            loop, "collect_results", lambda *_args, **_kwargs: {})
+        monkeypatch.setattr(
+            eng.runtime, "list_runs", lambda _item_id: list(runs))
+
+        result = tick(eng.store, eng.runtime, manifest, path)
+
+        assert result.state == "running"
+        assert result.running == ["active"]
+        assert result.failed == ["decision"]
+        assert manifest.nodes["active"].status == "in_progress"
+        assert manifest.nodes["decision"].status == "blocked"
+
+    def test_recovered_active_reviewer_completion_is_consumed_as_rework(
+        self, tmp_path,
+    ):
+        from omac.engines import mock as mock_engine
+
+        eng, manifest, path, item, _reviewer_id = (
+            _reviewer_runtime_failure_fixture(tmp_path)
+        )
+        decision = _node("decision")
+        decision.status = "blocked"
+        decision_item = eng.store.create_work_item(
+            "ws", "decision", "caller decision", dag_key="decision",
+            worker=decision.worker,
+            initial_status=WorkItemStatus.BLOCKED,
+        )
+        decision.work_item_id = decision_item.id
+        manifest.nodes["decision"] = decision
+        manifest.nodes["a"].status = "blocked"
+        save_manifest(manifest, path)
+        reviewer_assignments = len([
+            entry for entry in eng.store.assign_log if entry[2] == "reviewer"
+        ])
+
+        first = tick(eng.store, eng.runtime, manifest, path)
+
+        assert first.state == "running"
+        assert first.running == ["a"]
+        assert first.failed == ["decision"]
+        assert manifest.nodes["a"].status == "in_review"
+        assert len([
+            entry for entry in eng.store.assign_log if entry[2] == "reviewer"
+        ]) == reviewer_assignments
+
+        current = eng.store.get_work_item(item.id)
+        report = _review_report(current, "reject")
+        eng.store.update_work_item_metadata(
+            item.id,
+            review_verdict="reject",
+            review_report=report,
+            review_report_source=yaml.safe_dump(report),
+        )
+        mock_engine._finish_mock_run(item.id)
+
+        second = tick(eng.store, eng.runtime, manifest, path)
+
+        recovered = eng.store.get_work_item(item.id)
+        assert second.state == "running"
+        assert manifest.nodes["a"].status == "in_progress"
+        assert recovered.phase is TaskPhase.AUTHORING
+        assert recovered.bounces.review == 1
+        assert len([
+            entry for entry in eng.store.assign_log if entry[2] == "reviewer"
+        ]) == reviewer_assignments
+        assert len([
+            entry for entry in eng.store.assign_log if entry[2] == "worker"
+        ]) == 2
 
     def test_terminal_formal_run_does_not_hide_needs_decision(
         self, tmp_path, monkeypatch,
