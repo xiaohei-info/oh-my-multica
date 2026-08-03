@@ -107,7 +107,10 @@ class AgentRunObservation:
 
     @property
     def active(self) -> bool:
-        return self.status in {"queued", "pending", "running", "dispatching"}
+        return self.status in {
+            "queued", "pending", "dispatched", "running", "dispatching",
+            "waiting_local_directory", "deferred",
+        }
 
     @property
     def terminal(self) -> bool:
