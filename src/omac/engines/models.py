@@ -8,7 +8,7 @@ from typing import Any, Dict, FrozenSet, List, Optional, Tuple, TypeAlias
 
 from ..core.taskmeta import (
     Bounces, DeliveryIdentity, ReviewerRunBaseline, TaskKind, TaskPhase,
-    WorkerHandoffIntent,
+    WorkerHandoffIntent, current_review_ledger,
 )
 
 
@@ -115,6 +115,10 @@ class AgentRunObservation:
     @property
     def terminal(self) -> bool:
         return self.status in {"completed", "failed", "cancelled"}
+
+    @property
+    def formal(self) -> bool:
+        return self.trigger_kind in {"issue_assignment", "rerun"}
 
 
 @dataclass(frozen=True)
@@ -228,6 +232,8 @@ class WorkItem:
     review_obligations_ref: Optional[Dict[str, Any]] = None
     review_ledger: Optional[Dict[str, Any]] = None
     review_ledger_ref: Optional[Dict[str, Any]] = None
+    review_generation: Optional[str] = None
+    review_ledger_generation: Optional[str] = None
     review_continuation: Optional[Dict[str, Any]] = None
     reviewer_run_baseline: Optional[ReviewerRunBaseline] = None
     worker_handoff: Optional[WorkerHandoffIntent] = None
@@ -247,6 +253,7 @@ class WorkItem:
     kind: TaskKind = TaskKind.DEVELOP
     phase: TaskPhase = TaskPhase.AUTHORING
     bounces: Bounces = field(default_factory=Bounces)
+    bounce_baseline: Optional[Dict[str, int]] = None
     # 通用交付物:按 kind 承载 plan/acceptance/manifest/acceptance-results 正文
     deliverable: Optional[str] = None
     deliverable_ref: Optional[Dict[str, Any]] = None
@@ -269,6 +276,11 @@ class WorkItem:
     def requires_decision(self) -> bool:
         """Empty platform tombstones are the same domain fact as no decision."""
         return self.decision_required not in (None, {})
+
+    @property
+    def current_review_ledger(self) -> Optional[Dict[str, Any]]:
+        """Return the ledger only when it belongs to the current control generation."""
+        return current_review_ledger(self)
 
     def is_completed(self) -> bool:
         return self.status == WorkItemStatus.DONE

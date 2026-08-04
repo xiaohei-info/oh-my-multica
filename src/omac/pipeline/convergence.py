@@ -14,7 +14,7 @@ from ..core.review_convergence import (
     review_state as summarize_review_state,
     validate_review_ledger,
 )
-from ..core.taskmeta import TaskPhase
+from ..core.taskmeta import TaskPhase, current_review_ledger
 from ..engines.models import WorkItemStatus
 
 
@@ -88,7 +88,7 @@ def resolve_convergence(
     node_id: str | None = None,
     recommended_action: str = "dag-amendment",
 ) -> ConvergenceResolution:
-    ledger = getattr(item, "review_ledger", None)
+    ledger = current_review_ledger(item)
     cycles = ledger.get("cycles") if isinstance(ledger, dict) else None
     effective_cycles = max(
         len(cycles) + (1 if for_next_cycle and isinstance(cycles, list) else 0),

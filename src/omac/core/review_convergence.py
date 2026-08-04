@@ -20,7 +20,9 @@ from .acceptance_responsibility import (
     responsibility_matrix,
 )
 from .manifest import loads_manifest
-from .taskmeta import DECISION_REQUIRED_SCHEMA, TaskKind, TaskPhase
+from .taskmeta import (
+    DECISION_REQUIRED_SCHEMA, TaskKind, TaskPhase, current_review_ledger,
+)
 
 
 REVIEW_PROTOCOL_VERSION = "omac.review/v2"
@@ -839,7 +841,7 @@ def validate_convergence_review(item: Any, verdict: str, report: Any) -> list[st
     prior_results = _results_by_id(
         report.get("prior_blocker_results", []), "blocker_id",
         errors=errors, prefix="review_report.prior_blocker_results")
-    ledger = getattr(item, "review_ledger", None)
+    ledger = current_review_ledger(item)
     all_records = {
         blocker.get("blocker_id"): blocker
         for blocker in (ledger.get("blockers", []) if isinstance(ledger, dict) else [])

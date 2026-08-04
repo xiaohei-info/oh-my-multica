@@ -154,6 +154,8 @@ def _render_table(output: dict, language: str) -> None:
         _render_kv("blocked_by", task["blocked_by"])
     if task.get("bounces"):
         print(f"- {t('work.table.bounces', language=language)}: {task['bounces']}")
+    if task.get("bounce_budget"):
+        _render_kv("bounce_budget", task["bounce_budget"])
     if is_review and task.get("worker"):
         print(f"- {t('work.table.author', language=language)}: {task['worker']}")
 
