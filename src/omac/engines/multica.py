@@ -1589,7 +1589,19 @@ class MulticaStore(WorkItemStore):
         review_generation: str,
         bounce_baseline: Optional[Dict[str, int]] = None,
     ) -> WorkItem:
-        """Publish the contract, then atomically switch the issue control projection."""
+        """Publish the contract, then reset the issue control projection.
+
+        Not one-shot atomic: one issue PUT fixes the dispatch fields
+        (status/assignee/suppress_run) first so the issue becomes
+        non-dispatchable, then each recovery metadata key is persisted
+        through ``issue metadata set``.  The real Multica server silently
+        ignores a ``metadata`` field in the issue PUT body (metadata is a
+        separate KV sub-resource), so recovery metadata must go through the
+        metadata CLI path or the read-back never converges.  Recovery runs
+        with the DAG runner stopped; a partial failure leaves todo status
+        with stale metadata, and re-running this restore skips
+        already-matching keys and converges.
+        """
         from ..core.manifest import _dump_contract
 
         payload = _dump_contract(contract) if not isinstance(contract, dict) else contract
@@ -1597,7 +1609,6 @@ class MulticaStore(WorkItemStore):
         contract_ref = self._publish_payload_comment(
             item_id, "contract", source, ".yaml")
         _issue, metadata = self._read_issue_metadata(item_id)
-        projected = dict(metadata)
         controls = (
             *_REVIEW_CLEAR_METADATA,
             (REVIEW_SUBJECT_DIGEST_KEY, ""),
@@ -1612,13 +1623,9 @@ class MulticaStore(WorkItemStore):
             (CONTRACT_REF_KEY, contract_ref),
             ("reviewer", ""),
         )
-        for key, value in controls:
-            assert_metadata_write_allowed(key, value)
-            projected[key] = encode_metadata_value(value)
         self._put_issue_fields_direct(
             item_id,
             {
-                "metadata": projected,
                 "status": "todo",
                 "assignee_type": None,
                 "assignee_id": None,
@@ -1626,6 +1633,7 @@ class MulticaStore(WorkItemStore):
             },
             operation="authoring-generation recovery",
         )
+        self._apply_metadata_projection(item_id, controls, metadata=metadata)
         self._pending_assignment_wakes.discard(item_id)
         return self.get_work_item(item_id)
 
