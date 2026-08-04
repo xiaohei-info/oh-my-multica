@@ -589,22 +589,23 @@ def accept_amendment(
         current_manifest.meta.get("last_amendment_id")
         == amendment.get("amendment_id")
     )
-    active = []
+    non_terminal_formal = []
     for node_id in authoring_recovery_node_ids(current_manifest, amendment):
         node = current_manifest.nodes.get(node_id)
         if node is None or not node.work_item_id:
             continue
-        active.extend(
+        non_terminal_formal.extend(
             (node_id, run.id)
             for run in engine.runtime.list_runs(node.work_item_id)
-            if run.active and run.formal
+            if run.formal and not run.terminal
         )
-    if active:
+    if non_terminal_formal:
         details = ", ".join(
-            f"{node_id}={run_id}" for node_id, run_id in active)
+            f"{node_id}={run_id}" for node_id, run_id in non_terminal_formal)
         raise ValidationError(ui(
             "Amendment authoring recovery is blocked by active formal Agent "
-            f"Runs: {details}. Wait for them to become explicitly terminal, "
+            "Runs or formal Agent Runs without an explicit terminal state: "
+            f"{details}. Wait for them to become explicitly terminal, "
             "then repeat the same accept command.",
             "amendment authoring 恢复被活跃 formal Agent Run 阻断："
             f"{details}。请等待这些 Run 明确终止后，重复同一个 accept 命令。",
