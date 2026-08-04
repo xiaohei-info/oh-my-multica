@@ -3652,6 +3652,49 @@ def test_non_authoring_recovery_noop_does_not_mark_synced(
     assert entry["state"] == "syncing"
 
 
+@pytest.mark.parametrize("residual", ("verdict", "report"))
+def test_recovery_conformance_review_target_requires_cleared_control(
+    tmp_path, monkeypatch, residual,
+):
+    path, engine, item, reviewed = _stage_amendment_with_handoff(
+        tmp_path, "review")
+    original_prepare = amendment_mod.prepare_stage_recovery
+
+    def leave_stale_review_control(*args, **kwargs):
+        result = original_prepare(*args, **kwargs)
+        if residual == "verdict":
+            engine.store.update_work_item_metadata(
+                item.id, review_verdict="reject")
+        else:
+            engine.store.update_work_item_metadata(
+                item.id,
+                review_report={"blockers": ["stale review report"]},
+                review_report_source="blockers:\n  - stale review report\n",
+            )
+        return result
+
+    monkeypatch.setattr(
+        amendment_mod, "prepare_stage_recovery", leave_stale_review_control)
+
+    with pytest.raises(ValidationError, match="observed progress"):
+        apply_amendment(
+            str(path),
+            reviewed,
+            engine.store,
+            {"alice", "bob", "charlie"},
+            acceptance=_responsibility_acceptance_doc(),
+        )
+
+    entry = load_manifest(str(path)).meta[
+        "amendment_apply"]["nodes"]["bootstrap"]
+    assert entry["state"] == "observed_progress"
+    current = engine.store.get_work_item(item.id)
+    if residual == "verdict":
+        assert current.review_verdict == "reject"
+    else:
+        assert current.review_report == {"blockers": ["stale review report"]}
+
+
 @pytest.mark.parametrize("stage", ("review", "merging"))
 @pytest.mark.parametrize("drift", ("safe", "progressed"))
 def test_persisted_synced_non_authoring_reobserves_store(
@@ -3911,6 +3954,67 @@ def test_apply_ledger_retries_only_unfinished_node_side_effects(tmp_path, monkey
     completed = load_manifest(str(path)).meta["amendment_apply"]["nodes"]
     assert completed["bootstrap"]["state"] == "observed_progress"
     assert completed["started-dependent"]["state"] == "synced"
+
+
+def test_recovery_conformance_preflights_entire_ledger_before_side_effects(
+    tmp_path, monkeypatch,
+):
+    path = _topology_manifest(tmp_path)
+    engine = _engine()
+    first = engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    engine.store.update_status(first.id, WorkItemStatus.BLOCKED)
+    second = engine.store.create_work_item(
+        "ws", "dependent", "desc", "started-dependent", "charlie",
+        reviewer="bob")
+    engine.store.update_status(second.id, WorkItemStatus.IN_REVIEW)
+    reviewed = build_reviewed_amendment(
+        load_manifest(str(path)),
+        _proposal({
+            "op": "update",
+            "node": "bootstrap",
+            "set": {"blocked_by": ["foundation"]},
+        }),
+        engine.store,
+        issue_id="amendment-issue",
+        reviewer_verdict="pass",
+    )
+    original_resume = amendment_mod._resume_apply_ledger
+    monkeypatch.setattr(
+        amendment_mod,
+        "_resume_apply_ledger",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("stop after ledger creation")),
+    )
+    with pytest.raises(RuntimeError, match="after ledger creation"):
+        apply_amendment(
+            str(path), reviewed, engine.store, {"alice", "bob", "charlie"})
+
+    manifest = load_manifest(str(path))
+    entries = manifest.meta["amendment_apply"]["nodes"]
+    assert list(entries)[:2] == ["bootstrap", "started-dependent"]
+    assert entries["bootstrap"]["state"] == "pending"
+    entries["started-dependent"]["state"] = "repairing"
+    entries["started-dependent"].pop("attempt_baseline", None)
+    save_manifest(manifest, str(path))
+    before_manifest = path.read_bytes()
+    before_first = copy.deepcopy(engine.store.get_work_item(first.id))
+    before_second = copy.deepcopy(engine.store.get_work_item(second.id))
+    monkeypatch.setattr(
+        amendment_mod, "_resume_apply_ledger", original_resume)
+
+    with pytest.raises(
+        ValidationError, match="repairing entry is missing attempt_baseline",
+    ):
+        apply_amendment(
+            str(path), reviewed, engine.store, {"alice", "bob", "charlie"})
+
+    assert path.read_bytes() == before_manifest
+    assert engine.store.get_work_item(first.id) == before_first
+    assert engine.store.get_work_item(second.id) == before_second
+    unchanged = load_manifest(str(path)).meta["amendment_apply"]["nodes"]
+    assert unchanged["bootstrap"]["state"] == "pending"
+    assert unchanged["started-dependent"]["state"] == "repairing"
 
 
 def test_invalid_historical_ledger_remains_raw_history_during_authoring_recovery(

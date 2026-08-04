@@ -218,6 +218,11 @@ def classify_stage_recovery_observation(
         and current.get("status") == WorkItemStatus.IN_REVIEW.value
         and current.get("phase") == TaskPhase.REVIEW.value
         and current.get("review_subject_digest") == expected_review_subject
+        and current.get("review_verdict") in {None, ""}
+        and not current.get("decision_required_pending")
+        and not current.get("review_report_pending")
+        and not current.get("review_continuation_pending")
+        and not current.get("reviewer_run_baseline_pending")
     )
     if stage == "review" and review_target:
         return "reached" if handoff_retired else "safe"

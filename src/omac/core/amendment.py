@@ -1096,19 +1096,23 @@ def _resume_apply_ledger(
     if not isinstance(ledger, dict) or ledger.get("schema") != APPLY_LEDGER_SCHEMA:
         raise ValidationError(
             "Applied amendment is missing a valid per-node apply ledger")
+    malformed_repairing = next((
+        node_id for node_id, entry in ledger.get("nodes", {}).items()
+        if isinstance(entry, dict)
+        and entry.get("state") == "repairing"
+        and not isinstance(entry.get("attempt_baseline"), dict)
+    ), None)
+    if malformed_repairing is not None:
+        raise ValidationError(
+            f"node {malformed_repairing}: repairing entry is missing "
+            "attempt_baseline; refusing to infer a causal boundary from "
+            "current Store facts")
     summary = {"synced": [], "observed_progress": [], "already_complete": []}
     failures = []
     for node_id, entry in ledger.get("nodes", {}).items():
         state = entry.get("state")
         persisted_synced = state == "synced"
         started_repair = False
-        if state == "repairing" and not isinstance(
-            entry.get("attempt_baseline"), dict
-        ):
-            failures.append(
-                f"node {node_id}: repairing entry is missing attempt_baseline; "
-                "refusing to infer a causal boundary from current Store facts")
-            continue
         missing_authoring_generation = (
             entry.get("stage") == "authoring"
             and not entry.get("expected_review_generation")
