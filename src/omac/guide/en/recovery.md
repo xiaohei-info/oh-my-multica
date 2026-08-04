@@ -231,6 +231,17 @@ omac dag amend propose .omac/project.yaml \
   bounce audit counters remain intact. `work show` projects `review_state` and
   `required_closures` only when `review_ledger_generation` matches the current
   generation; an ordinary review rejection does not switch generations.
+- An authoring entry marked `synced` by an older CLI but missing the generation
+  projection is repaired idempotently by repeating the original
+  `omac dag amend accept` command; no manual metadata edit is required. Repair
+  still rejects active formal Runs and verifies the contract digest, generation,
+  retired decision/report/subject/handoff, and current-ledger visibility before
+  returning the entry to `synced`.
+- Bounce fields remain monotonic absolute audit counters and are never reset.
+  `work show.task.bounce_budget` and Worker retry logs distinguish the absolute
+  value, amendment baseline, and current-generation consumption. Runtime budget
+  decisions continue to use the relative calculation from the manifest
+  `amendment_apply.bounce_baseline` fact.
 - Done/merged nodes cannot be changed or removed. Changing worker or `scope_paths`
   on an executed node requires an explicit ownership migration and reason.
 - For `blocked_by`, worker, scope, or other implementation-semantic changes,

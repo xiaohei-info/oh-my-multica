@@ -1214,15 +1214,16 @@ def test_retry_handoff_retirement_is_restart_safe(
     original_restore = engine.store.restore_authoring_generation
     crashed = False
 
-    def crash_at_switch(item_id, contract, generation):
+    def crash_at_switch(item_id, contract, generation, bounce_baseline=None):
         nonlocal crashed
         if not crashed:
             crashed = True
             if checkpoint == "before_switch":
                 raise RuntimeError("crash before authoring generation switch")
-            result = original_restore(item_id, contract, generation)
+            result = original_restore(
+                item_id, contract, generation, bounce_baseline)
             raise RuntimeError("crash after authoring generation switch")
-        return original_restore(item_id, contract, generation)
+        return original_restore(item_id, contract, generation, bounce_baseline)
 
     monkeypatch.setattr(
         engine.store, "restore_authoring_generation", crash_at_switch)

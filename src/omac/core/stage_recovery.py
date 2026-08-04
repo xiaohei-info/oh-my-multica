@@ -42,6 +42,7 @@ def recovery_control_snapshot(item) -> dict:
             item, "review_ledger_generation", None),
         "review_ledger_current": (
             getattr(item, "current_review_ledger", None) is not None),
+        "bounce_baseline": getattr(item, "bounce_baseline", None),
         "decision_required_pending": bool(
             getattr(item, "decision_required", None)),
         "review_report_pending": bool(
@@ -118,6 +119,7 @@ def prepare_stage_recovery(
     *,
     expected_review_subject: str | None = None,
     expected_review_generation: str | None = None,
+    expected_bounce_baseline: dict[str, int] | None = None,
     sync_contract: bool = False,
 ) -> str:
     """共享的 review/authoring 阶段准备；merge 交给 run_merge_delivery。
@@ -138,7 +140,8 @@ def prepare_stage_recovery(
             })[:24]
         )
         store.restore_authoring_generation(
-            node.work_item_id, node.contract, generation)
+            node.work_item_id, node.contract, generation,
+            expected_bounce_baseline)
         return "todo"
     # 显式 stage recovery 开启新的执行世代。旧 review→worker handoff 只属于
     # 被 operator/amendment 取代的阶段，必须在任何可被 apply ledger 判定为
@@ -172,6 +175,7 @@ def classify_stage_recovery_observation(
     expected_contract_sha256: str,
     expected_review_subject: str | None = None,
     expected_review_generation: str | None = None,
+    expected_bounce_baseline: dict[str, int] | None = None,
 ) -> str:
     """返回 reached/safe/progressed，供 restart-safe 补偿决定是否写 Store。"""
     contract_matches = current.get("contract_sha256") == expected_contract_sha256
@@ -203,6 +207,7 @@ def classify_stage_recovery_observation(
         and current.get("status") == WorkItemStatus.TODO.value
         and current.get("phase") == TaskPhase.AUTHORING.value
         and current.get("review_generation") == expected_review_generation
+        and current.get("bounce_baseline") == expected_bounce_baseline
         and current.get("review_ledger_current") is False
         and current.get("review_verdict") in {None, ""}
         and current.get("review_subject_digest") in {None, ""}

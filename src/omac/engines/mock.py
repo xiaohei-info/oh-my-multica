@@ -781,6 +781,7 @@ class MockStore(WorkItemStore):
         review_ledger_source: Optional[str] = None,
         review_generation: Optional[str] = None,
         review_ledger_generation: Optional[str] = None,
+        bounce_baseline: Optional[Dict[str, int]] = None,
         review_continuation: Optional[Dict[str, Any]] = None,
         reviewer_run_baseline: Optional[
             ReviewerRunBaseline | Dict[str, Any]
@@ -897,6 +898,8 @@ class MockStore(WorkItemStore):
             item.review_generation = review_generation or None
         if review_ledger_generation is not None:
             item.review_ledger_generation = review_ledger_generation or None
+        if bounce_baseline is not None:
+            item.bounce_baseline = dict(bounce_baseline) or None
         if review_continuation is not None:
             item.review_continuation = review_continuation or None
         if reviewer_run_baseline is not None:
@@ -939,6 +942,7 @@ class MockStore(WorkItemStore):
         item_id: str,
         contract: Any,
         review_generation: str,
+        bounce_baseline: Optional[Dict[str, int]] = None,
     ) -> WorkItem:
         item = self.get_work_item(item_id)
         item.contract = contract
@@ -951,6 +955,8 @@ class MockStore(WorkItemStore):
             "sha256": hashlib.sha256(source.encode("utf-8")).hexdigest(),
         }
         item.review_generation = review_generation
+        item.bounce_baseline = (
+            dict(bounce_baseline) if bounce_baseline else None)
         item.review_verdict = None
         item.review_comment = None
         item.machine_feedback = None

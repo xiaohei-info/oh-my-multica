@@ -253,6 +253,7 @@ class WorkItem:
     kind: TaskKind = TaskKind.DEVELOP
     phase: TaskPhase = TaskPhase.AUTHORING
     bounces: Bounces = field(default_factory=Bounces)
+    bounce_baseline: Optional[Dict[str, int]] = None
     # 通用交付物:按 kind 承载 plan/acceptance/manifest/acceptance-results 正文
     deliverable: Optional[str] = None
     deliverable_ref: Optional[Dict[str, Any]] = None

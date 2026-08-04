@@ -29,7 +29,7 @@ import yaml
 
 from ..core import logsetup
 from ..core.taskmeta import (
-    AMENDMENT_ATTEMPT_KEY, CI_BOUNCE_KEY, CONTRACT_REF_KEY,
+    AMENDMENT_ATTEMPT_KEY, BOUNCE_BASELINE_KEY, CI_BOUNCE_KEY, CONTRACT_REF_KEY,
     DECISION_REQUIRED_KEY, DELIVERY_IDENTITY_KEY, DELIVERABLE_KEY,
     DELIVERABLE_REF_KEY, KIND_KEY, MERGE_BOUNCE_KEY, PHASE_KEY,
     MACHINE_FEEDBACK_REF_KEY, PROJECT_RULES_KEY, PROJECT_RULES_REF_KEY, REVIEW_BOUNCE_KEY,
@@ -84,7 +84,7 @@ _KNOWN_WORK_ITEM_METADATA_KEYS = {
     "dag_key", "worker", "reviewer", "blocked_by", "wave", "artifacts",
     "verification", "review_verdict", "review_comment", "review_report",
     "contract",
-    AMENDMENT_ATTEMPT_KEY, CI_BOUNCE_KEY, CONTRACT_REF_KEY,
+    AMENDMENT_ATTEMPT_KEY, BOUNCE_BASELINE_KEY, CI_BOUNCE_KEY, CONTRACT_REF_KEY,
     DECISION_REQUIRED_KEY, DELIVERABLE_KEY, DELIVERABLE_REF_KEY, KIND_KEY,
     MACHINE_FEEDBACK_REF_KEY, MERGE_BOUNCE_KEY, PHASE_KEY, PROJECT_RULES_KEY,
     PROJECT_RULES_REF_KEY, REVIEW_BOUNCE_KEY, REVIEW_CONTINUATION_KEY,
@@ -898,6 +898,7 @@ class MulticaStore(WorkItemStore):
             metadata, REVIEW_GENERATION_KEY)
         review_ledger_generation = self._optional_text_metadata(
             metadata, REVIEW_LEDGER_GENERATION_KEY)
+        bounce_baseline = self._json_metadata(metadata, BOUNCE_BASELINE_KEY)
         review_obligations_ref = self._json_metadata(
             metadata, REVIEW_OBLIGATIONS_REF_KEY)
         review_continuation = self._json_metadata(
@@ -977,6 +978,10 @@ class MulticaStore(WorkItemStore):
                 else None),
             review_generation=review_generation,
             review_ledger_generation=review_ledger_generation,
+            bounce_baseline=(
+                bounce_baseline
+                if isinstance(bounce_baseline, dict) and bounce_baseline
+                else None),
             review_continuation=(
                 review_continuation
                 if isinstance(review_continuation, dict) and review_continuation
@@ -1420,6 +1425,7 @@ class MulticaStore(WorkItemStore):
         review_ledger_source: Optional[str] = None,
         review_generation: Optional[str] = None,
         review_ledger_generation: Optional[str] = None,
+        bounce_baseline: Optional[Dict[str, int]] = None,
         review_continuation: Optional[Dict[str, Any]] = None,
         reviewer_run_baseline: Optional[
             ReviewerRunBaseline | Dict[str, Any]
@@ -1511,6 +1517,8 @@ class MulticaStore(WorkItemStore):
             self._set_metadata(
                 item_id, REVIEW_LEDGER_GENERATION_KEY,
                 review_ledger_generation)
+        if bounce_baseline is not None:
+            self._set_metadata(item_id, BOUNCE_BASELINE_KEY, bounce_baseline)
         if review_continuation is not None:
             self._set_metadata(
                 item_id, REVIEW_CONTINUATION_KEY, review_continuation)
@@ -1579,6 +1587,7 @@ class MulticaStore(WorkItemStore):
         item_id: str,
         contract: Any,
         review_generation: str,
+        bounce_baseline: Optional[Dict[str, int]] = None,
     ) -> WorkItem:
         """Publish the contract, then atomically switch the issue control projection."""
         from ..core.manifest import _dump_contract
@@ -1599,6 +1608,7 @@ class MulticaStore(WorkItemStore):
             (DELIVERY_IDENTITY_KEY, "{}"),
             (PHASE_KEY, TaskPhase.AUTHORING.value),
             (REVIEW_GENERATION_KEY, review_generation),
+            (BOUNCE_BASELINE_KEY, bounce_baseline or {}),
             (CONTRACT_REF_KEY, contract_ref),
             ("reviewer", ""),
         )

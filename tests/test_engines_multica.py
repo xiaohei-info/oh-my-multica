@@ -154,11 +154,13 @@ def test_multica_maps_current_and_ledger_review_generations():
             "phase": "authoring",
             "review_generation": "amendment-aiteam-850",
             "review_ledger_generation": "review-aiteam-849",
+            "bounce_baseline": '{"worker":14,"review":3,"merge":0}',
         },
     }, "ws").work_item
 
     assert item.review_generation == "amendment-aiteam-850"
     assert item.review_ledger_generation == "review-aiteam-849"
+    assert item.bounce_baseline == {"worker": 14, "review": 3, "merge": 0}
 
 
 def test_multica_restores_authoring_generation_with_one_atomic_issue_write(
@@ -204,6 +206,7 @@ def test_multica_restores_authoring_generation_with_one_atomic_issue_write(
         item_id,
         {"objective": "amended contract"},
         "amendment-aiteam-850",
+        {"worker": 14, "review": 3, "merge": 0},
     )
 
     assert result is expected
@@ -219,12 +222,53 @@ def test_multica_restores_authoring_generation_with_one_atomic_issue_write(
     assert metadata["worker_bounce"] == "15"
     assert metadata["review_bounce"] == "3"
     assert metadata["review_generation"] == "amendment-aiteam-850"
+    assert json.loads(metadata["bounce_baseline"]) == {
+        "worker": 14, "review": 3, "merge": 0}
     assert metadata["phase"] == "authoring"
     assert metadata["decision_required"] == "{}"
     assert metadata["review_report_ref"] == "{}"
     assert metadata["review_obligations"] == "[]"
     assert metadata["review_continuation"] == "{}"
     assert metadata["worker_handoff"] == "{}"
+
+
+def test_authoring_generation_tombstone_hides_legacy_inline_review_report(
+    monkeypatch,
+):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    item_id = "11111111-1111-4111-8111-111111111111"
+    old_metadata = {
+        "dag_key": "contracts-platform-resource-schema",
+        "kind": "develop",
+        "phase": "review",
+        "review_verdict": "reject",
+        "review_report": {"blockers": ["legacy inline report"]},
+    }
+    writes = []
+    monkeypatch.setattr(
+        store, "_publish_payload_comment",
+        lambda *_args, **_kwargs: {
+            "attachment_id": "contract-850", "sha256": "b" * 64})
+    monkeypatch.setattr(
+        store, "_read_issue_metadata",
+        lambda _item_id: ({"id": item_id}, dict(old_metadata)))
+    monkeypatch.setattr(
+        store, "_put_issue_fields_direct",
+        lambda _item_id, fields, *, operation: writes.append(fields))
+    monkeypatch.setattr(store, "get_work_item", lambda _item_id: SimpleNamespace())
+
+    store.restore_authoring_generation(
+        item_id, {"objective": "amended"}, "amendment-aiteam-850")
+
+    mapped = store._issue_to_control_projection({
+        "id": item_id,
+        "title": "legacy inline report",
+        "description": "legacy inline report",
+        "status": "todo",
+        "metadata": writes[0]["metadata"],
+    }, "ws").work_item
+    assert mapped.review_report is None
+    assert mapped.review_report_ref is None
 
 
 def test_multica_malformed_empty_decision_value_remains_fail_closed():

@@ -193,6 +193,7 @@ class WorkItemStore(ABC):
         review_ledger_source: Optional[str] = None,
         review_generation: Optional[str] = None,
         review_ledger_generation: Optional[str] = None,
+        bounce_baseline: Optional[Dict[str, int]] = None,
         review_continuation: Optional[Dict[str, Any]] = None,
         reviewer_run_baseline: Optional[
             ReviewerRunBaseline | Dict[str, Any]
@@ -233,12 +234,15 @@ class WorkItemStore(ABC):
         item_id: str,
         contract: Any,
         review_generation: str,
+        bounce_baseline: Optional[Dict[str, int]] = None,
     ) -> WorkItem:
         """Atomically replace the current authoring control projection.
 
         Historical review ledger attachments and absolute bounce counters remain
         untouched.  The new generation retires every prior review decision,
         verdict/report, continuation, dispatch intent, and delivery identity.
+        ``bounce_baseline`` is a read projection of the amendment ledger fact;
+        it never replaces the cumulative audit counters.
         """
 
     @abstractmethod

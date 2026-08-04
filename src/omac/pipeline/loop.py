@@ -31,7 +31,9 @@ from ..core.evidence import validate_review_evidence, validate_worker_evidence
 from ..core.review_convergence import (
     REVIEW_CONVERGENCE_EARLIEST_CYCLE,
     build_review_obligations, review_subject_digest)
-from ..core.retry_budget import consumed_bounces, review_rework_budget
+from ..core.retry_budget import (
+    bounce_log_fields, consumed_bounces, review_rework_budget,
+)
 from ..core.stage_recovery import stage_recovery_subject, validate_stage_recovery
 from ..core.gitsync import commit_manifest
 from ..core.manifest import (
@@ -1193,6 +1195,8 @@ def _block_review_rework_budget(
         gate=gate,
         rounds=budget.current_round,
         consumed=budget.consumed,
+        absolute_audit=budget.current_round,
+        current_generation_consumed=budget.consumed,
         max=budget.authorized_through_round,
     )
     return ui(
@@ -2963,6 +2967,8 @@ def collect_results(
                         f"worker 未交付(回退上界 {worker_limit} 已耗尽): {reason}")
                     log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
                              id=node.work_item_id,
+                             absolute_audit=cur_bounce,
+                             current_generation_consumed=consumed,
                              reason=ui(
                                  f"Worker delivery retry limit ({worker_limit}) exhausted",
                                  f"worker 未交付回退上界({worker_limit})已耗尽"))
@@ -2994,12 +3000,20 @@ def collect_results(
                                 gate="worker",
                                 round=cur_bounce + 1,
                                 max=worker_limit,
+                                **bounce_log_fields(
+                                    item, "worker",
+                                    absolute_count=cur_bounce + 1,
+                                    limit=worker_limit),
                             )
                             continue
                         set_node(manifest, key, status="in_progress")
                         log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=key,
                                  id=node.work_item_id, gate="worker",
-                                 round=cur_bounce + 1, max=worker_limit)
+                                 round=cur_bounce + 1, max=worker_limit,
+                                 **bounce_log_fields(
+                                     item, "worker",
+                                     absolute_count=cur_bounce + 1,
+                                     limit=worker_limit))
                     except PlatformError as exc:
                         store.update_work_item_metadata(
                             node.work_item_id, worker_bounce=cur_bounce)

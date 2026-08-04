@@ -35,6 +35,75 @@ def amendment_bounce_baseline(item: Any) -> dict[str, int]:
     }
 
 
+def projected_bounce_baseline(item: Any) -> dict[str, int] | None:
+    """Return a valid WorkItem projection of the latest amendment baseline."""
+    baseline = getattr(item, "bounce_baseline", None)
+    if not isinstance(baseline, dict):
+        return None
+    projected = {}
+    for stage in sorted(_SUPPORTED_STAGES):
+        value = baseline.get(stage)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            return None
+        projected[stage] = value
+    return projected
+
+
+def projected_consumed_bounces(
+    item: Any,
+    stage: str,
+    *,
+    absolute_count: int | None = None,
+) -> int:
+    """Calculate current-generation consumption from the WorkItem projection."""
+    if stage not in _SUPPORTED_STAGES:
+        raise ValueError(f"unsupported bounce stage: {stage}")
+    current = (
+        max(0, int(absolute_count))
+        if absolute_count is not None
+        else max(0, int(getattr(item.bounces, stage, 0)))
+    )
+    baseline = projected_bounce_baseline(item)
+    if baseline is None or current < baseline[stage]:
+        return current
+    return current - baseline[stage]
+
+
+def bounce_budget_projection(item: Any) -> dict[str, Any] | None:
+    """Describe absolute audit counters and relative amendment consumption."""
+    baseline = projected_bounce_baseline(item)
+    if baseline is None:
+        return None
+    absolute = amendment_bounce_baseline(item)
+    return {
+        "counter_semantics": "absolute-audit",
+        "absolute": absolute,
+        "current_generation": {
+            "baseline": baseline,
+            "consumed": {
+                stage: projected_consumed_bounces(item, stage)
+                for stage in sorted(_SUPPORTED_STAGES)
+            },
+        },
+    }
+
+
+def bounce_log_fields(
+    item: Any,
+    stage: str,
+    *,
+    absolute_count: int,
+    limit: int,
+) -> dict[str, int]:
+    """Return explicit absolute and current-generation retry log fields."""
+    return {
+        "absolute_audit_round": max(0, int(absolute_count)),
+        "current_generation_consumed": projected_consumed_bounces(
+            item, stage, absolute_count=absolute_count),
+        "current_generation_limit": max(0, int(limit)),
+    }
+
+
 def consumed_bounces(
     manifest: Any,
     node_id: str,

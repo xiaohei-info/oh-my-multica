@@ -32,6 +32,7 @@ from omac.core.manifest import (
     save_manifest,
 )
 from omac.core.review_convergence import review_subject_digest
+from omac.core.retry_budget import bounce_log_fields, consumed_bounces
 from omac.core.stage_recovery import prepare_stage_recovery
 from omac.core.taskmeta import (
     DECISION_REQUIRED_SCHEMA, DELIVERY_IDENTITY_SCHEMA, DeliveryIdentity,
@@ -2533,15 +2534,18 @@ def test_aiteam_849_authoring_generation_apply_is_restart_safe_and_idempotent(
     original_restore = engine.store.restore_authoring_generation
     crashed = False
 
-    def crash_at_switch(item_id, contract, generation):
+    def crash_at_switch(
+        item_id, contract, generation, bounce_baseline=None,
+    ):
         nonlocal crashed
         if not crashed:
             crashed = True
             if checkpoint == "before_switch":
                 raise RuntimeError("crash before authoring generation switch")
-            result = original_restore(item_id, contract, generation)
+            result = original_restore(
+                item_id, contract, generation, bounce_baseline)
             raise RuntimeError("crash after authoring generation switch")
-        return original_restore(item_id, contract, generation)
+        return original_restore(item_id, contract, generation, bounce_baseline)
 
     monkeypatch.setattr(
         engine.store, "restore_authoring_generation", crash_at_switch)
@@ -2666,6 +2670,407 @@ def test_accept_authoring_amendment_fails_before_manifest_write_for_active_forma
         )
 
     assert path.read_bytes() == before
+    assert engine.store.get_work_item(target.id).status is WorkItemStatus.BLOCKED
+
+
+def test_already_applied_authoring_crash_resume_blocks_active_formal_run(
+    tmp_path, monkeypatch,
+):
+    path = _manifest(tmp_path)
+    engine = _engine()
+    target = engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    engine.store.update_status(target.id, WorkItemStatus.BLOCKED)
+    amendment_issue = engine.store.create_work_item(
+        "ws", "amendment", "desc", "amend-crash-resume", "alice",
+        reviewer="bob", kind=TaskKind.AMENDMENT)
+    engine.store.update_work_item_metadata(
+        amendment_issue.id,
+        phase=TaskPhase.CONFIRMATION,
+        review_verdict="pass",
+    )
+    reviewed = build_reviewed_amendment(
+        load_manifest(str(path)),
+        _proposal({"op": "resume", "node": "bootstrap", "stage": "authoring"}),
+        engine.store,
+        issue_id=amendment_issue.id,
+        reviewer_verdict="pass",
+    )
+    amendment_file = tmp_path / "crash-resume.amendment.yaml"
+    amendment_file.write_text(yaml.safe_dump(reviewed, sort_keys=False))
+    original_prepare = amendment_mod.prepare_stage_recovery
+    monkeypatch.setattr(
+        amendment_mod,
+        "prepare_stage_recovery",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("crash after manifest write")),
+    )
+
+    with pytest.raises(RuntimeError, match="after manifest write"):
+        amendment_pipeline.accept_amendment(
+            engine,
+            str(path),
+            str(amendment_file),
+            reason="operator accepted",
+            agent_pool={"alice", "bob", "charlie"},
+        )
+
+    interrupted = load_manifest(str(path))
+    entry = interrupted.meta["amendment_apply"]["nodes"]["bootstrap"]
+    assert entry["state"] == "syncing"
+    monkeypatch.setattr(
+        amendment_mod, "prepare_stage_recovery", original_prepare)
+    active = AgentRunObservation(
+        id="formal-crash-resume-run",
+        kind="direct",
+        status="running",
+        agent_id="agent-alice",
+        trigger_kind="issue_assignment",
+    )
+    monkeypatch.setattr(
+        engine.runtime, "list_runs",
+        lambda item_id: [active] if item_id == target.id else [],
+    )
+    before = path.read_bytes()
+
+    with pytest.raises(ValidationError, match="active formal Agent Runs"):
+        amendment_pipeline.accept_amendment(
+            engine,
+            str(path),
+            str(amendment_file),
+            reason="operator accepted",
+            agent_pool={"alice", "bob", "charlie"},
+        )
+
+    assert path.read_bytes() == before
+    assert engine.store.get_work_item(target.id).status is WorkItemStatus.BLOCKED
+
+
+def _legacy_synced_authoring_accept_fixture(
+    tmp_path, aiteam_849_legacy_snapshot,
+):
+    snapshot = aiteam_849_legacy_snapshot["work_item"]
+    path = _manifest(tmp_path)
+    engine = _engine()
+    target = engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    engine.store.set_node_contract(
+        target.id, load_manifest(str(path)).nodes["bootstrap"].contract)
+    _seed_aiteam_849_review_control(engine, target, snapshot)
+    engine.store.update_work_item_metadata(target.id, worker_bounce=14)
+    engine.store.update_status(target.id, WorkItemStatus.BLOCKED)
+    amendment_issue = engine.store.create_work_item(
+        "ws", "amendment", "desc", "amend-aiteam-850", "alice",
+        reviewer="bob", kind=TaskKind.AMENDMENT)
+    engine.store.update_work_item_metadata(
+        amendment_issue.id,
+        phase=TaskPhase.CONFIRMATION,
+        review_verdict="pass",
+    )
+    reviewed = build_reviewed_amendment(
+        load_manifest(str(path)),
+        _proposal(_responsibility_update(resume_stage="authoring")),
+        engine.store,
+        issue_id=amendment_issue.id,
+        reviewer_verdict="pass",
+        acceptance=_responsibility_acceptance_doc(),
+    )
+    apply_amendment(
+        str(path), reviewed, engine.store, {"alice", "bob", "charlie"},
+        acceptance=_responsibility_acceptance_doc(),
+    )
+    legacy = load_manifest(str(path))
+    entry = legacy.meta["amendment_apply"]["nodes"]["bootstrap"]
+    entry.pop("expected_review_generation", None)
+    entry.pop("observed", None)
+    entry["state"] = "synced"
+    save_manifest(legacy, str(path))
+
+    _seed_aiteam_849_review_control(engine, target, snapshot)
+    current = engine.store.get_work_item(target.id)
+    current.review_generation = None
+    current.review_ledger_generation = None
+    current.bounce_baseline = None
+    current.phase = TaskPhase.AUTHORING
+    current.status = WorkItemStatus.IN_PROGRESS
+    current.bounces.worker = 17
+
+    reviewed["human_confirmation"] = "applied"
+    reviewed["apply_result"] = {"legacy": True}
+    amendment_file = tmp_path / "aiteam-850.amendment.yaml"
+    amendment_file.write_text(yaml.safe_dump(reviewed, sort_keys=False))
+    engine.store.update_status(amendment_issue.id, WorkItemStatus.DONE)
+    return path, amendment_file, engine, target, reviewed
+
+
+def test_same_legacy_synced_accept_repairs_missing_authoring_projection(
+    tmp_path, aiteam_849_legacy_snapshot,
+):
+    path, amendment_file, engine, target, reviewed = (
+        _legacy_synced_authoring_accept_fixture(
+            tmp_path, aiteam_849_legacy_snapshot))
+
+    result = amendment_pipeline.accept_amendment(
+        engine,
+        str(path),
+        str(amendment_file),
+        reason="repeat official accepted amendment",
+        agent_pool={"alice", "bob", "charlie"},
+    )
+
+    current = engine.store.get_work_item(target.id)
+    manifest = load_manifest(str(path))
+    entry = manifest.meta["amendment_apply"]["nodes"]["bootstrap"]
+    assert result["sync"]["synced"] == ["bootstrap"]
+    assert current.status is WorkItemStatus.TODO
+    assert current.phase is TaskPhase.AUTHORING
+    assert current.bounces.worker == 17
+    assert current.bounce_baseline == {
+        "worker": 14, "review": 3, "merge": 0}
+    assert consumed_bounces(manifest, "bootstrap", current, "worker") == 3
+    assert current.review_generation == entry["expected_review_generation"]
+    assert current.current_review_ledger is None
+    assert current.decision_required is None
+    assert current.review_subject_digest is None
+    assert current.review_verdict is None
+    assert current.review_report is None
+    assert current.worker_handoff is None
+    assert build_show_output(current, "worker:alice").get("ok", True) is True
+    assert entry["observed"]["contract_sha256"] == (
+        entry["expected_contract_sha256"])
+    assert entry["observed"]["review_generation"] == (
+        entry["expected_review_generation"])
+    assert entry["observed"]["review_ledger_current"] is False
+    assert yaml.safe_load(amendment_file.read_text())["human_confirmation"] == "applied"
+    repeated = amendment_pipeline.accept_amendment(
+        engine,
+        str(path),
+        str(amendment_file),
+        reason="repeat official accepted amendment",
+        agent_pool={"alice", "bob", "charlie"},
+    )
+    assert repeated["sync"]["already_complete"] == ["bootstrap"]
+
+
+@pytest.mark.parametrize("checkpoint", ("before_switch", "after_switch"))
+def test_legacy_synced_authoring_repair_is_restart_safe(
+    tmp_path, monkeypatch, aiteam_849_legacy_snapshot, checkpoint,
+):
+    path, amendment_file, engine, target, _reviewed = (
+        _legacy_synced_authoring_accept_fixture(
+            tmp_path, aiteam_849_legacy_snapshot))
+    original_restore = engine.store.restore_authoring_generation
+    crashed = False
+
+    def crash_at_switch(
+        item_id, contract, generation, bounce_baseline=None,
+    ):
+        nonlocal crashed
+        if not crashed:
+            crashed = True
+            if checkpoint == "before_switch":
+                raise RuntimeError("crash before legacy repair switch")
+            result = original_restore(
+                item_id, contract, generation, bounce_baseline)
+            raise RuntimeError("crash after legacy repair switch")
+        return original_restore(item_id, contract, generation, bounce_baseline)
+
+    monkeypatch.setattr(
+        engine.store, "restore_authoring_generation", crash_at_switch)
+    with pytest.raises(RuntimeError, match="legacy repair switch"):
+        amendment_pipeline.accept_amendment(
+            engine,
+            str(path),
+            str(amendment_file),
+            reason="repeat official accepted amendment",
+            agent_pool={"alice", "bob", "charlie"},
+        )
+
+    interrupted = load_manifest(str(path))
+    assert interrupted.meta[
+        "amendment_apply"]["nodes"]["bootstrap"]["state"] == "repairing"
+    monkeypatch.setattr(
+        engine.store, "restore_authoring_generation", original_restore)
+    recovered = amendment_pipeline.accept_amendment(
+        engine,
+        str(path),
+        str(amendment_file),
+        reason="repeat official accepted amendment",
+        agent_pool={"alice", "bob", "charlie"},
+    )
+    repeated = amendment_pipeline.accept_amendment(
+        engine,
+        str(path),
+        str(amendment_file),
+        reason="repeat official accepted amendment",
+        agent_pool={"alice", "bob", "charlie"},
+    )
+
+    assert recovered["sync"]["synced"] == ["bootstrap"]
+    assert repeated["sync"]["already_complete"] == ["bootstrap"]
+    current = engine.store.get_work_item(target.id)
+    assert current.review_generation is not None
+    assert current.current_review_ledger is None
+
+
+def test_legacy_synced_repair_fails_closed_for_active_formal_run(
+    tmp_path, monkeypatch, aiteam_849_legacy_snapshot,
+):
+    path, amendment_file, engine, target, _reviewed = (
+        _legacy_synced_authoring_accept_fixture(
+            tmp_path, aiteam_849_legacy_snapshot))
+    before_manifest = path.read_bytes()
+    before_item = copy.deepcopy(engine.store.get_work_item(target.id))
+    active = AgentRunObservation(
+        id="formal-repair-run",
+        kind="direct",
+        status="running",
+        agent_id="agent-alice",
+        trigger_kind="rerun",
+    )
+    monkeypatch.setattr(
+        engine.runtime, "list_runs",
+        lambda item_id: [active] if item_id == target.id else [],
+    )
+
+    with pytest.raises(ValidationError, match="active formal Agent Runs"):
+        amendment_pipeline.accept_amendment(
+            engine,
+            str(path),
+            str(amendment_file),
+            reason="repeat official accepted amendment",
+            agent_pool={"alice", "bob", "charlie"},
+        )
+
+    assert path.read_bytes() == before_manifest
+    current = engine.store.get_work_item(target.id)
+    assert current.review_generation == before_item.review_generation
+    assert current.decision_required == before_item.decision_required
+    assert current.worker_handoff == before_item.worker_handoff
+
+
+def test_legacy_synced_repair_first_reconcile_dispatches_one_worker(
+    tmp_path, aiteam_849_legacy_snapshot,
+):
+    path, amendment_file, engine, target, _reviewed = (
+        _legacy_synced_authoring_accept_fixture(
+            tmp_path, aiteam_849_legacy_snapshot))
+    amendment_pipeline.accept_amendment(
+        engine,
+        str(path),
+        str(amendment_file),
+        reason="repeat official accepted amendment",
+        agent_pool={"alice", "bob", "charlie"},
+    )
+    manifest = load_manifest(str(path))
+    manifest.nodes["closeout"].status = "abandoned"
+    save_manifest(manifest, str(path))
+    before = list(engine.runtime.list_runs(target.id))
+
+    loop.tick(engine.store, engine.runtime, manifest, str(path), max_parallel=1)
+    loop.tick(engine.store, engine.runtime, manifest, str(path), max_parallel=1)
+
+    after = list(engine.runtime.list_runs(target.id))
+    new_formal = [run for run in after if run not in before and run.formal]
+    assert len(new_formal) == 1
+    assert new_formal[0].agent_id == engine.store.resolve_agent_id("alice")
+
+
+def test_worker_retry_log_distinguishes_absolute_and_generation_consumption(
+    tmp_path, aiteam_849_legacy_snapshot,
+):
+    path, amendment_file, engine, target, _reviewed = (
+        _legacy_synced_authoring_accept_fixture(
+            tmp_path, aiteam_849_legacy_snapshot))
+    amendment_pipeline.accept_amendment(
+        engine,
+        str(path),
+        str(amendment_file),
+        reason="repeat official accepted amendment",
+        agent_pool={"alice", "bob", "charlie"},
+    )
+    manifest = load_manifest(str(path))
+    manifest.nodes["closeout"].status = "abandoned"
+    save_manifest(manifest, str(path))
+    current = engine.store.get_work_item(target.id)
+    worker_retry = bounce_log_fields(
+        current, "worker", absolute_count=18, limit=5)
+    assert worker_retry["absolute_audit_round"] == 18
+    assert worker_retry["current_generation_consumed"] == 4
+    assert worker_retry["current_generation_limit"] == 5
+
+
+def test_accept_authoring_amendment_resume_rechecks_active_formal_run(
+    tmp_path, monkeypatch,
+):
+    """Crash resume must not bypass the formal Run boundary after manifest apply."""
+    path = _manifest(tmp_path)
+    engine = _engine()
+    target = engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    engine.store.update_status(target.id, WorkItemStatus.BLOCKED)
+    amendment_issue = engine.store.create_work_item(
+        "ws", "amendment", "desc", "amend-active-resume", "alice",
+        reviewer="bob", kind=TaskKind.AMENDMENT)
+    engine.store.update_work_item_metadata(
+        amendment_issue.id,
+        phase=TaskPhase.CONFIRMATION,
+        review_verdict="pass",
+    )
+    reviewed = build_reviewed_amendment(
+        load_manifest(str(path)),
+        _proposal({"op": "resume", "node": "bootstrap", "stage": "authoring"}),
+        engine.store,
+        issue_id=amendment_issue.id,
+        reviewer_verdict="pass",
+    )
+    amendment_file = tmp_path / "active-resume.amendment.yaml"
+    amendment_file.write_text(yaml.safe_dump(reviewed, sort_keys=False))
+    monkeypatch.setattr(engine.runtime, "list_runs", lambda _item_id: [])
+    original_resume = amendment_mod._resume_apply_ledger
+    monkeypatch.setattr(
+        amendment_mod,
+        "_resume_apply_ledger",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("crash after manifest apply")),
+    )
+
+    with pytest.raises(RuntimeError, match="crash after manifest apply"):
+        amendment_pipeline.accept_amendment(
+            engine,
+            str(path),
+            str(amendment_file),
+            reason="operator accepted",
+            agent_pool={"alice", "bob", "charlie"},
+        )
+
+    monkeypatch.setattr(amendment_mod, "_resume_apply_ledger", original_resume)
+    active = AgentRunObservation(
+        id="formal-run-resume",
+        kind="direct",
+        status="running",
+        agent_id="agent-alice",
+        trigger_kind="issue_assignment",
+    )
+    monkeypatch.setattr(
+        engine.runtime,
+        "list_runs",
+        lambda item_id: [active] if item_id == target.id else [],
+    )
+
+    with pytest.raises(ValidationError, match="active formal Agent Runs"):
+        amendment_pipeline.accept_amendment(
+            engine,
+            str(path),
+            str(amendment_file),
+            reason="resume accepted amendment",
+            agent_pool={"alice", "bob", "charlie"},
+        )
+
+    interrupted = load_manifest(str(path))
+    assert interrupted.meta["amendment_apply"]["nodes"]["bootstrap"]["state"] == (
+        "pending"
+    )
     assert engine.store.get_work_item(target.id).status is WorkItemStatus.BLOCKED
 
 
@@ -3117,7 +3522,8 @@ def test_apply_ledger_retries_only_unfinished_node_side_effects(tmp_path, monkey
 
     def fail_second(
         node, store, stage, *, expected_review_subject=None,
-        expected_review_generation=None, sync_contract=False,
+        expected_review_generation=None, expected_bounce_baseline=None,
+        sync_contract=False,
     ):
         nonlocal failed
         if node.id == "started-dependent" and not failed:
@@ -3127,6 +3533,7 @@ def test_apply_ledger_retries_only_unfinished_node_side_effects(tmp_path, monkey
             node, store, stage,
             expected_review_subject=expected_review_subject,
             expected_review_generation=expected_review_generation,
+            expected_bounce_baseline=expected_bounce_baseline,
             sync_contract=sync_contract)
 
     monkeypatch.setattr(amendment_mod, "prepare_stage_recovery", fail_second)

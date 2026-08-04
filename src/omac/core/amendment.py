@@ -994,10 +994,7 @@ def _prepare_apply_ledger(
                 entry["expected_review_subject"] = stage_recovery_subject(node, item)
             if stage == "authoring":
                 entry["expected_review_generation"] = (
-                    "amendment-" + _digest({
-                        "amendment_id": amendment_id,
-                        "node_id": node_id,
-                    })[:24]
+                    _authoring_review_generation(amendment_id, node_id)
                 )
             if stage == "merging":
                 entry["sync_contract"] = node_id in responsibility_merge_sync_nodes
@@ -1008,6 +1005,39 @@ def _prepare_apply_ledger(
         "amendment_file": amendment_file,
         "nodes": entries,
     }
+
+
+def _authoring_review_generation(amendment_id: str, node_id: str) -> str:
+    return "amendment-" + _digest({
+        "amendment_id": amendment_id,
+        "node_id": node_id,
+    })[:24]
+
+
+def authoring_recovery_node_ids(
+    manifest: Manifest,
+    amendment: dict[str, Any],
+) -> list[str]:
+    """Return nodes whose current authoring projection may be rewritten."""
+    if manifest.meta.get("last_amendment_id") != amendment.get("amendment_id"):
+        minimal = (amendment.get("analysis") or {}).get("minimal_rerun") or {}
+        return list(minimal.get("authoring", []))
+    ledger = manifest.meta.get("amendment_apply")
+    entries = ledger.get("nodes") if isinstance(ledger, dict) else None
+    if not isinstance(entries, dict):
+        return []
+    return [
+        node_id for node_id, entry in entries.items()
+        if isinstance(entry, dict)
+        and entry.get("stage") == "authoring"
+        and (
+            entry.get("state") not in _COMPLETE_APPLY_STATES
+            or (
+                entry.get("state") == "synced"
+                and not entry.get("expected_review_generation")
+            )
+        )
+    ]
 
 
 def _save_ledger(manifest: Manifest, manifest_path: str, ledger: dict[str, Any]) -> None:
@@ -1027,7 +1057,25 @@ def _resume_apply_ledger(
     summary = {"synced": [], "observed_progress": [], "already_complete": []}
     for node_id, entry in ledger.get("nodes", {}).items():
         state = entry.get("state")
-        if state in {"synced", "observed_progress"}:
+        missing_authoring_generation = (
+            entry.get("stage") == "authoring"
+            and not entry.get("expected_review_generation")
+        )
+        legacy_synced_authoring = (
+            entry.get("stage") == "authoring"
+            and (
+                state == "repairing"
+                or (state == "synced" and missing_authoring_generation)
+            )
+        )
+        if missing_authoring_generation:
+            entry["expected_review_generation"] = _authoring_review_generation(
+                str(ledger.get("amendment_id") or ""), node_id)
+            if legacy_synced_authoring:
+                entry["state"] = "repairing"
+                state = "repairing"
+            _save_ledger(manifest, manifest_path, ledger)
+        if state in {"synced", "observed_progress"} and not legacy_synced_authoring:
             summary["already_complete"].append(node_id)
             continue
         node = manifest.nodes.get(node_id)
@@ -1047,6 +1095,7 @@ def _resume_apply_ledger(
             expected_review_subject=entry.get("expected_review_subject"),
             expected_review_generation=entry.get(
                 "expected_review_generation"),
+            expected_bounce_baseline=entry.get("bounce_baseline"),
         )
         if observation == "reached":
             entry["state"] = "synced"
@@ -1054,7 +1103,7 @@ def _resume_apply_ledger(
             _save_ledger(manifest, manifest_path, ledger)
             summary["synced"].append(node_id)
             continue
-        if observation == "progressed":
+        if observation == "progressed" and not legacy_synced_authoring:
             entry["state"] = "observed_progress"
             entry["observed"] = current
             entry["reason"] = (
@@ -1063,7 +1112,8 @@ def _resume_apply_ledger(
             _save_ledger(manifest, manifest_path, ledger)
             summary["observed_progress"].append(node_id)
             continue
-        entry["state"] = "syncing"
+        entry["state"] = (
+            "repairing" if legacy_synced_authoring else "syncing")
         entry["attempt_baseline"] = current
         _save_ledger(manifest, manifest_path, ledger)
         prepare_stage_recovery(
@@ -1073,6 +1123,7 @@ def _resume_apply_ledger(
             expected_review_subject=entry.get("expected_review_subject"),
             expected_review_generation=entry.get(
                 "expected_review_generation"),
+            expected_bounce_baseline=entry.get("bounce_baseline"),
             sync_contract=entry.get(
                 "sync_contract", entry["stage"] != "merging"),
         )

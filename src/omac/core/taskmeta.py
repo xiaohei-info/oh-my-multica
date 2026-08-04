@@ -80,6 +80,7 @@ CI_BOUNCE_KEY = "ci_bounce"
 REVIEW_BOUNCE_KEY = "review_bounce"
 MERGE_BOUNCE_KEY = "merge_bounce"
 WORKER_BOUNCE_KEY = "worker_bounce"
+BOUNCE_BASELINE_KEY = "bounce_baseline"
 # 旧 inline 交付物 key + 新引用 key。真实平台优先用 *_ref 承载 comment/attachment
 # 引用,避免长正文或嵌套 JSON 塞进 metadata;读侧仍向后兼容旧 inline key。
 DELIVERABLE_KEY = "deliverable"

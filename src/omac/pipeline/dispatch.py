@@ -25,6 +25,7 @@ from omac.core.contract_boundaries import (
 from omac.core.lint import lint as lint_manifest, lint_increment
 from omac.core.manifest import Contract, _dump_contract, _load_contract, load_manifest
 from omac.core.project_rules import END_MARKER, START_MARKER
+from omac.core.retry_budget import bounce_budget_projection
 from omac.core.review_convergence import (
     REVIEW_PROTOCOL_VERSION,
     advance_review_ledger,
@@ -398,6 +399,9 @@ def build_show_output(item: Any, identity: str, *, language: str = EN) -> Dict[s
             else {}
         ),
     }
+    bounce_budget = bounce_budget_projection(item)
+    if bounce_budget is not None:
+        task["bounce_budget"] = bounce_budget
 
     # 完整上下文:authoring 给 contract 全量;review 给评审对象 + env_setup
     contract = getattr(item, "contract", None)
@@ -1092,7 +1096,7 @@ def submit(
                     "legacy facts。",
                 ), report=resolution.decision)
             ledger = advance_review_ledger(
-                getattr(item, "review_ledger", None),
+                current_review_ledger(item),
                 report,
                 verdict=verdict,
                 subject_digest=item.review_subject_digest or "unknown",

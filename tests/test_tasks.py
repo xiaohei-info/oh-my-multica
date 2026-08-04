@@ -2259,6 +2259,11 @@ _AMENDMENT_ACTIVITY_FIELD_CASES = [
         "review-generation-1",
         "review_ledger_generation",
     ),
+    (
+        "bounce_baseline",
+        {"worker": 14, "review": 3, "merge": 0},
+        "bounce_baseline",
+    ),
     ("review_continuation", {"authorized_rounds": 1}, "review_continuation"),
     (
         "reviewer_run_baseline",
