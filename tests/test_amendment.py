@@ -3046,6 +3046,24 @@ def test_authoring_preflight_rejects_invalid_apply_ledger_shape(ledger):
         amendment_mod._preflight_authoring_repair_ledger(manifest)
 
 
+def test_authoring_recovery_includes_synced_entry_with_review_generation():
+    manifest = SimpleNamespace(meta={
+        "last_amendment_id": "amendment-1",
+        "amendment_apply": {
+            "nodes": {
+                "authoring": {
+                    "stage": "authoring",
+                    "state": "synced",
+                    "expected_review_generation": "generation-1",
+                },
+            },
+        },
+    })
+
+    assert amendment_mod.authoring_recovery_node_ids(
+        manifest, {"amendment_id": "amendment-1"}) == ["authoring"]
+
+
 def test_authoring_unknown_formal_run_blocks_first_accept(
     tmp_path, monkeypatch,
 ):

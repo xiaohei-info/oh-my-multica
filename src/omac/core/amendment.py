@@ -1057,10 +1057,7 @@ def authoring_recovery_node_ids(
         and entry.get("stage") == "authoring"
         and (
             entry.get("state") not in _COMPLETE_APPLY_STATES
-            or (
-                entry.get("state") == "synced"
-                and not entry.get("expected_review_generation")
-            )
+            or entry.get("state") == "synced"
         )
     ]
 
