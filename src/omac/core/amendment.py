@@ -1105,7 +1105,14 @@ def _resume_apply_ledger(
                 or (state == "synced" and missing_authoring_generation)
             )
         )
-        if missing_authoring_generation:
+        node = manifest.nodes.get(node_id)
+        legacy_repair_needs_baseline = (
+            legacy_synced_authoring
+            and missing_authoring_generation
+            and node is not None
+            and bool(node.work_item_id)
+        )
+        if missing_authoring_generation and not legacy_repair_needs_baseline:
             entry["expected_review_generation"] = _authoring_review_generation(
                 str(ledger.get("amendment_id") or ""), node_id)
             if legacy_synced_authoring:
@@ -1115,7 +1122,6 @@ def _resume_apply_ledger(
         if state in {"synced", "observed_progress"} and not legacy_synced_authoring:
             summary["already_complete"].append(node_id)
             continue
-        node = manifest.nodes.get(node_id)
         if node is None or not node.work_item_id:
             entry["state"] = "synced"
             entry["reason"] = "no existing work item side effect"
@@ -1124,6 +1130,13 @@ def _resume_apply_ledger(
             continue
         item = store.get_work_item(node.work_item_id)
         current = recovery_control_snapshot(item)
+        if legacy_repair_needs_baseline:
+            entry["expected_review_generation"] = _authoring_review_generation(
+                str(ledger.get("amendment_id") or ""), node_id)
+            entry["state"] = "repairing"
+            entry["attempt_baseline"] = current
+            state = "repairing"
+            _save_ledger(manifest, manifest_path, ledger)
         observation = classify_stage_recovery_observation(
             entry["stage"],
             entry.get("baseline") or {},

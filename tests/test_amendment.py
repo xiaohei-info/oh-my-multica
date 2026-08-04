@@ -2883,6 +2883,60 @@ def test_authoring_repair_noop_restore_does_not_mark_synced(
     assert entry["observed"]["review_generation"] is None
 
 
+def test_legacy_authoring_repair_baseline_read_failure_has_no_side_effect(
+    tmp_path, monkeypatch, aiteam_849_legacy_snapshot,
+):
+    path, amendment_file, engine, target, _reviewed = (
+        _legacy_synced_authoring_accept_fixture(
+            tmp_path, aiteam_849_legacy_snapshot))
+    legacy = load_manifest(str(path))
+    legacy.meta["amendment_apply"]["nodes"]["bootstrap"].pop(
+        "attempt_baseline", None)
+    save_manifest(legacy, str(path))
+    legacy_entry = load_manifest(str(path)).meta[
+        "amendment_apply"]["nodes"]["bootstrap"]
+    assert legacy_entry["state"] == "synced"
+    assert "expected_review_generation" not in legacy_entry
+    assert "attempt_baseline" not in legacy_entry
+    before_manifest = path.read_bytes()
+    before_amendment = amendment_file.read_bytes()
+    before_item = copy.deepcopy(engine.store.get_work_item(target.id))
+    original_get_work_item = engine.store.get_work_item
+    target_reads = 0
+    failed = False
+
+    def fail_once_for_target(item_id):
+        nonlocal failed, target_reads
+        if item_id == target.id:
+            target_reads += 1
+        if item_id == target.id and target_reads == 1:
+            failed = True
+            raise RuntimeError("legacy repair baseline read failed")
+        return original_get_work_item(item_id)
+
+    monkeypatch.setattr(engine.store, "get_work_item", fail_once_for_target)
+
+    with pytest.raises(RuntimeError, match="legacy repair baseline read failed"):
+        amendment_pipeline.accept_amendment(
+            engine,
+            str(path),
+            str(amendment_file),
+            reason="repeat official accepted amendment",
+            agent_pool={"alice", "bob", "charlie"},
+        )
+
+    assert failed
+    assert target_reads == 1
+    entry = load_manifest(str(path)).meta[
+        "amendment_apply"]["nodes"]["bootstrap"]
+    assert path.read_bytes() == before_manifest
+    assert amendment_file.read_bytes() == before_amendment
+    assert entry["state"] == "synced"
+    assert "attempt_baseline" not in entry
+    assert "expected_review_generation" not in entry
+    assert engine.store.get_work_item(target.id) == before_item
+
+
 def test_authoring_preflight_rejects_later_malformed_entry_before_any_write(
     tmp_path, monkeypatch,
 ):
