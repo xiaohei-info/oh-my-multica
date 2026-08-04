@@ -37,6 +37,29 @@ from ..i18n import ui
 SCHEMA = "omac.dag-amendment/v1"
 APPLY_LEDGER_SCHEMA = "omac.amendment-apply/v1"
 _COMPLETE_APPLY_STATES = {"synced", "observed_progress"}
+_APPLY_STAGES = {
+    "review", "authoring", "merging", "historical_contract_correction",
+}
+_APPLY_STATES = {"pending", "syncing", "repairing"} | _COMPLETE_APPLY_STATES
+_RECOVERY_SNAPSHOT_FIELDS = {
+    "status", "phase", "review_verdict", "review_subject_digest",
+    "review_generation", "review_ledger_generation", "review_ledger_current",
+    "bounce_baseline", "decision_required_pending", "review_report_pending",
+    "review_continuation_pending", "reviewer_run_baseline_pending",
+    "delivery_identity_pending", "contract_sha256", "worker_handoff_pending",
+}
+_RECOVERY_SNAPSHOT_BOOLEAN_FIELDS = {
+    "review_ledger_current", "decision_required_pending", "review_report_pending",
+    "review_continuation_pending", "reviewer_run_baseline_pending",
+    "delivery_identity_pending", "worker_handoff_pending",
+}
+_RECOVERY_SNAPSHOT_STRING_FIELDS = {
+    "status", "phase", "contract_sha256",
+}
+_RECOVERY_SNAPSHOT_OPTIONAL_STRING_FIELDS = {
+    "review_verdict", "review_subject_digest", "review_generation",
+    "review_ledger_generation",
+}
 _RUNTIME_FIELDS = {
     "work_item_id", "status", "merged", "merged_at", "merge_request_state",
 }
@@ -1047,23 +1070,75 @@ def _save_ledger(manifest: Manifest, manifest_path: str, ledger: dict[str, Any])
     save_manifest(manifest, manifest_path)
 
 
+def _is_structured_recovery_snapshot(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    if not _RECOVERY_SNAPSHOT_FIELDS.issubset(value):
+        return False
+    if any(
+        not isinstance(value[field], str) or not value[field]
+        for field in _RECOVERY_SNAPSHOT_STRING_FIELDS
+    ):
+        return False
+    if any(
+        not isinstance(value[field], bool)
+        for field in _RECOVERY_SNAPSHOT_BOOLEAN_FIELDS
+    ):
+        return False
+    if any(
+        value[field] is not None and not isinstance(value[field], str)
+        for field in _RECOVERY_SNAPSHOT_OPTIONAL_STRING_FIELDS
+    ):
+        return False
+    bounce_baseline = value["bounce_baseline"]
+    if bounce_baseline is not None and not isinstance(bounce_baseline, dict):
+        return False
+    return True
+
+
 def _preflight_authoring_repair_ledger(manifest: Manifest) -> None:
-    ledger = manifest.meta.get("amendment_apply")
-    if not isinstance(ledger, dict):
+    if "amendment_apply" not in manifest.meta:
         return
+
+    ledger = manifest.meta["amendment_apply"]
+    if not isinstance(ledger, dict):
+        raise ValidationError("amendment_apply ledger must be an object")
+    if ledger.get("schema") != APPLY_LEDGER_SCHEMA:
+        raise ValidationError(
+            f"amendment_apply ledger has unknown schema: {ledger.get('schema')!r}")
     entries = ledger.get("nodes")
     if not isinstance(entries, dict):
-        return
+        raise ValidationError("amendment_apply ledger nodes must be an object")
+
     for node_id, entry in entries.items():
-        if not isinstance(entry, dict):
-            continue
-        if (
-            entry.get("stage") == "authoring"
-            and entry.get("state") == "repairing"
-            and not entry.get("attempt_baseline")
-        ):
+        if not isinstance(node_id, str) or not node_id.strip():
             raise ValidationError(
-                f"node {node_id}: repairing entry is missing attempt_baseline")
+                f"amendment_apply ledger node id must be a non-empty string: {node_id!r}")
+        if not isinstance(entry, dict):
+            raise ValidationError(f"node {node_id}: apply ledger entry must be an object")
+
+        stage = entry.get("stage")
+        if not isinstance(stage, str) or stage not in _APPLY_STAGES:
+            raise ValidationError(
+                f"node {node_id}: unknown apply stage {stage!r}")
+        state = entry.get("state")
+        if not isinstance(state, str) or state not in _APPLY_STATES:
+            raise ValidationError(
+                f"node {node_id}: unknown apply state {state!r}")
+        if stage == "historical_contract_correction" and state != "synced":
+            raise ValidationError(
+                f"node {node_id}: historical contract correction must be synced")
+        if state == "repairing" and stage != "authoring":
+            raise ValidationError(
+                f"node {node_id}: repairing state is only valid for authoring")
+        if stage == "authoring" and state == "repairing":
+            attempt_baseline = entry.get("attempt_baseline")
+            if not attempt_baseline:
+                raise ValidationError(
+                    f"node {node_id}: repairing entry is missing attempt_baseline")
+            if not _is_structured_recovery_snapshot(attempt_baseline):
+                raise ValidationError(
+                    f"node {node_id}: repairing entry has invalid attempt_baseline")
 
 
 def _legacy_authoring_projection_is_repairable(current: dict[str, Any]) -> bool:

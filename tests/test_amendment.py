@@ -2992,6 +2992,60 @@ def test_authoring_preflight_rejects_later_malformed_entry_before_any_write(
     assert engine.store.get_work_item(second.id) == before_second
 
 
+@pytest.mark.parametrize(("entry", "message"), [
+    ([], "entry must be an object"),
+    ({"stage": "authoring", "state": "unknown"}, "unknown apply state"),
+])
+def test_authoring_preflight_rejects_invalid_ledger_entry(
+    entry, message,
+):
+    manifest = SimpleNamespace(meta={
+        "amendment_apply": {
+            "schema": amendment_mod.APPLY_LEDGER_SCHEMA,
+            "nodes": {"bootstrap": entry},
+        },
+    })
+
+    with pytest.raises(ValidationError, match=message):
+        amendment_mod._preflight_authoring_repair_ledger(manifest)
+
+
+@pytest.mark.parametrize("attempt_baseline", [
+    [],
+    {"status": "todo"},
+])
+def test_authoring_preflight_rejects_unstructured_attempt_baseline(
+    attempt_baseline,
+):
+    manifest = SimpleNamespace(meta={
+        "amendment_apply": {
+            "schema": amendment_mod.APPLY_LEDGER_SCHEMA,
+            "nodes": {
+                "bootstrap": {
+                    "stage": "authoring",
+                    "state": "repairing",
+                    "attempt_baseline": attempt_baseline,
+                },
+            },
+        },
+    })
+
+    with pytest.raises(ValidationError, match="attempt_baseline"):
+        amendment_mod._preflight_authoring_repair_ledger(manifest)
+
+
+@pytest.mark.parametrize("ledger", [
+    [],
+    {"schema": amendment_mod.APPLY_LEDGER_SCHEMA, "nodes": []},
+    {"schema": "unknown", "nodes": {}},
+])
+def test_authoring_preflight_rejects_invalid_apply_ledger_shape(ledger):
+    manifest = SimpleNamespace(meta={"amendment_apply": ledger})
+
+    with pytest.raises(ValidationError):
+        amendment_mod._preflight_authoring_repair_ledger(manifest)
+
+
 def test_authoring_unknown_formal_run_blocks_first_accept(
     tmp_path, monkeypatch,
 ):
