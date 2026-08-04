@@ -3570,12 +3570,12 @@ def test_apply_ledger_completes_after_contract_write_but_before_review_reset(tmp
     original_reset = engine.store.reset_review
     failed = False
 
-    def fail_reset(item_id):
+    def fail_reset(item_id, *, retire_current=False):
         nonlocal failed
         if not failed:
             failed = True
             raise RuntimeError("simulated reset interruption")
-        return original_reset(item_id)
+        return original_reset(item_id, retire_current=retire_current)
 
     monkeypatch.setattr(engine.store, "reset_review", fail_reset)
     with pytest.raises(RuntimeError, match="reset interruption"):
@@ -3652,7 +3652,27 @@ def test_non_authoring_recovery_noop_does_not_mark_synced(
     assert entry["state"] == "syncing"
 
 
-@pytest.mark.parametrize("residual", ("verdict", "report"))
+@pytest.mark.parametrize(
+    "residual",
+    (
+        "verdict",
+        "review_comment",
+        "machine_feedback",
+        "machine_feedback_ref",
+        "report",
+        "report_ref",
+        "decision",
+        "continuation",
+        "reviewer_baseline",
+        "obligations",
+        "obligations_ref",
+        "ledger_current",
+        "review_generation",
+        "subject",
+        "handoff",
+        "assignment",
+    ),
+)
 def test_recovery_conformance_review_target_requires_cleared_control(
     tmp_path, monkeypatch, residual,
 ):
@@ -3665,18 +3685,64 @@ def test_recovery_conformance_review_target_requires_cleared_control(
         if residual == "verdict":
             engine.store.update_work_item_metadata(
                 item.id, review_verdict="reject")
-        else:
+        elif residual == "review_comment":
+            engine.store.update_work_item_metadata(
+                item.id, review_comment="stale reviewer comment")
+        elif residual in {"machine_feedback", "machine_feedback_ref"}:
+            engine.store.update_work_item_metadata(
+                item.id,
+                machine_feedback={
+                    "schema": "omac.machine-feedback/v1",
+                    "gate": "review-preflight",
+                    "error_count": 1,
+                    "errors": ["stale machine feedback"],
+                },
+            )
+            if residual == "machine_feedback_ref":
+                engine.store.get_work_item(item.id).machine_feedback = None
+        elif residual in {"report", "report_ref"}:
             engine.store.update_work_item_metadata(
                 item.id,
                 review_report={"blockers": ["stale review report"]},
                 review_report_source="blockers:\n  - stale review report\n",
             )
+            if residual == "report_ref":
+                engine.store.get_work_item(item.id).review_report = None
+        else:
+            current = engine.store.get_work_item(item.id)
+            if residual == "decision":
+                current.decision_required = {"reason_code": "stale-decision"}
+            elif residual == "continuation":
+                current.review_continuation = {"authorized_through_round": 9}
+            elif residual == "reviewer_baseline":
+                current.reviewer_run_baseline = {"run_ids": ["stale-run"]}
+            elif residual == "obligations":
+                current.review_obligations = [{"obligation_id": "stale"}]
+            elif residual == "obligations_ref":
+                current.review_obligations_ref = {"attachment_id": "stale"}
+            elif residual == "ledger_current":
+                current.review_ledger_ref = {"attachment_id": "stale-ledger"}
+                current.review_ledger_generation = current.review_generation
+            elif residual == "review_generation":
+                current.review_generation = "stale-review-generation"
+            elif residual == "subject":
+                current.review_subject_digest = "stale-review-subject"
+            elif residual == "handoff":
+                engine.store.update_work_item_metadata(
+                    item.id, worker_handoff=_old_worker_handoff())
+            elif residual == "assignment":
+                current.platform_assignee_id = "stale-assignee"
         return result
 
     monkeypatch.setattr(
         amendment_mod, "prepare_stage_recovery", leave_stale_review_control)
 
-    with pytest.raises(ValidationError, match="observed progress"):
+    failure = (
+        "did not reach its target"
+        if residual in {"handoff", "assignment"}
+        else "observed progress"
+    )
+    with pytest.raises(ValidationError, match=failure):
         apply_amendment(
             str(path),
             reviewed,
@@ -3687,12 +3753,44 @@ def test_recovery_conformance_review_target_requires_cleared_control(
 
     entry = load_manifest(str(path)).meta[
         "amendment_apply"]["nodes"]["bootstrap"]
-    assert entry["state"] == "observed_progress"
+    assert entry["state"] == (
+        "syncing" if residual in {"handoff", "assignment"}
+        else "observed_progress"
+    )
     current = engine.store.get_work_item(item.id)
     if residual == "verdict":
         assert current.review_verdict == "reject"
+    elif residual == "review_comment":
+        assert current.review_comment == "stale reviewer comment"
+    elif residual == "machine_feedback":
+        assert current.machine_feedback is not None
+    elif residual == "machine_feedback_ref":
+        assert current.machine_feedback is None
+        assert current.machine_feedback_ref is not None
+    elif residual in {"report", "report_ref"}:
+        if residual == "report_ref":
+            assert current.review_report is None
+            assert current.review_report_ref is not None
+        else:
+            assert current.review_report == {"blockers": ["stale review report"]}
     else:
-        assert current.review_report == {"blockers": ["stale review report"]}
+        projection = recovery_control_snapshot(current)
+        projection_key = {
+            "decision": "decision_required_pending",
+            "continuation": "review_continuation_pending",
+            "reviewer_baseline": "reviewer_run_baseline_pending",
+            "obligations": "review_obligations_pending",
+            "obligations_ref": "review_obligations_pending",
+            "ledger_current": "review_ledger_current",
+            "handoff": "worker_handoff_pending",
+            "assignment": "assignment_pending",
+        }.get(residual)
+        if projection_key is not None:
+            assert projection[projection_key] is True
+        elif residual == "review_generation":
+            assert current.review_generation == "stale-review-generation"
+        else:
+            assert current.review_subject_digest == "stale-review-subject"
 
 
 @pytest.mark.parametrize("stage", ("review", "merging"))
@@ -4015,6 +4113,96 @@ def test_recovery_conformance_preflights_entire_ledger_before_side_effects(
     unchanged = load_manifest(str(path)).meta["amendment_apply"]["nodes"]
     assert unchanged["bootstrap"]["state"] == "pending"
     assert unchanged["started-dependent"]["state"] == "repairing"
+
+
+def test_pipeline_preflights_entire_recovery_before_any_accept_write(
+    tmp_path, monkeypatch,
+):
+    path = _topology_manifest(tmp_path)
+    engine = _engine()
+    first = engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    engine.store.update_status(first.id, WorkItemStatus.BLOCKED)
+    second = engine.store.create_work_item(
+        "ws", "dependent", "desc", "started-dependent", "charlie",
+        reviewer="bob")
+    engine.store.update_status(second.id, WorkItemStatus.IN_REVIEW)
+    amendment_issue = engine.store.create_work_item(
+        "ws", "amendment", "desc", "amend-preflight", "alice",
+        reviewer="bob", kind=TaskKind.AMENDMENT)
+    engine.store.update_work_item_metadata(
+        amendment_issue.id,
+        phase=TaskPhase.CONFIRMATION,
+        review_verdict="pass",
+        decision_required={"reason_code": "awaiting-human-confirmation"},
+    )
+    reviewed = build_reviewed_amendment(
+        load_manifest(str(path)),
+        _proposal({
+            "op": "update",
+            "node": "bootstrap",
+            "set": {"blocked_by": ["foundation"]},
+        }),
+        engine.store,
+        issue_id=amendment_issue.id,
+        reviewer_verdict="pass",
+    )
+    original_resume = amendment_mod._resume_apply_ledger
+    monkeypatch.setattr(
+        amendment_mod,
+        "_resume_apply_ledger",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("stop after ledger creation")),
+    )
+    with pytest.raises(RuntimeError, match="after ledger creation"):
+        apply_amendment(
+            str(path), reviewed, engine.store, {"alice", "bob", "charlie"})
+    monkeypatch.setattr(amendment_mod, "_resume_apply_ledger", original_resume)
+
+    manifest = load_manifest(str(path))
+    entries = manifest.meta["amendment_apply"]["nodes"]
+    entries["started-dependent"]["state"] = "repairing"
+    entries["started-dependent"].pop("attempt_baseline", None)
+    save_manifest(manifest, str(path))
+    amendment_file = tmp_path / "preflight.amendment.yaml"
+    amendment_file.write_text(yaml.safe_dump(reviewed, sort_keys=False))
+    before_manifest = path.read_bytes()
+    before_amendment = amendment_file.read_bytes()
+    before_first = copy.deepcopy(engine.store.get_work_item(first.id))
+    before_second = copy.deepcopy(engine.store.get_work_item(second.id))
+    before_issue = copy.deepcopy(engine.store.get_work_item(amendment_issue.id))
+    monkeypatch.setattr(engine.runtime, "list_runs", lambda _item_id: [])
+    original_get = engine.store.get_work_item
+    monkeypatch.setattr(
+        engine.store,
+        "get_work_item",
+        lambda item_id: pytest.fail(
+            "pipeline preflight must run before amendment issue hydration")
+        if item_id == amendment_issue.id else original_get(item_id),
+    )
+    monkeypatch.setattr(
+        amendment_pipeline,
+        "apply_amendment",
+        lambda *_args, **_kwargs: pytest.fail(
+            "pipeline preflight must run before core apply_amendment"),
+    )
+
+    with pytest.raises(
+        ValidationError, match="repairing entry is missing attempt_baseline",
+    ):
+        amendment_pipeline.accept_amendment(
+            engine,
+            str(path),
+            str(amendment_file),
+            reason="operator accepted",
+            agent_pool={"alice", "bob", "charlie"},
+        )
+
+    assert path.read_bytes() == before_manifest
+    assert amendment_file.read_bytes() == before_amendment
+    assert engine.store.get_work_item(first.id) == before_first
+    assert engine.store.get_work_item(second.id) == before_second
+    assert original_get(amendment_issue.id) == before_issue
 
 
 def test_invalid_historical_ledger_remains_raw_history_during_authoring_recovery(

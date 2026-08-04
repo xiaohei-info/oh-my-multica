@@ -22,6 +22,7 @@ from .manifest import (
 from .retry_budget import amendment_bounce_baseline
 from .stage_recovery import (
     classify_stage_recovery_observation,
+    _contract_ref_digest,
     observe_recovery_control,
     prepare_stage_recovery,
     recovery_control_snapshot,
@@ -992,10 +993,12 @@ def _prepare_apply_ledger(
                 "bounce_baseline": amendment_bounce_baseline(item),
                 "expected_contract_sha256": _digest(
                     _dump_contract(node.contract) if node.contract else None),
+                "expected_contract_ref_sha256": _contract_ref_digest(
+                    node.contract),
             }
             if stage == "review":
                 entry["expected_review_subject"] = stage_recovery_subject(node, item)
-            if stage == "authoring":
+            if stage in {"authoring", "review"}:
                 entry["expected_review_generation"] = (
                     _authoring_review_generation(amendment_id, node_id)
                 )
@@ -1025,6 +1028,8 @@ def _classify_apply_entry(
         entry.get("baseline") or {} if baseline is None else baseline,
         current,
         expected_contract_sha256=entry.get("expected_contract_sha256") or "",
+        expected_contract_ref_sha256=entry.get(
+            "expected_contract_ref_sha256"),
         expected_review_subject=entry.get("expected_review_subject"),
         expected_review_generation=entry.get("expected_review_generation"),
         expected_bounce_baseline=entry.get("bounce_baseline"),
@@ -1072,6 +1077,28 @@ def _save_ledger(manifest: Manifest, manifest_path: str, ledger: dict[str, Any])
     save_manifest(manifest, manifest_path)
 
 
+def preflight_amendment_recovery(
+    manifest: Manifest, amendment: dict[str, Any],
+) -> None:
+    """Read-only global recovery validation shared by pipeline and core."""
+    if manifest.meta.get("last_amendment_id") != amendment.get("amendment_id"):
+        return
+    ledger = manifest.meta.get("amendment_apply")
+    entries = ledger.get("nodes") if isinstance(ledger, dict) else None
+    if not isinstance(entries, dict):
+        return
+    malformed = next((
+        node_id for node_id, entry in entries.items()
+        if isinstance(entry, dict)
+        and entry.get("state") == "repairing"
+        and not isinstance(entry.get("attempt_baseline"), dict)
+    ), None)
+    if malformed is not None:
+        raise ValidationError(
+            f"node {malformed}: repairing entry is missing attempt_baseline; "
+            "refusing to infer a causal boundary from current Store facts")
+
+
 def _legacy_authoring_projection_is_repairable(current: dict[str, Any]) -> bool:
     """Return whether a missing-generation legacy projection is still authoring."""
     return (
@@ -1096,17 +1123,9 @@ def _resume_apply_ledger(
     if not isinstance(ledger, dict) or ledger.get("schema") != APPLY_LEDGER_SCHEMA:
         raise ValidationError(
             "Applied amendment is missing a valid per-node apply ledger")
-    malformed_repairing = next((
-        node_id for node_id, entry in ledger.get("nodes", {}).items()
-        if isinstance(entry, dict)
-        and entry.get("state") == "repairing"
-        and not isinstance(entry.get("attempt_baseline"), dict)
-    ), None)
-    if malformed_repairing is not None:
-        raise ValidationError(
-            f"node {malformed_repairing}: repairing entry is missing "
-            "attempt_baseline; refusing to infer a causal boundary from "
-            "current Store facts")
+    preflight_amendment_recovery(manifest, {
+        "amendment_id": ledger.get("amendment_id"),
+    })
     summary = {"synced": [], "observed_progress": [], "already_complete": []}
     failures = []
     for node_id, entry in ledger.get("nodes", {}).items():
@@ -1114,7 +1133,7 @@ def _resume_apply_ledger(
         persisted_synced = state == "synced"
         started_repair = False
         missing_authoring_generation = (
-            entry.get("stage") == "authoring"
+            entry.get("stage") in {"authoring", "review"}
             and not entry.get("expected_review_generation")
         )
         legacy_synced_authoring = (
@@ -1124,6 +1143,9 @@ def _resume_apply_ledger(
                 or (state == "synced" and missing_authoring_generation)
             )
         )
+        if not entry.get("expected_contract_ref_sha256"):
+            entry["expected_contract_ref_sha256"] = _contract_ref_digest(
+                node.contract if (node := manifest.nodes.get(node_id)) else None)
         if missing_authoring_generation:
             entry["expected_review_generation"] = _authoring_review_generation(
                 str(ledger.get("amendment_id") or ""), node_id)
@@ -1296,6 +1318,7 @@ def apply_amendment(
             "Amendment identity does not match its reviewed proposal and analysis")
 
     current = load_manifest(manifest_path)
+    preflight_amendment_recovery(current, amendment)
     already_applied = current.meta.get("last_amendment_id") == amendment.get("amendment_id")
     runtime_rebased = False
     if not already_applied:

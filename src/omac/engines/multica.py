@@ -1696,9 +1696,15 @@ class MulticaStore(WorkItemStore):
         """Multica 原生 cancelled 态:从活跃列表移除(区别于 blocked)。"""
         self._run_multica(["issue", "status", item_id, "cancelled"])
 
-    def reset_review(self, item_id: str):
+    def reset_review(self, item_id: str, *, retire_current: bool = False):
+        recovery_retirement = (
+            (REVIEW_OBLIGATIONS_KEY, []),
+            (REVIEW_OBLIGATIONS_REF_KEY, "{}"),
+            (REVIEW_CONTINUATION_KEY, "{}"),
+        ) if retire_current else ()
         self._apply_metadata_projection(item_id, (
             *_REVIEW_CLEAR_METADATA,
+            *recovery_retirement,
             (REVIEW_SUBJECT_DIGEST_KEY, ""),
             (PHASE_KEY, TaskPhase.AUTHORING.value),
         ))

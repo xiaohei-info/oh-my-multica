@@ -292,10 +292,11 @@ class WorkItemStore(ABC):
         """更新状态(排他,同一时刻只有一个)。写后读一致。"""
 
     @abstractmethod
-    def reset_review(self, item_id: str):
+    def reset_review(self, item_id: str, *, retire_current: bool = False):
         """回退到 worker 时清除 reviewer 侧判定(verdict/comment/report)并重置为 authoring。
 
         让重新提交后的节点再次接受评审,避免旧 verdict 立即再次触发 reject。
+        amendment recovery 可同时退役旧 obligations/continuation 控制。
         """
 
     @abstractmethod

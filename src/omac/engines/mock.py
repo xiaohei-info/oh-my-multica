@@ -1047,7 +1047,7 @@ class MockStore(WorkItemStore):
         _shared_active_assignments.pop(item_id, None)
         _shared_assignment_wake_pending.discard(item_id)
 
-    def reset_review(self, item_id: str):
+    def reset_review(self, item_id: str, *, retire_current: bool = False):
         item = self.get_work_item(item_id)
         item.review_verdict = None
         item.review_comment = None
@@ -1055,6 +1055,10 @@ class MockStore(WorkItemStore):
         item.machine_feedback_ref = None
         item.review_report = None
         item.review_report_ref = None
+        if retire_current:
+            item.review_obligations = []
+            item.review_obligations_ref = None
+            item.review_continuation = None
         item.decision_required = None
         item.review_subject_digest = None
         item.reviewer_run_baseline = None

@@ -15,7 +15,7 @@ import yaml
 from ..core.acceptance import load_acceptance_doc_file
 from ..core.amendment import (
     apply_amendment, authoring_recovery_node_ids, build_reviewed_amendment,
-    parse_proposal, validate_proposal,
+    parse_proposal, preflight_amendment_recovery, validate_proposal,
 )
 from ..core.manifest import Contract, load_manifest
 from ..core.repository_files import revision_directory_files
@@ -583,8 +583,9 @@ def accept_amendment(
     issue_id = review.get("issue_id")
     if not issue_id:
         raise ValidationError("Amendment review.issue_id is missing")
-    issue = engine.store.get_work_item(issue_id)
     current_manifest = load_manifest(manifest_path)
+    preflight_amendment_recovery(current_manifest, amendment)
+    issue = engine.store.get_work_item(issue_id)
     already_applied = (
         current_manifest.meta.get("last_amendment_id")
         == amendment.get("amendment_id")
