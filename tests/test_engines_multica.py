@@ -20,6 +20,7 @@ from omac.engines.models import (
     AgentRunObservation, EngineConfig, PullRequestReadinessFailure, PullRequestState,
 )
 from omac.engines.models import WorkItemStatus
+from omac.engines.metadata_policy import encode_metadata_value
 from omac.engines.multica import MulticaRuntime, MulticaStore
 from omac.errors import PlatformError
 from omac.pipeline import dispatch as dispatch_mod
@@ -163,75 +164,6 @@ def test_multica_maps_current_and_ledger_review_generations():
     assert item.bounce_baseline == {"worker": 14, "review": 3, "merge": 0}
 
 
-def test_multica_restores_authoring_generation_with_one_atomic_issue_write(
-    monkeypatch,
-):
-    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
-    item_id = "11111111-1111-4111-8111-111111111111"
-    old_ledger_ref = {
-        "attachment_id": "ledger-849",
-        "sha256": "a" * 64,
-    }
-    old_metadata = {
-        "dag_key": "contracts-platform-resource-schema",
-        "phase": "review",
-        "worker_bounce": "15",
-        "review_bounce": "3",
-        "decision_required": '{"reason_code":"old"}',
-        "review_verdict": "reject",
-        "review_report_ref": '{"attachment_id":"report-849"}',
-        "review_ledger_ref": json.dumps(old_ledger_ref),
-        "review_ledger_generation": "review-aiteam-849",
-        "review_continuation": '{"authorized_through_round":6}',
-        "worker_handoff": '{"schema":"omac.worker-handoff/v1"}',
-    }
-    writes = []
-    expected = SimpleNamespace(id=item_id)
-    monkeypatch.setattr(
-        store, "_publish_payload_comment",
-        lambda *_args, **_kwargs: {
-            "attachment_id": "contract-850",
-            "sha256": "b" * 64,
-        })
-    monkeypatch.setattr(
-        store, "_read_issue_metadata",
-        lambda _item_id: ({"id": item_id}, dict(old_metadata)))
-    monkeypatch.setattr(
-        store, "_put_issue_fields_direct",
-        lambda target_id, fields, *, operation: writes.append(
-            (target_id, fields, operation)))
-    monkeypatch.setattr(store, "get_work_item", lambda _item_id: expected)
-
-    result = store.restore_authoring_generation(
-        item_id,
-        {"objective": "amended contract"},
-        "amendment-aiteam-850",
-        {"worker": 14, "review": 3, "merge": 0},
-    )
-
-    assert result is expected
-    assert len(writes) == 1
-    target_id, fields, operation = writes[0]
-    assert target_id == item_id
-    assert operation == "authoring-generation recovery"
-    assert fields["status"] == "todo"
-    assert fields["assignee_id"] is None
-    metadata = fields["metadata"]
-    assert json.loads(metadata["review_ledger_ref"]) == old_ledger_ref
-    assert metadata["review_ledger_generation"] == "review-aiteam-849"
-    assert metadata["worker_bounce"] == "15"
-    assert metadata["review_bounce"] == "3"
-    assert metadata["review_generation"] == "amendment-aiteam-850"
-    assert json.loads(metadata["bounce_baseline"]) == {
-        "worker": 14, "review": 3, "merge": 0}
-    assert metadata["phase"] == "authoring"
-    assert metadata["decision_required"] == "{}"
-    assert metadata["review_report_ref"] == "{}"
-    assert metadata["review_obligations"] == "[]"
-    assert metadata["review_continuation"] == "{}"
-    assert metadata["worker_handoff"] == "{}"
-
-
 def test_authoring_generation_tombstone_hides_legacy_inline_review_report(
     monkeypatch,
 ):
@@ -244,7 +176,7 @@ def test_authoring_generation_tombstone_hides_legacy_inline_review_report(
         "review_verdict": "reject",
         "review_report": {"blockers": ["legacy inline report"]},
     }
-    writes = []
+    metadata_sets = []
     monkeypatch.setattr(
         store, "_publish_payload_comment",
         lambda *_args, **_kwargs: {
@@ -254,21 +186,181 @@ def test_authoring_generation_tombstone_hides_legacy_inline_review_report(
         lambda _item_id: ({"id": item_id}, dict(old_metadata)))
     monkeypatch.setattr(
         store, "_put_issue_fields_direct",
-        lambda _item_id, fields, *, operation: writes.append(fields))
+        lambda _item_id, fields, *, operation: None)
+    monkeypatch.setattr(
+        store, "_set_metadata",
+        lambda target_id, key, value: metadata_sets.append((key, value)))
     monkeypatch.setattr(store, "get_work_item", lambda _item_id: SimpleNamespace())
 
     store.restore_authoring_generation(
         item_id, {"objective": "amended"}, "amendment-aiteam-850")
 
+    # restore 现在逐键经 `issue metadata set` 写入;在服务端侧合并被写入的键。
+    projected = dict(old_metadata)
+    for key, value in metadata_sets:
+        projected[key] = encode_metadata_value(value)
     mapped = store._issue_to_control_projection({
         "id": item_id,
         "title": "legacy inline report",
         "description": "legacy inline report",
         "status": "todo",
-        "metadata": writes[0]["metadata"],
+        "metadata": projected,
     }, "ws").work_item
     assert mapped.review_report is None
     assert mapped.review_report_ref is None
+
+
+def test_multica_restore_writes_metadata_via_metadata_set_not_issue_put(
+    monkeypatch,
+):
+    """恢复 metadata 必须走 `issue metadata set`，issue PUT body 不得携带 metadata。
+
+    真实 multica 服务端的 PUT /api/issues/{id} 会静默忽略 body 里的 metadata
+    字段(metadata 是独立 KV 子资源);把恢复 metadata 塞进 PUT body 会导致
+    amendment accept 的 authoring recovery read-after-write 永不收敛。
+    """
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    item_id = "11111111-1111-4111-8111-111111111111"
+    old_metadata = {
+        "dag_key": "contracts-platform-resource-schema",
+        "kind": "develop",
+        "phase": "review",
+        "worker_bounce": "15",
+        "review_bounce": "3",
+        "decision_required": '{"reason_code":"old"}',
+        "review_verdict": "reject",
+        "review_report_ref": '{"attachment_id":"report-849"}',
+        "review_ledger_ref": json.dumps(
+            {"attachment_id": "ledger-849", "sha256": "a" * 64}),
+        "review_ledger_generation": "review-aiteam-849",
+        "review_continuation": '{"authorized_through_round":6}',
+        "worker_handoff": '{"schema":"omac.worker-handoff/v1"}',
+    }
+    contract_ref = {"attachment_id": "contract-850", "sha256": "b" * 64}
+    put_bodies = []
+    metadata_sets = []
+    expected = SimpleNamespace(
+        id=item_id, review_generation="amendment-aiteam-850")
+    monkeypatch.setattr(
+        store, "_publish_payload_comment",
+        lambda *_args, **_kwargs: dict(contract_ref))
+    monkeypatch.setattr(
+        store, "_read_issue_metadata",
+        lambda _item_id: ({"id": item_id}, dict(old_metadata)))
+    monkeypatch.setattr(
+        store, "_put_issue_fields_direct",
+        lambda target_id, fields, *, operation: put_bodies.append(
+            (target_id, fields, operation)))
+    monkeypatch.setattr(
+        store, "_set_metadata",
+        lambda target_id, key, value: metadata_sets.append(
+            (target_id, key, value)))
+    monkeypatch.setattr(store, "get_work_item", lambda _item_id: expected)
+
+    result = store.restore_authoring_generation(
+        item_id,
+        {"objective": "amended contract"},
+        "amendment-aiteam-850",
+        {"worker": 14, "review": 3, "merge": 0},
+    )
+
+    # (c) restore 必须读回并返回最新 WorkItem。
+    assert result is expected
+    # (b) issue PUT 只负责 issue 字段,body 中不得出现 metadata。
+    assert len(put_bodies) == 1
+    target_id, fields, operation = put_bodies[0]
+    assert target_id == item_id
+    assert operation == "authoring-generation recovery"
+    assert "metadata" not in fields
+    assert fields["status"] == "todo"
+    assert fields["assignee_type"] is None
+    assert fields["assignee_id"] is None
+    assert fields["suppress_run"] is True
+    # (a) 恢复 metadata 逐键经 `issue metadata set` 持久化。
+    written = {
+        key: value for set_id, key, value in metadata_sets
+        if set_id == item_id
+    }
+    assert written["review_generation"] == "amendment-aiteam-850"
+    assert written["bounce_baseline"] == {
+        "worker": 14, "review": 3, "merge": 0}
+    assert written["contract_ref"] == contract_ref
+    assert written["phase"] == "authoring"
+    assert written["worker_handoff"] == "{}"
+    assert written["delivery_identity"] == "{}"
+    assert written["review_obligations"] == []
+    assert written["review_obligations_ref"] == "{}"
+    assert written["review_continuation"] == "{}"
+    assert written["review_report_ref"] == "{}"
+    assert written["decision_required"] == "{}"
+    assert written["review_verdict"] == ""
+    assert written["reviewer"] == ""
+    # 历史 ledger / 绝对 bounce 计数不允许被恢复重写。
+    assert "review_ledger_ref" not in written
+    assert "review_ledger_generation" not in written
+    assert "worker_bounce" not in written
+    assert "review_bounce" not in written
+
+
+def test_multica_restore_rerun_skips_already_matching_metadata(monkeypatch):
+    """restart-safe:metadata 已达目标态时重跑只补齐 issue 字段,不重写 metadata。"""
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    item_id = "11111111-1111-4111-8111-111111111111"
+    contract_ref = {"attachment_id": "contract-850", "sha256": "b" * 64}
+    restored_metadata = {
+        "dag_key": "contracts-platform-resource-schema",
+        "kind": "develop",
+        "phase": "authoring",
+        "review_comment": "",
+        "machine_feedback_ref": "{}",
+        "review_report_ref": "{}",
+        "decision_required": "{}",
+        "reviewer_run_baseline": "{}",
+        "review_verdict": "",
+        "review_subject_digest": "",
+        "review_obligations": "[]",
+        "review_obligations_ref": "{}",
+        "review_continuation": "{}",
+        "worker_handoff": "{}",
+        "delivery_identity": "{}",
+        "review_generation": "amendment-aiteam-850",
+        "bounce_baseline": json.dumps(
+            {"worker": 14, "review": 3, "merge": 0}),
+        "contract_ref": json.dumps(contract_ref),
+        "reviewer": "",
+        "review_ledger_ref": json.dumps(
+            {"attachment_id": "ledger-849", "sha256": "a" * 64}),
+        "review_ledger_generation": "review-aiteam-849",
+    }
+    put_bodies = []
+    metadata_sets = []
+    monkeypatch.setattr(
+        store, "_publish_payload_comment",
+        lambda *_args, **_kwargs: dict(contract_ref))
+    monkeypatch.setattr(
+        store, "_read_issue_metadata",
+        lambda _item_id: ({"id": item_id}, dict(restored_metadata)))
+    monkeypatch.setattr(
+        store, "_put_issue_fields_direct",
+        lambda target_id, fields, *, operation: put_bodies.append(fields))
+    monkeypatch.setattr(
+        store, "_set_metadata",
+        lambda target_id, key, value: metadata_sets.append(
+            (target_id, key, value)))
+    monkeypatch.setattr(
+        store, "get_work_item", lambda _item_id: SimpleNamespace(id=item_id))
+
+    store.restore_authoring_generation(
+        item_id,
+        {"objective": "amended contract"},
+        "amendment-aiteam-850",
+        {"worker": 14, "review": 3, "merge": 0},
+    )
+
+    assert metadata_sets == []
+    assert len(put_bodies) == 1
+    assert "metadata" not in put_bodies[0]
+    assert put_bodies[0]["status"] == "todo"
 
 
 def test_multica_malformed_empty_decision_value_remains_fail_closed():
