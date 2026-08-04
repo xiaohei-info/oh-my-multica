@@ -18,6 +18,7 @@ from omac.core.taskmeta import (
 )
 from omac.engines.models import (
     AgentRunObservation, EngineConfig, PullRequestReadinessFailure, PullRequestState,
+    WorkItemControlProjection,
 )
 from omac.engines.models import WorkItemStatus
 from omac.engines.multica import MulticaRuntime, MulticaStore
@@ -186,7 +187,6 @@ def test_multica_restores_authoring_generation_with_one_atomic_issue_write(
         "worker_handoff": '{"schema":"omac.worker-handoff/v1"}',
     }
     writes = []
-    expected = SimpleNamespace(id=item_id)
     monkeypatch.setattr(
         store, "_publish_payload_comment",
         lambda *_args, **_kwargs: {
@@ -200,7 +200,23 @@ def test_multica_restores_authoring_generation_with_one_atomic_issue_write(
         store, "_put_issue_fields_direct",
         lambda target_id, fields, *, operation: writes.append(
             (target_id, fields, operation)))
-    monkeypatch.setattr(store, "get_work_item", lambda _item_id: expected)
+    monkeypatch.setattr(
+        store,
+        "hydrate_work_item_evidence",
+        lambda *_args, **_kwargs: pytest.fail(
+            "authoring generation restore must not hydrate historical payloads"),
+    )
+    monkeypatch.setattr(
+        store,
+        "_run_multica",
+        lambda args, capture=True: {
+            "id": item_id,
+            "title": "contracts platform resource",
+            "description": "historical invalid ledger remains attachment-backed",
+            "status": "todo",
+            "metadata": writes[0][1]["metadata"],
+        },
+    )
 
     result = store.restore_authoring_generation(
         item_id,
@@ -209,7 +225,12 @@ def test_multica_restores_authoring_generation_with_one_atomic_issue_write(
         {"worker": 14, "review": 3, "merge": 0},
     )
 
-    assert result is expected
+    assert result.id == item_id
+    assert result.review_ledger is None
+    assert result.review_ledger_ref == old_ledger_ref
+    assert result.review_generation == "amendment-aiteam-850"
+    assert result.review_ledger_generation == "review-aiteam-849"
+    assert result.current_review_ledger is None
     assert len(writes) == 1
     target_id, fields, operation = writes[0]
     assert target_id == item_id
@@ -255,7 +276,11 @@ def test_authoring_generation_tombstone_hides_legacy_inline_review_report(
     monkeypatch.setattr(
         store, "_put_issue_fields_direct",
         lambda _item_id, fields, *, operation: writes.append(fields))
-    monkeypatch.setattr(store, "get_work_item", lambda _item_id: SimpleNamespace())
+    monkeypatch.setattr(
+        store,
+        "observe_work_item_control",
+        lambda _item_id: WorkItemControlProjection(SimpleNamespace()),
+    )
 
     store.restore_authoring_generation(
         item_id, {"objective": "amended"}, "amendment-aiteam-850")

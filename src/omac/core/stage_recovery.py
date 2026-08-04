@@ -257,6 +257,21 @@ def classify_stage_recovery_observation(
         current.get("status") == baseline.get("status")
         and current.get("phase") == TaskPhase.AUTHORING.value
         and current.get("review_verdict") in {None, ""}
+        and all(
+            current.get(key) == baseline.get(key)
+            for key in {
+                "review_subject_digest",
+                "review_generation",
+                "review_ledger_generation",
+                "review_ledger_current",
+                "bounce_baseline",
+                "decision_required_pending",
+                "review_report_pending",
+                "review_continuation_pending",
+                "reviewer_run_baseline_pending",
+                "delivery_identity_pending",
+            }
+        )
     ):
         return "safe"
     return "progressed"

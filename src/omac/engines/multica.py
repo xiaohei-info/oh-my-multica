@@ -1627,7 +1627,7 @@ class MulticaStore(WorkItemStore):
             operation="authoring-generation recovery",
         )
         self._pending_assignment_wakes.discard(item_id)
-        return self.get_work_item(item_id)
+        return self.observe_work_item_control(item_id).work_item
 
     def set_node_contract(self, item_id: str, contract: Any):
         from ..core.manifest import _dump_contract

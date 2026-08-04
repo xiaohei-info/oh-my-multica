@@ -241,7 +241,10 @@ omac dag amend propose .omac/project.yaml \
   records `observed_progress` without rolling back the progressed Store facts and
   fails closed for that accept attempt. If read-after-write still has not reached
   the target, the entry remains `repairing`/`syncing`; repeat the same accept
-  command rather than recording a false `synced`.
+  command rather than recording a false `synced`; the same rule applies to review
+  and merging. Entering `repairing` persists `attempt_baseline` in the same ledger
+  save. An existing `repairing` entry without that baseline fails closed instead of
+  inferring one from current Store facts.
 - Bounce fields remain monotonic absolute audit counters and are never reset.
   `work show.task.bounce_budget` and Worker retry logs distinguish the absolute
   value, amendment baseline, and current-generation consumption. Runtime budget

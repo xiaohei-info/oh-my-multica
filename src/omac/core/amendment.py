@@ -1119,7 +1119,6 @@ def _resume_apply_ledger(
                 entry["state"] = "repairing"
                 state = "repairing"
                 started_repair = True
-            _save_ledger(manifest, manifest_path, ledger)
         if state == "observed_progress" or (
             state == "synced" and entry.get("stage") != "authoring"
         ):
@@ -1152,7 +1151,6 @@ def _resume_apply_ledger(
             state = "repairing"
             legacy_synced_authoring = True
             started_repair = True
-            _save_ledger(manifest, manifest_path, ledger)
         elif state == "synced":
             summary["already_complete"].append(node_id)
             continue
@@ -1161,6 +1159,11 @@ def _resume_apply_ledger(
             entry["attempt_baseline"] = current
             attempt_baseline = current
             _save_ledger(manifest, manifest_path, ledger)
+        elif state == "repairing" and not isinstance(attempt_baseline, dict):
+            failures.append(
+                f"node {node_id}: repairing entry is missing attempt_baseline; "
+                "refusing to infer a causal boundary from current Store facts")
+            continue
         if state == "repairing" and isinstance(attempt_baseline, dict):
             if current != attempt_baseline:
                 attempt_observation = _classify_apply_entry(
@@ -1211,12 +1214,6 @@ def _resume_apply_ledger(
         )
         observed = recovery_control_snapshot(
             observe_recovery_control(store, node.work_item_id))
-        if entry["stage"] != "authoring":
-            entry["state"] = "synced"
-            entry["observed"] = observed
-            _save_ledger(manifest, manifest_path, ledger)
-            summary["synced"].append(node_id)
-            continue
         after = _classify_apply_entry(
             entry, observed, baseline=entry.get("attempt_baseline") or {})
         entry["observed"] = observed
@@ -1238,7 +1235,7 @@ def _resume_apply_ledger(
             continue
         _save_ledger(manifest, manifest_path, ledger)
         failures.append(
-            f"node {node_id}: authoring recovery did not reach its target; "
+            f"node {node_id}: {entry['stage']} recovery did not reach its target; "
             "repeat the same amendment accept command")
     if failures:
         raise ValidationError("; ".join(failures))

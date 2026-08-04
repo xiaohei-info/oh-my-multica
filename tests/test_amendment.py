@@ -2981,6 +2981,105 @@ def test_legacy_synced_authoring_repair_is_restart_safe(
     assert current.current_review_ledger is None
 
 
+def test_repairing_without_attempt_baseline_fails_closed_after_crash(
+    tmp_path, monkeypatch, aiteam_849_legacy_snapshot,
+):
+    path, amendment_file, engine, target, _reviewed = (
+        _legacy_synced_authoring_accept_fixture(
+            tmp_path, aiteam_849_legacy_snapshot))
+    engine.store.update_work_item_metadata(target.id, decision_required={})
+    manifest = load_manifest(str(path))
+    entry = manifest.meta["amendment_apply"]["nodes"]["bootstrap"]
+    entry.pop("attempt_baseline", None)
+    save_manifest(manifest, str(path))
+    original_save = amendment_mod._save_ledger
+    crashed = False
+
+    def crash_after_repairing_save(manifest, manifest_path, ledger):
+        nonlocal crashed
+        original_save(manifest, manifest_path, ledger)
+        saved = ledger["nodes"]["bootstrap"]
+        if not crashed and saved["state"] == "repairing":
+            crashed = True
+            raise RuntimeError("crash after repairing state save")
+
+    monkeypatch.setattr(
+        amendment_mod, "_save_ledger", crash_after_repairing_save)
+    with pytest.raises(RuntimeError, match="repairing state save"):
+        amendment_pipeline.accept_amendment(
+            engine,
+            str(path),
+            str(amendment_file),
+            reason="repeat official accepted amendment",
+            agent_pool={"alice", "bob", "charlie"},
+        )
+
+    interrupted = load_manifest(str(path)).meta[
+        "amendment_apply"]["nodes"]["bootstrap"]
+    assert interrupted["state"] == "repairing"
+    assert interrupted["attempt_baseline"]
+    engine.store.update_work_item_metadata(
+        target.id, decision_required={"reason_code": "new-after-crash"})
+    assert interrupted["attempt_baseline"]["decision_required_pending"] is False
+    assert recovery_control_snapshot(
+        engine.store.get_work_item(target.id)
+    )["decision_required_pending"] is True
+    monkeypatch.setattr(amendment_mod, "_save_ledger", original_save)
+
+    with pytest.raises(
+        ValidationError, match="observed progress",
+    ):
+        amendment_pipeline.accept_amendment(
+            engine,
+            str(path),
+            str(amendment_file),
+            reason="repeat official accepted amendment",
+            agent_pool={"alice", "bob", "charlie"},
+        )
+
+    assert engine.store.get_work_item(target.id).decision_required == {
+        "reason_code": "new-after-crash"}
+    repaired = load_manifest(str(path)).meta[
+        "amendment_apply"]["nodes"]["bootstrap"]
+    assert repaired["state"] == "observed_progress"
+
+
+def test_existing_repairing_without_attempt_baseline_fails_closed(
+    tmp_path, monkeypatch, aiteam_849_legacy_snapshot,
+):
+    path, amendment_file, engine, target, _reviewed = (
+        _legacy_synced_authoring_accept_fixture(
+            tmp_path, aiteam_849_legacy_snapshot))
+    manifest = load_manifest(str(path))
+    entry = manifest.meta["amendment_apply"]["nodes"]["bootstrap"]
+    entry["state"] = "repairing"
+    entry["expected_review_generation"] = "repair-generation"
+    entry.pop("attempt_baseline", None)
+    save_manifest(manifest, str(path))
+    monkeypatch.setattr(engine.runtime, "list_runs", lambda _item_id: [])
+    monkeypatch.setattr(
+        engine.store,
+        "restore_authoring_generation",
+        lambda *_args, **_kwargs: pytest.fail(
+            "missing causal baseline must not restore Store control"),
+    )
+
+    with pytest.raises(
+        ValidationError, match="repairing entry is missing attempt_baseline",
+    ):
+        amendment_pipeline.accept_amendment(
+            engine,
+            str(path),
+            str(amendment_file),
+            reason="repeat official accepted amendment",
+            agent_pool={"alice", "bob", "charlie"},
+        )
+
+    assert load_manifest(str(path)).meta[
+        "amendment_apply"]["nodes"]["bootstrap"]["state"] == "repairing"
+    assert engine.store.get_work_item(target.id).review_generation is None
+
+
 def test_legacy_synced_repair_fails_closed_for_active_formal_run(
     tmp_path, monkeypatch, aiteam_849_legacy_snapshot,
 ):
@@ -3468,6 +3567,8 @@ def test_merge_only_recovery_keeps_pass_verdict_and_enters_merging(tmp_path):
         review_report={"blockers": []},
     )
     engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
+    engine.store.set_node_contract(
+        item.id, load_manifest(str(path)).nodes["bootstrap"].contract)
     proposal = _proposal({"op": "resume", "node": "bootstrap", "stage": "merging"})
     reviewed = build_reviewed_amendment(
         load_manifest(str(path)), proposal, engine.store,
@@ -3484,6 +3585,31 @@ def test_merge_only_recovery_keeps_pass_verdict_and_enters_merging(tmp_path):
     assert result["minimal_rerun"]["merging"] == ["bootstrap"]
     assert load_manifest(str(path)).nodes["bootstrap"].status == "merging"
     assert engine.store.get_work_item("1").review_verdict == "pass"
+
+
+@pytest.mark.parametrize("stage", ("review", "merging"))
+def test_non_authoring_recovery_noop_does_not_mark_synced(
+    tmp_path, monkeypatch, stage,
+):
+    path, engine, _item, reviewed = _stage_amendment_with_handoff(
+        tmp_path, stage)
+    monkeypatch.setattr(
+        amendment_mod, "prepare_stage_recovery",
+        lambda *_args, **_kwargs: None,
+    )
+
+    with pytest.raises(ValidationError, match="did not reach its target"):
+        apply_amendment(
+            str(path),
+            reviewed,
+            engine.store,
+            {"alice", "bob", "charlie"},
+            acceptance=_responsibility_acceptance_doc(),
+        )
+
+    entry = load_manifest(str(path)).meta[
+        "amendment_apply"]["nodes"]["bootstrap"]
+    assert entry["state"] == "syncing"
 
 
 def test_merge_only_precondition_failure_does_not_modify_manifest(tmp_path):
