@@ -2852,6 +2852,147 @@ def test_same_legacy_synced_accept_repairs_missing_authoring_projection(
     assert repeated["sync"]["already_complete"] == ["bootstrap"]
 
 
+def test_authoring_repair_noop_restore_does_not_mark_synced(
+    tmp_path, monkeypatch, aiteam_849_legacy_snapshot,
+):
+    path, amendment_file, engine, target, _reviewed = (
+        _legacy_synced_authoring_accept_fixture(
+            tmp_path, aiteam_849_legacy_snapshot))
+    before = copy.deepcopy(engine.store.get_work_item(target.id))
+    monkeypatch.setattr(engine.runtime, "list_runs", lambda _item_id: [])
+    monkeypatch.setattr(
+        engine.store,
+        "restore_authoring_generation",
+        lambda *_args, **_kwargs: before,
+    )
+
+    with pytest.raises(
+        ValidationError, match="authoring recovery did not reach its target",
+    ):
+        amendment_pipeline.accept_amendment(
+            engine,
+            str(path),
+            str(amendment_file),
+            reason="repeat official accepted amendment",
+            agent_pool={"alice", "bob", "charlie"},
+        )
+
+    entry = load_manifest(str(path)).meta[
+        "amendment_apply"]["nodes"]["bootstrap"]
+    assert entry["state"] == "repairing"
+    assert entry["observed"]["review_generation"] is None
+
+
+def test_authoring_preflight_rejects_later_malformed_entry_before_any_write(
+    tmp_path, monkeypatch,
+):
+    path = _topology_manifest(tmp_path)
+    engine = _engine()
+    first = engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    engine.store.update_status(first.id, WorkItemStatus.BLOCKED)
+    second = engine.store.create_work_item(
+        "ws", "dependent", "desc", "started-dependent", "charlie",
+        reviewer="bob")
+    engine.store.update_status(second.id, WorkItemStatus.IN_REVIEW)
+    reviewed = build_reviewed_amendment(
+        load_manifest(str(path)),
+        _proposal({
+            "op": "update",
+            "node": "bootstrap",
+            "set": {"blocked_by": ["foundation"]},
+        }),
+        engine.store,
+        issue_id="amendment-preflight",
+        reviewer_verdict="pass",
+    )
+    original_resume = amendment_mod._resume_apply_ledger
+    monkeypatch.setattr(
+        amendment_mod,
+        "_resume_apply_ledger",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("stop after ledger creation")),
+    )
+    with pytest.raises(RuntimeError, match="after ledger creation"):
+        apply_amendment(
+            str(path), reviewed, engine.store, {"alice", "bob", "charlie"})
+
+    manifest = load_manifest(str(path))
+    entries = manifest.meta["amendment_apply"]["nodes"]
+    entries["started-dependent"]["state"] = "repairing"
+    entries["started-dependent"].pop("attempt_baseline", None)
+    save_manifest(manifest, str(path))
+    before_manifest = path.read_bytes()
+    before_first = copy.deepcopy(engine.store.get_work_item(first.id))
+    before_second = copy.deepcopy(engine.store.get_work_item(second.id))
+    monkeypatch.setattr(amendment_mod, "_resume_apply_ledger", original_resume)
+
+    with pytest.raises(
+        ValidationError, match="repairing entry is missing attempt_baseline",
+    ):
+        apply_amendment(
+            str(path), reviewed, engine.store, {"alice", "bob", "charlie"})
+
+    assert path.read_bytes() == before_manifest
+    assert engine.store.get_work_item(first.id) == before_first
+    assert engine.store.get_work_item(second.id) == before_second
+
+
+def test_authoring_unknown_formal_run_blocks_first_accept(
+    tmp_path, monkeypatch,
+):
+    path = _manifest(tmp_path)
+    engine = _engine()
+    target = engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    engine.store.update_status(target.id, WorkItemStatus.BLOCKED)
+    amendment_issue = engine.store.create_work_item(
+        "ws", "amendment", "desc", "amend-unknown-run", "alice",
+        reviewer="bob", kind=TaskKind.AMENDMENT)
+    engine.store.update_work_item_metadata(
+        amendment_issue.id,
+        phase=TaskPhase.CONFIRMATION,
+        review_verdict="pass",
+    )
+    reviewed = build_reviewed_amendment(
+        load_manifest(str(path)),
+        _proposal({"op": "resume", "node": "bootstrap", "stage": "authoring"}),
+        engine.store,
+        issue_id=amendment_issue.id,
+        reviewer_verdict="pass",
+    )
+    amendment_file = tmp_path / "unknown-run.amendment.yaml"
+    amendment_file.write_text(yaml.safe_dump(reviewed, sort_keys=False))
+    unknown = AgentRunObservation(
+        id="formal-unknown-run",
+        kind="direct",
+        status="unknown",
+        agent_id="agent-alice",
+        trigger_kind="issue_assignment",
+    )
+    assert unknown.formal and not unknown.active and not unknown.terminal
+    monkeypatch.setattr(
+        engine.runtime, "list_runs",
+        lambda item_id: [unknown] if item_id == target.id else [],
+    )
+    before_manifest = path.read_bytes()
+    before_amendment = amendment_file.read_bytes()
+    before_item = copy.deepcopy(engine.store.get_work_item(target.id))
+
+    with pytest.raises(ValidationError, match="active formal Agent Runs"):
+        amendment_pipeline.accept_amendment(
+            engine,
+            str(path),
+            str(amendment_file),
+            reason="operator accepted",
+            agent_pool={"alice", "bob", "charlie"},
+        )
+
+    assert path.read_bytes() == before_manifest
+    assert amendment_file.read_bytes() == before_amendment
+    assert engine.store.get_work_item(target.id) == before_item
+
+
 @pytest.mark.parametrize("checkpoint", ("before_switch", "after_switch"))
 def test_legacy_synced_authoring_repair_is_restart_safe(
     tmp_path, monkeypatch, aiteam_849_legacy_snapshot, checkpoint,
