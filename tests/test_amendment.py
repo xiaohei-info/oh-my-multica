@@ -2852,6 +2852,44 @@ def test_same_legacy_synced_accept_repairs_missing_authoring_projection(
     assert repeated["sync"]["already_complete"] == ["bootstrap"]
 
 
+def test_synced_authoring_reobserves_stale_projection_with_expected_generation(
+    tmp_path, monkeypatch, aiteam_849_legacy_snapshot,
+):
+    path, amendment_file, engine, target, _reviewed = (
+        _legacy_synced_authoring_accept_fixture(
+            tmp_path, aiteam_849_legacy_snapshot))
+    manifest = load_manifest(str(path))
+    entry = manifest.meta["amendment_apply"]["nodes"]["bootstrap"]
+    entry["expected_review_generation"] = amendment_mod._authoring_review_generation(
+        manifest.meta["amendment_apply"]["amendment_id"], "bootstrap")
+    save_manifest(manifest, str(path))
+
+    stale = engine.store.get_work_item(target.id)
+    assert stale.review_generation is None
+    assert stale.current_review_ledger is not None
+    assert stale.worker_handoff is not None
+    monkeypatch.setattr(engine.runtime, "list_runs", lambda _item_id: [])
+
+    result = amendment_pipeline.accept_amendment(
+        engine,
+        str(path),
+        str(amendment_file),
+        reason="repeat official accepted amendment",
+        agent_pool={"alice", "bob", "charlie"},
+    )
+
+    assert result["sync"]["synced"] == ["bootstrap"]
+    assert result["sync"]["already_complete"] == []
+    current = engine.store.get_work_item(target.id)
+    applied = load_manifest(str(path))
+    entry = applied.meta["amendment_apply"]["nodes"]["bootstrap"]
+    assert current.review_generation == entry["expected_review_generation"]
+    assert current.current_review_ledger is None
+    assert current.worker_handoff is None
+    assert entry["observed"]["review_generation"] == (
+        entry["expected_review_generation"])
+
+
 def test_authoring_repair_noop_restore_does_not_mark_synced(
     tmp_path, monkeypatch, aiteam_849_legacy_snapshot,
 ):
@@ -3887,10 +3925,10 @@ def test_apply_ledger_retries_only_unfinished_node_side_effects(tmp_path, monkey
 
     assert engine.store.get_work_item(first.id).status == WorkItemStatus.DONE
     assert engine.store.get_work_item(second.id).status == WorkItemStatus.TODO
-    assert result["sync"]["already_complete"] == ["bootstrap"]
+    assert result["sync"]["observed_progress"] == ["bootstrap"]
     assert result["sync"]["synced"] == ["started-dependent"]
     completed = load_manifest(str(path)).meta["amendment_apply"]["nodes"]
-    assert completed["bootstrap"]["state"] == "synced"
+    assert completed["bootstrap"]["state"] == "observed_progress"
     assert completed["started-dependent"]["state"] == "synced"
 
 

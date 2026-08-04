@@ -1177,6 +1177,11 @@ def _resume_apply_ledger(
                 or (state == "synced" and missing_authoring_generation)
             )
         )
+        reobserve_synced_authoring = (
+            entry.get("stage") == "authoring"
+            and state == "synced"
+            and bool(entry.get("expected_review_generation"))
+        )
         node = manifest.nodes.get(node_id)
         legacy_repair_needs_baseline = (
             legacy_synced_authoring
@@ -1191,7 +1196,11 @@ def _resume_apply_ledger(
                 entry["state"] = "repairing"
                 state = "repairing"
             _save_ledger(manifest, manifest_path, ledger)
-        if state in {"synced", "observed_progress"} and not legacy_synced_authoring:
+        if (
+            state in {"synced", "observed_progress"}
+            and not legacy_synced_authoring
+            and not reobserve_synced_authoring
+        ):
             summary["already_complete"].append(node_id)
             continue
         if node is None or not node.work_item_id:
@@ -1219,6 +1228,35 @@ def _resume_apply_ledger(
                 "expected_review_generation"),
             expected_bounce_baseline=entry.get("bounce_baseline"),
         )
+        if reobserve_synced_authoring:
+            expected_generation = entry.get("expected_review_generation")
+            expected_contract = entry.get("expected_contract_sha256")
+            if (
+                not isinstance(expected_generation, str)
+                or not expected_generation
+                or not isinstance(expected_contract, str)
+                or not expected_contract
+                or not _is_structured_recovery_snapshot(entry.get("baseline"))
+                or not _is_structured_recovery_snapshot(current)
+            ):
+                raise ValidationError(
+                    f"node {node_id}: synced authoring recovery observation "
+                    "is missing a valid recovery contract or snapshot")
+            if observation not in {"reached", "safe", "progressed"}:
+                raise ValidationError(
+                    f"node {node_id}: synced authoring recovery observation "
+                    f"is unknown: {observation!r}")
+            if observation == "reached":
+                summary["already_complete"].append(node_id)
+                continue
+            legacy_synced_authoring = (
+                current.get("contract_sha256") == expected_contract
+                and _legacy_authoring_projection_is_repairable(current)
+            )
+            if observation == "safe" and not legacy_synced_authoring:
+                raise ValidationError(
+                    f"node {node_id}: synced authoring recovery cannot be "
+                    "safely repaired")
         if observation == "reached":
             entry["state"] = "synced"
             entry["observed"] = current
