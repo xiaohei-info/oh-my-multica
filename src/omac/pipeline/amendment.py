@@ -590,7 +590,9 @@ def accept_amendment(
         == amendment.get("amendment_id")
     )
     active = []
-    for node_id in authoring_recovery_node_ids(current_manifest, amendment):
+    for node_id in authoring_recovery_node_ids(
+        current_manifest, amendment, engine.store,
+    ):
         node = current_manifest.nodes.get(node_id)
         if node is None or not node.work_item_id:
             continue

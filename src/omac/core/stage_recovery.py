@@ -40,8 +40,7 @@ def recovery_control_snapshot(item) -> dict:
         "review_generation": getattr(item, "review_generation", None),
         "review_ledger_generation": getattr(
             item, "review_ledger_generation", None),
-        "review_ledger_current": (
-            getattr(item, "current_review_ledger", None) is not None),
+        "review_ledger_current": _review_ledger_is_current(item),
         "bounce_baseline": getattr(item, "bounce_baseline", None),
         "decision_required_pending": bool(
             getattr(item, "decision_required", None)),
@@ -58,6 +57,26 @@ def recovery_control_snapshot(item) -> dict:
         "worker_handoff_pending": (
             getattr(item, "worker_handoff", None) is not None),
     }
+
+
+def _review_ledger_is_current(item) -> bool:
+    ledger_present = bool(
+        getattr(item, "review_ledger", None) is not None
+        or getattr(item, "review_ledger_ref", None)
+    )
+    current = getattr(item, "review_generation", None)
+    ledger_generation = getattr(item, "review_ledger_generation", None)
+    if current in {None, ""} and ledger_generation in {None, ""}:
+        return ledger_present
+    return bool(ledger_present and current == ledger_generation)
+
+
+def observe_recovery_control(store, item_id: str):
+    """Read recovery control facts without hydrating historical attachments."""
+    observe = getattr(store, "observe_work_item_control", None)
+    if observe is None:
+        return store.get_work_item(item_id)
+    return observe(item_id).work_item
 
 
 def recovery_evidence_digest(item) -> str:
@@ -129,7 +148,7 @@ def prepare_stage_recovery(
     """
     if not node.work_item_id:
         return "no-work-item"
-    item = store.get_work_item(node.work_item_id)
+    item = observe_recovery_control(store, node.work_item_id)
     validate_stage_recovery(item, stage)
     if stage == "authoring":
         generation = expected_review_generation or (

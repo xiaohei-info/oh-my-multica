@@ -1,0 +1,27 @@
+schema: omac.test-amendment-recovery-snapshot/v1
+source:
+  node_id: contracts-platform-resource
+  work_item_id: 1b8e6ca8-4372-4974-a909-8994d0b05990
+  captured_at: 2026-08-04
+  redacted: true
+work_item:
+  status: todo
+  phase: authoring
+  bounces: {worker: 20, ci: 0, review: 10, merge: 0}
+  review_generation: null
+  review_ledger_generation: null
+  review_ledger:
+    schema: omac.review-ledger/v1
+    cycles:
+      - {round: 1, subject_digest: subject-1, verdict: pass, new_count: 0, fixed_count: 0, regressed_count: 0, unchanged_count: 0, open_count: 0, prior_open_blocker_ids: [], open_blocker_ids: [], reported_blocker_ids: []}
+      - {round: 2, subject_digest: subject-2, verdict: pass, new_count: 0, fixed_count: 0, regressed_count: 0, unchanged_count: 0, open_count: 0, prior_open_blocker_ids: [], open_blocker_ids: [], reported_blocker_ids: []}
+      - {round: 3, subject_digest: subject-3, verdict: pass, new_count: 0, fixed_count: 0, regressed_count: 0, unchanged_count: 0, open_count: 0, prior_open_blocker_ids: [], open_blocker_ids: [], reported_blocker_ids: []}
+      - {round: 4, subject_digest: subject-4, verdict: pass, new_count: 0, fixed_count: 0, regressed_count: 0, unchanged_count: 0, open_count: 0, prior_open_blocker_ids: [], open_blocker_ids: [], reported_blocker_ids: []}
+      - {round: 5, subject_digest: subject-5, verdict: pass, new_count: 0, fixed_count: 0, regressed_count: 0, unchanged_count: 0, open_count: 0, prior_open_blocker_ids: [], open_blocker_ids: [], reported_blocker_ids: []}
+      - {round: 6, subject_digest: subject-6, verdict: pass, new_count: 0, fixed_count: 0, regressed_count: 0, unchanged_count: 0, open_count: 0, prior_open_blocker_ids: [], open_blocker_ids: [], reported_blocker_ids: []}
+      - {round: 7, subject_digest: subject-7, verdict: pass, new_count: 0, fixed_count: 0, regressed_count: 0, unchanged_count: 0, open_count: 0, prior_open_blocker_ids: [], open_blocker_ids: [], reported_blocker_ids: []}
+      - {round: 8, subject_digest: subject-8, verdict: pass, new_count: 0, fixed_count: 0, regressed_count: 0, unchanged_count: 0, open_count: 0, prior_open_blocker_ids: [], open_blocker_ids: [], reported_blocker_ids: []}
+      - {round: 9, subject_digest: subject-9, verdict: pass, new_count: 0, fixed_count: 0, regressed_count: 0, unchanged_count: 0, open_count: 0, prior_open_blocker_ids: [], open_blocker_ids: [], reported_blocker_ids: []}
+      - {round: 10, subject_digest: subject-10, verdict: pass, new_count: 0, fixed_count: 0, regressed_count: 0, unchanged_count: 0, open_count: 0, prior_open_blocker_ids: [], open_blocker_ids: [], reported_blocker_ids: []}
+      - {round: 10, subject_digest: subject-11, verdict: pass, new_count: 0, fixed_count: 0, regressed_count: 0, unchanged_count: 0, open_count: 0, prior_open_blocker_ids: [], open_blocker_ids: [], reported_blocker_ids: []}
+    blockers: []

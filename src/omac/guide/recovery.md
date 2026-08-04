@@ -175,7 +175,8 @@ omac dag amend propose .omac/project.yaml \
   active formal Run，并验证 contract digest、generation、decision/report/subject/handoff 与
   当前 ledger visibility 后才重新标记 `synced`。如果 WorkItem 已封存新的 delivery identity、
   已进入 review，或已切换到其他 generation，重复 accept 只记录 `observed_progress`，不会回滚
-  已推进的 Store 事实。
+  已推进的 Store 事实，并让本次 accept 明确失败关闭。若 Store 写后读仍未达到目标，条目保持
+  `repairing/syncing`，要求重复同一条 accept 命令，绝不写成假 `synced`。
 - bounce 字段始终是单调累计的审计值，不清零。`work show.task.bounce_budget` 与 Worker retry
   日志同时给出 absolute audit、amendment baseline 和 current-generation consumed；实际预算
   判断仍由 manifest `amendment_apply.bounce_baseline` 的 relative 计算负责。

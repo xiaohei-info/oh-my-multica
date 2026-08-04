@@ -30,6 +30,14 @@ def aiteam_849_legacy_snapshot():
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
+@pytest.fixture
+def contracts_platform_resource_snapshot():
+    path = Path(__file__).parent / "fixtures" / (
+        "contracts_platform_resource_invalid_ledger_snapshot.yaml"
+    )
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
 def seal_mock_delivery(store, item_id, pr_url, verification, *, phase=None):
     """Persist a complete controller-sealed delivery for MockStore tests."""
     from omac.core.taskmeta import DELIVERY_IDENTITY_SCHEMA, DeliveryIdentity

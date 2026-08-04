@@ -33,7 +33,9 @@ from omac.core.manifest import (
 )
 from omac.core.review_convergence import review_subject_digest
 from omac.core.retry_budget import bounce_log_fields, consumed_bounces
-from omac.core.stage_recovery import prepare_stage_recovery
+from omac.core.stage_recovery import (
+    prepare_stage_recovery, recovery_control_snapshot,
+)
 from omac.core.taskmeta import (
     DECISION_REQUIRED_SCHEMA, DELIVERY_IDENTITY_SCHEMA, DeliveryIdentity,
     TaskKind, TaskPhase,
@@ -2852,6 +2854,72 @@ def test_same_legacy_synced_accept_repairs_missing_authoring_projection(
     assert repeated["sync"]["already_complete"] == ["bootstrap"]
 
 
+def test_authoring_repair_noop_restore_does_not_mark_synced(
+    tmp_path, monkeypatch, aiteam_849_legacy_snapshot,
+):
+    path, amendment_file, engine, target, _reviewed = (
+        _legacy_synced_authoring_accept_fixture(
+            tmp_path, aiteam_849_legacy_snapshot))
+    before = copy.deepcopy(engine.store.get_work_item(target.id))
+    monkeypatch.setattr(engine.runtime, "list_runs", lambda _item_id: [])
+    monkeypatch.setattr(
+        engine.store,
+        "restore_authoring_generation",
+        lambda *_args, **_kwargs: before,
+    )
+
+    with pytest.raises(
+        ValidationError, match="authoring recovery did not reach its target",
+    ):
+        amendment_pipeline.accept_amendment(
+            engine,
+            str(path),
+            str(amendment_file),
+            reason="repeat official accepted amendment",
+            agent_pool={"alice", "bob", "charlie"},
+        )
+
+    entry = load_manifest(str(path)).meta[
+        "amendment_apply"]["nodes"]["bootstrap"]
+    assert entry["state"] == "repairing"
+    assert entry["observed"]["review_generation"] is None
+
+
+def test_fake_synced_authoring_projection_is_reselected_and_repaired(
+    tmp_path, monkeypatch, aiteam_849_legacy_snapshot,
+):
+    path, amendment_file, engine, target, _reviewed = (
+        _legacy_synced_authoring_accept_fixture(
+            tmp_path, aiteam_849_legacy_snapshot))
+    manifest = load_manifest(str(path))
+    entry = manifest.meta["amendment_apply"]["nodes"]["bootstrap"]
+    entry["expected_review_generation"] = "expected-repair-generation"
+    entry["state"] = "synced"
+    entry["observed"] = recovery_control_snapshot(
+        engine.store.get_work_item(target.id))
+    save_manifest(manifest, str(path))
+    inspected = []
+    monkeypatch.setattr(
+        engine.runtime,
+        "list_runs",
+        lambda item_id: inspected.append(item_id) or [],
+    )
+
+    result = amendment_pipeline.accept_amendment(
+        engine,
+        str(path),
+        str(amendment_file),
+        reason="repeat official accepted amendment",
+        agent_pool={"alice", "bob", "charlie"},
+    )
+
+    current = engine.store.get_work_item(target.id)
+    assert inspected == [target.id]
+    assert result["sync"]["synced"] == ["bootstrap"]
+    assert current.review_generation == "expected-repair-generation"
+    assert current.current_review_ledger is None
+
+
 @pytest.mark.parametrize("checkpoint", ("before_switch", "after_switch"))
 def test_legacy_synced_authoring_repair_is_restart_safe(
     tmp_path, monkeypatch, aiteam_849_legacy_snapshot, checkpoint,
@@ -2949,7 +3017,7 @@ def test_legacy_synced_repair_fails_closed_for_active_formal_run(
     assert current.worker_handoff == before_item.worker_handoff
 
 
-@pytest.mark.parametrize("progress", ("delivery", "review"))
+@pytest.mark.parametrize("progress", ("delivery", "review", "generation"))
 @pytest.mark.parametrize("repair_state", ("synced", "repairing"))
 def test_legacy_synced_repair_does_not_rollback_progressed_work_item(
     tmp_path, monkeypatch, aiteam_849_legacy_snapshot, progress, repair_state,
@@ -2962,6 +3030,8 @@ def test_legacy_synced_repair_does_not_rollback_progressed_work_item(
     if repair_state == "repairing":
         entry["state"] = "repairing"
         entry["expected_review_generation"] = "legacy-repair-generation"
+        entry["attempt_baseline"] = recovery_control_snapshot(
+            engine.store.get_work_item(target.id))
         save_manifest(manifest, str(path))
 
     current = engine.store.get_work_item(target.id)
@@ -2980,11 +3050,13 @@ def test_legacy_synced_repair_does_not_rollback_progressed_work_item(
             verification_uploader_id="agent-alice",
             verification_uploader_type="agent",
         )
-    else:
+    elif progress == "review":
         current.phase = TaskPhase.REVIEW
         current.status = WorkItemStatus.IN_REVIEW
         current.review_generation = "progressed-review-generation"
         current.review_ledger_generation = "progressed-review-generation"
+    else:
+        current.review_generation = "new-authoring-generation"
 
     before_item = copy.deepcopy(current)
     monkeypatch.setattr(engine.runtime, "list_runs", lambda _item_id: [])
@@ -2995,15 +3067,15 @@ def test_legacy_synced_repair_does_not_rollback_progressed_work_item(
             AssertionError("progressed work item must not be restored")),
     )
 
-    result = amendment_pipeline.accept_amendment(
-        engine,
-        str(path),
-        str(amendment_file),
-        reason="repeat official accepted amendment",
-        agent_pool={"alice", "bob", "charlie"},
-    )
+    with pytest.raises(ValidationError, match="observed progress"):
+        amendment_pipeline.accept_amendment(
+            engine,
+            str(path),
+            str(amendment_file),
+            reason="repeat official accepted amendment",
+            agent_pool={"alice", "bob", "charlie"},
+        )
 
-    assert result["sync"]["observed_progress"] == ["bootstrap"]
     assert engine.store.get_work_item(target.id) == before_item
     repaired = load_manifest(str(path)).meta[
         "amendment_apply"]["nodes"]["bootstrap"]
@@ -3615,16 +3687,51 @@ def test_apply_ledger_retries_only_unfinished_node_side_effects(tmp_path, monkey
     save_manifest(interrupted, str(path))
     monkeypatch.setattr(amendment_mod, "prepare_stage_recovery", original_sync)
 
-    result = apply_amendment(
-        str(path), reviewed, engine.store, {"alice", "bob", "charlie"})
+    with pytest.raises(ValidationError, match="observed progress"):
+        apply_amendment(
+            str(path), reviewed, engine.store, {"alice", "bob", "charlie"})
 
     assert engine.store.get_work_item(first.id).status == WorkItemStatus.DONE
     assert engine.store.get_work_item(second.id).status == WorkItemStatus.TODO
-    assert result["sync"]["already_complete"] == ["bootstrap"]
-    assert result["sync"]["synced"] == ["started-dependent"]
     completed = load_manifest(str(path)).meta["amendment_apply"]["nodes"]
-    assert completed["bootstrap"]["state"] == "synced"
+    assert completed["bootstrap"]["state"] == "observed_progress"
     assert completed["started-dependent"]["state"] == "synced"
+
+
+def test_invalid_historical_ledger_remains_raw_history_during_authoring_recovery(
+    tmp_path, monkeypatch, aiteam_849_legacy_snapshot,
+    contracts_platform_resource_snapshot,
+):
+    path, amendment_file, engine, target, _reviewed = (
+        _legacy_synced_authoring_accept_fixture(
+            tmp_path, aiteam_849_legacy_snapshot))
+    invalid_ledger = copy.deepcopy(
+        contracts_platform_resource_snapshot["work_item"]["review_ledger"])
+    current = engine.store.get_work_item(target.id)
+    current.review_ledger = invalid_ledger
+    current.review_generation = None
+    current.review_ledger_generation = None
+    before = copy.deepcopy(current.review_ledger)
+
+    with pytest.raises(
+        ValidationError, match=r"cycles\[10\]\.round must be 11",
+    ):
+        build_show_output(current, "worker:alice")
+
+    monkeypatch.setattr(engine.runtime, "list_runs", lambda _item_id: [])
+    result = amendment_pipeline.accept_amendment(
+        engine,
+        str(path),
+        str(amendment_file),
+        reason="repeat official accepted amendment",
+        agent_pool={"alice", "bob", "charlie"},
+    )
+
+    recovered = engine.store.get_work_item(target.id)
+    assert result["sync"]["synced"] == ["bootstrap"]
+    assert recovered.review_ledger == before
+    assert recovered.current_review_ledger is None
+    assert build_show_output(recovered, "worker:alice").get("ok", True) is True
 
 
 def test_pending_apply_blocks_all_dag_progress_until_same_accept_resumes(

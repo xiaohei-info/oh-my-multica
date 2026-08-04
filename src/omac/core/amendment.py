@@ -22,6 +22,7 @@ from .manifest import (
 from .retry_budget import amendment_bounce_baseline
 from .stage_recovery import (
     classify_stage_recovery_observation,
+    observe_recovery_control,
     prepare_stage_recovery,
     recovery_control_snapshot,
     recovery_evidence_digest,
@@ -1016,9 +1017,24 @@ def _authoring_review_generation(amendment_id: str, node_id: str) -> str:
     })[:24]
 
 
+def _classify_apply_entry(
+    entry: dict[str, Any], current: dict[str, Any], *, baseline: dict | None = None,
+) -> str:
+    return classify_stage_recovery_observation(
+        entry["stage"],
+        entry.get("baseline") or {} if baseline is None else baseline,
+        current,
+        expected_contract_sha256=entry.get("expected_contract_sha256") or "",
+        expected_review_subject=entry.get("expected_review_subject"),
+        expected_review_generation=entry.get("expected_review_generation"),
+        expected_bounce_baseline=entry.get("bounce_baseline"),
+    )
+
+
 def authoring_recovery_node_ids(
     manifest: Manifest,
     amendment: dict[str, Any],
+    store: Any,
 ) -> list[str]:
     """Return nodes whose current authoring projection may be rewritten."""
     if manifest.meta.get("last_amendment_id") != amendment.get("amendment_id"):
@@ -1028,18 +1044,27 @@ def authoring_recovery_node_ids(
     entries = ledger.get("nodes") if isinstance(ledger, dict) else None
     if not isinstance(entries, dict):
         return []
-    return [
-        node_id for node_id, entry in entries.items()
-        if isinstance(entry, dict)
-        and entry.get("stage") == "authoring"
-        and (
-            entry.get("state") not in _COMPLETE_APPLY_STATES
-            or (
-                entry.get("state") == "synced"
-                and not entry.get("expected_review_generation")
-            )
-        )
-    ]
+    selected = []
+    for node_id, entry in entries.items():
+        if not isinstance(entry, dict) or entry.get("stage") != "authoring":
+            continue
+        if entry.get("state") not in _COMPLETE_APPLY_STATES:
+            selected.append(node_id)
+            continue
+        if entry.get("state") != "synced":
+            continue
+        node = manifest.nodes.get(node_id)
+        if node is None or not node.work_item_id:
+            continue
+        current = recovery_control_snapshot(
+            observe_recovery_control(store, node.work_item_id))
+        observed = entry.get("observed") or {}
+        if (
+            _classify_apply_entry(entry, observed) != "reached"
+            or _classify_apply_entry(entry, current) != "reached"
+        ):
+            selected.append(node_id)
+    return selected
 
 
 def _save_ledger(manifest: Manifest, manifest_path: str, ledger: dict[str, Any]) -> None:
@@ -1072,8 +1097,10 @@ def _resume_apply_ledger(
         raise ValidationError(
             "Applied amendment is missing a valid per-node apply ledger")
     summary = {"synced": [], "observed_progress": [], "already_complete": []}
+    failures = []
     for node_id, entry in ledger.get("nodes", {}).items():
         state = entry.get("state")
+        started_repair = False
         missing_authoring_generation = (
             entry.get("stage") == "authoring"
             and not entry.get("expected_review_generation")
@@ -1091,8 +1118,11 @@ def _resume_apply_ledger(
             if legacy_synced_authoring:
                 entry["state"] = "repairing"
                 state = "repairing"
+                started_repair = True
             _save_ledger(manifest, manifest_path, ledger)
-        if state in {"synced", "observed_progress"} and not legacy_synced_authoring:
+        if state == "observed_progress" or (
+            state == "synced" and entry.get("stage") != "authoring"
+        ):
             summary["already_complete"].append(node_id)
             continue
         node = manifest.nodes.get(node_id)
@@ -1102,24 +1132,52 @@ def _resume_apply_ledger(
             _save_ledger(manifest, manifest_path, ledger)
             summary["synced"].append(node_id)
             continue
-        item = store.get_work_item(node.work_item_id)
+        item = observe_recovery_control(store, node.work_item_id)
         current = recovery_control_snapshot(item)
-        observation = classify_stage_recovery_observation(
-            entry["stage"],
-            entry.get("baseline") or {},
-            current,
-            expected_contract_sha256=entry.get("expected_contract_sha256") or "",
-            expected_review_subject=entry.get("expected_review_subject"),
-            expected_review_generation=entry.get(
-                "expected_review_generation"),
-            expected_bounce_baseline=entry.get("bounce_baseline"),
-        )
+        observation = _classify_apply_entry(entry, current)
         if observation == "reached":
+            if state == "synced":
+                entry_observation = _classify_apply_entry(
+                    entry, entry.get("observed") or {})
+                if entry_observation == "reached":
+                    summary["already_complete"].append(node_id)
+                    continue
             entry["state"] = "synced"
             entry["observed"] = current
             _save_ledger(manifest, manifest_path, ledger)
             summary["synced"].append(node_id)
             continue
+        if state == "synced" and entry.get("stage") == "authoring":
+            entry["state"] = "repairing"
+            state = "repairing"
+            legacy_synced_authoring = True
+            started_repair = True
+            _save_ledger(manifest, manifest_path, ledger)
+        elif state == "synced":
+            summary["already_complete"].append(node_id)
+            continue
+        attempt_baseline = entry.get("attempt_baseline")
+        if started_repair:
+            entry["attempt_baseline"] = current
+            attempt_baseline = current
+            _save_ledger(manifest, manifest_path, ledger)
+        if state == "repairing" and isinstance(attempt_baseline, dict):
+            if current != attempt_baseline:
+                attempt_observation = _classify_apply_entry(
+                    entry, current, baseline=attempt_baseline)
+                if attempt_observation == "progressed":
+                    entry["state"] = "observed_progress"
+                    entry["observed"] = current
+                    entry["reason"] = (
+                        "work item advanced after authoring recovery began; "
+                        "preserved to prevent rollback"
+                    )
+                    _save_ledger(manifest, manifest_path, ledger)
+                    failures.append(
+                        f"node {node_id}: authoring recovery observed progress; "
+                        "preserved Store facts and stopped to prevent rollback")
+                    summary["observed_progress"].append(node_id)
+                    continue
         if observation == "progressed" and not (
             legacy_synced_authoring
             and _legacy_authoring_projection_is_repairable(current)
@@ -1131,10 +1189,14 @@ def _resume_apply_ledger(
             )
             _save_ledger(manifest, manifest_path, ledger)
             summary["observed_progress"].append(node_id)
+            failures.append(
+                f"node {node_id}: recovery observed progress; preserved Store "
+                "facts and stopped to prevent rollback")
             continue
         entry["state"] = (
             "repairing" if legacy_synced_authoring else "syncing")
-        entry["attempt_baseline"] = current
+        if not isinstance(entry.get("attempt_baseline"), dict):
+            entry["attempt_baseline"] = current
         _save_ledger(manifest, manifest_path, ledger)
         prepare_stage_recovery(
             node,
@@ -1147,11 +1209,39 @@ def _resume_apply_ledger(
             sync_contract=entry.get(
                 "sync_contract", entry["stage"] != "merging"),
         )
-        entry["state"] = "synced"
-        entry["observed"] = recovery_control_snapshot(
-            store.get_work_item(node.work_item_id))
+        observed = recovery_control_snapshot(
+            observe_recovery_control(store, node.work_item_id))
+        if entry["stage"] != "authoring":
+            entry["state"] = "synced"
+            entry["observed"] = observed
+            _save_ledger(manifest, manifest_path, ledger)
+            summary["synced"].append(node_id)
+            continue
+        after = _classify_apply_entry(
+            entry, observed, baseline=entry.get("attempt_baseline") or {})
+        entry["observed"] = observed
+        if after == "reached":
+            entry["state"] = "synced"
+            _save_ledger(manifest, manifest_path, ledger)
+            summary["synced"].append(node_id)
+            continue
+        if after == "progressed":
+            entry["state"] = "observed_progress"
+            entry["reason"] = (
+                "work item advanced during recovery; preserved to prevent rollback"
+            )
+            _save_ledger(manifest, manifest_path, ledger)
+            failures.append(
+                f"node {node_id}: recovery observed progress; preserved Store "
+                "facts and stopped to prevent rollback")
+            summary["observed_progress"].append(node_id)
+            continue
         _save_ledger(manifest, manifest_path, ledger)
-        summary["synced"].append(node_id)
+        failures.append(
+            f"node {node_id}: authoring recovery did not reach its target; "
+            "repeat the same amendment accept command")
+    if failures:
+        raise ValidationError("; ".join(failures))
     return summary
 
 
