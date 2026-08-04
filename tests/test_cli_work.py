@@ -538,6 +538,8 @@ def test_authoring_show_uses_review_ledger_after_current_projection_reset():
         review_report_source="/tmp/omac-review-report.yaml",
         review_ledger=ledger,
         review_ledger_source="/tmp/omac-review-ledger.yaml",
+        review_generation="review-generation-1",
+        review_ledger_generation="review-generation-1",
     )
     store.reset_review(item.id)
 
@@ -553,6 +555,40 @@ def test_authoring_show_uses_review_ledger_after_current_projection_reset():
     }]
     assert out["context"]["review_ledger_ref"]["filename"] == (
         "omac-review-ledger.yaml")
+
+
+def test_authoring_show_does_not_project_ledger_from_previous_review_generation():
+    """普通 reject 保持同代 ledger；amendment 切代后旧 ledger 只剩审计价值。"""
+    store = _store()
+    item = _make_item(store, TaskKind.DEVELOP, TaskPhase.AUTHORING,
+                      with_contract=True)
+    ledger = {
+        "schema": "omac.review-ledger/v1",
+        "cycles": [{"round": 1, "new_count": 1}],
+        "blockers": [{
+            "blocker_id": "BLK-old",
+            "obligation_id": "dimension:structure",
+            "root_cause_key": "old-generation",
+            "summary": "old generation blocker",
+            "required_fix": "historical only",
+            "status": "open",
+        }],
+    }
+    store.update_work_item_metadata(
+        item.id,
+        review_ledger=ledger,
+        review_ledger_source=yaml.safe_dump(ledger, sort_keys=False),
+    )
+    current = store.get_work_item(item.id)
+    current.review_generation = "amendment-aiteam-850"
+    current.review_ledger_generation = "review-aiteam-849"
+
+    out = build_show_output(current, "worker:alice")
+
+    assert "review_state" not in out["context"]
+    assert "required_closures" not in out["context"]
+    assert current.review_ledger == ledger
+    assert current.review_ledger_ref is not None
 
 
 def test_authoring_show_includes_source_issue_refs():

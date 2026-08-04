@@ -588,6 +588,28 @@ def accept_amendment(
         current_manifest.meta.get("last_amendment_id")
         == amendment.get("amendment_id")
     )
+    if not already_applied:
+        active = []
+        minimal = (amendment.get("analysis") or {}).get("minimal_rerun") or {}
+        for node_id in minimal.get("authoring", []):
+            node = current_manifest.nodes.get(node_id)
+            if node is None or not node.work_item_id:
+                continue
+            active.extend(
+                (node_id, run.id)
+                for run in engine.runtime.list_runs(node.work_item_id)
+                if run.active and run.formal
+            )
+        if active:
+            details = ", ".join(
+                f"{node_id}={run_id}" for node_id, run_id in active)
+            raise ValidationError(ui(
+                "Amendment authoring recovery is blocked by active formal Agent "
+                f"Runs: {details}. Wait for them to become explicitly terminal, "
+                "then repeat the same accept command.",
+                "amendment authoring 恢复被活跃 formal Agent Run 阻断："
+                f"{details}。请等待这些 Run 明确终止后，重复同一个 accept 命令。",
+            ))
     acceptance = (
         None if already_applied
         else _acceptance_for_manifest(current_manifest, manifest_path)

@@ -992,6 +992,13 @@ def _prepare_apply_ledger(
             }
             if stage == "review":
                 entry["expected_review_subject"] = stage_recovery_subject(node, item)
+            if stage == "authoring":
+                entry["expected_review_generation"] = (
+                    "amendment-" + _digest({
+                        "amendment_id": amendment_id,
+                        "node_id": node_id,
+                    })[:24]
+                )
             if stage == "merging":
                 entry["sync_contract"] = node_id in responsibility_merge_sync_nodes
             entries[node_id] = entry
@@ -1038,6 +1045,8 @@ def _resume_apply_ledger(
             current,
             expected_contract_sha256=entry.get("expected_contract_sha256") or "",
             expected_review_subject=entry.get("expected_review_subject"),
+            expected_review_generation=entry.get(
+                "expected_review_generation"),
         )
         if observation == "reached":
             entry["state"] = "synced"
@@ -1062,6 +1071,8 @@ def _resume_apply_ledger(
             store,
             entry["stage"],
             expected_review_subject=entry.get("expected_review_subject"),
+            expected_review_generation=entry.get(
+                "expected_review_generation"),
             sync_contract=entry.get(
                 "sync_contract", entry["stage"] != "merging"),
         )

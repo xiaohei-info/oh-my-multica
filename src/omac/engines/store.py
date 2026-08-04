@@ -191,6 +191,8 @@ class WorkItemStore(ABC):
         review_obligations: Optional[List[Dict[str, Any]]] = None,
         review_ledger: Optional[Dict[str, Any]] = None,
         review_ledger_source: Optional[str] = None,
+        review_generation: Optional[str] = None,
+        review_ledger_generation: Optional[str] = None,
         review_continuation: Optional[Dict[str, Any]] = None,
         reviewer_run_baseline: Optional[
             ReviewerRunBaseline | Dict[str, Any]
@@ -223,6 +225,20 @@ class WorkItemStore(ABC):
         - deliverable:按 kind 承载 plan/acceptance/manifest 等交付正文。
         - project_rules:plan 的项目级开发规范交付正文。
         - description:回填 Human-first issue 正文(顶部单一 bootstrap 嵌入真实 id)。
+        """
+
+    @abstractmethod
+    def restore_authoring_generation(
+        self,
+        item_id: str,
+        contract: Any,
+        review_generation: str,
+    ) -> WorkItem:
+        """Atomically replace the current authoring control projection.
+
+        Historical review ledger attachments and absolute bounce counters remain
+        untouched.  The new generation retires every prior review decision,
+        verdict/report, continuation, dispatch intent, and delivery identity.
         """
 
     @abstractmethod

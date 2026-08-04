@@ -31,7 +31,7 @@ from omac.core.review_convergence import (
     open_blockers,
     required_closures,
 )
-from omac.core.taskmeta import TaskKind, TaskPhase
+from omac.core.taskmeta import TaskKind, TaskPhase, current_review_ledger
 from omac.engines.models import (
     PullRequestReadiness, PullRequestReadinessFailure,
     PullRequestReadinessFailureKind, WorkItem, WorkItemPayload, WorkItemStatus,
@@ -371,7 +371,7 @@ def build_show_output(item: Any, identity: str, *, language: str = EN) -> Dict[s
     """
     kind: TaskKind = item.kind
     phase: TaskPhase = _resolve_phase(item, item.phase)
-    ledger = getattr(item, "review_ledger", None)
+    ledger = current_review_ledger(item)
     resolution = resolve_convergence(item, node_id=getattr(item, "dag_key", None))
     resolution.raise_if_invalid(ValidationError, item.id)
 
@@ -859,7 +859,7 @@ def _validate_review(
         review_verdict=verdict,
         review_report=report,
         review_obligations=getattr(item, "review_obligations", None),
-        review_ledger=getattr(item, "review_ledger", None),
+        review_ledger=current_review_ledger(item),
         review_subject_digest=getattr(item, "review_subject_digest", None),
     )
     errors = evidence_mod.validate_review_evidence(node, probe)
@@ -1102,6 +1102,8 @@ def submit(
                 "review_ledger": ledger,
                 "review_ledger_source": yaml.safe_dump(
                     ledger, allow_unicode=True, sort_keys=False),
+                "review_ledger_generation": getattr(
+                    item, "review_generation", None) or "",
             })
         store.update_work_item_metadata(
             issue_id,

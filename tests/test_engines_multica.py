@@ -139,6 +139,94 @@ def test_multica_empty_review_control_tombstones_are_canonical_absence():
     assert item.worker_handoff is None
 
 
+def test_multica_maps_current_and_ledger_review_generations():
+    """Store 映射必须保留最小持久边界，不能让展示层猜测 phase。"""
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+
+    item = store._issue_to_control_projection({
+        "id": "issue-1",
+        "title": "review generation",
+        "description": "review generation",
+        "status": "todo",
+        "metadata": {
+            "dag_key": "contracts-platform-resource-schema",
+            "kind": "develop",
+            "phase": "authoring",
+            "review_generation": "amendment-aiteam-850",
+            "review_ledger_generation": "review-aiteam-849",
+        },
+    }, "ws").work_item
+
+    assert item.review_generation == "amendment-aiteam-850"
+    assert item.review_ledger_generation == "review-aiteam-849"
+
+
+def test_multica_restores_authoring_generation_with_one_atomic_issue_write(
+    monkeypatch,
+):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    item_id = "11111111-1111-4111-8111-111111111111"
+    old_ledger_ref = {
+        "attachment_id": "ledger-849",
+        "sha256": "a" * 64,
+    }
+    old_metadata = {
+        "dag_key": "contracts-platform-resource-schema",
+        "phase": "review",
+        "worker_bounce": "15",
+        "review_bounce": "3",
+        "decision_required": '{"reason_code":"old"}',
+        "review_verdict": "reject",
+        "review_report_ref": '{"attachment_id":"report-849"}',
+        "review_ledger_ref": json.dumps(old_ledger_ref),
+        "review_ledger_generation": "review-aiteam-849",
+        "review_continuation": '{"authorized_through_round":6}',
+        "worker_handoff": '{"schema":"omac.worker-handoff/v1"}',
+    }
+    writes = []
+    expected = SimpleNamespace(id=item_id)
+    monkeypatch.setattr(
+        store, "_publish_payload_comment",
+        lambda *_args, **_kwargs: {
+            "attachment_id": "contract-850",
+            "sha256": "b" * 64,
+        })
+    monkeypatch.setattr(
+        store, "_read_issue_metadata",
+        lambda _item_id: ({"id": item_id}, dict(old_metadata)))
+    monkeypatch.setattr(
+        store, "_put_issue_fields_direct",
+        lambda target_id, fields, *, operation: writes.append(
+            (target_id, fields, operation)))
+    monkeypatch.setattr(store, "get_work_item", lambda _item_id: expected)
+
+    result = store.restore_authoring_generation(
+        item_id,
+        {"objective": "amended contract"},
+        "amendment-aiteam-850",
+    )
+
+    assert result is expected
+    assert len(writes) == 1
+    target_id, fields, operation = writes[0]
+    assert target_id == item_id
+    assert operation == "authoring-generation recovery"
+    assert fields["status"] == "todo"
+    assert fields["assignee_id"] is None
+    metadata = fields["metadata"]
+    assert json.loads(metadata["review_ledger_ref"]) == old_ledger_ref
+    assert metadata["review_ledger_generation"] == "review-aiteam-849"
+    assert metadata["worker_bounce"] == "15"
+    assert metadata["review_bounce"] == "3"
+    assert metadata["review_generation"] == "amendment-aiteam-850"
+    assert metadata["phase"] == "authoring"
+    assert metadata["decision_required"] == "{}"
+    assert metadata["review_report_ref"] == "{}"
+    assert metadata["review_obligations"] == "[]"
+    assert metadata["review_continuation"] == "{}"
+    assert metadata["worker_handoff"] == "{}"
+
+
 def test_multica_malformed_empty_decision_value_remains_fail_closed():
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
 

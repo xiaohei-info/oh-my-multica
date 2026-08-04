@@ -33,7 +33,8 @@ from ..core.taskmeta import (
     DECISION_REQUIRED_KEY, DELIVERY_IDENTITY_KEY, DELIVERABLE_KEY,
     DELIVERABLE_REF_KEY, KIND_KEY, MERGE_BOUNCE_KEY, PHASE_KEY,
     MACHINE_FEEDBACK_REF_KEY, PROJECT_RULES_KEY, PROJECT_RULES_REF_KEY, REVIEW_BOUNCE_KEY,
-    REVIEW_CONTINUATION_KEY, REVIEWER_RUN_BASELINE_KEY,
+    REVIEW_CONTINUATION_KEY, REVIEW_GENERATION_KEY,
+    REVIEW_LEDGER_GENERATION_KEY, REVIEWER_RUN_BASELINE_KEY,
     REVIEW_LEDGER_REF_KEY, REVIEW_OBLIGATIONS_KEY,
     REVIEW_OBLIGATIONS_REF_KEY,
     REVIEW_REPORT_REF_KEY,
@@ -87,6 +88,7 @@ _KNOWN_WORK_ITEM_METADATA_KEYS = {
     DECISION_REQUIRED_KEY, DELIVERABLE_KEY, DELIVERABLE_REF_KEY, KIND_KEY,
     MACHINE_FEEDBACK_REF_KEY, MERGE_BOUNCE_KEY, PHASE_KEY, PROJECT_RULES_KEY,
     PROJECT_RULES_REF_KEY, REVIEW_BOUNCE_KEY, REVIEW_CONTINUATION_KEY,
+    REVIEW_GENERATION_KEY, REVIEW_LEDGER_GENERATION_KEY,
     REVIEWER_RUN_BASELINE_KEY,
     REVIEW_LEDGER_REF_KEY, REVIEW_OBLIGATIONS_KEY, REVIEW_OBLIGATIONS_REF_KEY,
     REVIEW_REPORT_REF_KEY, REVIEW_SUBJECT_DIGEST_KEY, SOURCE_REFS_KEY,
@@ -892,6 +894,10 @@ class MulticaStore(WorkItemStore):
         verification_ref = self._json_metadata(metadata, VERIFICATION_REF_KEY)
         review_report_ref = self._json_metadata(metadata, REVIEW_REPORT_REF_KEY)
         review_ledger_ref = self._json_metadata(metadata, REVIEW_LEDGER_REF_KEY)
+        review_generation = self._optional_text_metadata(
+            metadata, REVIEW_GENERATION_KEY)
+        review_ledger_generation = self._optional_text_metadata(
+            metadata, REVIEW_LEDGER_GENERATION_KEY)
         review_obligations_ref = self._json_metadata(
             metadata, REVIEW_OBLIGATIONS_REF_KEY)
         review_continuation = self._json_metadata(
@@ -969,9 +975,12 @@ class MulticaStore(WorkItemStore):
                 review_ledger_ref
                 if isinstance(review_ledger_ref, dict) and review_ledger_ref
                 else None),
+            review_generation=review_generation,
+            review_ledger_generation=review_ledger_generation,
             review_continuation=(
                 review_continuation
-                if isinstance(review_continuation, dict) else None),
+                if isinstance(review_continuation, dict) and review_continuation
+                else None),
             reviewer_run_baseline=parse_reviewer_run_baseline(
                 reviewer_run_baseline),
             worker_handoff=parse_worker_handoff(
@@ -1409,6 +1418,8 @@ class MulticaStore(WorkItemStore):
         review_obligations: Optional[List[Dict[str, Any]]] = None,
         review_ledger: Optional[Dict[str, Any]] = None,
         review_ledger_source: Optional[str] = None,
+        review_generation: Optional[str] = None,
+        review_ledger_generation: Optional[str] = None,
         review_continuation: Optional[Dict[str, Any]] = None,
         reviewer_run_baseline: Optional[
             ReviewerRunBaseline | Dict[str, Any]
@@ -1494,6 +1505,12 @@ class MulticaStore(WorkItemStore):
             ref = self._publish_payload_comment(
                 item_id, "review-ledger", review_ledger_source, ".yaml")
             self._set_metadata(item_id, REVIEW_LEDGER_REF_KEY, ref)
+        if review_generation is not None:
+            self._set_metadata(item_id, REVIEW_GENERATION_KEY, review_generation)
+        if review_ledger_generation is not None:
+            self._set_metadata(
+                item_id, REVIEW_LEDGER_GENERATION_KEY,
+                review_ledger_generation)
         if review_continuation is not None:
             self._set_metadata(
                 item_id, REVIEW_CONTINUATION_KEY, review_continuation)
@@ -1555,6 +1572,51 @@ class MulticaStore(WorkItemStore):
         # verdict 是终态可见信号；所有报告和 ledger 证据必须先持久化。
         if review_verdict is not None:
             self._set_metadata(item_id, "review_verdict", review_verdict)
+        return self.get_work_item(item_id)
+
+    def restore_authoring_generation(
+        self,
+        item_id: str,
+        contract: Any,
+        review_generation: str,
+    ) -> WorkItem:
+        """Publish the contract, then atomically switch the issue control projection."""
+        from ..core.manifest import _dump_contract
+
+        payload = _dump_contract(contract) if not isinstance(contract, dict) else contract
+        source = yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
+        contract_ref = self._publish_payload_comment(
+            item_id, "contract", source, ".yaml")
+        _issue, metadata = self._read_issue_metadata(item_id)
+        projected = dict(metadata)
+        controls = (
+            *_REVIEW_CLEAR_METADATA,
+            (REVIEW_SUBJECT_DIGEST_KEY, ""),
+            (REVIEW_OBLIGATIONS_KEY, []),
+            (REVIEW_OBLIGATIONS_REF_KEY, "{}"),
+            (REVIEW_CONTINUATION_KEY, "{}"),
+            (WORKER_HANDOFF_KEY, "{}"),
+            (DELIVERY_IDENTITY_KEY, "{}"),
+            (PHASE_KEY, TaskPhase.AUTHORING.value),
+            (REVIEW_GENERATION_KEY, review_generation),
+            (CONTRACT_REF_KEY, contract_ref),
+            ("reviewer", ""),
+        )
+        for key, value in controls:
+            assert_metadata_write_allowed(key, value)
+            projected[key] = encode_metadata_value(value)
+        self._put_issue_fields_direct(
+            item_id,
+            {
+                "metadata": projected,
+                "status": "todo",
+                "assignee_type": None,
+                "assignee_id": None,
+                "suppress_run": True,
+            },
+            operation="authoring-generation recovery",
+        )
+        self._pending_assignment_wakes.discard(item_id)
         return self.get_work_item(item_id)
 
     def set_node_contract(self, item_id: str, contract: Any):

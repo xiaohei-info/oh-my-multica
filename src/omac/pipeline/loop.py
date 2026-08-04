@@ -62,7 +62,7 @@ from ..core.taskmeta import (
     REVIEWER_RUN_BASELINE_SCHEMA, WORKER_HANDOFF_SCHEMA,
     DeliveryIdentity, ReviewerRunBaseline, TaskKind, TaskPhase,
     WorkerHandoffIntent, exact_review_report_ref, parse_delivery_identity,
-    review_nits_feedback_is_complete,
+    review_nits_feedback_is_complete, current_review_ledger,
 )
 
 log = logsetup.get_logger(__name__)
@@ -383,7 +383,7 @@ def _formal_dispatch_target(
         (run for run in runs if run.id == observed.target_run_id),
         None,
     )
-    if target is None or target.trigger_kind not in {"issue_assignment", "rerun"}:
+    if target is None or not target.formal:
         return None, "post-baseline Run is not a formal assignment/rerun dispatch"
     return target, None
 
@@ -2363,7 +2363,7 @@ def _recover_legacy_initial_worker(store, runtime, manifest, key, item, path):
         or item.artifacts or item.verification or item.verification_ref
         or _delivery_identity(item) or _review_projection_present(item)
         or item.reviewer_run_baseline or item.review_obligations
-        or item.review_ledger or item.review_continuation)
+        or current_review_ledger(item) or item.review_continuation)
     worker_id = store.resolve_agent_id(node.worker)
     wrong_actor = any(
         run.kind == "direct" and run.agent_id != worker_id for run in runs)

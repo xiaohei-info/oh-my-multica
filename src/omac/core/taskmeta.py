@@ -93,6 +93,8 @@ REVIEW_SUBJECT_DIGEST_KEY = "review_subject_digest"
 REVIEW_OBLIGATIONS_KEY = "review_obligations"
 REVIEW_OBLIGATIONS_REF_KEY = "review_obligations_ref"
 REVIEW_LEDGER_REF_KEY = "review_ledger_ref"
+REVIEW_GENERATION_KEY = "review_generation"
+REVIEW_LEDGER_GENERATION_KEY = "review_ledger_generation"
 MACHINE_FEEDBACK_REF_KEY = "machine_feedback_ref"
 REVIEW_CONTINUATION_KEY = "review_continuation"
 REVIEWER_RUN_BASELINE_KEY = "reviewer_run_baseline"
@@ -135,6 +137,18 @@ class Bounces:
 
     def total(self) -> int:
         return self.worker + self.ci + self.review + self.merge
+
+
+def current_review_ledger(item: Any) -> Optional[dict[str, Any]]:
+    """Return only the review ledger bound to the current control generation."""
+    ledger = getattr(item, "review_ledger", None)
+    current = getattr(item, "review_generation", None)
+    ledger_generation = getattr(item, "review_ledger_generation", None)
+    if current in (None, "") and ledger_generation in (None, ""):
+        return ledger
+    if current and current == ledger_generation:
+        return ledger
+    return None
 
 
 @dataclass(frozen=True)

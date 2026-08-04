@@ -225,6 +225,12 @@ omac dag amend propose .omac/project.yaml \
   observes nor requests a PR merge; the next DAG run delegates that work to
   `run_merge_delivery`, where transient `UNKNOWN` observations consume no merge
   retry and cannot issue a duplicate merge request.
+- An authoring recovery atomically switches the Store to a new
+  `review_generation` and retires the prior current decision, verdict/report,
+  continuation, and handoff. Historical review ledger references and absolute
+  bounce audit counters remain intact. `work show` projects `review_state` and
+  `required_closures` only when `review_ledger_generation` matches the current
+  generation; an ordinary review rejection does not switch generations.
 - Done/merged nodes cannot be changed or removed. Changing worker or `scope_paths`
   on an executed node requires an explicit ownership migration and reason.
 - For `blocked_by`, worker, scope, or other implementation-semantic changes,

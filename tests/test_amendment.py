@@ -47,7 +47,7 @@ from omac.engines.models import (
 from omac.errors import NeedsDecision, ValidationError
 from omac.pipeline import loop
 from omac.pipeline.delivery import run_merge_delivery
-from omac.pipeline.dispatch import submit
+from omac.pipeline.dispatch import build_show_output, submit
 from omac.pipeline.tasks import run_task
 
 
@@ -123,6 +123,86 @@ def test_stage_recovery_retires_the_previous_assignment(stage):
     recovered = engine.store.get_work_item(item.id)
     assert recovered.platform_assignee_id is None
     assert recovered.reviewer is None
+
+
+def test_authoring_recovery_hides_aiteam_849_review_control_but_keeps_audit(
+    aiteam_849_legacy_snapshot,
+):
+    """新 authoring 世代不得继续消费 amendment 前的 convergence 控制事实。"""
+    snapshot = aiteam_849_legacy_snapshot["work_item"]
+    engine = _engine()
+    item = engine.store.create_work_item(
+        "ws",
+        "AITEAM-849",
+        "redacted production snapshot",
+        dag_key=snapshot["dag_key"],
+        worker=snapshot["worker_handoff"]["target_worker"],
+        reviewer="reviewer-redacted",
+        kind=TaskKind(snapshot["kind"]),
+        initial_status=WorkItemStatus.BLOCKED,
+    )
+    decision = {
+        "schema": DECISION_REQUIRED_SCHEMA,
+        "reason_code": "review-convergence-ledger-unverifiable",
+        "kind": "develop",
+        "phase": "review",
+        "gate": "review-convergence",
+        "rounds": 3,
+        "resume_issue_id": item.id,
+        "node_id": snapshot["dag_key"],
+        "verdict": "reject",
+        "recommended_action": "dag-amendment",
+        "convergence": {
+            "schema": "omac.review-convergence-decision/v1",
+            "mode": "unverifiable-legacy-ledger",
+            "reason_code": "review-convergence-ledger-unverifiable",
+            "cycle_count": 3,
+        },
+    }
+    engine.store.update_work_item_metadata(
+        item.id,
+        phase=TaskPhase.REVIEW,
+        worker_bounce=15,
+        review_bounce=snapshot["bounces"]["review"],
+        review_verdict="reject",
+        review_report={"blockers": ["legacy convergence audit"]},
+        review_report_source="blockers:\n  - legacy convergence audit\n",
+        review_subject_digest="subject-round-3",
+        review_ledger=snapshot["review_ledger"],
+        review_ledger_source=yaml.safe_dump(
+            snapshot["review_ledger"], sort_keys=False),
+        review_continuation={
+            "schema": "omac.review-continuation/v1",
+            "authorized_through_round": 6,
+        },
+        decision_required=decision,
+        worker_handoff=snapshot["worker_handoff"],
+    )
+    node = Node(
+        id=snapshot["dag_key"],
+        worker=snapshot["worker_handoff"]["target_worker"],
+        reviewer="reviewer-redacted",
+        contract=Contract(objective="amended authoring contract"),
+        work_item_id=item.id,
+    )
+
+    prepare_stage_recovery(node, engine.store, "authoring", sync_contract=True)
+
+    recovered = engine.store.get_work_item(item.id)
+    assert recovered.phase is TaskPhase.AUTHORING
+    assert recovered.status is WorkItemStatus.TODO
+    assert recovered.decision_required is None
+    assert recovered.review_verdict is None
+    assert recovered.review_report is None
+    assert recovered.review_subject_digest is None
+    assert recovered.worker_handoff is None
+    assert recovered.review_ledger == snapshot["review_ledger"]
+    assert recovered.review_ledger_ref is not None
+    output = build_show_output(recovered, "worker:worker-redacted")
+    assert output.get("ok", True) is True
+    assert "decision_required" not in output["context"]
+    assert "review_state" not in output["context"]
+    assert "required_closures" not in output["context"]
 
 
 def _engine():
@@ -2402,6 +2482,193 @@ def _apply_exhausted_stage_amendment(tmp_path, stage):
     return path, engine, item
 
 
+def _seed_aiteam_849_review_control(engine, item, snapshot):
+    decision = {
+        "schema": DECISION_REQUIRED_SCHEMA,
+        "reason_code": "review-convergence-ledger-unverifiable",
+        "kind": "develop",
+        "phase": "review",
+        "gate": "review-convergence",
+        "rounds": 3,
+        "resume_issue_id": item.id,
+        "node_id": snapshot["dag_key"],
+        "verdict": "reject",
+        "recommended_action": "dag-amendment",
+        "convergence": {
+            "schema": "omac.review-convergence-decision/v1",
+            "mode": "unverifiable-legacy-ledger",
+            "reason_code": "review-convergence-ledger-unverifiable",
+            "cycle_count": 3,
+        },
+    }
+    engine.store.update_work_item_metadata(
+        item.id,
+        phase=TaskPhase.REVIEW,
+        worker_bounce=15,
+        review_bounce=3,
+        review_verdict="reject",
+        review_report={"blockers": ["legacy convergence audit"]},
+        review_report_source="blockers:\n  - legacy convergence audit\n",
+        review_subject_digest="subject-round-3",
+        review_ledger=snapshot["review_ledger"],
+        review_ledger_source=yaml.safe_dump(
+            snapshot["review_ledger"], sort_keys=False),
+        review_continuation={
+            "schema": "omac.review-continuation/v1",
+            "authorized_through_round": 6,
+        },
+        decision_required=decision,
+        worker_handoff=snapshot["worker_handoff"],
+    )
+
+
+@pytest.mark.parametrize("checkpoint", ("before_switch", "after_switch"))
+def test_aiteam_849_authoring_generation_apply_is_restart_safe_and_idempotent(
+    tmp_path, monkeypatch, aiteam_849_legacy_snapshot, checkpoint,
+):
+    snapshot = aiteam_849_legacy_snapshot["work_item"]
+    path, engine, item, reviewed = _stage_amendment_with_handoff(
+        tmp_path, "authoring")
+    _seed_aiteam_849_review_control(engine, item, snapshot)
+    original_restore = engine.store.restore_authoring_generation
+    crashed = False
+
+    def crash_at_switch(item_id, contract, generation):
+        nonlocal crashed
+        if not crashed:
+            crashed = True
+            if checkpoint == "before_switch":
+                raise RuntimeError("crash before authoring generation switch")
+            result = original_restore(item_id, contract, generation)
+            raise RuntimeError("crash after authoring generation switch")
+        return original_restore(item_id, contract, generation)
+
+    monkeypatch.setattr(
+        engine.store, "restore_authoring_generation", crash_at_switch)
+    with pytest.raises(RuntimeError, match="authoring generation switch"):
+        apply_amendment(
+            str(path), reviewed, engine.store, {"alice", "bob", "charlie"},
+            acceptance=_responsibility_acceptance_doc(),
+        )
+
+    partial = load_manifest(str(path))
+    entry = partial.meta["amendment_apply"]["nodes"]["bootstrap"]
+    assert entry["state"] == "syncing"
+    assert entry["expected_review_generation"].startswith("amendment-")
+
+    monkeypatch.setattr(
+        engine.store, "restore_authoring_generation", original_restore)
+    recovered = apply_amendment(
+        str(path), reviewed, engine.store, {"alice", "bob", "charlie"},
+        acceptance=_responsibility_acceptance_doc(),
+    )
+    repeated = apply_amendment(
+        str(path), reviewed, engine.store, {"alice", "bob", "charlie"},
+        acceptance=_responsibility_acceptance_doc(),
+    )
+
+    current = engine.store.get_work_item(item.id)
+    applied = load_manifest(str(path))
+    entry = applied.meta["amendment_apply"]["nodes"]["bootstrap"]
+    assert recovered["sync"]["synced"] == ["bootstrap"]
+    assert repeated["sync"]["already_complete"] == ["bootstrap"]
+    assert current.review_generation == entry["expected_review_generation"]
+    assert current.review_ledger == snapshot["review_ledger"]
+    assert current.review_ledger_ref is not None
+    assert current.current_review_ledger is None
+    assert current.decision_required is None
+    assert current.review_continuation is None
+    assert current.worker_handoff is None
+    assert current.bounces.worker == 15
+    assert current.bounces.review == 3
+    assert entry["observed"]["review_generation"] == (
+        entry["expected_review_generation"])
+    assert entry["observed"]["review_ledger_current"] is False
+    assert entry["observed"]["decision_required_pending"] is False
+    assert entry["observed"]["review_report_pending"] is False
+    assert entry["observed"]["review_continuation_pending"] is False
+
+
+def test_runner_restart_after_aiteam_849_amendment_uses_fresh_worker_budget(
+    tmp_path, aiteam_849_legacy_snapshot,
+):
+    snapshot = aiteam_849_legacy_snapshot["work_item"]
+    path, engine, item, reviewed = _stage_amendment_with_handoff(
+        tmp_path, "authoring")
+    _seed_aiteam_849_review_control(engine, item, snapshot)
+    apply_amendment(
+        str(path), reviewed, engine.store, {"alice", "bob", "charlie"},
+        acceptance=_responsibility_acceptance_doc(),
+    )
+    manifest = load_manifest(str(path))
+    manifest.nodes["closeout"].status = "abandoned"
+    save_manifest(manifest, str(path))
+
+    first = loop.tick(
+        engine.store, engine.runtime, manifest, str(path), max_parallel=1)
+    second = loop.tick(
+        engine.store, engine.runtime, manifest, str(path), max_parallel=1)
+
+    current = engine.store.get_work_item(item.id)
+    assert first.state == "running"
+    assert second.state == "running"
+    assert current.bounces.worker == 15
+    assert current.decision_required is None
+    assert current.current_review_ledger is None
+    assert current.worker_handoff is not None
+
+
+def test_accept_authoring_amendment_fails_before_manifest_write_for_active_formal_run(
+    tmp_path, monkeypatch,
+):
+    path = _manifest(tmp_path)
+    engine = _engine()
+    target = engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    engine.store.update_status(target.id, WorkItemStatus.BLOCKED)
+    amendment_issue = engine.store.create_work_item(
+        "ws", "amendment", "desc", "amend-active-run", "alice",
+        reviewer="bob", kind=TaskKind.AMENDMENT)
+    engine.store.update_work_item_metadata(
+        amendment_issue.id,
+        phase=TaskPhase.CONFIRMATION,
+        review_verdict="pass",
+    )
+    reviewed = build_reviewed_amendment(
+        load_manifest(str(path)),
+        _proposal({"op": "resume", "node": "bootstrap", "stage": "authoring"}),
+        engine.store,
+        issue_id=amendment_issue.id,
+        reviewer_verdict="pass",
+    )
+    amendment_file = tmp_path / "active-run.amendment.yaml"
+    amendment_file.write_text(yaml.safe_dump(reviewed, sort_keys=False))
+    before = path.read_bytes()
+    active = AgentRunObservation(
+        id="formal-run-1",
+        kind="direct",
+        status="running",
+        agent_id="agent-alice",
+        trigger_kind="issue_assignment",
+    )
+    monkeypatch.setattr(
+        engine.runtime, "list_runs",
+        lambda item_id: [active] if item_id == target.id else [],
+    )
+
+    with pytest.raises(ValidationError, match="active formal Agent Runs"):
+        amendment_pipeline.accept_amendment(
+            engine,
+            str(path),
+            str(amendment_file),
+            reason="operator accepted",
+            agent_pool={"alice", "bob", "charlie"},
+        )
+
+    assert path.read_bytes() == before
+    assert engine.store.get_work_item(target.id).status is WorkItemStatus.BLOCKED
+
+
 @pytest.mark.parametrize("stage", ("authoring", "review", "merging"))
 def test_amendment_recovery_preserves_absolute_bounce_audit_and_records_fresh_budget(
     tmp_path, stage,
@@ -2422,7 +2689,7 @@ def test_amendment_recovery_preserves_absolute_bounce_audit_and_records_fresh_bu
     }
 
 
-@pytest.mark.parametrize("stage", ("authoring", "review", "merging"))
+@pytest.mark.parametrize("stage", ("review", "merging"))
 @pytest.mark.parametrize("checkpoint", ("before_clear", "after_clear"))
 def test_amendment_stage_recovery_retires_handoff_restart_safely(
     tmp_path, monkeypatch, stage, checkpoint,
@@ -2849,7 +3116,8 @@ def test_apply_ledger_retries_only_unfinished_node_side_effects(tmp_path, monkey
     failed = False
 
     def fail_second(
-        node, store, stage, *, expected_review_subject=None, sync_contract=False,
+        node, store, stage, *, expected_review_subject=None,
+        expected_review_generation=None, sync_contract=False,
     ):
         nonlocal failed
         if node.id == "started-dependent" and not failed:
@@ -2858,6 +3126,7 @@ def test_apply_ledger_retries_only_unfinished_node_side_effects(tmp_path, monkey
         return original_sync(
             node, store, stage,
             expected_review_subject=expected_review_subject,
+            expected_review_generation=expected_review_generation,
             sync_contract=sync_contract)
 
     monkeypatch.setattr(amendment_mod, "prepare_stage_recovery", fail_second)

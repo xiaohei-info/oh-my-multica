@@ -166,6 +166,10 @@ omac dag amend propose .omac/project.yaml \
   merging；改变实现 scope 的节点才回 authoring。新增节点从 authoring 开始。merge-only
   accept 不观察或请求 PR merge，后续统一由 `run_merge_delivery` 处理；临时 `UNKNOWN` 不消耗
   merge retry，也不会重复发起 merge。
+- 节点恢复到 authoring 时，Store 原子切换新的 `review_generation`，清除上一代当前
+  decision/verdict/report/continuation/handoff，但保留历史 review ledger/ref 与绝对 bounce
+  审计计数。只有 `review_ledger_generation` 与当前 generation 相同的 ledger 才能生成
+  `work show` 的 `review_state` 和 `required_closures`；普通 review reject 不切代。
 - done/merged 节点不可修改或删除。已执行节点改变 worker 或 `scope_paths` 必须携带显式
   ownership migration 及理由。
 - 对 blocked_by、worker、scope 或其他实现语义变更，OMAC 会计算受影响后继闭包。未启动后继

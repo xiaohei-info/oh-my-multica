@@ -37,6 +37,22 @@ def recovery_control_snapshot(item) -> dict:
         "phase": getattr(phase, "value", phase),
         "review_verdict": getattr(item, "review_verdict", None),
         "review_subject_digest": getattr(item, "review_subject_digest", None),
+        "review_generation": getattr(item, "review_generation", None),
+        "review_ledger_generation": getattr(
+            item, "review_ledger_generation", None),
+        "review_ledger_current": (
+            getattr(item, "current_review_ledger", None) is not None),
+        "decision_required_pending": bool(
+            getattr(item, "decision_required", None)),
+        "review_report_pending": bool(
+            getattr(item, "review_report", None)
+            or getattr(item, "review_report_ref", None)),
+        "review_continuation_pending": bool(
+            getattr(item, "review_continuation", None)),
+        "reviewer_run_baseline_pending": (
+            getattr(item, "reviewer_run_baseline", None) is not None),
+        "delivery_identity_pending": (
+            getattr(item, "delivery_identity", None) is not None),
         "contract_sha256": _stable_digest(contract_value),
         "worker_handoff_pending": (
             getattr(item, "worker_handoff", None) is not None),
@@ -101,6 +117,7 @@ def prepare_stage_recovery(
     stage: str,
     *,
     expected_review_subject: str | None = None,
+    expected_review_generation: str | None = None,
     sync_contract: bool = False,
 ) -> str:
     """共享的 review/authoring 阶段准备；merge 交给 run_merge_delivery。
@@ -112,6 +129,17 @@ def prepare_stage_recovery(
         return "no-work-item"
     item = store.get_work_item(node.work_item_id)
     validate_stage_recovery(item, stage)
+    if stage == "authoring":
+        generation = expected_review_generation or (
+            "authoring-" + _stable_digest({
+                "node": node.id,
+                "contract": _dump_contract(node.contract) if node.contract else None,
+                "evidence": recovery_evidence_digest(item),
+            })[:24]
+        )
+        store.restore_authoring_generation(
+            node.work_item_id, node.contract, generation)
+        return "todo"
     # 显式 stage recovery 开启新的执行世代。旧 review→worker handoff 只属于
     # 被 operator/amendment 取代的阶段，必须在任何可被 apply ledger 判定为
     # reached 的 contract/phase/status 写入前先退役。clear 是幂等 metadata
@@ -119,12 +147,6 @@ def prepare_stage_recovery(
     if item.worker_handoff is not None:
         store.update_work_item_metadata(
             node.work_item_id, worker_handoff={})
-    if (
-        stage == "authoring"
-        and getattr(item, "delivery_identity", None) is not None
-    ):
-        store.update_work_item_metadata(
-            node.work_item_id, delivery_identity={})
     if sync_contract and node.contract is not None:
         store.set_node_contract(node.work_item_id, node.contract)
     if stage == "merging":
@@ -139,8 +161,7 @@ def prepare_stage_recovery(
             node.work_item_id, phase=TaskPhase.REVIEW)
         store.update_status(node.work_item_id, WorkItemStatus.IN_REVIEW)
         return "in_review"
-    store.update_status(node.work_item_id, WorkItemStatus.TODO)
-    return "todo"
+    raise AssertionError(f"unhandled recovery stage: {stage}")
 
 
 def classify_stage_recovery_observation(
@@ -150,6 +171,7 @@ def classify_stage_recovery_observation(
     *,
     expected_contract_sha256: str,
     expected_review_subject: str | None = None,
+    expected_review_generation: str | None = None,
 ) -> str:
     """返回 reached/safe/progressed，供 restart-safe 补偿决定是否写 Store。"""
     contract_matches = current.get("contract_sha256") == expected_contract_sha256
@@ -180,8 +202,15 @@ def classify_stage_recovery_observation(
         contract_matches
         and current.get("status") == WorkItemStatus.TODO.value
         and current.get("phase") == TaskPhase.AUTHORING.value
+        and current.get("review_generation") == expected_review_generation
+        and current.get("review_ledger_current") is False
         and current.get("review_verdict") in {None, ""}
         and current.get("review_subject_digest") in {None, ""}
+        and not current.get("decision_required_pending")
+        and not current.get("review_report_pending")
+        and not current.get("review_continuation_pending")
+        and not current.get("reviewer_run_baseline_pending")
+        and not current.get("delivery_identity_pending")
     )
     if stage == "authoring" and authoring_target:
         return "reached" if handoff_retired else "safe"
