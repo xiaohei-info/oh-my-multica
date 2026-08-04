@@ -2475,6 +2475,56 @@ def _stage_amendment_with_handoff(tmp_path, stage):
     return path, engine, item, reviewed
 
 
+def _sealed_delivery_identity():
+    return DeliveryIdentity(
+        schema=DELIVERY_IDENTITY_SCHEMA,
+        handoff_generation="sealed-generation",
+        worker="alice",
+        agent_id="agent-alice",
+        run_id="sealed-run",
+        pr_url="https://example.test/pr/1",
+        pr_head_sha="abc",
+        verification_sha256="sealed-verification",
+        verification_attachment_id="sealed-attachment",
+        verification_comment_id="sealed-comment",
+        verification_task_id="sealed-run",
+    )
+
+
+def _review_amendment_with_sealed_delivery(tmp_path):
+    path = _manifest(tmp_path)
+    engine = _engine()
+    item = engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    identity = _sealed_delivery_identity()
+    engine.store.update_work_item_metadata(
+        item.id,
+        artifacts={"pr_url": identity.pr_url, "head_sha": identity.pr_head_sha},
+        verification={"commands": []},
+        delivery_identity=identity,
+        review_verdict="reject",
+        worker_bounce=3,
+        review_bounce=4,
+        merge_bounce=5,
+        worker_handoff=_old_worker_handoff(),
+    )
+    current = engine.store.get_work_item(item.id)
+    current.verification_ref = {
+        "attachment_id": identity.verification_attachment_id,
+        "comment_id": identity.verification_comment_id,
+    }
+    engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
+    reviewed = build_reviewed_amendment(
+        load_manifest(str(path)),
+        _proposal(_responsibility_update(resume_stage="review")),
+        engine.store,
+        issue_id="amendment-review-sealed-delivery",
+        reviewer_verdict="pass",
+        acceptance=_responsibility_acceptance_doc(),
+    )
+    return path, engine, item, reviewed
+
+
 def _apply_exhausted_stage_amendment(tmp_path, stage):
     path, engine, item, reviewed = _stage_amendment_with_handoff(
         tmp_path, stage)
@@ -2675,6 +2725,61 @@ def test_accept_authoring_amendment_fails_before_manifest_write_for_active_forma
     assert engine.store.get_work_item(target.id).status is WorkItemStatus.BLOCKED
 
 
+def test_accept_authoring_amendment_fails_closed_for_unknown_formal_run(
+    tmp_path, monkeypatch,
+):
+    path = _manifest(tmp_path)
+    engine = _engine()
+    target = engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    engine.store.update_status(target.id, WorkItemStatus.BLOCKED)
+    amendment_issue = engine.store.create_work_item(
+        "ws", "amendment", "desc", "amend-unknown-run", "alice",
+        reviewer="bob", kind=TaskKind.AMENDMENT)
+    engine.store.update_work_item_metadata(
+        amendment_issue.id,
+        phase=TaskPhase.CONFIRMATION,
+        review_verdict="pass",
+    )
+    reviewed = build_reviewed_amendment(
+        load_manifest(str(path)),
+        _proposal({"op": "resume", "node": "bootstrap", "stage": "authoring"}),
+        engine.store,
+        issue_id=amendment_issue.id,
+        reviewer_verdict="pass",
+    )
+    amendment_file = tmp_path / "unknown-run.amendment.yaml"
+    amendment_file.write_text(yaml.safe_dump(reviewed, sort_keys=False))
+    unknown = AgentRunObservation(
+        id="formal-unknown-run",
+        kind="direct",
+        status="unknown",
+        agent_id="agent-alice",
+        trigger_kind="issue_assignment",
+    )
+    assert unknown.formal and not unknown.active and not unknown.terminal
+    monkeypatch.setattr(
+        engine.runtime, "list_runs",
+        lambda item_id: [unknown] if item_id == target.id else [],
+    )
+    before_manifest = path.read_bytes()
+    before_amendment = amendment_file.read_bytes()
+    before_item = copy.deepcopy(engine.store.get_work_item(target.id))
+
+    with pytest.raises(ValidationError, match="active formal Agent Runs"):
+        amendment_pipeline.accept_amendment(
+            engine,
+            str(path),
+            str(amendment_file),
+            reason="operator accepted",
+            agent_pool={"alice", "bob", "charlie"},
+        )
+
+    assert path.read_bytes() == before_manifest
+    assert amendment_file.read_bytes() == before_amendment
+    assert engine.store.get_work_item(target.id) == before_item
+
+
 def test_already_applied_authoring_crash_resume_blocks_active_formal_run(
     tmp_path, monkeypatch,
 ):
@@ -2746,6 +2851,79 @@ def test_already_applied_authoring_crash_resume_blocks_active_formal_run(
 
     assert path.read_bytes() == before
     assert engine.store.get_work_item(target.id).status is WorkItemStatus.BLOCKED
+
+
+def test_already_applied_authoring_resume_fails_closed_for_unknown_formal_run(
+    tmp_path, monkeypatch,
+):
+    path = _manifest(tmp_path)
+    engine = _engine()
+    target = engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    engine.store.update_status(target.id, WorkItemStatus.BLOCKED)
+    amendment_issue = engine.store.create_work_item(
+        "ws", "amendment", "desc", "amend-unknown-resume", "alice",
+        reviewer="bob", kind=TaskKind.AMENDMENT)
+    engine.store.update_work_item_metadata(
+        amendment_issue.id,
+        phase=TaskPhase.CONFIRMATION,
+        review_verdict="pass",
+    )
+    reviewed = build_reviewed_amendment(
+        load_manifest(str(path)),
+        _proposal({"op": "resume", "node": "bootstrap", "stage": "authoring"}),
+        engine.store,
+        issue_id=amendment_issue.id,
+        reviewer_verdict="pass",
+    )
+    amendment_file = tmp_path / "unknown-resume.amendment.yaml"
+    amendment_file.write_text(yaml.safe_dump(reviewed, sort_keys=False))
+    original_prepare = amendment_mod.prepare_stage_recovery
+    monkeypatch.setattr(
+        amendment_mod,
+        "prepare_stage_recovery",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("crash after manifest write")),
+    )
+    with pytest.raises(RuntimeError, match="crash after manifest write"):
+        amendment_pipeline.accept_amendment(
+            engine,
+            str(path),
+            str(amendment_file),
+            reason="operator accepted",
+            agent_pool={"alice", "bob", "charlie"},
+        )
+
+    monkeypatch.setattr(
+        amendment_mod, "prepare_stage_recovery", original_prepare)
+    unknown = AgentRunObservation(
+        id="formal-unknown-resume",
+        kind="direct",
+        status="unknown",
+        agent_id="agent-alice",
+        trigger_kind="rerun",
+    )
+    assert unknown.formal and not unknown.active and not unknown.terminal
+    monkeypatch.setattr(
+        engine.runtime, "list_runs",
+        lambda item_id: [unknown] if item_id == target.id else [],
+    )
+    before_manifest = path.read_bytes()
+    before_amendment = amendment_file.read_bytes()
+    before_item = copy.deepcopy(engine.store.get_work_item(target.id))
+
+    with pytest.raises(ValidationError, match="active formal Agent Runs"):
+        amendment_pipeline.accept_amendment(
+            engine,
+            str(path),
+            str(amendment_file),
+            reason="resume accepted amendment",
+            agent_pool={"alice", "bob", "charlie"},
+        )
+
+    assert path.read_bytes() == before_manifest
+    assert amendment_file.read_bytes() == before_amendment
+    assert engine.store.get_work_item(target.id) == before_item
 
 
 def _legacy_synced_authoring_accept_fixture(
@@ -3791,6 +3969,134 @@ def test_recovery_conformance_review_target_requires_cleared_control(
             assert current.review_generation == "stale-review-generation"
         else:
             assert current.review_subject_digest == "stale-review-subject"
+
+
+@pytest.mark.parametrize("drift", ("deleted", "changed"))
+def test_review_recovery_does_not_sync_after_sealed_delivery_identity_drift(
+    tmp_path, monkeypatch, drift,
+):
+    path, engine, item, reviewed = _review_amendment_with_sealed_delivery(
+        tmp_path)
+    original_prepare = amendment_mod.prepare_stage_recovery
+
+    def drift_after_write(*args, **kwargs):
+        result = original_prepare(*args, **kwargs)
+        current = engine.store.get_work_item(item.id)
+        current.delivery_identity = (
+            None
+            if drift == "deleted"
+            else DeliveryIdentity(
+                **{
+                    **_sealed_delivery_identity().as_dict(),
+                    "run_id": "different-sealed-run",
+                }
+            )
+        )
+        return result
+
+    monkeypatch.setattr(
+        amendment_mod, "prepare_stage_recovery", drift_after_write)
+
+    with pytest.raises(ValidationError, match="observed progress"):
+        apply_amendment(
+            str(path),
+            reviewed,
+            engine.store,
+            {"alice", "bob", "charlie"},
+            acceptance=_responsibility_acceptance_doc(),
+        )
+
+    entry = load_manifest(str(path)).meta[
+        "amendment_apply"]["nodes"]["bootstrap"]
+    assert entry["state"] == "observed_progress"
+    assert engine.store.get_work_item(item.id).delivery_identity != (
+        _sealed_delivery_identity())
+
+
+@pytest.mark.parametrize("drift", ("deleted", "replaced"))
+def test_authoring_recovery_preserves_opaque_historical_review_ledger_identity(
+    tmp_path, monkeypatch, drift,
+):
+    path, engine, item, _reviewed = _stage_amendment_with_handoff(
+        tmp_path, "authoring")
+    current = engine.store.get_work_item(item.id)
+    current.review_ledger = {"opaque-legacy-ledger": ["do-not-parse"]}
+    current.review_ledger_ref = {
+        "attachment_id": "historical-ledger-attachment",
+        "sha256": "historical-ledger-digest",
+    }
+    current.review_ledger_generation = "historical-review-generation"
+    reviewed = build_reviewed_amendment(
+        load_manifest(str(path)),
+        _proposal(_responsibility_update(resume_stage="authoring")),
+        engine.store,
+        issue_id="amendment-authoring-ledger",
+        reviewer_verdict="pass",
+        acceptance=_responsibility_acceptance_doc(),
+    )
+    original_restore = engine.store.restore_authoring_generation
+
+    def drift_after_write(*args, **kwargs):
+        result = original_restore(*args, **kwargs)
+        recovered = engine.store.get_work_item(item.id)
+        if drift == "deleted":
+            recovered.review_ledger = None
+            recovered.review_ledger_ref = None
+        else:
+            recovered.review_ledger = "malformed replacement ledger"
+            recovered.review_ledger_ref = {
+                "attachment_id": "replacement-ledger-attachment",
+            }
+        return result
+
+    monkeypatch.setattr(
+        engine.store, "restore_authoring_generation", drift_after_write)
+
+    with pytest.raises(ValidationError, match="observed progress"):
+        apply_amendment(
+            str(path),
+            reviewed,
+            engine.store,
+            {"alice", "bob", "charlie"},
+            acceptance=_responsibility_acceptance_doc(),
+        )
+
+    entry = load_manifest(str(path)).meta[
+        "amendment_apply"]["nodes"]["bootstrap"]
+    assert entry["state"] == "observed_progress"
+
+
+@pytest.mark.parametrize("bounce", ("worker", "review", "merge"))
+@pytest.mark.parametrize("drift", ("decreased", "zeroed"))
+def test_recovery_does_not_sync_after_absolute_bounce_regression(
+    tmp_path, monkeypatch, bounce, drift,
+):
+    path, engine, item, reviewed = _stage_amendment_with_handoff(
+        tmp_path, "authoring")
+    original_restore = engine.store.restore_authoring_generation
+
+    def regress_after_write(*args, **kwargs):
+        result = original_restore(*args, **kwargs)
+        current = engine.store.get_work_item(item.id)
+        baseline = {"worker": 3, "review": 4, "merge": 5}[bounce]
+        setattr(current.bounces, bounce, 0 if drift == "zeroed" else baseline - 1)
+        return result
+
+    monkeypatch.setattr(
+        engine.store, "restore_authoring_generation", regress_after_write)
+
+    with pytest.raises(ValidationError, match="observed progress"):
+        apply_amendment(
+            str(path),
+            reviewed,
+            engine.store,
+            {"alice", "bob", "charlie"},
+            acceptance=_responsibility_acceptance_doc(),
+        )
+
+    entry = load_manifest(str(path)).meta[
+        "amendment_apply"]["nodes"]["bootstrap"]
+    assert entry["state"] == "observed_progress"
 
 
 @pytest.mark.parametrize("stage", ("review", "merging"))

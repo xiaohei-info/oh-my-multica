@@ -600,7 +600,7 @@ def accept_amendment(
         active.extend(
             (node_id, run.id)
             for run in engine.runtime.list_runs(node.work_item_id)
-            if run.active and run.formal
+            if run.formal and not run.terminal
         )
     if active:
         details = ", ".join(

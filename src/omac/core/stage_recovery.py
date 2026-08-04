@@ -49,6 +49,30 @@ def _contract_ref_digest(contract) -> str:
     return hashlib.sha256(source.encode("utf-8")).hexdigest()
 
 
+def _identity_value(value):
+    return value.as_dict() if hasattr(value, "as_dict") else value
+
+
+def _opaque_payload_identity(observation, payload: WorkItemPayload, ref_name: str):
+    """Bind an attachment-backed fact without parsing its historical body."""
+    item = _work_item(observation)
+    ref = getattr(item, ref_name, None)
+    body = getattr(item, payload.value, None)
+    if ref is not None:
+        return _stable_digest({"kind": "ref", "value": ref})
+    if body is not None:
+        return _stable_digest({"kind": "body", "value": body})
+    return None
+
+
+def _absolute_bounces(item) -> dict[str, int]:
+    bounces = getattr(item, "bounces", None)
+    return {
+        stage: int(getattr(bounces, stage, 0))
+        for stage in ("worker", "review", "merge")
+    }
+
+
 def recovery_control_snapshot(observation) -> dict:
     """唯一的阶段恢复控制投影；附件正文可延迟但存在性不可丢失。"""
     item = _work_item(observation)
@@ -78,8 +102,11 @@ def recovery_control_snapshot(observation) -> dict:
             item, "review_ledger_generation", None),
         "review_ledger_present": _payload_present(
             observation, WorkItemPayload.REVIEW_LEDGER, "review_ledger_ref"),
+        "review_ledger_identity_sha256": _opaque_payload_identity(
+            observation, WorkItemPayload.REVIEW_LEDGER, "review_ledger_ref"),
         "review_ledger_current": _review_ledger_is_current(observation),
         "bounce_baseline": getattr(item, "bounce_baseline", None),
+        "absolute_bounces": _absolute_bounces(item),
         "decision_required_pending": bool(
             getattr(item, "decision_required", None)),
         "review_report_pending": _payload_present(
@@ -90,6 +117,11 @@ def recovery_control_snapshot(observation) -> dict:
             getattr(item, "reviewer_run_baseline", None) is not None),
         "delivery_identity_pending": (
             getattr(item, "delivery_identity", None) is not None),
+        "delivery_identity_sha256": (
+            _stable_digest(_identity_value(getattr(item, "delivery_identity", None)))
+            if getattr(item, "delivery_identity", None) is not None
+            else None
+        ),
         "contract_sha256": _stable_digest(contract_value),
         "contract_ref_sha256": (
             (getattr(item, "contract_ref", None) or {}).get("sha256")
@@ -248,6 +280,12 @@ def classify_stage_recovery_observation(
     expected_bounce_baseline: dict[str, int] | None = None,
 ) -> str:
     """返回 reached/safe/progressed，供 restart-safe 补偿决定是否写 Store。"""
+    preservation_matches = _stage_preservation_matches(
+        stage,
+        baseline,
+        current,
+        expected_bounce_baseline=expected_bounce_baseline,
+    )
     contract_matches = (
         current.get("contract_sha256") == expected_contract_sha256
         or (
@@ -272,12 +310,14 @@ def classify_stage_recovery_observation(
     assignment_retired = not bool(current.get("assignment_pending", False))
     merging_target = (
         contract_matches
+        and preservation_matches
         and recovery_independent == baseline_recovery_independent
     )
     if stage == "merging" and merging_target:
         return "reached" if handoff_retired and assignment_retired else "safe"
     review_target = (
         contract_matches
+        and preservation_matches
         and current.get("status") == WorkItemStatus.IN_REVIEW.value
         and current.get("phase") == TaskPhase.REVIEW.value
         and current.get("review_subject_digest") == expected_review_subject
@@ -296,6 +336,7 @@ def classify_stage_recovery_observation(
         return "reached" if handoff_retired and assignment_retired else "safe"
     authoring_target = (
         contract_matches
+        and preservation_matches
         and current.get("status") == WorkItemStatus.TODO.value
         and current.get("phase") == TaskPhase.AUTHORING.value
         and current.get("review_generation") == expected_review_generation
@@ -314,6 +355,8 @@ def classify_stage_recovery_observation(
     )
     if stage == "authoring" and authoring_target:
         return "reached" if handoff_retired and assignment_retired else "safe"
+    if not preservation_matches:
+        return "progressed"
     if current == baseline:
         return "safe"
     if recovery_independent == baseline_recovery_independent:
@@ -351,3 +394,35 @@ def classify_stage_recovery_observation(
     ):
         return "safe"
     return "progressed"
+
+
+def _stage_preservation_matches(
+    stage: str,
+    baseline: dict,
+    current: dict,
+    *,
+    expected_bounce_baseline: dict[str, int] | None,
+) -> bool:
+    expected_bounces = baseline.get("absolute_bounces")
+    if expected_bounces is None:
+        expected_bounces = expected_bounce_baseline
+    if expected_bounces is not None:
+        current_bounces = current.get("absolute_bounces")
+        if not isinstance(current_bounces, dict) or any(
+            current_bounces.get(stage, -1) < expected_bounces.get(stage, 0)
+            for stage in ("worker", "review", "merge")
+        ):
+            return False
+    if stage in {"review", "merging"}:
+        for key in (
+            "delivery_identity_pending", "delivery_identity_sha256",
+        ):
+            if key in baseline and current.get(key) != baseline.get(key):
+                return False
+    if stage == "authoring":
+        for key in (
+            "review_ledger_present", "review_ledger_identity_sha256",
+        ):
+            if key in baseline and current.get(key) != baseline.get(key):
+                return False
+    return True
