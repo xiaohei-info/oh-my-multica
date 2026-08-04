@@ -3080,6 +3080,45 @@ def test_existing_repairing_without_attempt_baseline_fails_closed(
     assert engine.store.get_work_item(target.id).review_generation is None
 
 
+def test_repairing_without_attempt_baseline_fails_even_when_store_reached(
+    tmp_path, monkeypatch, aiteam_849_legacy_snapshot,
+):
+    path, amendment_file, engine, target, _reviewed = (
+        _legacy_synced_authoring_accept_fixture(
+            tmp_path, aiteam_849_legacy_snapshot))
+    monkeypatch.setattr(engine.runtime, "list_runs", lambda _item_id: [])
+    amendment_pipeline.accept_amendment(
+        engine,
+        str(path),
+        str(amendment_file),
+        reason="repeat official accepted amendment",
+        agent_pool={"alice", "bob", "charlie"},
+    )
+    manifest = load_manifest(str(path))
+    entry = manifest.meta["amendment_apply"]["nodes"]["bootstrap"]
+    entry["state"] = "repairing"
+    entry.pop("attempt_baseline", None)
+    save_manifest(manifest, str(path))
+
+    with pytest.raises(
+        ValidationError, match="repairing entry is missing attempt_baseline",
+    ):
+        amendment_pipeline.accept_amendment(
+            engine,
+            str(path),
+            str(amendment_file),
+            reason="repeat official accepted amendment",
+            agent_pool={"alice", "bob", "charlie"},
+        )
+
+    malformed = load_manifest(str(path)).meta[
+        "amendment_apply"]["nodes"]["bootstrap"]
+    assert malformed["state"] == "repairing"
+    assert "attempt_baseline" not in malformed
+    assert engine.store.get_work_item(target.id).review_generation == (
+        malformed["expected_review_generation"])
+
+
 def test_legacy_synced_repair_fails_closed_for_active_formal_run(
     tmp_path, monkeypatch, aiteam_849_legacy_snapshot,
 ):
@@ -3498,17 +3537,18 @@ def test_repeated_accept_after_node_progress_never_rolls_it_back(tmp_path):
     progressed.nodes["bootstrap"].merged_at = "2026-07-27T01:00:00Z"
     save_manifest(progressed, str(path))
 
-    second = apply_amendment(
-        str(path), reviewed, engine.store, {"alice", "bob", "charlie"})
+    with pytest.raises(ValidationError, match="observed progress"):
+        apply_amendment(
+            str(path), reviewed, engine.store, {"alice", "bob", "charlie"})
 
     got = engine.store.get_work_item(item.id)
     reloaded = load_manifest(str(path))
-    assert second["sync"]["already_complete"] == ["bootstrap"]
     assert got.status == WorkItemStatus.DONE
     assert got.review_verdict == "pass"
     assert reloaded.nodes["bootstrap"].status == "done"
     assert reloaded.nodes["bootstrap"].merged is True
-    assert reloaded.meta["amendment_apply"]["nodes"]["bootstrap"]["state"] == "synced"
+    assert reloaded.meta["amendment_apply"]["nodes"]["bootstrap"][
+        "state"] == "observed_progress"
 
 
 def test_apply_ledger_completes_after_contract_write_but_before_review_reset(tmp_path, monkeypatch):
@@ -3610,6 +3650,55 @@ def test_non_authoring_recovery_noop_does_not_mark_synced(
     entry = load_manifest(str(path)).meta[
         "amendment_apply"]["nodes"]["bootstrap"]
     assert entry["state"] == "syncing"
+
+
+@pytest.mark.parametrize("stage", ("review", "merging"))
+@pytest.mark.parametrize("drift", ("safe", "progressed"))
+def test_persisted_synced_non_authoring_reobserves_store(
+    tmp_path, monkeypatch, stage, drift,
+):
+    path, engine, item, reviewed = _stage_amendment_with_handoff(
+        tmp_path, stage)
+    before = copy.deepcopy(engine.store.get_work_item(item.id))
+    apply_amendment(
+        str(path),
+        reviewed,
+        engine.store,
+        {"alice", "bob", "charlie"},
+        acceptance=_responsibility_acceptance_doc(),
+    )
+    current = engine.store.get_work_item(item.id)
+    if drift == "safe":
+        current.__dict__.clear()
+        current.__dict__.update(copy.deepcopy(before.__dict__))
+    else:
+        current.status = WorkItemStatus.DONE
+    calls = []
+    monkeypatch.setattr(
+        amendment_mod,
+        "prepare_stage_recovery",
+        lambda *_args, **_kwargs: calls.append(stage),
+    )
+
+    match = "did not reach its target" if drift == "safe" else "observed progress"
+    with pytest.raises(ValidationError, match=match):
+        apply_amendment(
+            str(path),
+            reviewed,
+            engine.store,
+            {"alice", "bob", "charlie"},
+            acceptance=_responsibility_acceptance_doc(),
+        )
+
+    entry = load_manifest(str(path)).meta[
+        "amendment_apply"]["nodes"]["bootstrap"]
+    if drift == "safe":
+        assert entry["state"] == "syncing"
+        assert calls == [stage]
+    else:
+        assert entry["state"] == "observed_progress"
+        assert calls == []
+        assert engine.store.get_work_item(item.id).status is WorkItemStatus.DONE
 
 
 def test_merge_only_precondition_failure_does_not_modify_manifest(tmp_path):

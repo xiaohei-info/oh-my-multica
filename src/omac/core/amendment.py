@@ -1100,7 +1100,15 @@ def _resume_apply_ledger(
     failures = []
     for node_id, entry in ledger.get("nodes", {}).items():
         state = entry.get("state")
+        persisted_synced = state == "synced"
         started_repair = False
+        if state == "repairing" and not isinstance(
+            entry.get("attempt_baseline"), dict
+        ):
+            failures.append(
+                f"node {node_id}: repairing entry is missing attempt_baseline; "
+                "refusing to infer a causal boundary from current Store facts")
+            continue
         missing_authoring_generation = (
             entry.get("stage") == "authoring"
             and not entry.get("expected_review_generation")
@@ -1120,7 +1128,8 @@ def _resume_apply_ledger(
                 state = "repairing"
                 started_repair = True
         if state == "observed_progress" or (
-            state == "synced" and entry.get("stage") != "authoring"
+            state == "synced"
+            and entry.get("stage") == "historical_contract_correction"
         ):
             summary["already_complete"].append(node_id)
             continue
@@ -1151,19 +1160,11 @@ def _resume_apply_ledger(
             state = "repairing"
             legacy_synced_authoring = True
             started_repair = True
-        elif state == "synced":
-            summary["already_complete"].append(node_id)
-            continue
         attempt_baseline = entry.get("attempt_baseline")
         if started_repair:
             entry["attempt_baseline"] = current
             attempt_baseline = current
             _save_ledger(manifest, manifest_path, ledger)
-        elif state == "repairing" and not isinstance(attempt_baseline, dict):
-            failures.append(
-                f"node {node_id}: repairing entry is missing attempt_baseline; "
-                "refusing to infer a causal boundary from current Store facts")
-            continue
         if state == "repairing" and isinstance(attempt_baseline, dict):
             if current != attempt_baseline:
                 attempt_observation = _classify_apply_entry(
@@ -1198,7 +1199,9 @@ def _resume_apply_ledger(
             continue
         entry["state"] = (
             "repairing" if legacy_synced_authoring else "syncing")
-        if not isinstance(entry.get("attempt_baseline"), dict):
+        if persisted_synced and entry["state"] == "syncing":
+            entry["attempt_baseline"] = current
+        elif not isinstance(entry.get("attempt_baseline"), dict):
             entry["attempt_baseline"] = current
         _save_ledger(manifest, manifest_path, ledger)
         prepare_stage_recovery(
