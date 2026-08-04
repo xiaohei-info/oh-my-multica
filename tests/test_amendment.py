@@ -2949,6 +2949,70 @@ def test_legacy_synced_repair_fails_closed_for_active_formal_run(
     assert current.worker_handoff == before_item.worker_handoff
 
 
+@pytest.mark.parametrize("progress", ("delivery", "review"))
+@pytest.mark.parametrize("repair_state", ("synced", "repairing"))
+def test_legacy_synced_repair_does_not_rollback_progressed_work_item(
+    tmp_path, monkeypatch, aiteam_849_legacy_snapshot, progress, repair_state,
+):
+    path, amendment_file, engine, target, _reviewed = (
+        _legacy_synced_authoring_accept_fixture(
+            tmp_path, aiteam_849_legacy_snapshot))
+    manifest = load_manifest(str(path))
+    entry = manifest.meta["amendment_apply"]["nodes"]["bootstrap"]
+    if repair_state == "repairing":
+        entry["state"] = "repairing"
+        entry["expected_review_generation"] = "legacy-repair-generation"
+        save_manifest(manifest, str(path))
+
+    current = engine.store.get_work_item(target.id)
+    if progress == "delivery":
+        current.delivery_identity = DeliveryIdentity(
+            schema=DELIVERY_IDENTITY_SCHEMA,
+            handoff_generation="progressed-handoff",
+            worker="alice",
+            agent_id="agent-alice",
+            run_id="completed-worker-run",
+            pr_url="https://github.com/acme/repo/pull/146",
+            pr_head_sha="progressed-head",
+            verification_sha256="progressed-verification",
+            verification_attachment_id="progressed-attachment",
+            verification_comment_id="progressed-comment",
+            verification_uploader_id="agent-alice",
+            verification_uploader_type="agent",
+        )
+    else:
+        current.phase = TaskPhase.REVIEW
+        current.status = WorkItemStatus.IN_REVIEW
+        current.review_generation = "progressed-review-generation"
+        current.review_ledger_generation = "progressed-review-generation"
+
+    before_item = copy.deepcopy(current)
+    monkeypatch.setattr(engine.runtime, "list_runs", lambda _item_id: [])
+    monkeypatch.setattr(
+        engine.store,
+        "restore_authoring_generation",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("progressed work item must not be restored")),
+    )
+
+    result = amendment_pipeline.accept_amendment(
+        engine,
+        str(path),
+        str(amendment_file),
+        reason="repeat official accepted amendment",
+        agent_pool={"alice", "bob", "charlie"},
+    )
+
+    assert result["sync"]["observed_progress"] == ["bootstrap"]
+    assert engine.store.get_work_item(target.id) == before_item
+    repaired = load_manifest(str(path)).meta[
+        "amendment_apply"]["nodes"]["bootstrap"]
+    assert repaired["state"] == "observed_progress"
+    assert repaired["observed"]["delivery_identity_pending"] is (
+        progress == "delivery")
+    assert repaired["observed"]["phase"] == before_item.phase.value
+
+
 def test_legacy_synced_repair_first_reconcile_dispatches_one_worker(
     tmp_path, aiteam_849_legacy_snapshot,
 ):

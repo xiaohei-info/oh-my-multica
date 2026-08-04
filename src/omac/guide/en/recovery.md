@@ -236,7 +236,9 @@ omac dag amend propose .omac/project.yaml \
   `omac dag amend accept` command; no manual metadata edit is required. Repair
   still rejects active formal Runs and verifies the contract digest, generation,
   retired decision/report/subject/handoff, and current-ledger visibility before
-  returning the entry to `synced`.
+  returning the entry to `synced`. If the WorkItem has sealed a new delivery
+  identity, entered review, or switched to another generation, repeated accept
+  records `observed_progress` without rolling back the progressed Store facts.
 - Bounce fields remain monotonic absolute audit counters and are never reset.
   `work show.task.bounce_budget` and Worker retry logs distinguish the absolute
   value, amendment baseline, and current-generation consumption. Runtime budget

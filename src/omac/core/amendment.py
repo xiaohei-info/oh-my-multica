@@ -28,6 +28,8 @@ from .stage_recovery import (
     stage_recovery_subject,
     validate_stage_recovery,
 )
+from .taskmeta import TaskPhase
+from ..engines.models import WorkItemStatus
 from ..errors import NeedsDecision, ValidationError
 from ..i18n import ui
 
@@ -1045,6 +1047,21 @@ def _save_ledger(manifest: Manifest, manifest_path: str, ledger: dict[str, Any])
     save_manifest(manifest, manifest_path)
 
 
+def _legacy_authoring_projection_is_repairable(current: dict[str, Any]) -> bool:
+    """Return whether a missing-generation legacy projection is still authoring."""
+    return (
+        current.get("phase") == TaskPhase.AUTHORING.value
+        and current.get("status") in {
+            WorkItemStatus.TODO.value,
+            WorkItemStatus.IN_PROGRESS.value,
+            WorkItemStatus.BLOCKED.value,
+        }
+        and current.get("review_generation") in {None, ""}
+        and current.get("review_ledger_generation") in {None, ""}
+        and not current.get("delivery_identity_pending")
+    )
+
+
 def _resume_apply_ledger(
     manifest: Manifest,
     manifest_path: str,
@@ -1103,7 +1120,10 @@ def _resume_apply_ledger(
             _save_ledger(manifest, manifest_path, ledger)
             summary["synced"].append(node_id)
             continue
-        if observation == "progressed" and not legacy_synced_authoring:
+        if observation == "progressed" and not (
+            legacy_synced_authoring
+            and _legacy_authoring_projection_is_repairable(current)
+        ):
             entry["state"] = "observed_progress"
             entry["observed"] = current
             entry["reason"] = (
