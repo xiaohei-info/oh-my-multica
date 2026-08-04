@@ -25,13 +25,14 @@ from omac.core.contract_boundaries import (
 from omac.core.lint import lint as lint_manifest, lint_increment
 from omac.core.manifest import Contract, _dump_contract, _load_contract, load_manifest
 from omac.core.project_rules import END_MARKER, START_MARKER
+from omac.core.retry_budget import bounce_budget_projection
 from omac.core.review_convergence import (
     REVIEW_PROTOCOL_VERSION,
     advance_review_ledger,
     open_blockers,
     required_closures,
 )
-from omac.core.taskmeta import TaskKind, TaskPhase
+from omac.core.taskmeta import TaskKind, TaskPhase, current_review_ledger
 from omac.engines.models import (
     PullRequestReadiness, PullRequestReadinessFailure,
     PullRequestReadinessFailureKind, WorkItem, WorkItemPayload, WorkItemStatus,
@@ -371,7 +372,7 @@ def build_show_output(item: Any, identity: str, *, language: str = EN) -> Dict[s
     """
     kind: TaskKind = item.kind
     phase: TaskPhase = _resolve_phase(item, item.phase)
-    ledger = getattr(item, "review_ledger", None)
+    ledger = current_review_ledger(item)
     resolution = resolve_convergence(item, node_id=getattr(item, "dag_key", None))
     resolution.raise_if_invalid(ValidationError, item.id)
 
@@ -398,6 +399,9 @@ def build_show_output(item: Any, identity: str, *, language: str = EN) -> Dict[s
             else {}
         ),
     }
+    bounce_budget = bounce_budget_projection(item)
+    if bounce_budget is not None:
+        task["bounce_budget"] = bounce_budget
 
     # 完整上下文:authoring 给 contract 全量;review 给评审对象 + env_setup
     contract = getattr(item, "contract", None)
@@ -859,7 +863,7 @@ def _validate_review(
         review_verdict=verdict,
         review_report=report,
         review_obligations=getattr(item, "review_obligations", None),
-        review_ledger=getattr(item, "review_ledger", None),
+        review_ledger=current_review_ledger(item),
         review_subject_digest=getattr(item, "review_subject_digest", None),
     )
     errors = evidence_mod.validate_review_evidence(node, probe)
@@ -1092,7 +1096,7 @@ def submit(
                     "legacy facts。",
                 ), report=resolution.decision)
             ledger = advance_review_ledger(
-                getattr(item, "review_ledger", None),
+                current_review_ledger(item),
                 report,
                 verdict=verdict,
                 subject_digest=item.review_subject_digest or "unknown",
@@ -1102,6 +1106,8 @@ def submit(
                 "review_ledger": ledger,
                 "review_ledger_source": yaml.safe_dump(
                     ledger, allow_unicode=True, sort_keys=False),
+                "review_ledger_generation": getattr(
+                    item, "review_generation", None) or "",
             })
         store.update_work_item_metadata(
             issue_id,

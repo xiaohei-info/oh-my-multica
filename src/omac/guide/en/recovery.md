@@ -225,6 +225,25 @@ omac dag amend propose .omac/project.yaml \
   observes nor requests a PR merge; the next DAG run delegates that work to
   `run_merge_delivery`, where transient `UNKNOWN` observations consume no merge
   retry and cannot issue a duplicate merge request.
+- An authoring recovery atomically switches the Store to a new
+  `review_generation` and retires the prior current decision, verdict/report,
+  continuation, and handoff. Historical review ledger references and absolute
+  bounce audit counters remain intact. `work show` projects `review_state` and
+  `required_closures` only when `review_ledger_generation` matches the current
+  generation; an ordinary review rejection does not switch generations.
+- An authoring entry marked `synced` by an older CLI but missing the generation
+  projection is repaired idempotently by repeating the original
+  `omac dag amend accept` command; no manual metadata edit is required. Repair
+  still rejects active formal Runs and verifies the contract digest, generation,
+  retired decision/report/subject/handoff, and current-ledger visibility before
+  returning the entry to `synced`. If the WorkItem has sealed a new delivery
+  identity, entered review, or switched to another generation, repeated accept
+  records `observed_progress` without rolling back the progressed Store facts.
+- Bounce fields remain monotonic absolute audit counters and are never reset.
+  `work show.task.bounce_budget` and Worker retry logs distinguish the absolute
+  value, amendment baseline, and current-generation consumption. Runtime budget
+  decisions continue to use the relative calculation from the manifest
+  `amendment_apply.bounce_baseline` fact.
 - Done/merged nodes cannot be changed or removed. Changing worker or `scope_paths`
   on an executed node requires an explicit ownership migration and reason.
 - For `blocked_by`, worker, scope, or other implementation-semantic changes,

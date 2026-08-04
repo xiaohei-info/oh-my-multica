@@ -31,7 +31,9 @@ from ..core.evidence import validate_review_evidence, validate_worker_evidence
 from ..core.review_convergence import (
     REVIEW_CONVERGENCE_EARLIEST_CYCLE,
     build_review_obligations, review_subject_digest)
-from ..core.retry_budget import consumed_bounces, review_rework_budget
+from ..core.retry_budget import (
+    bounce_log_fields, consumed_bounces, review_rework_budget,
+)
 from ..core.stage_recovery import stage_recovery_subject, validate_stage_recovery
 from ..core.gitsync import commit_manifest
 from ..core.manifest import (
@@ -62,7 +64,7 @@ from ..core.taskmeta import (
     REVIEWER_RUN_BASELINE_SCHEMA, WORKER_HANDOFF_SCHEMA,
     DeliveryIdentity, ReviewerRunBaseline, TaskKind, TaskPhase,
     WorkerHandoffIntent, exact_review_report_ref, parse_delivery_identity,
-    review_nits_feedback_is_complete,
+    review_nits_feedback_is_complete, current_review_ledger,
 )
 
 log = logsetup.get_logger(__name__)
@@ -383,7 +385,7 @@ def _formal_dispatch_target(
         (run for run in runs if run.id == observed.target_run_id),
         None,
     )
-    if target is None or target.trigger_kind not in {"issue_assignment", "rerun"}:
+    if target is None or not target.formal:
         return None, "post-baseline Run is not a formal assignment/rerun dispatch"
     return target, None
 
@@ -1193,6 +1195,8 @@ def _block_review_rework_budget(
         gate=gate,
         rounds=budget.current_round,
         consumed=budget.consumed,
+        absolute_audit=budget.current_round,
+        current_generation_consumed=budget.consumed,
         max=budget.authorized_through_round,
     )
     return ui(
@@ -2363,7 +2367,7 @@ def _recover_legacy_initial_worker(store, runtime, manifest, key, item, path):
         or item.artifacts or item.verification or item.verification_ref
         or _delivery_identity(item) or _review_projection_present(item)
         or item.reviewer_run_baseline or item.review_obligations
-        or item.review_ledger or item.review_continuation)
+        or current_review_ledger(item) or item.review_continuation)
     worker_id = store.resolve_agent_id(node.worker)
     wrong_actor = any(
         run.kind == "direct" and run.agent_id != worker_id for run in runs)
@@ -2963,6 +2967,8 @@ def collect_results(
                         f"worker 未交付(回退上界 {worker_limit} 已耗尽): {reason}")
                     log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
                              id=node.work_item_id,
+                             absolute_audit=cur_bounce,
+                             current_generation_consumed=consumed,
                              reason=ui(
                                  f"Worker delivery retry limit ({worker_limit}) exhausted",
                                  f"worker 未交付回退上界({worker_limit})已耗尽"))
@@ -2994,12 +3000,20 @@ def collect_results(
                                 gate="worker",
                                 round=cur_bounce + 1,
                                 max=worker_limit,
+                                **bounce_log_fields(
+                                    item, "worker",
+                                    absolute_count=cur_bounce + 1,
+                                    limit=worker_limit),
                             )
                             continue
                         set_node(manifest, key, status="in_progress")
                         log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=key,
                                  id=node.work_item_id, gate="worker",
-                                 round=cur_bounce + 1, max=worker_limit)
+                                 round=cur_bounce + 1, max=worker_limit,
+                                 **bounce_log_fields(
+                                     item, "worker",
+                                     absolute_count=cur_bounce + 1,
+                                     limit=worker_limit))
                     except PlatformError as exc:
                         store.update_work_item_metadata(
                             node.work_item_id, worker_bounce=cur_bounce)

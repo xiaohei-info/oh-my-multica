@@ -1178,7 +1178,7 @@ def test_retry_legacy_delivery_isolates_old_evidence_until_fresh_submit(
 
 
 @pytest.mark.parametrize("replacement", [None, "charlie"])
-@pytest.mark.parametrize("checkpoint", ["before_clear", "after_clear"])
+@pytest.mark.parametrize("checkpoint", ["before_switch", "after_switch"])
 def test_retry_handoff_retirement_is_restart_safe(
     tmp_path, monkeypatch, replacement, checkpoint,
 ):
@@ -1211,26 +1211,27 @@ def test_retry_handoff_retirement_is_restart_safe(
         "id": "b", "worker": "bob", "status": "blocked",
         "work_item_id": item.id,
     }])
-    original_update = engine.store.update_work_item_metadata
+    original_restore = engine.store.restore_authoring_generation
     crashed = False
 
-    def crash_at_clear(item_id, **metadata):
+    def crash_at_switch(item_id, contract, generation, bounce_baseline=None):
         nonlocal crashed
-        if metadata.get("worker_handoff") == {} and not crashed:
+        if not crashed:
             crashed = True
-            if checkpoint == "before_clear":
-                raise RuntimeError("crash before handoff retirement")
-            result = original_update(item_id, **metadata)
-            raise RuntimeError("crash after handoff retirement")
-        return original_update(item_id, **metadata)
+            if checkpoint == "before_switch":
+                raise RuntimeError("crash before authoring generation switch")
+            result = original_restore(
+                item_id, contract, generation, bounce_baseline)
+            raise RuntimeError("crash after authoring generation switch")
+        return original_restore(item_id, contract, generation, bounce_baseline)
 
     monkeypatch.setattr(
-        engine.store, "update_work_item_metadata", crash_at_clear)
+        engine.store, "restore_authoring_generation", crash_at_switch)
     command = ["node", "retry", path, "b"]
     if replacement:
         command.extend(["--worker", replacement])
 
-    with pytest.raises(RuntimeError, match="handoff retirement"):
+    with pytest.raises(RuntimeError, match="authoring generation switch"):
         main(command)
 
     interrupted_manifest = load_manifest(path)
@@ -1238,10 +1239,12 @@ def test_retry_handoff_retirement_is_restart_safe(
     assert interrupted_manifest.nodes["b"].worker == "bob"
     interrupted_item = engine.store.get_work_item(item.id)
     assert (interrupted_item.worker_handoff is None) is (
-        checkpoint == "after_clear")
+        checkpoint == "after_switch")
+    assert (interrupted_item.review_generation is not None) is (
+        checkpoint == "after_switch")
 
     monkeypatch.setattr(
-        engine.store, "update_work_item_metadata", original_update)
+        engine.store, "restore_authoring_generation", original_restore)
     assert main(command) == exit_codes.OK
     assert main(command) == exit_codes.OK
 
@@ -1273,7 +1276,7 @@ def test_retry_platform_failure_keeps_manifest_unchanged(tmp_path, monkeypatch):
     monkeypatch.setattr(node_mod, "create_engine", lambda *a, **kw: engine)
     monkeypatch.setattr(
         engine.store,
-        "update_status",
+        "restore_authoring_generation",
         lambda *args, **kwargs: (_ for _ in ()).throw(PlatformError("offline")),
     )
 

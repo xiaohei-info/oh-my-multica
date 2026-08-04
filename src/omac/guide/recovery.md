@@ -166,6 +166,19 @@ omac dag amend propose .omac/project.yaml \
   merging；改变实现 scope 的节点才回 authoring。新增节点从 authoring 开始。merge-only
   accept 不观察或请求 PR merge，后续统一由 `run_merge_delivery` 处理；临时 `UNKNOWN` 不消耗
   merge retry，也不会重复发起 merge。
+- 节点恢复到 authoring 时，Store 原子切换新的 `review_generation`，清除上一代当前
+  decision/verdict/report/continuation/handoff，但保留历史 review ledger/ref 与绝对 bounce
+  审计计数。只有 `review_ledger_generation` 与当前 generation 相同的 ledger 才能生成
+  `work show` 的 `review_state` 和 `required_closures`；普通 review reject 不切代。
+- 升级前已标记 `synced`、但尚无 generation 投影的 authoring apply 条目，会在重复执行原
+  `omac dag amend accept` 命令时进入幂等 repair；不需要手工修改 metadata。repair 仍先检查
+  active formal Run，并验证 contract digest、generation、decision/report/subject/handoff 与
+  当前 ledger visibility 后才重新标记 `synced`。如果 WorkItem 已封存新的 delivery identity、
+  已进入 review，或已切换到其他 generation，重复 accept 只记录 `observed_progress`，不会回滚
+  已推进的 Store 事实。
+- bounce 字段始终是单调累计的审计值，不清零。`work show.task.bounce_budget` 与 Worker retry
+  日志同时给出 absolute audit、amendment baseline 和 current-generation consumed；实际预算
+  判断仍由 manifest `amendment_apply.bounce_baseline` 的 relative 计算负责。
 - done/merged 节点不可修改或删除。已执行节点改变 worker 或 `scope_paths` 必须携带显式
   ownership migration 及理由。
 - 对 blocked_by、worker、scope 或其他实现语义变更，OMAC 会计算受影响后继闭包。未启动后继

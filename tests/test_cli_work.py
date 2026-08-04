@@ -21,6 +21,11 @@ from omac.core.manifest import (
     save_manifest,
 )
 from omac.core.contract_boundaries import responsibility_summary
+from omac.core.review_convergence import (
+    REVIEW_PROTOCOL_VERSION,
+    advance_review_ledger,
+    build_review_obligations,
+)
 from omac.core.taskmeta import TaskKind, TaskPhase, WorkerHandoffIntent
 from omac.engines import create_engine
 from omac.engines.models import (
@@ -538,6 +543,8 @@ def test_authoring_show_uses_review_ledger_after_current_projection_reset():
         review_report_source="/tmp/omac-review-report.yaml",
         review_ledger=ledger,
         review_ledger_source="/tmp/omac-review-ledger.yaml",
+        review_generation="review-generation-1",
+        review_ledger_generation="review-generation-1",
     )
     store.reset_review(item.id)
 
@@ -553,6 +560,190 @@ def test_authoring_show_uses_review_ledger_after_current_projection_reset():
     }]
     assert out["context"]["review_ledger_ref"]["filename"] == (
         "omac-review-ledger.yaml")
+
+
+def test_authoring_show_does_not_project_ledger_from_previous_review_generation():
+    """普通 reject 保持同代 ledger；amendment 切代后旧 ledger 只剩审计价值。"""
+    store = _store()
+    item = _make_item(store, TaskKind.DEVELOP, TaskPhase.AUTHORING,
+                      with_contract=True)
+    ledger = {
+        "schema": "omac.review-ledger/v1",
+        "cycles": [{"round": 1, "new_count": 1}],
+        "blockers": [{
+            "blocker_id": "BLK-old",
+            "obligation_id": "dimension:structure",
+            "root_cause_key": "old-generation",
+            "summary": "old generation blocker",
+            "required_fix": "historical only",
+            "status": "open",
+        }],
+    }
+    store.update_work_item_metadata(
+        item.id,
+        review_ledger=ledger,
+        review_ledger_source=yaml.safe_dump(ledger, sort_keys=False),
+    )
+    current = store.get_work_item(item.id)
+    current.review_generation = "amendment-aiteam-850"
+    current.review_ledger_generation = "review-aiteam-849"
+
+    out = build_show_output(current, "worker:alice")
+
+    assert "review_state" not in out["context"]
+    assert "required_closures" not in out["context"]
+    assert current.review_ledger == ledger
+    assert current.review_ledger_ref is not None
+
+
+def test_work_show_distinguishes_absolute_bounces_from_current_generation_budget():
+    store = _store()
+    item = _make_item(store, TaskKind.DEVELOP, TaskPhase.AUTHORING,
+                      with_contract=True)
+    store.update_work_item_metadata(
+        item.id, worker_bounce=17, review_bounce=3, merge_bounce=0)
+    current = store.get_work_item(item.id)
+    current.bounce_baseline = {"worker": 14, "review": 3, "merge": 0}
+
+    out = build_show_output(current, "worker:alice")
+
+    assert out["task"]["bounces"]["worker_bounce"] == 17
+    assert out["task"]["bounce_budget"] == {
+        "counter_semantics": "absolute-audit",
+        "absolute": {"worker": 17, "review": 3, "merge": 0},
+        "current_generation": {
+            "baseline": {"worker": 14, "review": 3, "merge": 0},
+            "consumed": {"worker": 3, "review": 0, "merge": 0},
+        },
+    }
+
+
+def test_review_submit_does_not_advance_raw_ledger_from_previous_generation(
+    tmp_path, monkeypatch,
+):
+    store = _store()
+    item = _make_item(store, TaskKind.DEVELOP, TaskPhase.REVIEW,
+                      with_contract=True)
+    old_ledger = {
+        "schema": "omac.review-ledger/v1",
+        "cycles": [{"round": 1}],
+        "blockers": [],
+    }
+    store.update_work_item_metadata(
+        item.id,
+        review_generation="amendment-aiteam-850",
+        review_ledger_generation="review-aiteam-849",
+        review_ledger=old_ledger,
+        review_ledger_source=yaml.safe_dump(old_ledger),
+        review_subject_digest="subject-new-generation",
+        review_obligations=[{"obligation_id": "dimension:authority"}],
+    )
+    report_file = tmp_path / "review.yaml"
+    report_file.write_text("verdict: pass\n")
+    observed = []
+
+    monkeypatch.setattr(
+        dispatch_mod, "_validate_review",
+        lambda *_args, **_kwargs: {"verdict": "pass"})
+
+    def advance(previous, *_args, **_kwargs):
+        observed.append(previous)
+        return {"schema": "omac.review-ledger/v1", "cycles": [], "blockers": []}
+
+    monkeypatch.setattr(dispatch_mod, "advance_review_ledger", advance)
+
+    dispatch_mod.submit(
+        store, item.id, verdict="pass", report_file=str(report_file))
+
+    assert observed == [None]
+    current = store.get_work_item(item.id)
+    assert current.review_ledger_generation == "amendment-aiteam-850"
+
+
+def test_first_review_in_new_generation_starts_a_fresh_ledger(tmp_path):
+    """Reviewer validation and ledger persistence must use one current projection."""
+    store = _store()
+    item = store.create_work_item(
+        "mock-workspace", "develop", "desc", dag_key="develop-generation",
+        worker="alice", reviewer="bob", kind=TaskKind.DEVELOP,
+        initial_status=WorkItemStatus.IN_REVIEW,
+    )
+    store.set_node_contract(item.id, Contract(
+        objective="do it",
+        acceptance=["works"],
+        verification_commands=["pytest -q"],
+        integration_gates=[],
+        pr_base="main",
+    ))
+    item = store.get_work_item(item.id)
+    obligations = build_review_obligations(item)
+
+    def rejected_report(evidence):
+        return {
+            "review_protocol": REVIEW_PROTOCOL_VERSION,
+            "full_review_completed": True,
+            "obligation_results": [{
+                "obligation_id": obligation["obligation_id"],
+                "status": (
+                    "fail"
+                    if obligation["obligation_id"] == "dimension:structure"
+                    else "pass"
+                ),
+                "evidence": evidence,
+            } for obligation in obligations],
+            "prior_blocker_results": [],
+            "blockers": [{
+                "root_cause_key": "same-root",
+                "obligation_id": "dimension:structure",
+                "classification": "new",
+                "summary": "generation-local blocker",
+                "evidence": evidence,
+                "required_fix": "fix this generation",
+            }],
+            "nits": [],
+            "review_goals": ["review the current generation"],
+            "diff_reviewed": True,
+            "tests_rerun": True,
+            "coverage_checked": True,
+            "acceptance_mapping": [{"acceptance": "works", "status": "fail"}],
+        }
+
+    old_report = rejected_report("old generation evidence")
+    old_ledger = advance_review_ledger(
+        None, old_report, verdict="reject",
+        subject_digest="old-subject", round_index=1,
+    )
+    store.update_work_item_metadata(
+        item.id,
+        phase=TaskPhase.REVIEW,
+        review_obligations=obligations,
+        review_ledger=old_ledger,
+        review_ledger_source=yaml.safe_dump(old_ledger, sort_keys=False),
+        review_generation="review-old",
+        review_ledger_generation="review-old",
+        review_subject_digest="new-subject",
+    )
+    store.update_work_item_metadata(
+        item.id,
+        review_generation="amendment-new",
+        review_ledger_generation="review-old",
+        review_verdict="",
+        review_report={},
+        decision_required={},
+        phase=TaskPhase.REVIEW,
+    )
+    report_file = tmp_path / "report.yaml"
+    report_file.write_text(yaml.safe_dump(
+        rejected_report("new generation evidence"), sort_keys=False))
+
+    dispatch_mod.submit(
+        store, item.id, verdict="reject", report_file=str(report_file))
+
+    current = store.get_work_item(item.id)
+    assert current.review_ledger_generation == "amendment-new"
+    assert len(current.review_ledger["cycles"]) == 1
+    assert current.review_ledger["cycles"][0]["subject_digest"] == "new-subject"
+    assert current.review_ledger["blockers"][0]["classification"] == "new"
 
 
 def test_authoring_show_includes_source_issue_refs():

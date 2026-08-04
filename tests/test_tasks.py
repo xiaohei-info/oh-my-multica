@@ -2253,6 +2253,17 @@ _AMENDMENT_ACTIVITY_FIELD_CASES = [
     ("review_obligations_ref", {"attachment_id": "obligations"}, "review_obligations_ref"),
     ("review_ledger", {"schema": "omac.review-ledger/v1"}, "review_ledger"),
     ("review_ledger_ref", {"attachment_id": "ledger"}, "review_ledger_ref"),
+    ("review_generation", "review-generation-1", "review_generation"),
+    (
+        "review_ledger_generation",
+        "review-generation-1",
+        "review_ledger_generation",
+    ),
+    (
+        "bounce_baseline",
+        {"worker": 14, "review": 3, "merge": 0},
+        "bounce_baseline",
+    ),
     ("review_continuation", {"authorized_rounds": 1}, "review_continuation"),
     (
         "reviewer_run_baseline",

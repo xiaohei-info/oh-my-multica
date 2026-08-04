@@ -23,7 +23,7 @@ from ..core.machine_feedback import (
 from ..core.taskmeta import (
     DELIVERY_CONTENT_KEY, DeliveryIdentity, ReviewerRunBaseline, TaskKind,
     TaskPhase, WorkerHandoffIntent, parse_delivery_identity,
-    parse_reviewer_run_baseline, parse_worker_handoff,
+    parse_reviewer_run_baseline, parse_worker_handoff, current_review_ledger,
 )
 from ..errors import PlatformError, ValidationError, WorkItemNotFoundError
 from ..i18n import ui
@@ -489,7 +489,7 @@ class MockStore(WorkItemStore):
             if item.review_obligations:
                 from ..core.review_convergence import advance_review_ledger
                 item.review_ledger = advance_review_ledger(
-                    item.review_ledger,
+                    current_review_ledger(item),
                     item.review_report,
                     verdict=item.review_verdict,
                     subject_digest=item.review_subject_digest or "mock-subject",
@@ -500,6 +500,7 @@ class MockStore(WorkItemStore):
                     "bytes": len(yaml.safe_dump(
                         item.review_ledger, allow_unicode=True).encode("utf-8")),
                 }
+                item.review_ledger_generation = item.review_generation
             _finish_mock_run(item_id)
             del _shared_assigned_items[item_id]
 
@@ -592,7 +593,7 @@ class MockStore(WorkItemStore):
                         "status": "fixed",
                         "evidence": "Mock regression check passed",
                     }
-                    for blocker in open_blockers(item.review_ledger)
+                    for blocker in open_blockers(current_review_ledger(item))
                 ],
                 "blockers": ([{
                     "root_cause_key": f"mock-review-{item.bounces.review + 1}",
@@ -625,7 +626,7 @@ class MockStore(WorkItemStore):
                     "status": "fixed",
                     "evidence": "Mock regression check passed",
                 }
-                for blocker in open_blockers(item.review_ledger)
+                for blocker in open_blockers(current_review_ledger(item))
             ],
         }
         report.update({
@@ -778,6 +779,9 @@ class MockStore(WorkItemStore):
         review_obligations: Optional[List[Dict[str, Any]]] = None,
         review_ledger: Optional[Dict[str, Any]] = None,
         review_ledger_source: Optional[str] = None,
+        review_generation: Optional[str] = None,
+        review_ledger_generation: Optional[str] = None,
+        bounce_baseline: Optional[Dict[str, int]] = None,
         review_continuation: Optional[Dict[str, Any]] = None,
         reviewer_run_baseline: Optional[
             ReviewerRunBaseline | Dict[str, Any]
@@ -890,6 +894,12 @@ class MockStore(WorkItemStore):
                 "filename": "omac-review-ledger.yaml",
                 "bytes": len(review_ledger_source.encode("utf-8")),
             }
+        if review_generation is not None:
+            item.review_generation = review_generation or None
+        if review_ledger_generation is not None:
+            item.review_ledger_generation = review_ledger_generation or None
+        if bounce_baseline is not None:
+            item.bounce_baseline = dict(bounce_baseline) or None
         if review_continuation is not None:
             item.review_continuation = review_continuation or None
         if reviewer_run_baseline is not None:
@@ -925,6 +935,49 @@ class MockStore(WorkItemStore):
                     "Issue description cannot be empty (--description-file is empty)",
                     "issue update 的 description 不能为空(--description-file 空内容)"))
             item.description = description
+        return item
+
+    def restore_authoring_generation(
+        self,
+        item_id: str,
+        contract: Any,
+        review_generation: str,
+        bounce_baseline: Optional[Dict[str, int]] = None,
+    ) -> WorkItem:
+        item = self.get_work_item(item_id)
+        item.contract = contract
+        from ..core.manifest import _dump_contract
+        payload = _dump_contract(contract) if not isinstance(contract, dict) else contract
+        source = yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
+        item.contract_ref = {
+            "filename": "omac-contract.yaml",
+            "bytes": len(source.encode("utf-8")),
+            "sha256": hashlib.sha256(source.encode("utf-8")).hexdigest(),
+        }
+        item.review_generation = review_generation
+        item.bounce_baseline = (
+            dict(bounce_baseline) if bounce_baseline else None)
+        item.review_verdict = None
+        item.review_comment = None
+        item.machine_feedback = None
+        item.machine_feedback_ref = None
+        item.review_report = None
+        item.review_report_ref = None
+        item.review_subject_digest = None
+        item.review_obligations = []
+        item.review_obligations_ref = None
+        item.review_continuation = None
+        item.reviewer_run_baseline = None
+        item.worker_handoff = None
+        item.delivery_identity = None
+        item.decision_required = None
+        item.phase = TaskPhase.AUTHORING
+        item.status = WorkItemStatus.TODO
+        item.reviewer = None
+        item.platform_assignee_id = None
+        _shared_assigned_items.pop(item_id, None)
+        _shared_active_assignments.pop(item_id, None)
+        _shared_assignment_wake_pending.discard(item_id)
         return item
 
     def set_node_contract(self, item_id: str, contract: Any):
