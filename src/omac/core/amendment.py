@@ -1261,12 +1261,43 @@ def _resume_apply_ledger(
                 or not expected_generation
                 or not isinstance(expected_contract, str)
                 or not expected_contract
-                or not _is_structured_recovery_snapshot(entry.get("baseline"))
                 or not _is_structured_recovery_snapshot(current)
             ):
                 raise ValidationError(
                     f"node {node_id}: synced authoring recovery observation "
                     "is missing a valid recovery contract or snapshot")
+            if not _is_structured_recovery_snapshot(entry.get("baseline")):
+                # 修复前的 repair 路径可能把 legacy 残缺 baseline 原样留在
+                # synced entry 上,无法拿它做回退对比。仅当当前观测恰好就是
+                # 恢复目标(authoring_target,与 baseline 无关)时,把 baseline
+                # 升级为结构化快照以保证后续重入可复验;否则保持 fail-closed。
+                if classify_stage_recovery_observation(
+                        entry["stage"],
+                        current,
+                        current,
+                        expected_contract_sha256=expected_contract,
+                        expected_review_subject=entry.get(
+                            "expected_review_subject"),
+                        expected_review_generation=expected_generation,
+                        expected_bounce_baseline=entry.get("bounce_baseline"),
+                ) != "reached":
+                    raise ValidationError(
+                        f"node {node_id}: synced authoring recovery observation "
+                        "is missing a valid recovery contract or snapshot")
+                entry["baseline"] = current
+                _save_ledger(manifest, manifest_path, ledger)
+                observation = classify_stage_recovery_observation(
+                    entry["stage"],
+                    entry.get("baseline") or {},
+                    current,
+                    expected_contract_sha256=(
+                        entry.get("expected_contract_sha256") or ""),
+                    expected_review_subject=entry.get(
+                        "expected_review_subject"),
+                    expected_review_generation=entry.get(
+                        "expected_review_generation"),
+                    expected_bounce_baseline=entry.get("bounce_baseline"),
+                )
             if observation not in {"reached", "safe", "progressed"}:
                 raise ValidationError(
                     f"node {node_id}: synced authoring recovery observation "
@@ -1340,6 +1371,13 @@ def _resume_apply_ledger(
                 raise ValidationError(
                     f"node {node_id}: authoring recovery did not reach its target; "
                     "repeat the same amendment accept command")
+        if (
+            entry.get("stage") == "authoring"
+            and not _is_structured_recovery_snapshot(entry.get("baseline"))
+        ):
+            # repair 收敛后把 legacy 残缺 baseline 升级为结构化快照,
+            # 否则下次重入 accept 的 reobserve 分支无法复验。
+            entry["baseline"] = observed
         _normalize_recovered_authoring_node(entry.get("stage"), node, observed)
         entry["state"] = "synced"
         _save_ledger(manifest, manifest_path, ledger)

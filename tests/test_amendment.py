@@ -3418,6 +3418,135 @@ def test_recovery_reaccept_normalizes_stale_node_when_entry_already_synced(
     assert load_manifest(str(path)).nodes["bootstrap"].status == "todo"
 
 
+def test_reaccept_upgrades_legacy_baseline_when_work_item_at_recovery_target(
+    tmp_path, aiteam_849_legacy_snapshot,
+):
+    """synced entry 带着 legacy 残缺 baseline 重入时必须升级而非卡死。
+
+    生产现场:修复前的 repair 路径把 entry 收敛为 synced 时保留了 6 字段
+    legacy baseline;重入 accept 走 reobserve 分支被严格校验卡死,恢复无法
+    重启。修复后:当前观测就是恢复目标时升级 baseline 为结构化快照并继续
+    收敛,且不触发冗余 restore。
+    """
+    path, amendment_file, engine, target, _reviewed = (
+        _legacy_synced_authoring_accept_fixture(
+            tmp_path, aiteam_849_legacy_snapshot))
+    manifest = load_manifest(str(path))
+    manifest.nodes["closeout"].status = "abandoned"
+    save_manifest(manifest, str(path))
+    amendment_pipeline.accept_amendment(
+        engine,
+        str(path),
+        str(amendment_file),
+        reason="repeat official accepted amendment",
+        agent_pool={"alice", "bob", "charlie"},
+    )
+
+    # 模拟修复前遗留:把 baseline 降级为 legacy 6 字段,节点残留 in_progress。
+    manifest = load_manifest(str(path))
+    entry = manifest.meta["amendment_apply"]["nodes"]["bootstrap"]
+    entry["baseline"] = {
+        "status": "todo",
+        "phase": "authoring",
+        "review_verdict": None,
+        "review_subject_digest": None,
+        "contract_sha256": entry["baseline"]["contract_sha256"],
+        "worker_handoff_pending": False,
+    }
+    manifest.nodes["bootstrap"].status = "in_progress"
+    save_manifest(manifest, str(path))
+    before_item = engine.store.get_work_item(target.id)
+
+    amendment_pipeline.accept_amendment(
+        engine,
+        str(path),
+        str(amendment_file),
+        reason="repeat official accepted amendment",
+        agent_pool={"alice", "bob", "charlie"},
+    )
+
+    repaired = load_manifest(str(path))
+    new_entry = repaired.meta["amendment_apply"]["nodes"]["bootstrap"]
+    assert new_entry["state"] == "synced"
+    assert amendment_mod._RECOVERY_SNAPSHOT_FIELDS.issubset(new_entry["baseline"])
+    assert repaired.nodes["bootstrap"].status == "todo"
+    assert engine.store.get_work_item(target.id) == before_item
+
+
+def test_legacy_repair_upgrades_incomplete_baseline_when_syncing(
+    tmp_path, aiteam_849_legacy_snapshot,
+):
+    """repair 路径收敛 synced 时必须把残缺 baseline 升级为结构化快照。"""
+    path, amendment_file, engine, target, _reviewed = (
+        _legacy_synced_authoring_accept_fixture(
+            tmp_path, aiteam_849_legacy_snapshot))
+    manifest = load_manifest(str(path))
+    entry = manifest.meta["amendment_apply"]["nodes"]["bootstrap"]
+    entry["baseline"] = {
+        "status": "blocked",
+        "phase": "review",
+        "review_verdict": None,
+        "review_subject_digest": None,
+        "contract_sha256": entry["baseline"]["contract_sha256"],
+        "worker_handoff_pending": True,
+    }
+    manifest.nodes["closeout"].status = "abandoned"
+    save_manifest(manifest, str(path))
+
+    amendment_pipeline.accept_amendment(
+        engine,
+        str(path),
+        str(amendment_file),
+        reason="repeat official accepted amendment",
+        agent_pool={"alice", "bob", "charlie"},
+    )
+
+    repaired = load_manifest(str(path)).meta[
+        "amendment_apply"]["nodes"]["bootstrap"]
+    assert repaired["state"] == "synced"
+    assert amendment_mod._RECOVERY_SNAPSHOT_FIELDS.issubset(repaired["baseline"])
+
+
+def test_reaccept_legacy_baseline_fails_closed_when_work_item_drifted(
+    tmp_path, aiteam_849_legacy_snapshot,
+):
+    """legacy baseline + WorkItem 已漂移时必须保持 fail-closed。"""
+    path, amendment_file, engine, target, _reviewed = (
+        _legacy_synced_authoring_accept_fixture(
+            tmp_path, aiteam_849_legacy_snapshot))
+    manifest = load_manifest(str(path))
+    manifest.nodes["closeout"].status = "abandoned"
+    save_manifest(manifest, str(path))
+    amendment_pipeline.accept_amendment(
+        engine,
+        str(path),
+        str(amendment_file),
+        reason="repeat official accepted amendment",
+        agent_pool={"alice", "bob", "charlie"},
+    )
+    manifest = load_manifest(str(path))
+    entry = manifest.meta["amendment_apply"]["nodes"]["bootstrap"]
+    entry["baseline"] = {
+        "status": "todo",
+        "phase": "authoring",
+        "review_verdict": None,
+        "review_subject_digest": None,
+        "contract_sha256": entry["baseline"]["contract_sha256"],
+        "worker_handoff_pending": False,
+    }
+    save_manifest(manifest, str(path))
+    engine.store.update_status(target.id, WorkItemStatus.IN_PROGRESS)
+
+    with pytest.raises(amendment_mod.ValidationError):
+        amendment_pipeline.accept_amendment(
+            engine,
+            str(path),
+            str(amendment_file),
+            reason="repeat official accepted amendment",
+            agent_pool={"alice", "bob", "charlie"},
+        )
+
+
 def test_worker_retry_log_distinguishes_absolute_and_generation_consumption(
     tmp_path, aiteam_849_legacy_snapshot,
 ):
