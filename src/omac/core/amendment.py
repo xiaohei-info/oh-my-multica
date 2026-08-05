@@ -1153,6 +1153,31 @@ def _legacy_authoring_projection_is_repairable(current: dict[str, Any]) -> bool:
     )
 
 
+def _normalize_recovered_authoring_node(
+    stage: str | None, node: Any, observed: dict[str, Any],
+) -> bool:
+    """恢复收敛后把 authoring 节点归一到可派发状态。
+
+    fresh apply 会把 minimal rerun 的 authoring 节点显式设为 todo;resume
+    路径也必须收敛到同样的 manifest 状态,否则历史上已被 dispatch 设为
+    in_progress 的节点在 WorkItem 恢复后永远无法再次进入派发(ready 判定
+    只认 todo,reconcile 也没有 in_progress+TODO 的回收分支)。仅当恢复
+    观测停在 authoring 起点(TODO/authoring)时归一,不覆盖真实进度。
+    """
+    if stage != "authoring":
+        return False
+    if node is None or not node.work_item_id:
+        return False
+    if node.status in {"todo", "done", "abandoned"}:
+        return False
+    if observed.get("status") != WorkItemStatus.TODO.value:
+        return False
+    if observed.get("phase") != TaskPhase.AUTHORING.value:
+        return False
+    node.status = "todo"
+    return True
+
+
 def _resume_apply_ledger(
     manifest: Manifest,
     manifest_path: str,
@@ -1247,6 +1272,9 @@ def _resume_apply_ledger(
                     f"node {node_id}: synced authoring recovery observation "
                     f"is unknown: {observation!r}")
             if observation == "reached":
+                if _normalize_recovered_authoring_node(
+                        entry.get("stage"), node, current):
+                    _save_ledger(manifest, manifest_path, ledger)
                 summary["already_complete"].append(node_id)
                 continue
             legacy_synced_authoring = (
@@ -1258,6 +1286,8 @@ def _resume_apply_ledger(
                     f"node {node_id}: synced authoring recovery cannot be "
                     "safely repaired")
         if observation == "reached":
+            _normalize_recovered_authoring_node(
+                entry.get("stage"), node, current)
             entry["state"] = "synced"
             entry["observed"] = current
             _save_ledger(manifest, manifest_path, ledger)
@@ -1310,6 +1340,7 @@ def _resume_apply_ledger(
                 raise ValidationError(
                     f"node {node_id}: authoring recovery did not reach its target; "
                     "repeat the same amendment accept command")
+        _normalize_recovered_authoring_node(entry.get("stage"), node, observed)
         entry["state"] = "synced"
         _save_ledger(manifest, manifest_path, ledger)
         summary["synced"].append(node_id)

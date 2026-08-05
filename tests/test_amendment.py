@@ -3345,6 +3345,79 @@ def test_legacy_synced_repair_first_reconcile_dispatches_one_worker(
     assert new_formal[0].agent_id == engine.store.resolve_agent_id("alice")
 
 
+def test_recovery_normalizes_stale_in_progress_authoring_node_to_dispatchable(
+    tmp_path, aiteam_849_legacy_snapshot,
+):
+    """历史 dispatch 残留的 in_progress 节点恢复收敛后必须回到 todo。
+
+    生产现场:节点在 amendment 前已被派发为 in_progress,WorkItem 被恢复
+    到 authoring 起点后,若 manifest 节点仍是 in_progress,ready 判定只认
+    todo,reconcile 也没有 TODO 回收分支,节点永远无法再次派发。
+    """
+    path, amendment_file, engine, target, _reviewed = (
+        _legacy_synced_authoring_accept_fixture(
+            tmp_path, aiteam_849_legacy_snapshot))
+    manifest = load_manifest(str(path))
+    manifest.nodes["bootstrap"].status = "in_progress"
+    manifest.nodes["closeout"].status = "abandoned"
+    save_manifest(manifest, str(path))
+
+    amendment_pipeline.accept_amendment(
+        engine,
+        str(path),
+        str(amendment_file),
+        reason="repeat official accepted amendment",
+        agent_pool={"alice", "bob", "charlie"},
+    )
+
+    manifest = load_manifest(str(path))
+    assert manifest.nodes["bootstrap"].status == "todo"
+    item = engine.store.get_work_item(target.id)
+    assert item.status == WorkItemStatus.TODO
+    before = list(engine.runtime.list_runs(target.id))
+
+    loop.tick(engine.store, engine.runtime, manifest, str(path), max_parallel=1)
+
+    after = list(engine.runtime.list_runs(target.id))
+    new_formal = [run for run in after if run not in before and run.formal]
+    assert len(new_formal) == 1
+
+
+def test_recovery_reaccept_normalizes_stale_node_when_entry_already_synced(
+    tmp_path, aiteam_849_legacy_snapshot,
+):
+    """已 synced 的 authoring entry 在重入 accept 时仍要归一节点状态。"""
+    path, amendment_file, engine, target, _reviewed = (
+        _legacy_synced_authoring_accept_fixture(
+            tmp_path, aiteam_849_legacy_snapshot))
+    manifest = load_manifest(str(path))
+    manifest.nodes["closeout"].status = "abandoned"
+    save_manifest(manifest, str(path))
+    amendment_pipeline.accept_amendment(
+        engine,
+        str(path),
+        str(amendment_file),
+        reason="repeat official accepted amendment",
+        agent_pool={"alice", "bob", "charlie"},
+    )
+
+    # 模拟恢复收敛后、再次派发前的崩溃残留:节点回到 in_progress,
+    # WorkItem 仍停在 authoring 起点。
+    manifest = load_manifest(str(path))
+    manifest.nodes["bootstrap"].status = "in_progress"
+    save_manifest(manifest, str(path))
+
+    amendment_pipeline.accept_amendment(
+        engine,
+        str(path),
+        str(amendment_file),
+        reason="repeat official accepted amendment",
+        agent_pool={"alice", "bob", "charlie"},
+    )
+
+    assert load_manifest(str(path)).nodes["bootstrap"].status == "todo"
+
+
 def test_worker_retry_log_distinguishes_absolute_and_generation_consumption(
     tmp_path, aiteam_849_legacy_snapshot,
 ):
