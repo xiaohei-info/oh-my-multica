@@ -2091,7 +2091,13 @@ class MulticaRuntime(AgentRuntime):
                 if (
                     (observed.get("kind") or "direct") != "direct"
                     or str(observed.get("agent_id") or "") != expected_agent_id
-                    or not _is_manual_rerun(observed)
+                    # 成功路径的 Run 身份已由 rerun 响应返回的精确 id 证明。
+                    # 真实 multica 服务端把经 assignment 管道落地的 rerun
+                    # 标记为 issue_assignment，从不产出 trigger kind "rerun"；
+                    # 只认 "rerun" 会让 reviewer 续跑 read-back 永远失败。
+                    # 无归因（None）仍 fail-closed。
+                    or _run_trigger_kind(observed)
+                    not in {"rerun", "issue_assignment"}
                 ):
                     raise PlatformError(
                         f"Multica rerun {task_id} is not the expected fresh "

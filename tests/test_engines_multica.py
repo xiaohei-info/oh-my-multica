@@ -2216,6 +2216,88 @@ def test_multica_runtime_accepts_expected_run_after_not_assigned_rerun(
     ]) == 1
 
 
+def test_multica_runtime_accepts_real_server_rerun_attribution(monkeypatch):
+    """真实 multica 服务端把 rerun 派发标记为 issue_assignment。
+
+    reviewer 续跑的严格 read-back 若只接受 trigger kind "rerun"，在真实
+    服务端上永远失败（生产现场：hermes-architect 续跑被拦，reason=
+    "rerun is not the expected fresh direct Run"）。Run 身份已由 rerun
+    响应返回的精确 id + kind=direct + agent 匹配证明，触发标记应同时
+    接受服务端实际产出的 issue_assignment。
+    """
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    monkeypatch.setattr(store, "_resolve_agent_id", lambda name: "agent-expected")
+    observations = iter([
+        [{
+            "id": "run-done", "status": "completed", "kind": "direct",
+            "agent_id": "agent-expected",
+        }],
+        [
+            {
+                "id": "run-done", "status": "completed", "kind": "direct",
+                "agent_id": "agent-expected",
+            },
+            {
+                "id": "run-new", "status": "queued", "kind": "direct",
+                "agent_id": "agent-expected",
+                "attribution": {"evidence": {
+                    "kind": "issue_assignment", "ref_id": "issue-1"}},
+            },
+        ],
+    ])
+
+    def fake_run(args):
+        if args[:2] == ["issue", "runs"]:
+            return next(observations)
+        if args[:2] == ["issue", "rerun"]:
+            return {"id": "run-new", "agent_id": "agent-expected"}
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+    runtime = MulticaRuntime(
+        store, active_observation_attempts=2,
+        active_observation_interval=0, sleeper=lambda _seconds: None)
+
+    runtime.wake("issue-1", "alice", "reviewer")
+
+
+def test_multica_runtime_rejects_unattributed_rerun_run(monkeypatch):
+    """没有触发标记的 Run 仍须 fail-closed，不接受无归因派发。"""
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    monkeypatch.setattr(store, "_resolve_agent_id", lambda name: "agent-expected")
+    observations = iter([
+        [{
+            "id": "run-done", "status": "completed", "kind": "direct",
+            "agent_id": "agent-expected",
+        }],
+        [
+            {
+                "id": "run-done", "status": "completed", "kind": "direct",
+                "agent_id": "agent-expected",
+            },
+            {
+                "id": "run-new", "status": "queued", "kind": "direct",
+                "agent_id": "agent-expected",
+            },
+        ],
+    ])
+
+    def fake_run(args):
+        if args[:2] == ["issue", "runs"]:
+            return next(observations)
+        if args[:2] == ["issue", "rerun"]:
+            return {"id": "run-new", "agent_id": "agent-expected"}
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", fake_run)
+    runtime = MulticaRuntime(
+        store, active_observation_attempts=2,
+        active_observation_interval=0, sleeper=lambda _seconds: None)
+
+    with pytest.raises(PlatformError):
+        runtime.wake("issue-1", "alice", "reviewer")
+
+
 def test_multica_runtime_accepts_parented_rerun_before_response_failure(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
     monkeypatch.setattr(store, "_resolve_agent_id", lambda name: "agent-expected")
