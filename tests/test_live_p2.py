@@ -198,7 +198,10 @@ class TestLiveWorkItem:
             assert contract["objective"] == sample_contract.objective
             assert contract["acceptance"] == sample_contract.acceptance
             assert contract["pr_base"] == "feature/live-smoke"
-            assert contract["coverage_gate"] == 90
+            # 真实回读是裸 dict，而 _dump_contract 对默认值 coverage_gate=90
+            # 故意省略，读回侧也不走 _contract_from_raw 的默认还原，
+            # 故裸 dict 里可能没有该键。这是设计行为，不是服务器丢字段。
+            assert contract.get("coverage_gate", 90) == 90
         else:
             assert contract.objective == sample_contract.objective
             assert contract.pr_base == "feature/live-smoke"
@@ -293,6 +296,89 @@ class TestLiveWorkItem:
             assert got.verification.get("coverage") == 95
         assert got.review_verdict == "pass"
         assert got.review_report is not None
+
+
+# ==================== 3.5 真实服务器行为契约(恢复事故固化) ====================
+#
+# 以下两条是 OAC amendment 恢复期间踩出的真实服务器行为,固化成 live 契约
+# 防止回归。全部满足 §12.4 红线:不 assign、不 wake agent。
+
+
+class TestLiveRecoveryContracts:
+    def test_restore_authoring_generation_converges_on_real_server(
+        self, store, sample_contract,
+    ):
+        """恢复元数据写后读必须收敛(#1 回归契约)。
+
+        真实 Multica 服务器会静默忽略 issue PUT body 里的 metadata 字段
+        (metadata 是独立 KV 子资源);恢复元数据必须走 metadata CLI 逐键写,
+        否则写后读永不收敛。本用例直接调生产恢复入口
+        restore_authoring_generation,写后从服务器重新读回验证。
+        """
+        created = store.create_work_item(
+            workspace_id=_workspace_id(),
+            title=f"P2.6 recovery node {_RUN}",
+            description="authoring generation recovery contract",
+            dag_key="live-recovery",
+            worker="alice", reviewer="bob",
+        )
+        generation = f"live-generation-{_RUN}"
+        baseline = {"worker": 2, "review": 1, "ci": 0, "merge": 0}
+
+        restored = store.restore_authoring_generation(
+            created.id, sample_contract,
+            review_generation=generation, bounce_baseline=baseline)
+
+        # 写后读:不信内存返回值,从服务器重新读回
+        got = store.get_work_item(created.id)
+        assert got.review_generation == generation, (
+            "review_generation 写后读不收敛 —— metadata 可能又被塞进 issue PUT body")
+        assert got.bounce_baseline == baseline
+        assert got.status == WorkItemStatus.TODO
+        assert got.phase == TaskPhase.AUTHORING
+        assert got.worker_handoff in (None, {}), "恢复后 worker_handoff 必须清空"
+        assert restored.review_generation == generation
+
+        # 幂等收敛:重跑跳过已匹配键,结果不变(恢复重入语义)
+        again = store.restore_authoring_generation(
+            created.id, sample_contract,
+            review_generation=generation, bounce_baseline=baseline)
+        assert again.review_generation == generation
+        assert again.bounce_baseline == baseline
+
+
+# ==================== 3.6 真实 Run 归因契约(#4 回归契约) ====================
+
+
+def test_formal_run_attribution_kinds_on_real_server():
+    """真实服务器的 direct Run 归因标签必须在 OMAC 接受的 formal 集合内。
+
+    恢复事故发现:真实服务器从不给 rerun 打 'rerun' 标签,一律盖
+    'issue_assignment';旧代码只认 'rerun',导致评审续跑永远 fail-closed。
+    本契约只读观察已有 Run(不新建、不 wake),把真实服务器的归因行为钉死:
+    未来服务器若改标签,这里先红,而不是在生产恢复里翻车。
+
+    需设 MULTICA_LIVE_OBSERVE_ITEM_ID 指向一个有 direct Run 的 work item
+    (如恢复金丝雀节点);未设则 skip(纯只读,无副作用)。
+    """
+    observe_id = os.environ.get("MULTICA_LIVE_OBSERVE_ITEM_ID")
+    if not observe_id:
+        pytest.skip("MULTICA_LIVE_OBSERVE_ITEM_ID 未设,归因契约观察 skip")
+
+    runs = _engine().runtime.list_runs(observe_id)
+    direct = [run for run in runs if run.kind == "direct"]
+    assert direct, f"观察目标 {observe_id} 没有 direct Run,无法验证归因契约"
+
+    unknown = [
+        run.id for run in direct
+        if run.trigger_kind not in {"issue_assignment", "rerun"}
+    ]
+    assert not unknown, (
+        f"真实服务器出现了 OMAC formal 集合之外的归因标签: {unknown} —— "
+        "评审续跑/交付身份判定会 fail-closed,需先更新 engines 层再恢复")
+    # 记录真实观测到的标签分布,供后续契约演进参考
+    observed = sorted({run.trigger_kind for run in direct})
+    assert observed, "direct Run 全部无归因 —— 交付因果链不可证明"
 
 
 # ==================== 4. smoke_live_manifest 加载 ====================
