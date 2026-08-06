@@ -22,7 +22,7 @@ import yaml
 
 from ..core import graph, logsetup
 from ..core.amendment import ensure_amendment_apply_complete
-from ..core.config import DEFAULT_RETRY
+from ..core.config import DEFAULT_RETRY, resolve_no_submit_runs
 from ..core.contract_boundaries import (
     build_contract_boundary_decision,
     contract_boundary_conflicts,
@@ -2749,7 +2749,9 @@ def collect_results(
     retry_limits: config.retry 解析后的 {ci, review, merge} 上界(None = 全缺省 3)。
     reviewer reject 触发的「回到 worker」回退受 retry_limits["review"] 约束(0 = 立即 blocked)。
     config: 项目配置;用于决定是否启用 ci 门(§7.3)。显式配置 ci.check_command
-    或检测到 .github/workflows 时启用,否则跳过。
+    或检测到 .github/workflows 时启用,否则跳过。retry.no_submit_runs
+    (reviewer no-submit 续跑预算,缺省 2)也从此 config 解析;非法值
+    ValidationError fail-closed。
 
     in_progress 节点:
       worker DONE + 证据门过 → 有 reviewer: 转 in_review + assign reviewer + wake
@@ -2793,6 +2795,9 @@ def collect_results(
         for k, v in retry_limits.items():
             if k in limits:
                 limits[k] = v
+    # reviewer no-submit 续跑预算(config.retry.no_submit_runs,缺省 2)。
+    # 与基础设施瞬时失败预算 _TRANSIENT_RUNTIME_MAX_RUNS 语义不同,后者固定。
+    no_submit_runs = resolve_no_submit_runs(config or {})
 
     for key, node in manifest.nodes.items():
         if node.status not in RUNNING_STATUSES or not node.work_item_id:
@@ -3271,12 +3276,13 @@ def collect_results(
                             continue
                         if (
                             reviewer_terminal.consecutive_runs
-                            >= _TRANSIENT_RUNTIME_MAX_RUNS
+                            >= no_submit_runs
                         ):
                             failures[key] = _block_reviewer(
                                 store, manifest, manifest_path, key, item,
                                 "reviewer-run-no-submit-retry-exhausted",
-                                "reviewer exhausted no-submit attempts",
+                                f"reviewer exhausted no-submit attempts "
+                                f"(budget {no_submit_runs})",
                                 reviewer_terminal.run.id)
                             continue
                         retry_kind = "finished_without_submit"

@@ -29,7 +29,7 @@ import yaml
 
 from ..core.acceptance import AcceptanceDoc, load_acceptance_doc_file
 from ..core.config import (
-    DEFAULT_MAX_ROUNDS, get_value, resolve_retry,
+    DEFAULT_MAX_ROUNDS, get_value, resolve_no_submit_runs, resolve_retry,
 )
 from ..core.evidence import validate_acceptance_results
 from ..core.lint import lint_increment
@@ -183,6 +183,7 @@ def run_acceptance_loop(
     operation_branch = _resolve_operation_branch(manifest)
     plan_id = manifest.meta.get("plan_id")
     resolve_retry(config)  # 校验 retry 配置合法性(副作用)
+    resolve_no_submit_runs(config)  # 同上:reviewer no-submit 续跑预算
 
     orchestrator = get_value(config, "roles.orchestrator") or _first_worker(manifest)
     repo_urls = _project_repo_urls(engine.store)

@@ -218,3 +218,74 @@ def test_plan_resolve_review_rounds_rejects_negative(tmp_path, monkeypatch):
     """plan 读取的 config 不应含负数(validate 在更早阶段拦截,此处防御性校验)。"""
     with pytest.raises(ValidationError):
         plan_cmd.resolve_review_rounds({"retry": {"review": -1}})
+
+
+# ==================== resolve_no_submit_runs: reviewer no-submit 续跑预算 ====================
+
+def test_resolve_no_submit_runs_defaults_when_missing():
+    """未配置时保持历史硬编码预算 2,平台默认行为不变。"""
+    assert config_mod.resolve_no_submit_runs({}) == 2
+    assert config_mod.resolve_no_submit_runs({"engine": "mock"}) == 2
+    # retry 块存在但未写 no_submit_runs → 仍是默认 2
+    assert config_mod.resolve_no_submit_runs({"retry": {"review": 5}}) == 2
+
+
+def test_resolve_no_submit_runs_reads_configured_value():
+    assert config_mod.resolve_no_submit_runs({"retry": {"no_submit_runs": 6}}) == 6
+    # 1 是合法下界(≥ 1)
+    assert config_mod.resolve_no_submit_runs({"retry": {"no_submit_runs": 1}}) == 1
+
+
+def test_resolve_no_submit_runs_rejects_zero_and_negative():
+    """0/负数非法:预算为 0 会取消续跑宽限,与续跑语义冲突,fail-closed。"""
+    for bad in (0, -1, -6):
+        with pytest.raises(ValidationError, match="no_submit_runs"):
+            config_mod.resolve_no_submit_runs({"retry": {"no_submit_runs": bad}})
+
+
+def test_resolve_no_submit_runs_rejects_non_int():
+    for bad in ("6", 2.5, True, None):
+        with pytest.raises(ValidationError, match="no_submit_runs"):
+            config_mod.resolve_no_submit_runs({"retry": {"no_submit_runs": bad}})
+
+
+def test_resolve_no_submit_runs_rejects_non_mapping_retry_block():
+    with pytest.raises(ValidationError):
+        config_mod.resolve_no_submit_runs({"retry": [1, 2]})
+
+
+def test_resolve_retry_still_ignores_no_submit_runs_key():
+    """no_submit_runs 不进 bounce 上限 dict——它不是「回到 worker」回退预算。"""
+    cfg = {"retry": {"no_submit_runs": 6, "review": 2}}
+    assert config_mod.resolve_retry(cfg) == {
+        "worker": 3, "ci": 3, "review": 2, "merge": 3}
+
+
+# ==================== config set 校验 retry.no_submit_runs ====================
+
+def test_config_set_no_submit_runs_rejects_zero(tmp_path, monkeypatch, capsys):
+    """非法值在 config set 校验期被拒(exit 5),不落盘。"""
+    monkeypatch.chdir(tmp_path)
+    main(["config", "set", "engine", "mock"])
+    code = main(["config", "set", "retry.no_submit_runs", "0"])
+    assert code == exit_codes.VALIDATION
+    err = capsys.readouterr().err
+    assert "no_submit_runs" in err
+    cfg = config_mod.load_config()
+    assert (cfg.get("retry") or {}).get("no_submit_runs") is None
+
+
+def test_config_set_no_submit_runs_rejects_non_int(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    main(["config", "set", "engine", "mock"])
+    code = main(["config", "set", "retry.no_submit_runs", "1.5"])
+    assert code == exit_codes.VALIDATION
+    assert "no_submit_runs" in capsys.readouterr().err
+
+
+def test_config_set_no_submit_runs_accepts_positive(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    main(["config", "set", "engine", "mock"])
+    assert main(["config", "set", "retry.no_submit_runs", "6"]) == exit_codes.OK
+    capsys.readouterr()
+    assert config_mod.load_config()["retry"]["no_submit_runs"] == 6

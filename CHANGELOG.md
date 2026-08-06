@@ -8,6 +8,17 @@ This file records public changes to oh-my-multica. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- A new `retry.no_submit_runs` config key bounds how many consecutive reviewer
+  Runs may finish without submitting a verdict before the node blocks with
+  `reviewer-run-no-submit-retry-exhausted` (default 2, the previous hardcoded
+  budget; must be an integer ≥ 1). Staged multi-Run reviewer behavior can now
+  raise it (for example 6) instead of hitting the wall after two no-submit
+  Runs. The infrastructure transient-failure budget is separate and stays
+  fixed at 2. Invalid values fail closed at `config set`, `dag run`/`dag
+  tick`, and acceptance-loop entry.
+
 ### Changed
 
 - A blocked DAG review with the dedicated delayed-Run causality decision now

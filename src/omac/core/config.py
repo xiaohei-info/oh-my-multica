@@ -26,6 +26,8 @@
       ci: 3                                    # CI 失败 → worker 重修(0 = 立即 blocked,不回退)
       review: 3                                # reviewer reject → worker 重修(节点开发与 plan 流水线共用)
       merge: 3                                 # 合并冲突 → worker 重解
+      no_submit_runs: 2                        # reviewer 连续结束 Run 未提交裁决的续跑预算(须 ≥ 1;
+                                               # 不含基础设施瞬时失败预算,后者固定为 2)
 """
 from __future__ import annotations
 
@@ -63,6 +65,14 @@ DEFAULT_RETRY = {
 
 # 总控验收外层循环上限(设计文档 §6;与 retry 正交)
 DEFAULT_MAX_ROUNDS = 3
+
+# reviewer no-submit 续跑预算:连续多少个 reviewer Run 以「结束但未提交裁决」
+# 终结仍可续跑,达到上限才 blocked(reason_code
+# reviewer-run-no-submit-retry-exhausted)。缺省 2 = 历史硬编码行为。
+# 与 retry.{worker|ci|review|merge}(0 = 立即 blocked)不同,此值必须 ≥ 1:
+# 0 会取消续跑宽限,与「续跑是正常分段评审工作模式」的语义冲突。
+# 基础设施瞬时失败(连续 transient-failure Run)预算不用此值,仍固定为 2。
+DEFAULT_NO_SUBMIT_RUNS = 2
 
 DEFAULT_GITHUB_CHECK_COMMAND = "gh pr checks {pr_url} --watch --fail-fast"
 DEFAULT_GITHUB_MERGE_COMMAND = "gh pr merge {pr_url} --squash --delete-branch"
@@ -145,6 +155,48 @@ def resolve_retry(config: dict) -> dict:
                 f"retry.{key} 不能为负数(非法值 {val});需 ≥ 0"))
         resolved[key] = val
     return resolved
+
+
+def resolve_no_submit_runs(config: dict) -> int:
+    """解析 retry.no_submit_runs:reviewer no-submit 续跑预算。
+
+    未配置返回 DEFAULT_NO_SUBMIT_RUNS(2,历史硬编码行为)。校验规则
+    (fail-closed,报错即教学):必须为整数且 ≥ 1;0/负数/非整数/retry 块
+    非映射均在「校验期」报 ValidationError(→ exit 5),不静默回退缺省。
+    该预算只约束 reviewer「结束但未提交裁决」的续跑;基础设施瞬时失败
+    预算(loop._TRANSIENT_RUNTIME_MAX_RUNS)不读此值。
+    """
+    raw = get_value(config, "retry")
+    if raw is None:
+        return DEFAULT_NO_SUBMIT_RUNS
+    if not isinstance(raw, dict):
+        raise ValidationError(ui(
+            f"retry must be a YAML mapping (worker/ci/review/merge/no_submit_runs); "
+            f"got {type(raw).__name__}",
+            f"retry 配置应为 YAML 映射(worker/ci/review/merge/no_submit_runs),"
+            f"got {type(raw).__name__}"))
+    if "no_submit_runs" not in raw:
+        return DEFAULT_NO_SUBMIT_RUNS
+    val = raw["no_submit_runs"]
+    if isinstance(val, bool) or not isinstance(val, int):
+        raise ValidationError(ui(
+            f"retry.no_submit_runs must be an integer; got "
+            f"{type(val).__name__}({val!r}). It bounds how many consecutive "
+            "reviewer Runs may finish without submitting a verdict before the "
+            "node blocks; remove the key to keep the default "
+            f"{DEFAULT_NO_SUBMIT_RUNS}.",
+            f"retry.no_submit_runs 必须为整数,got {type(val).__name__}({val!r})。"
+            "它约束 reviewer 连续多少个 Run 未提交裁决才 blocked;"
+            f"删除该键即恢复缺省 {DEFAULT_NO_SUBMIT_RUNS}。"))
+    if val < 1:
+        raise ValidationError(ui(
+            f"retry.no_submit_runs must be ≥ 1; got {val}. A budget of 0 would "
+            "block on the first no-submit Run; raise it (e.g. 6) for reviewers "
+            "that legitimately need multi-Run staged reviews.",
+            f"retry.no_submit_runs 必须 ≥ 1(非法值 {val})。0 会让第一个 "
+            "no-submit Run 直接 blocked;需要多段评审的 reviewer 请调大"
+            "(如 6)。"))
+    return val
 
 
 def resolve_workflow(config: dict) -> dict:
