@@ -5971,6 +5971,148 @@ class TestReviewerRejectBoundedFallback:
         assert eng.store.assign_log == assignments_before
         assert eng.runtime.list_runs(item.id) == runs_before
 
+    def _post_recovery_reject_report(self, root="recovery-reset-root"):
+        return {
+            "obligation_results": [{
+                "obligation_id": "dimension:structure",
+                "status": "fail",
+                "evidence": "the same invariant still fails",
+            }],
+            "prior_blocker_results": [],
+            "blockers": [{
+                "root_cause_key": root,
+                "obligation_id": "dimension:structure",
+                "summary": "post-recovery finding",
+                "evidence": "the same invariant still fails",
+                "required_fix": "close the root",
+                "classification": "new",
+            }],
+        }
+
+    def test_recovery_reset_ledger_round_does_not_invalidate_handoff(
+        self, tmp_path,
+    ):
+        """恢复重置 review ledger 后，返工 handoff 仍须能收敛。
+
+        恢复保留绝对 bounce 审计事实（retry 预算用），但 review ledger
+        经 generation tombstone 从 round 1 重启。handoff 的
+        source_review_round 携带绝对 round（4），重置后 ledger 的最新
+        cycle 是位置 round 1。只要最新 cycle 是同一评审事件（subject
+        digest 相同），round 不一致是重置产物，不得 fail-closed。
+        """
+        from dataclasses import replace
+
+        from omac.pipeline.convergence import ResolutionState
+        from omac.pipeline.loop import _resolve_handoff_review_convergence
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        intent, _source = self._prepare_causal_handoff(eng, item)
+        intent = replace(
+            intent,
+            source_review_round=4,
+            target_review_bounce=4,
+            source_review_verdict="reject",
+        )
+        ledger = advance_review_ledger(
+            None,
+            self._post_recovery_reject_report(),
+            verdict="reject",
+            subject_digest=intent.source_review_subject_digest,
+            round_index=4,
+        )
+        assert [cycle["round"] for cycle in ledger["cycles"]] == [1]
+        eng.store.update_work_item_metadata(
+            item.id, worker_handoff=intent, review_ledger=ledger)
+        current = eng.store.get_work_item(item.id)
+
+        resolution = _resolve_handoff_review_convergence(current, intent, "a")
+
+        assert resolution.state is ResolutionState.VALID
+
+    def test_recovery_reset_ledger_with_drifted_subject_fails_closed(
+        self, tmp_path,
+    ):
+        """重置 ledger 的最新 cycle 若 subject 漂移，仍须 fail-closed。"""
+        from dataclasses import replace
+
+        from omac.pipeline.loop import _resolve_handoff_review_convergence
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        intent, _source = self._prepare_causal_handoff(eng, item)
+        intent = replace(
+            intent,
+            source_review_round=4,
+            target_review_bounce=4,
+            source_review_verdict="reject",
+        )
+        ledger = advance_review_ledger(
+            None,
+            self._post_recovery_reject_report(),
+            verdict="reject",
+            subject_digest="drifted-subject",
+            round_index=4,
+        )
+        eng.store.update_work_item_metadata(
+            item.id, worker_handoff=intent, review_ledger=ledger)
+        current = eng.store.get_work_item(item.id)
+
+        with pytest.raises(PlatformError):
+            _resolve_handoff_review_convergence(current, intent, "a")
+
+    def test_recovery_ledger_advanced_past_handoff_fails_closed(
+        self, tmp_path,
+    ):
+        """ledger 已推进到 handoff 之后的 round 是真实漂移，不得容忍。"""
+        from dataclasses import replace
+
+        from omac.pipeline.loop import _resolve_handoff_review_convergence
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        intent, _source = self._prepare_causal_handoff(eng, item)
+        intent = replace(
+            intent,
+            source_review_round=3,
+            target_review_bounce=3,
+            source_review_verdict="reject",
+        )
+        ledger = None
+        blocker_id = None
+        for round_index in range(1, 5):
+            subject = (
+                intent.source_review_subject_digest
+                if round_index == 4 else "older-subject")
+            report = self._post_recovery_reject_report(root="older-root")
+            report["blockers"][0]["evidence"] = (
+                f"round {round_index} invariant still fails")
+            if blocker_id is not None:
+                report["prior_blocker_results"] = [{
+                    "blocker_id": blocker_id,
+                    "status": "unchanged",
+                    "evidence": "the same invariant still fails",
+                }]
+                report["blockers"][0]["classification"] = "unchanged"
+            ledger = advance_review_ledger(
+                ledger,
+                report,
+                verdict="reject",
+                subject_digest=subject,
+                round_index=round_index,
+            )
+            blocker_id = ledger["blockers"][0]["blocker_id"]
+        assert [cycle["round"] for cycle in ledger["cycles"]] == [1, 2, 3, 4]
+        eng.store.update_work_item_metadata(
+            item.id, worker_handoff=intent, review_ledger=ledger)
+        current = eng.store.get_work_item(item.id)
+
+        with pytest.raises(PlatformError):
+            _resolve_handoff_review_convergence(current, intent, "a")
+
     def test_active_worker_restore_consumes_convergence_before_any_write(
         self, tmp_path, monkeypatch,
     ):
