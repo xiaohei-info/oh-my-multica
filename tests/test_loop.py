@@ -49,7 +49,7 @@ from omac.engines.models import (
     WorkItemPayload,
     WorkItemStatus,
 )
-from omac.errors import PlatformError
+from omac.errors import PlatformError, ValidationError
 from omac.pipeline import loop
 from omac.pipeline.dispatch import build_show_output, submit as submit_work
 from omac.pipeline.loop import TickResult, tick
@@ -3553,8 +3553,9 @@ def test_develop_reviewer_retry_assigns_without_resuming_old_session(
     assert reviewer_calls == [{"start_run": False}]
 
 
+@pytest.mark.parametrize("config", [None, {}, {"retry": {"review": 3}}])
 def test_reviewer_completed_without_verdict_is_bounded_by_run_attempts(
-    tmp_path, monkeypatch,
+    tmp_path, monkeypatch, config,
 ):
     """Reviewer 连续无结构化提交不能无限重派，也不消耗业务 bounce。"""
     eng, manifest, path, item, reviewer_id = (
@@ -3600,7 +3601,8 @@ def test_reviewer_completed_without_verdict_is_bounded_by_run_attempts(
         lambda *_args: pytest.fail("exhausted reviewer retry must not wake"),
     )
 
-    result = tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+    result = tick(
+        eng.store, eng.runtime, manifest, path, max_parallel=1, config=config)
     blocked = eng.store.get_work_item(item.id)
 
     assert result.state == "needs_decision"
@@ -3610,6 +3612,178 @@ def test_reviewer_completed_without_verdict_is_bounded_by_run_attempts(
     assert blocked.bounces.review == 0
     assert blocked.decision_required["reason_code"] == (
         "reviewer-run-no-submit-retry-exhausted")
+
+
+def _no_submit_run_chain(runs_count, reviewer_id):
+    """构造 runs_count 个连续 completed(未提交裁决)的 reviewer direct Run。"""
+    runs = []
+    for index in range(1, runs_count + 1):
+        runs.append(AgentRunObservation(
+            id=f"run-reviewer-no-submit-{index}",
+            kind="direct",
+            status="completed",
+            agent_id=reviewer_id,
+            created_at=f"2026-08-01T01:{index:02d}:00Z",
+            updated_at=f"2026-08-01T01:{index:02d}:30Z",
+        ))
+    return runs
+
+
+def test_reviewer_no_submit_continues_under_larger_budget(tmp_path, monkeypatch):
+    """retry.no_submit_runs=4:连续 3 次 no-submit 仍续跑,不撞墙。"""
+    eng, manifest, path, item, reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    runs = _no_submit_run_chain(3, reviewer_id)
+    baseline = eng.store.get_work_item(item.id).reviewer_run_baseline
+    eng.store.update_work_item_metadata(
+        item.id,
+        reviewer_run_baseline=replace(
+            baseline,
+            generation="review-attempt-3",
+            attempt=3,
+            baseline_direct_run_ids=(
+                "run-reviewer-no-submit-1", "run-reviewer-no-submit-2"),
+            target_run_id="run-reviewer-no-submit-3",
+        ),
+    )
+    monkeypatch.setattr(
+        loop, "_utcnow",
+        lambda: datetime(2026, 8, 1, 1, 4, 1, tzinfo=timezone.utc),
+    )
+    extra_runs = []
+    monkeypatch.setattr(
+        eng.runtime, "list_runs",
+        lambda _item_id: list(runs) + list(extra_runs))
+    wakes = []
+
+    def wake(*_args):
+        wakes.append(_args)
+        extra_runs.append(AgentRunObservation(
+            id="run-reviewer-no-submit-4",
+            kind="direct",
+            status="running",
+            agent_id=reviewer_id,
+            created_at="2026-08-01T01:03:40Z",
+            trigger_kind="rerun",
+        ))
+
+    monkeypatch.setattr(eng.runtime, "wake", wake)
+    monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
+
+    result = tick(
+        eng.store, eng.runtime, manifest, path, max_parallel=1,
+        config={"retry": {"no_submit_runs": 4}})
+    recovered = eng.store.get_work_item(item.id)
+
+    assert result.state == "running"
+    assert manifest.nodes["a"].status == "in_review"
+    assert recovered.status is WorkItemStatus.IN_REVIEW
+    assert not recovered.decision_required
+    assert recovered.reviewer_run_baseline.attempt == 4
+    assert recovered.reviewer_run_baseline.target_run_id == (
+        "run-reviewer-no-submit-4")
+    assert len(wakes) == 1
+
+
+def test_reviewer_no_submit_exhausts_only_beyond_larger_budget(
+    tmp_path, monkeypatch,
+):
+    """retry.no_submit_runs=4:第 4 次 no-submit 才耗尽预算 blocked。"""
+    eng, manifest, path, item, reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    runs = _no_submit_run_chain(4, reviewer_id)
+    baseline = eng.store.get_work_item(item.id).reviewer_run_baseline
+    eng.store.update_work_item_metadata(
+        item.id,
+        reviewer_run_baseline=replace(
+            baseline,
+            generation="review-attempt-4",
+            attempt=4,
+            baseline_direct_run_ids=(
+                "run-reviewer-no-submit-1", "run-reviewer-no-submit-2",
+                "run-reviewer-no-submit-3"),
+            target_run_id="run-reviewer-no-submit-4",
+        ),
+    )
+    monkeypatch.setattr(
+        loop, "_utcnow",
+        lambda: datetime(2026, 8, 1, 1, 5, 1, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
+    monkeypatch.setattr(
+        eng.runtime,
+        "wake",
+        lambda *_args: pytest.fail("exhausted reviewer retry must not wake"),
+    )
+
+    result = tick(
+        eng.store, eng.runtime, manifest, path, max_parallel=1,
+        config={"retry": {"no_submit_runs": 4}})
+    blocked = eng.store.get_work_item(item.id)
+
+    assert result.state == "needs_decision"
+    assert manifest.nodes["a"].status == "blocked"
+    assert blocked.status is WorkItemStatus.BLOCKED
+    assert blocked.phase is TaskPhase.REVIEW
+    assert blocked.bounces.review == 0
+    assert blocked.decision_required["reason_code"] == (
+        "reviewer-run-no-submit-retry-exhausted")
+
+
+def test_reviewer_no_submit_invalid_budget_fails_closed(tmp_path):
+    """非法 retry.no_submit_runs 在 tick 消费路径 fail-closed,不静默回退。"""
+    eng, manifest, path, _item, _reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    for bad in (0, -1, "6", 2.5):
+        with pytest.raises(ValidationError, match="no_submit_runs"):
+            tick(
+                eng.store, eng.runtime, manifest, path, max_parallel=1,
+                config={"retry": {"no_submit_runs": bad}})
+
+
+def test_reviewer_transient_failures_ignore_no_submit_budget(
+    tmp_path, monkeypatch,
+):
+    """基础设施瞬时失败预算仍为 2,不受 retry.no_submit_runs 放大。"""
+    eng, manifest, path, item, reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    runs = [
+        AgentRunObservation(
+            id="run-review-1", kind="direct", status="failed",
+            agent_id=reviewer_id, created_at="2026-07-31T10:00:00Z",
+            error="Our servers are currently overloaded"),
+        AgentRunObservation(
+            id="run-review-2", kind="direct", status="failed",
+            agent_id=reviewer_id, created_at="2026-07-31T10:01:00Z",
+            error="provider error: HTTP 503 Service Unavailable"),
+    ]
+    baseline = eng.store.get_work_item(item.id).reviewer_run_baseline
+    eng.store.update_work_item_metadata(
+        item.id,
+        reviewer_run_baseline=replace(
+            baseline,
+            generation="review-attempt-2",
+            attempt=2,
+            baseline_direct_run_ids=("run-review-1",),
+            target_run_id="run-review-2",
+        ),
+    )
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
+    monkeypatch.setattr(
+        eng.runtime, "wake",
+        lambda *_args: pytest.fail("exhausted reviewer retry must not wake"),
+    )
+
+    result = tick(
+        eng.store, eng.runtime, manifest, path, max_parallel=1,
+        config={"retry": {"no_submit_runs": 10}})
+    blocked = eng.store.get_work_item(item.id)
+
+    assert result.state == "needs_decision"
+    assert blocked.phase is TaskPhase.REVIEW
+    assert blocked.bounces.review == 0
+    assert blocked.decision_required["reason_code"] == (
+        "transient-runtime-retry-exhausted")
 
 
 def test_nonretryable_worker_failure_blocks_without_business_bounce(

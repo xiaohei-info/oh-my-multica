@@ -80,6 +80,21 @@ def _validate_set_value(key: str, value):
 
     if key.startswith("retry."):
         sub = key.split(".", 1)[1]
+        if sub == "no_submit_runs":
+            # 与 resolve_no_submit_runs 同规则:整数且 ≥ 1(不接受 0)
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValidationError(ui(
+                    f"{key} must be an integer; got {type(value).__name__}({value!r})",
+                    f"{key} 必须为整数,got {type(value).__name__}({value!r})"))
+            if value < 1:
+                raise ValidationError(ui(
+                    f"{key} must be ≥ 1; got {value}. It bounds reviewer "
+                    "no-submit continuation Runs; remove it to keep default "
+                    f"{config_mod.DEFAULT_NO_SUBMIT_RUNS}.",
+                    f"{key} 必须 ≥ 1(非法值 {value})。它约束 reviewer "
+                    "no-submit 续跑预算;删除该键即恢复缺省 "
+                    f"{config_mod.DEFAULT_NO_SUBMIT_RUNS}。"))
+            return
         if sub not in config_mod.DEFAULT_RETRY:
             return
         if isinstance(value, bool) or not isinstance(value, int):

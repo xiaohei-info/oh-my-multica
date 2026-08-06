@@ -10,7 +10,8 @@ from .. import exit_codes
 from ..output import add_output_flag, hint, print_json, print_table
 from ...core.config import (
     CONFIG_PATH, DEFAULTS, ENV_ENGINE, ENV_WORKSPACE,
-    load_config, resolve_engine_settings, resolve_retry,
+    load_config, resolve_engine_settings, resolve_no_submit_runs,
+    resolve_retry,
 )
 from ...core.amendment import ensure_amendment_apply_complete
 from ...core.graph import node_waves
@@ -672,6 +673,8 @@ def _loop_or_single_locked(args, single_round: bool) -> int:
                          engine_type=engine.store.config.engine_type)
     config = load_config(config_path)
     retry_limits = resolve_retry(config)
+    # fail-closed:非法 retry.no_submit_runs 在进 tick 前报错(exit 5)
+    resolve_no_submit_runs(config)
     _validate_execution_invariants(manifest, args.manifest)
     max_parallel = _default_max_parallel(args)
     max_rounds = getattr(args, "max_rounds", None)
