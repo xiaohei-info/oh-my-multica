@@ -143,6 +143,106 @@ def _delayed_reviewer_retry_fixture(tmp_path, monkeypatch):
     return engine, path, item.id, reviewer_id, subject, report
 
 
+def _dispatch_unresolved_reviewer_retry_fixture(tmp_path, monkeypatch):
+    """Build the persisted state of a continuation dispatch whose Run outcome
+    was never proven (reason_code reviewer-run-dispatch-unresolved).
+
+    与 `_delayed_reviewer_retry_fixture` 的区别:reviewer 尚未提交任何裁决
+    (review_verdict/report 为空),baseline 是 attempt=2 的续跑世代且没有
+    target Run——正是 `_retry_reviewer_attempt` 观察窗口空手而归后的现场。
+    """
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OMAC_ENGINE", "mock")
+    monkeypatch.setenv("OMAC_WORKSPACE_ID", "ws-1")
+
+    from omac.core.review_convergence import review_subject_digest
+    from omac.core.taskmeta import TaskPhase
+    from omac.engines import EngineConfig, create_engine
+    from omac.engines.models import WorkItemStatus
+
+    engine = create_engine(
+        "mock",
+        EngineConfig("mock", "ws-1", extra={"MOCK_AUTO_COMPLETE": "false"}),
+    )
+    item = engine.store.create_work_item(
+        "ws-1", "t", "d", "b", "bob", reviewer="alice")
+    verification = {
+        "commands": [],
+        "integration_gates": [],
+        "pr_base": "main",
+        "coverage": 100,
+    }
+    verification_ref = {
+        "attachment_id": "attachment-1",
+        "comment_id": "comment-1",
+        "created_at": "2026-08-02T13:30:00Z",
+    }
+    engine.store.update_work_item_metadata(
+        item.id,
+        phase=TaskPhase.REVIEW,
+        artifacts={"pr_url": "https://example.test/pr/1", "head_sha": "head-1"},
+        verification=verification,
+        delivery_identity={
+            "schema": "omac.delivery-identity/v1",
+            "handoff_generation": "handoff-1",
+            "worker": "bob",
+            "agent_id": "agent-bob",
+            "run_id": "run-worker",
+            "pr_url": "https://example.test/pr/1",
+            "pr_head_sha": "head-1",
+            "verification_sha256": "sha-1",
+            "verification_attachment_id": "attachment-1",
+            "verification_comment_id": "comment-1",
+            "verification_uploader_id": "agent-bob",
+            "verification_uploader_type": "agent",
+            "verification_created_at": "2026-08-02T13:30:00Z",
+        },
+    )
+    current = engine.store.get_work_item(item.id)
+    current.verification_ref = verification_ref
+    subject = review_subject_digest(current, 1)
+    reviewer_id = engine.store.resolve_agent_id("alice")
+    engine.store.update_work_item_metadata(
+        item.id,
+        review_subject_digest=subject,
+        reviewer_run_baseline={
+            "schema": "omac.reviewer-run-baseline/v1",
+            "subject_digest": subject,
+            "target_reviewer": "alice",
+            "target_agent_id": reviewer_id,
+            "cutoff_created_at": "2026-08-02T13:30:00Z",
+            "generation": "review-dispatch-unresolved",
+            "attempt": 2,
+            "baseline_direct_run_ids": ["run-worker"],
+            "target_run_id": None,
+        },
+        decision_required={
+            "schema": "omac.decision-required/v1",
+            "reason_code": "reviewer-run-dispatch-unresolved",
+            "kind": "develop",
+            "phase": "review",
+            "gate": "reviewer",
+            "resume_issue_id": item.id,
+            "node_id": "b",
+            "failure_class": "unproven-reviewer-run-causality",
+            "next_action": "omac node retry m.yaml b --stage review",
+        },
+    )
+    engine.store.clear_assignment(item.id)
+    engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
+
+    import omac.cli.commands.node as node_mod
+    monkeypatch.setattr(node_mod, "create_engine", lambda *a, **kw: engine)
+    path = _write_manifest(tmp_path, [{
+        "id": "b",
+        "worker": "bob",
+        "reviewer": "alice",
+        "status": "blocked",
+        "work_item_id": item.id,
+    }])
+    return engine, path, item.id, reviewer_id, subject
+
+
 # ---------------- show ----------------
 
 def test_show_missing_manifest_is_validation(tmp_path, capsys, monkeypatch):
@@ -809,6 +909,144 @@ def test_retry_review_without_submitted_report_keeps_normal_retry_semantics(
     assert resumed.review_verdict is None
     assert resumed.review_report is None
     assert resumed.reviewer_run_baseline is None
+
+
+@pytest.mark.parametrize("trigger_kind", ["issue_assignment", "rerun"])
+def test_retry_review_dispatch_unresolved_adopts_delayed_active_run(
+    tmp_path, capsys, monkeypatch, trigger_kind,
+):
+    """续跑派发结果未确证时,显式 retry 必须认领延迟可见的活跃 Run,
+    而不是重置评审阶段再派发一个重复 reviewer。"""
+    from omac.core.taskmeta import TaskPhase
+    from omac.engines.models import AgentRunObservation, WorkItemStatus
+
+    engine, path, item_id, reviewer_id, subject = (
+        _dispatch_unresolved_reviewer_retry_fixture(tmp_path, monkeypatch))
+    candidate = AgentRunObservation(
+        id="run-reviewer-continuation",
+        kind="direct",
+        status="running",
+        agent_id=reviewer_id,
+        created_at="2026-08-02T13:40:00Z",
+        trigger_kind=trigger_kind,
+    )
+    monkeypatch.setattr(
+        engine.runtime, "list_runs", lambda _item_id: [candidate])
+    monkeypatch.setattr(
+        engine.store,
+        "assign_work_item",
+        lambda *_args, **_kwargs: pytest.fail(
+            "adopting a delayed Run must not assign an Agent"),
+    )
+    monkeypatch.setattr(
+        engine.runtime,
+        "wake",
+        lambda *_args, **_kwargs: pytest.fail(
+            "adopting a delayed Run must not create or rerun an Agent Run"),
+    )
+
+    assert main([
+        "node", "retry", path, "b", "--stage", "review",
+    ]) == exit_codes.OK
+    capsys.readouterr()
+
+    resumed = engine.store.get_work_item(item_id)
+    assert load_manifest(path).nodes["b"].status == "in_review"
+    assert resumed.status is WorkItemStatus.IN_REVIEW
+    assert resumed.phase is TaskPhase.REVIEW
+    assert resumed.review_subject_digest == subject
+    assert resumed.review_verdict is None
+    assert resumed.review_report is None
+    assert resumed.decision_required["reason_code"] == (
+        "reviewer-run-dispatch-unresolved")
+    assert resumed.reviewer_run_baseline.target_run_id == candidate.id
+    assert resumed.reviewer_run_baseline.attempt == 2
+
+
+def test_retry_review_dispatch_unresolved_without_run_resets_review_stage(
+    tmp_path, capsys, monkeypatch,
+):
+    """续跑 Run 确实没有产生时,显式 retry 重置评审阶段以便重新派发,
+    且 retry 本身不产生任何 Agent 派发副作用。"""
+    from omac.core.taskmeta import TaskPhase
+    from omac.engines.models import WorkItemStatus
+
+    engine, path, item_id, _reviewer_id, subject = (
+        _dispatch_unresolved_reviewer_retry_fixture(tmp_path, monkeypatch))
+    monkeypatch.setattr(engine.runtime, "list_runs", lambda _item_id: [])
+    monkeypatch.setattr(
+        engine.store,
+        "assign_work_item",
+        lambda *_args, **_kwargs: pytest.fail(
+            "node retry must not assign an Agent"),
+    )
+    monkeypatch.setattr(
+        engine.runtime,
+        "wake",
+        lambda *_args, **_kwargs: pytest.fail(
+            "node retry must not create or rerun an Agent Run"),
+    )
+
+    assert main([
+        "node", "retry", path, "b", "--stage", "review",
+    ]) == exit_codes.OK
+    capsys.readouterr()
+
+    resumed = engine.store.get_work_item(item_id)
+    assert load_manifest(path).nodes["b"].status == "in_review"
+    assert resumed.status is WorkItemStatus.IN_REVIEW
+    assert resumed.phase is TaskPhase.REVIEW
+    assert resumed.review_verdict is None
+    assert resumed.review_report is None
+    assert resumed.reviewer_run_baseline is None
+    assert not resumed.decision_required
+    assert resumed.review_subject_digest
+    assert resumed.review_subject_digest != subject
+
+
+@pytest.mark.parametrize(
+    "case", ["tampered-reason-code", "missing-reason-code"])
+def test_retry_review_dispatch_unresolved_tampered_decision_fails_closed(
+    tmp_path, capsys, monkeypatch, case,
+):
+    """篡改后的 dispatch-unresolved 决策仍必须按未知决策失败关闭。"""
+    from copy import deepcopy
+
+    from omac.engines.models import WorkItemStatus
+
+    engine, path, item_id, _reviewer_id, subject = (
+        _dispatch_unresolved_reviewer_retry_fixture(tmp_path, monkeypatch))
+    current = engine.store.get_work_item(item_id)
+    decision = deepcopy(current.decision_required)
+    if case == "tampered-reason-code":
+        decision["reason_code"] = "reviewer-run-dispatch-unresolved-tampered"
+    else:
+        decision.pop("reason_code")
+    engine.store.update_work_item_metadata(item_id, decision_required=decision)
+    monkeypatch.setattr(
+        engine.store,
+        "assign_work_item",
+        lambda *_args, **_kwargs: pytest.fail(
+            "a tampered decision must not assign an Agent"),
+    )
+    monkeypatch.setattr(
+        engine.runtime,
+        "wake",
+        lambda *_args, **_kwargs: pytest.fail(
+            "a tampered decision must not start an Agent Run"),
+    )
+
+    assert main([
+        "node", "retry", path, "b", "--stage", "review",
+    ]) == exit_codes.VALIDATION
+    capsys.readouterr()
+
+    blocked = engine.store.get_work_item(item_id)
+    assert load_manifest(path).nodes["b"].status == "blocked"
+    assert blocked.status is WorkItemStatus.BLOCKED
+    assert blocked.decision_required == decision
+    assert blocked.review_subject_digest == subject
+    assert blocked.reviewer_run_baseline.attempt == 2
 
 
 def test_retry_explicitly_clears_confirmed_merge_closure(

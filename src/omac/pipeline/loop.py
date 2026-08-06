@@ -616,13 +616,13 @@ def _provisional_reviewer_decision_variants(
     key: str,
     item,
 ) -> tuple[dict, ...]:
-    """Return exact current and documented legacy marker shapes."""
-    canonical = _reviewer_recovery_decision(
-        manifest_path,
-        key,
-        item,
-        "reviewer-run-baseline-unavailable",
-    )
+    """Return exact current and documented legacy marker shapes.
+
+    Both provisional reason codes describe the same unproven Reviewer Run
+    causality family: a baseline that could not be established, and a
+    continuation dispatch whose Run outcome was never observed. Either must
+    be recoverable through the one explicit operator retry.
+    """
     path_spellings = {manifest_path, str(Path(manifest_path).resolve())}
     try:
         path_spellings.add(str(
@@ -631,13 +631,23 @@ def _provisional_reviewer_decision_variants(
     except ValueError:
         pass
     variants = []
-    for path_value in sorted(path_spellings):
-        for stage_suffix in (" --stage review", ""):
-            variant = dict(canonical)
-            variant["next_action"] = (
-                f"omac node retry {path_value} {key}{stage_suffix}"
-            )
-            variants.append(variant)
+    for reason_code in (
+        "reviewer-run-baseline-unavailable",
+        "reviewer-run-dispatch-unresolved",
+    ):
+        canonical = _reviewer_recovery_decision(
+            manifest_path,
+            key,
+            item,
+            reason_code,
+        )
+        for path_value in sorted(path_spellings):
+            for stage_suffix in (" --stage review", ""):
+                variant = dict(canonical)
+                variant["next_action"] = (
+                    f"omac node retry {path_value} {key}{stage_suffix}"
+                )
+                variants.append(variant)
     return tuple(variants)
 
 

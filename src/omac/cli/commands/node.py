@@ -272,7 +272,19 @@ def _recover_delayed_reviewer_submission(
         and isinstance(current.review_report_ref, dict)
         and current.review_report_ref
     )
-    if not has_submitted_review:
+    decision = (
+        current.decision_required
+        if isinstance(current.decision_required, dict) else {}
+    )
+    dispatch_unresolved = (
+        decision.get("reason_code") == "reviewer-run-dispatch-unresolved"
+    )
+    # A submitted review always needs its causal Run proven before replay. An
+    # unresolved continuation dispatch may additionally own a delayed Run that
+    # became visible after the observation window; adopting it below avoids a
+    # duplicate Reviewer dispatch. Every other unsubmitted shape stays an
+    # ordinary stage reset.
+    if not has_submitted_review and not dispatch_unresolved:
         return False
 
     baseline = current.reviewer_run_baseline
@@ -301,7 +313,12 @@ def _recover_delayed_reviewer_submission(
     )
     _target, target_error = _formal_dispatch_target(runs, observed)
     if target_error is not None:
-        raise unsafe(target_error)
+        if has_submitted_review:
+            raise unsafe(target_error)
+        # The unresolved continuation never materialized as a provable Run;
+        # there is nothing to preserve, so the ordinary review-stage reset in
+        # the caller redispatches the Reviewer exactly once.
+        return False
 
     engine.store.update_work_item_metadata(
         current.id,
