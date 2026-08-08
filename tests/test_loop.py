@@ -1789,6 +1789,12 @@ def _transient_worker_handoff_fixture(tmp_path):
     "transport status: HTTP 502 Bad Gateway",
     "runtime status: 503 Service Unavailable",
     "Hermes provider error: HTTP 504 Gateway Timeout",
+    (
+        "hermes provider error: ⚠️  API call failed (attempt 3/8): "
+        "InternalServerError [HTTP 503]"
+    ),
+    'hermes provider error: HTTP 502: {"error":"bad gateway"}',
+    'hermes provider error: HTTP 524: {"error":"upstream timed out"}',
     "connection timeout while opening provider stream",
     "read timeout while waiting for provider response",
     "provider error: connection timeout",
@@ -1803,6 +1809,16 @@ def test_transient_runtime_failure_allowlist(error):
 @pytest.mark.parametrize("error", [
     "HTTP 401 Missing Authentication header",
     "HTTP 403 Forbidden",
+    'Hermes provider error: HTTP 401: {"error":"missing authentication"}',
+    'Hermes provider error: HTTP 403: {"error":"forbidden"}',
+    'Hermes provider error: HTTP 500: {"error":"unknown server error"}',
+    (
+        'Hermes provider error: HTTP 400: {"type":"invalid_request_error",'
+        '"message":"expected HTTP 503"}'
+    ),
+    "Hermes provider error: response missing reasoning_text",
+    "Hermes provider error: response missing reasoning_content",
+    "Hermes provider error: invalid_request mentions HTTP 503",
     "quota exhausted for this account",
     "billing credits exhausted",
     "model does not exist",
@@ -2756,7 +2772,7 @@ def test_runner_classifies_decision_before_reviewer_no_submit_recovery(
     assert wake_calls == []
 
 
-def test_reviewer_capacity_failure_reruns_without_review_bounce(
+def test_reviewer_wrapped_provider_failure_reruns_without_review_bounce(
     tmp_path, monkeypatch,
 ):
     eng, manifest, path, current, reviewer_id = (
@@ -2764,7 +2780,10 @@ def test_reviewer_capacity_failure_reruns_without_review_bounce(
     runs = [AgentRunObservation(
         id="run-review-capacity", kind="direct", status="failed",
         agent_id=reviewer_id, created_at="2026-08-01T01:01:00Z",
-        error="Selected model is at capacity. Please try a different model.",
+        error=(
+            "hermes provider error: ⚠️  API call failed (attempt 3/8): "
+            "InternalServerError [HTTP 503]"
+        ),
     )]
     wake_calls = []
 
@@ -3751,11 +3770,14 @@ def test_reviewer_transient_failures_ignore_no_submit_budget(
         AgentRunObservation(
             id="run-review-1", kind="direct", status="failed",
             agent_id=reviewer_id, created_at="2026-07-31T10:00:00Z",
-            error="Our servers are currently overloaded"),
+            error=(
+                "hermes provider error: ⚠️ API call failed (attempt 3/8): "
+                "InternalServerError [HTTP 503]"
+            )),
         AgentRunObservation(
             id="run-review-2", kind="direct", status="failed",
             agent_id=reviewer_id, created_at="2026-07-31T10:01:00Z",
-            error="provider error: HTTP 503 Service Unavailable"),
+            error='Hermes provider error: HTTP 524: {"error":"timeout"}'),
     ]
     baseline = eng.store.get_work_item(item.id).reviewer_run_baseline
     eng.store.update_work_item_metadata(
