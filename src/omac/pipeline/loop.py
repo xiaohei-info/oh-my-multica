@@ -228,6 +228,14 @@ class _DirectRunAttempt:
     detail: str = ""
 
 
+# Cloudflare 524 is an origin response timeout, so it shares 504 semantics.
+_RETRYABLE_RUN_HTTP_STATUS_PATTERN = (
+    r"(?:429(?:\s+too many requests)?|502(?:\s+bad gateway)?|"
+    r"503(?:\s+service unavailable)?|504(?:\s+gateway timeout)?|"
+    r"524(?:\s+a timeout occurred)?)"
+)
+
+
 _RETRYABLE_RUN_ERROR_SIGNATURES = (
     re.compile(
         r"selected model is at capacity\. please try a different model\.?",
@@ -241,8 +249,16 @@ _RETRYABLE_RUN_ERROR_SIGNATURES = (
     re.compile(
         r"(?:(?:provider|runtime|transport) (?:error|status)|"
         r"hermes provider error):\s*(?:http\s+)?"
-        r"(?:429(?:\s+too many requests)?|502(?:\s+bad gateway)?|"
-        r"503(?:\s+service unavailable)?|504(?:\s+gateway timeout)?)\.?",
+        + _RETRYABLE_RUN_HTTP_STATUS_PATTERN
+        + r"(?:\.?|:\s*\{[\s\S]*\})",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"hermes provider error:\s*(?:⚠️?\s*)?api call failed\s*"
+        r"\(attempt\s+[1-9]\d*/[1-9]\d*\):\s*"
+        r"[a-z][a-z0-9_]*error\s*\[http\s+"
+        + _RETRYABLE_RUN_HTTP_STATUS_PATTERN
+        + r"\]\.?",
         re.IGNORECASE,
     ),
     re.compile(
