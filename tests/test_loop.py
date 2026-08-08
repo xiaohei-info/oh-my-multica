@@ -1807,6 +1807,106 @@ def test_transient_runtime_failure_allowlist(error):
 
 
 @pytest.mark.parametrize("error", [
+    (
+        "unexpected status 503 Service Unavailable: system cpu overloaded "
+        "(current: 94.9%, threshold: 90%), url: "
+        "https://newapi.xiaohei.tech/v1/responses, "
+        "cf-ray: a27dc25009ec1f54"
+    ),
+    (
+        "unexpected status 503 Service Unavailable: system cpu overloaded "
+        "(current: 97.8%, threshold: 90%), url: "
+        "https://newapi.xiaohei.tech/v1/responses, "
+        "cf-ray: a27dc25009ec1f54"
+    ),
+    (
+        "unexpected status 503 Service Unavailable: system cpu overloaded "
+        "(current: 93.1%, threshold: 90%), url: "
+        "https://newapi.xiaohei.tech/v1/responses, "
+        "cf-ray: a27dc25009ec1f54"
+    ),
+    (
+        "unexpected status 429 Too Many Requests: provider rate limited, "
+        "url: https://api.example.test/v1/responses"
+    ),
+    (
+        "unexpected status 502 Bad Gateway: upstream unavailable, url: "
+        "http://api.example.test/v1/responses"
+    ),
+    (
+        "unexpected status 504 Gateway Timeout: upstream timed out, url: "
+        "https://api.example.test/v1/responses"
+    ),
+    (
+        "unexpected status 524 A Timeout Occurred: origin timed out, url: "
+        "https://api.example.test/v1/responses"
+    ),
+])
+def test_transient_runtime_failure_allows_codex_http_status_wrapper(error):
+    assert loop._is_retryable_transient_run_failure(AgentRunObservation(
+        id="run-1", kind="direct", status="failed", error=error))
+
+
+@pytest.mark.parametrize("error", [
+    (
+        "unexpected status 401 Unauthorized: missing authentication, url: "
+        "https://api.example.test/v1/responses"
+    ),
+    (
+        "unexpected status 403 Forbidden: access denied, url: "
+        "https://api.example.test/v1/responses"
+    ),
+    (
+        "unexpected status 500 Internal Server Error: unknown failure, url: "
+        "https://api.example.test/v1/responses"
+    ),
+    (
+        "unexpected status 521 Web Server Is Down: origin unavailable, url: "
+        "https://api.example.test/v1/responses"
+    ),
+    (
+        "unexpected status 503 Bad Gateway: mismatched reason, url: "
+        "https://api.example.test/v1/responses"
+    ),
+    (
+        "unexpected status 502 Service Unavailable: mismatched reason, url: "
+        "https://api.example.test/v1/responses"
+    ),
+    "unexpected status 503 Service Unavailable: system cpu overloaded",
+    (
+        "unexpected status 503 Service Unavailable: system cpu overloaded, "
+        "url: ftp://api.example.test/v1/responses"
+    ),
+    (
+        "unexpected status 503 Service Unavailable: system cpu overloaded, "
+        "url: api.example.test/v1/responses"
+    ),
+    (
+        "request failed: unexpected status 503 Service Unavailable: system "
+        "cpu overloaded, url: https://api.example.test/v1/responses"
+    ),
+    (
+        "unexpected status 400 Bad Request: invalid_request business body "
+        "mentions 503 Service Unavailable, url: "
+        "https://api.example.test/v1/responses"
+    ),
+    (
+        "unexpected status 400 Bad Request: response missing reasoning_text "
+        "after a body mentioning 503, url: "
+        "https://api.example.test/v1/responses"
+    ),
+    (
+        "unexpected status 400 Bad Request: response missing "
+        "reasoning_content after a body mentioning 503, url: "
+        "https://api.example.test/v1/responses"
+    ),
+])
+def test_transient_runtime_failure_rejects_non_codex_http_status_wrapper(error):
+    assert not loop._is_retryable_transient_run_failure(AgentRunObservation(
+        id="run-1", kind="direct", status="failed", error=error))
+
+
+@pytest.mark.parametrize("error", [
     "HTTP 401 Missing Authentication header",
     "HTTP 403 Forbidden",
     'Hermes provider error: HTTP 401: {"error":"missing authentication"}',
@@ -1863,7 +1963,7 @@ def test_transient_runtime_failure_requires_provider_transport_context(error):
         id="run-1", kind="direct", status="failed", error=error))
 
 
-def test_worker_capacity_failure_reruns_without_consuming_business_bounce(
+def test_worker_codex_status_wrapper_reruns_without_consuming_business_bounce(
     tmp_path, monkeypatch,
 ):
     eng, manifest, path, item, agent_id = _transient_worker_handoff_fixture(
@@ -1871,7 +1971,12 @@ def test_worker_capacity_failure_reruns_without_consuming_business_bounce(
     runs = [AgentRunObservation(
         id="run-capacity-1", kind="direct", status="failed",
         agent_id=agent_id,
-        error="Selected model is at capacity. Please try a different model.",
+        error=(
+            "unexpected status 503 Service Unavailable: system cpu overloaded "
+            "(current: 94.9%, threshold: 90%), url: "
+            "https://newapi.xiaohei.tech/v1/responses, "
+            "cf-ray: a27dc25009ec1f54"
+        ),
     )]
     wake_calls = []
 

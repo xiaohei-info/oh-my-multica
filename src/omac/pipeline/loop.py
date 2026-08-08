@@ -235,8 +235,28 @@ _RETRYABLE_RUN_HTTP_STATUS_PATTERN = (
     r"524(?:\s+a timeout occurred)?)"
 )
 
+# Codex transport errors spell out both the status and its canonical reason.
+_RETRYABLE_CODEX_HTTP_STATUS_PATTERN = (
+    r"(?:429 too many requests|502 bad gateway|503 service unavailable|"
+    r"504 gateway timeout|524 a timeout occurred)"
+)
+_RETRYABLE_CODEX_PROVIDER_URL_PATTERN = (
+    r"https?://"
+    r"(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)*"
+    r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?"
+    r"(?::\d{1,5})?(?:/[^\s,\r\n]*)?"
+)
+
 
 _RETRYABLE_RUN_ERROR_SIGNATURES = (
+    re.compile(
+        r"unexpected status "
+        + _RETRYABLE_CODEX_HTTP_STATUS_PATTERN
+        + r":[^\r\n]+?,\s*url:\s*"
+        + _RETRYABLE_CODEX_PROVIDER_URL_PATTERN
+        + r"(?:,\s*[^\r\n]+)?",
+        re.IGNORECASE,
+    ),
     re.compile(
         r"selected model is at capacity\. please try a different model\.?",
         re.IGNORECASE,
