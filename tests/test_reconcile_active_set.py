@@ -188,6 +188,38 @@ class TestReconcileObservationScope:
         assert static.id not in observed
         assert closed.id not in observed
 
+    def test_full_scan_uses_default_batch_control_fallback_for_mock_store(self):
+        store = self._store()
+        item = self._item(store, "static", WorkItemStatus.BLOCKED)
+        manifest = Manifest(meta={}, nodes={
+            "static": Node(
+                "static", "worker", work_item_id=item.id, status="blocked"),
+        })
+        observed = []
+        original = store.observe_work_item_control
+        store.observe_work_item_control = lambda item_id: (
+            observed.append(item_id) or original(item_id))
+
+        observations, _ = loop._observe_reconcile_inputs(
+            store, manifest, full_scan=True)
+
+        assert observed == [item.id]
+        assert observations["static"].work_item.id == item.id
+
+    def test_interval_does_not_use_batch_control_observation(self):
+        store = self._store()
+        item = self._item(store, "active", WorkItemStatus.TODO)
+        manifest = Manifest(meta={}, nodes={
+            "active": Node(
+                "active", "worker", work_item_id=item.id, status="todo"),
+        })
+        store.observe_work_item_controls = lambda _item_ids: pytest.fail(
+            "interval reconcile must use per-item observations")
+
+        observations, _ = loop._observe_reconcile_inputs(store, manifest)
+
+        assert observations["active"].work_item.id == item.id
+
     def test_static_nodes_and_marker_are_unchanged_when_not_observed(self, tmp_path):
         store = self._store()
         blocked = self._item(store, "blocked", WorkItemStatus.DONE)
