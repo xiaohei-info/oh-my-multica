@@ -1085,20 +1085,28 @@ def _observe_reconcile_inputs(
         return key, projection
 
     if control_jobs:
-        requested_parallelism = max(1, max_parallel)
-        workers = max(1, min(
-            len(control_jobs),
-            requested_parallelism,
-            store.control_observation_parallelism(requested_parallelism),
-        ))
-        if workers == 1:
-            control_results = [observe_control(job) for job in control_jobs]
+        batch_observe = getattr(store, "observe_work_item_controls", None)
+        if full_scan and callable(batch_observe):
+            batch = batch_observe([item_id for _, item_id in control_jobs])
+            control_results = [
+                (key, batch.get(item_id, _MISSING_WORK_ITEM))
+                for key, item_id in control_jobs
+            ]
         else:
-            with ThreadPoolExecutor(
-                max_workers=workers,
-                thread_name_prefix="omac-control",
-            ) as executor:
-                control_results = list(executor.map(observe_control, control_jobs))
+            requested_parallelism = max(1, max_parallel)
+            workers = max(1, min(
+                len(control_jobs),
+                requested_parallelism,
+                store.control_observation_parallelism(requested_parallelism),
+            ))
+            if workers == 1:
+                control_results = [observe_control(job) for job in control_jobs]
+            else:
+                with ThreadPoolExecutor(
+                    max_workers=workers,
+                    thread_name_prefix="omac-control",
+                ) as executor:
+                    control_results = list(executor.map(observe_control, control_jobs))
         controls = dict(control_results)
 
     # Phase 2: the complete control snapshot produces an explicit hydration plan.

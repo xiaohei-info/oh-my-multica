@@ -1212,6 +1212,68 @@ def test_multica_list_work_items_is_scoped_to_configured_project(monkeypatch):
     assert calls[0][calls[0].index("--project") + 1] == "project-1"
 
 
+def test_multica_batch_control_observation_projects_pages_without_hydration(
+    monkeypatch,
+):
+    store = MulticaStore(EngineConfig(
+        engine_type="multica", workspace_id="ws", project_id="project-1"))
+    calls = []
+    issues = [
+        {
+            "id": f"issue-{index}", "title": "t", "description": "d",
+            "status": "todo", "metadata": {"dag_key": f"node-{index}"},
+        }
+        for index in range(101)
+    ]
+
+    def run(args, capture=True):
+        calls.append(args)
+        assert args[:2] == ["issue", "list"]
+        assert args[args.index("--project") + 1] == "project-1"
+        assert args[args.index("--limit") + 1] == "100"
+        offset = int(args[args.index("--offset") + 1])
+        return issues[offset:offset + 100]
+
+    monkeypatch.setattr(store, "_run_multica", run)
+    monkeypatch.setattr(
+        store,
+        "hydrate_work_item_evidence",
+        lambda *_args: pytest.fail("batch control observation must not hydrate"),
+    )
+
+    observed = store.observe_work_item_controls(["issue-100", "issue-0"])
+
+    assert list(observed) == ["issue-100", "issue-0"]
+    assert observed["issue-100"].work_item.dag_key == "node-100"
+    assert len(calls) == 2
+
+
+def test_multica_batch_control_observation_falls_back_for_missing_list_id(
+    monkeypatch,
+):
+    store = MulticaStore(EngineConfig(
+        engine_type="multica", workspace_id="ws", project_id="project-1"))
+    calls = []
+
+    def run(args, capture=True):
+        calls.append(args)
+        if args[:2] == ["issue", "list"]:
+            return []
+        if args[:2] == ["issue", "get"]:
+            return {
+                "id": "issue-1", "title": "t", "description": "d",
+                "status": "todo", "metadata": {"dag_key": "node-1"},
+            }
+        raise AssertionError(args)
+
+    monkeypatch.setattr(store, "_run_multica", run)
+
+    observed = store.observe_work_item_controls(["issue-1"])
+
+    assert list(observed) == ["issue-1"]
+    assert [call[:2] for call in calls] == [["issue", "list"], ["issue", "get"]]
+
+
 def test_multica_empty_review_verdict_is_read_as_missing():
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
 

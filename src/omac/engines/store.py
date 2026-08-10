@@ -15,7 +15,7 @@ from ..core.taskmeta import (
     DeliveryIdentity, ReviewerRunBaseline, TaskKind, TaskPhase,
     WorkerHandoffIntent,
 )
-from ..errors import PlatformError
+from ..errors import PlatformError, WorkItemNotFoundError
 from .models import (
     EngineConfig, MergeCommandResult, ProjectInfo, PullRequestCheckResult,
     PullRequestObservation, PullRequestReadiness, PullRequestReadinessFailure,
@@ -132,6 +132,24 @@ class WorkItemStore(ABC):
         should override this method and list every intentionally deferred body.
         """
         return WorkItemControlProjection(self.get_work_item(item_id))
+
+    def observe_work_item_controls(
+        self, item_ids: List[str],
+    ) -> Dict[str, WorkItemControlProjection]:
+        """Read control projections for the requested IDs.
+
+        The returned mapping retains requested-ID order and omits only IDs the
+        adapter can authoritatively prove are missing. The default preserves
+        compatibility for existing adapters with a safe per-item fallback.
+        Any other error aborts the complete observation.
+        """
+        observations: Dict[str, WorkItemControlProjection] = {}
+        for item_id in item_ids:
+            try:
+                observations[item_id] = self.observe_work_item_control(item_id)
+            except WorkItemNotFoundError:
+                continue
+        return observations
 
     def hydrate_work_item_evidence(
         self,

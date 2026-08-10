@@ -51,6 +51,7 @@ class _RemoteFixture:
         self.issues = issues
         self.attachments = attachments
         self.issue_gets = 0
+        self.issue_lists = 0
         self.attachment_downloads = 0
         self.pr_observations = 0
         self.calls: list[tuple[str, str]] = []
@@ -59,6 +60,13 @@ class _RemoteFixture:
         self.issue_get_hook = None
 
     def run(self, args, capture=True):
+        if args[:2] == ["issue", "list"]:
+            self.issue_lists += 1
+            self.calls.append(("issue-list", str(self.issue_lists)))
+            assert args[args.index("--project") + 1] == "project-1"
+            assert args[args.index("--limit") + 1] == "100"
+            offset = int(args[args.index("--offset") + 1])
+            return copy.deepcopy(list(self.issues.values())[offset:offset + 100])
         if args[:2] == ["issue", "get"]:
             item_id = args[2]
             self.issue_gets += 1
@@ -628,6 +636,71 @@ def test_146_node_interval_reconcile_reads_only_active_issues_and_hydrates_neede
     assert load_manifest(path).nodes["active-0"].status == "in_progress"
 
 
+def test_146_node_full_scan_batches_control_envelopes_without_payload_hydration(
+    tmp_path,
+):
+    issues, attachments, nodes = _large_dag_fixture()
+    remote = _RemoteFixture(issues, attachments)
+    store = _store(remote)
+    manifest, _path = _manifest_path(tmp_path, nodes)
+
+    observations, _ = loop._observe_reconcile_inputs(
+        store, manifest, full_scan=True)
+
+    assert list(observations) == list(nodes)
+    assert remote.issue_lists == 2
+    assert remote.issue_gets == 0
+    assert remote.attachment_downloads == 18
+    assert remote.calls[:2] == [("issue-list", "1"), ("issue-list", "2")]
+
+
+def test_146_node_full_scan_falls_back_to_issue_get_for_list_omission(tmp_path):
+    issues, attachments, nodes = _large_dag_fixture()
+    omitted_id = "blocked-0"
+    remote = _RemoteFixture(issues, attachments)
+    original_run = remote.run
+
+    def list_omits_one(args, capture=True):
+        if args[:2] == ["issue", "list"]:
+            result = original_run(args, capture)
+            if omitted_id not in {issue["id"] for issue in result}:
+                return result
+            return [
+                *[issue for issue in result if issue["id"] != omitted_id],
+                {
+                    "id": "unrequested-list-entry", "title": "t",
+                    "description": "d", "status": "todo", "metadata": {},
+                },
+            ]
+        return original_run(args, capture)
+
+    remote.run = list_omits_one
+    store = _store(remote)
+    manifest, _path = _manifest_path(tmp_path, nodes)
+
+    observations, _ = loop._observe_reconcile_inputs(
+        store, manifest, full_scan=True)
+
+    assert observations[omitted_id].work_item.id == omitted_id
+    assert remote.issue_gets == 1
+
+
+def test_full_scan_list_failure_is_an_atomic_observation_barrier(tmp_path):
+    issues, attachments, nodes = _large_dag_fixture()
+    remote = _RemoteFixture(issues, attachments)
+    store = _store(remote)
+    manifest, path = _manifest_path(tmp_path, nodes)
+    before = Path(path).read_bytes()
+    store._run_multica = lambda args, capture=True: (_ for _ in ()).throw(
+        PlatformError("issue list timed out"))
+
+    with pytest.raises(PlatformError, match="issue list timed out"):
+        loop.reconcile(store, manifest, path, full_scan=True)
+
+    assert Path(path).read_bytes() == before
+    assert remote.attachment_downloads == 0
+
+
 def test_146_node_reconcile_reuses_immutable_attachment_bodies_across_ticks(
     tmp_path,
 ):
@@ -656,10 +729,11 @@ def test_146_node_status_reuses_reconcile_observation_budget(tmp_path):
 
     assert report["progress"]["total"] == 146
     assert (
+        remote.issue_lists,
         remote.issue_gets,
         remote.attachment_downloads,
         remote.pr_observations,
-    ) == (146, 18, 1)
+    ) == (2, 0, 18, 1)
 
 
 def test_146_node_full_tick_reuses_reconcile_observations_for_collect(
@@ -1314,7 +1388,8 @@ def test_stale_manifest_hydrates_new_platform_delivery_and_reenters_gate(
     assert loop.reconcile(store, manifest, path, full_scan=True) is True
 
     assert manifest.nodes["node-a"].status == "in_progress"
-    assert remote.issue_gets == 1
+    assert remote.issue_lists == 1
+    assert remote.issue_gets == 0
     assert remote.attachment_downloads == expected_downloads
 
 
@@ -1520,10 +1595,11 @@ def test_cli_status_recovers_confirmed_merge_from_one_control_read_without_hydra
     assert "assignee_id" not in remote.issues[item_id]
     assert normalizations == [item_id]
     assert (
+        remote.issue_lists,
         remote.issue_gets,
         remote.attachment_downloads,
         remote.pr_observations,
-    ) == (1, 0, 0)
+    ) == (1, 0, 0, 0)
 
 
 def test_status_summary_preserves_deferred_verification_and_review_presence(
@@ -1554,7 +1630,8 @@ def test_status_summary_preserves_deferred_verification_and_review_presence(
     assert summary["has_verification"] is True
     assert summary["has_review"] is True
     assert summary["review_verdict"] == "reject"
-    assert remote.issue_gets == 1
+    assert remote.issue_lists == 1
+    assert remote.issue_gets == 0
     assert remote.attachment_downloads == 0
 
 
@@ -1799,7 +1876,8 @@ def test_required_attachment_failure_is_atomic_after_all_control_reads(tmp_path)
     with pytest.raises(PlatformError, match="attachment read failed"):
         loop.reconcile(store, manifest, path, full_scan=True)
 
-    assert [kind for kind, _ in remote.calls[:2]] == ["issue", "issue"]
+    assert remote.calls[0][0] == "issue-list"
+    assert remote.issue_lists == 1
     assert manifest.nodes["node-a"].status == "blocked"
     assert manifest.nodes["node-b"].status == "blocked"
     assert Path(path).read_bytes() == before

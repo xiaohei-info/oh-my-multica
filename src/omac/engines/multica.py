@@ -1419,6 +1419,41 @@ class MulticaStore(WorkItemStore):
                 f"Could not get issue {item_id}", f"获取 issue {item_id} 失败"))
         return self._issue_to_control_projection(result, self.config.workspace_id)
 
+    def observe_work_item_controls(
+        self, item_ids: List[str],
+    ) -> Dict[str, WorkItemControlProjection]:
+        """Batch-read project Issue envelopes without hydrating attachments.
+
+        A project-scoped list is authoritative only for its returned records:
+        every requested ID missing from that list is fetched individually so a
+        pagination/indexing gap cannot be treated as a deleted work item.
+        """
+        if not item_ids:
+            return {}
+        if not self.config.project_id:
+            return super().observe_work_item_controls(item_ids)
+
+        issues = self._list_issues_paginated([
+            "--project", self.config.project_id,
+        ])
+        listed_by_id = {
+            str(issue["id"]): issue
+            for issue in issues
+            if isinstance(issue, dict) and issue.get("id")
+        }
+        observations: Dict[str, WorkItemControlProjection] = {}
+        for item_id in item_ids:
+            issue = listed_by_id.get(item_id)
+            if issue is not None:
+                observations[item_id] = self._issue_to_control_projection(
+                    issue, self.config.workspace_id)
+                continue
+            try:
+                observations[item_id] = self.observe_work_item_control(item_id)
+            except WorkItemNotFoundError:
+                continue
+        return observations
+
     def set_authoring_identity(
         self, item_id: str, *, dag_key: str, kind: TaskKind,
     ) -> WorkItem:
