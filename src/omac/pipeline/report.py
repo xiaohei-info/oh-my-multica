@@ -60,18 +60,24 @@ def _graph_snapshot(manifest: Manifest) -> dict:
     }
 
 
-def _fetch_items(store: WorkItemStore, manifest: Manifest) -> dict:
-    """按 work_item_id 精准取回 WorkItem 缓存。查找失败 → None。"""
-    cache: dict = {}
-    for key, node in manifest.nodes.items():
-        if not node.work_item_id:
-            cache[key] = None
+def _observations_to_items_and_payloads(
+    observations: dict,
+) -> tuple[dict, dict]:
+    """reconcile observations → (items, deferred_payloads)。
+
+    observations: 节点 key → WorkItemControlProjection | None。None 观察
+    (节点无 work_item_id、平台已删除即 _MISSING_WORK_ITEM、或读取失败)
+    映射为 None item——与旧 _fetch_items 的失败宽容行为等价。
+    """
+    items: dict = {}
+    deferred_payloads: dict = {}
+    for key, observation in observations.items():
+        if observation is None:
+            items[key] = None
             continue
-        try:
-            cache[key] = store.get_work_item(node.work_item_id)
-        except Exception:
-            cache[key] = None
-    return cache
+        items[key] = observation.work_item
+        deferred_payloads[key] = observation.deferred_payloads
+    return items, deferred_payloads
 
 
 def _node_row(node, item) -> dict:
@@ -148,20 +154,24 @@ def _next_actions(failed_nodes: list, manifest_path: str) -> list:
 
 
 def build_needs_decision(
-    store: WorkItemStore,
     manifest: Manifest,
     manifest_path: str,
     failed_keys: set[str],
+    observations: dict,
     evidence: dict[str, str] | None = None,
 ) -> dict:
     """构建 needs-decision 段(锁定 NEEDS_DECISION_KEYS)。
 
+    observations 复用本轮 reconcile 的观察快照(key → WorkItemControlProjection
+    | None),不再二次读取平台——tick 刚完成全量 reconcile,observations 是
+    最新鲜的事实。
     evidence: 节点 key → 精确失败原因(由 tick 的 collect_results 提供);
-             未传入时(/status 路径)从 item 状态推导。
+             未传入时从 item 状态推导。
     """
+    items, deferred_payloads = _observations_to_items_and_payloads(observations)
     return _build_needs_decision_from_items(
         manifest, manifest_path, failed_keys,
-        _fetch_items(store, manifest), evidence)
+        items, evidence, deferred_payloads)
 
 
 def _build_needs_decision_from_items(
@@ -263,15 +273,8 @@ def build_status_report(
     """
     from .loop import reconcile_with_observations  # 延迟导入,避免循环依赖
     result = reconcile_with_observations(store, manifest, manifest_path)
-    items = {
-        key: observation.work_item if observation is not None else None
-        for key, observation in result.observations.items()
-    }
-    deferred_payloads = {
-        key: observation.deferred_payloads
-        for key, observation in result.observations.items()
-        if observation is not None
-    }
+    items, deferred_payloads = _observations_to_items_and_payloads(
+        result.observations)
 
     return _build_report_from_items(
         manifest, manifest_path, items, deferred_payloads)

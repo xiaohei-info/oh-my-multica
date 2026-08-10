@@ -1,4 +1,6 @@
+import json
 import re
+import subprocess
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -7,8 +9,11 @@ from pathlib import Path
 
 import pytest
 
+import omac.engines.multica as multica_module
 from omac.engines.models import EngineConfig, WorkItemStatus
-from omac.engines.multica import MulticaStore
+from omac.engines.multica import (
+    MulticaStore, _transient_read_failure, _TransientReadFailure,
+)
 from omac.errors import AuthError, PlatformError
 
 
@@ -493,6 +498,112 @@ def test_multica_write_operation_is_never_retried(monkeypatch):
     monkeypatch.setattr(store, "_run_multica", run)
 
     with pytest.raises(PlatformError, match="timed out"):
+        store.update_status("issue-1", WorkItemStatus.DONE)
+
+    assert attempts == 1
+    assert delays == []
+
+
+# ==================== P0: _run_multica 子进程硬超时 ====================
+#
+# multica CLI 在 TCP 连接卡死(SYN_SENT)时会永久挂起;_run_multica 的
+# subprocess.run 必须有进程级硬超时,且超时文案必须被
+# _transient_read_failure 归类为可重试的网络超时——幂等读经
+# _run_idempotent_read 自动重试;写路径从不经过重试包装,超时按
+# Unknown 直接上抛(fail-closed,不盲重试)。
+
+
+def test_run_multica_defines_bounded_subprocess_timeout_constant():
+    timeout = multica_module._MULTICA_SUBPROCESS_TIMEOUT
+
+    assert isinstance(timeout, (int, float))
+    # 必须严格大于 multica CLI 自身 HTTP 超时(缺省约 30s,可经
+    # MULTICA_HTTP_TIMEOUT 调高),让正常慢响应由 CLI 自己的超时文案
+    # 被分类,而不是被进程级硬超时误杀。
+    assert timeout > 30
+
+
+def test_run_multica_passes_timeout_to_subprocess_and_maps_expiry(monkeypatch):
+    store = _store(lambda _delay: None)
+    captured: dict = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured.update(kwargs)
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=kwargs.get("timeout"))
+
+    monkeypatch.setattr(multica_module.subprocess, "run", fake_run)
+
+    with pytest.raises(PlatformError) as excinfo:
+        store._run_multica(["issue", "get", "issue-1", "--output", "json"])
+
+    assert captured["timeout"] == multica_module._MULTICA_SUBPROCESS_TIMEOUT
+    # 挂起的调用必须归类为可重试的网络超时。
+    assert _transient_read_failure(str(excinfo.value)) is (
+        _TransientReadFailure.NETWORK_TIMEOUT)
+
+
+def test_issue_control_read_retries_subprocess_timeout_then_succeeds(monkeypatch):
+    delays = []
+    store = _store(delays.append)
+    attempts = 0
+
+    def fake_run(cmd, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise subprocess.TimeoutExpired(
+                cmd=cmd, timeout=kwargs.get("timeout"))
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps({"id": "issue-1"}), stderr="")
+
+    monkeypatch.setattr(multica_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        store,
+        "_issue_to_control_projection",
+        lambda issue, workspace_id: (issue, workspace_id),
+    )
+
+    assert store.observe_work_item_control("issue-1") == (
+        {"id": "issue-1"}, "ws")
+    assert attempts == 2
+    assert delays == [1.0]
+
+
+def test_issue_control_read_exhausts_retries_on_subprocess_timeout(monkeypatch):
+    delays = []
+    store = _store(delays.append)
+    attempts = 0
+
+    def fake_run(cmd, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=kwargs.get("timeout"))
+
+    monkeypatch.setattr(multica_module.subprocess, "run", fake_run)
+
+    with pytest.raises(PlatformError) as excinfo:
+        store.observe_work_item_control("issue-1")
+
+    assert attempts == 3
+    assert delays == [1.0, 2.0]
+    assert _transient_read_failure(str(excinfo.value)) is (
+        _TransientReadFailure.NETWORK_TIMEOUT)
+
+
+def test_write_path_subprocess_timeout_is_not_retried(monkeypatch):
+    delays = []
+    store = _store(delays.append)
+    attempts = 0
+
+    def fake_run(cmd, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=kwargs.get("timeout"))
+
+    monkeypatch.setattr(multica_module.subprocess, "run", fake_run)
+
+    with pytest.raises(PlatformError, match="timed out|超时"):
         store.update_status("issue-1", WorkItemStatus.DONE)
 
     assert attempts == 1

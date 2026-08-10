@@ -506,11 +506,15 @@ structurally isomorphic with build_status_report(...)["needs_decision"]
 —— /status and exit-20 draw from a single schema module.
 """
 import os
+import traceback
 
 import yaml
 
-from omac.engines.models import WorkItemStatus
+from omac.engines.models import (
+    WorkItem, WorkItemControlProjection, WorkItemPayload, WorkItemStatus,
+)
 from omac.pipeline.loop import tick
+from omac.pipeline.report import build_needs_decision
 
 
 class TestNeedsDecisionContract:
@@ -587,3 +591,104 @@ class TestNeedsDecisionContract:
             assert set(by_key_tick[key].keys()) == set(by_key_status[key].keys())
         # next_actions 都是可执行的 omac node 命令
         assert all(a.startswith("omac node ") for a in nd_b["next_actions"])
+
+
+class TestNeedsDecisionReportReusesObservations:
+    """P1: tick 的 needs_decision 报告复用本轮 reconcile observations。
+
+    旧实现在 state == needs_decision 时经 _fetch_items 对每个带 work_item_id
+    的节点再做一次全水合 get_work_item——而本轮 tick 刚做完全量 reconcile,
+    observations 更新鲜。报告构造必须只消费传入的 observations,不再触发
+    任何 store 读取。
+    """
+
+    def test_tick_needs_decision_report_does_not_read_store_again(self, tmp_path):
+        """报告构造阶段零 store 读取:任何 get_work_item 调用栈都不得出现 report.py。"""
+        path = _manifest_yaml(tmp_path, [
+            {"id": "a", "worker": "alice", "status": "in_progress", "work_item_id": "1"},
+            {"id": "b", "worker": "bob", "status": "todo", "blocked_by": ["a"]},
+        ])
+        manifest = load_manifest(path)
+        store = _mock_store()
+        store.create_work_item("ws", "A", "d", dag_key="a", worker="alice")
+        store.update_status("1", WorkItemStatus.FAILED)
+
+        read_stacks = []
+        original_get = store.get_work_item
+
+        def recording_get(item_id):
+            read_stacks.append(traceback.extract_stack())
+            return original_get(item_id)
+
+        store.get_work_item = recording_get
+
+        result = tick(store, MockRuntime(store), manifest, path)
+
+        assert result.state == "needs_decision"
+        assert read_stacks  # reconcile / collect 仍会读取平台
+        report_reads = [
+            stack for stack in read_stacks
+            if any(frame.filename.endswith("report.py") for frame in stack)
+        ]
+        assert report_reads == []
+
+    def test_build_needs_decision_consumes_observations_only(self, tmp_path):
+        """报告仅由传入的观察快照构建:字段映射与 deferred payload 语义与
+        build_status_report 一致(同一 _build_needs_decision_from_items)。"""
+        path = _manifest_yaml(tmp_path, [
+            {"id": "a", "worker": "alice", "status": "blocked", "work_item_id": "1"},
+            {"id": "b", "worker": "bob", "status": "todo", "blocked_by": ["a"]},
+        ])
+        manifest = load_manifest(path)
+        item = WorkItem(
+            id="1", workspace_id="ws", title="A", description="d",
+            status=WorkItemStatus.BLOCKED,
+            dag_key="a",
+            artifacts={"pr_url": "https://pr/1"},
+            review_verdict="reject",
+            review_comment="tests missing",
+        )
+        projection = WorkItemControlProjection(
+            item, frozenset({WorkItemPayload.VERIFICATION}))
+
+        report = build_needs_decision(
+            manifest, path, {"a"}, {"a": projection, "b": None},
+            evidence={"a": "ci failed"})
+
+        assert set(report.keys()) == set(NEEDS_DECISION_KEYS)
+        assert len(report["failed_nodes"]) == 1
+        node = report["failed_nodes"][0]
+        assert node["key"] == "a"
+        assert node["status"] == "blocked"
+        assert node["reason"] == "ci failed"
+        assert node["work_item_id"] == "1"
+        assert node["pr_url"] == "https://pr/1"
+        # deferred payload 按「引用已声明」计存在,与 build_status_report 相同
+        assert node["evidence_summary"] == {
+            "review_verdict": "reject",
+            "review_comment": "tests missing",
+            "has_verification": True,
+            "has_review": False,
+        }
+        assert report["blocked_downstream"] == ["b"]
+        assert report["next_actions"] == [
+            f"omac node retry {path} a",
+            f"omac node abandon {path} a",
+        ]
+
+    def test_build_needs_decision_none_observation_equals_legacy_tolerance(
+            self, tmp_path):
+        """None 观察(≙ 旧 _fetch_items 查找失败 / _MISSING_WORK_ITEM)→ None item。"""
+        path = _manifest_yaml(tmp_path, [
+            {"id": "a", "worker": "alice", "status": "failed", "work_item_id": "1"},
+        ])
+        manifest = load_manifest(path)
+
+        report = build_needs_decision(manifest, path, {"a"}, {"a": None})
+
+        assert set(report.keys()) == set(NEEDS_DECISION_KEYS)
+        node = report["failed_nodes"][0]
+        assert node["pr_url"] is None
+        assert node["evidence_summary"] is None
+        # 无精确原因且无 item 时回退 node.status,与旧 _fetch_items 宽容路径一致
+        assert node["reason"] == "failed"

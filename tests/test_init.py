@@ -44,7 +44,7 @@ def test_multica_list_workspaces_parses_json(monkeypatch):
         stdout = payload
         stderr = ""
 
-    def fake_run(cmd, capture_output=False, text=False):
+    def fake_run(cmd, capture_output=False, text=False, timeout=None):
         assert cmd[0] == "multica"
         # discovery 期 workspace_id 为空,不应注入 --workspace-id
         assert "--workspace-id" not in cmd
@@ -218,7 +218,7 @@ def test_multica_create_work_item_passes_project(monkeypatch):
         stderr = ""
         def __init__(self, out): self.stdout = out
 
-    def fake_run(cmd, capture_output=False, text=False):
+    def fake_run(cmd, capture_output=False, text=False, timeout=None):
         if "create" in cmd and "issue" in cmd:
             seen["create_cmd"] = cmd
             return _R(json.dumps({"id": "issue-1"}))
@@ -247,7 +247,7 @@ def test_multica_create_project_registers_project_and_workspace_repos(monkeypatc
         stderr = ""
         def __init__(self, out): self.stdout = out
 
-    def fake_run(cmd, capture_output=False, text=False):
+    def fake_run(cmd, capture_output=False, text=False, timeout=None):
         calls.append(cmd)
         if "project" in cmd and "create" in cmd:
             return _R(json.dumps({"id": "proj-9", "title": "demo"}))

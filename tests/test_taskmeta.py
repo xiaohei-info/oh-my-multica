@@ -420,7 +420,8 @@ class _FakeMulticaProc:
         self.attachment_download_failures = 0
         self.calls = []           # 记录调用,供断言
 
-    def run(self, cmd, capture_output=True, text=True):
+    def run(self, cmd, capture_output=True, text=True, timeout=None):
+        assert timeout is not None  # 所有 multica CLI 调用都有进程级硬超时
         self.calls.append(cmd)
         # cmd = ["multica", --workspace-id?, ws?, <subcommand...>]
         # 跳过全局 flag 段,定位子命令
