@@ -40,7 +40,7 @@ from omac.engines.models import (
 )
 from omac.engines.mock import MockRuntime, MockStore
 from omac.engines.multica import MulticaStore
-from omac.errors import PlatformError
+from omac.errors import AuthError, PlatformError, WorkItemNotFoundError
 from omac.pipeline import loop
 from omac.pipeline.report import build_status_report
 from omac.pipeline.tasks import _pristine_amendment_activity_projection
@@ -649,9 +649,13 @@ def test_146_node_full_scan_batches_control_envelopes_without_payload_hydration(
 
     assert list(observations) == list(nodes)
     assert remote.issue_lists == 2
-    assert remote.issue_gets == 0
+    assert remote.issue_gets == 8
     assert remote.attachment_downloads == 18
-    assert remote.calls[:2] == [("issue-list", "1"), ("issue-list", "2")]
+    assert remote.calls[:8] == [
+        ("issue", item_id)
+        for item_id in [*sorted(f"active-{index}" for index in range(7)), "confirm-0"]
+    ]
+    assert remote.calls[8:10] == [("issue-list", "1"), ("issue-list", "2")]
 
 
 def test_146_node_full_scan_falls_back_to_issue_get_for_list_omission(tmp_path):
@@ -682,23 +686,144 @@ def test_146_node_full_scan_falls_back_to_issue_get_for_list_omission(tmp_path):
         store, manifest, full_scan=True)
 
     assert observations[omitted_id].work_item.id == omitted_id
-    assert remote.issue_gets == 1
+    assert remote.issue_gets == 9
 
 
-def test_full_scan_list_failure_is_an_atomic_observation_barrier(tmp_path):
+def test_full_scan_active_control_failure_remains_an_observation_barrier(tmp_path):
     issues, attachments, nodes = _large_dag_fixture()
     remote = _RemoteFixture(issues, attachments)
     store = _store(remote)
     manifest, path = _manifest_path(tmp_path, nodes)
     before = Path(path).read_bytes()
-    store._run_multica = lambda args, capture=True: (_ for _ in ()).throw(
-        PlatformError("issue list timed out"))
+    active_id = nodes["active-0"].work_item_id
+    original_run = store._run_multica
 
-    with pytest.raises(PlatformError, match="issue list timed out"):
+    def fail_active(args, capture=True):
+        if args[:2] == ["issue", "get"] and args[2] == active_id:
+            raise PlatformError("active control timed out")
+        return original_run(args, capture)
+
+    store._run_multica = fail_active
+
+    with pytest.raises(PlatformError, match="active control timed out"):
         loop.reconcile(store, manifest, path, full_scan=True)
 
     assert Path(path).read_bytes() == before
-    assert remote.attachment_downloads == 0
+
+
+@pytest.mark.parametrize("error", [
+    PlatformError("static control timed out"),
+    AuthError("static control authentication expired"),
+])
+def test_full_scan_no_project_multica_static_control_failure_fails_closed(
+    tmp_path, error,
+):
+    store = MulticaStore(EngineConfig(
+        engine_type="multica", workspace_id="ws", project_id=None))
+    manifest = Manifest(meta={}, nodes={
+        "static": Node(
+            "static", "worker", work_item_id="issue-static", status="blocked"),
+    })
+    path = str(tmp_path / "manifest.yaml")
+    save_manifest(manifest, path)
+
+    def fail_control(_item_id):
+        raise error
+
+    store.observe_work_item_control = fail_control
+
+    with pytest.raises(type(error), match=str(error)):
+        loop.reconcile(store, manifest, path, full_scan=True)
+
+
+def test_full_scan_static_batch_failure_falls_back_and_isolates_unknown_error(
+    tmp_path,
+):
+    issues, attachments, nodes = _large_dag_fixture()
+    remote = _RemoteFixture(issues, attachments)
+    store = _store(remote)
+    manifest, path = _manifest_path(tmp_path, nodes)
+    static_id = nodes["blocked-0"].work_item_id
+    original_observe = store.observe_work_item_control
+
+    def fail_batch(item_ids):
+        raise PlatformError("static batch timed out")
+
+    def fallback(item_id):
+        if item_id == static_id:
+            raise AuthError("static fallback authentication expired")
+        return original_observe(item_id)
+
+    store.observe_work_item_controls = fail_batch
+    store.observe_work_item_control = fallback
+
+    result = loop.reconcile_with_observations(
+        store, manifest, path, full_scan=True)
+
+    assert result.audit_complete is False
+    assert result.incomplete_static_keys == frozenset({"blocked-0"})
+    assert result.observations["active-0"] is not None
+    assert manifest.nodes["blocked-0"].status == nodes["blocked-0"].status
+    assert manifest.nodes["blocked-0"].work_item_id == static_id
+
+
+def test_full_scan_static_missing_fallback_is_authoritative_fact(tmp_path):
+    issues, attachments, nodes = _large_dag_fixture()
+    remote = _RemoteFixture(issues, attachments)
+    store = _store(remote)
+    manifest, path = _manifest_path(tmp_path, nodes)
+    static_id = nodes["blocked-0"].work_item_id
+    original_observe = store.observe_work_item_control
+
+    def fail_batch(item_ids):
+        raise PlatformError("static batch timed out")
+
+    def fallback(item_id):
+        if item_id == static_id:
+            raise WorkItemNotFoundError("missing static item")
+        return original_observe(item_id)
+
+    store.observe_work_item_controls = fail_batch
+    store.observe_work_item_control = fallback
+
+    result = loop.reconcile_with_observations(
+        store, manifest, path, full_scan=True)
+
+    assert result.audit_complete is True
+    assert result.incomplete_static_keys == frozenset()
+    assert result.observations["blocked-0"] is None
+    assert manifest.nodes["blocked-0"].work_item_id is None
+
+
+def test_full_scan_list_failure_isolates_static_controls(tmp_path):
+    issues, attachments, nodes = _large_dag_fixture()
+    remote = _RemoteFixture(issues, attachments)
+    store = _store(remote)
+    manifest, path = _manifest_path(tmp_path, nodes)
+    static_ids = {
+        node.work_item_id
+        for key, node in nodes.items()
+        if key not in loop.reconcile_active_keys(manifest)
+    }
+    original_run = store._run_multica
+
+    def fail_lists_only(args, capture=True):
+        if args[:2] == ["issue", "list"]:
+            raise PlatformError("issue list timed out")
+        return original_run(args, capture)
+
+    store._run_multica = fail_lists_only
+    result = loop.reconcile_with_observations(
+        store, manifest, path, full_scan=True)
+
+    assert result.audit_complete is True
+    assert result.incomplete_static_keys == frozenset()
+    assert remote.issue_gets == len(nodes)
+    assert static_ids <= {
+        observation.work_item.id
+        for observation in result.observations.values()
+        if observation is not None
+    }
 
 
 def test_146_node_reconcile_reuses_immutable_attachment_bodies_across_ticks(
@@ -733,7 +858,7 @@ def test_146_node_status_reuses_reconcile_observation_budget(tmp_path):
         remote.issue_gets,
         remote.attachment_downloads,
         remote.pr_observations,
-    ) == (2, 0, 18, 1)
+    ) == (2, 8, 18, 1)
 
 
 def test_146_node_full_tick_reuses_reconcile_observations_for_collect(
@@ -1388,8 +1513,8 @@ def test_stale_manifest_hydrates_new_platform_delivery_and_reenters_gate(
     assert loop.reconcile(store, manifest, path, full_scan=True) is True
 
     assert manifest.nodes["node-a"].status == "in_progress"
-    assert remote.issue_lists == 1
-    assert remote.issue_gets == 0
+    assert remote.issue_lists == (0 if manifest_status == "done" else 1)
+    assert remote.issue_gets == (1 if manifest_status == "done" else 0)
     assert remote.attachment_downloads == expected_downloads
 
 
@@ -1599,7 +1724,7 @@ def test_cli_status_recovers_confirmed_merge_from_one_control_read_without_hydra
         remote.issue_gets,
         remote.attachment_downloads,
         remote.pr_observations,
-    ) == (1, 0, 0, 0)
+    ) == (0, 1, 0, 0)
 
 
 def test_status_summary_preserves_deferred_verification_and_review_presence(

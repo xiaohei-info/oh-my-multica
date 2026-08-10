@@ -1419,6 +1419,10 @@ class MulticaStore(WorkItemStore):
                 f"Could not get issue {item_id}", f"获取 issue {item_id} 失败"))
         return self._issue_to_control_projection(result, self.config.workspace_id)
 
+    def control_batch_observation_supported(self) -> bool:
+        """Return whether the configured project enables a true list-batch read."""
+        return bool(self.config.project_id)
+
     def observe_work_item_controls(
         self, item_ids: List[str],
     ) -> Dict[str, WorkItemControlProjection]:

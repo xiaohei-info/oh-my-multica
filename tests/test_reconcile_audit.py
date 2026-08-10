@@ -221,6 +221,45 @@ def test_failed_full_tick_after_reconcile_does_not_advance_audit_state(
     assert "reconcile_audit" not in load_manifest(path).meta
 
 
+def test_incomplete_full_scan_does_not_advance_audit_state_or_schedule(tmp_path):
+    class BatchCapableMockStore(MockStore):
+        def control_batch_observation_supported(self):
+            return True
+
+    store = BatchCapableMockStore(
+        EngineConfig(engine_type="mock", workspace_id="audit"))
+    item = store.create_work_item("audit", "node", "test", dag_key="node", worker="worker")
+    store.update_status(item.id, WorkItemStatus.BLOCKED)
+    manifest = Manifest(meta={}, nodes={
+        "node": Node("node", "worker", work_item_id=item.id, status="blocked"),
+    })
+    path = str(tmp_path / "manifest.yaml")
+    save_manifest(manifest, path)
+    recorded = False
+
+    def fail_batch(_item_ids):
+        raise PlatformError("static batch timed out")
+
+    def fail_fallback(_item_id):
+        raise PlatformError("static fallback timed out")
+
+    def record():
+        nonlocal recorded
+        recorded = True
+        reconcile_audit.record_successful_tick(manifest, full_scan=True, now=NOW)
+
+    store.observe_work_item_controls = fail_batch
+    store.observe_work_item_control = fail_fallback
+    result = tick(
+        store, MockRuntime(store), manifest, path, full_scan=True,
+        after_successful_tick=record)
+
+    assert result.audit_complete is False
+    assert recorded is False
+    assert "reconcile_audit" not in load_manifest(path).meta
+    assert reconcile_audit.should_full_scan(manifest, _config(), now=NOW)
+
+
 def test_failed_audit_state_write_does_not_advance_audit_state(tmp_path):
     store = MockStore(EngineConfig(engine_type="mock", workspace_id="audit"))
     item = store.create_work_item("audit", "node", "test", dag_key="node", worker="worker")
