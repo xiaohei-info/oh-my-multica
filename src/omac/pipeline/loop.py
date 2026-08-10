@@ -1048,20 +1048,32 @@ def _validate_structured_recovery_payloads(
 
 
 def _observe_reconcile_inputs(
-    store: WorkItemStore, manifest: Manifest, max_parallel: int = 4,
+    store: WorkItemStore,
+    manifest: Manifest,
+    max_parallel: int = 4,
+    *,
+    full_scan: bool = False,
 ) -> tuple[Dict[str, Any], Dict[str, Any]]:
-    """Observe controls for all nodes, plan hydration, then load required evidence."""
+    """Observe one reconcile scope, plan hydration, then load required evidence.
+
+    ``full_scan`` is intentionally an explicit caller choice. Normal tick/run
+    reconciliation observes only the active set; ``dag status`` requests the
+    complete platform view. P3 may later choose full scans on an audit
+    schedule without changing this read contract.
+    """
     controls: Dict[str, Any] = {}
     observations: Dict[str, Any] = {}
     pull_requests: Dict[str, Any] = {}
 
-    # Phase 1: every Issue control envelope is read before any attachment body.
+    # Phase 1: every selected Issue control envelope is read before any
+    # attachment body. Static nodes are not read during normal reconciliation.
     # Adapters may explicitly allow bounded parallel reads; results remain an
     # all-or-nothing barrier and are published in manifest order below.
+    active_keys = reconcile_active_keys(manifest)
     control_jobs = [
         (key, node.work_item_id)
         for key, node in manifest.nodes.items()
-        if node.work_item_id
+        if node.work_item_id and (full_scan or key in active_keys)
     ]
 
     def observe_control(job: Tuple[str, str]) -> Tuple[str, Any]:
@@ -1215,6 +1227,7 @@ def _block_runtime_failure(
         "failure_class": failure_class,
         "next_action": retry,
     }
+    _mark_recovery_pending(manifest, key)
     store.update_work_item_metadata(item.id, decision_required=decision)
     store.update_status(item.id, WorkItemStatus.BLOCKED)
     set_node(manifest, key, status="blocked")
@@ -1240,6 +1253,8 @@ def _block_reviewer(
     )
     decision = _reviewer_recovery_decision(
         manifest_path, key, item, reason_code, run_id=run_id)
+    manifest._recovery_manifest_path = manifest_path
+    _mark_recovery_pending(manifest, key)
     store.update_work_item_metadata(item.id, decision_required=decision)
     store.update_status(item.id, WorkItemStatus.BLOCKED)
     set_node(manifest, key, status="blocked")
@@ -1274,6 +1289,7 @@ def _block_review_rework_budget(
         value = getattr(item, field, None)
         if isinstance(value, dict) and value:
             decision[field] = value
+    _mark_recovery_pending(manifest, key)
     store.update_work_item_metadata(item.id, decision_required=decision)
     store.update_status(item.id, WorkItemStatus.BLOCKED)
     store.add_comment(item.id, ui(
@@ -1307,6 +1323,7 @@ def _block_review_non_convergence(
     resolution: ConvergenceResolution,
 ) -> str:
     """Stop semantic retries and preserve the ledger for DAG amendment."""
+    _mark_recovery_pending(manifest, key)
     persist_decision(store, item, resolution)
     if manifest.nodes[key].status != "blocked":
         set_node(manifest, key, status="blocked")
@@ -1375,6 +1392,8 @@ def _reviewer_no_submit_grace_state(
 def _reviewer_run_baseline_for_observation(
     store: WorkItemStore,
     runtime: AgentRuntime,
+    manifest: Manifest,
+    key: str,
     item,
     reviewer: str,
     reviewer_id: str,
@@ -1399,6 +1418,7 @@ def _reviewer_run_baseline_for_observation(
                 baseline = replace(
                     baseline, cutoff_created_at=identity.verification_created_at,
                     generation=f"review-{secrets.token_hex(8)}")
+                _mark_recovery_pending(manifest, key)
                 store.update_work_item_metadata(
                     item.id, reviewer_run_baseline=baseline)
             cutoff = _parse_platform_time(baseline.cutoff_created_at)
@@ -1444,12 +1464,15 @@ def _reviewer_run_baseline_for_observation(
         generation=f"review-{secrets.token_hex(8)}",
         baseline_direct_run_ids=tuple(sorted(historical_ids)),
     )
+    _mark_recovery_pending(manifest, key)
     store.update_work_item_metadata(
         item.id, reviewer_run_baseline=baseline)
     return baseline, None
 
 
-def _retry_reviewer_attempt(store, runtime, node, item, baseline) -> str | None:
+def _retry_reviewer_attempt(
+    store, runtime, node, item, baseline, *, manifest=None, key: str | None = None,
+) -> str | None:
     runs = runtime.list_runs(item.id)
     retry = replace(
         baseline,
@@ -1459,6 +1482,10 @@ def _retry_reviewer_attempt(store, runtime, node, item, baseline) -> str | None:
             run.id for run in runs if run.kind == "direct")),
         target_run_id=None,
     )
+    if manifest is not None and key is not None:
+        _mark_recovery_pending(manifest, key)
+    else:
+        node.recovery_marker = True
     store.update_work_item_metadata(item.id, reviewer_run_baseline=retry)
     wake_error = None
     try:
@@ -1509,6 +1536,8 @@ def _dispatch_reviewer_for_current_subject(
 
     reviewer_id = store.resolve_agent_id(node.reviewer)
     baseline = current.reviewer_run_baseline
+    if baseline is not None:
+        _mark_recovery_pending(manifest, key)
     if (
         baseline is None
         or not baseline.is_causally_bound()
@@ -1544,6 +1573,7 @@ def _dispatch_reviewer_for_current_subject(
                 if run.kind == "direct"
             )),
         )
+        _mark_recovery_pending(manifest, key)
         store.update_work_item_metadata(
             item_id, reviewer_run_baseline=baseline)
         current = store.get_work_item(item_id)
@@ -1616,6 +1646,8 @@ def _dispatch_worker_handoff(
         projection or store.observe_work_item_control(item_id)
     ).work_item
     intent = current.worker_handoff
+    if intent is not None:
+        _mark_recovery_pending(manifest, key)
     if intent is not None and intent.gate in {"review", "review-nits"}:
         resolution = _resolve_handoff_review_convergence(current, intent, key)
         if resolution.state is ResolutionState.NEEDS_DECISION:
@@ -1707,6 +1739,7 @@ def _dispatch_worker_handoff(
                 return _WorkerHandoffResult("pending-initialization", None)
             projection = preparation.projection
             current = projection.work_item
+        _mark_recovery_pending(manifest, key)
         preparation = _apply_observed_handoff_preparation_write(
             store,
             item_id,
@@ -2482,12 +2515,14 @@ def _recover_legacy_initial_worker(store, runtime, manifest, key, item, path):
             generation=f"handoff-{secrets.token_hex(8)}",
             target_agent_id=worker_id, target_run_id=observed.target_run_id,
             target_worker_bounce=0)
+        _mark_recovery_pending(manifest, key)
         store.update_work_item_metadata(item.id, worker_handoff=intent)
         return store.observe_work_item_control(item.id).work_item, None
     retry = f"omac node retry {path} {key}"
     reason = ui(
         f"Legacy Worker Run causality is unsafe; inspect Runs, then use `{retry}`.",
         f"旧版 Worker Run 因果关系不安全；请检查 Runs 后执行 `{retry}`。")
+    _mark_recovery_pending(manifest, key)
     store.update_work_item_metadata(item.id, decision_required={
         "schema": DECISION_REQUIRED_SCHEMA,
         "reason_code": "legacy-worker-handoff-migration-unproven",
@@ -2554,11 +2589,94 @@ def _complete_merge_if_confirmed(
 
 # ==================== reconcile ====================
 
+def reconcile_active_keys(manifest: Manifest) -> set[str]:
+    """计算 reconcile 间隔轮需要观察的活跃集（按需读取，P2）。
+
+    活跃集成员（宁多勿漏）：
+    - RUNNING_STATUSES：collect_results 在 tick 路径要求 running 节点的
+      observation 完整（硬约束，活跃集必须 ⊇ running 集）；
+    - todo：即将派发，需旧投影保护；依赖刚满足、本轮将被 dispatch 的节点
+      是 ready 的 todo 节点（graph.ready_nodes 只返回 todo），已被本规则覆盖；
+    - recovery_marker=True：平台挂着待消费的恢复事实（worker_handoff /
+      reviewer_run_baseline / decision_required）；
+    - done 且未 confirmed-merge 收口：PR 收口观察是 done→merging/merged 的
+      唯一依据。
+
+    静态集（间隔轮跳过、全量审计轮兜底）：confirmed-merge 已收口的 done、
+    无恢复标记的 blocked/failed、abandoned（无条件剔除——今天读了也被
+    _reconcile_candidate 直接丢弃）。非标准状态保守留在活跃集，避免静默
+    丢失通用平台同步分支。
+    """
+    active: set[str] = set()
+    for key, node in manifest.nodes.items():
+        if not node.work_item_id:
+            continue
+        status = node.status
+        if status == "abandoned":
+            continue
+        if (
+            status in RUNNING_STATUSES
+            or status == "todo"
+            or node.recovery_marker
+        ):
+            active.add(key)
+            continue
+        if status == "done" and not confirmed_merge_is_closed(node):
+            active.add(key)
+            continue
+        if status == "done":
+            # confirmed-merge 已收口的 done 属于静态集,留给全量审计轮。
+            continue
+        if status not in FAILED_STATUSES:
+            active.add(key)
+    return active
+
+
+def _has_recovery_control_fact(item) -> bool:
+    """Return whether an observed OMAC recovery fact still needs attention."""
+    return bool(
+        getattr(item, "worker_handoff", None)
+        or getattr(item, "reviewer_run_baseline", None)
+        or getattr(item, "decision_required", None)
+    )
+
+
+def _mark_recovery_pending(manifest: Manifest, key: str) -> None:
+    """Persist the active-set hint before writing a recovery control fact.
+
+    The write outcome can be unknown. Persisting first is deliberately
+    conservative: a restart observes the platform fact rather than silently
+    dropping a possibly committed handoff/baseline/decision.
+    """
+    manifest.nodes[key].recovery_marker = True
+    manifest_path = getattr(manifest, "_recovery_manifest_path", None)
+    if manifest_path is not None:
+        save_manifest(manifest, manifest_path)
+
+
+def _sync_recovery_marker(manifest: Manifest, key: str, item) -> None:
+    """Persist the active-set hint from the authoritative control facts."""
+    marker = _has_recovery_control_fact(item)
+    if manifest.nodes[key].recovery_marker == marker:
+        return
+    manifest.nodes[key].recovery_marker = marker
+    manifest_path = getattr(manifest, "_recovery_manifest_path", None)
+    if manifest_path is not None:
+        save_manifest(manifest, manifest_path)
+
+
+def _clear_recovery_pending(manifest: Manifest, key: str, item) -> None:
+    """Synchronize marker removal after a successful recovery-fact clear."""
+    _sync_recovery_marker(manifest, key, item)
+
+
 def reconcile_with_observations(
     store: WorkItemStore,
     manifest: Manifest,
     manifest_path: str,
     max_parallel: int = 4,
+    *,
+    full_scan: bool = False,
 ) -> ReconcileResult:
     """逐节点拿 work_item_id 去平台核对真实状态,同步回 manifest。
 
@@ -2575,11 +2693,13 @@ def reconcile_with_observations(
     个节点的部分状态。
     """
     ensure_amendment_apply_complete(manifest, manifest_path)
+    manifest._recovery_manifest_path = manifest_path
     observations, pull_requests = _observe_reconcile_inputs(
-        store, manifest, max_parallel=max_parallel)
+        store, manifest, max_parallel=max_parallel, full_scan=full_scan)
     candidate = copy.deepcopy(manifest)
     changed = _reconcile_candidate(
-        store, candidate, manifest_path, observations, pull_requests)
+        store, candidate, manifest_path, observations, pull_requests,
+        full_scan=full_scan)
     if changed:
         save_manifest(candidate, manifest_path)
         manifest.meta = candidate.meta
@@ -2602,15 +2722,20 @@ def reconcile(
     manifest: Manifest,
     manifest_path: str,
     max_parallel: int = 4,
+    *,
+    full_scan: bool = False,
 ) -> bool:
     """Compatibility entry point returning only whether manifest state changed."""
     return reconcile_with_observations(
-        store, manifest, manifest_path, max_parallel=max_parallel).changed
+        store, manifest, manifest_path, max_parallel=max_parallel,
+        full_scan=full_scan).changed
 
 
 def _reconcile_candidate(
     store: WorkItemStore, manifest: Manifest, manifest_path: str,
     observations: Dict[str, Any], pull_requests: Dict[str, Any],
+    *,
+    full_scan: bool = False,
 ) -> bool:
     """用已完整观察的事实计算候选；此阶段不得再执行平台读取。"""
     changed = False
@@ -2624,7 +2749,22 @@ def _reconcile_candidate(
                 set_node(manifest, key, status="blocked")
                 changed = True
             continue
-        observation = observations[key]
+        observation = observations.get(key)
+        if observation is None:
+            # An interval reconcile deliberately has no platform fact for a
+            # static node. Retain its complete manifest projection, including
+            # recovery_marker; P3's full audit will inspect it later.
+            if full_scan or key in reconcile_active_keys(manifest):
+                raise PlatformError(
+                    f"Reconcile observation is missing for selected node {key}")
+            continue
+        observed_marker = (
+            False if observation is _MISSING_WORK_ITEM
+            else _has_recovery_control_fact(observation.work_item)
+        )
+        if node.recovery_marker != observed_marker:
+            node.recovery_marker = observed_marker
+            changed = True
         if observation is _MISSING_WORK_ITEM:
             if confirmed_merge_is_closed(node):
                 if node.status != "done":
@@ -2800,6 +2940,7 @@ def collect_results(
     # Standalone callers retain the complete-read fallback.  ``tick`` passes
     # the fresh, atomic reconcile observations so collection does not repeat
     # the same Issue and attachment reads.
+    manifest._recovery_manifest_path = manifest_path
     if observations is None:
         running_observations = {
             key: WorkItemControlProjection(store.get_work_item(node.work_item_id))
@@ -2880,6 +3021,7 @@ def collect_results(
                 "node_id": key, "next_action": retry,
             }
             if item.decision_required != decision:
+                _mark_recovery_pending(manifest, key)
                 store.update_work_item_metadata(
                     node.work_item_id, decision_required=decision)
                 store.add_comment(node.work_item_id, reason)
@@ -2904,7 +3046,8 @@ def collect_results(
                     f"Worker handoff for {node.work_item_id} predates causal "
                     "delivery identity support; refusing to infer completion")
             handoff = _dispatch_worker_handoff(
-                store, runtime, manifest, key, projection=projection)
+                store, runtime, manifest, key,
+                projection=projection)
             if handoff.state in {
                 "transient-failure", "nonretryable-failure",
             }:
@@ -2939,6 +3082,7 @@ def collect_results(
                     * failure.consecutive_runs)
                 retry_intent = _next_worker_handoff_attempt(
                     store, runtime, item, consume_business_bounce=False)
+                _mark_recovery_pending(manifest, key)
                 store.update_work_item_metadata(
                     node.work_item_id, worker_handoff=retry_intent)
                 handoff = _dispatch_worker_handoff(
@@ -2962,8 +3106,9 @@ def collect_results(
                     agent_run_finished_without_submit=True,
                 )
             elif handoff.state == "complete-unsealed":
-                store.update_work_item_metadata(
+                cleared = store.update_work_item_metadata(
                     node.work_item_id, worker_handoff={})
+                _clear_recovery_pending(manifest, key, cleared)
                 item = handoff.projection.work_item
                 set_node(manifest, key, status="in_progress")
             elif handoff.state != "complete":
@@ -3041,6 +3186,7 @@ def collect_results(
                         "next_action": retry,
                     }
                     if item.decision_required != decision:
+                        _mark_recovery_pending(manifest, key)
                         store.update_work_item_metadata(
                             node.work_item_id, decision_required=decision)
                     store.update_status(
@@ -3057,8 +3203,9 @@ def collect_results(
                     "worker run 已结束但未通过 omac work submit 交付")
                 if worker_limit == 0 or consumed >= worker_limit:
                     store.clear_assignment(node.work_item_id)
-                    store.update_work_item_metadata(
+                    cleared = store.update_work_item_metadata(
                         node.work_item_id, worker_handoff={})
+                    _clear_recovery_pending(manifest, key, cleared)
                     store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
                     set_node(manifest, key, status="blocked")
                     failures[key] = ui(
@@ -3076,6 +3223,7 @@ def collect_results(
                         retry_intent = _next_worker_handoff_attempt(
                             store, runtime, item)
                         store.clear_assignment(node.work_item_id)
+                        _mark_recovery_pending(manifest, key)
                         store.update_work_item_metadata(
                             node.work_item_id,
                             worker_handoff=retry_intent,
@@ -3242,7 +3390,8 @@ def collect_results(
                     reviewer_id = store.resolve_agent_id(node.reviewer)
                     baseline, baseline_error = (
                         _reviewer_run_baseline_for_observation(
-                            store, runtime, item, node.reviewer, reviewer_id)
+                            store, runtime, manifest, key, item,
+                            node.reviewer, reviewer_id)
                     )
                     if baseline_error is not None:
                         failures[key] = _block_reviewer(
@@ -3324,7 +3473,8 @@ def collect_results(
                         retry_kind = "finished_without_submit"
                     if retry_kind:
                         retry_error = _retry_reviewer_attempt(
-                            store, runtime, node, item, baseline)
+                            store, runtime, node, item, baseline,
+                            manifest=manifest, key=key)
                         if retry_error:
                             failures[key] = _block_reviewer(
                                 store, manifest, manifest_path, key, item,
@@ -3393,8 +3543,9 @@ def collect_results(
                 # it. An unknown write result stops this tick; restart either
                 # retries the marker clear or observes it cleared and consumes
                 # the still-preserved verdict normally.
-                store.update_work_item_metadata(
+                cleared = store.update_work_item_metadata(
                     item.id, decision_required={})
+                _clear_recovery_pending(manifest, key, cleared)
 
             log.info(logsetup.EVT_VERDICT, kind=_DAG_KIND, node=key,
                      id=node.work_item_id, verdict=verdict)
@@ -3409,6 +3560,7 @@ def collect_results(
                 if boundary_conflicts:
                     decision = build_contract_boundary_decision(
                         item, node, boundary_conflicts)
+                    _mark_recovery_pending(manifest, key)
                     store.update_work_item_metadata(
                         node.work_item_id,
                         decision_required=decision,
@@ -3938,6 +4090,7 @@ def _restore_active_formal_run_stages(
                     f"Provisional reviewer decision for work item "
                     f"{projection.work_item.id} was not cleared")
             projection = WorkItemControlProjection(cleared)
+            _clear_recovery_pending(manifest, key, cleared)
         expected_status = (
             WorkItemStatus.IN_REVIEW
             if status == "in_review"
@@ -3968,6 +4121,8 @@ def tick(
     max_parallel: int = 4,
     retry_limits: dict | None = None,
     config: dict | None = None,
+    *,
+    full_scan: bool = False,
 ) -> TickResult:
     """执行单轮 tick:reconcile → collect_results → decide → dispatch。
 
@@ -3979,10 +4134,12 @@ def tick(
     (必须经 `omac node retry` 显式决策);retry_limits 是节点内的有界往返。
     """
     ensure_amendment_apply_complete(manifest, manifest_path)
+    manifest._recovery_manifest_path = manifest_path
 
     # 1. Reconcile: 平台状态同步回 manifest
     reconcile_result = reconcile_with_observations(
-        store, manifest, manifest_path, max_parallel=max_parallel)
+        store, manifest, manifest_path, max_parallel=max_parallel,
+        full_scan=full_scan)
 
     # A graph-level blocked projection must not hide an already-dispatched,
     # causally bound stage. Restore only that stage; unrelated decisions remain

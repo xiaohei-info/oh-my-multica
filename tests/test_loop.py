@@ -466,6 +466,9 @@ def _aiteam_834_legacy_delivery(tmp_path):
     engine.store.update_status(item.id, WorkItemStatus.DONE)
     engine.store.clear_assignment(item.id)
     engine.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
+    # This fixture clears the handoff directly on the mock platform, outside
+    # the OMAC completion path that normally clears the local recovery marker.
+    node.recovery_marker = False
     node.status = "in_review"
     save_manifest(manifest, path)
     return engine, manifest, path, node, item
@@ -572,7 +575,9 @@ def test_legacy_decision_restart_does_not_duplicate_comment_or_dispatch(
 
     def crash_before_manifest_save(current, current_path):
         nonlocal crashed
-        if not crashed:
+        # The recovery marker is now persisted before the platform decision.
+        # Crash at the later manifest write, after the platform facts commit.
+        if not crashed and engine.store.get_comments(item.id):
             crashed = True
             raise RuntimeError("crash before legacy decision manifest save")
         return original_save(current, current_path)
@@ -5367,7 +5372,9 @@ class TestReconcile:
         manifest.nodes["a"].status = "blocked"
         save_manifest(manifest, path)
 
-        r = tick(eng.store, eng.runtime, manifest, path)
+        # Missing static items are discovered by an explicit full audit; normal
+        # ticks leave this blocked projection for P3's audit scheduler.
+        r = tick(eng.store, eng.runtime, manifest, path, full_scan=True)
 
         assert "a" in r.dispatched
         assert r.state == "running"

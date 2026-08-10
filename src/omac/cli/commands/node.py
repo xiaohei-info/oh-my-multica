@@ -347,6 +347,15 @@ def _cmd_retry(args) -> int:
     config = load_config()
     engine = _build_engine(config)
 
+    # Persist the active-set hint before any retry recovery metadata write.
+    # The platform facts remain authoritative; this only keeps the node
+    # observable after a restart with an unknown write result. Do this before
+    # a requested worker replacement so a failed platform recovery cannot
+    # commit that business-field change.
+    if node.work_item_id and engine is not None:
+        node.recovery_marker = True
+        save_manifest(manifest, args.manifest)
+
     if args.worker:
         new_worker = _validate_worker(manifest, node, args.worker, config, engine)
         node.worker = new_worker
@@ -403,11 +412,17 @@ def _cmd_retry(args) -> int:
                 if handoff is not None:
                     engine.store.update_work_item_metadata(
                         node.work_item_id, worker_handoff=handoff)
+            refreshed = engine.store.get_work_item(node.work_item_id)
+            node.recovery_marker = bool(
+                refreshed.worker_handoff
+                or refreshed.reviewer_run_baseline
+                or refreshed.decision_required
+            )
         except WorkItemNotFoundError:
             # mock 的跨进程恢复没有持久化 store；陈旧 work_item_id 与 reconcile
             # 的“平台工单不存在”语义相同。retry 仍保留 ID 以兼容输出契约，
             # 下一次 dag run 再由 reconcile 清空并重新建单。
-            pass
+            node.recovery_marker = False
 
     # work_item_id 保留(同一 issue 续用)。
     node.status = "in_review" if stage == "review" else "todo"

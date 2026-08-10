@@ -272,7 +272,10 @@ def build_status_report(
     3. 构建 progress / nodes / needs_decision，不再次读取平台
     """
     from .loop import reconcile_with_observations  # 延迟导入,避免循环依赖
-    result = reconcile_with_observations(store, manifest, manifest_path)
+    # ``dag status`` is the user-facing platform inspection command. It must
+    # not inherit the normal tick/run active-set scope.
+    result = reconcile_with_observations(
+        store, manifest, manifest_path, full_scan=True)
     items, deferred_payloads = _observations_to_items_and_payloads(
         result.observations)
 

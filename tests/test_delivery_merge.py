@@ -899,7 +899,8 @@ class TestMergeClosureRegression:
             PlatformError("platform timeout"))
 
         with pytest.raises(PlatformError, match="platform timeout"):
-            loop.reconcile(store, manifest, str(tmp_path / "m.yaml"))
+            loop.reconcile(
+                store, manifest, str(tmp_path / "m.yaml"), full_scan=True)
 
         assert manifest.nodes["a"].status == "done"
         assert manifest.nodes["a"].merged is True

@@ -247,6 +247,11 @@ class Node:
     merged: bool = False
     merged_at: str | None = None
     merge_request_state: str | None = None
+    # 轻量恢复标记:平台上存在 OMAC 写入的待消费恢复事实
+    # (worker_handoff / reviewer_run_baseline / decision_required)时为 True。
+    # reconcile 按需读取据此把 blocked/failed 节点留在活跃集;标记在事实被
+    # 消费/清除时移除,观察不到标记的存量事实由全量审计轮兜底。
+    recovery_marker: bool = False
 
     def __post_init__(self):
         if isinstance(self.contract, dict):
@@ -296,6 +301,7 @@ def _build_nodes(raw) -> dict:
             merged=bool(n.get("merged", False)),
             merged_at=n.get("merged_at"),
             merge_request_state=n.get("merge_request_state"),
+            recovery_marker=bool(n.get("recovery_marker", False)),
         )
     return nodes
 
@@ -351,6 +357,8 @@ def save_manifest(manifest: Manifest, path: str):
             node["merged_at"] = n.merged_at
         if n.merge_request_state is not None:
             node["merge_request_state"] = n.merge_request_state
+        if n.recovery_marker:
+            node["recovery_marker"] = True
         node_list.append(node)
 
     data = {"meta": manifest.meta, "nodes": node_list}
