@@ -308,7 +308,12 @@ class TestReconcileObservationScope:
     def test_status_requests_full_scan_for_static_nodes(self, tmp_path):
         store = self._store()
         static = self._item(store, "static", WorkItemStatus.BLOCKED)
-        manifest = Manifest(meta={}, nodes={
+        audit_state = {
+            "schema": "omac.reconcile-audit/v1",
+            "last_full_scan_at": "2026-08-11T12:00:00Z",
+            "completed_interval_ticks": 1,
+        }
+        manifest = Manifest(meta={"reconcile_audit": audit_state}, nodes={
             "static": Node(
                 "static", "worker", work_item_id=static.id, status="blocked"),
         })
@@ -322,3 +327,4 @@ class TestReconcileObservationScope:
         build_status_report(manifest, store, path)
 
         assert observed == [static.id]
+        assert load_manifest(path).meta["reconcile_audit"] == audit_state

@@ -28,6 +28,9 @@
       merge: 3                                 # 合并冲突 → worker 重解
       no_submit_runs: 2                        # reviewer 连续结束 Run 未提交裁决的续跑预算(须 ≥ 1;
                                                # 不含基础设施瞬时失败预算,后者固定为 2)
+    reconcile:                                 # P3 低频全量审计调度
+      full_scan_interval_ticks: 20             # 成功 active tick 数达到此值后，下轮全量读取
+      full_scan_max_age_seconds: 1800          # 距上次成功全量读取的最长秒数
 """
 from __future__ import annotations
 
@@ -73,6 +76,12 @@ DEFAULT_MAX_ROUNDS = 3
 # 0 会取消续跑宽限,与「续跑是正常分段评审工作模式」的语义冲突。
 # 基础设施瞬时失败(连续 transient-failure Run)预算不用此值,仍固定为 2。
 DEFAULT_NO_SUBMIT_RUNS = 2
+
+# P3: successful active ticks allowed between persisted full reconcile audits.
+DEFAULT_RECONCILE = {
+    "full_scan_interval_ticks": 20,
+    "full_scan_max_age_seconds": 1800,
+}
 
 DEFAULT_GITHUB_CHECK_COMMAND = "gh pr checks {pr_url} --watch --fail-fast"
 DEFAULT_GITHUB_MERGE_COMMAND = "gh pr merge {pr_url} --squash --delete-branch"
@@ -197,6 +206,37 @@ def resolve_no_submit_runs(config: dict) -> int:
             "no-submit Run 直接 blocked;需要多段评审的 reviewer 请调大"
             "(如 6)。"))
     return val
+
+
+def resolve_reconcile(config: dict) -> dict:
+    """Resolve the P3 reconcile audit schedule and reject unsafe values.
+
+    Both settings are positive integers. A bad value cannot silently defer a
+    full audit, so validation fails closed before a runner tick starts.
+    """
+    raw = get_value(config, "reconcile")
+    if raw is None:
+        return dict(DEFAULT_RECONCILE)
+    if not isinstance(raw, dict):
+        raise ValidationError(ui(
+            f"reconcile must be a YAML mapping; got {type(raw).__name__}",
+            f"reconcile 配置应为 YAML 映射,got {type(raw).__name__}"))
+    resolved = dict(DEFAULT_RECONCILE)
+    for key in DEFAULT_RECONCILE:
+        if key not in raw:
+            continue
+        value = raw[key]
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValidationError(ui(
+                f"reconcile.{key} must be an integer; got "
+                f"{type(value).__name__}({value!r})",
+                f"reconcile.{key} 必须为整数,got {type(value).__name__}({value!r})"))
+        if value < 1:
+            raise ValidationError(ui(
+                f"reconcile.{key} must be >= 1; got {value}",
+                f"reconcile.{key} 必须 >= 1(非法值 {value})"))
+        resolved[key] = value
+    return resolved
 
 
 def resolve_workflow(config: dict) -> dict:

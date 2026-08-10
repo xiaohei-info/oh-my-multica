@@ -134,6 +134,7 @@ def test_init_writes_retry_block(tmp_path, monkeypatch):
     assert cfg["acceptance"] == {"max_rounds": config_mod.DEFAULT_MAX_ROUNDS}
     assert cfg["acceptance"]["max_rounds"] == 3
     assert cfg["workflow"] == config_mod.DEFAULT_WORKFLOW
+    assert cfg["reconcile"] == config_mod.DEFAULT_RECONCILE
 
 
 # ==================== config get/set 可读写 retry ====================
@@ -164,6 +165,14 @@ def test_config_set_negative_retry_rejected(tmp_path, monkeypatch, capsys):
     assert "cannot be negative" in err
 
 
+def test_config_set_invalid_reconcile_value_rejected(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    main(["config", "set", "engine", "mock"])
+    code = main(["config", "set", "reconcile.full_scan_interval_ticks", "0"])
+    assert code == exit_codes.VALIDATION
+    assert "must be >= 1" in capsys.readouterr().err
+
+
 def test_dag_tick_passes_configured_retry_limits(tmp_path, monkeypatch, capsys):
     """dag run/tick 必须把 config.retry 注入主 tick,否则配置写了不生效。"""
     import yaml
@@ -188,14 +197,18 @@ def test_dag_tick_passes_configured_retry_limits(tmp_path, monkeypatch, capsys):
     seen = {}
 
     def fake_tick(store, runtime, manifest_obj, manifest_path, *,
-                  max_parallel=4, retry_limits=None, config=None):
+                  max_parallel=4, retry_limits=None, config=None,
+                  full_scan=False, after_successful_tick=None):
         seen["retry_limits"] = retry_limits
+        seen["full_scan"] = full_scan
+        after_successful_tick()
         return TickResult(state="converged", done=["a"])
 
     monkeypatch.setattr(dag_cmd, "tick", fake_tick)
 
     assert main(["dag", "tick", str(manifest)]) == exit_codes.OK
     assert seen["retry_limits"] == {"worker": 3, "ci": 0, "review": 1, "merge": 2}
+    assert seen["full_scan"] is True
 
 
 # ==================== plan 流水线共用 retry.review ====================
