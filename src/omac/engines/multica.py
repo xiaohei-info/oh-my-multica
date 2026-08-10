@@ -72,6 +72,15 @@ MULTICA_PR_VIEW_FIELDS = (
 )
 _MULTICA_READ_MAX_ATTEMPTS = 3
 _MULTICA_READ_INITIAL_DELAY = 1.0
+# 单次 multica CLI 子进程调用的硬超时(秒)。
+# multica CLI 自带 HTTP 超时(缺省约 30s,可经 MULTICA_HTTP_TIMEOUT 调高),
+# 超时会以可分类的文本输出("Request timed out: ...")返回;此进程级上限只
+# 兜底 CLI 在其 HTTP 超时之前/之外挂死的情形(如 TCP SYN_SENT 卡死),否则
+# 一条挂起连接会永久占住一个 reconcile worker 槽。90s 对 CLI 缺省超时保留
+# >3x 余量,正常慢响应仍由 CLI 自己的超时文案被分类,不会被这里误杀。
+# subprocess.run 在 timeout 到期时会 kill 子进程(Python 语义),无残留进程
+# 需要清理。
+_MULTICA_SUBPROCESS_TIMEOUT = 90.0
 _ATTACHMENT_BODY_CACHE_CAPACITY = 64
 # Current Multica task states plus legacy aliases still returned by older APIs.
 _ACTIVE_RUN_STATUSES = {
@@ -401,12 +410,25 @@ class MulticaStore(WorkItemStore):
             cmd += ["--workspace-id", self.config.workspace_id]
         cmd += args
         try:
-            result = subprocess.run(cmd, capture_output=capture, text=True)
+            result = subprocess.run(
+                cmd, capture_output=capture, text=True,
+                timeout=_MULTICA_SUBPROCESS_TIMEOUT)
         except FileNotFoundError:
             raise AuthError(ui(
                 "multica CLI is not on PATH. Install it and sign in: "
                 "brew install multica-ai/tap/multica && multica login",
                 "multica CLI 不在 PATH —— 先安装并登录:brew install multica-ai/tap/multica && multica login"))
+        except subprocess.TimeoutExpired:
+            # subprocess.run 超时即 kill 子进程(Python 语义),无残留进程需清理。
+            # 文案包含 _transient_read_failure 识别的 "request timed out"/
+            # "请求超时":幂等读经 _run_idempotent_read 自动重试;写路径从不
+            # 经过该重试包装,超时按 Unknown 直接上抛(fail-closed,不盲重试)。
+            raise PlatformError(ui(
+                "multica request timed out after "
+                f"{int(_MULTICA_SUBPROCESS_TIMEOUT)}s "
+                f"(the CLI process was killed): {' '.join(cmd)}",
+                f"multica 请求超时({int(_MULTICA_SUBPROCESS_TIMEOUT)} 秒,"
+                f"已终止 CLI 进程): {' '.join(cmd)}"))
         if result.returncode != 0:
             stderr = (result.stderr or "").strip()
             if result.returncode == 3 or "auth" in stderr.lower() or "login" in stderr.lower():

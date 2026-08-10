@@ -4052,8 +4052,12 @@ def tick(
     report: Dict[str, Any] = {}
     if state == "needs_decision":
         from ..pipeline.report import NEEDS_DECISION_KEYS, build_needs_decision  # 延迟导入,避免循环依赖
+        # 复用本轮 reconcile 的观察快照构建报告,消灭二次全量读取
+        # (旧实现经 _fetch_items 对每个带 work_item_id 的节点再做一次
+        # 全水合 get_work_item,含全量附件下载,而 observations 更新鲜)。
         report = build_needs_decision(
-            store, manifest, manifest_path, set(failed_keys), evidence=new_failures)
+            manifest, manifest_path, set(failed_keys),
+            reconcile_result.observations, evidence=new_failures)
         # 锁定 schema:P5 web / agent 消费方只依赖 NEEDS_DECISION_KEYS
         assert set(report.keys()) == set(NEEDS_DECISION_KEYS)
 
