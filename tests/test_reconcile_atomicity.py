@@ -58,7 +58,7 @@ def test_unknown_work_item_read_preserves_every_manifest_business_state(
     store.get_work_item = lambda _item_id: (_ for _ in ()).throw(error)
 
     with pytest.raises(type(error), match=str(error)):
-        loop.reconcile(store, manifest, path)
+        loop.reconcile(store, manifest, path, full_scan=True)
 
     assert manifest.nodes["a"].status == status
     assert manifest.nodes["a"].work_item_id == item_id
@@ -101,7 +101,7 @@ def test_nth_work_item_read_failure_discards_partial_reconcile_results(tmp_path)
     store.get_work_item = fail_on_fourth
 
     with pytest.raises(PlatformError, match="fourth read timed out"):
-        loop.reconcile(store, manifest, path)
+        loop.reconcile(store, manifest, path, full_scan=True)
 
     assert [node.status for node in manifest.nodes.values()] == [
         "done", "in_review", "todo", "blocked",

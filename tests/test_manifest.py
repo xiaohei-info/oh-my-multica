@@ -189,3 +189,57 @@ def test_missing_worker_rejected(tmp_path):
         assert False, "should raise"
     except ValueError:
         pass
+
+
+# ==================== recovery_marker(reconcile 按需读取的轻量恢复标记) ====================
+
+def test_recovery_marker_defaults_false_and_is_omitted_when_false(tmp_path):
+    """新字段缺省 False;False 不落盘(旧 manifest 向后兼容,不新增噪声字段)。"""
+    path = _write(tmp_path, BASIC)
+    m = load_manifest(path)
+    assert m.nodes["a"].recovery_marker is False
+    assert m.nodes["b"].recovery_marker is False
+
+    save_manifest(m, path)
+    import yaml as _yaml
+    raw = _yaml.safe_load(open(path, encoding="utf-8").read())
+    assert all("recovery_marker" not in node for node in raw["nodes"])
+
+
+def test_recovery_marker_roundtrip_true(tmp_path):
+    """True 往返保留:save 落盘、load 读回。"""
+    path = _write(tmp_path, BASIC)
+    m = load_manifest(path)
+    m.nodes["a"].recovery_marker = True
+    save_manifest(m, path)
+
+    m2 = load_manifest(path)
+    assert m2.nodes["a"].recovery_marker is True
+    assert m2.nodes["b"].recovery_marker is False
+
+
+def test_recovery_marker_loads_legacy_manifest_without_field(tmp_path):
+    """旧 manifest(无 recovery_marker 字段)加载为 False,不报错。"""
+    legacy = (
+        "meta: {}\nnodes:\n"
+        "  - id: a\n    worker: alice\n    work_item_id: \"7\"\n"
+        "    status: blocked\n"
+    )
+    m = load_manifest(_write(tmp_path, legacy))
+    assert m.nodes["a"].recovery_marker is False
+
+
+def test_recovery_marker_clear_roundtrip(tmp_path):
+    """标记可被清除:True → False 后再落盘不再携带该字段。"""
+    path = _write(tmp_path, BASIC)
+    m = load_manifest(path)
+    m.nodes["a"].recovery_marker = True
+    save_manifest(m, path)
+    m.nodes["a"].recovery_marker = False
+    save_manifest(m, path)
+
+    m2 = load_manifest(path)
+    assert m2.nodes["a"].recovery_marker is False
+    import yaml as _yaml
+    raw = _yaml.safe_load(open(path, encoding="utf-8").read())
+    assert all("recovery_marker" not in node for node in raw["nodes"])

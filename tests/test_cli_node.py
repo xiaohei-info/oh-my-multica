@@ -1495,8 +1495,49 @@ def test_retry_handoff_retirement_is_restart_safe(
     assert recovered_item.status is WorkItemStatus.TODO
 
 
-def test_retry_platform_failure_keeps_manifest_unchanged(tmp_path, monkeypatch):
-    """平台 todo 写入失败时，不能只保存本地 worker/status 形成分叉事实。"""
+def test_retry_clears_recovery_marker_after_retiring_recovery_facts(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OMAC_ENGINE", "mock")
+    monkeypatch.setenv("OMAC_WORKSPACE_ID", "ws-1")
+
+    from omac.core.taskmeta import TaskPhase
+    from omac.engines import EngineConfig, create_engine
+    from omac.engines.models import WorkItemStatus
+
+    engine = create_engine(
+        "mock",
+        EngineConfig("mock", "ws-1", extra={"MOCK_AUTO_COMPLETE": "false"}),
+    )
+    item = engine.store.create_work_item("ws-1", "t", "d", "b", "bob")
+    engine.store.update_work_item_metadata(
+        item.id,
+        phase=TaskPhase.REVIEW,
+        decision_required={"reason_code": "operator-retry"},
+        worker_handoff=_old_worker_handoff(),
+    )
+    engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
+
+    import omac.cli.commands.node as node_mod
+    monkeypatch.setattr(node_mod, "create_engine", lambda *a, **kw: engine)
+    path = _write_manifest(tmp_path, [{
+        "id": "b", "worker": "bob", "status": "blocked",
+        "work_item_id": item.id, "recovery_marker": True,
+    }])
+
+    assert main(["node", "retry", path, "b"]) == exit_codes.OK
+    recovered = engine.store.get_work_item(item.id)
+    assert recovered.worker_handoff is None
+    assert recovered.reviewer_run_baseline is None
+    assert recovered.decision_required is None
+    assert load_manifest(path).nodes["b"].recovery_marker is False
+
+
+def test_retry_platform_failure_preserves_recovery_marker_and_business_fields(
+    tmp_path, monkeypatch,
+):
+    """平台恢复写入失败时保留观察 marker，不能提交业务字段变更。"""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("OMAC_ENGINE", "mock")
     monkeypatch.setenv("OMAC_WORKSPACE_ID", "ws-1")
@@ -1531,6 +1572,47 @@ def test_retry_platform_failure_keeps_manifest_unchanged(tmp_path, monkeypatch):
     manifest = load_manifest(path)
     assert manifest.nodes["b"].worker == "bob"
     assert manifest.nodes["b"].status == "blocked"
+    assert manifest.nodes["b"].work_item_id == item.id
+    assert manifest.nodes["b"].recovery_marker is True
+
+
+def test_retry_platform_read_failure_preserves_recovery_marker_and_business_fields(
+    tmp_path, monkeypatch,
+):
+    """平台工单读取未知时，预先持久化的恢复提示必须保留。"""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OMAC_ENGINE", "mock")
+    monkeypatch.setenv("OMAC_WORKSPACE_ID", "ws-1")
+
+    from omac.engines import EngineConfig, create_engine
+    from omac.errors import PlatformError
+
+    engine = create_engine(
+        "mock",
+        EngineConfig("mock", "ws-1", extra={"MOCK_AUTO_COMPLETE": "false"}),
+    )
+    item = engine.store.create_work_item("ws-1", "t", "d", "b", "bob")
+
+    import omac.cli.commands.node as node_mod
+    monkeypatch.setattr(node_mod, "create_engine", lambda *a, **kw: engine)
+    monkeypatch.setattr(
+        engine.store,
+        "get_work_item",
+        lambda *args, **kwargs: (_ for _ in ()).throw(PlatformError("offline")),
+    )
+    path = _write_manifest(tmp_path, [{
+        "id": "b",
+        "worker": "bob",
+        "status": "blocked",
+        "work_item_id": item.id,
+    }])
+
+    assert main(["node", "retry", path, "b"]) == exit_codes.PLATFORM
+    manifest = load_manifest(path)
+    assert manifest.nodes["b"].worker == "bob"
+    assert manifest.nodes["b"].status == "blocked"
+    assert manifest.nodes["b"].work_item_id == item.id
+    assert manifest.nodes["b"].recovery_marker is True
 
 
 def test_retry_preserves_stale_mock_work_item_id_for_reconcile(tmp_path, monkeypatch):

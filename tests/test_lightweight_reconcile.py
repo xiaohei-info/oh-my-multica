@@ -493,7 +493,7 @@ def test_reconcile_observes_controls_with_bounded_parallelism():
 
     started = time.monotonic()
     observations, _ = loop._observe_reconcile_inputs(
-        store, manifest, max_parallel=4)
+        store, manifest, max_parallel=4, full_scan=True)
     elapsed = time.monotonic() - started
 
     assert elapsed < 0.55
@@ -595,7 +595,7 @@ def test_reconcile_does_not_share_duplicate_attachment_refs_across_work_items():
         "item_id": "item-b"}
 
 
-def test_146_node_reconcile_phase_reads_every_issue_and_hydrates_only_needed_evidence(
+def test_146_node_interval_reconcile_reads_only_active_issues_and_hydrates_needed_evidence(
     tmp_path,
 ):
     issues, attachments, nodes = _large_dag_fixture()
@@ -621,9 +621,9 @@ def test_146_node_reconcile_phase_reads_every_issue_and_hydrates_only_needed_evi
         optimized_remote.issue_gets,
         optimized_remote.attachment_downloads,
         optimized_remote.pr_observations,
-    ) == (146, 18, 1)
-    assert all(kind == "issue" for kind, _ in optimized_remote.calls[:146])
-    assert all(kind == "attachment" for kind, _ in optimized_remote.calls[146:-1])
+    ) == (8, 18, 1)
+    assert all(kind == "issue" for kind, _ in optimized_remote.calls[:8])
+    assert all(kind == "attachment" for kind, _ in optimized_remote.calls[8:-1])
     assert optimized_remote.calls[-1][0] == "pr"
     assert load_manifest(path).nodes["active-0"].status == "in_progress"
 
@@ -642,7 +642,7 @@ def test_146_node_reconcile_reuses_immutable_attachment_bodies_across_ticks(
 
     assert first_tick_downloads == 18
     assert remote.attachment_downloads == first_tick_downloads
-    assert remote.issue_gets == 292
+    assert remote.issue_gets == 16
     assert remote.pr_observations == 2
 
 
@@ -696,7 +696,7 @@ def test_146_node_full_tick_reuses_reconcile_observations_for_collect(
         remote.issue_gets,
         remote.attachment_downloads,
         remote.pr_observations,
-    ) == (146, 18, 1)
+    ) == (8, 18, 1)
 
 
 def test_terminal_worker_handoff_observation_downloads_no_attachments(tmp_path):
@@ -1062,8 +1062,10 @@ def test_146_node_late_submit_after_reconcile_is_collected_next_tick_without_wak
         "active-0", "verification-fresh", "verification-fresh.yaml", new_body)
     attachments[new_ref["attachment_id"]] = new_attachment
 
-    def submit_early_node_after_its_reconcile_read(_item_id, issue_get_number):
-        if issue_get_number != 146:
+    def submit_early_node_after_its_reconcile_read(item_id, _issue_get_number):
+        # ``active-6`` is the final active-set control read, so this mutates
+        # active-0 only after its snapshot is already fixed for this tick.
+        if item_id != "active-6":
             return
         issues["active-0"]["status"] = "done"
         issues["active-0"]["metadata"]["verification_ref"] = new_ref
@@ -1097,7 +1099,7 @@ def test_146_node_late_submit_after_reconcile_is_collected_next_tick_without_wak
     assert manifest.nodes["active-0"].status == "in_progress"
     assert wakes == []
     assert reviews == []
-    assert remote.issue_gets == 146
+    assert remote.issue_gets == 8
 
     remote.issue_get_hook = None
     second = loop.tick(
@@ -1309,7 +1311,7 @@ def test_stale_manifest_hydrates_new_platform_delivery_and_reenters_gate(
             merge_request_state=merge_request_state),
     })
 
-    assert loop.reconcile(store, manifest, path) is True
+    assert loop.reconcile(store, manifest, path, full_scan=True) is True
 
     assert manifest.nodes["node-a"].status == "in_progress"
     assert remote.issue_gets == 1
@@ -1453,7 +1455,7 @@ def test_confirmed_merge_ignores_platform_authoring_delivery_without_hydration(
 
     assert result.state == "converged"
     assert load_manifest(path).nodes[item_id].status == "done"
-    assert remote.issue_gets == 1
+    assert remote.issue_gets == 0
     assert remote.attachment_downloads == 0
     assert remote.pr_observations == 0
     assert wakes == []
@@ -1795,7 +1797,7 @@ def test_required_attachment_failure_is_atomic_after_all_control_reads(tmp_path)
     before = Path(path).read_bytes()
 
     with pytest.raises(PlatformError, match="attachment read failed"):
-        loop.reconcile(store, manifest, path)
+        loop.reconcile(store, manifest, path, full_scan=True)
 
     assert [kind for kind, _ in remote.calls[:2]] == ["issue", "issue"]
     assert manifest.nodes["node-a"].status == "blocked"
