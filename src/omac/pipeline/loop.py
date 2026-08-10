@@ -1058,8 +1058,8 @@ def _observe_reconcile_inputs(
 
     ``full_scan`` is intentionally an explicit caller choice. Normal tick/run
     reconciliation observes only the active set; ``dag status`` requests the
-    complete platform view. P3 may later choose full scans on an audit
-    schedule without changing this read contract.
+    complete platform view. P3's CLI scheduler chooses audit full scans
+    without changing this explicit read contract.
     """
     controls: Dict[str, Any] = {}
     observations: Dict[str, Any] = {}
@@ -4123,6 +4123,7 @@ def tick(
     config: dict | None = None,
     *,
     full_scan: bool = False,
+    after_successful_tick: Callable[[], None] | None = None,
 ) -> TickResult:
     """执行单轮 tick:reconcile → collect_results → decide → dispatch。
 
@@ -4180,13 +4181,7 @@ def tick(
     # 5. DISPATCH: 派发就绪节点(受 max_parallel 约束)
     dispatched = _dispatch(store, runtime, manifest, manifest_path, ready, max_parallel)
 
-    # 6. 保存 manifest（本地落盘 + 真实引擎回写 git,供跨机 resume 读到最新状态）
-    save_manifest(manifest, manifest_path)
-    commit_manifest(
-        manifest_path, "chore(omac): manifest sync",
-        engine_type=getattr(store.config, "engine_type", None))
-
-    # 7. 构建 TickResult
+    # 6. 构建 TickResult
     done = [k for k, n in manifest.nodes.items() if n.status == "done"]
     running = [k for k, n in manifest.nodes.items() if n.status in RUNNING_STATUSES]
     failed_keys = [k for k, n in manifest.nodes.items() if n.status in FAILED_STATUSES]
@@ -4218,7 +4213,7 @@ def tick(
         # 锁定 schema:P5 web / agent 消费方只依赖 NEEDS_DECISION_KEYS
         assert set(report.keys()) == set(NEEDS_DECISION_KEYS)
 
-    return TickResult(
+    result = TickResult(
         state=state,
         done=done,
         failed=failed_keys,
@@ -4226,3 +4221,16 @@ def tick(
         dispatched=dispatched,
         report=report,
     )
+
+    # The CLI audit scheduler records its state only after every tick phase,
+    # including needs-decision report construction, has completed. Direct
+    # tick callers leave this unset and retain P2's explicit full_scan API.
+    if after_successful_tick is not None:
+        after_successful_tick()
+
+    # 7. 保存 manifest（本地落盘 + 真实引擎回写 git,供跨机 resume 读到最新状态）
+    save_manifest(manifest, manifest_path)
+    commit_manifest(
+        manifest_path, "chore(omac): manifest sync",
+        engine_type=getattr(store.config, "engine_type", None))
+    return result

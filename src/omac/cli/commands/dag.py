@@ -11,7 +11,7 @@ from ..output import add_output_flag, hint, print_json, print_table
 from ...core.config import (
     CONFIG_PATH, DEFAULTS, ENV_ENGINE, ENV_WORKSPACE,
     load_config, resolve_engine_settings, resolve_no_submit_runs,
-    resolve_retry,
+    resolve_reconcile, resolve_retry,
 )
 from ...core.amendment import ensure_amendment_apply_complete
 from ...core.graph import node_waves
@@ -23,6 +23,7 @@ from ...engines.models import EngineConfig
 from ...errors import NeedsDecision, ValidationError
 from ...i18n import current_language, ui
 from ...pipeline.loop import tick
+from ...pipeline.reconcile_audit import record_successful_tick, should_full_scan
 from ...pipeline.review import run_review
 from ...pipeline.acceptance import (
     acceptance_doc_path, run_acceptance_loop,
@@ -451,7 +452,7 @@ def show(args) -> int:
 
 
 def status(args) -> int:
-    """reconcile + 快照，不推进；未知平台结果按稳定错误码退出。"""
+    """Full reconcile + snapshot without advancing the runner audit schedule."""
     if not os.path.exists(args.manifest):
         raise ValidationError(ui(
             f"Manifest file not found: {args.manifest}\n"
@@ -643,6 +644,27 @@ def _validate_execution_invariants(manifest, manifest_path: str) -> None:
                 "或从已评审 acceptance issue 附件恢复该文件。"))
 
 
+def _scheduled_tick(
+    engine,
+    manifest,
+    manifest_path: str,
+    *,
+    max_parallel: int,
+    retry_limits: dict,
+    config: dict,
+):
+    """Run one tick with P3's persisted, explicit full-scan selection."""
+    reconcile_config = resolve_reconcile(config)
+    full_scan = should_full_scan(manifest, reconcile_config)
+    return tick(
+        engine.store, engine.runtime, manifest, manifest_path,
+        max_parallel=max_parallel, retry_limits=retry_limits, config=config,
+        full_scan=full_scan,
+        after_successful_tick=lambda: record_successful_tick(
+            manifest, full_scan=full_scan),
+    )
+
+
 def _loop_or_single(args, single_round: bool) -> int:
     with manifest_write_lock(args.manifest):
         return _loop_or_single_locked(args, single_round)
@@ -685,8 +707,8 @@ def _loop_or_single_locked(args, single_round: bool) -> int:
     last_result = None
 
     while True:
-        last_result = tick(
-            engine.store, engine.runtime, manifest, args.manifest,
+        last_result = _scheduled_tick(
+            engine, manifest, args.manifest,
             max_parallel=max_parallel, retry_limits=retry_limits, config=config)
         rounds += 1
 
@@ -697,8 +719,8 @@ def _loop_or_single_locked(args, single_round: bool) -> int:
                 # 验收外层循环可能已并入 fix 节点并收敛;重新 tick 一次
                 # (幂等:全部 done 时不派发)拿到最新 done 列表再 emit,
                 # 否则 emit 反映的是验收前的 3 节点,用户看不到增量节点。
-                last_result = tick(
-                    engine.store, engine.runtime, manifest, args.manifest,
+                last_result = _scheduled_tick(
+                    engine, manifest, args.manifest,
                     max_parallel=max_parallel, retry_limits=retry_limits, config=config)
                 _emit(last_result, manifest, args)
                 return acceptance_exit

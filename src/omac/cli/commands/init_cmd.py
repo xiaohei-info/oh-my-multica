@@ -515,6 +515,7 @@ def _build_config(engine: str, workspace: str, project: Optional[str],
         "defaults": defaults,
         "workflow": dict(workflow or config_mod.DEFAULT_WORKFLOW),
         "retry": retry_cfg,
+        "reconcile": dict(config_mod.DEFAULT_RECONCILE),
         "acceptance": {"max_rounds": config_mod.DEFAULT_MAX_ROUNDS},
     })
     return cfg

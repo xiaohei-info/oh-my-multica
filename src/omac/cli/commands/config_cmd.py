@@ -107,6 +107,20 @@ def _validate_set_value(key: str, value):
                 f"{key} 不能为负数(非法值 {value});需 ≥ 0"))
         return
 
+    if key.startswith("reconcile."):
+        sub = key.split(".", 1)[1]
+        if sub not in config_mod.DEFAULT_RECONCILE:
+            return
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValidationError(ui(
+                f"{key} must be an integer; got {type(value).__name__}({value!r})",
+                f"{key} 必须为整数,got {type(value).__name__}({value!r})"))
+        if value < 1:
+            raise ValidationError(ui(
+                f"{key} must be >= 1; got {value}",
+                f"{key} 必须 >= 1(非法值 {value})"))
+        return
+
     if key.startswith("workflow."):
         sub = key.split(".", 1)[1]
         if sub not in config_mod.DEFAULT_WORKFLOW:
