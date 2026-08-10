@@ -521,6 +521,21 @@ class TickResult:
     running: List[str] = field(default_factory=list)
     dispatched: List[str] = field(default_factory=list)
     report: Dict[str, Any] = field(default_factory=dict)
+    audit_complete: bool = True
+
+
+@dataclass(frozen=True)
+class ReconcileInputs:
+    """Complete reconcile observations plus transient full-audit completeness."""
+
+    observations: Dict[str, Any]
+    pull_requests: Dict[str, Any]
+    incomplete_static_keys: frozenset[str] = frozenset()
+
+    def __iter__(self):
+        """Keep the established two-value internal unpacking contract."""
+        yield self.observations
+        yield self.pull_requests
 
 
 @dataclass(frozen=True)
@@ -529,6 +544,8 @@ class ReconcileResult:
 
     changed: bool
     observations: Dict[str, WorkItemControlProjection | None]
+    incomplete_static_keys: frozenset[str] = frozenset()
+    audit_complete: bool = True
 
 
 def _build_snapshot(manifest: Manifest) -> dict:
@@ -1053,7 +1070,7 @@ def _observe_reconcile_inputs(
     max_parallel: int = 4,
     *,
     full_scan: bool = False,
-) -> tuple[Dict[str, Any], Dict[str, Any]]:
+) -> ReconcileInputs:
     """Observe one reconcile scope, plan hydration, then load required evidence.
 
     ``full_scan`` is intentionally an explicit caller choice. Normal tick/run
@@ -1064,13 +1081,24 @@ def _observe_reconcile_inputs(
     controls: Dict[str, Any] = {}
     observations: Dict[str, Any] = {}
     pull_requests: Dict[str, Any] = {}
+    incomplete_static_keys: set[str] = set()
 
     # Phase 1: every selected Issue control envelope is read before any
     # attachment body. Static nodes are not read during normal reconciliation.
-    # Adapters may explicitly allow bounded parallel reads; results remain an
-    # all-or-nothing barrier and are published in manifest order below.
+    # Full audits always read active controls independently and fail closed;
+    # only static control reads may be isolated after a batch/fallback failure.
     active_keys = reconcile_active_keys(manifest)
-    control_jobs = [
+    active_control_jobs = [
+        (key, node.work_item_id)
+        for key, node in manifest.nodes.items()
+        if node.work_item_id and key in active_keys
+    ]
+    static_control_jobs = [
+        (key, node.work_item_id)
+        for key, node in manifest.nodes.items()
+        if full_scan and node.work_item_id and key not in active_keys
+    ]
+    selected_control_jobs = [
         (key, node.work_item_id)
         for key, node in manifest.nodes.items()
         if node.work_item_id and (full_scan or key in active_keys)
@@ -1084,30 +1112,54 @@ def _observe_reconcile_inputs(
             projection = _MISSING_WORK_ITEM
         return key, projection
 
-    if control_jobs:
-        batch_observe = getattr(store, "observe_work_item_controls", None)
-        if full_scan and callable(batch_observe):
-            batch = batch_observe([item_id for _, item_id in control_jobs])
-            control_results = [
-                (key, batch.get(item_id, _MISSING_WORK_ITEM))
-                for key, item_id in control_jobs
-            ]
-        else:
-            requested_parallelism = max(1, max_parallel)
-            workers = max(1, min(
-                len(control_jobs),
-                requested_parallelism,
-                store.control_observation_parallelism(requested_parallelism),
-            ))
-            if workers == 1:
-                control_results = [observe_control(job) for job in control_jobs]
-            else:
-                with ThreadPoolExecutor(
-                    max_workers=workers,
-                    thread_name_prefix="omac-control",
-                ) as executor:
-                    control_results = list(executor.map(observe_control, control_jobs))
-        controls = dict(control_results)
+    def observe_controls_fail_closed(
+        control_jobs: List[Tuple[str, str]],
+    ) -> List[Tuple[str, Any]]:
+        """Read active controls with the Store's bounded parallelism contract."""
+        if not control_jobs:
+            return []
+        requested_parallelism = max(1, max_parallel)
+        workers = max(1, min(
+            len(control_jobs),
+            requested_parallelism,
+            store.control_observation_parallelism(requested_parallelism),
+        ))
+        if workers == 1:
+            return [observe_control(job) for job in control_jobs]
+        with ThreadPoolExecutor(
+            max_workers=workers,
+            thread_name_prefix="omac-control",
+        ) as executor:
+            return list(executor.map(observe_control, control_jobs))
+
+    # Static error isolation is valid only for adapters that explicitly
+    # execute a real list-batch control read. The default Store batch method is
+    # a compatibility per-item loop and must remain all-or-nothing.
+    batch_capable = getattr(
+        store, "control_batch_observation_supported", lambda: False)()
+    if not full_scan or not batch_capable:
+        controls.update(observe_controls_fail_closed(selected_control_jobs))
+    else:
+        controls.update(observe_controls_fail_closed(active_control_jobs))
+        if static_control_jobs:
+            batch: Dict[str, WorkItemControlProjection] = {}
+            try:
+                batch = store.observe_work_item_controls(
+                    [item_id for _, item_id in static_control_jobs])
+            except (PlatformError, AuthError):
+                # The batch has no authoritative per-item facts. Retry each
+                # static item below, isolating only explicit data-plane errors.
+                batch = {}
+            for key, item_id in static_control_jobs:
+                if item_id in batch:
+                    controls[key] = batch[item_id]
+                    continue
+                try:
+                    _, projection = observe_control((key, item_id))
+                except (PlatformError, AuthError):
+                    incomplete_static_keys.add(key)
+                    continue
+                controls[key] = projection
 
     # Phase 2: the complete control snapshot produces an explicit hydration plan.
     hydration_jobs: List[
@@ -1174,7 +1226,11 @@ def _observe_reconcile_inputs(
             continue
         pull_requests[key] = store.observe_pull_request(
             _pull_request_url(item))
-    return observations, pull_requests
+    return ReconcileInputs(
+        observations=observations,
+        pull_requests=pull_requests,
+        incomplete_static_keys=frozenset(incomplete_static_keys),
+    )
 
 
 def _resume_reviewer_run(store, runtime, node) -> bool:
@@ -2702,12 +2758,15 @@ def reconcile_with_observations(
     """
     ensure_amendment_apply_complete(manifest, manifest_path)
     manifest._recovery_manifest_path = manifest_path
-    observations, pull_requests = _observe_reconcile_inputs(
+    reconcile_inputs = _observe_reconcile_inputs(
         store, manifest, max_parallel=max_parallel, full_scan=full_scan)
+    observations = reconcile_inputs.observations
+    pull_requests = reconcile_inputs.pull_requests
     candidate = copy.deepcopy(manifest)
     changed = _reconcile_candidate(
         store, candidate, manifest_path, observations, pull_requests,
-        full_scan=full_scan)
+        full_scan=full_scan,
+        incomplete_static_keys=reconcile_inputs.incomplete_static_keys)
     if changed:
         save_manifest(candidate, manifest_path)
         manifest.meta = candidate.meta
@@ -2722,6 +2781,9 @@ def reconcile_with_observations(
             )
             for key in manifest.nodes
         },
+        incomplete_static_keys=reconcile_inputs.incomplete_static_keys,
+        audit_complete=(
+            not full_scan or not reconcile_inputs.incomplete_static_keys),
     )
 
 
@@ -2744,6 +2806,7 @@ def _reconcile_candidate(
     observations: Dict[str, Any], pull_requests: Dict[str, Any],
     *,
     full_scan: bool = False,
+    incomplete_static_keys: frozenset[str] = frozenset(),
 ) -> bool:
     """用已完整观察的事实计算候选；此阶段不得再执行平台读取。"""
     changed = False
@@ -2759,6 +2822,10 @@ def _reconcile_candidate(
             continue
         observation = observations.get(key)
         if observation is None:
+            if key in incomplete_static_keys:
+                # A static control read failed with no authoritative fact.
+                # Preserve its whole manifest projection for the next audit.
+                continue
             # An interval reconcile deliberately has no platform fact for a
             # static node. Retain its complete manifest projection, including
             # recovery_marker; P3's full audit will inspect it later.
@@ -4228,12 +4295,16 @@ def tick(
         running=running,
         dispatched=dispatched,
         report=report,
+        audit_complete=reconcile_result.audit_complete,
     )
 
     # The CLI audit scheduler records its state only after every tick phase,
-    # including needs-decision report construction, has completed. Direct
-    # tick callers leave this unset and retain P2's explicit full_scan API.
-    if after_successful_tick is not None:
+    # including needs-decision report construction, has completed. An
+    # incomplete full scan must leave P3's audit requirement outstanding.
+    if (
+        after_successful_tick is not None
+        and (not full_scan or reconcile_result.audit_complete)
+    ):
         after_successful_tick()
 
     # 7. 保存 manifest（本地落盘 + 真实引擎回写 git,供跨机 resume 读到最新状态）

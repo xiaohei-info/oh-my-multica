@@ -151,6 +151,15 @@ class WorkItemStore(ABC):
                 continue
         return observations
 
+    def control_batch_observation_supported(self) -> bool:
+        """Return whether static control reads support true list-batch isolation.
+
+        The default ``observe_work_item_controls`` implementation is a
+        compatibility per-item loop, so its errors remain all-or-nothing.
+        Adapters may opt in only when they execute a real list-batch read.
+        """
+        return False
+
     def hydrate_work_item_evidence(
         self,
         projection: WorkItemControlProjection,
