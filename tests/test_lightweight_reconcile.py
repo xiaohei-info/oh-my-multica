@@ -64,9 +64,9 @@ class _RemoteFixture:
             self.issue_lists += 1
             self.calls.append(("issue-list", str(self.issue_lists)))
             assert args[args.index("--project") + 1] == "project-1"
-            assert args[args.index("--limit") + 1] == "100"
+            assert args[args.index("--limit") + 1] == "30"
             offset = int(args[args.index("--offset") + 1])
-            return copy.deepcopy(list(self.issues.values())[offset:offset + 100])
+            return copy.deepcopy(list(self.issues.values())[offset:offset + 30])
         if args[:2] == ["issue", "get"]:
             item_id = args[2]
             self.issue_gets += 1
@@ -648,14 +648,16 @@ def test_146_node_full_scan_batches_control_envelopes_without_payload_hydration(
         store, manifest, full_scan=True)
 
     assert list(observations) == list(nodes)
-    assert remote.issue_lists == 2
+    assert remote.issue_lists == 5
     assert remote.issue_gets == 8
     assert remote.attachment_downloads == 18
     assert remote.calls[:8] == [
         ("issue", item_id)
         for item_id in [*sorted(f"active-{index}" for index in range(7)), "confirm-0"]
     ]
-    assert remote.calls[8:10] == [("issue-list", "1"), ("issue-list", "2")]
+    assert remote.calls[8:13] == [
+        ("issue-list", str(page)) for page in range(1, 6)
+    ]
 
 
 def test_146_node_full_scan_falls_back_to_issue_get_for_list_omission(tmp_path):
@@ -858,7 +860,7 @@ def test_146_node_status_reuses_reconcile_observation_budget(tmp_path):
         remote.issue_gets,
         remote.attachment_downloads,
         remote.pr_observations,
-    ) == (2, 8, 18, 1)
+    ) == (5, 8, 18, 1)
 
 
 def test_146_node_full_tick_reuses_reconcile_observations_for_collect(
