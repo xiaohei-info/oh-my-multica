@@ -1706,10 +1706,10 @@ class MulticaStore(WorkItemStore):
         self._set_metadata(item_id, CONTRACT_REF_KEY, ref)
 
     # multica issue list 服务端单页上限 100;更大的 --limit 会被静默截断。
-    # 实际页大小取 30:每条 issue 携带大体量 metadata 时,满 100 条的响应体
-    # 会超过 multica CLI 客户端的读取超时(context deadline exceeded),
-    # 小页读取可稳定完成。
-    _LIST_PAGE_SIZE = 30
+    # 实际页大小取 10:metadata 密集的 issue 会使响应体超过 multica CLI
+    # 客户端 30 秒读取超时(context deadline exceeded);30 条页仍间歇超时,
+    # 10 条页稳定完成。
+    _LIST_PAGE_SIZE = 10
 
     def _list_issues_paginated(self, extra_args: List[str]) -> List[Dict]:
         issues: List[Dict] = []

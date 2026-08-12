@@ -1230,9 +1230,9 @@ def test_multica_batch_control_observation_projects_pages_without_hydration(
         calls.append(args)
         assert args[:2] == ["issue", "list"]
         assert args[args.index("--project") + 1] == "project-1"
-        assert args[args.index("--limit") + 1] == "30"
+        assert args[args.index("--limit") + 1] == "10"
         offset = int(args[args.index("--offset") + 1])
-        return issues[offset:offset + 30]
+        return issues[offset:offset + 10]
 
     monkeypatch.setattr(store, "_run_multica", run)
     monkeypatch.setattr(
@@ -1245,7 +1245,7 @@ def test_multica_batch_control_observation_projects_pages_without_hydration(
 
     assert list(observed) == ["issue-100", "issue-0"]
     assert observed["issue-100"].work_item.dag_key == "node-100"
-    assert len(calls) == 4
+    assert len(calls) == 11
 
 
 def test_multica_batch_control_observation_falls_back_for_missing_list_id(
