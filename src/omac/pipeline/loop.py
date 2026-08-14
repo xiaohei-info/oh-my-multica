@@ -89,6 +89,9 @@ _PLATFORM_TO_MANIFEST: Dict[str, str] = {
     "blocked": "blocked",
 }
 _MISSING_WORK_ITEM = object()
+# Multica 限制单 issue metadata 为 8KB;direct Run 基线封顶保留最近 N 个,
+# 避免高 bounce 节点的 handoff 写入确定性超限(gap #13)。
+_BASELINE_MAX_DIRECT_RUN_IDS = 20
 _HANDOFF_OBSERVATION_ATTEMPTS = 3
 _HANDOFF_OBSERVATION_INTERVAL = 0.5
 _HANDOFF_TERMINAL_GRACE_SECONDS = 30
@@ -337,6 +340,7 @@ def _latest_run_failure(
     agent_id: str,
     *,
     baseline_direct_run_ids: Tuple[str, ...] = (),
+    baseline_cutoff_created_at: str | None = None,
     target_run_id: str | None = None,
 ) -> _RunFailure | None:
     """Return the latest expected failed Run and its derived classification."""
@@ -344,6 +348,7 @@ def _latest_run_failure(
         runtime.list_runs(item_id),
         agent_id,
         baseline_direct_run_ids=baseline_direct_run_ids,
+        cutoff_created_at=baseline_cutoff_created_at,
         target_run_id=target_run_id,
     )
     terminal = observed.terminal
@@ -356,6 +361,75 @@ def _latest_run_failure(
     )
     return _RunFailure(
         terminal.run, classification, terminal.consecutive_runs)
+
+
+def _bounded_direct_run_baseline(
+    runs: List[AgentRunObservation],
+    *,
+    gate_cutoff_created_at: str | None = None,
+) -> tuple[Tuple[str, ...], Optional[str]]:
+    """Cap the direct-Run baseline at the most recent N Runs (gap #13).
+
+    Returns ``(baseline ids, cutoff_created_at)`` keeping the existing
+    sorted-by-ID order semantics. Uncapped baselines return ``None`` cutoff so
+    consumers keep pure ID-membership semantics. When capped, the returned
+    cutoff is the newest retained Run's creation time: consumers treat Runs
+    created at or before it as baseline-internal, Runs after it stay
+    fail-closed. With ``gate_cutoff_created_at`` the caller already owns a
+    consumer-side timestamp gate; then only Runs at or before that gate may be
+    dropped, the returned cutoff stays ``None``, and anything unsafe fails
+    closed.
+    """
+    direct = [run for run in runs if run.kind == "direct"]
+    if len(direct) <= _BASELINE_MAX_DIRECT_RUN_IDS:
+        return tuple(sorted(run.id for run in direct)), None
+    timed = []
+    for run in direct:
+        created = _parse_platform_time(run.created_at)
+        if created is None or created.tzinfo is None:
+            raise PlatformError(
+                f"Run {run.id} has no usable creation time; cannot bound the "
+                "direct Run baseline safely")
+        timed.append((created, run))
+    timed.sort(key=lambda pair: (pair[0], pair[1].id))
+    keep = timed[-_BASELINE_MAX_DIRECT_RUN_IDS:]
+    dropped = timed[:-_BASELINE_MAX_DIRECT_RUN_IDS]
+    kept_ids = tuple(sorted(run.id for _created, run in keep))
+    if gate_cutoff_created_at is not None:
+        gate = _parse_platform_time(gate_cutoff_created_at)
+        if gate is None or gate.tzinfo is None:
+            raise PlatformError(
+                "Direct Run baseline cannot be bounded: unusable gate cutoff")
+        if any(created > gate for created, _run in dropped):
+            raise PlatformError(
+                "Direct Run baseline cannot be bounded safely: Runs after "
+                "the gate cutoff exceed the baseline limit")
+        return kept_ids, None
+    return kept_ids, keep[-1][1].created_at
+
+
+def _run_created_within_baseline(
+    run: AgentRunObservation, cutoff: datetime | None,
+) -> bool:
+    """Whether a Run predates the baseline cutoff and is baseline-internal."""
+    if cutoff is None:
+        return False
+    created = _parse_platform_time(run.created_at)
+    if created is None or created.tzinfo is None:
+        return False
+    return created <= cutoff
+
+
+def _parse_baseline_cutoff(intent) -> datetime | None:
+    """Parse a persisted baseline cutoff or fail closed when unusable."""
+    raw = getattr(intent, "baseline_cutoff_created_at", None)
+    if not raw:
+        return None
+    cutoff = _parse_platform_time(raw)
+    if cutoff is None or cutoff.tzinfo is None:
+        raise PlatformError(
+            "Direct Run baseline cutoff is unusable; refusing to observe")
+    return cutoff
 
 
 def _observe_direct_run_attempt(
@@ -1512,13 +1586,19 @@ def _reviewer_run_baseline_for_observation(
         run for run in runtime.list_runs(item.id)
         if run.kind == "direct" and run.agent_id == reviewer_id
     ]
-    historical_ids = []
+    historical_runs = []
     for run in direct_runs:
         created_at = _parse_platform_time(run.created_at)
         if created_at is None or created_at.tzinfo is None:
             return None, f"Reviewer Run {run.id} has no usable creation time"
         if created_at <= cutoff:
-            historical_ids.append(run.id)
+            historical_runs.append(run)
+    try:
+        historical_ids, _ = _bounded_direct_run_baseline(
+            historical_runs,
+            gate_cutoff_created_at=identity.verification_created_at)
+    except PlatformError as exc:
+        return None, str(exc)
     baseline = ReviewerRunBaseline(
         schema=REVIEWER_RUN_BASELINE_SCHEMA,
         subject_digest=item.review_subject_digest,
@@ -1538,12 +1618,17 @@ def _retry_reviewer_attempt(
     store, runtime, node, item, baseline, *, manifest=None, key: str | None = None,
 ) -> str | None:
     runs = runtime.list_runs(item.id)
+    try:
+        bounded_ids, _ = _bounded_direct_run_baseline(
+            [run for run in runs if run.kind == "direct"],
+            gate_cutoff_created_at=baseline.cutoff_created_at)
+    except PlatformError as exc:
+        return str(exc)
     retry = replace(
         baseline,
         generation=f"review-{secrets.token_hex(8)}",
         attempt=baseline.attempt + 1,
-        baseline_direct_run_ids=tuple(sorted(
-            run.id for run in runs if run.kind == "direct")),
+        baseline_direct_run_ids=bounded_ids,
         target_run_id=None,
     )
     if manifest is not None and key is not None:
@@ -1625,6 +1710,9 @@ def _dispatch_reviewer_for_current_subject(
         ):
             raise PlatformError(
                 "Reviewer dispatch requires a sealed delivery verification time")
+        baseline_ids, _ = _bounded_direct_run_baseline(
+            runtime.list_runs(item_id),
+            gate_cutoff_created_at=identity.verification_created_at)
         baseline = ReviewerRunBaseline(
             schema=REVIEWER_RUN_BASELINE_SCHEMA,
             subject_digest=subject_digest,
@@ -1632,10 +1720,7 @@ def _dispatch_reviewer_for_current_subject(
             target_agent_id=reviewer_id,
             cutoff_created_at=identity.verification_created_at,
             generation=f"review-{secrets.token_hex(8)}",
-            baseline_direct_run_ids=tuple(sorted(
-                run.id for run in runtime.list_runs(item_id)
-                if run.kind == "direct"
-            )),
+            baseline_direct_run_ids=baseline_ids,
         )
         _mark_recovery_pending(manifest, key)
         store.update_work_item_metadata(
@@ -1764,10 +1849,8 @@ def _dispatch_worker_handoff(
                 "Worker handoff requires stable direct Run identity support")
         try:
             target_agent_id = store.resolve_agent_id(node.worker)
-            baseline_run_ids = tuple(sorted(
-                run.id for run in runtime.list_runs(item_id)
-                if run.kind == "direct"
-            ))
+            baseline_run_ids, baseline_cutoff = _bounded_direct_run_baseline(
+                runtime.list_runs(item_id))
         except PlatformError as exc:
             if store.is_transient_transport_error(exc):
                 return _WorkerHandoffResult("pending-initialization", None)
@@ -1785,6 +1868,7 @@ def _dispatch_worker_handoff(
             generation=f"handoff-{secrets.token_hex(8)}",
             target_agent_id=target_agent_id,
             baseline_direct_run_ids=baseline_run_ids,
+            baseline_cutoff_created_at=baseline_cutoff,
             baseline_verification_attachment_id=(
                 str((current.verification_ref or {}).get("attachment_id") or "")
                 or None
@@ -2110,20 +2194,27 @@ def _next_worker_handoff_attempt(
     if any(run.active for run in direct_runs):
         raise PlatformError(
             f"Worker handoff still has an active Run for work item {item.id}")
+    cutoff = _parse_baseline_cutoff(intent)
     allowed_run_ids = set(intent.baseline_direct_run_ids)
     if intent.target_run_id:
         allowed_run_ids.add(intent.target_run_id)
-    if any(run.id not in allowed_run_ids for run in direct_runs):
+    if any(
+        run.id not in allowed_run_ids
+        and not _run_created_within_baseline(run, cutoff)
+        for run in direct_runs
+    ):
         raise PlatformError(
             f"Worker handoff observed an unexpected terminal Run for work item "
             f"{item.id}")
     verification_ref = (
         item.verification_ref if isinstance(item.verification_ref, dict) else {}
     )
+    bounded_ids, bounded_cutoff = _bounded_direct_run_baseline(direct_runs)
     return replace(
         intent,
         generation=f"handoff-{secrets.token_hex(8)}",
-        baseline_direct_run_ids=tuple(sorted(run.id for run in direct_runs)),
+        baseline_direct_run_ids=bounded_ids,
+        baseline_cutoff_created_at=bounded_cutoff,
         baseline_verification_attachment_id=(
             str(verification_ref.get("attachment_id") or "") or None
         ),
@@ -2464,6 +2555,9 @@ def _observe_worker_handoff(
     current = projection.work_item
     runs = runtime.list_runs(item_id)
     baseline = set(intent.baseline_direct_run_ids)
+    # 封顶基线的时间戳门控:cutoff 之前创建的 Run 视为基线内,cutoff 之后的
+    # 未知 Run 仍 fail-closed(gap #13)。无 cutoff 的旧 intent 保持纯成员语义。
+    cutoff = _parse_baseline_cutoff(intent)
 
     if not intent.is_causally_bound():
         raise PlatformError(
@@ -2472,6 +2566,7 @@ def _observe_worker_handoff(
     if any(
         run.kind == "direct" and run.id not in baseline
         and run.agent_id != intent.target_agent_id
+        and not _run_created_within_baseline(run, cutoff)
         for run in runs
     ):
         raise PlatformError(
@@ -2479,6 +2574,7 @@ def _observe_worker_handoff(
     observed = _observe_direct_run_attempt(
         runs, intent.target_agent_id,
         baseline_direct_run_ids=intent.baseline_direct_run_ids,
+        cutoff_created_at=intent.baseline_cutoff_created_at,
         target_run_id=intent.target_run_id)
     if observed.state == "unexpected":
         raise PlatformError(observed.detail)
@@ -3132,6 +3228,8 @@ def collect_results(
                     handoff.intent.target_agent_id,
                     baseline_direct_run_ids=(
                         handoff.intent.baseline_direct_run_ids),
+                    baseline_cutoff_created_at=(
+                        handoff.intent.baseline_cutoff_created_at),
                     target_run_id=handoff.intent.target_run_id,
                 )
                 if failure is None:
@@ -4049,6 +4147,7 @@ def _active_formal_run_nodes(
                     runs,
                     intent.target_agent_id,
                     baseline_direct_run_ids=intent.baseline_direct_run_ids,
+                    cutoff_created_at=intent.baseline_cutoff_created_at,
                     target_run_id=intent.target_run_id,
                 )
         elif item.phase == TaskPhase.REVIEW:

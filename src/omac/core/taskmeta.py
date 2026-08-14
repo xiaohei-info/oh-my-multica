@@ -168,6 +168,9 @@ class WorkerHandoffIntent:
     generation: Optional[str] = None
     target_agent_id: Optional[str] = None
     baseline_direct_run_ids: Tuple[str, ...] = ()
+    # 基线封顶后消费端的时间戳门控:该时间之前创建的 Run 视为基线内。
+    # 仅在基线被封顶时写入;None 保持纯 ID 成员判断的旧语义。
+    baseline_cutoff_created_at: Optional[str] = None
     baseline_verification_attachment_id: Optional[str] = None
     target_run_id: Optional[str] = None
     target_worker_bounce: Optional[int] = None
@@ -187,6 +190,7 @@ class WorkerHandoffIntent:
             "generation": self.generation,
             "target_agent_id": self.target_agent_id,
             "baseline_direct_run_ids": list(self.baseline_direct_run_ids),
+            "baseline_cutoff_created_at": self.baseline_cutoff_created_at,
             "baseline_verification_attachment_id": (
                 self.baseline_verification_attachment_id
             ),
@@ -439,6 +443,7 @@ def parse_worker_handoff(value: Any) -> Optional[WorkerHandoffIntent]:
             run_id for run_id in value.get("baseline_direct_run_ids", [])
             if isinstance(run_id, str) and run_id
         ) if isinstance(value.get("baseline_direct_run_ids", []), list) else (),
+        baseline_cutoff_created_at=text_field("baseline_cutoff_created_at"),
         baseline_verification_attachment_id=text_field(
             "baseline_verification_attachment_id"),
         target_run_id=text_field("target_run_id"),
