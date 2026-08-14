@@ -9546,6 +9546,54 @@ class TestReviewerRejectBoundedFallback:
             set_node(manifest, "a", status="in_review")
             save_manifest(manifest, fpath)
 
+    def test_worker_handoff_baseline_is_bounded_for_metadata_limit(
+        self, tmp_path, monkeypatch,
+    ):
+        """gap #13:bounce 历史 Run 无界增长时,handoff 基线必须封顶并可写入。
+
+        Multica 限制单个 issue 的 metadata 为 8KB;生产中见过 46/56 个 UUID
+        的 baseline_direct_run_ids。封顶保留最近 20 个,cutoff 之前被裁掉的
+        旧 Run 按时间戳门控仍视为基线内,handoff 观察不得误判 non-causal。
+        """
+        from omac.engines import create_engine
+        from omac.engines.metadata_policy import assert_metadata_write_allowed
+        from omac.core.taskmeta import WORKER_HANDOFF_KEY
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        worker_id = eng.store.resolve_agent_id("alice")
+        reviewer_id = eng.store.resolve_agent_id("bob")
+        history = _baseline_history_runs(45, worker_id, reviewer_id)
+        real_list_runs = eng.runtime.list_runs
+        ordered = sorted(
+            history + real_list_runs(item.id),
+            key=lambda run: loop._parse_platform_time(run.created_at))
+        expected_ids = tuple(sorted(run.id for run in ordered[-20:]))
+        expected_cutoff = ordered[-1].created_at
+        monkeypatch.setattr(
+            eng.runtime, "list_runs",
+            lambda item_id: (
+                history + real_list_runs(item_id)
+                if item_id == item.id else real_list_runs(item_id)))
+
+        eng.store.update_work_item_metadata(
+            item.id, review_obligations=build_review_obligations(item))
+        eng.store.update_work_item_metadata(
+            item.id, review_report=_review_report(item, "reject"))
+
+        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+
+        got = eng.store.get_work_item(item.id)
+        handoff = got.worker_handoff
+        assert result.state == "running"
+        assert handoff is not None
+        assert len(handoff.baseline_direct_run_ids) <= 20
+        assert handoff.baseline_direct_run_ids == expected_ids
+        assert handoff.baseline_cutoff_created_at == expected_cutoff
+        # 封顶后的 handoff 必须落在 Multica 单值 8KB 上限内。
+        assert_metadata_write_allowed(WORKER_HANDOFF_KEY, handoff.as_dict())
+
 
 class TestReviewerRejectFallbackRecovery:
     """未知副作用的 Worker handoff 失败保留 intent，由 restart 幂等续跑。"""
@@ -9651,3 +9699,139 @@ class TestReviewerRejectFallbackRecovery:
         assert recovered.bounces.review == 1
         assert recovered.status is WorkItemStatus.IN_PROGRESS
         assert len(eng.runtime.list_runs(item.id)) == runs_before_handoff + 1
+
+
+# ==================== gap #13:baseline_direct_run_ids 封顶(gap #13) ====================
+# Multica 限制单 issue metadata 为 8KB;无界增长的 baseline 会让 handoff 写入
+# 确定性失败。封顶保留最近 20 个,cutoff 之前的旧 Run 按时间戳门控视为基线内,
+# cutoff 之后的陌生 Run 仍 fail-closed。
+
+def _baseline_history_runs(count, worker_id, reviewer_id):
+    """交错的 worker/reviewer 历史 terminal Runs,创建时间严格递增。"""
+    return [
+        AgentRunObservation(
+            id=f"run-hist-{index:03d}",
+            kind="direct",
+            status="completed",
+            agent_id=worker_id if index % 2 == 0 else reviewer_id,
+            created_at=(
+                f"2026-01-{1 + index // 1440:02d}T"
+                f"{(index // 60) % 24:02d}:{index % 60:02d}:00Z"
+            ),
+        )
+        for index in range(count)
+    ]
+
+
+def test_bounded_direct_run_baseline_keeps_small_lists_uncapped():
+    runs = _baseline_history_runs(5, "agent-worker", "agent-reviewer")
+    ids, cutoff = loop._bounded_direct_run_baseline(
+        runs + [AgentRunObservation(id="run-child", kind="child", status="completed")])
+    assert ids == tuple(sorted(run.id for run in runs))
+    assert cutoff is None
+
+
+def test_bounded_direct_run_baseline_caps_to_latest_20_with_cutoff():
+    runs = _baseline_history_runs(45, "agent-worker", "agent-reviewer")
+    ids, cutoff = loop._bounded_direct_run_baseline(runs)
+    assert len(ids) == 20
+    assert ids == tuple(sorted(run.id for run in runs[-20:]))
+    assert cutoff == runs[-1].created_at
+
+
+def test_bounded_direct_run_baseline_fails_closed_without_creation_time():
+    runs = _baseline_history_runs(25, "agent-worker", "agent-reviewer")
+    runs[0] = replace(runs[0], created_at=None)
+    with pytest.raises(PlatformError):
+        loop._bounded_direct_run_baseline(runs)
+
+
+def test_bounded_direct_run_baseline_gate_drops_only_pre_cutoff_runs():
+    runs = _baseline_history_runs(45, "agent-worker", "agent-reviewer")
+    # 门控 cutoff 覆盖全部被裁 Run → 安全封顶,沿用调用方自己的门控。
+    ids, cutoff = loop._bounded_direct_run_baseline(
+        runs, gate_cutoff_created_at=runs[24].created_at)
+    assert ids == tuple(sorted(run.id for run in runs[-20:]))
+    assert cutoff is None
+    # 被裁 Run 晚于门控 cutoff → 无法安全封顶,fail-closed。
+    with pytest.raises(PlatformError):
+        loop._bounded_direct_run_baseline(
+            runs, gate_cutoff_created_at=runs[10].created_at)
+
+
+def _capped_worker_handoff_fixture(tmp_path):
+    """40 个历史 Run + 1 个当前失败 Run 的 capped handoff 场景。"""
+    eng, manifest, path, item, agent_id = _transient_worker_handoff_fixture(
+        tmp_path)
+    reviewer_id = eng.store.resolve_agent_id("bob")
+    history = _baseline_history_runs(40, agent_id, reviewer_id)
+    current_run = AgentRunObservation(
+        id="run-current", kind="direct", status="failed",
+        agent_id=agent_id, created_at="2026-01-03T00:00:00Z",
+        error="provider error: HTTP 503 Service Unavailable")
+    retained = tuple(sorted(run.id for run in history[-20:]))
+    current = eng.store.get_work_item(item.id)
+    eng.store.update_work_item_metadata(
+        item.id,
+        worker_handoff=WorkerHandoffIntent(
+            **{
+                **current.worker_handoff.as_dict(),
+                "baseline_direct_run_ids": retained,
+                "baseline_cutoff_created_at": history[-1].created_at,
+                "target_run_id": "run-current",
+            }
+        ),
+    )
+    return eng, manifest, path, item, agent_id, reviewer_id, history, current_run
+
+
+def test_capped_worker_handoff_treats_pre_cutoff_runs_as_baseline(
+    tmp_path, monkeypatch,
+):
+    """被裁掉的旧 Run(含异 agent)不得误判 non-causal;重试后基线仍封顶。"""
+    (eng, manifest, path, item, agent_id, reviewer_id, history,
+     current_run) = _capped_worker_handoff_fixture(tmp_path)
+    runs = history + [current_run]
+    wake_calls = 0
+
+    def wake(_item_id, _agent, role):
+        nonlocal wake_calls
+        assert role == "worker"
+        wake_calls += 1
+        runs.append(AgentRunObservation(
+            id="run-current-retry", kind="direct", status="running",
+            agent_id=agent_id, created_at="2026-01-03T00:05:00Z"))
+
+    monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
+    monkeypatch.setattr(eng.runtime, "wake", wake)
+
+    assert loop.collect_results(eng.store, eng.runtime, manifest, path) == {}
+
+    recovered = eng.store.get_work_item(item.id)
+    assert wake_calls == 1
+    assert recovered.status is WorkItemStatus.IN_PROGRESS
+    # 重试生成的新基线同样封顶,且 cutoff 推进到最新 Run。
+    assert len(recovered.worker_handoff.baseline_direct_run_ids) <= 20
+    assert "run-current" in recovered.worker_handoff.baseline_direct_run_ids
+    assert recovered.worker_handoff.baseline_cutoff_created_at == (
+        current_run.created_at)
+    assert recovered.worker_handoff.target_run_id == "run-current-retry"
+
+
+def test_capped_worker_handoff_still_fails_closed_for_post_cutoff_stranger(
+    tmp_path, monkeypatch,
+):
+    """cutoff 之后出现的陌生 direct Run 仍必须 fail-closed。"""
+    (eng, manifest, path, item, agent_id, reviewer_id, history,
+     current_run) = _capped_worker_handoff_fixture(tmp_path)
+    stranger = AgentRunObservation(
+        id="run-stranger", kind="direct", status="completed",
+        agent_id=reviewer_id, created_at="2026-01-03T00:30:00Z")
+    runs = history + [current_run, stranger]
+
+    monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
+
+    with pytest.raises(PlatformError, match="non-causal"):
+        loop.collect_results(eng.store, eng.runtime, manifest, path)

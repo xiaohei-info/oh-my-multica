@@ -204,6 +204,28 @@ def test_worker_handoff_keeps_positive_bounce_compatibility(gate):
     assert intent.is_causally_bound()
 
 
+def test_worker_handoff_round_trips_baseline_cutoff_created_at():
+    """gap #13:封顶基线的时间戳门控字段必须可持久化并容错解析。"""
+    base = _worker_handoff_intent()
+    intent = WorkerHandoffIntent(**{
+        **base.as_dict(),
+        "baseline_direct_run_ids": tuple(base.baseline_direct_run_ids),
+        "baseline_cutoff_created_at": "2026-02-01T00:39:00Z",
+    })
+
+    parsed = taskmeta.parse_worker_handoff(intent.as_dict())
+    assert parsed == intent
+    assert parsed.baseline_cutoff_created_at == "2026-02-01T00:39:00Z"
+
+    # 旧数据无该字段 → 缺省 None,保持纯成员判断语义。
+    legacy = dict(intent.as_dict())
+    legacy.pop("baseline_cutoff_created_at")
+    assert taskmeta.parse_worker_handoff(legacy).baseline_cutoff_created_at is None
+    # 非字符串值 → 容错为 None。
+    legacy["baseline_cutoff_created_at"] = 123
+    assert taskmeta.parse_worker_handoff(legacy).baseline_cutoff_created_at is None
+
+
 def _review_nits_handoff_payload(**feedback_updates):
     feedback = {
         "verdict": "pass-with-nits",
