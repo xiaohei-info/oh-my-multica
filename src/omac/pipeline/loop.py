@@ -1399,6 +1399,23 @@ def _block_reviewer(
     return reason
 
 
+def _block_existing_reviewer_decision(
+    store: WorkItemStore,
+    manifest: Manifest,
+    key: str,
+    item,
+) -> str:
+    """Keep a persisted decision authoritative and stop Reviewer dispatch."""
+    set_node(manifest, key, status="blocked")
+    _mark_recovery_pending(manifest, key)
+    if item.status != WorkItemStatus.BLOCKED:
+        store.update_status(item.id, WorkItemStatus.BLOCKED)
+    return ui(
+        "Reviewer dispatch is blocked by the existing decision.",
+        "reviewer 派发被已有 decision 阻塞。",
+    )
+
+
 def _block_review_rework_budget(
     store: WorkItemStore,
     manifest: Manifest,
@@ -1669,6 +1686,9 @@ def _dispatch_reviewer_for_current_subject(
     node = manifest.nodes[key]
     item_id = node.work_item_id
     current = store.get_work_item(item_id)
+    if current.decision_required not in (None, {}):
+        _block_existing_reviewer_decision(store, manifest, key, current)
+        return False
     _validate_controller_sealed_delivery(store, current)
     subject_digest = _review_subject_for_current_delivery(
         manifest, key, current)
@@ -2734,6 +2754,9 @@ def _complete_merge_if_confirmed(
     ):
         _dispatch_reviewer_for_current_subject(
             store, runtime, manifest, key)
+        if manifest.nodes[key].status == "blocked":
+            save_manifest(manifest, manifest_path)
+            return "blocked"
         set_node(manifest, key, status="in_review")
         save_manifest(manifest, manifest_path)
         return "review"
@@ -3307,9 +3330,19 @@ def collect_results(
             ):
                 continue
             if node.reviewer:
+                if item.decision_required not in (None, {}):
+                    failures[key] = _block_existing_reviewer_decision(
+                        store, manifest, key, item)
+                    continue
                 store.reset_review(node.work_item_id)
                 _dispatch_reviewer_for_current_subject(
                     store, runtime, manifest, key)
+                if manifest.nodes[key].status == "blocked":
+                    failures[key] = ui(
+                        "Reviewer dispatch is blocked by the existing decision.",
+                        "reviewer 派发被已有 decision 阻塞。",
+                    )
+                    continue
                 set_node(manifest, key, status="in_review")
                 continue
 
@@ -3318,6 +3351,10 @@ def collect_results(
             and node.reviewer
             and item.phase == TaskPhase.REVIEW
         ):
+            if item.decision_required not in (None, {}):
+                failures[key] = _block_existing_reviewer_decision(
+                    store, manifest, key, item)
+                continue
             if not _review_subject_is_current(manifest, key, item):
                 pending_review.append(
                     (key, node.work_item_id, node.reviewer))
@@ -3848,6 +3885,12 @@ def collect_results(
         try:
             dispatched = _dispatch_reviewer_for_current_subject(
                 store, runtime, manifest, key)
+            if manifest.nodes[key].status == "blocked":
+                failures[key] = ui(
+                    "Reviewer dispatch is blocked by the existing decision.",
+                    "reviewer 派发被已有 decision 阻塞。",
+                )
+                continue
             set_node(manifest, key, status="in_review")
             if dispatched:
                 log.info(logsetup.EVT_REVIEW_DISPATCH, kind=_DAG_KIND, node=key,
