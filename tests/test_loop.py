@@ -3466,6 +3466,98 @@ def test_reviewer_dispatch_rejects_naive_delivery_cutoff(tmp_path):
             eng.store, eng.runtime, manifest, "a")
 
 
+def test_pending_review_with_existing_decision_fails_closed(
+    tmp_path, monkeypatch,
+):
+    """review-convergence decision must block before pending Reviewer dispatch."""
+    from omac.engines import mock as mock_engine
+
+    eng, manifest, path, item, _reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    decision = {
+        "schema": "omac.decision-required/v1",
+        "reason_code": "review-convergence-stalled",
+        "kind": "develop",
+        "phase": "review",
+        "gate": "review-convergence",
+        "rounds": 3,
+        "resume_issue_id": item.id,
+        "node_id": "a",
+    }
+    mock_engine._finish_mock_run(item.id)
+    eng.store.clear_assignment(item.id)
+    eng.store.update_work_item_metadata(item.id, decision_required=decision)
+    eng.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
+    manifest.nodes["a"].status = "in_progress"
+    save_manifest(manifest, path)
+
+    monkeypatch.setattr(
+        eng.store,
+        "assign_work_item",
+        lambda *_args, **_kwargs: pytest.fail(
+            "existing decision must not assign Reviewer"),
+    )
+    monkeypatch.setattr(
+        eng.runtime,
+        "wake",
+        lambda *_args, **_kwargs: pytest.fail(
+            "existing decision must not wake Reviewer"),
+    )
+
+    failures = loop.collect_results(eng.store, eng.runtime, manifest, path)
+
+    blocked = eng.store.get_work_item(item.id)
+    assert "a" in failures
+    assert manifest.nodes["a"].status == "blocked"
+    assert blocked.status is WorkItemStatus.BLOCKED
+    assert blocked.decision_required == decision
+
+
+def test_reviewer_dispatch_guard_preserves_existing_decision(
+    tmp_path, monkeypatch,
+):
+    """Direct dispatch callers cannot bypass a persisted decision guard."""
+    eng, manifest, path, item, _reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    decision = {
+        "schema": "omac.decision-required/v1",
+        "reason_code": "review-convergence-stalled",
+        "kind": "develop",
+        "phase": "review",
+        "gate": "review-convergence",
+        "rounds": 3,
+        "resume_issue_id": item.id,
+        "node_id": "a",
+    }
+    eng.store.update_work_item_metadata(item.id, decision_required=decision)
+    eng.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
+    manifest.nodes["a"].status = "in_progress"
+    save_manifest(manifest, path)
+    assignments_before = list(eng.store.assign_log)
+
+    monkeypatch.setattr(
+        eng.store,
+        "assign_work_item",
+        lambda *_args, **_kwargs: pytest.fail(
+            "existing decision must not assign Reviewer"),
+    )
+    monkeypatch.setattr(
+        eng.runtime,
+        "wake",
+        lambda *_args, **_kwargs: pytest.fail(
+            "existing decision must not wake Reviewer"),
+    )
+
+    assert loop._dispatch_reviewer_for_current_subject(
+        eng.store, eng.runtime, manifest, "a") is False
+
+    blocked = eng.store.get_work_item(item.id)
+    assert manifest.nodes["a"].status == "blocked"
+    assert blocked.status is WorkItemStatus.BLOCKED
+    assert blocked.decision_required == decision
+    assert eng.store.assign_log == assignments_before
+
+
 def test_reviewer_dispatch_refreshes_reused_issue_with_control_protocol(
     tmp_path, monkeypatch,
 ):
