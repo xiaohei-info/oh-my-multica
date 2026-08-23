@@ -63,6 +63,15 @@ _MESSAGES = {
             "be safely summarized, report the evidence boundary or environment "
             "blocker; never fabricate a pass."
         ),
+        "work.protocol.reviewer_role_guard": (
+            "Reviewer-only boundary: inspect current facts, run declared "
+            "verification, and generate the review report. The only allowed write "
+            "is the returned `omac work submit --verdict "
+            "<pass|pass-with-nits|reject> --report-file <report-file>` command. "
+            "Never run `omac dag amend propose` or `omac dag amend accept`, "
+            "modify the manifest, modify platform state, or perform operator "
+            "recovery or retry."
+        ),
         "work.protocol.control": (
             "Do not edit platform status, assignee, metadata, rerun, or cancel "
             "directly. Use OMAC as the only write path."
@@ -202,6 +211,13 @@ _MESSAGES = {
             "reasoning/report 中复现敏感 payload、凭证、网络目标或原始敏感日志。"
             "若必要验证会暴露无法安全概述的敏感内容，报告证据边界或环境阻塞；"
             "不得伪造 pass。"
+        ),
+        "work.protocol.reviewer_role_guard": (
+            "reviewer-only 边界：只检查当前事实、运行已声明验证并生成 review report。"
+            "唯一允许的写操作是返回的 `omac work submit --verdict "
+            "<pass|pass-with-nits|reject> --report-file <report-file>` 命令。"
+            "禁止运行 `omac dag amend propose` 或 `omac dag amend accept`，禁止修改 "
+            "manifest 或平台状态，也禁止进行 operator recovery 或 retry。"
         ),
         "work.protocol.control": (
             "不要直接修改平台状态、负责人、metadata，也不要直接 rerun 或 cancel；"

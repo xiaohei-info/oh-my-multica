@@ -60,7 +60,9 @@ from .convergence import (
     ConvergenceResolution, ResolutionState, persist_decision,
     resolve_convergence,
 )
-from ..pipeline.dispatch import normalize_source_refs, render_issue_body
+from ..pipeline.dispatch import (
+    normalize_source_refs, render_issue_body, reviewer_dispatch_stopped,
+)
 from ..core.taskmeta import (
     DECISION_REQUIRED_SCHEMA, DELIVERY_IDENTITY_SCHEMA,
     REVIEWER_RUN_BASELINE_SCHEMA, WORKER_HANDOFF_SCHEMA,
@@ -1307,12 +1309,31 @@ def _observe_reconcile_inputs(
     )
 
 
-def _resume_reviewer_run(store, runtime, node) -> bool:
+def _resume_reviewer_run(
+    store, runtime, node, *, manifest: Manifest | None = None,
+    key: str | None = None,
+) -> bool:
     """在同一 issue 恢复 reviewer，不重置既有 worker/评审对象事实。"""
     if not node.reviewer:
         return False
     item_id = node.work_item_id
+    if manifest is not None and key is not None:
+        if _guard_reviewer_dispatch_control(
+            store, manifest, key, item_id) is not None:
+            return False
+    else:
+        current = store.observe_work_item_control(item_id).work_item
+        if reviewer_dispatch_stopped(current):
+            return False
     store.update_status(item_id, WorkItemStatus.IN_REVIEW)
+    if manifest is not None and key is not None:
+        if _guard_reviewer_dispatch_control(
+            store, manifest, key, item_id) is not None:
+            return False
+    else:
+        current = store.observe_work_item_control(item_id).work_item
+        if reviewer_dispatch_stopped(current):
+            return False
     store.assign_work_item(
         item_id, node.reviewer, "reviewer", start_run=False)
     runtime.wake(item_id, node.reviewer, "reviewer")
@@ -1405,15 +1426,28 @@ def _block_existing_reviewer_decision(
     key: str,
     item,
 ) -> str:
-    """Keep a persisted decision authoritative and stop Reviewer dispatch."""
+    """Keep a persisted decision or blocked status authoritative."""
     set_node(manifest, key, status="blocked")
     _mark_recovery_pending(manifest, key)
     if item.status != WorkItemStatus.BLOCKED:
         store.update_status(item.id, WorkItemStatus.BLOCKED)
     return ui(
-        "Reviewer dispatch is blocked by the existing decision.",
-        "reviewer 派发被已有 decision 阻塞。",
+        "Reviewer dispatch is blocked by the existing decision or platform status.",
+        "reviewer 派发被已有 decision 或平台 blocked 状态阻塞。",
     )
+
+
+def _guard_reviewer_dispatch_control(
+    store: WorkItemStore,
+    manifest: Manifest,
+    key: str,
+    item_id: str,
+) -> str | None:
+    """Re-read authoritative control immediately before Reviewer dispatch."""
+    current = store.observe_work_item_control(item_id).work_item
+    if not reviewer_dispatch_stopped(current):
+        return None
+    return _block_existing_reviewer_decision(store, manifest, key, current)
 
 
 def _block_review_rework_budget(
@@ -1509,6 +1543,8 @@ def _reviewer_no_submit_grace_state(
     observed = terminal
     for attempt in range(_HANDOFF_OBSERVATION_ATTEMPTS):
         fresh = store.observe_work_item_control(item.id).work_item
+        if reviewer_dispatch_stopped(fresh):
+            return "blocked"
         if fresh.review_verdict:
             return "submitted"
 
@@ -1634,6 +1670,10 @@ def _reviewer_run_baseline_for_observation(
 def _retry_reviewer_attempt(
     store, runtime, node, item, baseline, *, manifest=None, key: str | None = None,
 ) -> str | None:
+    if manifest is not None and key is not None:
+        if _guard_reviewer_dispatch_control(
+            store, manifest, key, item.id) is not None:
+            return "reviewer dispatch is blocked by existing control"
     runs = runtime.list_runs(item.id)
     try:
         bounded_ids, _ = _bounded_direct_run_baseline(
@@ -1655,7 +1695,10 @@ def _retry_reviewer_attempt(
     store.update_work_item_metadata(item.id, reviewer_run_baseline=retry)
     wake_error = None
     try:
-        _resume_reviewer_run(store, runtime, node)
+        resumed = _resume_reviewer_run(
+            store, runtime, node, manifest=manifest, key=key)
+        if not resumed:
+            return "reviewer dispatch is blocked by existing control"
     except PlatformError as exc:
         wake_error = str(exc)
     for attempt in range(_HANDOFF_OBSERVATION_ATTEMPTS):
@@ -1686,7 +1729,7 @@ def _dispatch_reviewer_for_current_subject(
     node = manifest.nodes[key]
     item_id = node.work_item_id
     current = store.get_work_item(item_id)
-    if current.decision_required not in (None, {}):
+    if reviewer_dispatch_stopped(current):
         _block_existing_reviewer_decision(store, manifest, key, current)
         return False
     _validate_controller_sealed_delivery(store, current)
@@ -1792,6 +1835,9 @@ def _dispatch_reviewer_for_current_subject(
     _refresh_develop_issue_body(
         store, manifest, key, phase=TaskPhase.REVIEW)
     store.update_status(item_id, WorkItemStatus.IN_REVIEW)
+    if _guard_reviewer_dispatch_control(
+        store, manifest, key, item_id) is not None:
+        return False
     store.assign_work_item(
         item_id, node.reviewer, "reviewer", start_run=False)
     runtime.wake(item_id, node.reviewer, "reviewer")
@@ -3351,9 +3397,10 @@ def collect_results(
             and node.reviewer
             and item.phase == TaskPhase.REVIEW
         ):
-            if item.decision_required not in (None, {}):
-                failures[key] = _block_existing_reviewer_decision(
-                    store, manifest, key, item)
+            dispatch_block = _guard_reviewer_dispatch_control(
+                store, manifest, key, item.id)
+            if dispatch_block is not None:
+                failures[key] = dispatch_block
                 continue
             if not _review_subject_is_current(manifest, key, item):
                 pending_review.append(
@@ -3635,6 +3682,12 @@ def collect_results(
                         continue
                     reviewer_terminal = observed.terminal
                     retry_kind = None
+                    if reviewer_terminal:
+                        dispatch_block = _guard_reviewer_dispatch_control(
+                            store, manifest, key, item.id)
+                        if dispatch_block is not None:
+                            failures[key] = dispatch_block
+                            continue
                     if reviewer_terminal and reviewer_terminal.outcome != "finished-without-submit":
                         reviewer_failure = _RunFailure(
                             reviewer_terminal.run,
@@ -3662,6 +3715,12 @@ def collect_results(
                             store, runtime, item, baseline, reviewer_terminal)
                         if grace_state in {"submitted", "waiting"}:
                             continue
+                        if grace_state == "blocked":
+                            dispatch_block = _guard_reviewer_dispatch_control(
+                                store, manifest, key, item.id)
+                            if dispatch_block is not None:
+                                failures[key] = dispatch_block
+                            continue
                         if grace_state == "unavailable":
                             failures[key] = _block_reviewer(
                                 store, manifest, manifest_path, key, item,
@@ -3682,10 +3741,21 @@ def collect_results(
                             continue
                         retry_kind = "finished_without_submit"
                     if retry_kind:
+                        dispatch_block = _guard_reviewer_dispatch_control(
+                            store, manifest, key, item.id)
+                        if dispatch_block is not None:
+                            failures[key] = dispatch_block
+                            continue
                         retry_error = _retry_reviewer_attempt(
                             store, runtime, node, item, baseline,
                             manifest=manifest, key=key)
                         if retry_error:
+                            if manifest.nodes[key].status == "blocked":
+                                failures[key] = ui(
+                                    "Reviewer dispatch is blocked by the existing decision or platform status.",
+                                    "reviewer 派发被已有 decision 或平台 blocked 状态阻塞。",
+                                )
+                                continue
                             failures[key] = _block_reviewer(
                                 store, manifest, manifest_path, key, item,
                                 "reviewer-run-dispatch-unresolved", retry_error)
@@ -3699,11 +3769,19 @@ def collect_results(
                         continue
                 if _reviewer_run_needs_resume(item):
                     try:
-                        if _resume_reviewer_run(store, runtime, node):
+                        resumed = _resume_reviewer_run(
+                            store, runtime, node, manifest=manifest, key=key)
+                        if resumed:
                             set_node(manifest, key, status="in_review")
                             log.info(logsetup.EVT_REVIEW_DISPATCH, kind=_DAG_KIND,
                                      node=key, id=node.work_item_id,
                                      reviewer=node.reviewer, recovered=True)
+                            continue
+                        if manifest.nodes[key].status == "blocked":
+                            failures[key] = ui(
+                                "Reviewer dispatch is blocked by the existing decision or platform status.",
+                                "reviewer 派发被已有 decision 或平台 blocked 状态阻塞。",
+                            )
                             continue
                     except PlatformError as exc:
                         store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)

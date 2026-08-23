@@ -446,6 +446,35 @@ def test_show_output_structure(kind, phase):
         assert out["context"]["verification"]["coverage"] == 92
 
 
+def test_reviewer_show_declares_reviewer_only_role_guard():
+    store = _store()
+    item = _make_item(
+        store, TaskKind.DEVELOP, TaskPhase.REVIEW,
+        with_deliverable=True, with_verification=True)
+
+    output = build_show_output(item, "reviewer:bob", language="en")
+    guard = output["context"]["reviewer_role_guard"]
+
+    assert guard["role"] == "reviewer-only"
+    assert guard["reviewer_only"] is True
+    assert any("inspect current facts" in action for action in guard["allowed_actions"])
+    assert any("generate a structured review report" in action for action in guard["allowed_actions"])
+    assert any(
+        "omac work submit <issue-id> --verdict" in action
+        and "--report-file <report-file>" in action
+        for action in guard["allowed_actions"]
+    )
+    for forbidden in (
+        "omac dag amend propose",
+        "omac dag amend accept",
+        "modify the manifest",
+        "modify platform state",
+        "perform operator recovery",
+    ):
+        assert forbidden in guard["forbidden_actions"]
+        assert forbidden in output["protocol"]
+
+
 def test_worker_submit_success_requires_a_confirmed_terminal_tool_result():
     """Worker 不能把仍在运行、缺 tool_result 或未知结果口头当成提交成功。"""
     store = _store()

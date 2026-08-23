@@ -564,6 +564,48 @@ def test_resume_refresh_requires_no_delivery_ref_or_stopped_signal(
     assert result["delivery"]["plan"] == "fresh plan"
 
 
+def test_run_task_rechecks_reviewer_control_before_assignment(monkeypatch):
+    """Direct run_task reviewer dispatch preserves a late decision."""
+    MockStore.reset()
+    eng = _engine()
+    MockStore.set_kind_delivery("plan", {"plan": "计划正文"})
+    decision = {
+        "schema": "omac.decision-required/v1",
+        "reason_code": "review-convergence-scope-expanding",
+        "kind": "plan",
+        "phase": "review",
+        "gate": "review-convergence",
+    }
+    original_mark_in_review = eng.store.mark_in_review
+
+    def mark_in_review(item_id):
+        original_mark_in_review(item_id)
+        eng.store.update_work_item_metadata(
+            item_id, decision_required=decision)
+
+    monkeypatch.setattr(eng.store, "mark_in_review", mark_in_review)
+    monkeypatch.setattr(
+        eng.store,
+        "assign_work_item",
+        lambda item_id, assignee, role, **kwargs: (
+            pytest.fail("late reviewer decision must prevent assignment")
+            if role == "reviewer"
+            else MockStore.assign_work_item(
+                eng.store, item_id, assignee, role, **kwargs)
+        ),
+    )
+
+    with pytest.raises(NeedsDecision, match="Reviewer dispatch is blocked"):
+        run_task(
+            eng, TaskKind.PLAN, _payload(), "alice",
+            reviewers=["bob"], poll=_poll)
+
+    item = eng.store.list_work_items("ws")[0]
+    assert item.status is WorkItemStatus.BLOCKED
+    assert item.decision_required == decision
+    assert [entry[2] for entry in eng.store.assign_log] == ["worker"]
+
+
 def test_run_task_handoff_to_reviewer_does_not_post_trigger_comment():
     """正常转派 reviewer 只靠 assign + metadata 交接,不发评论触发第二次 run。"""
     eng = _engine()

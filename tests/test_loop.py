@@ -3558,6 +3558,173 @@ def test_reviewer_dispatch_guard_preserves_existing_decision(
     assert eng.store.assign_log == assignments_before
 
 
+def test_reviewer_dispatch_rechecks_control_before_final_assignment(
+    tmp_path, monkeypatch,
+):
+    """A decision appearing during handoff blocks before assign or wake."""
+    from omac.engines import mock as mock_engine
+
+    eng, manifest, _path, item, _reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    mock_engine._finish_mock_run(item.id)
+    eng.store.clear_assignment(item.id)
+    eng.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
+    decision = {
+        "schema": "omac.decision-required/v1",
+        "reason_code": "review-convergence-scope-expanding",
+        "kind": "develop",
+        "phase": "review",
+        "gate": "review-convergence",
+        "resume_issue_id": item.id,
+        "node_id": "a",
+    }
+    original_refresh = loop._refresh_develop_issue_body
+
+    def inject_decision(*args, **kwargs):
+        original_refresh(*args, **kwargs)
+        eng.store.update_work_item_metadata(
+            item.id, decision_required=decision)
+
+    monkeypatch.setattr(loop, "_refresh_develop_issue_body", inject_decision)
+    monkeypatch.setattr(
+        eng.store,
+        "assign_work_item",
+        lambda *_args, **_kwargs: pytest.fail(
+            "late decision must block before Reviewer assignment"),
+    )
+    monkeypatch.setattr(
+        eng.runtime,
+        "wake",
+        lambda *_args, **_kwargs: pytest.fail(
+            "late decision must block before Reviewer wake"),
+    )
+
+    assert loop._dispatch_reviewer_for_current_subject(
+        eng.store, eng.runtime, manifest, "a") is False
+
+    blocked = eng.store.get_work_item(item.id)
+    assert manifest.nodes["a"].status == "blocked"
+    assert blocked.status is WorkItemStatus.BLOCKED
+    assert blocked.decision_required == decision
+
+
+def test_reviewer_pending_review_rechecks_control_before_dispatch(
+    tmp_path, monkeypatch,
+):
+    """in_progress/pending_review cannot dispatch after a late decision."""
+    from omac.engines import mock as mock_engine
+
+    eng, manifest, path, item, _reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    mock_engine._finish_mock_run(item.id)
+    eng.store.clear_assignment(item.id)
+    eng.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
+    manifest.nodes["a"].status = "in_progress"
+    save_manifest(manifest, path)
+    decision = {
+        "schema": "omac.decision-required/v1",
+        "reason_code": "review-convergence-scope-expanding",
+        "kind": "develop",
+        "phase": "review",
+        "gate": "review-convergence",
+        "resume_issue_id": item.id,
+        "node_id": "a",
+    }
+    original_refresh = loop._refresh_develop_issue_body
+
+    def inject_decision(*args, **kwargs):
+        original_refresh(*args, **kwargs)
+        eng.store.update_work_item_metadata(
+            item.id, decision_required=decision)
+
+    monkeypatch.setattr(loop, "_refresh_develop_issue_body", inject_decision)
+    monkeypatch.setattr(
+        eng.store,
+        "assign_work_item",
+        lambda *_args, **_kwargs: pytest.fail(
+            "pending decision must block before Reviewer assignment"),
+    )
+    monkeypatch.setattr(
+        eng.runtime,
+        "wake",
+        lambda *_args, **_kwargs: pytest.fail(
+            "pending decision must block before Reviewer wake"),
+    )
+
+    failures = loop.collect_results(eng.store, eng.runtime, manifest, path)
+
+    blocked = eng.store.get_work_item(item.id)
+    assert "a" in failures
+    assert manifest.nodes["a"].status == "blocked"
+    assert blocked.status is WorkItemStatus.BLOCKED
+    assert blocked.decision_required == decision
+
+
+def test_reviewer_terminal_decision_stops_no_submit_retry(
+    tmp_path, monkeypatch,
+):
+    """A decision observed after terminal Run wins over no-submit retry."""
+    eng, manifest, path, item, reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    baseline = item.reviewer_run_baseline
+    runs = [
+        replace(
+            run,
+            status="completed",
+            updated_at="2026-08-01T01:01:30Z",
+            trigger_kind="issue_assignment",
+        ) if run.agent_id == reviewer_id
+        and run.id not in baseline.baseline_direct_run_ids else run
+        for run in eng.runtime.list_runs(item.id)
+    ]
+    decision = {
+        "schema": "omac.decision-required/v1",
+        "reason_code": "review-convergence-scope-expanding",
+        "kind": "develop",
+        "phase": "review",
+        "gate": "review-convergence",
+        "resume_issue_id": item.id,
+        "node_id": "a",
+    }
+    original_grace = loop._reviewer_no_submit_grace_state
+
+    def inject_decision_after_terminal(*args, **kwargs):
+        state = original_grace(*args, **kwargs)
+        if state == "elapsed":
+            eng.store.update_work_item_metadata(
+                item.id, decision_required=decision)
+        return state
+
+    monkeypatch.setattr(loop, "_reviewer_no_submit_grace_state", inject_decision_after_terminal)
+    monkeypatch.setattr(
+        loop, "_utcnow",
+        lambda: datetime(2026, 8, 1, 1, 3, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
+    monkeypatch.setattr(
+        eng.store,
+        "assign_work_item",
+        lambda *_args, **_kwargs: pytest.fail(
+            "terminal decision must stop no-submit retry"),
+    )
+    monkeypatch.setattr(
+        eng.runtime,
+        "wake",
+        lambda *_args, **_kwargs: pytest.fail(
+            "terminal decision must stop no-submit continuation"),
+    )
+
+    failures = loop.collect_results(eng.store, eng.runtime, manifest, path)
+
+    blocked = eng.store.get_work_item(item.id)
+    assert "a" in failures
+    assert manifest.nodes["a"].status == "blocked"
+    assert blocked.status is WorkItemStatus.BLOCKED
+    assert blocked.decision_required == decision
+    assert blocked.reviewer_run_baseline.attempt == baseline.attempt
+
+
 def test_reviewer_dispatch_refreshes_reused_issue_with_control_protocol(
     tmp_path, monkeypatch,
 ):

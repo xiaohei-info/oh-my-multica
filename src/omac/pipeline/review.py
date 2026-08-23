@@ -18,6 +18,7 @@ from ..core.taskmeta import TaskKind
 from ..engines.models import WorkItemStatus
 from ..errors import NeedsDecision
 from ..i18n import ui
+from .dispatch import reviewer_dispatch_stopped
 
 
 def run_review(
@@ -76,7 +77,37 @@ def run_review(
     if metadata:
         store.update_work_item_metadata(item.id, **metadata)
 
+    current = store.observe_work_item_control(item.id).work_item
+    if reviewer_dispatch_stopped(current):
+        if current.status != WorkItemStatus.BLOCKED:
+            store.update_status(item.id, WorkItemStatus.BLOCKED)
+        raise NeedsDecision(
+            ui(
+                "Reviewer dispatch is blocked by the existing decision or platform status.",
+                "reviewer 派发被已有 decision 或平台 blocked 状态阻塞。",
+            ),
+            report={
+                "item_id": item.id,
+                "reason_code": "reviewer-dispatch-blocked",
+                "decision_required": current.decision_required,
+            },
+        )
     store.mark_in_review(item.id)
+    current = store.observe_work_item_control(item.id).work_item
+    if reviewer_dispatch_stopped(current):
+        if current.status != WorkItemStatus.BLOCKED:
+            store.update_status(item.id, WorkItemStatus.BLOCKED)
+        raise NeedsDecision(
+            ui(
+                "Reviewer dispatch is blocked by the existing decision or platform status.",
+                "reviewer 派发被已有 decision 或平台 blocked 状态阻塞。",
+            ),
+            report={
+                "item_id": item.id,
+                "reason_code": "reviewer-dispatch-blocked",
+                "decision_required": current.decision_required,
+            },
+        )
     store.assign_work_item(item.id, reviewer, "reviewer")
     runtime.wake(item.id, reviewer, "reviewer")
 

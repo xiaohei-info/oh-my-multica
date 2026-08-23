@@ -90,6 +90,14 @@ _AUTHORING_ACTION_KEYS = {
 }
 
 
+def reviewer_dispatch_stopped(item: Any) -> bool:
+    """Return whether authoritative control forbids a Reviewer dispatch."""
+    return (
+        getattr(item, "decision_required", None) not in (None, {})
+        or getattr(item, "status", None) == WorkItemStatus.BLOCKED
+    )
+
+
 def _next_action(kind: TaskKind, phase: TaskPhase, language: str) -> str:
     """「现在做什么」:只陈述当前动作,不混入静态 guide 命令。"""
     if phase == TaskPhase.REVIEW:
@@ -102,10 +110,16 @@ def _next_action(kind: TaskKind, phase: TaskPhase, language: str) -> str:
         if kind == TaskKind.DEVELOP and phase == TaskPhase.REVIEW
         else ""
     )
+    role_guard = (
+        t("work.protocol.reviewer_role_guard", language=language)
+        if phase == TaskPhase.REVIEW
+        else ""
+    )
     control = t("work.protocol.control", language=language)
     terminal = _command_terminal_protocol(language)
     return "\n".join(
-        part for part in (action, safe_content, control, terminal) if part)
+        part for part in (action, safe_content, role_guard, control, terminal)
+        if part)
 
 
 def _command_terminal_protocol(language: str) -> str:
@@ -459,6 +473,27 @@ def build_show_output(item: Any, identity: str, *, language: str = EN) -> Dict[s
                 context["review_ledger_ref"] = ledger_ref
     else:
         # review 阶段:评审对象(deliverable) + contract + worker 的 env_setup
+        context["reviewer_role_guard"] = {
+            "role": "reviewer-only",
+            "reviewer_only": True,
+            "allowed_actions": [
+                "inspect current facts and declared verification",
+                "generate a structured review report",
+                (
+                    "omac work submit <issue-id> --verdict "
+                    "<pass|pass-with-nits|reject> --report-file <report-file>"
+                ),
+            ],
+            "forbidden_actions": [
+                "omac dag amend propose",
+                "omac dag amend accept",
+                "modify the manifest",
+                "modify platform state",
+                "modify platform metadata, assignee, rerun, or cancel",
+                "perform operator recovery",
+                "perform operator retry",
+            ],
+        }
         context["deliverable"] = item.deliverable
         for key in (
             "deliverable_ref",

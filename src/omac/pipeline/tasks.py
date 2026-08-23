@@ -34,7 +34,9 @@ from ..engines.models import WorkItem, WorkItemStatus
 from ..errors import NeedsDecision, PlatformError, ValidationError
 from ..i18n import current_language, ui
 from .convergence import ResolutionState, persist_decision, resolve_convergence
-from .dispatch import normalize_source_refs, render_issue_body
+from .dispatch import (
+    normalize_source_refs, render_issue_body, reviewer_dispatch_stopped,
+)
 
 log = logsetup.get_logger(__name__)
 
@@ -79,6 +81,30 @@ def _produced(item: WorkItem) -> bool:
     )
     return staged or item.status in (
         WorkItemStatus.DONE, WorkItemStatus.FAILED, WorkItemStatus.BLOCKED)
+
+
+def _raise_if_reviewer_dispatch_stopped(
+    store, item_id: str, kind: TaskKind,
+) -> None:
+    """Keep persisted Reviewer control authoritative before assign/wake."""
+    current = store.observe_work_item_control(item_id).work_item
+    if not reviewer_dispatch_stopped(current):
+        return
+    if current.status != WorkItemStatus.BLOCKED:
+        store.update_status(item_id, WorkItemStatus.BLOCKED)
+    raise NeedsDecision(
+        ui(
+            "Reviewer dispatch is blocked by the existing decision or platform status.",
+            "reviewer 派发被已有 decision 或平台 blocked 状态阻塞。",
+        ),
+        report={
+            "item_id": item_id,
+            "kind": kind.value,
+            "phase": TaskPhase.REVIEW.value,
+            "reason_code": "reviewer-dispatch-blocked",
+            "decision_required": current.decision_required,
+        },
+    )
 
 
 def _delivery_of(kind: TaskKind, item: WorkItem) -> Dict[str, Any]:
@@ -999,6 +1025,9 @@ def run_task(
                 if predicate(current):
                     return current, observed_run_id
                 if run.terminal:
+                    if role == "reviewer":
+                        _raise_if_reviewer_dispatch_stopped(
+                            store, item_id, kind)
                     _raise_completed_without_submit(
                         reason_code=(
                             "reviewer-completed-without-verdict"
@@ -1343,12 +1372,14 @@ def run_task(
                     store, item_id, subject_digest, evidence_errors)
 
             store.mark_in_review(item_id)
+            _raise_if_reviewer_dispatch_stopped(store, item_id, kind)
             reviewer_baseline = None
             if runtime.capabilities.stable_direct_run_identity:
                 reviewer_baseline = {
                     run.id for run in runtime.list_runs(item_id)
                     if run.kind == "direct"
                 }
+            _raise_if_reviewer_dispatch_stopped(store, item_id, kind)
             store.assign_work_item(item_id, reviewer, "reviewer")
             log.info(logsetup.EVT_REVIEW_DISPATCH, kind=kind.value, id=item_id,
                      reviewer=reviewer)
