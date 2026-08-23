@@ -1334,10 +1334,10 @@ def _resume_reviewer_run(
         current = store.observe_work_item_control(item_id).work_item
         if reviewer_dispatch_stopped(current):
             return False
-    store.assign_work_item(
-        item_id, node.reviewer, "reviewer", start_run=False)
-    runtime.wake(item_id, node.reviewer, "reviewer")
-    return True
+    resumed = runtime.dispatch_reviewer(store, item_id, node.reviewer)
+    if not resumed and manifest is not None and key is not None:
+        _guard_reviewer_dispatch_control(store, manifest, key, item_id)
+    return resumed
 
 
 def _block_runtime_failure(
@@ -1725,6 +1725,19 @@ def _dispatch_reviewer_for_current_subject(
     manifest: Manifest,
     key: str,
 ) -> bool:
+    """Run Reviewer handoff preparation and guarded assign/wake as one window."""
+    item_id = manifest.nodes[key].work_item_id
+    with store.reviewer_dispatch_lock(item_id):
+        return _dispatch_reviewer_for_current_subject_locked(
+            store, runtime, manifest, key)
+
+
+def _dispatch_reviewer_for_current_subject_locked(
+    store: WorkItemStore,
+    runtime: AgentRuntime,
+    manifest: Manifest,
+    key: str,
+) -> bool:
     """幂等完成当前交付的 reviewer handoff；同 subject 不重置评审事实。"""
     node = manifest.nodes[key]
     item_id = node.work_item_id
@@ -1737,14 +1750,27 @@ def _dispatch_reviewer_for_current_subject(
         manifest, key, current)
     subject_changed = current.review_subject_digest != subject_digest
     if subject_changed:
+        # Recheck before any reset that could clear the old Reviewer facts.
+        if _guard_reviewer_dispatch_control(
+            store, manifest, key, item_id) is not None:
+            return False
         # 先解除旧 subject 的 assignment；若随后崩溃，reviewer metadata 为空，
         # restart 不会把旧 active Run 误认成新 subject 已派发。
         store.clear_assignment(item_id)
+        if _guard_reviewer_dispatch_control(
+            store, manifest, key, item_id) is not None:
+            return False
         store.update_work_item_metadata(
             item_id,
             review_obligations=build_review_obligations(current),
         )
+        if _guard_reviewer_dispatch_control(
+            store, manifest, key, item_id) is not None:
+            return False
         current = store.prepare_review_cycle(item_id, subject_digest)
+        if _guard_reviewer_dispatch_control(
+            store, manifest, key, item_id) is not None:
+            return False
 
     reviewer_id = store.resolve_agent_id(node.reviewer)
     baseline = current.reviewer_run_baseline
@@ -1786,8 +1812,14 @@ def _dispatch_reviewer_for_current_subject(
             baseline_direct_run_ids=baseline_ids,
         )
         _mark_recovery_pending(manifest, key)
+        if _guard_reviewer_dispatch_control(
+            store, manifest, key, item_id) is not None:
+            return False
         store.update_work_item_metadata(
             item_id, reviewer_run_baseline=baseline)
+        if _guard_reviewer_dispatch_control(
+            store, manifest, key, item_id) is not None:
+            return False
         current = store.get_work_item(item_id)
 
     if (
@@ -1838,9 +1870,10 @@ def _dispatch_reviewer_for_current_subject(
     if _guard_reviewer_dispatch_control(
         store, manifest, key, item_id) is not None:
         return False
-    store.assign_work_item(
-        item_id, node.reviewer, "reviewer", start_run=False)
-    runtime.wake(item_id, node.reviewer, "reviewer")
+    dispatched = runtime.dispatch_reviewer(store, item_id, node.reviewer)
+    if not dispatched:
+        _guard_reviewer_dispatch_control(store, manifest, key, item_id)
+        return False
     return True
 
 

@@ -108,8 +108,21 @@ def run_review(
                 "decision_required": current.decision_required,
             },
         )
-    store.assign_work_item(item.id, reviewer, "reviewer")
-    runtime.wake(item.id, reviewer, "reviewer")
+    if not runtime.dispatch_reviewer(store, item.id, reviewer):
+        current = store.observe_work_item_control(item.id).work_item
+        if current.status != WorkItemStatus.BLOCKED:
+            store.update_status(item.id, WorkItemStatus.BLOCKED)
+        raise NeedsDecision(
+            ui(
+                "Reviewer dispatch is blocked by the existing decision or platform status.",
+                "reviewer 派发被已有 decision 或平台 blocked 状态阻塞。",
+            ),
+            report={
+                "item_id": item.id,
+                "reason_code": "reviewer-dispatch-blocked",
+                "decision_required": current.decision_required,
+            },
+        )
 
     while True:
         cur = store.get_work_item(item.id)
