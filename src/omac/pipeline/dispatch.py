@@ -37,7 +37,7 @@ from omac.engines.models import (
     PullRequestReadiness, PullRequestReadinessFailure,
     PullRequestReadinessFailureKind, WorkItem, WorkItemPayload, WorkItemStatus,
 )
-from omac.engines.store import WorkItemStore
+from omac.engines.store import WorkItemStore, reviewer_dispatch_stopped
 from omac.errors import AuthError, NeedsDecision, PlatformError, ValidationError
 from omac.i18n import CN, EN, t, ui
 from .convergence import ResolutionState, resolve_convergence
@@ -88,14 +88,6 @@ _AUTHORING_ACTION_KEYS = {
     TaskKind.DEVELOP: "work.protocol.develop",
     TaskKind.FINAL_ACCEPTANCE: "work.protocol.final_acceptance",
 }
-
-
-def reviewer_dispatch_stopped(item: Any) -> bool:
-    """Return whether authoritative control forbids a Reviewer dispatch."""
-    return (
-        getattr(item, "decision_required", None) not in (None, {})
-        or getattr(item, "status", None) == WorkItemStatus.BLOCKED
-    )
 
 
 def _next_action(kind: TaskKind, phase: TaskPhase, language: str) -> str:

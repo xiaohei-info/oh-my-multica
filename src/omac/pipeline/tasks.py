@@ -1380,10 +1380,11 @@ def run_task(
                     if run.kind == "direct"
                 }
             _raise_if_reviewer_dispatch_stopped(store, item_id, kind)
-            store.assign_work_item(item_id, reviewer, "reviewer")
+            dispatched = runtime.dispatch_reviewer(store, item_id, reviewer)
+            if not dispatched:
+                _raise_if_reviewer_dispatch_stopped(store, item_id, kind)
             log.info(logsetup.EVT_REVIEW_DISPATCH, kind=kind.value, id=item_id,
                      reviewer=reviewer)
-            runtime.wake(item_id, reviewer, "reviewer")
             if reviewer_baseline is not None:
                 reviewed, _reviewer_run_id = _wait_for_dispatched_run(
                     baseline_ids=reviewer_baseline,

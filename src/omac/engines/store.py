@@ -9,7 +9,13 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from contextlib import contextmanager
+import fcntl
+import hashlib
+import os
+import tempfile
+import threading
+from typing import Any, Dict, Iterator, List, Optional
 
 from ..core.taskmeta import (
     DeliveryIdentity, ReviewerRunBaseline, TaskKind, TaskPhase,
@@ -22,6 +28,19 @@ from .models import (
     VerificationAttachmentObservation, WorkItem, WorkItemControlProjection,
     WorkItemHydrationPlan, WorkItemStatus, WorkspaceInfo,
 )
+
+
+_reviewer_dispatch_locks_guard = threading.Lock()
+_reviewer_dispatch_locks: Dict[str, threading.RLock] = {}
+_reviewer_dispatch_local = threading.local()
+
+
+def reviewer_dispatch_stopped(item: Any) -> bool:
+    """Return whether persisted control forbids starting a Reviewer Run."""
+    return (
+        getattr(item, "decision_required", None) not in (None, {})
+        or getattr(item, "status", None) == WorkItemStatus.BLOCKED
+    )
 
 
 class WorkItemStore(ABC):
@@ -132,6 +151,74 @@ class WorkItemStore(ABC):
         should override this method and list every intentionally deferred body.
         """
         return WorkItemControlProjection(self.get_work_item(item_id))
+
+    @contextmanager
+    def reviewer_dispatch_lock(self, item_id: str) -> Iterator[None]:
+        """Serialize OMAC Reviewer dispatch writers for one work item.
+
+        This is a host-local OMAC single-writer lock, not a platform CAS or a
+        cross-system transaction.  Reviewer dispatch callers must still perform
+        an authoritative control read while holding it; direct platform writes
+        and OMAC processes that do not take this lock remain an unsupported
+        concurrency boundary and are handled fail-closed by the final read.
+        """
+        identity = "\0".join((
+            str(getattr(self.config, "engine_type", "")),
+            str(getattr(self.config, "workspace_id", "")),
+            str(getattr(self.config, "project_id", "")),
+            str(item_id),
+        ))
+        key = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
+        lock_path = os.path.join(
+            tempfile.gettempdir(), f"omac-reviewer-{key}.lock")
+        with _reviewer_dispatch_locks_guard:
+            lock = _reviewer_dispatch_locks.setdefault(lock_path, threading.RLock())
+        lock.acquire()
+        held = getattr(_reviewer_dispatch_local, "held", None)
+        if held is None:
+            held = {}
+            _reviewer_dispatch_local.held = held
+        state = held.get(lock_path)
+        fd = None
+        if state is None:
+            fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX)
+            except BaseException:
+                os.close(fd)
+                lock.release()
+                raise
+            held[lock_path] = (fd, 1)
+        else:
+            held[lock_path] = (state[0], state[1] + 1)
+        try:
+            yield
+        finally:
+            fd, depth = held[lock_path]
+            if depth == 1:
+                del held[lock_path]
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(fd)
+            else:
+                held[lock_path] = (fd, depth - 1)
+            lock.release()
+
+    def assign_reviewer(self, item_id: str, assignee: str) -> bool:
+        """Assign a Reviewer without starting a Run when control is stopped.
+
+        The lock and read are deliberately separate from platform assignment:
+        adapters without conditional CAS cannot claim linearizable dispatch.
+        ``AgentRuntime.dispatch_reviewer`` performs the second read before wake.
+        """
+        with self.reviewer_dispatch_lock(item_id):
+            current = self.observe_work_item_control(item_id).work_item
+            if reviewer_dispatch_stopped(current):
+                return False
+            self.assign_work_item(
+                item_id, assignee, "reviewer", start_run=False)
+            return True
 
     def observe_work_item_controls(
         self, item_ids: List[str],

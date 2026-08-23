@@ -7,13 +7,16 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import List
+from typing import TYPE_CHECKING, List
 
 from ..errors import PlatformError
 from .models import (
     AgentInfo, AgentProvisionSpec, AgentRunObservation, RuntimeCapabilities,
     RuntimeTarget,
 )
+
+if TYPE_CHECKING:
+    from .store import WorkItemStore
 
 
 class AgentRuntime(ABC):
@@ -30,6 +33,35 @@ class AgentRuntime(ABC):
           不同 assignee 必须可行。
         - 无法达成唤醒时抛 PlatformError,编排层据此把节点标 blocked。
         """
+
+    def wake_reviewer(
+        self, store: "WorkItemStore", item_id: str, agent: str,
+    ) -> bool:
+        """Recheck control under the Store lock before waking a Reviewer.
+
+        ``False`` means no wake was attempted because persisted control stopped
+        the handoff.  The Store lock is host-local OMAC serialization only; it
+        is not a platform CAS, so the read immediately before ``wake`` remains
+        mandatory and direct platform writers stay an unsupported boundary.
+        """
+        from .store import reviewer_dispatch_stopped
+
+        with store.reviewer_dispatch_lock(item_id):
+            current = store.observe_work_item_control(item_id).work_item
+            if reviewer_dispatch_stopped(current):
+                return False
+            self.wake(item_id, agent, "reviewer")
+            current = store.observe_work_item_control(item_id).work_item
+            return not reviewer_dispatch_stopped(current)
+
+    def dispatch_reviewer(
+        self, store: "WorkItemStore", item_id: str, agent: str,
+    ) -> bool:
+        """Assign and wake one Reviewer through the guarded interface seam."""
+        with store.reviewer_dispatch_lock(item_id):
+            if not store.assign_reviewer(item_id, agent):
+                return False
+            return self.wake_reviewer(store, item_id, agent)
 
     @abstractmethod
     def cancel(self, item_id: str) -> bool:

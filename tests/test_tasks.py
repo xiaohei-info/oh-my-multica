@@ -2176,7 +2176,9 @@ def test_new_attempt_finalizes_every_partial_shell_before_dispatch(
         identity_calls.append(item_id)
         return original_identity(item_id, dag_key=dag_key, kind=kind)
 
-    def assert_finalized_before_assign(item_id, assignee, role):
+    def assert_finalized_before_assign(
+        item_id, assignee, role, **kwargs,
+    ):
         current = eng.store.get_work_item(item_id)
         if role == "worker":
             body, refs = tasks_module._authoring_materialization(
@@ -2188,7 +2190,7 @@ def test_new_attempt_finalizes_every_partial_shell_before_dispatch(
                     finalized=True))
             assert identity_errors == []
             assert activity_fields == ["status"]
-        return original_assign(item_id, assignee, role)
+        return original_assign(item_id, assignee, role, **kwargs)
 
     monkeypatch.setattr(eng.store, "set_authoring_identity", record_identity)
     monkeypatch.setattr(eng.store, "assign_work_item", assert_finalized_before_assign)

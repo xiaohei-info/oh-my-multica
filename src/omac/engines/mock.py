@@ -31,7 +31,8 @@ from .models import (
     AgentInfo, AgentProvisionSpec, AgentRunObservation, EngineConfig, ProjectInfo, RuntimeTarget,
     MergeCommandResult, PullRequestCheckResult, PullRequestObservation,
     PullRequestReadiness, PullRequestState, RuntimeCapabilities,
-    VerificationAttachmentObservation, WorkItem, WorkItemStatus, WorkspaceInfo,
+    VerificationAttachmentObservation, WorkItem, WorkItemControlProjection,
+    WorkItemStatus, WorkspaceInfo,
 )
 from .runtime import AgentRuntime
 from .store import WorkItemStore
@@ -84,8 +85,19 @@ def _finish_mock_run(item_id: str, status: str = "completed") -> None:
     runs = _shared_runs.get(item_id) or []
     if not runs:
         return
-    latest = runs[-1]
-    runs[-1] = AgentRunObservation(
+    assignment = _shared_active_assignments.get(item_id)
+    expected_agent_id = (
+        f"mock-agent-{assignment[0]}" if assignment else None)
+    candidates = [
+        index for index, run in enumerate(runs)
+        if run.active and (
+            expected_agent_id is None or run.agent_id == expected_agent_id)
+    ]
+    if not candidates:
+        return
+    index = candidates[-1]
+    latest = runs[index]
+    runs[index] = AgentRunObservation(
         id=latest.id, kind=latest.kind, status=status,
         agent_id=latest.agent_id, created_at=latest.created_at,
         updated_at=datetime.now(timezone.utc).isoformat(), error=latest.error,
@@ -749,8 +761,18 @@ class MockStore(WorkItemStore):
             raise WorkItemNotFoundError(ui(
                 f"Work item not found: {item_id}",
                 f"工作单元不存在: {item_id}"))
-        self._auto_complete_check(item_id)
+        if not getattr(self, "_control_observation", False):
+            self._auto_complete_check(item_id)
         return _shared_work_items[item_id]
+
+    def observe_work_item_control(
+        self, item_id: str,
+    ) -> WorkItemControlProjection:
+        self._control_observation = True
+        try:
+            return WorkItemControlProjection(self.get_work_item(item_id))
+        finally:
+            self._control_observation = False
 
     def set_authoring_identity(
         self, item_id: str, *, dag_key: str, kind: TaskKind,
@@ -1122,10 +1144,14 @@ class MockStore(WorkItemStore):
 
     def _start_assigned_run(
         self, item_id: str, agent_id: str, trigger_kind: str,
+        *, allow_foreign_active: bool = False,
     ) -> None:
         runs = _shared_runs.setdefault(item_id, [])
         if any(run.active for run in runs):
-            return
+            if not allow_foreign_active or any(
+                run.active and run.agent_id == agent_id for run in runs
+            ):
+                return
         self._append_assigned_run(item_id, agent_id, trigger_kind)
 
     def clear_assignment(self, item_id: str) -> None:
@@ -1238,8 +1264,42 @@ class MockRuntime(AgentRuntime):
     def capabilities(self) -> RuntimeCapabilities:
         return RuntimeCapabilities(stable_direct_run_identity=True)
 
+    def wake_reviewer(
+        self, store, item_id: str, agent: str,
+    ) -> bool:
+        """Create the mock Run at the guarded wake boundary before callbacks."""
+        from .store import reviewer_dispatch_stopped
+
+        with store.reviewer_dispatch_lock(item_id):
+            current = store.observe_work_item_control(item_id).work_item
+            if reviewer_dispatch_stopped(current):
+                return False
+            agent_id = store.resolve_agent_id(agent)
+            before_ids = {
+                run.id for run in _shared_runs.get(item_id, [])
+            }
+            self.wake(item_id, agent, "reviewer")
+            # Test callbacks may stand in for wake and only persist a verdict.
+            # Keep the mock's causal Run visible without prestarting it before
+            # the callback (a raised wake must leave no new Run).
+            if not any(
+                run.id not in before_ids and run.agent_id == agent_id
+                for run in _shared_runs.get(item_id, [])
+            ):
+                current = store.observe_work_item_control(item_id).work_item
+                if reviewer_dispatch_stopped(current):
+                    return False
+                store._start_assigned_run(
+                    item_id, agent_id, "rerun", allow_foreign_active=True)
+            current = store.observe_work_item_control(item_id).work_item
+            return not reviewer_dispatch_stopped(current)
+
     def wake(self, item_id: str, agent: str, role: str) -> None:
-        item = self._store.get_work_item(item_id)
+        # Do not hydrate through get_work_item before creating the Run: the
+        # mock's auto-complete hook is intentionally evaluated by later reads.
+        item = _shared_work_items.get(item_id)
+        if item is None:
+            raise WorkItemNotFoundError(item_id)
         agent_id = self._store.resolve_agent_id(agent)
         if item_id in _shared_assignment_wake_pending:
             _shared_assignment_wake_pending.discard(item_id)
@@ -1252,6 +1312,11 @@ class MockRuntime(AgentRuntime):
         if item.platform_assignee_id is None:
             item.platform_assignee_id = agent_id
             _shared_active_assignments[item_id] = (agent, role)
+        if role == "reviewer":
+            from .store import reviewer_dispatch_stopped
+            if reviewer_dispatch_stopped(
+                self._store.observe_work_item_control(item_id).work_item):
+                return None
         self._store._start_assigned_run(item_id, agent_id, "rerun")
 
     def cancel(self, item_id: str) -> bool:
