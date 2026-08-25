@@ -315,6 +315,7 @@ class WorkItemStore(ABC):
         worker_handoff: Optional[WorkerHandoffIntent | Dict[str, Any]] = None,
         delivery_identity: Optional[DeliveryIdentity | Dict[str, Any]] = None,
         decision_required: Optional[Dict[str, Any]] = None,
+        review_nits_acceptance: Optional[Dict[str, Any]] = None,
         amendment_attempt: Optional[Dict[str, Any]] = None,
         phase: Optional[TaskPhase] = None,
         worker_bounce: Optional[int] = None,
@@ -337,6 +338,8 @@ class WorkItemStore(ABC):
         - reviewer_run_baseline:当前 review subject 的 direct Run 因果边界；
           空 dict 清除，不承载 lifecycle 状态或业务回退计数。
         - worker_handoff:有界的内部 review→worker 交接意图；空 dict 清除。
+        - review_nits_acceptance:绑定当前 pass-with-nits 事实的有界 operator marker；
+          空 dict 清除，不改写 reviewer verdict/report。
         - deliverable:按 kind 承载 plan/acceptance/manifest 等交付正文。
         - project_rules:plan 的项目级开发规范交付正文。
         - description:回填 Human-first issue 正文(顶部单一 bootstrap 嵌入真实 id)。

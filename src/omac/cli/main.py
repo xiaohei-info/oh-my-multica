@@ -32,6 +32,7 @@ _EN_SUBCOMMAND_HELP = {
     "snapshot": "Read a manifest snapshot without platform access or reconciliation",
     "tick": "Advance one round and return exit 0, 10, or 20",
     "retry": "Reset a node to todo, optionally with another worker",
+    "accept-nits": "Accept pass-with-nits and resume review without marking done",
     "accept": "Accept a known risk and mark the node done",
     "amend-accept": "Accept a Reviewer-approved amendment and apply it",
     "abandon": "Abandon a node and release non-hard-dependent work",

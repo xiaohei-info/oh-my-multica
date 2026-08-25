@@ -169,6 +169,20 @@ def test_review_handoff_on_same_item():
     assert got.review_report["full_review_completed"] is True
 
 
+def test_mock_pass_with_nits_publishes_sealed_report_ref():
+    store = _engine().store
+    MockStore.set_review_verdict("pass-with-nits")
+    item = store.create_work_item("ws", "t", "d", dag_key="a", worker="alice")
+    store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+    store.assign_work_item(item.id, "bob", "reviewer")
+
+    got = store.get_work_item(item.id)
+    assert got.review_verdict == "pass-with-nits"
+    assert got.review_report["nits"]
+    assert got.review_report_ref["attachment_id"]
+    assert got.review_report_ref["sha256"]
+
+
 def test_runtime_wake_is_idempotent():
     eng = _engine(MOCK_AUTO_COMPLETE="false")
     item = eng.store.create_work_item("ws", "t", "d", dag_key="a", worker="alice")

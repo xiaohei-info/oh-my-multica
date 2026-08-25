@@ -6,7 +6,8 @@
 ## 适用条件
 
 - `work show` 表明当前 issue 是 `develop` 产出阶段，且当前身份是 worker。
-- 适用于首次开发，以及 reviewer reject、pass-with-nits、CI 或合并回退后的返工。
+- 适用于首次开发，以及调用者显式 `omac node retry` 后的 reviewer reject、CI 或合并回退返工。
+  `pass-with-nits` 默认等待 caller acceptance；未执行 retry 前不会派发 Worker。
 - worker 按当前 contract 做 TDD 开发，交付 ready for review 的 PR 和结构化 verification。
 
 ## 指令优先级

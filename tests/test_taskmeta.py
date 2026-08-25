@@ -116,6 +116,23 @@ def test_mock_review_continuation_roundtrip():
     assert store.get_work_item(item.id).review_continuation == continuation
 
 
+def test_mock_review_nits_acceptance_marker_roundtrip_and_clear():
+    store = MockStore(_mock_config())
+    item = store.create_work_item(
+        "ws", "t", "d", dag_key="develop-a", worker="alice")
+    marker = {
+        "schema": "omac.review-nits-acceptance/v1",
+        "review_subject_digest": "subject-1",
+        "review_report_ref": {"attachment_id": "att-1", "sha256": "a" * 64},
+        "verdict": "pass-with-nits",
+    }
+
+    store.update_work_item_metadata(item.id, review_nits_acceptance=marker)
+    assert store.get_work_item(item.id).review_nits_acceptance == marker
+    store.update_work_item_metadata(item.id, review_nits_acceptance={})
+    assert store.get_work_item(item.id).review_nits_acceptance is None
+
+
 def _reviewer_run_baseline():
     return ReviewerRunBaseline(
         schema=REVIEWER_RUN_BASELINE_SCHEMA,
@@ -635,6 +652,28 @@ def test_multica_review_continuation_roundtrip():
 
     assert got.review_continuation == continuation
     assert fake.metadata[item.id]["review_continuation"] == continuation
+
+
+def test_multica_review_nits_acceptance_marker_roundtrip_and_clear():
+    store = _multica_store()
+    fake = _FakeMulticaProc()
+    marker = {
+        "schema": "omac.review-nits-acceptance/v1",
+        "review_subject_digest": "subject-1",
+        "review_report_ref": {"attachment_id": "att-1", "sha256": "a" * 64},
+        "verdict": "pass-with-nits",
+    }
+    with patch("subprocess.run", side_effect=fake.run):
+        item = store.create_work_item(
+            "ws", "t", "d", dag_key="develop-a", worker="alice")
+        store.update_work_item_metadata(item.id, review_nits_acceptance=marker)
+        persisted = store.get_work_item(item.id)
+        store.update_work_item_metadata(item.id, review_nits_acceptance={})
+        cleared = store.get_work_item(item.id)
+
+    assert persisted.review_nits_acceptance == marker
+    assert fake.metadata[item.id]["review_nits_acceptance"] == {}
+    assert cleared.review_nits_acceptance is None
 
 
 def test_multica_reviewer_run_baseline_roundtrip_and_clear():

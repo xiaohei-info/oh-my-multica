@@ -28,6 +28,26 @@ structured stdout report is the current recovery fact.
 4. Re-run `omac dag run <manifest>`. Completed nodes are reused; the remainder
    continues from current state.
 
+### `pass-with-nits` acceptance
+
+A develop node with `pass-with-nits` is blocked for an explicit caller decision;
+OMAC does not dispatch the Worker for another unchanged verification. Inspect the
+sealed delivery and review report, then choose one path:
+
+```bash
+omac node accept-nits <manifest> <node_key>
+# or reject the nits and return to authoring:
+omac node retry <manifest> <node_key>
+```
+
+`accept-nits` requires the current sealed delivery, matching review subject and
+report reference, and no active direct Run. It preserves the Reviewer verdict and
+report, writes only a bounded `omac.review-nits-acceptance/v1` marker, clears the
+caller decision, and restores `review/in_review`; the next `dag run` still observes
+remote merge facts and does not mark the node done directly. Repeating the command
+is safe. A normal `node retry` clears the marker and invalidates the old review
+projection before authoring a new delivery.
+
 ### Stage-aware recovery and merge observation
 
 - Recovery follows the issue's real `phase`: authoring resumes only the worker.
@@ -297,8 +317,8 @@ integrations whose remaining work can ship independently.
 
 - Insufficient evidence, reviewer rejection, or exhausted CI/merge fallback:
   the node is blocked or needs decision.
-- `pass-with-nits` normally returns to the worker for suggestions without using
-  a review bounce or entering needs-decision.
+- `pass-with-nits` stops at caller acceptance; it does not dispatch the Worker
+  again until the caller explicitly chooses `omac node retry`.
 - Final acceptance still has failures after `acceptance.max_rounds`: the report
   retains the failure list.
 

@@ -98,6 +98,8 @@ REVIEW_GENERATION_KEY = "review_generation"
 REVIEW_LEDGER_GENERATION_KEY = "review_ledger_generation"
 MACHINE_FEEDBACK_REF_KEY = "machine_feedback_ref"
 REVIEW_CONTINUATION_KEY = "review_continuation"
+REVIEW_NITS_ACCEPTANCE_KEY = "review_nits_acceptance"
+REVIEW_NITS_ACCEPTANCE_SCHEMA = "omac.review-nits-acceptance/v1"
 REVIEWER_RUN_BASELINE_KEY = "reviewer_run_baseline"
 REVIEWER_RUN_BASELINE_SCHEMA = "omac.reviewer-run-baseline/v1"
 WORKER_HANDOFF_KEY = "worker_handoff"
@@ -492,6 +494,24 @@ def review_nits_feedback_is_complete(value: Any) -> bool:
     if any(not isinstance(nit, str) or not nit.strip() for nit in nits):
         return False
     return exact_review_report_ref(value.get("report_ref"))
+
+
+_REVIEW_NITS_ACCEPTANCE_FIELDS = frozenset({
+    "schema", "review_subject_digest", "review_report_ref", "verdict",
+})
+
+
+def review_nits_acceptance_is_valid(value: Any) -> bool:
+    """Validate the bounded operator marker for an accepted nits verdict."""
+    if not isinstance(value, dict) or set(value) != _REVIEW_NITS_ACCEPTANCE_FIELDS:
+        return False
+    return bool(
+        value.get("schema") == REVIEW_NITS_ACCEPTANCE_SCHEMA
+        and isinstance(value.get("review_subject_digest"), str)
+        and bool(value["review_subject_digest"])
+        and value.get("verdict") == "pass-with-nits"
+        and exact_review_report_ref(value.get("review_report_ref"))
+    )
 
 
 def parse_reviewer_run_baseline(value: Any) -> Optional[ReviewerRunBaseline]:

@@ -1,5 +1,6 @@
 """cli.node: show / retry / abandon —— exit 20 后的显式决策工具(§7.5)。"""
 from copy import deepcopy
+import hashlib
 import os
 
 import pytest
@@ -14,6 +15,106 @@ def _write_manifest(tmp_path, nodes_yaml):
     p = tmp_path / "m.yaml"
     p.write_text(yaml.dump({"meta": {}, "nodes": nodes_yaml}, allow_unicode=True))
     return str(p)
+
+
+def _pass_with_nits_fixture(tmp_path, monkeypatch):
+    """A blocked develop review with a controller-sealed current delivery."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OMAC_ENGINE", "mock")
+    monkeypatch.setenv("OMAC_WORKSPACE_ID", "ws-1")
+
+    from omac.core.review_convergence import review_subject_digest
+    from omac.core.taskmeta import (
+        DeliveryIdentity, DELIVERY_IDENTITY_SCHEMA, TaskKind, TaskPhase,
+    )
+    from omac.engines import EngineConfig, create_engine
+    from omac.engines.models import WorkItemStatus
+
+    engine = create_engine(
+        "mock",
+        EngineConfig("mock", "ws-1", extra={"MOCK_AUTO_COMPLETE": "false"}),
+    )
+    item = engine.store.create_work_item(
+        "ws-1", "t", "d", "b", "bob", reviewer="alice",
+        kind=TaskKind.DEVELOP,
+        initial_status=WorkItemStatus.BLOCKED,
+    )
+    pr_url = "https://example.test/pr/1"
+    head_sha = hashlib.sha256(pr_url.encode()).hexdigest()
+    verification = {
+        "commands": [], "integration_gates": [], "pr_base": "main",
+        "coverage": 100,
+    }
+    report = {
+        "review_goals": ["verify delivery"],
+        "full_review_completed": True,
+        "diff_reviewed": True,
+        "tests_rerun": True,
+        "coverage_checked": True,
+        "acceptance_mapping": [],
+        "blockers": [],
+        "nits": ["non-blocking follow-up"],
+    }
+    engine.store.update_work_item_metadata(
+        item.id,
+        phase=TaskPhase.REVIEW,
+        artifacts={"pr_url": pr_url, "head_sha": head_sha},
+        verification=verification,
+        verification_source=yaml.safe_dump(verification),
+        review_verdict="pass-with-nits",
+        review_report=report,
+        review_report_source=yaml.safe_dump(report),
+    )
+    current = engine.store.get_work_item(item.id)
+    ref = current.verification_ref
+    run_id = "worker-run-1"
+    engine.store.update_work_item_metadata(
+        item.id,
+        delivery_identity=DeliveryIdentity(
+            schema=DELIVERY_IDENTITY_SCHEMA,
+            handoff_generation="handoff-1",
+            worker="bob",
+            agent_id=engine.store.resolve_agent_id("bob"),
+            run_id=run_id,
+            pr_url=pr_url,
+            pr_head_sha=head_sha,
+            verification_sha256=ref["sha256"],
+            verification_attachment_id=ref["attachment_id"],
+            verification_comment_id=ref["comment_id"],
+            verification_uploader_type="system",
+            verification_task_id=run_id,
+            verification_created_at=ref["created_at"],
+        ),
+    )
+    current = engine.store.get_work_item(item.id)
+    subject = review_subject_digest(current, 1)
+    engine.store.update_work_item_metadata(
+        item.id,
+        review_subject_digest=subject,
+        decision_required={
+            "schema": "omac.decision-required/v1",
+            "reason_code": "review-nits-acceptance-required",
+            "kind": "develop",
+            "phase": "review",
+            "gate": "review-nits",
+            "resume_issue_id": item.id,
+            "node_id": "b",
+            "review_subject_digest": subject,
+            "review_report_ref": current.review_report_ref,
+            "verdict": "pass-with-nits",
+            "next_action": "omac node accept-nits manifest.yaml b",
+        },
+    )
+    engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
+
+    import omac.cli.commands.node as node_mod
+    monkeypatch.setattr(node_mod, "create_engine", lambda *a, **kw: engine)
+    path = _write_manifest(tmp_path, [{
+        "id": "b", "worker": "bob", "reviewer": "alice",
+        "status": "blocked", "work_item_id": item.id,
+        "recovery_marker": True,
+    }])
+    return engine, path, item.id
 
 
 def _basic_nodes():
@@ -1641,6 +1742,104 @@ def test_retry_preserves_stale_mock_work_item_id_for_reconcile(tmp_path, monkeyp
     manifest = load_manifest(path)
     assert manifest.nodes["b"].status == "todo"
     assert manifest.nodes["b"].work_item_id == "stale-id"
+
+
+def test_accept_nits_restores_review_preserves_reviewer_facts_and_is_idempotent(
+    tmp_path, capsys, monkeypatch,
+):
+    import json
+    from omac.engines.models import WorkItemStatus
+
+    engine, path, item_id = _pass_with_nits_fixture(tmp_path, monkeypatch)
+    before = engine.store.get_work_item(item_id)
+    verdict = before.review_verdict
+    report = deepcopy(before.review_report)
+    report_ref = deepcopy(before.review_report_ref)
+    subject = before.review_subject_digest
+
+    assert main(["node", "accept-nits", path, "b"]) == exit_codes.OK
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "in_review"
+
+    accepted = engine.store.get_work_item(item_id)
+    assert accepted.status is WorkItemStatus.IN_REVIEW
+    assert accepted.phase.value == "review"
+    assert accepted.review_verdict == verdict == "pass-with-nits"
+    assert accepted.review_report == report
+    assert accepted.review_report_ref == report_ref
+    assert accepted.review_subject_digest == subject
+    assert accepted.decision_required in (None, {})
+    assert accepted.review_nits_acceptance == {
+        "schema": "omac.review-nits-acceptance/v1",
+        "review_subject_digest": subject,
+        "review_report_ref": report_ref,
+        "verdict": "pass-with-nits",
+    }
+    assert load_manifest(path).nodes["b"].status == "in_review"
+
+    # A second invocation observes the same bounded marker and performs no new
+    # assignment/run or reviewer-fact mutation.
+    assignments = list(engine.store.assign_log)
+    assert main(["node", "accept-nits", path, "b"]) == exit_codes.OK
+    capsys.readouterr()
+    repeated = engine.store.get_work_item(item_id)
+    assert engine.store.assign_log == assignments
+    assert repeated.review_verdict == verdict
+    assert repeated.review_report == report
+    assert repeated.review_report_ref == report_ref
+    assert repeated.review_nits_acceptance["review_subject_digest"] == subject
+
+
+def test_accept_nits_rejects_active_direct_run_without_writes(
+    tmp_path, capsys, monkeypatch,
+):
+    from omac.engines.models import WorkItemStatus
+
+    engine, path, item_id = _pass_with_nits_fixture(tmp_path, monkeypatch)
+    engine.store.assign_work_item(item_id, "alice", "reviewer")
+    before = engine.store.get_work_item(item_id)
+    assignments = list(engine.store.assign_log)
+
+    assert main(["node", "accept-nits", path, "b"]) == exit_codes.VALIDATION
+    capsys.readouterr()
+    current = engine.store.get_work_item(item_id)
+    assert current.status is WorkItemStatus.BLOCKED
+    assert current.decision_required == before.decision_required
+    assert current.review_nits_acceptance is None
+    assert engine.store.assign_log == assignments
+    assert load_manifest(path).nodes["b"].status == "blocked"
+
+
+def test_retry_clears_review_nits_acceptance_marker_and_returns_authoring(
+    tmp_path, capsys, monkeypatch,
+):
+    from omac.engines.models import WorkItemStatus
+
+    engine, path, item_id = _pass_with_nits_fixture(tmp_path, monkeypatch)
+    marker = {
+        "schema": "omac.review-nits-acceptance/v1",
+        "review_subject_digest": engine.store.get_work_item(
+            item_id).review_subject_digest,
+        "review_report_ref": engine.store.get_work_item(item_id).review_report_ref,
+        "verdict": "pass-with-nits",
+    }
+    engine.store.update_work_item_metadata(
+        item_id, review_nits_acceptance=marker, decision_required={})
+    engine.store.update_status(item_id, WorkItemStatus.IN_REVIEW)
+    manifest = load_manifest(path)
+    manifest.nodes["b"].status = "in_review"
+    manifest.nodes["b"].recovery_marker = False
+    save_manifest(manifest, path)
+
+    assert main(["node", "retry", path, "b"]) == exit_codes.OK
+    capsys.readouterr()
+    current = engine.store.get_work_item(item_id)
+    assert current.review_nits_acceptance is None
+    assert current.review_verdict is None
+    assert current.review_report is None
+    assert current.phase.value == "authoring"
+    assert current.status is WorkItemStatus.TODO
+    assert load_manifest(path).nodes["b"].status == "todo"
 
 
 def test_accept_marks_done_and_updates_platform_status(tmp_path, capsys, monkeypatch):

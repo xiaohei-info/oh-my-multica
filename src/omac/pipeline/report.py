@@ -105,9 +105,11 @@ def _build_failed_node(
     pr_url = None
     evidence_summary = None
 
+    decision_required = None
     if item is not None:
         if item.artifacts:
             pr_url = item.artifacts.get("pr_url")
+        decision_required = item.decision_required
         evidence_summary = {
             "review_verdict": item.review_verdict,
             "review_comment": item.review_comment,
@@ -140,6 +142,7 @@ def _build_failed_node(
         "work_item_id": node.work_item_id,
         "pr_url": pr_url,
         "evidence_summary": evidence_summary,
+        "decision_required": decision_required,
     }
 
 
@@ -148,6 +151,10 @@ def _next_actions(failed_nodes: list, manifest_path: str) -> list:
     actions = []
     for fn in failed_nodes:
         key = fn["key"]
+        decision = fn.get("decision_required")
+        if isinstance(decision, dict) and decision.get(
+            "reason_code") == "review-nits-acceptance-required":
+            actions.append(f"omac node accept-nits {manifest_path} {key}")
         actions.append(f"omac node retry {manifest_path} {key}")
         actions.append(f"omac node abandon {manifest_path} {key}")
     return actions
