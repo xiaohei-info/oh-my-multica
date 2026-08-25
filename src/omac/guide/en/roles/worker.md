@@ -7,8 +7,9 @@ current contract from old tasks.
 ## When this applies
 
 - `work show` identifies `develop` authoring and you as worker.
-- It applies to first implementation and to rework after reviewer rejection,
-  pass-with-nits, CI, or merge fallback.
+- It applies to first implementation and to explicit `omac node retry`
+  rework after reviewer rejection, CI, or merge fallback. `pass-with-nits`
+  waits for caller acceptance and does not dispatch a Worker until retry.
 - The worker follows the current contract with TDD and delivers a review-ready
   PR plus structured verification.
 

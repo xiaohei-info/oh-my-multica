@@ -271,6 +271,9 @@ class WorkItem:
     updated_at: Optional[str] = None
     platform_assignee_id: Optional[str] = None
     unknown_persisted_fields: Dict[str, Any] = field(default_factory=dict)
+    # Dedicated bounded operator fact for an accepted pass-with-nits review.
+    # Kept last to preserve existing positional WorkItem construction.
+    review_nits_acceptance: Optional[Dict[str, Any]] = None
 
     @property
     def requires_decision(self) -> bool:

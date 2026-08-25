@@ -2310,6 +2310,16 @@ _AMENDMENT_ACTIVITY_FIELD_CASES = [
     ),
     ("review_continuation", {"authorized_rounds": 1}, "review_continuation"),
     (
+        "review_nits_acceptance",
+        {
+            "schema": "omac.review-nits-acceptance/v1",
+            "review_subject_digest": "subject",
+            "review_report_ref": {"attachment_id": "report", "sha256": "a" * 64},
+            "verdict": "pass-with-nits",
+        },
+        "review_nits_acceptance",
+    ),
+    (
         "reviewer_run_baseline",
         ReviewerRunBaseline(
             schema=REVIEWER_RUN_BASELINE_SCHEMA,

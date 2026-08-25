@@ -5190,7 +5190,7 @@ class TestFailureInjection:
         assert manifest.nodes["active"].status == "in_progress"
         assert manifest.nodes["decision"].status == "blocked"
 
-    @pytest.mark.parametrize("verdict", ["reject", "pass-with-nits"])
+    @pytest.mark.parametrize("verdict", ["reject"])
     def test_recovered_active_reviewer_completion_preserves_rework_context(
         self, tmp_path, verdict,
     ):
@@ -7090,6 +7090,7 @@ class TestReviewerRejectBoundedFallback:
             review_bounce=9,
             review_verdict="pass-with-nits",
             review_report=report,
+            review_report_source=yaml.safe_dump(report),
         )
         current = eng.store.get_work_item(item.id)
         eng.store.update_work_item_metadata(
@@ -7128,31 +7129,31 @@ class TestReviewerRejectBoundedFallback:
             entry for entry in eng.store.assign_log if entry[2] == "worker"
         ]) == worker_assignments
         assert len(eng.runtime.list_runs(item.id)) == runs_before
-        assert got.decision_required == {
-            "schema": "omac.decision-required/v1",
-            "reason_code": "review-nits-budget-exhausted",
-            "kind": "develop",
-            "phase": "review",
-            "gate": "review-nits",
-            "rounds": 9,
-            "consumed": 9,
-            "limit": 9,
-            "resume_issue_id": item.id,
-            "node_id": "a",
-            "verdict": "pass-with-nits",
-        }
+        assert got.review_nits_acceptance is None
+        assert got.decision_required["schema"] == "omac.decision-required/v1"
+        assert got.decision_required["reason_code"] == (
+            "review-nits-acceptance-required")
+        assert got.decision_required["kind"] == "develop"
+        assert got.decision_required["phase"] == "review"
+        assert got.decision_required["gate"] == "review-nits"
+        assert got.decision_required["resume_issue_id"] == item.id
+        assert got.decision_required["node_id"] == "a"
+        assert got.decision_required["review_subject_digest"] == (
+            got.review_subject_digest)
+        assert got.decision_required["review_report_ref"] == got.review_report_ref
+        assert got.decision_required["verdict"] == "pass-with-nits"
+        assert f"omac node accept-nits {path} a" in result.report["next_actions"]
 
-    def test_pass_with_nits_below_review_limit_dispatches_fresh_review(
+    def test_pass_with_nits_below_review_limit_still_needs_acceptance(
         self, tmp_path,
     ):
-        """未耗尽时 nits 仍回 Worker，bounce +1，重交后必须 fresh review。"""
+        """nits never become an automatic Worker bounce, regardless of budget."""
         from omac.engines import create_engine
 
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
         path = str(tmp_path / "m.yaml")
         manifest, eng, item = self._setup_reject_node(eng, path)
-        report = _review_report(
-            item, "pass-with-nits", nits=["follow up"])
+        report = _review_report(item, "pass-with-nits", nits=["follow up"])
         eng.store.update_work_item_metadata(
             item.id,
             review_bounce=1,
@@ -7167,47 +7168,21 @@ class TestReviewerRejectBoundedFallback:
         )
 
         first = tick(
-            eng.store,
-            eng.runtime,
-            manifest,
-            path,
-            max_parallel=4,
+            eng.store, eng.runtime, manifest, path, max_parallel=4,
             retry_limits={"review": 2},
         )
 
         got = eng.store.get_work_item(item.id)
-        assert first.state == "running"
-        assert manifest.nodes["a"].status == "in_progress"
-        assert got.bounces.review == 2
-        assert got.review_verdict is None
-        assert got.review_report is None
-        show = build_show_output(got, "worker:alice")
-        assert show["context"]["previous_review"] == {
-            "verdict": "pass-with-nits",
-            "report_ref": got.worker_handoff.source_review_feedback[
-                "report_ref"],
-            "nits": ["follow up"],
-        }
-
-        reviewer_assignments = len([
-            entry for entry in eng.store.assign_log if entry[2] == "reviewer"
-        ])
-        self._submit_revision(eng, item, revision=2)
-        second = tick(
-            eng.store,
-            eng.runtime,
-            manifest,
-            path,
-            max_parallel=4,
-            retry_limits={"review": 2},
-        )
-
-        assert second.state == "running"
-        assert manifest.nodes["a"].status == "in_review"
-        assert eng.store.get_work_item(item.id).worker_handoff is None
-        assert len([
-            entry for entry in eng.store.assign_log if entry[2] == "reviewer"
-        ]) == reviewer_assignments + 1
+        assert first.state == "needs_decision"
+        assert manifest.nodes["a"].status == "blocked"
+        assert got.status is WorkItemStatus.BLOCKED
+        assert got.bounces.review == 1
+        assert got.review_verdict == "pass-with-nits"
+        assert got.review_report == report
+        assert got.worker_handoff is None
+        assert got.review_nits_acceptance is None
+        assert got.decision_required["reason_code"] == (
+            "review-nits-acceptance-required")
 
     @pytest.mark.parametrize(
         "report_ref",
@@ -7282,10 +7257,10 @@ class TestReviewerRejectBoundedFallback:
         assert after.worker_handoff is before["worker_handoff"]
         assert eng.store.assign_log == before["assignments"]
 
-    def test_review_continuation_authorizes_pass_with_nits_rework(
+    def test_review_continuation_does_not_auto_rework_pass_with_nits(
         self, tmp_path,
     ):
-        """显式 continuation 扩大绝对上限后允许 final nits 再返工一轮。"""
+        """An old continuation marker cannot bypass explicit nits acceptance."""
         from omac.engines import create_engine
 
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
@@ -7324,11 +7299,14 @@ class TestReviewerRejectBoundedFallback:
         )
 
         got = eng.store.get_work_item(item.id)
-        assert result.state == "running"
-        assert manifest.nodes["a"].status == "in_progress"
-        assert got.status == WorkItemStatus.IN_PROGRESS
-        assert got.bounces.review == 10
-        assert got.review_verdict is None
+        assert result.state == "needs_decision"
+        assert manifest.nodes["a"].status == "blocked"
+        assert got.status == WorkItemStatus.BLOCKED
+        assert got.bounces.review == 9
+        assert got.review_verdict == "pass-with-nits"
+        assert got.review_nits_acceptance is None
+        assert got.decision_required["reason_code"] == (
+            "review-nits-acceptance-required")
 
     def test_valid_reject_report_still_bounces_worker(self, tmp_path):
         """结构合法的 reject report 是业务拒绝,不能因为证据合法就把节点置 done。"""
@@ -7842,7 +7820,7 @@ class TestReviewerRejectBoundedFallback:
         assert result.state == "pending-preparation"
         assert getattr(eng.store.get_work_item(item.id), field) is not None
 
-    @pytest.mark.parametrize("verdict", ["reject", "pass-with-nits"])
+    @pytest.mark.parametrize("verdict", ["reject"])
     @pytest.mark.parametrize(
         "checkpoint",
         [
@@ -9544,8 +9522,8 @@ class TestReviewerRejectBoundedFallback:
         assert got.decision_required is None
         assert got.bounces.review == 1
 
-    def test_pass_with_nits_worker_followup_requires_fresh_review(self, tmp_path):
-        """pass-with-nits 返工形成新 subject，必须 fresh review 后才能 merge。"""
+    def test_pass_with_nits_waits_for_explicit_acceptance(self, tmp_path):
+        """pass-with-nits remains blocked until the caller chooses a path."""
         from omac.engines import create_engine
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
         path = str(tmp_path / "m.yaml")
@@ -9563,43 +9541,16 @@ class TestReviewerRejectBoundedFallback:
 
         first = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
 
-        assert first.state == "running"
-        assert manifest.nodes["a"].status == "in_progress"
+        assert first.state == "needs_decision"
+        assert manifest.nodes["a"].status == "blocked"
         got = eng.store.get_work_item(item.id)
-        assert got.status == WorkItemStatus.IN_PROGRESS
-        assert got.review_verdict is None
-        assert got.review_report is None
-        assert got.review_subject_digest is None
-        assert got.decision_required is None
-        assert got.bounces.review == 1
-
-        reviewer_dispatches_before_followup = len([
-            entry for entry in eng.store.assign_log if entry[2] == "reviewer"])
-        self._submit_revision(eng, item, revision=2)
-        second = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
-
-        assert second.state == "running"
-        assert manifest.nodes["a"].status == "in_review"
-        reviewer_dispatches_after_followup = len([
-            entry for entry in eng.store.assign_log if entry[2] == "reviewer"])
-        assert reviewer_dispatches_after_followup == reviewer_dispatches_before_followup + 1
-        got = eng.store.get_work_item(item.id)
-        assert got.status == WorkItemStatus.IN_REVIEW
-        assert got.review_verdict is None
-        eng.store.update_work_item_metadata(
-            item.id,
-            review_verdict="pass",
-            review_report=_review_report(got, "pass"),
-        )
-
-        third = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
-
-        got = eng.store.get_work_item(item.id)
-        assert third.state == "converged"
-        assert manifest.nodes["a"].status == "done"
-        assert got.status == WorkItemStatus.DONE
-        assert got.review_verdict == "pass"
-        assert got.bounces.review == 1
+        assert got.status == WorkItemStatus.BLOCKED
+        assert got.review_verdict == "pass-with-nits"
+        assert got.review_report == report
+        assert got.review_nits_acceptance is None
+        assert got.decision_required["reason_code"] == (
+            "review-nits-acceptance-required")
+        assert got.bounces.review == 0
 
     def test_pass_with_nits_cannot_bypass_obligation_evidence_gate(self, tmp_path):
         from omac.engines import create_engine

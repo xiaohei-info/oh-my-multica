@@ -68,7 +68,8 @@ from ..core.taskmeta import (
     REVIEWER_RUN_BASELINE_SCHEMA, WORKER_HANDOFF_SCHEMA,
     DeliveryIdentity, ReviewerRunBaseline, TaskKind, TaskPhase,
     WorkerHandoffIntent, exact_review_report_ref, parse_delivery_identity,
-    review_nits_feedback_is_complete, current_review_ledger,
+    review_nits_feedback_is_complete, review_nits_acceptance_is_valid,
+    current_review_ledger,
 )
 
 log = logsetup.get_logger(__name__)
@@ -1450,6 +1451,69 @@ def _guard_reviewer_dispatch_control(
     return _block_existing_reviewer_decision(store, manifest, key, current)
 
 
+def _review_nits_acceptance_matches(
+    manifest: Manifest, key: str, item,
+) -> bool:
+    """Return whether the operator marker still authorizes this exact delivery."""
+    marker = getattr(item, "review_nits_acceptance", None)
+    if not review_nits_acceptance_is_valid(marker):
+        return False
+    subject = _review_subject_for_current_delivery(manifest, key, item)
+    return bool(
+        _control_matches_delivery_identity(item)
+        and item.review_verdict == "pass-with-nits"
+        and item.review_subject_digest == subject
+        and marker["review_subject_digest"] == subject
+        and marker["review_report_ref"] == item.review_report_ref
+    )
+
+
+def _block_review_nits_acceptance(
+    store: WorkItemStore,
+    manifest: Manifest,
+    manifest_path: str,
+    key: str,
+    item,
+) -> str:
+    """Persist a bounded caller decision instead of dispatching Worker rework."""
+    if not exact_review_report_ref(item.review_report_ref):
+        raise PlatformError(
+            f"pass-with-nits review report ref is invalid for work item {item.id}")
+    subject = item.review_subject_digest
+    if not isinstance(subject, str) or not subject:
+        raise PlatformError(
+            f"pass-with-nits review subject is missing for work item {item.id}")
+    decision = {
+        "schema": DECISION_REQUIRED_SCHEMA,
+        "reason_code": "review-nits-acceptance-required",
+        "kind": TaskKind.DEVELOP.value,
+        "phase": TaskPhase.REVIEW.value,
+        "gate": "review-nits",
+        "resume_issue_id": item.id,
+        "node_id": key,
+        "review_subject_digest": subject,
+        "review_report_ref": dict(item.review_report_ref),
+        "verdict": "pass-with-nits",
+        "next_action": f"omac node accept-nits {manifest_path} {key}",
+    }
+    if item.decision_required != decision:
+        _mark_recovery_pending(manifest, key)
+        store.update_work_item_metadata(item.id, decision_required=decision)
+    else:
+        _mark_recovery_pending(manifest, key)
+    if item.status != WorkItemStatus.BLOCKED:
+        store.update_status(item.id, WorkItemStatus.BLOCKED)
+    set_node(manifest, key, status="blocked")
+    return ui(
+        "Reviewer returned pass-with-nits; caller acceptance is required before merge. "
+        f"Run `omac node accept-nits {manifest_path} {key}` to accept, or "
+        f"`omac node retry {manifest_path} {key}` to reject the nits.",
+        "reviewer 返回 pass-with-nits；合入前需要调用者确认。请运行 "
+        f"`omac node accept-nits {manifest_path} {key}` 接受建议项，或运行 "
+        f"`omac node retry {manifest_path} {key}` 拒绝建议项并回到 authoring。",
+    )
+
+
 def _block_review_rework_budget(
     store: WorkItemStore,
     manifest: Manifest,
@@ -2194,6 +2258,7 @@ def _review_projection_is_clear(item) -> bool:
         and item.review_report is None
         and item.review_report_ref is None
         and item.review_subject_digest is None
+        and item.review_nits_acceptance is None
         and not item.requires_decision
         and item.reviewer_run_baseline is None
     )
@@ -3911,30 +3976,18 @@ def collect_results(
                         store, manifest, key, item, resolution)
                     continue
             if verdict == "pass-with-nits" and not gate_errors:
-                if not rework_budget.allows_rework:
-                    failures[key] = _block_review_rework_budget(
-                        store,
-                        manifest,
-                        key,
-                        item,
-                        rework_budget,
-                        gate="review-nits",
-                        reason="reviewer returned pass-with-nits",
-                    )
+                if not _review_nits_acceptance_matches(manifest, key, item):
+                    failures[key] = _block_review_nits_acceptance(
+                        store, manifest, manifest_path, key, item)
                     continue
-                handoff = _dispatch_worker_handoff(
-                    store, runtime, manifest, key,
-                    review_bounce=rework_budget.next_round,
-                    gate="review-nits",
-                    projection=projection,
+                log.info(
+                    logsetup.EVT_VERDICT,
+                    kind=_DAG_KIND,
+                    node=key,
+                    id=node.work_item_id,
+                    verdict=verdict,
+                    operator_acceptance=True,
                 )
-                if handoff.state == "complete":
-                    _finalize_worker_handoff_or_defer(
-                        store, manifest, key, node, handoff)
-                set_node(manifest, key, status="in_progress")
-                log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=key,
-                         id=node.work_item_id, gate="review-nits")
-                continue
             if not gate_errors and verdict != "reject":
                 # reviewer pass → P4.2 自动 merge 门。命令与远端观察均由引擎适配器执行。
                 merge_action = _complete_merge_if_confirmed(

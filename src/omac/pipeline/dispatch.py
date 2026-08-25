@@ -433,6 +433,9 @@ def build_show_output(item: Any, identity: str, *, language: str = EN) -> Dict[s
     decision_required = getattr(item, "decision_required", None)
     if decision_required is not None:
         context["decision_required"] = decision_required
+    review_nits_acceptance = getattr(item, "review_nits_acceptance", None)
+    if review_nits_acceptance is not None:
+        context["review_nits_acceptance"] = review_nits_acceptance
     machine_feedback = getattr(item, "machine_feedback", None)
     if machine_feedback is not None:
         context["machine_feedback"] = machine_feedback
@@ -1081,6 +1084,7 @@ def submit(
             machine_feedback={},
             review_subject_digest="",
             decision_required={},
+            review_nits_acceptance={},
             phase=TaskPhase.REVIEW,
             **metadata,
         )

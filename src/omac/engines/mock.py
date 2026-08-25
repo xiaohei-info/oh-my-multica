@@ -326,7 +326,7 @@ class MockStore(WorkItemStore):
     # ==================== 模拟执行 ====================
 
     def _auto_complete_check(self, item_id: str):
-        global _shared_review_rejects_remaining
+        global _shared_review_rejects_remaining, _shared_next_attachment_id
         item = _shared_work_items.get(item_id)
         if not item:
             return
@@ -432,6 +432,7 @@ class MockStore(WorkItemStore):
                 item.machine_feedback_ref = None
                 item.review_subject_digest = None
                 item.decision_required = {}
+                item.review_nits_acceptance = None
                 item.phase = TaskPhase.REVIEW
                 item.status = WorkItemStatus.IN_REVIEW
             else:
@@ -447,7 +448,6 @@ class MockStore(WorkItemStore):
                     item.verification = verification
                     verification_source = yaml.safe_dump(
                         verification, allow_unicode=True, sort_keys=False)
-                    global _shared_next_attachment_id
                     attachment_id = (
                         f"mock-attachment-{_shared_next_attachment_id}")
                     _shared_next_attachment_id += 1
@@ -498,6 +498,24 @@ class MockStore(WorkItemStore):
                     if item.review_verdict == "pass-with-nits" else []
                 ),
             }
+            # Keep the mock pass-with-nits path equivalent to the real
+            # adapter: acceptance is only actionable with a sealed report ref.
+            if item.review_verdict == "pass-with-nits":
+                report_source = yaml.safe_dump(
+                    item.review_report, allow_unicode=True, sort_keys=False)
+                report_attachment_id = (
+                    f"mock-attachment-{_shared_next_attachment_id}")
+                _shared_next_attachment_id += 1
+                report_body = report_source.encode("utf-8")
+                _shared_attachment_bodies[report_attachment_id] = report_body
+                item.review_report_ref = {
+                    "comment_id": f"mock-comment-{report_attachment_id}",
+                    "attachment_id": report_attachment_id,
+                    "filename": "omac-review-report.yaml",
+                    "bytes": len(report_body),
+                    "sha256": hashlib.sha256(report_body).hexdigest(),
+                    "created_at": "2026-01-01T00:00:01Z",
+                }
             if item.review_obligations:
                 from ..core.review_convergence import advance_review_ledger
                 item.review_ledger = advance_review_ledger(
@@ -811,6 +829,7 @@ class MockStore(WorkItemStore):
         worker_handoff: Optional[WorkerHandoffIntent | Dict[str, Any]] = None,
         delivery_identity: Optional[DeliveryIdentity | Dict[str, Any]] = None,
         decision_required: Optional[Dict[str, Any]] = None,
+        review_nits_acceptance: Optional[Dict[str, Any]] = None,
         amendment_attempt: Optional[Dict[str, Any]] = None,
         phase: Optional[TaskPhase] = None,
         worker_bounce: Optional[int] = None,
@@ -933,6 +952,10 @@ class MockStore(WorkItemStore):
             item.delivery_identity = parse_delivery_identity(delivery_identity)
         if decision_required is not None:
             item.decision_required = decision_required
+        if review_nits_acceptance is not None:
+            item.review_nits_acceptance = (
+                dict(review_nits_acceptance) if review_nits_acceptance else None
+            )
         if amendment_attempt is not None:
             item.amendment_attempt = dict(amendment_attempt)
         if phase is not None:
@@ -993,6 +1016,7 @@ class MockStore(WorkItemStore):
         item.worker_handoff = None
         item.delivery_identity = None
         item.decision_required = None
+        item.review_nits_acceptance = None
         item.phase = TaskPhase.AUTHORING
         item.status = WorkItemStatus.TODO
         item.reviewer = None
@@ -1078,6 +1102,7 @@ class MockStore(WorkItemStore):
         item.review_report = None
         item.review_report_ref = None
         item.decision_required = None
+        item.review_nits_acceptance = None
         item.review_subject_digest = None
         item.reviewer_run_baseline = None
         item.phase = TaskPhase.AUTHORING
@@ -1093,6 +1118,7 @@ class MockStore(WorkItemStore):
         item.review_report = None
         item.review_report_ref = None
         item.decision_required = None
+        item.review_nits_acceptance = None
         item.review_subject_digest = subject_digest
         item.reviewer_run_baseline = None
         item.phase = TaskPhase.REVIEW

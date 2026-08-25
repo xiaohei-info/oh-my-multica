@@ -25,6 +25,23 @@
      `omac dag amend propose`，禁止直接覆盖运行中 manifest。
 4. 重新运行 `omac dag run <manifest>`。已 done 节点会复用，其余节点续跑。
 
+### `pass-with-nits` 接受决策
+
+develop 节点收到 `pass-with-nits` 后会停在 blocked，等待调用者决策；OMAC 不会为未变化的
+verification 自动再次派发 Worker。检查 sealed delivery 和 review report 后选择：
+
+```bash
+omac node accept-nits <manifest> <node_key>
+# 或拒绝建议项并回到 authoring：
+omac node retry <manifest> <node_key>
+```
+
+`accept-nits` 要求当前 delivery 已 sealed、review subject/report ref 仍匹配，且没有 active
+direct Run。它保留 Reviewer verdict/report，只写入有界的
+`omac.review-nits-acceptance/v1` marker，清除 caller decision 并恢复 `review/in_review`；下一次
+`dag run` 仍会观察远端 merge 事实，不会直接把节点标记 done。命令可安全重复执行。
+普通 `node retry` 会清除 marker、使旧 review projection 失效，再回到 authoring 产生新交付。
+
 ### 阶段级恢复与 merge 观察
 
 - 恢复以 issue 的真实 `phase` 为准：authoring 只恢复 worker；reviewer run 失败或结束但未提交 verdict 时，保留同一 issue、worker 的 PR/verification 与 review subject，在 `review` 阶段重新派发 reviewer；不得错误退回 worker。
@@ -224,7 +241,8 @@ worker、按现有 blocker 修复，或把过粗节点拆成语义等价的小�
 ## 常见退出原因
 
 - 证据不达标、reviewer reject、CI 或 merge 回退耗尽：节点 blocked 或 needs_decision。
-- pass-with-nits 默认回到 worker 处理建议项，不消耗 review bounce，不进入 needs_decision。
+- pass-with-nits 会停在 caller acceptance，不自动派发 Worker；只有调用者显式执行
+  `omac node retry` 才会回到 authoring。
 - 总控验收超过 `acceptance.max_rounds` 仍有 fail：报告保留未通过项清单。
 
 Review ledger 只记录已提交的语义评审，不记录 provider 过载、网络超时或附件读取等

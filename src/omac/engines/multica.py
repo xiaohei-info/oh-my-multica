@@ -38,7 +38,7 @@ from ..core.taskmeta import (
     REVIEW_LEDGER_REF_KEY, REVIEW_OBLIGATIONS_KEY,
     REVIEW_OBLIGATIONS_REF_KEY,
     REVIEW_REPORT_REF_KEY,
-    REVIEW_SUBJECT_DIGEST_KEY,
+    REVIEW_SUBJECT_DIGEST_KEY, REVIEW_NITS_ACCEPTANCE_KEY,
     SOURCE_REFS_KEY, DeliveryIdentity, ReviewerRunBaseline, TaskKind, TaskPhase,
     VERIFICATION_REF_KEY, WORKER_BOUNCE_KEY, WORKER_HANDOFF_KEY,
     WorkerHandoffIntent, parse_bounces, parse_delivery_identity, parse_kind,
@@ -100,7 +100,8 @@ _KNOWN_WORK_ITEM_METADATA_KEYS = {
     REVIEW_GENERATION_KEY, REVIEW_LEDGER_GENERATION_KEY,
     REVIEWER_RUN_BASELINE_KEY,
     REVIEW_LEDGER_REF_KEY, REVIEW_OBLIGATIONS_KEY, REVIEW_OBLIGATIONS_REF_KEY,
-    REVIEW_REPORT_REF_KEY, REVIEW_SUBJECT_DIGEST_KEY, SOURCE_REFS_KEY,
+    REVIEW_REPORT_REF_KEY, REVIEW_SUBJECT_DIGEST_KEY,
+    REVIEW_NITS_ACCEPTANCE_KEY, SOURCE_REFS_KEY,
     VERIFICATION_REF_KEY, WORKER_BOUNCE_KEY, WORKER_HANDOFF_KEY,
     DELIVERY_IDENTITY_KEY,
 }
@@ -127,6 +128,7 @@ _REVIEW_CLEAR_METADATA = (
     (REVIEW_REPORT_REF_KEY, "{}"),
     (DECISION_REQUIRED_KEY, "{}"),
     (REVIEWER_RUN_BASELINE_KEY, "{}"),
+    (REVIEW_NITS_ACCEPTANCE_KEY, "{}"),
     ("review_verdict", ""),
 )
 _EMPTY_TEXT_METADATA = frozenset({
@@ -135,6 +137,7 @@ _EMPTY_TEXT_METADATA = frozenset({
 _EMPTY_OBJECT_METADATA = frozenset({
     MACHINE_FEEDBACK_REF_KEY, REVIEW_REPORT_REF_KEY,
     DECISION_REQUIRED_KEY, REVIEWER_RUN_BASELINE_KEY,
+    REVIEW_NITS_ACCEPTANCE_KEY,
 })
 _INVALID_OBJECT_METADATA_SCHEMA = "omac.invalid-object-metadata/v1"
 
@@ -930,6 +933,8 @@ class MulticaStore(WorkItemStore):
         machine_feedback_ref = self._json_metadata(
             metadata, MACHINE_FEEDBACK_REF_KEY)
         decision_required = self._json_metadata(metadata, DECISION_REQUIRED_KEY)
+        review_nits_acceptance = self._json_metadata(
+            metadata, REVIEW_NITS_ACCEPTANCE_KEY)
         amendment_attempt = self._json_metadata(metadata, AMENDMENT_ATTEMPT_KEY)
         review_obligations = self._json_metadata(metadata, REVIEW_OBLIGATIONS_KEY)
         contract_ref = self._json_metadata(metadata, CONTRACT_REF_KEY)
@@ -1015,6 +1020,11 @@ class MulticaStore(WorkItemStore):
             delivery_identity=parse_delivery_identity(
                 self._json_metadata(metadata, DELIVERY_IDENTITY_KEY)),
             decision_required=decision_required,
+            review_nits_acceptance=(
+                review_nits_acceptance
+                if isinstance(review_nits_acceptance, dict)
+                and review_nits_acceptance
+                else None),
             amendment_attempt=(
                 amendment_attempt if isinstance(amendment_attempt, dict) else None),
             contract=contract,
@@ -1494,6 +1504,7 @@ class MulticaStore(WorkItemStore):
         worker_handoff: Optional[WorkerHandoffIntent | Dict[str, Any]] = None,
         delivery_identity: Optional[DeliveryIdentity | Dict[str, Any]] = None,
         decision_required: Optional[Dict[str, Any]] = None,
+        review_nits_acceptance: Optional[Dict[str, Any]] = None,
         amendment_attempt: Optional[Dict[str, Any]] = None,
         phase: Optional[TaskPhase] = None,
         worker_bounce: Optional[int] = None,
@@ -1609,6 +1620,9 @@ class MulticaStore(WorkItemStore):
                 item_id, REVIEW_SUBJECT_DIGEST_KEY, review_subject_digest)
         if decision_required is not None:
             self._set_metadata(item_id, DECISION_REQUIRED_KEY, decision_required)
+        if review_nits_acceptance is not None:
+            self._set_metadata(
+                item_id, REVIEW_NITS_ACCEPTANCE_KEY, review_nits_acceptance)
         if amendment_attempt is not None:
             self._set_metadata(item_id, AMENDMENT_ATTEMPT_KEY, amendment_attempt)
         if worker_bounce is not None:
