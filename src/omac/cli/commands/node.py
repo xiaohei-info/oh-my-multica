@@ -398,9 +398,15 @@ def _cmd_retry(args) -> int:
                 and current.bounces.review > 0
                 and has_delivery
             ):
+                from ...pipeline.loop import _bounded_direct_run_baseline
+
                 source_subject = (
                     current.review_subject_digest
                     or stage_recovery_subject(node, current)
+                )
+                baseline_direct_run_ids, baseline_cutoff_created_at = (
+                    _bounded_direct_run_baseline(
+                        engine.runtime.list_runs(current.id))
                 )
                 handoff = WorkerHandoffIntent(
                     schema=WORKER_HANDOFF_SCHEMA,
@@ -412,10 +418,8 @@ def _cmd_retry(args) -> int:
                     target_review_bounce=max(1, current.bounces.review),
                     generation=f"handoff-{secrets.token_hex(8)}",
                     target_agent_id=engine.store.resolve_agent_id(node.worker),
-                    baseline_direct_run_ids=tuple(sorted(
-                        run.id for run in engine.runtime.list_runs(current.id)
-                        if run.kind == "direct"
-                    )),
+                    baseline_direct_run_ids=baseline_direct_run_ids,
+                    baseline_cutoff_created_at=baseline_cutoff_created_at,
                     baseline_verification_attachment_id=str(
                         (current.verification_ref or {}).get("attachment_id") or ""
                     ) or None,
