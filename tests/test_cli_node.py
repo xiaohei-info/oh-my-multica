@@ -507,6 +507,64 @@ def test_retry_review_preserves_sealed_delivery_and_resumes_reviewer(
     assert resumed.review_subject_digest
 
 
+def test_retry_bounds_operator_handoff_direct_run_baseline(
+    tmp_path, capsys, monkeypatch,
+):
+    """operator retry must cap handoff Run IDs and persist its causal cutoff."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OMAC_ENGINE", "mock")
+    monkeypatch.setenv("OMAC_WORKSPACE_ID", "ws-1")
+
+    from omac.core.taskmeta import TaskPhase
+    from omac.engines import EngineConfig, create_engine
+    from omac.engines.models import AgentRunObservation, WorkItemStatus
+
+    engine = create_engine(
+        "mock",
+        EngineConfig("mock", "ws-1", extra={"MOCK_AUTO_COMPLETE": "false"}),
+    )
+    item = engine.store.create_work_item(
+        "ws-1", "t", "d", "b", "bob", reviewer="alice")
+    engine.store.update_work_item_metadata(
+        item.id,
+        phase=TaskPhase.REVIEW,
+        review_bounce=1,
+        review_verdict="reject",
+        review_subject_digest="rejected-subject",
+        artifacts={"pr_url": "https://example.test/pr/1"},
+        verification={"commands": []},
+    )
+    engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
+
+    runs = [AgentRunObservation(
+        id=f"run-{index:02d}",
+        kind="direct",
+        status="completed",
+        created_at=f"2026-08-01T00:{index:02d}:00Z",
+    ) for index in range(21)]
+    monkeypatch.setattr(engine.runtime, "list_runs", lambda _item_id: runs)
+
+    import omac.cli.commands.node as node_mod
+    monkeypatch.setattr(node_mod, "create_engine", lambda *a, **kw: engine)
+    path = _write_manifest(tmp_path, [{
+        "id": "b",
+        "worker": "bob",
+        "reviewer": "alice",
+        "status": "blocked",
+        "work_item_id": item.id,
+    }])
+
+    assert main(["node", "retry", path, "b"]) == exit_codes.OK
+    capsys.readouterr()
+
+    handoff = engine.store.get_work_item(item.id).worker_handoff
+    assert handoff is not None
+    assert len(handoff.baseline_direct_run_ids) == 20
+    assert handoff.baseline_direct_run_ids == tuple(
+        f"run-{index:02d}" for index in range(1, 21))
+    assert handoff.baseline_cutoff_created_at == "2026-08-01T00:20:00Z"
+
+
 @pytest.mark.parametrize("trigger_kind", ["issue_assignment", "rerun"])
 def test_retry_review_recovers_delayed_visible_dispatch_and_preserves_reject(
     tmp_path, capsys, monkeypatch, trigger_kind,
