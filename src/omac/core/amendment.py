@@ -35,6 +35,7 @@ from ..i18n import ui
 
 
 SCHEMA = "omac.dag-amendment/v1"
+AMENDMENT_IDENTITY_SCHEMA = "omac.dag-amendment-identity/v2"
 APPLY_LEDGER_SCHEMA = "omac.amendment-apply/v1"
 _COMPLETE_APPLY_STATES = {"synced", "observed_progress"}
 _APPLY_STAGES = {
@@ -625,7 +626,7 @@ def validate_proposal(
                     + ", ".join(sorted(runtime_fields)))
             try:
                 added = _node_from_mapping(raw_node)
-            except ValueError as exc:
+            except (KeyError, TypeError, ValueError) as exc:
                 errors.append(f"{prefix}: {exc}")
                 continue
             if added.id in manifest.nodes or added.id in seen:
@@ -646,7 +647,17 @@ def validate_proposal(
             errors.append(f"{prefix}: node {node_id!r} has multiple operations")
         seen.add(node_id)
         if op == _RESPONSIBILITY_OPERATION:
-            errors.extend(_validate_responsibility_operation(node, operation, prefix))
+            responsibility_errors = _validate_responsibility_operation(
+                node, operation, prefix)
+            errors.extend(responsibility_errors)
+            if not responsibility_errors and not operation.get(
+                    "historical_contract_correction"):
+                after = copy.deepcopy(node)
+                after.contract = _responsibility_contract(node, operation)
+                if not _responsibility_allowed_diff(node, after):
+                    errors.append(
+                        f"{prefix}: update-responsibility must change at least one "
+                        "acceptance responsibility field")
             continue
         if node.status == "done" or node.merged:
             errors.append(f"{prefix}: done/merged node {node_id!r} is immutable")
@@ -659,6 +670,7 @@ def validate_proposal(
             if operation.get("stage") not in {"review", "authoring", "merging"}:
                 errors.append(f"{prefix}.stage must be review, authoring, or merging")
             continue
+        operation_error_count = len(errors)
         changes = operation.get("set")
         if not isinstance(changes, dict) or not changes:
             errors.append(f"{prefix}.set must be a non-empty object")
@@ -674,21 +686,47 @@ def validate_proposal(
             errors.append(f"{prefix}.set.contract must be a complete object")
         errors.extend(_contract_boundary_replacement_errors(
             node, operation, prefix))
+        responsibility_fields = {
+            "acceptance_claims", "acceptance_contributions", "acceptance_refs",
+        }
+        if acceptance is not None:
+            responsibility_fields.add("acceptance")
         if (
             "contract" in changes
             and isinstance(changes["contract"], dict)
             and _contract_changes(node, changes["contract"])
-            & {"acceptance_claims", "acceptance_contributions", "acceptance_refs"}
+            & responsibility_fields
         ):
             errors.append(
                 f"{prefix}: responsibility migration must use "
                 f"{_RESPONSIBILITY_OPERATION}")
         if node.work_item_id and _requires_ownership_migration(node, changes):
             migration = operation.get("migration") or {}
-            if migration.get("ownership_transfer") is not True or not migration.get("reason"):
+            if not isinstance(migration, dict):
+                errors.append(f"{prefix}.migration must be an object")
+            elif migration.get("ownership_transfer") is not True or not isinstance(
+                    migration.get("reason"), str) or not migration["reason"].strip():
                 errors.append(
                     f"{prefix}: executed node ownership migration requires "
                     "migration.ownership_transfer=true and a reason")
+        if len(errors) == operation_error_count and op == "update":
+            try:
+                after = copy.deepcopy(node)
+                for key, value in changes.items():
+                    if key == "contract":
+                        after.contract = _load_contract(value)
+                    elif key == "blocked_by":
+                        after.blocked_by = list(value or [])
+                    else:
+                        setattr(after, key, copy.deepcopy(value))
+            except (KeyError, TypeError, ValueError):
+                # Let the guarded full proposal application below report the
+                # malformed nested contract instead of leaking a raw exception.
+                after = None
+            if after is not None and _node_dict(node, include_runtime=False) == _node_dict(
+                    after, include_runtime=False):
+                errors.append(
+                    f"{prefix}: update must change at least one node definition field")
 
     if errors:
         return errors
@@ -847,11 +885,30 @@ def _amendment_id(
     minimal: dict[str, list[str]],
     historical_corrections: list[dict[str, Any]],
     evidence: dict[str, str],
+    *,
+    manifest_digest_value: str | None = None,
+    acceptance_digest: str | None = None,
+    issue_id: str | None = None,
+    reviewer_verdict: str | None = None,
 ) -> str:
-    identity = _digest([
+    # Bind the reviewed envelope as well as the definition.  Otherwise a
+    # tampered base digest or review issue could turn a reviewed amendment into
+    # a different CAS target without changing its visible operations.
+    envelope = {
+        "manifest_sha256": manifest_digest_value,
+        "acceptance_sha256": acceptance_digest,
+        "issue_id": issue_id,
+        "reviewer_verdict": reviewer_verdict,
+    }
+    identity_parts = [
         definition_digest, _proposal_core(proposal), minimal,
         historical_corrections, evidence,
-    ])[:12]
+    ]
+    # Keep the old digest byte-for-byte when called without an identity
+    # envelope so already-reviewed v1 amendment files remain readable.
+    if any(value is not None for value in envelope.values()):
+        identity_parts.append(envelope)
+    identity = _digest(identity_parts)[:12]
     return "amend-" + identity
 
 
@@ -915,8 +972,14 @@ def build_reviewed_amendment(
         base["acceptance_sha256"] = acceptance_sha256
     return {
         **proposal,
+        "identity_schema": AMENDMENT_IDENTITY_SCHEMA,
         "amendment_id": _amendment_id(
-            definition_digest, proposal, minimal, historical_corrections, evidence),
+            definition_digest, proposal, minimal, historical_corrections, evidence,
+            manifest_digest_value=base["manifest_sha256"],
+            acceptance_digest=base.get("acceptance_sha256"),
+            issue_id=issue_id,
+            reviewer_verdict=reviewer_verdict,
+        ),
         "base": base,
         "review": {"issue_id": issue_id, "verdict": reviewer_verdict},
         "human_confirmation": "pending",
@@ -1416,16 +1479,48 @@ def apply_amendment(
     acceptance: Any = None,
 ) -> dict[str, Any]:
     amendment = parse_proposal(amendment_source)
-    if amendment.get("review", {}).get("verdict") != "pass":
+    review = amendment.get("review")
+    if not isinstance(review, dict) or review.get("verdict") != "pass":
         raise ValidationError("Amendment has not passed Reviewer review")
     if amendment.get("human_confirmation") not in {"pending", "accepted", "applied"}:
         raise ValidationError("Amendment is not waiting for human confirmation")
+    base = amendment.get("base")
+    if not isinstance(base, dict):
+        raise ValidationError("Amendment base must be an object")
+    identity_schema = amendment.get("identity_schema")
+    if identity_schema not in {None, AMENDMENT_IDENTITY_SCHEMA}:
+        raise ValidationError(
+            f"Amendment identity schema is unsupported: {identity_schema!r}")
+    analysis = amendment.get("analysis")
+    if analysis is None and identity_schema is None:
+        # Legacy reviewed files occasionally omitted the optional analysis
+        # projection; preserve their original identity/application path.
+        analysis = {}
+    elif not isinstance(analysis, dict):
+        raise ValidationError("Amendment analysis must be an object")
+    identity_kwargs = {}
+    if identity_schema == AMENDMENT_IDENTITY_SCHEMA:
+        for field, value in (
+            ("base.manifest_sha256", base.get("manifest_sha256")),
+            ("base.definition_sha256", base.get("definition_sha256")),
+            ("review.issue_id", review.get("issue_id")),
+            ("review.verdict", review.get("verdict")),
+        ):
+            if not isinstance(value, str) or not value.strip():
+                raise ValidationError(f"Amendment {field} is required")
+        identity_kwargs = {
+            "manifest_digest_value": base.get("manifest_sha256"),
+            "acceptance_digest": base.get("acceptance_sha256"),
+            "issue_id": review.get("issue_id"),
+            "reviewer_verdict": review.get("verdict"),
+        }
     expected_id = _amendment_id(
-        (amendment.get("base") or {}).get("definition_sha256") or "",
+        base.get("definition_sha256") or "",
         amendment,
-        (amendment.get("analysis") or {}).get("minimal_rerun") or {},
-        (amendment.get("analysis") or {}).get("historical_contract_corrections") or [],
-        (amendment.get("base") or {}).get("evidence_sha256") or {},
+        analysis.get("minimal_rerun") or {},
+        analysis.get("historical_contract_corrections") or [],
+        base.get("evidence_sha256") or {},
+        **identity_kwargs,
     )
     if amendment.get("amendment_id") != expected_id:
         raise ValidationError(

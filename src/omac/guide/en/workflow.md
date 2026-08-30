@@ -83,20 +83,26 @@ For a dispatched task, do not pre-read every guide. Read `guide_refs` from
   review pass.
 - OMAC runs deterministic preflight before Reviewer dispatch for mechanically
   certain facts such as shell syntax and Go local package targets missing a
-  `./` or `../` prefix. Without an explicit typed IO contract, it does not infer
-  producers or materialization from generic flags, current file existence, or
-  `scope_paths`. Complete machine feedback lives in an attachment; the author
-  follows the bounded summary's `omac work show <issue-id> --output json`
-  entrypoint and reads `context.machine_feedback` without consuming a Reviewer
-  cycle.
+  `./` or `../` prefix. New plan decomposition additionally requires a concrete
+  owner/description, one primary `scope_paths`, typed IO
+  (`evidence_mode`/`produces`/`consumes`), and one negative conflict matrix for
+  scope, artifact producers, and acceptance responsibility; running legacy
+  manifests remain compatible. Ordinary review does not infer producers or
+  materialization from generic flags, current file existence, or `scope_paths`.
+  Complete machine feedback lives in an attachment; the author follows the
+  bounded summary's `omac work show <issue-id> --output json` entrypoint and
+  reads `context.machine_feedback` without consuming a Reviewer cycle.
 - Every review has finite `review_obligations`. Cross-cycle blockers live in a
   review ledger with stable root-cause identity and explicit fixed, unchanged,
   deeper, regressed, or new classification.
 - `review_state` only projects the authoritative
   `review_convergence_decision`. Its public mode remains `convergence-audit`;
   `review_state.decision.mode` carries the specific `stalled`,
-  `scope-expanding`, or `exhausted` reason. A decision stops rework for the
-  current node and requires an explicit DAG amendment instead of another bounce.
+  `scope-expanding`, or `exhausted` reason. `scope-expanding` additionally
+  requires two consecutive non-reducing blocker transitions, an explicit
+  `owner` on every open blocker, and at least two distinct owners. A decision
+  stops rework for the current node and requires an explicit DAG amendment
+  instead of another bounce.
 - After plan, acceptance, or decompose review budget is exhausted, a Human can
   authorize one round with `omac plan continue-review --dag-key <stage-key>`.
   The `review_continuation` decision is persisted on the platform work item,

@@ -39,6 +39,7 @@ from ..core.lint import lint
 from ..core.manifest import loads_manifest, save_manifest
 from ..core.project_rules import read_agents_snapshot, write_project_rules
 from ..core.repository_files import revision_directory_files
+from ..core.review_preflight import plan_manifest_preflight
 from ..core.review_continuation import (
     authorized_review_limit, build_review_continuation,
 )
@@ -460,12 +461,15 @@ def _name_from_plan_issue(item: WorkItem) -> str:
 def _compose_guard(
     members: set,
     acceptance_doc: Optional[acceptance_mod.AcceptanceDoc] = None,
+    *,
+    strict_plan: bool = False,
 ) -> Callable[[WorkItem], List[str]]:
     """造 decompose 的 lint 机器门(零 token,≤ max_revisions 轮)。
 
     从交付 artifacts 取 manifest 文本,解析后跑 core/lint(有验收文档时附加
-    锚定校验:contract.acceptance 每条须锚定验收文档 flow.id)。
-    返回错误字符串列表(空 = 通过)。
+    锚定校验:contract.acceptance 每条须锚定验收文档 flow.id)。strict_plan
+    还执行新 plan 的 owner/scope/typed-I/O/责任冲突 preflight；旧运行
+    manifest 由默认非 strict 路径保持兼容。返回错误字符串列表(空 = 通过)。
     """
 
     def guard(item: WorkItem) -> List[str]:
@@ -474,8 +478,11 @@ def _compose_guard(
             return [ui(
                 f"Delivery is missing '{_MANIFEST_KEY}'; the orchestrator did not submit a manifest.",
                 f"交付缺少 '{_MANIFEST_KEY}' —— orchestrator 未产出 manifest")]
-        manifest = loads_manifest(text)
-        return lint(
+        try:
+            manifest = loads_manifest(text)
+        except Exception as exc:
+            return [f"manifest preflight could not parse manifest: {exc}"]
+        errors = lint(
             manifest,
             members,
             acceptance=acceptance_doc,
@@ -484,6 +491,10 @@ def _compose_guard(
                 and acceptance_doc.schema == "omac.acceptance/v2"
             ),
         )
+        if strict_plan:
+            errors.extend(plan_manifest_preflight(
+                manifest, acceptance_doc=acceptance_doc))
+        return list(dict.fromkeys(errors))
 
     return guard
 
@@ -584,7 +595,8 @@ def plan_create(
     decompose_inputs = {"plan": plan_text}
     if acceptance_text is not None:
         decompose_inputs["acceptance"] = acceptance_text
-    guard = _compose_guard(ctx.members, acceptance_doc=acceptance_doc)
+    guard = _compose_guard(
+        ctx.members, acceptance_doc=acceptance_doc, strict_plan=True)
     res = run_task(
         ctx.engine,
         TaskKind.DECOMPOSE,
@@ -805,7 +817,8 @@ def plan_resume(
         reviewers=reviewers,
         max_revisions=ctx.max_revisions,
         poll=poll_cb,
-        guard=_compose_guard(ctx.members, acceptance_doc=acceptance_doc),
+        guard=_compose_guard(
+            ctx.members, acceptance_doc=acceptance_doc, strict_plan=True),
         source_refs=(
             ([{"label": "plan", "kind": "plan", "issue_id": plan_item_id}]
              if plan_item_id else [])

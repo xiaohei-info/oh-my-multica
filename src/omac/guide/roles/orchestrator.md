@@ -34,9 +34,11 @@
 ## 机器预检与收敛模式
 
 - Reviewer 派发前，OMAC 的 machine preflight 只检查不依赖项目规范、语义无歧义的
-  机械事实，例如 shell 语法和缺少 `./` / `../` 前缀的 Go 本地包目标。没有显式
-  typed IO contract 时，OMAC 不会根据通用 flag 名称、当前文件是否存在或
-  `scope_paths` 推断 artifact producer / input materialization。
+  机械事实，例如 shell 语法和缺少 `./` / `../` 前缀的 Go 本地包目标。新 plan decomposition
+  还必须为每个节点给出具体 owner/description、一个 primary `scope_paths`、typed IO
+  (`evidence_mode`、`produces`、显式 `consumes`) 以及可机械检查的负向冲突矩阵；普通运行中
+  legacy manifest 仍保留兼容。没有显式 typed IO contract 时，普通 review 不会根据通用
+  flag 名称、当前文件是否存在或 `scope_paths` 推断 artifact producer / input materialization。
 - `work show.context.contract_boundary_schema` 给出可选 typed IO 形状。需要明确制品边界时，
   为节点声明 `evidence_mode: fixture|artifact|live`、稳定的 `produces[].artifact_id`，
   以及 `consumes[]` 的 `{artifact_id, producer, evidence_mode}`。fixture 表示当前节点拥有
@@ -57,8 +59,9 @@
   做影响分析。
 - `review_state.mode=convergence-audit` 直接投影权威
   `review_convergence_decision`；具体原因由 `review_state.decision.mode` 的
-  `stalled|scope-expanding|exhausted` 表达。此时 OMAC 停止当前节点返工并要求 DAG
-  amendment；不得把它解释成一次新的 Worker 补丁轮次。
+  `stalled|scope-expanding|exhausted` 表达。`scope-expanding` 还要求连续两次 blocker 数
+  不再减少、每个 open blocker 具名 `owner` 且至少两个不同 owner。此时 OMAC 停止当前节点
+  返工并要求 DAG amendment；不得把它解释成一次新的 Worker 补丁轮次。
 - 修复必须保留稳定 blocker 身份，并为每项 closure 提供可独立复验的证据。
 
 ## 执行步骤

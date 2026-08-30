@@ -185,8 +185,8 @@ must be acyclic.
 | `pr_base` | Required integration branch for the PR. |
 | `coverage_gate` | Number from 0 to 100; default 90. |
 | `acceptance_doc` | Optional structured acceptance context when the instance contract needs it. |
-| `scope_paths` | Optional primary code ownership for stable boundaries and lower parallel conflict. |
-| `evidence_mode` | Optional primary evidence class: `fixture`, `artifact`, or `live`. It is required when `produces` or `consumes` is declared. |
+| `scope_paths` | Optional for running legacy manifests; new plan decomposition must declare exactly one primary code-ownership path. Supporting files remain explainable in the PR/verification. |
+| `evidence_mode` | Optional for running legacy manifests; new plan decomposition must explicitly choose `fixture`, `artifact`, or `live`. |
 | `produces` | Stable artifact IDs uniquely produced by this node, shaped as `{artifact_id}`. One artifact ID has one canonical producer. |
 | `consumes` | Tri-state input policy. Omitted permits transitional legacy inputs only from transitive upstream dependencies; `[]` permits no external input; a non-empty list is a strict `{artifact_id, producer, evidence_mode}` allowlist. Explicit `null` is invalid. New complete DAGs use explicit `[]` or a non-empty list. |
 
@@ -229,6 +229,11 @@ non-goals, and parallel boundaries, not merely path membership.
    every consume producer must exist, be transitive upstream, and produce the
    named artifact. A fixture node cannot require live evidence. Legacy manifests
    that omit these fields keep their existing behavior and require no migration.
+10. New plan decomposition also runs OMAC plan preflight: every node has a
+    concrete owner/description, exactly one primary `scope_paths`, explicit
+    `evidence_mode`/`produces`/`consumes`, and one negative conflict matrix for
+    scope ownership, artifact producers, and acceptance responsibility. A
+    preflight failure returns to authoring without consuming a Reviewer cycle.
 
 ## Common errors → corrections
 

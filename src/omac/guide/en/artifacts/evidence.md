@@ -83,6 +83,7 @@ blockers:
   - root_cause_key: release-trust-handoff
     obligation_id: dimension:evidence
     classification: new # or unchanged|deeper|regressed
+    owner: release-integrator # stable owner ID for scope-expanding admission
     summary: Release N trust handoff is incomplete
     evidence: The verifier does not consume the N signature report
     required_fix: Verify N and N+1 signatures and payload digests symmetrically
@@ -126,7 +127,7 @@ Submit the PR URL separately through `--pr-url`, not in verification YAML.
 | `integration_tests_rerun` | `true` when the contract has integration gates. |
 | `acceptance_mapping` | Evidence and pass/fail for every complete flow claim and exact Action contribution; trace refs create no mapping obligation. |
 | `integration_gate_mapping` | Independently reproduced gate results aligned with the contract. |
-| `blockers` | Empty for pass forms; structured obligation/root-cause/classification/evidence/repair objects for reject. Each root appears once per cycle; unresolved prior roots remain listed with classification matching `prior_blocker_results`. |
+| `blockers` | Empty for pass forms; structured obligation/root-cause/classification/evidence/repair objects for reject. Each root appears once per cycle; unresolved prior roots remain listed with classification matching `prior_blocker_results`. To request `scope-expanding`, every open blocker also names a stable `owner`; at least two distinct owners and two consecutive non-reducing blocker transitions are required before an amendment is admitted. |
 | `nits` | Non-blocking improvement suggestions. |
 
 Submit verdict through `--verdict`, not report YAML. Valid values are `pass`,

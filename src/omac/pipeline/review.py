@@ -14,9 +14,10 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 
+from ..core.review_preflight import run_manifest_preflight
 from ..core.taskmeta import TaskKind
 from ..engines.models import WorkItemStatus
-from ..errors import NeedsDecision
+from ..errors import NeedsDecision, ValidationError
 from ..i18n import ui
 from .dispatch import reviewer_dispatch_stopped
 
@@ -50,6 +51,14 @@ def run_review(
 
     store = engine.store
     runtime = engine.runtime
+
+    if deliverable is not None:
+        preflight_errors = run_manifest_preflight(deliverable)
+        if preflight_errors:
+            raise ValidationError(
+                "Manifest review preflight failed:\n  - "
+                + "\n  - ".join(preflight_errors)
+            )
 
     if not store.check_member_exists(workspace_id, reviewer):
         raise NeedsDecision(
@@ -151,4 +160,25 @@ def run_review(
                     "comment": cur.review_comment,
                     "blockers": (cur.review_report or {}).get("blockers", []),
                 })
+        terminal_runs = [
+            run for run in runtime.list_runs(item.id)
+            if run.kind == "direct" and run.terminal
+        ]
+        if terminal_runs:
+            if cur.status != WorkItemStatus.BLOCKED:
+                store.update_status(item.id, WorkItemStatus.BLOCKED)
+            raise NeedsDecision(
+                ui(
+                    "Reviewer Agent Run ended without submitting a verdict; inspect "
+                    "the run and retry the same review issue.",
+                    "Reviewer Agent Run 已结束但未提交 verdict；请检查该 Run 后重试同一 review issue。",
+                ),
+                report={
+                    "item_id": cur.id,
+                    "reviewer": reviewer,
+                    "reason_code": "reviewer-completed-without-verdict",
+                    "outcome": "unknown_partial",
+                    "run_ids": [run.id for run in terminal_runs],
+                },
+            )
         poll()

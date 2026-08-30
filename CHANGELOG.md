@@ -10,6 +10,12 @@ This file records public changes to oh-my-multica. The format follows
 
 ### Added
 
+- New reviewed amendments use an identity envelope that binds the base manifest
+  and acceptance digests plus the review issue, preventing envelope tampering from
+  bypassing CAS or confirmation ownership. Legacy amendment files without the
+  marker remain readable through the compatibility path. An explicit blocked-node
+  decision admits only convergence or contract-boundary amendments; no-submit,
+  network, metadata, and Runner failures stay on their dedicated recovery paths.
 - A new `retry.no_submit_runs` config key bounds how many consecutive reviewer
   Runs may finish without submitting a verdict before the node blocks with
   `reviewer-run-no-submit-retry-exhausted` (default 2, the previous hardcoded
@@ -36,11 +42,12 @@ This file records public changes to oh-my-multica. The format follows
   remote Agents can reproduce the exact authoritative docs digest.
 - Review rework now has one convergence authority for both `review_state` and
   Runner control. The same blocker surviving two rework cycles stops at cycle
-  three, three open responsibility dimensions stop from cycle three, root causes
-  first seen after cycle five mark expanding scope, and cycle ten is an
-  unconditional stop. Existing pending or completed-without-submit Worker
-  handoffs are blocked before another assign/wake; infrastructure retries remain
-  outside the semantic ledger.
+  three; `scope-expanding` additionally requires two consecutive non-reducing
+  blocker transitions plus explicit owners on all open blockers with at least two
+  distinct owners. Existing pending or completed-without-submit Worker handoffs
+  are blocked before another assign/wake; infrastructure retries remain outside
+  the semantic ledger. New plan decomposition runs a strict owner/scope/typed-I/O
+  and acceptance-conflict preflight before Reviewer dispatch.
 - `work submit` now observes control facts once and hydrates only the attachment
   bodies required by its exact kind and phase, so stale historical evidence
   downloads cannot block a fresh authoring submission.

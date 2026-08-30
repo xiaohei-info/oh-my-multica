@@ -173,8 +173,8 @@ nodes:
 | `pr_base` | PR 必须基于的集成分支。 |
 | `coverage_gate` | 0 到 100 的数字，默认 90。 |
 | `acceptance_doc` | 可选的验收文档结构上下文；仅在实例 contract 需要时填充。 |
-| `scope_paths` | 可选的主要代码归属范围，用于表达稳定模块边界和降低并行冲突。 |
-| `evidence_mode` | 可选的主要证据类别：`fixture`、`artifact` 或 `live`。声明 `produces`/`consumes` 时必须显式填写。 |
+| `scope_paths` | 运行中旧 manifest 可选；新的 plan decomposition 必须给出一个主要代码归属范围，配套文件仍可在 PR/verification 中说明。 |
+| `evidence_mode` | 运行中旧 manifest 可选；新的 plan decomposition 必须显式选择 `fixture`、`artifact` 或 `live`。 |
 | `produces` | 当前节点唯一生产的稳定制品 id 列表，形状为 `{artifact_id}`；同一 id 只能有一个 producer。 |
 | `consumes` | 三态输入策略：省略时，旧运行 manifest 过渡期仅允许传递上游输入；`[]` 表示无外部输入；非空列表是严格 `{artifact_id, producer, evidence_mode}` allowlist；显式 `null` 非法。新完整 DAG 使用显式 `[]` 或非空列表。 |
 
@@ -211,6 +211,9 @@ verification 中说明原因。reviewer 应判断这些改动是否服务于 con
 9. typed 制品边界若出现，`evidence_mode` 必须合法；每个 consume 的 producer 必须存在、
    位于传递上游并生产对应 artifact。fixture 节点不能要求 live evidence。未声明这些字段的旧 manifest
    保持原行为，不强制迁移。
+10. 新 plan decomposition 还必须通过 OMAC plan preflight：每个节点有具体 owner/description、
+    恰好一个 primary `scope_paths`、显式 `evidence_mode`/`produces`/`consumes`，并一次报告
+    scope/制品 producer/acceptance responsibility 的负向冲突矩阵；preflight 失败不会消耗 Reviewer cycle。
 
 ## 常见错误 → 修正
 

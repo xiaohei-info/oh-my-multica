@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from omac.core.review_preflight import run_review_preflight
+from omac.core.review_preflight import run_plan_preflight, run_review_preflight
 from omac.core.taskmeta import TaskKind
 from omac.engines import create_engine
 from omac.engines.mock import MockStore
@@ -41,6 +41,129 @@ def _item(command_a, command_b=None, *, blocked_by=None, scope_paths=None):
         kind=TaskKind.DECOMPOSE,
         deliverable=yaml.safe_dump(manifest, sort_keys=False),
     )
+
+
+def test_plan_preflight_requires_explicit_owner_scope_and_typed_io():
+    import yaml
+
+    text = yaml.safe_dump({
+        "meta": {"name": "demo"},
+        "nodes": [{
+            "id": "node-a",
+            "worker": "alice",
+            "contract": {
+                "acceptance": ["UJ-1"],
+            },
+        }],
+    }, sort_keys=False)
+
+    errors = run_plan_preflight(text)
+
+    assert any("scope_paths" in error for error in errors)
+    assert any("evidence_mode" in error for error in errors)
+    assert any("consumes" in error for error in errors)
+
+
+def test_plan_preflight_accepts_contribution_only_typed_node():
+    import yaml
+
+    text = yaml.safe_dump({
+        "meta": {"name": "demo"},
+        "nodes": [{
+            "id": "node-a",
+            "worker": "alice",
+            "description": "Implement the concrete login behavior.",
+            "contract": {
+                "objective": "implement login",
+                "acceptance_contributions": [{
+                    "flow_id": "UJ-1", "action_ids": ["ACT-1"],
+                }],
+                "source_of_truth": ["docs/login.md"],
+                "non_goals": ["no dashboard changes"],
+                "verification_commands": ["pytest -q"],
+                "integration_gates": [{
+                    "name": "login",
+                    "layer": "L1",
+                    "delivery_goal": "login works",
+                    "source_of_truth": ["docs/login.md"],
+                    "covers": ["login"],
+                    "acceptance_refs": ["UJ-1"],
+                    "commands": ["pytest -q"],
+                }],
+                "pr_base": "main",
+                "scope_paths": ["src/login/**"],
+                "evidence_mode": "fixture",
+                "produces": [],
+                "consumes": [],
+            },
+        }],
+    }, sort_keys=False)
+
+    assert run_plan_preflight(text) == []
+
+
+def test_plan_preflight_rejects_generic_description_and_duplicate_scope_owner():
+    import yaml
+
+    contract = {
+        "objective": "implement login",
+        "acceptance": ["UJ-1"],
+        "source_of_truth": ["docs/login.md"],
+        "non_goals": ["no dashboard changes"],
+        "verification_commands": ["pytest -q"],
+        "integration_gates": [{
+            "name": "login",
+            "layer": "L1",
+            "delivery_goal": "login works",
+            "source_of_truth": ["docs/login.md"],
+            "covers": ["login"],
+            "acceptance_refs": ["UJ-1"],
+            "commands": ["pytest -q"],
+        }],
+        "pr_base": "main",
+        "scope_paths": ["src/shared/**"],
+        "evidence_mode": "fixture",
+        "produces": [],
+        "consumes": [],
+    }
+    text = yaml.safe_dump({
+        "meta": {"name": "demo"},
+        "nodes": [
+            {
+                "id": "node-a", "worker": "alice",
+                "description": "Smallest independently PR-able unit.",
+                "contract": contract,
+            },
+            {
+                "id": "node-b", "worker": "bob",
+                "description": "Another concrete behavior.",
+                "contract": contract,
+            },
+        ],
+    }, sort_keys=False)
+
+    errors = run_plan_preflight(text)
+
+    assert any("generic smallest independently PR-able" in error for error in errors)
+    assert any("scope ownership conflict" in error for error in errors)
+
+
+def test_plan_preflight_reports_malformed_manifest_as_machine_error():
+    errors = run_plan_preflight("nodes: [")
+
+    assert len(errors) == 1
+    assert errors[0].startswith("plan preflight could not parse manifest:")
+
+
+def test_plan_compose_guard_reports_malformed_manifest_as_machine_error():
+    from omac.pipeline.plan import _compose_guard
+
+    guard = _compose_guard({"alice"}, strict_plan=True)
+
+    errors = guard(SimpleNamespace(deliverable="nodes: ["))
+
+    assert len(errors) == 1
+    assert errors[0].startswith("manifest preflight could not parse manifest:")
 
 
 def test_preflight_rejects_bare_go_local_package_target():

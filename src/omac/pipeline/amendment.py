@@ -19,6 +19,7 @@ from ..core.amendment import (
 )
 from ..core.manifest import Contract, load_manifest
 from ..core.repository_files import revision_directory_files
+from ..core.review_convergence import REVIEW_CONVERGENCE_MIN_NON_REDUCING_STREAK
 from ..core.taskmeta import DECISION_REQUIRED_SCHEMA, TaskKind, TaskPhase
 from ..engines.models import WorkItemStatus
 from ..errors import NeedsDecision, PlatformError, ValidationError
@@ -86,6 +87,94 @@ def _attempt_context(
         "supersedes_issue_id": superseded_issue.id,
         "supersedes_issue_key": superseded_issue.identifier or "",
     }
+
+
+def _validate_amendment_admission(
+    engine: Any,
+    manifest: Any,
+    manifest_path: str,
+    blocked_nodes: list[str],
+    *,
+    new_attempt: bool = False,
+    supersedes_issue_id: str | None = None,
+) -> None:
+    """Reject an amendment when an explicit decision still calls for recovery.
+
+    Older manifests may not persist a decision, so the check is additive for
+    compatibility.  Once a decision exists, only a convergence or typed
+    contract-boundary decision can authorize a DAG-definition change; no-submit,
+    budget, and Runner errors stay on their own recovery paths.
+    """
+    allowed = {
+        "contract-boundary-conflict",
+    }
+    for node_id in blocked_nodes:
+        node = manifest.nodes.get(node_id)
+        if node is None or not node.work_item_id:
+            continue
+        item = engine.store.get_work_item(node.work_item_id)
+        decision = getattr(item, "decision_required", None)
+        if not isinstance(decision, dict) or not decision:
+            continue
+        if (
+            decision.get("schema") != DECISION_REQUIRED_SCHEMA
+            or decision.get("resume_issue_id") != item.id
+        ):
+            raise ValidationError(
+                "Amendment admission found a malformed decision_required on "
+                f"node {node_id}; inspect `omac work show {item.id} --output json` "
+                "before retrying.")
+        reason_code = decision.get("reason_code")
+        # Some legacy manifests point at the superseded amendment issue itself
+        # rather than the develop node. Its own no-submit decision is handled by
+        # the explicit --new-attempt path, not by DAG-definition admission.
+        item_kind = getattr(getattr(item, "kind", None), "value", None)
+        if item_kind is None:
+            item_kind = getattr(item, "kind", None)
+        if (
+            item_kind == TaskKind.AMENDMENT.value
+            and new_attempt
+            and supersedes_issue_id == item.id
+        ):
+            continue
+        if reason_code == "review-convergence-scope-expanding":
+            convergence = decision.get("convergence")
+            owner_keys = (
+                convergence.get("blocker_owner_keys")
+                if isinstance(convergence, dict) else None
+            )
+            valid_owner_keys = (
+                isinstance(owner_keys, list)
+                and all(isinstance(owner, str) and owner.strip() for owner in owner_keys)
+                and len(set(owner_keys)) >= 2
+            )
+            if not isinstance(convergence, dict) or (
+                convergence.get("cross_owner") is not True
+                or not valid_owner_keys
+                or not isinstance(convergence.get("non_reducing_streak"), int)
+                or isinstance(convergence.get("non_reducing_streak"), bool)
+                or convergence["non_reducing_streak"] < (
+                    REVIEW_CONVERGENCE_MIN_NON_REDUCING_STREAK
+                )
+            ):
+                raise ValidationError(
+                    "Amendment admission requires a scope-expanding decision with "
+                    "two non-reducing blocker transitions and explicit cross-owner evidence")
+            continue
+        if (
+            isinstance(reason_code, str)
+            and (
+                reason_code.startswith("review-convergence-")
+                or reason_code in allowed
+            )
+        ):
+            continue
+        raise ValidationError(
+            "Amendment admission is not authorized by the blocked node's "
+            f"decision ({reason_code or 'unknown'}). Resolve the existing "
+            f"decision with `omac node retry {manifest_path} {node_id}` or the exact recovery "
+            "command in `omac work show` before proposing a DAG amendment."
+        )
 
 
 def _validate_superseded_amendment(engine: Any, item: Any) -> None:
@@ -396,6 +485,14 @@ def propose_amendment(
         raise ValidationError(
             "Amendment agents are not in the workspace pool: "
             + ", ".join(sorted(set(missing_agents))))
+    _validate_amendment_admission(
+        engine,
+        manifest,
+        manifest_path,
+        blocked_nodes,
+        new_attempt=new_attempt,
+        supersedes_issue_id=supersedes_issue_id,
+    )
 
     description = (
         "A DAG already approved and running has exposed a contract/topology defect. "
@@ -584,6 +681,10 @@ def accept_amendment(
     if not issue_id:
         raise ValidationError("Amendment review.issue_id is missing")
     issue = engine.store.get_work_item(issue_id)
+    issue_kind = getattr(issue.kind, "value", issue.kind)
+    if issue_kind != TaskKind.AMENDMENT.value:
+        raise ValidationError(
+            "Amendment review.issue_id must reference an amendment work item")
     current_manifest = load_manifest(manifest_path)
     already_applied = (
         current_manifest.meta.get("last_amendment_id")

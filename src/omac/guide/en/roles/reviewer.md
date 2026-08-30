@@ -75,6 +75,10 @@ conflict or cannot be reproduced, do not infer pass.
   not `fixed` must remain in `blockers` with the same root and a classification
   matching `prior_blocker_results`; a root declared fixed cannot also remain a
   current blocker.
+- When a cycle may qualify as `scope-expanding`, add a stable `owner` to every
+  open blocker. Multiple blockers may share an owner, but at least two distinct
+  owners and two consecutive non-reducing blocker transitions are required before
+  recommending a DAG amendment.
 - When a blocker requires another external input, add `required_inputs` entries
   shaped as `{artifact_id, producer, evidence_mode}`. When it requires a
   particular evidence class, add

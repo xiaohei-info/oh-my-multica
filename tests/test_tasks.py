@@ -1522,13 +1522,13 @@ def test_non_converging_review_stops_before_configured_twenty_round_limit():
 
     item = eng.store.list_work_items("ws")[0]
     assert exc.value.report["reason_code"] == (
-        "review-convergence-scope-expanding")
-    assert exc.value.report["rounds"] == 6
+        "review-convergence-exhausted")
+    assert exc.value.report["rounds"] == 10
     assert item.status is WorkItemStatus.BLOCKED
-    assert item.bounces.review == 5
+    assert item.bounces.review == 9
     assert item.decision_required["recommended_action"] == (
         "reconsider-task-boundary")
-    assert len(item.review_ledger["cycles"]) == 6
+    assert len(item.review_ledger["cycles"]) == 10
 
 
 def test_resume_uses_persisted_review_bounce_limit():
