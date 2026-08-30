@@ -81,6 +81,7 @@ blockers:
   - root_cause_key: release-trust-handoff
     obligation_id: dimension:evidence
     classification: new # 或 unchanged|deeper|regressed
+    owner: release-integrator # scope-expanding admission uses stable owner IDs
     summary: Release N 信任交接不闭合
     evidence: 验证器未消费 N 的签名报告
     required_fix: 对称校验 N 与 N+1 的签名和 payload digest
@@ -124,7 +125,7 @@ PR URL 不写入 verification YAML，而是通过 submit 的 `--pr-url` 单独�
 | `integration_tests_rerun` | contract 有 integration gates 时必须为 `true`。 |
 | `acceptance_mapping` | 逐项映射完整 flow claim 与精确 Action contribution 到证据和 `pass/fail`；trace ref 不产生映射义务。 |
 | `integration_gate_mapping` | 按 gate 名称记录独立复跑结果，字段必须与 contract 对齐。 |
-| `blockers` | pass 类 verdict 时必须为空；reject 时为结构化对象列表，绑定 obligation、稳定 root cause、分类、证据和修复入口。同一 root 每轮只出现一次，未关闭的历史 root 必须继续列出且分类与 `prior_blocker_results` 一致。 |
+| `blockers` | pass 类 verdict 时必须为空；reject 时为结构化对象列表，绑定 obligation、稳定 root cause、分类、证据和修复入口。同一 root 每轮只出现一次，未关闭的历史 root 必须继续列出且分类与 `prior_blocker_results` 一致。需要请求 `scope-expanding` 时，每个 open blocker 还必须给出稳定 `owner`；至少两个不同 owner 且 blocker 数连续两轮不再减少才准入 amendment。 |
 | `nits` | 不阻塞通过的改进建议。 |
 
 verdict 不写入 report YAML，而是通过 submit 的 `--verdict` 提交；合法值为 `pass`、

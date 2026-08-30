@@ -147,10 +147,18 @@ omac dag amend propose .omac/project.yaml \
   and neither observes nor requests a merge; the later `dag run` owns that work.
   Historical contract correction cannot set `resume_stage`.
 - OMAC checks DAG cycles, dependencies, the agent pool, immutable done/merged
-  facts, and explicit ownership migration before independent Reviewer review.
+  facts, and explicit ownership migration before independent Reviewer review. If
+  a blocked node already has `decision_required`, amendment admission accepts
+  only `review-convergence-*` or `contract-boundary-conflict`; no-submit, network,
+  metadata, and Runner errors stay on their own recovery paths instead of being
+  retried through an amendment.
 - Reviewer pass returns exit 20 in `confirmation`; it never applies automatically.
   Inspect the generated amendment and run the returned
-  `omac dag amend accept ...` command.
+  `omac dag amend accept ...` command. New files use
+  `identity_schema: omac.dag-amendment-identity/v2`, binding the base
+  manifest/acceptance digests and review issue into the amendment identity. Older
+  files without the marker remain readable through the legacy identity path; the
+  next re-propose emits the v2 marker.
 - Exhausted amendment review or machine-guard budgets are not confirmation. The
   issue remains at `blocked/review` with `decision_required`; after an explicit
   decision to continue, rerun the original `omac dag amend propose ...` command
@@ -326,12 +334,14 @@ The review ledger counts submitted semantic reviews only; provider capacity,
 transport, and attachment-read retries do not consume review cycles.
 `review_convergence_decision` is the single convergence authority: the same
 blocker remaining `unchanged` through two rework cycles stops at cycle three;
-three open responsibility dimensions stop from cycle three; a root cause first seen
-after cycle five marks expanding scope; and cycle ten is an unconditional stop.
-OMAC persists the `review-convergence-*` decision before another Worker
-dispatch. The decision requests a task-boundary reconsideration; for develop
-nodes the Orchestrator proposes a DAG amendment, while OMAC never rewrites the
-DAG implicitly.
+`scope-expanding` additionally requires at least two consecutive non-reducing
+blocker transitions, an explicit `owner` on every open blocker, and at least two
+distinct owners. Three dimensions alone, a still-reducing blocker set, or missing
+owner evidence does not admit an amendment. A root cause first seen after cycle
+five follows the same admission rule; cycle ten remains an unconditional stop.
+OMAC persists the `review-convergence-*` decision before another Worker dispatch.
+The decision requests a task-boundary reconsideration; for develop nodes the
+Orchestrator proposes a DAG amendment, while OMAC never rewrites the DAG implicitly.
 
 ## Failure isolation
 

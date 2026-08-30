@@ -30,6 +30,9 @@ REVIEW_LEDGER_SCHEMA = "omac.review-ledger/v1"
 REVIEW_CYCLE_BLOCKER_FACTS_SCHEMA = "omac.review-cycle-blocker-facts/v1"
 REVIEW_CONVERGENCE_DECISION_SCHEMA = "omac.review-convergence-decision/v1"
 REVIEW_CONVERGENCE_EARLIEST_CYCLE = 3
+REVIEW_CONVERGENCE_MIN_NON_REDUCING_STREAK = (
+    REVIEW_CONVERGENCE_EARLIEST_CYCLE - 1
+)
 
 
 class LegacyReviewLedgerUnverifiable(ValueError):
@@ -61,7 +64,8 @@ _BLOCKER_FACT_FIELDS = (
     "status",
     "classification",
 )
-_BLOCKER_SUMMARY_FIELDS = _BLOCKER_FACT_FIELDS + (
+_BLOCKER_OPTIONAL_FIELDS = ("owner",)
+_BLOCKER_SUMMARY_FIELDS = _BLOCKER_FACT_FIELDS + _BLOCKER_OPTIONAL_FIELDS + (
     "first_seen_round",
     "last_seen_round",
     "seen_count",
@@ -160,6 +164,9 @@ def _validate_common_blockers(
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(
                     f"review ledger {path}.{field} must be a non-empty string")
+        owner = blocker.get("owner")
+        if owner is not None and (not isinstance(owner, str) or not owner.strip()):
+            raise ValueError(f"review ledger {path}.owner must be a non-empty string")
         blocker_id = blocker["blocker_id"]
         root_cause_key = blocker["root_cause_key"]
         if blocker_id in blocker_ids:
@@ -276,6 +283,10 @@ def _parse_cycle_blocker_facts(
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(
                     f"review ledger {fact_path}.{field} must be a non-empty string")
+        owner = fact.get("owner")
+        if owner is not None and (not isinstance(owner, str) or not owner.strip()):
+            raise ValueError(
+                f"review ledger {fact_path}.owner must be a non-empty string")
         blocker_id = fact["blocker_id"]
         if blocker_id in fact_ids:
             raise ValueError(
@@ -317,7 +328,8 @@ def _parse_cycle_blocker_facts(
         if status == "open":
             classifications[classification] += 1
         parsed_facts.append(MappingProxyType({
-            field: fact[field] for field in _BLOCKER_FACT_FIELDS + ("last_evidence",)
+            field: fact[field]
+            for field in _BLOCKER_FACT_FIELDS + _BLOCKER_OPTIONAL_FIELDS + ("last_evidence",)
             if field in fact
         }))
     if open_fact_ids != current_ids or fixed_fact_ids != prior_ids - current_ids:
@@ -406,6 +418,11 @@ def _canonical_cycle_projection(
             if status == "open":
                 seen_count += 1
             record = {field: fact[field] for field in _BLOCKER_FACT_FIELDS}
+            for field in _BLOCKER_OPTIONAL_FIELDS:
+                if field in fact:
+                    record[field] = fact[field]
+                elif previous is not None and field in previous:
+                    record[field] = previous[field]
             record.update({
                 "first_seen_round": first_seen_round,
                 "last_seen_round": cycle["round"],
@@ -452,6 +469,24 @@ def validate_review_ledger(
     blocker_roots = {
         blocker["blocker_id"]: blocker["root_cause_key"] for blocker in blockers
     }
+    blocker_owners: dict[str, str] = {}
+    for cycle_index, cycle in enumerate(cycles):
+        for fact_index, fact in enumerate(cycle.get("blocker_facts", [])):
+            if not isinstance(fact, dict) or "owner" not in fact:
+                continue
+            owner = fact.get("owner")
+            if not isinstance(owner, str) or not owner.strip():
+                # Shape validation below emits the path-specific error.
+                continue
+            blocker_id = fact.get("blocker_id")
+            if not isinstance(blocker_id, str):
+                continue
+            previous_owner = blocker_owners.get(blocker_id)
+            if previous_owner is not None and previous_owner != owner:
+                raise ValueError(
+                    f"review ledger cycles[{cycle_index}].blocker_facts[{fact_index}].owner "
+                    "changed identity")
+            blocker_owners[blocker_id] = owner
     parsed_cycles = _parse_present_blocker_facts(cycles, blocker_roots)
     canonical_projection = _canonical_cycle_projection(cycles, parsed_cycles)
     persisted_projection = _persisted_blocker_projection(blockers)
@@ -492,6 +527,25 @@ def _open_blockers(ledger: Any) -> list[dict]:
     ]
 
 
+def _blocker_owner_keys(blockers: list[dict]) -> tuple[list[str], bool]:
+    """Return explicit owner identities and whether they prove cross-owner scope.
+
+    Owner evidence is intentionally optional for legacy ledgers.  It must be
+    present on every open blocker before it can authorize a scope-expanding
+    amendment; a dimension count alone is not an ownership boundary.
+    """
+    owners = {
+        blocker.get("owner")
+        for blocker in blockers
+        if isinstance(blocker.get("owner"), str) and blocker["owner"].strip()
+    }
+    complete = bool(blockers) and all(
+        isinstance(blocker.get("owner"), str) and blocker["owner"].strip()
+        for blocker in blockers
+    )
+    return sorted(owners), complete and len(owners) >= 2
+
+
 def open_blockers(ledger: Any) -> list[dict]:
     """Return copies of currently open blocker records."""
     return deepcopy(_open_blockers(ledger))
@@ -516,7 +570,10 @@ def review_convergence_decision(
     """Return a fail-closed task-boundary decision for non-converging review.
 
     Infrastructure retries are not ledger cycles.  This policy consumes only
-    validated semantic Reviewer reports already persisted in the ledger.
+    validated semantic Reviewer reports already persisted in the ledger. A
+    scope-expanding amendment additionally needs a two-transition non-reducing
+    streak and explicit cross-owner evidence; obligation dimensions alone are
+    not sufficient.
     """
     if not isinstance(ledger, dict):
         return None
@@ -561,6 +618,7 @@ def review_convergence_decision(
         and record.get("classification") == "unchanged"
         and int(record.get("seen_count", 0)) >= 3
     })
+    owner_keys, cross_owner = _blocker_owner_keys(open_records)
 
     non_reducing_streak = 0
     for previous, current in reversed(list(zip(cycles, cycles[1:]))):
@@ -582,6 +640,8 @@ def review_convergence_decision(
         "late_root_cause_keys": late_roots,
         "unchanged_blocker_ids": unchanged_blocker_ids,
         "non_reducing_streak": non_reducing_streak,
+        "blocker_owner_keys": owner_keys,
+        "cross_owner": cross_owner,
     }
     if cycle_count >= hard_limit:
         return {
@@ -589,10 +649,22 @@ def review_convergence_decision(
             "mode": "exhausted",
             "reason_code": "review-convergence-exhausted",
         }
-    if (
+    # Multiple obligation dimensions are only an amendment signal after the
+    # blocker set has stopped shrinking and the report names distinct owners.
+    # A dimension count by itself is common while a healthy review is still
+    # reducing work and must not create another amendment issue.
+    scope_expanding = (
         cycle_count >= REVIEW_CONVERGENCE_EARLIEST_CYCLE
         and len(dimensions) >= 3
-    ) or late_roots:
+        and non_reducing_streak >= REVIEW_CONVERGENCE_MIN_NON_REDUCING_STREAK
+        and cross_owner
+    )
+    late_scope_expanding = (
+        bool(late_roots)
+        and non_reducing_streak >= 1
+        and cross_owner
+    )
+    if scope_expanding or late_scope_expanding:
         return {
             **common,
             "mode": "scope-expanding",
@@ -895,6 +967,10 @@ def validate_convergence_review(item: Any, verdict: str, report: Any) -> list[st
         ):
             if not isinstance(blocker.get(field), str) or not blocker[field].strip():
                 errors.append(f"{prefix}.{field} must be a non-empty string")
+        if "owner" in blocker and (
+            not isinstance(blocker.get("owner"), str) or not blocker["owner"].strip()
+        ):
+            errors.append(f"{prefix}.owner must be a non-empty string when present")
         if blocker.get("obligation_id") not in expected:
             errors.append(f"{prefix}.obligation_id references an unknown obligation")
         elif results.get(blocker.get("obligation_id"), {}).get("status") != "fail":
@@ -1028,13 +1104,17 @@ def advance_review_ledger(
         record = records_by_id.get(blocker_id)
         if record is None:
             continue
-        blocker_facts.append({
+        fixed_fact = {
             field: record[field] for field in _BLOCKER_FACT_FIELDS[:6]
         } | {
             "status": "fixed",
             "classification": "fixed",
             "last_evidence": result.get("evidence"),
-        })
+        }
+        for field in _BLOCKER_OPTIONAL_FIELDS:
+            if field in record:
+                fixed_fact[field] = record[field]
+        blocker_facts.append(fixed_fact)
 
     for blocker in report.get("blockers", []):
         if not isinstance(blocker, dict):
@@ -1064,6 +1144,11 @@ def advance_review_ledger(
             "status": "open",
             "classification": classification,
         }
+        owner = blocker.get("owner")
+        if isinstance(owner, str) and owner.strip():
+            fact["owner"] = owner
+        elif record is not None and isinstance(record.get("owner"), str):
+            fact["owner"] = record["owner"]
         prior_result = prior_results.get(blocker_id)
         if prior_result is not None:
             fact["last_evidence"] = prior_result.get("evidence")

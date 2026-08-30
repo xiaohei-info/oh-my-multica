@@ -19,6 +19,7 @@ from omac.engines.mock import MockStore, MockRuntime
 from omac.core.manifest import load_manifest, save_manifest, Node, Manifest
 from omac.pipeline.loop import reconcile
 from omac.pipeline.report import (
+    _next_actions,
     build_status_report,
     render_table,
     STATUS_REPORT_KEYS,
@@ -48,6 +49,24 @@ def _manifest_yaml(tmp_path, nodes):
     with open(path, "w") as f:
         yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
     return str(path)
+
+
+def test_needs_decision_report_prioritizes_convergence_amendment_action():
+    actions = _next_actions([{
+        "key": "resource-runs",
+        "decision_required": {
+            "reason_code": "review-convergence-scope-expanding",
+            "next_action": (
+                "omac dag amend propose .omac/dag.yaml --report-file report.md "
+                "--docs docs --blocked-node resource-runs --output json"
+            ),
+        },
+    }], ".omac/dag.yaml")
+
+    assert actions == [
+        "omac dag amend propose .omac/dag.yaml --report-file report.md "
+        "--docs docs --blocked-node resource-runs --output json"
+    ]
 
 
 def test_dag_run_rejects_missing_declared_closeout_node(

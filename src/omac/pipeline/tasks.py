@@ -1237,6 +1237,7 @@ def run_task(
             guard_errors: List[str] = guard(delivered) if guard is not None else []
             if reviewers:
                 guard_errors.extend(run_review_preflight(delivered))
+            guard_errors = list(dict.fromkeys(guard_errors))
             if not guard_errors:
                 break
             log.info(logsetup.EVT_REVISION, kind=kind.value, id=item_id,

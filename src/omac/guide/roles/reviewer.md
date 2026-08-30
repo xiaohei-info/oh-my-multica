@@ -56,6 +56,8 @@
 - 同一 `root_cause_key` 每轮只能出现一次。历史 blocker 若不是 `fixed`，必须在
   `blockers` 中保留同一根因，且 classification 与 `prior_blocker_results` 状态一致；
   声明 `fixed` 的根因不得同时仍列为 blocker。
+- 若本轮可能构成 `scope-expanding`，每个 open blocker 必须补充稳定的 `owner`（同一 owner
+  可以对应多个 blocker，但至少需要两个不同 owner）；同时只有 blocker 数连续两轮不再减少时才可建议 DAG amendment。
 - blocker 若要求新增外部输入，必须补充 `required_inputs`，每项为
   `{artifact_id, producer, evidence_mode}`；若要求特定证据类别，补充
   `required_evidence_mode: fixture|artifact|live`。这些字段只描述边界，不复制交付物正文。

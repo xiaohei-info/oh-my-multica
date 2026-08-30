@@ -14,6 +14,7 @@ from ...core.config import (
     resolve_reconcile, resolve_retry,
 )
 from ...core.amendment import ensure_amendment_apply_complete
+from ...core.acceptance import load_acceptance_doc_file
 from ...core.graph import node_waves
 from ...core.lint import lint
 from ...core.manifest import load_manifest, manifest_write_lock
@@ -272,7 +273,21 @@ def check(args) -> int:
 
     engine, _ = _assemble_engine(args)
     pool = set(engine.store.list_members(engine.store.config.workspace_id))
-    errs = lint(manifest, pool)
+    acceptance = None
+    acceptance_file = manifest.meta.get("acceptance_file")
+    if acceptance_file:
+        if not isinstance(acceptance_file, str) or not acceptance_file.strip():
+            errs = ["Manifest meta.acceptance_file must be a non-empty string"]
+        else:
+            acceptance_path = os.path.join(os.path.dirname(path), acceptance_file)
+            try:
+                acceptance = load_acceptance_doc_file(acceptance_path)
+            except (OSError, ValueError) as exc:
+                errs = [f"Could not load acceptance document {acceptance_path}: {exc}"]
+            else:
+                errs = lint(manifest, pool, acceptance=acceptance)
+    else:
+        errs = lint(manifest, pool)
 
     if errs:
         if args.output == "json":

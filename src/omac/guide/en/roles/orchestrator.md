@@ -45,8 +45,11 @@ guide does not decide product facts.
 
 - Before Reviewer dispatch, OMAC machine preflight checks only mechanically
   certain facts that do not depend on project conventions, such as shell syntax
-  and Go local package targets missing a `./` or `../` prefix. Without an
-  explicit typed IO contract, OMAC does not infer artifact producers or input
+  and Go local package targets missing a `./` or `../` prefix. New plan
+  decomposition additionally requires a concrete owner/description, one primary
+  `scope_paths`, typed IO (`evidence_mode`, `produces`, and explicit `consumes`),
+  and a mechanically checkable negative conflict matrix; running legacy manifests
+  remain compatible. Ordinary review does not infer artifact producers or input
   materialization from generic flag names, current file existence, or
   `scope_paths`.
 - `work show.context.contract_boundary_schema` defines the optional typed IO
@@ -79,9 +82,11 @@ guide does not decide product facts.
   the full manifest impact.
 - `review_state.mode=convergence-audit` directly projects the authoritative
   `review_convergence_decision`; `review_state.decision.mode` carries the
-  specific `stalled|scope-expanding|exhausted` reason. OMAC stops rework for
-  the current node and requires a DAG amendment; do not interpret it as another
-  Worker patch round.
+  specific `stalled|scope-expanding|exhausted` reason. `scope-expanding` also
+  requires two consecutive non-reducing blocker transitions, an explicit
+  `owner` on every open blocker, and at least two distinct owners. OMAC stops
+  rework for the current node and requires a DAG amendment; do not interpret it
+  as another Worker patch round.
 - Preserve blocker identity and provide independently reproducible closure
   evidence.
 

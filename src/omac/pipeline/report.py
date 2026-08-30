@@ -152,9 +152,29 @@ def _next_actions(failed_nodes: list, manifest_path: str) -> list:
     for fn in failed_nodes:
         key = fn["key"]
         decision = fn.get("decision_required")
-        if isinstance(decision, dict) and decision.get(
-            "reason_code") == "review-nits-acceptance-required":
-            actions.append(f"omac node accept-nits {manifest_path} {key}")
+        if isinstance(decision, dict):
+            reason_code = decision.get("reason_code")
+            if reason_code == "review-nits-acceptance-required":
+                actions.append(f"omac node accept-nits {manifest_path} {key}")
+            elif reason_code == "amendment_apply_incomplete":
+                resume = decision.get("resume_command")
+                actions.append(
+                    resume if isinstance(resume, str) and resume.strip()
+                    else "omac dag amend accept <manifest> <amendment-file>"
+                )
+                continue
+            elif isinstance(reason_code, str) and reason_code.startswith(
+                    "review-convergence-"):
+                next_action = decision.get("next_action")
+                actions.append(
+                    next_action if isinstance(next_action, str) and next_action.strip()
+                    else (
+                        "omac dag amend propose "
+                        f"{manifest_path} --report-file <report> --docs <docs> "
+                        f"--blocked-node {key} --output json"
+                    )
+                )
+                continue
         actions.append(f"omac node retry {manifest_path} {key}")
         actions.append(f"omac node abandon {manifest_path} {key}")
     return actions

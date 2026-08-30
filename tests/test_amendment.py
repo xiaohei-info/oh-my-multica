@@ -480,6 +480,35 @@ def test_complete_contract_update_preserves_and_validates_responsibility_fields(
     assert any("unknown business action 'UNKNOWN-ACTION'" in error for error in errors)
 
 
+def test_legacy_acceptance_change_with_authoritative_doc_requires_responsibility_operation(
+        tmp_path):
+    manifest = load_manifest(str(_manifest(tmp_path)))
+
+    errors = validate_proposal(
+        manifest,
+        _proposal(_contract_update()),
+        {"alice", "bob", "charlie"},
+        acceptance=_responsibility_acceptance_doc(),
+    )
+
+    assert any("responsibility migration must use update-responsibility" in error
+               for error in errors)
+
+
+def test_definition_update_rejects_noop_contract_replacement(tmp_path):
+    manifest = load_manifest(str(_manifest(tmp_path)))
+    current = amendment_mod._dump_contract(manifest.nodes["bootstrap"].contract)
+    proposal = _proposal({
+        "op": "update", "node": "bootstrap", "set": {"contract": current},
+    })
+
+    errors = validate_proposal(
+        manifest, proposal, {"alice", "bob", "charlie"})
+
+    assert any("update must change at least one node definition field" in error
+               for error in errors)
+
+
 def test_complete_contract_replacement_requires_boundary_preservation_or_clear(tmp_path):
     path = _manifest(tmp_path)
     _add_typed_boundary(path)
@@ -547,6 +576,10 @@ def test_apply_and_restart_fail_closed_on_tampered_null_consumes(tmp_path):
         reviewed["analysis"]["minimal_rerun"],
         reviewed["analysis"]["historical_contract_corrections"],
         reviewed["base"]["evidence_sha256"],
+        manifest_digest_value=reviewed["base"]["manifest_sha256"],
+        acceptance_digest=reviewed["base"].get("acceptance_sha256"),
+        issue_id=reviewed["review"]["issue_id"],
+        reviewer_verdict=reviewed["review"]["verdict"],
     )
     original = path.read_bytes()
 
@@ -556,6 +589,72 @@ def test_apply_and_restart_fail_closed_on_tampered_null_consumes(tmp_path):
                 str(path), reviewed, engine.store, {"alice", "bob", "charlie"})
         assert path.read_bytes() == original
         assert load_manifest(str(path)).nodes["bootstrap"].contract.consumes == []
+
+
+def test_reviewed_amendment_identity_binds_cas_and_review_envelope(tmp_path):
+    path = _manifest(tmp_path)
+    engine = _engine()
+    engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    reviewed = build_reviewed_amendment(
+        load_manifest(str(path)), _proposal(_contract_update()), engine.store,
+        issue_id="amendment-issue", reviewer_verdict="pass")
+    original = path.read_bytes()
+
+    for mutate in (
+        lambda amendment: amendment["base"].update({
+            "manifest_sha256": "forged-manifest-digest",
+        }),
+        lambda amendment: amendment["review"].update({
+            "issue_id": "other-amendment-issue",
+        }),
+    ):
+        tampered = copy.deepcopy(reviewed)
+        mutate(tampered)
+        with pytest.raises(ValidationError, match="identity does not match"):
+            apply_amendment(
+                str(path), tampered, engine.store,
+                {"alice", "bob", "charlie"})
+        assert path.read_bytes() == original
+
+
+def test_legacy_amendment_identity_remains_readable(tmp_path):
+    path = _manifest(tmp_path)
+    engine = _engine()
+    engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    reviewed = build_reviewed_amendment(
+        load_manifest(str(path)), _proposal(_contract_update()), engine.store,
+        issue_id="amendment-issue", reviewer_verdict="pass")
+    reviewed.pop("identity_schema")
+    reviewed["amendment_id"] = amendment_mod._amendment_id(
+        reviewed["base"]["definition_sha256"], reviewed,
+        reviewed["analysis"]["minimal_rerun"],
+        reviewed["analysis"]["historical_contract_corrections"],
+        reviewed["base"]["evidence_sha256"],
+    )
+
+    result = apply_amendment(
+        str(path), reviewed, engine.store, {"alice", "bob", "charlie"})
+
+    assert result["amendment_id"] == reviewed["amendment_id"]
+
+
+def test_reviewed_amendment_identity_binds_acceptance_digest_presence(tmp_path):
+    path = _manifest(tmp_path)
+    acceptance = _responsibility_acceptance_doc()
+    engine = _engine()
+    engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    reviewed = build_reviewed_amendment(
+        load_manifest(str(path)), _proposal(_responsibility_update()), engine.store,
+        issue_id="amendment-issue", reviewer_verdict="pass", acceptance=acceptance)
+    reviewed["base"].pop("acceptance_sha256")
+
+    with pytest.raises(ValidationError, match="identity does not match"):
+        apply_amendment(
+            str(path), reviewed, engine.store,
+            {"alice", "bob", "charlie"}, acceptance=acceptance)
 
 
 def test_contract_boundary_clear_expression_is_explicit_and_unambiguous(tmp_path):
@@ -1142,6 +1241,35 @@ def test_historical_correction_requires_marker_and_evidence_cas(tmp_path):
             acceptance=acceptance)
 
 
+def test_contract_only_responsibility_amendment_rejects_repeating_same_node(tmp_path):
+    path = _manifest(tmp_path)
+    acceptance = _responsibility_acceptance_doc()
+    engine = _engine()
+    engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    proposal = _proposal(_responsibility_update())
+    reviewed = build_reviewed_amendment(
+        load_manifest(str(path)), proposal, engine.store,
+        issue_id="amendment-issue", reviewer_verdict="pass",
+        acceptance=acceptance,
+    )
+    apply_amendment(
+        str(path), reviewed, engine.store, {"alice", "bob", "charlie"},
+        acceptance=acceptance,
+    )
+
+    errors = validate_proposal(
+        load_manifest(str(path)), proposal,
+        {"alice", "bob", "charlie"}, acceptance=acceptance,
+    )
+
+    assert any(
+        "update-responsibility must change at least one acceptance responsibility field"
+        in error
+        for error in errors
+    )
+
+
 def test_responsibility_update_without_work_item_is_definition_only_but_existing_delivery_reopens_review(tmp_path):
     path = _manifest(tmp_path)
     acceptance = _responsibility_acceptance_doc()
@@ -1640,6 +1768,68 @@ def test_real_oac_done_node_historical_responsibility_correction_is_facts_only(t
 
     second = apply_amendment(str(path), reviewed, HistoricalStore(), {node.worker, node.reviewer})
     assert second["sync"]["already_complete"] == [node.id]
+
+
+def test_amendment_admission_rejects_unqualified_scope_decision_before_issue_creation(
+        tmp_path):
+    path = _manifest(tmp_path)
+    report = tmp_path / "report.md"
+    report.write_text("scope expansion")
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "design.md").write_text("authoritative design")
+    engine = _engine()
+    item = engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    engine.store.update_work_item_metadata(
+        item.id,
+        decision_required={
+            "schema": DECISION_REQUIRED_SCHEMA,
+            "reason_code": "review-convergence-scope-expanding",
+            "resume_issue_id": item.id,
+            "convergence": {"cross_owner": False, "non_reducing_streak": 2},
+        },
+    )
+    before = list(engine.store.list_work_items("ws"))
+
+    with pytest.raises(ValidationError, match="scope-expanding decision"):
+        amendment_pipeline.propose_amendment(
+            engine, str(path), report_file=str(report), docs=[str(docs)],
+            blocked_nodes=["bootstrap"], orchestrator="alice",
+            reviewers=["bob"], max_revisions=1,
+        )
+
+    assert engine.store.list_work_items("ws") == before
+
+
+def test_amendment_admission_rejects_non_convergence_decision_before_issue_creation(
+        tmp_path):
+    path = _manifest(tmp_path)
+    report = tmp_path / "report.md"
+    report.write_text("reviewer did not submit")
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "design.md").write_text("authoritative design")
+    engine = _engine()
+    item = engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    engine.store.update_work_item_metadata(
+        item.id,
+        decision_required={
+            "schema": DECISION_REQUIRED_SCHEMA,
+            "reason_code": "reviewer-completed-without-verdict",
+        },
+    )
+    before = list(engine.store.list_work_items("ws"))
+
+    with pytest.raises(ValidationError, match="Amendment admission"):
+        amendment_pipeline.propose_amendment(
+            engine, str(path), report_file=str(report), docs=[str(docs)],
+            blocked_nodes=["bootstrap"], orchestrator="alice",
+            reviewers=["bob"], max_revisions=1,
+        )
+
+    assert engine.store.list_work_items("ws") == before
 
 
 def test_propose_amendment_passes_authoritative_acceptance_to_reviewer_obligations(
@@ -2620,6 +2810,26 @@ def test_runner_restart_after_aiteam_849_amendment_uses_fresh_worker_budget(
     assert current.decision_required is None
     assert current.current_review_ledger is None
     assert current.worker_handoff is not None
+
+
+def test_accept_amendment_rejects_review_issue_of_wrong_kind(tmp_path):
+    path = _manifest(tmp_path)
+    engine = _engine()
+    issue = engine.store.create_work_item(
+        "ws", "develop", "desc", "develop", "alice", reviewer="bob",
+        kind=TaskKind.DEVELOP)
+    engine.store.update_work_item_metadata(
+        issue.id, phase=TaskPhase.CONFIRMATION, review_verdict="pass")
+    reviewed = build_reviewed_amendment(
+        load_manifest(str(path)), _proposal(_contract_update()), engine.store,
+        issue_id=issue.id, reviewer_verdict="pass")
+    amendment_file = tmp_path / "wrong-kind.yaml"
+    amendment_file.write_text(yaml.safe_dump(reviewed, sort_keys=False))
+
+    with pytest.raises(ValidationError, match="must reference an amendment"):
+        amendment_pipeline.accept_amendment(
+            engine, str(path), str(amendment_file), reason="operator accepted",
+            agent_pool={"alice", "bob", "charlie"})
 
 
 def test_accept_authoring_amendment_fails_before_manifest_write_for_active_formal_run(
@@ -4235,6 +4445,38 @@ def test_topology_change_fails_closed_for_completed_downstream(tmp_path):
         manifest, proposal, {"alice", "bob", "charlie"})
 
     assert any("done/merged downstream" in error for error in errors)
+
+
+def test_added_node_malformed_contract_is_validation_error_not_raw_exception(tmp_path):
+    manifest = load_manifest(str(_manifest(tmp_path)))
+    proposal = _proposal({
+        "op": "add",
+        "value": {
+            "id": "new-node",
+            "worker": "alice",
+            "blocked_by": [],
+            "contract": {"source_of_truth": None},
+        },
+    })
+
+    errors = validate_proposal(manifest, proposal, {"alice", "bob", "charlie"})
+
+    assert errors
+    assert errors[0].startswith("operations[0]")
+
+
+def test_ownership_migration_requires_structured_string_reason(tmp_path):
+    manifest = load_manifest(str(_manifest(tmp_path)))
+    proposal = _proposal({
+        "op": "update",
+        "node": "bootstrap",
+        "set": {"worker": "charlie"},
+        "migration": "ownership transferred",
+    })
+
+    errors = validate_proposal(manifest, proposal, {"alice", "bob", "charlie"})
+
+    assert "operations[0].migration must be an object" in errors
 
 
 def test_added_node_cannot_smuggle_runtime_facts(tmp_path):

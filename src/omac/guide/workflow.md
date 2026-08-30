@@ -66,14 +66,18 @@ Controller Agent 应直接执行这条下一步命令，让 `dag run` 接管开�
 - Reviewer 发现问题后继续完成整个评审范围，以 `full_review_completed: true` 声明完整审查，并一次性报告本轮全部 blockers 和 nits。
 - OMAC 在 Reviewer 前执行 deterministic preflight，只把 shell 语法、缺少 `./` / `../`
   前缀的 Go 本地包目标等语义无歧义的机械问题退回产出者，不消耗 Reviewer 轮次。
-  没有显式 typed IO contract 时，不根据通用 flag、当前文件存在性或 `scope_paths`
-  猜测 producer / materialization。完整机器反馈存于附件；产出者按有界摘要中的
+  新 plan decomposition 还强制每个节点给出具体 owner/description、一个 primary
+  `scope_paths`、typed `evidence_mode`/`produces`/`consumes`，并一次检查 scope、制品
+  producer 和 acceptance responsibility 的负向冲突矩阵；旧运行 manifest 继续兼容。
+  没有显式 typed IO contract 时，普通 review 不根据通用 flag、当前文件存在性或
+  `scope_paths` 猜测 producer / materialization。完整机器反馈存于附件；产出者按有界摘要中的
   `omac work show <issue-id> --output json` 入口读取 `context.machine_feedback`。
 - 每轮 review 都有有限 `review_obligations`；Reviewer 必须逐项给结论。跨轮 blocker 写入 review ledger，以稳定根因区分 fixed、unchanged、deeper、regressed 和 new。
 - `review_state` 只投影权威 `review_convergence_decision`；其 mode 保持
   `convergence-audit`，具体 `stalled`、`scope-expanding` 或 `exhausted` 原因位于
-  `review_state.decision.mode`。命中后停止当前节点返工并进入显式 DAG amendment，
-  不再派发普通 bounce。
+  `review_state.decision.mode`。`scope-expanding` 还需连续两次 blocker 数不再减少、
+  每个 open blocker 具名 `owner` 且至少两个不同 owner；命中后停止当前节点返工并进入
+  显式 DAG amendment，不再派发普通 bounce。
 - plan / acceptance / decompose 的 review 预算耗尽后，Human 可用
   `omac plan continue-review --dag-key <stage-key>` 明确授权一轮。授权作为平台 work item
   的 `review_continuation` 持久化，不修改项目内 `retry.review`，跨进程 `plan resume` 仍有效。

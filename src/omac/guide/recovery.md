@@ -113,9 +113,14 @@ omac dag amend propose .omac/project.yaml \
   再保持 review verdict、PR/verification、Store status/phase 和人员分配不变；它不派发 Agent，也不观察或请求
   merge，后续 `dag run` 统一负责。historical contract correction 禁止设置 `resume_stage`。
 - OMAC 先做 DAG、循环、依赖、agent pool、done/merged 不可变性和 ownership migration
-  机器门，再交给独立 Reviewer。
+  机器门，再交给独立 Reviewer。若 blocked node 已持有明确的 decision_required，只有
+  `review-convergence-*` 或 `contract-boundary-conflict` 才能作为 amendment 准入；
+  no-submit、network、metadata 和 Runner 错误必须沿各自恢复路径处理，不能借 amendment 重试。
 - Reviewer pass 后命令以 exit 20 停在 `confirmation`，不会自动应用。人工审阅生成的
-  amendment 文件后再运行返回的 `omac dag amend accept ...` 命令。
+  amendment 文件后再运行返回的 `omac dag amend accept ...` 命令。新文件使用
+  `identity_schema: omac.dag-amendment-identity/v2`，把 base manifest/acceptance digest
+  与 review issue 绑定进 amendment identity；旧无该标记的文件按旧 identity 兼容读取，
+  下一次重新 propose 会生成 v2。
 - amendment 的 review 或 machine guard 预算耗尽不是 confirmation。issue 会停在
   `blocked/review` 并携带 `decision_required`；人工决定继续后，使用原
   `omac dag amend propose ... --resume-issue-id <issue-id>` 命令续接同一 issue、交付与
@@ -247,9 +252,11 @@ worker、按现有 blocker 修复，或把过粗节点拆成语义等价的小�
 
 Review ledger 只记录已提交的语义评审，不记录 provider 过载、网络超时或附件读取等
 基础设施重试。`review_convergence_decision` 是唯一收敛权威：同一 blocker 经两次返工仍
-保持 `unchanged` 时在第 3 个 cycle 停止；从第 3 个 cycle 起同时存在至少 3 个独立责任维度时
-停止；第 5 个 cycle 之后首次出现新的 root cause 时标记 scope expanding；达到第 10 个
-cycle 时无条件停止。OMAC 会在再次派发 Worker 前持久化 `review-convergence-*` 决策。
+保持 `unchanged` 时在第 3 个 cycle 停止；`scope-expanding` 还必须同时满足最近至少两次
+连续 blocker 数不再减少、所有 open blocker 都带显式 `owner` 且至少有两个不同 owner。
+单纯出现三个责任维度、仍在减少的 blocker 集合或缺失 owner 证据不会准入 amendment；第 5
+个 cycle 之后首次出现新的 root cause 也遵守同一 admission 条件；达到第 10 个 cycle 时
+无条件停止。OMAC 会在再次派发 Worker 前持久化 `review-convergence-*` 决策。
 该决策只要求重新考虑任务边界；develop 节点由 Orchestrator 提出 DAG amendment，OMAC
 不会隐藏地重写 DAG。
 

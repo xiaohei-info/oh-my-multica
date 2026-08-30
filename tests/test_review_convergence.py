@@ -336,6 +336,28 @@ def test_review_report_rejects_duplicate_root_cause_keys():
     assert "review_report contains duplicate root_cause_key: duplicate-root" in errors
 
 
+def test_review_report_rejects_empty_blocker_owner_when_declared():
+    item = _item()
+    obligations = build_review_obligations(item)
+    report = _report(
+        obligations,
+        failed={"dimension:structure"},
+        blockers=[{
+            "root_cause_key": "owner-root",
+            "obligation_id": "dimension:structure",
+            "classification": "new",
+            "owner": "",
+            "summary": "owner is missing",
+            "evidence": "no owner evidence",
+            "required_fix": "name the owner",
+        }],
+    )
+
+    errors = validate_convergence_review(item, "reject", report)
+
+    assert "review_report.blockers[0].owner must be a non-empty string when present" in errors
+
+
 def test_review_report_blocker_must_reference_failed_obligation():
     item = _item()
     obligations = build_review_obligations(item)
@@ -647,6 +669,7 @@ def _production_multi_blocker_ledger(
                 "root_cause_key": root,
                 "obligation_id": obligation_id,
                 "classification": classification,
+                "owner": f"owner-{root[-1]}",
                 "summary": f"{root} remains open",
                 "evidence": f"round {round_index} evidence for {root}",
                 "required_fix": f"fix {root}",
@@ -863,6 +886,7 @@ def _with_cycle_blocker_facts(ledger):
                 "obligation_id": "dimension:structure",
                 "status": "open",
                 "classification": "new",
+                "owner": f"owner-{len(records) % 3}",
             })
             previous = current.get(blocker_id)
             if previous is None:
@@ -880,6 +904,7 @@ def _with_cycle_blocker_facts(ledger):
                 "root_cause_key": source["root_cause_key"],
                 "obligation_id": source["obligation_id"],
                 "summary": source.get("summary", blocker_id),
+                **({"owner": source["owner"]} if source.get("owner") else {}),
                 "evidence": source.get("evidence", f"evidence for {blocker_id}"),
                 "required_fix": source.get("required_fix", f"fix {blocker_id}"),
                 "status": "open",
@@ -942,6 +967,7 @@ def _decision_ledger(
             "first_seen_round": 1,
             "last_seen_round": len(open_counts),
             "seen_count": len(open_counts),
+            "owner": f"owner-{(index - 1) % 3}",
         }
         for index in range(1, max_open_count + 1)
     ]
@@ -996,6 +1022,68 @@ def test_review_convergence_stops_at_cycle_three_for_same_unchanged_blocker():
     state = review_state(ledger)
     assert state["mode"] == "convergence-audit"
     assert state["decision"] == decision
+
+
+def test_scope_expansion_requires_non_reducing_streak_and_cross_owner_evidence():
+    reducing = _decision_ledger(
+        [4, 3, 2],
+        obligation_ids=(
+            "dimension:authority",
+            "dimension:structure",
+            "dimension:ownership",
+        ),
+        classifications=("new", "new", "new"),
+    )
+    assert review_convergence_decision(reducing) is None
+
+    same_owner = _decision_ledger(
+        [3, 3, 3],
+        obligation_ids=(
+            "dimension:authority",
+            "dimension:structure",
+            "dimension:ownership",
+        ),
+        classifications=("new", "new", "new"),
+    )
+    for cycle in same_owner["cycles"]:
+        for fact in cycle["blocker_facts"]:
+            fact["owner"] = "owner-one"
+    for blocker in same_owner["blockers"]:
+        blocker["owner"] = "owner-one"
+    assert review_convergence_decision(same_owner) is None
+
+    qualified = _decision_ledger(
+        [3, 3, 3],
+        obligation_ids=(
+            "dimension:authority",
+            "dimension:structure",
+            "dimension:ownership",
+        ),
+        classifications=("new", "new", "new"),
+    )
+    decision = review_convergence_decision(qualified)
+    assert decision["reason_code"] == "review-convergence-scope-expanding"
+    assert decision["cross_owner"] is True
+    assert decision["blocker_owner_keys"] == ["owner-0", "owner-1", "owner-2"]
+
+
+def test_scope_expansion_requires_owner_on_every_open_blocker():
+    ledger = _decision_ledger(
+        [3, 3, 3],
+        obligation_ids=(
+            "dimension:authority",
+            "dimension:structure",
+            "dimension:ownership",
+        ),
+        classifications=("new", "new", "new"),
+    )
+    ledger["blockers"][0].pop("owner")
+    for cycle in ledger["cycles"]:
+        for fact in cycle["blocker_facts"]:
+            if fact["blocker_id"] == "BLK-1":
+                fact.pop("owner")
+
+    assert review_convergence_decision(ledger) is None
 
 
 def test_review_convergence_stops_when_late_review_expands_scope():

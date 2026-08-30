@@ -19,7 +19,7 @@ from omac.cli.main import main
 from omac.engines import create_engine
 from omac.engines.mock import MockStore
 from omac.engines.mock import MockRuntime
-from omac.engines.models import EngineConfig, WorkItemStatus
+from omac.engines.models import AgentRunObservation, EngineConfig, WorkItemStatus
 
 
 def test_acceptance_guard_rejects_generic_expected_template():
@@ -173,6 +173,19 @@ def test_check_requires_engine_config(tmp_path, monkeypatch, capsys):
     assert "引擎" in err or "engine" in err.lower()
 
 
+def test_check_rejects_invalid_declared_acceptance_before_review_issue_creation(
+        tmp_path, monkeypatch):
+    engine = _configure_mock(tmp_path, monkeypatch)
+    path = _write(tmp_path, CLEAN_MANIFEST)
+    raw = yaml.safe_load((tmp_path / "m.yaml").read_text())
+    raw["meta"]["acceptance_file"] = "acceptance.yaml"
+    (tmp_path / "m.yaml").write_text(yaml.safe_dump(raw, sort_keys=False))
+    (tmp_path / "acceptance.yaml").write_text("schema: invalid\n")
+
+    assert main(["dag", "check", path, "--no-review"]) == exit_codes.VALIDATION
+    assert engine.store.list_work_items("mock-workspace") == []
+
+
 def test_check_clean_manifest_passes(tmp_path, monkeypatch, capsys):
     engine = _configure_mock(tmp_path, monkeypatch)
     engine.store.set_review_rejects(0)
@@ -246,6 +259,57 @@ def test_check_bad_manifest_json_error_list(tmp_path, monkeypatch, capsys):
     data = json.loads(capsys.readouterr().out)
     assert data["ok"] is False
     assert len(data["errors"]) >= 1
+
+
+def test_manifest_review_preflight_fails_before_issue_creation(
+        tmp_path, monkeypatch):
+    from omac.errors import ValidationError
+    from omac.pipeline.review import run_review
+
+    engine = _configure_mock(tmp_path, monkeypatch)
+    with pytest.raises(ValidationError, match="Manifest review preflight"):
+        run_review(
+            engine,
+            "mock-workspace",
+            "manifest review",
+            "nodes: [",
+            "alice",
+            deliverable="nodes: [",
+            poll=lambda: None,
+        )
+
+    assert engine.store.list_work_items("mock-workspace") == []
+
+
+def test_check_review_terminal_run_without_verdict_is_decision_required(
+        tmp_path, monkeypatch):
+    from omac.errors import NeedsDecision
+    from omac.pipeline.review import run_review
+
+    engine = _configure_mock(tmp_path, monkeypatch)
+    terminal = AgentRunObservation(
+        id="review-run-without-verdict",
+        kind="direct",
+        status="completed",
+        agent_id="agent-bob",
+        trigger_kind="issue_assignment",
+    )
+    monkeypatch.setattr(engine.runtime, "list_runs", lambda _item_id: [terminal])
+    monkeypatch.setattr(engine.runtime, "dispatch_reviewer", lambda *_args: True)
+
+    with pytest.raises(NeedsDecision) as exc_info:
+        run_review(
+            engine,
+            "mock-workspace",
+            "manifest review",
+            "manifest",
+            "bob",
+            poll=lambda: None,
+        )
+
+    assert exc_info.value.report["reason_code"] == (
+        "reviewer-completed-without-verdict")
+    assert exc_info.value.report["outcome"] == "unknown_partial"
 
 
 def test_check_review_reject_exit_20(tmp_path, monkeypatch, capsys):
@@ -377,6 +441,7 @@ meta:
 nodes:
   - id: login
     worker: alice
+    description: Implement the login flow and its observable session behavior.
     contract:
       objective: 实现登录
       acceptance_claims:
@@ -397,8 +462,13 @@ nodes:
           acceptance_refs: ["flow-login"]
           commands: ["pytest tests/int/login"]
       pr_base: feature/demo
+      scope_paths: [src/login/**]
+      evidence_mode: fixture
+      produces: [{artifact_id: login-component}]
+      consumes: []
   - id: dashboard
     worker: bob
+    description: Implement the dashboard flow and its observable data behavior.
     blocked_by: [login]
     contract:
       objective: 实现仪表盘
@@ -420,6 +490,10 @@ nodes:
           acceptance_refs: ["flow-dashboard"]
           commands: ["pytest tests/int/dash"]
       pr_base: feature/demo
+      scope_paths: [src/dashboard/**]
+      evidence_mode: fixture
+      produces: [{artifact_id: dashboard-component}]
+      consumes: []
 """
 
 BAD_MANIFEST_LINT = """\
