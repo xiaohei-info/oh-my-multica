@@ -1838,6 +1838,7 @@ def _dispatch_reviewer_for_current_subject_locked(
 
     reviewer_id = store.resolve_agent_id(node.reviewer)
     baseline = current.reviewer_run_baseline
+    baseline_created = False
     if baseline is not None:
         _mark_recovery_pending(manifest, key)
     if (
@@ -1875,6 +1876,7 @@ def _dispatch_reviewer_for_current_subject_locked(
             generation=f"review-{secrets.token_hex(8)}",
             baseline_direct_run_ids=baseline_ids,
         )
+        baseline_created = True
         _mark_recovery_pending(manifest, key)
         if _guard_reviewer_dispatch_control(
             store, manifest, key, item_id) is not None:
@@ -1898,6 +1900,7 @@ def _dispatch_reviewer_for_current_subject_locked(
 
     assignment_prepared = (
         not subject_changed
+        and not baseline_created
         and baseline.target_run_id is None
         and current.phase == TaskPhase.REVIEW
         and current.status == WorkItemStatus.IN_REVIEW

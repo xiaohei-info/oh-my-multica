@@ -3816,6 +3816,46 @@ def test_mock_silent_assignment_defers_run_until_wake():
     assert eng.runtime.list_runs(item.id) == first
 
 
+def test_reviewer_dispatch_new_baseline_is_dispatched_then_existing_baseline_is_observed(
+    tmp_path, monkeypatch,
+):
+    """新建 baseline 后必须派发；已存在 baseline 仍只认领可证明的 Run。"""
+    eng, manifest, _path, item, _reviewer_id = (
+        _reviewer_runtime_failure_fixture(tmp_path))
+    eng.store.update_work_item_metadata(
+        item.id, reviewer="bob", reviewer_run_baseline={})
+    dispatch_calls = []
+
+    monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: [])
+    monkeypatch.setattr(
+        eng.runtime,
+        "dispatch_reviewer",
+        lambda _store, item_id, reviewer: dispatch_calls.append(
+            (item_id, reviewer)) or True,
+    )
+
+    assert loop._dispatch_reviewer_for_current_subject(
+        eng.store, eng.runtime, manifest, "a") is True
+    assert dispatch_calls == [(item.id, "bob")]
+    current = eng.store.get_work_item(item.id)
+    assert current.decision_required is None
+    baseline = current.reviewer_run_baseline
+    assert baseline is not None
+    assert baseline.target_run_id is None
+
+    monkeypatch.setattr(
+        eng.runtime,
+        "dispatch_reviewer",
+        lambda *_args: pytest.fail("existing baseline must be observed first"),
+    )
+    with pytest.raises(
+        loop._ReviewerDispatchUnresolved,
+        match="no uniquely observable target Run",
+    ):
+        loop._dispatch_reviewer_for_current_subject(
+            eng.store, eng.runtime, manifest, "a")
+
+
 def test_initial_reviewer_dispatch_crash_after_assignment_fails_closed(
     tmp_path, monkeypatch,
 ):
