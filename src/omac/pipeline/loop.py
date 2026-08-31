@@ -4598,7 +4598,11 @@ def tick(
 
     # 状态判定:running 优先(有正式运行继续协调),其次 needs_decision(有失败),
     # 最后 converged(全部 done)
-    if running:
+    if running or (full_scan and not reconcile_result.audit_complete):
+        # A static full-audit read with no authoritative fact is neither a
+        # business failure nor convergence. Keep the runner advancing so the
+        # next audit can retry without claiming a cross-machine sync that was
+        # never observed.
         state = "running"
     elif failed_keys:
         state = "needs_decision"

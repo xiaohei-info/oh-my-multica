@@ -174,11 +174,9 @@ class WorkerHandoffIntent:
     # 仅在基线被封顶时写入;None 保持纯 ID 成员判断的旧语义。
     baseline_cutoff_created_at: Optional[str] = None
     baseline_verification_attachment_id: Optional[str] = None
-    # Review-rework only: the last reviewed PR head. Optional for legacy
-    # handoffs and explicit evidence-only/nits compatibility paths.
-    baseline_pr_head_sha: Optional[str] = None
     # For a review rework, remember the last submitted PR head so a fresh
     # Worker Run cannot send the unchanged rejected code straight to Reviewer.
+    # Optional for legacy handoffs and evidence-only/nits compatibility paths.
     baseline_pr_head_sha: Optional[str] = None
     target_run_id: Optional[str] = None
     target_worker_bounce: Optional[int] = None

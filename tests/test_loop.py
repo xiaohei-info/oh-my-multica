@@ -152,6 +152,39 @@ def test_direct_run_observation_rejects_retry_chain_forks():
     assert observed.detail == "ambiguous target Run"
 
 
+def test_incomplete_full_scan_cannot_report_converged(
+        tmp_path, monkeypatch):
+    store = MockStore(EngineConfig(
+        engine_type="mock", workspace_id="ws",
+        extra={"MOCK_AUTO_COMPLETE": "false"},
+    ))
+    manifest = Manifest(meta={}, nodes={
+        "static": Node(
+            "static", "worker", work_item_id="issue-static", status="done",
+            merged=True, merged_at="2026-08-31T00:00:00Z",
+        ),
+    })
+    path = str(tmp_path / "manifest.yaml")
+    save_manifest(manifest, path)
+    monkeypatch.setattr(
+        loop,
+        "reconcile_with_observations",
+        lambda *_args, **_kwargs: loop.ReconcileResult(
+            changed=False,
+            observations={},
+            audit_complete=False,
+        ),
+    )
+
+    result = tick(
+        store, MockRuntime(store), manifest, path, full_scan=True,
+    )
+
+    assert result.state == "running"
+    assert result.running == []
+    assert result.audit_complete is False
+
+
 def test_rework_handoff_rejects_unchanged_rejected_pr_head_before_reviewer():
     item = SimpleNamespace(
         status=WorkItemStatus.DONE,

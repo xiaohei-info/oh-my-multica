@@ -27,6 +27,9 @@ This file records public changes to oh-my-multica. The format follows
 
 ### Changed
 
+- Static project-scoped full-audit control-read failures now remain incomplete
+  observations instead of aborting active DAG progress or claiming convergence;
+  the audit scheduler retries the static set while active nodes continue.
 - Manifest push failures now retain the local commit and back off retries per
   repository/path (10 seconds initially, capped at 5 minutes), suppressing
   repeated `manifest_sync_failed` network warnings without claiming remote sync.

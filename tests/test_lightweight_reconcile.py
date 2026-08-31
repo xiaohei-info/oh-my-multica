@@ -797,6 +797,65 @@ def test_full_scan_static_missing_fallback_is_authoritative_fact(tmp_path):
     assert manifest.nodes["blocked-0"].work_item_id is None
 
 
+def test_status_report_does_not_claim_converged_for_incomplete_full_scan(
+        tmp_path, monkeypatch):
+    store = MockStore(EngineConfig(
+        engine_type="mock", workspace_id="ws",
+        extra={"MOCK_AUTO_COMPLETE": "false"},
+    ))
+    manifest = Manifest(meta={}, nodes={
+        "static": Node(
+            "static", "worker", work_item_id="issue-static", status="done",
+            merged=True, merged_at="2026-08-31T00:00:00Z",
+        ),
+    })
+    path = str(tmp_path / "manifest.yaml")
+    save_manifest(manifest, path)
+    monkeypatch.setattr(
+        loop,
+        "reconcile_with_observations",
+        lambda *_args, **_kwargs: loop.ReconcileResult(
+            changed=False,
+            observations={},
+            audit_complete=False,
+        ),
+    )
+
+    report = build_status_report(manifest, store, path)
+
+    assert report["progress"]["converged"] is False
+
+
+def test_project_full_scan_network_failure_on_static_issue_isolated_from_active_reads(
+        tmp_path):
+    """Transient static issue reads must not abort a project-scoped audit."""
+    issues, attachments, nodes = _large_dag_fixture()
+    remote = _RemoteFixture(issues, attachments)
+    store = _store(remote)
+    store._sleep = lambda _seconds: None
+    manifest, path = _manifest_path(tmp_path, nodes)
+    static_id = nodes["done-0"].work_item_id
+    original_run = store._run_multica
+
+    def fail_static(args, capture=True):
+        if args[:2] == ["issue", "list"]:
+            raise PlatformError("multica 调用失败: network is unreachable")
+        if args[:2] == ["issue", "get"] and args[2] == static_id:
+            raise PlatformError("multica 调用失败: Could not reach Multica server")
+        return original_run(args, capture)
+
+    store._run_multica = fail_static
+
+    result = loop.reconcile_with_observations(
+        store, manifest, path, full_scan=True)
+
+    assert result.audit_complete is False
+    assert result.incomplete_static_keys == frozenset({"done-0"})
+    assert result.observations["active-0"] is not None
+    assert manifest.nodes["done-0"].status == "done"
+    assert manifest.nodes["done-0"].merged is True
+
+
 def test_full_scan_list_failure_isolates_static_controls(tmp_path):
     issues, attachments, nodes = _large_dag_fixture()
     remote = _RemoteFixture(issues, attachments)
