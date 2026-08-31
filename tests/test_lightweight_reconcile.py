@@ -826,7 +826,7 @@ def test_status_report_does_not_claim_converged_for_incomplete_full_scan(
     assert report["progress"]["converged"] is False
 
 
-def test_confirmed_merge_stale_marker_is_cleared_after_static_observation(tmp_path):
+def test_confirmed_merge_stale_marker_is_cleared_after_authoritative_observation(tmp_path):
     issues, attachments, nodes = _large_dag_fixture()
     remote = _RemoteFixture(issues, attachments)
     store = _store(remote)
@@ -840,6 +840,9 @@ def test_confirmed_merge_stale_marker_is_cleared_after_static_observation(tmp_pa
     assert result.audit_complete is True
     assert manifest.nodes["done-0"].recovery_marker is False
     assert load_manifest(path).nodes["done-0"].recovery_marker is False
+    # A recovery marker keeps the node in the active read barrier until this
+    # successful control observation proves that it was stale.
+    assert ("issue", "done-0") in remote.calls
 
 
 def test_project_full_scan_network_failure_on_static_issue_isolated_from_active_reads(
@@ -850,6 +853,7 @@ def test_project_full_scan_network_failure_on_static_issue_isolated_from_active_
     store = _store(remote)
     store._sleep = lambda _seconds: None
     manifest, path = _manifest_path(tmp_path, nodes)
+    # The confirmed merge node remains static when no recovery marker exists.
     static_id = nodes["done-0"].work_item_id
     original_run = store._run_multica
 
@@ -870,6 +874,34 @@ def test_project_full_scan_network_failure_on_static_issue_isolated_from_active_
     assert result.observations["active-0"] is not None
     assert manifest.nodes["done-0"].status == "done"
     assert manifest.nodes["done-0"].merged is True
+
+
+def test_confirmed_merge_marker_network_failure_remains_active_barrier(tmp_path):
+    issues, attachments, nodes = _large_dag_fixture()
+    static_id = nodes["done-0"].work_item_id
+    issues[static_id]["metadata"]["worker_handoff"] = _worker_handoff(
+        issues[static_id], item_id=static_id)
+    remote = _RemoteFixture(issues, attachments)
+    store = _store(remote)
+    manifest, path = _manifest_path(tmp_path, nodes)
+    manifest.nodes["done-0"].recovery_marker = True
+    save_manifest(manifest, path)
+    before = Path(path).read_bytes()
+    original_run = store._run_multica
+
+    def fail_recovery_read(args, capture=True):
+        if args[:2] == ["issue", "get"] and args[2] == static_id:
+            raise PlatformError("network_unreachable")
+        return original_run(args, capture)
+
+    store._run_multica = fail_recovery_read
+
+    with pytest.raises(PlatformError, match="network_unreachable"):
+        loop.reconcile_with_observations(
+            store, manifest, path, full_scan=True)
+
+    assert Path(path).read_bytes() == before
+    assert load_manifest(path).nodes["done-0"].recovery_marker is True
 
 
 def test_confirmed_merge_with_real_recovery_fact_fails_closed(tmp_path):

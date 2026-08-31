@@ -73,9 +73,8 @@ class TestReconcileActiveKeys:
                 "merged_at": "2026-01-01T00:00:00Z",
                 "recovery_marker": True,
             }))
-        # Interval reconciliation stays conservative; full audits move this
-        # terminal node into the static batch so stale markers do not abort the
-        # active control barrier.
+        # Interval and full-scan reconciliation both stay conservative until
+        # an authoritative control read proves that the marker is stale.
         assert loop.reconcile_active_keys(manifest) == {"node"}
 
     def test_done_without_merge_closure_is_active_for_pr_observation(self):
