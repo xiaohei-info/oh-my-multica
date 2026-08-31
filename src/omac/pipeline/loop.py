@@ -2997,6 +2997,19 @@ def _has_recovery_control_fact(item) -> bool:
     )
 
 
+def _confirmed_merge_has_real_recovery(item) -> bool:
+    """Keep non-terminal recovery facts visible on an otherwise closed node.
+
+    A reviewer baseline can remain in a terminal WorkItem projection while a
+    successful merge is being normalized; handoffs and decisions, however,
+    represent work that must never be swallowed by the done closure.
+    """
+    if getattr(item, "worker_handoff", None) or getattr(item, "decision_required", None):
+        return True
+    baseline = getattr(item, "reviewer_run_baseline", None)
+    return bool(baseline and item.status != WorkItemStatus.DONE)
+
+
 def _mark_recovery_pending(manifest: Manifest, key: str) -> None:
     """Persist the active-set hint before writing a recovery control fact.
 
@@ -3150,7 +3163,7 @@ def _reconcile_candidate(
         # invariant. Explicit amendment/retry must retire it before any
         # authoring/review recovery is eligible again.
         if confirmed_merge_is_closed(node):
-            if observed_marker:
+            if _confirmed_merge_has_real_recovery(item):
                 raise PlatformError(
                     f"Confirmed merge node {key} still has recovery control facts; "
                     "inspect the WorkItem before clearing its recovery marker")
