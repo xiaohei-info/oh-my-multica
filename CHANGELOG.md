@@ -27,6 +27,9 @@ This file records public changes to oh-my-multica. The format follows
 
 ### Changed
 
+- Manifest push failures now retain the local commit and back off retries per
+  repository/path (10 seconds initially, capped at 5 minutes), suppressing
+  repeated `manifest_sync_failed` network warnings without claiming remote sync.
 - A blocked DAG review with the dedicated delayed-Run causality decision now
   resumes automatically when one later-visible formal Reviewer Run proves the
   original baseline. OMAC hydrates and validates the current review evidence

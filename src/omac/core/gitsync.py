@@ -9,6 +9,7 @@ OMAC_GIT_SYNC 显式覆盖(truthy 强开 / falsy 强关)。
 """
 import os
 import subprocess
+import time
 
 from . import logsetup
 from ..errors import NeedsDecision, ValidationError
@@ -18,6 +19,11 @@ log = logsetup.get_logger(__name__)
 
 _TRUTHY = {"1", "true", "yes", "on"}
 _FALSY = {"0", "false", "no", "off"}
+_PUSH_RETRY_BASE_SECONDS = 10.0
+_PUSH_RETRY_MAX_SECONDS = 300.0
+# Process-local: manifest commits stay on disk; only the next network attempt is
+# delayed. A Runner process therefore cannot turn one outage into a tight loop.
+_PUSH_RETRY_STATE: dict[tuple[str, tuple[str, ...]], dict[str, float | int]] = {}
 
 
 def sync_enabled(engine_type=None) -> bool:
@@ -108,16 +114,45 @@ def _path_matches_remote_tracking(
     )
 
 
-def _retry_manifest_push(path: str, repo_root: str) -> None:
-    _retry_files_push([path], repo_root)
+def _push_retry_key(repo_root: str, paths) -> tuple[str, tuple[str, ...]]:
+    return (
+        os.path.abspath(repo_root),
+        tuple(sorted(_repo_relative_paths(repo_root, paths))),
+    )
 
 
-def _retry_files_push(paths, repo_root: str) -> None:
+def _push_retry_deferred(key: tuple[str, tuple[str, ...]]) -> bool:
+    state = _PUSH_RETRY_STATE.get(key)
+    return bool(state and time.monotonic() < state["next_retry_at"])
+
+
+def _record_push_failure(key: tuple[str, tuple[str, ...]]) -> float:
+    failures = int(_PUSH_RETRY_STATE.get(key, {}).get("failures", 0)) + 1
+    delay = min(
+        _PUSH_RETRY_BASE_SECONDS * (2 ** (failures - 1)),
+        _PUSH_RETRY_MAX_SECONDS,
+    )
+    _PUSH_RETRY_STATE[key] = {
+        "failures": failures,
+        "next_retry_at": time.monotonic() + delay,
+    }
+    return delay
+
+
+def _clear_push_retry(key: tuple[str, tuple[str, ...]]) -> None:
+    _PUSH_RETRY_STATE.pop(key, None)
+
+
+def _retry_manifest_push(path: str, repo_root: str) -> bool:
+    return _retry_files_push([path], repo_root)
+
+
+def _retry_files_push(paths, repo_root: str) -> bool:
     fetched = _run(repo_root, "fetch", "--quiet")
     if fetched.returncode != 0:
         log.warning("manifest_sync_failed", step="fetch",
                     error=fetched.stderr.strip())
-        return
+        return False
 
     upstream_result = _run(
         repo_root, "rev-parse", "--abbrev-ref", "--symbolic-full-name",
@@ -125,14 +160,14 @@ def _retry_files_push(paths, repo_root: str) -> None:
     if upstream_result.returncode != 0:
         log.warning("manifest_sync_failed", step="upstream",
                     error=upstream_result.stderr.strip())
-        return
+        return False
     upstream = upstream_result.stdout.strip()
 
     head_result = _run(repo_root, "rev-parse", "HEAD")
     if head_result.returncode != 0:
         log.warning("manifest_sync_failed", step="safety",
                     error=head_result.stderr.strip())
-        return
+        return False
     validated_head = head_result.stdout.strip()
 
     relative_paths = _repo_relative_paths(repo_root, paths)
@@ -153,7 +188,7 @@ def _retry_files_push(paths, repo_root: str) -> None:
             hint=ui(
                 "OMAC will not rebase user business commits automatically.",
                 "OMAC 不会自动 rebase 用户业务提交"))
-        return
+        return False
 
     current_head = _run(repo_root, "rev-parse", "HEAD")
     if current_head.returncode != 0 or current_head.stdout.strip() != validated_head:
@@ -165,7 +200,7 @@ def _retry_files_push(paths, repo_root: str) -> None:
             hint=ui(
                 "Wait for the current git operation; the next tick will retry.",
                 "等待当前 git 操作完成后由下一轮 tick 重试"))
-        return
+        return False
 
     rebased = _run(repo_root, "rebase", upstream)
     if rebased.returncode != 0:
@@ -184,7 +219,7 @@ def _retry_files_push(paths, repo_root: str) -> None:
                 hint=ui(
                     "The manifest conflicts with remote state. Rebase was aborted and remote state was not overwritten.",
                     "manifest 与远程状态冲突,已中止 rebase,未覆盖远程"))
-        return
+        return False
 
     retried = _run(repo_root, "push")
     if retried.returncode != 0:
@@ -193,6 +228,8 @@ def _retry_files_push(paths, repo_root: str) -> None:
                     hint=ui(
                         "Manifest rebased, but the retry push failed.",
                         "manifest 已 rebase 但重试 push 失败"))
+        return False
+    return True
 
 
 def ensure_config_synced(config_path: str, branch: str = "main",
@@ -276,6 +313,7 @@ def commit_files(paths, message: str, repo_root: str = ".",
     relative_paths = _repo_relative_paths(repo_root, paths)
     if not relative_paths:
         return False
+    retry_key = _push_retry_key(repo_root, relative_paths)
     r = _run(repo_root, "add", "--", *relative_paths)
     if r.returncode != 0:
         log.warning("manifest_sync_failed", step="add", error=r.stderr.strip())
@@ -288,14 +326,33 @@ def commit_files(paths, message: str, repo_root: str = ".",
             log.warning("manifest_sync_failed", step="commit", error=r.stderr.strip())
             return False
     elif not _has_unpushed_files(repo_root, relative_paths):
+        _clear_push_retry(retry_key)
         return False
+    if _push_retry_deferred(retry_key):
+        return True
+
     r = _run(repo_root, "push")
     if r.returncode != 0:
         if _is_non_fast_forward(r.stderr):
-            _retry_files_push(relative_paths, repo_root)
+            if _retry_files_push(relative_paths, repo_root):
+                _clear_push_retry(retry_key)
+            else:
+                _record_push_failure(retry_key)
         else:
-            log.warning("manifest_sync_failed", step="push", error=r.stderr.strip(),
-                        hint="OMAC 状态已本地 commit 但未 push,跨机口径可能滞后")
+            delay = _record_push_failure(retry_key)
+            log.warning(
+                "manifest_sync_failed",
+                step="push",
+                error=r.stderr.strip(),
+                retry_after_seconds=delay,
+                hint=ui(
+                    "OMAC kept the local commit and will retry with exponential backoff; "
+                    "cross-machine state may lag",
+                    "OMAC 已保留本地 commit，将以指数退避重试；跨机状态可能暂时滞后",
+                ),
+            )
+    else:
+        _clear_push_retry(retry_key)
     return True
 
 
@@ -303,8 +360,8 @@ def commit_manifest(path: str, message: str, repo_root: str = ".",
                     engine_type=None) -> bool:
     """git add manifest + commit + push。sync 关闭或无变更时返回 False。
 
-    push 失败醒目告警但不中断编排(跨机口径可能滞后,但不阻塞本机推进);
-    不自动 merge —— PR 评审是外部门控。
+    push 失败保留本地 commit，并以指数退避抑制重复网络请求/告警；跨机口径可能
+    暂时滞后但不阻塞本机推进。不自动 merge —— PR 评审是外部门控。
     """
     return commit_files(
         [path], message, repo_root=repo_root, engine_type=engine_type)
