@@ -66,6 +66,18 @@ class TestReconcileActiveKeys:
             "done", {"merged": True, "merged_at": "2026-01-01T00:00:00Z"}))
         assert loop.reconcile_active_keys(manifest) == set()
 
+    def test_confirmed_merge_closed_done_with_marker_stays_active_until_observed(self):
+        manifest = _manifest(node=(
+            "done", {
+                "merged": True,
+                "merged_at": "2026-01-01T00:00:00Z",
+                "recovery_marker": True,
+            }))
+        # Interval reconciliation stays conservative; full audits move this
+        # terminal node into the static batch so stale markers do not abort the
+        # active control barrier.
+        assert loop.reconcile_active_keys(manifest) == {"node"}
+
     def test_done_without_merge_closure_is_active_for_pr_observation(self):
         manifest = _manifest(node=("done", {}))
         assert loop.reconcile_active_keys(manifest) == {"node"}
