@@ -845,6 +845,35 @@ def test_confirmed_merge_stale_marker_is_cleared_after_authoritative_observation
     assert ("issue", "done-0") in remote.calls
 
 
+def test_confirmed_merge_historical_done_review_baseline_is_cleared(tmp_path):
+    issues, attachments, nodes = _large_dag_fixture()
+    static_id = nodes["done-0"].work_item_id
+    issues[static_id]["metadata"]["reviewer_run_baseline"] = ReviewerRunBaseline(
+        schema="omac.reviewer-run-baseline/v1",
+        subject_digest="historical-subject",
+        target_reviewer="reviewer",
+        target_agent_id="agent-reviewer",
+        cutoff_created_at="2026-07-30T01:00:00Z",
+        generation="review-historical",
+        baseline_direct_run_ids=(),
+    ).as_dict()
+    remote = _RemoteFixture(issues, attachments)
+    store = _store(remote)
+    manifest, path = _manifest_path(tmp_path, nodes)
+    manifest.nodes["done-0"].recovery_marker = True
+    save_manifest(manifest, path)
+
+    result = loop.reconcile_with_observations(
+        store, manifest, path, full_scan=True)
+
+    assert result.audit_complete is True
+    assert manifest.nodes["done-0"].recovery_marker is False
+    assert load_manifest(path).nodes["done-0"].recovery_marker is False
+    # The historical baseline remains on the authoritative WorkItem; only the
+    # manifest recovery hint is retired after the terminal read.
+    assert result.observations["done-0"].work_item.reviewer_run_baseline is not None
+
+
 def test_project_full_scan_network_failure_on_static_issue_isolated_from_active_reads(
         tmp_path):
     """Transient static issue reads must not abort a project-scoped audit."""

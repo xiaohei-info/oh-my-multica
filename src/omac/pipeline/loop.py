@@ -3167,6 +3167,12 @@ def _reconcile_candidate(
                 raise PlatformError(
                     f"Confirmed merge node {key} still has recovery control facts; "
                     "inspect the WorkItem before clearing its recovery marker")
+            # A terminal DONE projection may carry a historical reviewer
+            # baseline from the just-completed cycle. It is stale only after
+            # this authoritative read, so clear the manifest marker now.
+            if node.recovery_marker:
+                node.recovery_marker = False
+                changed = True
             if (
                 item.status != WorkItemStatus.DONE
                 or item.platform_assignee_id is not None
