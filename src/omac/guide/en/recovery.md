@@ -66,6 +66,12 @@ projection before authoring a new delivery.
 - Only an explicit `CLOSED_UNMERGED` observation or a known merge-command
   failure enters merge-failure/rework semantics. `MERGED + mergedAt` remains
   the sole fact that closes a node.
+- A `done + merged + merged_at` node with a leftover `recovery_marker` is still
+  read as terminal static control during a project-scoped full audit, so batch/list
+  isolation protects active work from a transient issue read failure. Once the
+  control read proves no handoff, review baseline, or decision remains, OMAC clears
+  the stale marker; a real recovery fact is preserved and fails closed instead of
+  being swallowed as done.
 
 ## Continuing an exhausted plan-stage review
 

@@ -48,6 +48,7 @@ direct Run。它保留 Reviewer verdict/report，只写入有界的
 - `merging` 只观察已经持久化的 merge intent/request。GitHub/平台返回 `UNKNOWN` 或临时读取失败时，节点留在 `merging`，不消耗 `retry.merge`、不回退 worker、也不再发送第二次 merge 请求。
 - 认证或授权失败不是暂态观察结果：OMAC 会本地持久化 `blocked` 并保留 work item、PR 和 merge marker，不会重新发起合入。修复凭证/权限、远端核实 PR 后，读取节点证据并使用提示的显式恢复命令再运行 DAG。
 - 只有明确的 `CLOSED_UNMERGED` 或已知 merge 命令失败才进入 merge 失败/回退语义。恢复期间仍必须以远端 `MERGED + mergedAt` 作为 done 的唯一事实。
+- `done + merged + merged_at` 的节点即使残留 `recovery_marker`，full audit 也按 terminal static 控制读取走 project batch/list 隔离；成功观察到无真实 recovery fact 后清除 stale marker。若观察到真实 handoff、review baseline 或 decision，则保留事实并 fail-closed，不能把它吞成已完成。
 
 ## plan / decompose review 耗尽后的继续决策
 

@@ -826,6 +826,22 @@ def test_status_report_does_not_claim_converged_for_incomplete_full_scan(
     assert report["progress"]["converged"] is False
 
 
+def test_confirmed_merge_stale_marker_is_cleared_after_static_observation(tmp_path):
+    issues, attachments, nodes = _large_dag_fixture()
+    remote = _RemoteFixture(issues, attachments)
+    store = _store(remote)
+    manifest, path = _manifest_path(tmp_path, nodes)
+    manifest.nodes["done-0"].recovery_marker = True
+    save_manifest(manifest, path)
+
+    result = loop.reconcile_with_observations(
+        store, manifest, path, full_scan=True)
+
+    assert result.audit_complete is True
+    assert manifest.nodes["done-0"].recovery_marker is False
+    assert load_manifest(path).nodes["done-0"].recovery_marker is False
+
+
 def test_project_full_scan_network_failure_on_static_issue_isolated_from_active_reads(
         tmp_path):
     """Transient static issue reads must not abort a project-scoped audit."""
@@ -854,6 +870,26 @@ def test_project_full_scan_network_failure_on_static_issue_isolated_from_active_
     assert result.observations["active-0"] is not None
     assert manifest.nodes["done-0"].status == "done"
     assert manifest.nodes["done-0"].merged is True
+
+
+def test_confirmed_merge_with_real_recovery_fact_fails_closed(tmp_path):
+    issues, attachments, nodes = _large_dag_fixture()
+    static_id = nodes["done-0"].work_item_id
+    issues[static_id]["metadata"]["decision_required"] = {
+        "schema": "omac.decision-required/v1",
+        "reason_code": "real-recovery-fact",
+    }
+    remote = _RemoteFixture(issues, attachments)
+    store = _store(remote)
+    manifest, path = _manifest_path(tmp_path, nodes)
+    manifest.nodes["done-0"].recovery_marker = True
+    save_manifest(manifest, path)
+
+    with pytest.raises(PlatformError, match="recovery control facts"):
+        loop.reconcile_with_observations(
+            store, manifest, path, full_scan=True)
+
+    assert load_manifest(path).nodes["done-0"].recovery_marker is True
 
 
 def test_full_scan_list_failure_isolates_static_controls(tmp_path):

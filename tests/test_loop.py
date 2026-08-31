@@ -9755,7 +9755,13 @@ class TestReviewerRejectBoundedFallback:
         manifest.nodes["a"].merged = True
         manifest.nodes["a"].merged_at = "2026-07-26T08:00:00Z"
         eng.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
-        eng.store.update_work_item_metadata(item.id, review_verdict="pass-with-nits")
+        eng.store.update_work_item_metadata(
+            item.id,
+            review_verdict="pass-with-nits",
+            worker_handoff={},
+            reviewer_run_baseline={},
+            decision_required={},
+        )
         save_manifest(manifest, path)
 
         result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
