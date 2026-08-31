@@ -1004,12 +1004,26 @@ def _worker_handoff_has_new_delivery(item, intent: WorkerHandoffIntent) -> bool:
     )
     attachment_id = str(
         verification_ref.get("attachment_id") or "").strip()
-    return bool(
+    if not (
         item.status == WorkItemStatus.DONE
         and artifacts
         and attachment_id
         and attachment_id != intent.baseline_verification_attachment_id
-    )
+    ):
+        return False
+
+    baseline_head = intent.baseline_pr_head_sha
+    current_head = str(artifacts.get("head_sha") or "").strip()
+    if not baseline_head:
+        # Legacy intents did not retain the rejected head. Preserve explicit
+        # evidence-only/nits compatibility, but fail closed for an old reject
+        # handoff rather than send an unproven delivery to Reviewer.
+        return intent.source_review_verdict != "reject"
+    if current_head != baseline_head:
+        return True
+    # pass-with-nits is an explicit non-blocking review path: a new verification
+    # attachment may legitimately reuse the same code head.
+    return intent.source_review_verdict == "pass-with-nits"
 
 
 def _build_work_item_hydration_plan(
@@ -1993,6 +2007,17 @@ def _dispatch_worker_handoff(
             current.review_verdict
             if gate in {"review", "review-nits"} else None
         )
+        baseline_pr_head_sha = None
+        if source_verdict in {"reject", "pass-with-nits"}:
+            identity = _delivery_identity(current)
+            baseline_pr_head_sha = (
+                getattr(identity, "pr_head_sha", None)
+                if identity is not None else
+                str(
+                    (current.artifacts.get("head_sha") or "")
+                    if isinstance(current.artifacts, dict) else ""
+                )
+            ) or None
         source_feedback = None
         if gate == "review-nits":
             source_feedback = {"verdict": source_verdict}
@@ -2039,6 +2064,7 @@ def _dispatch_worker_handoff(
                 str((current.verification_ref or {}).get("attachment_id") or "")
                 or None
             ),
+            baseline_pr_head_sha=baseline_pr_head_sha,
             target_worker_bounce=current.bounces.worker,
         )
         if current.delivery_identity is not None:

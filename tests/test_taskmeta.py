@@ -169,6 +169,7 @@ def _worker_handoff_intent():
         generation="handoff-generation-1",
         target_agent_id="agent-alice",
         baseline_direct_run_ids=("run-old",),
+        baseline_pr_head_sha="head-old",
         target_run_id="run-new",
         target_worker_bounce=2,
         terminal_observed_at="2026-07-31T06:30:00+00:00",
@@ -219,6 +220,19 @@ def test_worker_handoff_keeps_positive_bounce_compatibility(gate):
     intent = WorkerHandoffIntent(**{**intent.as_dict(), "gate": gate})
 
     assert intent.is_causally_bound()
+
+
+def test_worker_handoff_round_trips_baseline_pr_head_sha():
+    intent = _worker_handoff_intent()
+
+    parsed = taskmeta.parse_worker_handoff(intent.as_dict())
+
+    assert parsed == intent
+    assert parsed.baseline_pr_head_sha == "head-old"
+
+    legacy = dict(intent.as_dict())
+    legacy.pop("baseline_pr_head_sha")
+    assert taskmeta.parse_worker_handoff(legacy).baseline_pr_head_sha is None
 
 
 def test_worker_handoff_round_trips_baseline_cutoff_created_at():

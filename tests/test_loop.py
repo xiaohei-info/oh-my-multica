@@ -12,6 +12,7 @@ import os
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 import tempfile
 
 import pytest
@@ -149,6 +150,36 @@ def test_direct_run_observation_rejects_retry_chain_forks():
 
     assert observed.state == "unexpected"
     assert observed.detail == "ambiguous target Run"
+
+
+def test_rework_handoff_rejects_unchanged_rejected_pr_head_before_reviewer():
+    item = SimpleNamespace(
+        status=WorkItemStatus.DONE,
+        artifacts={"pr_url": "https://example.test/pr/1", "head_sha": "head-old"},
+        verification_ref={"attachment_id": "attachment-new"},
+    )
+    rejected = WorkerHandoffIntent(
+        gate="review",
+        source_review_verdict="reject",
+        baseline_verification_attachment_id="attachment-old",
+        baseline_pr_head_sha="head-old",
+    )
+
+    assert loop._worker_handoff_has_new_delivery(item, rejected) is False
+
+    nits = WorkerHandoffIntent(
+        gate="review-nits",
+        source_review_verdict="pass-with-nits",
+        baseline_verification_attachment_id="attachment-old",
+        baseline_pr_head_sha="head-old",
+    )
+    assert loop._worker_handoff_has_new_delivery(item, nits) is True
+
+    legacy_reject = WorkerHandoffIntent(
+        gate="review", source_review_verdict="reject",
+        baseline_verification_attachment_id="attachment-old",
+    )
+    assert loop._worker_handoff_has_new_delivery(item, legacy_reject) is False
 
 
 def _contract(acceptance=None, verification_commands=None, integration_gates=None):
@@ -6432,6 +6463,61 @@ class TestReviewerRejectBoundedFallback:
         assert assignments_after_restart == 1
         assert retry_assignments == assignments_after_restart
 
+    def test_rework_handoff_records_rejected_pr_head(self, tmp_path):
+        """A review reject handoff remembers the head that was reviewed."""
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        previous = eng.store.get_work_item(item.id)
+        previous_head = previous.artifacts["head_sha"]
+
+        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+
+        assert result.state == "running"
+        handoff = eng.store.get_work_item(item.id).worker_handoff
+        assert handoff is not None
+        assert handoff.gate == "review"
+        assert handoff.source_review_verdict == "reject"
+        assert handoff.baseline_pr_head_sha == previous_head
+
+    def test_unchanged_rejected_head_does_not_dispatch_reviewer(
+            self, tmp_path, monkeypatch):
+        """A fresh verification on a rejected head returns to Worker, not Reviewer."""
+        from omac.engines.mock import _finish_mock_run
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        old = eng.store.get_work_item(item.id)
+        old_head = old.artifacts["head_sha"]
+        reviewer_assignments = len([
+            entry for entry in eng.store.assign_log if entry[2] == "reviewer"
+        ])
+
+        assert tick(eng.store, eng.runtime, manifest, path, max_parallel=4).state == "running"
+        handoff = eng.store.get_work_item(item.id).worker_handoff
+        assert handoff is not None
+
+        verification = dict(old.verification or {}, revision="same-head")
+        eng.store.update_work_item_metadata(
+            item.id,
+            artifacts={"pr_url": old.artifacts["pr_url"], "head_sha": old_head},
+            verification=verification,
+            verification_source=yaml.safe_dump(verification),
+        )
+        _finish_mock_run(item.id)
+        eng.store.update_status(item.id, WorkItemStatus.DONE)
+        monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
+
+        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+
+        assert result.state == "running"
+        assert manifest.nodes["a"].status == "in_progress"
+        assert len([
+            entry for entry in eng.store.assign_log if entry[2] == "reviewer"
+        ]) == reviewer_assignments
+        assert eng.store.get_work_item(item.id).worker_handoff is not None
+
     def test_retry_review_zero_blocks_immediately(self, tmp_path):
         """retry.review=0 → 首次 reject 立即 blocked,review_bounce 保持 0。"""
         from omac.engines import create_engine
@@ -9450,6 +9536,10 @@ class TestReviewerRejectBoundedFallback:
         path = _tmp_manifest_path(manifest)
         eng = _engine()
         MockStore.set_review_verdict_sequence(["reject", "pass"])
+        MockStore.set_kind_delivery_sequence("develop", [
+            {"pr_url": "https://mock.example.com/pr/rework-v1"},
+            {"pr_url": "https://mock.example.com/pr/rework-v2"},
+        ])
 
         result = _loop_to_settle(eng.store, eng.runtime, manifest, path)
 

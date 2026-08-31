@@ -174,6 +174,12 @@ class WorkerHandoffIntent:
     # 仅在基线被封顶时写入;None 保持纯 ID 成员判断的旧语义。
     baseline_cutoff_created_at: Optional[str] = None
     baseline_verification_attachment_id: Optional[str] = None
+    # Review-rework only: the last reviewed PR head. Optional for legacy
+    # handoffs and explicit evidence-only/nits compatibility paths.
+    baseline_pr_head_sha: Optional[str] = None
+    # For a review rework, remember the last submitted PR head so a fresh
+    # Worker Run cannot send the unchanged rejected code straight to Reviewer.
+    baseline_pr_head_sha: Optional[str] = None
     target_run_id: Optional[str] = None
     target_worker_bounce: Optional[int] = None
     terminal_observed_at: Optional[str] = None
@@ -196,6 +202,7 @@ class WorkerHandoffIntent:
             "baseline_verification_attachment_id": (
                 self.baseline_verification_attachment_id
             ),
+            "baseline_pr_head_sha": self.baseline_pr_head_sha,
             "target_run_id": self.target_run_id,
             "target_worker_bounce": self.target_worker_bounce,
             "terminal_observed_at": self.terminal_observed_at,
@@ -448,6 +455,7 @@ def parse_worker_handoff(value: Any) -> Optional[WorkerHandoffIntent]:
         baseline_cutoff_created_at=text_field("baseline_cutoff_created_at"),
         baseline_verification_attachment_id=text_field(
             "baseline_verification_attachment_id"),
+        baseline_pr_head_sha=text_field("baseline_pr_head_sha"),
         target_run_id=text_field("target_run_id"),
         target_worker_bounce=int_field("target_worker_bounce"),
         terminal_observed_at=text_field("terminal_observed_at"),

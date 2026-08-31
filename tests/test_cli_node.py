@@ -1802,6 +1802,35 @@ def test_retry_preserves_stale_mock_work_item_id_for_reconcile(tmp_path, monkeyp
     assert manifest.nodes["b"].work_item_id == "stale-id"
 
 
+def test_plain_retry_records_rejected_pr_head_for_worker_delta(
+        tmp_path, capsys, monkeypatch):
+    from omac.engines.models import WorkItemStatus
+
+    engine, path, item_id = _pass_with_nits_fixture(tmp_path, monkeypatch)
+    current = engine.store.get_work_item(item_id)
+    old_head = current.delivery_identity.pr_head_sha
+    engine.store.update_work_item_metadata(
+        item_id,
+        review_verdict="reject",
+        review_bounce=1,
+        decision_required={},
+        review_nits_acceptance={},
+    )
+    engine.store.update_status(item_id, WorkItemStatus.BLOCKED)
+    manifest = load_manifest(path)
+    manifest.nodes["b"].status = "blocked"
+    save_manifest(manifest, path)
+
+    assert main(["node", "retry", path, "b"]) == exit_codes.OK
+    capsys.readouterr()
+
+    retried = engine.store.get_work_item(item_id)
+    assert retried.worker_handoff is not None
+    assert retried.worker_handoff.gate == "operator-retry"
+    assert retried.worker_handoff.source_review_verdict == "reject"
+    assert retried.worker_handoff.baseline_pr_head_sha == old_head
+
+
 def test_accept_nits_restores_review_preserves_reviewer_facts_and_is_idempotent(
     tmp_path, capsys, monkeypatch,
 ):
