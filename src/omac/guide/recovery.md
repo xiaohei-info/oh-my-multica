@@ -202,7 +202,10 @@ omac dag amend propose .omac/project.yaml \
   当前 ledger visibility 后才重新标记 `synced`。如果 WorkItem 已封存新的 delivery identity、
   已进入 review，或已切换到其他 generation，重复 accept 只记录 `observed_progress`，不会回滚
   已推进的 Store 事实。
-- bounce 字段始终是单调累计的审计值，不清零。`work show.task.bounce_budget` 与 Worker retry
+- bounce 字段始终是单调累计的审计值，不清零。Review reject 回到 Worker 时，handoff 还会
+  绑定上一轮已评审的 PR head；同一 reject head 的新 Run 不会直接派 Reviewer，而会沿 Worker
+  retry/决策路径处理。`pass-with-nits` 与历史未封存的 evidence-only 路径仍允许用新证据附件
+  复用同一 head。`work show.task.bounce_budget` 与 Worker retry
   日志同时给出 absolute audit、amendment baseline 和 current-generation consumed；实际预算
   判断仍由 manifest `amendment_apply.bounce_baseline` 的 relative 计算负责。
 - done/merged 节点不可修改或删除。已执行节点改变 worker 或 `scope_paths` 必须携带显式

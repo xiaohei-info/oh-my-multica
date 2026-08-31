@@ -408,6 +408,22 @@ def _cmd_retry(args) -> int:
                     _bounded_direct_run_baseline(
                         engine.runtime.list_runs(current.id))
                 )
+                source_review_verdict = (
+                    current.review_verdict
+                    if current.review_verdict in {"reject", "pass-with-nits"}
+                    else None
+                )
+                baseline_pr_head_sha = None
+                if source_review_verdict is not None:
+                    identity = current.delivery_identity
+                    baseline_pr_head_sha = (
+                        getattr(identity, "pr_head_sha", None)
+                        if identity is not None else
+                        str(
+                            (current.artifacts.get("head_sha") or "")
+                            if isinstance(current.artifacts, dict) else ""
+                        )
+                    ) or None
                 handoff = WorkerHandoffIntent(
                     schema=WORKER_HANDOFF_SCHEMA,
                     state="pending",
@@ -415,6 +431,7 @@ def _cmd_retry(args) -> int:
                     gate="operator-retry",
                     source_review_subject_digest=source_subject,
                     source_review_round=max(1, current.bounces.review),
+                    source_review_verdict=source_review_verdict,
                     target_review_bounce=max(1, current.bounces.review),
                     generation=f"handoff-{secrets.token_hex(8)}",
                     target_agent_id=engine.store.resolve_agent_id(node.worker),
@@ -423,6 +440,7 @@ def _cmd_retry(args) -> int:
                     baseline_verification_attachment_id=str(
                         (current.verification_ref or {}).get("attachment_id") or ""
                     ) or None,
+                    baseline_pr_head_sha=baseline_pr_head_sha,
                     target_worker_bounce=current.bounces.worker,
                 )
             if not delayed_review_recovered:

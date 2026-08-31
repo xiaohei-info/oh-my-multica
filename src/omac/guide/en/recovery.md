@@ -274,6 +274,10 @@ omac dag amend propose .omac/project.yaml \
   identity, entered review, or switched to another generation, repeated accept
   records `observed_progress` without rolling back the progressed Store facts.
 - Bounce fields remain monotonic absolute audit counters and are never reset.
+  A review-reject Worker handoff also records the previously reviewed PR head;
+  a fresh Run reporting the same reject head cannot go straight to Reviewer and
+  follows the Worker retry/decision path. `pass-with-nits` and legacy unsealed
+  evidence-only paths may still reuse a head with a new evidence attachment.
   `work show.task.bounce_budget` and Worker retry logs distinguish the absolute
   value, amendment baseline, and current-generation consumption. Runtime budget
   decisions continue to use the relative calculation from the manifest

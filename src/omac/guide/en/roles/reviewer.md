@@ -93,6 +93,9 @@ conflict or cannot be reproduced, do not infer pass.
   inputs; a non-empty list remains a strict allowlist.
 - Keep `full_review_completed: true`, but OMAC also computes completeness from
   obligation and prior-blocker coverage. The boolean cannot hide omissions.
+- After a review reject, OMAC will not send a Worker Run directly to Reviewer when
+  its PR head is unchanged from the reviewed head. Submit a new implementation
+  head, or use the explicit pass-with-nits/evidence-only path.
 
 ## Steps
 

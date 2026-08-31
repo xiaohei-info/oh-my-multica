@@ -68,6 +68,9 @@
   非空列表仍是严格 allowlist。
 - `full_review_completed: true` 仍必须提交，但 OMAC 还会根据 obligation 与历史
   blocker 覆盖计算完整性；布尔声明不能覆盖缺项。
+- review reject 后，若 Worker handoff 的 PR head 仍等于上一轮已评审 head，OMAC 不会把
+  新 Run 直接派给 Reviewer；应先提交新的实现 head，或明确走 pass-with-nits/evidence-only
+  证据路径。
 
 ## 执行步骤
 
