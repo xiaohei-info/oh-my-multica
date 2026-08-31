@@ -7,6 +7,7 @@
 """
 import json
 import os
+from types import SimpleNamespace
 
 import pytest
 
@@ -39,6 +40,21 @@ def _engine_config(**extra):
 
 def _mock_store():
     return MockStore(_engine_config())
+
+
+def test_dag_engine_maps_config_project_to_multica_batch_capability(
+        tmp_path):
+    omac_dir = tmp_path / ".omac"
+    omac_dir.mkdir()
+    (omac_dir / "config.yaml").write_text(
+        "engine: multica\nworkspace: ws\nproject: project-1\n")
+    manifest = omac_dir / "dag.yaml"
+    manifest.write_text("meta: {}\nnodes: []\n")
+
+    engine, _ = _assemble_engine(SimpleNamespace(manifest=str(manifest)))
+
+    assert engine.store.config.project_id == "project-1"
+    assert engine.store.control_batch_observation_supported() is True
 
 
 def _manifest_yaml(tmp_path, nodes):
