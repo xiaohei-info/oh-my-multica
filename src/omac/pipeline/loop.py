@@ -1179,22 +1179,15 @@ def _observe_reconcile_inputs(
     # Full audits always read active controls independently and fail closed;
     # only static control reads may be isolated after a batch/fallback failure.
     active_keys = reconcile_active_keys(manifest)
-    terminal_done_keys = {
-        key for key, node in manifest.nodes.items()
-        if node.status == "done" and confirmed_merge_is_closed(node)
-    }
     active_control_jobs = [
         (key, node.work_item_id)
         for key, node in manifest.nodes.items()
-        if node.work_item_id
-        and key in active_keys
-        and not (full_scan and key in terminal_done_keys)
+        if node.work_item_id and key in active_keys
     ]
     static_control_jobs = [
         (key, node.work_item_id)
         for key, node in manifest.nodes.items()
-        if full_scan and node.work_item_id
-        and (key not in active_keys or key in terminal_done_keys)
+        if full_scan and node.work_item_id and key not in active_keys
     ]
     selected_control_jobs = [
         (key, node.work_item_id)
@@ -3004,19 +2997,6 @@ def _has_recovery_control_fact(item) -> bool:
     )
 
 
-def _confirmed_merge_has_real_recovery(item) -> bool:
-    """Keep non-terminal recovery facts visible on an otherwise closed node.
-
-    A reviewer baseline can remain in a terminal WorkItem projection while a
-    successful merge is being normalized; handoffs and decisions, however,
-    represent work that must never be swallowed by the done closure.
-    """
-    if getattr(item, "worker_handoff", None) or getattr(item, "decision_required", None):
-        return True
-    baseline = getattr(item, "reviewer_run_baseline", None)
-    return bool(baseline and item.status != WorkItemStatus.DONE)
-
-
 def _mark_recovery_pending(manifest: Manifest, key: str) -> None:
     """Persist the active-set hint before writing a recovery control fact.
 
@@ -3149,10 +3129,10 @@ def _reconcile_candidate(
             False if observation is _MISSING_WORK_ITEM
             else _has_recovery_control_fact(observation.work_item)
         )
+        if node.recovery_marker != observed_marker:
+            node.recovery_marker = observed_marker
+            changed = True
         if observation is _MISSING_WORK_ITEM:
-            if node.recovery_marker:
-                node.recovery_marker = False
-                changed = True
             if confirmed_merge_is_closed(node):
                 if node.status != "done":
                     set_node(manifest, key, status="done")
@@ -3168,16 +3148,12 @@ def _reconcile_candidate(
 
         # confirmed merge closure is the sole ordinary-reconcile terminal
         # invariant. Explicit amendment/retry must retire it before any
-        # authoring/review recovery is eligible again. A real persisted recovery
-        # fact must not be swallowed merely because the manifest says done.
+        # authoring/review recovery is eligible again.
         if confirmed_merge_is_closed(node):
-            if _confirmed_merge_has_real_recovery(item):
+            if observed_marker:
                 raise PlatformError(
                     f"Confirmed merge node {key} still has recovery control facts; "
                     "inspect the WorkItem before clearing its recovery marker")
-            if node.recovery_marker:
-                node.recovery_marker = False
-                changed = True
             if (
                 item.status != WorkItemStatus.DONE
                 or item.platform_assignee_id is not None
@@ -3187,10 +3163,6 @@ def _reconcile_candidate(
                 set_node(manifest, key, status="done")
                 changed = True
             continue
-
-        if node.recovery_marker != observed_marker:
-            node.recovery_marker = observed_marker
-            changed = True
 
         # reviewer reject 后，worker 可在 manifest 仍 todo/blocked/done 时通过正式
         # work submit 写入新交付。todo 常见于 node retry 后、下一次 tick 前提交。
