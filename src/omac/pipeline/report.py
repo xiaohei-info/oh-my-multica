@@ -306,8 +306,13 @@ def build_status_report(
     items, deferred_payloads = _observations_to_items_and_payloads(
         result.observations)
 
-    return _build_report_from_items(
+    report = _build_report_from_items(
         manifest, manifest_path, items, deferred_payloads)
+    if not result.audit_complete:
+        # A full audit with missing static facts cannot truthfully claim that
+        # every node is synchronized, even if the manifest projection is done.
+        report["progress"]["converged"] = False
+    return report
 
 
 # ==================== table 渲染(给人看) ====================
