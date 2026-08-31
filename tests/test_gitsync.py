@@ -199,6 +199,90 @@ class TestEnsureConfigSynced:
 
 # ==================== commit_manifest 回写 ====================
 
+class TestManifestPushBackoff:
+    def _patch_push_sequence(self, monkeypatch, outcomes):
+        calls = []
+        outcome_iter = iter(outcomes)
+
+        def fake_run(_repo_root, *args):
+            calls.append(args)
+            if args[:1] == ("push",):
+                return next(outcome_iter)
+            if args[:1] == ("rev-list",):
+                return subprocess.CompletedProcess(args, 0, "local-commit\n", "")
+            if args[:2] == ("diff", "--cached"):
+                return subprocess.CompletedProcess(args, 0, "", "")
+            return subprocess.CompletedProcess(args, 0, "", "")
+
+        monkeypatch.setattr(gitsync, "_run", fake_run)
+        return calls
+
+    def test_network_push_failure_backs_off_and_deduplicates_warning(
+            self, monkeypatch):
+        monkeypatch.delenv("OMAC_GIT_SYNC", raising=False)
+        gitsync._PUSH_RETRY_STATE.clear()
+        now = [100.0]
+        monkeypatch.setattr(gitsync.time, "monotonic", lambda: now[0])
+        warnings = []
+        monkeypatch.setattr(
+            "omac.core.gitsync.log.warning",
+            lambda event, **kwargs: warnings.append((event, kwargs)),
+        )
+        calls = self._patch_push_sequence(
+            monkeypatch,
+            [
+                subprocess.CompletedProcess([], 1, "", "Connection closed"),
+                subprocess.CompletedProcess([], 1, "", "Connection closed"),
+            ],
+        )
+
+        assert commit_manifest(
+            ".omac/m.yaml", "manifest sync", repo_root=".", engine_type="multica") is True
+        now[0] = 105.0
+        assert commit_manifest(
+            ".omac/m.yaml", "manifest sync", repo_root=".", engine_type="multica") is True
+        assert len([call for call in calls if call[:1] == ("push",)]) == 1
+        assert len(warnings) == 1
+
+        now[0] = 110.0
+        assert commit_manifest(
+            ".omac/m.yaml", "manifest sync", repo_root=".", engine_type="multica") is True
+        assert len([call for call in calls if call[:1] == ("push",)]) == 2
+        assert len(warnings) == 2
+
+    def test_backoff_is_capped(self, monkeypatch):
+        gitsync._PUSH_RETRY_STATE.clear()
+        monkeypatch.setattr(gitsync.time, "monotonic", lambda: 100.0)
+        key = gitsync._push_retry_key(".", [".omac/m.yaml"])
+
+        for _ in range(20):
+            delay = gitsync._record_push_failure(key)
+
+        assert delay == gitsync._PUSH_RETRY_MAX_SECONDS
+        assert gitsync._PUSH_RETRY_STATE[key]["failures"] == 20
+
+    def test_successful_retry_clears_backoff_state(self, monkeypatch):
+        monkeypatch.delenv("OMAC_GIT_SYNC", raising=False)
+        gitsync._PUSH_RETRY_STATE.clear()
+        now = [100.0]
+        monkeypatch.setattr(gitsync.time, "monotonic", lambda: now[0])
+        outcomes = [
+            subprocess.CompletedProcess([], 1, "", "Connection closed"),
+            subprocess.CompletedProcess([], 0, "", ""),
+        ]
+        calls = self._patch_push_sequence(monkeypatch, outcomes)
+
+        commit_manifest(
+            ".omac/m.yaml", "manifest sync", repo_root=".", engine_type="multica")
+        assert gitsync._PUSH_RETRY_STATE
+        now[0] = 110.0
+        commit_manifest(
+            ".omac/m.yaml", "manifest sync", repo_root=".", engine_type="multica")
+
+        assert not gitsync._PUSH_RETRY_STATE
+        assert len([call for call in calls if call[:1] == ("push",)]) == 2
+
+
 class TestCommitManifest:
     def test_commit_files_pushes_manifest_and_acceptance_together(
             self, tmp_path, monkeypatch):

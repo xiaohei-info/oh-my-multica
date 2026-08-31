@@ -111,6 +111,12 @@ omac plan resume --plan-id p-xxxx
 `accept` accepts a known risk; it does not skip failed verification. `retry`
 requires new evidence or a new plan, not the same failed attempt.
 
+When `commit_manifest` cannot push, OMAC keeps the local manifest commit and
+uses exponential backoff for that repository/path (10 seconds initially, capped
+at 5 minutes). Calls inside the window do not issue another push or warning.
+Remote lag remains an explicit sync warning rather than a false synced state;
+a successful push clears the backoff.
+
 ## Controlled amendment of a running DAG
 
 If a contract, acceptance responsibility, or dependency defect appears only after

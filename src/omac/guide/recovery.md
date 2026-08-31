@@ -87,6 +87,10 @@ omac plan resume --plan-id p-xxxx
 `accept` 只用于接受已知风险，不是跳过失败验证。`retry` 必须有新的事实或方案，
 不能原样重复已失败的尝试。
 
+`commit_manifest` 的 push 失败时，OMAC 先保留本地 manifest commit，并对同一仓库/路径
+使用 10 秒起、最多 5 分钟的指数退避；退避窗口内不重复发起 push 或刷屏。远端暂时落后
+是显式同步告警，不会伪造已同步状态；恢复后成功 push 会清除退避状态。
+
 ## 运行中 DAG 的受控 amendment
 
 当已批准 DAG 开始执行后才发现 contract、验收责任或依赖边错误，不要重新运行整份
