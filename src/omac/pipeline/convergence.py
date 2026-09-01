@@ -9,6 +9,7 @@ from ..core.review_convergence import (
     LegacyReviewLedgerUnverifiable,
     REVIEW_CONVERGENCE_DECISION_SCHEMA,
     REVIEW_CONVERGENCE_EARLIEST_CYCLE,
+    bounded_decision_required,
     build_review_convergence_decision,
     review_convergence_decision,
     review_state as summarize_review_state,
@@ -120,7 +121,7 @@ def resolve_convergence(
 
 
 def persist_decision(store, item: Any, resolution: ConvergenceResolution) -> dict:
-    decision = resolution.decision
+    decision = bounded_decision_required(resolution.decision)
     if item.decision_required != decision or item.phase != TaskPhase.REVIEW:
         store.update_work_item_metadata(
             item.id, decision_required=decision, phase=TaskPhase.REVIEW)
