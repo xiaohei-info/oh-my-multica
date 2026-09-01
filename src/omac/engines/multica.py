@@ -83,6 +83,7 @@ _MULTICA_READ_INITIAL_DELAY = 1.0
 # 需要清理。
 _MULTICA_SUBPROCESS_TIMEOUT = 90.0
 _ATTACHMENT_BODY_CACHE_CAPACITY = 64
+_MULTICA_METADATA_TOTAL_MAX_BYTES = 8 * 1024
 # Current Multica task states plus legacy aliases still returned by older APIs.
 _ACTIVE_RUN_STATUSES = {
     "queued", "pending", "dispatched", "running", "dispatching",
@@ -1378,6 +1379,107 @@ class MulticaStore(WorkItemStore):
 
         return self.get_work_item(issue_id)
 
+    @staticmethod
+    def _metadata_object_bytes(metadata: Dict) -> int:
+        return len(json.dumps(metadata, ensure_ascii=False).encode("utf-8"))
+
+    @classmethod
+    def _decision_metadata_object_bytes(
+        cls, metadata: Dict, decision: Dict[str, Any],
+    ) -> int:
+        """Use the larger typed/string representation as a safe upper bound."""
+        typed = dict(metadata)
+        typed[DECISION_REQUIRED_KEY] = decision
+        encoded = dict(metadata)
+        encoded[DECISION_REQUIRED_KEY] = encode_metadata_value(decision)
+        return max(
+            cls._metadata_object_bytes(typed),
+            cls._metadata_object_bytes(encoded),
+        )
+
+    def _prepare_decision_metadata_budget(
+        self, item_id: str, decision: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Make the complete Issue metadata object fit before writing a decision."""
+        decision = bounded_decision_required(decision)
+        _, metadata = self._read_issue_metadata(item_id)
+        candidate = dict(metadata)
+        candidate[DECISION_REQUIRED_KEY] = decision
+        if self._decision_metadata_object_bytes(
+            metadata, decision) <= _MULTICA_METADATA_TOTAL_MAX_BYTES:
+            return decision
+
+        reductions: list[tuple[str, Any]] = []
+
+        def consider(key: str, value: Any) -> None:
+            if key not in candidate or candidate[key] == value:
+                return
+            reduced = dict(candidate)
+            reduced[key] = value
+            if self._decision_metadata_object_bytes(
+                reduced, decision) >= self._decision_metadata_object_bytes(
+                    candidate, decision):
+                return
+            candidate[key] = value
+            reductions.append((key, value))
+
+        source_refs = _decode_json_metadata_value(metadata.get(SOURCE_REFS_KEY))
+        if isinstance(source_refs, list) and source_refs:
+            # Source issue links are recoverable from the authoritative issue
+            # body/attachment references and are not needed to route recovery.
+            consider(SOURCE_REFS_KEY, [])
+
+        baseline = parse_reviewer_run_baseline(
+            _decode_json_metadata_value(metadata.get(REVIEWER_RUN_BASELINE_KEY)))
+        if (
+            baseline is not None
+            and baseline.cutoff_created_at
+            and baseline.baseline_direct_run_ids
+        ):
+            # Once cutoff_created_at is present, pre-cutoff Runs are identified
+            # by time; retaining every historical ID only duplicates that fact.
+            compact_baseline = baseline.as_dict()
+            run_ids = list(baseline.baseline_direct_run_ids)
+            compact_baseline["baseline_direct_run_ids"] = run_ids[-2:]
+            compact_baseline["baseline_direct_run_ids_count"] = len(run_ids)
+            compact_baseline["baseline_direct_run_ids_sha256"] = hashlib.sha256(
+                json.dumps(run_ids, ensure_ascii=False, separators=(",", ":")).encode(
+                    "utf-8")
+            ).hexdigest()
+            consider(REVIEWER_RUN_BASELINE_KEY, compact_baseline)
+
+        obligations = _decode_json_metadata_value(
+            metadata.get(REVIEW_OBLIGATIONS_KEY))
+        if (
+            isinstance(obligations, list)
+            and obligations
+            and _decode_json_metadata_value(
+                metadata.get(REVIEW_OBLIGATIONS_REF_KEY))
+        ):
+            # The full obligation set is already in the referenced attachment.
+            consider(REVIEW_OBLIGATIONS_KEY, [])
+
+        if self._decision_metadata_object_bytes(
+            candidate, decision) > _MULTICA_METADATA_TOTAL_MAX_BYTES:
+            raise ValueError(
+                "Issue metadata remains above Multica's 8KB aggregate limit after "
+                "safe decision projection; preserve attachments and fail closed")
+
+        for key, value in reductions:
+            self._set_metadata(item_id, key, value)
+
+        _, observed = self._read_issue_metadata(item_id)
+        observed_candidate = dict(observed)
+        observed_candidate[DECISION_REQUIRED_KEY] = decision
+        if (
+            self._decision_metadata_object_bytes(observed, decision)
+            > _MULTICA_METADATA_TOTAL_MAX_BYTES
+        ):
+            raise ValueError(
+                "Issue metadata changed during decision preparation and exceeds "
+                "Multica's 8KB aggregate limit; fail closed")
+        return decision
+
     def _set_metadata(self, item_id: str, key: str, value: Any):
         # capture 默认开:吃掉 multica 的确认表格,不漏进编排者终端(进度靠事件流)。
         if key == DECISION_REQUIRED_KEY:
@@ -1649,10 +1751,12 @@ class MulticaStore(WorkItemStore):
             self._set_metadata(
                 item_id, REVIEW_SUBJECT_DIGEST_KEY, review_subject_digest)
         if decision_required is not None:
+            decision_required = self._prepare_decision_metadata_budget(
+                item_id, decision_required)
             self._set_metadata(
                 item_id,
                 DECISION_REQUIRED_KEY,
-                bounded_decision_required(decision_required),
+                decision_required,
             )
         if review_nits_acceptance is not None:
             self._set_metadata(
@@ -1689,6 +1793,12 @@ class MulticaStore(WorkItemStore):
         # verdict 是终态可见信号；所有报告和 ledger 证据必须先持久化。
         if review_verdict is not None:
             self._set_metadata(item_id, "review_verdict", review_verdict)
+        if decision_required is not None:
+            # Other metadata fields in this same call (for example verdict or
+            # phase) are written after the decision branch above. Recheck the
+            # aggregate budget at the final write boundary as well.
+            self._prepare_decision_metadata_budget(
+                item_id, decision_required)
         return self.get_work_item(item_id)
 
     def restore_authoring_generation(

@@ -935,6 +935,11 @@ def test_multica_bounds_oversized_decision_and_reads_back_projection(monkeypatch
         lambda args: writes.append(args),
     )
     monkeypatch.setattr(store, "get_work_item", lambda _item_id: expected)
+    monkeypatch.setattr(
+        store,
+        "_read_issue_metadata",
+        lambda _item_id: ({}, {}),
+    )
 
     store.update_work_item_metadata(
         expected.id, decision_required=_oversized_decision_required())
@@ -966,6 +971,141 @@ def test_multica_bounds_oversized_decision_and_reads_back_projection(monkeypatch
     readback = store._issue_to_control_projection(raw, "ws").work_item
     assert readback.decision_required == projected
     assert readback.decision_required["decision_projection"]["source_bytes"] > 8192
+
+
+def _production_shape_decision_required():
+    decision = json.loads(json.dumps(_oversized_decision_required()))
+    for key in decision["convergence"]:
+        if not isinstance(decision["convergence"][key], list):
+            continue
+        count = 13
+        if key == "obligation_dimensions":
+            count = 6
+        elif key == "blocker_owner_keys":
+            count = 8
+        elif key in {"late_root_cause_keys", "unchanged_blocker_ids"}:
+            count = 0
+        decision["convergence"][key] = [
+            f"{key}-{index}-{'x' * 20}" for index in range(count)
+        ]
+    return decision
+
+
+def test_multica_plans_aggregate_metadata_budget_before_decision_write(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    ref = {
+        "comment_id": "comment-1234567890",
+        "attachment_id": "attachment-1234567890",
+        "filename": "omac-review-ledger.yaml",
+        "sha256": "a" * 64,
+        "bytes": 12000,
+    }
+    metadata = {
+        "dag_key": "authentication-methods",
+        "worker": "worker",
+        "reviewer": "reviewer",
+        "kind": "develop",
+        "phase": "review",
+        "artifacts": {"pr_url": "https://github.com/acme/repo/pull/60", "head_sha": "d" * 40},
+        "review_verdict": "reject",
+        "review_comment": "x" * 500,
+        "review_subject_digest": "s" * 64,
+        "reviewer_run_baseline": {
+            "schema": "omac.reviewer-run-baseline/v1",
+            "subject_digest": "s" * 64,
+            "target_reviewer": "reviewer",
+            "target_agent_id": "agent-reviewer",
+            "cutoff_created_at": "2026-09-01T00:00:00Z",
+            "generation": "review-generation",
+            "attempt": 1,
+            "baseline_direct_run_ids": [f"run-history-{index:02d}-{'r' * 36}" for index in range(20)],
+            "target_run_id": "run-review-current",
+        },
+        "source_refs": [
+            {"issue_id": f"source-{index:02d}", "label": "upstream", "url": "https://example.test/source"}
+            for index in range(8)
+        ],
+        "delivery_identity": {"schema": "omac.delivery-identity/v1", "handoff_generation": "handoff", "worker": "worker", "agent_id": "agent-worker", "run_id": "run-worker", "pr_url": "https://github.com/acme/repo/pull/60", "pr_head_sha": "d" * 40, "verification_sha256": "v" * 64, "verification_attachment_id": "verification", "verification_comment_id": "comment", "verification_uploader_id": "agent-worker", "verification_uploader_type": "agent", "verification_task_id": "run-worker", "verification_created_at": "2026-09-01T00:00:00Z"},
+        "contract_ref": ref,
+        "review_report_ref": ref,
+        "review_ledger_ref": ref,
+        "review_obligations": [{"obligation_id": f"dimension:{index}", "requirement": "verify"} for index in range(6)],
+        "review_obligations_ref": ref,
+        "review_generation": "review-generation",
+        "review_ledger_generation": "review-generation",
+        "review_bounce": "3",
+        "worker_bounce": "2",
+        "ci_bounce": "1",
+        "merge_bounce": "0",
+        "blocked_by": ["upstream-a", "upstream-b"],
+        "wave": "3",
+        "review_continuation": {"authorized_through_round": 3, "decision_count": 1},
+        "review_nits_acceptance": {"schema": "omac.review-nits-acceptance/v1"},
+    }
+    assert len(metadata) == 27
+    decision = _production_shape_decision_required()
+    assert 2500 < len(encode_metadata_value(decision).encode("utf-8")) < 8192
+    metadata_before = json.loads(json.dumps(metadata))
+    writes = []
+
+    def read_metadata(_item_id):
+        return ({"id": _item_id, "metadata": metadata}, metadata)
+
+    def set_metadata(item_id, key, value):
+        writes.append((item_id, key, value))
+        metadata[key] = value
+
+    expected = SimpleNamespace(id="issue-authentication-methods")
+    monkeypatch.setattr(store, "_read_issue_metadata", read_metadata)
+    monkeypatch.setattr(store, "_set_metadata", set_metadata)
+    monkeypatch.setattr(store, "get_work_item", lambda _item_id: expected)
+
+    raw_total = store._metadata_object_bytes(
+        {**metadata_before, DECISION_REQUIRED_KEY: decision})
+    store.update_work_item_metadata(
+        expected.id, decision_required=decision)
+
+    assert raw_total > 8192
+    assert store._metadata_object_bytes(metadata) <= 8192
+    assert metadata["source_refs"] == []
+    compact_ids = metadata["reviewer_run_baseline"]["baseline_direct_run_ids"]
+    assert len(compact_ids) == 2
+    assert metadata["reviewer_run_baseline"]["baseline_direct_run_ids_count"] == 20
+    assert metadata["reviewer_run_baseline"]["baseline_direct_run_ids_sha256"]
+    stored_decision = metadata[DECISION_REQUIRED_KEY]
+    assert len(encode_metadata_value(stored_decision).encode("utf-8")) <= 8192
+    assert stored_decision["review_ledger_ref"]["attachment_id"] == "ledger"
+    assert any(key == "source_refs" for _, key, _ in writes)
+    assert any(key == "reviewer_run_baseline" for _, key, _ in writes)
+
+
+def test_multica_rejects_irreducible_aggregate_metadata_budget(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    metadata = {"immutable_projection": "x" * 8000}
+    writes = []
+    monkeypatch.setattr(
+        store,
+        "_read_issue_metadata",
+        lambda _item_id: ({"metadata": metadata}, metadata),
+    )
+    monkeypatch.setattr(
+        store,
+        "_set_metadata",
+        lambda *args: writes.append(args),
+    )
+    monkeypatch.setattr(
+        store,
+        "get_work_item",
+        lambda _item_id: SimpleNamespace(id=_item_id),
+    )
+
+    with pytest.raises(ValueError, match="aggregate limit"):
+        store.update_work_item_metadata(
+            "issue-authentication-methods",
+            decision_required=_production_shape_decision_required(),
+        )
+
+    assert writes == []
 
 
 def test_multica_bounds_raw_decision_metadata_command_at_cli_boundary(monkeypatch):
