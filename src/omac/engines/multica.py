@@ -403,12 +403,39 @@ class MulticaStore(WorkItemStore):
         """Classify only the existing strict Multica transport allowlist."""
         return _transient_read_failure(str(error)) is not None
 
+    @staticmethod
+    def _bound_metadata_command(args: List[str]) -> List[str]:
+        """Defensively bound direct metadata commands at the CLI boundary."""
+        if args[:3] != ["issue", "metadata", "set"]:
+            return args
+        try:
+            key_index = args.index("--key") + 1
+            value_index = args.index("--value") + 1
+        except ValueError:
+            return args
+        if key_index >= len(args) or value_index >= len(args):
+            return args
+        if args[key_index] != DECISION_REQUIRED_KEY:
+            return args
+        try:
+            raw = json.loads(args[value_index])
+        except (TypeError, json.JSONDecodeError):
+            return args
+        projected = bounded_decision_required(raw)
+        encoded = encode_metadata_value(projected)
+        if encoded == args[value_index]:
+            return args
+        bounded = list(args)
+        bounded[value_index] = encoded
+        return bounded
+
     def _run_multica(self, args: List[str], capture=True) -> Any:
         """调用 multica CLI。
 
         workspace 通过全局 flag `--workspace-id` 注入(位于 multica 与子命令之间),
         与 multica CLI 约定一致——子命令本身不接受 --workspace-id。
         """
+        args = self._bound_metadata_command(args)
         cmd = ["multica"]
         if self.config.workspace_id:
             cmd += ["--workspace-id", self.config.workspace_id]
