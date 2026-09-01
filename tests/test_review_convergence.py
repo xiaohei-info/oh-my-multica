@@ -12,6 +12,7 @@ from omac.core import review_convergence as review_mod
 from omac.core.review_convergence import (
     LegacyReviewLedgerUnverifiable,
     REVIEW_PROTOCOL_VERSION,
+    bounded_decision_required,
     advance_review_ledger,
     build_review_obligations,
     review_convergence_decision,
@@ -1065,6 +1066,56 @@ def test_scope_expansion_requires_non_reducing_streak_and_cross_owner_evidence()
     assert decision["reason_code"] == "review-convergence-scope-expanding"
     assert decision["cross_owner"] is True
     assert decision["blocker_owner_keys"] == ["owner-0", "owner-1", "owner-2"]
+
+
+def test_bounded_decision_projection_preserves_routing_refs_and_audit_digests():
+    ledger = _decision_ledger(
+        [13, 13, 13],
+        obligation_ids=(
+            "dimension:authority",
+            "dimension:structure",
+            "dimension:ownership",
+        ),
+        classifications=["deeper"],
+    )
+    item = SimpleNamespace(
+        id="issue-authentication-methods",
+        review_verdict="reject",
+        contract_ref={"attachment_id": "contract", "sha256": "c" * 64},
+        review_report_ref={"attachment_id": "report", "sha256": "r" * 64},
+        review_ledger_ref={"attachment_id": "ledger", "sha256": "l" * 64},
+    )
+    convergence = review_convergence_decision(ledger)
+    decision = review_mod.build_review_convergence_decision(
+        item,
+        convergence,
+        kind="develop",
+        recommended_action="dag-amendment",
+        node_id="authentication-methods",
+    )
+    decision["next_action"] = "omac dag amend propose manifest.yaml --output json"
+    for key in review_mod._DECISION_SEQUENCE_FIELDS:
+        decision["convergence"][key] = [f"{key}-{'x' * 80}-{index}" for index in range(13)]
+    decision["conflict_codes"] = [f"conflict-{'x' * 80}-{index}" for index in range(13)]
+
+    original = deepcopy(decision)
+    bounded = bounded_decision_required(decision)
+
+    assert len(json.dumps(bounded, ensure_ascii=False).encode("utf-8")) <= 8192
+    assert decision == original
+    assert bounded["reason_code"] == decision["reason_code"]
+    assert bounded["next_action"] == decision["next_action"]
+    assert bounded["contract_ref"] == decision["contract_ref"]
+    assert bounded["review_report_ref"] == decision["review_report_ref"]
+    assert bounded["review_ledger_ref"] == decision["review_ledger_ref"]
+    projected = bounded["convergence"]
+    assert projected["open_blocker_ids_count"] == 13
+    assert projected["open_blocker_ids_truncated"] is True
+    assert len(projected["blocker_owner_keys"]) >= 2
+    assert projected["cross_owner"] is True
+    assert bounded["conflict_codes_count"] == 13
+    assert bounded["conflict_codes_truncated"] is True
+    assert bounded["decision_projection"]["source_bytes"] > 8192
 
 
 def test_scope_expansion_requires_owner_on_every_open_blocker():

@@ -891,6 +891,83 @@ def test_multica_review_projection_propagates_hard_metadata_error(monkeypatch):
         store.reset_review("issue-1")
 
 
+def _oversized_decision_required():
+    return {
+        "schema": "omac.decision-required/v1",
+        "reason_code": "review-convergence-scope-expanding",
+        "kind": "develop",
+        "phase": "review",
+        "gate": "review-convergence",
+        "rounds": 20,
+        "resume_issue_id": "issue-authentication-methods",
+        "node_id": "authentication-methods",
+        "verdict": "reject",
+        "recommended_action": "dag-amendment",
+        "next_action": "omac dag amend propose manifest.yaml --output json",
+        "contract_ref": {"attachment_id": "contract", "sha256": "c" * 64},
+        "review_report_ref": {"attachment_id": "report", "sha256": "r" * 64},
+        "review_ledger_ref": {"attachment_id": "ledger", "sha256": "l" * 64},
+        "convergence": {
+            "schema": "omac.review-convergence-decision/v1",
+            "mode": "scope-expanding",
+            "reason_code": "review-convergence-scope-expanding",
+            "cycle_count": 20,
+            "open_blocker_count": 13,
+            "non_reducing_streak": 19,
+            "cross_owner": True,
+            "open_blocker_ids": [f"blocker-{index}-{'x' * 80}" for index in range(13)],
+            "open_root_cause_keys": [f"root-{index}-{'x' * 80}" for index in range(13)],
+            "obligation_dimensions": [f"dimension-{index}-{'x' * 80}" for index in range(13)],
+            "late_root_cause_keys": [f"late-{index}-{'x' * 80}" for index in range(13)],
+            "unchanged_blocker_ids": [f"unchanged-{index}-{'x' * 80}" for index in range(13)],
+            "blocker_owner_keys": [f"owner-{index}-{'x' * 80}" for index in range(13)],
+        },
+    }
+
+
+def test_multica_bounds_oversized_decision_and_reads_back_projection(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    writes = []
+    expected = SimpleNamespace(id="issue-authentication-methods")
+    monkeypatch.setattr(
+        store,
+        "_run_multica",
+        lambda args: writes.append(args),
+    )
+    monkeypatch.setattr(store, "get_work_item", lambda _item_id: expected)
+
+    store.update_work_item_metadata(
+        expected.id, decision_required=_oversized_decision_required())
+
+    assert len(writes) == 1
+    assert writes[0][:2] == ["issue", "metadata"]
+    assert writes[0][2] == "set"
+    assert writes[0][3] == expected.id
+    assert writes[0][writes[0].index("--key") + 1] == DECISION_REQUIRED_KEY
+    encoded = writes[0][writes[0].index("--value") + 1]
+    projected = json.loads(encoded)
+    assert len(encoded.encode("utf-8")) <= 8192
+    assert projected["review_ledger_ref"]["attachment_id"] == "ledger"
+    assert projected["convergence"]["open_blocker_ids_count"] == 13
+    assert len(projected["convergence"]["blocker_owner_keys"]) >= 2
+
+    raw = {
+        "id": expected.id,
+        "title": "authentication-methods",
+        "description": "review",
+        "status": "blocked",
+        "metadata": {
+            "dag_key": "authentication-methods",
+            "kind": "develop",
+            "phase": "review",
+            DECISION_REQUIRED_KEY: encode_metadata_value(projected),
+        },
+    }
+    readback = store._issue_to_control_projection(raw, "ws").work_item
+    assert readback.decision_required == projected
+    assert readback.decision_required["decision_projection"]["source_bytes"] > 8192
+
+
 def test_multica_externalizes_machine_feedback_before_bounded_summary(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
     errors = [f"error-{index}: {'x' * 80}" for index in range(160)]

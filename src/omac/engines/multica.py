@@ -28,6 +28,7 @@ from typing import Any, Callable, Dict, List, Optional, TypeVar
 import yaml
 
 from ..core import logsetup
+from ..core.review_convergence import bounded_decision_required
 from ..core.taskmeta import (
     AMENDMENT_ATTEMPT_KEY, BOUNCE_BASELINE_KEY, CI_BOUNCE_KEY, CONTRACT_REF_KEY,
     DECISION_REQUIRED_KEY, DELIVERY_IDENTITY_KEY, DELIVERABLE_KEY,
@@ -1352,6 +1353,8 @@ class MulticaStore(WorkItemStore):
 
     def _set_metadata(self, item_id: str, key: str, value: Any):
         # capture 默认开:吃掉 multica 的确认表格,不漏进编排者终端(进度靠事件流)。
+        if key == DECISION_REQUIRED_KEY:
+            value = bounded_decision_required(value)
         assert_metadata_write_allowed(key, value)
         encoded = encode_metadata_value(value)
         self._run_multica([
@@ -1619,7 +1622,11 @@ class MulticaStore(WorkItemStore):
             self._set_metadata(
                 item_id, REVIEW_SUBJECT_DIGEST_KEY, review_subject_digest)
         if decision_required is not None:
-            self._set_metadata(item_id, DECISION_REQUIRED_KEY, decision_required)
+            self._set_metadata(
+                item_id,
+                DECISION_REQUIRED_KEY,
+                bounded_decision_required(decision_required),
+            )
         if review_nits_acceptance is not None:
             self._set_metadata(
                 item_id, REVIEW_NITS_ACCEPTANCE_KEY, review_nits_acceptance)

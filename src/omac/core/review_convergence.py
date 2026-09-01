@@ -33,8 +33,25 @@ REVIEW_CONVERGENCE_EARLIEST_CYCLE = 3
 REVIEW_CONVERGENCE_MIN_NON_REDUCING_STREAK = (
     REVIEW_CONVERGENCE_EARLIEST_CYCLE - 1
 )
-
-
+DECISION_REQUIRED_MAX_BYTES = 8 * 1024
+_DECISION_PROJECTION_SCHEMA = "omac.decision-required-projection/v1"
+_DECISION_SEQUENCE_FIELDS = (
+    "open_blocker_ids",
+    "open_root_cause_keys",
+    "obligation_dimensions",
+    "late_root_cause_keys",
+    "unchanged_blocker_ids",
+    "blocker_owner_keys",
+)
+_DECISION_CONVERGENCE_SCALARS = (
+    "schema",
+    "mode",
+    "reason_code",
+    "cycle_count",
+    "open_blocker_count",
+    "non_reducing_streak",
+    "cross_owner",
+)
 class LegacyReviewLedgerUnverifiable(ValueError):
     """A legacy cycle lacks immutable blocker facts required for verification."""
 
@@ -677,6 +694,105 @@ def review_convergence_decision(
             "reason_code": "review-convergence-stalled",
         }
     return None
+
+
+def _json_bytes(value: Any) -> int:
+    return len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
+
+
+def _sequence_digest(values: list[Any]) -> str:
+    encoded = json.dumps(
+        values, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _bounded_list(values: list[Any], key: str) -> dict[str, Any]:
+    """Keep a deterministic sample plus lossless size/digest audit fields."""
+    if len(values) <= 2:
+        return {key: deepcopy(values)}
+    return {
+        key: deepcopy(values[:2]),
+        f"{key}_count": len(values),
+        f"{key}_sha256": _sequence_digest(values),
+        f"{key}_truncated": True,
+    }
+
+
+def _bounded_convergence_projection(convergence: Any) -> dict:
+    """Retain decision scalars and auditable summaries of long ID lists."""
+    if not isinstance(convergence, dict):
+        return {
+            "schema": _DECISION_PROJECTION_SCHEMA,
+            "source_type": type(convergence).__name__,
+        }
+    projected = {
+        key: deepcopy(convergence[key])
+        for key in _DECISION_CONVERGENCE_SCALARS
+        if key in convergence
+    }
+    for key in _DECISION_SEQUENCE_FIELDS:
+        values = convergence.get(key)
+        if isinstance(values, list):
+            projected.update(_bounded_list(values, key))
+    projected["projection"] = {
+        "schema": _DECISION_PROJECTION_SCHEMA,
+        "truncated": any(
+            isinstance(convergence.get(key), list)
+            and len(convergence[key]) > 2
+            for key in _DECISION_SEQUENCE_FIELDS
+        ),
+    }
+    return projected
+
+
+def bounded_decision_required(
+    decision: Any,
+    *,
+    max_bytes: int = DECISION_REQUIRED_MAX_BYTES,
+) -> Any:
+    """Project a convergence decision into the platform metadata budget.
+
+    Full review reports and ledgers remain in their attachment references. The
+    control projection keeps recovery routing, owner evidence, scalar audit
+    facts, and count/digest summaries for every truncated list. If the known
+    projection cannot fit the budget, fail closed instead of dropping facts.
+    """
+    if not isinstance(decision, dict) or _json_bytes(decision) <= max_bytes:
+        return deepcopy(decision)
+
+    projected = {}
+    for key, value in decision.items():
+        if key == "convergence":
+            projected[key] = _bounded_convergence_projection(value)
+        elif isinstance(value, list):
+            projected.update(_bounded_list(value, key))
+        else:
+            projected[key] = deepcopy(value)
+    projection = {
+        "schema": _DECISION_PROJECTION_SCHEMA,
+        "source_bytes": _json_bytes(decision),
+        "source_sha256": _sequence_digest([decision]),
+    }
+    projected["decision_projection"] = projection
+    if _json_bytes(projected) > max_bytes:
+        # Keep refs and routing fields, but progressively remove optional
+        # convergence samples; counts/digests are the lossless audit summary.
+        convergence = projected.get("convergence")
+        if isinstance(convergence, dict):
+            for key in _DECISION_SEQUENCE_FIELDS:
+                if key in convergence:
+                    convergence.pop(key, None)
+        for key, value in list(projected.items()):
+            if isinstance(value, list):
+                projected.pop(key, None)
+        if _json_bytes(projected) <= max_bytes:
+            return projected
+    if _json_bytes(projected) > max_bytes:
+        raise ValueError(
+            "bounded decision_required projection exceeds the metadata budget; "
+            "preserve the referenced report/ledger and fail closed")
+    return projected
 
 
 def build_review_convergence_decision(

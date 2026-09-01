@@ -70,6 +70,12 @@ projection before authoring a new delivery.
   re-read and sealed by the Controller before the limit is consumed, including
   its `delivery_identity`. The no-submit limit still blocks when the final
   authoritative read proves that no fresh delivery exists.
+- The complete convergence report and review ledger remain in their attachment
+  references. The `decision_required` control projection stores only bounded
+  routing fields, scalar audit facts, and count/digest summaries for long lists,
+  while retaining `review_report_ref`, `review_ledger_ref`, and `contract_ref`.
+  If that projection still cannot fit the platform metadata limit, OMAC fails
+  closed rather than dropping facts or advancing the workflow.
 - A `recovery_marker` keeps a node in the active control barrier even when its
   manifest projection says `done + merged + merged_at`. OMAC clears that marker
   only after an authoritative control read proves no handoff, review baseline,
