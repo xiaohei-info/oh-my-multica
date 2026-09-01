@@ -2733,6 +2733,42 @@ def _finalize_worker_handoff_or_defer(
         return None
 
 
+def _recover_late_worker_delivery(
+    store: WorkItemStore,
+    runtime: AgentRuntime,
+    manifest: Manifest,
+    key: str,
+    node,
+    result: _WorkerHandoffResult,
+) -> tuple[Any, list] | None:
+    """Recheck a delivery before consuming the final no-submit retry.
+
+    Worker ``omac work submit`` writes the delivery projection before the
+    controller seals ``delivery_identity`` and clears the handoff. If those
+    writes race with the terminal Run observation, a final authoritative
+    control read must win over the no-submit budget branch.
+    """
+    if result.intent is None:
+        return None
+    projection = store.observe_work_item_control(node.work_item_id)
+    current = projection.work_item
+    if current.worker_handoff is None:
+        if not _control_matches_delivery_identity(current):
+            return None
+        projection = _hydrate_worker_collect_evidence(store, projection)
+        return projection.work_item, validate_worker_evidence(
+            node, projection.work_item)
+    if current.worker_handoff.generation != result.intent.generation:
+        return None
+    observed = _observe_worker_handoff(
+        store, runtime, manifest, key, current.worker_handoff,
+        projection=projection,
+    )
+    if observed.state != "complete":
+        return None
+    return _finalize_worker_handoff_delivery(store, node, observed)
+
+
 def _observe_worker_handoff(
     store: WorkItemStore,
     runtime: AgentRuntime,
@@ -3608,7 +3644,16 @@ def collect_results(
                 reason = ui(
                     "Worker run ended without delivery through `omac work submit`.",
                     "worker run 已结束但未通过 omac work submit 交付")
-                if worker_limit == 0 or consumed >= worker_limit:
+                limit_exhausted = worker_limit == 0 or consumed >= worker_limit
+                late_delivery = (
+                    _recover_late_worker_delivery(
+                        store, runtime, manifest, key, node, handoff)
+                    if limit_exhausted else None
+                )
+                if late_delivery is not None:
+                    item, worker_gate_errors = late_delivery
+                    set_node(manifest, key, status="in_progress")
+                elif limit_exhausted:
                     store.clear_assignment(node.work_item_id)
                     cleared = store.update_work_item_metadata(
                         node.work_item_id, worker_handoff={})
@@ -3683,7 +3728,8 @@ def collect_results(
                         failures[key] = ui(
                             f"Failed to return delivery to worker {node.worker}: {exc}",
                             f"回退到 worker {node.worker} 继续交付失败: {exc}")
-                continue
+                if late_delivery is None:
+                    continue
             if item.status == WorkItemStatus.IN_PROGRESS:
                 continue
             if item.status == WorkItemStatus.DONE:

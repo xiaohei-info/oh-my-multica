@@ -6357,6 +6357,105 @@ class TestReviewerRejectBoundedFallback:
             entry for entry in eng.store.assign_log if entry[2] == "worker"
         ]) == worker_assignments_before
 
+    def test_successful_submit_at_worker_retry_limit_wins_over_no_submit_guard(
+        self, tmp_path, monkeypatch,
+    ):
+        """A valid submit at the worker limit must not be blocked as no-submit."""
+        from omac.engines import create_engine
+        from omac.engines.models import (
+            AgentRunObservation, PullRequestReadiness,
+        )
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        intent, _source = self._prepare_causal_handoff(eng, item)
+        intent = replace(
+            intent,
+            source_review_verdict="reject",
+            baseline_pr_head_sha="head-reviewed",
+        )
+        eng.store.update_work_item_metadata(item.id, worker_handoff=intent)
+        limit = 20
+        eng.store.update_work_item_metadata(item.id, worker_bounce=limit)
+        now = [datetime(2026, 7, 31, tzinfo=timezone.utc)]
+        submitted = False
+        verification_path = tmp_path / "verification.yaml"
+        pr_url = f"https://github.com/acme/repo/pull/{item.id}-limit"
+        monkeypatch.setattr(
+            eng.store,
+            "read_pull_request_readiness",
+            lambda _url: PullRequestReadiness(
+                is_draft=False, state="OPEN", head_sha="head-limit"),
+        )
+        verification_path.write_text(yaml.safe_dump({
+            "commands": [_business_command()],
+            "integration_gates": [{
+                "name": "limit-gate",
+                "commands": [_business_command()],
+            }],
+            "pr_base": "main",
+            "coverage": 90,
+        }))
+
+        monkeypatch.setattr(loop, "_utcnow", lambda: now[0])
+        monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
+        monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: [
+            AgentRunObservation(
+                id=intent.target_run_id,
+                kind="direct",
+                status="completed",
+                agent_id=intent.target_agent_id,
+                created_at="2026-07-31T00:00:00Z",
+                updated_at="2026-07-31T00:01:00Z",
+            )
+        ])
+        original_dispatch = loop._dispatch_worker_handoff
+
+        def dispatch_with_late_submit(*args, **kwargs):
+            nonlocal submitted
+            result = original_dispatch(*args, **kwargs)
+            if result.state == "finished-without-submit" and not submitted:
+                submitted_result = submit_work(
+                    eng.store,
+                    item.id,
+                    pr_url=pr_url,
+                    verification_file=str(verification_path),
+                )
+                assert submitted_result.advanced_to is WorkItemStatus.DONE
+                current = eng.store.get_work_item(item.id)
+                current.verification_ref.update({
+                    "uploader_type": "agent",
+                    "uploader_id": intent.target_agent_id,
+                    "task_id": intent.target_run_id,
+                    "created_at": "2026-07-31T00:00:01Z",
+                })
+                submitted = True
+            return result
+
+        monkeypatch.setattr(loop, "_dispatch_worker_handoff", dispatch_with_late_submit)
+
+        assert loop.collect_results(
+            eng.store, eng.runtime, manifest, path,
+            retry_limits={"worker": limit},
+        ) == {}
+        now[0] += timedelta(
+            seconds=loop._HANDOFF_TERMINAL_GRACE_SECONDS + 1)
+        failures = loop.collect_results(
+            eng.store, eng.runtime, manifest, path,
+            retry_limits={"worker": limit},
+        )
+
+        recovered = eng.store.get_work_item(item.id)
+        assert submitted is True
+        assert failures == {}
+        assert manifest.nodes["a"].status == "in_review"
+        assert recovered.status is WorkItemStatus.IN_REVIEW
+        assert recovered.worker_handoff is None
+        assert recovered.delivery_identity is not None
+        assert recovered.delivery_identity.pr_url.endswith("-limit")
+        assert recovered.bounces.worker == limit
+
     def test_terminal_worker_handoff_collects_submit_that_arrives_within_window(
         self, tmp_path, monkeypatch,
     ):

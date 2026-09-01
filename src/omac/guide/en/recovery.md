@@ -66,6 +66,10 @@ projection before authoring a new delivery.
 - Only an explicit `CLOSED_UNMERGED` observation or a known merge-command
   failure enters merge-failure/rework semantics. `MERGED + mergedAt` remains
   the sole fact that closes a node.
+- A Worker `omac work submit` that races the no-submit retry boundary is
+  re-read and sealed by the Controller before the limit is consumed, including
+  its `delivery_identity`. The no-submit limit still blocks when the final
+  authoritative read proves that no fresh delivery exists.
 - A `recovery_marker` keeps a node in the active control barrier even when its
   manifest projection says `done + merged + merged_at`. OMAC clears that marker
   only after an authoritative control read proves no handoff, review baseline,
