@@ -968,6 +968,34 @@ def test_multica_bounds_oversized_decision_and_reads_back_projection(monkeypatch
     assert readback.decision_required["decision_projection"]["source_bytes"] > 8192
 
 
+def test_multica_bounds_raw_decision_metadata_command_at_cli_boundary(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    raw = _oversized_decision_required()
+    commands = []
+
+    class Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    monkeypatch.setattr(
+        "omac.engines.multica.subprocess.run",
+        lambda command, **_kwargs: commands.append(command) or Result(),
+    )
+
+    store._run_multica([
+        "issue", "metadata", "set", "issue-authentication-methods",
+        "--key", DECISION_REQUIRED_KEY,
+        "--value", encode_metadata_value(raw),
+    ])
+
+    assert len(commands) == 1
+    value = commands[0][commands[0].index("--value") + 1]
+    projected = json.loads(value)
+    assert len(value.encode("utf-8")) <= 8192
+    assert projected["decision_projection"]["source_bytes"] > 8192
+
+
 def test_multica_externalizes_machine_feedback_before_bounded_summary(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
     errors = [f"error-{index}: {'x' * 80}" for index in range(160)]
