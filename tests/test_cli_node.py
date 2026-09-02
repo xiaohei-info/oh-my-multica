@@ -1565,13 +1565,13 @@ def test_retry_legacy_delivery_isolates_old_evidence_until_fresh_submit(
 
     current = engine.store.get_work_item(item.id)
     assert reviewed.state == "running"
-    assert manifest.nodes["b"].status == "in_review"
-    assert current.delivery_identity is not None
-    assert current.delivery_identity.pr_url == old_pr
-    assert current.delivery_identity.verification_attachment_id != old_attachment
-    assert current.worker_handoff is None
-    assert current.phase is TaskPhase.REVIEW
-    assert ci_calls == 1
+    assert manifest.nodes["b"].status == "in_progress"
+    assert current.delivery_identity is None
+    assert current.worker_handoff is not None
+    assert current.worker_handoff.baseline_pr_head_sha is None
+    assert current.worker_handoff.baseline_verification_attachment_id == old_attachment
+    assert current.phase is TaskPhase.AUTHORING
+    assert ci_calls == 0
 
 
 @pytest.mark.parametrize("replacement", [None, "charlie"])
@@ -1828,6 +1828,95 @@ def test_plain_retry_records_rejected_pr_head_for_worker_delta(
     assert retried.worker_handoff is not None
     assert retried.worker_handoff.gate == "operator-retry"
     assert retried.worker_handoff.source_review_verdict == "reject"
+    assert retried.worker_handoff.baseline_pr_head_sha == old_head
+
+
+def test_plain_retry_without_live_verdict_still_records_existing_head(
+        tmp_path, capsys, monkeypatch):
+    from omac.engines.models import WorkItemStatus
+
+    engine, path, item_id = _pass_with_nits_fixture(tmp_path, monkeypatch)
+    current = engine.store.get_work_item(item_id)
+    old_head = current.delivery_identity.pr_head_sha
+    engine.store.update_work_item_metadata(
+        item_id,
+        review_verdict="",
+        review_bounce=1,
+        decision_required={},
+        review_nits_acceptance={},
+    )
+    engine.store.update_status(item_id, WorkItemStatus.BLOCKED)
+    manifest = load_manifest(path)
+    manifest.nodes["b"].status = "blocked"
+    save_manifest(manifest, path)
+
+    assert main(["node", "retry", path, "b"]) == exit_codes.OK
+    capsys.readouterr()
+
+    retried = engine.store.get_work_item(item_id)
+    assert retried.worker_handoff is not None
+    assert retried.worker_handoff.gate == "operator-retry"
+    assert retried.worker_handoff.source_review_verdict is None
+    assert retried.worker_handoff.baseline_pr_head_sha == old_head
+
+
+def test_plain_retry_reject_with_zero_review_bounce_records_existing_head(
+        tmp_path, capsys, monkeypatch):
+    from omac.core.taskmeta import TaskPhase
+    from omac.engines.models import WorkItemStatus
+
+    engine, path, item_id = _pass_with_nits_fixture(tmp_path, monkeypatch)
+    current = engine.store.get_work_item(item_id)
+    old_head = current.delivery_identity.pr_head_sha
+    engine.store.update_work_item_metadata(
+        item_id,
+        phase=TaskPhase.REVIEW,
+        review_verdict="reject",
+        review_bounce=0,
+        decision_required={},
+        review_nits_acceptance={},
+    )
+    engine.store.update_status(item_id, WorkItemStatus.BLOCKED)
+    manifest = load_manifest(path)
+    manifest.nodes["b"].status = "blocked"
+    save_manifest(manifest, path)
+
+    assert main(["node", "retry", path, "b"]) == exit_codes.OK
+    capsys.readouterr()
+
+    retried = engine.store.get_work_item(item_id)
+    assert retried.worker_handoff is not None
+    assert retried.worker_handoff.source_review_verdict == "reject"
+    assert retried.worker_handoff.baseline_pr_head_sha == old_head
+
+
+def test_plain_retry_falls_back_to_artifact_head_for_incomplete_identity(
+        tmp_path, capsys, monkeypatch):
+    from dataclasses import replace
+    from omac.engines.models import WorkItemStatus
+
+    engine, path, item_id = _pass_with_nits_fixture(tmp_path, monkeypatch)
+    current = engine.store.get_work_item(item_id)
+    old_head = current.delivery_identity.pr_head_sha
+    engine.store.update_work_item_metadata(
+        item_id,
+        review_verdict="reject",
+        review_bounce=1,
+        delivery_identity=replace(
+            current.delivery_identity, pr_head_sha=None),
+        decision_required={},
+        review_nits_acceptance={},
+    )
+    engine.store.update_status(item_id, WorkItemStatus.BLOCKED)
+    manifest = load_manifest(path)
+    manifest.nodes["b"].status = "blocked"
+    save_manifest(manifest, path)
+
+    assert main(["node", "retry", path, "b"]) == exit_codes.OK
+    capsys.readouterr()
+
+    retried = engine.store.get_work_item(item_id)
+    assert retried.worker_handoff is not None
     assert retried.worker_handoff.baseline_pr_head_sha == old_head
 
 

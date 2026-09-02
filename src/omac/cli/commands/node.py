@@ -395,7 +395,10 @@ def _cmd_retry(args) -> int:
             if (
                 stage == "authoring"
                 and node.reviewer
-                and current.bounces.review > 0
+                and (
+                    current.bounces.review > 0
+                    or current.review_verdict == "reject"
+                )
                 and has_delivery
             ):
                 from ...pipeline.loop import _bounded_direct_run_baseline
@@ -413,17 +416,13 @@ def _cmd_retry(args) -> int:
                     if current.review_verdict in {"reject", "pass-with-nits"}
                     else None
                 )
-                baseline_pr_head_sha = None
-                if source_review_verdict is not None:
-                    identity = current.delivery_identity
-                    baseline_pr_head_sha = (
-                        getattr(identity, "pr_head_sha", None)
-                        if identity is not None else
-                        str(
-                            (current.artifacts.get("head_sha") or "")
-                            if isinstance(current.artifacts, dict) else ""
-                        )
-                    ) or None
+                identity_head = getattr(
+                    current.delivery_identity, "pr_head_sha", None)
+                artifact_head = (
+                    str(current.artifacts.get("head_sha") or "")
+                    if isinstance(current.artifacts, dict) else ""
+                )
+                baseline_pr_head_sha = identity_head or artifact_head or None
                 handoff = WorkerHandoffIntent(
                     schema=WORKER_HANDOFF_SCHEMA,
                     state="pending",

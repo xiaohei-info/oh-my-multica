@@ -200,6 +200,63 @@ def test_rework_handoff_rejects_unchanged_rejected_pr_head_before_reviewer():
 
     assert loop._worker_handoff_has_new_delivery(item, rejected) is False
 
+    missing_head = SimpleNamespace(
+        status=WorkItemStatus.DONE,
+        artifacts={"pr_url": "https://example.test/pr/1"},
+        verification_ref={"attachment_id": "attachment-new"},
+        worker_handoff=None,
+        requires_decision=False,
+    )
+    assert loop._worker_handoff_has_new_delivery(
+        missing_head,
+        WorkerHandoffIntent(
+            gate="operator-retry",
+            baseline_verification_attachment_id="attachment-old",
+            baseline_pr_head_sha="head-old",
+        ),
+    ) is False
+
+    operator_retry = WorkerHandoffIntent(
+        gate="operator-retry",
+        baseline_verification_attachment_id="attachment-old",
+        baseline_pr_head_sha="head-old",
+    )
+    assert loop._worker_handoff_has_new_delivery(item, operator_retry) is False
+
+    operator_unknown = WorkerHandoffIntent(
+        gate="operator-retry",
+        source_review_verdict=None,
+        baseline_verification_attachment_id="attachment-old",
+        baseline_pr_head_sha=None,
+    )
+    assert loop._worker_handoff_has_new_delivery(item, operator_unknown) is False
+
+    operator_nits = WorkerHandoffIntent(
+        gate="operator-retry",
+        source_review_verdict="pass-with-nits",
+        baseline_verification_attachment_id="attachment-old",
+        baseline_pr_head_sha=None,
+    )
+    assert loop._worker_handoff_has_new_delivery(item, operator_nits) is True
+
+    operator_nits_missing_head = WorkerHandoffIntent(
+        gate="operator-retry",
+        source_review_verdict="pass-with-nits",
+        baseline_verification_attachment_id="attachment-old",
+        baseline_pr_head_sha=None,
+    )
+    assert loop._worker_handoff_has_new_delivery(
+        missing_head, operator_nits_missing_head) is False
+
+    explicit_retry_with_old_delivery = WorkerHandoffIntent(
+        gate="explicit-dispatch",
+        source_review_verdict=None,
+        baseline_verification_attachment_id="attachment-old",
+        baseline_pr_head_sha=None,
+    )
+    assert loop._worker_handoff_has_new_delivery(
+        item, explicit_retry_with_old_delivery) is False
+
     nits = WorkerHandoffIntent(
         gate="review-nits",
         source_review_verdict="pass-with-nits",
