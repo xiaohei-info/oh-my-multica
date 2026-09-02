@@ -104,6 +104,7 @@ REVIEWER_RUN_BASELINE_KEY = "reviewer_run_baseline"
 REVIEWER_RUN_BASELINE_SCHEMA = "omac.reviewer-run-baseline/v1"
 WORKER_HANDOFF_KEY = "worker_handoff"
 WORKER_HANDOFF_SCHEMA = "omac.worker-handoff/v1"
+WORKER_REWORK_FEEDBACK_SCHEMA = "omac.worker-rework-feedback/v1"
 DELIVERY_IDENTITY_KEY = "delivery_identity"
 DELIVERY_IDENTITY_SCHEMA = "omac.delivery-identity/v1"
 DECISION_REQUIRED_KEY = "decision_required"
@@ -226,6 +227,12 @@ class WorkerHandoffIntent:
             feedback_valid = bool(
                 self.source_review_verdict == "pass-with-nits"
                 and review_nits_feedback_is_complete(
+                    self.source_review_feedback)
+            )
+        elif self.gate == "operator-retry":
+            feedback_valid = (
+                self.source_review_feedback is None
+                or worker_rework_feedback_is_valid(
                     self.source_review_feedback)
             )
         return bool(
@@ -500,6 +507,50 @@ def review_nits_feedback_is_complete(value: Any) -> bool:
     if any(not isinstance(nit, str) or not nit.strip() for nit in nits):
         return False
     return exact_review_report_ref(value.get("report_ref"))
+
+
+_WORKER_REWORK_FEEDBACK_FIELDS = frozenset({
+    "schema", "verdict", "report_ref", "ledger_ref", "blockers", "comment",
+})
+
+
+def worker_rework_feedback_is_valid(value: Any) -> bool:
+    """Validate bounded reject context carried by an operator retry handoff."""
+    if not isinstance(value, dict) or set(value) - _WORKER_REWORK_FEEDBACK_FIELDS:
+        return False
+    if value.get("schema") != WORKER_REWORK_FEEDBACK_SCHEMA:
+        return False
+    if value.get("verdict") not in {"reject", "pass-with-nits", None}:
+        return False
+    for key in ("report_ref", "ledger_ref"):
+        ref = value.get(key)
+        if ref is not None and not exact_review_report_ref(ref):
+            return False
+    blockers = value.get("blockers")
+    if blockers is not None:
+        if not isinstance(blockers, list) or len(blockers) > 8:
+            return False
+        allowed = {"root_cause_key", "summary", "required_fix"}
+        for blocker in blockers:
+            if not isinstance(blocker, dict) or set(blocker) - allowed:
+                return False
+            if any(
+                not isinstance(blocker[field], str) or not blocker[field].strip()
+                for field in blocker
+            ):
+                return False
+    comment = value.get("comment")
+    if comment is not None and (
+        not isinstance(comment, str) or len(comment.encode("utf-8")) > 1024
+    ):
+        return False
+    return bool(
+        value.get("verdict")
+        or value.get("report_ref")
+        or value.get("ledger_ref")
+        or value.get("blockers")
+        or value.get("comment")
+    )
 
 
 _REVIEW_NITS_ACCEPTANCE_FIELDS = frozenset({

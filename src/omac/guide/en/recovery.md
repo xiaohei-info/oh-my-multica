@@ -51,7 +51,9 @@ retry also records the previous delivery's PR head as the baseline even if the
 current verdict was cleared; the Worker must submit a new head and cannot bypass
 the Reviewer with unchanged code. If the old head or delivery-causality facts
 are missing, OMAC fails closed rather than guessing or routing a same-head
-submission with only a new attachment to Reviewer.
+submission with only a new attachment to Reviewer. When the old review report or
+ledger is available, retry carries its references and a bounded blocker summary
+in `previous_review`; the Worker must address those blockers in the new delivery.
 
 ### Stage-aware recovery and merge observation
 
