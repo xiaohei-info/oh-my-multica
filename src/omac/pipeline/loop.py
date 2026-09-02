@@ -648,16 +648,24 @@ def _has_unreviewed_worker_delivery(node, item) -> bool:
         and item.delivery_identity is not None
         and not _control_matches_delivery_identity(item)
     )
+    status_can_hold_delivery = item.status == WorkItemStatus.DONE or (
+        item.status == WorkItemStatus.BLOCKED
+        and phase == TaskPhase.AUTHORING
+        and item.worker_handoff is not None
+        and not item.requires_decision
+        and _worker_handoff_has_new_delivery(
+            item, item.worker_handoff)
+    )
     return bool(
         node.reviewer
-        and item.status == WorkItemStatus.DONE
+        and status_can_hold_delivery
         and (
             phase == TaskPhase.AUTHORING
             or review_subject_changed
             or delivery_identity_changed
         )
         and item.artifacts
-        and item.verification
+        and (item.verification or item.verification_ref)
         and not _current_delivery_passed_review(item)
     )
 
@@ -1004,8 +1012,15 @@ def _worker_handoff_has_new_delivery(item, intent: WorkerHandoffIntent) -> bool:
     )
     attachment_id = str(
         verification_ref.get("attachment_id") or "").strip()
+    status_can_hold_delivery = item.status == WorkItemStatus.DONE or (
+        item.status == WorkItemStatus.BLOCKED
+        and item.phase == TaskPhase.AUTHORING
+        and item.worker_handoff is not None
+        and not item.requires_decision
+        and item.worker_handoff.generation == intent.generation
+    )
     if not (
-        item.status == WorkItemStatus.DONE
+        status_can_hold_delivery
         and artifacts
         and attachment_id
         and attachment_id != intent.baseline_verification_attachment_id
@@ -1040,9 +1055,18 @@ def _build_work_item_hydration_plan(
         and projection.has_payload(WorkItemPayload.VERIFICATION)
     )
     authoring_delivery = bool(
-        item.status == WorkItemStatus.DONE
-        and item.phase == TaskPhase.AUTHORING
+        item.phase == TaskPhase.AUTHORING
         and has_delivery
+        and (
+            item.status == WorkItemStatus.DONE
+            or (
+                item.status == WorkItemStatus.BLOCKED
+                and item.worker_handoff is not None
+                and not item.requires_decision
+                and _worker_handoff_has_new_delivery(
+                    item, item.worker_handoff)
+            )
+        )
     )
     manifest_allows_lifecycle_progress = (
         node.status not in FAILED_STATUSES and node.status != "abandoned"
@@ -2709,6 +2733,17 @@ def _finalize_worker_handoff_delivery(
         node.work_item_id,
         replace(result, projection=projection),
     )
+    if projection.work_item.status == WorkItemStatus.BLOCKED:
+        # A prior no-submit race may have projected the WorkItem blocked after
+        # the Worker already submitted this causally bound delivery. Once the
+        # delivery is sealed and its evidence passes, restore the platform
+        # status to the submitted terminal state before routing Reviewer.
+        store.update_status(node.work_item_id, WorkItemStatus.DONE)
+        projection = replace(
+            projection,
+            work_item=replace(
+                projection.work_item, status=WorkItemStatus.DONE),
+        )
     return projection.work_item, gate_errors
 
 
