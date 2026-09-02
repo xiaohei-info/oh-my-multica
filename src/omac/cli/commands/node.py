@@ -391,13 +391,24 @@ def _cmd_retry(args) -> int:
                     args.manifest)
             )
             handoff = None
+            prior_handoff = current.worker_handoff
             has_delivery = bool(current.artifacts or current.verification)
+            prior_rework = bool(
+                prior_handoff is not None
+                and (
+                    prior_handoff.source_review_verdict in {
+                        "reject", "pass-with-nits",
+                    }
+                    or prior_handoff.baseline_pr_head_sha
+                )
+            )
             if (
                 stage == "authoring"
                 and node.reviewer
                 and (
                     current.bounces.review > 0
                     or current.review_verdict == "reject"
+                    or prior_rework
                 )
                 and has_delivery
             ):
@@ -414,7 +425,10 @@ def _cmd_retry(args) -> int:
                 source_review_verdict = (
                     current.review_verdict
                     if current.review_verdict in {"reject", "pass-with-nits"}
-                    else None
+                    else (
+                        prior_handoff.source_review_verdict
+                        if prior_rework else None
+                    )
                 )
                 identity_head = getattr(
                     current.delivery_identity, "pr_head_sha", None)
@@ -422,7 +436,15 @@ def _cmd_retry(args) -> int:
                     str(current.artifacts.get("head_sha") or "")
                     if isinstance(current.artifacts, dict) else ""
                 )
-                baseline_pr_head_sha = identity_head or artifact_head or None
+                baseline_pr_head_sha = (
+                    identity_head
+                    or artifact_head
+                    or (
+                        prior_handoff.baseline_pr_head_sha
+                        if prior_handoff is not None else None
+                    )
+                    or None
+                )
                 handoff = WorkerHandoffIntent(
                     schema=WORKER_HANDOFF_SCHEMA,
                     state="pending",
