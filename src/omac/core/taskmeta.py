@@ -545,8 +545,7 @@ def worker_rework_feedback_is_valid(value: Any) -> bool:
     ):
         return False
     return bool(
-        value.get("verdict")
-        or value.get("report_ref")
+        value.get("report_ref")
         or value.get("ledger_ref")
         or value.get("blockers")
         or value.get("comment")

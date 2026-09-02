@@ -54,6 +54,8 @@ are missing, OMAC fails closed rather than guessing or routing a same-head
 submission with only a new attachment to Reviewer. When the old review report or
 ledger is available, retry carries its references and a bounded blocker summary
 in `previous_review`; the Worker must address those blockers in the new delivery.
+If a reject is known but no report, ledger, or blocker context can be recovered,
+retry stops with exit 20 instead of consuming another Worker round.
 
 ### Stage-aware recovery and merge observation
 

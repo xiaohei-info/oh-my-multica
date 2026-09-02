@@ -1561,6 +1561,83 @@ class MulticaStore(WorkItemStore):
                 f"Could not get issue {item_id}", f"获取 issue {item_id} 失败"))
         return self._issue_to_control_projection(result, self.config.workspace_id)
 
+    @staticmethod
+    def _review_attachment_ref(comment: Dict, attachment: Dict, kind: str) -> Optional[Dict[str, Any]]:
+        filename = str(
+            attachment.get("filename") or attachment.get("name") or "")
+        if not filename.startswith(f"omac-{kind}-"):
+            return None
+        comment_id = str(comment.get("id") or "").strip()
+        attachment_id = str(attachment.get("id") or "").strip()
+        content = str(comment.get("content") or "")
+        digest_match = re.search(r"^\s*-\s*sha256:\s*([0-9a-fA-F]{64})\s*$", content, re.MULTILINE)
+        bytes_match = re.search(r"^\s*-\s*bytes:\s*(\d+)\s*$", content, re.MULTILINE)
+        digest = str(attachment.get("sha256") or (
+            digest_match.group(1) if digest_match else "")).strip()
+        if not comment_id or not attachment_id or not re.fullmatch(
+            r"[0-9a-fA-F]{64}", digest):
+            return None
+        ref: Dict[str, Any] = {
+            "comment_id": comment_id,
+            "attachment_id": attachment_id,
+            "filename": filename,
+            "sha256": digest,
+        }
+        size = attachment.get("bytes")
+        if size is None and bytes_match:
+            size = int(bytes_match.group(1))
+        if isinstance(size, int) and not isinstance(size, bool) and size >= 0:
+            ref["bytes"] = size
+        return ref
+
+    def recover_review_rework_context(self, item_id: str) -> Dict[str, Any]:
+        """Recover the latest immutable review attachments after metadata cleanup."""
+        comments = self._run_multica([
+            "issue", "comment", "list", item_id, "--output", "json",
+        ])
+        if not isinstance(comments, list):
+            raise PlatformError(
+                f"Could not read review comments for work item {item_id}")
+        candidates: Dict[str, tuple[str, int, Dict[str, Any]]] = {}
+        for index, comment in enumerate(comments):
+            if not isinstance(comment, dict):
+                continue
+            stamp = str(comment.get("created_at") or comment.get("updated_at") or "")
+            for attachment in comment.get("attachments") or []:
+                if not isinstance(attachment, dict):
+                    continue
+                for kind in ("review-report", "review-ledger"):
+                    ref = self._review_attachment_ref(comment, attachment, kind)
+                    if ref is not None:
+                        current = candidates.get(kind)
+                        if current is None or (stamp, index) >= current[:2]:
+                            candidates[kind] = (stamp, index, ref)
+        context: Dict[str, Any] = {}
+        report_entry = candidates.get("review-report")
+        if report_entry is not None:
+            report_ref = report_entry[2]
+            report_text = self._load_payload_comment(
+                item_id, "review-report", report_ref)
+            if report_text:
+                try:
+                    report = yaml.safe_load(report_text)
+                except yaml.YAMLError as exc:
+                    raise PlatformError(
+                        f"Latest review report attachment for work item {item_id} "
+                        "could not be parsed") from exc
+                if isinstance(report, dict):
+                    blockers = report.get("blockers")
+                    if isinstance(blockers, list) and blockers:
+                        context["blockers"] = [
+                            blocker for blocker in blockers
+                            if isinstance(blocker, dict)
+                        ][:8]
+            context["report_ref"] = report_ref
+        ledger_entry = candidates.get("review-ledger")
+        if ledger_entry is not None:
+            context["ledger_ref"] = ledger_entry[2]
+        return context
+
     def control_batch_observation_supported(self) -> bool:
         """Return whether the configured project enables a true list-batch read."""
         return bool(self.config.project_id)

@@ -533,6 +533,16 @@ def test_retry_bounds_operator_handoff_direct_run_baseline(
         review_subject_digest="rejected-subject",
         artifacts={"pr_url": "https://example.test/pr/1"},
         verification={"commands": []},
+        review_report={"blockers": [{
+            "summary": "restore the missing context",
+            "required_fix": "provide the next change",
+        }]},
+        review_report_source=yaml.safe_dump({
+            "blockers": [{
+                "summary": "restore the missing context",
+                "required_fix": "provide the next change",
+            }],
+        }),
     )
     engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
 
@@ -1428,6 +1438,16 @@ def test_retry_legacy_delivery_isolates_old_evidence_until_fresh_submit(
         artifacts={"pr_url": old_pr},
         verification=old_verification,
         verification_source=yaml.safe_dump(old_verification),
+        review_report={"blockers": [{
+            "summary": "restore the legacy rework context",
+            "required_fix": "make the new change explicit",
+        }]},
+        review_report_source=yaml.safe_dump({
+            "blockers": [{
+                "summary": "restore the legacy rework context",
+                "required_fix": "make the new change explicit",
+            }],
+        }),
         phase=TaskPhase.AUTHORING,
         review_bounce=1,
         review_ledger={
@@ -1904,6 +1924,69 @@ def test_plain_retry_preserves_prior_handoff_rejected_head_when_projection_is_in
     assert retried.worker_handoff is not None
     assert retried.worker_handoff.source_review_verdict == "reject"
     assert retried.worker_handoff.baseline_pr_head_sha == old_head
+
+
+def test_plain_retry_recovers_review_feedback_from_store_comments(
+        tmp_path, capsys, monkeypatch):
+    from omac.core.taskmeta import WORKER_REWORK_FEEDBACK_SCHEMA
+    from omac.engines.models import WorkItemStatus
+
+    engine, path, item_id = _pass_with_nits_fixture(tmp_path, monkeypatch)
+    current = engine.store.get_work_item(item_id)
+    report_ref = current.review_report_ref
+    engine.store.reset_review(item_id)
+    engine.store.update_work_item_metadata(item_id, review_bounce=1)
+    engine.store.update_status(item_id, WorkItemStatus.BLOCKED)
+    recovery = {
+        "verdict": "reject",
+        "report_ref": report_ref,
+        "blockers": [{
+            "root_cause_key": "auth-boundary",
+            "summary": "add the missing auth method",
+            "required_fix": "implement auth method",
+        }],
+    }
+    monkeypatch.setattr(
+        engine.store,
+        "recover_review_rework_context",
+        lambda _item_id: recovery,
+    )
+    manifest = load_manifest(path)
+    manifest.nodes["b"].status = "blocked"
+    save_manifest(manifest, path)
+
+    assert main(["node", "retry", path, "b"]) == exit_codes.OK
+    capsys.readouterr()
+
+    retried = engine.store.get_work_item(item_id)
+    feedback = retried.worker_handoff.source_review_feedback
+    assert feedback["schema"] == WORKER_REWORK_FEEDBACK_SCHEMA
+    assert feedback["verdict"] == "reject"
+    assert feedback["report_ref"] == report_ref
+    assert feedback["blockers"][0]["required_fix"] == "implement auth method"
+
+
+def test_plain_retry_reject_without_review_context_fails_closed(
+        tmp_path, capsys, monkeypatch):
+    from omac.engines.models import WorkItemStatus
+
+    engine, path, item_id = _pass_with_nits_fixture(tmp_path, monkeypatch)
+    engine.store.reset_review(item_id)
+    engine.store.update_work_item_metadata(
+        item_id,
+        review_verdict="reject",
+        review_bounce=0,
+    )
+    engine.store.update_status(item_id, WorkItemStatus.BLOCKED)
+    manifest = load_manifest(path)
+    manifest.nodes["b"].status = "blocked"
+    save_manifest(manifest, path)
+
+    assert main(["node", "retry", path, "b"]) == exit_codes.NEEDS_DECISION
+    payload = capsys.readouterr()
+    assert "prior review rework context is unavailable" in payload.err
+    assert engine.store.get_work_item(item_id).status is WorkItemStatus.BLOCKED
+    assert load_manifest(path).nodes["b"].status == "blocked"
 
 
 def test_plain_retry_reject_with_zero_review_bounce_records_existing_head(

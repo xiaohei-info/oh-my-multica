@@ -67,6 +67,62 @@ def test_multica_rejects_hard_errors_as_transient_transport(message):
     assert not store.is_transient_transport_error(PlatformError(message))
 
 
+def test_multica_recovers_latest_review_context_from_comment_attachments(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    comments = [
+        {
+            "id": "comment-old",
+            "created_at": "2026-09-01T10:00:00Z",
+            "content": "- sha256: " + "a" * 64 + "\n- bytes: 100\n",
+            "attachments": [{
+                "id": "attachment-old",
+                "filename": "omac-review-report-old.yaml",
+            }],
+        },
+        {
+            "id": "comment-latest",
+            "created_at": "2026-09-01T11:00:00Z",
+            "content": "- sha256: " + "b" * 64 + "\n- bytes: 200\n",
+            "attachments": [
+                {"id": "attachment-latest", "filename": "omac-review-report-latest.yaml"},
+                {"id": "ledger-latest", "filename": "omac-review-ledger-latest.yaml", "sha256": "c" * 64, "bytes": 300},
+            ],
+        },
+    ]
+    monkeypatch.setattr(
+        store,
+        "_run_multica",
+        lambda _args: comments,
+    )
+    monkeypatch.setattr(
+        store,
+        "_load_payload_comment",
+        lambda _item_id, key, _ref: (
+            "blockers:\n"
+            "  - root_cause_key: auth-boundary\n"
+            "    summary: add auth method\n"
+            "    required_fix: wire the method\n"
+            if key == "review-report" else ""
+        ),
+    )
+
+    context = store.recover_review_rework_context("issue-1")
+
+    assert context["report_ref"] == {
+        "comment_id": "comment-latest",
+        "attachment_id": "attachment-latest",
+        "filename": "omac-review-report-latest.yaml",
+        "sha256": "b" * 64,
+        "bytes": 200,
+    }
+    assert context["ledger_ref"]["attachment_id"] == "ledger-latest"
+    assert context["blockers"] == [{
+        "root_cause_key": "auth-boundary",
+        "summary": "add auth method",
+        "required_fix": "wire the method",
+    }]
+
+
 def test_multica_finalizes_authoring_identity_with_existing_store_writes(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
     writes = []
