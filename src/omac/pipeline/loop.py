@@ -1029,10 +1029,21 @@ def _worker_handoff_has_new_delivery(item, intent: WorkerHandoffIntent) -> bool:
 
     baseline_head = intent.baseline_pr_head_sha
     current_head = str(artifacts.get("head_sha") or "").strip()
+    if not current_head:
+        return False
     if not baseline_head:
-        # Legacy intents did not retain the rejected head. Preserve explicit
-        # evidence-only/nits compatibility, but fail closed for an old reject
-        # handoff rather than send an unproven delivery to Reviewer.
+        # Legacy explicit dispatches had no rejected head to compare. A plain
+        # operator retry is different: absent a captured baseline it cannot
+        # prove that the new submit changed the rejected delivery. Keep the
+        # pass-with-nits compatibility path, but fail closed for unknown or
+        # rejected operator-retry provenance.
+        if intent.gate == "operator-retry":
+            return intent.source_review_verdict == "pass-with-nits"
+        if (
+            intent.gate == "explicit-dispatch"
+            and intent.baseline_verification_attachment_id
+        ):
+            return intent.source_review_verdict == "pass-with-nits"
         return intent.source_review_verdict != "reject"
     if current_head != baseline_head:
         return True

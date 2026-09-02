@@ -46,7 +46,12 @@ report, writes only a bounded `omac.review-nits-acceptance/v1` marker, clears th
 caller decision, and restores `review/in_review`; the next `dag run` still observes
 remote merge facts and does not mark the node done directly. Repeating the command
 is safe. A normal `node retry` clears the marker and invalidates the old review
-projection before authoring a new delivery.
+projection before authoring a new delivery. When review rework history exists,
+retry also records the previous delivery's PR head as the baseline even if the
+current verdict was cleared; the Worker must submit a new head and cannot bypass
+the Reviewer with unchanged code. If the old head or delivery-causality facts
+are missing, OMAC fails closed rather than guessing or routing a same-head
+submission with only a new attachment to Reviewer.
 
 ### Stage-aware recovery and merge observation
 
