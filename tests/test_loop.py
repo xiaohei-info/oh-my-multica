@@ -6456,6 +6456,99 @@ class TestReviewerRejectBoundedFallback:
         assert recovered.delivery_identity.pr_url.endswith("-limit")
         assert recovered.bounces.worker == limit
 
+    def test_blocked_worker_handoff_with_submitted_delivery_is_collected(
+        self, tmp_path, monkeypatch,
+    ):
+        """A blocked projection must not hide a terminal submitted handoff."""
+        from omac.engines import create_engine
+        from omac.engines.models import (
+            AgentRunObservation, PullRequestReadiness,
+        )
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        intent, _source = self._prepare_causal_handoff(eng, item)
+        intent = replace(
+            intent,
+            source_review_verdict="reject",
+            baseline_pr_head_sha="head-reviewed",
+            target_run_id=None,
+        )
+        target_run_id = "run-worker"
+        eng.store.update_work_item_metadata(item.id, worker_handoff=intent)
+        pr_url = f"https://github.com/acme/repo/pull/{item.id}-blocked"
+        verification_path = tmp_path / "verification.yaml"
+        verification_path.write_text(yaml.safe_dump({
+            "commands": [_business_command()],
+            "integration_gates": [{
+                "name": "blocked-gate",
+                "commands": [_business_command()],
+            }],
+            "pr_base": "main",
+            "coverage": 90,
+        }))
+        monkeypatch.setattr(
+            eng.store,
+            "read_pull_request_readiness",
+            lambda _url: PullRequestReadiness(
+                is_draft=False, state="OPEN", head_sha="head-blocked"),
+        )
+        submitted = submit_work(
+            eng.store,
+            item.id,
+            pr_url=pr_url,
+            verification_file=str(verification_path),
+        )
+        assert submitted.advanced_to is WorkItemStatus.DONE
+        current = eng.store.get_work_item(item.id)
+        current.verification_ref.update({
+            "uploader_type": "agent",
+            "uploader_id": intent.target_agent_id,
+            "task_id": target_run_id,
+            "created_at": "2026-07-31T00:00:01Z",
+        })
+        eng.store.update_status(item.id, WorkItemStatus.BLOCKED)
+        manifest.nodes["a"].status = "blocked"
+        manifest.nodes["a"].recovery_marker = True
+        save_manifest(manifest, path)
+        monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: [
+            AgentRunObservation(
+                id=target_run_id,
+                kind="direct",
+                status="completed",
+                agent_id=intent.target_agent_id,
+                created_at="2026-07-31T00:00:00Z",
+                updated_at="2026-07-31T00:01:00Z",
+            )
+        ])
+        reviewer_dispatches = []
+
+        def record_reviewer_dispatch(store, _runtime, _manifest, key):
+            reviewer_dispatches.append(key)
+            store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+
+        monkeypatch.setattr(
+            loop,
+            "_dispatch_reviewer_for_current_subject",
+            record_reviewer_dispatch,
+        )
+
+        result = tick(
+            eng.store, eng.runtime, manifest, path,
+            retry_limits={"worker": 20},
+        )
+
+        recovered = eng.store.get_work_item(item.id)
+        assert result.state == "running"
+        assert result.failed == []
+        assert manifest.nodes["a"].status == "in_review"
+        assert reviewer_dispatches == ["a"]
+        assert recovered.status is WorkItemStatus.IN_REVIEW
+        assert recovered.worker_handoff is None
+        assert recovered.delivery_identity is not None
+        assert recovered.delivery_identity.pr_url == pr_url
+
     def test_terminal_worker_handoff_collects_submit_that_arrives_within_window(
         self, tmp_path, monkeypatch,
     ):

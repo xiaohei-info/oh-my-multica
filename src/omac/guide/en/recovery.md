@@ -70,6 +70,11 @@ projection before authoring a new delivery.
   re-read and sealed by the Controller before the limit is consumed, including
   its `delivery_identity`. The no-submit limit still blocks when the final
   authoritative read proves that no fresh delivery exists.
+- If a race leaves the WorkItem and manifest at `blocked/authoring` while the
+  same causal `worker_handoff` remains and authoritative evidence proves a fresh
+  delivery, the next `dag tick/run` restores the collect path, seals the delivery,
+  and routes it to Reviewer. An existing `decision_required` or unproven delivery
+  remains blocked; do not edit metadata manually.
 - The complete convergence report and review ledger remain in their attachment
   references. The `decision_required` control projection stores only bounded
   routing fields, scalar audit facts, and count/digest summaries for long lists,
