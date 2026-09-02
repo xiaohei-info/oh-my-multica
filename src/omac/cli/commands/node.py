@@ -25,7 +25,7 @@ from ...core.stage_recovery import (
 )
 from ...engines import EngineConfig, create_engine
 from ...engines.models import PullRequestState, WorkItemStatus
-from ...errors import OmacError, ValidationError, WorkItemNotFoundError
+from ...errors import NeedsDecision, OmacError, ValidationError, WorkItemNotFoundError
 from ...i18n import ui
 
 NAME = "node"
@@ -347,7 +347,7 @@ def _recover_delayed_reviewer_submission(
     return True
 
 
-def _operator_retry_feedback(current, prior_handoff):
+def _operator_retry_feedback(current, prior_handoff, recovered_context=None):
     """Carry bounded actionable context into a new authoring generation."""
     def clip(value: str, limit: int = 256) -> str:
         encoded = value.encode("utf-8")
@@ -357,6 +357,11 @@ def _operator_retry_feedback(current, prior_handoff):
     verdict = current.review_verdict
     if verdict not in {"reject", "pass-with-nits"} and prior_handoff is not None:
         verdict = prior_handoff.source_review_verdict
+    if verdict not in {"reject", "pass-with-nits"}:
+        verdict = (
+            recovered_context.get("verdict")
+            if isinstance(recovered_context, dict) else None
+        )
     if verdict in {"reject", "pass-with-nits"}:
         feedback["verdict"] = verdict
 
@@ -367,14 +372,19 @@ def _operator_retry_feedback(current, prior_handoff):
         and isinstance(prior_handoff.source_review_feedback, dict)
         else {}
     )
-    if not isinstance(report_ref, dict) or not report_ref:
+    recovered = recovered_context if isinstance(recovered_context, dict) else {}
+    if not exact_review_report_ref(report_ref):
         report_ref = prior_feedback.get("report_ref")
+    if not exact_review_report_ref(report_ref):
+        report_ref = recovered.get("report_ref")
     if exact_review_report_ref(report_ref):
         feedback["report_ref"] = dict(report_ref)
 
     ledger_ref = getattr(current, "review_ledger_ref", None)
-    if not isinstance(ledger_ref, dict) or not ledger_ref:
+    if not exact_review_report_ref(ledger_ref):
         ledger_ref = prior_feedback.get("ledger_ref")
+    if not exact_review_report_ref(ledger_ref):
+        ledger_ref = recovered.get("ledger_ref")
     if exact_review_report_ref(ledger_ref):
         feedback["ledger_ref"] = dict(ledger_ref)
 
@@ -393,6 +403,8 @@ def _operator_retry_feedback(current, prior_handoff):
                 blockers.append(compact)
     if not blockers:
         prior_blockers = prior_feedback.get("blockers")
+        if not isinstance(prior_blockers, list):
+            prior_blockers = recovered.get("blockers")
         if isinstance(prior_blockers, list):
             blockers = []
             for blocker in prior_blockers[:4]:
@@ -411,7 +423,7 @@ def _operator_retry_feedback(current, prior_handoff):
 
     comment = current.review_comment
     if not comment:
-        comment = prior_feedback.get("comment")
+        comment = prior_feedback.get("comment") or recovered.get("comment")
     if isinstance(comment, str) and comment.strip():
         feedback["comment"] = clip(comment)
     return feedback if len(feedback) > 1 else None
@@ -473,6 +485,32 @@ def _cmd_retry(args) -> int:
                     or prior_handoff.baseline_pr_head_sha
                 )
             )
+            recovered_context = {}
+            has_retry_history = bool(
+                current.bounces.review > 0
+                or current.review_verdict == "reject"
+                or prior_rework
+            )
+            prior_feedback = (
+                prior_handoff.source_review_feedback
+                if prior_handoff is not None
+                and isinstance(prior_handoff.source_review_feedback, dict)
+                else None
+            )
+            if (
+                stage == "authoring"
+                and node.reviewer
+                and has_delivery
+                and has_retry_history
+                and not current.review_report
+                and not current.review_report_ref
+                and not prior_feedback
+            ):
+                recovered_context = (
+                    engine.store.recover_review_rework_context(
+                        node.work_item_id)
+                    or {}
+                )
             if (
                 stage == "authoring"
                 and node.reviewer
@@ -516,13 +554,44 @@ def _cmd_retry(args) -> int:
                     )
                     or None
                 )
+                source_review_feedback = _operator_retry_feedback(
+                    current, prior_handoff, recovered_context)
+                if (
+                    has_retry_history
+                    and (
+                        source_review_feedback is None
+                        or not any(
+                            source_review_feedback.get(field)
+                            for field in (
+                                "report_ref", "ledger_ref", "blockers", "comment",
+                            )
+                        )
+                    )
+                ):
+                    raise NeedsDecision(
+                        ui(
+                            "The prior review rework context is unavailable; restore the latest "
+                            "review report/ledger attachment before retrying this node.",
+                            "无法获得之前的 review 返工上下文；请先恢复最新 review report/ledger "
+                            "附件后再重试该节点。",
+                        ),
+                        report={
+                            "item_id": node.work_item_id,
+                            "node_id": args.node_key,
+                            "reason_code": "review-rework-context-unavailable",
+                            "next_action": f"omac work show {node.work_item_id} --output json",
+                            "recovery": (
+                                "Restore the authoritative reject report/ledger context; "
+                                "do not submit the unchanged PR head or run Reviewer."
+                            ),
+                        },
+                    )
                 handoff = WorkerHandoffIntent(
                     schema=WORKER_HANDOFF_SCHEMA,
                     state="pending",
                     target_worker=node.worker,
                     gate="operator-retry",
-                    source_review_feedback=_operator_retry_feedback(
-                        current, prior_handoff),
+                    source_review_feedback=source_review_feedback,
                     source_review_subject_digest=source_subject,
                     source_review_round=max(1, current.bounces.review),
                     source_review_verdict=source_review_verdict,

@@ -152,6 +152,15 @@ class WorkItemStore(ABC):
         """
         return WorkItemControlProjection(self.get_work_item(item_id))
 
+    def recover_review_rework_context(self, item_id: str) -> Dict[str, Any]:
+        """Recover bounded prior-review context from authoritative Store facts.
+
+        Adapters may inspect immutable report/ledger attachments when the live
+        metadata projection no longer carries their references. The default is
+        empty so existing engines retain their compatibility behavior.
+        """
+        return {}
+
     @contextmanager
     def reviewer_dispatch_lock(self, item_id: str) -> Iterator[None]:
         """Serialize OMAC Reviewer dispatch writers for one work item.
