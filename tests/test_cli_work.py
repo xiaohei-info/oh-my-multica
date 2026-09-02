@@ -26,7 +26,9 @@ from omac.core.review_convergence import (
     advance_review_ledger,
     build_review_obligations,
 )
-from omac.core.taskmeta import TaskKind, TaskPhase, WorkerHandoffIntent
+from omac.core.taskmeta import (
+    TaskKind, TaskPhase, WorkerHandoffIntent, WORKER_REWORK_FEEDBACK_SCHEMA,
+)
 from omac.engines import create_engine
 from omac.engines.models import (
     EngineConfig, PullRequestReadiness, PullRequestReadinessFailure,
@@ -138,6 +140,64 @@ def test_work_show_operator_retry_requires_fresh_submission():
     assert "禁止复用或仅引用" in chinese["protocol"]
     assert "旧 verification 仅作为 baseline，不能作为本轮证据" in chinese["protocol"]
     assert "即使代码无需修改" in chinese["protocol"]
+
+
+def test_work_show_operator_retry_exposes_rework_feedback_context():
+    store = _store()
+    item = _make_item(store, TaskKind.DEVELOP, TaskPhase.AUTHORING)
+    report_ref = {
+        "attachment_id": "review-report",
+        "sha256": "a" * 64,
+        "filename": "review-report.yaml",
+    }
+    ledger_ref = {
+        "attachment_id": "review-ledger",
+        "sha256": "b" * 64,
+        "filename": "review-ledger.yaml",
+    }
+    store.update_work_item_metadata(
+        item.id,
+        worker_handoff=WorkerHandoffIntent(
+            schema="omac.worker-handoff/v1",
+            state="pending",
+            target_worker="alice",
+            gate="operator-retry",
+            source_review_subject_digest="subject-1",
+            source_review_round=1,
+            source_review_verdict="reject",
+            source_review_feedback={
+                "schema": WORKER_REWORK_FEEDBACK_SCHEMA,
+                "verdict": "reject",
+                "report_ref": report_ref,
+                "ledger_ref": ledger_ref,
+                "blockers": [{
+                    "root_cause_key": "auth-boundary",
+                    "summary": "Authentication path is incomplete",
+                    "required_fix": "Add the missing auth method",
+                }],
+            },
+            target_review_bounce=1,
+            generation="handoff-1",
+            target_agent_id="agent-alice",
+            baseline_direct_run_ids=("old-run",),
+        ),
+    )
+
+    output = build_show_output(
+        store.get_work_item(item.id), "worker:alice", language="en")
+
+    assert output["context"]["previous_review"] == {
+        "verdict": "reject",
+        "report_ref": report_ref,
+        "ledger_ref": ledger_ref,
+        "blockers": [{
+            "root_cause_key": "auth-boundary",
+            "summary": "Authentication path is incomplete",
+            "required_fix": "Add the missing auth method",
+        }],
+    }
+    assert "context.previous_review" in output["protocol"]
+    assert "address every preserved blocker" in output["protocol"]
 
 
 def test_work_show_normal_authoring_has_no_operator_retry_instruction():

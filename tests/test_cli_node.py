@@ -1829,6 +1829,8 @@ def test_plain_retry_records_rejected_pr_head_for_worker_delta(
     assert retried.worker_handoff.gate == "operator-retry"
     assert retried.worker_handoff.source_review_verdict == "reject"
     assert retried.worker_handoff.baseline_pr_head_sha == old_head
+    assert retried.worker_handoff.source_review_feedback["verdict"] == "reject"
+    assert retried.worker_handoff.source_review_feedback["report_ref"]
 
 
 def test_plain_retry_without_live_verdict_still_records_existing_head(

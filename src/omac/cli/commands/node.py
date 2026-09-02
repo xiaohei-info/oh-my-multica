@@ -15,7 +15,8 @@ from ...core.manifest import (
 from ...core.graph import downstream_of
 from ...core.taskmeta import (
     DECISION_REQUIRED_SCHEMA, REVIEW_NITS_ACCEPTANCE_SCHEMA,
-    WORKER_HANDOFF_SCHEMA, TaskKind, TaskPhase,
+    WORKER_HANDOFF_SCHEMA, WORKER_REWORK_FEEDBACK_SCHEMA,
+    TaskKind, TaskPhase,
     WorkerHandoffIntent, exact_review_report_ref,
     review_nits_acceptance_is_valid,
 )
@@ -346,6 +347,76 @@ def _recover_delayed_reviewer_submission(
     return True
 
 
+def _operator_retry_feedback(current, prior_handoff):
+    """Carry bounded actionable context into a new authoring generation."""
+    def clip(value: str, limit: int = 256) -> str:
+        encoded = value.encode("utf-8")
+        return encoded[:limit].decode("utf-8", errors="ignore")
+
+    feedback = {"schema": WORKER_REWORK_FEEDBACK_SCHEMA}
+    verdict = current.review_verdict
+    if verdict not in {"reject", "pass-with-nits"} and prior_handoff is not None:
+        verdict = prior_handoff.source_review_verdict
+    if verdict in {"reject", "pass-with-nits"}:
+        feedback["verdict"] = verdict
+
+    report_ref = current.review_report_ref
+    prior_feedback = (
+        prior_handoff.source_review_feedback
+        if prior_handoff is not None
+        and isinstance(prior_handoff.source_review_feedback, dict)
+        else {}
+    )
+    if not isinstance(report_ref, dict) or not report_ref:
+        report_ref = prior_feedback.get("report_ref")
+    if exact_review_report_ref(report_ref):
+        feedback["report_ref"] = dict(report_ref)
+
+    ledger_ref = getattr(current, "review_ledger_ref", None)
+    if not isinstance(ledger_ref, dict) or not ledger_ref:
+        ledger_ref = prior_feedback.get("ledger_ref")
+    if exact_review_report_ref(ledger_ref):
+        feedback["ledger_ref"] = dict(ledger_ref)
+
+    report = current.review_report
+    blockers = []
+    if isinstance(report, dict):
+        for raw in report.get("blockers", []) or []:
+            if not isinstance(raw, dict):
+                continue
+            compact = {}
+            for field in ("root_cause_key", "summary", "required_fix"):
+                value = raw.get(field)
+                if isinstance(value, str) and value.strip():
+                    compact[field] = clip(value)
+            if compact:
+                blockers.append(compact)
+    if not blockers:
+        prior_blockers = prior_feedback.get("blockers")
+        if isinstance(prior_blockers, list):
+            blockers = []
+            for blocker in prior_blockers[:4]:
+                if not isinstance(blocker, dict):
+                    continue
+                compact = {
+                    field: clip(value)
+                    for field, value in blocker.items()
+                    if field in {"root_cause_key", "summary", "required_fix"}
+                    and isinstance(value, str) and value.strip()
+                }
+                if compact:
+                    blockers.append(compact)
+    if blockers:
+        feedback["blockers"] = blockers[:4]
+
+    comment = current.review_comment
+    if not comment:
+        comment = prior_feedback.get("comment")
+    if isinstance(comment, str) and comment.strip():
+        feedback["comment"] = clip(comment)
+    return feedback if len(feedback) > 1 else None
+
+
 def _cmd_retry(args) -> int:
     manifest = _load_or_raise(args.manifest)
     node = _require_node(manifest, args.node_key)
@@ -450,6 +521,8 @@ def _cmd_retry(args) -> int:
                     state="pending",
                     target_worker=node.worker,
                     gate="operator-retry",
+                    source_review_feedback=_operator_retry_feedback(
+                        current, prior_handoff),
                     source_review_subject_digest=source_subject,
                     source_review_round=max(1, current.bounces.review),
                     source_review_verdict=source_review_verdict,

@@ -100,12 +100,13 @@ _MESSAGES = {
             "still works when the key is absent."
         ),
         "work.protocol.operator_retry": (
-            "This execution follows an explicit operator retry. Do not reuse or "
-            "merely cite prior verification: it is baseline-only and cannot be "
-            "used as evidence for this execution. Even when no code change is "
-            "needed, rerun the current contract verification against the current "
-            "PR HEAD and finish with the exact `omac work submit` command shown "
-            "below."
+            "This execution follows an explicit operator retry. Read "
+            "`context.previous_review` and address every preserved blocker. Do not "
+            "reuse or merely cite prior verification: it is baseline-only and "
+            "cannot be used as evidence for this execution. Even when no code "
+            "change is needed, rerun the current contract verification against "
+            "the current PR HEAD, make the required rework explicit, and finish "
+            "with the exact `omac work submit` command shown below."
         ),
         "work.authority.current": "Current facts from work show",
         "work.authority.contract": "contract / previous_review",
@@ -236,7 +237,7 @@ _MESSAGES = {
             "重新提交。submit 成功就是本次执行的最后动作，立即停止，不再执行任何平台写入。"
         ),
         "work.protocol.pr_link": "建议让 GitHub PR 的分支名、标题或正文包含 `{issue_key}`，这样 Multica 可以自动关联该 issue；缺失时仍可交付。",
-        "work.protocol.operator_retry": "本次执行来自显式 operator retry。旧 verification 仅作为 baseline，不能作为本轮证据，禁止复用或仅引用；即使代码无需修改，也必须针对当前 PR HEAD 重新执行本轮 contract 验证，并以如下精确的 `omac work submit` 命令完成提交。",
+        "work.protocol.operator_retry": "本次执行来自显式 operator retry。先读取 `context.previous_review` 并处理其中保留的每个 blocker；旧 verification 仅作为 baseline，不能作为本轮证据，禁止复用或仅引用；即使代码无需修改，也必须明确完成要求的返工、针对当前 PR HEAD 重新执行本轮 contract 验证，并以如下精确的 `omac work submit` 命令完成提交。",
         "work.authority.current": "work show 当前实例事实",
         "work.authority.contract": "contract / previous_review",
         "work.authority.role": "role guide",

@@ -311,7 +311,8 @@ def _previous_review_context(item: Any) -> Optional[Dict[str, Any]]:
     if not report and not report_ref and not comment:
         handoff = getattr(item, "worker_handoff", None)
         if (
-            getattr(handoff, "gate", None) != "review-nits"
+            getattr(handoff, "gate", None)
+            not in {"review-nits", "operator-retry"}
             or not handoff.is_causally_bound()
         ):
             return None
@@ -325,9 +326,18 @@ def _previous_review_context(item: Any) -> Optional[Dict[str, Any]]:
         source_report_ref = feedback.get("report_ref")
         if isinstance(source_report_ref, dict) and source_report_ref:
             previous["report_ref"] = source_report_ref
+        ledger_ref = feedback.get("ledger_ref")
+        if isinstance(ledger_ref, dict) and ledger_ref:
+            previous["ledger_ref"] = ledger_ref
         nits = feedback.get("nits")
         if isinstance(nits, list) and nits:
             previous["nits"] = list(nits)
+        blockers = feedback.get("blockers")
+        if isinstance(blockers, list) and blockers:
+            previous["blockers"] = list(blockers)
+        source_comment = feedback.get("comment")
+        if isinstance(source_comment, str) and source_comment:
+            previous["comment"] = source_comment
         return previous or None
 
     previous: Dict[str, Any] = {}
