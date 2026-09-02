@@ -1860,6 +1860,50 @@ def test_plain_retry_without_live_verdict_still_records_existing_head(
     assert retried.worker_handoff.baseline_pr_head_sha == old_head
 
 
+def test_plain_retry_preserves_prior_handoff_rejected_head_when_projection_is_incomplete(
+        tmp_path, capsys, monkeypatch):
+    from dataclasses import replace
+    from omac.core.taskmeta import WorkerHandoffIntent
+    from omac.engines.models import WorkItemStatus
+
+    engine, path, item_id = _pass_with_nits_fixture(tmp_path, monkeypatch)
+    current = engine.store.get_work_item(item_id)
+    old_head = current.delivery_identity.pr_head_sha
+    prior = WorkerHandoffIntent(
+        schema="omac.worker-handoff/v1",
+        state="pending",
+        target_worker="bob",
+        gate="operator-retry",
+        source_review_verdict="reject",
+        generation="prior-retry",
+        target_agent_id=engine.store.resolve_agent_id("bob"),
+        baseline_verification_attachment_id=current.verification_ref["attachment_id"],
+        baseline_pr_head_sha=old_head,
+    )
+    engine.store.update_work_item_metadata(
+        item_id,
+        artifacts={"pr_url": current.artifacts["pr_url"]},
+        delivery_identity=replace(current.delivery_identity, pr_head_sha=None),
+        review_verdict="",
+        review_bounce=0,
+        worker_handoff=prior,
+        decision_required={},
+        review_nits_acceptance={},
+    )
+    engine.store.update_status(item_id, WorkItemStatus.BLOCKED)
+    manifest = load_manifest(path)
+    manifest.nodes["b"].status = "blocked"
+    save_manifest(manifest, path)
+
+    assert main(["node", "retry", path, "b"]) == exit_codes.OK
+    capsys.readouterr()
+
+    retried = engine.store.get_work_item(item_id)
+    assert retried.worker_handoff is not None
+    assert retried.worker_handoff.source_review_verdict == "reject"
+    assert retried.worker_handoff.baseline_pr_head_sha == old_head
+
+
 def test_plain_retry_reject_with_zero_review_bounce_records_existing_head(
         tmp_path, capsys, monkeypatch):
     from omac.core.taskmeta import TaskPhase
