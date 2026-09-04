@@ -2484,6 +2484,21 @@ def _pristine_attempt_fixture():
     return eng, item, spec, body, refs
 
 
+def test_multica_stable_issue_envelope_fields_are_not_unknown_activity():
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = _multica_aiteam_812_pristine_item(
+        eng,
+        issue_overrides={
+            "last_activity_at": "2026-09-04T01:00:00Z",
+            "revision": 4,
+            "status_category": "backlog",
+            "status_name": "todo",
+        },
+    )
+
+    assert item.unknown_persisted_fields == {}
+
+
 def test_multica_standard_issue_envelope_pristine_shell_can_finalize_and_dispatch(
     monkeypatch,
 ):

@@ -116,6 +116,7 @@ _KNOWN_ISSUE_FIELDS = {
 _READ_ONLY_ISSUE_ENVELOPE_FIELDS = frozenset({
     "assignee_type", "creator_type", "due_date", "labels", "number",
     "parent_issue_id", "position", "priority", "stage", "start_date",
+    "last_activity_at", "revision", "status_category", "status_name",
 })
 _EMPTY_DEFAULT_ISSUE_ENVELOPE_FIELDS = {
     "properties": {},
