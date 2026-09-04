@@ -3089,6 +3089,53 @@ def test_resume_reviewer_without_verdict_rejects_unknown_run_state():
     assert eng.store.get_work_item(item.id).decision_required == decision
 
 
+def test_resume_authoring_terminal_run_blocks_without_duplicate_dispatch():
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = create_authoring_task(eng, AuthoringTaskSpec(
+        kind=TaskKind.AMENDMENT,
+        title="resume terminal authoring",
+        dag_key="amend-resume-terminal-authoring",
+        assignee="alice",
+        contract=_payload()["contract"],
+    ))
+    eng.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
+    eng.runtime.list_runs = lambda _item_id: [AgentRunObservation(
+        id="terminal-authoring-run", kind="direct", status="completed")]
+    assignments = list(eng.store.assign_log)
+
+    with pytest.raises(NeedsDecision, match="ended without submitting") as exc:
+        tasks_module._guard_resume_authoring_terminal_run(
+            eng, eng.store.get_work_item(item.id), TaskKind.AMENDMENT)
+
+    blocked = eng.store.get_work_item(item.id)
+    assert exc.value.report["reason_code"] == "completed-without-submit"
+    assert blocked.status is WorkItemStatus.BLOCKED
+    assert blocked.decision_required["run_id"] == "terminal-authoring-run"
+    assert eng.store.assign_log == assignments
+
+
+def test_resume_authoring_run_observation_failure_stays_unchanged():
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = create_authoring_task(eng, AuthoringTaskSpec(
+        kind=TaskKind.AMENDMENT,
+        title="resume unreadable authoring",
+        dag_key="amend-resume-unreadable-authoring",
+        assignee="alice",
+        contract=_payload()["contract"],
+    ))
+    eng.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
+    eng.runtime.list_runs = lambda _item_id: (
+        (_ for _ in ()).throw(PlatformError("run list unavailable")))
+
+    with pytest.raises(NeedsDecision, match="no new Run was started"):
+        tasks_module._guard_resume_authoring_terminal_run(
+            eng, eng.store.get_work_item(item.id), TaskKind.AMENDMENT)
+
+    unchanged = eng.store.get_work_item(item.id)
+    assert unchanged.status is WorkItemStatus.IN_PROGRESS
+    assert unchanged.decision_required is None
+
+
 def test_blocked_production_short_circuits_on_resume():
     eng = _engine(MOCK_AUTO_COMPLETE="false")
     item = create_authoring_task(eng, AuthoringTaskSpec(

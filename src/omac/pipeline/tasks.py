@@ -823,6 +823,82 @@ def _resume_reviewer_completed_without_verdict(
     return verified
 
 
+def _guard_resume_authoring_terminal_run(
+    engine, item: WorkItem, kind: TaskKind,
+) -> WorkItem:
+    """Stop a resumed authoring issue whose prior Run ended without submit."""
+    if not (
+        item.phase == TaskPhase.AUTHORING
+        and item.status == WorkItemStatus.IN_PROGRESS
+        and not item.deliverable
+        and not item.deliverable_ref
+        and not item.agent_run_finished_without_submit
+    ):
+        return item
+    try:
+        runs = engine.runtime.list_runs(item.id)
+    except PlatformError as exc:
+        raise NeedsDecision(
+            "Could not safely observe the resumed authoring Run; no new Run was started.",
+            report={
+                "item_id": item.id,
+                "kind": kind.value,
+                "reason_code": "resume-authoring-run-observation-failed",
+                "detail": str(exc),
+                "next_action": f"omac work show {item.id} --output json",
+            },
+        ) from exc
+    direct_runs = [run for run in runs if run.kind == "direct"]
+    unsafe_runs = [run for run in direct_runs if run.active or not run.terminal]
+    if unsafe_runs:
+        raise NeedsDecision(
+            "The resumed authoring Run is active or its terminal state is unknown; "
+            "no duplicate Run was started.",
+            report={
+                "item_id": item.id,
+                "kind": kind.value,
+                "reason_code": "resume-authoring-run-not-terminal",
+                "run_ids": [run.id for run in unsafe_runs],
+                "next_action": f"omac work show {item.id} --output json",
+            },
+        )
+    if not direct_runs:
+        return item
+    latest = max(
+        direct_runs,
+        key=lambda run: run.updated_at or run.created_at or "",
+    )
+    if not latest.terminal:
+        raise NeedsDecision(
+            "The resumed authoring Run has no explicit terminal result; "
+            "no duplicate Run was started.",
+            report={
+                "item_id": item.id,
+                "kind": kind.value,
+                "reason_code": "resume-authoring-run-not-terminal",
+                "run_ids": [latest.id],
+                "next_action": f"omac work show {item.id} --output json",
+            },
+        )
+    decision = {
+        "schema": DECISION_REQUIRED_SCHEMA,
+        "reason_code": "completed-without-submit",
+        "kind": kind.value,
+        "phase": TaskPhase.AUTHORING.value,
+        "resume_issue_id": item.id,
+        "run_id": latest.id,
+        "next_action": f"omac node retry <manifest> <node>",
+    }
+    engine.store.update_work_item_metadata(
+        item.id, decision_required=decision, phase=TaskPhase.AUTHORING)
+    engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
+    raise NeedsDecision(
+        "The previous authoring Run ended without submitting a deliverable; "
+        "no duplicate Run was started.",
+        report={**decision, "outcome": "unknown_partial"},
+    )
+
+
 def run_task(
     engine,
     kind: TaskKind,
@@ -878,6 +954,7 @@ def run_task(
         # 绝不能在读取失败时授权 refresh 或其他副作用。
         item = store.get_work_item(resume_item_id)
         item = _resume_reviewer_completed_without_verdict(engine, item, kind)
+        item = _guard_resume_authoring_terminal_run(engine, item, kind)
         if (
             item.status == WorkItemStatus.TODO
             and item.phase == TaskPhase.AUTHORING
