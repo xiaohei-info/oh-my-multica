@@ -90,6 +90,10 @@ retry stops with exit 20 instead of consuming another Worker round.
   while retaining `review_report_ref`, `review_ledger_ref`, and `contract_ref`.
   If that projection still cannot fit the platform metadata limit, OMAC fails
   closed rather than dropping facts or advancing the workflow.
+- If an amendment Reviewer Run explicitly terminates without a verdict,
+  `dag amend propose --resume-issue-id` clears only the matching
+  `reviewer-completed-without-verdict` decision after proving no Run is active,
+  then redispatches Reviewer on the same issue. Other decisions are never cleared.
 - A `recovery_marker` keeps a node in the active control barrier even when its
   manifest projection says `done + merged + merged_at`. OMAC clears that marker
   only after an authoritative control read proves no handoff, review baseline,
