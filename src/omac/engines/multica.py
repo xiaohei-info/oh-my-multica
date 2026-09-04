@@ -1628,6 +1628,7 @@ class MulticaStore(WorkItemStore):
                 if isinstance(report, dict):
                     blockers = report.get("blockers")
                     if isinstance(blockers, list) and blockers:
+                        context["verdict"] = "reject"
                         context["blockers"] = [
                             blocker for blocker in blockers
                             if isinstance(blocker, dict)
