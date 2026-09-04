@@ -2238,6 +2238,63 @@ def test_new_attempt_finalizes_every_partial_shell_before_dispatch(
     assert len(eng.store.list_work_items("ws")) == 1
 
 
+def test_new_attempt_orphan_shell_clears_creation_assignee_before_finalize():
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    spec = AuthoringTaskSpec(
+        kind=TaskKind.AMENDMENT,
+        title="orphan amendment",
+        dag_key="amend-project-attempt-orphan-shell",
+        assignee="alice",
+        contract=_payload()["contract"],
+        amendment_attempt={"request_digest": "orphan-shell"},
+    )
+    item = eng.store.create_work_item(
+        "ws", spec.title, spec.title, spec.dag_key, "alice",
+        kind=TaskKind.AMENDMENT)
+    item.platform_assignee_id = "platform-auto-assignee"
+
+    finalized = tasks_module.finalize_authoring_shell(
+        eng, item, spec, allow_created_platform_assignee=True)
+
+    assert finalized.platform_assignee_id is None
+    assert finalized.amendment_attempt == spec.amendment_attempt
+    assert finalized.phase is TaskPhase.AUTHORING
+    assert eng.store.assign_log == []
+
+
+def test_new_attempt_reuses_orphan_shell_with_creation_assignee(monkeypatch):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    spec = AuthoringTaskSpec(
+        kind=TaskKind.AMENDMENT,
+        title="orphan amendment",
+        dag_key="amend-project-attempt-orphan-reuse",
+        assignee="alice",
+        contract=_payload()["contract"],
+        amendment_attempt={"request_digest": "orphan-reuse"},
+    )
+    item = eng.store.create_work_item(
+        "ws", spec.title, spec.title, spec.dag_key, "alice",
+        kind=TaskKind.AMENDMENT)
+    item.platform_assignee_id = "platform-auto-assignee"
+    monkeypatch.setattr(
+        eng.store,
+        "find_work_item_by_dag_key",
+        lambda *_args: item,
+    )
+    assert tasks_module._is_pristine_created_amendment_shell(
+        eng, item, spec) is True
+    finalized = tasks_module.finalize_authoring_shell(
+        eng,
+        item,
+        spec,
+        allow_created_platform_assignee=True,
+    )
+
+    assert finalized.id == item.id
+    assert finalized.platform_assignee_id is None
+    assert finalized.amendment_attempt == spec.amendment_attempt
+
+
 def test_new_attempt_finalize_is_idempotent_without_duplicate_contract_publish(
     monkeypatch,
 ):
@@ -2605,8 +2662,8 @@ def test_new_attempt_rechecks_pristine_shell_after_finalize_before_dispatch(
     eng = _engine(MOCK_AUTO_COMPLETE="false")
     original_finalize = tasks_module.finalize_authoring_shell
 
-    def finalize_then_receive_submit_fact(engine, item, spec):
-        finalized = original_finalize(engine, item, spec)
+    def finalize_then_receive_submit_fact(engine, item, spec, **kwargs):
+        finalized = original_finalize(engine, item, spec, **kwargs)
         finalized.artifacts = {"pr_url": "https://example.test/pr/after-finalize"}
         return finalized
 

@@ -459,7 +459,8 @@ def create_authoring_task(engine, spec: AuthoringTaskSpec) -> WorkItem:
         kind=spec.kind,
     )
     if spec.amendment_attempt is not None:
-        return finalize_authoring_shell(engine, item, spec)
+        return finalize_authoring_shell(
+            engine, item, spec, allow_created_platform_assignee=True)
     return refresh_authoring_task(engine, item.id, spec, item_snapshot=item)
 
 
@@ -652,8 +653,22 @@ def _reject_started_attempt(item: WorkItem, dag_key: str, fields: List[str]) -> 
     )
 
 
-def finalize_authoring_shell(
+def _is_pristine_created_amendment_shell(
     engine, item: WorkItem, spec: AuthoringTaskSpec,
+) -> bool:
+    """Recognize an orphaned TODO shell with only platform auto-assignment."""
+    if item.amendment_attempt is not None:
+        return False
+    body, refs = _authoring_materialization(engine, item.id, spec, item)
+    identity_errors, activity_fields = _pristine_amendment_shell_errors(
+        item, spec, body=body, refs=refs,
+        workspace_id=engine.store.config.workspace_id, finalized=False)
+    return not identity_errors and set(activity_fields) <= {"platform_assignee_id"}
+
+
+def finalize_authoring_shell(
+    engine, item: WorkItem, spec: AuthoringTaskSpec, *,
+    allow_created_platform_assignee: bool = False,
 ) -> WorkItem:
     """幂等完成 deterministic amendment shell；完整前绝不派发。"""
     if spec.kind != TaskKind.AMENDMENT or spec.amendment_attempt is None:
@@ -664,6 +679,11 @@ def finalize_authoring_shell(
     identity_errors, activity_fields = _pristine_amendment_shell_errors(
         item, spec, body=body, refs=refs,
         workspace_id=engine.store.config.workspace_id, finalized=False)
+    if allow_created_platform_assignee:
+        activity_fields = [
+            field for field in activity_fields
+            if field != "platform_assignee_id"
+        ]
     if activity_fields:
         _reject_started_attempt(item, spec.dag_key, activity_fields)
     if identity_errors:
@@ -690,11 +710,19 @@ def finalize_authoring_shell(
         phase=TaskPhase.AUTHORING,
     )
     finalized = store.get_work_item(item.id)
+    if allow_created_platform_assignee and finalized.platform_assignee_id:
+        store.clear_assignment(item.id)
+        finalized = store.get_work_item(item.id)
     if _observe_attempt_active(engine, item.id, spec.dag_key):
         _reject_active_attempt(finalized, spec.dag_key)
     identity_errors, activity_fields = _pristine_amendment_shell_errors(
         finalized, spec, body=body, refs=refs,
         workspace_id=store.config.workspace_id, finalized=True)
+    if allow_created_platform_assignee:
+        activity_fields = [
+            field for field in activity_fields
+            if field != "platform_assignee_id"
+        ]
     if activity_fields:
         _reject_started_attempt(finalized, spec.dag_key, activity_fields)
     if identity_errors:
@@ -780,6 +808,7 @@ def run_task(
         amendment_attempt=amendment_attempt,
     )
     reused_created_item = False
+    created_after_ambiguous_failure = False
 
     if resume_item_id is not None:
         # Store 当前事实是 resume 的唯一授权来源。调用方 snapshot 仅为兼容保留，
@@ -844,8 +873,18 @@ def run_task(
                 if item is None:
                     raise
                 reused_created_item = True
+                created_after_ambiguous_failure = True
         if reused_created_item:
-            item = finalize_authoring_shell(engine, item, spec)
+            allow_platform_assignee = (
+                created_after_ambiguous_failure
+                or _is_pristine_created_amendment_shell(engine, item, spec)
+            )
+            item = finalize_authoring_shell(
+                engine,
+                item,
+                spec,
+                allow_created_platform_assignee=allow_platform_assignee,
+            )
         item_id = item.id
 
     explicit_resume = resume_item_id is not None or reused_created_item
