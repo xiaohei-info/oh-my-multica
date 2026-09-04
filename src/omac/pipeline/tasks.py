@@ -760,6 +760,69 @@ def refresh_authoring_task(
     )
 
 
+def _resume_reviewer_completed_without_verdict(
+    engine, item: WorkItem, expected_kind: TaskKind | None = None,
+) -> WorkItem:
+    """Clear only the bounded reviewer no-submit decision on safe resume."""
+    decision = item.decision_required
+    if not (
+        item.phase == TaskPhase.REVIEW
+        and item.status == WorkItemStatus.BLOCKED
+        and isinstance(decision, dict)
+        and decision.get("schema") == DECISION_REQUIRED_SCHEMA
+        and decision.get("reason_code") == "reviewer-completed-without-verdict"
+        and decision.get("resume_issue_id") == item.id
+        and decision.get("phase") == TaskPhase.REVIEW.value
+        and decision.get("kind") == getattr(item.kind, "value", item.kind)
+        and (
+            expected_kind is None
+            or decision.get("kind") == getattr(expected_kind, "value", expected_kind)
+        )
+    ):
+        return item
+    runs = engine.runtime.list_runs(item.id)
+    unsafe_runs = [run for run in runs if run.active or not run.terminal]
+    if unsafe_runs:
+        raise NeedsDecision(
+            "The Reviewer Run is still active or its terminal state is unknown; "
+            "wait before resuming.",
+            report={
+                "item_id": item.id,
+                "reason_code": "reviewer-resume-run-not-terminal",
+                "run_ids": [run.id for run in unsafe_runs],
+                "next_action": f"omac work show {item.id} --output json",
+            },
+        )
+    cleared = engine.store.update_work_item_metadata(
+        item.id, decision_required={})
+    if cleared.requires_decision:
+        raise NeedsDecision(
+            "The reviewer no-submit decision could not be cleared safely.",
+            report={
+                "item_id": item.id,
+                "reason_code": "reviewer-resume-decision-not-cleared",
+                "next_action": f"omac work show {item.id} --output json",
+            },
+        )
+    if cleared.status != WorkItemStatus.IN_REVIEW:
+        engine.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+    verified = engine.store.get_work_item(item.id)
+    if (
+        verified.decision_required not in (None, {})
+        or verified.phase != TaskPhase.REVIEW
+        or verified.status != WorkItemStatus.IN_REVIEW
+    ):
+        raise NeedsDecision(
+            "The reviewer no-submit decision did not clear to a reviewable state.",
+            report={
+                "item_id": item.id,
+                "reason_code": "reviewer-resume-readback-mismatch",
+                "next_action": f"omac work show {item.id} --output json",
+            },
+        )
+    return verified
+
+
 def run_task(
     engine,
     kind: TaskKind,
@@ -814,6 +877,7 @@ def run_task(
         # Store 当前事实是 resume 的唯一授权来源。调用方 snapshot 仅为兼容保留，
         # 绝不能在读取失败时授权 refresh 或其他副作用。
         item = store.get_work_item(resume_item_id)
+        item = _resume_reviewer_completed_without_verdict(engine, item, kind)
         if (
             item.status == WorkItemStatus.TODO
             and item.phase == TaskPhase.AUTHORING

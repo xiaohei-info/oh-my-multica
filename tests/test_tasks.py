@@ -2986,6 +2986,94 @@ def test_reviewer_completed_without_verdict_is_bounded(monkeypatch):
     assert current.status == WorkItemStatus.BLOCKED
 
 
+def test_resume_reviewer_without_verdict_clears_only_known_decision():
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = create_authoring_task(eng, AuthoringTaskSpec(
+        kind=TaskKind.AMENDMENT,
+        title="resume amendment",
+        dag_key="amend-resume-reviewer-no-verdict",
+        assignee="alice",
+        contract=_payload()["contract"],
+    ))
+    decision = {
+        "schema": "omac.decision-required/v1",
+        "reason_code": "reviewer-completed-without-verdict",
+        "kind": "amendment",
+        "phase": "review",
+        "resume_issue_id": item.id,
+    }
+    eng.store.update_work_item_metadata(
+        item.id, phase=TaskPhase.REVIEW, deliverable="amendment", decision_required=decision)
+    eng.store.update_status(item.id, WorkItemStatus.BLOCKED)
+    eng.runtime.list_runs = lambda _item_id: [AgentRunObservation(
+        id="reviewer-run", kind="direct", status="completed")]
+
+    resumed = tasks_module._resume_reviewer_completed_without_verdict(
+        eng, eng.store.get_work_item(item.id))
+
+    assert resumed.status is WorkItemStatus.IN_REVIEW
+    assert resumed.phase is TaskPhase.REVIEW
+    assert resumed.decision_required in (None, {})
+
+
+def test_resume_reviewer_without_verdict_preserves_active_run_decision():
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = create_authoring_task(eng, AuthoringTaskSpec(
+        kind=TaskKind.AMENDMENT,
+        title="resume active review",
+        dag_key="amend-resume-reviewer-active",
+        assignee="alice",
+        contract=_payload()["contract"],
+    ))
+    decision = {
+        "schema": "omac.decision-required/v1",
+        "reason_code": "reviewer-completed-without-verdict",
+        "kind": "amendment",
+        "phase": "review",
+        "resume_issue_id": item.id,
+    }
+    eng.store.update_work_item_metadata(
+        item.id, phase=TaskPhase.REVIEW, decision_required=decision)
+    eng.store.update_status(item.id, WorkItemStatus.BLOCKED)
+    eng.runtime.list_runs = lambda _item_id: [AgentRunObservation(
+        id="reviewer-run", kind="direct", status="running")]
+
+    with pytest.raises(NeedsDecision, match="still active"):
+        tasks_module._resume_reviewer_completed_without_verdict(
+            eng, eng.store.get_work_item(item.id))
+
+    assert eng.store.get_work_item(item.id).decision_required == decision
+
+
+def test_resume_reviewer_without_verdict_rejects_unknown_run_state():
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = create_authoring_task(eng, AuthoringTaskSpec(
+        kind=TaskKind.AMENDMENT,
+        title="resume unknown review",
+        dag_key="amend-resume-reviewer-unknown",
+        assignee="alice",
+        contract=_payload()["contract"],
+    ))
+    decision = {
+        "schema": "omac.decision-required/v1",
+        "reason_code": "reviewer-completed-without-verdict",
+        "kind": "amendment",
+        "phase": "review",
+        "resume_issue_id": item.id,
+    }
+    eng.store.update_work_item_metadata(
+        item.id, phase=TaskPhase.REVIEW, decision_required=decision)
+    eng.store.update_status(item.id, WorkItemStatus.BLOCKED)
+    eng.runtime.list_runs = lambda _item_id: [AgentRunObservation(
+        id="reviewer-run", kind="direct", status="unknown")]
+
+    with pytest.raises(NeedsDecision, match="active or its terminal state is unknown"):
+        tasks_module._resume_reviewer_completed_without_verdict(
+            eng, eng.store.get_work_item(item.id))
+
+    assert eng.store.get_work_item(item.id).decision_required == decision
+
+
 def test_blocked_production_short_circuits_on_resume():
     eng = _engine(MOCK_AUTO_COMPLETE="false")
     item = create_authoring_task(eng, AuthoringTaskSpec(

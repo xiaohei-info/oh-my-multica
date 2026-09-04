@@ -51,6 +51,7 @@ direct Run。它保留 Reviewer verdict/report，只写入有界的
 - Worker 在 no-submit 回退上限边界成功执行 `omac work submit` 时，Controller 会在耗尽上限前重新读取并封存这次交付（包括 `delivery_identity`）；只有最终权威读取仍证明无新交付时，才保留 no-submit 失败并阻断。真实 no-submit 上限保护不会被绕过。
 - 若上一轮竞态已把 WorkItem 和 manifest 留在 `blocked/authoring`，但同一 causal `worker_handoff` 仍在且权威证据显示新交付，下一轮 `dag tick/run` 会先恢复到 collect 路径、封存 delivery，再转入 Reviewer；存在 `decision_required` 或无法证明新交付时仍保持 blocked，不能手改 metadata。
 - review convergence 的完整 report/ledger 始终通过 attachment reference 保存；`decision_required` 控制面只写入有界路由字段、审计标量以及各清单的 count/digest 摘要，保留 `review_report_ref`、`review_ledger_ref` 和 `contract_ref`。若有界投影仍无法落入平台 metadata 上限，则 fail-closed，不删事实或强行推进。
+- amendment Reviewer Run 若明确终止但没有提交 verdict，`dag amend propose --resume-issue-id` 只在确认没有 active Run 后清除对应的 `reviewer-completed-without-verdict` decision，并重新派发同一 issue 的 Reviewer；其它 decision 不会被清除。
 - 节点即使 manifest 投影为 `done + merged + merged_at`，只要残留 `recovery_marker` 就仍属于 active control barrier。OMAC 只有在权威 control read 证明不存在 handoff、review baseline 或 decision 后才清除 marker；读取失败或不可用时保持 fail-closed，不能把真实 recovery 吞成已完成。
 
 ## plan / decompose review 耗尽后的继续决策
