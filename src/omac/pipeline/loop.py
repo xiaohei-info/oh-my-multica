@@ -1234,8 +1234,23 @@ def _observe_reconcile_inputs(
         key, item_id = job
         try:
             projection = store.observe_work_item_control(item_id)
-        except WorkItemNotFoundError:
-            projection = _MISSING_WORK_ITEM
+        except WorkItemNotFoundError as first_missing:
+            # One typed not-found can be a transient resolver/index result. Do
+            # not clear the manifest identity until a second explicit 404-like
+            # observation names the same item; any other error stays fail-closed.
+            try:
+                projection = store.observe_work_item_control(item_id)
+            except WorkItemNotFoundError as confirmed_missing:
+                identity = str(item_id).strip().lower()
+                if (
+                    not identity
+                    or identity not in str(first_missing).lower()
+                    or identity not in str(confirmed_missing).lower()
+                ):
+                    raise PlatformError(
+                        f"Work item {item_id} missing identity was not confirmed; "
+                        "preserving the manifest work_item_id") from confirmed_missing
+                projection = _MISSING_WORK_ITEM
         return key, projection
 
     def observe_controls_fail_closed(

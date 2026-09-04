@@ -782,7 +782,7 @@ def test_full_scan_static_missing_fallback_is_authoritative_fact(tmp_path):
 
     def fallback(item_id):
         if item_id == static_id:
-            raise WorkItemNotFoundError("missing static item")
+            raise WorkItemNotFoundError(f"Work item {item_id} not found")
         return original_observe(item_id)
 
     store.observe_work_item_controls = fail_batch
@@ -795,6 +795,92 @@ def test_full_scan_static_missing_fallback_is_authoritative_fact(tmp_path):
     assert result.incomplete_static_keys == frozenset()
     assert result.observations["blocked-0"] is None
     assert manifest.nodes["blocked-0"].work_item_id is None
+
+
+def test_single_not_found_recheck_preserves_work_item_identity_when_item_returns(
+        tmp_path):
+    issues, attachments, nodes = _large_dag_fixture()
+    remote = _RemoteFixture(issues, attachments)
+    store = _store(remote)
+    manifest, path = _manifest_path(tmp_path, nodes)
+    item_id = nodes["blocked-0"].work_item_id
+    original_observe = store.observe_work_item_control
+    attempts = 0
+
+    store.observe_work_item_controls = lambda _item_ids: {}
+
+    def observe(item_id_arg):
+        nonlocal attempts
+        if item_id_arg == item_id:
+            attempts += 1
+            if attempts == 1:
+                raise WorkItemNotFoundError(
+                    f"Work item {item_id_arg} not found")
+        return original_observe(item_id_arg)
+
+    store.observe_work_item_control = observe
+
+    result = loop.reconcile_with_observations(
+        store, manifest, path, full_scan=True)
+
+    assert result.audit_complete is True
+    assert attempts == 2
+    assert result.observations["blocked-0"] is not None
+    assert manifest.nodes["blocked-0"].work_item_id == item_id
+
+
+def test_not_found_followed_by_unknown_error_preserves_manifest_identity(
+        tmp_path):
+    issues, attachments, nodes = _large_dag_fixture()
+    remote = _RemoteFixture(issues, attachments)
+    store = _store(remote)
+    manifest, path = _manifest_path(tmp_path, nodes)
+    item_id = nodes["blocked-0"].work_item_id
+    before_node = load_manifest(path).nodes["blocked-0"]
+    store.observe_work_item_controls = lambda _item_ids: {}
+    original_observe = store.observe_work_item_control
+    attempts = 0
+
+    def observe(item_id_arg):
+        nonlocal attempts
+        if item_id_arg == item_id:
+            attempts += 1
+            if attempts == 1:
+                raise WorkItemNotFoundError(
+                    f"Work item {item_id_arg} not found")
+            raise PlatformError("network_unreachable")
+        return original_observe(item_id_arg)
+
+    store.observe_work_item_control = observe
+
+    result = loop.reconcile_with_observations(
+        store, manifest, path, full_scan=True)
+
+    assert result.audit_complete is False
+    assert result.incomplete_static_keys == frozenset({"blocked-0"})
+    assert attempts == 2
+    assert manifest.nodes["blocked-0"].work_item_id == before_node.work_item_id == item_id
+    assert manifest.nodes["blocked-0"].status == before_node.status
+
+
+def test_not_found_without_identity_confirmation_fails_closed(
+        tmp_path):
+    issues, attachments, nodes = _large_dag_fixture()
+    remote = _RemoteFixture(issues, attachments)
+    store = _store(remote)
+    manifest, path = _manifest_path(tmp_path, nodes)
+    item_id = nodes["blocked-0"].work_item_id
+    before = Path(path).read_bytes()
+    store.observe_work_item_controls = lambda _item_ids: {}
+    store.observe_work_item_control = lambda _item_id: (
+        (_ for _ in ()).throw(WorkItemNotFoundError("item not found")))
+
+    with pytest.raises(PlatformError, match="identity was not confirmed"):
+        loop.reconcile_with_observations(
+            store, manifest, path, full_scan=True)
+
+    assert Path(path).read_bytes() == before
+    assert manifest.nodes["blocked-0"].work_item_id == item_id
 
 
 def test_status_report_does_not_claim_converged_for_incomplete_full_scan(
