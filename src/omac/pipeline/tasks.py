@@ -1393,6 +1393,7 @@ def run_task(
     if (
         delivered.status == WorkItemStatus.DONE
         and delivered.review_verdict in {"pass", "pass-with-nits"}
+        and not (confirm and delivered.phase == TaskPhase.REVIEW)
     ):
         log.info(logsetup.EVT_NODE_DONE, kind=kind.value, id=item_id)
         return {"item_id": item_id, "delivery": delivery,
@@ -1479,6 +1480,19 @@ def run_task(
         log.info(logsetup.EVT_NODE_DONE, kind=kind.value, id=item_id)
         return {"item_id": item_id, "delivery": confirmed_delivery,
                 "rounds": rounds, "verdict": verdict, "kind": kind.value}
+
+    if (
+        delivered.phase == TaskPhase.REVIEW
+        and delivered.review_verdict == "pass"
+        and delivered.status in {WorkItemStatus.IN_REVIEW, WorkItemStatus.DONE}
+    ):
+        evidence_errors = _review_evidence_errors(contract, delivered)
+        if not evidence_errors:
+            return _finish_after_review(
+                "pass",
+                max(1, delivered.bounces.review + 1),
+                delivery,
+            )
 
     if delivered.phase == TaskPhase.CONFIRMATION:
         confirmation_round = max(1, delivered.bounces.review + 1)

@@ -3089,6 +3089,51 @@ def test_resume_reviewer_without_verdict_rejects_unknown_run_state():
     assert eng.store.get_work_item(item.id).decision_required == decision
 
 
+def test_resume_amendment_reviewer_pass_enters_confirmation_without_redispatch(
+        monkeypatch):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = create_authoring_task(eng, AuthoringTaskSpec(
+        kind=TaskKind.AMENDMENT,
+        title="resume passed amendment",
+        dag_key="amend-resume-passed-review",
+        assignee="alice",
+        contract=_payload()["contract"],
+    ))
+    report = _review_report("pass", item)
+    eng.store.update_work_item_metadata(
+        item.id,
+        deliverable="amendment: existing reviewed delivery",
+        phase=TaskPhase.REVIEW,
+        review_verdict="pass",
+        review_report=report,
+        review_report_source=yaml.safe_dump(report),
+    )
+    eng.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+    monkeypatch.setattr(
+        eng.runtime,
+        "dispatch_reviewer",
+        lambda *_args: pytest.fail("persisted Reviewer pass must not redispatch"),
+    )
+
+    result = run_task(
+        eng,
+        TaskKind.AMENDMENT,
+        _payload(title="resume passed amendment"),
+        "alice",
+        reviewers=["bob"],
+        confirm=True,
+        pause_at_confirmation=True,
+        poll=_poll,
+        resume_item_id=item.id,
+    )
+
+    assert result["pending_confirmation"] is True
+    assert result["verdict"] == "pass"
+    resumed = eng.store.get_work_item(item.id)
+    assert resumed.phase is TaskPhase.CONFIRMATION
+    assert resumed.review_verdict == "pass"
+
+
 def test_resume_authoring_terminal_run_blocks_without_duplicate_dispatch():
     eng = _engine(MOCK_AUTO_COMPLETE="false")
     item = create_authoring_task(eng, AuthoringTaskSpec(
