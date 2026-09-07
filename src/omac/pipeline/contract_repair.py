@@ -480,6 +480,9 @@ def _validate_receipt_entry(
         raise _receipt_entry_error(receipt, node_id, "approved contract digest does not match")
     if not isinstance(entry.get("changes"), list):
         raise _receipt_entry_error(receipt, node_id, "changes must be a list")
+    if state == "not_needed" and entry["changes"]:
+        raise _receipt_entry_error(
+            receipt, node_id, "not_needed state requires an empty command diff")
     if not isinstance(entry.get("runtime_snapshot"), dict):
         raise _receipt_entry_error(receipt, node_id, "runtime_snapshot is missing")
     if state == "not_applicable":
@@ -703,6 +706,9 @@ def repair_contract_commands(
         if entry.get("store_state") == "not_applicable":
             _write_receipt(receipt_path, receipt)
             continue
+        if entry.get("store_state") == "not_needed" and changes:
+            raise _receipt_entry_error(
+                receipt_path, node_id, "current contract still has command damage")
         if not changes and entry.get("store_state") == "pending":
             # This amendment operation already agrees with the current
             # contract.  The repair command has no authority to republish a
@@ -798,6 +804,12 @@ def repair_contract_commands(
                 raise _needs_decision(
                     f"Contract repair Store readback returned the wrong WorkItem for {node_id}",
                     "contract-repair-work-item-id-mismatch", receipt_path) from exc
+            if _item_runtime_snapshot(current) != runtime_snapshot:
+                entry["error"] = "WorkItem runtime facts changed after write"
+                _write_receipt(receipt_path, receipt)
+                raise _needs_decision(
+                    f"Contract repair Store runtime changed after write for {node_id}",
+                    "contract-repair-store-cas-mismatch", receipt_path) from exc
             if _store_contract_matches(current, approved, digest):
                 entry["store_state"] = "synced"
                 _write_receipt(receipt_path, receipt)

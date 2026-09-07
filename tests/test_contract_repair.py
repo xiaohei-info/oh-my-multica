@@ -482,6 +482,25 @@ def test_repair_manifest_failure_resumes_without_republishing_store_contract(
     assert item.contract_ref["sha256"] == _contract_digest(approved)
 
 
+def test_repair_rejects_runtime_change_on_lost_write_readback(tmp_path):
+    engine, item, manifest, manifest_path, amendment_path, approved = _setup(tmp_path)
+    digest = _contract_digest(approved)
+
+    def lost_set(_item_id, contract):
+        item.contract = Contract(**contract)
+        item.contract_ref = {"sha256": digest}
+        item.status = WorkItemStatus.TODO
+        raise RuntimeError("response lost after publish")
+
+    engine.store.set_node_contract = lost_set
+    engine.store.find_contract_publications = lambda *_args: []
+
+    with pytest.raises(NeedsDecision, match="readback|runtime"):
+        repair_contract_commands(engine, str(manifest_path), str(amendment_path))
+
+    assert _dump_contract(load_manifest(str(manifest_path)).nodes["authority"].contract) != approved
+
+
 def test_repair_rejects_wrong_item_on_lost_write_readback(tmp_path):
     engine, item, manifest, manifest_path, amendment_path, approved = _setup(tmp_path)
     original_get = engine.store.get_work_item
@@ -572,6 +591,27 @@ def test_repair_recovers_ref_write_failure_without_republishing_contract(tmp_pat
     assert result["state"] == "synced"
     assert calls == {"set": 1, "sync": 2}
     assert _dump_contract(load_manifest(str(manifest_path)).nodes["authority"].contract) == approved
+
+
+def test_repair_rejects_forged_not_needed_state_for_damaged_contract(tmp_path):
+    engine, item, manifest, manifest_path, amendment_path, _approved = _setup(tmp_path)
+
+    def lost_set(*_args):
+        raise RuntimeError("unknown write result")
+
+    engine.store.set_node_contract = lost_set
+    engine.store.find_contract_publications = lambda *_args: []
+    with pytest.raises(NeedsDecision):
+        repair_contract_commands(engine, str(manifest_path), str(amendment_path))
+
+    receipt_path = next((tmp_path / "contract-repair").glob("*.json"))
+    receipt = json.loads(receipt_path.read_text())
+    receipt["targets"]["authority"]["store_state"] = "not_needed"
+    receipt_path.write_text(json.dumps(receipt))
+
+    with pytest.raises(NeedsDecision, match="receipt|damage"):
+        repair_contract_commands(engine, str(manifest_path), str(amendment_path))
+    assert _dump_contract(load_manifest(str(manifest_path)).nodes["authority"].contract) != _approved
 
 
 def test_repair_receipt_failure_after_manifest_save_resumes_without_store_republish(
