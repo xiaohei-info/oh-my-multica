@@ -70,8 +70,11 @@ omac dag amend repair-contract-commands .omac/project.yaml /tmp/applied.amendmen
 
 The command requires matching identity/base digests and apply-ledger contract
 digests. It restores only provable empty-default placeholder differences in
-`verification_commands` and `integration_gates[].commands`; it never replays
-other operations. It reads and snapshots current WorkItem runtime facts first,
+`verification_commands` and `integration_gates[].commands`. It accepts
+`add.value.contract` and `update.set.contract` entries carrying already-applied
+`description`/`blocked_by`, but never replays those or other operations. A new
+node without a WorkItem receives a definition-only manifest repair; no issue is
+created. It reads and snapshots current WorkItem runtime facts first,
 rejecting active/unknown Runs, platform assignments, unrelated contract drift,
 and unproven Store outcomes. If an attachment was published before its response
 was lost, only one existing publication with the OMAC contract producer marker,

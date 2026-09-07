@@ -15,6 +15,7 @@ import yaml
 from ..core.amendment import (
     AMENDMENT_IDENTITY_SCHEMA,
     _amendment_id,
+    _digest,
     amendment_apply_blocker,
     parse_proposal,
 )
@@ -29,6 +30,7 @@ from ..errors import NeedsDecision, PlatformError, ValidationError
 
 _REPAIR_SCHEMA = "omac.contract-command-repair/v1"
 _EMPTY_DEFAULT_PLACEHOLDER = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*:-\}")
+_IGNORED_APPLIED_UPDATE_FIELDS = {"description", "blocked_by"}
 _TOTAL_RUNTIME_FIELDS = (
     "work_item_id", "status", "worker", "reviewer", "blocked_by",
     "merged", "merged_at", "merge_request_state", "recovery_marker",
@@ -67,6 +69,14 @@ def _contract_source(contract: Any) -> str:
 
 def _contract_digest(contract: Any) -> str:
     return hashlib.sha256(_contract_source(contract).encode("utf-8")).hexdigest()
+
+
+def _ledger_contract_digest(contract: Any) -> str:
+    canonical = (
+        _dump_contract(_load_contract(contract))
+        if isinstance(contract, dict) else _dump_contract(contract)
+    )
+    return _digest(canonical)
 
 
 def _empty_default_expansion(command: Any) -> Any:
@@ -328,9 +338,13 @@ def _validate_approved_amendment(
             changes = operation.get("set")
             if not isinstance(changes, dict) or "contract" not in changes:
                 continue
-            if set(changes) != {"contract"}:
+            unsupported_fields = set(changes) - {
+                "contract", *_IGNORED_APPLIED_UPDATE_FIELDS,
+            }
+            if unsupported_fields:
                 raise ValidationError(
-                    "Contract command repair accepts only update.set.contract operations")
+                    "Contract command repair accepts only contract plus already-applied "
+                    "description/blocked_by fields")
             node_id = str(operation.get("node") or "").strip()
             contract_value = changes["contract"]
         else:
@@ -352,7 +366,7 @@ def _validate_approved_amendment(
             else:
                 raise
         apply_entry = (ledger.get("nodes") or {}).get(node_id)
-        expected_digest = _contract_digest(approved)
+        expected_digest = _ledger_contract_digest(approved)
         if not isinstance(apply_entry, dict):
             raise ValidationError(
                 f"Applied amendment ledger does not bind approved contract for {node_id}")
@@ -421,7 +435,7 @@ def _sync_contract_ref(store: Any, item_id: str, ref: dict[str, Any]) -> None:
 
 
 def _receipt_baseline_digest(
-    item_id: str,
+    item_id: str | None,
     digest: str,
     entry: dict[str, Any],
 ) -> str:
@@ -451,13 +465,14 @@ def _validate_receipt_entry(
     *,
     allow_pending: bool = False,
 ) -> None:
-    if entry.get("store_state") not in {"pending", "writing", "unknown", "synced"}:
+    state = entry.get("store_state")
+    if state not in {"pending", "writing", "unknown", "synced", "not_applicable"}:
         raise _receipt_entry_error(receipt, node_id, "unknown store_state")
     if entry.get("store_state") == "pending" and not allow_pending:
         raise _receipt_entry_error(receipt, node_id, "persisted store_state is pending")
     if entry.get("manifest_state") not in {"pending", "unknown", "synced"}:
         raise _receipt_entry_error(receipt, node_id, "unknown manifest_state")
-    if entry.get("work_item_id") != item_id:
+    if "work_item_id" not in entry or entry.get("work_item_id") != item_id:
         raise _receipt_entry_error(receipt, node_id, "work_item_id does not match manifest")
     if entry.get("approved_contract_sha256") != digest:
         raise _receipt_entry_error(receipt, node_id, "approved contract digest does not match")
@@ -465,7 +480,11 @@ def _validate_receipt_entry(
         raise _receipt_entry_error(receipt, node_id, "changes must be a list")
     if not isinstance(entry.get("runtime_snapshot"), dict):
         raise _receipt_entry_error(receipt, node_id, "runtime_snapshot is missing")
-    if set(entry["runtime_snapshot"]) != set(_ITEM_RUNTIME_FIELDS):
+    if state == "not_applicable":
+        if item_id is not None or entry["runtime_snapshot"]:
+            raise _receipt_entry_error(
+                receipt, node_id, "not_applicable store state has WorkItem facts")
+    elif set(entry["runtime_snapshot"]) != set(_ITEM_RUNTIME_FIELDS):
         raise _receipt_entry_error(receipt, node_id, "runtime_snapshot shape is invalid")
     if not isinstance(entry.get("manifest_snapshot"), dict):
         raise _receipt_entry_error(receipt, node_id, "manifest_snapshot is missing")
@@ -543,6 +562,34 @@ def _observe_store_target(
     entry["approved_contract_sha256"] = digest
     entry.setdefault("baseline_sha256", _receipt_baseline_digest(item_id, digest, entry))
     return item, snapshot
+
+
+def _observe_definition_target(
+    node_id: str,
+    node: Any,
+    approved: dict[str, Any],
+    receipt: dict[str, Any],
+) -> tuple[None, dict[str, Any]]:
+    entry = receipt["targets"][node_id]
+    current_manifest = _node_runtime_snapshot(node)
+    previous_manifest = entry.get("manifest_snapshot")
+    if previous_manifest is not None and previous_manifest != current_manifest:
+        raise _needs_decision(
+            f"Manifest runtime facts changed during contract repair for {node_id}",
+            "contract-repair-manifest-cas-mismatch",
+            _receipt_path(receipt["manifest_path"], receipt["repair_id"]),
+        )
+    entry["work_item_id"] = None
+    entry["runtime_snapshot"] = {}
+    entry["manifest_snapshot"] = current_manifest
+    entry["approved_contract_sha256"] = _contract_digest(approved)
+    entry.setdefault(
+        "baseline_sha256",
+        _receipt_baseline_digest(
+            None, entry["approved_contract_sha256"], entry),
+    )
+    entry["store_state"] = "not_applicable"
+    return None, {}
 
 
 def _canonical_contract(contract: Any) -> Any:
@@ -637,16 +684,23 @@ def repair_contract_commands(
             raise _receipt_entry_error(receipt_path, node_id, "entry is not an object")
         else:
             _validate_receipt_entry(
-                entry, node_id, manifest.nodes[node_id].work_item_id or "",
+                entry, node_id, manifest.nodes[node_id].work_item_id,
                 digest, receipt_path)
         node = manifest.nodes[node_id]
-        item, runtime_snapshot = _observe_store_target(
-            engine.store, engine.runtime, node_id, node, approved, receipt)
+        if node.work_item_id:
+            item, runtime_snapshot = _observe_store_target(
+                engine.store, engine.runtime, node_id, node, approved, receipt)
+        else:
+            item, runtime_snapshot = _observe_definition_target(
+                node_id, node, approved, receipt)
         if new_entry:
-            # _observe_store_target populated and bound all baseline fields.
+            # The observation populated and bound all baseline fields.
             _validate_receipt_entry(
-                entry, node_id, node.work_item_id or "", digest, receipt_path,
+                entry, node_id, node.work_item_id, digest, receipt_path,
                 allow_pending=True)
+        if entry.get("store_state") == "not_applicable":
+            _write_receipt(receipt_path, receipt)
+            continue
         if entry.get("store_state") == "synced":
             try:
                 _verify_store_runtime(
@@ -787,11 +841,11 @@ def repair_contract_commands(
             raise _receipt_entry_error(receipt_path, node_id, "entry is not an object")
         node = manifest.nodes[node_id]
         _validate_receipt_entry(
-            entry, node_id, node.work_item_id or "", _contract_digest(approved),
+            entry, node_id, node.work_item_id, _contract_digest(approved),
             receipt_path)
-        if entry["store_state"] != "synced":
+        if entry["store_state"] not in {"synced", "not_applicable"}:
             raise _needs_decision(
-                f"Contract repair Store state is not synced for {node_id}",
+                f"Contract repair Store state is not complete for {node_id}",
                 "contract-repair-store-outcome-unknown", receipt_path)
 
     current_manifest = load_manifest(manifest_path)
@@ -799,7 +853,7 @@ def repair_contract_commands(
         entry = receipt["targets"][node_id]
         node = current_manifest.nodes[node_id]
         expected_runtime = entry.get("manifest_snapshot")
-        if expected_runtime and _node_runtime_snapshot(node) != expected_runtime:
+        if expected_runtime is None or _node_runtime_snapshot(node) != expected_runtime:
             entry["manifest_state"] = "unknown"
             entry["error"] = "manifest runtime facts changed"
             _write_receipt(receipt_path, receipt)

@@ -53,8 +53,9 @@ omac dag amend repair-contract-commands .omac/project.yaml /tmp/applied.amendmen
 ```
 
 命令只接受 identity、base digest、apply ledger 均匹配的 amendment，并且只恢复
-`verification_commands` 与 `integration_gates[].commands` 中可证明的空默认占位符差异；不重放其余
-operations。它先读取并锁定 WorkItem 当前运行事实，拒绝 active/unknown Run、平台 assignment、
+`verification_commands` 与 `integration_gates[].commands` 中可证明的空默认占位符差异；支持
+`add.value.contract` 与带已应用 `description`/`blocked_by` 的 `update.set.contract`，但不重放其余
+operations。没有 WorkItem 的新节点只做 definition-only manifest 修复，不会创建 issue。它先读取并锁定 WorkItem 当前运行事实，拒绝 active/unknown Run、平台 assignment、
 非目标 contract drift 和无法证明的 Store 状态；Store 附件发布成功但响应丢失时只认一个带 OMAC contract producer marker、绑定同一 issue、文件名 digest
 及 bytes 均完整匹配的既有 publication，不会盲目重复发布。每个 Store/manifest 步骤都写入可恢复 receipt；中断后重复
 同一命令会继续未完成步骤而不回退 status、phase、bounce、PR、verification 或 review 事实。修复后
