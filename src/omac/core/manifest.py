@@ -17,15 +17,20 @@ _UNSET = object()  # sentinel: 参数未传（区别于 None=显式清空）
 
 # 仅匹配 ${VAR} 与 ${VAR:-default}，不碰裸 $VAR（避免误伤 description 里的 $ 文本）
 _ENV_PAT = re.compile(r"\$\{(\w+)(?::-([^}]*))?\}")
+_SHELL_COMMAND_KEYS = frozenset({"commands", "verification_commands"})
 
 
-def _expand_env(value):
-    """递归把 manifest 里的 ${VAR} / ${VAR:-默认值} 用环境变量展开。
+def _expand_env(value, *, preserve_shell=False):
+    """Expand manifest values without consuming shell command placeholders.
 
-    让 manifest 不必把 workspace 等 id 硬写进文件——CI/他人克隆后
-    设环境变量即可，未设则用默认值。VAR 未设且无默认值时保留原样（显式可见）。
+    Manifest/config values may use ``${VAR}`` or ``${VAR:-default}``, but
+    verification and integration command strings must reach the execution
+    environment unchanged so the shell can resolve their variables at runtime.
     """
     if isinstance(value, str):
+        if preserve_shell:
+            return value
+
         def sub(m):
             name, default = m.group(1), m.group(2)
             env = os.environ.get(name)
@@ -34,9 +39,12 @@ def _expand_env(value):
             return default if default is not None else m.group(0)
         return _ENV_PAT.sub(sub, value)
     if isinstance(value, dict):
-        return {k: _expand_env(v) for k, v in value.items()}
+        return {
+            k: _expand_env(v, preserve_shell=(preserve_shell or k in _SHELL_COMMAND_KEYS))
+            for k, v in value.items()
+        }
     if isinstance(value, list):
-        return [_expand_env(v) for v in value]
+        return [_expand_env(v, preserve_shell=preserve_shell) for v in value]
     return value
 
 class EvidenceMode(str, Enum):
