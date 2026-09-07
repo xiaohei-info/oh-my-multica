@@ -213,6 +213,29 @@ def test_multica_ignores_contract_attachment_without_omac_producer_marker(monkey
         store.find_contract_publications("issue-1", digest)
 
 
+def test_multica_rejects_matching_contract_publication_with_unreadable_body(
+        monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    body = b"objective: live authority\n"
+    digest = hashlib.sha256(body).hexdigest()
+    filename = f"omac-contract-{digest[:12]}.yaml"
+    comments = [{
+        "id": "comment-contract",
+        "content": (
+            "## omac contract\n"
+            f"- sha256: {digest}\n"
+            f"- bytes: {len(body)}\n"
+            "- metadata: `contract_ref`\n"
+        ),
+        "attachments": [{"id": "attachment-contract", "filename": filename}],
+    }]
+    monkeypatch.setattr(store, "_run_multica", lambda _args: comments)
+    monkeypatch.setattr(store, "_download_attachment_bytes", lambda *_args, **_kwargs: None)
+
+    with pytest.raises(PlatformError, match="read"):
+        store.find_contract_publications("issue-1", digest)
+
+
 def test_multica_ignores_contract_attachment_bound_to_another_issue(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
     body = b"objective: live authority\n"
