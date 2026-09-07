@@ -74,7 +74,10 @@ digests. It restores only provable empty-default placeholder differences in
 `add.value.contract` and `update.set.contract` entries carrying already-applied
 `description`/`blocked_by`, but never replays those or other operations. A new
 node without a WorkItem receives a definition-only manifest repair; no issue is
-created. It reads and snapshots current WorkItem runtime facts first,
+created. If the current contract already equals the approved contract with
+no command damage, repair also skips Store publication/ref repair rather than
+creating an attachment just because `contract_ref` is absent. It reads and
+snapshots current WorkItem runtime facts first,
 rejecting active/unknown Runs, platform assignments, unrelated contract drift,
 and unproven Store outcomes. If an attachment was published before its response
 was lost, only one existing publication with the OMAC contract producer marker,
