@@ -705,6 +705,12 @@ def repair_contract_commands(
             _write_receipt(receipt_path, receipt)
             # Observe once after a lost response; never blindly republish.
             current = engine.store.get_work_item(item.id)
+            if str(getattr(current, "id", "")) != str(item.id):
+                entry["error"] = "Store returned the wrong WorkItem after write"
+                _write_receipt(receipt_path, receipt)
+                raise _needs_decision(
+                    f"Contract repair Store readback returned the wrong WorkItem for {node_id}",
+                    "contract-repair-work-item-id-mismatch", receipt_path) from exc
             if _store_contract_matches(current, approved, digest):
                 entry["store_state"] = "synced"
                 _write_receipt(receipt_path, receipt)

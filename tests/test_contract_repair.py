@@ -372,6 +372,36 @@ def test_repair_manifest_failure_resumes_without_republishing_store_contract(
     assert item.contract_ref["sha256"] == _contract_digest(approved)
 
 
+def test_repair_rejects_wrong_item_on_lost_write_readback(tmp_path):
+    engine, item, manifest, manifest_path, amendment_path, approved = _setup(tmp_path)
+    original_get = engine.store.get_work_item
+    digest = _contract_digest(approved)
+    reads = {"count": 0}
+
+    def wrong_recovery_item(item_id):
+        reads["count"] += 1
+        observed = copy.copy(original_get(item_id))
+        if reads["count"] >= 2:
+            observed.id = "different-issue"
+            observed.contract = Contract(**approved)
+            observed.contract_ref = {"sha256": digest}
+        return observed
+
+    def lost_set(*_args):
+        raise RuntimeError("response lost after publish")
+
+    engine.store.get_work_item = wrong_recovery_item
+    engine.store.set_node_contract = lost_set
+    engine.store.find_contract_publications = lambda *_args: []
+
+    with pytest.raises(NeedsDecision, match="WorkItem"):
+        repair_contract_commands(engine, str(manifest_path), str(amendment_path))
+
+    assert _dump_contract(load_manifest(str(manifest_path)).nodes["authority"].contract) != approved
+    assert reads["count"] >= 2
+    assert item.contract_ref is None
+
+
 def test_repair_rejects_unbound_publication_before_any_store_write(tmp_path):
     engine, item, manifest, manifest_path, amendment_path, approved = _setup(tmp_path)
     digest = _contract_digest(approved)

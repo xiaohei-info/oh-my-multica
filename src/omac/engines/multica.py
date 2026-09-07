@@ -1729,7 +1729,8 @@ class MulticaStore(WorkItemStore):
                     expected_bytes=ref.get("bytes"),
                 )
                 if body is None:
-                    continue
+                    raise PlatformError(
+                        f"Contract publication body is unreadable for work item {item_id}")
                 if hashlib.sha256(body).hexdigest() != expected_digest:
                     raise PlatformError(
                         f"Contract publication digest mismatch for work item {item_id}")
