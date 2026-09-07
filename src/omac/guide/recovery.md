@@ -42,6 +42,24 @@ direct Run。它保留 Reviewer verdict/report，只写入有界的
 `dag run` 仍会观察远端 merge 事实，不会直接把节点标记 done。命令可安全重复执行。
 普通 `node retry` 会清除 marker、使旧 review projection 失效，再回到 authoring 产生新交付。若节点已有 review 回退历史，即使当前 verdict 已被清除，retry 仍记录上一份 delivery 的 PR head 作为 baseline；Worker 必须提交新 head，不能用同一 head 绕过 Reviewer 防线。若旧 head 或交付因果资料缺失，OMAC 不猜测而 fail-closed，不会把仅有新附件的同 head 交付送进 Reviewer。若可读取旧 review report/ledger，retry 会把 report/ledger 引用及有限 blocker 摘要放入 `previous_review`，Worker 必须针对这些 blocker 完成返工；若已知为 reject 但无法恢复任何 report/ledger/blocker 上下文，retry 会以 exit 20 停止，不会再消耗 Worker 轮次。
 
+### 已应用 amendment 的 contract command 修复
+
+若旧版 manifest load 已把 `${VAR:-}` 运行时占位符写成 `""`，不要重新执行
+`amend accept`，也不要猜环境值或手改线上 metadata。使用同一份已 Reviewer pass 且已 applied 的
+v2 amendment 原文执行定义级修复：
+
+```bash
+omac dag amend repair-contract-commands .omac/project.yaml /tmp/applied.amendment.yaml
+```
+
+命令只接受 identity、base digest、apply ledger 均匹配的 amendment，并且只恢复
+`verification_commands` 与 `integration_gates[].commands` 中可证明的空默认占位符差异；不重放其余
+operations。它先读取并锁定 WorkItem 当前运行事实，拒绝 active/unknown Run、平台 assignment、
+非目标 contract drift 和无法证明的 Store 状态；Store 附件发布成功但响应丢失时只认一个完整 digest
+匹配的既有 publication，不会盲目重复发布。每个 Store/manifest 步骤都写入可恢复 receipt；中断后重复
+同一命令会继续未完成步骤而不回退 status、phase、bounce、PR、verification 或 review 事实。修复后
+命令提交 manifest；push 失败保留本地 commit，按普通 git 同步告警处理。
+
 ### 阶段级恢复与 merge 观察
 
 - 恢复以 issue 的真实 `phase` 为准：authoring 只恢复 worker；reviewer run 失败或结束但未提交 verdict 时，保留同一 issue、worker 的 PR/verification 与 review subject，在 `review` 阶段重新派发 reviewer；不得错误退回 worker。

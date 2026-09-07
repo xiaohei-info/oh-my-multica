@@ -18,7 +18,7 @@ from ...core.acceptance import load_acceptance_doc_file
 from ...core.graph import node_waves
 from ...core.lint import lint
 from ...core.manifest import load_manifest, manifest_write_lock
-from ...core.gitsync import ensure_config_synced
+from ...core.gitsync import commit_manifest, ensure_config_synced
 from ...engines import create_engine
 from ...engines.models import EngineConfig
 from ...errors import NeedsDecision, ValidationError
@@ -191,6 +191,16 @@ def register(parser):
     accept.add_argument("--engine", help="引擎类型覆盖")
     accept.add_argument("--workspace", help="workspace 覆盖")
     add_output_flag(accept, default="json")
+
+    repair = amend_sub.add_parser(
+        "repair-contract-commands",
+        help="从已应用 amendment 原文恢复受限 shell command 损坏，不重放 accept",
+    )
+    repair.add_argument("manifest", help="当前运行 manifest 文件路径")
+    repair.add_argument("amendment_file", help="已 applied 的 approved amendment YAML")
+    repair.add_argument("--engine", help="引擎类型覆盖")
+    repair.add_argument("--workspace", help="workspace 覆盖")
+    add_output_flag(repair, default="json")
 
 
 def _assemble_engine(args):
@@ -511,10 +521,21 @@ def amend(args) -> int:
 
 def _amend_locked(args) -> int:
     from ...pipeline.amendment import accept_amendment, propose_amendment
+    from ...pipeline.contract_repair import repair_contract_commands
 
     engine, _ = _assemble_engine(args)
     config = _load_config_for_manifest(args.manifest)
     roles = config.get("roles") or {}
+    if args.amend_action == "repair-contract-commands":
+        result = repair_contract_commands(
+            engine, args.manifest, args.amendment_file)
+        commit_manifest(
+            args.manifest,
+            "fix(omac): repair contract command placeholders",
+            engine_type=engine.store.config.engine_type,
+        )
+        print_json(result)
+        return exit_codes.OK
     if args.amend_action == "propose":
         reviewers = args.reviewer or roles.get("reviewers") or []
         if isinstance(reviewers, str):
