@@ -45,7 +45,7 @@ def _approved_contract(verification_command: str, gate_command: str) -> dict:
     }
 
 
-def _setup(tmp_path: Path):
+def _setup(tmp_path: Path, *, added: bool = False):
     engine = create_engine(
         "mock",
         EngineConfig("mock", "ws", extra={"MOCK_AUTO_COMPLETE": "false"}),
@@ -89,11 +89,24 @@ def _setup(tmp_path: Path):
         "reason": "restore shell placeholders",
         "human_confirmation": "applied",
         "review": {"verdict": "pass", "issue_id": "amend-review"},
-        "operations": [{
-            "op": "update",
-            "node": "authority",
-            "set": {"contract": approved_contract},
-        }],
+        "operations": [
+            (
+                {
+                    "op": "add",
+                    "value": {
+                        "id": "authority",
+                        "worker": "alice",
+                        "contract": approved_contract,
+                    },
+                }
+                if added else
+                {
+                    "op": "update",
+                    "node": "authority",
+                    "set": {"contract": approved_contract},
+                }
+            ),
+        ],
         "analysis": {
             "minimal_rerun": {},
             "historical_contract_corrections": [],
@@ -117,15 +130,35 @@ def _setup(tmp_path: Path):
     )
     manifest.meta["last_amendment_id"] = amendment["amendment_id"]
     manifest.meta["amendment_apply"]["amendment_id"] = amendment["amendment_id"]
-    manifest.meta["amendment_apply"]["nodes"]["authority"] = {
-        "stage": "review",
-        "state": "synced",
-        "expected_contract_sha256": _contract_digest(approved_contract),
-    }
+    manifest.meta["amendment_apply"]["nodes"]["authority"] = (
+        {
+            "stage": "authoring",
+            "state": "synced",
+            "reason": "no existing work item side effect",
+        }
+        if added else
+        {
+            "stage": "review",
+            "state": "synced",
+            "expected_contract_sha256": _contract_digest(approved_contract),
+        }
+    )
     save_manifest(manifest, str(manifest_path))
     amendment_path = tmp_path / "approved.amendment.yaml"
     amendment_path.write_text(yaml.safe_dump(amendment, sort_keys=False))
     return engine, item, manifest, manifest_path, amendment_path, approved_contract
+
+
+def test_repair_restores_contract_commands_for_added_node(tmp_path):
+    engine, item, manifest, manifest_path, amendment_path, approved = _setup(
+        tmp_path, added=True)
+
+    result = repair_contract_commands(
+        engine, str(manifest_path), str(amendment_path))
+
+    assert result["state"] == "synced"
+    assert _dump_contract(load_manifest(str(manifest_path)).nodes["authority"].contract) == approved
+    assert item.contract_ref["sha256"] == _contract_digest(approved)
 
 
 def test_repair_contract_commands_restores_exact_shell_damage_and_preserves_runtime(tmp_path):
