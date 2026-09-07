@@ -15,6 +15,7 @@ import yaml
 from ..core.amendment import (
     AMENDMENT_IDENTITY_SCHEMA,
     _amendment_id,
+    amendment_apply_blocker,
     parse_proposal,
 )
 from ..core.manifest import (
@@ -254,7 +255,9 @@ def _decision_report(message: str, reason_code: str, receipt: Path) -> NeedsDeci
 
 
 def _validate_approved_amendment(
-    manifest: Manifest, amendment: dict[str, Any],
+    manifest: Manifest,
+    amendment: dict[str, Any],
+    manifest_path: str,
 ) -> list[tuple[str, dict[str, Any], list[dict[str, Any]]]]:
     amendment_id = amendment.get("amendment_id")
     review = amendment.get("review")
@@ -273,6 +276,16 @@ def _validate_approved_amendment(
         or not isinstance(ledger.get("nodes"), dict)
     ):
         raise ValidationError("Applied amendment repair requires its matching apply ledger")
+    apply_blocker = amendment_apply_blocker(manifest, manifest_path)
+    if apply_blocker is not None:
+        raise NeedsDecision(
+            "Contract repair is blocked until the amendment apply ledger is complete",
+            report={
+                **apply_blocker,
+                "reason": "contract-repair-amendment-apply-incomplete",
+                "next_action": apply_blocker.get("resume_command"),
+            },
+        )
     if amendment.get("identity_schema") != AMENDMENT_IDENTITY_SCHEMA:
         raise ValidationError(
             "Contract repair requires the v2 reviewed amendment identity")
@@ -358,7 +371,25 @@ def _find_contract_publications(store: Any, item_id: str, digest: str) -> list[d
     finder = getattr(store, "find_contract_publications", None)
     if not callable(finder):
         return []
-    return list(finder(item_id, digest) or [])
+    publications = list(finder(item_id, digest) or [])
+    for ref in publications:
+        if not isinstance(ref, dict):
+            raise PlatformError("Store returned an invalid contract publication reference")
+        if ref.get("work_item_id") != item_id:
+            raise PlatformError(
+                f"Contract publication is not bound to work item {item_id}")
+        if str(ref.get("sha256") or "").lower() != digest.lower():
+            raise PlatformError(
+                f"Contract publication digest is not bound to work item {item_id}")
+        if not str(ref.get("comment_id") or "").strip() or not str(
+                ref.get("attachment_id") or "").strip():
+            raise PlatformError("Contract publication reference identity is incomplete")
+        if str(ref.get("filename") or "") != f"omac-contract-{digest[:12]}.yaml":
+            raise PlatformError("Contract publication filename is not bound to digest")
+        size = ref.get("bytes")
+        if not isinstance(size, int) or isinstance(size, bool) or size < 0:
+            raise PlatformError("Contract publication byte size is missing or invalid")
+    return publications
 
 
 def _sync_contract_ref(store: Any, item_id: str, ref: dict[str, Any]) -> None:
@@ -366,6 +397,62 @@ def _sync_contract_ref(store: Any, item_id: str, ref: dict[str, Any]) -> None:
     if not callable(sync):
         raise PlatformError("Store does not support contract reference-only repair")
     sync(item_id, ref)
+
+
+def _receipt_baseline_digest(
+    item_id: str,
+    digest: str,
+    entry: dict[str, Any],
+) -> str:
+    return _json_digest({
+        "work_item_id": item_id,
+        "approved_contract_sha256": digest,
+        "changes": entry.get("changes"),
+        "runtime_snapshot": entry.get("runtime_snapshot"),
+        "manifest_snapshot": entry.get("manifest_snapshot"),
+    })
+
+
+def _receipt_entry_error(
+    receipt: Path, node_id: str, message: str,
+) -> NeedsDecision:
+    return _needs_decision(
+        f"Contract repair receipt is invalid for {node_id}: {message}",
+        "contract-repair-receipt-invalid", receipt)
+
+
+def _validate_receipt_entry(
+    entry: dict[str, Any],
+    node_id: str,
+    item_id: str,
+    digest: str,
+    receipt: Path,
+    *,
+    allow_pending: bool = False,
+) -> None:
+    if entry.get("store_state") not in {"pending", "writing", "unknown", "synced"}:
+        raise _receipt_entry_error(receipt, node_id, "unknown store_state")
+    if entry.get("store_state") == "pending" and not allow_pending:
+        raise _receipt_entry_error(receipt, node_id, "persisted store_state is pending")
+    if entry.get("manifest_state") not in {"pending", "unknown", "synced"}:
+        raise _receipt_entry_error(receipt, node_id, "unknown manifest_state")
+    if entry.get("work_item_id") != item_id:
+        raise _receipt_entry_error(receipt, node_id, "work_item_id does not match manifest")
+    if entry.get("approved_contract_sha256") != digest:
+        raise _receipt_entry_error(receipt, node_id, "approved contract digest does not match")
+    if not isinstance(entry.get("changes"), list):
+        raise _receipt_entry_error(receipt, node_id, "changes must be a list")
+    if not isinstance(entry.get("runtime_snapshot"), dict):
+        raise _receipt_entry_error(receipt, node_id, "runtime_snapshot is missing")
+    if set(entry["runtime_snapshot"]) != set(_ITEM_RUNTIME_FIELDS):
+        raise _receipt_entry_error(receipt, node_id, "runtime_snapshot shape is invalid")
+    if not isinstance(entry.get("manifest_snapshot"), dict):
+        raise _receipt_entry_error(receipt, node_id, "manifest_snapshot is missing")
+    if set(entry["manifest_snapshot"]) != set(_TOTAL_RUNTIME_FIELDS):
+        raise _receipt_entry_error(receipt, node_id, "manifest_snapshot shape is invalid")
+    if entry.get("baseline_sha256") != _receipt_baseline_digest(
+            item_id, digest, entry):
+        raise _receipt_entry_error(receipt, node_id, "baseline digest does not match")
 
 
 def _observe_store_target(
@@ -380,6 +467,16 @@ def _observe_store_target(
     if not item_id:
         raise ValidationError(f"Repair node {node_id} has no work_item_id")
     item = store.get_work_item(item_id)
+    if str(getattr(item, "id", "")) != str(item_id):
+        raise NeedsDecision(
+            f"Contract repair Store returned the wrong WorkItem for {node_id}",
+            report={
+                "reason_code": "contract-repair-work-item-id-mismatch",
+                "node_id": node_id,
+                "expected_work_item_id": item_id,
+                "observed_work_item_id": getattr(item, "id", None),
+            },
+        )
     runs = runtime.list_runs(item_id)
     unsafe = [run for run in runs if run.active or not run.terminal]
     if unsafe:
@@ -421,7 +518,9 @@ def _observe_store_target(
     entry["work_item_id"] = item_id
     entry.setdefault("runtime_snapshot", snapshot)
     entry.setdefault("manifest_snapshot", current_manifest)
-    entry["approved_contract_sha256"] = _contract_digest(approved)
+    digest = _contract_digest(approved)
+    entry["approved_contract_sha256"] = digest
+    entry.setdefault("baseline_sha256", _receipt_baseline_digest(item_id, digest, entry))
     return item, snapshot
 
 
@@ -442,6 +541,9 @@ def _store_contract_matches(item: Any, approved: dict[str, Any], expected_digest
 
 def _verify_store_runtime(store: Any, item_id: str, before: dict[str, Any], approved: dict[str, Any], digest: str) -> Any:
     current = store.get_work_item(item_id)
+    if str(getattr(current, "id", "")) != str(item_id):
+        raise PlatformError(
+            f"Contract repair Store returned the wrong WorkItem for {item_id}")
     if _item_runtime_snapshot(current) != before:
         raise PlatformError(
             f"Contract repair changed runtime facts for work item {item_id}")
@@ -466,7 +568,8 @@ def repair_contract_commands(
     except OSError as exc:
         raise ValidationError(f"Could not read approved amendment {amendment_file}: {exc}") from exc
     manifest = load_manifest(manifest_path)
-    targets = _validate_approved_amendment(manifest, amendment)
+    targets = _validate_approved_amendment(
+        manifest, amendment, os.path.realpath(manifest_path))
     repair_id = _json_digest({
         "amendment_id": amendment["amendment_id"],
         "manifest": os.path.realpath(manifest_path),
@@ -500,21 +603,29 @@ def repair_contract_commands(
 
     target_map = {node_id: (approved, changes) for node_id, approved, changes in targets}
     for node_id, (approved, changes) in target_map.items():
+        digest = _contract_digest(approved)
         entry = receipt["targets"].get(node_id)
-        if entry is None:
+        new_entry = entry is None
+        if new_entry:
             entry = receipt["targets"][node_id] = {
                 "changes": changes,
                 "store_state": "pending",
                 "manifest_state": "pending",
             }
         elif not isinstance(entry, dict):
-            raise _needs_decision(
-                f"Contract repair receipt entry is malformed for {node_id}",
-                "contract-repair-receipt-invalid", receipt_path)
+            raise _receipt_entry_error(receipt_path, node_id, "entry is not an object")
+        else:
+            _validate_receipt_entry(
+                entry, node_id, manifest.nodes[node_id].work_item_id or "",
+                digest, receipt_path)
         node = manifest.nodes[node_id]
         item, runtime_snapshot = _observe_store_target(
             engine.store, engine.runtime, node_id, node, approved, receipt)
-        digest = _contract_digest(approved)
+        if new_entry:
+            # _observe_store_target populated and bound all baseline fields.
+            _validate_receipt_entry(
+                entry, node_id, node.work_item_id or "", digest, receipt_path,
+                allow_pending=True)
         if entry.get("store_state") == "synced":
             try:
                 _verify_store_runtime(
@@ -627,6 +738,34 @@ def repair_contract_commands(
                 "contract-repair-store-readback-mismatch", receipt_path) from exc
         entry["store_state"] = "synced"
         _write_receipt(receipt_path, receipt)
+
+    # Re-read the durable receipt before the manifest side effect.  This
+    # catches a concurrent edit/deletion and never trusts an in-memory state
+    # after the Store boundary.
+    persisted_receipt = _load_receipt(receipt_path)
+    if (
+        persisted_receipt is None
+        or persisted_receipt.get("repair_id") != repair_id
+        or persisted_receipt.get("amendment_id") != amendment["amendment_id"]
+        or persisted_receipt.get("manifest_path") != os.path.realpath(manifest_path)
+        or not isinstance(persisted_receipt.get("targets"), dict)
+    ):
+        raise _needs_decision(
+            "Contract repair receipt changed before manifest write",
+            "contract-repair-receipt-conflict", receipt_path)
+    receipt = persisted_receipt
+    for node_id, (approved, _changes) in target_map.items():
+        entry = receipt["targets"].get(node_id)
+        if not isinstance(entry, dict):
+            raise _receipt_entry_error(receipt_path, node_id, "entry is not an object")
+        node = manifest.nodes[node_id]
+        _validate_receipt_entry(
+            entry, node_id, node.work_item_id or "", _contract_digest(approved),
+            receipt_path)
+        if entry["store_state"] != "synced":
+            raise _needs_decision(
+                f"Contract repair Store state is not synced for {node_id}",
+                "contract-repair-store-outcome-unknown", receipt_path)
 
     current_manifest = load_manifest(manifest_path)
     for node_id, (approved, changes) in target_map.items():

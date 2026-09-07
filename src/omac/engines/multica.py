@@ -757,13 +757,22 @@ class MulticaStore(WorkItemStore):
 
         expected_sha256 = expected_sha256.strip().lower()
         key = (attachment_id, expected_sha256, filename or "", expected_bytes)
-        return self._attachment_bodies.get_or_load(
+        body = self._attachment_bodies.get_or_load(
             key,
             lambda: self._run_idempotent_read(label, download),
-            cacheable=lambda body: bool(expected_sha256) and (
-                hashlib.sha256(body).hexdigest() == expected_sha256
+            cacheable=lambda value: bool(expected_sha256) and (
+                hashlib.sha256(value).hexdigest() == expected_sha256
             ),
         )
+        if body is None:
+            return None
+        if expected_sha256 and hashlib.sha256(body).hexdigest() != expected_sha256:
+            raise PlatformError(
+                f"Downloaded {label} digest does not match declared SHA-256")
+        if expected_bytes is not None and len(body) != expected_bytes:
+            raise PlatformError(
+                f"Downloaded {label} byte length does not match declared size")
+        return body
 
     def _load_payload_comment(self, item_id: str, key: str, ref: Optional[Dict[str, Any]]) -> Optional[str]:
         if not ref:
@@ -1651,23 +1660,85 @@ class MulticaStore(WorkItemStore):
             raise PlatformError(
                 f"Could not read contract publications for work item {item_id}")
         matches = []
+        expected_digest = contract_sha256.strip().lower()
         for comment in comments:
             if not isinstance(comment, dict):
                 continue
+            # The list call is issue-scoped, but retain defensive provenance
+            # checks when adapters expose item identifiers in the payload.
+            comment_bound = not any(
+                comment.get(key) is not None
+                and str(comment.get(key)) != str(item_id)
+                for key in ("issue_id", "work_item_id", "item_id")
+            )
+            content = str(comment.get("content") or "")
+            producer_marked = (
+                re.search(r"^\s*##\s+omac contract\s*$", content, re.MULTILINE)
+                and re.search(
+                    r"^\s*-\s*metadata:\s*`contract_ref`\s*$",
+                    content, re.MULTILINE,
+                )
+            )
             for attachment in comment.get("attachments") or []:
                 if not isinstance(attachment, dict):
                     continue
                 ref = self._review_attachment_ref(comment, attachment, "contract")
-                if ref is None or ref.get("sha256") != contract_sha256:
+                raw_digest = str(attachment.get("sha256") or "").strip().lower()
+                comment_digest = ""
+                digest_match = re.search(
+                    r"^\s*-\s*sha256:\s*([0-9a-fA-F]{64})\s*$",
+                    content, re.MULTILINE,
+                )
+                if digest_match:
+                    comment_digest = digest_match.group(1).lower()
+                if comment_digest and raw_digest and comment_digest != raw_digest:
+                    raise PlatformError(
+                        f"Contract publication digest is conflicting for work item {item_id}")
+                if comment_digest and comment_digest != expected_digest and raw_digest == expected_digest:
+                    raise PlatformError(
+                        f"Contract publication digest is conflicting for work item {item_id}")
+                if ref is None:
+                    if raw_digest == expected_digest or comment_digest == expected_digest:
+                        raise PlatformError(
+                            f"Contract publication identity is incomplete for work item {item_id}")
                     continue
+                if str(ref.get("sha256") or "").lower() != expected_digest:
+                    if comment_digest == expected_digest:
+                        raise PlatformError(
+                            f"Contract publication digest is conflicting for work item {item_id}")
+                    continue
+                if not comment_bound or not producer_marked:
+                    raise PlatformError(
+                        f"Contract publication is not bound to OMAC producer/item "
+                        f"for work item {item_id}")
+                if any(
+                    attachment.get(key) is not None
+                    and str(attachment.get(key)) != str(item_id)
+                    for key in ("issue_id", "work_item_id", "item_id")
+                ):
+                    raise PlatformError(
+                        f"Contract publication is bound to another item for work item {item_id}")
+                filename = str(ref.get("filename") or "")
+                if filename != f"omac-contract-{expected_digest[:12]}.yaml":
+                    raise PlatformError(
+                        f"Contract publication filename is not bound to digest for work item {item_id}")
                 body = self._download_attachment_bytes(
                     ref["attachment_id"], ref.get("filename"),
                     label="contract publication",
-                    expected_sha256=contract_sha256,
+                    expected_sha256=expected_digest,
                     expected_bytes=ref.get("bytes"),
                 )
                 if body is None:
                     continue
+                if hashlib.sha256(body).hexdigest() != expected_digest:
+                    raise PlatformError(
+                        f"Contract publication digest mismatch for work item {item_id}")
+                declared_bytes = ref.get("bytes")
+                if declared_bytes is not None and len(body) != declared_bytes:
+                    raise PlatformError(
+                        f"Contract publication byte length mismatch for work item {item_id}")
+                ref = dict(ref)
+                ref["work_item_id"] = item_id
                 matches.append(ref)
         return matches
 

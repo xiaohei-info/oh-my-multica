@@ -74,8 +74,9 @@ digests. It restores only provable empty-default placeholder differences in
 other operations. It reads and snapshots current WorkItem runtime facts first,
 rejecting active/unknown Runs, platform assignments, unrelated contract drift,
 and unproven Store outcomes. If an attachment was published before its response
-was lost, only one complete digest-matching existing publication may be
-adopted; it never blindly publishes a duplicate. A durable receipt is written
+was lost, only one existing publication with the OMAC contract producer marker,
+the same issue binding, digest-bound filename, and exact digest/byte count may
+be adopted; it never blindly publishes a duplicate. A durable receipt is written
 before each Store/manifest side effect, so repeating the same command resumes
 safely without changing status, phase, bounce, PR, verification, or review
 facts. The command commits the manifest; a failed push remains a local commit
