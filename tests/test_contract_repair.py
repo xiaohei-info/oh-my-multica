@@ -162,6 +162,41 @@ def _setup(
     return engine, item, manifest, manifest_path, amendment_path, approved_contract
 
 
+def test_repair_does_not_republish_contract_without_command_damage(tmp_path):
+    engine, item, manifest, manifest_path, amendment_path, approved = _setup(tmp_path)
+    item.contract = Contract(**approved)
+    manifest.nodes["authority"].contract = Contract(**approved)
+    save_manifest(manifest, str(manifest_path))
+    calls = []
+    engine.store.set_node_contract = lambda *args: calls.append(args)
+
+    result = repair_contract_commands(
+        engine, str(manifest_path), str(amendment_path))
+
+    assert result["state"] == "synced"
+    assert calls == []
+    assert item.contract_ref is None
+
+
+def test_repair_does_not_republish_contract_without_command_damage(tmp_path):
+    engine, item, manifest, manifest_path, amendment_path, approved = _setup(tmp_path)
+    manifest.nodes["authority"].contract = Contract(**approved)
+    item.contract = Contract(**approved)
+    save_manifest(manifest, str(manifest_path))
+    calls = []
+    original_set = engine.store.set_node_contract
+    engine.store.set_node_contract = lambda *args, **kwargs: (
+        calls.append(args), original_set(*args, **kwargs)
+    )[-1]
+
+    result = repair_contract_commands(
+        engine, str(manifest_path), str(amendment_path))
+
+    assert result["state"] == "synced"
+    assert calls == []
+    assert item.contract_ref is None
+
+
 def test_repair_ignores_already_applied_update_fields(tmp_path):
     engine, item, manifest, manifest_path, amendment_path, approved = _setup(
         tmp_path, extra_update_fields=True)

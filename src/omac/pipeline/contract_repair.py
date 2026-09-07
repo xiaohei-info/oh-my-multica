@@ -466,7 +466,9 @@ def _validate_receipt_entry(
     allow_pending: bool = False,
 ) -> None:
     state = entry.get("store_state")
-    if state not in {"pending", "writing", "unknown", "synced", "not_applicable"}:
+    if state not in {
+        "pending", "writing", "unknown", "synced", "not_applicable", "not_needed",
+    }:
         raise _receipt_entry_error(receipt, node_id, "unknown store_state")
     if entry.get("store_state") == "pending" and not allow_pending:
         raise _receipt_entry_error(receipt, node_id, "persisted store_state is pending")
@@ -701,6 +703,16 @@ def repair_contract_commands(
         if entry.get("store_state") == "not_applicable":
             _write_receipt(receipt_path, receipt)
             continue
+        if not changes and entry.get("store_state") == "pending":
+            # This amendment operation already agrees with the current
+            # contract.  The repair command has no authority to republish a
+            # merely missing contract_ref or otherwise touch the Store.
+            entry["store_state"] = "not_needed"
+            _write_receipt(receipt_path, receipt)
+            continue
+        if entry.get("store_state") == "not_needed":
+            _write_receipt(receipt_path, receipt)
+            continue
         if entry.get("store_state") == "synced":
             try:
                 _verify_store_runtime(
@@ -843,7 +855,7 @@ def repair_contract_commands(
         _validate_receipt_entry(
             entry, node_id, node.work_item_id, _contract_digest(approved),
             receipt_path)
-        if entry["store_state"] not in {"synced", "not_applicable"}:
+        if entry["store_state"] not in {"synced", "not_applicable", "not_needed"}:
             raise _needs_decision(
                 f"Contract repair Store state is not complete for {node_id}",
                 "contract-repair-store-outcome-unknown", receipt_path)
