@@ -117,12 +117,13 @@ def test_attachment_body_cache_does_not_reuse_different_declared_size(
         body=body,
         declared_bytes=len(body),
     ) == body.decode()
-    assert _load_cached_attachment(
-        store,
-        attachment_id="attachment-1",
-        body=body,
-        declared_bytes=len(body) + 1,
-    ) == body.decode()
+    with pytest.raises(PlatformError, match="byte length"):
+        _load_cached_attachment(
+            store,
+            attachment_id="attachment-1",
+            body=body,
+            declared_bytes=len(body) + 1,
+        )
     assert downloads == 2
 
 

@@ -9,6 +9,7 @@ import yaml
 
 from omac.core.amendment import (
     AMENDMENT_IDENTITY_SCHEMA,
+    APPLY_LEDGER_SCHEMA,
     _amendment_id,
     manifest_definition_digest,
     manifest_digest,
@@ -17,7 +18,7 @@ from omac.core.manifest import Contract, Manifest, Node, _dump_contract, load_ma
 from omac.core.taskmeta import TaskKind, TaskPhase
 from omac.engines import create_engine
 from omac.engines.models import AgentRunObservation, EngineConfig, WorkItemStatus
-from omac.errors import NeedsDecision, ValidationError
+from omac.errors import NeedsDecision, PlatformError, ValidationError
 from omac.pipeline.contract_repair import (
     _contract_digest,
     repair_contract_commands,
@@ -66,6 +67,7 @@ def _setup(tmp_path: Path):
         meta={
             "last_amendment_id": "amend-live-1",
             "amendment_apply": {
+                "schema": APPLY_LEDGER_SCHEMA,
                 "amendment_id": "amend-live-1",
                 "nodes": {"authority": {"stage": "review", "state": "synced"}},
             },
@@ -182,6 +184,17 @@ def test_repair_rejects_malformed_receipt_fail_closed(tmp_path, monkeypatch):
     assert item.contract_ref is None
 
 
+def test_repair_rejects_incomplete_amendment_apply_ledger(tmp_path):
+    engine, item, manifest, manifest_path, amendment_path, _approved = _setup(tmp_path)
+    manifest.meta["amendment_apply"]["nodes"]["authority"]["state"] = "pending"
+    save_manifest(manifest, str(manifest_path))
+
+    with pytest.raises(NeedsDecision, match="apply"):
+        repair_contract_commands(engine, str(manifest_path), str(amendment_path))
+
+    assert item.contract_ref is None
+
+
 def test_repair_rejects_assigned_work_item_before_store_side_effect(tmp_path):
     engine, item, manifest, manifest_path, amendment_path, _approved = _setup(tmp_path)
     item.platform_assignee_id = "agent-active"
@@ -209,8 +222,10 @@ def test_repair_lost_response_adopts_one_matching_publication_without_republish(
     publication = {
         "comment_id": "published-comment",
         "attachment_id": "published-contract",
-        "filename": "omac-contract-published.yaml",
+        "filename": f"omac-contract-{digest[:12]}.yaml",
         "sha256": digest,
+        "bytes": 10,
+        "work_item_id": item.id,
     }
     calls = {"set": 0, "sync": 0}
 
@@ -241,6 +256,82 @@ def test_repair_lost_response_adopts_one_matching_publication_without_republish(
     assert calls == {"set": 1, "sync": 1}
     assert item.contract_ref == publication
     assert _dump_contract(load_manifest(str(manifest_path)).nodes["authority"].contract) == approved
+
+
+@pytest.mark.parametrize("tampered_state", ["bogus", "pending"])
+def test_repair_rejects_tampered_receipt_state_without_republishing(
+        tmp_path, tampered_state):
+    engine, item, manifest, manifest_path, amendment_path, _approved = _setup(tmp_path)
+    calls = {"set": 0}
+
+    def lost_set(*_args):
+        calls["set"] += 1
+        raise RuntimeError("unknown write result")
+
+    engine.store.set_node_contract = lost_set
+    engine.store.find_contract_publications = lambda *_args: []
+    with pytest.raises(NeedsDecision):
+        repair_contract_commands(engine, str(manifest_path), str(amendment_path))
+    assert calls["set"] == 1
+
+    receipt_path = next((tmp_path / "contract-repair").glob("*.json"))
+    receipt = json.loads(receipt_path.read_text())
+    receipt["targets"]["authority"]["store_state"] = tampered_state
+    receipt_path.write_text(json.dumps(receipt))
+
+    with pytest.raises(NeedsDecision, match="receipt"):
+        repair_contract_commands(engine, str(manifest_path), str(amendment_path))
+    assert calls["set"] == 1
+    assert item.contract_ref is None
+
+
+def test_repair_rejects_store_item_id_mismatch_before_write(tmp_path):
+    engine, item, manifest, manifest_path, amendment_path, _approved = _setup(tmp_path)
+    original_get = engine.store.get_work_item
+    calls = []
+
+    def wrong_item(item_id):
+        observed = copy.copy(original_get(item_id))
+        observed.id = "different-issue"
+        return observed
+
+    engine.store.get_work_item = wrong_item
+    engine.store.set_node_contract = lambda item_id, _contract: calls.append(item_id)
+
+    with pytest.raises(NeedsDecision, match="WorkItem"):
+        repair_contract_commands(engine, str(manifest_path), str(amendment_path))
+
+    assert calls == []
+    assert item.contract_ref is None
+
+
+def test_repair_rejects_tampered_receipt_cas_snapshots(tmp_path, monkeypatch):
+    engine, item, manifest, manifest_path, amendment_path, _approved = _setup(tmp_path)
+    original_save = save_manifest
+    failed = {"value": False}
+
+    def fail_once(current_manifest, path):
+        if not failed["value"]:
+            failed["value"] = True
+            raise OSError("manifest write interrupted")
+        return original_save(current_manifest, path)
+
+    monkeypatch.setattr("omac.pipeline.contract_repair.save_manifest", fail_once)
+    with pytest.raises(OSError):
+        repair_contract_commands(engine, str(manifest_path), str(amendment_path))
+    monkeypatch.setattr("omac.pipeline.contract_repair.save_manifest", original_save)
+
+    receipt_path = next((tmp_path / "contract-repair").glob("*.json"))
+    receipt = json.loads(receipt_path.read_text())
+    target = receipt["targets"]["authority"]
+    target["store_state"] = "unknown"
+    target["runtime_snapshot"] = None
+    target["manifest_snapshot"] = None
+    receipt_path.write_text(json.dumps(receipt))
+    item.status = WorkItemStatus.TODO
+
+    with pytest.raises(NeedsDecision, match="CAS|runtime"):
+        repair_contract_commands(engine, str(manifest_path), str(amendment_path))
 
 
 def test_repair_manifest_failure_resumes_without_republishing_store_contract(
@@ -278,6 +369,102 @@ def test_repair_manifest_failure_resumes_without_republishing_store_contract(
     assert result["state"] == "synced"
     assert calls["set"] == 1
     assert _dump_contract(load_manifest(str(manifest_path)).nodes["authority"].contract) == approved
+    assert item.contract_ref["sha256"] == _contract_digest(approved)
+
+
+def test_repair_rejects_unbound_publication_before_any_store_write(tmp_path):
+    engine, item, manifest, manifest_path, amendment_path, approved = _setup(tmp_path)
+    digest = _contract_digest(approved)
+    calls = []
+    engine.store.find_contract_publications = lambda *_args: [{
+        "comment_id": "comment-contract",
+        "attachment_id": "attachment-contract",
+        "filename": f"omac-contract-{digest[:12]}.yaml",
+        "sha256": digest,
+        "bytes": 10,
+    }]
+    engine.store.set_node_contract = lambda *args: calls.append(args)
+
+    with pytest.raises(PlatformError, match="bound"):
+        repair_contract_commands(engine, str(manifest_path), str(amendment_path))
+
+    assert calls == []
+    assert item.contract_ref is None
+
+
+def test_repair_recovers_ref_write_failure_without_republishing_contract(tmp_path):
+    engine, item, manifest, manifest_path, amendment_path, approved = _setup(tmp_path)
+    calls = {"set": 0, "sync": 0}
+    published = {"value": False}
+    publication = {
+        "comment_id": "comment-contract",
+        "attachment_id": "attachment-contract",
+        "filename": f"omac-contract-{_contract_digest(approved)[:12]}.yaml",
+        "sha256": _contract_digest(approved),
+        "bytes": 10,
+        "work_item_id": item.id,
+    }
+
+    def lost_set(_item_id, contract):
+        calls["set"] += 1
+        item.contract = Contract(**contract)
+        published["value"] = True
+        raise RuntimeError("response lost after publish")
+
+    def find(_item_id, _digest):
+        return [publication] if published["value"] else []
+
+    def sync(_item_id, ref):
+        calls["sync"] += 1
+        if calls["sync"] == 1:
+            raise PlatformError("ref metadata write failed")
+        item.contract_ref = dict(ref)
+
+    engine.store.set_node_contract = lost_set
+    engine.store.find_contract_publications = find
+    engine.store.sync_contract_ref = sync
+    with pytest.raises(NeedsDecision, match="unknown"):
+        repair_contract_commands(engine, str(manifest_path), str(amendment_path))
+    assert calls == {"set": 1, "sync": 1}
+
+    result = repair_contract_commands(engine, str(manifest_path), str(amendment_path))
+
+    assert result["state"] == "synced"
+    assert calls == {"set": 1, "sync": 2}
+    assert _dump_contract(load_manifest(str(manifest_path)).nodes["authority"].contract) == approved
+
+
+def test_repair_receipt_failure_after_manifest_save_resumes_without_store_republish(
+        tmp_path, monkeypatch):
+    engine, item, manifest, manifest_path, amendment_path, approved = _setup(tmp_path)
+    calls = {"set": 0, "writes": 0}
+    original_set = engine.store.set_node_contract
+    original_write = __import__(
+        "omac.pipeline.contract_repair", fromlist=["_write_receipt"]
+    )._write_receipt
+
+    def count_set(*args, **kwargs):
+        calls["set"] += 1
+        return original_set(*args, **kwargs)
+
+    def fail_after_manifest(path, receipt):
+        calls["writes"] += 1
+        if calls["writes"] == 4:
+            raise OSError("receipt write interrupted")
+        return original_write(path, receipt)
+
+    monkeypatch.setattr(engine.store, "set_node_contract", count_set)
+    monkeypatch.setattr("omac.pipeline.contract_repair._write_receipt", fail_after_manifest)
+    with pytest.raises(OSError, match="receipt write interrupted"):
+        repair_contract_commands(engine, str(manifest_path), str(amendment_path))
+    assert calls["set"] == 1
+    assert _dump_contract(load_manifest(str(manifest_path)).nodes["authority"].contract) == approved
+
+    monkeypatch.setattr("omac.pipeline.contract_repair._write_receipt", original_write)
+    result = repair_contract_commands(engine, str(manifest_path), str(amendment_path))
+
+    assert result["state"] == "synced"
+    assert calls["set"] == 1
     assert item.contract_ref["sha256"] == _contract_digest(approved)
 
 

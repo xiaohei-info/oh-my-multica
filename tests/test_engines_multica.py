@@ -127,12 +127,18 @@ def test_multica_finds_integrity_checked_contract_publication(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
     body = b"objective: live authority\n"
     digest = hashlib.sha256(body).hexdigest()
+    filename = f"omac-contract-{digest[:12]}.yaml"
     comments = [{
         "id": "comment-contract",
-        "content": f"- sha256: {digest}\n- bytes: {len(body)}\n",
+        "content": (
+            "## omac contract\n"
+            f"- sha256: {digest}\n"
+            f"- bytes: {len(body)}\n"
+            "- metadata: `contract_ref`\n"
+        ),
         "attachments": [{
             "id": "attachment-contract",
-            "filename": "omac-contract-approved.yaml",
+            "filename": filename,
         }],
     }]
     monkeypatch.setattr(store, "_run_multica", lambda _args: comments)
@@ -141,7 +147,7 @@ def test_multica_finds_integrity_checked_contract_publication(monkeypatch):
         "_download_attachment_bytes",
         lambda attachment_id, filename, **kwargs: (
             body if attachment_id == "attachment-contract"
-            and filename == "omac-contract-approved.yaml"
+            and filename == f"omac-contract-{digest[:12]}.yaml"
             and kwargs["expected_sha256"] == digest
             and kwargs["expected_bytes"] == len(body)
             else None
@@ -153,10 +159,81 @@ def test_multica_finds_integrity_checked_contract_publication(monkeypatch):
     assert matches == [{
         "comment_id": "comment-contract",
         "attachment_id": "attachment-contract",
-        "filename": "omac-contract-approved.yaml",
+        "filename": filename,
         "sha256": digest,
         "bytes": len(body),
+        "work_item_id": "issue-1",
     }]
+
+
+@pytest.mark.parametrize("declared_sha, declared_bytes, expected", [
+    ("a" * 64, 5, "digest"),
+    (None, 999, "byte"),
+])
+def test_multica_rejects_contract_publication_integrity_mismatch(
+        monkeypatch, declared_sha, declared_bytes, expected):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    body = b"objective: live authority\n"
+    declared_sha = declared_sha or hashlib.sha256(body).hexdigest()
+    filename = f"omac-contract-{declared_sha[:12]}.yaml"
+    comments = [{
+        "id": "comment-contract",
+        "content": (
+            "## omac contract\n"
+            f"- sha256: {declared_sha}\n"
+            f"- bytes: {declared_bytes}\n"
+            "- metadata: `contract_ref`\n"
+        ),
+        "attachments": [{
+            "id": "attachment-contract",
+            "filename": filename,
+        }],
+    }]
+    monkeypatch.setattr(store, "_run_multica", lambda _args: comments)
+    monkeypatch.setattr(store, "_download_attachment_bytes", lambda *_args, **_kwargs: body)
+
+    with pytest.raises(PlatformError, match=expected):
+        store.find_contract_publications("issue-1", declared_sha)
+
+
+def test_multica_ignores_contract_attachment_without_omac_producer_marker(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    body = b"objective: live authority\n"
+    digest = hashlib.sha256(body).hexdigest()
+    filename = f"omac-contract-{digest[:12]}.yaml"
+    comments = [{
+        "id": "comment-untrusted",
+        "content": f"- sha256: {digest}\n- bytes: {len(body)}\n",
+        "attachments": [{"id": "attachment-untrusted", "filename": filename}],
+    }]
+    monkeypatch.setattr(store, "_run_multica", lambda _args: comments)
+    monkeypatch.setattr(store, "_download_attachment_bytes", lambda *_args, **_kwargs: body)
+
+    with pytest.raises(PlatformError, match="producer"):
+        store.find_contract_publications("issue-1", digest)
+
+
+def test_multica_ignores_contract_attachment_bound_to_another_issue(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    body = b"objective: live authority\n"
+    digest = hashlib.sha256(body).hexdigest()
+    filename = f"omac-contract-{digest[:12]}.yaml"
+    comments = [{
+        "id": "comment-other",
+        "issue_id": "issue-other",
+        "content": (
+            "## omac contract\n"
+            f"- sha256: {digest}\n"
+            f"- bytes: {len(body)}\n"
+            "- metadata: `contract_ref`\n"
+        ),
+        "attachments": [{"id": "attachment-other", "filename": filename}],
+    }]
+    monkeypatch.setattr(store, "_run_multica", lambda _args: comments)
+    monkeypatch.setattr(store, "_download_attachment_bytes", lambda *_args, **_kwargs: body)
+
+    with pytest.raises(PlatformError, match="bound"):
+        store.find_contract_publications("issue-1", digest)
 
 
 def test_multica_finalizes_authoring_identity_with_existing_store_writes(monkeypatch):
