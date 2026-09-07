@@ -205,6 +205,15 @@ nodes:
         'test -n "${OAC_WORKSPACE_TOKEN:-}"'
     ]
 
+    save_manifest(manifest, path)
+    roundtrip = load_manifest(path)
+    assert roundtrip.nodes["live"].contract.verification_commands == (
+        manifest.nodes["live"].contract.verification_commands
+    )
+    assert roundtrip.nodes["live"].contract.integration_gates[0]["commands"] == (
+        manifest.nodes["live"].contract.integration_gates[0]["commands"]
+    )
+
 
 def test_set_node_unknown_key(tmp_path):
     m = load_manifest(_write(tmp_path, BASIC))
