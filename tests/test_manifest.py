@@ -173,6 +173,39 @@ def test_env_expansion(tmp_path, monkeypatch):
     assert load_manifest(path).meta["ws"] == "real-ws"
 
 
+def test_env_expansion_preserves_runtime_shell_commands(tmp_path, monkeypatch):
+    monkeypatch.delenv("OAC_WORKSPACE_LIVE_CONFIG", raising=False)
+    content = """\
+meta:
+  ws: "${OMAC_TEST_WS:-fallback}"
+nodes:
+  - id: live
+    worker: alice
+    contract:
+      objective: live checks
+      acceptance: [live]
+      non_goals: []
+      verification_commands:
+        - 'test -n "${OAC_WORKSPACE_ID:-}" && test -r "$OAC_WORKSPACE_LIVE_CONFIG"'
+      integration_gates:
+        - name: live
+          commands:
+            - 'test -n "${OAC_WORKSPACE_TOKEN:-}"'
+      pr_base: main
+"""
+    path = _write(tmp_path, content)
+
+    manifest = load_manifest(path)
+
+    assert manifest.meta["ws"] == "fallback"
+    assert manifest.nodes["live"].contract.verification_commands == [
+        'test -n "${OAC_WORKSPACE_ID:-}" && test -r "$OAC_WORKSPACE_LIVE_CONFIG"'
+    ]
+    assert manifest.nodes["live"].contract.integration_gates[0]["commands"] == [
+        'test -n "${OAC_WORKSPACE_TOKEN:-}"'
+    ]
+
+
 def test_set_node_unknown_key(tmp_path):
     m = load_manifest(_write(tmp_path, BASIC))
     try:
