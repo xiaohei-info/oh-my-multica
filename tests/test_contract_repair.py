@@ -11,10 +11,14 @@ from omac.core.amendment import (
     AMENDMENT_IDENTITY_SCHEMA,
     APPLY_LEDGER_SCHEMA,
     _amendment_id,
+    _digest,
     manifest_definition_digest,
     manifest_digest,
 )
-from omac.core.manifest import Contract, Manifest, Node, _dump_contract, load_manifest, save_manifest
+from omac.core.manifest import (
+    Contract, Manifest, Node, _dump_contract, _load_contract, load_manifest,
+    save_manifest,
+)
 from omac.core.taskmeta import TaskKind, TaskPhase
 from omac.engines import create_engine
 from omac.engines.models import AgentRunObservation, EngineConfig, WorkItemStatus
@@ -45,7 +49,9 @@ def _approved_contract(verification_command: str, gate_command: str) -> dict:
     }
 
 
-def _setup(tmp_path: Path, *, added: bool = False):
+def _setup(
+        tmp_path: Path, *, added: bool = False,
+        extra_update_fields: bool = False):
     engine = create_engine(
         "mock",
         EngineConfig("mock", "ws", extra={"MOCK_AUTO_COMPLETE": "false"}),
@@ -84,6 +90,12 @@ def _setup(tmp_path: Path, *, added: bool = False):
     )
     manifest_path = tmp_path / "manifest.yaml"
     save_manifest(manifest, str(manifest_path))
+    update_set = {"contract": approved_contract}
+    if extra_update_fields:
+        update_set.update({
+            "description": "already applied description",
+            "blocked_by": ["already-applied-upstream"],
+        })
     amendment = {
         "schema": "omac.dag-amendment/v1",
         "reason": "restore shell placeholders",
@@ -103,7 +115,7 @@ def _setup(tmp_path: Path, *, added: bool = False):
                 {
                     "op": "update",
                     "node": "authority",
-                    "set": {"contract": approved_contract},
+                    "set": update_set,
                 }
             ),
         ],
@@ -140,13 +152,28 @@ def _setup(tmp_path: Path, *, added: bool = False):
         {
             "stage": "review",
             "state": "synced",
-            "expected_contract_sha256": _contract_digest(approved_contract),
+            "expected_contract_sha256": _digest(
+                _dump_contract(_load_contract(approved_contract))),
         }
     )
     save_manifest(manifest, str(manifest_path))
     amendment_path = tmp_path / "approved.amendment.yaml"
     amendment_path.write_text(yaml.safe_dump(amendment, sort_keys=False))
     return engine, item, manifest, manifest_path, amendment_path, approved_contract
+
+
+def test_repair_ignores_already_applied_update_fields(tmp_path):
+    engine, item, manifest, manifest_path, amendment_path, approved = _setup(
+        tmp_path, extra_update_fields=True)
+
+    result = repair_contract_commands(
+        engine, str(manifest_path), str(amendment_path))
+
+    assert result["state"] == "synced"
+    repaired = load_manifest(str(manifest_path))
+    assert _dump_contract(repaired.nodes["authority"].contract) == approved
+    assert repaired.nodes["authority"].description is None
+    assert repaired.nodes["authority"].blocked_by == []
 
 
 def test_repair_restores_contract_commands_for_added_node(tmp_path):
@@ -159,6 +186,21 @@ def test_repair_restores_contract_commands_for_added_node(tmp_path):
     assert result["state"] == "synced"
     assert _dump_contract(load_manifest(str(manifest_path)).nodes["authority"].contract) == approved
     assert item.contract_ref["sha256"] == _contract_digest(approved)
+
+
+def test_repair_restores_added_node_without_work_item_definition_only(tmp_path):
+    engine, item, manifest, manifest_path, amendment_path, approved = _setup(
+        tmp_path, added=True)
+    manifest.nodes["authority"].work_item_id = None
+    manifest.nodes["authority"].status = "todo"
+    save_manifest(manifest, str(manifest_path))
+
+    result = repair_contract_commands(
+        engine, str(manifest_path), str(amendment_path))
+
+    assert result["state"] == "synced"
+    assert _dump_contract(load_manifest(str(manifest_path)).nodes["authority"].contract) == approved
+    assert item.contract_ref is None
 
 
 def test_repair_contract_commands_restores_exact_shell_damage_and_preserves_runtime(tmp_path):
