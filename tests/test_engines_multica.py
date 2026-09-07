@@ -123,6 +123,42 @@ def test_multica_recovers_latest_review_context_from_comment_attachments(monkeyp
     }]
 
 
+def test_multica_finds_integrity_checked_contract_publication(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    body = b"objective: live authority\n"
+    digest = hashlib.sha256(body).hexdigest()
+    comments = [{
+        "id": "comment-contract",
+        "content": f"- sha256: {digest}\n- bytes: {len(body)}\n",
+        "attachments": [{
+            "id": "attachment-contract",
+            "filename": "omac-contract-approved.yaml",
+        }],
+    }]
+    monkeypatch.setattr(store, "_run_multica", lambda _args: comments)
+    monkeypatch.setattr(
+        store,
+        "_download_attachment_bytes",
+        lambda attachment_id, filename, **kwargs: (
+            body if attachment_id == "attachment-contract"
+            and filename == "omac-contract-approved.yaml"
+            and kwargs["expected_sha256"] == digest
+            and kwargs["expected_bytes"] == len(body)
+            else None
+        ),
+    )
+
+    matches = store.find_contract_publications("issue-1", digest)
+
+    assert matches == [{
+        "comment_id": "comment-contract",
+        "attachment_id": "attachment-contract",
+        "filename": "omac-contract-approved.yaml",
+        "sha256": digest,
+        "bytes": len(body),
+    }]
+
+
 def test_multica_finalizes_authoring_identity_with_existing_store_writes(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
     writes = []

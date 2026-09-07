@@ -1640,6 +1640,41 @@ class MulticaStore(WorkItemStore):
             context["ledger_ref"] = ledger_entry[2]
         return context
 
+    def find_contract_publications(
+        self, item_id: str, contract_sha256: str,
+    ) -> List[Dict[str, Any]]:
+        """Find and integrity-check existing contract attachments by digest."""
+        comments = self._run_multica([
+            "issue", "comment", "list", item_id, "--output", "json",
+        ])
+        if not isinstance(comments, list):
+            raise PlatformError(
+                f"Could not read contract publications for work item {item_id}")
+        matches = []
+        for comment in comments:
+            if not isinstance(comment, dict):
+                continue
+            for attachment in comment.get("attachments") or []:
+                if not isinstance(attachment, dict):
+                    continue
+                ref = self._review_attachment_ref(comment, attachment, "contract")
+                if ref is None or ref.get("sha256") != contract_sha256:
+                    continue
+                body = self._download_attachment_bytes(
+                    ref["attachment_id"], ref.get("filename"),
+                    label="contract publication",
+                    expected_sha256=contract_sha256,
+                    expected_bytes=ref.get("bytes"),
+                )
+                if body is None:
+                    continue
+                matches.append(ref)
+        return matches
+
+    def sync_contract_ref(self, item_id: str, ref: Dict[str, Any]) -> None:
+        """Link a previously published contract attachment without new comment IO."""
+        self._set_metadata(item_id, CONTRACT_REF_KEY, ref)
+
     def control_batch_observation_supported(self) -> bool:
         """Return whether the configured project enables a true list-batch read."""
         return bool(self.config.project_id)

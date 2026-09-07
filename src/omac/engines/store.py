@@ -161,6 +161,17 @@ class WorkItemStore(ABC):
         """
         return {}
 
+    def find_contract_publications(
+        self, item_id: str, contract_sha256: str,
+    ) -> List[Dict[str, Any]]:
+        """Find already-published contract attachments without creating one."""
+        return []
+
+    def sync_contract_ref(self, item_id: str, ref: Dict[str, Any]) -> None:
+        """Persist a known contract attachment reference without republishing."""
+        raise PlatformError(
+            "WorkItemStore does not support contract reference-only repair")
+
     @contextmanager
     def reviewer_dispatch_lock(self, item_id: str) -> Iterator[None]:
         """Serialize OMAC Reviewer dispatch writers for one work item.

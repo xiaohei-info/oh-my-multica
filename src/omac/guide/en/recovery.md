@@ -57,6 +57,30 @@ in `previous_review`; the Worker must address those blockers in the new delivery
 If a reject is known but no report, ledger, or blocker context can be recovered,
 retry stops with exit 20 instead of consuming another Worker round.
 
+### Repairing contract commands after an applied amendment
+
+If an old manifest load already expanded `${VAR:-}` runtime placeholders to
+`""`, do not re-run `amend accept`, guess environment values, or edit live
+metadata by hand. Use the same Reviewer-passed, already-applied v2 amendment
+source for a definition-only repair:
+
+```bash
+omac dag amend repair-contract-commands .omac/project.yaml /tmp/applied.amendment.yaml
+```
+
+The command requires matching identity/base digests and apply-ledger contract
+digests. It restores only provable empty-default placeholder differences in
+`verification_commands` and `integration_gates[].commands`; it never replays
+other operations. It reads and snapshots current WorkItem runtime facts first,
+rejecting active/unknown Runs, platform assignments, unrelated contract drift,
+and unproven Store outcomes. If an attachment was published before its response
+was lost, only one complete digest-matching existing publication may be
+adopted; it never blindly publishes a duplicate. A durable receipt is written
+before each Store/manifest side effect, so repeating the same command resumes
+safely without changing status, phase, bounce, PR, verification, or review
+facts. The command commits the manifest; a failed push remains a local commit
+and follows the normal git-sync warning path.
+
 ### Stage-aware recovery and merge observation
 
 - Recovery follows the issue's real `phase`: authoring resumes only the worker.
