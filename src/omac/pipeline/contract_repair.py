@@ -314,21 +314,33 @@ def _validate_approved_amendment(
 
     targets = []
     for operation in amendment.get("operations") or []:
-        if not isinstance(operation, dict) or operation.get("op") != "update":
+        if not isinstance(operation, dict):
             continue
-        changes = operation.get("set")
-        if not isinstance(changes, dict) or "contract" not in changes:
+        operation_kind = operation.get("op")
+        added = operation_kind == "add"
+        if added:
+            value = operation.get("value")
+            if not isinstance(value, dict) or "contract" not in value:
+                continue
+            node_id = str(value.get("id") or "").strip()
+            contract_value = value["contract"]
+        elif operation_kind == "update":
+            changes = operation.get("set")
+            if not isinstance(changes, dict) or "contract" not in changes:
+                continue
+            if set(changes) != {"contract"}:
+                raise ValidationError(
+                    "Contract command repair accepts only update.set.contract operations")
+            node_id = str(operation.get("node") or "").strip()
+            contract_value = changes["contract"]
+        else:
             continue
-        if set(changes) != {"contract"}:
-            raise ValidationError(
-                "Contract command repair accepts only update.set.contract operations")
-        node_id = str(operation.get("node") or "").strip()
         node = manifest.nodes.get(node_id)
         if node is None:
             raise ValidationError(f"Approved repair references unknown node {node_id}")
-        if not isinstance(changes["contract"], dict):
+        if not isinstance(contract_value, dict):
             raise ValidationError(f"Approved contract for node {node_id} is invalid")
-        approved = _dump_contract(_load_contract(changes["contract"]))
+        approved = _dump_contract(_load_contract(contract_value))
         if not isinstance(approved, dict):
             raise ValidationError(f"Approved contract for node {node_id} is invalid")
         current = _dump_contract(node.contract) if node.contract is not None else {}
@@ -340,10 +352,19 @@ def _validate_approved_amendment(
             else:
                 raise
         apply_entry = (ledger.get("nodes") or {}).get(node_id)
-        if not isinstance(apply_entry, dict) or apply_entry.get(
-                "expected_contract_sha256") != _contract_digest(approved):
+        expected_digest = _contract_digest(approved)
+        if not isinstance(apply_entry, dict):
             raise ValidationError(
                 f"Applied amendment ledger does not bind approved contract for {node_id}")
+        if apply_entry.get("expected_contract_sha256") != expected_digest:
+            added_without_store_entry = (
+                added
+                and apply_entry.get("state") in {"synced", "observed_progress"}
+                and apply_entry.get("reason") == "no existing work item side effect"
+            )
+            if not added_without_store_entry:
+                raise ValidationError(
+                    f"Applied amendment ledger does not bind approved contract for {node_id}")
         targets.append((node_id, approved, command_changes))
     if not targets:
         raise ValidationError("Approved amendment contains no repairable contract command operations")
