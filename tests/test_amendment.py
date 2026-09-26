@@ -13,6 +13,7 @@ import yaml
 import omac.cli.commands.dag as dag_cmd
 import omac.core.amendment as amendment_mod
 import omac.pipeline.amendment as amendment_pipeline
+import omac.pipeline.tasks as tasks_module
 from omac.core.amendment import (
     apply_amendment,
     build_reviewed_amendment,
@@ -352,6 +353,48 @@ def _typed_boundary_contract_update():
         "consumes": [],
     })
     return operation
+
+
+def _pass_with_nits_amendment_fixture(tmp_path):
+    path = _manifest(tmp_path)
+    engine = _engine()
+    target = engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    engine.store.update_status(target.id, WorkItemStatus.BLOCKED)
+    issue = engine.store.create_work_item(
+        "ws", "amendment", "desc", "amend-pass-with-nits", "alice",
+        reviewer="bob", kind=TaskKind.AMENDMENT)
+    proposal = _proposal(_contract_update())
+    deliverable = yaml.safe_dump(proposal, sort_keys=False)
+    report = {
+        "full_review_completed": True,
+        "blockers": [],
+        "nits": ["tighten the operator guide", "add one regression example"],
+    }
+    ledger = {"schema": "omac.review-ledger/v1", "rounds": [], "blockers": []}
+    engine.store.update_work_item_metadata(
+        issue.id,
+        deliverable=deliverable,
+        review_report=report,
+        review_report_source=yaml.safe_dump(report, sort_keys=False),
+        review_ledger=ledger,
+        review_ledger_source=yaml.safe_dump(ledger, sort_keys=False),
+        review_verdict="pass-with-nits",
+        phase=TaskPhase.CONFIRMATION,
+    )
+    issue = engine.store.get_work_item(issue.id)
+    engine.store.update_work_item_metadata(
+        issue.id,
+        review_subject_digest=review_subject_digest(issue, 1),
+    )
+    engine.store.update_status(issue.id, WorkItemStatus.IN_REVIEW)
+    reviewed = build_reviewed_amendment(
+        load_manifest(str(path)), proposal, engine.store,
+        issue_id=issue.id, reviewer_verdict="pass-with-nits",
+    )
+    amendment_file = tmp_path / "pass-with-nits.amendment.yaml"
+    amendment_file.write_text(yaml.safe_dump(reviewed, sort_keys=False))
+    return path, engine, issue, amendment_file, reviewed
 
 
 def _transitional_boundary_contract_update():
@@ -1891,6 +1934,70 @@ def test_propose_amendment_passes_authoritative_acceptance_to_reviewer_obligatio
     assert Path(result["amendment_file"]).exists()
 
 
+def test_resume_pass_with_nits_materializes_reviewed_amendment_without_dispatch(
+    tmp_path, monkeypatch,
+):
+    path = _manifest(tmp_path)
+    report_file = tmp_path / "trigger-report.md"
+    report_file.write_text("existing amendment review report")
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "design.md").write_text("authoritative design")
+    engine = _engine()
+    target = engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    engine.store.update_status(target.id, WorkItemStatus.BLOCKED)
+    persisted_contract = amendment_pipeline._contract(
+        str(path), [str(docs)], ["bootstrap"], str(report_file),
+        project_root=tmp_path,
+    )
+    issue = engine.store.create_work_item(
+        "ws", "amendment", "desc", "amend-resume-nits", "alice",
+        reviewer="bob", kind=TaskKind.AMENDMENT)
+    engine.store.set_node_contract(issue.id, persisted_contract)
+    proposal = _proposal(_contract_update())
+    deliverable = yaml.safe_dump(proposal, sort_keys=False)
+    report = engine.store._mock_review_report(issue.id, "pass-with-nits")
+    report["nits"] = ["operator guide wording"]
+    engine.store.update_work_item_metadata(
+        issue.id,
+        deliverable=deliverable,
+        review_report=report,
+        review_report_source=yaml.safe_dump(report, sort_keys=False),
+        review_verdict="pass-with-nits",
+        phase=TaskPhase.REVIEW,
+    )
+    current = engine.store.get_work_item(issue.id)
+    current.review_subject_digest = tasks_module._review_subject_digest(
+        TaskKind.AMENDMENT, current, 1)
+    engine.store.update_status(issue.id, WorkItemStatus.IN_REVIEW)
+    before_assignments = list(engine.store.assign_log)
+    output_file = tmp_path / "workspace-cni-simplification-v2.amendment.yaml"
+
+    result = amendment_pipeline.propose_amendment(
+        engine,
+        str(path),
+        report_file=str(report_file),
+        docs=[str(docs)],
+        blocked_nodes=["bootstrap"],
+        orchestrator="alice",
+        reviewers=["bob"],
+        max_revisions=1,
+        output_file=str(output_file),
+        resume_issue_id=issue.id,
+    )
+
+    assert output_file.exists()
+    reviewed = yaml.safe_load(output_file.read_text())
+    assert result["next_action"].startswith("omac dag amend accept-nits ")
+    assert reviewed["review"]["issue_id"] == issue.id
+    assert reviewed["review"]["verdict"] == "pass-with-nits"
+    assert engine.store.assign_log == before_assignments
+    final = engine.store.get_work_item(issue.id)
+    assert final.phase == TaskPhase.CONFIRMATION
+    assert final.review_verdict == "pass-with-nits"
+
+
 def test_propose_amendment_forwards_explicit_resume_issue_id(
     tmp_path, monkeypatch,
 ):
@@ -2830,6 +2937,114 @@ def test_accept_amendment_rejects_review_issue_of_wrong_kind(tmp_path):
         amendment_pipeline.accept_amendment(
             engine, str(path), str(amendment_file), reason="operator accepted",
             agent_pool={"alice", "bob", "charlie"})
+
+
+def test_accept_amendment_pass_with_nits_records_marker_without_apply_and_is_idempotent(
+    tmp_path,
+):
+    path, engine, issue, amendment_file, reviewed = (
+        _pass_with_nits_amendment_fixture(tmp_path))
+    before_manifest = path.read_bytes()
+
+    result = amendment_pipeline.accept_amendment_nits(
+        engine, str(path), str(amendment_file), reason="operator accepted nits")
+
+    assert result["state"] == "nits_accepted"
+    assert result["next_action"].startswith("omac dag amend accept ")
+    assert path.read_bytes() == before_manifest
+    current = engine.store.get_work_item(issue.id)
+    assert current.review_verdict == "pass-with-nits"
+    assert current.phase == TaskPhase.CONFIRMATION
+    assert current.status == WorkItemStatus.IN_REVIEW
+    marker = current.review_nits_acceptance
+    assert marker["schema"] == "omac.amendment-review-nits-acceptance/v1"
+    assert marker["issue_id"] == issue.id
+    assert marker["amendment_id"] == reviewed["amendment_id"]
+
+    repeated = amendment_pipeline.accept_amendment_nits(
+        engine, str(path), str(amendment_file), reason="same operator decision")
+    assert repeated["state"] == "nits_accepted"
+    assert engine.store.get_work_item(issue.id).review_nits_acceptance == marker
+
+
+def test_accept_amendment_pass_with_nits_official_accept_applies_after_marker(
+    tmp_path,
+):
+    path, engine, issue, amendment_file, reviewed = (
+        _pass_with_nits_amendment_fixture(tmp_path))
+    amendment_pipeline.accept_amendment_nits(
+        engine, str(path), str(amendment_file), reason="operator accepted nits")
+
+    result = amendment_pipeline.accept_amendment(
+        engine, str(path), str(amendment_file), reason="operator applies amendment",
+        agent_pool={"alice", "bob", "charlie"},
+    )
+
+    assert result["state"] == "applied"
+    assert load_manifest(str(path)).meta["last_amendment_id"] == reviewed["amendment_id"]
+    assert engine.store.get_work_item(issue.id).status == WorkItemStatus.DONE
+
+
+def test_accept_amendment_pass_with_nits_rejects_subject_or_report_drift(
+    tmp_path,
+):
+    path, engine, issue, amendment_file, _reviewed = (
+        _pass_with_nits_amendment_fixture(tmp_path))
+    amendment = yaml.safe_load(amendment_file.read_text())
+    amendment["review"]["review_subject_digest"] = "stale-subject"
+    amendment_file.write_text(yaml.safe_dump(amendment, sort_keys=False))
+    before_manifest = path.read_bytes()
+
+    with pytest.raises(ValidationError, match="subject/report/ledger/deliverable"):
+        amendment_pipeline.accept_amendment_nits(
+            engine, str(path), str(amendment_file), reason="operator accepted nits")
+
+    assert path.read_bytes() == before_manifest
+    assert engine.store.get_work_item(issue.id).review_nits_acceptance in (None, {})
+
+
+def test_accept_amendment_pass_with_nits_rejects_current_report_ref_drift(
+    tmp_path,
+):
+    path, engine, issue, amendment_file, _reviewed = (
+        _pass_with_nits_amendment_fixture(tmp_path))
+    engine.store.get_work_item(issue.id).review_report_ref = {
+        "attachment_id": "replacement-report",
+        "sha256": "b" * 64,
+    }
+    before_manifest = path.read_bytes()
+
+    with pytest.raises(ValidationError, match="subject/report/ledger/deliverable"):
+        amendment_pipeline.accept_amendment_nits(
+            engine, str(path), str(amendment_file), reason="operator accepted nits")
+
+    assert path.read_bytes() == before_manifest
+    assert engine.store.get_work_item(issue.id).review_nits_acceptance in (None, {})
+
+
+def test_accept_amendment_pass_with_nits_rejects_active_direct_run_without_write(
+    tmp_path, monkeypatch,
+):
+    path, engine, issue, amendment_file, _reviewed = (
+        _pass_with_nits_amendment_fixture(tmp_path))
+    active = AgentRunObservation(
+        id="amendment-review-run", kind="direct", status="running",
+        agent_id="agent-bob", trigger_kind="issue_assignment",
+    )
+    monkeypatch.setattr(
+        engine.runtime, "list_runs",
+        lambda item_id: [active] if item_id == issue.id else [],
+    )
+    before_manifest = path.read_bytes()
+    before_amendment = amendment_file.read_bytes()
+
+    with pytest.raises(ValidationError, match="active.*direct Run"):
+        amendment_pipeline.accept_amendment_nits(
+            engine, str(path), str(amendment_file), reason="operator accepted nits")
+
+    assert path.read_bytes() == before_manifest
+    assert amendment_file.read_bytes() == before_amendment
+    assert engine.store.get_work_item(issue.id).review_nits_acceptance in (None, {})
 
 
 def test_accept_authoring_amendment_fails_before_manifest_write_for_active_formal_run(

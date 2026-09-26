@@ -28,7 +28,10 @@ from .stage_recovery import (
     stage_recovery_subject,
     validate_stage_recovery,
 )
-from .taskmeta import TaskPhase
+from .taskmeta import (
+    TaskPhase,
+    amendment_review_nits_acceptance_is_valid,
+)
 from ..engines.models import WorkItemStatus
 from ..errors import NeedsDecision, ValidationError
 from ..i18n import ui
@@ -174,6 +177,43 @@ def _acceptance_digest(acceptance: Any) -> str | None:
         return None
     value = asdict(acceptance) if is_dataclass(acceptance) else acceptance
     return _digest(value)
+
+
+def amendment_review_binding(item: Any) -> dict[str, Any]:
+    """Return the bounded current-review facts an amendment nits decision binds."""
+    deliverable = getattr(item, "deliverable", None)
+    deliverable_sha256 = (
+        hashlib.sha256(deliverable.encode("utf-8")).hexdigest()
+        if isinstance(deliverable, str) and deliverable
+        else None
+    )
+    return {
+        "review_subject_digest": getattr(item, "review_subject_digest", None),
+        "review_report_ref": copy.deepcopy(
+            getattr(item, "review_report_ref", None)),
+        "review_ledger_ref": copy.deepcopy(
+            getattr(item, "review_ledger_ref", None)),
+        "deliverable_sha256": deliverable_sha256,
+    }
+
+
+def _amendment_nits_marker_matches(
+    marker: Any, amendment: dict[str, Any], item: Any,
+) -> bool:
+    if not amendment_review_nits_acceptance_is_valid(marker):
+        return False
+    review = amendment.get("review") or {}
+    binding = amendment_review_binding(item)
+    return bool(
+        marker.get("issue_id") == review.get("issue_id") == item.id
+        and marker.get("amendment_id") == amendment.get("amendment_id")
+        and marker.get("review_subject_digest")
+        == binding["review_subject_digest"]
+        and marker.get("review_report_ref") == binding["review_report_ref"]
+        and marker.get("review_ledger_ref") == binding["review_ledger_ref"]
+        and marker.get("deliverable_sha256") == binding["deliverable_sha256"]
+        and marker.get("verdict") == review.get("verdict") == "pass-with-nits"
+    )
 
 
 def amendment_apply_blocker(
@@ -928,8 +968,9 @@ def build_reviewed_amendment(
         manifest, proposal, pool, acceptance=acceptance)
     if errors:
         raise ValidationError("Amendment validation failed:\n  - " + "\n  - ".join(errors))
-    if reviewer_verdict != "pass":
-        raise ValidationError("Only a reviewer pass can enter human confirmation")
+    if reviewer_verdict not in {"pass", "pass-with-nits"}:
+        raise ValidationError(
+            "Only a reviewer pass or pass-with-nits can enter human confirmation")
 
     minimal, derived, immutable = _minimal_rerun(manifest, proposal)
     if immutable:
@@ -970,18 +1011,26 @@ def build_reviewed_amendment(
     acceptance_sha256 = _acceptance_digest(acceptance)
     if acceptance_sha256:
         base["acceptance_sha256"] = acceptance_sha256
+    amendment_id = _amendment_id(
+        definition_digest, proposal, minimal, historical_corrections, evidence,
+        manifest_digest_value=base["manifest_sha256"],
+        acceptance_digest=base.get("acceptance_sha256"),
+        issue_id=issue_id,
+        reviewer_verdict=reviewer_verdict,
+    )
+    review = {"issue_id": issue_id, "verdict": reviewer_verdict}
+    # Keep the Reviewer verdict untouched while carrying a read-only snapshot of
+    # the facts the operator must accept for a pass-with-nits amendment.  The
+    # marker is checked again against Store facts before either acceptance or
+    # apply; it is not a replacement for those facts.
+    if reviewer_verdict == "pass-with-nits":
+        review.update(amendment_review_binding(store.get_work_item(issue_id)))
     return {
         **proposal,
         "identity_schema": AMENDMENT_IDENTITY_SCHEMA,
-        "amendment_id": _amendment_id(
-            definition_digest, proposal, minimal, historical_corrections, evidence,
-            manifest_digest_value=base["manifest_sha256"],
-            acceptance_digest=base.get("acceptance_sha256"),
-            issue_id=issue_id,
-            reviewer_verdict=reviewer_verdict,
-        ),
+        "amendment_id": amendment_id,
         "base": base,
-        "review": {"issue_id": issue_id, "verdict": reviewer_verdict},
+        "review": review,
         "human_confirmation": "pending",
         "analysis": {
             "changed_nodes": _changed_node_ids(proposal),
@@ -1480,7 +1529,9 @@ def apply_amendment(
 ) -> dict[str, Any]:
     amendment = parse_proposal(amendment_source)
     review = amendment.get("review")
-    if not isinstance(review, dict) or review.get("verdict") != "pass":
+    if not isinstance(review, dict) or review.get("verdict") not in {
+        "pass", "pass-with-nits",
+    }:
         raise ValidationError("Amendment has not passed Reviewer review")
     if amendment.get("human_confirmation") not in {"pending", "accepted", "applied"}:
         raise ValidationError("Amendment is not waiting for human confirmation")
@@ -1525,6 +1576,34 @@ def apply_amendment(
     if amendment.get("amendment_id") != expected_id:
         raise ValidationError(
             "Amendment identity does not match its reviewed proposal and analysis")
+
+    nits_issue = None
+    if review.get("verdict") == "pass-with-nits":
+        try:
+            nits_issue = store.get_work_item(review.get("issue_id"))
+        except Exception as exc:
+            raise ValidationError(
+                "Cannot read the amendment review issue for pass-with-nits acceptance"
+            ) from exc
+        issue_kind = getattr(getattr(nits_issue, "kind", None), "value", None)
+        if issue_kind is None:
+            issue_kind = getattr(nits_issue, "kind", None)
+        if issue_kind != "amendment":
+            raise ValidationError(
+                "pass-with-nits amendment review.issue_id must reference an amendment work item")
+        binding = amendment_review_binding(nits_issue)
+        for field in (
+            "review_subject_digest", "review_report_ref", "review_ledger_ref",
+            "deliverable_sha256",
+        ):
+            if review.get(field) != binding[field]:
+                raise ValidationError(
+                    "Amendment pass-with-nits review facts changed after review")
+        marker = getattr(nits_issue, "review_nits_acceptance", None)
+        if not _amendment_nits_marker_matches(marker, amendment, nits_issue):
+            raise ValidationError(
+                "Amendment pass-with-nits requires explicit operator acceptance "
+                "bound to the current issue, review, ledger, and deliverable")
 
     current = load_manifest(manifest_path)
     _preflight_authoring_repair_ledger(current)

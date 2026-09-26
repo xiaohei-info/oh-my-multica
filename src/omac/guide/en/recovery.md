@@ -57,6 +57,49 @@ in `previous_review`; the Worker must address those blockers in the new delivery
 If a reject is known but no report, ledger, or blocker context can be recovered,
 retry stops with exit 20 instead of consuming another Worker round.
 
+### Amendment `pass-with-nits` acceptance
+
+When a running-DAG amendment receives `pass-with-nits`, OMAC preserves the
+Reviewer verdict; it never fabricates `pass`. The amendment stops at the
+confirmation gate for an explicit operator decision. If an interruption left
+no reviewed amendment YAML, materialize it from the same issue with
+`--resume-issue-id`; this consumes the sealed Store delivery/verdict and does
+not dispatch another Worker or Reviewer:
+
+```bash
+omac dag amend propose <manifest> \
+  --report-file <original-review-report> \
+  --docs <persisted-contract-source> \
+  --blocked-node <node> \
+  --resume-issue-id <amendment-issue-id> \
+  --output-file <amendment-file>
+```
+
+`--docs` must match the issue contract's persisted `source_of_truth`; do not
+also pass `--report-file` as a design document. OMAC fails closed on docs or
+contract drift, preserving the original verdict instead of silently changing
+the review authority. Once the file exists, explicitly accept and then apply:
+
+```bash
+# Record explicit operator acceptance only; do not apply the amendment
+omac dag amend accept-nits <manifest> <amendment-file>
+# Continue the official apply path
+omac dag amend accept <manifest> <amendment-file>
+```
+
+The first command writes a bounded
+`omac.amendment-review-nits-acceptance/v1` marker only when the current issue,
+review subject, report reference, ledger reference, and complete deliverable
+still match and no active/unknown direct Run exists. It does not change the
+Reviewer verdict, write the manifest, or apply the amendment. Any subject,
+report, ledger, or deliverable drift, or a running Run, fails closed. Repeating
+the command is safe when the marker is bound to the exact same review; a
+mismatched marker is never overwritten. Only the second `omac dag amend accept`
+performs the normal amendment CAS/apply and per-node ledger compensation; it
+revalidates the marker against current Store facts and cannot bypass the first
+step. A normal develop node still uses the separate `omac node accept-nits`
+path; the two markers are not interchangeable.
+
 ### Repairing contract commands after an applied amendment
 
 If an old manifest load already expanded `${VAR:-}` runtime placeholders to

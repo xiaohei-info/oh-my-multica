@@ -42,6 +42,42 @@ direct Run。它保留 Reviewer verdict/report，只写入有界的
 `dag run` 仍会观察远端 merge 事实，不会直接把节点标记 done。命令可安全重复执行。
 普通 `node retry` 会清除 marker、使旧 review projection 失效，再回到 authoring 产生新交付。若节点已有 review 回退历史，即使当前 verdict 已被清除，retry 仍记录上一份 delivery 的 PR head 作为 baseline；Worker 必须提交新 head，不能用同一 head 绕过 Reviewer 防线。若旧 head 或交付因果资料缺失，OMAC 不猜测而 fail-closed，不会把仅有新附件的同 head 交付送进 Reviewer。若可读取旧 review report/ledger，retry 会把 report/ledger 引用及有限 blocker 摘要放入 `previous_review`，Worker 必须针对这些 blocker 完成返工；若已知为 reject 但无法恢复任何 report/ledger/blocker 上下文，retry 会以 exit 20 停止，不会再消耗 Worker 轮次。
 
+### amendment 的 `pass-with-nits` 接受
+
+运行中 DAG 的 amendment 若 Reviewer 返回 `pass-with-nits`，OMAC 保留原始
+verdict，不把建议项伪装成 `pass`，并停在 confirmation 等待 operator。若进程中断导致
+reviewed amendment YAML 尚未生成，使用同一 issue 的 `--resume-issue-id` 物化文件；该路径
+只消费 Store 中已封存的交付和 verdict，不重新派发 Worker/Reviewer：
+
+```bash
+omac dag amend propose <manifest> \
+  --report-file <original-review-report> \
+  --docs <persisted-contract-source> \
+  --blocked-node <node> \
+  --resume-issue-id <amendment-issue-id> \
+  --output-file <amendment-file>
+```
+
+`--docs` 必须与 issue 持久化 contract 的 `source_of_truth` 一致；不要把
+`--report-file` 再作为 `--docs` 传入。OMAC 发现 docs/contract 漂移会 fail-closed，保留原始
+verdict，不静默替换评审权威。文件生成后，先显式接受再 apply：
+
+```bash
+# 只记录明确的 operator acceptance，不应用 amendment
+omac dag amend accept-nits <manifest> <amendment-file>
+# 继续官方 apply 路径
+omac dag amend accept <manifest> <amendment-file>
+```
+
+第一步只在当前 issue、review subject、report ref、ledger ref 和完整 deliverable
+仍一致，且没有 active/unknown direct Run 时写入有界的
+`omac.amendment-review-nits-acceptance/v1` marker；它不修改 Reviewer verdict、
+不写 manifest，也不 apply。任何 subject/report/ledger/deliverable 漂移或运行中的
+Run 都 fail-closed。marker 已存在且绑定完全相同的 review 时重复命令安全；不匹配时
+拒绝覆盖。只有第二步 `omac dag amend accept` 才会执行正常 amendment CAS/apply 和
+逐节点 ledger 补偿；它会再次验证 marker 与 Store 当前事实，不能跳过第一步。普通
+develop 节点仍使用独立的 `omac node accept-nits`，两条路径不会互相消费 marker。
+
 ### 已应用 amendment 的 contract command 修复
 
 若旧版 manifest load 已把 `${VAR:-}` 运行时占位符写成 `""`，不要重新执行

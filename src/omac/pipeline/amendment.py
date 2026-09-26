@@ -14,22 +14,57 @@ import yaml
 
 from ..core.acceptance import load_acceptance_doc_file
 from ..core.amendment import (
-    apply_amendment, authoring_recovery_node_ids, build_reviewed_amendment,
-    parse_proposal, validate_proposal,
+    amendment_review_binding, apply_amendment, authoring_recovery_node_ids,
+    build_reviewed_amendment, parse_proposal, validate_proposal,
 )
 from ..core.manifest import Contract, load_manifest
 from ..core.repository_files import revision_directory_files
-from ..core.review_convergence import REVIEW_CONVERGENCE_MIN_NON_REDUCING_STREAK
-from ..core.taskmeta import DECISION_REQUIRED_SCHEMA, TaskKind, TaskPhase
+from ..core.review_convergence import (
+    REVIEW_CONVERGENCE_MIN_NON_REDUCING_STREAK,
+    review_subject_digest,
+)
+from ..core.taskmeta import (
+    AMENDMENT_REVIEW_NITS_ACCEPTANCE_SCHEMA,
+    DECISION_REQUIRED_SCHEMA,
+    TaskKind,
+    TaskPhase,
+    amendment_review_evidence_ref_is_valid,
+    amendment_review_nits_acceptance_is_valid,
+    current_review_ledger,
+)
 from ..engines.models import WorkItemStatus
 from ..errors import NeedsDecision, PlatformError, ValidationError
 from ..i18n import ui
-from .tasks import run_task
+from .tasks import _review_subject_digest as task_review_subject_digest, run_task
 
 
 def default_amendment_path(manifest_path: str) -> str:
     path = Path(manifest_path)
     return str(path.with_name(f"{path.stem}.amendment.yaml"))
+
+
+def _resume_command(
+    manifest_path: str,
+    *,
+    report_file: str,
+    docs: list[str],
+    blocked_nodes: list[str],
+    resume_issue_id: str,
+    output_file: str | None,
+) -> str:
+    args = [
+        "omac", "dag", "amend", "propose", manifest_path,
+        "--report-file", report_file,
+    ]
+    for path in docs:
+        args.extend(["--docs", path])
+    for node_id in blocked_nodes:
+        args.extend(["--blocked-node", node_id])
+    args.extend(["--resume-issue-id", resume_issue_id])
+    if output_file:
+        args.extend(["--output-file", output_file])
+    args.extend(["--output", "json"])
+    return shlex.join(args)
 
 
 def _new_attempt_command(
@@ -617,6 +652,24 @@ def propose_amendment(
             review_acceptance_doc=acceptance,
             review_amendment_manifest=manifest,
         )
+    except NeedsDecision as exc:
+        if exc.report.get("reason_code") == "amendment-resume-contract-drift":
+            manifest_source = _project_logical_path(
+                Path(manifest_path), project_root)
+            persisted_docs = [
+                source for source in exc.report.get("persisted_source_of_truth", [])
+                if source != manifest_source
+            ]
+            if persisted_docs and resume_issue_id:
+                exc.report["next_action"] = _resume_command(
+                    manifest_path,
+                    report_file=report_file,
+                    docs=persisted_docs,
+                    blocked_nodes=blocked_nodes,
+                    resume_issue_id=resume_issue_id,
+                    output_file=output_file,
+                )
+        raise
     except PlatformError as exc:
         if resume_issue_id or new_attempt or "conflict" not in str(exc).lower():
             raise
@@ -641,8 +694,11 @@ def propose_amendment(
             },
         ) from exc
     issue = engine.store.get_work_item(outcome["item_id"])
-    if issue.phase != TaskPhase.CONFIRMATION or issue.review_verdict != "pass":
-        raise ValidationError("Amendment did not reach Reviewer-pass confirmation")
+    if issue.phase != TaskPhase.CONFIRMATION or issue.review_verdict not in {
+        "pass", "pass-with-nits",
+    }:
+        raise ValidationError(
+            "Amendment did not reach Reviewer-pass or pass-with-nits confirmation")
 
     reviewed = build_reviewed_amendment(
         manifest,
@@ -655,15 +711,219 @@ def propose_amendment(
     )
     target = output_file or default_amendment_path(manifest_path)
     _write_yaml_atomic(target, reviewed)
+    if issue.review_verdict == "pass-with-nits":
+        state = "pending_operator_nits_acceptance"
+        next_action = f"omac dag amend accept-nits {manifest_path} {target}"
+    else:
+        state = "pending_human_confirmation"
+        next_action = f"omac dag amend accept {manifest_path} {target}"
     return {
-        "state": "pending_human_confirmation",
+        "state": state,
         "manifest": manifest_path,
         "amendment_file": target,
         "amendment_id": reviewed["amendment_id"],
         "issue_id": issue.id,
         "reviewer_verdict": issue.review_verdict,
         "analysis": reviewed["analysis"],
-        "next_action": f"omac dag amend accept {manifest_path} {target}",
+        "next_action": next_action,
+    }
+
+
+def _amendment_nits_marker(
+    amendment: dict[str, Any], issue: Any, reason: str,
+) -> dict[str, Any]:
+    binding = amendment_review_binding(issue)
+    return {
+        "schema": AMENDMENT_REVIEW_NITS_ACCEPTANCE_SCHEMA,
+        "issue_id": issue.id,
+        "amendment_id": amendment.get("amendment_id"),
+        **binding,
+        "verdict": "pass-with-nits",
+        "reason": reason,
+    }
+
+
+def _amendment_nits_binding_matches(
+    amendment: dict[str, Any], issue: Any,
+) -> bool:
+    review = amendment.get("review") or {}
+    binding = amendment_review_binding(issue)
+    if not all(field in review for field in binding):
+        return False
+    return all(review.get(field) == value for field, value in binding.items())
+
+
+def _ensure_no_active_amendment_direct_run(engine: Any, issue: Any) -> None:
+    unsafe = [
+        run for run in engine.runtime.list_runs(issue.id)
+        if run.kind == "direct" and (run.active or not run.terminal)
+    ]
+    if not unsafe:
+        return
+    details = ", ".join(
+        f"{run.id}={run.status or '(missing)'}" for run in unsafe)
+    raise ValidationError(ui(
+        "Amendment operator acceptance is blocked by an active or unknown direct "
+        f"Run ({details}); wait for it to become explicitly terminal, then repeat "
+        "the same command.",
+        "amendment operator acceptance 被 active 或状态未知的 direct Run 阻断（"
+        f"{details}）；请等待其明确终止后重复同一个命令。",
+    ))
+
+
+def _validate_amendment_nits_state(
+    engine: Any,
+    manifest_path: str,
+    amendment: dict[str, Any],
+    *,
+    reason: str,
+    require_marker: bool,
+) -> tuple[Any, dict[str, Any]]:
+    try:
+        load_manifest(manifest_path)
+    except (OSError, ValueError) as exc:
+        raise ValidationError(
+            f"Could not load current manifest for amendment nits acceptance: {manifest_path}"
+        ) from exc
+    review = amendment.get("review")
+    if not isinstance(review, dict) or not review.get("issue_id"):
+        raise ValidationError("Amendment review.issue_id is missing")
+    if review.get("verdict") != "pass-with-nits":
+        raise ValidationError(
+            "Amendment operator nits acceptance requires the Reviewer verdict pass-with-nits")
+    issue = engine.store.get_work_item(review["issue_id"])
+    issue_kind = getattr(getattr(issue, "kind", None), "value", None)
+    if issue_kind is None:
+        issue_kind = getattr(issue, "kind", None)
+    if issue_kind != TaskKind.AMENDMENT.value:
+        raise ValidationError(
+            "Amendment review.issue_id must reference an amendment work item")
+    if issue.phase != TaskPhase.CONFIRMATION:
+        raise ValidationError(ui(
+            "Amendment pass-with-nits must be in confirmation before operator "
+            "acceptance; do not edit the issue verdict.",
+            "amendment pass-with-nits 必须先处于 confirmation 才能由 operator 接受；"
+            "不要修改 issue verdict。",
+        ))
+    existing_marker = getattr(issue, "review_nits_acceptance", None)
+    if issue.status not in {WorkItemStatus.IN_REVIEW, WorkItemStatus.BLOCKED} and not (
+        require_marker
+        and issue.status == WorkItemStatus.DONE
+        and amendment_review_nits_acceptance_is_valid(existing_marker)
+    ):
+        raise ValidationError(ui(
+            "The amendment review issue is not in the confirmation acceptance state; "
+            "refusing to write an operator marker.",
+            "amendment review issue 不处于 confirmation 接受状态；拒绝写入 operator marker。",
+        ))
+    if not isinstance(reason, str) or not reason.strip():
+        raise ValidationError("Operator acceptance reason must not be empty")
+    if len(reason.encode("utf-8")) > 1024:
+        raise ValidationError("Operator acceptance reason must be at most 1024 bytes")
+    if not amendment.get("amendment_id"):
+        raise ValidationError("Amendment amendment_id is missing")
+    if not isinstance(issue.deliverable, str) or not issue.deliverable:
+        raise ValidationError(
+            "Amendment pass-with-nits requires the current non-empty deliverable")
+    report = issue.review_report
+    if not isinstance(report, dict):
+        raise ValidationError(
+            "Amendment pass-with-nits requires the complete persisted review report")
+    blockers = report.get("blockers") or []
+    if not isinstance(blockers, list) or blockers:
+        raise ValidationError(
+            "Amendment pass-with-nits requires an empty blockers list")
+    nits = report.get("nits")
+    if not isinstance(nits, list) or not nits or any(
+        not isinstance(nit, str) or not nit.strip() for nit in nits
+    ):
+        raise ValidationError(
+            "Amendment pass-with-nits requires at least one non-empty nit")
+    if not amendment_review_evidence_ref_is_valid(issue.review_report_ref):
+        raise ValidationError(
+            "Amendment pass-with-nits requires a sealed review report reference")
+    if not isinstance(issue.review_ledger_ref, dict) or not issue.review_ledger_ref:
+        raise ValidationError(
+            "Amendment pass-with-nits requires a sealed review ledger reference")
+    if not isinstance(current_review_ledger(issue), dict):
+        raise ValidationError(
+            "Amendment pass-with-nits requires the current review ledger")
+    round_index = max(1, issue.bounces.review + 1)
+    expected_subjects = {
+        # Current run_task review cycles use the task-local digest.  The
+        # cross-kind digest remains accepted for legacy amendment issues that
+        # were sealed before the shared review-subject projection was adopted.
+        task_review_subject_digest(TaskKind.AMENDMENT, issue, round_index),
+        review_subject_digest(issue, round_index),
+    }
+    if issue.review_subject_digest not in expected_subjects:
+        raise ValidationError(ui(
+            "The amendment pass-with-nits verdict is bound to a stale review subject; "
+            "generate and review a fresh amendment.",
+            "amendment pass-with-nits verdict 绑定的 review subject 已过期；请重新生成并评审 amendment。",
+        ))
+    if not _amendment_nits_binding_matches(amendment, issue):
+        raise ValidationError(
+            "Amendment pass-with-nits review subject/report/ledger/deliverable "
+            "does not match the current issue")
+
+    _ensure_no_active_amendment_direct_run(engine, issue)
+    marker = _amendment_nits_marker(amendment, issue, reason)
+    existing = existing_marker
+    if existing not in (None, {}):
+        if not amendment_review_nits_acceptance_is_valid(existing):
+            raise ValidationError(
+                "The existing amendment nits acceptance marker is malformed; "
+                "refusing to overwrite it")
+        immutable_fields = set(marker) - {"reason"}
+        if any(existing.get(field) != marker.get(field) for field in immutable_fields):
+            raise ValidationError(
+                "The existing amendment nits acceptance marker does not match "
+                "the current sealed review; refusing to overwrite it")
+        marker = existing
+    elif require_marker:
+        raise ValidationError(
+            "Amendment pass-with-nits requires explicit operator acceptance first; "
+            "run `omac dag amend accept-nits` before `omac dag amend accept`")
+
+    return issue, marker
+
+
+def accept_amendment_nits(
+    engine: Any,
+    manifest_path: str,
+    amendment_file: str,
+    *,
+    reason: str,
+) -> dict[str, Any]:
+    """Record explicit acceptance of amendment nits without applying the amendment."""
+    amendment = load_amendment_file(amendment_file)
+    issue, marker = _validate_amendment_nits_state(
+        engine, manifest_path, amendment, reason=reason, require_marker=False)
+    if getattr(issue, "review_nits_acceptance", None) in (None, {}):
+        _ensure_no_active_amendment_direct_run(engine, issue)
+        updated = engine.store.update_work_item_metadata(
+            issue.id, review_nits_acceptance=marker)
+        if updated.review_nits_acceptance != marker:
+            raise ValidationError(
+                "Amendment operator acceptance marker was not persisted; "
+                "refusing to continue")
+        issue = updated
+    _ensure_no_active_amendment_direct_run(engine, issue)
+    final = engine.store.get_work_item(issue.id)
+    if not amendment_review_nits_acceptance_is_valid(
+        getattr(final, "review_nits_acceptance", None)
+    ):
+        raise ValidationError(
+            "Amendment operator acceptance marker did not survive read-after-write")
+    return {
+        "state": "nits_accepted",
+        "manifest": manifest_path,
+        "amendment_file": amendment_file,
+        "amendment_id": amendment["amendment_id"],
+        "issue_id": issue.id,
+        "reviewer_verdict": "pass-with-nits",
+        "next_action": f"omac dag amend accept {manifest_path} {amendment_file}",
     }
 
 
@@ -711,16 +971,25 @@ def accept_amendment(
             "amendment authoring 恢复被活跃 formal Agent Run 阻断："
             f"{details}。请等待这些 Run 明确终止后，重复同一个 accept 命令。",
         ))
-    acceptance = (
-        None if already_applied
-        else _acceptance_for_manifest(current_manifest, manifest_path)
-    )
-    if not already_applied and (
+    if issue.review_verdict == "pass-with-nits":
+        # Revalidate the immutable operator marker immediately before apply.  A
+        # marker accepted earlier is not permission to consume changed Store
+        # facts or a newly active Reviewer Run.
+        _validate_amendment_nits_state(
+            engine, manifest_path, amendment, reason=reason,
+            require_marker=True,
+        )
+    elif not already_applied and (
         issue.review_verdict != "pass" or issue.phase != TaskPhase.CONFIRMATION
     ):
         raise ValidationError(ui(
             "Human acceptance is allowed only after Reviewer pass and confirmation phase.",
             "只有 Reviewer pass 且进入 confirmation 后才能人工 accept。"))
+
+    acceptance = (
+        None if already_applied
+        else _acceptance_for_manifest(current_manifest, manifest_path)
+    )
 
     result = apply_amendment(
         manifest_path, amendment, engine.store, agent_pool,

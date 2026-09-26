@@ -813,6 +813,96 @@ def test_resume_confirmation_invalid_current_facts_fail_before_agent_path(
     assert eng.store.assign_log == []
 
 
+def _amendment_in_review_pass_with_nits_item(eng):
+    persisted_contract = _payload()["contract"]
+    persisted_contract.source_of_truth = ["docs/design.md"]
+    item = create_authoring_task(eng, AuthoringTaskSpec(
+        kind=TaskKind.AMENDMENT,
+        title="running DAG amendment",
+        dag_key="amend-resume-final-nits",
+        assignee="alice",
+        contract=persisted_contract,
+    ))
+    report = _review_report()
+    report["nits"] = ["operator guide wording"]
+    eng.store.update_work_item_metadata(
+        item.id,
+        deliverable="schema: omac.dag-amendment/v1\nreason: fixed\noperations: []\n",
+        phase=TaskPhase.REVIEW,
+        review_verdict="pass-with-nits",
+        review_report=report,
+    )
+    current = eng.store.get_work_item(item.id)
+    current.review_subject_digest = tasks_module._review_subject_digest(
+        TaskKind.AMENDMENT, current, 1)
+    eng.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+    return eng.store.get_work_item(item.id)
+
+
+def test_resume_in_review_amendment_pass_with_nits_enters_confirmation_without_dispatch(
+    monkeypatch,
+):
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = _amendment_in_review_pass_with_nits_item(eng)
+    monkeypatch.setattr(
+        eng.runtime, "dispatch_reviewer",
+        lambda *_args, **_kwargs: pytest.fail("resume must not dispatch Reviewer"),
+    )
+    monkeypatch.setattr(
+        eng.runtime, "wake",
+        lambda *_args, **_kwargs: pytest.fail("resume must not dispatch Worker"),
+    )
+
+    result = run_task(
+        eng,
+        TaskKind.AMENDMENT,
+        _payload(contract=item.contract),
+        "alice",
+        reviewers=["bob"],
+        confirm=True,
+        pause_at_confirmation=True,
+        poll=lambda: pytest.fail("resume must not poll a new Run"),
+        resume_item_id=item.id,
+    )
+
+    assert result["item_id"] == item.id
+    assert result["verdict"] == "pass-with-nits"
+    assert result["pending_confirmation"] is True
+    resumed = eng.store.get_work_item(item.id)
+    assert resumed.phase == TaskPhase.CONFIRMATION
+    assert resumed.review_verdict == "pass-with-nits"
+    assert eng.store.assign_log == []
+
+
+def test_resume_amendment_rejects_docs_contract_drift_before_dispatch():
+    eng = _engine(MOCK_AUTO_COMPLETE="false")
+    item = _amendment_in_review_pass_with_nits_item(eng)
+    requested = Contract(
+        objective=item.contract.objective,
+        acceptance=list(item.contract.acceptance),
+        source_of_truth=["docs/design.md", "docs/review-report.md"],
+    )
+
+    with pytest.raises(NeedsDecision) as exc:
+        run_task(
+            eng,
+            TaskKind.AMENDMENT,
+            _payload(contract=requested),
+            "alice",
+            reviewers=["bob"],
+            confirm=True,
+            poll=lambda: pytest.fail("contract drift must stop before polling"),
+            resume_item_id=item.id,
+        )
+
+    assert exc.value.report["reason_code"] == "amendment-resume-contract-drift"
+    assert exc.value.report["persisted_source_of_truth"] == ["docs/design.md"]
+    current = eng.store.get_work_item(item.id)
+    assert current.phase == TaskPhase.REVIEW
+    assert current.review_verdict == "pass-with-nits"
+    assert eng.store.assign_log == []
+
+
 @pytest.mark.parametrize("status", [WorkItemStatus.FAILED, WorkItemStatus.BLOCKED])
 def test_resume_valid_confirmation_ignores_failed_projection_without_agent(
     monkeypatch, status,

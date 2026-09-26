@@ -63,6 +63,16 @@ def test_amend_propose_help_documents_explicit_authoring_restart(capsys):
     assert "--supersedes-issue-id" in help_text
 
 
+def test_amend_accept_nits_help_explains_two_step_apply(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["dag", "amend", "accept-nits", "--help"])
+    assert exc.value.code == 0
+    help_text = capsys.readouterr().out
+    assert "accept-nits" in help_text
+    assert "Record explicit operator acceptance" in help_text
+    assert "omac dag amend accept" in help_text
+
+
 def test_unknown_command_teaches(capsys):
     with pytest.raises(SystemExit) as e:
         main(["nope"])
