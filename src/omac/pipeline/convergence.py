@@ -42,7 +42,11 @@ class ConvergenceResolution:
 
     def raise_if_invalid(self, error_type: Type[Exception], item_id: str) -> None:
         if self.state is ResolutionState.INVALID:
-            raise error_type(f"Invalid review ledger for work item {item_id}: {self.error}")
+            raise error_type(
+                f"Invalid review ledger for work item {item_id}: {self.error}. "
+                "Do not renumber historical rounds. For a fresh delivery run "
+                "omac node retry <manifest> <node> --stage authoring; "
+                "retain the original ledger as audit evidence.")
 
     def cli_fields(self) -> dict:
         if self.state is not ResolutionState.NEEDS_DECISION:

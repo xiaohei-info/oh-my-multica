@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime
 
 from .manifest import _dump_contract
 from .taskmeta import TaskPhase
@@ -87,6 +88,10 @@ def validate_stage_recovery(item, stage: str) -> None:
     if stage not in {"review", "authoring", "merging"}:
         raise ValueError(f"unknown recovery stage: {stage}")
     identity = getattr(item, "delivery_identity", None)
+    if stage == "review" and identity is None:
+        raise ValueError(
+            "review recovery requires a valid controller-sealed delivery identity; "
+            "use omac node retry <manifest> <node> --stage authoring for a fresh submission")
     if stage in {"review", "merging"} and identity is not None:
         artifacts = item.artifacts if isinstance(item.artifacts, dict) else {}
         verification_ref = (
@@ -103,6 +108,15 @@ def validate_stage_recovery(item, stage: str) -> None:
         ):
             raise ValueError(
                 f"{stage} recovery requires a valid controller-sealed delivery identity")
+    if stage == "review":
+        try:
+            cutoff = datetime.fromisoformat(identity.verification_created_at.replace("Z", "+00:00"))
+        except (AttributeError, TypeError, ValueError):
+            cutoff = None
+        if cutoff is None or cutoff.tzinfo is None:
+            raise ValueError(
+                "review recovery requires a timezone-aware sealed verification time; "
+                "use omac node retry <manifest> <node> --stage authoring for a fresh submission")
     if stage != "merging":
         return
     artifacts = item.artifacts if isinstance(item.artifacts, dict) else {}

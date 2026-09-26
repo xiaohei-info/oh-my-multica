@@ -64,6 +64,7 @@ from ..pipeline.dispatch import (
     normalize_source_refs, render_issue_body, reviewer_dispatch_stopped,
 )
 from ..core.taskmeta import (
+    review_context_binding,
     DECISION_REQUIRED_SCHEMA, DELIVERY_IDENTITY_SCHEMA,
     REVIEWER_RUN_BASELINE_SCHEMA, WORKER_HANDOFF_SCHEMA,
     DeliveryIdentity, ReviewerRunBaseline, TaskKind, TaskPhase,
@@ -370,7 +371,7 @@ def _bounded_direct_run_baseline(
     runs: List[AgentRunObservation],
     *,
     gate_cutoff_created_at: str | None = None,
-) -> tuple[Tuple[str, ...], Optional[str]]:
+) -> tuple[Tuple[str, ...], str | None]:
     """Cap the direct-Run baseline at the most recent N Runs (gap #13).
 
     Returns ``(baseline ids, cutoff_created_at)`` keeping the existing
@@ -2025,6 +2026,9 @@ def _dispatch_worker_handoff(
         projection or store.observe_work_item_control(item_id)
     ).work_item
     intent = current.worker_handoff
+    if current.phase == TaskPhase.AUTHORING and current.decision_required:
+        return _WorkerHandoffResult(
+            "needs-decision", intent, projection, decision=current.decision_required)
     if intent is not None:
         _mark_recovery_pending(manifest, key)
     if intent is not None and intent.gate in {"review", "review-nits"}:
@@ -2105,6 +2109,7 @@ def _dispatch_worker_handoff(
             source_review_round=source_round,
             source_review_verdict=source_verdict,
             source_review_feedback=source_feedback,
+            review_context_binding=review_context_binding(current),
             target_review_bounce=review_bounce,
             generation=f"handoff-{secrets.token_hex(8)}",
             target_agent_id=target_agent_id,
@@ -3470,6 +3475,13 @@ def collect_results(
         projection = running_observations[key]
         item = projection.work_item
         worker_gate_errors = None
+        # Structured worker blockers are operator decisions, not no-submit failures.
+        if item.phase == TaskPhase.AUTHORING and item.decision_required:
+            if item.status != WorkItemStatus.BLOCKED:
+                store.update_status(item.id, WorkItemStatus.BLOCKED)
+            set_node(manifest, key, status="blocked")
+            failures[key] = str(item.decision_required.get("reason_code", "worker-decision-required"))
+            continue
 
         # A persisted review handoff belongs to the review ledger that created
         # it.  Re-evaluate the one authoritative convergence policy before
@@ -4398,6 +4410,12 @@ def _dispatch(
             log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
                      id=node.work_item_id, reason=ui(
                          f"Failed to wake worker {worker}", f"唤醒 worker {worker} 失败"))
+            continue
+
+        if handoff.state == "needs-decision":
+            store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
+            set_node(manifest, key, status="blocked")
+            manifest_changed = True
             continue
 
         if handoff.state == "pending-initialization":

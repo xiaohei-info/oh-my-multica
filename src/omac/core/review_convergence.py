@@ -26,7 +26,8 @@ from .taskmeta import (
 
 
 REVIEW_PROTOCOL_VERSION = "omac.review/v2"
-REVIEW_LEDGER_SCHEMA = "omac.review-ledger/v1"
+REVIEW_LEDGER_SCHEMA = "omac.review-ledger/v2"
+LEGACY_REVIEW_LEDGER_SCHEMA = "omac.review-ledger/v1"
 REVIEW_CYCLE_BLOCKER_FACTS_SCHEMA = "omac.review-cycle-blocker-facts/v1"
 REVIEW_CONVERGENCE_DECISION_SCHEMA = "omac.review-convergence-decision/v1"
 REVIEW_CONVERGENCE_EARLIEST_CYCLE = 3
@@ -468,7 +469,7 @@ def validate_review_ledger(
     """Validate only facts consumed by the convergence decision boundary."""
     if not isinstance(ledger, dict):
         raise ValueError("review ledger must be an object")
-    if ledger.get("schema") != REVIEW_LEDGER_SCHEMA:
+    if ledger.get("schema") not in {REVIEW_LEDGER_SCHEMA, LEGACY_REVIEW_LEDGER_SCHEMA}:
         raise ValueError(f"review ledger schema must be {REVIEW_LEDGER_SCHEMA}")
     cycles = ledger.get("cycles")
     blockers = ledger.get("blockers")
@@ -1193,6 +1194,7 @@ def advance_review_ledger(
             and latest.get("report_digest") == report_digest
         ):
             return current
+    current["schema"] = REVIEW_LEDGER_SCHEMA
     cycle_round = len(current["cycles"]) + 1
 
     prior_open_ids = sorted(

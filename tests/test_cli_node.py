@@ -2359,3 +2359,50 @@ def test_abandon_reports_affected_downstream(tmp_path, capsys, monkeypatch):
     # a 的传递下游:b、c
     assert "b" in payload["affected_downstream"]
     assert "c" in payload["affected_downstream"]
+
+
+def test_retry_retired_generation_does_not_recover_host_obligations(tmp_path, monkeypatch, capsys):
+    from omac.pipeline.dispatch import build_show_output
+    engine, path, item_id = _pass_with_nits_fixture(tmp_path, monkeypatch)
+    current = engine.store.get_work_item(item_id)
+    old_ledger = current.review_ledger
+    engine.store.reset_review(item_id)
+    engine.store.update_work_item_metadata(
+        item_id, review_generation="sdk-only", review_ledger_generation="retired-host",
+        review_bounce=8,
+    )
+    def forbidden_recovery(_):
+        pytest.fail("retired feedback must not be recovered")
+    monkeypatch.setattr(engine.store, "recover_review_rework_context", forbidden_recovery)
+    assert main(["node", "retry", path, "b"]) == exit_codes.OK
+    capsys.readouterr()
+    recovered = engine.store.get_work_item(item_id)
+    assert recovered.worker_handoff is None
+    assert recovered.review_ledger == old_ledger
+    assert "previous_review" not in build_show_output(recovered, "worker:bob")["context"]
+
+
+def test_review_retry_without_identity_returns_validation_before_store_writes(tmp_path, monkeypatch, capsys):
+    engine, path, item_id = _pass_with_nits_fixture(tmp_path, monkeypatch)
+    engine.store.update_work_item_metadata(item_id, delivery_identity={})
+    from unittest.mock import Mock
+    writes = Mock(side_effect=engine.store.update_work_item_metadata)
+    monkeypatch.setattr(engine.store, "update_work_item_metadata", writes)
+    assert main(["node", "retry", path, "b", "--stage", "review"]) == exit_codes.VALIDATION
+    capsys.readouterr()
+    writes.assert_not_called()
+
+
+def test_retry_does_not_rebind_review_feedback_to_a_changed_manifest_contract(tmp_path, monkeypatch, capsys):
+    from omac.core.manifest import Contract
+    from omac.pipeline.dispatch import build_show_output
+    engine, path, item_id = _pass_with_nits_fixture(tmp_path, monkeypatch)
+    engine.store.update_work_item_metadata(item_id, review_bounce=1)
+    manifest = load_manifest(path)
+    manifest.nodes["b"].contract = Contract(objective="SDK only")
+    save_manifest(manifest, path)
+    assert main(["node", "retry", path, "b"]) == exit_codes.OK
+    capsys.readouterr()
+    recovered = engine.store.get_work_item(item_id)
+    assert recovered.worker_handoff is None
+    assert "previous_review" not in build_show_output(recovered, "worker:bob")["context"]

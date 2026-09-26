@@ -164,3 +164,24 @@ OMAC checks the PR is not a draft and validates verification before CI, review,
 or merge can continue. The command can be slow; a running/session response or
 missing final tool_result is not success. Wait or poll until the explicit exit
 code 0 plus `ok=true`, `terminal=true`, and `next_action=stop` result arrives.
+
+### Deterministic upstream read blockers
+
+When a develop Worker's upstream `work show` or `work read` finishes with exit 5,
+record the actual failure in YAML, then run
+`omac work block <current-issue-id> --report-file blocker.yaml`:
+
+```yaml
+schema: omac.worker-blocker/v1
+reason_code: upstream-unreadable
+upstream_issue_id: <unreadable-upstream-issue-id>
+operation: work-show # use work-read for work read
+exit_code: 5
+```
+
+Stop when this returns exit 20, `terminal=true`, and `next_action=stop`. This
+reports a blocker, not a successful delivery. The Runner retains the decision
+and waits for operator repair without spending no-submit retries. Final prose
+alone does not report a structured blocker. Never relabel network exit 2,
+authentication exit 3, or unknown errors as exit 5; retain the error and escalate.
+Do not change platform state directly or increase retry budgets.

@@ -117,3 +117,21 @@
 不会进入 CI、review 或 merge。命令可能较慢；`running/session` 或缺少最终 tool_result 都不代表成功，
 必须等待或轮询到明确的退出码 0 与 `ok=true`、`terminal=true`、`next_action=stop`。
 提交后由 OMAC loop 推进后续状态。
+
+### 上游确定性读取阻塞
+
+若 develop Worker 的上游 `work show` 或 `work read` 已明确以 exit 5 结束，
+将实际失败事实写为 YAML，再运行 `omac work block <当前 issue-id> --report-file blocker.yaml`：
+
+```yaml
+schema: omac.worker-blocker/v1
+reason_code: upstream-unreadable
+upstream_issue_id: <读取失败的上游 issue-id>
+operation: work-show # work read 时使用 work-read
+exit_code: 5
+```
+
+该命令返回 exit 20、`terminal=true`、`next_action=stop` 后停止；这是阻塞报告，
+不是交付成功。Runner 保留结构化 decision 并等待 operator 修复，不消耗 no-submit
+重试预算。不要仅在最后一段自然语言里报告阻塞。网络 exit 2、认证 exit 3 或未知错误
+不得伪装成 exit 5；保留原始错误并升级。不要直接修改平台状态或增加重试预算。

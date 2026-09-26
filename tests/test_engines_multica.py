@@ -69,6 +69,13 @@ def test_multica_rejects_hard_errors_as_transient_transport(message):
 
 def test_multica_recovers_latest_review_context_from_comment_attachments(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    report = {"blockers": [{"root_cause_key": "auth-boundary", "summary": "add auth method", "required_fix": "wire the method"}]}
+    digest = hashlib.sha256(json.dumps(report, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+    monkeypatch.setattr(store, "get_work_item", lambda _: SimpleNamespace(
+        review_generation="current", review_ledger_generation="current",
+        review_subject_digest="subject",
+        review_ledger={"cycles": [{"subject_digest": "subject", "report_digest": digest, "verdict": "reject"}]},
+        review_ledger_ref={"attachment_id": "ledger-latest"}))
     comments = [
         {
             "id": "comment-old",
@@ -102,7 +109,7 @@ def test_multica_recovers_latest_review_context_from_comment_attachments(monkeyp
             "  - root_cause_key: auth-boundary\n"
             "    summary: add auth method\n"
             "    required_fix: wire the method\n"
-            if key == "review-report" else ""
+            if key == "review-report" and _ref["attachment_id"] == "attachment-latest" else ""
         ),
     )
 

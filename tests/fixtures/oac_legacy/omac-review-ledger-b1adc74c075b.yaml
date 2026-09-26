@@ -1,0 +1,237 @@
+schema: omac.review-ledger/v1
+cycles:
+- round: 1
+  subject_digest: 3291ffaa3409de01d00cbb5a27ff2a040ce5f1b915ffce48b305ecce3e2aa78d
+  report_digest: 46544d7c6711886ebc1bf7d270b56c5ff82f09219b28ff92cfca37c97e34fba5
+  verdict: reject
+  obligation_results:
+    dimension:authority: pass
+    dimension:structure: pass
+    dimension:execution: fail
+    dimension:ownership: fail
+    dimension:evidence: fail
+    dimension:regression: pass
+    acceptance:UJ-KERNEL-001: fail
+    integration:bootstrap-go-gate: fail
+  new_count: 5
+  fixed_count: 0
+  regressed_count: 0
+  unchanged_count: 0
+  open_count: 5
+  prior_open_blocker_ids: []
+  open_blocker_ids:
+  - BLK-40740303b57a
+  - BLK-adf62dbe7e55
+  - BLK-cb064228323f
+  - BLK-decfdbdfaaa6
+  - BLK-f54d1c5004a0
+  reported_blocker_ids:
+  - BLK-40740303b57a
+  - BLK-adf62dbe7e55
+  - BLK-cb064228323f
+  - BLK-decfdbdfaaa6
+  - BLK-f54d1c5004a0
+- round: 2
+  subject_digest: c2dbf344a1a392768ae3d658ab22767769afc67d88fdeb1a4ae0023c4b28906d
+  report_digest: 6afaec3aedb52cf9c9c0400168b67fb34d48e29be99c88ec7b7a1e15062d6bd8
+  verdict: reject
+  obligation_results:
+    dimension:authority: pass
+    dimension:structure: pass
+    dimension:execution: fail
+    dimension:ownership: pass
+    dimension:evidence: fail
+    dimension:regression: pass
+    acceptance:UJ-KERNEL-001: pass
+    integration:bootstrap-go-gate: pass
+  new_count: 1
+  fixed_count: 4
+  regressed_count: 0
+  unchanged_count: 1
+  open_count: 2
+  prior_open_blocker_ids:
+  - BLK-40740303b57a
+  - BLK-adf62dbe7e55
+  - BLK-cb064228323f
+  - BLK-decfdbdfaaa6
+  - BLK-f54d1c5004a0
+  open_blocker_ids:
+  - BLK-40740303b57a
+  - BLK-cc4fbbb45511
+  reported_blocker_ids:
+  - BLK-40740303b57a
+  - BLK-cc4fbbb45511
+- round: 3
+  subject_digest: 1c0b5974891b59aa63429a772f395f7d2747557451a387c0d38df757b24d45be
+  report_digest: 30bde913bb2c0c6a105051391221284c67299cd09ca4c56fa91815d67210cecd
+  verdict: reject
+  obligation_results:
+    dimension:authority: pass
+    dimension:structure: pass
+    dimension:execution: pass
+    dimension:ownership: fail
+    dimension:evidence: pass
+    dimension:regression: pass
+    integration:bootstrap-go-gate: pass
+  new_count: 0
+  fixed_count: 2
+  regressed_count: 1
+  unchanged_count: 0
+  open_count: 1
+  prior_open_blocker_ids:
+  - BLK-40740303b57a
+  - BLK-cc4fbbb45511
+  open_blocker_ids:
+  - BLK-decfdbdfaaa6
+  reported_blocker_ids:
+  - BLK-decfdbdfaaa6
+- round: 3
+  subject_digest: 586c535f108b17d004e32f2a9e52367bd8dc50dcb91ff22845ab5772f234ab06
+  report_digest: 59f979f1fc7c48361f4bbee8844be95d5c9b94cec57fdcf202572dc91046aa65
+  verdict: pass
+  obligation_results:
+    dimension:authority: pass
+    dimension:structure: pass
+    dimension:execution: pass
+    dimension:ownership: pass
+    dimension:evidence: pass
+    dimension:regression: pass
+    integration:bootstrap-go-gate: pass
+  new_count: 0
+  fixed_count: 1
+  regressed_count: 0
+  unchanged_count: 0
+  open_count: 0
+  prior_open_blocker_ids:
+  - BLK-decfdbdfaaa6
+  open_blocker_ids: []
+  reported_blocker_ids: []
+blockers:
+- blocker_id: BLK-cb064228323f
+  root_cause_key: acceptance-mapping-fixed-value-proxy
+  first_seen_round: 1
+  seen_count: 1
+  obligation_id: acceptance:UJ-KERNEL-001
+  summary: The declared UJ-KERNEL-001 business test is only a fixed-value bootstrap
+    contract test and does not prove the accepted user journey.
+  evidence: internal/bootstrap/contract_test.go:5-23 compares five constants, while
+    docs/delivery/acceptance-and-validation.md:680-693 requires document resource/digest
+    handling, a visible document-bootstrap plan, AgentWorkChannel oacok show/read/submit,
+    compiler/review/gate progression, and missing-resource/digest/executor fixtures.
+  required_fix: Either provide executable evidence that covers the required UJ-KERNEL-001
+    main and failure paths, or obtain an authoritative contract/decomposition correction
+    that maps this bootstrap-only node to a truthful independently verifiable acceptance
+    outcome; do not label fixed constant assertions as UJ-KERNEL-001 coverage.
+  status: fixed
+  classification: fixed
+  last_seen_round: 2
+  last_evidence: Contract 5e788d3e1dca removes UJ-KERNEL-001 from acceptance/claims/contributions
+    and keeps it only as acceptance_refs traceability; the updated reviewer guide
+    explicitly makes trace refs non-obligating.
+- blocker_id: BLK-decfdbdfaaa6
+  root_cause_key: ownership-baseline-integrity-not-verified
+  first_seen_round: 1
+  seen_count: 2
+  obligation_id: dimension:ownership
+  summary: The baseline validator rejects stale digests but still trusts a modified
+    baseline whose attacker-controlled canonical_sha256 is recomputed consistently.
+  evidence: scripts/bootstrap/package_go_module.py:111-114 only compares declared_digest
+    with the digest recalculated from the same input file. The authoritative prerequisite
+    gate also requires digest == ed452f39d2c7e0e5e7f7b78d0cbf09a37ec2cae872680d0d931c9b4424050872.
+    Independent reproduction renamed go.sum to go.sum2, updated the baseline path
+    and canonical_sha256 to 9b0f488abc489f8067925b33f7ec61fa44f7f52b698b99dde72b122038a66839,
+    and the Python -S packager successfully emitted a 12-file bundle containing go.sum2.
+  required_fix: 'Anchor the consumer to the immutable prerequisite result: require
+    both the declared and recomputed canonical digest to equal ed452f39d2c7e0e5e7f7b78d0cbf09a37ec2cae872680d0d931c9b4424050872
+    (or verify an equivalently trusted prerequisite validation artifact/signature).
+    Add a regression test where content and canonical_sha256 are modified together;
+    it must fail.'
+  status: fixed
+  classification: fixed
+  last_seen_round: 3
+  last_evidence: scripts/bootstrap/package_go_module.py now anchors declared_digest
+    and actual_digest to ed452f39d2c7e0e5e7f7b78d0cbf09a37ec2cae872680d0d931c9b4424050872.
+    TestPackagerRejectsRecomputedCanonicalDigest passes, and the independent go.sum2/resigned-baseline
+    attack exits 1 with the immutable-digest mismatch.
+- blocker_id: BLK-adf62dbe7e55
+  root_cause_key: source-bundle-symlink-boundary-escape
+  first_seen_round: 1
+  seen_count: 1
+  obligation_id: dimension:execution
+  summary: The source packager accepts symlinks inside owned directories and can emit
+    absolute links to files outside the repository.
+  evidence: scripts/bootstrap/package_go_module.py:79-91 uses Path.is_file(), which
+    follows symlinks, and write_bundle preserves tar link metadata. Replacing internal/bootstrap/contract.go
+    with a symlink to /etc/hosts succeeded; the bundle contained 'internal/bootstrap/contract.go
+    -> /etc/hosts' and the manifest hashed the external target.
+  required_fix: Reject symlinks and non-regular files during recursive collection,
+    resolve every descendant and require it to remain within the repository and declared
+    owned input boundary, then add regression tests for absolute/relative escaping
+    links and normal regular files.
+  status: fixed
+  classification: fixed
+  last_seen_round: 2
+  last_evidence: repository_path and collect_files reject symlinks and non-regular
+    descendants. TestPackagerRejectsExternalSymlink independently passed.
+- blocker_id: BLK-f54d1c5004a0
+  root_cause_key: deterministic-go-toolchain-not-enforced
+  first_seen_round: 1
+  seen_count: 1
+  obligation_id: integration:bootstrap-go-gate
+  summary: The harness publishes go1.26.0 as a string but does not enforce that exact
+    toolchain for tests or generation.
+  evidence: go.mod:3 declares go 1.26.0, generated contract.go reports go1.26.0, but
+    Makefile:3-12 invokes go test/generate without checking go env GOVERSION. The
+    live environment reports GOTOOLCHAIN=auto, so a newer selected toolchain is accepted
+    and the claimed deterministic toolchain is not a gate.
+  required_fix: Add an exact toolchain-version check used by every quality/generation
+    entry point (or run them in a digest-pinned toolchain image), fail clearly on
+    mismatch, and test both matching and mismatching versions.
+  status: fixed
+  classification: fixed
+  last_seen_round: 2
+  last_evidence: Makefile go-test/go-generate-check and go:generate invoke check-toolchain.
+    A module pinned to go 1.25.0 fails against live go1.26.0 with an explicit got/want
+    error; matching 1.26.0 passes.
+- blocker_id: BLK-40740303b57a
+  root_cause_key: worker-evidence-overclaims-validation
+  first_seen_round: 1
+  seen_count: 2
+  obligation_id: dimension:evidence
+  summary: The structured worker verification remains stale after both the implementation
+    rework and acceptance-responsibility correction.
+  evidence: work-show still references verification 71e56caad3a3, which claims a deterministic
+    nine-file bundle and lists internal/bootstrap/contract_test.go::TestContractPublishesPinnedQualityConvention
+    as UJ-KERNEL-001 business evidence. Current PR packaging produces 12 files, and
+    the current contract has no acceptance claim or contribution.
+  required_fix: Submit a new OMAC worker verification for PR head 9de35ed with the
+    four exact current command results, 100% coverage, 12-file packaging evidence,
+    current failure-path tests, and no business_tests entry for trace-only UJ-KERNEL-001.
+  status: fixed
+  classification: fixed
+  last_seen_round: 3
+  last_evidence: work-show now references verification 4ee29b060c34, which reports
+    the current 12-file bundle, standard-library-only execution, four exact command
+    results, 100% coverage, and no UJ-KERNEL-001 business-test overclaim.
+- blocker_id: BLK-cc4fbbb45511
+  root_cause_key: packager-python-dependency-undeclared
+  first_seen_round: 2
+  seen_count: 1
+  obligation_id: dimension:execution
+  summary: The hardened source packager depends on PyYAML, but that runtime dependency
+    is neither declared nor pinned by the bootstrap contract or source set.
+  evidence: 'scripts/bootstrap/package_go_module.py:15 imports yaml. Repository search
+    finds no requirements/pyproject declaration. In a clean Python 3.14 virtual environment,
+    running the script fails immediately with ModuleNotFoundError: No module named
+    yaml, although the documented env_setup only requires Python 3.14.3 and Zstandard
+    1.5.7.'
+  required_fix: 'Make the dependency reproducible: eliminate the third-party import
+    or add an exact, owned, gate-consumed dependency declaration/setup and update
+    env_setup. Add a clean-environment test proving the packaging command works from
+    documented prerequisites.'
+  status: fixed
+  classification: fixed
+  last_seen_round: 3
+  last_evidence: PR commit 51b06e3 removes import yaml and adds TestPackagerRunsWithoutSitePackages.
+    Independent python3 -S packaging succeeds and produces byte-identical artifacts
+    to normal Python.

@@ -120,6 +120,8 @@ def test_stage_recovery_retires_the_previous_assignment(stage):
     current = engine.store.get_work_item(item.id)
     current.platform_assignee_id = "agent-from-previous-stage"
 
+    if stage == "review":
+        _seal_review_fixture(engine, item.id)
     prepare_stage_recovery(node, engine.store, stage)
 
     recovered = engine.store.get_work_item(item.id)
@@ -205,6 +207,23 @@ def test_authoring_recovery_hides_aiteam_849_review_control_but_keeps_audit(
     assert "decision_required" not in output["context"]
     assert "review_state" not in output["context"]
     assert "required_closures" not in output["context"]
+
+
+def _seal_review_fixture(engine, item_id="1"):
+    """Review recovery fixtures model a real prior controller-sealed submission."""
+    from conftest import seal_mock_delivery
+    from dataclasses import replace
+    current = engine.store.get_work_item(item_id)
+    old_head = (current.artifacts or {}).get("head_sha")
+    sealed = seal_mock_delivery(
+        engine.store, item_id,
+        (current.artifacts or {}).get("pr_url", "https://example.test/pr/1"),
+        current.verification or {"commands": []},
+    )
+    if old_head:
+        engine.store.update_work_item_metadata(
+            item_id, artifacts={**sealed.artifacts, "head_sha": old_head},
+            delivery_identity=replace(sealed.delivery_identity, pr_head_sha=old_head))
 
 
 def _engine():
@@ -388,6 +407,7 @@ def _pass_with_nits_amendment_fixture(tmp_path):
         review_subject_digest=review_subject_digest(issue, 1),
     )
     engine.store.update_status(issue.id, WorkItemStatus.IN_REVIEW)
+    _seal_review_fixture(engine)
     reviewed = build_reviewed_amendment(
         load_manifest(str(path)), proposal, engine.store,
         issue_id=issue.id, reviewer_verdict="pass-with-nits",
@@ -492,6 +512,7 @@ def test_complete_contract_update_preserves_and_validates_responsibility_fields(
     acceptance = _responsibility_acceptance_doc()
     proposal = _proposal(_responsibility_update())
 
+    _seal_review_fixture(engine)
     reviewed = build_reviewed_amendment(
         load_manifest(str(path)), proposal, engine.store,
         issue_id="amendment-issue", reviewer_verdict="pass",
@@ -666,6 +687,7 @@ def test_legacy_amendment_identity_remains_readable(tmp_path):
     engine = _engine()
     engine.store.create_work_item(
         "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    _seal_review_fixture(engine)
     reviewed = build_reviewed_amendment(
         load_manifest(str(path)), _proposal(_contract_update()), engine.store,
         issue_id="amendment-issue", reviewer_verdict="pass")
@@ -761,6 +783,7 @@ def test_typed_contract_boundary_preservation_survives_apply_and_reload(tmp_path
     item = engine.store.create_work_item(
         "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
     engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
+    _seal_review_fixture(engine)
     reviewed = build_reviewed_amendment(
         load_manifest(str(path)), _proposal(_typed_boundary_contract_update()),
         engine.store, issue_id="amendment-issue", reviewer_verdict="pass")
@@ -1291,6 +1314,7 @@ def test_contract_only_responsibility_amendment_rejects_repeating_same_node(tmp_
     engine.store.create_work_item(
         "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
     proposal = _proposal(_responsibility_update())
+    _seal_review_fixture(engine)
     reviewed = build_reviewed_amendment(
         load_manifest(str(path)), proposal, engine.store,
         issue_id="amendment-issue", reviewer_verdict="pass",
@@ -2724,6 +2748,7 @@ def test_contract_only_amendment_preserves_runtime_facts_and_resumes_review(tmp_
     engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
 
     base = load_manifest(str(path))
+    _seal_review_fixture(engine)
     reviewed = build_reviewed_amendment(
         base, _proposal(_contract_update()), engine.store,
         issue_id="amendment-issue", reviewer_verdict="pass")
@@ -2759,6 +2784,7 @@ def _stage_amendment_with_handoff(tmp_path, stage):
         worker_handoff=_old_worker_handoff(),
     )
     engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
+    _seal_review_fixture(engine)
     reviewed = build_reviewed_amendment(
         load_manifest(str(path)),
         _proposal(_responsibility_update(resume_stage=stage)),
@@ -4239,6 +4265,7 @@ def test_repeated_accept_after_node_progress_never_rolls_it_back(tmp_path):
         review_report={"blockers": ["bad mapping"]},
     )
     engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
+    _seal_review_fixture(engine)
     reviewed = build_reviewed_amendment(
         load_manifest(str(path)), _proposal(_contract_update()), engine.store,
         issue_id="amendment-issue", reviewer_verdict="pass")
@@ -4285,6 +4312,7 @@ def test_apply_ledger_completes_after_contract_write_but_before_review_reset(tmp
         review_report={"blockers": ["bad mapping"]},
     )
     engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
+    _seal_review_fixture(engine)
     reviewed = build_reviewed_amendment(
         load_manifest(str(path)), _proposal(_contract_update()), engine.store,
         issue_id="amendment-issue", reviewer_verdict="pass")
@@ -4428,6 +4456,7 @@ def test_runtime_drift_is_rebased_but_definition_drift_fails_cas(tmp_path):
     engine = _engine()
     engine.store.create_work_item("ws", "bootstrap", "desc", "bootstrap", "alice")
     base = load_manifest(str(path))
+    _seal_review_fixture(engine)
     reviewed = build_reviewed_amendment(
         base, _proposal(_contract_update()), engine.store,
         issue_id="amendment-issue", reviewer_verdict="pass")
@@ -4574,6 +4603,7 @@ def test_pending_apply_blocks_all_dag_progress_until_same_accept_resumes(
         review_report={"blockers": ["bad mapping"]},
     )
     engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
+    _seal_review_fixture(engine)
     reviewed = build_reviewed_amendment(
         load_manifest(str(path)), _proposal(_contract_update()), engine.store,
         issue_id="amendment-issue", reviewer_verdict="pass")
@@ -4779,6 +4809,7 @@ def test_cli_amendment_stops_after_reviewer_then_human_accepts(tmp_path, monkeyp
         review_report={"blockers": ["bad mapping"]},
     )
     engine.store.update_status(bootstrap.id, WorkItemStatus.BLOCKED)
+    _seal_review_fixture(engine, bootstrap.id)
     MockStore.set_kind_delivery("amendment", {
         "amendment": yaml.safe_dump(_proposal(_contract_update()), sort_keys=False),
     })

@@ -1,0 +1,539 @@
+schema: omac.review-ledger/v1
+cycles:
+- round: 1
+  subject_digest: 32c199b9e2e7088dbde5dd4b1074b38efc417e4aa159f28a109c19049e242fbb
+  report_digest: 41acdfe5575ea042448f570b93871db84c3b3771331fe8da71dfd3e8c46509e2
+  verdict: reject
+  obligation_results:
+    dimension:authority: pass
+    dimension:structure: fail
+    dimension:execution: fail
+    dimension:ownership: fail
+    dimension:evidence: fail
+    dimension:regression: pass
+    integration:release-artifact-tooling-gate: fail
+  new_count: 8
+  fixed_count: 0
+  regressed_count: 0
+  unchanged_count: 0
+  open_count: 8
+  prior_open_blocker_ids: []
+  open_blocker_ids:
+  - BLK-593ae9b8c05c
+  - BLK-5a0505b8683d
+  - BLK-78571057591c
+  - BLK-a9464440f5e8
+  - BLK-cbd12be54004
+  - BLK-ce9ba3357290
+  - BLK-ecfe50669639
+  - BLK-efefd3fd2698
+  reported_blocker_ids:
+  - BLK-593ae9b8c05c
+  - BLK-5a0505b8683d
+  - BLK-78571057591c
+  - BLK-a9464440f5e8
+  - BLK-cbd12be54004
+  - BLK-ce9ba3357290
+  - BLK-ecfe50669639
+  - BLK-efefd3fd2698
+- round: 1
+  subject_digest: 6a171e3c2e2d728f29761b214ce6ac83c3d945ea844111efecfafc2824a09fbd
+  report_digest: 6e9d98396f4a638a73495170f86df184269d8708fae5bd893b1e2cce84fac00d
+  verdict: reject
+  obligation_results:
+    dimension:authority: pass
+    dimension:structure: fail
+    dimension:execution: fail
+    dimension:ownership: fail
+    dimension:evidence: fail
+    dimension:regression: pass
+    integration:release-artifact-tooling-gate: fail
+  new_count: 2
+  fixed_count: 5
+  regressed_count: 0
+  unchanged_count: 0
+  open_count: 5
+  prior_open_blocker_ids:
+  - BLK-593ae9b8c05c
+  - BLK-5a0505b8683d
+  - BLK-78571057591c
+  - BLK-a9464440f5e8
+  - BLK-cbd12be54004
+  - BLK-ce9ba3357290
+  - BLK-ecfe50669639
+  - BLK-efefd3fd2698
+  open_blocker_ids:
+  - BLK-5a0505b8683d
+  - BLK-78571057591c
+  - BLK-a57cfa236abb
+  - BLK-a9464440f5e8
+  - BLK-abb8dd63e51b
+  reported_blocker_ids:
+  - BLK-5a0505b8683d
+  - BLK-78571057591c
+  - BLK-a57cfa236abb
+  - BLK-a9464440f5e8
+  - BLK-abb8dd63e51b
+- round: 2
+  subject_digest: 111c97b4e54838f4b3d1222bd6513baacf239f8c5b990a81b7e3e0bb80c3aab8
+  report_digest: 277b59e1679348129fac36285ef79f51b0f102c34d23bd1467b9126773daa6d8
+  verdict: reject
+  obligation_results:
+    dimension:authority: pass
+    dimension:structure: pass
+    dimension:execution: pass
+    dimension:ownership: fail
+    dimension:evidence: fail
+    dimension:regression: pass
+    integration:release-artifact-tooling-gate: fail
+  new_count: 0
+  fixed_count: 2
+  regressed_count: 0
+  unchanged_count: 0
+  open_count: 3
+  prior_open_blocker_ids:
+  - BLK-5a0505b8683d
+  - BLK-78571057591c
+  - BLK-a57cfa236abb
+  - BLK-a9464440f5e8
+  - BLK-abb8dd63e51b
+  open_blocker_ids:
+  - BLK-78571057591c
+  - BLK-a57cfa236abb
+  - BLK-a9464440f5e8
+  reported_blocker_ids:
+  - BLK-78571057591c
+  - BLK-a57cfa236abb
+  - BLK-a9464440f5e8
+- round: 3
+  subject_digest: 08fe758732c6051ce5bbb6081e709c878acfb529a567a36ee619fe00e9d4beab
+  report_digest: 9f4bbbca03b895ec002c407cefaa75fb541dd9d98447d528ec9a7dd6ead70274
+  verdict: reject
+  obligation_results:
+    dimension:authority: fail
+    dimension:structure: fail
+    dimension:execution: fail
+    dimension:ownership: fail
+    dimension:evidence: fail
+    dimension:regression: pass
+    integration:release-artifact-tooling-gate: fail
+  new_count: 3
+  fixed_count: 0
+  regressed_count: 0
+  unchanged_count: 0
+  open_count: 6
+  prior_open_blocker_ids:
+  - BLK-78571057591c
+  - BLK-a57cfa236abb
+  - BLK-a9464440f5e8
+  open_blocker_ids:
+  - BLK-18966cea919e
+  - BLK-4a9fca5aff21
+  - BLK-78571057591c
+  - BLK-a57cfa236abb
+  - BLK-a9464440f5e8
+  - BLK-b4fb409f62ff
+  reported_blocker_ids:
+  - BLK-18966cea919e
+  - BLK-4a9fca5aff21
+  - BLK-78571057591c
+  - BLK-a57cfa236abb
+  - BLK-a9464440f5e8
+  - BLK-b4fb409f62ff
+- round: 4
+  subject_digest: b0a5a50ca568b2638bc6af3b8366a2b35e6751296882d8299cb31f330a8a8623
+  report_digest: 25be9ea0d0ff6e916c95ca2d32fac176c8feb6a88a4063b8c0747162cf808e12
+  verdict: reject
+  obligation_results:
+    dimension:authority: pass
+    dimension:structure: fail
+    dimension:execution: fail
+    dimension:ownership: fail
+    dimension:evidence: fail
+    dimension:regression: pass
+    integration:release-artifact-tooling-gate: fail
+  new_count: 1
+  fixed_count: 1
+  regressed_count: 0
+  unchanged_count: 0
+  open_count: 6
+  prior_open_blocker_ids:
+  - BLK-18966cea919e
+  - BLK-4a9fca5aff21
+  - BLK-78571057591c
+  - BLK-a57cfa236abb
+  - BLK-a9464440f5e8
+  - BLK-b4fb409f62ff
+  open_blocker_ids:
+  - BLK-178e14377d53
+  - BLK-18966cea919e
+  - BLK-4a9fca5aff21
+  - BLK-78571057591c
+  - BLK-a57cfa236abb
+  - BLK-a9464440f5e8
+  reported_blocker_ids:
+  - BLK-178e14377d53
+  - BLK-18966cea919e
+  - BLK-4a9fca5aff21
+  - BLK-78571057591c
+  - BLK-a57cfa236abb
+  - BLK-a9464440f5e8
+- round: 5
+  subject_digest: f7340a0e725d010d7797b40d8b48e7d2c2509f4942e201dfb5965d7b3d330110
+  report_digest: 6a3a26b7e086f51c1fecf057355fe791bfc2564d4d33f08c28905927885c00bd
+  verdict: reject
+  obligation_results:
+    dimension:authority: pass
+    dimension:structure: fail
+    dimension:execution: fail
+    dimension:ownership: fail
+    dimension:evidence: fail
+    dimension:regression: pass
+    integration:release-artifact-tooling-gate: fail
+  new_count: 0
+  fixed_count: 0
+  regressed_count: 0
+  unchanged_count: 0
+  open_count: 6
+  prior_open_blocker_ids:
+  - BLK-178e14377d53
+  - BLK-18966cea919e
+  - BLK-4a9fca5aff21
+  - BLK-78571057591c
+  - BLK-a57cfa236abb
+  - BLK-a9464440f5e8
+  open_blocker_ids:
+  - BLK-178e14377d53
+  - BLK-18966cea919e
+  - BLK-4a9fca5aff21
+  - BLK-78571057591c
+  - BLK-a57cfa236abb
+  - BLK-a9464440f5e8
+  reported_blocker_ids:
+  - BLK-178e14377d53
+  - BLK-18966cea919e
+  - BLK-4a9fca5aff21
+  - BLK-78571057591c
+  - BLK-a57cfa236abb
+  - BLK-a9464440f5e8
+- round: 6
+  subject_digest: 4c5be76d496c926e922cf92b9452a891cf2c58383e82258a74308806801e7a5c
+  report_digest: f7df3e5d2fc6871dd5791864cee54bf6ce4803e01650e4a8842ea27e2ee280d7
+  verdict: pass
+  obligation_results:
+    dimension:authority: pass
+    dimension:structure: pass
+    dimension:execution: pass
+    dimension:ownership: pass
+    dimension:evidence: pass
+    dimension:regression: pass
+    integration:release-artifact-tooling-gate: pass
+  new_count: 0
+  fixed_count: 6
+  regressed_count: 0
+  unchanged_count: 0
+  open_count: 0
+  prior_open_blocker_ids:
+  - BLK-178e14377d53
+  - BLK-18966cea919e
+  - BLK-4a9fca5aff21
+  - BLK-78571057591c
+  - BLK-a57cfa236abb
+  - BLK-a9464440f5e8
+  open_blocker_ids: []
+  reported_blocker_ids: []
+blockers:
+- blocker_id: BLK-78571057591c
+  root_cause_key: release-handoff-closure-not-authenticated
+  first_seen_round: 1
+  seen_count: 6
+  obligation_id: dimension:evidence
+  summary: Signed fixture storage closure is not bound to the workload/OCI fixtures
+    or an authenticated exact fixture catalog.
+  evidence: verify_workload_manifests.py:217-222 selects storage verification instead
+    of verify_workloads, ignoring supplied workload/image paths. Nonexistent paths
+    passed independently. Catalog validation checks only named supplied documents;
+    extra catalog records are accepted, and the signed release commits only the storage
+    closure, not the catalog or trusted key material.
+  required_fix: In storage mode, verify the declared workload and image fixtures through
+    the normal PodSpec/OCI path; require the catalog exact member set and bind its
+    digest plus trusted key fingerprint into signed authority. Reject extra, missing,
+    malformed, or uncommitted fixture members.
+  status: fixed
+  classification: fixed
+  last_seen_round: 6
+  last_evidence: verify_artifact_storage_contract now verifies workload and image
+    fixtures, requires the exact supplied catalog member/digest set, binds the catalog
+    and trusted key fingerprint into the closure/release/index, and verifies the release
+    signature; missing/extra/tampered cases are covered.
+- blocker_id: BLK-efefd3fd2698
+  root_cause_key: component-payload-symlink-closure
+  first_seen_round: 1
+  seen_count: 1
+  obligation_id: dimension:execution
+  summary: Declared symlinks and undeclared tar symlink members are accepted.
+  evidence: _common.py:74-83 resolves the candidate before is_symlink(), so a top-level
+    source symlink loses its symlink identity. package_component.py:22-30 then packages
+    the resolved target. verify_component_manifest.py:28-40 filters to member.isfile()
+    and never rejects symlink, hardlink, device, directory, or traversal members.
+    Reproducers reported SYMLINK_ACCEPTED files=['real.txt'] and UNINDEXED_TAR_SYMLINK_ACCEPTED
+    yes for an extra 'escape -> ../../outside' member.
+  required_fix: lstat every path component before resolution/open, reject all symlinks
+    and special files, and make bundle verification reject every archive member not
+    exactly represented by a safe manifest file entry.
+  status: fixed
+  classification: fixed
+  last_seen_round: 1
+  last_evidence: _common.py now lstats every path component before resolution; package_component.py
+    rejects nested symlinks/special files; verify_component_manifest.py rejects every
+    non-regular or duplicate tar member. The declared symlink and undeclared tar symlink
+    regression test passes.
+- blocker_id: BLK-cbd12be54004
+  root_cause_key: package-output-self-inclusion-nondeterminism
+  first_seen_round: 1
+  seen_count: 1
+  obligation_id: dimension:execution
+  summary: Repeating the same packaging command can produce different bundles.
+  evidence: package_component.py:52-58 collects declared files before creating the
+    output but never excludes/rejects an output directory inside the declared source
+    tree. Running twice with --declared-input . and --output-dir <source>/dist produced
+    SHA-256 740def4e... then 04793f26... because the second run indexed its prior
+    bundle/manifest and truncated the bundle while reading it.
+  required_fix: Resolve output paths before collection and fail if either output can
+    fall under any declared input, or stage outputs outside the source tree and atomically
+    publish them after collection.
+  status: fixed
+  classification: fixed
+  last_seen_round: 1
+  last_evidence: package_component.py collect_files rejects output directories inside
+    any declared input before collection, and the regression test confirms the former
+    self-inclusion path fails.
+- blocker_id: BLK-ecfe50669639
+  root_cause_key: source-ownership-not-repository-closed
+  first_seen_round: 1
+  seen_count: 1
+  obligation_id: dimension:ownership
+  summary: The ownership gate proves catalog equality, not source ownership completeness.
+  evidence: verify_source_closure.py:56-88 loads only baseline/catalog YAML and compares
+    canonical rows; there is no repository root, filesystem, or Git index scan. Every
+    new scripts/release/*.py file, the new schema, and the new release test are outside
+    all 212 source_path prefixes, yet the required command passes. source-ownership-catalog.yaml:445-449
+    only owns internal/softwaredelivery/preview and /release under the similarly named
+    release-preview component.
+  required_fix: Add explicit ownership for the production release tooling and make
+    closure validation enumerate the authoritative releasable source set (preferably
+    Git-indexed files), rejecting every relevant source path that has zero or multiple
+    owners and every stale catalog path as required by the baseline contract.
+  status: fixed
+  classification: fixed
+  last_seen_round: 1
+  last_evidence: verify_source_closure.py now enumerates git ls-files, requires explicit
+    tooling_owners for every required release-tooling root, rejects zero/multiple
+    owners and stale roots, and independently reports 20 covered Git-indexed tooling
+    files.
+- blocker_id: BLK-593ae9b8c05c
+  root_cause_key: linked-component-identity-not-enforced
+  first_seen_round: 1
+  seen_count: 1
+  obligation_id: dimension:structure
+  summary: Go component links accept a binaries manifest that claims a different component
+    and version.
+  evidence: link_go_component.py:19-22 checks only schema and component_manifest_sha256,
+    then emits the component manifest identity at :23-31 without checking binaries_manifest.component_id/version
+    or validating its binaries. A manifest with component_id='other', version='9.9.9',
+    binaries=[] and the correct component-manifest hash passed against worker@1.2.3.
+  required_fix: Fully validate the Go binaries manifest, require exact component_id/version
+    equality, nonempty unique safe binary records with valid digest/size fields, and
+    where verifying a handoff, check the actual binary payload set exactly.
+  status: fixed
+  classification: fixed
+  last_seen_round: 1
+  last_evidence: link_go_component.py now requires exact component_id/version, a nonempty
+    binary set, safe unique sorted filenames, digests, and sizes; identity mismatch
+    and empty-set regression tests pass.
+- blocker_id: BLK-ce9ba3357290
+  root_cause_key: installer-signature-set-can-be-empty
+  first_seen_round: 1
+  seen_count: 1
+  obligation_id: dimension:execution
+  summary: Installer signature verification succeeds with no installer records.
+  evidence: verify_installer_signatures.py:16-28 only requires installers to be a
+    list and then iterates it; an empty list reaches success at :31. A document {'schema':'oac.installer-signatures/v1','installers':[]}
+    passed with no installer arguments.
+  required_fix: Require a nonempty, unique, safe installer set and require the caller/release
+    manifest to declare the exact expected installer filenames and digests so missing
+    and extra installers fail closed.
+  status: fixed
+  classification: fixed
+  last_seen_round: 1
+  last_evidence: installer signing and verification now consume the system release
+    manifest, require a nonempty exact installer set, reject missing/extra/duplicate
+    records, check trusted_key_id, and verify each payload signature and digest.
+- blocker_id: BLK-5a0505b8683d
+  root_cause_key: exact-semver-validation-is-incomplete
+  first_seen_round: 1
+  seen_count: 2
+  obligation_id: dimension:structure
+  summary: Exact SemVer validation still accepts non-ASCII numeric versions.
+  evidence: _common.py lines 82-86 uses str.isdigit for core identifiers. Running
+    package_component.py with version ١.٢.٣ returned exit code 0 and produced a bundle,
+    although SemVer numeric identifiers are ASCII [0-9].
+  required_fix: Validate core numeric identifiers with an ASCII-only expression or
+    a standards-compliant SemVer 2.0 parser, align the JSON schemas to the same parser
+    contract, and add Unicode-digit negative tests.
+  status: fixed
+  classification: fixed
+  last_seen_round: 2
+  last_evidence: require_semver now uses ASCII-only [0-9] expressions for core and
+    numeric prerelease identifiers; package_component rejects ١.٢.٣, and the regression
+    test covers the Unicode-digit case.
+- blocker_id: BLK-a9464440f5e8
+  root_cause_key: five-tests-do-not-cover-high-risk-failures
+  first_seen_round: 1
+  seen_count: 6
+  obligation_id: integration:release-artifact-tooling-gate
+  summary: Green regression names still do not prove several claimed rejection behaviors.
+  evidence: The checked-in CLI fixture contains four incomplete invocations with expected_exit
+    2; test_release_closure semantic reject tests all assert the same positive run_semantic_audit
+    result. All 78 tests pass while malicious unknown CLI options, missing workload/image
+    paths, nonexistent semantic inputs, and alternate Git environment are accepted.
+  required_fix: Use complete positive CLI invocations with expected exit 0 and targeted
+    malformed variants that fail for the named reason; mutate semantic manifest/ownership
+    inputs per rejection test; add behavioral workload/image, catalog-extra, Git-environment,
+    and extracted-runtime negative tests.
+  status: fixed
+  classification: fixed
+  last_seen_round: 6
+  last_evidence: Named tests now perform real mutations for CLI, semantic-audit, Git
+    provenance, workload/OCI, exact catalog, and extracted-runtime failures. The security/compatibility
+    JUnit assertion requires the full named regression set and reports no skip/failure/error.
+- blocker_id: BLK-a57cfa236abb
+  root_cause_key: packaging-not-bound-to-source-ownership
+  first_seen_round: 1
+  seen_count: 5
+  obligation_id: dimension:ownership
+  summary: Reviewed Git identity can be redirected away from the PR checkout by inherited
+    Git environment.
+  evidence: package_component.py:103-148 and verify_component_manifest.py:15-40 run
+    git -C without sanitizing GIT_DIR/GIT_WORK_TREE. With an isolated alternate repo,
+    REPOSITORY_ROOT remained the PR checkout but reviewed_revision returned alternate
+    commit 6c0c7af and status was clean.
+  required_fix: Run Git with a sanitized environment, explicitly bind --git-dir/--work-tree
+    to the discovered checkout, verify repository top-level and object directory,
+    and add adversarial tests for GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, and related
+    environment overrides.
+  status: fixed
+  classification: fixed
+  last_seen_round: 6
+  last_evidence: run_repository_git removes GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE,
+    object-directory, alternate-object, common-dir, and config overrides, disables
+    system Git config, verifies repository top-level, and is used by packaging and
+    manifest verification. The alternate-repository test binds output to the checkout
+    HEAD.
+- blocker_id: BLK-abb8dd63e51b
+  root_cause_key: component-bundle-canonical-metadata-not-enforced
+  first_seen_round: 1
+  seen_count: 1
+  obligation_id: dimension:execution
+  summary: Bundle verification accepts noncanonical tar metadata and therefore does
+    not prove deterministic bundle form.
+  evidence: verify_component_manifest.py lines 30-49 checks names, regular-file type,
+    contents, size, and digests but not mode, mtime, uid/gid, uname/gname, or canonical
+    archive format. Repacking the same payload with mode 0777, nonzero mtime, uid/gid,
+    and attacker owner names, then rebinding bundle.sha256, passed verification.
+  required_fix: Verify the canonical metadata emitted by create_bundle for every member,
+    including regular type, mode 0644, mtime 0, uid/gid 0, empty owner/group names,
+    sorted members, and the expected deterministic tar format; add a negative regression
+    test.
+  status: fixed
+  classification: fixed
+  last_seen_round: 2
+  last_evidence: verify_component_manifest.py now rejects noncanonical mode, mtime,
+    uid/gid, uname/gname, and PAX metadata for every tar member; the repacked attacker-metadata
+    regression test passes.
+- blocker_id: BLK-18966cea919e
+  root_cause_key: release-tooling-cli-contract-incompatible
+  first_seen_round: 3
+  seen_count: 3
+  obligation_id: dimension:execution
+  summary: Concrete invocation evidence validates self-declared parser failures rather
+    than supported CLI behavior.
+  evidence: package_component.py:347-373 trusts fixture behavior_category and expected_exit
+    and only compares subprocess exit. A malicious fixture using four unknown options
+    with expected_exit 2 and the required self-declared categories passed all strict
+    flags. The checked-in fixture likewise contains only incomplete expected-exit-2
+    invocations.
+  required_fix: Require supported positive invocations to complete successfully with
+    real owned inputs and validate output manifests/digests; derive behavior categories
+    from parsed options/outcomes, pin fixture content digest, and require negative
+    cases to match their specific validation error.
+  status: fixed
+  classification: fixed
+  last_seen_round: 6
+  last_evidence: CLI fixture schema v3 removes self-declared categories/expected exits,
+    derives reviewed-source categories from concrete argv, requires actual component/bundle/manifest
+    options, executes each positive invocation successfully through package_component.py,
+    and verifies the produced package.
+- blocker_id: BLK-4a9fca5aff21
+  root_cause_key: system-release-resource-closure-incomplete
+  first_seen_round: 3
+  seen_count: 3
+  obligation_id: dimension:structure
+  summary: The narrowed node excludes production assembly, but the PR still ships
+    incomplete production-shaped assembly files.
+  evidence: The current contract explicitly makes production CRDs/workloads/migrations/installers
+    and assembly closure downstream non-goals, yet the PR adds packaging/system-release/installation-index.json
+    with empty crd/services/rbac/migrations and assemble/verify scripts. Keeping them
+    here preserves the misleading incomplete closure instead of respecting the boundary.
+  required_fix: Remove the production-path installation index and assembly implementation
+    from this PR or move them to the owning downstream node; retain only static ownership
+    references permitted by the fixture-tooling contract.
+  status: fixed
+  classification: fixed
+  last_seen_round: 6
+  last_evidence: packaging/system-release/installation-index.json plus scripts/release/assemble.py
+    and verify_assembly.py were removed from this tooling PR. Only contract-authorized
+    static downstream owner-root assertions remain.
+- blocker_id: BLK-b4fb409f62ff
+  root_cause_key: system-release-component-boundary-collision
+  first_seen_round: 3
+  seen_count: 1
+  obligation_id: dimension:authority
+  summary: Release tooling is packaged under the Software Delivery release-preview
+    component identity.
+  evidence: source-ownership-catalog.yaml lines 5-12 assigns tooling roots to release-preview,
+    while lines 454-458 assign the same component to internal/softwaredelivery/preview
+    and internal/softwaredelivery/release. package_component.py lines 31-45 merges
+    owners and tooling_owners, despite deployment-and-operations-design.md lines 246
+    and 261 requiring system release to remain separate from Software Delivery.
+  required_fix: Introduce an approved dedicated system-release-tooling component/owner
+    boundary, update the immutable ownership authority through its proper review path,
+    and package system release tooling independently from Software Delivery source.
+  status: fixed
+  classification: fixed
+  last_seen_round: 4
+  last_evidence: The amended authority creates dedicated system-release-tooling/system-release-assembly
+    owners and the final catalog preserves release-preview only for internal/softwaredelivery
+    release/preview roots; overlap validation passes and tooling roots are no longer
+    assigned to release-preview.
+- blocker_id: BLK-178e14377d53
+  root_cause_key: system-release-tooling-artifact-not-runnable
+  first_seen_round: 4
+  seen_count: 2
+  obligation_id: dimension:structure
+  summary: The zstd tooling bundle passes --help smoke tests but lacks runtime schemas
+    required for real operations.
+  evidence: Archive inspection shows valid zstd, _common.py present, but schemas/system-release-manifest.schema.json
+    absent. _common.py:51-60 loads schemas relative to the extracted root; sign_release
+    and verify_release_handoff require system-release-manifest.schema.json. Help-only
+    smoke tests do not exercise this path.
+  required_fix: Declare and package all runtime schemas/dependencies, then run meaningful
+    extracted operations for signing, handoff, component verification, fixture verification,
+    and workload verification rather than only --help.
+  status: fixed
+  classification: fixed
+  last_seen_round: 6
+  last_evidence: Packaging now adds schemas/system-release-manifest.schema.json whenever
+    signing/handoff tools require it, and test_extracted_release_tooling_runs_meaningful_operations
+    executes real component, image, fixture, workload, signing, installer-signing,
+    and release-handoff operations from the extracted bundle.

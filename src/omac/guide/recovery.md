@@ -367,3 +367,29 @@ nodes:
 - 禁止把 exit 20 报告成成功。
 - 禁止为了单次 plan review 继续而修改 `retry.review` 并污染被评审 revision；使用
   `omac plan continue-review`。
+
+## 历史读取、代际隔离与确定性阻塞
+
+已完成任务的 `work show` 将旧 review ledger 放在 `context.review_history`，标记为
+`unverified-history`；原始 rounds 与附件引用保留，不视作当前 convergence 通过证明。
+新 writer 使用 `omac.review-ledger/v2` 的 ledger-local 连续轮次。旧 v1 只有通过同样的
+严格校验才能继续参与活动评审；不兼容的旧账本必须经显式 authoring 恢复退役，不能重编号。
+
+`node retry --stage review` 要求完整、匹配当前 PR/verification 引用且时间带时区的
+controller-sealed delivery identity。缺少身份时使用
+`omac node retry <manifest> <node> --stage authoring`，由新 Worker Run 正式提交再封存；
+不得补造 identity 或 reviewer Run baseline。amendment 的 review 恢复也在应用前检查。
+
+恢复旧报告须匹配当前 ledger generation、subject 和 report digest；旧代际的报告只保留
+审计用途。handoff 携带的反馈绑定目标 generation 和 contract，合同改变后不得继续强制执行。
+对于已污染的 Harness，确认 manifest 中的 SDK-only contract 后用 authoring retry 退役旧
+handoff，再检查 `work show` 没有旧 Host-positive 的 `previous_review`。
+
+Audit 遇到确定性的上游读取 exit 5，应按 Worker guide 使用 `work block`。修复读取后，
+operator 运行 `omac work show <upstream-id>` 核对可读交付，再运行
+`omac node retry <manifest> <audit-node> --stage authoring`。绝对历史计数不清零；预算已经
+耗尽时，使用现有 reviewed amendment 的显式恢复与 fresh budget 流程，不提高预算上限。
+
+Run 列表读取使用现有有界指数退避，含 TLS handshake timeout/握手超时。证书、认证、
+权限和未知错误不重试；重试耗尽仍为 exit 2。修好读取后先核对已有 Run，再以单一受监督
+进程运行 `omac dag run <manifest>`；不要因 Runner 退出而直接取消或重派已有 Agent。

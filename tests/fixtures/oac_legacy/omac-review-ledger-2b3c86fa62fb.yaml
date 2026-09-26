@@ -1,0 +1,150 @@
+schema: omac.review-ledger/v1
+cycles:
+- round: 7
+  subject_digest: 8518f0b497a83990259f5d6eb7f4e827f8e88eb8db4ef7157d387bfee785301a
+  report_digest: 141507281e2f5bc3ba26a17406024f22fb3b0775bbad422b4cf1088ca0367b30
+  verdict: reject
+  obligation_results:
+    dimension:authority: pass
+    dimension:structure: pass
+    dimension:execution: fail
+    dimension:ownership: fail
+    dimension:evidence: pass
+    dimension:regression: pass
+  new_count: 2
+  fixed_count: 0
+  regressed_count: 0
+  unchanged_count: 0
+  open_count: 2
+  prior_open_blocker_ids: []
+  open_blocker_ids:
+  - BLK-1294146ec8a8
+  - BLK-b7b189c2d354
+  reported_blocker_ids:
+  - BLK-1294146ec8a8
+  - BLK-b7b189c2d354
+- round: 8
+  subject_digest: 14e8a3b4f24df5c0f23da46b8d48f3a52066048df90ef2adc387d16a3d8cbcf0
+  report_digest: ed3f7c343c8c4ed8e1e6aaf25b98ccc37d7e38b7050f38025ce647535b57c52a
+  verdict: pass-with-nits
+  obligation_results:
+    dimension:authority: pass
+    dimension:structure: pass
+    dimension:execution: pass
+    dimension:ownership: pass
+    dimension:evidence: pass
+    dimension:regression: pass
+  new_count: 0
+  fixed_count: 2
+  regressed_count: 0
+  unchanged_count: 0
+  open_count: 0
+  prior_open_blocker_ids:
+  - BLK-1294146ec8a8
+  - BLK-b7b189c2d354
+  open_blocker_ids: []
+  reported_blocker_ids: []
+- round: 9
+  subject_digest: 44720184467f9158a698eb6d0590dc100c9eb31479aea59e66bffd287712f98c
+  report_digest: 49323588019bb874de5798cf0fe7546cabc603226a6b53bfc4fb203d172a0ca0
+  verdict: reject
+  obligation_results:
+    dimension:authority: fail
+    dimension:structure: pass
+    dimension:execution: pass
+    dimension:ownership: pass
+    dimension:evidence: pass
+    dimension:regression: pass
+  new_count: 1
+  fixed_count: 0
+  regressed_count: 0
+  unchanged_count: 0
+  open_count: 1
+  prior_open_blocker_ids: []
+  open_blocker_ids:
+  - BLK-cec3f403e26a
+  reported_blocker_ids:
+  - BLK-cec3f403e26a
+- round: 10
+  subject_digest: 152d28808633732e054188548d69d78f7192d276d7c872acc4f6a8506eb4a006
+  report_digest: 9b2fee42a844417a999a022ffb614943c3588451f47302e71cb0fb964b6852c0
+  verdict: pass
+  obligation_results:
+    dimension:authority: pass
+    dimension:structure: pass
+    dimension:execution: pass
+    dimension:ownership: pass
+    dimension:evidence: pass
+    dimension:regression: pass
+  new_count: 0
+  fixed_count: 1
+  regressed_count: 0
+  unchanged_count: 0
+  open_count: 0
+  prior_open_blocker_ids:
+  - BLK-cec3f403e26a
+  open_blocker_ids: []
+  reported_blocker_ids: []
+blockers:
+- blocker_id: BLK-b7b189c2d354
+  root_cause_key: source-ownership-catalog-not-complete-or-bidirectional
+  first_seen_round: 7
+  seen_count: 1
+  obligation_id: dimension:ownership
+  summary: Source ownership catalog 与 release source bundle 没有完整、双向的闭包合同。
+  evidence: release-artifact-tooling 第 830/847 行仅 `--require-component` identity-local、authentication-methods、audit-ledger、usage-readmodel、bootstrap-go，没有固定所有生产节点/owner/component
+    的全集或数量。platform-schema-migration-bundle 在第 8678-8682 行拥有 packaging/schema-migration/**，但第
+    8651/8667 行打包命令未将该路径作为 input。final source closure 同时依赖 DAG 内生成的 catalog 与 component
+    manifests；二者共同遗漏同一路径时，当前命令没有明确的外部完整性基线可拒绝。
+  required_fix: 将 packaging/schema-migration 绑定进 schema/migration component manifest/digest；并为
+    ownership catalog 建立固定、可审查的完整 owner/component 基线。source closure 必须同时验证 catalog→bundle
+    和 release/input-index→catalog 两个方向，要求每个发布源码恰有一个 owner、每个 owner 的 required source
+    均进入对应 bundle，并固定 expected owner/component 数或等价摘要。
+  status: fixed
+  classification: fixed
+  last_seen_round: 8
+  last_evidence: 新增 immutable baseline（131/131/212，sha256=ed452f39d2c7e0e5e7f7b78d0cbf09a37ec2cae872680d0d931c9b4424050872）；独立从全部
+    owner 节点 scope 重建摘要一致；全部 component packaging 绑定 owner baseline；schema-migration
+    packaging 已入 bundle；final closeout 同时校验两个方向和 exactly-one ownership。
+- blocker_id: BLK-1294146ec8a8
+  root_cause_key: platform-release-action-scenario-map-semantic-integrity-missing
+  first_seen_round: 7
+  seen_count: 1
+  obligation_id: dimension:execution
+  summary: Action-Scenario map 只验证集合覆盖，不能证明 Scenario 被绑定到正确的权威用户步骤。
+  evidence: 第 9333/9350 行只要求 23 行 Action 集合精确、73 Scenario 并集完整、每行非空且行内无重复；没有固定配对、Scenario
+    全局唯一性或允许多映射基数。独立构造的畸形 map：首个 Action 绑定全部 73 Scenario，其余 22 Action 各绑定同一 Scenario，仍满足全部显式断言。final
+    verify_evidence_closure.py 继续消费同一份 map，因此 cross-action/cross-scenario 检查无法发现权威
+    map 自身被错误编排。
+  required_fix: 从 acceptance 的精确用户步骤生成并固定 canonical `(action_id, scenario_id)` 配对，保存可重算摘要；对每个
+    Scenario 声明 exactly-once 或明确允许的多映射基数，并验证每项 source ref 指向对应 Action/步骤。测试必须加入错误
+    Action 配对、全场景塞入单 Action、跨 Action 重复 Scenario、缺失/额外配对等负例，final closeout 校验固定 map
+    摘要后再解析 evidence refs。
+  status: fixed
+  classification: fixed
+  last_seen_round: 8
+  last_evidence: Action-Scenario map 已固定 73 个精确 pair、23 个 Action source refs、exactly-once
+    global cardinality 和摘要 e4768a7509154d4787b5fe9eba6ae99aa18396f1714ef356049fe7b4cf41b7a3；错误配对、单
+    Action 吞并、跨 Action 重复、缺失/额外、错误 source ref 与 digest mismatch 均有负例；final closure
+    再次固定摘要和配对。
+- blocker_id: BLK-cec3f403e26a
+  root_cause_key: manifest-repository-revision-stale-against-authoritative-plan
+  first_seen_round: 9
+  seen_count: 1
+  obligation_id: dimension:authority
+  summary: Manifest 固定的 repository revision 落后于当前 work show/plan 的权威 revision。
+  evidence: 'work show 和 issue description 指定 repository_revision=922708b8109feb39e3b61373b4eb020018815722；通过
+    `multica repo checkout ... --ref 922708b...` 后 HEAD 精确匹配。manifest 第 3 行仍声明 84e902987cd06dae365efcb713793a7cf6fc8b9a。独立
+    diff 证明 84e9029 是 922708b 的直接父版本，唯一变化为 `.omac/config.yaml` 中 `retry.review: 8→9`；因此实质设计审查结果仍有效，但
+    artifact 的来源身份、可复现 checkout 和上一轮 authority 证据已失真。'
+  required_fix: 将 manifest meta.repository_revision 更新为 922708b8109feb39e3b61373b4eb020018815722，基于该
+    revision 重新计算并提交 deliverable hash；重新运行 source refs、required contracts、ownership
+    baseline 与 command 静态检查。由于 diff 仅为 OMAC retry 配置且设计 blobs 未变，不需要重写 145 节点合同，但必须让最终
+    artifact 和 review evidence 引用同一权威 SHA。
+  status: fixed
+  classification: fixed
+  last_seen_round: 10
+  last_evidence: manifest meta.repository_revision 已更新为权威 HEAD 922708b8109feb39e3b61373b4eb020018815722；新
+    deliverable hash 为 3693d655f0555b73a5b598081c68b31fcad3748b237c862ef1f7e74cbf0c69f3。递归
+    diff 证明这是相对上一版的唯一内容变化；在该 SHA 上复跑 387 source refs/required contracts、145-node DAG、506
+    commands、131/131/212 ownership baseline、61 flow/495 Action 均通过。

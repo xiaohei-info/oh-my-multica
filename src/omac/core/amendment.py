@@ -1505,6 +1505,10 @@ def _validate_stage_preconditions(
         if node is None or not node.work_item_id:
             raise ValidationError(
                 f"node {node_id}: review recovery requires an existing work item")
+        try:
+            validate_stage_recovery(store.get_work_item(node.work_item_id), "review")
+        except ValueError as exc:
+            raise ValidationError(f"node {node_id}: {exc}") from exc
     for node_id in minimal.get("merging", []):
         node = manifest.nodes.get(node_id)
         if node is None or not node.work_item_id:
