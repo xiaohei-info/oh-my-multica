@@ -255,7 +255,7 @@ def test_rework_handoff_rejects_unchanged_rejected_pr_head_before_reviewer():
         baseline_pr_head_sha=None,
     )
     assert loop._worker_handoff_has_new_delivery(
-        item, explicit_retry_with_old_delivery) is False
+        item, explicit_retry_with_old_delivery) is True
 
     nits = WorkerHandoffIntent(
         gate="review-nits",
@@ -271,6 +271,45 @@ def test_rework_handoff_rejects_unchanged_rejected_pr_head_before_reviewer():
     )
     assert loop._worker_handoff_has_new_delivery(item, legacy_reject) is False
 
+
+
+@pytest.mark.parametrize("baseline_head", [None, "same-head"])
+def test_explicit_authoring_submit_can_reuse_head_with_new_verification(baseline_head):
+    item = SimpleNamespace(
+        status=WorkItemStatus.DONE,
+        artifacts={"pr_url": "https://example.test/pr/1", "head_sha": "same-head"},
+        verification_ref={"attachment_id": "new-verification"},
+    )
+    intent = WorkerHandoffIntent(
+        gate="explicit-dispatch", source_review_verdict=None,
+        baseline_verification_attachment_id="old-verification",
+        baseline_pr_head_sha=baseline_head,
+    )
+    assert loop._worker_handoff_has_new_delivery(item, intent)
+    item.verification_ref = {"attachment_id": "old-verification"}
+    assert not loop._worker_handoff_has_new_delivery(item, intent)
+    item.verification_ref = {"attachment_id": "new-verification"}
+    item.artifacts.pop("head_sha")
+    assert not loop._worker_handoff_has_new_delivery(item, intent)
+
+
+@pytest.mark.parametrize("gate", ["review", "operator-retry", "explicit-dispatch"])
+@pytest.mark.parametrize("baseline_head", [None, "same-head"])
+def test_rejected_delivery_still_requires_a_changed_known_head(gate, baseline_head):
+    item = SimpleNamespace(
+        status=WorkItemStatus.DONE,
+        artifacts={"pr_url": "https://example.test/pr/1", "head_sha": "same-head"},
+        verification_ref={"attachment_id": "new-verification"},
+    )
+    intent = WorkerHandoffIntent(
+        gate=gate, source_review_verdict="reject",
+        baseline_verification_attachment_id="old-verification",
+        baseline_pr_head_sha=baseline_head,
+    )
+    assert not loop._worker_handoff_has_new_delivery(item, intent)
+    if baseline_head:
+        item.artifacts["head_sha"] = "changed-head"
+        assert loop._worker_handoff_has_new_delivery(item, intent)
 
 def _contract(acceptance=None, verification_commands=None, integration_gates=None):
     return Contract(
@@ -6761,6 +6800,62 @@ class TestReviewerRejectBoundedFallback:
         assert handoff.gate == "review"
         assert handoff.source_review_verdict == "reject"
         assert handoff.baseline_pr_head_sha == previous_head
+
+    @pytest.mark.parametrize("causal_attachment", [True, False])
+    def test_authoring_recovery_collects_same_head_submit_without_worker_retry(
+        self, tmp_path, monkeypatch, causal_attachment,
+    ):
+        from omac.core.stage_recovery import prepare_stage_recovery
+        from omac.engines.mock import _finish_mock_run
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        old = eng.store.get_work_item(item.id)
+        from omac.engines.models import PullRequestReadiness
+        pr_url, head = "https://github.com/acme/repo/pull/73", old.artifacts["head_sha"]
+        eng.store.update_work_item_metadata(
+            item.id, artifacts={"pr_url": pr_url, "head_sha": head})
+        monkeypatch.setattr(eng.store, "read_pull_request_readiness", lambda _: (
+            PullRequestReadiness(is_draft=False, state="OPEN", head_sha=head)))
+        verification = deepcopy(old.verification)
+        _finish_mock_run(item.id)
+        prepare_stage_recovery(manifest.nodes["a"], eng.store, "authoring")
+        eng.store.update_work_item_metadata(item.id, worker_bounce=15)
+        manifest.nodes["a"].status = "todo"
+        loop._dispatch(eng.store, eng.runtime, manifest, path, ["a"], 4)
+        intent = eng.store.get_work_item(item.id).worker_handoff
+        assert intent.gate == "explicit-dispatch"
+        assert intent.source_review_verdict is None
+        assert intent.baseline_verification_attachment_id
+        verification_path = tmp_path / "verification.yaml"
+        verification_path.write_text(yaml.safe_dump(verification))
+        result = submit_work(eng.store, item.id, pr_url=pr_url,
+                             verification_file=str(verification_path))
+        assert result.advanced_to == WorkItemStatus.DONE
+        current = eng.store.get_work_item(item.id)
+        assert current.artifacts["head_sha"] == head
+        assert current.verification_ref["attachment_id"] != intent.baseline_verification_attachment_id
+        if not causal_attachment:
+            current.verification_ref.update({"task_id": "unrelated-run"})
+        _finish_mock_run(item.id)
+        workers_before = len([e for e in eng.store.assign_log if e[2] == "worker"])
+        reviewers_before = len([e for e in eng.store.assign_log if e[2] == "reviewer"])
+        monkeypatch.setattr(loop.time, "sleep", lambda _: None)
+        if not causal_attachment:
+            with pytest.raises(PlatformError, match="causally bound"):
+                loop.collect_results(eng.store, eng.runtime, manifest, path)
+            assert eng.store.get_work_item(item.id).delivery_identity is None
+        else:
+            assert loop.collect_results(eng.store, eng.runtime, manifest, path,
+                                        retry_limits={"worker": 15}) == {}
+            recovered = eng.store.get_work_item(item.id)
+            assert manifest.nodes["a"].status == "in_review"
+            assert recovered.worker_handoff is None
+            assert recovered.delivery_identity.pr_head_sha == head
+            assert recovered.bounces.worker == 15
+            assert len([e for e in eng.store.assign_log if e[2] == "reviewer"]) == reviewers_before + 1
+        assert len([e for e in eng.store.assign_log if e[2] == "worker"]) == workers_before
 
     def test_unchanged_rejected_head_does_not_dispatch_reviewer(
             self, tmp_path, monkeypatch):

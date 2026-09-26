@@ -1032,6 +1032,16 @@ def _worker_handoff_has_new_delivery(item, intent: WorkerHandoffIntent) -> bool:
     current_head = str(artifacts.get("head_sha") or "").strip()
     if not current_head:
         return False
+    if (
+        intent.gate == "explicit-dispatch"
+        and intent.source_review_verdict is None
+        and intent.source_review_feedback is None
+    ):
+        # An explicit authoring dispatch has no rejected code obligation. Its
+        # attachment baseline prevents reusing the old submission, not the code
+        # head. Run/attachment provenance and remote HEAD are still checked by
+        # _seal_worker_delivery before any candidate becomes a sealed delivery.
+        return True
     if not baseline_head:
         # Legacy explicit dispatches had no rejected head to compare. A plain
         # operator retry is different: absent a captured baseline it cannot
