@@ -100,6 +100,9 @@ MACHINE_FEEDBACK_REF_KEY = "machine_feedback_ref"
 REVIEW_CONTINUATION_KEY = "review_continuation"
 REVIEW_NITS_ACCEPTANCE_KEY = "review_nits_acceptance"
 REVIEW_NITS_ACCEPTANCE_SCHEMA = "omac.review-nits-acceptance/v1"
+AMENDMENT_REVIEW_NITS_ACCEPTANCE_SCHEMA = (
+    "omac.amendment-review-nits-acceptance/v1"
+)
 REVIEWER_RUN_BASELINE_KEY = "reviewer_run_baseline"
 REVIEWER_RUN_BASELINE_SCHEMA = "omac.reviewer-run-baseline/v1"
 WORKER_HANDOFF_KEY = "worker_handoff"
@@ -495,6 +498,25 @@ def exact_review_report_ref(value: Any) -> bool:
     )
 
 
+_AMENDMENT_REVIEW_REF_FIELDS = _REVIEW_REPORT_REF_FIELDS | frozenset({"created_at"})
+
+
+def amendment_review_evidence_ref_is_valid(value: Any) -> bool:
+    """Validate amendment evidence refs while preserving adapter timestamps."""
+    if not isinstance(value, dict) or not value:
+        return False
+    if set(value) - _AMENDMENT_REVIEW_REF_FIELDS:
+        return False
+    if not exact_review_report_ref({
+        key: field for key, field in value.items() if key != "created_at"
+    }):
+        return False
+    created_at = value.get("created_at")
+    return created_at is None or (
+        isinstance(created_at, str) and bool(created_at.strip())
+    )
+
+
 def review_nits_feedback_is_complete(value: Any) -> bool:
     """Validate the compact source feedback owned by one review-nits handoff."""
     if not isinstance(value, dict) or set(value) - _REVIEW_FEEDBACK_FIELDS:
@@ -567,6 +589,44 @@ def review_nits_acceptance_is_valid(value: Any) -> bool:
         and bool(value["review_subject_digest"])
         and value.get("verdict") == "pass-with-nits"
         and exact_review_report_ref(value.get("review_report_ref"))
+    )
+
+
+_AMENDMENT_REVIEW_NITS_ACCEPTANCE_FIELDS = frozenset({
+    "schema", "issue_id", "amendment_id", "review_subject_digest",
+    "review_report_ref", "review_ledger_ref", "deliverable_sha256",
+    "verdict", "reason",
+})
+
+
+def amendment_review_nits_acceptance_is_valid(value: Any) -> bool:
+    """Validate the amendment-specific operator acceptance marker.
+
+    Amendment acceptance is deliberately separate from the develop-node marker:
+    it binds the reviewed amendment issue, proposal identity, current review
+    subject, both evidence references, and the exact submitted deliverable.
+    """
+    if not isinstance(value, dict) or set(value) != _AMENDMENT_REVIEW_NITS_ACCEPTANCE_FIELDS:
+        return False
+    issue_id = value.get("issue_id")
+    amendment_id = value.get("amendment_id")
+    subject = value.get("review_subject_digest")
+    digest = value.get("deliverable_sha256")
+    reason = value.get("reason")
+    return bool(
+        value.get("schema") == AMENDMENT_REVIEW_NITS_ACCEPTANCE_SCHEMA
+        and isinstance(issue_id, str) and bool(issue_id.strip())
+        and isinstance(amendment_id, str) and bool(amendment_id.strip())
+        and isinstance(subject, str) and bool(subject.strip())
+        and amendment_review_evidence_ref_is_valid(value.get("review_report_ref"))
+        and isinstance(value.get("review_ledger_ref"), dict)
+        and bool(value["review_ledger_ref"])
+        and isinstance(digest, str)
+        and bool(re.fullmatch(r"[0-9a-fA-F]{64}", digest))
+        and isinstance(reason, str)
+        and bool(reason.strip())
+        and len(reason.encode("utf-8")) <= 1024
+        and value.get("verdict") == "pass-with-nits"
     )
 
 

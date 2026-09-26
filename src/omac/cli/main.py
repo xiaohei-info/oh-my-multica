@@ -35,6 +35,7 @@ _EN_SUBCOMMAND_HELP = {
     "accept-nits": "Accept pass-with-nits and resume review without marking done",
     "accept": "Accept a known risk and mark the node done",
     "amend-accept": "Accept a Reviewer-approved amendment and apply it",
+    "amend-accept-nits": "Explicitly accept amendment nits without applying it",
     "abandon": "Abandon a node and release non-hard-dependent work",
     "submit": "Validate and submit one structured deliverable",
     "get": "Read the full configuration or one key",
@@ -44,6 +45,7 @@ _EN_SUBCOMMAND_HELP = {
 _EN_ARGUMENT_HELP = {
     "log_format": "Progress-event format: text for humans, json for machines and CI",
     "manifest": "Manifest file path",
+    "amendment_file": "Reviewed amendment YAML",
     "node_key": "Manifest node ID",
     "engine": "Engine override; otherwise read project configuration",
     "workspace": "Workspace override; otherwise read project configuration",

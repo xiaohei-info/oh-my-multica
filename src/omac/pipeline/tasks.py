@@ -10,6 +10,7 @@ issue body 取自 dispatch.render_issue_body(Human-first 模板),与 work show/s
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from dataclasses import MISSING, dataclass, field, fields as dataclass_fields
 from types import SimpleNamespace
@@ -164,6 +165,95 @@ def _confirmation_resume_errors(
     )
     errors.extend(_review_evidence_errors(persisted_contract, item))
     return errors
+
+
+def _contract_identity(contract: Any) -> tuple[str, Any]:
+    payload = _contract_payload(_payload_contract(contract))
+    encoded = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest(), payload
+
+
+def _validate_amendment_resume_contract(
+    item: WorkItem, requested_contract: Any,
+) -> Any:
+    """Reject amendment resume when the caller changed the bound contract/docs."""
+    if item.contract is None:
+        return requested_contract
+    persisted_digest, persisted_payload = _contract_identity(item.contract)
+    requested_digest, _requested_payload = _contract_identity(requested_contract)
+    if persisted_digest == requested_digest:
+        return _payload_contract(item.contract)
+    raise NeedsDecision(
+        ui(
+            "Amendment resume inputs changed the persisted issue contract. Re-run "
+            "with exactly the original authoritative docs; do not silently replace "
+            "the bound contract.",
+            "amendment resume 输入改变了 issue 已持久化的 contract。请严格使用原始权威 "
+            "docs 重试；不会静默替换已绑定 contract。",
+        ),
+        report={
+            "reason_code": "amendment-resume-contract-drift",
+            "item_id": item.id,
+            "persisted_contract_sha256": persisted_digest,
+            "requested_contract_sha256": requested_digest,
+            "persisted_source_of_truth": (
+                persisted_payload.get("source_of_truth", [])
+                if isinstance(persisted_payload, dict) else []
+            ),
+            "next_action": (
+                "omac dag amend propose <manifest> --resume-issue-id "
+                f"{item.id} --docs <persisted-contract-source>"
+            ),
+        },
+    )
+
+
+def _resume_amendment_nits_confirmation(
+    engine: Any, item: WorkItem, contract: Any,
+) -> WorkItem:
+    """Recover an in-review amendment nits verdict without dispatching again."""
+    errors = _confirmation_resume_errors(TaskKind.AMENDMENT, contract, item)
+    if errors:
+        raise NeedsDecision(
+            ui(
+                f"amendment pass-with-nits cannot resume from current Store facts "
+                f"(item {item.id})",
+                f"amendment pass-with-nits 无法基于当前 Store 事实恢复 "
+                f"（item {item.id}）。",
+            ),
+            report={
+                "reason_code": "confirmation-not-consumable",
+                "item_id": item.id,
+                "kind": TaskKind.AMENDMENT.value,
+                "phase": item.phase.value,
+                "last_opinion": "; ".join(errors),
+                "errors": errors,
+            },
+        )
+    unsafe_runs = [
+        run for run in engine.runtime.list_runs(item.id)
+        if run.kind == "direct" and (run.active or not run.terminal)
+    ]
+    if unsafe_runs:
+        raise NeedsDecision(
+            ui(
+                "Amendment Reviewer/Worker direct Run is still active or unknown; "
+                "wait for an explicit terminal state before resuming.",
+                "amendment Reviewer/Worker direct Run 仍 active 或状态未知；请等待明确终止后再恢复。",
+            ),
+            report={
+                "reason_code": "amendment-resume-active-direct-run",
+                "item_id": item.id,
+                "run_ids": [run.id for run in unsafe_runs],
+            },
+        )
+    engine.store.clear_assignment(item.id)
+    engine.store.update_work_item_metadata(
+        item.id, phase=TaskPhase.CONFIRMATION)
+    return engine.store.get_work_item(item.id)
 
 
 def _restart_invalid_review(
@@ -953,6 +1043,9 @@ def run_task(
         # Store 当前事实是 resume 的唯一授权来源。调用方 snapshot 仅为兼容保留，
         # 绝不能在读取失败时授权 refresh 或其他副作用。
         item = store.get_work_item(resume_item_id)
+        if kind == TaskKind.AMENDMENT:
+            contract = _validate_amendment_resume_contract(item, contract)
+            spec.contract = contract
         item = _resume_reviewer_completed_without_verdict(engine, item, kind)
         item = _guard_resume_authoring_terminal_run(engine, item, kind)
         if (
@@ -1057,6 +1150,19 @@ def run_task(
                 },
             )
         resumed_confirmation = item
+
+    if (
+        resume_item_id is not None
+        and kind == TaskKind.AMENDMENT
+        and item.phase == TaskPhase.REVIEW
+        and item.review_verdict == "pass-with-nits"
+    ):
+        # A reviewer may have submitted the final nits verdict just before the
+        # process stopped, leaving the issue in review rather than confirmation.
+        # Recover that same sealed delivery in place; never redispatch either
+        # role merely to manufacture a reviewed amendment file.
+        resumed_confirmation = _resume_amendment_nits_confirmation(
+            engine, item, contract)
 
     if (
         resume_item_id is not None
@@ -1621,6 +1727,13 @@ def run_task(
                 )
 
         if verdict == "pass-with-nits":
+            if kind == TaskKind.AMENDMENT:
+                # A running-DAG amendment is already a reviewed control-plane
+                # change.  Do not silently send its Orchestrator back to
+                # authoring: the operator must explicitly accept the nits,
+                # then invoke `dag amend accept` to apply it.
+                return _finish_after_review(
+                    "pass-with-nits", round_index, delivery)
             log.info(logsetup.EVT_REVISION, kind=kind.value, id=item_id,
                      gate="review-nits", round=round_index, max=review_limit)
             store.update_work_item_metadata(

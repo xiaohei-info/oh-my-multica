@@ -192,6 +192,24 @@ def register(parser):
     accept.add_argument("--workspace", help="workspace 覆盖")
     add_output_flag(accept, default="json")
 
+    accept_nits = amend_sub.add_parser(
+        "accept-nits", help=ui(
+            "Explicitly accept amendment nits without applying the amendment",
+            "显式接受 amendment 建议项，但不应用 amendment"),
+        description=ui(
+            "Record explicit operator acceptance only; continue with `omac dag amend accept` to apply",
+            "只记录 operator 明确接受；继续运行 `omac dag amend accept` 才会应用 amendment"),
+    )
+    accept_nits._help_key = "amend-accept-nits"
+    accept_nits.add_argument("manifest", help="当前运行 manifest 文件路径")
+    accept_nits.add_argument("amendment_file", help="Reviewer 返回 pass-with-nits 的 amendment YAML")
+    accept_nits.add_argument(
+        "--reason", default="human accepted amendment nits",
+        help="人工确认原因")
+    accept_nits.add_argument("--engine", help="引擎类型覆盖")
+    accept_nits.add_argument("--workspace", help="workspace 覆盖")
+    add_output_flag(accept_nits, default="json")
+
     repair = amend_sub.add_parser(
         "repair-contract-commands",
         help="从已应用 amendment 原文恢复受限 shell command 损坏，不重放 accept",
@@ -520,7 +538,11 @@ def amend(args) -> int:
 
 
 def _amend_locked(args) -> int:
-    from ...pipeline.amendment import accept_amendment, propose_amendment
+    from ...pipeline.amendment import (
+        accept_amendment,
+        accept_amendment_nits,
+        propose_amendment,
+    )
     from ...pipeline.contract_repair import repair_contract_commands
 
     engine, _ = _assemble_engine(args)
@@ -573,6 +595,20 @@ def _amend_locked(args) -> int:
             "Amendment passed Reviewer review and is waiting for human confirmation.",
             "amendment 已通过 Reviewer，正在等待人工确认。"), report=report)
 
+    if args.amend_action == "accept-nits":
+        result = accept_amendment_nits(
+            engine,
+            args.manifest,
+            args.amendment_file,
+            reason=args.reason,
+        )
+        print_json(result)
+        hint(ui(
+            "Amendment nits accepted; nothing was applied. Continue with `omac dag amend accept "
+            f"{args.manifest} {args.amendment_file}`.",
+            "amendment 建议项已接受；尚未应用任何变更。请继续运行 `omac dag amend accept "
+            f"{args.manifest} {args.amendment_file}`。"))
+        return exit_codes.OK
     if args.amend_action == "accept":
         result = accept_amendment(
             engine,
