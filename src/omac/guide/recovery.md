@@ -393,3 +393,15 @@ operator 运行 `omac work show <upstream-id>` 核对可读交付，再运行
 Run 列表读取使用现有有界指数退避，含 TLS handshake timeout/握手超时。证书、认证、
 权限和未知错误不重试；重试耗尽仍为 exit 2。修好读取后先核对已有 Run，再以单一受监督
 进程运行 `omac dag run <manifest>`；不要因 Runner 退出而直接取消或重派已有 Agent。
+
+### authoring 恢复后的同 HEAD 正式提交
+
+普通 authoring 恢复产生的 `explicit-dispatch` handoff 若没有来源 review verdict/feedback，
+旧 verification 附件仅用于区分新提交，不要求 Worker 为相同代码制造新 commit。新的正式
+verification 仍必须绑定当前 Worker Run，且提交的 HEAD 必须与远端 PR HEAD 一致；
+Controller 校验后才封存并进入 review，不消耗一次“未提交”重试。
+
+来源为 reject 的返工仍必须改变已拒绝的 HEAD；缺少拒绝基线或来源未知的
+`operator-retry` 不通过本规则放宽。旧 verification、缺失 HEAD 或不属于当前 Run 的
+附件也不能复用。若已存在 operator prerequisite decision，部署此修复不会自动清除它、
+归零计数或启动 Runner；保留现有提交和 handoff，由 operator 按已确认的恢复事实处理。

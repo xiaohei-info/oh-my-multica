@@ -534,3 +534,19 @@ Certificate, authentication, permission, and unknown errors fail immediately;
 exhausted reads retain exit 2. Inspect existing Runs before restarting one
 supervised `omac dag run <manifest>` process. A Runner exit does not authorize
 cancelling or redispatching already-running Agents.
+
+### Same-head submission after authoring recovery
+
+An ordinary authoring recovery creates an `explicit-dispatch` handoff without
+source review verdict/feedback. Its verification attachment baseline distinguishes
+new submissions; it does not require a new commit on unchanged code. The new
+formal verification must still belong to the current Worker Run, and its submitted
+HEAD must match the remote PR HEAD. Only then may the Controller seal the delivery
+and enter review without consuming a no-submit retry.
+
+Reject rework still requires changing the rejected HEAD. Missing reject baselines
+and unknown `operator-retry` provenance remain fail-closed. Old verification,
+missing HEAD, and unrelated Run attachments remain invalid. An existing operator
+prerequisite decision is not automatically cleared by deployment, and neither
+counters nor Runner state are changed. Preserve the submitted delivery and handoff
+for explicit operator recovery.
