@@ -2289,3 +2289,21 @@ def test_mock_review_cycles_persist_same_ledger_contract_as_real_submit():
     assert item.review_ledger["cycles"][0]["verdict"] == "reject"
     assert item.review_ledger["cycles"][1]["verdict"] == "pass"
     assert item.review_ledger["blockers"][0]["status"] == "fixed"
+
+
+def test_new_ledger_versions_local_round_semantics_without_rewriting_history():
+    report = _report([])
+    ledger = advance_review_ledger(None, report, verdict="pass", subject_digest="first", round_index=7)
+    assert ledger["schema"] == "omac.review-ledger/v2"
+    assert [cycle["round"] for cycle in ledger["cycles"]] == [1]
+    legacy = deepcopy(ledger)
+    legacy["schema"] = "omac.review-ledger/v1"
+    before = deepcopy(legacy)
+    continued = advance_review_ledger(legacy, report, verdict="pass", subject_digest="second", round_index=9)
+    assert continued["schema"] == "omac.review-ledger/v2"
+    assert [cycle["round"] for cycle in continued["cycles"]] == [1, 2]
+    assert legacy == before
+    broken = deepcopy(ledger)
+    broken["cycles"][0]["round"] = 7
+    with pytest.raises(ValueError, match="round must be 1"):
+        validate_review_ledger(broken)

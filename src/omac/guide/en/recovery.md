@@ -501,3 +501,36 @@ nodes:
 - Do not report exit 20 as success.
 - Do not change `retry.review` merely to continue one exhausted plan review and
   thereby change the reviewed revision; use `omac plan continue-review`.
+
+## Historical reads, generation isolation, and prerequisite blockers
+
+Completed `work show` exposes original ledgers and refs under
+`context.review_history`, marked `unverified-history`. It does not reinterpret
+historical rounds or certify active convergence. New ledgers use
+`omac.review-ledger/v2` with ledger-local sequential rounds. Existing v1 must
+pass the same strict validation before active reuse; retire incompatible history
+through explicit authoring recovery, never by renumbering it.
+
+`node retry --stage review` requires a complete controller-sealed delivery
+identity matching current PR/verification refs and a timezone-aware verification
+time. Otherwise run `omac node retry <manifest> <node> --stage authoring` and
+obtain a fresh Worker submission. Never invent an identity or Reviewer Run
+baseline. Amendment review recovery checks this before applying changes.
+
+Recovered reports must match the current ledger generation, subject, and report
+digest. Carried handoff feedback is bound to its target generation and contract.
+Retired reviews remain audit evidence. For a contaminated Harness, confirm its
+SDK-only manifest contract, perform authoring retry, then verify that `work show`
+contains no retired Host-positive `previous_review` obligations.
+
+For Audit upstream read exit 5, use the Worker guide's `work block` protocol.
+After repair, verify `omac work show <upstream-id>`, then explicitly run
+`omac node retry <manifest> <audit-node> --stage authoring`. Absolute counters
+remain audit history. If the budget is exhausted, use the existing reviewed
+amendment recovery/fresh-budget workflow; do not raise limits.
+
+Run-list reads use bounded exponential backoff, including TLS handshake timeouts.
+Certificate, authentication, permission, and unknown errors fail immediately;
+exhausted reads retain exit 2. Inspect existing Runs before restarting one
+supervised `omac dag run <manifest>` process. A Runner exit does not authorize
+cancelling or redispatching already-running Agents.

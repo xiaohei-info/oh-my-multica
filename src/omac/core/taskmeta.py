@@ -14,6 +14,8 @@ pipeline 经 WorkItemStore.update_work_item_metadata 写入,Store 只存取。
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import secrets
 from copy import deepcopy
@@ -158,6 +160,32 @@ def current_review_ledger(item: Any) -> Optional[dict[str, Any]]:
     return None
 
 
+def review_context_binding(item: Any) -> dict:
+    """Bind carried feedback to the target contract and control generation."""
+    from .manifest import _dump_contract
+    contract = getattr(item, "contract", None)
+    payload = (
+        contract if isinstance(contract, dict) or contract is None
+        else _dump_contract(contract))
+    digest = hashlib.sha256(json.dumps(
+        payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"),
+        default=str).encode("utf-8")).hexdigest()
+    return {"generation": getattr(item, "review_generation", None), "contract_sha256": digest}
+
+
+def review_feedback_is_current(item: Any, handoff: Any = None) -> bool:
+    """Fail closed for unbound feedback in an explicitly versioned generation."""
+    generation = getattr(item, "review_generation", None)
+    if handoff is not None:
+        binding = getattr(handoff, "review_context_binding", None)
+        if binding is not None:
+            return binding == review_context_binding(item)
+        return not generation and not getattr(item, "review_ledger_generation", None)
+    ledger_generation = getattr(item, "review_ledger_generation", None)
+    return (not generation and not ledger_generation) or bool(
+        generation and generation == ledger_generation)
+
+
 @dataclass(frozen=True)
 class WorkerHandoffIntent:
     """持久化的 review→worker 交接意图；只引用源评审，不复制完整报告。"""
@@ -170,6 +198,7 @@ class WorkerHandoffIntent:
     source_review_round: Optional[int] = None
     source_review_verdict: Optional[str] = None
     source_review_feedback: Optional[dict[str, Any]] = None
+    review_context_binding: Optional[dict[str, Any]] = None
     target_review_bounce: Optional[int] = None
     generation: Optional[str] = None
     target_agent_id: Optional[str] = None
@@ -196,6 +225,7 @@ class WorkerHandoffIntent:
             "source_review_round": self.source_review_round,
             "source_review_verdict": self.source_review_verdict,
             "source_review_feedback": deepcopy(self.source_review_feedback),
+            "review_context_binding": deepcopy(self.review_context_binding),
             "target_review_bounce": self.target_review_bounce,
             "generation": self.generation,
             "target_agent_id": self.target_agent_id,
@@ -445,6 +475,8 @@ def parse_worker_handoff(value: Any) -> Optional[WorkerHandoffIntent]:
         gate=text_field("gate"),
         source_review_subject_digest=text_field(
             "source_review_subject_digest"),
+        review_context_binding=(deepcopy(value.get("review_context_binding"))
+                                if "review_context_binding" in value else None),
         source_review_round=int_field("source_review_round"),
         source_review_verdict=text_field("source_review_verdict"),
         source_review_feedback=(

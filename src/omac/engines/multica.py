@@ -28,7 +28,7 @@ from typing import Any, Callable, Dict, List, Optional, TypeVar
 import yaml
 
 from ..core import logsetup
-from ..core.review_convergence import bounded_decision_required
+from ..core.review_convergence import bounded_decision_required, _review_report_digest
 from ..core.taskmeta import (
     AMENDMENT_ATTEMPT_KEY, BOUNCE_BASELINE_KEY, CI_BOUNCE_KEY, CONTRACT_REF_KEY,
     DECISION_REQUIRED_KEY, DELIVERY_IDENTITY_KEY, DELIVERABLE_KEY,
@@ -42,6 +42,7 @@ from ..core.taskmeta import (
     REVIEW_SUBJECT_DIGEST_KEY, REVIEW_NITS_ACCEPTANCE_KEY,
     SOURCE_REFS_KEY, DeliveryIdentity, ReviewerRunBaseline, TaskKind, TaskPhase,
     VERIFICATION_REF_KEY, WORKER_BOUNCE_KEY, WORKER_HANDOFF_KEY,
+    review_feedback_is_current,
     WorkerHandoffIntent, parse_bounces, parse_delivery_identity, parse_kind,
     parse_phase, parse_reviewer_run_baseline, parse_worker_handoff,
 )
@@ -234,10 +235,15 @@ class _TransientReadFailure(str, Enum):
 def _transient_read_failure(message: str) -> Optional[_TransientReadFailure]:
     """Classify only known transient Multica CLI output.
 
-    Auth, permission, not-found, validation, TLS/certificate, and unknown errors
-    deliberately fall through so callers fail immediately.
+    Certificate, auth, permission, and unknown errors fail immediately.
+    Only explicit handshake timeouts are treated as transient TLS failures.
     """
     text = message.lower()
+    if any(marker in text for marker in (
+        "certificate", "x509", "unauthorized", "forbidden", "permission denied",
+        "证书", "未认证", "权限", "authentication", "http 401", "http 403",
+    )):
+        return None
     status_match = re.search(
         r"\b(?:http(?: status)?|status(?: code)?|server returned)"
         r"\s*[:=]?\s*(429|502|503|504)\b",
@@ -253,7 +259,9 @@ def _transient_read_failure(message: str) -> Optional[_TransientReadFailure]:
     if "too many requests" in text or "请求过于频繁" in text:
         return _TransientReadFailure.HTTP_429
     if (
-        "request timed out" in text
+        "tls handshake timed out" in text
+        or "握手超时" in text
+        or "request timed out" in text
         or "context deadline exceeded" in text
         or "i/o timeout" in text
         or "client.timeout exceeded" in text
@@ -1601,53 +1609,55 @@ class MulticaStore(WorkItemStore):
         return ref
 
     def recover_review_rework_context(self, item_id: str) -> Dict[str, Any]:
-        """Recover the latest immutable review attachments after metadata cleanup."""
-        comments = self._run_multica([
-            "issue", "comment", "list", item_id, "--output", "json",
-        ])
+        """Recover only the report bound to the current ledger and subject."""
+        item = self.get_work_item(item_id)
+        if not review_feedback_is_current(item):
+            return {}
+        ledger = item.review_ledger
+        cycles = ledger.get("cycles") if isinstance(ledger, dict) else None
+        if not isinstance(cycles, list) or not cycles or not isinstance(cycles[-1], dict):
+            return {}
+        latest = cycles[-1]
+        # The ledger's current generation and subject, not comment chronology,
+        # identify the one review whose feedback may be recovered.
+        if not item.review_subject_digest or latest.get("subject_digest") != item.review_subject_digest:
+            return {}
+        digest = latest.get("report_digest")
+        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            return {}
+        comments = self._run_idempotent_read(
+            "review recovery comments", lambda: self._run_multica([
+                "issue", "comment", "list", item_id, "--output", "json",
+            ]))
         if not isinstance(comments, list):
-            raise PlatformError(
-                f"Could not read review comments for work item {item_id}")
-        candidates: Dict[str, tuple[str, int, Dict[str, Any]]] = {}
-        for index, comment in enumerate(comments):
+            raise PlatformError(f"Could not read review comments for work item {item_id}")
+        for comment in comments:
             if not isinstance(comment, dict):
                 continue
-            stamp = str(comment.get("created_at") or comment.get("updated_at") or "")
             for attachment in comment.get("attachments") or []:
                 if not isinstance(attachment, dict):
                     continue
-                for kind in ("review-report", "review-ledger"):
-                    ref = self._review_attachment_ref(comment, attachment, kind)
-                    if ref is not None:
-                        current = candidates.get(kind)
-                        if current is None or (stamp, index) >= current[:2]:
-                            candidates[kind] = (stamp, index, ref)
-        context: Dict[str, Any] = {}
-        report_entry = candidates.get("review-report")
-        if report_entry is not None:
-            report_ref = report_entry[2]
-            report_text = self._load_payload_comment(
-                item_id, "review-report", report_ref)
-            if report_text:
+                ref = self._review_attachment_ref(comment, attachment, "review-report")
+                if ref is None:
+                    continue
+                report_text = self._load_payload_comment(item_id, "review-report", ref)
                 try:
-                    report = yaml.safe_load(report_text)
+                    report = yaml.safe_load(report_text) if report_text else None
                 except yaml.YAMLError as exc:
-                    raise PlatformError(
-                        f"Latest review report attachment for work item {item_id} "
-                        "could not be parsed") from exc
-                if isinstance(report, dict):
-                    blockers = report.get("blockers")
-                    if isinstance(blockers, list) and blockers:
-                        context["verdict"] = "reject"
-                        context["blockers"] = [
-                            blocker for blocker in blockers
-                            if isinstance(blocker, dict)
-                        ][:8]
-            context["report_ref"] = report_ref
-        ledger_entry = candidates.get("review-ledger")
-        if ledger_entry is not None:
-            context["ledger_ref"] = ledger_entry[2]
-        return context
+                    raise PlatformError(f"Review report attachment for {item_id} could not be parsed") from exc
+                if not isinstance(report, dict):
+                    continue
+                # Ledger report_digest is canonical JSON, not attachment bytes.
+                if _review_report_digest(report) != digest:
+                    continue
+                context = {"report_ref": ref, "verdict": latest.get("verdict")}
+                if item.review_ledger_ref:
+                    context["ledger_ref"] = dict(item.review_ledger_ref)
+                blockers = report.get("blockers")
+                if isinstance(blockers, list):
+                    context["blockers"] = [b for b in blockers if isinstance(b, dict)][:8]
+                return context
+        return {}
 
     def find_contract_publications(
         self, item_id: str, contract_sha256: str,
@@ -2329,9 +2339,10 @@ class MulticaRuntime(AgentRuntime):
         return RuntimeCapabilities(stable_direct_run_identity=True)
 
     def _issue_runs(self, item_id: str) -> List[Dict[str, Any]]:
-        runs = self._store._run_multica([
-            "issue", "runs", item_id, "--output", "json",
-        ])
+        runs = self._store._run_idempotent_read(
+            "issue runs", lambda: self._store._run_multica([
+                "issue", "runs", item_id, "--output", "json",
+            ]))
         if not isinstance(runs, list):
             raise PlatformError("Malformed Multica run payload: expected a list")
         validated = []

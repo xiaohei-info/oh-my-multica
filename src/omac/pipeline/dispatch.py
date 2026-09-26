@@ -40,7 +40,7 @@ from omac.engines.models import (
 from omac.engines.store import WorkItemStore, reviewer_dispatch_stopped
 from omac.errors import AuthError, NeedsDecision, PlatformError, ValidationError
 from omac.i18n import CN, EN, t, ui
-from .convergence import ResolutionState, resolve_convergence
+from .convergence import ConvergenceResolution, ResolutionState, resolve_convergence
 
 
 
@@ -305,6 +305,10 @@ def _env_setup_checklist(item: Any) -> Optional[List[str]]:
 
 
 def _previous_review_context(item: Any) -> Optional[Dict[str, Any]]:
+    from ..core.taskmeta import review_feedback_is_current
+    handoff = getattr(item, "worker_handoff", None)
+    if not review_feedback_is_current(item, handoff):
+        return None
     report = getattr(item, "review_report", None)
     report_ref = getattr(item, "review_report_ref", None)
     comment = getattr(item, "review_comment", None)
@@ -389,7 +393,12 @@ def build_show_output(item: Any, identity: str, *, language: str = EN) -> Dict[s
     kind: TaskKind = item.kind
     phase: TaskPhase = _resolve_phase(item, item.phase)
     ledger = current_review_ledger(item)
-    resolution = resolve_convergence(item, node_id=getattr(item, "dag_key", None))
+    historical = item.status == WorkItemStatus.DONE
+    if historical:
+        resolution = ConvergenceResolution(ResolutionState.VALID)
+        ledger = None
+    else:
+        resolution = resolve_convergence(item, node_id=getattr(item, "dag_key", None))
     resolution.raise_if_invalid(ValidationError, item.id)
 
     task = {
@@ -432,6 +441,18 @@ def build_show_output(item: Any, identity: str, *, language: str = EN) -> Dict[s
         "issue_description": getattr(item, "description", ""),
         "contract": contract_payload,
     }
+    if historical:
+        for field in ("artifacts", "verification", "verification_ref", "deliverable", "deliverable_ref"):
+            value = getattr(item, field, None)
+            if value is not None:
+                context[field] = value
+    if historical and getattr(item, "review_ledger", None) is not None:
+        context["review_history"] = {
+            "ledger": deepcopy(item.review_ledger),
+            "ledger_ref": getattr(item, "review_ledger_ref", None),
+            "validation": "unverified-history",
+            "active_convergence_evidence": False,
+        }
     responsibility = responsibility_summary(contract)
     if responsibility is not None:
         context["responsibility"] = responsibility
@@ -555,7 +576,11 @@ def build_show_output(item: Any, identity: str, *, language: str = EN) -> Dict[s
         "authority": authority_order(language),
         "guide_refs": guide_refs_for(kind, phase),
     }
+    if kind == TaskKind.DEVELOP and phase == TaskPhase.AUTHORING and not historical:
+        output["control"]["report_blocker"] = f"omac work block {item.id} --report-file <blocker.yaml>"
     resolution.apply_to_show(output, context)
+    if historical:
+        output["submit"] = None
     return output
 
 
@@ -1031,6 +1056,45 @@ class SubmitResult:
         self.next_phase = next_phase
         self.message = message
         self.deliverable_keys = deliverable_keys or (deliverable_key,)
+
+
+def report_worker_blocker(store: WorkItemStore, issue_id: str, report_file: str) -> dict:
+    """Persist a typed prerequisite failure; never interpret Agent final prose."""
+    from ..core.taskmeta import DECISION_REQUIRED_SCHEMA, review_context_binding
+    report = _parse_structured(report_file)
+    fields = {"schema", "reason_code", "upstream_issue_id", "operation", "exit_code"}
+    if (
+        not isinstance(report, dict) or set(report) != fields
+        or report.get("schema") != "omac.worker-blocker/v1"
+        or report.get("reason_code") != "upstream-unreadable"
+        or report.get("operation") not in {"work-show", "work-read"}
+        or type(report.get("exit_code")) is not int or report["exit_code"] != 5
+        or not isinstance(report.get("upstream_issue_id"), str)
+        or not report["upstream_issue_id"].strip()
+        or len(report["upstream_issue_id"].encode("utf-8")) > 256
+    ):
+        raise ValidationError(
+            "Invalid worker blocker: use omac.worker-blocker/v1 with reason_code "
+            "upstream-unreadable, upstream_issue_id, operation work-show/work-read, "
+            "and exit_code 5; run omac work block --help")
+    item = store.get_work_item(issue_id)
+    if item.kind != TaskKind.DEVELOP or item.phase != TaskPhase.AUTHORING or item.status == WorkItemStatus.DONE:
+        raise ValidationError("Worker blockers require active develop authoring; run omac work show " + issue_id)
+    decision = {
+        "schema": DECISION_REQUIRED_SCHEMA,
+        "reason_code": "worker-precondition-blocked",
+        "kind": item.kind.value, "phase": TaskPhase.AUTHORING.value,
+        "gate": "worker", "resume_issue_id": item.id,
+        "blocker": report, "review_context_binding": review_context_binding(item),
+        "next_action": "Repair the upstream read, then run omac node retry <manifest> " + item.dag_key,
+    }
+    if item.decision_required not in (None, {}, decision):
+        raise NeedsDecision("An existing decision must be resolved first", report=item.decision_required)
+    # Decision first: an interrupted status write still prevents redispatch.
+    store.update_work_item_metadata(item.id, decision_required=decision)
+    store.update_status(item.id, WorkItemStatus.BLOCKED)
+    return {"ok": False, "exit_code": 20, "terminal": True,
+            "decision_required": decision, "next_action": "stop"}
 
 
 def submit(

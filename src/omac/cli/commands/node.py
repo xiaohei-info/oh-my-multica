@@ -18,10 +18,10 @@ from ...core.taskmeta import (
     WORKER_HANDOFF_SCHEMA, WORKER_REWORK_FEEDBACK_SCHEMA,
     TaskKind, TaskPhase,
     WorkerHandoffIntent, exact_review_report_ref,
-    review_nits_acceptance_is_valid,
+    review_nits_acceptance_is_valid, review_feedback_is_current, review_context_binding,
 )
 from ...core.stage_recovery import (
-    prepare_stage_recovery, stage_recovery_subject,
+    prepare_stage_recovery, stage_recovery_subject, validate_stage_recovery,
 )
 from ...engines import EngineConfig, create_engine
 from ...engines.models import PullRequestState, WorkItemStatus
@@ -353,6 +353,13 @@ def _operator_retry_feedback(current, prior_handoff, recovered_context=None):
         encoded = value.encode("utf-8")
         return encoded[:limit].decode("utf-8", errors="ignore")
 
+    if prior_handoff is not None and not review_feedback_is_current(current, prior_handoff):
+        prior_handoff = None
+    if not review_feedback_is_current(current):
+        if prior_handoff is None:
+            return None
+        current = replace(current, review_report=None, review_report_ref=None,
+                          review_ledger_ref=None, review_verdict=None, review_comment=None)
     feedback = {"schema": WORKER_REWORK_FEEDBACK_SCHEMA}
     verdict = current.review_verdict
     if verdict not in {"reject", "pass-with-nits"} and prior_handoff is not None:
@@ -467,6 +474,12 @@ def _cmd_retry(args) -> int:
     if node.work_item_id and engine is not None:
         try:
             current = engine.store.get_work_item(node.work_item_id)
+            try:
+                validate_stage_recovery(current, stage)
+            except ValueError as exc:
+                raise ValidationError(
+                    f"{exc}; run omac node retry {args.manifest} {args.node_key} --stage authoring"
+                ) from exc
             delayed_review_recovered = (
                 stage == "review"
                 and _recover_delayed_reviewer_submission(
@@ -475,6 +488,16 @@ def _cmd_retry(args) -> int:
             )
             handoff = None
             prior_handoff = current.worker_handoff
+            if prior_handoff is not None and not review_feedback_is_current(current, prior_handoff):
+                prior_handoff = None
+            contract_matches = (
+                review_context_binding(current)["contract_sha256"]
+                == review_context_binding(replace(current, contract=node.contract))["contract_sha256"]
+            )
+            if not contract_matches:
+                prior_handoff = None
+            review_current = contract_matches and (
+                review_feedback_is_current(current) or prior_handoff is not None)
             has_delivery = bool(current.artifacts or current.verification)
             prior_rework = bool(
                 prior_handoff is not None
@@ -502,6 +525,7 @@ def _cmd_retry(args) -> int:
                 and node.reviewer
                 and has_delivery
                 and has_retry_history
+                and review_current
                 and not current.review_report
                 and not current.review_report_ref
                 and not prior_feedback
@@ -520,6 +544,7 @@ def _cmd_retry(args) -> int:
                     or prior_rework
                 )
                 and has_delivery
+                and review_current
             ):
                 from ...pipeline.loop import _bounded_direct_run_baseline
 
@@ -611,6 +636,8 @@ def _cmd_retry(args) -> int:
                 # 指定阶段，同时保留 PR、verification 与历史附件。
                 prepare_stage_recovery(node, engine.store, stage)
                 if handoff is not None:
+                    handoff = replace(handoff, review_context_binding=review_context_binding(
+                        engine.store.get_work_item(node.work_item_id)))
                     engine.store.update_work_item_metadata(
                         node.work_item_id, worker_handoff=handoff)
             refreshed = engine.store.get_work_item(node.work_item_id)

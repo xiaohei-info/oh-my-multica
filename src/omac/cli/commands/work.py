@@ -14,6 +14,7 @@ from ...i18n import resolve_language, t, ui
 from ...pipeline.dispatch import (
     SUBMIT_PARAM_SPECS,
     build_show_output,
+    report_worker_blocker,
     render_source_refs_section,
     submit,
 )
@@ -61,6 +62,13 @@ def register(parser):
     read.add_argument("issue_id")
     read.add_argument("--source", required=True)
     read.add_argument("--output-file", required=True)
+
+    block = sub.add_parser("block", help="Report a structured worker prerequisite blocker")
+    block._work_action = "block"
+    block._parse_error_renderer = _render_parse_error
+    block.add_argument("issue_id")
+    block.add_argument("--report-file", required=True)
+    add_output_flag(block, default="json")
 
     submit = sub.add_parser("submit", help="给 Agent 提交交付物并返回结构化结果(默认 JSON)")
     submit._work_action = "submit"
@@ -434,6 +442,10 @@ def run(args) -> int:
             return _run_show(args)
         if args.action == "read":
             return _run_read(args)
+        if args.action == "block":
+            result = report_worker_blocker(_resolve_store(), args.issue_id, args.report_file)
+            print_json(result)
+            return exit_codes.NEEDS_DECISION
         if args.action == "submit":
             return _submit(args)
         return not_implemented(f"work {args.action}", "P2")

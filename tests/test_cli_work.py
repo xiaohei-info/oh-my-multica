@@ -440,6 +440,8 @@ def test_show_output_structure(kind, phase):
     assert "context" in out
     assert "protocol" in out
     assert "submit" in out
+    if kind == TaskKind.DEVELOP and phase == TaskPhase.AUTHORING:
+        assert out["control"].pop("report_blocker") == f"omac work block {item.id} --report-file <blocker.yaml>"
     assert out["control"] == {
         "platform_writes": "omac-only",
         "submit_is_terminal": True,
@@ -2525,3 +2527,23 @@ class TestPhaseResolution:
         assert got.deliverable is None
         assert got.status == WorkItemStatus.TODO
         assert got.phase == dispatch_mod.TaskPhase.AUTHORING
+
+
+def test_work_block_persists_typed_decision_and_returns_20(tmp_path, monkeypatch, capsys):
+    store = _store()
+    item = _make_item(store, TaskKind.DEVELOP, TaskPhase.AUTHORING)
+    monkeypatch.setattr(work_cmd, "_resolve_store", lambda: store)
+    report = tmp_path / "blocker.yaml"
+    report.write_text(yaml.safe_dump({
+        "schema": "omac.worker-blocker/v1", "reason_code": "upstream-unreadable",
+        "upstream_issue_id": "upstream", "operation": "work-show", "exit_code": 5,
+    }))
+    for _ in range(2):
+        assert main(["work", "block", item.id, "--report-file", str(report)]) == 20
+        result = json.loads(capsys.readouterr().out)
+        assert result["terminal"] is True
+        assert result["next_action"] == "stop"
+    current = store.get_work_item(item.id)
+    assert current.status == WorkItemStatus.BLOCKED
+    assert current.bounces.worker == 0
+    assert current.decision_required["reason_code"] == "worker-precondition-blocked"
