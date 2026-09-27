@@ -575,3 +575,9 @@ created before metadata was written. Only the first match is fully hydrated and
 its attachments validated; unrelated attachments are not downloaded. An absent
 identity returns none. Selected-item attachment failures and pagination errors
 still propagate, rather than being treated as absence and creating a duplicate.
+
+A Multica Issue envelope's `duplicate_of: null` is an empty default and does not
+block idempotent recovery of an undispatched amendment shell. Only JSON null for
+this named field is ignored; other values and arbitrary unknown fields still fail
+closed. Recover the same attempt with unchanged manifest/report/docs/supersedes inputs and
+the same deterministic dag_key, without creating a duplicate issue.
