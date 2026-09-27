@@ -581,3 +581,20 @@ block idempotent recovery of an undispatched amendment shell. Only JSON null for
 this named field is ignored; other values and arbitrary unknown fields still fail
 closed. Recover the same attempt with unchanged manifest/report/docs/supersedes inputs and
 the same deterministic dag_key, without creating a duplicate issue.
+
+### Budget authority across consecutive amendments
+
+A new amendment's `amendment_apply.nodes` contains only its own recovery work.
+Completed budget authorizations for unaffected nodes are carried separately in
+`amendment_apply.retained_bounce_baselines`, with the source amendment, work item
+ID, contract digest, and original worker/review/merge baseline. Old recovery steps
+are not replayed. A new recovery of the same node supersedes its older baseline;
+removed nodes, changed issue/contract identities, and invalid baselines do not
+inherit authority.
+
+Budget decisions use accepted manifest authority, never an arbitrary Store
+bounce_baseline projection. Absolute counters and configured limits are unchanged.
+Already-lost baselines require verification against the original applied ledger
+and Git history, then a narrowly scoped restoration under single-writer control.
+Do not replay the old apply queue, raise limits, clear audit counters, or invent a
+contract change to compensate for lost budget records.
