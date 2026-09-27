@@ -4035,3 +4035,36 @@ def test_multica_readiness_malformed_payload_fails_closed(monkeypatch, payload):
     result = store.read_pull_request_readiness("https://github.com/acme/repo/pull/1")
 
     assert isinstance(result, PullRequestReadinessFailure)
+
+
+@pytest.mark.parametrize("mode", ["authoring", "review", "retired", "invalid", "wrong-report", "mismatched-subject"])
+def test_rework_recovery_after_reset_uses_valid_current_ledger_subject(monkeypatch, mode):
+    ledger = yaml.safe_load((Path(__file__).parent / "fixtures/executor_reject_ledger.yaml").read_text())
+    if mode == "invalid":
+        ledger["cycles"][-1]["round"] = 99
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    item = SimpleNamespace(
+        review_generation="current", review_ledger_generation="old" if mode == "retired" else "current",
+        review_subject_digest="different" if mode == "mismatched-subject" else None, review_ledger=ledger,
+        review_ledger_ref={"attachment_id": "ledger"},
+        phase=TaskPhase.REVIEW if mode == "review" else TaskPhase.AUTHORING,
+    )
+    monkeypatch.setattr(store, "get_work_item", lambda _: item)
+    calls = []
+    report = yaml.safe_load((Path(__file__).parent / "fixtures/executor_reject_report.yaml").read_text())
+    if mode == "wrong-report":
+        report["blockers"][0]["required_fix"] = "different review"
+    comments = [{"id": "comment", "content": "", "attachments": [{
+        "id": "report", "filename": "omac-review-report-fixture.yaml",
+        "sha256": "a" * 64, "bytes": 100}]}]
+    monkeypatch.setattr(store, "_run_multica", lambda args: calls.append(args) or comments)
+    monkeypatch.setattr(store, "_load_payload_comment", lambda *args: yaml.safe_dump(report))
+    recovered = store.recover_review_rework_context("issue")
+    if mode == "authoring":
+        assert recovered["verdict"] == "reject"
+        assert recovered["subject_digest"] == ledger["cycles"][-1]["subject_digest"]
+        assert recovered["report_ref"]["attachment_id"] == "report"
+        assert recovered["blockers"][0]["root_cause_key"] == "platform-resource-stale-release-artifact-lineage"
+    else:
+        assert recovered == {}
+    assert bool(calls) == (mode in {"authoring", "wrong-report"})

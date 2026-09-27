@@ -405,3 +405,15 @@ Controller 校验后才封存并进入 review，不消耗一次“未提交”�
 `operator-retry` 不通过本规则放宽。旧 verification、缺失 HEAD 或不属于当前 Run 的
 附件也不能复用。若已存在 operator prerequisite decision，部署此修复不会自动清除它、
 归零计数或启动 Runner；保留现有提交和 handoff，由 operator 按已确认的恢复事实处理。
+
+### reject 反馈在 authoring 交接中保留
+
+普通 reject handoff 在清理当前 review 字段前保存有界 blocker 摘要和完整 report/ledger
+引用，并绑定当前 contract 与 review generation。`work show.context.previous_review`
+从该 handoff 展示反馈；no-submit 重试和中断恢复不会清除这些义务。
+
+如果旧版本已清空报告和 handoff，显式 authoring retry 可从严格校验且属于当前 generation
+的 ledger 最后一轮恢复 subject/report digest，再匹配不可变附件。缺失 live subject 不等于
+没有评审。不同 generation、无效 ledger 或报告 digest 不匹配仍拒绝恢复，绝不只按评论
+时间选最新附件。恢复后的 handoff 保留原 reject verdict 和 subject；真正 reject 的换 HEAD
+校验不变。执行恢复前先读取新的 `previous_review`，不要把“之前提交成功”视为已通过评审。

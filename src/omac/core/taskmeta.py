@@ -19,7 +19,7 @@ import json
 import re
 import secrets
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Any, Optional, Tuple
 
@@ -186,6 +186,95 @@ def review_feedback_is_current(item: Any, handoff: Any = None) -> bool:
         generation and generation == ledger_generation)
 
 
+def build_worker_rework_feedback(current, prior_handoff=None, recovered_context=None):
+    """Carry bounded actionable context into a new authoring generation."""
+    def clip(value: str, limit: int = 256) -> str:
+        encoded = value.encode("utf-8")
+        return encoded[:limit].decode("utf-8", errors="ignore")
+
+    if prior_handoff is not None and not review_feedback_is_current(current, prior_handoff):
+        prior_handoff = None
+    if not review_feedback_is_current(current):
+        if prior_handoff is None:
+            return None
+        current = replace(current, review_report=None, review_report_ref=None,
+                          review_ledger_ref=None, review_verdict=None, review_comment=None)
+    feedback = {"schema": WORKER_REWORK_FEEDBACK_SCHEMA}
+    verdict = current.review_verdict
+    if verdict not in {"reject", "pass-with-nits"} and prior_handoff is not None:
+        verdict = prior_handoff.source_review_verdict
+    if verdict not in {"reject", "pass-with-nits"}:
+        verdict = (
+            recovered_context.get("verdict")
+            if isinstance(recovered_context, dict) else None
+        )
+    if verdict in {"reject", "pass-with-nits"}:
+        feedback["verdict"] = verdict
+
+    report_ref = current.review_report_ref
+    prior_feedback = (
+        prior_handoff.source_review_feedback
+        if prior_handoff is not None
+        and isinstance(prior_handoff.source_review_feedback, dict)
+        else {}
+    )
+    recovered = recovered_context if isinstance(recovered_context, dict) else {}
+    if not exact_review_report_ref(report_ref):
+        report_ref = prior_feedback.get("report_ref")
+    if not exact_review_report_ref(report_ref):
+        report_ref = recovered.get("report_ref")
+    if exact_review_report_ref(report_ref):
+        feedback["report_ref"] = dict(report_ref)
+
+    ledger_ref = getattr(current, "review_ledger_ref", None)
+    if not exact_review_report_ref(ledger_ref):
+        ledger_ref = prior_feedback.get("ledger_ref")
+    if not exact_review_report_ref(ledger_ref):
+        ledger_ref = recovered.get("ledger_ref")
+    if exact_review_report_ref(ledger_ref):
+        feedback["ledger_ref"] = dict(ledger_ref)
+
+    report = current.review_report
+    blockers = []
+    if isinstance(report, dict):
+        for raw in report.get("blockers", []) or []:
+            if not isinstance(raw, dict):
+                continue
+            compact = {}
+            for field in ("root_cause_key", "summary", "required_fix"):
+                value = raw.get(field)
+                if isinstance(value, str) and value.strip():
+                    compact[field] = clip(value)
+            if compact:
+                blockers.append(compact)
+    if not blockers:
+        prior_blockers = prior_feedback.get("blockers")
+        if not isinstance(prior_blockers, list):
+            prior_blockers = recovered.get("blockers")
+        if isinstance(prior_blockers, list):
+            blockers = []
+            for blocker in prior_blockers[:4]:
+                if not isinstance(blocker, dict):
+                    continue
+                compact = {
+                    field: clip(value)
+                    for field, value in blocker.items()
+                    if field in {"root_cause_key", "summary", "required_fix"}
+                    and isinstance(value, str) and value.strip()
+                }
+                if compact:
+                    blockers.append(compact)
+    if blockers:
+        feedback["blockers"] = blockers[:4]
+
+    comment = current.review_comment
+    if not comment:
+        comment = prior_feedback.get("comment") or recovered.get("comment")
+    if isinstance(comment, str) and comment.strip():
+        feedback["comment"] = clip(comment)
+    return feedback if len(feedback) > 1 else None
+
+
 @dataclass(frozen=True)
 class WorkerHandoffIntent:
     """持久化的 review→worker 交接意图；只引用源评审，不复制完整报告。"""
@@ -262,7 +351,7 @@ class WorkerHandoffIntent:
                 and review_nits_feedback_is_complete(
                     self.source_review_feedback)
             )
-        elif self.gate == "operator-retry":
+        elif self.gate in {"review", "operator-retry"}:
             feedback_valid = (
                 self.source_review_feedback is None
                 or worker_rework_feedback_is_valid(

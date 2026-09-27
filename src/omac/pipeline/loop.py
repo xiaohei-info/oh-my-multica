@@ -64,7 +64,7 @@ from ..pipeline.dispatch import (
     normalize_source_refs, render_issue_body, reviewer_dispatch_stopped,
 )
 from ..core.taskmeta import (
-    review_context_binding,
+    review_context_binding, build_worker_rework_feedback, worker_rework_feedback_is_valid,
     DECISION_REQUIRED_SCHEMA, DELIVERY_IDENTITY_SCHEMA,
     REVIEWER_RUN_BASELINE_SCHEMA, WORKER_HANDOFF_SCHEMA,
     DeliveryIdentity, ReviewerRunBaseline, TaskKind, TaskPhase,
@@ -2032,9 +2032,8 @@ def _dispatch_worker_handoff(
     """幂等完成 review→worker handoff；assign 可能立即启动 Run。"""
     node = manifest.nodes[key]
     item_id = node.work_item_id
-    current = (
-        projection or store.observe_work_item_control(item_id)
-    ).work_item
+    projection = projection or store.observe_work_item_control(item_id)
+    current = projection.work_item
     intent = current.worker_handoff
     if current.phase == TaskPhase.AUTHORING and current.decision_required:
         return _WorkerHandoffResult(
@@ -2051,6 +2050,13 @@ def _dispatch_worker_handoff(
                 decision=resolution.decision,
             )
     if intent is None:
+        if gate in {"review", "review-nits"}:
+            # Bind and copy review feedback before reset_review clears it.
+            # Control projections may defer both the report and contract bodies.
+            projection = _hydrate_work_item_payloads(
+                store, projection or WorkItemControlProjection(current),
+                frozenset({WorkItemPayload.CONTRACT, WorkItemPayload.REVIEW_REPORT}))
+            current = projection.work_item
         if review_bounce is None or gate is None:
             raise PlatformError(
                 f"Worker handoff intent is missing for work item {item_id}")
@@ -2083,6 +2089,10 @@ def _dispatch_worker_handoff(
                 )
             ) or None
         source_feedback = None
+        if gate == "review":
+            feedback = build_worker_rework_feedback(current)
+            if worker_rework_feedback_is_valid(feedback):
+                source_feedback = feedback
         if gate == "review-nits":
             source_feedback = {"verdict": source_verdict}
             if not exact_review_report_ref(current.review_report_ref):
