@@ -1,0 +1,119 @@
+schema: omac.review-ledger/v2
+cycles:
+- round: 1
+  subject_digest: 2580f3b2556f85992935fd4a4abdcbcc9710dc5911a8f0c1d9016ee7eaf9f2c9
+  report_digest: b17e58fa17e9d8623371937b6e634e57a8b9c359d0f5e122da2f82df338e8f25
+  verdict: reject
+  obligation_results:
+    dimension:authority: pass
+    dimension:structure: pass
+    dimension:execution: pass
+    dimension:ownership: pass
+    dimension:evidence: fail
+    dimension:regression: pass
+    integration:contracts-platform-resource-executor-resolution-v1-gate: pass
+  new_count: 1
+  fixed_count: 0
+  regressed_count: 0
+  unchanged_count: 0
+  open_count: 1
+  prior_open_blocker_ids: []
+  open_blocker_ids:
+  - BLK-f8f891daf84d
+  reported_blocker_ids:
+  - BLK-f8f891daf84d
+  blocker_facts_schema: omac.review-cycle-blocker-facts/v1
+  blocker_facts:
+  - blocker_id: BLK-f8f891daf84d
+    root_cause_key: platform-resource-stale-release-artifact-lineage
+    obligation_id: dimension:evidence
+    summary: The delivered Platform component manifest and bundle identify an earlier
+      source revision rather than the reviewed PR head.
+    evidence: At PR head 338d79863, artifacts/contracts-platform-resource-executor-resolution-v1/component-manifest.json:1
+      records source_revision 208ba4f8 and source_tree_sha 4f322756; HEAD's tree is
+      f9bac739. Independent producer regeneration and package command produce a different
+      upstream manifest digest and bundle digest. The previous bundle's internal verifier
+      passes but does not compare its revision with HEAD. The amendment decision:13
+      requires artifact lineage and gate outputs to describe the same corrected head.
+    required_fix: Regenerate the declared upstream inputs and Platform release evidence
+      for the final reviewed head, publish a package manifest and bundle bound to
+      that head without circular tracked-artifact revision drift, and verify both
+      internal hashes and provenance against that head.
+    status: open
+    classification: new
+    owner: contracts-platform-resource-executor-resolution-v1
+- round: 2
+  subject_digest: b02a3ad26185662ad08a770107ea9c9d788b8d3d92f466e11bb4e9bbda773e3a
+  report_digest: cb700578e00cfb68d0693f5930e5eeac68a8b66e14d4ef1946e61e2e1167d1d9
+  verdict: reject
+  obligation_results:
+    dimension:authority: pass
+    dimension:structure: pass
+    dimension:execution: pass
+    dimension:ownership: pass
+    dimension:evidence: fail
+    dimension:regression: pass
+    integration:contracts-platform-resource-executor-resolution-v1-gate: pass
+  new_count: 0
+  fixed_count: 0
+  regressed_count: 0
+  unchanged_count: 0
+  open_count: 1
+  prior_open_blocker_ids:
+  - BLK-f8f891daf84d
+  open_blocker_ids:
+  - BLK-f8f891daf84d
+  reported_blocker_ids:
+  - BLK-f8f891daf84d
+  blocker_facts_schema: omac.review-cycle-blocker-facts/v1
+  blocker_facts:
+  - blocker_id: BLK-f8f891daf84d
+    root_cause_key: platform-resource-stale-release-artifact-lineage
+    obligation_id: dimension:evidence
+    summary: The delivered component still has no retrievable current-head manifest
+      or bundle.
+    evidence: The complete PR diff contains only kernel_wire.go and kernel_wire_test.go,
+      and git ls-files artifacts/contracts-platform-resource-executor-resolution-v1
+      returns no paths. Current work-show exposes only PR URL/head and a YAML verification
+      attachment; issue attachments have no bundle, manifest or digest. Independent
+      packaging generated matching source_revision 208ba4f8 and passed schema/hash
+      checks, but solely in an ignored local directory.
+    required_fix: Publish the current-head Platform manifest, bundle and digest (with
+      upstream input identities) as durable review-accessible artifacts outside the
+      source tree, attach or identify their retrievable handles in delivery evidence,
+      then verify those published bytes and their source revision/tree against the
+      final PR head.
+    status: open
+    classification: deeper
+    owner: contracts-platform-resource-executor-resolution-v1
+    last_evidence: A current-head manifest and bundle can be independently recreated,
+      but the worker removed the prior published files from PR delivery without publishing
+      their replacements. Verification YAML alone is not the package artifact; no
+      attached bundle or manifest exists.
+blockers:
+- blocker_id: BLK-f8f891daf84d
+  root_cause_key: platform-resource-stale-release-artifact-lineage
+  obligation_id: dimension:evidence
+  summary: The delivered component still has no retrievable current-head manifest
+    or bundle.
+  evidence: The complete PR diff contains only kernel_wire.go and kernel_wire_test.go,
+    and git ls-files artifacts/contracts-platform-resource-executor-resolution-v1
+    returns no paths. Current work-show exposes only PR URL/head and a YAML verification
+    attachment; issue attachments have no bundle, manifest or digest. Independent
+    packaging generated matching source_revision 208ba4f8 and passed schema/hash checks,
+    but solely in an ignored local directory.
+  required_fix: Publish the current-head Platform manifest, bundle and digest (with
+    upstream input identities) as durable review-accessible artifacts outside the
+    source tree, attach or identify their retrievable handles in delivery evidence,
+    then verify those published bytes and their source revision/tree against the final
+    PR head.
+  status: open
+  classification: deeper
+  owner: contracts-platform-resource-executor-resolution-v1
+  first_seen_round: 1
+  last_seen_round: 2
+  seen_count: 2
+  last_evidence: A current-head manifest and bundle can be independently recreated,
+    but the worker removed the prior published files from PR delivery without publishing
+    their replacements. Verification YAML alone is not the package artifact; no attached
+    bundle or manifest exists.

@@ -316,7 +316,7 @@ def _previous_review_context(item: Any) -> Optional[Dict[str, Any]]:
         handoff = getattr(item, "worker_handoff", None)
         if (
             getattr(handoff, "gate", None)
-            not in {"review-nits", "operator-retry"}
+            not in {"review", "review-nits", "operator-retry"}
             or not handoff.is_causally_bound()
         ):
             return None

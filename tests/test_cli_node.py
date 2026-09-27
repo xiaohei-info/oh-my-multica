@@ -1939,6 +1939,7 @@ def test_plain_retry_recovers_review_feedback_from_store_comments(
     engine.store.update_status(item_id, WorkItemStatus.BLOCKED)
     recovery = {
         "verdict": "reject",
+        "subject_digest": "recovered-review-subject",
         "report_ref": report_ref,
         "blockers": [{
             "root_cause_key": "auth-boundary",
@@ -1959,6 +1960,8 @@ def test_plain_retry_recovers_review_feedback_from_store_comments(
     capsys.readouterr()
 
     retried = engine.store.get_work_item(item_id)
+    assert retried.worker_handoff.source_review_verdict == "reject"
+    assert retried.worker_handoff.source_review_subject_digest == "recovered-review-subject"
     feedback = retried.worker_handoff.source_review_feedback
     assert feedback["schema"] == WORKER_REWORK_FEEDBACK_SCHEMA
     assert feedback["verdict"] == "reject"

@@ -1,0 +1,88 @@
+review_protocol: omac.review/v2
+review_goals:
+  - Verify the additive Platform wire admission preserves exact executor-selection identity, responsibility and Run lineage without widening Kernel v1.
+  - Independently reproduce all declared regressions, coverage and ownership-aware component packaging at the delivered PR head, and audit the prior artifact-lineage blocker.
+diff_reviewed: true
+tests_rerun: true
+integration_tests_rerun: true
+coverage_checked: true
+full_review_completed: true
+obligation_results:
+  - obligation_id: dimension:authority
+    status: pass
+    evidence: "Compared PR 84 head 208ba4f8 with the amendment decision:9-13, overview:581-611, orchestration detailed design:617-652 and the published orchestration contract:412-418."
+  - obligation_id: dimension:structure
+    status: pass
+    evidence: "Complete main...HEAD diff changes only kernel_wire.go and kernel_wire_test.go; the seven new entry points consume canonical lifecyclev1 DTOs and Validators, and the existing closed Kernel v1 root allowlist remains unchanged."
+  - obligation_id: dimension:execution
+    status: pass
+    evidence: "Installed Go 1.26.0 locally; the resource suite, all three exact named regressions and JSON assertion, coverage assertion, go vet, ownership producers, upstream package, Platform package and manifest verifier returned 0 at PR head."
+  - obligation_id: dimension:ownership
+    status: pass
+    evidence: "Only the two owned Platform wire files differ from main; the packaged owner catalog registers exactly four Platform resource roots, and no Kernel, SDK, or CLI source is changed."
+  - obligation_id: dimension:evidence
+    status: fail
+    evidence: "Independent regeneration produced a six-input Platform manifest with source_revision 208ba4f8, source_tree_sha 4f322756 and an internally verified bundle; however the PR tracks none of the five gate artifacts, and work-show/issue attachments contain only YAML verification and review records, not a current-head bundle, manifest or digest. The claimed release component has no durable delivered artifact for consumers to inspect or retrieve."
+  - obligation_id: dimension:regression
+    status: pass
+    evidence: "All three required named regressions passed, as did existing Kernel v1 root rejection and the full package test suite at 90.9% statement coverage. Prior stale-manifest mismatch cannot be repeated in locally regenerated output, but its published-artifact lineage is still unclosed."
+  - obligation_id: integration:contracts-platform-resource-executor-resolution-v1-gate
+    status: pass
+    evidence: "All five L0 commands passed independently, with 90.9% coverage and 3/3 named passes. Locally reproduced artifacts meet the gate; their absence from the actual delivery is separately blocked under dimension:evidence."
+prior_blocker_results:
+  - blocker_id: BLK-f8f891daf84d
+    status: deeper
+    evidence: "A current-head manifest and bundle can be independently recreated, but the worker removed the prior published files from PR delivery without publishing their replacements. Verification YAML alone is not the package artifact; no attached bundle or manifest exists."
+acceptance_mapping:
+  - acceptance: UJ-RUN-001
+    status: pass
+    evidence: "Trace-only reference: validated existing request/action wire boundaries and the resource suite; this node does not claim the whole user journey."
+  - acceptance: UJ-EXECUTOR-RESOLUTION-001
+    status: pass
+    evidence: "Trace-only reference: named tests validate foreign identity rejection, exact persisted fact and responsibility/lineage preservation at the resource boundary."
+integration_gate_mapping:
+  - gate: contracts-platform-resource-executor-resolution-v1-gate
+    name: contracts-platform-resource-executor-resolution-v1-gate
+    layer: L0
+    status: pass
+    source_of_truth:
+      - kernel-lifecycle-oacok-amendment-decision.md
+      - docs/design/open-agent-cluster-overview-design.md:L581-L611
+      - docs/design/detailed/04-orchestration-kernel-detailed-design.md:L617-L652
+      - review-report:AITEAM-953:BLK-aiteam953-regression-gate
+    delivery_goal: Prove the ownership-registered Platform wire component preserves exact executor-resolution responsibility and lineage identity, with all three named negative/round-trip regressions executed and passed.
+    commands:
+      - cmd: "mkdir -p artifacts/contracts-platform-resource-executor-resolution-v1 && go test -covermode=atomic -coverprofile=artifacts/contracts-platform-resource-executor-resolution-v1/coverage.out ./contracts/workflow/resource/..."
+        exit_code: 0
+      - cmd: "mkdir -p artifacts/contracts-platform-resource-executor-resolution-v1 && go test -json ./contracts/workflow/resource/... -run '^(TestKernelExecutorResolutionEvidenceRejectsForeignHistoricalIdentity|TestKernelExecutorResolutionEvidencePreservesResponsibilityContext|TestKernelExecutorSelectionRequiresExactFact)$' > artifacts/contracts-platform-resource-executor-resolution-v1/named-regressions.json"
+        exit_code: 0
+      - cmd: "python3 -c \"import json; rows=[json.loads(x) for x in open('artifacts/contracts-platform-resource-executor-resolution-v1/named-regressions.json') if x.strip()]; required=set('TestKernelExecutorResolutionEvidenceRejectsForeignHistoricalIdentity,TestKernelExecutorResolutionEvidencePreservesResponsibilityContext,TestKernelExecutorSelectionRequiresExactFact'.split(',')); passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; failed={x.get('Test') for x in rows if x.get('Action')=='fail'}; assert passed==required, f'missing passing Platform regressions: {sorted(required-passed)}'; assert not (required & failed)\""
+        exit_code: 0
+      - cmd: "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/contracts-platform-resource-executor-resolution-v1/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\""
+        exit_code: 0
+      - cmd: "python3 scripts/release/package_component.py --component contracts-platform-resource-executor-resolution-v1 --kind platform-core-dependency-source --input contracts/workflow/resource/kernel_wire.go --input contracts/workflow/resource/kernel_wire_test.go --input contracts/workflow/resource/kernel_compatibility.go --input contracts/workflow/resource/kernel_compatibility_test.go --generated-input artifacts/kernel-lifecycle-contract-ownership/source-ownership-catalog.yaml --generated-input artifacts/contracts-kernel-executor-resolution-evidence-v1/component-manifest.json --require-generated-input-digest --bundle artifacts/contracts-platform-resource-executor-resolution-v1/source-bundle.tar.zst --component-manifest artifacts/contracts-platform-resource-executor-resolution-v1/component-manifest.json --digest-output artifacts/contracts-platform-resource-executor-resolution-v1/bundle-digest.txt --ownership-catalog artifacts/kernel-lifecycle-contract-ownership/source-ownership-catalog.yaml --owner contracts-platform-resource-executor-resolution-v1 --require-all-owner-sources-accounted"
+        exit_code: 0
+    metrics:
+      statement_coverage_percent: 90.9
+      required_named_regression_count: 3
+      required_named_regression_pass_count: 3
+      foreign_executor_evidence_accept_count: 0
+      responsibility_context_loss_count: 0
+      declared_artifact_count: 5
+    artifacts:
+      - artifacts/contracts-platform-resource-executor-resolution-v1/coverage.out
+      - artifacts/contracts-platform-resource-executor-resolution-v1/named-regressions.json
+      - artifacts/contracts-platform-resource-executor-resolution-v1/source-bundle.tar.zst
+      - artifacts/contracts-platform-resource-executor-resolution-v1/component-manifest.json
+      - artifacts/contracts-platform-resource-executor-resolution-v1/bundle-digest.txt
+blockers:
+  - root_cause_key: platform-resource-stale-release-artifact-lineage
+    obligation_id: dimension:evidence
+    classification: deeper
+    owner: contracts-platform-resource-executor-resolution-v1
+    severity: major
+    summary: "The delivered component still has no retrievable current-head manifest or bundle."
+    impact: "Consumers cannot verify or consume the declared artifact-mode component or bind it to PR head 208ba4f8; reviewer-local regeneration is not a published deliverable."
+    evidence: "The complete PR diff contains only kernel_wire.go and kernel_wire_test.go, and git ls-files artifacts/contracts-platform-resource-executor-resolution-v1 returns no paths. Current work-show exposes only PR URL/head and a YAML verification attachment; issue attachments have no bundle, manifest or digest. Independent packaging generated matching source_revision 208ba4f8 and passed schema/hash checks, but solely in an ignored local directory."
+    required_fix: "Publish the current-head Platform manifest, bundle and digest (with upstream input identities) as durable review-accessible artifacts outside the source tree, attach or identify their retrievable handles in delivery evidence, then verify those published bytes and their source revision/tree against the final PR head."
+nits: []

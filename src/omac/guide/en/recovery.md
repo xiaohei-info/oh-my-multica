@@ -550,3 +550,19 @@ missing HEAD, and unrelated Run attachments remain invalid. An existing operator
 prerequisite decision is not automatically cleared by deployment, and neither
 counters nor Runner state are changed. Preserve the submitted delivery and handoff
 for explicit operator recovery.
+
+### Preserve reject feedback across authoring handoff
+
+Before clearing live review fields, an ordinary reject handoff retains bounded
+blocker summaries and full report/ledger references, bound to the current contract
+and review generation. `work show.context.previous_review` exposes this feedback;
+no-submit retries and restart recovery preserve those obligations.
+
+If an older version cleared both report and handoff, explicit authoring retry can
+recover the last subject/report digest from a strictly validated current-generation
+ledger and match its immutable attachment. A missing live subject does not mean
+there was no review. Generation drift, invalid ledgers, and report digest mismatch
+still fail closed; comment recency alone never selects feedback. Recovered handoffs
+retain the original reject verdict and subject. Rejected-head change checks remain
+unchanged. Read `previous_review` before proceeding; a successful earlier submission
+is not review approval.

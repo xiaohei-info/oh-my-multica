@@ -5457,7 +5457,8 @@ class TestFailureInjection:
             }
             assert "required_closures" not in show["context"]
         else:
-            assert "previous_review" not in show["context"]
+            assert show["context"]["previous_review"]["verdict"] == "reject"
+            assert show["context"]["previous_review"]["blockers"]
             assert show["context"]["required_closures"] == [{
                 "blocker_id": recovered.review_ledger["blockers"][0][
                     "blocker_id"],
@@ -6783,6 +6784,54 @@ class TestReviewerRejectBoundedFallback:
         assert recovered.bounces.worker == 1
         assert assignments_after_restart == 1
         assert retry_assignments == assignments_after_restart
+
+    @pytest.mark.parametrize("deferred", [False, True])
+    def test_normal_reject_carries_bound_feedback_through_reset(self, tmp_path, monkeypatch, deferred):
+        from omac.core.taskmeta import review_context_binding
+        from omac.pipeline.dispatch import _previous_review_context
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        report = {"blockers": [{"root_cause_key": "artifact-lineage",
+                  "summary": "No retrievable package", "required_fix": "Publish the current-head bundle"}]}
+        eng.store.update_work_item_metadata(
+            item.id, review_report=report, review_report_source=yaml.safe_dump(report))
+        reviewed = deepcopy(eng.store.get_work_item(item.id))
+        expected_ref = reviewed.review_report_ref
+        original_observe = eng.store.observe_work_item_control
+        if deferred:
+            def observe(item_id):
+                projection = original_observe(item_id)
+                return WorkItemControlProjection(
+                    replace(projection.work_item, contract=None, review_report=None),
+                    deferred_payloads=frozenset({WorkItemPayload.CONTRACT, WorkItemPayload.REVIEW_REPORT}))
+            monkeypatch.setattr(eng.store, "observe_work_item_control", observe)
+            monkeypatch.setattr(eng.store, "hydrate_work_item_evidence", lambda projection, plan: (
+                replace(projection.work_item,
+                        contract=reviewed.contract, review_report=reviewed.review_report)))
+        loop._dispatch_worker_handoff(eng.store, eng.runtime, manifest, "a", review_bounce=1, gate="review")
+        current = eng.store.get_work_item(item.id)
+        intent = current.worker_handoff
+        assert intent.gate == "review"
+        assert intent.source_review_verdict == "reject"
+        assert current.review_report_ref is None
+        assert current.review_subject_digest is None
+        assert intent.review_context_binding == review_context_binding(reviewed)
+        assert intent.is_causally_bound()
+        previous = _previous_review_context(current)
+        assert previous is not None
+        assert previous["report_ref"] == expected_ref
+        assert previous["blockers"][0]["required_fix"] == "Publish the current-head bundle"
+        # No-submit retry and operator retry retain the same obligation, while
+        # contract/generation drift must not resurrect it.
+        from omac.cli.commands.node import _operator_retry_feedback
+        assert _operator_retry_feedback(current, intent)["verdict"] == "reject"
+        from omac.engines.mock import _finish_mock_run
+        _finish_mock_run(item.id)
+        next_intent = loop._next_worker_handoff_attempt(eng.store, eng.runtime, current)
+        assert _previous_review_context(replace(current, worker_handoff=next_intent)) == previous
+        assert _previous_review_context(replace(current, review_generation="new")) is None
+        assert _previous_review_context(replace(current, contract=Contract(objective="changed"))) is None
 
     def test_rework_handoff_records_rejected_pr_head(self, tmp_path):
         """A review reject handoff remembers the head that was reviewed."""
@@ -8439,7 +8488,8 @@ class TestReviewerRejectBoundedFallback:
             assert crashed_item.worker_handoff.source_review_feedback[
                 "nits"] == ["follow up"]
         else:
-            assert crashed_item.worker_handoff.source_review_feedback is None
+            assert crashed_item.worker_handoff.source_review_feedback["verdict"] == "reject"
+            assert crashed_item.worker_handoff.source_review_feedback["blockers"]
 
         monkeypatch.setattr(
             eng.store, "update_work_item_metadata", original_update_metadata)
@@ -8486,7 +8536,8 @@ class TestReviewerRejectBoundedFallback:
             assert recovered.worker_handoff.source_review_feedback[
                 "verdict"] == verdict
         else:
-            assert recovered.worker_handoff.source_review_feedback is None
+            assert recovered.worker_handoff.source_review_feedback["verdict"] == "reject"
+            assert recovered.worker_handoff.source_review_feedback["blockers"]
         assert recovered.bounces.review == 1
         assert len(eng.runtime.list_runs(item.id)) == runs_before_handoff + 1
         assert eng.store.assign_log[-1][2] == "worker"

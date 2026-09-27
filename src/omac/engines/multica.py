@@ -28,7 +28,9 @@ from typing import Any, Callable, Dict, List, Optional, TypeVar
 import yaml
 
 from ..core import logsetup
-from ..core.review_convergence import bounded_decision_required, _review_report_digest
+from ..core.review_convergence import (
+    bounded_decision_required, _review_report_digest, validate_review_ledger,
+)
 from ..core.taskmeta import (
     AMENDMENT_ATTEMPT_KEY, BOUNCE_BASELINE_KEY, CI_BOUNCE_KEY, CONTRACT_REF_KEY,
     DECISION_REQUIRED_KEY, DELIVERY_IDENTITY_KEY, DELIVERABLE_KEY,
@@ -1620,7 +1622,19 @@ class MulticaStore(WorkItemStore):
         latest = cycles[-1]
         # The ledger's current generation and subject, not comment chronology,
         # identify the one review whose feedback may be recovered.
-        if not item.review_subject_digest or latest.get("subject_digest") != item.review_subject_digest:
+        subject = item.review_subject_digest
+        if not subject:
+            # Ordinary reject->authoring reset intentionally clears the live
+            # subject/report. A validated, current ledger preserves their exact
+            # identity; unrelated generations were rejected above.
+            if getattr(item, "phase", None) != TaskPhase.AUTHORING:
+                return {}
+            try:
+                validate_review_ledger(ledger)
+            except ValueError:
+                return {}
+            subject = latest.get("subject_digest")
+        if not subject or latest.get("subject_digest") != subject:
             return {}
         digest = latest.get("report_digest")
         if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
@@ -1650,7 +1664,10 @@ class MulticaStore(WorkItemStore):
                 # Ledger report_digest is canonical JSON, not attachment bytes.
                 if _review_report_digest(report) != digest:
                     continue
-                context = {"report_ref": ref, "verdict": latest.get("verdict")}
+                context = {
+                    "report_ref": ref, "verdict": latest.get("verdict"),
+                    "subject_digest": subject,
+                }
                 if item.review_ledger_ref:
                     context["ledger_ref"] = dict(item.review_ledger_ref)
                 blockers = report.get("blockers")
