@@ -123,6 +123,7 @@ _READ_ONLY_ISSUE_ENVELOPE_FIELDS = frozenset({
 })
 _EMPTY_DEFAULT_ISSUE_ENVELOPE_FIELDS = {
     "properties": {},
+    "duplicate_of": None,
 }
 
 _ReadResult = TypeVar("_ReadResult")

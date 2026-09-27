@@ -424,3 +424,8 @@ Multica 的 `find_work_item_by_dag_key` 复用项目范围内的分页 issue env
 `dag_key` 或 `[DAG:key]` title 前缀查找（含创建后尚未写 metadata 的 shell），只对首个
 匹配项完整读取和校验附件。无关 issue 的附件不会因身份查找而下载；未找到返回空。
 匹配项的坏附件和分页读取错误仍失败关闭，不会把读取失败当成“任务不存在”并重复创建。
+
+Multica issue envelope 的 `duplicate_of: null` 是未标记重复的空默认值，不阻止未派发
+amendment shell 的幂等恢复。只有这个字段的 JSON null 被忽略；非空 duplicate 标记、
+其他值类型以及任意其他未知字段仍视为持久化活动事实并失败关闭。恢复中断的新 attempt
+必须保留原 manifest/report/docs/supersedes 输入，重用同一 deterministic dag_key，不另建重复 issue。

@@ -2589,11 +2589,14 @@ def test_multica_stable_issue_envelope_fields_are_not_unknown_activity():
     assert item.unknown_persisted_fields == {}
 
 
+@pytest.mark.parametrize("issue_overrides", [{}, {"duplicate_of": None}])
 def test_multica_standard_issue_envelope_pristine_shell_can_finalize_and_dispatch(
-    monkeypatch,
+    monkeypatch, issue_overrides,
 ):
     eng = _engine(MOCK_AUTO_COMPLETE="false")
-    item = _multica_aiteam_812_pristine_item(eng)
+    item = _multica_aiteam_812_pristine_item(eng, issue_overrides=issue_overrides)
+    monkeypatch.setattr(eng.store, "create_work_item", lambda *args, **kwargs: (
+        pytest.fail("recover the existing attempt; do not create another issue")))
     assignments = []
     wakes = []
     original_assign = eng.store.assign_work_item
@@ -2644,6 +2647,13 @@ def test_multica_standard_issue_envelope_pristine_shell_can_finalize_and_dispatc
         ({"future_run_fact": False}, {}, "issue.future_run_fact"),
         ({}, {"future_execution_fact": False}, "metadata.future_execution_fact"),
         ({"properties": {"future_run_fact": False}}, {}, "issue.properties"),
+        ({"duplicate_of": "another-issue"}, {}, "issue.duplicate_of"),
+        ({"duplicate_of": ""}, {}, "issue.duplicate_of"),
+        ({"duplicate_of": False}, {}, "issue.duplicate_of"),
+        ({"duplicate_of": 0}, {}, "issue.duplicate_of"),
+        ({"duplicate_of": {}}, {}, "issue.duplicate_of"),
+        ({"duplicate_of": []}, {}, "issue.duplicate_of"),
+        ({"future_nullable_fact": None}, {}, "issue.future_nullable_fact"),
     ],
 )
 def test_multica_pristine_shell_keeps_unknown_facts_fail_closed(
@@ -2687,9 +2697,9 @@ def test_multica_pristine_shell_keeps_unknown_facts_fail_closed(
     assert exc.value.report["fields"] == ["unknown_persisted_fields"]
     assert item.unknown_persisted_fields == {
         expected_unknown: (
-            issue_overrides.get("properties")
-            if expected_unknown == "issue.properties"
-            else False
+            issue_overrides[expected_unknown.removeprefix("issue.")]
+            if expected_unknown.startswith("issue.")
+            else metadata_overrides[expected_unknown.removeprefix("metadata.")]
         ),
     }
     assert eng.store.assign_log == []
