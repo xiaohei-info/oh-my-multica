@@ -2104,6 +2104,19 @@ class MulticaStore(WorkItemStore):
             offset += len(page)
         return issues
 
+    def find_work_item_by_dag_key(
+        self, workspace_id: str, dag_key: str,
+    ) -> Optional[WorkItem]:
+        """Match paginated Issue identities before loading the selected evidence."""
+        extra_args = ["--project", self.config.project_id] if self.config.project_id else []
+        title_prefix = f"[DAG:{dag_key}]"
+        for issue in self._list_issues_paginated(extra_args):
+            item = self._issue_to_control_projection(issue, workspace_id).work_item
+            if item.dag_key == dag_key or item.title.startswith(title_prefix):
+                # Preserve full attachment validation and first-match semantics.
+                return self._issue_to_work_item(issue, workspace_id)
+        return None
+
     def list_work_items(
         self,
         workspace_id: str,

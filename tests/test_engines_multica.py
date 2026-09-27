@@ -4068,3 +4068,88 @@ def test_rework_recovery_after_reset_uses_valid_current_ledger_subject(monkeypat
     else:
         assert recovered == {}
     assert bool(calls) == (mode in {"authoring", "wrong-report"})
+
+
+@pytest.mark.parametrize("shell", [False, True])
+@pytest.mark.parametrize("project_id", [None, "project-1"])
+def test_find_dag_key_filters_paginated_envelopes_before_hydration(monkeypatch, shell, project_id):
+    from dataclasses import replace
+    from omac.engines.models import WorkItemPayload
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws", project_id=project_id))
+    issues = [{"id": str(i), "title": "unrelated", "status": "todo",
+               "metadata": {"dag_key": "target-other"}} for i in range(12)]
+    issues.append({"id": "target", "title": "[DAG:target] incomplete shell" if shell else "task",
+                   "status": "todo", "metadata": {} if shell else {"dag_key": "target"}})
+    issues.append({"id": "later-match", "title": "[DAG:target] duplicate", "status": "todo", "metadata": {}})
+    calls, hydrated = [], []
+    def run(args):
+        calls.append(args)
+        assert args[:2] == ["issue", "list"]
+        if project_id:
+            assert args[args.index("--project") + 1] == project_id
+        else:
+            assert "--project" not in args
+        offset = int(args[args.index("--offset") + 1])
+        limit = int(args[args.index("--limit") + 1])
+        return {"issues": issues[offset:offset + limit]}
+    def hydrate(projection, requested):
+        hydrated.append(projection.work_item.id)
+        if projection.work_item.id != "target":
+            raise PlatformError("Unrelated attachment TLS timeout")
+        assert requested == frozenset(WorkItemPayload)
+        return replace(projection.work_item, verification={"fully_hydrated": True})
+    monkeypatch.setattr(store, "_run_multica", run)
+    monkeypatch.setattr(store, "hydrate_work_item_evidence", hydrate)
+    found = store.find_work_item_by_dag_key("ws", "target")
+    assert found.id == "target"
+    assert found.workspace_id == "ws"
+    assert found.verification == {"fully_hydrated": True}
+    assert hydrated == ["target"]
+    assert [int(c[c.index("--offset") + 1]) for c in calls] == [0, 10]
+
+
+def test_find_dag_key_absent_does_not_read_any_attachments(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    monkeypatch.setattr(store, "_run_multica", lambda args: [
+        {"id": "other", "title": "[DAG:target-extra] task", "metadata": {"dag_key": "target-extra"}}])
+    monkeypatch.setattr(store, "hydrate_work_item_evidence", lambda *args: pytest.fail("no target: no hydration"))
+    assert store.find_work_item_by_dag_key("ws", "target") is None
+
+
+def test_find_dag_key_selected_bad_attachment_still_fails(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    monkeypatch.setattr(store, "_run_multica", lambda args: [
+        {"id": "target", "title": "task", "metadata": {"dag_key": "target", "verification_ref": {"attachment_id": "bad"}}}])
+    reads = []
+    def load(item_id, key, ref):
+        reads.append((item_id, key))
+        raise PlatformError("verification attachment checksum mismatch")
+    monkeypatch.setattr(store, "_load_payload_comment", load)
+    with pytest.raises(PlatformError, match="checksum mismatch"):
+        store.find_work_item_by_dag_key("ws", "target")
+    assert reads == [("target", "verification")]
+
+
+def test_find_dag_key_preserves_first_shell_match_before_exact_metadata(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    monkeypatch.setattr(store, "_run_multica", lambda args: [
+        {"id": "shell", "title": "[DAG:target] shell", "metadata": {}},
+        {"id": "exact", "title": "later", "metadata": {"dag_key": "target"}},
+    ])
+    hydrated = []
+    def hydrate(projection, requested):
+        hydrated.append(projection.work_item.id)
+        return projection.work_item
+    monkeypatch.setattr(store, "hydrate_work_item_evidence", hydrate)
+    assert store.find_work_item_by_dag_key("ws", "target").id == "shell"
+    assert hydrated == ["shell"]
+
+
+def test_find_dag_key_does_not_hide_listing_errors(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    def run(args):
+        raise PlatformError("listing failed")
+    monkeypatch.setattr(store, "_run_multica", run)
+    monkeypatch.setattr(store, "hydrate_work_item_evidence", lambda *args: pytest.fail("list failed"))
+    with pytest.raises(PlatformError, match="listing failed"):
+        store.find_work_item_by_dag_key("ws", "target")
