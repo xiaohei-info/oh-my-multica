@@ -417,3 +417,10 @@ Controller 校验后才封存并进入 review，不消耗一次“未提交”�
 没有评审。不同 generation、无效 ledger 或报告 digest 不匹配仍拒绝恢复，绝不只按评论
 时间选最新附件。恢复后的 handoff 保留原 reject verdict 和 subject；真正 reject 的换 HEAD
 校验不变。执行恢复前先读取新的 `previous_review`，不要把“之前提交成功”视为已通过评审。
+
+### 修订与任务创建前的身份查找
+
+Multica 的 `find_work_item_by_dag_key` 复用项目范围内的分页 issue envelope，先按精确
+`dag_key` 或 `[DAG:key]` title 前缀查找（含创建后尚未写 metadata 的 shell），只对首个
+匹配项完整读取和校验附件。无关 issue 的附件不会因身份查找而下载；未找到返回空。
+匹配项的坏附件和分页读取错误仍失败关闭，不会把读取失败当成“任务不存在”并重复创建。

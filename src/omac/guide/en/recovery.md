@@ -566,3 +566,12 @@ still fail closed; comment recency alone never selects feedback. Recovered hando
 retain the original reject verdict and subject. Rejected-head change checks remain
 unchanged. Read `previous_review` before proceeding; a successful earlier submission
 is not review approval.
+
+### Identity lookup before amendment or task creation
+
+Multica `find_work_item_by_dag_key` uses the existing project-scoped paginated Issue
+envelopes to match an exact `dag_key` or `[DAG:key]` title prefix, including shells
+created before metadata was written. Only the first match is fully hydrated and
+its attachments validated; unrelated attachments are not downloaded. An absent
+identity returns none. Selected-item attachment failures and pagination errors
+still propagate, rather than being treated as absence and creating a duplicate.
