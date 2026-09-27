@@ -3793,7 +3793,7 @@ def collect_results(
                                 round=cur_bounce + 1,
                                 max=worker_limit,
                                 **bounce_log_fields(
-                                    item, "worker",
+                                    item, "worker", manifest=manifest, node_id=key,
                                     absolute_count=cur_bounce + 1,
                                     limit=worker_limit),
                             )
@@ -3803,7 +3803,7 @@ def collect_results(
                                  id=node.work_item_id, gate="worker",
                                  round=cur_bounce + 1, max=worker_limit,
                                  **bounce_log_fields(
-                                     item, "worker",
+                                     item, "worker", manifest=manifest, node_id=key,
                                      absolute_count=cur_bounce + 1,
                                      limit=worker_limit))
                     except PlatformError as exc:

@@ -19,7 +19,7 @@ from .lint import lint
 from .manifest import (
     Manifest, Node, _dump_contract, _load_contract, load_manifest, save_manifest,
 )
-from .retry_budget import amendment_bounce_baseline
+from .retry_budget import amendment_bounce_baseline, carry_forward_bounce_baselines
 from .stage_recovery import (
     classify_stage_recovery_observation,
     prepare_stage_recovery,
@@ -1122,6 +1122,7 @@ def _prepare_apply_ledger(
             entry = {
                 "stage": stage,
                 "state": "pending",
+                "work_item_id": item.id,
                 "baseline": recovery_control_snapshot(item),
                 "bounce_baseline": amendment_bounce_baseline(item),
                 "expected_contract_sha256": _digest(
@@ -1136,12 +1137,19 @@ def _prepare_apply_ledger(
             if stage == "merging":
                 entry["sync_contract"] = node_id in responsibility_merge_sync_nodes
             entries[node_id] = entry
-    return {
+    ledger = {
         "schema": APPLY_LEDGER_SCHEMA,
         "amendment_id": amendment_id,
         "amendment_file": amendment_file,
         "nodes": entries,
     }
+    retained = {
+        key: record for key, record in carry_forward_bounce_baselines(manifest).items()
+        if key not in entries
+    }
+    if retained:
+        ledger["retained_bounce_baselines"] = retained
+    return ledger
 
 
 def _authoring_review_generation(amendment_id: str, node_id: str) -> str:
@@ -1660,7 +1668,6 @@ def apply_amendment(
                         amended.nodes[node_id].merge_request_state = None
         amended.meta["amendment_revision"] = int(
             amended.meta.get("amendment_revision") or 0) + 1
-        amended.meta["last_amendment_id"] = amendment.get("amendment_id")
         amended.meta["amendment_apply"] = _prepare_apply_ledger(
             amended, amendment["amendment_id"], minimal, corrections, store,
             amendment_file,
@@ -1673,6 +1680,7 @@ def apply_amendment(
                 )
             },
         )
+        amended.meta["last_amendment_id"] = amendment.get("amendment_id")
         save_manifest(amended, manifest_path)
         current = amended
     else:

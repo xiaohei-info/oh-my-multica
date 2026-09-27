@@ -1,10 +1,12 @@
 """Amendment recovery budgets over cumulative bounce audit counters."""
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
 from .review_continuation import authorized_review_limit
+from .taskmeta import review_context_binding
 
 
 _SUPPORTED_STAGES = {"worker", "review", "merge"}
@@ -94,15 +96,76 @@ def bounce_log_fields(
     *,
     absolute_count: int,
     limit: int,
+    manifest: Any = None,
+    node_id: str | None = None,
 ) -> dict[str, int]:
     """Return explicit absolute and current-generation retry log fields."""
     return {
         "absolute_audit_round": max(0, int(absolute_count)),
-        "current_generation_consumed": projected_consumed_bounces(
-            item, stage, absolute_count=absolute_count),
+        "current_generation_consumed": (
+            consumed_bounces(manifest, node_id, item, stage, absolute_count=absolute_count)
+            if manifest is not None and node_id is not None
+            else projected_consumed_bounces(item, stage, absolute_count=absolute_count)
+        ),
         "current_generation_limit": max(0, int(limit)),
     }
 
+
+
+def _retained_bounce_baseline(manifest: Any, node_id: str, record: Any) -> dict | None:
+    """Read a completed amendment authorization, never a Store projection."""
+    node = getattr(manifest, "nodes", {}).get(node_id)
+    if not isinstance(record, dict) or node is None or not node.work_item_id:
+        return None
+    if (
+        not isinstance(record.get("amendment_id"), str) or not record["amendment_id"]
+        or record.get("work_item_id") != node.work_item_id
+        or record.get("contract_sha256") != review_context_binding(node)["contract_sha256"]
+    ):
+        return None
+    baseline = record.get("bounce_baseline")
+    if not isinstance(baseline, dict) or any(
+        type(baseline.get(stage)) is not int or baseline[stage] < 0
+        for stage in _SUPPORTED_STAGES
+    ):
+        return None
+    return baseline
+
+
+def carry_forward_bounce_baselines(manifest: Any) -> dict:
+    """Keep per-node budget authority separate from the next apply work queue."""
+    meta = getattr(manifest, "meta", {})
+    ledger = meta.get("amendment_apply")
+    if not isinstance(ledger, dict) or (
+        ledger.get("schema") != "omac.amendment-apply/v1"
+        or not isinstance(ledger.get("amendment_id"), str)
+        or not ledger["amendment_id"]
+        or ledger["amendment_id"] != meta.get("last_amendment_id")
+    ):
+        return {}
+    previous = ledger.get("retained_bounce_baselines", {})
+    retained = {
+        key: deepcopy(record) for key, record in previous.items()
+        if _retained_bounce_baseline(manifest, key, record) is not None
+    } if isinstance(previous, dict) else {}
+    for key, entry in ledger.get("nodes", {}).items():
+        # A newer recovery supersedes earlier authority even if it is incomplete.
+        retained.pop(key, None)
+        node = manifest.nodes.get(key)
+        if not isinstance(entry, dict) or node is None or (
+            entry.get("state") not in {"synced", "observed_progress"}
+            or entry.get("stage") not in {"authoring", "review", "merging"}
+        ):
+            continue
+        record = {
+            "amendment_id": ledger["amendment_id"],
+            "work_item_id": entry.get("work_item_id", node.work_item_id),
+            "contract_sha256": entry.get("expected_contract_sha256"),
+            "bounce_baseline": entry.get("bounce_baseline"),
+        }
+        if _retained_bounce_baseline(manifest, key, record) is not None:
+            retained[key] = deepcopy(record)
+    return retained
 
 def consumed_bounces(
     manifest: Any,
@@ -116,8 +179,9 @@ def consumed_bounces(
 
     Bounce fields remain monotonic absolute audit counters. A reviewed and
     accepted amendment records a baseline in its restart-safe apply ledger;
-    only budget comparison becomes relative to that baseline. Old manifests
-    without a baseline retain the historical absolute semantics.
+    only budget comparison becomes relative to that baseline. Completed per-node
+    authorizations are retained outside later amendments' active apply queue.
+    Old manifests without either baseline retain absolute semantics.
     """
     if stage not in _SUPPORTED_STAGES:
         raise ValueError(f"unsupported bounce stage: {stage}")
@@ -131,6 +195,18 @@ def consumed_bounces(
     entries = ledger.get("nodes") if isinstance(ledger, dict) else None
     entry = entries.get(node_id) if isinstance(entries, dict) else None
     baseline = entry.get("bounce_baseline") if isinstance(entry, dict) else None
+    if isinstance(entry, dict) and entry.get("work_item_id", getattr(item, "id", None)) != getattr(item, "id", None):
+        return current
+    if entry is None and isinstance(ledger, dict) and (
+        ledger.get("schema") == "omac.amendment-apply/v1"
+        and isinstance(ledger.get("amendment_id"), str)
+        and bool(ledger["amendment_id"])
+        and ledger["amendment_id"] == meta.get("last_amendment_id")
+    ):
+        retained = ledger.get("retained_bounce_baselines", {})
+        record = retained.get(node_id) if isinstance(retained, dict) else None
+        if isinstance(record, dict) and record.get("work_item_id") == getattr(item, "id", None):
+            baseline = _retained_bounce_baseline(manifest, node_id, record)
     value = baseline.get(stage) if isinstance(baseline, dict) else None
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
         return current

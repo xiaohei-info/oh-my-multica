@@ -429,3 +429,16 @@ Multica issue envelope 的 `duplicate_of: null` 是未标记重复的空默认�
 amendment shell 的幂等恢复。只有这个字段的 JSON null 被忽略；非空 duplicate 标记、
 其他值类型以及任意其他未知字段仍视为持久化活动事实并失败关闭。恢复中断的新 attempt
 必须保留原 manifest/report/docs/supersedes 输入，重用同一 deterministic dag_key，不另建重复 issue。
+
+### 连续 amendment 的预算授权
+
+新 amendment 的 `amendment_apply.nodes` 只包含本轮恢复节点。未受影响节点已经完成的
+预算授权保留在 `amendment_apply.retained_bounce_baselines`，记录来源 amendment、
+work item ID、contract digest 和原始 worker/review/merge baseline；不复制旧恢复步骤，
+不会因接受无关 amendment 再次 reset/assign 旧节点。对同一节点接受新的恢复时，以新基线
+为准。节点被移除、issue/contract 变化或非法基线不继承旧授权。
+
+预算判断读取 manifest 中的已接受授权，不以 Store 的 bounce_baseline 投影代替授权，
+绝对累计计数和配置 limit 均不改动。较早版本已经丢失的基线不会被自动猜回：必须从原已
+应用 ledger/Git 历史核验 amendment、完成状态、issue 和 contract，再在单写者控制下只恢复
+相应预算记录。不要重放整个旧 apply ledger、提高 limit、清零审计计数或制造合同变更。
