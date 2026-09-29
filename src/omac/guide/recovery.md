@@ -442,3 +442,33 @@ work item ID、contract digest 和原始 worker/review/merge baseline；不复�
 绝对累计计数和配置 limit 均不改动。较早版本已经丢失的基线不会被自动猜回：必须从原已
 应用 ledger/Git 历史核验 amendment、完成状态、issue 和 contract，再在单写者控制下只恢复
 相应预算记录。不要重放整个旧 apply ledger、提高 limit、清零审计计数或制造合同变更。
+
+### Worker 主动等待决定（结构化阻塞）
+
+当前 develop/authoring Worker 遇到合同规定的失败停止条件或需要 owner
+决定时，先重新运行 `omac work show <issue-id> --output json`，复制
+`control.blocker_report_template`，通过返回的 `report_blocker` 命令提交
+`omac.worker-blocker/v2` 报告。普通 Reviewer reject 仍须正常返工；不能仅因
+被 reject 就报告需要决定，也不能将已结束的旧 Run 追溯补报。
+
+- `quality-gate-failed`：evidence 至少一项包含真实执行的 command、非零整数
+  exit_code、ref 和 observation。不要为了提交报告继续执行合同已禁止的后续验证。
+- `owner-decision-required`：保留 evidence 的 ref/observation，并明确
+  decision_needed。contract_ref 必须是当前 context.contract 中实际存在的顶层字段；
+  summary 说明该字段与停止条件的关系，不创造新的合同授权。
+- 保留模板中的 issue_id、review_context_binding、handoff_generation、worker
+  和当前直接 Worker run_id。它们是因果关联，不是身份认证凭证。若 Run 尚未绑定，
+  等待 OMAC 绑定后重读 work show；不要拿 session ID 或旧 Run ID 替代。
+- ref/observation 是待核验的事实报告。保留原始日志、失败证据及工作树；本地未提交文件
+  不代表其他机器可读取或已独立复现。阻塞不要求成功 verification，不产生 pass。
+
+命令须实际返回 exit 20、`terminal: true`、`next_action: stop` 才表示阻塞已记录。
+相同报告可幂等重试；不要把未知结果当成功。OMAC 先持久化 decision，再置 blocked，
+停止该节点自动重派，保留 bounce、预算、review ledger 和工作文件。已消耗的预算不会
+退回；其他独立节点仍可推进。v1 upstream-unreadable 报告保持兼容。
+
+协调者解决决定后使用现有显式 retry 或真实 amendment 流程恢复；部署修复不等于
+恢复许可。Worker block/submit/重派共享本机锁并在写入前重读控制事实；这不是跨机器
+CAS。保持现有单 Runner 管理约束，不允许多个控制器同时替换同一节点的 generation。
+
+报告最多 2048 UTF-8 JSON 字节，含 1–4 条证据；完整日志留在引用位置，不内嵌。

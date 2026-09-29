@@ -172,6 +172,10 @@ class WorkItemStore(ABC):
         raise PlatformError(
             "WorkItemStore does not support contract reference-only repair")
 
+    def worker_control_lock(self, item_id: str):
+        """Share the host-local control lock; callers still re-read remote facts."""
+        return self.reviewer_dispatch_lock(item_id)
+
     @contextmanager
     def reviewer_dispatch_lock(self, item_id: str) -> Iterator[None]:
         """Serialize OMAC Reviewer dispatch writers for one work item.

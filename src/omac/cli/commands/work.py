@@ -63,11 +63,12 @@ def register(parser):
     read.add_argument("--source", required=True)
     read.add_argument("--output-file", required=True)
 
-    block = sub.add_parser("block", help="Report a structured worker prerequisite blocker")
+    block = sub.add_parser("block", help="Report a structured Worker blocker requiring an operator decision")
     block._work_action = "block"
     block._parse_error_renderer = _render_parse_error
     block.add_argument("issue_id")
-    block.add_argument("--report-file", required=True)
+    block.add_argument("--report-file", required=True,
+                       help="v1 upstream-unreadable or v2 report from work show control.blocker_report_template")
     add_output_flag(block, default="json")
 
     submit = sub.add_parser("submit", help="给 Agent 提交交付物并返回结构化结果(默认 JSON)")
@@ -443,7 +444,10 @@ def run(args) -> int:
         if args.action == "read":
             return _run_read(args)
         if args.action == "block":
-            result = report_worker_blocker(_resolve_store(), args.issue_id, args.report_file)
+            store = _resolve_store()
+            result = report_worker_blocker(
+                store, args.issue_id, args.report_file,
+                runtime=create_engine(store.config.engine_type, store.config).runtime)
             print_json(result)
             return exit_codes.NEEDS_DECISION
         if args.action == "submit":

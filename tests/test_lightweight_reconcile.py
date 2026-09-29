@@ -1249,7 +1249,7 @@ def test_late_submit_contract_hydration_failure_keeps_handoff_uncommitted(
         "attachment_id"]
 
     def submit_after_reconcile(_item_id, issue_get_number):
-        if issue_get_number == 2:
+        if issue_get_number == 3:  # After the new pre-dispatch control read.
             issue["status"] = "done"
             issue["metadata"]["verification_ref"] = fresh_ref
 
@@ -1434,7 +1434,7 @@ def test_eight_terminal_worker_handoffs_use_zero_attachment_reads(tmp_path):
     )
 
     assert result.state == "running"
-    assert remote.issue_gets == 32
+    assert remote.issue_gets == 40  # One additional control guard per Worker.
     assert remote.attachment_downloads == 0
 
 

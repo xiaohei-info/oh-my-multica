@@ -598,3 +598,38 @@ Already-lost baselines require verification against the original applied ledger
 and Git history, then a narrowly scoped restoration under single-writer control.
 Do not replay the old apply queue, raise limits, clear audit counters, or invent a
 contract change to compensate for lost budget records.
+
+### A Worker requests an operator decision
+
+For an active develop/authoring execution, re-read
+`omac work show <issue-id> --output json`, copy `control.blocker_report_template`,
+and use its `report_blocker` command to submit an `omac.worker-blocker/v2` report.
+This is for a contract stop condition or an owner decision, not ordinary Reviewer
+reject rework. Completed old Runs cannot be reported retroactively.
+
+Use `quality-gate-failed` with at least one actual command, nonzero integer
+exit_code, retained evidence ref and observation. Use `owner-decision-required`
+with evidence refs/observations and a specific decision_needed. contract_ref must
+name an existing top-level context.contract field; explain its relevance in
+summary. Do not run later verification forbidden by the stop condition, invent a
+contract authorization, or claim local uncommitted files are independently
+reproduced. Evidence is a claim to inspect, not a pass verdict.
+
+Keep the issue_id, review_context_binding, handoff_generation, worker and current
+direct Worker run_id from the template. These bind causality, not caller
+credentials. If the target Run is not yet bound, wait and re-read work show; do
+not substitute a session ID or an old Run.
+
+Confirm exit 20, terminal=true and next_action=stop before stopping. An identical
+report is idempotent, including recovery after an interrupted status write.
+OMAC persists the decision before blocking; it preserves work, counters, budget
+and review history and stops automatic redispatch of this node. Other independent
+nodes can continue. Consumed budget is not refunded. The v1 upstream-unreadable
+format remains supported. Resume only through an explicit operator retry or a
+real amendment after resolving the decision.
+
+Block, submit and Worker redispatch share a host-local lock and re-read control
+before writes. This is not cross-host CAS: retain the single-Runner control
+boundary and do not concurrently replace a node's generation from multiple hosts.
+
+Reports are limited to 2048 UTF-8 JSON bytes and 1–4 evidence entries; keep full logs at the referenced location.
