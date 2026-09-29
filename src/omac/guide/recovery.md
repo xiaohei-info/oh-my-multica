@@ -472,3 +472,8 @@ work item ID、contract digest 和原始 worker/review/merge baseline；不复�
 CAS。保持现有单 Runner 管理约束，不允许多个控制器同时替换同一节点的 generation。
 
 报告最多 2048 UTF-8 JSON 字节，含 1–4 条证据；完整日志留在引用位置，不内嵌。
+
+新建 Worker handoff 时，OMAC 必须先读取标记为 deferred 的 Store contract，
+再计算绑定；未下载的 `None` 不能作为真实空合同。若附件读取失败，停止派发，
+不保存空合同哈希。已存在的错误绑定不会自动被重写，也不能通过放宽 `work block`
+校验恢复；应保留失败证据，由协调者在明确恢复授权后创建新的 handoff。

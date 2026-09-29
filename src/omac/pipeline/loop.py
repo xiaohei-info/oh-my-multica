@@ -2058,13 +2058,23 @@ def _dispatch_worker_handoff_locked(
                 decision=resolution.decision,
             )
     if intent is None:
+        # Every new handoff binds the materialized Store contract. A deferred
+        # control projection's None is not an authoritative null contract.
+        required_payloads = {WorkItemPayload.CONTRACT}
         if gate in {"review", "review-nits"}:
-            # Bind and copy review feedback before reset_review clears it.
-            # Control projections may defer both the report and contract bodies.
-            projection = _hydrate_work_item_payloads(
-                store, projection or WorkItemControlProjection(current),
-                frozenset({WorkItemPayload.CONTRACT, WorkItemPayload.REVIEW_REPORT}))
-            current = projection.work_item
+            required_payloads.add(WorkItemPayload.REVIEW_REPORT)
+        contract_deferred = WorkItemPayload.CONTRACT in projection.deferred_payloads
+        projection = _hydrate_work_item_payloads(
+            store, projection or WorkItemControlProjection(current),
+            frozenset(required_payloads))
+        current = projection.work_item
+        from .dispatch import _submit_payload_is_materialized
+        if contract_deferred and not _submit_payload_is_materialized(
+            WorkItemPayload.CONTRACT, current.contract
+        ):
+            raise PlatformError(
+                f"Could not hydrate contract for Worker handoff {item_id}; "
+                f"restore its contract attachment and run `omac work show {item_id} --output json`")
         if review_bounce is None or gate is None:
             raise PlatformError(
                 f"Worker handoff intent is missing for work item {item_id}")
