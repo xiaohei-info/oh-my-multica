@@ -135,3 +135,11 @@ exit_code: 5
 不是交付成功。Runner 保留结构化 decision 并等待 operator 修复，不消耗 no-submit
 重试预算。不要仅在最后一段自然语言里报告阻塞。网络 exit 2、认证 exit 3 或未知错误
 不得伪装成 exit 5；保留原始错误并升级。不要直接修改平台状态或增加重试预算。
+
+### 合同要求停止并等待决定
+
+若当前合同明确要求门禁失败后停止，或执行需要 owner 决定，不要把失败伪造为
+成功 submit，也不要只在最终自然语言中说“等待”。重新读取 work show，按
+`control.blocker_report_template` 和 `control.report_blocker` 提交 v2 结构化阻塞，
+保留真实失败证据和工作树。确认 exit20、terminal=true、next_action=stop 后停止。
+普通 reject 仍正常返工；细节见 `omac guide recovery`。

@@ -578,6 +578,10 @@ def build_show_output(item: Any, identity: str, *, language: str = EN) -> Dict[s
     }
     if kind == TaskKind.DEVELOP and phase == TaskPhase.AUTHORING and not historical:
         output["control"]["report_blocker"] = f"omac work block {item.id} --report-file <blocker.yaml>"
+        from .worker_decision import blocker_template
+        template = blocker_template(item)
+        if template is not None:
+            output["control"]["blocker_report_template"] = template
     resolution.apply_to_show(output, context)
     if historical:
         output["submit"] = None
@@ -1058,10 +1062,13 @@ class SubmitResult:
         self.deliverable_keys = deliverable_keys or (deliverable_key,)
 
 
-def report_worker_blocker(store: WorkItemStore, issue_id: str, report_file: str) -> dict:
+def report_worker_blocker(store: WorkItemStore, issue_id: str, report_file: str, *, runtime=None) -> dict:
     """Persist a typed prerequisite failure; never interpret Agent final prose."""
     from ..core.taskmeta import DECISION_REQUIRED_SCHEMA, review_context_binding
     report = _parse_structured(report_file)
+    if isinstance(report, dict) and report.get("schema") == "omac.worker-blocker/v2":
+        from .worker_decision import report_decision
+        return report_decision(store, runtime, issue_id, report)
     fields = {"schema", "reason_code", "upstream_issue_id", "operation", "exit_code"}
     if (
         not isinstance(report, dict) or set(report) != fields
@@ -1166,21 +1173,34 @@ def submit(
 
     # ---------- develop × authoring ----------
     if kind == TaskKind.DEVELOP and phase == TaskPhase.AUTHORING:
-        verification, readiness = _validate_develop_authoring(
-            store, pr_url, verification_file, item)
-        verification_source = _read_text(verification_file)
-        pr_head_sha = readiness.head_sha if readiness is not None else None
-        artifacts = {"pr_url": pr_url}
-        if pr_head_sha:
-            artifacts["head_sha"] = pr_head_sha
-        store.update_work_item_metadata(
-            issue_id,
-            artifacts=artifacts,
-            verification=verification,
-            verification_source=verification_source,
-        )
-        store.update_status(issue_id, WorkItemStatus.DONE)
-        return SubmitResult(kind, phase, "verification", WorkItemStatus.DONE)
+        with store.worker_control_lock(issue_id):
+            current = store.observe_work_item_control(issue_id).work_item
+            if current.decision_required:
+                raise NeedsDecision('Resolve the current Worker decision before submitting', report=current.decision_required)
+            if (current.phase != item.phase or current.worker_handoff != item.worker_handoff
+                or current.contract_ref != item.contract_ref or current.review_generation != item.review_generation):
+                raise ValidationError('Worker control changed; re-read work show before submitting')
+            verification, readiness = _validate_develop_authoring(
+                store, pr_url, verification_file, item)
+            verification_source = _read_text(verification_file)
+            pr_head_sha = readiness.head_sha if readiness is not None else None
+            artifacts = {"pr_url": pr_url}
+            if pr_head_sha:
+                artifacts["head_sha"] = pr_head_sha
+            fresh = store.observe_work_item_control(issue_id).work_item
+            if fresh.decision_required:
+                raise NeedsDecision('Resolve the current Worker decision before submitting', report=fresh.decision_required)
+            if (fresh.phase != current.phase or fresh.worker_handoff != current.worker_handoff
+                or fresh.contract_ref != current.contract_ref or fresh.review_generation != current.review_generation):
+                raise ValidationError('Worker control changed during verification; re-read work show')
+            store.update_work_item_metadata(
+                issue_id,
+                artifacts=artifacts,
+                verification=verification,
+                verification_source=verification_source,
+            )
+            store.update_status(issue_id, WorkItemStatus.DONE)
+            return SubmitResult(kind, phase, "verification", WorkItemStatus.DONE)
 
     # ---------- review(各 kind 共用) ----------
     if phase == TaskPhase.REVIEW:

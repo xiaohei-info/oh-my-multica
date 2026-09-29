@@ -158,6 +158,8 @@ def test_persisted_worker_decision_prevents_dispatch_even_with_stale_manifest():
     work = item(status=WorkItemStatus.IN_PROGRESS, phase=TaskPhase.AUTHORING,
                 decision_required={"reason_code": "worker-precondition-blocked"})
     store, runtime = Mock(), Mock()
+    from contextlib import nullcontext
+    store.worker_control_lock.side_effect = lambda _: nullcontext()
     store.observe_work_item_control.return_value = WorkItemControlProjection(work)
     manifest = Manifest(meta={}, nodes={"node": Node(id="node", worker="alice", work_item_id="issue")})
     result = _dispatch_worker_handoff(store, runtime, manifest, "node", review_bounce=0, gate="explicit-dispatch")

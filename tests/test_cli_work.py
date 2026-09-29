@@ -1449,7 +1449,7 @@ def test_develop_authoring_submit_ignores_unrelated_historical_attachments(
 
     assert result.advanced_to is WorkItemStatus.DONE
     assert store.full_get_calls == 0
-    assert store.observe_calls == 1
+    assert store.observe_calls == 3  # Initial read plus pre-validation and pre-write control guards.
     assert store.hydration_plans == [frozenset({WorkItemPayload.CONTRACT})]
     assert backing.get_work_item(item.id).verification is not None
 
@@ -1477,7 +1477,7 @@ def test_cli_submit_does_not_preload_complete_work_item(
 
     assert rc == exit_codes.OK, capsys.readouterr()
     assert store.full_get_calls == 0
-    assert store.observe_calls == 1
+    assert store.observe_calls == 3  # Initial read plus pre-validation and pre-write control guards.
     assert store.hydration_plans == [frozenset({WorkItemPayload.CONTRACT})]
 
 

@@ -2019,7 +2019,15 @@ def _dispatch_reviewer_for_current_subject_locked(
     return True
 
 
-def _dispatch_worker_handoff(
+def _dispatch_worker_handoff(store, runtime, manifest, key, **kwargs):
+    # Same-host writers serialize; remote platform state still requires fresh reads.
+    with store.worker_control_lock(manifest.nodes[key].work_item_id):
+        kwargs["projection"] = store.observe_work_item_control(
+            manifest.nodes[key].work_item_id)
+        return _dispatch_worker_handoff_locked(store, runtime, manifest, key, **kwargs)
+
+
+def _dispatch_worker_handoff_locked(
     store: WorkItemStore,
     runtime: AgentRuntime,
     manifest: Manifest,
@@ -2315,6 +2323,12 @@ def _dispatch_worker_handoff(
 
     # assign_work_item 自身负责观察当前 assignee并幂等修复。目标 Run 的
     # 身份由后续只读观察绑定到持久 handoff，而不是由 assignment 成功猜测。
+    fresh = store.observe_work_item_control(item_id)
+    if fresh.work_item.decision_required:
+        return _WorkerHandoffResult("needs-decision", intent, fresh,
+                                    decision=fresh.work_item.decision_required)
+    if fresh.work_item.worker_handoff != intent:
+        raise PlatformError(f"Worker handoff changed before dispatch for {item_id}")
     try:
         store.assign_work_item(item_id, intent.target_worker, "worker")
     except PlatformError as assign_error:
@@ -2333,6 +2347,12 @@ def _dispatch_worker_handoff(
     if resolved is not None:
         return resolved
 
+    fresh = store.observe_work_item_control(item_id)
+    if fresh.work_item.decision_required:
+        return _WorkerHandoffResult("needs-decision", intent, fresh,
+                                    decision=fresh.work_item.decision_required)
+    if fresh.work_item.worker_handoff != intent:
+        raise PlatformError(f"Worker handoff changed before dispatch for {item_id}")
     try:
         runtime.wake(item_id, intent.target_worker, "worker")
     except PlatformError as wake_error:
@@ -2442,6 +2462,32 @@ def _observe_worker_handoff_bounded(
         if attempt + 1 < _HANDOFF_OBSERVATION_ATTEMPTS:
             time.sleep(_HANDOFF_OBSERVATION_INTERVAL)
     return result
+
+
+def _retry_worker_handoff(
+    store, runtime, manifest, key, item, *, consume_business_bounce=True,
+):
+    with store.worker_control_lock(item.id):
+        projection = store.observe_work_item_control(item.id)
+        current = projection.work_item
+        if current.decision_required:
+            return _WorkerHandoffResult("needs-decision", current.worker_handoff,
+                                       projection, decision=current.decision_required)
+        if current.worker_handoff != item.worker_handoff or current.phase != item.phase:
+            raise PlatformError(f"Worker retry control changed for {item.id}; re-read before retrying")
+        retry_intent = _next_worker_handoff_attempt(
+            store, runtime, current, consume_business_bounce=consume_business_bounce)
+        fresh = store.observe_work_item_control(item.id)
+        if fresh.work_item.decision_required:
+            return _WorkerHandoffResult("needs-decision", fresh.work_item.worker_handoff,
+                                       fresh, decision=fresh.work_item.decision_required)
+        if fresh.work_item.worker_handoff != current.worker_handoff:
+            raise PlatformError(f"Worker retry generation changed for {item.id}")
+        if consume_business_bounce:
+            store.clear_assignment(item.id)
+        _mark_recovery_pending(manifest, key)
+        store.update_work_item_metadata(item.id, worker_handoff=retry_intent)
+        return _dispatch_worker_handoff(store, runtime, manifest, key)
 
 
 def _next_worker_handoff_attempt(
@@ -3567,6 +3613,10 @@ def collect_results(
             handoff = _dispatch_worker_handoff(
                 store, runtime, manifest, key,
                 projection=projection)
+            if handoff.state == "needs-decision":
+                set_node(manifest, key, status="blocked")
+                failures[key] = "worker-decision-required"
+                continue
             if handoff.state in {
                 "transient-failure", "nonretryable-failure",
             }:
@@ -3601,13 +3651,12 @@ def collect_results(
                 time.sleep(
                     _TRANSIENT_RUNTIME_RETRY_BACKOFF_SECONDS
                     * failure.consecutive_runs)
-                retry_intent = _next_worker_handoff_attempt(
-                    store, runtime, item, consume_business_bounce=False)
-                _mark_recovery_pending(manifest, key)
-                store.update_work_item_metadata(
-                    node.work_item_id, worker_handoff=retry_intent)
-                handoff = _dispatch_worker_handoff(
-                    store, runtime, manifest, key)
+                handoff = _retry_worker_handoff(
+                    store, runtime, manifest, key, item, consume_business_bounce=False)
+                if handoff.state == "needs-decision":
+                    set_node(manifest, key, status="blocked")
+                    failures[key] = "worker-decision-required"
+                    continue
                 if handoff.state == "complete":
                     finalized = _finalize_worker_handoff_or_defer(
                         store, manifest, key, node, handoff,
@@ -3765,16 +3814,12 @@ def collect_results(
                                  f"worker 未交付回退上界({worker_limit})已耗尽"))
                 else:
                     try:
-                        retry_intent = _next_worker_handoff_attempt(
-                            store, runtime, item)
-                        store.clear_assignment(node.work_item_id)
-                        _mark_recovery_pending(manifest, key)
-                        store.update_work_item_metadata(
-                            node.work_item_id,
-                            worker_handoff=retry_intent,
-                        )
-                        handoff = _dispatch_worker_handoff(
-                            store, runtime, manifest, key)
+                        handoff = _retry_worker_handoff(
+                            store, runtime, manifest, key, item)
+                        if handoff.state == "needs-decision":
+                            set_node(manifest, key, status="blocked")
+                            failures[key] = "worker-decision-required"
+                            continue
                         if handoff.state == "complete":
                             finalized = _finalize_worker_handoff_or_defer(
                                 store, manifest, key, node, handoff,

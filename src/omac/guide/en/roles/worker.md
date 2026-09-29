@@ -185,3 +185,12 @@ and waits for operator repair without spending no-submit retries. Final prose
 alone does not report a structured blocker. Never relabel network exit 2,
 authentication exit 3, or unknown errors as exit 5; retain the error and escalate.
 Do not change platform state directly or increase retry budgets.
+
+### A contract requires stopping for a decision
+
+When a contract requires stopping after a failed gate or execution needs an owner
+decision, do not fake a successful submission or rely on final prose saying
+"waiting". Re-read work show and use control.blocker_report_template and
+control.report_blocker to submit a v2 structured blocker. Preserve failed evidence
+and the worktree. Stop after confirming exit20, terminal=true, next_action=stop.
+Ordinary reject rework remains unchanged; see `omac guide recovery`.
