@@ -650,3 +650,59 @@ A current explicit-dispatch handoff does not make a retired review ledger curren
 again during `node retry`. Historical review counters remain audit facts; current
 review evidence or a handoff carrying actual review rework still requires its
 review context before recovery.
+
+### Single-use same-HEAD evidence review
+
+`omac node review-evidence` handles an existing evidence-only-rework-head-policy
+block only. An explicitly approved original Agent session may witness the historical
+handoff/baseline association. It does not replace independent platform Run,
+attachment attribution, contract, HEAD, reject or artifact-byte verification.
+Preserve the unedited JSONL and independently pin its SHA256; select the one-based
+line containing a complete Issue JSON toolResult.
+
+```bash
+omac node review-evidence <manifest> <node> \
+  --witness-file <original-session.jsonl> --witness-line <line> \
+  --witness-sha256 <approved-file-sha256> \
+  --reason '<explicit operator authorization>' > evidence-review-request.json
+```
+
+Preview is read-only. It freshly downloads old/new verification, source reject
+report/ledger and every retrievable_artifact. Only same-PR-repository GitHub blob
+URLs pinned to full commit SHAs are supported. Attachment task_id or parent
+comment.source_task_id must identify the original completed Worker Run; conflicting
+IDs are rejected. The uploader and time window must match. A later Run or the
+historical baseline cannot stand in for that submission.
+
+After auditing the exact request, the single controller may consume it:
+
+```bash
+omac node review-evidence <manifest> <node> \
+  --witness-file <same-original-session.jsonl> \
+  --apply-request evidence-review-request.json
+```
+
+All bindings and published bytes are checked again. The Controller generates the
+identity through normal sealing; callers cannot supply it. The preserved source
+reject ledger is bound to the verified current contract generation so its blockers
+remain independent-review obligations. This never grants a verdict, resets counts
+or budgets, or changes the normal same-HEAD reject policy.
+
+Progress is recorded in manifest.meta.evidence_review_authorizations. Resume an
+interrupted operation with the identical request and witness; completed consumption
+cannot be replayed. Changed Runs, HEAD, contract/generation, attachments, artifact
+set, control facts or amendment authority fail closed. A witness hash pins bytes,
+not platform authenticity. No approved witness means no recovery from truncated
+history.
+
+Success means ready-for-independent-review only: no Agent is dispatched and no
+node is marked done. The coordinator separately supervises ordinary `omac dag run`
+after checking facts; that command can advance the whole DAG. Keep one controller:
+host-local manifest/Store locks are not cross-host CAS. Do not manufacture source
+commits or write sealed identities manually.
+
+The supported witness profile pairs the toolResult with one original bash toolCall
+whose exact command is `multica issue get <issue-id> --output json`; echoed or
+transformed JSON is rejected. Older sealed identities without verification_task_id
+remain valid only when newly exposed comment attribution equals their already
+sealed run_id. Conflicting Runs are rejected and old identities are not rewritten.

@@ -486,3 +486,55 @@ Reviewer verdict，再判断是否缺少提交；不能用 Run 查询前的旧�
 `node retry` 不会因为存在当前 explicit-dispatch handoff，就把旧 generation 的
 评审 ledger 重新视为有效。历史 review_bounce 保留作审计；仅当前有效评审或
 实际携带来源 reject/返工 head 的 handoff 才要求恢复其评审上下文。
+
+### 一次性同 HEAD 新证据送独立评审
+
+`omac node review-evidence` 仅处理已有 `evidence-only-rework-head-policy` 阻塞：
+原 reject、同一合同和 HEAD 下，原 completed Worker Run 已提交新的 verification
+及不可变发布物。它不是 pass/accept，也不永久放开普通 reject 的换 HEAD 规则。
+必须明确批准原始 Agent session 作为历史 handoff/旧 baseline 关联见证；该来源
+只补历史关联，不能取代平台 Run、附件上传归属、合同、HEAD 和发布字节的独立读取。
+
+先保存未经编辑的原始 JSONL，并独立固定文件 SHA256；选择其中完整 Issue JSON
+`toolResult` 的一基行号。不要重写、裁剪或合成历史行。只读准备请求：
+
+```bash
+omac node review-evidence <manifest> <node> \
+  --witness-file <original-session.jsonl> --witness-line <line> \
+  --witness-sha256 <approved-file-sha256> \
+  --reason '<explicit operator authorization>' > evidence-review-request.json
+```
+
+准备阶段不会写 Store/manifest 或派发 Agent。它重新下载原/新 verification、
+原 reject report/ledger及全部 `retrievable_artifacts`，核对身份和字节。当前版本只支持
+PR 同仓库、40位 commit 固定的 GitHub blob URL；不接受分支 URL。附件归属来自附件
+task_id 或父 comment.source_task_id，两者冲突即拒绝。新附件必须来自原 completed
+Run及同Agent，且在其时间窗内；不能归到前滚的另一个Run或复用历史baseline。
+
+审核完整请求后，在同一控制器串行窗口中消费：
+
+```bash
+omac node review-evidence <manifest> <node> \
+  --witness-file <same-original-session.jsonl> \
+  --apply-request evidence-review-request.json
+```
+
+消费时再次独立核验。Controller复用正常封存函数生成identity，caller不得传入identity。
+只有这个确切tuple获得同HEAD例外；原reject ledger原字节保留并绑定到已核验的当前合同
+世代，使原blocker继续作为独立Reviewer义务。计数、预算baseline与配置limit不变。
+
+授权消费进度记录在 `manifest.meta.evidence_review_authorizations`。中断时使用完全
+相同请求与见证续接，不生成另一个请求；每一步只接受期望前态或该步已落地的后态。
+已消费请求明确拒绝再次消费。HEAD、合同/世代、附件、发布集、Run集合、控制面或
+manifest amendment authority变化均须停止重核。见证SHA只固定字节，不是平台签名。
+
+成功只到 `ready-for-independent-review`，**不派发Reviewer、不标done、不声称pass**。
+协调者核对事实后才用既有 `omac dag run <manifest>` 监督正常独立review。该命令会推进
+整个DAG；不要与现有Runner/amendment写者并发。manifest锁和Store控制锁是本机
+串行化，不是跨机器CAS；仍须保持单控制器。若原始平台历史已截断且没有批准见证，
+必须保留fail-closed，不制造源码commit或手写identity来绕过。
+
+当前见证格式还要求该toolResult与session内唯一的原始bash toolCall配对，命令必须是
+精确的 `multica issue get <issue-id> --output json`；不接受echo、变换或拼造的JSON。
+升级读取comment Run归属时，旧封存identity仅在新增归属恰好等于其原run_id时兼容，
+不会重写旧identity，也不会接受冲突Run。

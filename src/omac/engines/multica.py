@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import hashlib
+import base64
 import json
 import os
 import re
@@ -263,6 +264,7 @@ def _transient_read_failure(message: str) -> Optional[_TransientReadFailure]:
         return _TransientReadFailure.HTTP_429
     if (
         "tls handshake timed out" in text
+        or "tls handshake timeout" in text
         or "握手超时" in text
         or "request timed out" in text
         or "context deadline exceeded" in text
@@ -858,6 +860,7 @@ class MulticaStore(WorkItemStore):
             raise PlatformError(
                 f"Verification comment observation is unavailable for work item {item_id}")
         attachment: Optional[Dict[str, Any]] = None
+        comment_task_id = None
         for comment in comments:
             if not isinstance(comment, dict) or str(comment.get("id") or "") != comment_id:
                 continue
@@ -867,6 +870,7 @@ class MulticaStore(WorkItemStore):
                     and str(candidate.get("id") or "") == attachment_id
                 ):
                     attachment = candidate
+                    comment_task_id = comment.get("source_task_id")
                     break
             if attachment is not None:
                 break
@@ -874,6 +878,10 @@ class MulticaStore(WorkItemStore):
             raise PlatformError(
                 f"Verification attachment {attachment_id} is not bound to comment "
                 f"{comment_id} for work item {item_id}")
+        attachment_task_id = attachment.get("task_id")
+        if attachment_task_id and comment_task_id and str(attachment_task_id) != str(comment_task_id):
+            raise PlatformError("Attachment and comment Run identities disagree")
+        task_id = attachment_task_id or comment_task_id
         declared_sha = str(ref.get("sha256") or "").strip()
         body = self._download_attachment_bytes(
             attachment_id,
@@ -905,8 +913,7 @@ class MulticaStore(WorkItemStore):
                 if attachment.get("uploader_type") else None
             ),
             task_id=(
-                str(attachment.get("task_id"))
-                if attachment.get("task_id") else None
+                str(task_id) if task_id else None
             ),
             created_at=(
                 str(attachment.get("created_at"))
@@ -2304,6 +2311,42 @@ class MulticaStore(WorkItemStore):
         return PullRequestCheckResult(
             proc.returncode == 0, proc.returncode,
             (proc.stdout or "") + (proc.stderr or ""))
+
+    def read_immutable_artifact(self, url: str) -> bytes:
+        from urllib.parse import urlsplit, unquote, quote
+        parsed = urlsplit(url)
+        match = re.fullmatch(r"/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/blob/([0-9a-f]{40})/(.+)", parsed.path)
+        if parsed.scheme != "https" or parsed.netloc != "github.com" or parsed.query or parsed.fragment or not match:
+            raise PlatformError("Use an immutable https://github.com/owner/repo/blob/<40-hex-commit>/path artifact URL")
+        owner, repo, commit, path = match.groups()
+        path = unquote(path)
+        if any(part in {"", ".", ".."} for part in path.split("/")):
+            raise PlatformError("Invalid immutable artifact path")
+        endpoint = f"repos/{owner}/{repo}/contents/{quote(path, safe='/')}?ref={commit}"
+        def download():
+            try:
+                result = subprocess.run(["gh", "api", endpoint], capture_output=True, timeout=30)
+            except subprocess.TimeoutExpired as exc:
+                raise PlatformError(f"Immutable artifact request timed out: {url}") from exc
+            except OSError as exc:
+                raise PlatformError(f"Immutable artifact CLI unavailable: {exc}") from exc
+            if result.returncode:
+                detail = (result.stderr or b"").decode("utf-8", errors="replace")[:500]
+                raise PlatformError(f"Immutable artifact download failed for {url}: {detail}")
+            try:
+                payload = json.loads(result.stdout)
+                if not isinstance(payload, dict) or payload.get("encoding") != "base64":
+                    raise ValueError("file content is not a base64 object")
+                body = base64.b64decode("".join(payload["content"].split()), validate=True)
+                blob_sha = hashlib.sha1(b"blob " + str(len(body)).encode() + b"\0" + body).hexdigest()
+                if payload.get("size") != len(body) or payload.get("sha") != blob_sha:
+                    raise ValueError("Git blob identity does not match downloaded bytes")
+            except (ValueError, KeyError, TypeError, AttributeError) as exc:
+                raise PlatformError(f"Immutable artifact response is invalid for {url}: {exc}") from exc
+            if len(body) > 16 * 1024 * 1024:
+                raise PlatformError(f"Immutable artifact exceeds 16 MiB: {url}")
+            return body
+        return self._run_idempotent_read("immutable artifact download", download)
 
     def read_pull_request_readiness(
         self, pr_url: str,
