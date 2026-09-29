@@ -645,3 +645,8 @@ After observing a stage-task Agent Run as terminal, OMAC re-reads the delivery o
 Reviewer verdict before recording a missing-submission decision. A failed final
 read preserves existing facts. Plan submissions use the plan/project-rules pair
 and transition to review; they do not use develop's delivery_identity.
+
+A current explicit-dispatch handoff does not make a retired review ledger current
+again during `node retry`. Historical review counters remain audit facts; current
+review evidence or a handoff carrying actual review rework still requires its
+review context before recovery.
