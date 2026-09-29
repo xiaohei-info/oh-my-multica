@@ -633,3 +633,10 @@ before writes. This is not cross-host CAS: retain the single-Runner control
 boundary and do not concurrently replace a node's generation from multiple hosts.
 
 Reports are limited to 2048 UTF-8 JSON bytes and 1–4 evidence entries; keep full logs at the referenced location.
+
+Before creating a Worker handoff, OMAC materializes a deferred Store contract
+before hashing it. An unloaded `None` is not an authoritative null contract.
+Attachment failure stops dispatch instead of persisting a null hash. Existing
+bad bindings are not silently rewritten or accepted by `work block`; preserve
+failure evidence and create a new handoff only through explicitly authorized
+recovery.
