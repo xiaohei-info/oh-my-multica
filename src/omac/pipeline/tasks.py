@@ -970,6 +970,10 @@ def _guard_resume_authoring_terminal_run(
                 "next_action": f"omac work show {item.id} --output json",
             },
         )
+    # A resumed Run can also submit between the input snapshot and list_runs.
+    item = engine.store.get_work_item(item.id)
+    if _produced(item):
+        return item
     decision = {
         "schema": DECISION_REQUIRED_SCHEMA,
         "reason_code": "completed-without-submit",
@@ -1311,6 +1315,11 @@ def run_task(
                 if predicate(current):
                     return current, observed_run_id
                 if run.terminal:
+                    # The submission can land while list_runs is in flight.
+                    # Never overwrite it using the earlier WorkItem snapshot.
+                    current = store.get_work_item(item_id)
+                    if predicate(current):
+                        return current, observed_run_id
                     if role == "reviewer":
                         _raise_if_reviewer_dispatch_stopped(
                             store, item_id, kind)

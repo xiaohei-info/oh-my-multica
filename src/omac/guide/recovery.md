@@ -477,3 +477,8 @@ CAS。保持现有单 Runner 管理约束，不允许多个控制器同时替换
 再计算绑定；未下载的 `None` 不能作为真实空合同。若附件读取失败，停止派发，
 不保存空合同哈希。已存在的错误绑定不会自动被重写，也不能通过放宽 `work block`
 校验恢复；应保留失败证据，由协调者在明确恢复授权后创建新的 handoff。
+
+plan/amendment 等阶段任务在观察到 Agent Run 终态后，会重新读取当前交付或
+Reviewer verdict，再判断是否缺少提交；不能用 Run 查询前的旧快照覆盖刚完成的提交。
+若终态后的读取失败，则保留现有事实并报错，不写“未提交”决定。plan 的正式提交
+由 plan/project-rules 双交付及 review 阶段转换识别，不使用 develop 的 delivery_identity。
