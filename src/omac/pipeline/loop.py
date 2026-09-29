@@ -2717,7 +2717,13 @@ def _validate_controller_sealed_delivery(
         or attachment.comment_id != identity.verification_comment_id
         or attachment.uploader_id != identity.verification_uploader_id
         or attachment.uploader_type != identity.verification_uploader_type
-        or attachment.task_id != identity.verification_task_id
+        or (
+            attachment.task_id != identity.verification_task_id
+            and not (
+                identity.verification_task_id is None
+                and attachment.task_id == identity.run_id
+            )
+        )
         or attachment.created_at != identity.verification_created_at
     ):
         raise PlatformError(

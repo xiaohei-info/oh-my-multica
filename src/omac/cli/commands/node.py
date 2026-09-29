@@ -79,6 +79,16 @@ def register(parser):
         help="恢复阶段；默认 authoring，已有封存交付可显式恢复 review",
     )
 
+    evidence_review = sub.add_parser(
+        "review-evidence", help="Prepare or consume one witnessed same-HEAD evidence review authorization")
+    evidence_review.add_argument("manifest")
+    evidence_review.add_argument("node_key")
+    evidence_review.add_argument("--witness-file", required=True, help="Unmodified original Agent session JSONL")
+    evidence_review.add_argument("--witness-line", type=int, help="Original complete Issue toolResult line (preview)")
+    evidence_review.add_argument("--witness-sha256", help="Explicitly approved original session SHA256 (preview)")
+    evidence_review.add_argument("--reason", help="Operator authorization reason (preview)")
+    evidence_review.add_argument("--apply-request", help="Consume the exact previously prepared JSON request; does not dispatch review")
+
     accept_nits = sub.add_parser(
         "accept-nits",
         help="接受 pass-with-nits 建议并恢复 review（不直接完成节点）",
@@ -858,7 +868,37 @@ def _cmd_abandon(args) -> int:
     return exit_codes.OK
 
 
+def _cmd_review_evidence(args) -> int:
+    import json
+    from pathlib import Path
+    from ...core.manifest import manifest_write_lock
+    from ...pipeline.evidence_review import preview_evidence_review, apply_evidence_review
+    engine = _build_engine(load_config())
+    if engine is None:
+        raise ValidationError("Configure an engine, then run `omac node review-evidence --help`")
+    try:
+        if args.apply_request:
+            if args.reason or args.witness_line is not None or args.witness_sha256:
+                raise ValidationError("Apply uses the exact saved request; omit preview flags")
+            request = json.loads(Path(args.apply_request).read_text())
+            with manifest_write_lock(args.manifest):
+                result = apply_evidence_review(engine.store, engine.runtime, args.manifest,
+                                               args.node_key, args.witness_file, request)
+        else:
+            if not args.reason or args.witness_line is None or not args.witness_sha256:
+                raise ValidationError("Preview requires --reason, --witness-line and the approved --witness-sha256; run `omac node review-evidence --help`")
+            result = preview_evidence_review(engine.store, engine.runtime,
+                _load_or_raise(args.manifest), args.node_key, args.witness_file,
+                args.witness_line, args.reason, expected_witness_sha256=args.witness_sha256)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValidationError(f"Could not read the exact request/witness file: {exc}; run `omac node review-evidence --help`") from exc
+    print_json(result)
+    return exit_codes.OK
+
+
 def run(args) -> int:
+    if args.action == "review-evidence":
+        return _cmd_review_evidence(args)
     if args.action == "show":
         return _cmd_show(args)
     if args.action == "retry":

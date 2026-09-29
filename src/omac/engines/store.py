@@ -513,6 +513,10 @@ class WorkItemStore(ABC):
     ) -> VerificationAttachmentObservation:
         """独立读取 verification 附件平台归属，并对下载字节重新计算摘要。"""
 
+    def read_immutable_artifact(self, url: str) -> bytes:
+        """Read a supported immutable published artifact; unsupported engines fail closed."""
+        raise PlatformError("This Store cannot independently read immutable published artifacts")
+
     # ==================== 便捷方法(基类实现) ====================
 
     def check_member_exists(self, workspace_id: str, member_name: str) -> bool:
