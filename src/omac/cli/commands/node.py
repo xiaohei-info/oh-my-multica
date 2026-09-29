@@ -409,8 +409,6 @@ def _cmd_retry(args) -> int:
             )
             if not contract_matches:
                 prior_handoff = None
-            review_current = contract_matches and (
-                review_feedback_is_current(current) or prior_handoff is not None)
             has_delivery = bool(current.artifacts or current.verification)
             prior_rework = bool(
                 prior_handoff is not None
@@ -421,6 +419,10 @@ def _cmd_retry(args) -> int:
                     or prior_handoff.baseline_pr_head_sha
                 )
             )
+            # An explicit authoring handoff proves this execution's identity,
+            # not that a retired review ledger is current again.
+            review_current = contract_matches and (
+                review_feedback_is_current(current) or prior_rework)
             recovered_context = {}
             has_retry_history = bool(
                 current.bounces.review > 0

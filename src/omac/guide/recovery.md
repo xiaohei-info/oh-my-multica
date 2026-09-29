@@ -482,3 +482,7 @@ plan/amendment 等阶段任务在观察到 Agent Run 终态后，会重新读取
 Reviewer verdict，再判断是否缺少提交；不能用 Run 查询前的旧快照覆盖刚完成的提交。
 若终态后的读取失败，则保留现有事实并报错，不写“未提交”决定。plan 的正式提交
 由 plan/project-rules 双交付及 review 阶段转换识别，不使用 develop 的 delivery_identity。
+
+`node retry` 不会因为存在当前 explicit-dispatch handoff，就把旧 generation 的
+评审 ledger 重新视为有效。历史 review_bounce 保留作审计；仅当前有效评审或
+实际携带来源 reject/返工 head 的 handoff 才要求恢复其评审上下文。
