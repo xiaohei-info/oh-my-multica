@@ -640,3 +640,8 @@ Attachment failure stops dispatch instead of persisting a null hash. Existing
 bad bindings are not silently rewritten or accepted by `work block`; preserve
 failure evidence and create a new handoff only through explicitly authorized
 recovery.
+
+After observing a stage-task Agent Run as terminal, OMAC re-reads the delivery or
+Reviewer verdict before recording a missing-submission decision. A failed final
+read preserves existing facts. Plan submissions use the plan/project-rules pair
+and transition to review; they do not use develop's delivery_identity.
