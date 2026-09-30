@@ -585,3 +585,10 @@ reject 当 pass，也不能手改冻结包或 analysis。新增专项 review obl
 任何目标/后代、authority、原 reject 或新 review 的漂移要求重新准备并评审；已消费
 的 amendment 只能按原 ledger 幂等观察，不会重复派发。仍须保持单写者；这不是跨
 机器平台事务。此能力不提供 selected DAG tick，也不允许用全局 tick 提前执行旧合同。
+
+进入 confirmation 后正常 unassign 会清空当前 reviewer 名称。精确字面量修订导出
+以不可变 report 的 Agent uploader 和同一 issue 的唯一 completed formal Reviewer Run
+校验已完成身份，并仍要求其与 Worker 独立、报告/提交/subject/ledger 与专项义务匹配；
+若当前 reviewer 名称非空，仍须与该身份一致。不能为了导出手改 reviewer 或 pass。
+导出在人工门之后失败时，保留原参数和 `--resume-issue-id` 续接同一 confirmation
+issue；现有 subject/合同/CAS 校验通过后重新导出，不重新准备、派发或评审。
