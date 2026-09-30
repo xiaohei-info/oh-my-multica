@@ -592,3 +592,16 @@ reject 当 pass，也不能手改冻结包或 analysis。新增专项 review obl
 若当前 reviewer 名称非空，仍须与该身份一致。不能为了导出手改 reviewer 或 pass。
 导出在人工门之后失败时，保留原参数和 `--resume-issue-id` 续接同一 confirmation
 issue；现有 subject/合同/CAS 校验通过后重新导出，不重新准备、派发或评审。
+
+Multica 的 8KB 限制针对整份 issue metadata JSONB。Worker handoff 超出总预算时，
+OMAC 将完整 intent 发布到不可变附件，原 metadata 键只存 issue/key/SHA/bytes/ref。
+反馈、原 Run 基线和绝对预算不删减；普通小 intent 保持内联。读取控制面必须先完整
+验证引用，缺失、错 issue/key、坏字节或不合法 checkpoint 均失败关闭，不能被当作无 intent。
+进度 checkpoint 只覆盖 state/target_run_id/terminal_observed_at，复用原附件，不为正在
+运行的 Worker 发布新系统评论。未知 set 回复用新读回判断；upload 后中断通过同 SHA
+原始系统评论找到附件并续接，不靠进程内缓存。
+
+新 handoff 必须先完整持久化并读回同 generation，再精确复核原 subject/合同绑定，
+随后才能退役原 delivery_identity。失败或中断不能留下“旧 identity 已清、intent 尚未存”
+的新状态。该顺序修复不会自动补造旧版本已丢失的 sealed identity；原接受 source 缺少
+因果 handoff/被明确授权的历史来源时，现有 CLI 仍需失败关闭并保留旧 review 与计数。

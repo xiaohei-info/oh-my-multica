@@ -147,6 +147,9 @@ _EMPTY_OBJECT_METADATA = frozenset({
     DECISION_REQUIRED_KEY, REVIEWER_RUN_BASELINE_KEY,
     REVIEW_NITS_ACCEPTANCE_KEY,
 })
+_CONTROL_PAYLOAD_SCHEMA = "omac.control-payload/v1"
+_HANDOFF_CHECKPOINT_FIELDS = frozenset({"state", "target_run_id", "terminal_observed_at"})
+
 _INVALID_OBJECT_METADATA_SCHEMA = "omac.invalid-object-metadata/v1"
 
 
@@ -724,6 +727,7 @@ class MulticaStore(WorkItemStore):
             "review-report": REVIEW_REPORT_REF_KEY,
             "review-obligations": REVIEW_OBLIGATIONS_REF_KEY,
             "machine-feedback": MACHINE_FEEDBACK_REF_KEY,
+            "worker-handoff": WORKER_HANDOFF_KEY,
         }.get(key, f"{key}_ref")
         return ui(
             f"## omac {key}\n"
@@ -1073,7 +1077,9 @@ class MulticaStore(WorkItemStore):
             reviewer_run_baseline=parse_reviewer_run_baseline(
                 reviewer_run_baseline),
             worker_handoff=parse_worker_handoff(
-                self._json_metadata(metadata, WORKER_HANDOFF_KEY)),
+                self._control_payload_value(
+                    issue_data["id"], WORKER_HANDOFF_KEY,
+                    metadata.get(WORKER_HANDOFF_KEY))),
             delivery_identity=parse_delivery_identity(
                 self._json_metadata(metadata, DELIVERY_IDENTITY_KEY)),
             decision_required=decision_required,
@@ -1508,12 +1514,220 @@ class MulticaStore(WorkItemStore):
                 "Multica's 8KB aggregate limit; fail closed")
         return decision
 
+    @classmethod
+    def _control_metadata_bytes(cls, metadata: Dict) -> int:
+        # CLI stores objects/lists as JSON strings. Include JSONB entry/numeric
+        # overhead as well as escaped wire size; never enlarge the platform cap.
+        scalar = {
+            key: encode_metadata_value(value)
+            if isinstance(value, (dict, list))
+            else value
+            for key, value in metadata.items()
+        }
+        storage_bound = (
+            8
+            + 8 * len(scalar)
+            + sum(
+                len(key.encode("utf-8"))
+                + (
+                    len(value.encode("utf-8"))
+                    if isinstance(value, str)
+                    else len(json.dumps(value).encode("utf-8")) + 16
+                )
+                for key, value in scalar.items()
+            )
+        )
+        return max(cls._metadata_object_bytes(scalar), storage_bound)
+
+    def _control_payload_value(self, item_id: str, key: str, value: Any):
+        decoded = _decode_json_metadata_value(value)
+        if not isinstance(decoded, dict) or not str(
+            decoded.get("schema") or ""
+        ).startswith("omac.control-payload/"):
+            return decoded
+        if (
+            decoded.get("schema") != _CONTROL_PAYLOAD_SCHEMA
+            or not {"schema", "key", "issue_id", "ref"}.issubset(decoded)
+            or set(decoded) - {"schema", "key", "issue_id", "ref", "overlay"}
+            or decoded.get("key") != key
+            or decoded.get("issue_id") != item_id
+        ):
+            raise PlatformError(
+                "Invalid control payload reference; preserve it and re-read work show "
+                + item_id
+            )
+        ref = decoded["ref"]
+        if (
+            not isinstance(ref, dict)
+            or not ref.get("attachment_id")
+            or not ref.get("comment_id")
+            or not re.fullmatch(r"[0-9a-f]{64}", str(ref.get("sha256") or ""))
+            or type(ref.get("bytes")) is not int
+            or ref["bytes"] < 0
+        ):
+            raise PlatformError(
+                "Incomplete control payload reference for work item " + item_id
+            )
+        text = self._load_payload_comment(item_id, key.replace("_", "-"), ref)
+        if (
+            not isinstance(text, str)
+            or hashlib.sha256(text.encode("utf-8")).hexdigest() != ref["sha256"]
+            or len(text.encode("utf-8")) != ref["bytes"]
+        ):
+            raise PlatformError(
+                "Control payload attachment is missing or changed for work item "
+                + item_id
+            )
+        try:
+            payload = json.loads(text)
+        except (TypeError, ValueError) as exc:
+            raise PlatformError(
+                "Control payload JSON is invalid for work item " + item_id
+            ) from exc
+        overlay = decoded.get("overlay", {})
+        if (
+            not isinstance(overlay, dict) or set(overlay) - _HANDOFF_CHECKPOINT_FIELDS
+            or any(value is not None and (not isinstance(value, str) or not value) for value in overlay.values())
+        ):
+            raise PlatformError("Invalid mutable control checkpoint for " + item_id)
+        if isinstance(payload, dict):
+            payload = {**payload, **overlay}
+        if not isinstance(payload, dict) or parse_worker_handoff(payload) is None:
+            raise PlatformError(
+                "Control payload does not contain a valid Worker handoff for " + item_id
+            )
+        return payload
+
+    def _bounded_control_metadata(self, item_id: str, key: str, value: Any, *, metadata=None):
+        if metadata is None:
+            _, metadata = self._read_issue_metadata(item_id)
+        target = _decode_json_metadata_value(value)
+        previous = metadata.get(key)
+        if self._control_payload_value(item_id, key, previous) == target:
+            return previous
+        previous_ref = _decode_json_metadata_value(previous)
+        if isinstance(previous_ref, dict) and previous_ref.get("schema") == _CONTROL_PAYLOAD_SCHEMA:
+            # Mutable progress uses a tiny atomic overlay; it must not publish
+            # system comments or unassign an already-running Worker.
+            base = self._control_payload_value(item_id, key, {**previous_ref, "overlay": {}})
+            if isinstance(target, dict) and {
+                name: field for name, field in base.items() if name not in _HANDOFF_CHECKPOINT_FIELDS
+            } == {
+                name: field for name, field in target.items() if name not in _HANDOFF_CHECKPOINT_FIELDS
+            }:
+                checkpoint = {**previous_ref, "overlay": {
+                    name: target.get(name) for name in _HANDOFF_CHECKPOINT_FIELDS
+                    if target.get(name) != base.get(name)
+                }}
+                if self._control_metadata_bytes({**metadata, key: checkpoint}) > _MULTICA_METADATA_TOTAL_MAX_BYTES:
+                    raise ValueError("Mutable handoff checkpoint exceeds the 8KB aggregate limit; preserve its original reference")
+                if self._control_payload_value(item_id, key, checkpoint) != target:
+                    raise PlatformError("Mutable checkpoint changes the source handoff")
+                return checkpoint
+        candidate = {**metadata, key: encode_metadata_value(value)}
+        if self._control_metadata_bytes(candidate) <= _MULTICA_METADATA_TOTAL_MAX_BYTES:
+            return value
+        text = encode_metadata_value(target)
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        payload_key = key.replace("_", "-")
+        # Ref-only preflight prevents irreducible overflow from publishing or
+        # unassigning anything. Actual reference is checked again before set.
+        placeholder = {
+            "comment_id": "0" * 36,
+            "attachment_id": "0" * 36,
+            "sha256": digest,
+            "bytes": len(text.encode("utf-8")),
+            "filename": f"omac-{payload_key}-{digest[:12]}.json",
+        }
+        wrapper = {
+            "schema": _CONTROL_PAYLOAD_SCHEMA,
+            "key": key,
+            "issue_id": item_id,
+            "ref": placeholder,
+        }
+        if (
+            self._control_metadata_bytes({**metadata, key: wrapper})
+            > _MULTICA_METADATA_TOTAL_MAX_BYTES
+        ):
+            raise ValueError(
+                "Issue metadata cannot fit the complete control reference within the 8KB aggregate limit; preserve all facts"
+            )
+        # An upload can succeed before a crash/lost reply. Its SHA-indexed
+        # system comment is the durable recovery seam, not an in-memory cache.
+        comments = self._run_idempotent_read(
+            "control payload comments",
+            lambda: self._run_multica(
+                [
+                    "issue",
+                    "comment",
+                    "list",
+                    item_id,
+                    "--output",
+                    "json",
+                    "--full",
+                ]
+            ),
+        )
+        if not isinstance(comments, list):
+            raise PlatformError(
+                "Could not read original control payload references for " + item_id
+            )
+        ref = None
+        for comment in comments:
+            if not isinstance(comment, dict):
+                continue
+            for attachment in comment.get("attachments") or []:
+                candidate_ref = self._review_attachment_ref(
+                    comment, attachment, payload_key
+                )
+                if candidate_ref and candidate_ref.get("sha256") == digest:
+                    candidate_ref["bytes"] = len(text.encode("utf-8"))
+                    probe = {**wrapper, "ref": candidate_ref}
+                    if self._control_payload_value(item_id, key, probe) == target:
+                        ref = candidate_ref
+                        break
+            if ref is not None:
+                break
+        if ref is None:
+            ref = self._publish_payload_comment(item_id, payload_key, text, ".json")
+        wrapper["ref"] = ref
+        # Do not write a pointer until the complete immutable bytes are proven.
+        if self._control_payload_value(item_id, key, wrapper) != target:
+            raise PlatformError("Published control payload does not match its intent")
+        _, fresh = self._read_issue_metadata(item_id)
+        fresh_value = self._control_payload_value(item_id, key, fresh.get(key))
+        if fresh_value not in (self._control_payload_value(item_id, key, previous), target):
+            raise PlatformError("Worker handoff changed before control reference commit")
+        if (
+            self._control_metadata_bytes({**fresh, key: wrapper})
+            > _MULTICA_METADATA_TOTAL_MAX_BYTES
+        ):
+            raise ValueError(
+                "Issue metadata drift exceeds the 8KB aggregate limit; preserve the complete control attachment"
+            )
+        return wrapper
+
     def _set_metadata(self, item_id: str, key: str, value: Any):
         # capture 默认开:吃掉 multica 的确认表格,不漏进编排者终端(进度靠事件流)。
         if key == DECISION_REQUIRED_KEY:
             value = bounded_decision_required(value)
+        bounded_control = key == WORKER_HANDOFF_KEY and _decode_json_metadata_value(value) not in (None, {})
+        if bounded_control:
+            _, before_metadata = self._read_issue_metadata(item_id)
+            previous_control = self._control_payload_value(item_id, key, before_metadata.get(key))
+            target_control = _decode_json_metadata_value(value)
+            value = self._bounded_control_metadata(item_id, key, value, metadata=before_metadata)
         assert_metadata_write_allowed(key, value)
         encoded = encode_metadata_value(value)
+        if bounded_control:
+            _, current = self._read_issue_metadata(item_id)
+            current_control = self._control_payload_value(item_id, key, current.get(key))
+            if current_control not in (previous_control, target_control):
+                raise PlatformError("Worker handoff changed immediately before metadata commit")
+            if self._control_metadata_bytes({**current, key: encoded}) > _MULTICA_METADATA_TOTAL_MAX_BYTES:
+                raise ValueError("Control write exceeds the fresh 8KB aggregate metadata budget")
+            if current.get(key) == encoded:
+                return
         self._run_multica([
             "issue", "metadata", "set", item_id,
             "--key", key, "--value", encoded,

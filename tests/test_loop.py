@@ -8736,6 +8736,75 @@ class TestReviewerRejectBoundedFallback:
         assert plans == [frozenset({payload})]
         assert bool(writes) is (source == "current")
 
+    def test_rejected_intent_write_never_retires_source_delivery(self, tmp_path, monkeypatch):
+        from copy import deepcopy
+        from omac.errors import PlatformError
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        before = deepcopy(eng.store.get_work_item(item.id))
+        assert before.delivery_identity is not None
+        original = eng.store.update_work_item_metadata
+        def reject(item_id, **metadata):
+            if metadata.get("worker_handoff"):
+                raise PlatformError("metadata exceeds the 8KB size limit")
+            return original(item_id, **metadata)
+        monkeypatch.setattr(eng.store, "update_work_item_metadata", reject)
+        with pytest.raises(PlatformError, match="8KB"):
+            loop._dispatch_worker_handoff(eng.store, eng.runtime, manifest, "a",
+                review_bounce=before.bounces.review + 1, gate="review")
+        current = eng.store.get_work_item(item.id)
+        assert current.delivery_identity == before.delivery_identity
+        assert current.worker_handoff is None
+        assert current.bounces == before.bounces
+        assert current.review_verdict == before.review_verdict
+
+    @pytest.mark.parametrize("drift", [False, True])
+    def test_durable_intent_precedes_retirement_and_resumes_strictly(self, tmp_path, monkeypatch, drift):
+        from copy import deepcopy
+        from omac.errors import PlatformError
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        before = deepcopy(eng.store.get_work_item(item.id))
+        original = eng.store.update_work_item_metadata
+        crashed = False
+        lost = False
+        monkeypatch.setattr(eng.store, "is_transient_transport_error", lambda exc: "connection reset by peer" in str(exc))
+        def interrupt(item_id, **metadata):
+            nonlocal crashed, lost
+            if metadata.get("worker_handoff") and not lost:
+                lost = True
+                result = original(item_id, **metadata)
+                raise PlatformError("connection reset by peer")
+            if metadata.get("delivery_identity") == {} and not crashed:
+                assert eng.store.get_work_item(item_id).worker_handoff is not None
+                crashed = True
+                raise RuntimeError("crash before source retirement")
+            return original(item_id, **metadata)
+        monkeypatch.setattr(eng.store, "update_work_item_metadata", interrupt)
+        with pytest.raises(RuntimeError, match="before source retirement"):
+            loop._dispatch_worker_handoff(eng.store, eng.runtime, manifest, "a",
+                review_bounce=before.bounces.review + 1, gate="review")
+        staged = eng.store.get_work_item(item.id)
+        generation = staged.worker_handoff.generation
+        assert staged.delivery_identity == before.delivery_identity
+        assert staged.bounces == before.bounces
+        monkeypatch.setattr(eng.store, "update_work_item_metadata", original)
+        if drift:
+            staged.artifacts["head_sha"] = "foreign-head"
+            with pytest.raises(PlatformError, match="source.*changed|source.*stale"):
+                loop._dispatch_worker_handoff(eng.store, eng.runtime, manifest, "a")
+            assert staged.delivery_identity == before.delivery_identity
+            assert staged.bounces == before.bounces
+        else:
+            loop._dispatch_worker_handoff(eng.store, eng.runtime, manifest, "a")
+            current = eng.store.get_work_item(item.id)
+            assert current.delivery_identity is None
+            assert current.worker_handoff.generation == generation
+            assert current.bounces.worker == before.bounces.worker
+            assert current.bounces.review == before.bounces.review + 1
+
     def test_review_handoff_persistent_stale_source_fails_before_writes(
         self, tmp_path, monkeypatch,
     ):
