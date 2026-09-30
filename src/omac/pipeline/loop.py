@@ -2048,6 +2048,13 @@ def _dispatch_worker_handoff_locked(
             "needs-decision", intent, projection, decision=current.decision_required)
     if intent is not None:
         _mark_recovery_pending(manifest, key)
+    if (
+        intent is not None and current.delivery_identity is not None
+        and current.delivery_identity.handoff_generation != intent.generation
+    ):
+        projection = _hydrate_work_item_payloads(
+            store, projection, _REVIEW_CONFIRMATION_PAYLOADS)
+        current = projection.work_item
     if intent is not None and intent.gate in {"review", "review-nits"}:
         resolution = _resolve_handoff_review_convergence(current, intent, key)
         if resolution.state is ResolutionState.NEEDS_DECISION:
@@ -2162,18 +2169,6 @@ def _dispatch_worker_handoff_locked(
             baseline_pr_head_sha=baseline_pr_head_sha,
             target_worker_bounce=current.bounces.worker,
         )
-        if current.delivery_identity is not None:
-            preparation = _apply_observed_handoff_preparation_write(
-                store,
-                item_id,
-                lambda: store.update_work_item_metadata(
-                    item_id, delivery_identity={}),
-                lambda item: item.delivery_identity is None,
-            )
-            if preparation.state == "pending":
-                return _WorkerHandoffResult("pending-initialization", None)
-            projection = preparation.projection
-            current = projection.work_item
         _mark_recovery_pending(manifest, key)
         preparation = _apply_observed_handoff_preparation_write(
             store,
@@ -2203,6 +2198,37 @@ def _dispatch_worker_handoff_locked(
     if not intent.is_causally_bound():
         raise PlatformError(
             f"Worker handoff lacks causal identity for work item {item_id}")
+
+    # The complete causal intent must be durably observable before retiring
+    # the source identity. Restart can then verify the same source exactly.
+    if (
+        current.delivery_identity is not None
+        and current.delivery_identity.handoff_generation != intent.generation
+        and not _worker_handoff_has_new_delivery(current, intent)
+    ):
+        projection = _hydrate_work_item_payloads(
+            store, projection, _REVIEW_CONFIRMATION_PAYLOADS)
+        current = projection.work_item
+        source_subject = (
+            stage_recovery_subject(node, current)
+            if intent.gate == "explicit-dispatch"
+            else _review_subject_for_round(
+                manifest, key, current, intent.source_review_round)
+        )
+        if (
+            source_subject != intent.source_review_subject_digest
+            or review_context_binding(current) != intent.review_context_binding
+        ):
+            raise PlatformError(f"Worker handoff source changed before retirement for {item_id}")
+        preparation = _apply_observed_handoff_preparation_write(
+            store, item_id,
+            lambda: store.update_work_item_metadata(item_id, delivery_identity={}),
+            lambda item: item.delivery_identity is None,
+        )
+        if preparation.state == "pending":
+            return _WorkerHandoffResult("pending-preparation", intent)
+        projection = preparation.projection
+        current = projection.work_item
 
     target_worker_bounce = intent.target_worker_bounce
     if target_worker_bounce is not None:

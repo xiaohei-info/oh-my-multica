@@ -761,3 +761,19 @@ reviewer name must still match. Do not edit the reviewer or pass fact to export.
 After a post-human-gate export failure, retain the original arguments and resume the
 same confirmation issue with --resume-issue-id. Existing contract/subject/CAS checks
 remain mandatory; no fresh preparation, dispatch or review is needed.
+
+Multica's 8KB cap applies to the complete issue metadata JSONB object. An oversized
+Worker handoff uses a complete immutable attachment plus an issue/key/SHA/size/ref
+under the original metadata key. Feedback, Run baselines and absolute counters are
+not pruned; small intents stay inline. Control reads fully validate the reference
+before routing: missing, foreign, malformed or changed payloads fail closed rather
+than becoming no intent. Mutable state/target_run_id/terminal_observed_at checkpoints
+reuse the original attachment without posting comments to an active Worker. Unknown
+set replies are resolved by fresh observation; upload-before-reference crashes reuse
+the matching SHA-indexed system comment, independent of process caches.
+
+A new intent must be durably written and observed before the original sealed delivery
+is retired, with an exact source subject/contract check before retirement. The ordering
+fix does not reconstruct an identity already lost by an older version. Missing causal
+handoff or unapproved historical provenance still blocks existing recovery commands;
+preserve the accepted review and counters instead of fabricating identity fields.
