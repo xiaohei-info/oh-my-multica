@@ -176,7 +176,37 @@ def _handoff_ledger_round_reset(item, handoff_intent) -> bool:
     return True
 
 
-def _resolve_handoff_review_convergence(item, handoff_intent, node_id=None):
+def _resolve_handoff_review_convergence(
+    item, handoff_intent, node_id=None, *, store: WorkItemStore | None = None,
+):
+    needs_ledger = max(
+        handoff_intent.source_review_round or 0,
+        handoff_intent.target_review_bounce or 0,
+    ) >= REVIEW_CONVERGENCE_EARLIEST_CYCLE
+    source_ref = (handoff_intent.source_review_feedback or {}).get("ledger_ref")
+    if needs_ledger and source_ref and item.review_ledger_ref != source_ref:
+        raise PlatformError(f"Worker handoff ledger reference changed for {item.id}; inspect `omac work show {item.id} --output json`")
+    if needs_ledger and store is not None and item.review_ledger_ref:
+        # A fresh control read defers the immutable body, even after review reset.
+        # Materialize it before applying the unchanged convergence policy.
+        fields = (
+            "status", "phase", "worker", "reviewer", "platform_assignee_id",
+            "review_verdict", "review_subject_digest", "review_generation",
+            "review_ledger_generation", "review_ledger_ref", "contract_ref",
+            "review_report_ref", "review_obligations_ref", "review_continuation",
+            "reviewer_run_baseline", "review_nits_acceptance", "bounce_baseline",
+            "worker_handoff", "delivery_identity", "artifacts", "verification_ref",
+            "bounces", "decision_required",
+        )
+        before = copy.deepcopy({name: getattr(item, name) for name in fields})
+        if item.review_ledger is None:
+            item = store.hydrate_work_item_evidence(
+                WorkItemControlProjection(item, frozenset({WorkItemPayload.REVIEW_LEDGER})),
+                frozenset({WorkItemPayload.REVIEW_LEDGER}),
+            )
+        fresh = store.observe_work_item_control(item.id).work_item
+        if any(getattr(fresh, name) != value for name, value in before.items()):
+            raise PlatformError(f"Worker handoff control facts changed while loading ledger for {item.id}; reobserve `omac work show {item.id} --output json` before continuing")
     resolution = resolve_convergence(
         item, expected_round=handoff_intent.source_review_round,
         kind=TaskKind.DEVELOP.value, node_id=node_id)
@@ -2058,7 +2088,7 @@ def _dispatch_worker_handoff_locked(
             store, projection, _REVIEW_CONFIRMATION_PAYLOADS)
         current = projection.work_item
     if intent is not None and intent.gate in {"review", "review-nits"}:
-        resolution = _resolve_handoff_review_convergence(current, intent, key)
+        resolution = _resolve_handoff_review_convergence(current, intent, key, store=store)
         if resolution.state is ResolutionState.NEEDS_DECISION:
             return _WorkerHandoffResult(
                 "needs-decision",
@@ -3606,7 +3636,7 @@ def collect_results(
             and handoff_intent.gate in {"review", "review-nits"}
         ):
             resolution = _resolve_handoff_review_convergence(
-                item, handoff_intent, key)
+                item, handoff_intent, key, store=store)
             if resolution.state is ResolutionState.NEEDS_DECISION:
                 failures[key] = _block_review_non_convergence(
                     store, manifest, key, item, resolution)
@@ -4696,7 +4726,7 @@ def _restore_active_formal_run_stages(
         _validate_structured_recovery_payloads(
             hydrated, plan & projection.deferred_payloads)
         resolution = _resolve_handoff_review_convergence(
-            hydrated.work_item, intent, key)
+            hydrated.work_item, intent, key, store=store)
         if resolution.state is ResolutionState.NEEDS_DECISION:
             blocked[key] = (hydrated, resolution)
             continue
@@ -4726,7 +4756,7 @@ def _restore_active_formal_run_stages(
             and handoff_intent.gate in {"review", "review-nits"}
         ):
             resolution = _resolve_handoff_review_convergence(
-                hydrated.work_item, handoff_intent, key)
+                hydrated.work_item, handoff_intent, key, store=store)
             if resolution.state is ResolutionState.NEEDS_DECISION:
                 blocked[key] = (hydrated, resolution)
                 continue
