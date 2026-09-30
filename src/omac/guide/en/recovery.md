@@ -641,6 +641,11 @@ bad bindings are not silently rewritten or accepted by `work block`; preserve
 failure evidence and create a new handoff only through explicitly authorized
 recovery.
 
+Ordinary review rework materializes the source subject’s delivery and review
+evidence after the locked control re-read, before exact subject validation.
+Deferred bodies are not missing evidence; actual subject drift still fails before
+writes. This read correction does not clear rejects, alter budgets or grant recovery.
+
 After observing a stage-task Agent Run as terminal, OMAC re-reads the delivery or
 Reviewer verdict before recording a missing-submission decision. A failed final
 read preserves existing facts. Plan submissions use the plan/project-rules pair
