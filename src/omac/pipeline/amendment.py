@@ -534,7 +534,11 @@ def propose_amendment(
         "Read every design document under each supplied docs path, the current manifest, "
         "and the Reviewer report. Submit one YAML object using schema "
         "omac.dag-amendment/v1 with reason and operations. Supported operations are "
-        "update/add/remove/resume/update-responsibility. Never patch runtime fields. "
+        "update/add/remove/resume/update-responsibility/correct-contract-literal. Never patch runtime fields. "
+        "A correct-contract-literal operation must be the sole operation and preserve the exact "
+        "read-only prepare-literal-correction output, including immutable authority, the real prior "
+        "reject and every frozen descendant snapshot. Never invent or edit that witness package; "
+        "a new independent review must explicitly prove semantic non-propagation. "
         "Done/merged nodes are immutable except update-responsibility with explicit "
         "historical_contract_correction=true and an operation reason. Use "
         "update-responsibility for every acceptance responsibility migration: carry only "
@@ -708,6 +712,7 @@ def propose_amendment(
         reviewer_verdict=issue.review_verdict,
         agent_pool=pool,
         acceptance=acceptance,
+        runtime=engine.runtime,
     )
     target = output_file or default_amendment_path(manifest_path)
     _write_yaml_atomic(target, reviewed)
@@ -993,7 +998,7 @@ def accept_amendment(
 
     result = apply_amendment(
         manifest_path, amendment, engine.store, agent_pool,
-        amendment_file=amendment_file, acceptance=acceptance)
+        amendment_file=amendment_file, acceptance=acceptance, runtime=engine.runtime)
     amendment["human_confirmation"] = "applied"
     amendment["human_reason"] = reason
     amendment["apply_result"] = result

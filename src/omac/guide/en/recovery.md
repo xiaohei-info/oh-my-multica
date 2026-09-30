@@ -711,3 +711,35 @@ whose exact command is `multica issue get <issue-id> --output json`; echoed or
 transformed JSON is rejected. Older sealed identities without verification_task_id
 remain valid only when newly exposed comment attribution equals their already
 sealed run_id. Conflicting Runs are rejected and old identities are not rewritten.
+
+## Exact contract literal correction
+
+Generic non_goals changes remain implementation-affecting. The sole operation
+`correct-contract-literal` changes one identifier occurrence in one non_goals
+string, with identical full contracts otherwise. It is restricted to an existing
+unmerged TODO/authoring target with no assignee, handoff, sealed delivery, Run or
+consumed budget. It is not a general recovery exemption.
+
+Use `omac dag amend prepare-literal-correction --help` for read-only preparation.
+Supply the exact original/replacement token and non_goals index, a commit-pinned
+GitHub docs URL, verified SHA256 and canonical quote, and the real rejected
+amendment issue. The rejected proposal must name this same target and full
+replacement contract. Preparation freezes its report/ledger and completed
+independent Reviewer provenance, plus every target/descendant manifest, Store and
+Run snapshot. Unknown/non-terminal Runs or any snapshot drift fail closed.
+
+The coordinator submits the untouched prepared proposal through a new ordinary
+amendment attempt. A dedicated review obligation requires independent authority
+verification and an explicit proof of no semantic scope, quality, ownership,
+output or downstream implementation effect. The original reject stays intact.
+Only a new actual pass/confirmation, exact submitted proposal and report bytes,
+and uniquely completed independent Reviewer Run may produce a reviewed envelope;
+pass-with-nits is not accepted for this operation.
+
+Human `dag amend accept` reuses amendment identity, definition CAS and the normal
+restart-safe target authoring ledger. Descendants and absolute counters remain
+unchanged. Targets with historical consumed budget are unsupported to avoid
+creating a fresh allowance via an authoring baseline. Authority, reject, review or
+runtime drift requires preparation and independent review again. Re-entry observes
+the existing consumed ledger without dispatch. Retain the single-writer boundary;
+this is not a cross-host platform transaction or a selected-DAG tick bypass.

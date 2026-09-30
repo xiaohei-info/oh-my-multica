@@ -934,6 +934,10 @@ def build_review_obligations(
                 "after": after_matrix,
                 "historical_contract_corrections": corrections,
             })
+        from .literal_correction import literal_review_obligation
+        literal_obligation = literal_review_obligation(parse_proposal(deliverable))
+        if literal_obligation is not None:
+            obligations.append(literal_obligation)
     return obligations
 
 
