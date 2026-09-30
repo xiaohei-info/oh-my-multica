@@ -7,11 +7,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import asdict, replace
 from datetime import datetime
 
 from .manifest import _dump_contract
-from .taskmeta import TaskPhase
+from .taskmeta import TaskPhase, review_context_binding, WorkerHandoffIntent
 from ..engines.models import WorkItemStatus
+from ..errors import PlatformError
 
 
 def _stable_digest(value) -> str:
@@ -126,6 +128,134 @@ def validate_stage_recovery(item, stage: str) -> None:
         raise ValueError("merge-only recovery requires a passed review and PR")
 
 
+def _authoring_generation(node, item) -> str:
+    return "authoring-" + _stable_digest({
+        "node": node.id,
+        "contract": _dump_contract(node.contract) if node.contract else None,
+        "evidence": recovery_evidence_digest(item),
+    })[:24]
+
+
+def _authoring_retry_source(item) -> dict:
+    # Only freshly observed control facts; never a reconstructed historical seal.
+    return {
+        "binding": review_context_binding(item),
+        "status": item.status.value,
+        "phase": item.phase.value,
+        "assignee": item.platform_assignee_id,
+        "delivery": _stable_digest({"artifacts": item.artifacts,
+                                    "verification_ref": item.verification_ref}),
+        "counters": asdict(item.bounces),
+        "identity": _stable_digest(item.delivery_identity.as_dict())
+        if item.delivery_identity is not None else None,
+        "subject": item.review_subject_digest,
+        "verdict": item.review_verdict,
+        "ledger_generation": item.review_ledger_generation,
+        "report_ref": item.review_report_ref,
+        "ledger_ref": item.review_ledger_ref,
+    }
+
+
+def _prepare_authoring_retry(node, store, item, intent):
+    """Persist a recovery intent before the first destructive stage write."""
+    def observe_write(write, expected):
+        try:
+            write()
+        except PlatformError:
+            # A timeout is not permission to replay. Read the durable result first.
+            observed = store.get_work_item(node.work_item_id)
+            if not expected(observed):
+                raise
+            return observed
+        observed = store.get_work_item(node.work_item_id)
+        if not expected(observed):
+            raise PlatformError("Authoring recovery write did not converge; repeat node retry after inspecting work show")
+        return observed
+
+    node_binding = review_context_binding(replace(item, contract=node.contract))
+    if intent.authoring_recovery is None:
+        if (intent.is_causally_bound()
+                and item.phase == TaskPhase.AUTHORING and item.status == WorkItemStatus.TODO
+                and intent == item.worker_handoff and intent.target_run_id is None
+                and intent.target_worker == node.worker
+                and not item.review_report_ref and not item.review_subject_digest
+                and not item.review_verdict and not item.delivery_identity
+                and intent.review_context_binding == review_context_binding(item)
+                and node_binding == review_context_binding(item)):
+            return "todo"
+        feedback = intent.source_review_feedback or {}
+        if (not intent.is_causally_bound()
+                or node_binding != review_context_binding(item)
+                or intent.review_context_binding != review_context_binding(item)
+                or intent.target_worker != node.worker
+                or intent.target_worker_bounce != item.bounces.worker
+                or ((item.artifacts or {}).get("head_sha") and intent.baseline_pr_head_sha != item.artifacts["head_sha"])
+                or intent.baseline_verification_attachment_id != (item.verification_ref or {}).get("attachment_id")
+                or (item.review_subject_digest and item.review_subject_digest != intent.source_review_subject_digest)
+                or (item.review_verdict and item.review_verdict != intent.source_review_verdict)
+                or any(getattr(item, field) and getattr(item, field) != feedback.get(key)
+                       for field, key in (("review_report_ref", "report_ref"), ("review_ledger_ref", "ledger_ref")))):
+            raise PlatformError("Authoring retry source changed before intent publication; inspect work show before retry")
+        plan = {"generation": _authoring_generation(node, item),
+                "source": _authoring_retry_source(item)}
+        intent = replace(intent, state="recovering", authoring_recovery=plan)
+        item = observe_write(
+            lambda: store.update_work_item_metadata(node.work_item_id, worker_handoff=intent),
+            lambda current: current.worker_handoff == intent)
+    plan = intent.authoring_recovery
+    if (intent.state != "recovering"
+            or not replace(intent, state="pending", authoring_recovery=None).is_causally_bound()
+            or not isinstance(plan, dict) or set(plan) != {"generation", "source"}):
+        raise PlatformError("Invalid authoring recovery intent; inspect work show before retry")
+    generation, source = plan["generation"], plan["source"]
+    current = _authoring_retry_source(item)
+    if (not isinstance(generation, str) or not generation or not isinstance(source, dict)
+            or set(source) != set(current)
+            or not isinstance(source["binding"], dict)
+            or set(source["binding"]) != {"generation", "contract_sha256"}
+            or not (source["binding"]["generation"] is None or isinstance(source["binding"]["generation"], str))
+            or intent.review_context_binding != source["binding"]
+            or item.worker_handoff != intent
+            or current["status"] not in (source["status"], WorkItemStatus.TODO.value)
+            or current["phase"] not in (source["phase"], TaskPhase.AUTHORING.value)
+            or current["assignee"] not in (None, source["assignee"])
+            or node.worker != intent.target_worker
+            or review_context_binding(replace(item, contract=node.contract))["contract_sha256"] != source["binding"]["contract_sha256"]
+            or current["binding"]["contract_sha256"] != source["binding"]["contract_sha256"]
+            or current["binding"]["generation"] not in {source["binding"]["generation"], generation}
+            or any(current[k] != source[k] for k in ("delivery", "counters", "ledger_ref", "ledger_generation"))
+            or any(current[k] not in (None, source[k]) for k in ("identity", "subject", "report_ref", "verdict"))):
+        raise PlatformError("Authoring recovery source changed; inspect work show before retry")
+
+    def reached(current):
+        return (current.worker_handoff == intent
+                and current.phase == TaskPhase.AUTHORING
+                and current.status == WorkItemStatus.TODO
+                and current.review_generation == generation
+                and not current.review_verdict and not current.review_report
+                and not current.review_report_ref and not current.review_subject_digest
+                and not current.delivery_identity and not current.decision_required
+                and not current.review_obligations and not current.review_continuation
+                and not current.reviewer_run_baseline and not current.machine_feedback
+                and current.bounce_baseline is None
+                and current.platform_assignee_id is None
+                and review_context_binding(current)["contract_sha256"] == source["binding"]["contract_sha256"]
+                and _authoring_retry_source(current)["delivery"] == source["delivery"]
+                and asdict(current.bounces) == source["counters"])
+
+    if not reached(item):
+        item = observe_write(
+            lambda: store.restore_authoring_generation(
+                node.work_item_id, node.contract, generation, worker_handoff=intent),
+            reached)
+    completed = replace(intent, state="pending", authoring_recovery=None,
+                        review_context_binding=review_context_binding(item))
+    observe_write(
+        lambda: store.update_work_item_metadata(node.work_item_id, worker_handoff=completed),
+        lambda current: current.worker_handoff == completed and current.review_generation == generation)
+    return "todo"
+
+
 def prepare_stage_recovery(
     node,
     store,
@@ -135,6 +265,7 @@ def prepare_stage_recovery(
     expected_review_generation: str | None = None,
     expected_bounce_baseline: dict[str, int] | None = None,
     sync_contract: bool = False,
+    worker_handoff: WorkerHandoffIntent | None = None,
 ) -> str:
     """共享的 review/authoring 阶段准备；merge 交给 run_merge_delivery。
 
@@ -146,13 +277,9 @@ def prepare_stage_recovery(
     item = store.get_work_item(node.work_item_id)
     validate_stage_recovery(item, stage)
     if stage == "authoring":
-        generation = expected_review_generation or (
-            "authoring-" + _stable_digest({
-                "node": node.id,
-                "contract": _dump_contract(node.contract) if node.contract else None,
-                "evidence": recovery_evidence_digest(item),
-            })[:24]
-        )
+        if worker_handoff is not None:
+            return _prepare_authoring_retry(node, store, item, worker_handoff)
+        generation = expected_review_generation or _authoring_generation(node, item)
         store.restore_authoring_generation(
             node.work_item_id, node.contract, generation,
             expected_bounce_baseline)

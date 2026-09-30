@@ -2043,6 +2043,8 @@ def _dispatch_worker_handoff_locked(
     projection = projection or store.observe_work_item_control(item_id)
     current = projection.work_item
     intent = current.worker_handoff
+    if intent is not None and intent.authoring_recovery is not None:
+        raise PlatformError(f"Authoring recovery is incomplete; finish `omac node retry <manifest> {key} --stage authoring` before dispatch")
     if current.phase == TaskPhase.AUTHORING and current.decision_required:
         return _WorkerHandoffResult(
             "needs-decision", intent, projection, decision=current.decision_required)

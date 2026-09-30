@@ -777,3 +777,7 @@ is retired, with an exact source subject/contract check before retirement. The o
 fix does not reconstruct an identity already lost by an older version. Missing causal
 handoff or unapproved historical provenance still blocks existing recovery commands;
 preserve the accepted review and counters instead of fabricating identity fields.
+
+### Interrupted authoring retry
+
+For an existing reject, `omac node retry <manifest> <node> --stage authoring` persists the complete rework handoff before clearing the old review. A `recovering` intent cannot dispatch a Worker; unknown responses are observed before continuing. After interruption, inspect `omac work show <work-item-id> --output json` and repeat the same retry command to finish the original generation. Do not clear the intent or reset counters. Contract, HEAD, verification-reference or counter drift blocks recovery. Success prepares recovery; normal DAG execution must still deliver, review and merge. Rework text is bounded; read the retained immutable report/ledger refs for full requirements. Cumulative bounce audit counters and retained manifest budget authority are unchanged.

@@ -605,3 +605,7 @@ OMAC 将完整 intent 发布到不可变附件，原 metadata 键只存 issue/ke
 随后才能退役原 delivery_identity。失败或中断不能留下“旧 identity 已清、intent 尚未存”
 的新状态。该顺序修复不会自动补造旧版本已丢失的 sealed identity；原接受 source 缺少
 因果 handoff/被明确授权的历史来源时，现有 CLI 仍需失败关闭并保留旧 review 与计数。
+
+### Authoring retry 的中断恢复
+
+已有 reject 的 `omac node retry <manifest> <node> --stage authoring` 先持久化完整返工 handoff，再清理旧 review。准备阶段的 `recovering` intent 不允许派发 Worker；响应未知时先读回确认。若命令中断，检查 `omac work show <work-item-id> --output json` 后重复同一 retry 命令，继续原 generation；不要清除 intent 或重置计数。来源的 contract、HEAD、verification 引用或计数发生漂移时命令会拒绝继续。成功只表示恢复准备完成，后续仍需通过正常 DAG 执行交付、评审和合并。三项等返工反馈使用有界摘要；完整修复要求通过保留的 immutable report/ledger refs 阅读。累计 bounce 审计计数及 manifest 保留的预算授权不变。

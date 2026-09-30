@@ -988,8 +988,18 @@ class MockStore(WorkItemStore):
         contract: Any,
         review_generation: str,
         bounce_baseline: Optional[Dict[str, int]] = None,
+        *,
+        worker_handoff: Optional[WorkerHandoffIntent] = None,
     ) -> WorkItem:
         item = self.get_work_item(item_id)
+        if worker_handoff is not None and (
+            worker_handoff.state != "recovering"
+            or not isinstance(worker_handoff.authoring_recovery, dict)
+            or worker_handoff.authoring_recovery.get("generation") != review_generation
+        ):
+            raise PlatformError("Invalid durable authoring recovery intent")
+        if worker_handoff is not None and item.worker_handoff != worker_handoff:
+            raise PlatformError("Authoring recovery intent changed before retirement")
         item.contract = contract
         from ..core.manifest import _dump_contract
         payload = _dump_contract(contract) if not isinstance(contract, dict) else contract
@@ -1013,7 +1023,7 @@ class MockStore(WorkItemStore):
         item.review_obligations_ref = None
         item.review_continuation = None
         item.reviewer_run_baseline = None
-        item.worker_handoff = None
+        item.worker_handoff = worker_handoff
         item.delivery_identity = None
         item.decision_required = None
         item.review_nits_acceptance = None

@@ -2242,6 +2242,8 @@ class MulticaStore(WorkItemStore):
         contract: Any,
         review_generation: str,
         bounce_baseline: Optional[Dict[str, int]] = None,
+        *,
+        worker_handoff: Optional[WorkerHandoffIntent] = None,
     ) -> WorkItem:
         """Publish the contract, then reset the issue control projection.
 
@@ -2258,6 +2260,14 @@ class MulticaStore(WorkItemStore):
         """
         from ..core.manifest import _dump_contract
 
+        if worker_handoff is not None and (
+            worker_handoff.state != "recovering"
+            or not isinstance(worker_handoff.authoring_recovery, dict)
+            or worker_handoff.authoring_recovery.get("generation") != review_generation
+        ):
+            raise PlatformError("Invalid durable authoring recovery intent")
+        if worker_handoff is not None and self.get_work_item(item_id).worker_handoff != worker_handoff:
+            raise PlatformError("Authoring recovery intent changed before retirement")
         payload = _dump_contract(contract) if not isinstance(contract, dict) else contract
         source = yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
         contract_ref = self._publish_payload_comment(
@@ -2269,7 +2279,7 @@ class MulticaStore(WorkItemStore):
             (REVIEW_OBLIGATIONS_KEY, []),
             (REVIEW_OBLIGATIONS_REF_KEY, "{}"),
             (REVIEW_CONTINUATION_KEY, "{}"),
-            (WORKER_HANDOFF_KEY, "{}"),
+            *(((WORKER_HANDOFF_KEY, "{}"),) if worker_handoff is None else ()),
             (DELIVERY_IDENTITY_KEY, "{}"),
             (PHASE_KEY, TaskPhase.AUTHORING.value),
             (REVIEW_GENERATION_KEY, review_generation),

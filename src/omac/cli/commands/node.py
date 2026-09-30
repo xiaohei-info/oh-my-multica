@@ -409,7 +409,16 @@ def _cmd_retry(args) -> int:
                     manifest, args.node_key, node, engine, current,
                     args.manifest)
             )
-            handoff = None
+            resuming_authoring = bool(
+                stage == "authoring" and current.worker_handoff is not None
+                and (current.worker_handoff.authoring_recovery is not None
+                     or (current.phase == TaskPhase.AUTHORING
+                         and current.status == WorkItemStatus.TODO
+                         and current.worker_handoff.gate == "operator-retry"
+                         and current.worker_handoff.target_worker == node.worker
+                         and current.worker_handoff.target_run_id is None
+                         and review_feedback_is_current(current, current.worker_handoff))))
+            handoff = current.worker_handoff if resuming_authoring else None
             prior_handoff = current.worker_handoff
             if prior_handoff is not None and not review_feedback_is_current(current, prior_handoff):
                 prior_handoff = None
@@ -462,6 +471,7 @@ def _cmd_retry(args) -> int:
                 )
             if (
                 stage == "authoring"
+                and not resuming_authoring
                 and node.reviewer
                 and (
                     current.bounces.review > 0
@@ -558,16 +568,13 @@ def _cmd_retry(args) -> int:
                     ) or None,
                     baseline_pr_head_sha=baseline_pr_head_sha,
                     target_worker_bounce=current.bounces.worker,
+                    review_context_binding=review_context_binding(current),
                 )
             if not delayed_review_recovered:
                 # 复用 DAG stage recovery 原语；清除旧 reviewer 判定并恢复
                 # 指定阶段，同时保留 PR、verification 与历史附件。
-                prepare_stage_recovery(node, engine.store, stage)
-                if handoff is not None:
-                    handoff = replace(handoff, review_context_binding=review_context_binding(
-                        engine.store.get_work_item(node.work_item_id)))
-                    engine.store.update_work_item_metadata(
-                        node.work_item_id, worker_handoff=handoff)
+                prepare_stage_recovery(
+                    node, engine.store, stage, worker_handoff=handoff)
             refreshed = engine.store.get_work_item(node.work_item_id)
             node.recovery_marker = bool(
                 refreshed.worker_handoff
