@@ -303,6 +303,8 @@ class WorkerHandoffIntent:
     target_run_id: Optional[str] = None
     target_worker_bounce: Optional[int] = None
     terminal_observed_at: Optional[str] = None
+    # Durable, non-dispatchable stage preparation; removed after read-back.
+    authoring_recovery: Optional[dict[str, Any]] = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -327,6 +329,8 @@ class WorkerHandoffIntent:
             "target_run_id": self.target_run_id,
             "target_worker_bounce": self.target_worker_bounce,
             "terminal_observed_at": self.terminal_observed_at,
+            **({"authoring_recovery": deepcopy(self.authoring_recovery)}
+               if self.authoring_recovery is not None else {}),
         }
 
     def is_complete(self) -> bool:
@@ -360,6 +364,7 @@ class WorkerHandoffIntent:
         return bool(
             self.schema == WORKER_HANDOFF_SCHEMA
             and self.state == "pending"
+            and self.authoring_recovery is None
             and self.target_worker
             and review_bounce_valid
             and self.source_review_subject_digest
@@ -588,6 +593,7 @@ def parse_worker_handoff(value: Any) -> Optional[WorkerHandoffIntent]:
         target_run_id=text_field("target_run_id"),
         target_worker_bounce=int_field("target_worker_bounce"),
         terminal_observed_at=text_field("terminal_observed_at"),
+        authoring_recovery=deepcopy(value.get("authoring_recovery")),
     )
 
 

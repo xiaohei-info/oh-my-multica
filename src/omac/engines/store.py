@@ -376,12 +376,16 @@ class WorkItemStore(ABC):
         contract: Any,
         review_generation: str,
         bounce_baseline: Optional[Dict[str, int]] = None,
+        *,
+        worker_handoff: Optional[WorkerHandoffIntent] = None,
     ) -> WorkItem:
-        """Atomically replace the current authoring control projection.
+        """Replace the current authoring control projection without dispatch.
 
         Historical review ledger attachments and absolute bounce counters remain
         untouched.  The new generation retires every prior review decision,
         verdict/report, continuation, dispatch intent, and delivery identity.
+        A supplied worker_handoff must already be durable and is preserved
+        across partial metadata writes for restart-safe operator recovery.
         ``bounce_baseline`` is a read projection of the amendment ledger fact;
         it never replaces the cumulative audit counters.
         """
