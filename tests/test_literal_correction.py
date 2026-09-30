@@ -511,3 +511,222 @@ def test_ordinary_amendment_review_receives_specific_non_propagation_obligation(
     item.deliverable = yaml.safe_dump(proposal)
     obligations = build_review_obligations(item, amendment_manifest=case.manifest)
     assert literal_review_obligation(proposal) in obligations
+
+
+def historical_blocker(c):
+    from omac.core.taskmeta import review_context_binding
+
+    run = AgentRunObservation(
+        "discovery",
+        "direct",
+        "completed",
+        agent_id="mock-agent-alice",
+        trigger_kind="issue_assignment",
+        created_at="2026-09-30T01:00:00Z",
+        updated_at="2026-09-30T01:03:00Z",
+    )
+    prior = c.eng.runtime.list_runs
+    c.eng.runtime.list_runs = lambda item_id: (
+        [run] if item_id == c.item.id else prior(item_id)
+    )
+    binding = review_context_binding(c.item)
+    blocker = {
+        "schema": "omac.worker-blocker/v2",
+        "reason_code": "owner-decision-required",
+        "issue_id": c.item.id,
+        "review_context_binding": binding,
+        "handoff_generation": "historical-handoff",
+        "worker": "alice",
+        "run_id": run.id,
+        "contract_ref": "non_goals",
+        "summary": "old-purpose differs from canonical new-purpose",
+        "decision_needed": "Confirm canonical token",
+        "evidence": [
+            {"ref": "docs/design.md", "observation": "Canonical purpose is new-purpose"}
+        ],
+    }
+    decision = {
+        "schema": "omac.decision-required/v1",
+        "reason_code": "worker-decision-required",
+        "kind": "develop",
+        "phase": "authoring",
+        "gate": "worker",
+        "resume_issue_id": c.item.id,
+        "review_context_binding": binding,
+        "blocker": blocker,
+    }
+    output = {
+        "ok": False,
+        "exit_code": 20,
+        "terminal": True,
+        "decision_required": decision,
+        "next_action": "stop",
+    }
+    messages = [
+        {
+            "seq": 1,
+            "type": "tool_use",
+            "tool": "exec_command",
+            "call_id": "block",
+            "issue_id": c.item.id,
+            "task_id": run.id,
+            "created_at": "2026-09-30T01:01:00Z",
+            "input": {
+                "command": f"/usr/bin/zsh -lc 'OMAC_ENGINE=multica omac work block {c.item.id} --report-file blocker.yaml'"
+            },
+        },
+        {
+            "seq": 2,
+            "type": "tool_result",
+            "tool": "exec_command",
+            "call_id": "block",
+            "issue_id": c.item.id,
+            "task_id": run.id,
+            "created_at": "2026-09-30T01:02:00Z",
+            "output_truncated": False,
+            "output": json.dumps(output),
+        },
+    ]
+    c.eng.runtime.read_run_messages = lambda _item_id, _run_id: deepcopy(messages)
+    return run, messages, output
+
+
+def test_only_proven_completed_blocker_discovery_is_eligible_without_erasing_history(
+    case,
+):
+    run, messages, _ = historical_blocker(case)
+    original = deepcopy(case.item)
+    proposal = prepare(case)
+    snapshot = proposal["operations"][0]["correction"]["snapshots"]["bootstrap"]
+    assert snapshot["runs"][0]["id"] == run.id
+    assert snapshot["historical_blocker"]["receipt"]["exit_code"] == 20
+    assert snapshot["historical_blocker"]["messages_sha256"]
+    assert case.item == original and case.eng.runtime.list_runs(case.item.id) == [run]
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "active",
+        "unknown",
+        "failed",
+        "foreign-agent",
+        "foreign-worker",
+        "foreign-issue",
+        "truncated",
+        "fake-command",
+        "wrong-contract",
+        "wrong-run",
+        "not-terminal",
+        "prior-submit",
+        "after-stop",
+        "verification",
+        "artifacts",
+        "deliverable",
+        "extra-run",
+        "wrong-topic",
+        "outside-window",
+        "wrong-call",
+    ],
+)
+def test_historical_discovery_exception_never_accepts_activity_delivery_or_fake_receipts(
+    case, change
+):
+    from dataclasses import replace
+
+    run, messages, output = historical_blocker(case)
+    if change in ("active", "unknown", "failed"):
+        run = replace(
+            run,
+            status={"active": "running", "unknown": "unknown", "failed": "failed"}[
+                change
+            ],
+        )
+    if change == "foreign-agent":
+        run = replace(run, agent_id="other")
+    if change == "foreign-worker":
+        case.item.worker = "charlie"
+    if change == "foreign-issue":
+        messages[1]["issue_id"] = "other"
+    if change == "truncated":
+        messages[1]["output_truncated"] = True
+    if change == "fake-command":
+        messages[0]["input"]["command"] = "echo claimed blocker"
+    if change == "wrong-contract":
+        output["decision_required"]["blocker"]["review_context_binding"][
+            "contract_sha256"
+        ] = "0" * 64
+    if change == "wrong-run":
+        output["decision_required"]["blocker"]["run_id"] = "old"
+    if change == "not-terminal":
+        output["terminal"] = False
+    if change == "prior-submit":
+        messages.insert(
+            0,
+            {
+                "seq": 0,
+                "type": "tool_use",
+                "tool": "exec_command",
+                "input": {
+                    "command": f"omac work submit {case.item.id} --pr-url https://example.test/pr/1"
+                },
+            },
+        )
+    if change == "after-stop":
+        messages.append(
+            {
+                "seq": 3,
+                "type": "tool_use",
+                "tool": "exec_command",
+                "input": {"command": "git status"},
+            }
+        )
+    if change == "verification":
+        case.item.verification_ref = {"attachment_id": "old-verification"}
+    if change == "artifacts":
+        case.item.artifacts = {"pr_url": "https://example.test/pr/1"}
+    if change == "deliverable":
+        case.item.deliverable = "produced result"
+    if change == "wrong-topic":
+        output["decision_required"]["blocker"]["summary"] = "Unrelated owner decision"
+        messages[1]["output"] = json.dumps(output)
+    if change == "outside-window":
+        messages[1]["created_at"] = "2026-09-30T02:00:00Z"
+    if change == "wrong-call":
+        messages[1]["call_id"] = "foreign"
+    if change == "extra-run":
+        prior = case.eng.runtime.list_runs
+        case.eng.runtime.list_runs = lambda item_id: (
+            [run, replace(run, id="another")]
+            if item_id == case.item.id
+            else prior(item_id)
+        )
+    elif change in ("active", "unknown", "failed", "foreign-agent"):
+        prior = case.eng.runtime.list_runs
+        case.eng.runtime.list_runs = lambda item_id: (
+            [run] if item_id == case.item.id else prior(item_id)
+        )
+    if change in ("wrong-contract", "wrong-run", "not-terminal"):
+        messages[1]["output"] = json.dumps(output)
+    with pytest.raises(ValidationError):
+        prepare(case)
+
+
+def test_historical_receipt_drift_invalidates_frozen_preparation(case):
+    from omac.core.literal_correction import verify_literal_correction
+
+    _, messages, _ = historical_blocker(case)
+    proposal = prepare(case)
+    messages[0]["input"]["command"] += " "
+    with pytest.raises(ValidationError, match="snapshot changed"):
+        verify_literal_correction(
+            case.manifest, proposal, case.eng.store, case.eng.runtime
+        )
+
+
+def test_nonzero_budget_categories_cannot_cancel_each_other(case):
+    historical_blocker(case)
+    case.item.bounces.worker = 1
+    case.item.bounces.review = -1
+    with pytest.raises(ValidationError):
+        prepare(case)

@@ -548,7 +548,7 @@ manifest amendment authority变化均须停止重核。见证SHA只固定字节�
 普通 `non_goals` 变更仍按 implementation-affecting 处理。只有可由不可变 authority
 核对、并经新独立 Reviewer 明确证明没有语义、scope、质量或下游实现影响的单 token
 错误，才能使用 `correct-contract-literal`。入口限已有、未合并、TODO/authoring、
-无 assignee/handoff/交付/Run/已消费预算的目标；不是一般合同恢复豁免。
+无 assignee/handoff/交付/已消费预算的目标；不是一般合同恢复豁免。
 
 协调者先只读准备候选（下面值均须使用真实 authority 和原 reject）：
 
@@ -565,7 +565,13 @@ omac dag amend prepare-literal-correction <manifest> <node> \
 或派发 Agent。绑定完整 old/new contract、单个 `non_goals[index]` 的一次替换、同一
 目标及同一完整替换合同的真实原拒绝方案、原 report/ledger/独立 completed Reviewer
 Run、目标和全部后代的 manifest/Store/Run 快照。所有被绑定的 Run 必须明确终止。
-读取失败、已有目标 Run/预算、未知 Run 或快照变化均失败关闭。
+读取失败、已有目标消费预算、未知或活跃 Run、交付或快照变化均失败关闭。
+目标默认无 Run；唯一历史例外是同一 Worker 的一个 completed formal direct Run，
+平台原始完整工具记录必须证明其精确 `work block` 调用收到未截断的 v2 owner-decision
+终止回执（exit 20），绑定同 issue/Run/Worker、相同完整旧合同哈希和本次两 token。
+必须无提交尝试、无后续工具调用，全部回执与原记录 SHA 随候选冻结。任意普通 completed、
+failed/cancelled、多个 Run、外来 actor 或伪造/残缺回执仍拒绝。历史发现不恢复旧 decision
+或 handoff，也不抹除 Run；它只证明当前无交付、无消费的历史发现可接受精确文字纠正。
 
 由协调者在普通 amendment 新 attempt 中提交这份原样候选并独立评审；不能把原
 reject 当 pass，也不能手改冻结包或 analysis。新增专项 review obligation 要求明确

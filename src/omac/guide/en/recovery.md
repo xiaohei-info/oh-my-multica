@@ -717,8 +717,8 @@ sealed run_id. Conflicting Runs are rejected and old identities are not rewritte
 Generic non_goals changes remain implementation-affecting. The sole operation
 `correct-contract-literal` changes one identifier occurrence in one non_goals
 string, with identical full contracts otherwise. It is restricted to an existing
-unmerged TODO/authoring target with no assignee, handoff, sealed delivery, Run or
-consumed budget. It is not a general recovery exemption.
+unmerged TODO/authoring target with no assignee, handoff, delivery or consumed
+budget. It is not a general recovery exemption.
 
 Use `omac dag amend prepare-literal-correction --help` for read-only preparation.
 Supply the exact original/replacement token and non_goals index, a commit-pinned
@@ -727,6 +727,15 @@ amendment issue. The rejected proposal must name this same target and full
 replacement contract. Preparation freezes its report/ledger and completed
 independent Reviewer provenance, plus every target/descendant manifest, Store and
 Run snapshot. Unknown/non-terminal Runs or any snapshot drift fail closed.
+
+A target normally has no Run history. The sole exception is one completed formal
+direct Run of the same Worker: complete original platform tool records must pair
+the exact work-block command with an untruncated v2 owner-decision terminal
+receipt (exit 20), bound to the issue, Run, Worker, full old-contract hash and both
+literal tokens. No submission attempt or later tool call is permitted. The receipt
+and complete message digest are frozen. Generic completed, failed/cancelled,
+multiple, foreign or unproved Runs still fail closed. This historical evidence
+does not restore a retired decision/handoff, erase history or grant a budget.
 
 The coordinator submits the untouched prepared proposal through a new ordinary
 amendment attempt. A dedicated review obligation requires independent authority
