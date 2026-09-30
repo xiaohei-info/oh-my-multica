@@ -77,6 +77,10 @@ class AgentRuntime(ABC):
             "Runtime adapter does not expose stable Agent Run identities; "
             "implement AgentRuntime.list_runs first")
 
+    def read_run_messages(self, item_id: str, run_id: str) -> List[dict]:
+        """Read complete platform tool records; unsupported adapters fail closed."""
+        raise PlatformError("Runtime adapter does not expose original Run tool records")
+
     @abstractmethod
     def list_targets(self) -> List[RuntimeTarget]:
         """列出用户创建 Agent 时可选择的运行时目标。"""

@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import asdict
+from datetime import datetime
 import hashlib
 import json
 import re
+import shlex
 from urllib.parse import urlparse
 
 import yaml
@@ -124,7 +126,193 @@ def _scope(manifest, target):
     return [key for key in manifest.nodes if key in selected]
 
 
-def _snapshots(manifest, target, store, runtime):
+def _block_command(command, item_id):
+    try:
+        words = shlex.split(command)
+        if words and words[0] in {
+            "sh",
+            "bash",
+            "zsh",
+            "/bin/sh",
+            "/bin/bash",
+            "/bin/zsh",
+            "/usr/bin/zsh",
+        }:
+            if len(words) != 3 or words[1] not in {"-c", "-lc"}:
+                return False
+            words = shlex.split(words[2])
+        while words and re.fullmatch(
+            r"OMAC_(ENGINE|WORKSPACE_ID|PROJECT_ID)=[^\s]+", words[0]
+        ):
+            words.pop(0)
+        return (
+            len(words) == 6
+            and words[:5] == ["omac", "work", "block", item_id, "--report-file"]
+            and bool(words[5])
+        )
+    except (TypeError, ValueError):
+        return False
+
+
+def _historical_blocker(item, node, runs, store, runtime, tokens):
+    """A terminal discovery receipt is historical evidence, never a live decision."""
+    from .taskmeta import review_context_binding
+
+    if not runs:
+        return None
+    if len(runs) != 1:
+        raise ValidationError(
+            "Literal correction permits only one proven historical discovery Run"
+        )
+    run = runs[0]
+    if (
+        item.worker != node.worker
+        or run.status != "completed"
+        or run.kind != "direct"
+        or not run.formal
+        or run.agent_id != store.resolve_agent_id(node.worker)
+    ):
+        raise ValidationError(
+            "Historical discovery must be the exact completed formal Worker Run"
+        )
+    records = runtime.read_run_messages(item.id, run.id)
+    if (
+        not isinstance(records, list)
+        or not records
+        or not all(isinstance(row, dict) for row in records)
+    ):
+        raise ValidationError("Original discovery tool records are missing")
+    encoded = json.dumps(records, sort_keys=True, ensure_ascii=False).encode()
+    if len(encoded) > 16 * 1024 * 1024:
+        raise ValidationError(
+            "Original discovery tool records exceed the bounded witness size"
+        )
+    sequences = [row.get("seq") for row in records]
+    if any(type(seq) is not int for seq in sequences) or sequences != list(
+        range(1, len(records) + 1)
+    ):
+        raise ValidationError(
+            "Original discovery tool records are incomplete or ambiguous"
+        )
+    for row in records:
+        if row.get("type") != "tool_use":
+            continue
+        command = (row.get("input") or {}).get("command", "")
+        normalized = (
+            re.sub(r"[\"',]+", " ", command) if isinstance(command, str) else ""
+        )
+        if re.search(r"\bomac\s+work\s+submit\b", normalized):
+            raise ValidationError("Historical Run attempted delivery submission")
+    receipts = []
+    for result in records:
+        if (
+            result.get("type") != "tool_result"
+            or result.get("output_truncated") is not False
+            or result.get("error")
+        ):
+            continue
+        calls = [
+            row
+            for row in records
+            if row.get("type") == "tool_use"
+            and row.get("call_id") == result.get("call_id")
+        ]
+        if len(calls) != 1:
+            continue
+        call = calls[0]
+        if (
+            call.get("tool") not in {"exec_command", "bash"}
+            or result.get("tool") != call.get("tool")
+            or not _block_command((call.get("input") or {}).get("command"), item.id)
+        ):
+            continue
+        if (
+            any(
+                row.get("issue_id") != item.id or row.get("task_id") != run.id
+                for row in (call, result)
+            )
+            or call["seq"] >= result["seq"]
+        ):
+            continue
+        try:
+            start = datetime.fromisoformat(run.created_at.replace("Z", "+00:00"))
+            end = datetime.fromisoformat(run.updated_at.replace("Z", "+00:00"))
+            call_time = datetime.fromisoformat(
+                call["created_at"].replace("Z", "+00:00")
+            )
+            result_time = datetime.fromisoformat(
+                result["created_at"].replace("Z", "+00:00")
+            )
+            if (
+                any(
+                    value.tzinfo is None
+                    for value in (start, end, call_time, result_time)
+                )
+                or not start <= call_time <= result_time <= end
+            ):
+                continue
+            receipt = json.loads(result["output"])
+            decision = receipt["decision_required"]
+            blocker = decision["blocker"]
+            sha = review_context_binding(item)["contract_sha256"]
+            if (
+                receipt.get("ok") is not False
+                or receipt.get("exit_code") != 20
+                or receipt.get("terminal") is not True
+                or receipt.get("next_action") != "stop"
+            ):
+                continue
+            if (
+                decision.get("schema") != "omac.decision-required/v1"
+                or decision.get("reason_code") != "worker-decision-required"
+                or decision.get("kind") != "develop"
+                or decision.get("phase") != "authoring"
+                or decision.get("gate") != "worker"
+                or decision.get("resume_issue_id") != item.id
+            ):
+                continue
+            binding = blocker.get("review_context_binding")
+            if (
+                not isinstance(binding, dict)
+                or binding.get("contract_sha256") != sha
+                or decision.get("review_context_binding") != binding
+            ):
+                continue
+            if (
+                blocker.get("schema") != "omac.worker-blocker/v2"
+                or blocker.get("reason_code") != "owner-decision-required"
+                or blocker.get("issue_id") != item.id
+                or blocker.get("worker") != node.worker
+                or blocker.get("run_id") != run.id
+                or not blocker.get("handoff_generation")
+                or blocker.get("contract_ref") != "non_goals"
+                or not blocker.get("evidence")
+                or not isinstance(blocker.get("summary"), str)
+                or not tokens
+                or not all(token in blocker["summary"] for token in tokens)
+            ):
+                continue
+        except (AttributeError, KeyError, TypeError, ValueError):
+            continue
+        if any(
+            row.get("type") == "tool_use" and row["seq"] > result["seq"]
+            for row in records
+        ):
+            raise ValidationError(
+                "Historical discovery continued tools after terminal stop"
+            )
+        receipts.append(receipt)
+    if len(receipts) != 1:
+        raise ValidationError(
+            "Historical discovery requires one complete accepted work-block receipt"
+        )
+    return {
+        "receipt": receipts[0],
+        "messages_sha256": hashlib.sha256(encoded).hexdigest(),
+    }
+
+
+def _snapshots(manifest, target, store, runtime, *, tokens=None):
     if runtime is None:
         raise ValidationError("Literal correction requires an AgentRuntime snapshot")
     result = {}
@@ -148,18 +336,29 @@ def _snapshots(manifest, target, store, runtime):
             or item.reviewer_run_baseline
             or item.requires_decision
             or item.unknown_persisted_fields
-            or item.bounces.total()
-            or runs
+            or any(asdict(item.bounces).values())
+            or item.artifacts
+            or item.verification
+            or item.verification_ref
+            or item.deliverable
+            or item.deliverable_ref
+            or item.project_rules
+            or item.project_rules_ref
             or _contract(item.contract) != _dump_contract(node.contract)
         ):
             raise ValidationError(
-                "Literal correction requires an unassigned, Run-free authoring target with the exact old contract"
+                "Literal correction requires an unassigned, delivery-free authoring target with zero consumed counters and the exact old contract"
             )
         result[key] = _json(
             {
                 "node": asdict(node),
                 "store": asdict(item) if item else None,
                 "runs": [asdict(run) for run in runs],
+                "historical_blocker": (
+                    _historical_blocker(item, node, runs, store, runtime, tokens)
+                    if key == target
+                    else None
+                ),
             }
         )
     return result
@@ -307,7 +506,9 @@ def prepare_literal_correction(
     operation["correction"]["source_reject"] = _source_reject(
         store, runtime, source_issue_id
     )
-    operation["correction"]["snapshots"] = _snapshots(manifest, node_id, store, runtime)
+    operation["correction"]["snapshots"] = _snapshots(
+        manifest, node_id, store, runtime, tokens=(old_token, new_token)
+    )
     # A second read prevents a preparation assembled from changing snapshots.
     proposal = {
         "schema": "omac.dag-amendment/v1",
@@ -347,7 +548,13 @@ def verify_literal_correction(manifest, proposal, store, runtime):
         raise ValidationError(
             "Original rejected amendment changed after literal correction preparation"
         )
-    if c["snapshots"] != _snapshots(manifest, operation["node"], store, runtime):
+    if c["snapshots"] != _snapshots(
+        manifest,
+        operation["node"],
+        store,
+        runtime,
+        tokens=(c["old_token"], c["new_token"]),
+    ):
         raise ValidationError(
             "Literal correction target/downstream runtime snapshot changed; prepare and independently review again"
         )
@@ -365,7 +572,10 @@ def literal_review_obligation(proposal):
             "Independently verify the canonical token against the exact immutable authority quote; "
             "the single prose-token correction has no semantic scope, quality, ownership, output or "
             "downstream implementation effect. Verify both full contracts, preserved real reject, "
-            "and every frozen target/downstream Store and Run snapshot. Do not approve generic "
+            "and every frozen target/downstream Store and Run snapshot. Any historical target "
+            "Run must have its unique completed formal Worker discovery receipt, exact old contract "
+            "binding, no delivery/submission or consumed counters, and no tools after its accepted "
+            "terminal stop. Historical receipts are not current decisions. Do not approve generic "
             "non_goals relaxation or clear the original reject/budgets. Reject if this cannot be proved."
         ),
         "authority": c["authority"],

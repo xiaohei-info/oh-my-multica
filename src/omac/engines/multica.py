@@ -2650,6 +2650,18 @@ class MulticaRuntime(AgentRuntime):
             if isinstance(run, dict) and run.get("id")
         ]
 
+    def read_run_messages(self, item_id: str, run_id: str) -> List[dict]:
+        payload = self._store._run_idempotent_read(
+            "run messages",
+            lambda: self._store._run_multica([
+                "issue", "run-messages", run_id, "--issue", item_id,
+                "--output", "json",
+            ]),
+        )
+        if not isinstance(payload, list) or not all(isinstance(row, dict) for row in payload):
+            raise PlatformError("Could not read complete original Run tool records")
+        return payload
+
     @staticmethod
     def _items(payload, key: str) -> List[Dict[str, Any]]:
         if isinstance(payload, list):
