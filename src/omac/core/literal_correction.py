@@ -645,7 +645,17 @@ def literal_review_binding(proposal, store, runtime, issue_id):
             raise ValidationError("Literal correction reviewed deliverable changed")
         ref = item.review_report_ref
         observed = store.observe_verification_attachment(issue_id, ref)
-        reviewer_id = store.resolve_agent_id(item.reviewer)
+        # Confirmation clears the live assignment. The immutable report and
+        # exact completed formal Run retain the reviewer's causal identity.
+        reviewer_id = (
+            store.resolve_agent_id(item.reviewer)
+            if item.reviewer
+            else observed.uploader_id
+        )
+        if not isinstance(reviewer_id, str) or not reviewer_id.strip():
+            raise ValidationError(
+                "Literal correction report reviewer identity is missing"
+            )
         worker_id = store.resolve_agent_id(item.worker)
         if (
             observed.attachment_id != ref["attachment_id"]

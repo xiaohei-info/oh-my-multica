@@ -752,3 +752,12 @@ creating a fresh allowance via an authoring baseline. Authority, reject, review 
 runtime drift requires preparation and independent review again. Re-entry observes
 the existing consumed ledger without dispatch. Retain the single-writer boundary;
 this is not a cross-host platform transaction or a selected-DAG tick bypass.
+
+Normal confirmation unassignment clears the live reviewer name. Literal export
+verifies the immutable report's Agent uploader against the exact uniquely completed
+formal Reviewer Run for that issue, still independent from the Worker and bound to
+the exact report, submit, subject, ledger and specific obligation. A nonempty live
+reviewer name must still match. Do not edit the reviewer or pass fact to export.
+After a post-human-gate export failure, retain the original arguments and resume the
+same confirmation issue with --resume-issue-id. Existing contract/subject/CAS checks
+remain mandatory; no fresh preparation, dispatch or review is needed.

@@ -730,3 +730,76 @@ def test_nonzero_budget_categories_cannot_cancel_each_other(case):
     case.item.bounces.review = -1
     with pytest.raises(ValidationError):
         prepare(case)
+
+
+@pytest.mark.parametrize("cleared", [None, ""])
+def test_confirmation_export_uses_exact_report_run_after_assignment_is_cleared(
+    case, cleared
+):
+    proposal = prepare(case)
+    reviewed = approve(case, proposal)
+    item = case.eng.store.get_work_item(reviewed["review"]["issue_id"])
+    item.reviewer = cleared
+    before = deepcopy(item)
+    exported = build_reviewed_amendment(
+        case.manifest,
+        proposal,
+        case.eng.store,
+        issue_id=item.id,
+        reviewer_verdict="pass",
+        agent_pool={"alice", "bob", "charlie"},
+        runtime=case.eng.runtime,
+    )
+    assert (
+        exported["review"]["literal_review_binding"]
+        == reviewed["review"]["literal_review_binding"]
+    )
+    assert item == before
+    assert case.eng.store.assign_log == []
+
+
+@pytest.mark.parametrize(
+    "change", ["missing-uploader", "self-uploader", "foreign-run", "active-run"]
+)
+def test_cleared_confirmation_reviewer_never_weakens_independent_run_proof(
+    case, change
+):
+    from dataclasses import replace
+
+    proposal = prepare(case)
+    reviewed = approve(case, proposal)
+    item = case.eng.store.get_work_item(reviewed["review"]["issue_id"])
+    item.reviewer = ""
+    original_observe = case.eng.store.observe_verification_attachment
+
+    def observe(issue_id, ref):
+        result = original_observe(issue_id, ref)
+        if issue_id == item.id and change in {"missing-uploader", "self-uploader"}:
+            return replace(
+                result,
+                uploader_id="" if change == "missing-uploader" else "mock-agent-alice",
+            )
+        return result
+
+    case.eng.store.observe_verification_attachment = observe
+    original_runs = case.eng.runtime.list_runs
+
+    def runs(issue_id):
+        results = original_runs(issue_id)
+        if issue_id == item.id and change == "foreign-run":
+            return [replace(run, agent_id="foreign") for run in results]
+        if issue_id == item.id and change == "active-run":
+            return [replace(run, status="running") for run in results]
+        return results
+
+    case.eng.runtime.list_runs = runs
+    with pytest.raises(ValidationError):
+        build_reviewed_amendment(
+            case.manifest,
+            proposal,
+            case.eng.store,
+            issue_id=item.id,
+            reviewer_verdict="pass",
+            agent_pool={"alice", "bob", "charlie"},
+            runtime=case.eng.runtime,
+        )
