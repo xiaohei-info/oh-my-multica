@@ -8664,6 +8664,78 @@ class TestReviewerRejectBoundedFallback:
 
         assert calls == [True]
 
+    @pytest.mark.parametrize("payload", [
+        WorkItemPayload.VERIFICATION,
+        WorkItemPayload.DELIVERABLE,
+        WorkItemPayload.PROJECT_RULES,
+    ])
+    @pytest.mark.parametrize("source", ["current", "head-drift", "unreadable"])
+    def test_new_review_handoff_hydrates_fresh_subject_before_any_write(
+        self, tmp_path, monkeypatch, payload, source,
+    ):
+        """The locked fresh projection must materialize every subject input."""
+        from copy import deepcopy
+        from omac.errors import PlatformError
+
+        eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
+        path = str(tmp_path / "m.yaml")
+        manifest, eng, item = self._setup_reject_node(eng, path)
+        eng.store.update_work_item_metadata(
+            item.id, deliverable="exact delivery", project_rules="exact rules")
+        current = eng.store.get_work_item(item.id)
+        eng.store.update_work_item_metadata(
+            item.id,
+            review_subject_digest=review_subject_digest(
+                current, current.bounces.review + 1),
+            review_report=_review_report(current, "reject"),
+        )
+        current = deepcopy(eng.store.get_work_item(item.id))
+        if source == "head-drift":
+            current.artifacts["head_sha"] = "c" * 40
+        deferred = WorkItemControlProjection(
+            replace(current, **{payload.value: None}),
+            deferred_payloads=frozenset({payload}),
+        )
+        monkeypatch.setattr(
+            eng.store, "observe_work_item_control", lambda _item_id: deferred)
+        plans = []
+
+        def hydrate(projection, plan):
+            plans.append(plan)
+            return replace(projection.work_item, **{
+                payload.value: (None if source == "unreadable"
+                                else getattr(current, payload.value)),
+            })
+
+        monkeypatch.setattr(eng.store, "hydrate_work_item_evidence", hydrate)
+        writes = []
+
+        def stop_before_write(_item_id, **metadata):
+            writes.append(metadata)
+            raise RuntimeError("source accepted before first write")
+
+        monkeypatch.setattr(
+            eng.store, "update_work_item_metadata", stop_before_write)
+        for target, name in (
+            (eng.store, "update_status"),
+            (eng.store, "assign_work_item"),
+            (eng.runtime, "wake"),
+        ):
+            monkeypatch.setattr(
+                target, name,
+                lambda *_args, **_kwargs: pytest.fail("must not dispatch"),
+            )
+        error = RuntimeError if source == "current" else PlatformError
+        message = "source accepted" if source == "current" else "source is stale"
+        with pytest.raises(error, match=message):
+            loop._dispatch_worker_handoff(
+                eng.store, eng.runtime, manifest, "a",
+                review_bounce=current.bounces.review + 1, gate="review",
+                projection=WorkItemControlProjection(current),
+            )
+        assert plans == [frozenset({payload})]
+        assert bool(writes) is (source == "current")
+
     def test_review_handoff_persistent_stale_source_fails_before_writes(
         self, tmp_path, monkeypatch,
     ):

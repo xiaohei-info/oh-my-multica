@@ -2062,7 +2062,9 @@ def _dispatch_worker_handoff_locked(
         # control projection's None is not an authoritative null contract.
         required_payloads = {WorkItemPayload.CONTRACT}
         if gate in {"review", "review-nits"}:
-            required_payloads.add(WorkItemPayload.REVIEW_REPORT)
+            # The locked fresh projection defers the exact review subject's
+            # delivery and feedback bodies, even if collect already read them.
+            required_payloads.update(_REVIEW_CONFIRMATION_PAYLOADS)
         contract_deferred = WorkItemPayload.CONTRACT in projection.deferred_payloads
         projection = _hydrate_work_item_payloads(
             store, projection or WorkItemControlProjection(current),
