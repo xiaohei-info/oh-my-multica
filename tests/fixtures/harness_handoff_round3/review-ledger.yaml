@@ -1,0 +1,425 @@
+schema: omac.review-ledger/v2
+cycles:
+- round: 1
+  subject_digest: 03610f026a2fa4a971f0adf89338976c74a02b3da94d3e8661152e0144c70d33
+  report_digest: 1ab7e79ef7eb111a5f87339b8a401e0b05c26add1483d6b3a979e6fdc2141bf3
+  verdict: reject
+  obligation_results:
+    dimension:authority: pass
+    dimension:structure: pass
+    dimension:execution: pass
+    dimension:ownership: pass
+    dimension:evidence: fail
+    dimension:regression: fail
+    integration:harness-sdk-gate: fail
+  new_count: 3
+  fixed_count: 0
+  regressed_count: 0
+  unchanged_count: 0
+  open_count: 3
+  prior_open_blocker_ids: []
+  open_blocker_ids: &id001
+  - BLK-26ea0298bfd1
+  - BLK-36d3e6907885
+  - BLK-d5ac2fc7ef18
+  reported_blocker_ids: *id001
+  blocker_facts_schema: omac.review-cycle-blocker-facts/v1
+  blocker_facts:
+  - blocker_id: BLK-26ea0298bfd1
+    root_cause_key: receipt-tree-delivery-audit-not-bound-to-reviewed-source
+    obligation_id: dimension:evidence
+    summary: Published source snapshot, coverage audits and semantic evidence describe
+      pre-redesign bytes rather than the reviewed source.
+    evidence: At PR73 HEAD 9ce418cadca3cca358047d25c922207a08d856ed, artifacts/harness-sdk/source-snapshot.json:159
+      records be131f99b6cba9df1168dd0b9451c8d271e2e959. Checking the declared file
+      hashes against current source finds 12 mismatches; both new execution_measurement_tree
+      files are omitted. coverage-audit.md:5-16 reports the old source and 1689/2018
+      (83.6967%); coverage-block-audit.json retains the same old source/profile hashes
+      and function locations. Committed semantic-evidence.json likewise names be131f99b6cba9df1168dd0b9451c8d271e2e959.
+      Independently regenerated current evidence passes at 1911/2246 (85.08459483526269%)
+      with profile SHA-256 33eafae195bfa602242dacd40ecd723ea0302b69016c3e4dc53ebd9828636713.
+      Source, profile, audit and package bytes must be reconciled, not silently relabelled.
+    required_fix: Preserve prior audit artifacts explicitly as historical. Publish
+      synchronized current source-snapshot with complete current file inventory/hashes,
+      raw unfiltered coverage and block audit, final fixed 50-test/13-row/seven-current-row
+      semantic evidence and deterministic package manifest/bundle bound to the same
+      selected committed source bytes after functional correction. Do not relabel
+      historical results or treat reviewer-local regeneration as the worker sealed
+      delivery.
+    status: open
+    classification: new
+    owner: harness-sdk
+  - blocker_id: BLK-36d3e6907885
+    root_cause_key: sealed-receipt-subtree-descendant-relink-rejected
+    obligation_id: dimension:regression
+    summary: The sealed receipt adapter rejects valid nested subtree attachment even
+      though the shared data engine supports it.
+    evidence: Source 9ce418cadca3cca358047d25c922207a08d856ed; sdk/harness/execution_receipt.go:374-399.
+      After the root data tree is successfully relinked at :381, :389-390 recursively
+      calls rebindExecutionReceiptParent on the ORIGINAL child receipt using the NEW
+      parent identity. That original descendant is already linked to the old subtree-root
+      identity. execution_measurement_tree.go:127-128 rejects its different parent
+      digest. In contrast the historical implementation at 621ba1f7a2a45c9cf6072a3cc0c25cb27c727fb8
+      relinked descendants after validating the attachment root, and the pure engine
+      still does so at execution_measurement_tree.go:136-143. TestHarnessSDKMeasuredTreeCopyAndParentBinding
+      at execution_measurement_tree_test.go:138-152 exercises only data-tree attachment,
+      not authoritative wrapper relinking. This is a static control-flow finding;
+      no prohibited Host proof was fabricated and no additional authority experiment
+      was run.
+    required_fix: Validate the authoritative parent and every original child node
+      first, reject a differently bound attachment root, then rebuild the copied receipt
+      wrappers from the shared engine's already-relinked immutable subtree while retaining
+      only those previously validated per-node seals. Do not apply the external different-parent
+      attachment guard again to legitimate internal descendant relinking, promote
+      unsealed data, or relax root reparent rejection. Keep original snapshots unchanged.
+      Rerun all declared SDK regressions and verification; the existing downstream
+      Host-owned TestHarnessHostReceiptTreeAuthenticatesEveryNode must cover genuine
+      nested attachment without SDK proof fixtures.
+    status: open
+    classification: new
+    owner: harness-sdk
+  - blocker_id: BLK-d5ac2fc7ef18
+    root_cause_key: required-receipt-tree-design-audit-missing
+    obligation_id: integration:harness-sdk-gate
+    summary: Mandatory receipt-tree-design-evidence.md and the separate delivered
+      four-regression output are absent from PR73.
+    evidence: 'Source 9ce418cadca3cca358047d25c922207a08d856ed: exact read of artifacts/harness-sdk/receipt-tree-design-evidence.md
+      returned file-not-found and git ls-tree HEAD confirms it is not tracked. git
+      cat-file -e HEAD:artifacts/harness-sdk/receipt-tree-tests.json exits 128; the
+      four-test file exists only after reviewer execution of the declared selector.
+      The producer verification lists both paths as artifacts, but path declarations
+      alone are not artifacts. All four tests independently pass; that does not establish
+      the missing design audit.'
+    required_fix: Publish artifacts/harness-sdk/receipt-tree-design-evidence.md and
+      the actual separate four-test output. Include exact committed source/toolchain/profile
+      hashes, before/after production call graphs, every affected old-to-new block/function
+      mapping including Host-only code, raw covered/total counts, semantic explanation
+      of each denominator change, actual four named regression results, exported API/JSON/canonical
+      digest compatibility and a validation/ownership preservation map. Keep the 50-test/13-row
+      ledger unchanged and genuine Host obligations not-run. Do not create extra production
+      behavior or alter quality/security gates to close an evidence requirement.
+    status: open
+    classification: new
+    owner: harness-sdk
+- round: 2
+  subject_digest: dd74e7eec03ddfb37807a076b989baf66a80ad154d25e7b78ddda7a81b4b75ee
+  report_digest: 848eeaea5712ef103b5b8b95ff549cdcdb033b2c8ee71bae85a12f1a592a3a67
+  verdict: reject
+  obligation_results:
+    dimension:authority: fail
+    dimension:structure: pass
+    dimension:execution: pass
+    dimension:ownership: pass
+    dimension:evidence: fail
+    dimension:regression: pass
+    integration:harness-sdk-gate: pass
+  new_count: 1
+  fixed_count: 2
+  regressed_count: 0
+  unchanged_count: 0
+  open_count: 2
+  prior_open_blocker_ids:
+  - BLK-26ea0298bfd1
+  - BLK-36d3e6907885
+  - BLK-d5ac2fc7ef18
+  open_blocker_ids: &id002
+  - BLK-d4085e4d8609
+  - BLK-d5ac2fc7ef18
+  reported_blocker_ids: *id002
+  blocker_facts_schema: omac.review-cycle-blocker-facts/v1
+  blocker_facts:
+  - blocker_id: BLK-26ea0298bfd1
+    root_cause_key: receipt-tree-delivery-audit-not-bound-to-reviewed-source
+    obligation_id: dimension:evidence
+    summary: Published source snapshot, coverage audits and semantic evidence describe
+      pre-redesign bytes rather than the reviewed source.
+    evidence: At PR73 HEAD 9ce418cadca3cca358047d25c922207a08d856ed, artifacts/harness-sdk/source-snapshot.json:159
+      records be131f99b6cba9df1168dd0b9451c8d271e2e959. Checking the declared file
+      hashes against current source finds 12 mismatches; both new execution_measurement_tree
+      files are omitted. coverage-audit.md:5-16 reports the old source and 1689/2018
+      (83.6967%); coverage-block-audit.json retains the same old source/profile hashes
+      and function locations. Committed semantic-evidence.json likewise names be131f99b6cba9df1168dd0b9451c8d271e2e959.
+      Independently regenerated current evidence passes at 1911/2246 (85.08459483526269%)
+      with profile SHA-256 33eafae195bfa602242dacd40ecd723ea0302b69016c3e4dc53ebd9828636713.
+      Source, profile, audit and package bytes must be reconciled, not silently relabelled.
+    required_fix: Preserve prior audit artifacts explicitly as historical. Publish
+      synchronized current source-snapshot with complete current file inventory/hashes,
+      raw unfiltered coverage and block audit, final fixed 50-test/13-row/seven-current-row
+      semantic evidence and deterministic package manifest/bundle bound to the same
+      selected committed source bytes after functional correction. Do not relabel
+      historical results or treat reviewer-local regeneration as the worker sealed
+      delivery.
+    status: fixed
+    classification: fixed
+    last_evidence: All 31 source-snapshot files and tree hash match d54256aad13eb228e1aec4e1b6ffff13369891e6;
+      PR head 972a9b5e0454a93d351e2bbee4f87f4b8f78055a changes only evidence after
+      that source. Declared gzip patch is byte-identical to its source-bound git diff.
+      Published/current atomic profiles have identical block weights and covered set
+      at 1909/2229. All audit/profile hashes agree; semantic metrics and fixture rows
+      independently match exactly; regenerated deterministic bundle is byte-identical
+      with SHA-256 40ce8d4102dd9c5c8147d92946e15136487c0784a09b8deca4663f919b70ad8f.
+      Historical blobs remain addressable through the hashed history README.
+    owner: harness-sdk
+  - blocker_id: BLK-36d3e6907885
+    root_cause_key: sealed-receipt-subtree-descendant-relink-rejected
+    obligation_id: dimension:regression
+    summary: The sealed receipt adapter rejects valid nested subtree attachment even
+      though the shared data engine supports it.
+    evidence: Source 9ce418cadca3cca358047d25c922207a08d856ed; sdk/harness/execution_receipt.go:374-399.
+      After the root data tree is successfully relinked at :381, :389-390 recursively
+      calls rebindExecutionReceiptParent on the ORIGINAL child receipt using the NEW
+      parent identity. That original descendant is already linked to the old subtree-root
+      identity. execution_measurement_tree.go:127-128 rejects its different parent
+      digest. In contrast the historical implementation at 621ba1f7a2a45c9cf6072a3cc0c25cb27c727fb8
+      relinked descendants after validating the attachment root, and the pure engine
+      still does so at execution_measurement_tree.go:136-143. TestHarnessSDKMeasuredTreeCopyAndParentBinding
+      at execution_measurement_tree_test.go:138-152 exercises only data-tree attachment,
+      not authoritative wrapper relinking. This is a static control-flow finding;
+      no prohibited Host proof was fabricated and no additional authority experiment
+      was run.
+    required_fix: Validate the authoritative parent and every original child node
+      first, reject a differently bound attachment root, then rebuild the copied receipt
+      wrappers from the shared engine's already-relinked immutable subtree while retaining
+      only those previously validated per-node seals. Do not apply the external different-parent
+      attachment guard again to legitimate internal descendant relinking, promote
+      unsealed data, or relax root reparent rejection. Keep original snapshots unchanged.
+      Rerun all declared SDK regressions and verification; the existing downstream
+      Host-owned TestHarnessHostReceiptTreeAuthenticatesEveryNode must cover genuine
+      nested attachment without SDK proof fixtures.
+    status: fixed
+    classification: fixed
+    last_evidence: execution_receipt.go:271-300 validates the original child/parent
+      receipts, attaches once through the shared data engine, then rewraps the corresponding
+      already-relinked nodes at :372-378. It no longer reapplies the external different-parent
+      guard to original descendants. The shared engine retains the root guard at execution_measurement_tree.go:95-98
+      and relinks descendant copies at :136-143. Final updated.Validate still authenticates
+      every node. All four declared SDK data/authority-negative regressions pass.
+      This closure is static for genuine sealed nested attachment; the legitimate
+      Host-positive test remains downstream, not-run here.
+    owner: harness-sdk
+  - blocker_id: BLK-d4085e4d8609
+    root_cause_key: implementation-mutable-request-not-snapshotted-before-sealing
+    obligation_id: dimension:authority
+    summary: Implementation dispatch shares mutable request slices with the scope
+      later captured in measurement trees and authoritative receipt seals.
+    evidence: Static control-flow evidence at selected source d54256aad13eb228e1aec4e1b6ffff13369891e6;
+      no additional negative experiment or Host-proof fixture was constructed. sdk/harness/typed_execution_receipt.go:195-207
+      validates request.Scope before dispatch, passes the same slice-bearing request
+      through executeTypedExtension at :235, then supplies request.Scope to newExecutionReceipt.
+      The ordinary runner likewise stores request by value at conformance.go:607 and
+      constructs its tree after dispatch at :644-645. Executor runner conformance.go:563-564
+      copies Input but retains the original scope slices before invoking the closure;
+      :588 constructs the tree afterward. Executor production executeWithReceipt at
+      execution_receipt.go:432-447 also seals request.Scope after forwarding it to
+      the implementation. RequestScope.Permissions and InvocationIdentity.Entrypoint.Args
+      are slices; the dispatch/counter functions do not detach them. newExecutionReceipt
+      at execution_receipt.go:305-332 validates transport data and the trusted attestation
+      marker, but does not compare the post-call scope with the original Host proof.
+      validateWithParent at :190-205 subsequently compares against the newly captured
+      snapshot. The added TestHarnessSDKRejectsImplementationMutatedRequest at typed_response_validation_test.go:70-95
+      checks only mutation into an unsupported permission, which the later shape validator
+      rejects; it does not establish isolation of well-formed identity/scope changes.
+    required_fix: Before untrusted implementation dispatch, retain an independent
+      immutable snapshot of the complete originally validated request/scope and pass
+      detached mutable DTO data to the implementation. Build measurements and receipts
+      from that original snapshot, or reject any post-call projection mismatch without
+      sealing changed identity. Apply the same rule to typed and Executor Execute/Observe/Cancel
+      paths and preserve existing authority-check ordering, public API and canonical
+      bytes. Add ordinary SDK regressions for copy isolation and well-formed slice
+      mutations; keep genuine Host-positive checks in the already declared downstream
+      Host tests, not SDK proof fixtures. Regenerate all source-bound verification/evidence
+      after the substantive correction.
+    status: open
+    classification: new
+    owner: harness-sdk
+  - blocker_id: BLK-d5ac2fc7ef18
+    root_cause_key: required-receipt-tree-design-audit-missing
+    obligation_id: dimension:evidence
+    summary: The delivered receipt-tree audit covers the latest subtree repair, but
+      not the complete approved recursive representation change.
+    evidence: PR73 972a9b5e0454a93d351e2bbee4f87f4b8f78055a, selected source d54256aad13eb228e1aec4e1b6ffff13369891e6.
+      artifacts/harness-sdk/receipt-tree-design-evidence.md:18-31 maps only the 9ce418ca-to-d54256aa
+      subtree repair and says the authority validators/issuers were unchanged relative
+      to that repair. It does not map the original proof-coupled validateWithParent,
+      cloneExecutionReceipt, digest/child projection, newExecutionReceipt/newGateExecutionReceipt
+      and semantic adapter to the new shared engine and fixed-runner callers. Lines
+      44-48 explain only the 2246-to-2229 reduction, not the original 2018-to-2229
+      redesign. coverage-block-audit.json contains current function_callers and current
+      profile blocks only; its top-level schema has no historical graph or old-to-new
+      block mapping. The audit and four-test output now exist and their hashes/counts
+      are valid, so this is a deeper incomplete-content finding rather than continued
+      absence.
+    required_fix: Extend the existing source-bound audit with the full original-to-current
+      call graphs and affected block/function mapping for the approved representation
+      change, including Host-only guards, shared-engine functions, runner projections/attachments,
+      authoritative adapters and semantic writer. Map retained/redundant validation
+      and account for the entire denominator transition. Preserve historical source/profile
+      pairs and keep all security and coverage gates unchanged; no production padding
+      or Host fixtures are needed to repair this documentation/evidence defect.
+    status: open
+    classification: deeper
+    owner: harness-sdk
+    last_evidence: PR73 972a9b5e0454a93d351e2bbee4f87f4b8f78055a, selected source
+      d54256aad13eb228e1aec4e1b6ffff13369891e6. artifacts/harness-sdk/receipt-tree-design-evidence.md:18-31
+      maps only the 9ce418ca-to-d54256aa subtree repair and says the authority validators/issuers
+      were unchanged relative to that repair. It does not map the original proof-coupled
+      validateWithParent, cloneExecutionReceipt, digest/child projection, newExecutionReceipt/newGateExecutionReceipt
+      and semantic adapter to the new shared engine and fixed-runner callers. Lines
+      44-48 explain only the 2246-to-2229 reduction, not the original 2018-to-2229
+      redesign. coverage-block-audit.json contains current function_callers and current
+      profile blocks only; its top-level schema has no historical graph or old-to-new
+      block mapping. The audit and four-test output now exist and their hashes/counts
+      are valid, so this is a deeper incomplete-content finding rather than continued
+      absence.
+blockers:
+- blocker_id: BLK-26ea0298bfd1
+  root_cause_key: receipt-tree-delivery-audit-not-bound-to-reviewed-source
+  obligation_id: dimension:evidence
+  summary: Published source snapshot, coverage audits and semantic evidence describe
+    pre-redesign bytes rather than the reviewed source.
+  evidence: At PR73 HEAD 9ce418cadca3cca358047d25c922207a08d856ed, artifacts/harness-sdk/source-snapshot.json:159
+    records be131f99b6cba9df1168dd0b9451c8d271e2e959. Checking the declared file hashes
+    against current source finds 12 mismatches; both new execution_measurement_tree
+    files are omitted. coverage-audit.md:5-16 reports the old source and 1689/2018
+    (83.6967%); coverage-block-audit.json retains the same old source/profile hashes
+    and function locations. Committed semantic-evidence.json likewise names be131f99b6cba9df1168dd0b9451c8d271e2e959.
+    Independently regenerated current evidence passes at 1911/2246 (85.08459483526269%)
+    with profile SHA-256 33eafae195bfa602242dacd40ecd723ea0302b69016c3e4dc53ebd9828636713.
+    Source, profile, audit and package bytes must be reconciled, not silently relabelled.
+  required_fix: Preserve prior audit artifacts explicitly as historical. Publish synchronized
+    current source-snapshot with complete current file inventory/hashes, raw unfiltered
+    coverage and block audit, final fixed 50-test/13-row/seven-current-row semantic
+    evidence and deterministic package manifest/bundle bound to the same selected
+    committed source bytes after functional correction. Do not relabel historical
+    results or treat reviewer-local regeneration as the worker sealed delivery.
+  status: fixed
+  classification: fixed
+  owner: harness-sdk
+  first_seen_round: 1
+  last_seen_round: 2
+  seen_count: 1
+  last_evidence: All 31 source-snapshot files and tree hash match d54256aad13eb228e1aec4e1b6ffff13369891e6;
+    PR head 972a9b5e0454a93d351e2bbee4f87f4b8f78055a changes only evidence after that
+    source. Declared gzip patch is byte-identical to its source-bound git diff. Published/current
+    atomic profiles have identical block weights and covered set at 1909/2229. All
+    audit/profile hashes agree; semantic metrics and fixture rows independently match
+    exactly; regenerated deterministic bundle is byte-identical with SHA-256 40ce8d4102dd9c5c8147d92946e15136487c0784a09b8deca4663f919b70ad8f.
+    Historical blobs remain addressable through the hashed history README.
+- blocker_id: BLK-36d3e6907885
+  root_cause_key: sealed-receipt-subtree-descendant-relink-rejected
+  obligation_id: dimension:regression
+  summary: The sealed receipt adapter rejects valid nested subtree attachment even
+    though the shared data engine supports it.
+  evidence: Source 9ce418cadca3cca358047d25c922207a08d856ed; sdk/harness/execution_receipt.go:374-399.
+    After the root data tree is successfully relinked at :381, :389-390 recursively
+    calls rebindExecutionReceiptParent on the ORIGINAL child receipt using the NEW
+    parent identity. That original descendant is already linked to the old subtree-root
+    identity. execution_measurement_tree.go:127-128 rejects its different parent digest.
+    In contrast the historical implementation at 621ba1f7a2a45c9cf6072a3cc0c25cb27c727fb8
+    relinked descendants after validating the attachment root, and the pure engine
+    still does so at execution_measurement_tree.go:136-143. TestHarnessSDKMeasuredTreeCopyAndParentBinding
+    at execution_measurement_tree_test.go:138-152 exercises only data-tree attachment,
+    not authoritative wrapper relinking. This is a static control-flow finding; no
+    prohibited Host proof was fabricated and no additional authority experiment was
+    run.
+  required_fix: Validate the authoritative parent and every original child node first,
+    reject a differently bound attachment root, then rebuild the copied receipt wrappers
+    from the shared engine's already-relinked immutable subtree while retaining only
+    those previously validated per-node seals. Do not apply the external different-parent
+    attachment guard again to legitimate internal descendant relinking, promote unsealed
+    data, or relax root reparent rejection. Keep original snapshots unchanged. Rerun
+    all declared SDK regressions and verification; the existing downstream Host-owned
+    TestHarnessHostReceiptTreeAuthenticatesEveryNode must cover genuine nested attachment
+    without SDK proof fixtures.
+  status: fixed
+  classification: fixed
+  owner: harness-sdk
+  first_seen_round: 1
+  last_seen_round: 2
+  seen_count: 1
+  last_evidence: execution_receipt.go:271-300 validates the original child/parent
+    receipts, attaches once through the shared data engine, then rewraps the corresponding
+    already-relinked nodes at :372-378. It no longer reapplies the external different-parent
+    guard to original descendants. The shared engine retains the root guard at execution_measurement_tree.go:95-98
+    and relinks descendant copies at :136-143. Final updated.Validate still authenticates
+    every node. All four declared SDK data/authority-negative regressions pass. This
+    closure is static for genuine sealed nested attachment; the legitimate Host-positive
+    test remains downstream, not-run here.
+- blocker_id: BLK-d4085e4d8609
+  root_cause_key: implementation-mutable-request-not-snapshotted-before-sealing
+  obligation_id: dimension:authority
+  summary: Implementation dispatch shares mutable request slices with the scope later
+    captured in measurement trees and authoritative receipt seals.
+  evidence: Static control-flow evidence at selected source d54256aad13eb228e1aec4e1b6ffff13369891e6;
+    no additional negative experiment or Host-proof fixture was constructed. sdk/harness/typed_execution_receipt.go:195-207
+    validates request.Scope before dispatch, passes the same slice-bearing request
+    through executeTypedExtension at :235, then supplies request.Scope to newExecutionReceipt.
+    The ordinary runner likewise stores request by value at conformance.go:607 and
+    constructs its tree after dispatch at :644-645. Executor runner conformance.go:563-564
+    copies Input but retains the original scope slices before invoking the closure;
+    :588 constructs the tree afterward. Executor production executeWithReceipt at
+    execution_receipt.go:432-447 also seals request.Scope after forwarding it to the
+    implementation. RequestScope.Permissions and InvocationIdentity.Entrypoint.Args
+    are slices; the dispatch/counter functions do not detach them. newExecutionReceipt
+    at execution_receipt.go:305-332 validates transport data and the trusted attestation
+    marker, but does not compare the post-call scope with the original Host proof.
+    validateWithParent at :190-205 subsequently compares against the newly captured
+    snapshot. The added TestHarnessSDKRejectsImplementationMutatedRequest at typed_response_validation_test.go:70-95
+    checks only mutation into an unsupported permission, which the later shape validator
+    rejects; it does not establish isolation of well-formed identity/scope changes.
+  required_fix: Before untrusted implementation dispatch, retain an independent immutable
+    snapshot of the complete originally validated request/scope and pass detached
+    mutable DTO data to the implementation. Build measurements and receipts from that
+    original snapshot, or reject any post-call projection mismatch without sealing
+    changed identity. Apply the same rule to typed and Executor Execute/Observe/Cancel
+    paths and preserve existing authority-check ordering, public API and canonical
+    bytes. Add ordinary SDK regressions for copy isolation and well-formed slice mutations;
+    keep genuine Host-positive checks in the already declared downstream Host tests,
+    not SDK proof fixtures. Regenerate all source-bound verification/evidence after
+    the substantive correction.
+  status: open
+  classification: new
+  owner: harness-sdk
+  first_seen_round: 2
+  last_seen_round: 2
+  seen_count: 1
+- blocker_id: BLK-d5ac2fc7ef18
+  root_cause_key: required-receipt-tree-design-audit-missing
+  obligation_id: dimension:evidence
+  summary: The delivered receipt-tree audit covers the latest subtree repair, but
+    not the complete approved recursive representation change.
+  evidence: PR73 972a9b5e0454a93d351e2bbee4f87f4b8f78055a, selected source d54256aad13eb228e1aec4e1b6ffff13369891e6.
+    artifacts/harness-sdk/receipt-tree-design-evidence.md:18-31 maps only the 9ce418ca-to-d54256aa
+    subtree repair and says the authority validators/issuers were unchanged relative
+    to that repair. It does not map the original proof-coupled validateWithParent,
+    cloneExecutionReceipt, digest/child projection, newExecutionReceipt/newGateExecutionReceipt
+    and semantic adapter to the new shared engine and fixed-runner callers. Lines
+    44-48 explain only the 2246-to-2229 reduction, not the original 2018-to-2229 redesign.
+    coverage-block-audit.json contains current function_callers and current profile
+    blocks only; its top-level schema has no historical graph or old-to-new block
+    mapping. The audit and four-test output now exist and their hashes/counts are
+    valid, so this is a deeper incomplete-content finding rather than continued absence.
+  required_fix: Extend the existing source-bound audit with the full original-to-current
+    call graphs and affected block/function mapping for the approved representation
+    change, including Host-only guards, shared-engine functions, runner projections/attachments,
+    authoritative adapters and semantic writer. Map retained/redundant validation
+    and account for the entire denominator transition. Preserve historical source/profile
+    pairs and keep all security and coverage gates unchanged; no production padding
+    or Host fixtures are needed to repair this documentation/evidence defect.
+  status: open
+  classification: deeper
+  owner: harness-sdk
+  first_seen_round: 1
+  last_seen_round: 2
+  seen_count: 2
+  last_evidence: PR73 972a9b5e0454a93d351e2bbee4f87f4b8f78055a, selected source d54256aad13eb228e1aec4e1b6ffff13369891e6.
+    artifacts/harness-sdk/receipt-tree-design-evidence.md:18-31 maps only the 9ce418ca-to-d54256aa
+    subtree repair and says the authority validators/issuers were unchanged relative
+    to that repair. It does not map the original proof-coupled validateWithParent,
+    cloneExecutionReceipt, digest/child projection, newExecutionReceipt/newGateExecutionReceipt
+    and semantic adapter to the new shared engine and fixed-runner callers. Lines
+    44-48 explain only the 2246-to-2229 reduction, not the original 2018-to-2229 redesign.
+    coverage-block-audit.json contains current function_callers and current profile
+    blocks only; its top-level schema has no historical graph or old-to-new block
+    mapping. The audit and four-test output now exist and their hashes/counts are
+    valid, so this is a deeper incomplete-content finding rather than continued absence.
