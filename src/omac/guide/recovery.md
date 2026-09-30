@@ -542,3 +542,40 @@ manifest amendment authority变化均须停止重核。见证SHA只固定字节�
 精确的 `multica issue get <issue-id> --output json`；不接受echo、变换或拼造的JSON。
 升级读取comment Run归属时，旧封存identity仅在新增归属恰好等于其原run_id时兼容，
 不会重写旧identity，也不会接受冲突Run。
+
+## 精确合同字面量修订
+
+普通 `non_goals` 变更仍按 implementation-affecting 处理。只有可由不可变 authority
+核对、并经新独立 Reviewer 明确证明没有语义、scope、质量或下游实现影响的单 token
+错误，才能使用 `correct-contract-literal`。入口限已有、未合并、TODO/authoring、
+无 assignee/handoff/交付/Run/已消费预算的目标；不是一般合同恢复豁免。
+
+协调者先只读准备候选（下面值均须使用真实 authority 和原 reject）：
+
+```bash
+omac dag amend prepare-literal-correction <manifest> <node> \
+  --index <non_goals-index> --old-token <incorrect-token> --new-token <canonical-token> \
+  --authority-url https://github.com/<owner>/<repo>/blob/<40-hex-commit>/docs/<file> \
+  --authority-sha256 <sha256> --authority-quote '<exact canonical quote>' \
+  --source-reject-issue-id <rejected-amendment-issue> --reason '<correction reason>' \
+  --output json > literal-correction-proposal.json
+```
+
+准备只读 Store/Runtime/authority，输出未经批准的 proposal，不修改 manifest、Store
+或派发 Agent。绑定完整 old/new contract、单个 `non_goals[index]` 的一次替换、同一
+目标及同一完整替换合同的真实原拒绝方案、原 report/ledger/独立 completed Reviewer
+Run、目标和全部后代的 manifest/Store/Run 快照。所有被绑定的 Run 必须明确终止。
+读取失败、已有目标 Run/预算、未知 Run 或快照变化均失败关闭。
+
+由协调者在普通 amendment 新 attempt 中提交这份原样候选并独立评审；不能把原
+reject 当 pass，也不能手改冻结包或 analysis。新增专项 review obligation 要求明确
+核对 authority 的 canonical quote 和不传播证明。只有新的实际 pass/confirmation、
+完全匹配的提交、报告附件与唯一 completed 独立 Reviewer Run，才可输出供人工
+`dag amend accept` 使用的 reviewed amendment；pass-with-nits 不适用于此入口。
+
+正式接受复用现有 amendment ID、定义 CAS、完整目标 authoring apply ledger 和
+重启安全补偿。只恢复目标；所有后代运行状态和绝对预算保持。authoring baseline
+不得为历史已消费预算授予额外次数，因此该入口不支持有既有消费的目标。接受前
+任何目标/后代、authority、原 reject 或新 review 的漂移要求重新准备并评审；已消费
+的 amendment 只能按原 ledger 幂等观察，不会重复派发。仍须保持单写者；这不是跨
+机器平台事务。此能力不提供 selected DAG tick，也不允许用全局 tick 提前执行旧合同。

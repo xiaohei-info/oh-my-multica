@@ -210,6 +210,24 @@ def register(parser):
     accept_nits.add_argument("--workspace", help="workspace 覆盖")
     add_output_flag(accept_nits, default="json")
 
+    literal = amend_sub.add_parser(
+        "prepare-literal-correction",
+        help="只读准备独立评审所需的精确合同字面量修订，不应用或派发",
+    )
+    literal.add_argument("manifest", help="当前权威 manifest")
+    literal.add_argument("node", help="既有 TODO authoring 目标")
+    literal.add_argument("--index", required=True, type=int, help="non_goals 字符串索引")
+    literal.add_argument("--old-token", required=True)
+    literal.add_argument("--new-token", required=True)
+    literal.add_argument("--authority-url", required=True, help="commit-pinned GitHub docs blob")
+    literal.add_argument("--authority-sha256", required=True)
+    literal.add_argument("--authority-quote", required=True)
+    literal.add_argument("--source-reject-issue-id", required=True)
+    literal.add_argument("--reason", required=True)
+    literal.add_argument("--engine")
+    literal.add_argument("--workspace")
+    add_output_flag(literal, default="json")
+
     repair = amend_sub.add_parser(
         "repair-contract-commands",
         help="从已应用 amendment 原文恢复受限 shell command 损坏，不重放 accept",
@@ -548,6 +566,19 @@ def _amend_locked(args) -> int:
     engine, _ = _assemble_engine(args)
     config = _load_config_for_manifest(args.manifest)
     roles = config.get("roles") or {}
+    if args.amend_action == "prepare-literal-correction":
+        from ...core.literal_correction import prepare_literal_correction
+        proposal = prepare_literal_correction(
+            load_manifest(args.manifest), engine.store, engine.runtime,
+            node_id=args.node, index=args.index,
+            old_token=args.old_token, new_token=args.new_token,
+            authority_url=args.authority_url,
+            authority_sha256=args.authority_sha256,
+            authority_quote=args.authority_quote,
+            source_issue_id=args.source_reject_issue_id, reason=args.reason,
+        )
+        print_json(proposal)
+        return exit_codes.OK
     if args.amend_action == "repair-contract-commands":
         result = repair_contract_commands(
             engine, args.manifest, args.amendment_file)

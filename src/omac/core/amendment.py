@@ -15,6 +15,10 @@ from typing import Any
 
 import yaml
 
+from .literal_correction import (
+    OP as LITERAL_CORRECTION_OPERATION, literal_operation,
+    validate_literal_operation, verify_literal_correction, literal_review_binding,
+)
 from .lint import lint
 from .manifest import (
     Manifest, Node, _dump_contract, _load_contract, load_manifest, save_manifest,
@@ -642,6 +646,10 @@ def validate_proposal(
     if not isinstance(operations, list) or not operations:
         return errors + ["operations must be a non-empty list"]
 
+    try:
+        literal_operation(proposal)
+    except ValidationError as exc:
+        return [str(exc)]
     seen: set[str] = set()
     for index, operation in enumerate(operations):
         prefix = f"operations[{index}]"
@@ -649,10 +657,10 @@ def validate_proposal(
             errors.append(f"{prefix} must be an object")
             continue
         op = operation.get("op")
-        if op not in {"update", "add", "remove", "resume", _RESPONSIBILITY_OPERATION}:
+        if op not in {"update", "add", "remove", "resume", _RESPONSIBILITY_OPERATION, LITERAL_CORRECTION_OPERATION}:
             errors.append(
                 f"{prefix}.op must be update, add, remove, resume, or "
-                f"{_RESPONSIBILITY_OPERATION}")
+                f"{_RESPONSIBILITY_OPERATION}, or {LITERAL_CORRECTION_OPERATION}")
             continue
         if "clear_contract_boundary" in operation and op != "update":
             errors.append(
@@ -686,6 +694,12 @@ def validate_proposal(
         if node_id in seen:
             errors.append(f"{prefix}: node {node_id!r} has multiple operations")
         seen.add(node_id)
+        if op == LITERAL_CORRECTION_OPERATION:
+            try:
+                validate_literal_operation(manifest, operation)
+            except ValidationError as exc:
+                errors.append(f"{prefix}: {exc}")
+            continue
         if op == _RESPONSIBILITY_OPERATION:
             responsibility_errors = _validate_responsibility_operation(
                 node, operation, prefix)
@@ -930,6 +944,7 @@ def _amendment_id(
     acceptance_digest: str | None = None,
     issue_id: str | None = None,
     reviewer_verdict: str | None = None,
+    literal_binding: dict | None = None,
 ) -> str:
     # Bind the reviewed envelope as well as the definition.  Otherwise a
     # tampered base digest or review issue could turn a reviewed amendment into
@@ -940,6 +955,8 @@ def _amendment_id(
         "issue_id": issue_id,
         "reviewer_verdict": reviewer_verdict,
     }
+    if literal_binding is not None:
+        envelope["literal_review_binding"] = literal_binding
     identity_parts = [
         definition_digest, _proposal_core(proposal), minimal,
         historical_corrections, evidence,
@@ -961,6 +978,7 @@ def build_reviewed_amendment(
     reviewer_verdict: str,
     agent_pool: set[str] | None = None,
     acceptance: Any = None,
+    runtime: Any = None,
 ) -> dict[str, Any]:
     proposal = parse_proposal(proposal_source)
     pool = agent_pool or set(store.list_members(store.config.workspace_id))
@@ -972,6 +990,8 @@ def build_reviewed_amendment(
         raise ValidationError(
             "Only a reviewer pass or pass-with-nits can enter human confirmation")
 
+    verify_literal_correction(manifest, proposal, store, runtime)
+    literal_binding = literal_review_binding(proposal, store, runtime, issue_id)
     minimal, derived, immutable = _minimal_rerun(manifest, proposal)
     if immutable:
         raise ValidationError(
@@ -1017,8 +1037,11 @@ def build_reviewed_amendment(
         acceptance_digest=base.get("acceptance_sha256"),
         issue_id=issue_id,
         reviewer_verdict=reviewer_verdict,
+        literal_binding=literal_binding,
     )
     review = {"issue_id": issue_id, "verdict": reviewer_verdict}
+    if literal_binding is not None:
+        review["literal_review_binding"] = literal_binding
     # Keep the Reviewer verdict untouched while carrying a read-only snapshot of
     # the facts the operator must accept for a pass-with-nits amendment.  The
     # marker is checked again against Store facts before either acceptance or
@@ -1538,6 +1561,7 @@ def apply_amendment(
     *,
     amendment_file: str | None = None,
     acceptance: Any = None,
+    runtime: Any = None,
 ) -> dict[str, Any]:
     amendment = parse_proposal(amendment_source)
     review = amendment.get("review")
@@ -1577,6 +1601,10 @@ def apply_amendment(
             "issue_id": review.get("issue_id"),
             "reviewer_verdict": review.get("verdict"),
         }
+    if literal_operation(amendment) is not None:
+        if identity_schema != AMENDMENT_IDENTITY_SCHEMA or not review.get("literal_review_binding"):
+            raise ValidationError("Literal correction requires the bound independent review identity")
+        identity_kwargs["literal_binding"] = review["literal_review_binding"]
     expected_id = _amendment_id(
         base.get("definition_sha256") or "",
         amendment,
@@ -1622,6 +1650,11 @@ def apply_amendment(
     already_applied = current.meta.get("last_amendment_id") == amendment.get("amendment_id")
     runtime_rebased = False
     if not already_applied:
+        verify_literal_correction(current, amendment, store, runtime)
+        if literal_operation(amendment) is not None and literal_review_binding(
+            amendment, store, runtime, review.get("issue_id")
+        ) != review["literal_review_binding"]:
+            raise ValidationError("Literal correction independent review facts changed")
         runtime_rebased = _verify_base(current, amendment)
         expected_acceptance = (amendment.get("base") or {}).get(
             "acceptance_sha256")
