@@ -606,6 +606,11 @@ def _apply_review_request(store, runtime, manifest_path, key, request, token, *,
                 "step": 0,
             }
             save_manifest(manifest, manifest_path)
+        elif progress > existing["step"]:
+            # Observe an accepted unknown write durably before another write;
+            # otherwise two lost replies can outrun the one-step resume window.
+            existing["step"] = progress
+            save_manifest(manifest, manifest_path)
         operations = [
             lambda: store.update_work_item_metadata(
                 item.id, delivery_identity=identity

@@ -628,3 +628,21 @@ prepare 只读；应批准完整生成请求及 source tuple，能力实现授�
 中断留下 pending receipt，Runner tick 会拒绝继续。仅用同一请求和 digest 续接；不要手改 receipt、清 handoff、重试 Worker 或重置预算。来源变化需先调查。已 consumed 请求不可再消费，不接受 historical session 导入或手写 delivery identity。
 
 已 consumed 的 publication request 可能已有 current review subject 和第一轮 Reviewer baseline，但尚无指派或 target Run。正常结果收集现在将此 REVIEW/IN_REVIEW、未指派的状态送入已有首次派发入口，保留原 baseline generation 和冻结义务。已指派、active、terminal、已绑定 target 或后续 attempt 仍走原观察/恢复路径。共享派发入口在 assign/wake 前再次核对当前 seal、subject、baseline、phase/status 和指派人。继续单一正常 Runner 即可；不要重放 consumed apply、清 journal、手写 metadata 或新增 Worker/预算 attempt。
+
+### SDK operator hold 的原生发布重评
+
+`omac node review-sdk-publication` 是独立、一次性 SDK profile，仅支持当前 AITEAM-1040 明确来源链，不复用 Preview、Executor 或 historical session 授权。prepare 只读，必须核对完整未指派 BLOCKED/AUTHORING operator hold、真正原独立 publication-only reject、最新 formal Worker/terminal submit、当前合同/generation，以及独立 Git commit 的原生 commit/tree/blob metadata、index 和十八份 payload 的 SHA256/字节数/OID。原 Reviewer 查询的完整 comment/attachment 前缀仅证明关联；全部原 verification 字节和 uploader/task/time 重新从 Store 读取，不把截断正文或 session 文件变成历史 seal。
+
+```bash
+omac node review-sdk-publication <manifest> harness-sdk-production-build-repair \
+  --index-url 'https://github.com/xiaohei-info/open-agent-cluster/blob/8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96/artifacts/harness-sdk-build-repair-evidence/evidence-index.json' \
+  --reason '<SDK 恢复范围>' --output json > sdk-request.json
+# 另行审阅并明确批准完整请求的 canonical SHA256 后：
+omac node review-sdk-publication <manifest> harness-sdk-production-build-repair \
+  --apply-request sdk-request.json --approve-request-sha256 '<明确批准的 request digest>' \
+  --output json
+```
+
+能力工作批准不清除 hold、不授权生产 apply。digest 对 sorted compact UTF-8 JSON（ensure_ascii=False）计算 SHA256。apply 复用八步持久化过渡及单一 Controller/本机文件锁；未知写已生效时先持久化观察进度再写下一步。仅用同一 pending request/digest 续接，consumed 请求拒绝重放，pending journal 阻止 Runner tick；不宣称跨主机原子 CAS。
+
+最新 Worker 上传修正文案后的 verification，二十三次执行仍属于前一 formal execution Run 及其 verification；保留原生记录和原命令结果供独立核验，字节完整性不等于技术闭环。原拒绝、SDK23/raw85/wholeSDK90/Host90/security/downstream 义务、绝对计数和零 baseline 不变，其他 manifest 节点/meta 均绑定保留。apply 只准备 REVIEW/IN_REVIEW，不派发、不出 verdict/merge/done；后由正常 Runner 一次 guarded assignment/wake 送真实独立 Reviewer，保留冻结 SDK 义务。不要用 authoring amendment、retry、dummy commit、手写 metadata 或预算 reset 绕过拒绝。

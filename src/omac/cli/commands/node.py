@@ -89,14 +89,18 @@ def register(parser):
     evidence_review.add_argument("--reason", help="Operator authorization reason (preview)")
     evidence_review.add_argument("--apply-request", help="Consume the exact previously prepared JSON request; does not dispatch review")
 
-    publication_review = sub.add_parser("review-publication", help="Prepare or consume one exact Preview publication re-review authorization")
-    publication_review.add_argument("manifest")
-    publication_review.add_argument("node_key")
-    publication_review.add_argument("--index-url", help="Current verification evidence-index URL (prepare only)")
-    publication_review.add_argument("--reason", help="Bounded operator reason (prepare only)")
-    publication_review.add_argument("--apply-request", help="Exact generated JSON request (apply only)")
-    publication_review.add_argument("--approve-request-sha256", help="Explicitly approved canonical request SHA256 (apply only)")
-    add_output_flag(publication_review)
+    for action, description in (
+        ("review-publication", "Prepare or consume one exact Preview publication re-review authorization"),
+        ("review-sdk-publication", "Prepare or consume one held SDK native-publication authorization"),
+    ):
+        publication_review = sub.add_parser(action, help=description)
+        publication_review.add_argument("manifest")
+        publication_review.add_argument("node_key")
+        publication_review.add_argument("--index-url", help="Current verification publication index URL (prepare only)")
+        publication_review.add_argument("--reason", help="Bounded operator reason (prepare only)")
+        publication_review.add_argument("--apply-request", help="Exact generated JSON request (apply only)")
+        publication_review.add_argument("--approve-request-sha256", help="Explicitly approved canonical request SHA256 (apply only)")
+        add_output_flag(publication_review)
 
     accept_nits = sub.add_parser(
         "accept-nits",
@@ -917,30 +921,35 @@ def _cmd_review_publication(args) -> int:
     from pathlib import Path
     from ...core.manifest import manifest_write_lock
     from ...pipeline.publication_review import prepare_publication_review, apply_publication_review
+    action = getattr(args, "action", "review-publication")
+    if action == "review-sdk-publication":
+        from ...pipeline.sdk_publication_review import prepare_sdk_publication_review, apply_sdk_publication_review
+        prepare_publication_review, apply_publication_review = prepare_sdk_publication_review, apply_sdk_publication_review
+    help_command = f"omac node {action} --help"
     engine = _build_engine(load_config())
     if engine is None:
-        raise ValidationError("Configure an engine, then run omac node review-publication --help")
+        raise ValidationError(f"Configure an engine, then run {help_command}")
     try:
         if args.apply_request:
             if args.index_url or args.reason or not args.approve_request_sha256:
-                raise ValidationError("Apply requires only --apply-request and --approve-request-sha256; run omac node review-publication --help")
+                raise ValidationError(f"Apply requires only --apply-request and --approve-request-sha256; run {help_command}")
             request = json.loads(Path(args.apply_request).read_text())
             with manifest_write_lock(args.manifest):
                 result = apply_publication_review(engine.store, engine.runtime, args.manifest, args.node_key, request,
                                                   approved_request_sha256=args.approve_request_sha256)
         else:
             if not args.index_url or not args.reason or args.approve_request_sha256:
-                raise ValidationError("Prepare requires --index-url and --reason; run omac node review-publication --help")
+                raise ValidationError(f"Prepare requires --index-url and --reason; run {help_command}")
             result = prepare_publication_review(engine.store, engine.runtime, _load_or_raise(args.manifest), args.node_key,
                                                 args.index_url, args.reason)
     except (OSError, json.JSONDecodeError) as exc:
-        raise ValidationError("Could not read exact generated request; run omac node review-publication --help") from exc
+        raise ValidationError(f"Could not read exact generated request; run {help_command}") from exc
     print_json(result)
     return exit_codes.OK
 
 
 def run(args) -> int:
-    if args.action == "review-publication":
+    if args.action in {"review-publication", "review-sdk-publication"}:
         return _cmd_review_publication(args)
     if args.action == "review-evidence":
         return _cmd_review_evidence(args)

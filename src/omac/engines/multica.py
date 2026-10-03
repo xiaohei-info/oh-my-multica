@@ -2572,7 +2572,22 @@ class MulticaStore(WorkItemStore):
             return body
         return self._run_idempotent_read("immutable artifact download", download)
 
-    def read_verification_reference(self, item_id: str, comment_id: str) -> Dict[str, Any]:
+    def read_verification_reference(self, item_id: str, comment_id: str | None = None, *, attachment_id: str | None = None) -> Dict[str, Any]:
+        if attachment_id is not None:
+            if comment_id is not None:
+                raise PlatformError("Use exactly one native comment or attachment identity")
+            roots = self._run_idempotent_read(
+                "native verification roots",
+                lambda: self._run_multica(["issue","comment","list",item_id,"--roots-only","--full","--output","json"]))
+            if not isinstance(roots,list):
+                raise PlatformError("Native verification roots are malformed")
+            found = [c.get("id") for c in roots if isinstance(c,dict) and
+                     any(a.get("id") == attachment_id for a in (c.get("attachments") or []) if isinstance(a,dict))]
+            if len(found) != 1:
+                raise PlatformError("Native attachment must belong to one verification comment")
+            comment_id = found[0]
+        if not isinstance(comment_id,str) or not re.fullmatch(r"[0-9a-f-]{36}",comment_id):
+            raise PlatformError("An exact native verification comment ID is required")
         comments = self._run_idempotent_read(
             "native verification index",
             lambda: self._run_multica(["issue", "comment", "list", item_id,
@@ -2586,9 +2601,83 @@ class MulticaStore(WorkItemStore):
                 ref = self._review_attachment_ref(comment, attachment, "verification")
                 if ref:
                     refs.append(ref)
-        if len(refs) != 1:
+        if len(refs) != 1 or (attachment_id is not None and refs[0]["attachment_id"] != attachment_id):
             raise PlatformError("Native source comment must identify exactly one verification attachment")
         return refs[0]
+
+    def observe_git_artifacts(self, urls: List[str], *, download: bool = True):
+        """Read only commit-pinned regular blobs; native tree proves their paths."""
+        from .models import ReleaseAssetObservation
+        if not isinstance(urls,list) or not 1 <= len(urls) <= 19 or any(not isinstance(u,str) for u in urls) or len(set(urls)) != len(urls):
+            raise PlatformError("Use one to nineteen unique native Git artifact URLs")
+        parsed=[]
+        for url in urls:
+            if not isinstance(url,str):
+                raise PlatformError("Native Git artifact URLs must be strings")
+            match=re.fullmatch(r"https://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/blob/([0-9a-f]{40})/([A-Za-z0-9._/-]+)",url)
+            if not match or any(p in {"",".",".."} for p in match[3].split("/")):
+                raise PlatformError("Use an exact commit-pinned GitHub blob URL")
+            parsed.append(match.groups())
+        if len({(r,c) for r,c,p in parsed})!=1:
+            raise PlatformError("Native Git artifacts must share one repository and commit")
+        repository,commit,_=parsed[0]
+        def api(endpoint):
+            def read():
+                try:
+                    result=subprocess.run(["gh","api","--method","GET",endpoint],capture_output=True,timeout=30)
+                except (OSError,subprocess.TimeoutExpired) as exc:
+                    raise PlatformError("Native Git artifact read unavailable") from exc
+                if result.returncode:
+                    raise PlatformError("Native Git artifact read failed: "+(result.stderr or b"").decode(errors="replace")[:400])
+                try:
+                    data=json.loads(result.stdout)
+                    if not isinstance(data,dict):
+                        raise ValueError("not an object")
+                    return data
+                except (ValueError,TypeError) as exc:
+                    raise PlatformError("Native Git artifact response is malformed") from exc
+            return self._run_idempotent_read("native Git artifact",read)
+        prefix="repos/"+repository+"/git/"
+        metadata=api(prefix+"commits/"+commit)
+        tree_id=(metadata.get("tree") or {}).get("sha")
+        parents=[p.get("sha") for p in metadata.get("parents",[]) if isinstance(p,dict)]
+        if metadata.get("sha")!=commit or not re.fullmatch(r"[0-9a-f]{40}",str(tree_id)) or not parents or any(not re.fullmatch(r"[0-9a-f]{40}",str(p)) for p in parents):
+            raise PlatformError("Native publication commit/tree/parents are invalid")
+        tree=api(prefix+"trees/"+tree_id+"?recursive=1")
+        if tree.get("sha")!=tree_id or tree.get("truncated") is not False or not isinstance(tree.get("tree"),list):
+            raise PlatformError("Native publication tree is incomplete or mismatched")
+        entries={}
+        for row in tree["tree"]:
+            if not isinstance(row,dict) or row.get("path") in entries:
+                raise PlatformError("Native publication tree paths are ambiguous")
+            entries[row.get("path")]=row
+        observations=[]
+        total=0
+        for _,_,path in parsed:
+            entry=entries.get(path,{})
+            oid,size=entry.get("sha"),entry.get("size")
+            if entry.get("type")!="blob" or entry.get("mode") not in {"100644","100755"} or not re.fullmatch(r"[0-9a-f]{40}",str(oid)) or type(size) is not int or not 0<size<=16*1024*1024:
+                raise PlatformError("Native publication regular blob identity/size is invalid")
+            total+=size
+            if total>64*1024*1024:
+                raise PlatformError("Native publication exceeds total byte bound")
+            body=b""
+            if download:
+                blob=api(prefix+"blobs/"+oid)
+                try:
+                    if blob.get("encoding")!="base64":
+                        raise ValueError("unsupported encoding")
+                    body=base64.b64decode("".join(blob["content"].split()),validate=True)
+                    calculated=hashlib.sha1(b"blob "+str(len(body)).encode()+b"\0"+body).hexdigest()
+                    if blob.get("sha")!=oid or blob.get("size")!=size or len(body)!=size or calculated!=oid:
+                        raise ValueError("Git blob identity mismatch")
+                except (ValueError,KeyError,TypeError,AttributeError) as exc:
+                    raise PlatformError("Native Git blob bytes failed integrity validation") from exc
+            observations.append(ReleaseAssetObservation({
+                "url":"https://github.com/"+repository+"/blob/"+commit+"/"+path,
+                "repository":repository,"commit_sha":commit,"tree_sha":tree_id,
+                "parent_shas":parents,"path":path,"blob_oid":oid,"bytes":size},body))
+        return observations
 
     def observe_release_assets(self, urls: List[str], *, download: bool = True):
         """Pin identities and digests; never treat a mutable download URL as immutable."""
