@@ -626,3 +626,5 @@ omac node review-publication <manifest> release-preview-audit-vocabulary-repair 
 prepare 只读；应批准完整生成请求及 source tuple，能力实现授权不等于生产恢复授权。canonical SHA256 对 sorted compact UTF-8 JSON（`ensure_ascii=False`）计算。apply 每次写入前复核来源，只封存最新真实 Worker 交付并准备独立评审，保留累计计数和原 budget authority，不派发、不给 verdict、不 merge/done。后续由单一正常 DAG Controller 送真实独立 Reviewer；本机锁及语义检查不是跨主机原子 CAS。
 
 中断留下 pending receipt，Runner tick 会拒绝继续。仅用同一请求和 digest 续接；不要手改 receipt、清 handoff、重试 Worker 或重置预算。来源变化需先调查。已 consumed 请求不可再消费，不接受 historical session 导入或手写 delivery identity。
+
+已 consumed 的 publication request 可能已有 current review subject 和第一轮 Reviewer baseline，但尚无指派或 target Run。正常结果收集现在将此 REVIEW/IN_REVIEW、未指派的状态送入已有首次派发入口，保留原 baseline generation 和冻结义务。已指派、active、terminal、已绑定 target 或后续 attempt 仍走原观察/恢复路径。共享派发入口在 assign/wake 前再次核对当前 seal、subject、baseline、phase/status 和指派人。继续单一正常 Runner 即可；不要重放 consumed apply、清 journal、手写 metadata 或新增 Worker/预算 attempt。

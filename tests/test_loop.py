@@ -9608,7 +9608,8 @@ class TestReviewerRejectBoundedFallback:
                 live.artifacts = copy.deepcopy(fresh.artifacts)
                 live.verification = copy.deepcopy(fresh.verification)
                 live.verification_ref = copy.deepcopy(fresh.verification_ref)
-                live.status = WorkItemStatus.DONE
+                if live.phase == TaskPhase.AUTHORING:
+                    live.status = WorkItemStatus.DONE
             return original_get(item_id)
 
         def wake(_item_id, _agent, role):

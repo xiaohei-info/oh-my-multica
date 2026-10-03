@@ -815,3 +815,13 @@ Resume with the exact same request and digest; do not edit the receipt, clear th
 handoff, retry the Worker, or reset budgets. Changed sources require investigation.
 Consumed requests cannot be applied again. No historical session import or
 hand-written delivery identity is accepted.
+
+A consumed publication request can already have a current review subject and a
+first-attempt Reviewer baseline without an assignment or target Run. Normal
+result collection now sends this REVIEW/IN_REVIEW state through guarded initial
+Reviewer dispatch, retaining the original baseline generation and obligations.
+Existing assigned, active, terminal, bound-target or later-attempt Runs stay on
+their existing observation/recovery paths. The shared dispatch checks the fresh
+seal, subject, baseline, phase/status and assignment again before assign/wake.
+Resume the normal single-controller Runner; do not replay the consumed apply,
+clear its journal, hand-write metadata or grant another Worker/budget attempt.
