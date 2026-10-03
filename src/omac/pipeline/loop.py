@@ -4863,6 +4863,8 @@ def tick(
     ensure_publication_review_complete(manifest, manifest_path)
     from .sdk_publication_review import ensure_sdk_publication_review_complete
     ensure_sdk_publication_review_complete(manifest, manifest_path)
+    from .sdk_checkpoint_review import ensure_sdk_checkpoint_review_complete
+    ensure_sdk_checkpoint_review_complete(manifest, manifest_path)
     ensure_amendment_apply_complete(manifest, manifest_path)
     manifest._recovery_manifest_path = manifest_path
 
