@@ -1,0 +1,38 @@
+{
+  "contract": {
+    "attachment_id": "01a101bd-9ed8-70b9-9877-a2e8977ac323",
+    "comment_id": "01a101bd-a054-7518-9944-b0fc7edcc097",
+    "sha256": "c24ef6006121c794e9447c38cc19fbcc1906fb52081677144a5e9e8d43edf107",
+    "uploader_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "uploader_type": "member",
+    "task_id": null,
+    "created_at": "2026-10-03T12:29:26Z"
+  },
+  "verification": {
+    "attachment_id": "01a101dc-030d-73e4-ac67-d02441ffc6ba",
+    "comment_id": "01a101dc-0360-7697-be7f-8ad3710a6841",
+    "sha256": "7d9d1ee92e9d0971e8efea060b3d475f4d4756d0a8e63044dba1e32529d192d2",
+    "uploader_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "uploader_type": "agent",
+    "task_id": "01a101bf-006b-7412-af52-258d6979a7cd",
+    "created_at": "2026-10-03T13:02:38Z"
+  },
+  "report": {
+    "attachment_id": "01a101af-5020-7720-a1b6-ceb216d88f8c",
+    "comment_id": "01a101af-5094-7ec8-9a06-948c338ee72d",
+    "sha256": "0ba346be2c046ef8ce339263bb77f0ec9d8516c06044b815561ddec27c269f16",
+    "uploader_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+    "uploader_type": "agent",
+    "task_id": "01a1019d-907b-7c70-872a-26fd10521987",
+    "created_at": "2026-10-03T12:13:49Z"
+  },
+  "ledger": {
+    "attachment_id": "01a101af-533f-7810-a8f2-6ae294568646",
+    "comment_id": "01a101af-53aa-700e-b20a-5a1d87caa124",
+    "sha256": "89ff9fb7ccc6573648a9afb5189d26af573abec1ecf0e2191778ee1f7b53d7bb",
+    "uploader_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+    "uploader_type": "agent",
+    "task_id": "01a1019d-907b-7c70-872a-26fd10521987",
+    "created_at": "2026-10-03T12:13:49Z"
+  }
+}

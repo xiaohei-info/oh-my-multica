@@ -867,3 +867,39 @@ Apply prepares REVIEW/IN_REVIEW without dispatch, verdict, merge or done. The
 normal Runner later performs one guarded independent Reviewer assignment/wake,
 retaining the frozen SDK obligations. Do not use authoring amendment, retry,
 dummy commit, metadata editing or budget reset to bypass a refusal.
+
+### SDK command18 checkpoint successor
+
+`omac node review-sdk-checkpoint` admits only the separate AITEAM-1040 successor
+with original reject `0ba346…`, ledger `89ff9f…`, latest formal Worker Run
+`01a101bf-006b-7412-af52-258d6979a7cd` and immutable publication `6aebcc6…`.
+The older `abcd709…` SDK request must remain consumed at step eight. It is never
+replayed. The intact operator-retry subject and retained review subject are
+bound separately; this does not relax the global same-HEAD delivery guard.
+
+```bash
+omac node review-sdk-checkpoint <manifest> harness-sdk-production-build-repair \
+  --index-url 'https://github.com/xiaohei-info/open-agent-cluster/blob/6aebcc6a53992e7e9bc77b249596655fb7bb4b7a/artifacts/harness-sdk-build-repair-evidence/evidence-index.json' \
+  --reason '<bounded recovery reason>' --output json > checkpoint-request.json
+omac node review-sdk-checkpoint <manifest> harness-sdk-production-build-repair \
+  --apply-request checkpoint-request.json \
+  --approve-request-sha256 '<approved canonical request SHA256>' --output json
+```
+
+Preparation is read-only. Native complete command-runner receipts bind all 23
+unchanged commands to this Run and the actual command18 checkpoint
+`5e709ad…` (169561 bytes), before the command23 contrast `2dcaeae…`.
+The indexed native Git payloads and all 17 regular archive members must agree.
+Original source association uses pinned native response prefixes and fresh full
+Store attachment bytes; truncated responses are never full success receipts or
+historical seals. Product command18 revalidation remains an independent Reviewer
+obligation, including the published revalidation record whose remote output was
+truncated. No Controller evaluation becomes a technical pass.
+
+Apply uses the existing eight-step journal transition, preserves both reject
+cycles, counters, the absent typed budget baseline, all other nodes and metadata,
+and prepares independent review without dispatch, verdict, merge or done.
+Pending receipts block Runner tick before I/O; resume only the exact request and
+digest. A consumed receipt cannot be replayed. The normal single-controller
+Runner subsequently assigns and wakes one independent Reviewer. Implementation,
+deployment and production request approval are separate actions.

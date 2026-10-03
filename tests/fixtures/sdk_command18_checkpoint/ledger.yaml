@@ -1,0 +1,209 @@
+schema: omac.review-ledger/v2
+cycles:
+- round: 1
+  subject_digest: f19b526aaa80ab217f6285c561cd78fe6deebf6dce07a5c095d765977a614a78
+  report_digest: 60834ff4c423ba092f6492ddd1ad66b7ccf5321f461e2eecd2dadc32bb9c665b
+  verdict: reject
+  obligation_results:
+    dimension:authority: pass
+    dimension:structure: pass
+    dimension:execution: pass
+    dimension:ownership: pass
+    dimension:evidence: fail
+    dimension:regression: pass
+    integration:harness-sdk-gate: pass
+    integration:harness-sdk-production-build-repair-gate: pass
+  new_count: 1
+  fixed_count: 0
+  regressed_count: 0
+  unchanged_count: 0
+  open_count: 1
+  prior_open_blocker_ids: []
+  open_blocker_ids: &id001
+  - BLK-30900928f802
+  reported_blocker_ids: *id001
+  blocker_facts_schema: omac.review-cycle-blocker-facts/v1
+  blocker_facts:
+  - blocker_id: BLK-30900928f802
+    root_cause_key: harness-sdk-repair-published-evidence-not-pr-head
+    obligation_id: dimension:evidence
+    summary: Fresh repair evidence and verification are bound to the source-parent
+      commit rather than the submitted final PR HEAD.
+    evidence: 'PR90 HEAD and delivery_identity: 1ebf12d36d29c2a3726257bd03685139f5bc568a.
+      Published artifacts/harness-sdk-build-repair-evidence/{semantic-evidence.json,component-manifest.json,source-snapshot.json,verification-results.json,evidence-index.json}
+      identify 96020d5faf6d4bbb399c068da50d1885fa9dcb5a. owner-repair.md:18-23 and
+      44-46 explicitly document the parent-commit execution/evidence strategy. In
+      an isolated submitted-HEAD checkout with the delivered repair payloads placed
+      at the inherited gate paths, exact commands 16 and 20 both exit 1 at source_revision==git
+      rev-parse HEAD. Separately regenerating the outputs at HEAD makes all 23 unchanged
+      commands pass.'
+    required_fix: Preserve PR90 and its one-line SDK diff. At the stable final submitted
+      PR HEAD rerun all 23 commands in the original order/environment, regenerate
+      every required SDK/repair artifact with that exact source_revision, and publish
+      a new immutable source-bound evidence set plus fresh OMAC verification identifying
+      the same HEAD. Use external immutable publication/attachments if needed to avoid
+      an artifact-only commit advancing HEAD after generation; do not relabel old
+      outputs, weaken equality gates, overwrite historical deliveries, create a duplicate
+      PR, or change SDK behavior.
+    status: open
+    classification: new
+    owner: harness-sdk
+- round: 2
+  subject_digest: f36f91c4c423847008f98e2b8e6a609f023be5e7f59765f1c8bccab60c7baea3
+  report_digest: ed56e022743be65c0d45f44b8243ad568543262af0028f2663121354016d58fc
+  verdict: reject
+  obligation_results:
+    dimension:authority: pass
+    dimension:structure: pass
+    dimension:execution: pass
+    dimension:ownership: pass
+    dimension:evidence: fail
+    dimension:regression: pass
+    integration:harness-sdk-gate: pass
+    integration:harness-sdk-production-build-repair-gate: pass
+  new_count: 1
+  fixed_count: 1
+  regressed_count: 0
+  unchanged_count: 0
+  open_count: 1
+  prior_open_blocker_ids:
+  - BLK-30900928f802
+  open_blocker_ids: &id002
+  - BLK-b1b208243999
+  reported_blocker_ids: *id002
+  blocker_facts_schema: omac.review-cycle-blocker-facts/v1
+  blocker_facts:
+  - blocker_id: BLK-30900928f802
+    root_cause_key: harness-sdk-repair-published-evidence-not-pr-head
+    obligation_id: dimension:evidence
+    summary: Fresh repair evidence and verification are bound to the source-parent
+      commit rather than the submitted final PR HEAD.
+    evidence: 'PR90 HEAD and delivery_identity: 1ebf12d36d29c2a3726257bd03685139f5bc568a.
+      Published artifacts/harness-sdk-build-repair-evidence/{semantic-evidence.json,component-manifest.json,source-snapshot.json,verification-results.json,evidence-index.json}
+      identify 96020d5faf6d4bbb399c068da50d1885fa9dcb5a. owner-repair.md:18-23 and
+      44-46 explicitly document the parent-commit execution/evidence strategy. In
+      an isolated submitted-HEAD checkout with the delivered repair payloads placed
+      at the inherited gate paths, exact commands 16 and 20 both exit 1 at source_revision==git
+      rev-parse HEAD. Separately regenerating the outputs at HEAD makes all 23 unchanged
+      commands pass.'
+    required_fix: Preserve PR90 and its one-line SDK diff. At the stable final submitted
+      PR HEAD rerun all 23 commands in the original order/environment, regenerate
+      every required SDK/repair artifact with that exact source_revision, and publish
+      a new immutable source-bound evidence set plus fresh OMAC verification identifying
+      the same HEAD. Use external immutable publication/attachments if needed to avoid
+      an artifact-only commit advancing HEAD after generation; do not relabel old
+      outputs, weaken equality gates, overwrite historical deliveries, create a duplicate
+      PR, or change SDK behavior.
+    status: fixed
+    classification: fixed
+    last_evidence: All new source-bearing payloads and verification identify submitted
+      HEAD 1ebf12d36d29c2a3726257bd03685139f5bc568a. Exact source_revision equality
+      commands 16 and 20 both independently pass against immutable delivered bytes;
+      manifest and bundle equal independently generated HEAD packaging. Original historical
+      96020d5f-bound evidence remains intact at earlier commits. The separate new
+      metric-loss defect is not a recurrence of the source-parent mismatch.
+    owner: harness-sdk
+  - blocker_id: BLK-b1b208243999
+    root_cause_key: harness-sdk-repair-published-semantic-ledger-overwritten-by-full-suite
+    obligation_id: dimension:evidence
+    summary: The immutable repair publication contains the post-full-suite semantic
+      file, which no longer passes the unchanged fixed 50-test ledger gate.
+    evidence: 'At publication commit 8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96, artifacts/harness-sdk-build-repair-evidence/semantic-evidence.json
+      has SHA-256 2dcaeae5cd056b2e0c06152fed7b155c73fd4e36a12b609fee14fa04ab90e307
+      and omits metrics.required_harness_conformance_test_count. Its archive contains
+      the identical bytes. With these delivered payloads at the inherited paths and
+      git HEAD=1ebf12d36d29c2a3726257bd03685139f5bc568a, exact command 18 exits 1:
+      KeyError: ''required_harness_conformance_test_count''. I independently ran all
+      23 exact commands in original order: all exited 0 when executed. A read-only
+      checkpoint immediately after command 18 contained the measured count 50 and
+      SHA-256 5e709ad69d68c6971a655a70f75a3cb754930b9f0f7c864a6f8d29304ee27670. Command
+      23 rewrote that file to the exact published hash, removing only this metric.
+      The source cause is sdk/harness/semantic_evidence_test.go:319-325 (metric emitted
+      only with HARNESS_SDK_SEMANTIC_EVIDENCE set) and :386-396 (unset env still writes
+      the default gate path). The final transcript independently contains all 50 passing
+      required tests, so this is an evidence-harvesting failure, not missing executed
+      tests or a production SDK behavior defect.'
+    required_fix: Keep PR90 and its one-line production diff. At its stable committed
+      submitted HEAD, run all 23 commands unchanged in original order and the required
+      native environment, preserving the actual validated semantic bytes from the
+      fixed-selector generation/command-18 checkpoint before the unchanged full suite
+      rewrites its default output. Publish that measured checkpoint together with
+      all other required fresh same-HEAD artifacts, command exits and source bundle
+      in a new immutable evidence set; recompute and verify index/archive hashes and
+      rerun exact command 18 against the published bytes. Preserve prior publications
+      as history. Do not synthesize the metric, relabel an unvalidated output, change
+      SDK/test behavior, alter the original commands or gates, create a dummy source
+      commit, or claim Host90/whole-SDK90/merge/Audit completion.
+    status: open
+    classification: new
+    owner: harness-sdk
+blockers:
+- blocker_id: BLK-30900928f802
+  root_cause_key: harness-sdk-repair-published-evidence-not-pr-head
+  obligation_id: dimension:evidence
+  summary: Fresh repair evidence and verification are bound to the source-parent commit
+    rather than the submitted final PR HEAD.
+  evidence: 'PR90 HEAD and delivery_identity: 1ebf12d36d29c2a3726257bd03685139f5bc568a.
+    Published artifacts/harness-sdk-build-repair-evidence/{semantic-evidence.json,component-manifest.json,source-snapshot.json,verification-results.json,evidence-index.json}
+    identify 96020d5faf6d4bbb399c068da50d1885fa9dcb5a. owner-repair.md:18-23 and 44-46
+    explicitly document the parent-commit execution/evidence strategy. In an isolated
+    submitted-HEAD checkout with the delivered repair payloads placed at the inherited
+    gate paths, exact commands 16 and 20 both exit 1 at source_revision==git rev-parse
+    HEAD. Separately regenerating the outputs at HEAD makes all 23 unchanged commands
+    pass.'
+  required_fix: Preserve PR90 and its one-line SDK diff. At the stable final submitted
+    PR HEAD rerun all 23 commands in the original order/environment, regenerate every
+    required SDK/repair artifact with that exact source_revision, and publish a new
+    immutable source-bound evidence set plus fresh OMAC verification identifying the
+    same HEAD. Use external immutable publication/attachments if needed to avoid an
+    artifact-only commit advancing HEAD after generation; do not relabel old outputs,
+    weaken equality gates, overwrite historical deliveries, create a duplicate PR,
+    or change SDK behavior.
+  status: fixed
+  classification: fixed
+  owner: harness-sdk
+  first_seen_round: 1
+  last_seen_round: 2
+  seen_count: 1
+  last_evidence: All new source-bearing payloads and verification identify submitted
+    HEAD 1ebf12d36d29c2a3726257bd03685139f5bc568a. Exact source_revision equality
+    commands 16 and 20 both independently pass against immutable delivered bytes;
+    manifest and bundle equal independently generated HEAD packaging. Original historical
+    96020d5f-bound evidence remains intact at earlier commits. The separate new metric-loss
+    defect is not a recurrence of the source-parent mismatch.
+- blocker_id: BLK-b1b208243999
+  root_cause_key: harness-sdk-repair-published-semantic-ledger-overwritten-by-full-suite
+  obligation_id: dimension:evidence
+  summary: The immutable repair publication contains the post-full-suite semantic
+    file, which no longer passes the unchanged fixed 50-test ledger gate.
+  evidence: 'At publication commit 8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96, artifacts/harness-sdk-build-repair-evidence/semantic-evidence.json
+    has SHA-256 2dcaeae5cd056b2e0c06152fed7b155c73fd4e36a12b609fee14fa04ab90e307 and
+    omits metrics.required_harness_conformance_test_count. Its archive contains the
+    identical bytes. With these delivered payloads at the inherited paths and git
+    HEAD=1ebf12d36d29c2a3726257bd03685139f5bc568a, exact command 18 exits 1: KeyError:
+    ''required_harness_conformance_test_count''. I independently ran all 23 exact
+    commands in original order: all exited 0 when executed. A read-only checkpoint
+    immediately after command 18 contained the measured count 50 and SHA-256 5e709ad69d68c6971a655a70f75a3cb754930b9f0f7c864a6f8d29304ee27670.
+    Command 23 rewrote that file to the exact published hash, removing only this metric.
+    The source cause is sdk/harness/semantic_evidence_test.go:319-325 (metric emitted
+    only with HARNESS_SDK_SEMANTIC_EVIDENCE set) and :386-396 (unset env still writes
+    the default gate path). The final transcript independently contains all 50 passing
+    required tests, so this is an evidence-harvesting failure, not missing executed
+    tests or a production SDK behavior defect.'
+  required_fix: Keep PR90 and its one-line production diff. At its stable committed
+    submitted HEAD, run all 23 commands unchanged in original order and the required
+    native environment, preserving the actual validated semantic bytes from the fixed-selector
+    generation/command-18 checkpoint before the unchanged full suite rewrites its
+    default output. Publish that measured checkpoint together with all other required
+    fresh same-HEAD artifacts, command exits and source bundle in a new immutable
+    evidence set; recompute and verify index/archive hashes and rerun exact command
+    18 against the published bytes. Preserve prior publications as history. Do not
+    synthesize the metric, relabel an unvalidated output, change SDK/test behavior,
+    alter the original commands or gates, create a dummy source commit, or claim Host90/whole-SDK90/merge/Audit
+    completion.
+  status: open
+  classification: new
+  owner: harness-sdk
+  first_seen_round: 2
+  last_seen_round: 2
+  seen_count: 1

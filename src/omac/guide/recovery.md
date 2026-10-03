@@ -646,3 +646,20 @@ omac node review-sdk-publication <manifest> harness-sdk-production-build-repair 
 能力工作批准不清除 hold、不授权生产 apply。digest 对 sorted compact UTF-8 JSON（ensure_ascii=False）计算 SHA256。apply 复用八步持久化过渡及单一 Controller/本机文件锁；未知写已生效时先持久化观察进度再写下一步。仅用同一 pending request/digest 续接，consumed 请求拒绝重放，pending journal 阻止 Runner tick；不宣称跨主机原子 CAS。
 
 最新 Worker 上传修正文案后的 verification，二十三次执行仍属于前一 formal execution Run 及其 verification；保留原生记录和原命令结果供独立核验，字节完整性不等于技术闭环。原拒绝、SDK23/raw85/wholeSDK90/Host90/security/downstream 义务、绝对计数和零 baseline 不变，其他 manifest 节点/meta 均绑定保留。apply 只准备 REVIEW/IN_REVIEW，不派发、不出 verdict/merge/done；后由正常 Runner 一次 guarded assignment/wake 送真实独立 Reviewer，保留冻结 SDK 义务。不要用 authoring amendment、retry、dummy commit、手写 metadata 或预算 reset 绕过拒绝。
+
+### SDK command18 检查点后继交付
+
+`omac node review-sdk-checkpoint` 仅支持 AITEAM-1040 新 reject `0ba346…`、ledger `89ff9f…`、formal Worker Run `01a101bf-006b-7412-af52-258d6979a7cd` 和独立不可变 publication `6aebcc6…`。旧 SDK 请求 `abcd709…` 必须保持 consumed/step8，不能重放。operator-retry 来源 subject 与保留的 review subject 分别绑定，不放宽全局 same-HEAD 交付检查。
+
+```bash
+omac node review-sdk-checkpoint <manifest> harness-sdk-production-build-repair \
+  --index-url 'https://github.com/xiaohei-info/open-agent-cluster/blob/6aebcc6a53992e7e9bc77b249596655fb7bb4b7a/artifacts/harness-sdk-build-repair-evidence/evidence-index.json' \
+  --reason '<恢复范围>' --output json > checkpoint-request.json
+omac node review-sdk-checkpoint <manifest> harness-sdk-production-build-repair \
+  --apply-request checkpoint-request.json \
+  --approve-request-sha256 '<明确批准的 canonical request SHA256>' --output json
+```
+
+prepare 只读。完整原生 runner receipt 绑定同 Run 的 23 条原命令，以及 command23 改写前保存的 command18 原始检查点 `5e709ad…`/169561 字节；原生 Git index/payload 和归档的 17 个普通文件必须逐字节一致。原 Reviewer 的截断回复前缀只证明来源关联，完整旧 verification 重新通过 Store 附件读取，不导入历史 seal。远程 publication revalidation 的截断输出不能称完整成功 receipt；新 Reviewer 仍须独立核验实际出版字节、原命令和完整原报告，不将 Controller 校验当技术 pass。
+
+apply 复用八步 journal，保留两轮拒绝、计数、实际缺省 typed baseline、所有其他节点/meta，准备独立 review，不派发、不出 verdict/merge/done。pending receipt 在 I/O 前阻止 Runner tick；仅用原请求和 digest 续接，consumed 不重放。正常单一 Controller 后续只 assign/wake 一次独立 Reviewer。能力实现、部署与生产精确请求批准分别处理。

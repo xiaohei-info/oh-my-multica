@@ -139,15 +139,15 @@ def _source_reference(store, runtime, item, reviewer_run):
     return found[0][0], _digest(found[0][1])
 
 
-def _publication(store, index_url, item, original, expected=None, *, download=True):
+def _publication(store, index_url, item, original, expected=None, *, download=True, publication_commit=COMMIT, publication_index_url=INDEX):
     if (
-        index_url != INDEX
+        index_url != publication_index_url
         or index_url not in _urls(item.verification)
         or index_url in _urls(original)
     ):
         _fail("Only the changed, exact immutable SDK publication is supported")
     body = (
-        store.observe_git_artifacts([INDEX])[0].content
+        store.observe_git_artifacts([publication_index_url])[0].content
         if expected is None
         else base64.b64decode(expected["index_bytes"], validate=True)
     )
@@ -205,7 +205,7 @@ def _publication(store, index_url, item, original, expected=None, *, download=Tr
             or path != PREFIX + path.removeprefix(PREFIX)
         ):
             _fail("SDK index path is outside the exact payload set")
-        url = INDEX.rsplit("/", 1)[0] + "/" + path.removeprefix(PREFIX)
+        url = publication_index_url.rsplit("/", 1)[0] + "/" + path.removeprefix(PREFIX)
         if (
             url in by_url
             or not re.fullmatch(r"[0-9a-f]{40}", str(row["git_blob_oid"]))
@@ -215,7 +215,7 @@ def _publication(store, index_url, item, original, expected=None, *, download=Tr
         ):
             _fail("SDK index identity, digest or size is invalid")
         by_url[url] = row
-    urls = sorted([INDEX, *by_url])
+    urls = sorted([publication_index_url, *by_url])
     observed = store.observe_git_artifacts(urls, download=download)
     if len(observed) != len(urls):
         _fail("Native Git observations are incomplete")
@@ -238,13 +238,13 @@ def _publication(store, index_url, item, original, expected=None, *, download=Tr
             }
             or ref["url"] != url
             or ref["repository"] != "xiaohei-info/open-agent-cluster"
-            or ref["commit_sha"] != COMMIT
+            or ref["commit_sha"] != publication_commit
             or ref["parent_shas"] != [HEAD]
             or url
             != "https://github.com/"
             + ref["repository"]
             + "/blob/"
-            + COMMIT
+            + publication_commit
             + "/"
             + ref["path"]
             or not re.fullmatch(r"[0-9a-f]{40}", str(ref["tree_sha"]))
@@ -268,7 +268,7 @@ def _publication(store, index_url, item, original, expected=None, *, download=Tr
             if {k: v for k, v in old.items() if k != "sha256"} != ref:
                 _fail("Native Git publication changed before recovery write")
             ref["sha256"] = old["sha256"]
-        if url == INDEX:
+        if url == publication_index_url:
             if (
                 ref["bytes"] != len(body)
                 or ref["sha256"] != hashlib.sha256(body).hexdigest()
@@ -306,7 +306,7 @@ def _publication(store, index_url, item, original, expected=None, *, download=Tr
     ):
         _fail("SDK publication is ambiguous or oversized")
     result = {
-        "index_url": INDEX,
+        "index_url": publication_index_url,
         "index_bytes": base64.b64encode(body).decode(),
         "assets": refs,
         "source_bindings": bindings,

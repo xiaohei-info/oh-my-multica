@@ -349,6 +349,8 @@ def _verify(
     source_reader, publication_reader = _source_reference, _publication
     if sdk:
         from . import sdk_publication_review as profile
+        if sdk == "checkpoint":
+            from . import sdk_checkpoint_review as profile
 
         bound_key, bound_root, artifact = profile.KEY, profile.ROOT, profile.ARTIFACT
         source_reader, publication_reader = (
@@ -386,7 +388,7 @@ def _verify(
         or not handoff.is_causally_bound()
         or handoff.authoring_recovery is not None
         or handoff.source_review_verdict != "reject"
-        or handoff.gate != "review"
+        or handoff.gate != ("operator-retry" if sdk == "checkpoint" else "review")
         or handoff.target_worker != node.worker
         or item.worker != node.worker
         or handoff.target_worker_bounce != item.bounces.worker
@@ -440,7 +442,7 @@ def _verify(
     if (
         len(blockers) != 1
         or blockers[0].get("root_cause_key") != bound_root
-        or latest.get("subject_digest") != handoff.source_review_subject_digest
+        or latest.get("subject_digest") != (profile.LEDGER_SUBJECT if sdk == "checkpoint" else handoff.source_review_subject_digest)
         or latest.get("verdict") != "reject"
         or latest.get("report_digest") != _review_report_digest(report)
         or report.get("reviewed_pr") != (item.artifacts or {}).get("pr_url")
@@ -657,6 +659,8 @@ def apply_publication_review(
     schema, journal, initial, obligations = SCHEMA, JOURNAL, _initial, _obligations
     if _sdk:
         from . import sdk_publication_review as profile
+        if _sdk == "checkpoint":
+            from . import sdk_checkpoint_review as profile
 
         schema, journal, initial, obligations = (
             profile.SCHEMA,

@@ -92,6 +92,7 @@ def register(parser):
     for action, description in (
         ("review-publication", "Prepare or consume one exact Preview publication re-review authorization"),
         ("review-sdk-publication", "Prepare or consume one held SDK native-publication authorization"),
+        ("review-sdk-checkpoint", "Prepare or consume one exact native SDK command18 checkpoint authorization"),
     ):
         publication_review = sub.add_parser(action, help=description)
         publication_review.add_argument("manifest")
@@ -925,6 +926,9 @@ def _cmd_review_publication(args) -> int:
     if action == "review-sdk-publication":
         from ...pipeline.sdk_publication_review import prepare_sdk_publication_review, apply_sdk_publication_review
         prepare_publication_review, apply_publication_review = prepare_sdk_publication_review, apply_sdk_publication_review
+    if action == "review-sdk-checkpoint":
+        from ...pipeline.sdk_checkpoint_review import prepare_sdk_checkpoint_review, apply_sdk_checkpoint_review
+        prepare_publication_review, apply_publication_review = prepare_sdk_checkpoint_review, apply_sdk_checkpoint_review
     help_command = f"omac node {action} --help"
     engine = _build_engine(load_config())
     if engine is None:
@@ -949,7 +953,7 @@ def _cmd_review_publication(args) -> int:
 
 
 def run(args) -> int:
-    if args.action in {"review-publication", "review-sdk-publication"}:
+    if args.action in {"review-publication", "review-sdk-publication", "review-sdk-checkpoint"}:
         return _cmd_review_publication(args)
     if args.action == "review-evidence":
         return _cmd_review_evidence(args)

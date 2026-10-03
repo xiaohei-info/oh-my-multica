@@ -1,0 +1,1232 @@
+review_protocol: omac.review/v2
+reviewed_pr: https://github.com/xiaohei-info/open-agent-cluster/pull/90
+reviewed_head_sha: 1ebf12d36d29c2a3726257bd03685139f5bc568a
+review_goals:
+- Verify the compile-only repair preserves API, authority, Unknown retry-denial and behavior boundaries.
+- Independently execute all unchanged verification/integration commands in the exact native environment.
+- Verify immutable publication bytes and same submitted-HEAD lineage, disposition the original blocker, and check every current
+  review obligation.
+summary: 'Reject for one new publication blocker. The compile-only source repair, all 23 exact local verification commands
+  and raw SDK85 pass. The prior source-parent lineage blocker is fixed. The immutable publication instead contains a semantic
+  JSON overwritten by the final full test suite: it loses the fixed 50-test metric and fails unchanged gate command 18. Host90/whole-SDK90
+  and genuine Host positive authority remain downstream and not-run; no merge or Audit completion is claimed.'
+diff_reviewed: true
+tests_rerun: true
+integration_tests_rerun: true
+coverage_checked: true
+full_review_completed: true
+env_setup:
+- Native Linux aarch64 with /proc/self/fd present. go.mod pins go 1.26.0; actual go version go1.26.0 linux/arm64.
+- GOOS=linux; GOARCH=arm64; GOVERSION=go1.26.0; CGO_ENABLED=0; GOFLAGS empty; GOTOOLCHAIN=auto. GCC 13.3.0. Exact race command
+  sets CGO_ENABLED=1.
+- Fresh dedicated reviewer checkout of submitted PR90 HEAD; no worker source changed. All 23 exact commands rerun synchronously
+  in original order.
+- A second unchanged sequence retained a read-only semantic checkpoint immediately after command 18 to diagnose final-suite
+  overwriting. Local snapshotting did not alter any verification command or source.
+- Immutable payloads fetched through Git at exact evidence commit; platform attachments downloaded through multica CLI. Original
+  reject, ledger, native execution verification and latest correction verification verified by hash and size.
+commands:
+- index: 1
+  cmd: mkdir -p artifacts/harness-sdk && go test -covermode=atomic -coverprofile=artifacts/harness-sdk/coverage.out ./sdk/harness/...
+  exit_code: 0
+  stdout: "ok  \tgithub.com/xiaohei-info/open-agent-cluster/sdk/harness\t4.534s\tcoverage: 85.5% of statements\n"
+  stderr: ''
+  seconds: 5.205
+- index: 2
+  cmd: "python3 -c 'from pathlib import Path\nrows=Path('\"'\"'artifacts/harness-sdk/coverage.out'\"'\"').read_text().splitlines()\n\
+    assert rows and rows[0]=='\"'\"'mode: atomic'\"'\"'\nblocks={}\nfor line in rows[1:]:\n    key,weight,count=line.split();\
+    \ weight=int(weight); count=int(count)\n    assert key.startswith('\"'\"'github.com/xiaohei-info/open-agent-cluster/sdk/harness/'\"\
+    '\"') and weight>=0 and count>=0\n    if key in blocks:\n        assert blocks[key][0]==weight\n        count+=blocks[key][1]\n\
+    \    blocks[key]=(weight,count)\ntotal=sum(w for w,c in blocks.values()); covered=sum(w for w,c in blocks.values() if\
+    \ c>0)\nassert total>0 and 100*covered>=85*total, (covered,total,'\"'\"'required raw SDK-only coverage >=85%'\"'\"')\n\
+    '"
+  exit_code: 0
+  stdout: ''
+  stderr: ''
+  seconds: 0.04
+- index: 3
+  cmd: go vet ./sdk/harness/...
+  exit_code: 0
+  stdout: ''
+  stderr: ''
+  seconds: 0.218
+- index: 4
+  cmd: CGO_ENABLED=1 go test -race ./sdk/harness/...
+  exit_code: 0
+  stdout: "ok  \tgithub.com/xiaohei-info/open-agent-cluster/sdk/harness\t28.089s\n"
+  stderr: ''
+  seconds: 28.921
+- index: 5
+  cmd: mkdir -p artifacts/harness-sdk && go test -json ./sdk/harness/... -run '^(TestHarnessSDKMeasuredTreeUsesProductionLineage|TestHarnessSDKMeasuredTreeCopyAndParentBinding|TestHarnessSDKMeasuredTreeCannotAuthorizeReceipt|TestHarnessSDKReceiptProjectionCompatibility)$'
+    -count=1 > artifacts/harness-sdk/receipt-tree-tests.json
+  exit_code: 0
+  stdout: ''
+  stderr: ''
+  seconds: 0.664
+- index: 6
+  cmd: 'python3 -c ''import json; required={''"''"''TestHarnessSDKMeasuredTreeCannotAuthorizeReceipt''"''"'', ''"''"''TestHarnessSDKMeasuredTreeUsesProductionLineage''"''"'',
+    ''"''"''TestHarnessSDKMeasuredTreeCopyAndParentBinding''"''"'', ''"''"''TestHarnessSDKReceiptProjectionCompatibility''"''"''};
+    rows=[json.loads(x) for x in open(''"''"''artifacts/harness-sdk/receipt-tree-tests.json''"''"'') if x.strip()]; passed={x.get(''"''"''Test''"''"'')
+    for x in rows if x.get(''"''"''Action''"''"'')==''"''"''pass''"''"'' and x.get(''"''"''Test''"''"'') in required}; assert
+    passed==required, f''"''"''missing design regressions: {sorted(required-passed)}''"''"''; assert not any(x.get(''"''"''Action''"''"'')==''"''"''fail''"''"''
+    for x in rows)'''
+  exit_code: 0
+  stdout: ''
+  stderr: ''
+  seconds: 0.03
+- index: 7
+  cmd: mkdir -p artifacts/harness-sdk && go test -json ./sdk/harness/... -run '^(TestHarnessSDKDescribeAndTypedInvocationConformance|TestHarnessSDKObserveBeforeRetryAndCancelConformance|TestHarnessSDKPermissionAndFailureConformance|TestHarnessSDKRejectsSelfAttestedHostEvidence|TestHarnessSDKServiceEnvelopeRejectsConsistentUntrustedHandoff|TestHarnessSDKServiceModeRejectsMissingAttestation|TestHarnessSDKServiceModeRejectsAlteredAttestation|TestHarnessSDKServiceModeRejectsExpiredAttestation|TestHarnessSDKServiceModeRejectsReplayedAttestation|TestHarnessSDKServiceModeRejectsMismatchedScope|TestHarnessSDKServiceModeRejectsMismatchedDigest|TestHarnessSDKServiceModeRejectsMismatchedInvocationIdentity|TestHarnessSDKServiceConsumerRejectsCallerRotationClaims|TestHarnessSDKComputationalGuideMonotonicConformance|TestHarnessSDKInferentialGuideAppendOnlyConformance|TestHarnessSDKExecutorSideEffectLifecycleConformance|TestHarnessSDKComputationalSensorAppendOnlyConformance|TestHarnessSDKInferentialSensorAppendOnlyConformance|TestHarnessSDKTriggerConformance|TestHarnessSDKEventHandlerSideEffectLifecycleConformance|TestHarnessSDKRequiredOptionalFailureObservationConformance|TestHarnessSDKTargetBindingConformance|TestHarnessSDKRegisteredGateEvaluatorPurityFailClosedConformance|TestHarnessSDKTypeSpecificDescribeSchemaConformance|TestHarnessSDKTypedOperationAndPayloadBindingConformance|TestHarnessSDKGateEvaluatorRegistryProvenanceConformance|TestPublicServiceConsumerRejectsCallerHandoffForEveryTypedOperation|TestPublicServiceConsumerRejectsUntrustedReplayAcrossReceivers|TestPublicServiceConsumerRejectsMissingOrMalformedHostIngress)$'
+    -count=1 > artifacts/harness-sdk/conformance-tests.json
+  exit_code: 0
+  stdout: ''
+  stderr: ''
+  seconds: 0.833
+- index: 8
+  cmd: 'python3 -c "import json; required=set(''TestHarnessSDKDescribeAndTypedInvocationConformance TestHarnessSDKObserveBeforeRetryAndCancelConformance
+    TestHarnessSDKPermissionAndFailureConformance TestHarnessSDKRejectsSelfAttestedHostEvidence TestHarnessSDKServiceEnvelopeRejectsConsistentUntrustedHandoff
+    TestHarnessSDKServiceModeRejectsMissingAttestation TestHarnessSDKServiceModeRejectsAlteredAttestation TestHarnessSDKServiceModeRejectsExpiredAttestation
+    TestHarnessSDKServiceModeRejectsReplayedAttestation TestHarnessSDKServiceModeRejectsMismatchedScope TestHarnessSDKServiceModeRejectsMismatchedDigest
+    TestHarnessSDKServiceModeRejectsMismatchedInvocationIdentity TestHarnessSDKServiceConsumerRejectsCallerRotationClaims
+    TestHarnessSDKComputationalGuideMonotonicConformance TestHarnessSDKInferentialGuideAppendOnlyConformance TestHarnessSDKExecutorSideEffectLifecycleConformance
+    TestHarnessSDKComputationalSensorAppendOnlyConformance TestHarnessSDKInferentialSensorAppendOnlyConformance TestHarnessSDKTriggerConformance
+    TestHarnessSDKEventHandlerSideEffectLifecycleConformance TestHarnessSDKRequiredOptionalFailureObservationConformance TestHarnessSDKTargetBindingConformance
+    TestHarnessSDKRegisteredGateEvaluatorPurityFailClosedConformance TestHarnessSDKTypeSpecificDescribeSchemaConformance TestHarnessSDKTypedOperationAndPayloadBindingConformance
+    TestHarnessSDKGateEvaluatorRegistryProvenanceConformance TestPublicServiceConsumerRejectsCallerHandoffForEveryTypedOperation
+    TestPublicServiceConsumerRejectsUntrustedReplayAcrossReceivers TestPublicServiceConsumerRejectsMissingOrMalformedHostIngress''.split());
+    rows=[json.loads(x) for x in open(''artifacts/harness-sdk/conformance-tests.json'') if x.strip()]; passed={x.get(''Test'')
+    for x in rows if x.get(''Action'')==''pass'' and x.get(''Test'') in required}; assert passed==required, f''missing required
+    passing tests: {sorted(required-passed)}''"'
+  exit_code: 0
+  stdout: ''
+  stderr: ''
+  seconds: 0.03
+- index: 9
+  cmd: go test -json ./sdk/harness/... -run '^(TestHarnessSDKRetryProofBindsCompleteObserveScopeAndServicePayload|TestHarnessSDKTargetBindingIdentityMismatchesRejectWithoutImplementationCalls|TestPublicServiceConsumerRejectsUnverifiedIssuerOutput|TestPublicGateEvaluatorRegistryRejectsCallerForgedHostCapability|TestHarnessSDKGateCapabilityBoundaryFailures|TestPublicServiceConsumerRejectsAlternatePayload|TestHarnessSDKObserveSchemaRejectsInvalidPayloadWithoutImplementationCall|TestHarnessSDKCancelSchemaRejectsInvalidPayloadWithoutImplementationCall|TestHarnessSDKTriggerAndEventHandlerPositiveFixturesRejectErrorOnlyImplementations|TestHarnessSDKRejectsExternalSchemaReferencesWithoutIO|TestHarnessSDKBoundsSchemaPayloadSizeAndDepth|TestPublicGateEvaluationRejectsCallerSuppliedEvaluator|TestExternalPackageCannotForgeCurrentHostGateHandoff|TestHarnessSDKSemanticLedgerPreservesChildExecutionEvidence|TestHarnessSDKSemanticLedgerRejectsHelperOnlyOrLiteralPassRows)$'
+    -count=1 >> artifacts/harness-sdk/conformance-tests.json
+  exit_code: 0
+  stdout: ''
+  stderr: ''
+  seconds: 0.591
+- index: 10
+  cmd: 'python3 -c "import json; required=set(''TestHarnessSDKRetryProofBindsCompleteObserveScopeAndServicePayload TestHarnessSDKTargetBindingIdentityMismatchesRejectWithoutImplementationCalls
+    TestPublicServiceConsumerRejectsUnverifiedIssuerOutput TestPublicGateEvaluatorRegistryRejectsCallerForgedHostCapability
+    TestHarnessSDKGateCapabilityBoundaryFailures TestPublicServiceConsumerRejectsAlternatePayload TestHarnessSDKObserveSchemaRejectsInvalidPayloadWithoutImplementationCall
+    TestHarnessSDKCancelSchemaRejectsInvalidPayloadWithoutImplementationCall TestHarnessSDKTriggerAndEventHandlerPositiveFixturesRejectErrorOnlyImplementations
+    TestHarnessSDKRejectsExternalSchemaReferencesWithoutIO TestHarnessSDKBoundsSchemaPayloadSizeAndDepth TestPublicGateEvaluationRejectsCallerSuppliedEvaluator
+    TestExternalPackageCannotForgeCurrentHostGateHandoff TestHarnessSDKSemanticLedgerPreservesChildExecutionEvidence TestHarnessSDKSemanticLedgerRejectsHelperOnlyOrLiteralPassRows''.split());
+    rows=[json.loads(x) for x in open(''artifacts/harness-sdk/conformance-tests.json'') if x.strip()]; passed={x.get(''Test'')
+    for x in rows if x.get(''Action'')==''pass'' and x.get(''Test'') in required}; assert passed==required, f''missing residual
+    semantic regressions: {sorted(required-passed)}''"'
+  exit_code: 0
+  stdout: ''
+  stderr: ''
+  seconds: 0.037
+- index: 11
+  cmd: go test -json ./sdk/harness/... -run '^(TestHarnessSDKTypedResponseValidationPrecedesReceiptAcceptance|TestHarnessSDKOptionalUnknownFailureRequiresObservation|TestHarnessSDKConformanceEvidenceCannotAuthorizeHostIngress)$'
+    -count=1 >> artifacts/harness-sdk/conformance-tests.json
+  exit_code: 0
+  stdout: ''
+  stderr: ''
+  seconds: 0.567
+- index: 12
+  cmd: 'python3 -c ''import json; required={''"''"''TestHarnessSDKOptionalUnknownFailureRequiresObservation''"''"'', ''"''"''TestHarnessSDKConformanceEvidenceCannotAuthorizeHostIngress''"''"'',
+    ''"''"''TestHarnessSDKTypedResponseValidationPrecedesReceiptAcceptance''"''"''}; rows=[json.loads(x) for x in open(''"''"''artifacts/harness-sdk/conformance-tests.json''"''"'')
+    if x.strip()]; passed={x.get(''"''"''Test''"''"'') for x in rows if x.get(''"''"''Action''"''"'')==''"''"''pass''"''"''
+    and x.get(''"''"''Test''"''"'') in required}; assert passed==required, f''"''"''missing blocker regressions: {sorted(required-passed)}''"''"'';
+    assert not any(x.get(''"''"''Test''"''"'') in required and x.get(''"''"''Action''"''"'') in {''"''"''skip''"''"'',''"''"''fail''"''"''}
+    for x in rows)'''
+  exit_code: 0
+  stdout: ''
+  stderr: ''
+  seconds: 0.032
+- index: 13
+  cmd: mkdir -p artifacts/harness-sdk && go test -json ./sdk/harness/... -run '^(TestPublicHostAuthorityCannotBeSelectedByCaller|TestCurrentPublicGateForgeryRejectsWithoutBindingReceiptOrEvaluatorCall)$'
+    -count=1 >> artifacts/harness-sdk/conformance-tests.json
+  exit_code: 0
+  stdout: ''
+  stderr: ''
+  seconds: 0.478
+- index: 14
+  cmd: 'python3 -c "import json; required={''TestPublicHostAuthorityCannotBeSelectedByCaller'',''TestCurrentPublicGateForgeryRejectsWithoutBindingReceiptOrEvaluatorCall''};
+    rows=[json.loads(x) for x in open(''artifacts/harness-sdk/conformance-tests.json'') if x.strip()]; passed={x.get(''Test'')
+    for x in rows if x.get(''Action'')==''pass'' and x.get(''Test'') in required}; assert passed==required, f''missing current-boundary
+    regressions: {sorted(required-passed)}''"'
+  exit_code: 0
+  stdout: ''
+  stderr: ''
+  seconds: 0.031
+- index: 15
+  cmd: HARNESS_SDK_SEMANTIC_EVIDENCE="$PWD/artifacts/harness-sdk/semantic-evidence.json" go test -json ./sdk/harness/... -run
+    '^TestHarnessSDKSemanticEvidenceConformance$' -count=1 >> artifacts/harness-sdk/conformance-tests.json
+  exit_code: 0
+  stdout: ''
+  stderr: ''
+  seconds: 1.005
+- index: 16
+  cmd: python3 -c "from pathlib import Path; import json,subprocess; p=Path('artifacts/harness-sdk/semantic-evidence.json');
+    assert p.is_file() and p.stat().st_size>0; d=json.loads(p.read_text()); assert d['schema']=='oac.harness-sdk-semantic-evidence/v1';
+    rev=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(); assert d['source_revision']==rev; required={'typed-point-describe-contracts','service-host-consumer-boundary','service-consumer-payload-boundary','observe-input-schema','cancel-input-schema','trigger-positive-success','event-handler-positive-lifecycle','external-schema-reference-isolation','schema-size-depth-bounds','required-optional-failure-policy','unknown-recovery-retry-cancel','target-binding-identity','gate-evaluator-consumer-boundary'};
+    rows={x['fixture_id']:x for x in d['fixtures']}; assert required==set(rows); assert all(rows[k]['status']=='pass' and
+    rows[k].get('execution_count')==1 and rows[k].get('accepted_count',0)+rows[k].get('rejected_count',0)>0 and rows[k].get('forbidden_accept_count')==0
+    and rows[k].get('forbidden_implementation_call_count')==0 and isinstance(rows[k].get('identity_evidence'),list) and any(str(x).startswith('target=')
+    for x in rows[k]['identity_evidence']) and any(str(x).startswith('operation=') for x in rows[k]['identity_evidence'])
+    and any(str(x).startswith('provenance=') for x in rows[k]['identity_evidence']) and rows[k].get('assertions') and rows[k].get('evidence_refs')
+    for k in required); m=d['metrics']; assert m['required_current_amendment_semantic_fixture_count']==7; assert m['required_delivery_goal_semantic_fixture_count']==13;
+    exact={'required_extension_point_fixture_count':7,'required_service_mode_fixture_count':15,'valid_service_mode_invocation_accept_count':0,'invalid_service_mode_invocation_accept_count':0,'malformed_type_specific_schema_accept_count':0,'missing_target_binding_accept_count':0,'missing_registered_gate_evaluator_accept_count':0,'required_optional_failure_observation_gap_count':0,'operation_mismatch_rejection_count':3,'altered_payload_rejection_count':7,'external_host_direct_bind_rejection_count':2,'event_handler_lifecycle_schema_negative_count':2,'gate_evaluator_provenance_fixture_count':7,'gate_evaluator_service_mode_rejection_count':2,'gate_evaluator_mismatched_release_rejection_count':1,'gate_evaluator_purity_rejection_count':1,'retry_scope_mismatch_rejection_count':4,'target_binding_identity_mismatch_fixture_count':56,'target_binding_package_id_mismatch_rejection_count':7,'target_binding_package_version_mismatch_rejection_count':7,'target_binding_entrypoint_mismatch_rejection_count':7,'target_binding_artifact_mismatch_rejection_count':7,'untrusted_service_cross_receiver_replay_rejection_count':2};
+    assert all(m[k]==v for k,v in exact.items()); assert m['service_consumer_alternate_payload_accept_count']==0; assert m['observe_schema_invalid_implementation_call_count']==0;
+    assert m['cancel_schema_invalid_implementation_call_count']==0; assert m['trigger_error_only_positive_accept_count']==0;
+    assert m['event_handler_error_only_positive_accept_count']==0; assert m['external_schema_reference_rejection_count']>=2;
+    assert m['external_schema_resolution_io_attempt_count']==0; assert m['schema_size_limit_bypass_accept_count']==0; assert
+    m['payload_size_limit_bypass_accept_count']==0; assert m['schema_depth_limit_bypass_accept_count']==0; assert m['payload_depth_limit_bypass_accept_count']==0;
+    assert m['trigger_successful_response_count']>=1; assert m['event_handler_successful_lifecycle_operation_count']>=3; assert
+    m['required_measured_semantic_row_count']==13; assert m['unregistered_gate_execution_accept_count']==0; assert m['sdk_owned_host_handoff_construction_count']==0;
+    assert m['helper_only_semantic_fixture_accept_count']==0; assert m['literal_semantic_status_accept_count']==0; assert
+    m['dropped_child_execution_evidence_count']==0"
+  exit_code: 0
+  stdout: ''
+  stderr: ''
+  seconds: 0.049
+- index: 17
+  cmd: python3 -c "from pathlib import Path; import json; d=json.loads(Path('artifacts/harness-sdk/semantic-evidence.json').read_text());
+    m=d['metrics']; assert m['registered_gate_positive_path_count']==0; assert m['authoritative_gate_positive_claim_count']==0;
+    assert d['evidence_scope']=='sdk-boundary'; rows={x['fixture_id']:x for x in d['fixtures']}; r=rows['gate-evaluator-consumer-boundary'];
+    assert r['status']=='pass' and r.get('accepted_count',0)==0 and r.get('rejected_count',0)>0; assert r.get('forbidden_accept_count')==0
+    and r.get('forbidden_implementation_call_count')==0"
+  exit_code: 0
+  stdout: ''
+  stderr: ''
+  seconds: 0.038
+- index: 18
+  cmd: 'python3 -c ''from pathlib import Path; import json; d=json.loads(Path(''"''"''artifacts/harness-sdk/semantic-evidence.json''"''"'').read_text());
+    m=d[''"''"''metrics''"''"'']; rows={r[''"''"''fixture_id''"''"'']:r for r in d[''"''"''fixtures''"''"'']}; assert len(d[''"''"''fixtures''"''"''])==len(rows)==13;
+    negative={''"''"''service-host-consumer-boundary''"''"'',''"''"''service-consumer-payload-boundary''"''"'',''"''"''gate-evaluator-consumer-boundary''"''"''};
+    assert all(r[''"''"''evidence_scope''"''"'']==(''"''"''sdk-consumer-negative''"''"'' if k in negative else ''"''"''sdk-operation-conformance''"''"'')
+    and r[''"''"''authoritative_host_claim''"''"''] is False for k,r in rows.items()); assert all(rows[k][''"''"''accepted_count''"''"'']==0
+    and rows[k][''"''"''rejected_count''"''"'']>0 and rows[k][''"''"''binding_issued_count''"''"'']==0 and rows[k][''"''"''authoritative_receipt_issued_count''"''"'']==0
+    and rows[k][''"''"''implementation_call_count''"''"'']==0 for k in negative); assert all(rows[k][''"''"''accepted_count''"''"'']>0
+    for k in [''"''"''trigger-positive-success''"''"'',''"''"''event-handler-positive-lifecycle''"''"'']); cases=rows[''"''"''service-host-consumer-boundary''"''"''][''"''"''cases''"''"''];
+    required_cases=[''"''"''missing-attestation''"''"'', ''"''"''altered-attestation''"''"'', ''"''"''expired-attestation''"''"'',
+    ''"''"''replayed-untrusted-attestation''"''"'', ''"''"''mismatched-scope''"''"'', ''"''"''mismatched-digest''"''"'', ''"''"''mismatched-invocation-identity''"''"'',
+    ''"''"''caller-rotation-claims''"''"'', ''"''"''consistent-untrusted-handoff''"''"'', ''"''"''caller-verifier''"''"'',
+    ''"''"''caller-signer-trust-pair''"''"'', ''"''"''unverified-issuer-output''"''"'', ''"''"''missing-ingress''"''"'', ''"''"''malformed-ingress''"''"'',
+    ''"''"''untrusted-cross-receiver-replay''"''"'']; assert len(cases)==len(required_cases) and {c[''"''"''case_id''"''"'']
+    for c in cases}==set(required_cases); assert all(c[''"''"''attempt_count''"''"'']>0 and c[''"''"''rejected_count''"''"'']==c[''"''"''attempt_count''"''"'']
+    and c[''"''"''accepted_count''"''"'']==0 and c[''"''"''binding_issued_count''"''"'']==0 and c[''"''"''authoritative_receipt_issued_count''"''"'']==0
+    and c[''"''"''implementation_call_count''"''"'']==0 and c[''"''"''execution_evidence''"''"''] for c in cases); expected={''"''"''required_harness_conformance_test_count''"''"'':
+    50, ''"''"''required_extension_point_fixture_count''"''"'': 7, ''"''"''required_service_mode_fixture_count''"''"'': 15,
+    ''"''"''valid_service_mode_invocation_accept_count''"''"'': 0, ''"''"''invalid_service_mode_invocation_accept_count''"''"'':
+    0, ''"''"''malformed_type_specific_schema_accept_count''"''"'': 0, ''"''"''missing_target_binding_accept_count''"''"'':
+    0, ''"''"''missing_registered_gate_evaluator_accept_count''"''"'': 0, ''"''"''required_optional_failure_observation_gap_count''"''"'':
+    0, ''"''"''operation_mismatch_rejection_count''"''"'': 3, ''"''"''altered_payload_rejection_count''"''"'': 7, ''"''"''external_host_direct_bind_rejection_count''"''"'':
+    2, ''"''"''event_handler_lifecycle_schema_negative_count''"''"'': 2, ''"''"''gate_evaluator_provenance_fixture_count''"''"'':
+    7, ''"''"''gate_evaluator_service_mode_rejection_count''"''"'': 2, ''"''"''gate_evaluator_mismatched_release_rejection_count''"''"'':
+    1, ''"''"''gate_evaluator_purity_rejection_count''"''"'': 1, ''"''"''retry_scope_mismatch_rejection_count''"''"'': 4,
+    ''"''"''target_binding_identity_mismatch_fixture_count''"''"'': 56, ''"''"''target_binding_package_id_mismatch_rejection_count''"''"'':
+    7, ''"''"''target_binding_package_version_mismatch_rejection_count''"''"'': 7, ''"''"''target_binding_entrypoint_mismatch_rejection_count''"''"'':
+    7, ''"''"''target_binding_artifact_mismatch_rejection_count''"''"'': 7, ''"''"''required_current_amendment_semantic_fixture_count''"''"'':
+    7, ''"''"''required_delivery_goal_semantic_fixture_count''"''"'': 13, ''"''"''observe_schema_invalid_implementation_call_count''"''"'':
+    0, ''"''"''cancel_schema_invalid_implementation_call_count''"''"'': 0, ''"''"''trigger_error_only_positive_accept_count''"''"'':
+    0, ''"''"''event_handler_error_only_positive_accept_count''"''"'': 0, ''"''"''external_schema_reference_rejection_count''"''"'':
+    2, ''"''"''external_schema_resolution_io_attempt_count''"''"'': 0, ''"''"''schema_size_limit_bypass_accept_count''"''"'':
+    0, ''"''"''payload_size_limit_bypass_accept_count''"''"'': 0, ''"''"''schema_depth_limit_bypass_accept_count''"''"'':
+    0, ''"''"''payload_depth_limit_bypass_accept_count''"''"'': 0, ''"''"''trigger_successful_response_count''"''"'': 1, ''"''"''event_handler_successful_lifecycle_operation_count''"''"'':
+    3, ''"''"''semantic_evidence_source_revision_match_count''"''"'': 1, ''"''"''required_measured_semantic_row_count''"''"'':
+    13, ''"''"''unregistered_gate_execution_accept_count''"''"'': 0, ''"''"''sdk_owned_host_handoff_construction_count''"''"'':
+    0, ''"''"''helper_only_semantic_fixture_accept_count''"''"'': 0, ''"''"''literal_semantic_status_accept_count''"''"'':
+    0, ''"''"''dropped_child_execution_evidence_count''"''"'': 0, ''"''"''registered_gate_positive_path_count''"''"'': 0,
+    ''"''"''authoritative_gate_positive_claim_count''"''"'': 0, ''"''"''caller_selected_host_authority_accept_count''"''"'':
+    0, ''"''"''current_public_handoff_forgery_accept_count''"''"'': 0, ''"''"''gate_consumer_boundary_fixture_count''"''"'':
+    1, ''"''"''untrusted_service_cross_receiver_replay_rejection_count''"''"'': 2, ''"''"''service_consumer_alternate_payload_accept_count''"''"'':
+    0, ''"''"''typed_invalid_response_accepted_receipt_count''"''"'': 0, ''"''"''typed_response_validation_negative_count''"''"'':
+    16, ''"''"''typed_valid_error_envelope_fixture_count''"''"'': 8, ''"''"''typed_valid_error_business_success_count''"''"'':
+    0, ''"''"''optional_unknown_skip_count''"''"'': 0, ''"''"''optional_unknown_failure_fixture_count''"''"'': 2, ''"''"''sdk_fixture_authority_leak_accept_count''"''"'':
+    0}; assert all(m[k]==v for k,v in expected.items()), {k:(m.get(k),v) for k,v in expected.items() if m.get(k)!=v}; downstream=d[''"''"''downstream_host_conformance''"''"''];
+    assert downstream[''"''"''status''"''"'']==''"''"''not-run''"''"'' and downstream[''"''"''producer''"''"'']==''"''"''harness-host''"''"''
+    and downstream[''"''"''artifact_id''"''"'']==''"''"''harness-host-gate-evidence''"''"'' and downstream[''"''"''artifact_path''"''"'']==''"''"''artifacts/harness-host/gate-evidence.json''"''"''
+    and downstream[''"''"''combined_owner''"''"'']==''"''"''contracts-extension''"''"''; assert set(downstream[''"''"''required_obligations''"''"''])=={''"''"''registered-gate-positive''"''"'',''"''"''service-authority-positive''"''"'',''"''"''authenticated-transport''"''"'',''"''"''expiry-and-key-rotation''"''"'',''"''"''accepted-then-replayed-cross-receiver-and-restart''"''"''};
+    tests=[json.loads(x) for x in Path(''"''"''artifacts/harness-sdk/conformance-tests.json''"''"'').read_text().splitlines()
+    if x.strip()]; required=[''"''"''TestHarnessSDKDescribeAndTypedInvocationConformance''"''"'', ''"''"''TestHarnessSDKObserveBeforeRetryAndCancelConformance''"''"'',
+    ''"''"''TestHarnessSDKPermissionAndFailureConformance''"''"'', ''"''"''TestHarnessSDKRejectsSelfAttestedHostEvidence''"''"'',
+    ''"''"''TestHarnessSDKServiceEnvelopeRejectsConsistentUntrustedHandoff''"''"'', ''"''"''TestHarnessSDKServiceModeRejectsMissingAttestation''"''"'',
+    ''"''"''TestHarnessSDKServiceModeRejectsAlteredAttestation''"''"'', ''"''"''TestHarnessSDKServiceModeRejectsExpiredAttestation''"''"'',
+    ''"''"''TestHarnessSDKServiceModeRejectsReplayedAttestation''"''"'', ''"''"''TestHarnessSDKServiceModeRejectsMismatchedScope''"''"'',
+    ''"''"''TestHarnessSDKServiceModeRejectsMismatchedDigest''"''"'', ''"''"''TestHarnessSDKServiceModeRejectsMismatchedInvocationIdentity''"''"'',
+    ''"''"''TestHarnessSDKServiceConsumerRejectsCallerRotationClaims''"''"'', ''"''"''TestHarnessSDKComputationalGuideMonotonicConformance''"''"'',
+    ''"''"''TestHarnessSDKInferentialGuideAppendOnlyConformance''"''"'', ''"''"''TestHarnessSDKExecutorSideEffectLifecycleConformance''"''"'',
+    ''"''"''TestHarnessSDKComputationalSensorAppendOnlyConformance''"''"'', ''"''"''TestHarnessSDKInferentialSensorAppendOnlyConformance''"''"'',
+    ''"''"''TestHarnessSDKTriggerConformance''"''"'', ''"''"''TestHarnessSDKEventHandlerSideEffectLifecycleConformance''"''"'',
+    ''"''"''TestHarnessSDKRequiredOptionalFailureObservationConformance''"''"'', ''"''"''TestHarnessSDKTargetBindingConformance''"''"'',
+    ''"''"''TestHarnessSDKRegisteredGateEvaluatorPurityFailClosedConformance''"''"'', ''"''"''TestHarnessSDKTypeSpecificDescribeSchemaConformance''"''"'',
+    ''"''"''TestHarnessSDKTypedOperationAndPayloadBindingConformance''"''"'', ''"''"''TestHarnessSDKGateEvaluatorRegistryProvenanceConformance''"''"'',
+    ''"''"''TestPublicServiceConsumerRejectsCallerHandoffForEveryTypedOperation''"''"'', ''"''"''TestPublicServiceConsumerRejectsUntrustedReplayAcrossReceivers''"''"'',
+    ''"''"''TestPublicServiceConsumerRejectsMissingOrMalformedHostIngress''"''"'', ''"''"''TestHarnessSDKRetryProofBindsCompleteObserveScopeAndServicePayload''"''"'',
+    ''"''"''TestHarnessSDKTargetBindingIdentityMismatchesRejectWithoutImplementationCalls''"''"'', ''"''"''TestPublicServiceConsumerRejectsUnverifiedIssuerOutput''"''"'',
+    ''"''"''TestPublicGateEvaluatorRegistryRejectsCallerForgedHostCapability''"''"'', ''"''"''TestHarnessSDKGateCapabilityBoundaryFailures''"''"'',
+    ''"''"''TestPublicServiceConsumerRejectsAlternatePayload''"''"'', ''"''"''TestHarnessSDKObserveSchemaRejectsInvalidPayloadWithoutImplementationCall''"''"'',
+    ''"''"''TestHarnessSDKCancelSchemaRejectsInvalidPayloadWithoutImplementationCall''"''"'', ''"''"''TestHarnessSDKTriggerAndEventHandlerPositiveFixturesRejectErrorOnlyImplementations''"''"'',
+    ''"''"''TestHarnessSDKRejectsExternalSchemaReferencesWithoutIO''"''"'', ''"''"''TestHarnessSDKBoundsSchemaPayloadSizeAndDepth''"''"'',
+    ''"''"''TestPublicGateEvaluationRejectsCallerSuppliedEvaluator''"''"'', ''"''"''TestExternalPackageCannotForgeCurrentHostGateHandoff''"''"'',
+    ''"''"''TestHarnessSDKSemanticLedgerPreservesChildExecutionEvidence''"''"'', ''"''"''TestHarnessSDKSemanticLedgerRejectsHelperOnlyOrLiteralPassRows''"''"'',
+    ''"''"''TestHarnessSDKTypedResponseValidationPrecedesReceiptAcceptance''"''"'', ''"''"''TestHarnessSDKOptionalUnknownFailureRequiresObservation''"''"'',
+    ''"''"''TestHarnessSDKConformanceEvidenceCannotAuthorizeHostIngress''"''"'', ''"''"''TestHarnessSDKSemanticEvidenceConformance''"''"'',
+    ''"''"''TestPublicHostAuthorityCannotBeSelectedByCaller''"''"'', ''"''"''TestCurrentPublicGateForgeryRejectsWithoutBindingReceiptOrEvaluatorCall''"''"''];
+    assert {r.get(''"''"''Test''"''"'') for r in tests if r.get(''"''"''Action''"''"'')==''"''"''pass''"''"'' and r.get(''"''"''Test''"''"'')
+    in required}==set(required); assert not any(r.get(''"''"''Test''"''"'') in required and r.get(''"''"''Action''"''"'')
+    in {''"''"''skip''"''"'',''"''"''fail''"''"''} for r in tests)'''
+  exit_code: 0
+  stdout: ''
+  stderr: ''
+  seconds: 0.043
+- index: 19
+  cmd: python3 scripts/release/package_component.py --component harness-sdk --kind public-extension-sdk --input sdk/harness
+    --bundle artifacts/harness-sdk/source-bundle.tar.zst --component-manifest artifacts/harness-sdk/component-manifest.json
+    --digest-output artifacts/harness-sdk/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml
+    --owner harness-sdk --require-all-owner-sources-accounted
+  exit_code: 0
+  stdout: 'bundle=artifacts/harness-sdk/source-bundle.tar.zst
+
+    manifest=artifacts/harness-sdk/component-manifest.json
+
+    '
+  stderr: ''
+  seconds: 0.76
+- index: 20
+  cmd: python3 -c "from pathlib import Path; import hashlib,json,subprocess; b=Path('artifacts/harness-sdk/source-bundle.tar.zst');
+    m=json.loads(Path('artifacts/harness-sdk/component-manifest.json').read_text()); digest=Path('artifacts/harness-sdk/bundle-digest.txt').read_text().strip();
+    actual=hashlib.sha256(b.read_bytes()).hexdigest(); rev=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip();
+    assert m['component_id']=='harness-sdk' and m['source_revision']==rev; assert actual==digest==m['bundle']['sha256']; assert
+    {x['path'] for x in m['files']} and all(x['path'].startswith('sdk/harness/') for x in m['files'])"
+  exit_code: 0
+  stdout: ''
+  stderr: ''
+  seconds: 0.05
+- index: 21
+  cmd: go build ./sdk/harness/...
+  exit_code: 0
+  stdout: ''
+  stderr: ''
+  seconds: 0.099
+- index: 22
+  cmd: go build ./...
+  exit_code: 0
+  stdout: ''
+  stderr: ''
+  seconds: 1.315
+- index: 23
+  cmd: go test -count=1 ./...
+  exit_code: 0
+  stdout: "ok  \tgithub.com/xiaohei-info/open-agent-cluster/authentication-sdk\t0.018s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/cmd/agentrun-job\t\
+    164.236s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/cmd/agentrun-job/vendor\t0.447s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/contracts/agent\t\
+    0.008s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/contracts/agentrun\t0.011s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/contracts/extension\t\
+    0.008s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/contracts/governance/admission\t0.007s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/contracts/governance/audit\t\
+    0.006s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/contracts/governance/authz\t0.008s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/contracts/governance/credential\t\
+    0.008s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/contracts/identity/externalidentitylink\t0.008s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/contracts/identity/invitation\t\
+    0.007s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/contracts/identity/principal\t0.009s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/contracts/identity/recovery\t\
+    0.005s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/contracts/identity/requestcontext\t0.009s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/contracts/identity/session\t\
+    0.006s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/contracts/kernel\t0.008s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/contracts/kernel/lifecyclev1\t\
+    0.461s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/contracts/project\t0.018s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/contracts/runtime-adapter\t\
+    0.006s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/contracts/solution\t0.015s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/contracts/workflow/commands\t\
+    0.281s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/contracts/workflow/commands/schema\t0.014s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/contracts/workflow/commands/schema/cmd\t\
+    0.015s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/contracts/workflow/commands/schema/cmd/verifybundle\t0.036s\n\
+    ok  \tgithub.com/xiaohei-info/open-agent-cluster/contracts/workflow/events\t0.024s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/contracts/workflow/resource\t\
+    3.533s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/contracts/workspace\t4.827s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/internal/admission\t\
+    0.007s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/internal/agentrun\t0.069s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/internal/agents/definitions\t\
+    0.023s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/internal/agents/modelpolicy\t0.009s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/internal/agents/templates\t\
+    0.006s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/internal/bootstrap\t0.861s\n?   \tgithub.com/xiaohei-info/open-agent-cluster/internal/harnesshandoff\t\
+    [no test files]\nok  \tgithub.com/xiaohei-info/open-agent-cluster/internal/mcp\t0.011s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/internal/modelcatalog/manual\t\
+    0.005s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/internal/platformcore/agentrun\t0.111s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/internal/projects/bindings\t\
+    0.007s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/internal/projects/lifecycle\t0.005s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/internal/projects/precheck\t\
+    0.007s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/internal/skills\t0.038s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/internal/softwaredelivery/artifacts\t\
+    0.223s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/internal/softwaredelivery/preview\t0.187s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/internal/softwaredelivery/release\t\
+    0.009s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/internal/solutions/definition\t0.018s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/internal/workspace/filesystem\t\
+    0.007s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/internal/workspace/kubernetes\t1.421s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/internal/workspace/source\t\
+    0.091s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/kernel/planning\t0.055s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/runtime-sdk\t\
+    20.648s\n?   \tgithub.com/xiaohei-info/open-agent-cluster/scripts/go-quality\t[no test files]\n?   \tgithub.com/xiaohei-info/open-agent-cluster/scripts/go-quality/check-toolchain\t\
+    [no test files]\nok  \tgithub.com/xiaohei-info/open-agent-cluster/sdk/deployment\t0.013s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/sdk/harness\t\
+    3.769s\n"
+  stderr: ''
+  seconds: 165.051
+coverage: 85.45534924845269
+raw_statement_coverage:
+  covered: 1933
+  total: 2262
+  percent: 85.45534924845269
+  gate_percent: 85
+  profile_filtering: false
+obligation_results:
+- obligation_id: dimension:authority
+  status: pass
+  evidence: Current work-show contract and all eight obligations were used. Exact Preview owner verification de3cde659675
+    and its commit-pinned eight-payload input were read and byte-verified. PR91 independently reviewed/merged at 47100a651b3f376c6b4a9af8a8a2c931c3bcb6e3
+    is an ancestor of repair base e3e6221ba743dcb1e851c535ef41d9da68aae89e. The original c5fa31452edb reject and dddd52526aac
+    ledger were retrieved and SHA/size checked, not reused as a fresh verdict.
+- obligation_id: dimension:structure
+  status: pass
+  evidence: All 18 indexed repair payloads, index and sidecar are retrievable and structurally inspected; bundle/source snapshot
+    match all 31 selected SDK source files. However the delivered semantic JSON lacks the required measured fixed-test metric
+    and fails exact command 18; see the new evidence-harvesting blocker.
+- obligation_id: dimension:execution
+  status: pass
+  evidence: Native Linux aarch64, Go go1.26.0 linux/arm64, GCC 13.3.0, /proc/self/fd available, GOOS=linux GOARCH=arm64 CGO_ENABLED=0
+    GOFLAGS empty GOTOOLCHAIN=auto. All 23 original commands were independently executed in order with exit 0, including CGO_ENABLED=1
+    race, SDK/full builds and uncached full tests. No wrapper, cross-compile, package-filtered replacement or policy relaxation
+    was used. Separate declared payload validators discovered the post-execution artifact overwrite; real command exits do
+    not imply valid delivered bytes.
+- obligation_id: dimension:ownership
+  status: pass
+  evidence: 'Complete PR diff: only sdk/harness/conformance.go:1402 changes production source; supporting changes are repair
+    evidence. Replacement literal exactly matches operationPointer in conformance_test.go:469-470. Caller-constructed Unknown
+    and ErrRetryNotPermitted assertions remain; AuthorizeRetry still fails closed. No exported API, wire/JSON/digest, authority,
+    trust, permission, source ownership, Preview/filesystem source or shared measurement/seal implementation changed. No platform
+    writes, merge, operator recovery or retry were performed.'
+- obligation_id: dimension:evidence
+  status: fail
+  evidence: 'Original source-parent mismatch is fixed: new index, semantic file, manifest, snapshot, command results and SDK
+    source bundle bind submitted PR HEAD 1ebf12d36d29c2a3726257bd03685139f5bc568a; exact validators 16 and 20 pass on delivered
+    bytes. All 18 payload SHA256/blob OID/size identities and archive contents match commit 8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96.
+    Latest a171 attachment is attributable to correction Run 01a100a6-13a4-7d17-97ef-cca4e913b8e0, not a new 23-command execution;
+    preceding ef0e attachment and work-show execution provenance attribute native execution to 01a10062-994b-740f-9916-d7849dc301cc.
+    Despite integrity and corrected revision lineage, the new publication contains the post-command-23 semantic artifact that
+    fails exact command 18.'
+- obligation_id: dimension:regression
+  status: pass
+  evidence: Independently reproduced base SDK build failure (undefined operationPointer at conformance.go:1402:77), then passing
+    production SDK/full builds and full uncached tests on submitted HEAD. Four receipt-tree regressions and fixed 50-test/13-row/7-amendment/15-service-case
+    selectors pass. Raw unfiltered SDK coverage independently reproduces 1933/2262 statements, 85.4553%; source/authority/digest
+    tests unchanged. New finding is publication checkpoint loss, not source-parent regression.
+- obligation_id: integration:harness-sdk-gate
+  status: pass
+  evidence: All original 20 SDK commands pass during execution; required metrics at the validated checkpoint meet every original
+    threshold, 50 fixed tests and four separate receipt-tree tests pass without fail/skip. Delivered byte validations 2,6,8,10,12,14,16,17,20
+    pass; validation 18 fails because the delivered metric is absent. Therefore local gate execution passes but the required
+    published gate artifact does not.
+- obligation_id: integration:harness-sdk-production-build-repair-gate
+  status: pass
+  evidence: Exact go build ./sdk/harness/..., go build ./..., go test -count=1 ./... each exit 0 on 1ebf12d36d29c2a3726257bd03685139f5bc568a
+    in the prescribed native environment. Fresh owner-repair/source-snapshot/coverage-audit/coverage-block-audit records are
+    retrievable and source-bound. Filesystem result establishes descriptor identity inspection and typed mutation denial only;
+    no identity-atomic mutation or live Workspace conformance is claimed. PR90 remains open; reviewed merge and buildable
+    main are still prerequisites for Audit.
+prior_blocker_results:
+- blocker_id: BLK-30900928f802
+  root_cause_key: harness-sdk-repair-published-evidence-not-pr-head
+  status: fixed
+  evidence: All new source-bearing payloads and verification identify submitted HEAD 1ebf12d36d29c2a3726257bd03685139f5bc568a.
+    Exact source_revision equality commands 16 and 20 both independently pass against immutable delivered bytes; manifest
+    and bundle equal independently generated HEAD packaging. Original historical 96020d5f-bound evidence remains intact at
+    earlier commits. The separate new metric-loss defect is not a recurrence of the source-parent mismatch.
+acceptance_mapping:
+- acceptance: UJ-EXTENSION-PACKAGE-001
+  trace_only: true
+  status: fail
+  evidence: Trace-only SDK contribution, not a full user journey claim. Local compile-only repair and SDK conformance execute
+    successfully; required immutable fixed-ledger evidence remains blocked. No genuine Host positive, live Workspace, Audit
+    or merged-main acceptance is claimed.
+integration_gate_mapping:
+- gate: harness-sdk-gate
+  status: pass
+  source_of_truth:
+  - git:ff6c81d568c57d871c58e713c99c018c4e8fd95e:harness-sdk-fourth-amendment-decision.md#sha256=5560469099217e132394a970dde8568bf83b1878f682462116f79fd1694d8c06
+  - git:a3bead45c067b5107b949a0752b7f545bf639aaf:harness-sdk-current-amendment-decision.md#sha256=e52509ad4cb3f444680ce6992263190d102ce886e796e6af878c48bdb5395211
+  - harness-sdk-amendment-decision.md:L1-L29
+  - docs/design/open-agent-cluster-overview-design.md:L335-L355
+  - docs/design/open-agent-cluster-overview-design.md:L469-L485
+  - docs/design/detailed/08-component-and-extension-detailed-design.md:L259-L325
+  - docs/design/detailed/08-component-and-extension-detailed-design.md:L327-L412
+  - docs/design/detailed/08-component-and-extension-detailed-design.md:L461-L480
+  - docs/design/detailed/09-governance-and-security-detailed-design.md:L27-L46
+  - docs/design/detailed/09-governance-and-security-detailed-design.md:L312-L406
+  - docs/references/extension/plugin-contracts.md:L7-L176
+  - docs/references/extension/component-governance.md:L1-L281
+  - docs/references/governance/security-and-enterprise.md:L7-L20
+  - docs/references/governance/security-and-enterprise.md:L263-L299
+  - docs/delivery/acceptance-and-validation.md:L170-L185
+  - git:e1e48af331c0d568257e0eb2cbb88c1f19c97cb0:b-class-structural-decomposition-decisions.md#sha256=bee2866be23e0d5fe6f77a245f7f3177522308d5bd3ebbd14fb2baf0d9e37f19
+  delivery_goal: 'Deliver the complete protocol-neutral public harness.oac.dev/v1 SDK boundary with typed Describe, execute,
+    observe, cancel, result, and error unions; preserve exact Package/entrypoint, Extension/binding, operation, owner, subject,
+    scope, request digest, and service payload digest through every public binding path. Remove every public authority constructor
+    that lets a caller choose both Host signing and trust verification inputs, and expose only the package-neutral consumer/verification
+    side of opaque service and Gate handoffs. The SDK must define a usable Host-facing ingress contract without implementing
+    the Host producer: arbitrary callers and ExtensionPackages must be unable to mint an authoritative RequestScope, GateEvaluatorBinding,
+    receipt, or evaluator invocation. Replace the obsolete missing-symbol regression with a structurally valid attempt against
+    the current public API and prove zero binding, receipt, and evaluator calls. Remove all SDK-owned or same-package test-only
+    Host authority bridges. Every SDK-local fixture must emit source-revision-bound measured evidence for its exact scoped
+    assertion; the Gate consumer row may pass only by proving the negative boundary, must report registered_gate_positive_path_count=0
+    and authoritative_gate_positive_claim_count=0, and must identify its scope as sdk-boundary rather than representing full
+    Host-backed Gate conformance. Produce harness-sdk-boundary-evidence for the downstream harness-host producer. Preserve
+    typed operation-schema validation, successful Trigger/EventHandler, bounded offline schema resolution, Required/Optional
+    behavior, Unknown recovery, safe retry/cancel, coverage, race, vet, and deterministic sdk/harness packaging. The mandatory
+    genuine Host-installed positive path and final combined semantic verdict remain downstream responsibilities of harness-host
+    and contracts-extension. SDK-local positive operation conformance is not Host authorization: the fixed SDK conformance runner
+    may execute ordinary typed Describe/Guide/Sensor/Executor/Trigger/EventHandler implementations with deterministic, non-authoritative
+    request data and the same production input/response/schema/outcome validation and receipt-classification code. Its measured
+    conformance records must be explicitly scoped sdk-operation-conformance, must not construct trusted RequestScope, service/Gate
+    handoffs or authoritative receipts, and must never be usable by production authority entry points. A helper-only predicate
+    or direct implementation call that bypasses the shared validation/measurement path is insufficient. Preserve successful
+    Trigger output and all three successful EventHandler lifecycle operations; error-only implementations must fail these
+    positive fixtures. Production typed Guide/Sensor/Trigger/EventHandler paths must finish response and output-schema validation
+    before accepting a receipt; invalid results yield rejected/failed measured outcomes, while valid business-error envelopes
+    retain a separate failed business outcome and never count as positive operation success. Optional side-effecting failures
+    may become skipped only when the external failure outcome is known; structured Unknown and unstructured errors remain
+    Unknown and require observation/recovery. SDK service/Gate rows are exclusively sdk-consumer-negative: reject even internally
+    consistent caller handoffs without issuing a binding, authoritative receipt, or implementation/evaluator call. Envelope,
+    rotation, replay, payload and identity assertions in these rows prove rejection of untrusted candidates, not authentication
+    or durable replay enforcement. The Host-facing ingress contract must be package-neutral and implementable by the separately
+    owned harness-host producer, not an unconditional rejecting stub or a caller-selectable verifier; document the exact release/entrypoint,
+    binding, operation, owner, subject, scope, request/service-payload digest, component/run, policy and evaluator identity
+    handoff. Host-owned verification, configured trust, expiry/rotation and replay enforcement remain in harness-host. The
+    existing downstream dependency harness-host consumes harness-sdk-boundary-evidence and produces harness-host-gate-evidence
+    at artifacts/harness-host/gate-evidence.json; contracts-extension consumes both and emits contracts-extension-final-conformance.
+    Genuine service/Gate acceptance, authenticated handoff transport, accepted-then-replayed rejection across receivers/restart
+    and genuine key rotation are mandatory Host conformance within that artifact, not SDK-local metrics or SDK prerequisites.
+    Mark those downstream obligations not-run in SDK evidence, never passed, and do not add a reverse dependency. This clarification
+    governs all existing test names, counters and historical decision references; no ordinary operation, schema, full identity,
+    provenance, receipt, recovery or replay obligation is removed. The three newly required regression test names are authoring
+    deliverables, not claims of existing passing tests: TestHarnessSDKTypedResponseValidationPrecedesReceiptAcceptance measures
+    malformed response and output-schema violation for both Guide points, both Sensor points, Trigger, and EventHandler execute/observe/cancel
+    (16 rejected results), plus a valid business-error envelope for each of those eight paths without false business success.
+    TestHarnessSDKOptionalUnknownFailureRequiresObservation measures structured outcome_known=false and unstructured errors,
+    retains Unknown without skipped Observation or retry permission, and preserves Required blocking/known Optional failure
+    observations. TestHarnessSDKConformanceEvidenceCannotAuthorizeHostIngress submits actual fixed-runner measurements/request
+    data to the current production service/Gate boundary and proves no authority, bindings, authoritative receipts or implementation/evaluator
+    calls. Keep these child executions in the existing typed-point-describe-contracts, required-optional-failure-policy and
+    service/Gate consumer rows; the fixed selector still has exactly 13 measured semantic rows and seven current-amendment
+    rows. No new row may be faked from test-name presence. Ordinary operation rows carry actual implementation call/result
+    and validator/receipt-classification evidence with full target/operation/provenance identity; service cases are the 15
+    fixed case IDs checked by the gate. All exact counters derive from those actual parent/child executions, and forbidden-call
+    counters count only calls forbidden for that assertion, not legitimate calls in ordinary positive fixtures. Staged coverage
+    policy, effective only after explicit human acceptance of this amendment: SDK-only raw unfiltered statement coverage must
+    be at least 85%; this does not waive the whole-SDK 90% gate now required of downstream harness-host. Do not filter profiles,
+    change coverage scope, pad the denominator, delete required behavior, manufacture Host proof, or move production code
+    between owners to meet a percentage. The current 79.5% source is not accepted. Add real coverage of ordinary production-used
+    paths and execute the exact reordered commands: broad coverage/vet/race runs first, reset the conformance log, execute
+    every fixed boundary selector, then generate and validate the final 50-test/13-row semantic evidence once. Keep genuine
+    Host conformance not-run in SDK evidence. An ordinary intermediate test, semantic-evidence or raw-coverage failure is
+    implementation feedback, not by itself a terminal blocker: retain the source-bound result, diagnose the specific failing
+    assertion or uncovered production-used path, make a substantive in-contract implementation/test correction, and measure
+    again. Do not submit failing work as successful or advance review/merge/downstream acceptance without every unchanged
+    gate passing. Do not repeat identical attempts without a changed source/test, a distinct evidence-backed diagnostic hypothesis,
+    or a verified infrastructure recovery; existing bounded infrastructure retries, convergence protections and authorized
+    budgets still apply. Request terminal blocking only with specific source-bound evidence that further lawful in-contract
+    work cannot proceed, such as a contract/responsibility/dependency contradiction, missing authorization, indispensable
+    external input, or an independently applicable exhausted control budget. Identify the exact source revision and contract
+    field, actual command/result and retained evidence, attempted substantive corrections, why the next required action is
+    unavailable within the contract, and the precise owner decision or input needed; a below-threshold percentage, one failed
+    attempt or uncertainty about feasibility is insufficient. Use the current work-show-bound blocker protocol for a genuine
+    blocker, never fabricate success or authority. This policy supersedes only the automatic quality-failure stopping interpretation
+    in earlier repair reports, coordinator comments and historical stop clauses; it does not supersede security/design stop
+    conditions or authorize a new architecture, quality relaxation, unlimited retries or a budget reset. After corrections,
+    complete the unchanged source-bound final verification sequence in its existing order, including coverage, vet, race,
+    all fixed selectors, semantic evidence and packaging; diagnostic runs are not final passing evidence. Require the shared
+    immutable measurement-tree redesign described in the objective: preserve recursive per-node authority, public receipt/digest
+    compatibility and complete measured ordinary-operation lineage; four additional regressions are separate from the fixed
+    50-test/13-row ledger. Their presence never closes a Host-positive obligation.'
+  commands:
+  - cmd: mkdir -p artifacts/harness-sdk && go test -covermode=atomic -coverprofile=artifacts/harness-sdk/coverage.out ./sdk/harness/...
+    exit_code: 0
+  - cmd: "python3 -c 'from pathlib import Path\nrows=Path('\"'\"'artifacts/harness-sdk/coverage.out'\"'\"').read_text().splitlines()\n\
+      assert rows and rows[0]=='\"'\"'mode: atomic'\"'\"'\nblocks={}\nfor line in rows[1:]:\n    key,weight,count=line.split();\
+      \ weight=int(weight); count=int(count)\n    assert key.startswith('\"'\"'github.com/xiaohei-info/open-agent-cluster/sdk/harness/'\"\
+      '\"') and weight>=0 and count>=0\n    if key in blocks:\n        assert blocks[key][0]==weight\n        count+=blocks[key][1]\n\
+      \    blocks[key]=(weight,count)\ntotal=sum(w for w,c in blocks.values()); covered=sum(w for w,c in blocks.values() if\
+      \ c>0)\nassert total>0 and 100*covered>=85*total, (covered,total,'\"'\"'required raw SDK-only coverage >=85%'\"'\"')\n\
+      '"
+    exit_code: 0
+  - cmd: go vet ./sdk/harness/...
+    exit_code: 0
+  - cmd: CGO_ENABLED=1 go test -race ./sdk/harness/...
+    exit_code: 0
+  - cmd: mkdir -p artifacts/harness-sdk && go test -json ./sdk/harness/... -run '^(TestHarnessSDKMeasuredTreeUsesProductionLineage|TestHarnessSDKMeasuredTreeCopyAndParentBinding|TestHarnessSDKMeasuredTreeCannotAuthorizeReceipt|TestHarnessSDKReceiptProjectionCompatibility)$'
+      -count=1 > artifacts/harness-sdk/receipt-tree-tests.json
+    exit_code: 0
+  - cmd: 'python3 -c ''import json; required={''"''"''TestHarnessSDKMeasuredTreeCannotAuthorizeReceipt''"''"'', ''"''"''TestHarnessSDKMeasuredTreeUsesProductionLineage''"''"'',
+      ''"''"''TestHarnessSDKMeasuredTreeCopyAndParentBinding''"''"'', ''"''"''TestHarnessSDKReceiptProjectionCompatibility''"''"''};
+      rows=[json.loads(x) for x in open(''"''"''artifacts/harness-sdk/receipt-tree-tests.json''"''"'') if x.strip()]; passed={x.get(''"''"''Test''"''"'')
+      for x in rows if x.get(''"''"''Action''"''"'')==''"''"''pass''"''"'' and x.get(''"''"''Test''"''"'') in required}; assert
+      passed==required, f''"''"''missing design regressions: {sorted(required-passed)}''"''"''; assert not any(x.get(''"''"''Action''"''"'')==''"''"''fail''"''"''
+      for x in rows)'''
+    exit_code: 0
+  - cmd: mkdir -p artifacts/harness-sdk && go test -json ./sdk/harness/... -run '^(TestHarnessSDKDescribeAndTypedInvocationConformance|TestHarnessSDKObserveBeforeRetryAndCancelConformance|TestHarnessSDKPermissionAndFailureConformance|TestHarnessSDKRejectsSelfAttestedHostEvidence|TestHarnessSDKServiceEnvelopeRejectsConsistentUntrustedHandoff|TestHarnessSDKServiceModeRejectsMissingAttestation|TestHarnessSDKServiceModeRejectsAlteredAttestation|TestHarnessSDKServiceModeRejectsExpiredAttestation|TestHarnessSDKServiceModeRejectsReplayedAttestation|TestHarnessSDKServiceModeRejectsMismatchedScope|TestHarnessSDKServiceModeRejectsMismatchedDigest|TestHarnessSDKServiceModeRejectsMismatchedInvocationIdentity|TestHarnessSDKServiceConsumerRejectsCallerRotationClaims|TestHarnessSDKComputationalGuideMonotonicConformance|TestHarnessSDKInferentialGuideAppendOnlyConformance|TestHarnessSDKExecutorSideEffectLifecycleConformance|TestHarnessSDKComputationalSensorAppendOnlyConformance|TestHarnessSDKInferentialSensorAppendOnlyConformance|TestHarnessSDKTriggerConformance|TestHarnessSDKEventHandlerSideEffectLifecycleConformance|TestHarnessSDKRequiredOptionalFailureObservationConformance|TestHarnessSDKTargetBindingConformance|TestHarnessSDKRegisteredGateEvaluatorPurityFailClosedConformance|TestHarnessSDKTypeSpecificDescribeSchemaConformance|TestHarnessSDKTypedOperationAndPayloadBindingConformance|TestHarnessSDKGateEvaluatorRegistryProvenanceConformance|TestPublicServiceConsumerRejectsCallerHandoffForEveryTypedOperation|TestPublicServiceConsumerRejectsUntrustedReplayAcrossReceivers|TestPublicServiceConsumerRejectsMissingOrMalformedHostIngress)$'
+      -count=1 > artifacts/harness-sdk/conformance-tests.json
+    exit_code: 0
+  - cmd: 'python3 -c "import json; required=set(''TestHarnessSDKDescribeAndTypedInvocationConformance TestHarnessSDKObserveBeforeRetryAndCancelConformance
+      TestHarnessSDKPermissionAndFailureConformance TestHarnessSDKRejectsSelfAttestedHostEvidence TestHarnessSDKServiceEnvelopeRejectsConsistentUntrustedHandoff
+      TestHarnessSDKServiceModeRejectsMissingAttestation TestHarnessSDKServiceModeRejectsAlteredAttestation TestHarnessSDKServiceModeRejectsExpiredAttestation
+      TestHarnessSDKServiceModeRejectsReplayedAttestation TestHarnessSDKServiceModeRejectsMismatchedScope TestHarnessSDKServiceModeRejectsMismatchedDigest
+      TestHarnessSDKServiceModeRejectsMismatchedInvocationIdentity TestHarnessSDKServiceConsumerRejectsCallerRotationClaims
+      TestHarnessSDKComputationalGuideMonotonicConformance TestHarnessSDKInferentialGuideAppendOnlyConformance TestHarnessSDKExecutorSideEffectLifecycleConformance
+      TestHarnessSDKComputationalSensorAppendOnlyConformance TestHarnessSDKInferentialSensorAppendOnlyConformance TestHarnessSDKTriggerConformance
+      TestHarnessSDKEventHandlerSideEffectLifecycleConformance TestHarnessSDKRequiredOptionalFailureObservationConformance
+      TestHarnessSDKTargetBindingConformance TestHarnessSDKRegisteredGateEvaluatorPurityFailClosedConformance TestHarnessSDKTypeSpecificDescribeSchemaConformance
+      TestHarnessSDKTypedOperationAndPayloadBindingConformance TestHarnessSDKGateEvaluatorRegistryProvenanceConformance TestPublicServiceConsumerRejectsCallerHandoffForEveryTypedOperation
+      TestPublicServiceConsumerRejectsUntrustedReplayAcrossReceivers TestPublicServiceConsumerRejectsMissingOrMalformedHostIngress''.split());
+      rows=[json.loads(x) for x in open(''artifacts/harness-sdk/conformance-tests.json'') if x.strip()]; passed={x.get(''Test'')
+      for x in rows if x.get(''Action'')==''pass'' and x.get(''Test'') in required}; assert passed==required, f''missing required
+      passing tests: {sorted(required-passed)}''"'
+    exit_code: 0
+  - cmd: go test -json ./sdk/harness/... -run '^(TestHarnessSDKRetryProofBindsCompleteObserveScopeAndServicePayload|TestHarnessSDKTargetBindingIdentityMismatchesRejectWithoutImplementationCalls|TestPublicServiceConsumerRejectsUnverifiedIssuerOutput|TestPublicGateEvaluatorRegistryRejectsCallerForgedHostCapability|TestHarnessSDKGateCapabilityBoundaryFailures|TestPublicServiceConsumerRejectsAlternatePayload|TestHarnessSDKObserveSchemaRejectsInvalidPayloadWithoutImplementationCall|TestHarnessSDKCancelSchemaRejectsInvalidPayloadWithoutImplementationCall|TestHarnessSDKTriggerAndEventHandlerPositiveFixturesRejectErrorOnlyImplementations|TestHarnessSDKRejectsExternalSchemaReferencesWithoutIO|TestHarnessSDKBoundsSchemaPayloadSizeAndDepth|TestPublicGateEvaluationRejectsCallerSuppliedEvaluator|TestExternalPackageCannotForgeCurrentHostGateHandoff|TestHarnessSDKSemanticLedgerPreservesChildExecutionEvidence|TestHarnessSDKSemanticLedgerRejectsHelperOnlyOrLiteralPassRows)$'
+      -count=1 >> artifacts/harness-sdk/conformance-tests.json
+    exit_code: 0
+  - cmd: 'python3 -c "import json; required=set(''TestHarnessSDKRetryProofBindsCompleteObserveScopeAndServicePayload TestHarnessSDKTargetBindingIdentityMismatchesRejectWithoutImplementationCalls
+      TestPublicServiceConsumerRejectsUnverifiedIssuerOutput TestPublicGateEvaluatorRegistryRejectsCallerForgedHostCapability
+      TestHarnessSDKGateCapabilityBoundaryFailures TestPublicServiceConsumerRejectsAlternatePayload TestHarnessSDKObserveSchemaRejectsInvalidPayloadWithoutImplementationCall
+      TestHarnessSDKCancelSchemaRejectsInvalidPayloadWithoutImplementationCall TestHarnessSDKTriggerAndEventHandlerPositiveFixturesRejectErrorOnlyImplementations
+      TestHarnessSDKRejectsExternalSchemaReferencesWithoutIO TestHarnessSDKBoundsSchemaPayloadSizeAndDepth TestPublicGateEvaluationRejectsCallerSuppliedEvaluator
+      TestExternalPackageCannotForgeCurrentHostGateHandoff TestHarnessSDKSemanticLedgerPreservesChildExecutionEvidence TestHarnessSDKSemanticLedgerRejectsHelperOnlyOrLiteralPassRows''.split());
+      rows=[json.loads(x) for x in open(''artifacts/harness-sdk/conformance-tests.json'') if x.strip()]; passed={x.get(''Test'')
+      for x in rows if x.get(''Action'')==''pass'' and x.get(''Test'') in required}; assert passed==required, f''missing residual
+      semantic regressions: {sorted(required-passed)}''"'
+    exit_code: 0
+  - cmd: go test -json ./sdk/harness/... -run '^(TestHarnessSDKTypedResponseValidationPrecedesReceiptAcceptance|TestHarnessSDKOptionalUnknownFailureRequiresObservation|TestHarnessSDKConformanceEvidenceCannotAuthorizeHostIngress)$'
+      -count=1 >> artifacts/harness-sdk/conformance-tests.json
+    exit_code: 0
+  - cmd: 'python3 -c ''import json; required={''"''"''TestHarnessSDKOptionalUnknownFailureRequiresObservation''"''"'', ''"''"''TestHarnessSDKConformanceEvidenceCannotAuthorizeHostIngress''"''"'',
+      ''"''"''TestHarnessSDKTypedResponseValidationPrecedesReceiptAcceptance''"''"''}; rows=[json.loads(x) for x in open(''"''"''artifacts/harness-sdk/conformance-tests.json''"''"'')
+      if x.strip()]; passed={x.get(''"''"''Test''"''"'') for x in rows if x.get(''"''"''Action''"''"'')==''"''"''pass''"''"''
+      and x.get(''"''"''Test''"''"'') in required}; assert passed==required, f''"''"''missing blocker regressions: {sorted(required-passed)}''"''"'';
+      assert not any(x.get(''"''"''Test''"''"'') in required and x.get(''"''"''Action''"''"'') in {''"''"''skip''"''"'',''"''"''fail''"''"''}
+      for x in rows)'''
+    exit_code: 0
+  - cmd: mkdir -p artifacts/harness-sdk && go test -json ./sdk/harness/... -run '^(TestPublicHostAuthorityCannotBeSelectedByCaller|TestCurrentPublicGateForgeryRejectsWithoutBindingReceiptOrEvaluatorCall)$'
+      -count=1 >> artifacts/harness-sdk/conformance-tests.json
+    exit_code: 0
+  - cmd: 'python3 -c "import json; required={''TestPublicHostAuthorityCannotBeSelectedByCaller'',''TestCurrentPublicGateForgeryRejectsWithoutBindingReceiptOrEvaluatorCall''};
+      rows=[json.loads(x) for x in open(''artifacts/harness-sdk/conformance-tests.json'') if x.strip()]; passed={x.get(''Test'')
+      for x in rows if x.get(''Action'')==''pass'' and x.get(''Test'') in required}; assert passed==required, f''missing current-boundary
+      regressions: {sorted(required-passed)}''"'
+    exit_code: 0
+  - cmd: HARNESS_SDK_SEMANTIC_EVIDENCE="$PWD/artifacts/harness-sdk/semantic-evidence.json" go test -json ./sdk/harness/...
+      -run '^TestHarnessSDKSemanticEvidenceConformance$' -count=1 >> artifacts/harness-sdk/conformance-tests.json
+    exit_code: 0
+  - cmd: python3 -c "from pathlib import Path; import json,subprocess; p=Path('artifacts/harness-sdk/semantic-evidence.json');
+      assert p.is_file() and p.stat().st_size>0; d=json.loads(p.read_text()); assert d['schema']=='oac.harness-sdk-semantic-evidence/v1';
+      rev=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(); assert d['source_revision']==rev; required={'typed-point-describe-contracts','service-host-consumer-boundary','service-consumer-payload-boundary','observe-input-schema','cancel-input-schema','trigger-positive-success','event-handler-positive-lifecycle','external-schema-reference-isolation','schema-size-depth-bounds','required-optional-failure-policy','unknown-recovery-retry-cancel','target-binding-identity','gate-evaluator-consumer-boundary'};
+      rows={x['fixture_id']:x for x in d['fixtures']}; assert required==set(rows); assert all(rows[k]['status']=='pass' and
+      rows[k].get('execution_count')==1 and rows[k].get('accepted_count',0)+rows[k].get('rejected_count',0)>0 and rows[k].get('forbidden_accept_count')==0
+      and rows[k].get('forbidden_implementation_call_count')==0 and isinstance(rows[k].get('identity_evidence'),list) and
+      any(str(x).startswith('target=') for x in rows[k]['identity_evidence']) and any(str(x).startswith('operation=') for
+      x in rows[k]['identity_evidence']) and any(str(x).startswith('provenance=') for x in rows[k]['identity_evidence']) and
+      rows[k].get('assertions') and rows[k].get('evidence_refs') for k in required); m=d['metrics']; assert m['required_current_amendment_semantic_fixture_count']==7;
+      assert m['required_delivery_goal_semantic_fixture_count']==13; exact={'required_extension_point_fixture_count':7,'required_service_mode_fixture_count':15,'valid_service_mode_invocation_accept_count':0,'invalid_service_mode_invocation_accept_count':0,'malformed_type_specific_schema_accept_count':0,'missing_target_binding_accept_count':0,'missing_registered_gate_evaluator_accept_count':0,'required_optional_failure_observation_gap_count':0,'operation_mismatch_rejection_count':3,'altered_payload_rejection_count':7,'external_host_direct_bind_rejection_count':2,'event_handler_lifecycle_schema_negative_count':2,'gate_evaluator_provenance_fixture_count':7,'gate_evaluator_service_mode_rejection_count':2,'gate_evaluator_mismatched_release_rejection_count':1,'gate_evaluator_purity_rejection_count':1,'retry_scope_mismatch_rejection_count':4,'target_binding_identity_mismatch_fixture_count':56,'target_binding_package_id_mismatch_rejection_count':7,'target_binding_package_version_mismatch_rejection_count':7,'target_binding_entrypoint_mismatch_rejection_count':7,'target_binding_artifact_mismatch_rejection_count':7,'untrusted_service_cross_receiver_replay_rejection_count':2};
+      assert all(m[k]==v for k,v in exact.items()); assert m['service_consumer_alternate_payload_accept_count']==0; assert
+      m['observe_schema_invalid_implementation_call_count']==0; assert m['cancel_schema_invalid_implementation_call_count']==0;
+      assert m['trigger_error_only_positive_accept_count']==0; assert m['event_handler_error_only_positive_accept_count']==0;
+      assert m['external_schema_reference_rejection_count']>=2; assert m['external_schema_resolution_io_attempt_count']==0;
+      assert m['schema_size_limit_bypass_accept_count']==0; assert m['payload_size_limit_bypass_accept_count']==0; assert
+      m['schema_depth_limit_bypass_accept_count']==0; assert m['payload_depth_limit_bypass_accept_count']==0; assert m['trigger_successful_response_count']>=1;
+      assert m['event_handler_successful_lifecycle_operation_count']>=3; assert m['required_measured_semantic_row_count']==13;
+      assert m['unregistered_gate_execution_accept_count']==0; assert m['sdk_owned_host_handoff_construction_count']==0; assert
+      m['helper_only_semantic_fixture_accept_count']==0; assert m['literal_semantic_status_accept_count']==0; assert m['dropped_child_execution_evidence_count']==0"
+    exit_code: 0
+  - cmd: python3 -c "from pathlib import Path; import json; d=json.loads(Path('artifacts/harness-sdk/semantic-evidence.json').read_text());
+      m=d['metrics']; assert m['registered_gate_positive_path_count']==0; assert m['authoritative_gate_positive_claim_count']==0;
+      assert d['evidence_scope']=='sdk-boundary'; rows={x['fixture_id']:x for x in d['fixtures']}; r=rows['gate-evaluator-consumer-boundary'];
+      assert r['status']=='pass' and r.get('accepted_count',0)==0 and r.get('rejected_count',0)>0; assert r.get('forbidden_accept_count')==0
+      and r.get('forbidden_implementation_call_count')==0"
+    exit_code: 0
+  - cmd: 'python3 -c ''from pathlib import Path; import json; d=json.loads(Path(''"''"''artifacts/harness-sdk/semantic-evidence.json''"''"'').read_text());
+      m=d[''"''"''metrics''"''"'']; rows={r[''"''"''fixture_id''"''"'']:r for r in d[''"''"''fixtures''"''"'']}; assert len(d[''"''"''fixtures''"''"''])==len(rows)==13;
+      negative={''"''"''service-host-consumer-boundary''"''"'',''"''"''service-consumer-payload-boundary''"''"'',''"''"''gate-evaluator-consumer-boundary''"''"''};
+      assert all(r[''"''"''evidence_scope''"''"'']==(''"''"''sdk-consumer-negative''"''"'' if k in negative else ''"''"''sdk-operation-conformance''"''"'')
+      and r[''"''"''authoritative_host_claim''"''"''] is False for k,r in rows.items()); assert all(rows[k][''"''"''accepted_count''"''"'']==0
+      and rows[k][''"''"''rejected_count''"''"'']>0 and rows[k][''"''"''binding_issued_count''"''"'']==0 and rows[k][''"''"''authoritative_receipt_issued_count''"''"'']==0
+      and rows[k][''"''"''implementation_call_count''"''"'']==0 for k in negative); assert all(rows[k][''"''"''accepted_count''"''"'']>0
+      for k in [''"''"''trigger-positive-success''"''"'',''"''"''event-handler-positive-lifecycle''"''"'']); cases=rows[''"''"''service-host-consumer-boundary''"''"''][''"''"''cases''"''"''];
+      required_cases=[''"''"''missing-attestation''"''"'', ''"''"''altered-attestation''"''"'', ''"''"''expired-attestation''"''"'',
+      ''"''"''replayed-untrusted-attestation''"''"'', ''"''"''mismatched-scope''"''"'', ''"''"''mismatched-digest''"''"'',
+      ''"''"''mismatched-invocation-identity''"''"'', ''"''"''caller-rotation-claims''"''"'', ''"''"''consistent-untrusted-handoff''"''"'',
+      ''"''"''caller-verifier''"''"'', ''"''"''caller-signer-trust-pair''"''"'', ''"''"''unverified-issuer-output''"''"'',
+      ''"''"''missing-ingress''"''"'', ''"''"''malformed-ingress''"''"'', ''"''"''untrusted-cross-receiver-replay''"''"''];
+      assert len(cases)==len(required_cases) and {c[''"''"''case_id''"''"''] for c in cases}==set(required_cases); assert
+      all(c[''"''"''attempt_count''"''"'']>0 and c[''"''"''rejected_count''"''"'']==c[''"''"''attempt_count''"''"''] and c[''"''"''accepted_count''"''"'']==0
+      and c[''"''"''binding_issued_count''"''"'']==0 and c[''"''"''authoritative_receipt_issued_count''"''"'']==0 and c[''"''"''implementation_call_count''"''"'']==0
+      and c[''"''"''execution_evidence''"''"''] for c in cases); expected={''"''"''required_harness_conformance_test_count''"''"'':
+      50, ''"''"''required_extension_point_fixture_count''"''"'': 7, ''"''"''required_service_mode_fixture_count''"''"'':
+      15, ''"''"''valid_service_mode_invocation_accept_count''"''"'': 0, ''"''"''invalid_service_mode_invocation_accept_count''"''"'':
+      0, ''"''"''malformed_type_specific_schema_accept_count''"''"'': 0, ''"''"''missing_target_binding_accept_count''"''"'':
+      0, ''"''"''missing_registered_gate_evaluator_accept_count''"''"'': 0, ''"''"''required_optional_failure_observation_gap_count''"''"'':
+      0, ''"''"''operation_mismatch_rejection_count''"''"'': 3, ''"''"''altered_payload_rejection_count''"''"'': 7, ''"''"''external_host_direct_bind_rejection_count''"''"'':
+      2, ''"''"''event_handler_lifecycle_schema_negative_count''"''"'': 2, ''"''"''gate_evaluator_provenance_fixture_count''"''"'':
+      7, ''"''"''gate_evaluator_service_mode_rejection_count''"''"'': 2, ''"''"''gate_evaluator_mismatched_release_rejection_count''"''"'':
+      1, ''"''"''gate_evaluator_purity_rejection_count''"''"'': 1, ''"''"''retry_scope_mismatch_rejection_count''"''"'': 4,
+      ''"''"''target_binding_identity_mismatch_fixture_count''"''"'': 56, ''"''"''target_binding_package_id_mismatch_rejection_count''"''"'':
+      7, ''"''"''target_binding_package_version_mismatch_rejection_count''"''"'': 7, ''"''"''target_binding_entrypoint_mismatch_rejection_count''"''"'':
+      7, ''"''"''target_binding_artifact_mismatch_rejection_count''"''"'': 7, ''"''"''required_current_amendment_semantic_fixture_count''"''"'':
+      7, ''"''"''required_delivery_goal_semantic_fixture_count''"''"'': 13, ''"''"''observe_schema_invalid_implementation_call_count''"''"'':
+      0, ''"''"''cancel_schema_invalid_implementation_call_count''"''"'': 0, ''"''"''trigger_error_only_positive_accept_count''"''"'':
+      0, ''"''"''event_handler_error_only_positive_accept_count''"''"'': 0, ''"''"''external_schema_reference_rejection_count''"''"'':
+      2, ''"''"''external_schema_resolution_io_attempt_count''"''"'': 0, ''"''"''schema_size_limit_bypass_accept_count''"''"'':
+      0, ''"''"''payload_size_limit_bypass_accept_count''"''"'': 0, ''"''"''schema_depth_limit_bypass_accept_count''"''"'':
+      0, ''"''"''payload_depth_limit_bypass_accept_count''"''"'': 0, ''"''"''trigger_successful_response_count''"''"'': 1,
+      ''"''"''event_handler_successful_lifecycle_operation_count''"''"'': 3, ''"''"''semantic_evidence_source_revision_match_count''"''"'':
+      1, ''"''"''required_measured_semantic_row_count''"''"'': 13, ''"''"''unregistered_gate_execution_accept_count''"''"'':
+      0, ''"''"''sdk_owned_host_handoff_construction_count''"''"'': 0, ''"''"''helper_only_semantic_fixture_accept_count''"''"'':
+      0, ''"''"''literal_semantic_status_accept_count''"''"'': 0, ''"''"''dropped_child_execution_evidence_count''"''"'':
+      0, ''"''"''registered_gate_positive_path_count''"''"'': 0, ''"''"''authoritative_gate_positive_claim_count''"''"'':
+      0, ''"''"''caller_selected_host_authority_accept_count''"''"'': 0, ''"''"''current_public_handoff_forgery_accept_count''"''"'':
+      0, ''"''"''gate_consumer_boundary_fixture_count''"''"'': 1, ''"''"''untrusted_service_cross_receiver_replay_rejection_count''"''"'':
+      2, ''"''"''service_consumer_alternate_payload_accept_count''"''"'': 0, ''"''"''typed_invalid_response_accepted_receipt_count''"''"'':
+      0, ''"''"''typed_response_validation_negative_count''"''"'': 16, ''"''"''typed_valid_error_envelope_fixture_count''"''"'':
+      8, ''"''"''typed_valid_error_business_success_count''"''"'': 0, ''"''"''optional_unknown_skip_count''"''"'': 0, ''"''"''optional_unknown_failure_fixture_count''"''"'':
+      2, ''"''"''sdk_fixture_authority_leak_accept_count''"''"'': 0}; assert all(m[k]==v for k,v in expected.items()), {k:(m.get(k),v)
+      for k,v in expected.items() if m.get(k)!=v}; downstream=d[''"''"''downstream_host_conformance''"''"'']; assert downstream[''"''"''status''"''"'']==''"''"''not-run''"''"''
+      and downstream[''"''"''producer''"''"'']==''"''"''harness-host''"''"'' and downstream[''"''"''artifact_id''"''"'']==''"''"''harness-host-gate-evidence''"''"''
+      and downstream[''"''"''artifact_path''"''"'']==''"''"''artifacts/harness-host/gate-evidence.json''"''"'' and downstream[''"''"''combined_owner''"''"'']==''"''"''contracts-extension''"''"'';
+      assert set(downstream[''"''"''required_obligations''"''"''])=={''"''"''registered-gate-positive''"''"'',''"''"''service-authority-positive''"''"'',''"''"''authenticated-transport''"''"'',''"''"''expiry-and-key-rotation''"''"'',''"''"''accepted-then-replayed-cross-receiver-and-restart''"''"''};
+      tests=[json.loads(x) for x in Path(''"''"''artifacts/harness-sdk/conformance-tests.json''"''"'').read_text().splitlines()
+      if x.strip()]; required=[''"''"''TestHarnessSDKDescribeAndTypedInvocationConformance''"''"'', ''"''"''TestHarnessSDKObserveBeforeRetryAndCancelConformance''"''"'',
+      ''"''"''TestHarnessSDKPermissionAndFailureConformance''"''"'', ''"''"''TestHarnessSDKRejectsSelfAttestedHostEvidence''"''"'',
+      ''"''"''TestHarnessSDKServiceEnvelopeRejectsConsistentUntrustedHandoff''"''"'', ''"''"''TestHarnessSDKServiceModeRejectsMissingAttestation''"''"'',
+      ''"''"''TestHarnessSDKServiceModeRejectsAlteredAttestation''"''"'', ''"''"''TestHarnessSDKServiceModeRejectsExpiredAttestation''"''"'',
+      ''"''"''TestHarnessSDKServiceModeRejectsReplayedAttestation''"''"'', ''"''"''TestHarnessSDKServiceModeRejectsMismatchedScope''"''"'',
+      ''"''"''TestHarnessSDKServiceModeRejectsMismatchedDigest''"''"'', ''"''"''TestHarnessSDKServiceModeRejectsMismatchedInvocationIdentity''"''"'',
+      ''"''"''TestHarnessSDKServiceConsumerRejectsCallerRotationClaims''"''"'', ''"''"''TestHarnessSDKComputationalGuideMonotonicConformance''"''"'',
+      ''"''"''TestHarnessSDKInferentialGuideAppendOnlyConformance''"''"'', ''"''"''TestHarnessSDKExecutorSideEffectLifecycleConformance''"''"'',
+      ''"''"''TestHarnessSDKComputationalSensorAppendOnlyConformance''"''"'', ''"''"''TestHarnessSDKInferentialSensorAppendOnlyConformance''"''"'',
+      ''"''"''TestHarnessSDKTriggerConformance''"''"'', ''"''"''TestHarnessSDKEventHandlerSideEffectLifecycleConformance''"''"'',
+      ''"''"''TestHarnessSDKRequiredOptionalFailureObservationConformance''"''"'', ''"''"''TestHarnessSDKTargetBindingConformance''"''"'',
+      ''"''"''TestHarnessSDKRegisteredGateEvaluatorPurityFailClosedConformance''"''"'', ''"''"''TestHarnessSDKTypeSpecificDescribeSchemaConformance''"''"'',
+      ''"''"''TestHarnessSDKTypedOperationAndPayloadBindingConformance''"''"'', ''"''"''TestHarnessSDKGateEvaluatorRegistryProvenanceConformance''"''"'',
+      ''"''"''TestPublicServiceConsumerRejectsCallerHandoffForEveryTypedOperation''"''"'', ''"''"''TestPublicServiceConsumerRejectsUntrustedReplayAcrossReceivers''"''"'',
+      ''"''"''TestPublicServiceConsumerRejectsMissingOrMalformedHostIngress''"''"'', ''"''"''TestHarnessSDKRetryProofBindsCompleteObserveScopeAndServicePayload''"''"'',
+      ''"''"''TestHarnessSDKTargetBindingIdentityMismatchesRejectWithoutImplementationCalls''"''"'', ''"''"''TestPublicServiceConsumerRejectsUnverifiedIssuerOutput''"''"'',
+      ''"''"''TestPublicGateEvaluatorRegistryRejectsCallerForgedHostCapability''"''"'', ''"''"''TestHarnessSDKGateCapabilityBoundaryFailures''"''"'',
+      ''"''"''TestPublicServiceConsumerRejectsAlternatePayload''"''"'', ''"''"''TestHarnessSDKObserveSchemaRejectsInvalidPayloadWithoutImplementationCall''"''"'',
+      ''"''"''TestHarnessSDKCancelSchemaRejectsInvalidPayloadWithoutImplementationCall''"''"'', ''"''"''TestHarnessSDKTriggerAndEventHandlerPositiveFixturesRejectErrorOnlyImplementations''"''"'',
+      ''"''"''TestHarnessSDKRejectsExternalSchemaReferencesWithoutIO''"''"'', ''"''"''TestHarnessSDKBoundsSchemaPayloadSizeAndDepth''"''"'',
+      ''"''"''TestPublicGateEvaluationRejectsCallerSuppliedEvaluator''"''"'', ''"''"''TestExternalPackageCannotForgeCurrentHostGateHandoff''"''"'',
+      ''"''"''TestHarnessSDKSemanticLedgerPreservesChildExecutionEvidence''"''"'', ''"''"''TestHarnessSDKSemanticLedgerRejectsHelperOnlyOrLiteralPassRows''"''"'',
+      ''"''"''TestHarnessSDKTypedResponseValidationPrecedesReceiptAcceptance''"''"'', ''"''"''TestHarnessSDKOptionalUnknownFailureRequiresObservation''"''"'',
+      ''"''"''TestHarnessSDKConformanceEvidenceCannotAuthorizeHostIngress''"''"'', ''"''"''TestHarnessSDKSemanticEvidenceConformance''"''"'',
+      ''"''"''TestPublicHostAuthorityCannotBeSelectedByCaller''"''"'', ''"''"''TestCurrentPublicGateForgeryRejectsWithoutBindingReceiptOrEvaluatorCall''"''"''];
+      assert {r.get(''"''"''Test''"''"'') for r in tests if r.get(''"''"''Action''"''"'')==''"''"''pass''"''"'' and r.get(''"''"''Test''"''"'')
+      in required}==set(required); assert not any(r.get(''"''"''Test''"''"'') in required and r.get(''"''"''Action''"''"'')
+      in {''"''"''skip''"''"'',''"''"''fail''"''"''} for r in tests)'''
+    exit_code: 0
+  - cmd: python3 scripts/release/package_component.py --component harness-sdk --kind public-extension-sdk --input sdk/harness
+      --bundle artifacts/harness-sdk/source-bundle.tar.zst --component-manifest artifacts/harness-sdk/component-manifest.json
+      --digest-output artifacts/harness-sdk/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml
+      --owner harness-sdk --require-all-owner-sources-accounted
+    exit_code: 0
+  - cmd: python3 -c "from pathlib import Path; import hashlib,json,subprocess; b=Path('artifacts/harness-sdk/source-bundle.tar.zst');
+      m=json.loads(Path('artifacts/harness-sdk/component-manifest.json').read_text()); digest=Path('artifacts/harness-sdk/bundle-digest.txt').read_text().strip();
+      actual=hashlib.sha256(b.read_bytes()).hexdigest(); rev=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip();
+      assert m['component_id']=='harness-sdk' and m['source_revision']==rev; assert actual==digest==m['bundle']['sha256'];
+      assert {x['path'] for x in m['files']} and all(x['path'].startswith('sdk/harness/') for x in m['files'])"
+    exit_code: 0
+  metrics:
+    altered_payload_rejection_count: 7
+    authoritative_gate_positive_claim_count: 0
+    caller_selected_host_authority_accept_count: 0
+    cancel_schema_invalid_implementation_call_count: 0
+    current_public_handoff_forgery_accept_count: 0
+    dropped_child_execution_evidence_count: 0
+    event_handler_error_only_positive_accept_count: 0
+    event_handler_lifecycle_schema_negative_count: 2
+    event_handler_successful_lifecycle_operation_count: 3
+    external_host_direct_bind_rejection_count: 2
+    external_host_positive_path_count: 0
+    external_schema_reference_rejection_count: 2
+    external_schema_resolution_io_attempt_count: 0
+    gate_consumer_boundary_fixture_count: 1
+    gate_evaluator_mismatched_release_rejection_count: 1
+    gate_evaluator_provenance_fixture_count: 7
+    gate_evaluator_purity_rejection_count: 1
+    gate_evaluator_service_mode_rejection_count: 2
+    gate_evaluator_service_payload_rejection_count: 3
+    gate_facts_depth_limit_bypass_accept_count: 0
+    gate_facts_size_limit_bypass_accept_count: 0
+    helper_only_semantic_fixture_accept_count: 0
+    invalid_service_mode_invocation_accept_count: 0
+    literal_semantic_status_accept_count: 0
+    malformed_type_specific_schema_accept_count: 0
+    missing_registered_gate_evaluator_accept_count: 0
+    missing_target_binding_accept_count: 0
+    observe_schema_invalid_implementation_call_count: 0
+    operation_mismatch_rejection_count: 3
+    optional_unknown_failure_fixture_count: 2
+    optional_unknown_skip_count: 0
+    payload_depth_limit_bypass_accept_count: 0
+    payload_size_limit_bypass_accept_count: 0
+    registered_gate_positive_path_count: 0
+    required_current_amendment_semantic_fixture_count: 7
+    required_delivery_goal_semantic_fixture_count: 13
+    required_extension_point_fixture_count: 7
+    required_harness_conformance_test_count: 50
+    required_measured_semantic_row_count: 13
+    required_optional_failure_observation_gap_count: 0
+    required_service_mode_fixture_count: 15
+    retry_scope_mismatch_rejection_count: 4
+    schema_depth_limit_bypass_accept_count: 0
+    schema_internal_reference_rejection_count: 1
+    schema_size_limit_bypass_accept_count: 0
+    sdk_fixture_authority_leak_accept_count: 0
+    sdk_owned_host_handoff_construction_count: 0
+    semantic_evidence_source_revision_match_count: 1
+    service_consumer_alternate_payload_accept_count: 0
+    target_binding_artifact_mismatch_rejection_count: 7
+    target_binding_entrypoint_mismatch_rejection_count: 7
+    target_binding_identity_mismatch_fixture_count: 56
+    target_binding_package_id_mismatch_rejection_count: 7
+    target_binding_package_version_mismatch_rejection_count: 7
+    trigger_error_only_positive_accept_count: 0
+    trigger_successful_response_count: 1
+    typed_invalid_response_accepted_receipt_count: 0
+    typed_response_validation_negative_count: 16
+    typed_valid_error_business_success_count: 0
+    typed_valid_error_envelope_fixture_count: 8
+    unregistered_gate_execution_accept_count: 0
+    untrusted_service_cross_receiver_replay_rejection_count: 2
+    valid_service_mode_invocation_accept_count: 0
+    statement_coverage_percent: 85.45534924845269
+    required_receipt_tree_design_regression_test_count: 4
+  artifacts:
+  - artifacts/harness-sdk/coverage.out
+  - artifacts/harness-sdk/conformance-tests.json
+  - artifacts/harness-sdk/semantic-evidence.json
+  - artifacts/harness-sdk/source-bundle.tar.zst
+  - artifacts/harness-sdk/bundle-digest.txt
+  - artifacts/harness-sdk/component-manifest.json
+  - artifacts/harness-sdk/receipt-tree-tests.json
+  - artifacts/harness-sdk/receipt-tree-design-evidence.md
+  - https://github.com/xiaohei-info/open-agent-cluster/blob/8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96/artifacts/harness-sdk-build-repair-evidence/coverage.out
+  - https://github.com/xiaohei-info/open-agent-cluster/blob/8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96/artifacts/harness-sdk-build-repair-evidence/conformance-tests.json
+  - https://github.com/xiaohei-info/open-agent-cluster/blob/8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96/artifacts/harness-sdk-build-repair-evidence/semantic-evidence.json
+  - https://github.com/xiaohei-info/open-agent-cluster/blob/8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96/artifacts/harness-sdk-build-repair-evidence/source-bundle.tar.zst
+  - https://github.com/xiaohei-info/open-agent-cluster/blob/8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96/artifacts/harness-sdk-build-repair-evidence/bundle-digest.txt
+  - https://github.com/xiaohei-info/open-agent-cluster/blob/8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96/artifacts/harness-sdk-build-repair-evidence/component-manifest.json
+  - https://github.com/xiaohei-info/open-agent-cluster/blob/8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96/artifacts/harness-sdk-build-repair-evidence/receipt-tree-tests.json
+  - https://github.com/xiaohei-info/open-agent-cluster/blob/8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96/artifacts/harness-sdk-build-repair-evidence/receipt-tree-design-evidence.md
+  evidence: All original 20 SDK commands pass during execution; required metrics at the validated checkpoint meet every original
+    threshold, 50 fixed tests and four separate receipt-tree tests pass without fail/skip. Delivered byte validations 2,6,8,10,12,14,16,17,20
+    pass; validation 18 fails because the delivered metric is absent. Therefore local gate execution passes but the required
+    published gate artifact does not.
+- gate: harness-sdk-production-build-repair-gate
+  status: pass
+  source_of_truth:
+  - git:a1837b81e115104b235bd3ed2665af6b3ec157f5:sdk/harness/conformance.go:L1398-L1405
+  - docs/design/detailed/08-component-and-extension-detailed-design.md#18-package-与接口检查
+  delivery_goal: The repaired production SDK and full repository compile without _test.go helpers, and the uncached full test
+    suite passes on the same committed revision; historical build evidence is not a substitute.
+  commands:
+  - cmd: go build ./sdk/harness/...
+    exit_code: 0
+  - cmd: go build ./...
+    exit_code: 0
+  - cmd: go test -count=1 ./...
+    exit_code: 0
+  metrics: {}
+  artifacts:
+  - artifacts/harness-sdk/owner-repair.md
+  - artifacts/harness-sdk/source-snapshot.md
+  - artifacts/harness-sdk/coverage-audit.md
+  - artifacts/harness-sdk/coverage-block-audit.md
+  - https://github.com/xiaohei-info/open-agent-cluster/blob/8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96/artifacts/harness-sdk-build-repair-evidence/owner-repair.md
+  - https://github.com/xiaohei-info/open-agent-cluster/blob/8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96/artifacts/harness-sdk-build-repair-evidence/source-snapshot.md
+  - https://github.com/xiaohei-info/open-agent-cluster/blob/8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96/artifacts/harness-sdk-build-repair-evidence/coverage-audit.md
+  - https://github.com/xiaohei-info/open-agent-cluster/blob/8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96/artifacts/harness-sdk-build-repair-evidence/coverage-block-audit.md
+  evidence: Exact go build ./sdk/harness/..., go build ./..., go test -count=1 ./... each exit 0 on 1ebf12d36d29c2a3726257bd03685139f5bc568a
+    in the prescribed native environment. Fresh owner-repair/source-snapshot/coverage-audit/coverage-block-audit records are
+    retrievable and source-bound. Filesystem result establishes descriptor identity inspection and typed mutation denial only;
+    no identity-atomic mutation or live Workspace conformance is claimed. PR90 remains open; reviewed merge and buildable
+    main are still prerequisites for Audit.
+publication_verification:
+  commit: 8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96
+  index_sha256: 41f168bcaabae379bd9deddf1f06ee5e9d9e61b6ec61d593fe3948d5d95b2049
+  index_size_bytes: 5978
+  assets_verified:
+  - path: artifacts/harness-sdk-build-repair-evidence/bundle-digest.txt
+    size_bytes: 65
+    sha256: fe82d6059dd3f25b2f108ea3d7726db2402901c6a11cad98e8803aefb0cac6f1
+    git_blob_oid: f2e0226c9f79ca6b9d911910f35dc80ec6f9116d
+    retrieved_from_commit: 8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96
+  - path: artifacts/harness-sdk-build-repair-evidence/component-manifest.json
+    size_bytes: 6652
+    sha256: 3982c8151fa3c76881969d7d87d856f7f24c6b08f41071ca8d199152ebfb4ccb
+    git_blob_oid: e5e2eb88141eeedad3bb7e4a195a160d39e8beab
+    retrieved_from_commit: 8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96
+  - path: artifacts/harness-sdk-build-repair-evidence/conformance-tests.json
+    size_bytes: 86297
+    sha256: 6e17b7c9b917cf3543dee9e00cf23ac16a03e51eadc4e913ac5c9c95c125ae34
+    git_blob_oid: 4e7afbc721a619c174b9fa88cc74488fd8cd8697
+    retrieved_from_commit: 8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96
+  - path: artifacts/harness-sdk-build-repair-evidence/coverage-attribution.json
+    size_bytes: 1038928
+    sha256: 6c7759624b574093ce7500826a2cee1ac494f772f6df5406c8d677edc8b68a8e
+    git_blob_oid: 110919bc5e6d216978ad0f7ca4f06fc5ba26082a
+    retrieved_from_commit: 8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96
+  - path: artifacts/harness-sdk-build-repair-evidence/coverage-audit.md
+    size_bytes: 1737
+    sha256: 85dadcd10fd1e6e3e8ced8d13cd28c2a0c3d7ac3fd2400fb71a06b1f6828a211
+    git_blob_oid: 2913c77e767349ea2cee211a9cc8eaadf7ec4ed5
+    retrieved_from_commit: 8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96
+  - path: artifacts/harness-sdk-build-repair-evidence/coverage-block-audit.json
+    size_bytes: 1923627
+    sha256: e700974b97abb6f069a62b5ca2d9b71cac4ee7bb08d8c2b025ff0c19e2fe8bdd
+    git_blob_oid: c4930fad0f7e8c2503cdc6d07e14814848d53055
+    retrieved_from_commit: 8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96
+  - path: artifacts/harness-sdk-build-repair-evidence/coverage-block-audit.md
+    size_bytes: 1524
+    sha256: ab9886907e3dd1a2e5d7126da18a91d07bf2fe9dc55c69d6de33904cba9b3d67
+    git_blob_oid: 8708acf5f5731f20f12481fb59f64f1c93df4c29
+    retrieved_from_commit: 8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96
+  - path: artifacts/harness-sdk-build-repair-evidence/coverage.out
+    size_bytes: 165570
+    sha256: d86aca5fc0b7c9caa9d5781dd79ccac9b9b7769578976d65c314c5789ffba93e
+    git_blob_oid: 253db74ff0e2d85c06babcfe0d04ad6062a1967a
+    retrieved_from_commit: 8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96
+  - path: artifacts/harness-sdk-build-repair-evidence/harness-sdk-build-repair-evidence.tar.gz
+    size_bytes: 305762
+    sha256: 9b849f60a8dbca4b60fa276c6fcafd51bbdfc35b226908aa0e09611eccb6fafe
+    git_blob_oid: 2d28a109227317c5d08b54b8839682ef0df58a5c
+    retrieved_from_commit: 8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96
+  - path: artifacts/harness-sdk-build-repair-evidence/owner-repair.md
+    size_bytes: 3528
+    sha256: 149edf0240af2302a12629cc2c96077f53d5b6ef6a542189fc37ab6c51ea4296
+    git_blob_oid: 17b1f56751ea998d64f11e3d20f7a2aa685e8cec
+    retrieved_from_commit: 8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96
+  - path: artifacts/harness-sdk-build-repair-evidence/receipt-tree-design-evidence.md
+    size_bytes: 1872
+    sha256: ad959254de4b0de8c571fd114f13879a31ca31f80d5097309216f7c5083ab0c8
+    git_blob_oid: 70c7bd68c0619896d6e9c85a2ad2b0ee7cdebd54
+    retrieved_from_commit: 8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96
+  - path: artifacts/harness-sdk-build-repair-evidence/receipt-tree-tests.json
+    size_bytes: 4284
+    sha256: ac7e6a39561112775c8cc88767e2de5f39fac64f06e6c98b5ac372f7377b38aa
+    git_blob_oid: 369af507b2590a63a959f52e13ec9f25a77ac0dd
+    retrieved_from_commit: 8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96
+  - path: artifacts/harness-sdk-build-repair-evidence/semantic-evidence.json
+    size_bytes: 169510
+    sha256: 2dcaeae5cd056b2e0c06152fed7b155c73fd4e36a12b609fee14fa04ab90e307
+    git_blob_oid: 3d705493d0989d88c89ebe9349630b0e072a774d
+    retrieved_from_commit: 8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96
+  - path: artifacts/harness-sdk-build-repair-evidence/source-bundle.tar.zst
+    size_bytes: 86973
+    sha256: 51fe5c84fbaf2f962ced040c99940521c994614721955231afad23ce911f5887
+    git_blob_oid: 26248eaa0df456f100cb7ad76787d56c0b758e15
+    retrieved_from_commit: 8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96
+  - path: artifacts/harness-sdk-build-repair-evidence/source-snapshot.json
+    size_bytes: 6346
+    sha256: bd204d9475952fdfa8438f106a07938c45476ad08fa17710690257a0bad4eb0e
+    git_blob_oid: 1612c367ba28484d9260fa8ac85c5f8cefa931f4
+    retrieved_from_commit: 8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96
+  - path: artifacts/harness-sdk-build-repair-evidence/source-snapshot.md
+    size_bytes: 1711
+    sha256: 83332ce4d4af9cbfeba1b941acf6d00210885e0848a3dadfd858a499c5f3e0a4
+    git_blob_oid: 5fd5a124a57122a7071d1ddcc9ec6dbb37f69483
+    retrieved_from_commit: 8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96
+  - path: artifacts/harness-sdk-build-repair-evidence/source.patch.gz
+    size_bytes: 416
+    sha256: dececf1032705da4fcf2a4913ce9a289730ae562938cf88ff9e82d4a01788fba
+    git_blob_oid: 014f046a5002b0d64cc9214b85a259575ecb7388
+    retrieved_from_commit: 8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96
+  - path: artifacts/harness-sdk-build-repair-evidence/verification-results.json
+    size_bytes: 33512
+    sha256: 73c212305fd2c9f3027cd1dd15b1d43b05137f6dc37661d88c368395d4dfb31a
+    git_blob_oid: ceadc2a2f15d053cc3cd65d46cd0e7e430fb1d8d
+    retrieved_from_commit: 8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96
+  indexed_payload_count: 18
+  source_revision: 1ebf12d36d29c2a3726257bd03685139f5bc568a
+  published_payload_validators:
+  - index: 2
+    cmd: "python3 -c 'from pathlib import Path\nrows=Path('\"'\"'artifacts/harness-sdk/coverage.out'\"'\"').read_text().splitlines()\n\
+      assert rows and rows[0]=='\"'\"'mode: atomic'\"'\"'\nblocks={}\nfor line in rows[1:]:\n    key,weight,count=line.split();\
+      \ weight=int(weight); count=int(count)\n    assert key.startswith('\"'\"'github.com/xiaohei-info/open-agent-cluster/sdk/harness/'\"\
+      '\"') and weight>=0 and count>=0\n    if key in blocks:\n        assert blocks[key][0]==weight\n        count+=blocks[key][1]\n\
+      \    blocks[key]=(weight,count)\ntotal=sum(w for w,c in blocks.values()); covered=sum(w for w,c in blocks.values() if\
+      \ c>0)\nassert total>0 and 100*covered>=85*total, (covered,total,'\"'\"'required raw SDK-only coverage >=85%'\"'\"')\n\
+      '"
+    exit_code: 0
+    summary: pass
+  - index: 6
+    cmd: 'python3 -c ''import json; required={''"''"''TestHarnessSDKMeasuredTreeCannotAuthorizeReceipt''"''"'', ''"''"''TestHarnessSDKMeasuredTreeUsesProductionLineage''"''"'',
+      ''"''"''TestHarnessSDKMeasuredTreeCopyAndParentBinding''"''"'', ''"''"''TestHarnessSDKReceiptProjectionCompatibility''"''"''};
+      rows=[json.loads(x) for x in open(''"''"''artifacts/harness-sdk/receipt-tree-tests.json''"''"'') if x.strip()]; passed={x.get(''"''"''Test''"''"'')
+      for x in rows if x.get(''"''"''Action''"''"'')==''"''"''pass''"''"'' and x.get(''"''"''Test''"''"'') in required}; assert
+      passed==required, f''"''"''missing design regressions: {sorted(required-passed)}''"''"''; assert not any(x.get(''"''"''Action''"''"'')==''"''"''fail''"''"''
+      for x in rows)'''
+    exit_code: 0
+    summary: pass
+  - index: 8
+    cmd: 'python3 -c "import json; required=set(''TestHarnessSDKDescribeAndTypedInvocationConformance TestHarnessSDKObserveBeforeRetryAndCancelConformance
+      TestHarnessSDKPermissionAndFailureConformance TestHarnessSDKRejectsSelfAttestedHostEvidence TestHarnessSDKServiceEnvelopeRejectsConsistentUntrustedHandoff
+      TestHarnessSDKServiceModeRejectsMissingAttestation TestHarnessSDKServiceModeRejectsAlteredAttestation TestHarnessSDKServiceModeRejectsExpiredAttestation
+      TestHarnessSDKServiceModeRejectsReplayedAttestation TestHarnessSDKServiceModeRejectsMismatchedScope TestHarnessSDKServiceModeRejectsMismatchedDigest
+      TestHarnessSDKServiceModeRejectsMismatchedInvocationIdentity TestHarnessSDKServiceConsumerRejectsCallerRotationClaims
+      TestHarnessSDKComputationalGuideMonotonicConformance TestHarnessSDKInferentialGuideAppendOnlyConformance TestHarnessSDKExecutorSideEffectLifecycleConformance
+      TestHarnessSDKComputationalSensorAppendOnlyConformance TestHarnessSDKInferentialSensorAppendOnlyConformance TestHarnessSDKTriggerConformance
+      TestHarnessSDKEventHandlerSideEffectLifecycleConformance TestHarnessSDKRequiredOptionalFailureObservationConformance
+      TestHarnessSDKTargetBindingConformance TestHarnessSDKRegisteredGateEvaluatorPurityFailClosedConformance TestHarnessSDKTypeSpecificDescribeSchemaConformance
+      TestHarnessSDKTypedOperationAndPayloadBindingConformance TestHarnessSDKGateEvaluatorRegistryProvenanceConformance TestPublicServiceConsumerRejectsCallerHandoffForEveryTypedOperation
+      TestPublicServiceConsumerRejectsUntrustedReplayAcrossReceivers TestPublicServiceConsumerRejectsMissingOrMalformedHostIngress''.split());
+      rows=[json.loads(x) for x in open(''artifacts/harness-sdk/conformance-tests.json'') if x.strip()]; passed={x.get(''Test'')
+      for x in rows if x.get(''Action'')==''pass'' and x.get(''Test'') in required}; assert passed==required, f''missing required
+      passing tests: {sorted(required-passed)}''"'
+    exit_code: 0
+    summary: pass
+  - index: 10
+    cmd: 'python3 -c "import json; required=set(''TestHarnessSDKRetryProofBindsCompleteObserveScopeAndServicePayload TestHarnessSDKTargetBindingIdentityMismatchesRejectWithoutImplementationCalls
+      TestPublicServiceConsumerRejectsUnverifiedIssuerOutput TestPublicGateEvaluatorRegistryRejectsCallerForgedHostCapability
+      TestHarnessSDKGateCapabilityBoundaryFailures TestPublicServiceConsumerRejectsAlternatePayload TestHarnessSDKObserveSchemaRejectsInvalidPayloadWithoutImplementationCall
+      TestHarnessSDKCancelSchemaRejectsInvalidPayloadWithoutImplementationCall TestHarnessSDKTriggerAndEventHandlerPositiveFixturesRejectErrorOnlyImplementations
+      TestHarnessSDKRejectsExternalSchemaReferencesWithoutIO TestHarnessSDKBoundsSchemaPayloadSizeAndDepth TestPublicGateEvaluationRejectsCallerSuppliedEvaluator
+      TestExternalPackageCannotForgeCurrentHostGateHandoff TestHarnessSDKSemanticLedgerPreservesChildExecutionEvidence TestHarnessSDKSemanticLedgerRejectsHelperOnlyOrLiteralPassRows''.split());
+      rows=[json.loads(x) for x in open(''artifacts/harness-sdk/conformance-tests.json'') if x.strip()]; passed={x.get(''Test'')
+      for x in rows if x.get(''Action'')==''pass'' and x.get(''Test'') in required}; assert passed==required, f''missing residual
+      semantic regressions: {sorted(required-passed)}''"'
+    exit_code: 0
+    summary: pass
+  - index: 12
+    cmd: 'python3 -c ''import json; required={''"''"''TestHarnessSDKOptionalUnknownFailureRequiresObservation''"''"'', ''"''"''TestHarnessSDKConformanceEvidenceCannotAuthorizeHostIngress''"''"'',
+      ''"''"''TestHarnessSDKTypedResponseValidationPrecedesReceiptAcceptance''"''"''}; rows=[json.loads(x) for x in open(''"''"''artifacts/harness-sdk/conformance-tests.json''"''"'')
+      if x.strip()]; passed={x.get(''"''"''Test''"''"'') for x in rows if x.get(''"''"''Action''"''"'')==''"''"''pass''"''"''
+      and x.get(''"''"''Test''"''"'') in required}; assert passed==required, f''"''"''missing blocker regressions: {sorted(required-passed)}''"''"'';
+      assert not any(x.get(''"''"''Test''"''"'') in required and x.get(''"''"''Action''"''"'') in {''"''"''skip''"''"'',''"''"''fail''"''"''}
+      for x in rows)'''
+    exit_code: 0
+    summary: pass
+  - index: 14
+    cmd: 'python3 -c "import json; required={''TestPublicHostAuthorityCannotBeSelectedByCaller'',''TestCurrentPublicGateForgeryRejectsWithoutBindingReceiptOrEvaluatorCall''};
+      rows=[json.loads(x) for x in open(''artifacts/harness-sdk/conformance-tests.json'') if x.strip()]; passed={x.get(''Test'')
+      for x in rows if x.get(''Action'')==''pass'' and x.get(''Test'') in required}; assert passed==required, f''missing current-boundary
+      regressions: {sorted(required-passed)}''"'
+    exit_code: 0
+    summary: pass
+  - index: 16
+    cmd: python3 -c "from pathlib import Path; import json,subprocess; p=Path('artifacts/harness-sdk/semantic-evidence.json');
+      assert p.is_file() and p.stat().st_size>0; d=json.loads(p.read_text()); assert d['schema']=='oac.harness-sdk-semantic-evidence/v1';
+      rev=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(); assert d['source_revision']==rev; required={'typed-point-describe-contracts','service-host-consumer-boundary','service-consumer-payload-boundary','observe-input-schema','cancel-input-schema','trigger-positive-success','event-handler-positive-lifecycle','external-schema-reference-isolation','schema-size-depth-bounds','required-optional-failure-policy','unknown-recovery-retry-cancel','target-binding-identity','gate-evaluator-consumer-boundary'};
+      rows={x['fixture_id']:x for x in d['fixtures']}; assert required==set(rows); assert all(rows[k]['status']=='pass' and
+      rows[k].get('execution_count')==1 and rows[k].get('accepted_count',0)+rows[k].get('rejected_count',0)>0 and rows[k].get('forbidden_accept_count')==0
+      and rows[k].get('forbidden_implementation_call_count')==0 and isinstance(rows[k].get('identity_evidence'),list) and
+      any(str(x).startswith('target=') for x in rows[k]['identity_evidence']) and any(str(x).startswith('operation=') for
+      x in rows[k]['identity_evidence']) and any(str(x).startswith('provenance=') for x in rows[k]['identity_evidence']) and
+      rows[k].get('assertions') and rows[k].get('evidence_refs') for k in required); m=d['metrics']; assert m['required_current_amendment_semantic_fixture_count']==7;
+      assert m['required_delivery_goal_semantic_fixture_count']==13; exact={'required_extension_point_fixture_count':7,'required_service_mode_fixture_count':15,'valid_service_mode_invocation_accept_count':0,'invalid_service_mode_invocation_accept_count':0,'malformed_type_specific_schema_accept_count':0,'missing_target_binding_accept_count':0,'missing_registered_gate_evaluator_accept_count':0,'required_optional_failure_observation_gap_count':0,'operation_mismatch_rejection_count':3,'altered_payload_rejection_count':7,'external_host_direct_bind_rejection_count':2,'event_handler_lifecycle_schema_negative_count':2,'gate_evaluator_provenance_fixture_count':7,'gate_evaluator_service_mode_rejection_count':2,'gate_evaluator_mismatched_release_rejection_count':1,'gate_evaluator_purity_rejection_count':1,'retry_scope_mismatch_rejection_count':4,'target_binding_identity_mismatch_fixture_count':56,'target_binding_package_id_mismatch_rejection_count':7,'target_binding_package_version_mismatch_rejection_count':7,'target_binding_entrypoint_mismatch_rejection_count':7,'target_binding_artifact_mismatch_rejection_count':7,'untrusted_service_cross_receiver_replay_rejection_count':2};
+      assert all(m[k]==v for k,v in exact.items()); assert m['service_consumer_alternate_payload_accept_count']==0; assert
+      m['observe_schema_invalid_implementation_call_count']==0; assert m['cancel_schema_invalid_implementation_call_count']==0;
+      assert m['trigger_error_only_positive_accept_count']==0; assert m['event_handler_error_only_positive_accept_count']==0;
+      assert m['external_schema_reference_rejection_count']>=2; assert m['external_schema_resolution_io_attempt_count']==0;
+      assert m['schema_size_limit_bypass_accept_count']==0; assert m['payload_size_limit_bypass_accept_count']==0; assert
+      m['schema_depth_limit_bypass_accept_count']==0; assert m['payload_depth_limit_bypass_accept_count']==0; assert m['trigger_successful_response_count']>=1;
+      assert m['event_handler_successful_lifecycle_operation_count']>=3; assert m['required_measured_semantic_row_count']==13;
+      assert m['unregistered_gate_execution_accept_count']==0; assert m['sdk_owned_host_handoff_construction_count']==0; assert
+      m['helper_only_semantic_fixture_accept_count']==0; assert m['literal_semantic_status_accept_count']==0; assert m['dropped_child_execution_evidence_count']==0"
+    exit_code: 0
+    summary: pass
+  - index: 17
+    cmd: python3 -c "from pathlib import Path; import json; d=json.loads(Path('artifacts/harness-sdk/semantic-evidence.json').read_text());
+      m=d['metrics']; assert m['registered_gate_positive_path_count']==0; assert m['authoritative_gate_positive_claim_count']==0;
+      assert d['evidence_scope']=='sdk-boundary'; rows={x['fixture_id']:x for x in d['fixtures']}; r=rows['gate-evaluator-consumer-boundary'];
+      assert r['status']=='pass' and r.get('accepted_count',0)==0 and r.get('rejected_count',0)>0; assert r.get('forbidden_accept_count')==0
+      and r.get('forbidden_implementation_call_count')==0"
+    exit_code: 0
+    summary: pass
+  - index: 18
+    cmd: 'python3 -c ''from pathlib import Path; import json; d=json.loads(Path(''"''"''artifacts/harness-sdk/semantic-evidence.json''"''"'').read_text());
+      m=d[''"''"''metrics''"''"'']; rows={r[''"''"''fixture_id''"''"'']:r for r in d[''"''"''fixtures''"''"'']}; assert len(d[''"''"''fixtures''"''"''])==len(rows)==13;
+      negative={''"''"''service-host-consumer-boundary''"''"'',''"''"''service-consumer-payload-boundary''"''"'',''"''"''gate-evaluator-consumer-boundary''"''"''};
+      assert all(r[''"''"''evidence_scope''"''"'']==(''"''"''sdk-consumer-negative''"''"'' if k in negative else ''"''"''sdk-operation-conformance''"''"'')
+      and r[''"''"''authoritative_host_claim''"''"''] is False for k,r in rows.items()); assert all(rows[k][''"''"''accepted_count''"''"'']==0
+      and rows[k][''"''"''rejected_count''"''"'']>0 and rows[k][''"''"''binding_issued_count''"''"'']==0 and rows[k][''"''"''authoritative_receipt_issued_count''"''"'']==0
+      and rows[k][''"''"''implementation_call_count''"''"'']==0 for k in negative); assert all(rows[k][''"''"''accepted_count''"''"'']>0
+      for k in [''"''"''trigger-positive-success''"''"'',''"''"''event-handler-positive-lifecycle''"''"'']); cases=rows[''"''"''service-host-consumer-boundary''"''"''][''"''"''cases''"''"''];
+      required_cases=[''"''"''missing-attestation''"''"'', ''"''"''altered-attestation''"''"'', ''"''"''expired-attestation''"''"'',
+      ''"''"''replayed-untrusted-attestation''"''"'', ''"''"''mismatched-scope''"''"'', ''"''"''mismatched-digest''"''"'',
+      ''"''"''mismatched-invocation-identity''"''"'', ''"''"''caller-rotation-claims''"''"'', ''"''"''consistent-untrusted-handoff''"''"'',
+      ''"''"''caller-verifier''"''"'', ''"''"''caller-signer-trust-pair''"''"'', ''"''"''unverified-issuer-output''"''"'',
+      ''"''"''missing-ingress''"''"'', ''"''"''malformed-ingress''"''"'', ''"''"''untrusted-cross-receiver-replay''"''"''];
+      assert len(cases)==len(required_cases) and {c[''"''"''case_id''"''"''] for c in cases}==set(required_cases); assert
+      all(c[''"''"''attempt_count''"''"'']>0 and c[''"''"''rejected_count''"''"'']==c[''"''"''attempt_count''"''"''] and c[''"''"''accepted_count''"''"'']==0
+      and c[''"''"''binding_issued_count''"''"'']==0 and c[''"''"''authoritative_receipt_issued_count''"''"'']==0 and c[''"''"''implementation_call_count''"''"'']==0
+      and c[''"''"''execution_evidence''"''"''] for c in cases); expected={''"''"''required_harness_conformance_test_count''"''"'':
+      50, ''"''"''required_extension_point_fixture_count''"''"'': 7, ''"''"''required_service_mode_fixture_count''"''"'':
+      15, ''"''"''valid_service_mode_invocation_accept_count''"''"'': 0, ''"''"''invalid_service_mode_invocation_accept_count''"''"'':
+      0, ''"''"''malformed_type_specific_schema_accept_count''"''"'': 0, ''"''"''missing_target_binding_accept_count''"''"'':
+      0, ''"''"''missing_registered_gate_evaluator_accept_count''"''"'': 0, ''"''"''required_optional_failure_observation_gap_count''"''"'':
+      0, ''"''"''operation_mismatch_rejection_count''"''"'': 3, ''"''"''altered_payload_rejection_count''"''"'': 7, ''"''"''external_host_direct_bind_rejection_count''"''"'':
+      2, ''"''"''event_handler_lifecycle_schema_negative_count''"''"'': 2, ''"''"''gate_evaluator_provenance_fixture_count''"''"'':
+      7, ''"''"''gate_evaluator_service_mode_rejection_count''"''"'': 2, ''"''"''gate_evaluator_mismatched_release_rejection_count''"''"'':
+      1, ''"''"''gate_evaluator_purity_rejection_count''"''"'': 1, ''"''"''retry_scope_mismatch_rejection_count''"''"'': 4,
+      ''"''"''target_binding_identity_mismatch_fixture_count''"''"'': 56, ''"''"''target_binding_package_id_mismatch_rejection_count''"''"'':
+      7, ''"''"''target_binding_package_version_mismatch_rejection_count''"''"'': 7, ''"''"''target_binding_entrypoint_mismatch_rejection_count''"''"'':
+      7, ''"''"''target_binding_artifact_mismatch_rejection_count''"''"'': 7, ''"''"''required_current_amendment_semantic_fixture_count''"''"'':
+      7, ''"''"''required_delivery_goal_semantic_fixture_count''"''"'': 13, ''"''"''observe_schema_invalid_implementation_call_count''"''"'':
+      0, ''"''"''cancel_schema_invalid_implementation_call_count''"''"'': 0, ''"''"''trigger_error_only_positive_accept_count''"''"'':
+      0, ''"''"''event_handler_error_only_positive_accept_count''"''"'': 0, ''"''"''external_schema_reference_rejection_count''"''"'':
+      2, ''"''"''external_schema_resolution_io_attempt_count''"''"'': 0, ''"''"''schema_size_limit_bypass_accept_count''"''"'':
+      0, ''"''"''payload_size_limit_bypass_accept_count''"''"'': 0, ''"''"''schema_depth_limit_bypass_accept_count''"''"'':
+      0, ''"''"''payload_depth_limit_bypass_accept_count''"''"'': 0, ''"''"''trigger_successful_response_count''"''"'': 1,
+      ''"''"''event_handler_successful_lifecycle_operation_count''"''"'': 3, ''"''"''semantic_evidence_source_revision_match_count''"''"'':
+      1, ''"''"''required_measured_semantic_row_count''"''"'': 13, ''"''"''unregistered_gate_execution_accept_count''"''"'':
+      0, ''"''"''sdk_owned_host_handoff_construction_count''"''"'': 0, ''"''"''helper_only_semantic_fixture_accept_count''"''"'':
+      0, ''"''"''literal_semantic_status_accept_count''"''"'': 0, ''"''"''dropped_child_execution_evidence_count''"''"'':
+      0, ''"''"''registered_gate_positive_path_count''"''"'': 0, ''"''"''authoritative_gate_positive_claim_count''"''"'':
+      0, ''"''"''caller_selected_host_authority_accept_count''"''"'': 0, ''"''"''current_public_handoff_forgery_accept_count''"''"'':
+      0, ''"''"''gate_consumer_boundary_fixture_count''"''"'': 1, ''"''"''untrusted_service_cross_receiver_replay_rejection_count''"''"'':
+      2, ''"''"''service_consumer_alternate_payload_accept_count''"''"'': 0, ''"''"''typed_invalid_response_accepted_receipt_count''"''"'':
+      0, ''"''"''typed_response_validation_negative_count''"''"'': 16, ''"''"''typed_valid_error_envelope_fixture_count''"''"'':
+      8, ''"''"''typed_valid_error_business_success_count''"''"'': 0, ''"''"''optional_unknown_skip_count''"''"'': 0, ''"''"''optional_unknown_failure_fixture_count''"''"'':
+      2, ''"''"''sdk_fixture_authority_leak_accept_count''"''"'': 0}; assert all(m[k]==v for k,v in expected.items()), {k:(m.get(k),v)
+      for k,v in expected.items() if m.get(k)!=v}; downstream=d[''"''"''downstream_host_conformance''"''"'']; assert downstream[''"''"''status''"''"'']==''"''"''not-run''"''"''
+      and downstream[''"''"''producer''"''"'']==''"''"''harness-host''"''"'' and downstream[''"''"''artifact_id''"''"'']==''"''"''harness-host-gate-evidence''"''"''
+      and downstream[''"''"''artifact_path''"''"'']==''"''"''artifacts/harness-host/gate-evidence.json''"''"'' and downstream[''"''"''combined_owner''"''"'']==''"''"''contracts-extension''"''"'';
+      assert set(downstream[''"''"''required_obligations''"''"''])=={''"''"''registered-gate-positive''"''"'',''"''"''service-authority-positive''"''"'',''"''"''authenticated-transport''"''"'',''"''"''expiry-and-key-rotation''"''"'',''"''"''accepted-then-replayed-cross-receiver-and-restart''"''"''};
+      tests=[json.loads(x) for x in Path(''"''"''artifacts/harness-sdk/conformance-tests.json''"''"'').read_text().splitlines()
+      if x.strip()]; required=[''"''"''TestHarnessSDKDescribeAndTypedInvocationConformance''"''"'', ''"''"''TestHarnessSDKObserveBeforeRetryAndCancelConformance''"''"'',
+      ''"''"''TestHarnessSDKPermissionAndFailureConformance''"''"'', ''"''"''TestHarnessSDKRejectsSelfAttestedHostEvidence''"''"'',
+      ''"''"''TestHarnessSDKServiceEnvelopeRejectsConsistentUntrustedHandoff''"''"'', ''"''"''TestHarnessSDKServiceModeRejectsMissingAttestation''"''"'',
+      ''"''"''TestHarnessSDKServiceModeRejectsAlteredAttestation''"''"'', ''"''"''TestHarnessSDKServiceModeRejectsExpiredAttestation''"''"'',
+      ''"''"''TestHarnessSDKServiceModeRejectsReplayedAttestation''"''"'', ''"''"''TestHarnessSDKServiceModeRejectsMismatchedScope''"''"'',
+      ''"''"''TestHarnessSDKServiceModeRejectsMismatchedDigest''"''"'', ''"''"''TestHarnessSDKServiceModeRejectsMismatchedInvocationIdentity''"''"'',
+      ''"''"''TestHarnessSDKServiceConsumerRejectsCallerRotationClaims''"''"'', ''"''"''TestHarnessSDKComputationalGuideMonotonicConformance''"''"'',
+      ''"''"''TestHarnessSDKInferentialGuideAppendOnlyConformance''"''"'', ''"''"''TestHarnessSDKExecutorSideEffectLifecycleConformance''"''"'',
+      ''"''"''TestHarnessSDKComputationalSensorAppendOnlyConformance''"''"'', ''"''"''TestHarnessSDKInferentialSensorAppendOnlyConformance''"''"'',
+      ''"''"''TestHarnessSDKTriggerConformance''"''"'', ''"''"''TestHarnessSDKEventHandlerSideEffectLifecycleConformance''"''"'',
+      ''"''"''TestHarnessSDKRequiredOptionalFailureObservationConformance''"''"'', ''"''"''TestHarnessSDKTargetBindingConformance''"''"'',
+      ''"''"''TestHarnessSDKRegisteredGateEvaluatorPurityFailClosedConformance''"''"'', ''"''"''TestHarnessSDKTypeSpecificDescribeSchemaConformance''"''"'',
+      ''"''"''TestHarnessSDKTypedOperationAndPayloadBindingConformance''"''"'', ''"''"''TestHarnessSDKGateEvaluatorRegistryProvenanceConformance''"''"'',
+      ''"''"''TestPublicServiceConsumerRejectsCallerHandoffForEveryTypedOperation''"''"'', ''"''"''TestPublicServiceConsumerRejectsUntrustedReplayAcrossReceivers''"''"'',
+      ''"''"''TestPublicServiceConsumerRejectsMissingOrMalformedHostIngress''"''"'', ''"''"''TestHarnessSDKRetryProofBindsCompleteObserveScopeAndServicePayload''"''"'',
+      ''"''"''TestHarnessSDKTargetBindingIdentityMismatchesRejectWithoutImplementationCalls''"''"'', ''"''"''TestPublicServiceConsumerRejectsUnverifiedIssuerOutput''"''"'',
+      ''"''"''TestPublicGateEvaluatorRegistryRejectsCallerForgedHostCapability''"''"'', ''"''"''TestHarnessSDKGateCapabilityBoundaryFailures''"''"'',
+      ''"''"''TestPublicServiceConsumerRejectsAlternatePayload''"''"'', ''"''"''TestHarnessSDKObserveSchemaRejectsInvalidPayloadWithoutImplementationCall''"''"'',
+      ''"''"''TestHarnessSDKCancelSchemaRejectsInvalidPayloadWithoutImplementationCall''"''"'', ''"''"''TestHarnessSDKTriggerAndEventHandlerPositiveFixturesRejectErrorOnlyImplementations''"''"'',
+      ''"''"''TestHarnessSDKRejectsExternalSchemaReferencesWithoutIO''"''"'', ''"''"''TestHarnessSDKBoundsSchemaPayloadSizeAndDepth''"''"'',
+      ''"''"''TestPublicGateEvaluationRejectsCallerSuppliedEvaluator''"''"'', ''"''"''TestExternalPackageCannotForgeCurrentHostGateHandoff''"''"'',
+      ''"''"''TestHarnessSDKSemanticLedgerPreservesChildExecutionEvidence''"''"'', ''"''"''TestHarnessSDKSemanticLedgerRejectsHelperOnlyOrLiteralPassRows''"''"'',
+      ''"''"''TestHarnessSDKTypedResponseValidationPrecedesReceiptAcceptance''"''"'', ''"''"''TestHarnessSDKOptionalUnknownFailureRequiresObservation''"''"'',
+      ''"''"''TestHarnessSDKConformanceEvidenceCannotAuthorizeHostIngress''"''"'', ''"''"''TestHarnessSDKSemanticEvidenceConformance''"''"'',
+      ''"''"''TestPublicHostAuthorityCannotBeSelectedByCaller''"''"'', ''"''"''TestCurrentPublicGateForgeryRejectsWithoutBindingReceiptOrEvaluatorCall''"''"''];
+      assert {r.get(''"''"''Test''"''"'') for r in tests if r.get(''"''"''Action''"''"'')==''"''"''pass''"''"'' and r.get(''"''"''Test''"''"'')
+      in required}==set(required); assert not any(r.get(''"''"''Test''"''"'') in required and r.get(''"''"''Action''"''"'')
+      in {''"''"''skip''"''"'',''"''"''fail''"''"''} for r in tests)'''
+    exit_code: 1
+    summary: 'KeyError: ''required_harness_conformance_test_count'''
+  - index: 20
+    cmd: python3 -c "from pathlib import Path; import hashlib,json,subprocess; b=Path('artifacts/harness-sdk/source-bundle.tar.zst');
+      m=json.loads(Path('artifacts/harness-sdk/component-manifest.json').read_text()); digest=Path('artifacts/harness-sdk/bundle-digest.txt').read_text().strip();
+      actual=hashlib.sha256(b.read_bytes()).hexdigest(); rev=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip();
+      assert m['component_id']=='harness-sdk' and m['source_revision']==rev; assert actual==digest==m['bundle']['sha256'];
+      assert {x['path'] for x in m['files']} and all(x['path'].startswith('sdk/harness/') for x in m['files'])"
+    exit_code: 0
+    summary: pass
+semantic_checkpoint_diagnostic:
+  source_revision: 1ebf12d36d29c2a3726257bd03685139f5bc568a
+  after_command_18:
+    metric: 50
+    sha256: 5e709ad69d68c6971a655a70f75a3cb754930b9f0f7c864a6f8d29304ee27670
+  after_command_23:
+    metric_present: false
+    sha256: 2dcaeae5cd056b2e0c06152fed7b155c73fd4e36a12b609fee14fa04ab90e307
+    identical_to_published: true
+  post_suite_validation:
+    cmd: 'python3 -c ''from pathlib import Path; import json; d=json.loads(Path(''"''"''artifacts/harness-sdk/semantic-evidence.json''"''"'').read_text());
+      m=d[''"''"''metrics''"''"'']; rows={r[''"''"''fixture_id''"''"'']:r for r in d[''"''"''fixtures''"''"'']}; assert len(d[''"''"''fixtures''"''"''])==len(rows)==13;
+      negative={''"''"''service-host-consumer-boundary''"''"'',''"''"''service-consumer-payload-boundary''"''"'',''"''"''gate-evaluator-consumer-boundary''"''"''};
+      assert all(r[''"''"''evidence_scope''"''"'']==(''"''"''sdk-consumer-negative''"''"'' if k in negative else ''"''"''sdk-operation-conformance''"''"'')
+      and r[''"''"''authoritative_host_claim''"''"''] is False for k,r in rows.items()); assert all(rows[k][''"''"''accepted_count''"''"'']==0
+      and rows[k][''"''"''rejected_count''"''"'']>0 and rows[k][''"''"''binding_issued_count''"''"'']==0 and rows[k][''"''"''authoritative_receipt_issued_count''"''"'']==0
+      and rows[k][''"''"''implementation_call_count''"''"'']==0 for k in negative); assert all(rows[k][''"''"''accepted_count''"''"'']>0
+      for k in [''"''"''trigger-positive-success''"''"'',''"''"''event-handler-positive-lifecycle''"''"'']); cases=rows[''"''"''service-host-consumer-boundary''"''"''][''"''"''cases''"''"''];
+      required_cases=[''"''"''missing-attestation''"''"'', ''"''"''altered-attestation''"''"'', ''"''"''expired-attestation''"''"'',
+      ''"''"''replayed-untrusted-attestation''"''"'', ''"''"''mismatched-scope''"''"'', ''"''"''mismatched-digest''"''"'',
+      ''"''"''mismatched-invocation-identity''"''"'', ''"''"''caller-rotation-claims''"''"'', ''"''"''consistent-untrusted-handoff''"''"'',
+      ''"''"''caller-verifier''"''"'', ''"''"''caller-signer-trust-pair''"''"'', ''"''"''unverified-issuer-output''"''"'',
+      ''"''"''missing-ingress''"''"'', ''"''"''malformed-ingress''"''"'', ''"''"''untrusted-cross-receiver-replay''"''"''];
+      assert len(cases)==len(required_cases) and {c[''"''"''case_id''"''"''] for c in cases}==set(required_cases); assert
+      all(c[''"''"''attempt_count''"''"'']>0 and c[''"''"''rejected_count''"''"'']==c[''"''"''attempt_count''"''"''] and c[''"''"''accepted_count''"''"'']==0
+      and c[''"''"''binding_issued_count''"''"'']==0 and c[''"''"''authoritative_receipt_issued_count''"''"'']==0 and c[''"''"''implementation_call_count''"''"'']==0
+      and c[''"''"''execution_evidence''"''"''] for c in cases); expected={''"''"''required_harness_conformance_test_count''"''"'':
+      50, ''"''"''required_extension_point_fixture_count''"''"'': 7, ''"''"''required_service_mode_fixture_count''"''"'':
+      15, ''"''"''valid_service_mode_invocation_accept_count''"''"'': 0, ''"''"''invalid_service_mode_invocation_accept_count''"''"'':
+      0, ''"''"''malformed_type_specific_schema_accept_count''"''"'': 0, ''"''"''missing_target_binding_accept_count''"''"'':
+      0, ''"''"''missing_registered_gate_evaluator_accept_count''"''"'': 0, ''"''"''required_optional_failure_observation_gap_count''"''"'':
+      0, ''"''"''operation_mismatch_rejection_count''"''"'': 3, ''"''"''altered_payload_rejection_count''"''"'': 7, ''"''"''external_host_direct_bind_rejection_count''"''"'':
+      2, ''"''"''event_handler_lifecycle_schema_negative_count''"''"'': 2, ''"''"''gate_evaluator_provenance_fixture_count''"''"'':
+      7, ''"''"''gate_evaluator_service_mode_rejection_count''"''"'': 2, ''"''"''gate_evaluator_mismatched_release_rejection_count''"''"'':
+      1, ''"''"''gate_evaluator_purity_rejection_count''"''"'': 1, ''"''"''retry_scope_mismatch_rejection_count''"''"'': 4,
+      ''"''"''target_binding_identity_mismatch_fixture_count''"''"'': 56, ''"''"''target_binding_package_id_mismatch_rejection_count''"''"'':
+      7, ''"''"''target_binding_package_version_mismatch_rejection_count''"''"'': 7, ''"''"''target_binding_entrypoint_mismatch_rejection_count''"''"'':
+      7, ''"''"''target_binding_artifact_mismatch_rejection_count''"''"'': 7, ''"''"''required_current_amendment_semantic_fixture_count''"''"'':
+      7, ''"''"''required_delivery_goal_semantic_fixture_count''"''"'': 13, ''"''"''observe_schema_invalid_implementation_call_count''"''"'':
+      0, ''"''"''cancel_schema_invalid_implementation_call_count''"''"'': 0, ''"''"''trigger_error_only_positive_accept_count''"''"'':
+      0, ''"''"''event_handler_error_only_positive_accept_count''"''"'': 0, ''"''"''external_schema_reference_rejection_count''"''"'':
+      2, ''"''"''external_schema_resolution_io_attempt_count''"''"'': 0, ''"''"''schema_size_limit_bypass_accept_count''"''"'':
+      0, ''"''"''payload_size_limit_bypass_accept_count''"''"'': 0, ''"''"''schema_depth_limit_bypass_accept_count''"''"'':
+      0, ''"''"''payload_depth_limit_bypass_accept_count''"''"'': 0, ''"''"''trigger_successful_response_count''"''"'': 1,
+      ''"''"''event_handler_successful_lifecycle_operation_count''"''"'': 3, ''"''"''semantic_evidence_source_revision_match_count''"''"'':
+      1, ''"''"''required_measured_semantic_row_count''"''"'': 13, ''"''"''unregistered_gate_execution_accept_count''"''"'':
+      0, ''"''"''sdk_owned_host_handoff_construction_count''"''"'': 0, ''"''"''helper_only_semantic_fixture_accept_count''"''"'':
+      0, ''"''"''literal_semantic_status_accept_count''"''"'': 0, ''"''"''dropped_child_execution_evidence_count''"''"'':
+      0, ''"''"''registered_gate_positive_path_count''"''"'': 0, ''"''"''authoritative_gate_positive_claim_count''"''"'':
+      0, ''"''"''caller_selected_host_authority_accept_count''"''"'': 0, ''"''"''current_public_handoff_forgery_accept_count''"''"'':
+      0, ''"''"''gate_consumer_boundary_fixture_count''"''"'': 1, ''"''"''untrusted_service_cross_receiver_replay_rejection_count''"''"'':
+      2, ''"''"''service_consumer_alternate_payload_accept_count''"''"'': 0, ''"''"''typed_invalid_response_accepted_receipt_count''"''"'':
+      0, ''"''"''typed_response_validation_negative_count''"''"'': 16, ''"''"''typed_valid_error_envelope_fixture_count''"''"'':
+      8, ''"''"''typed_valid_error_business_success_count''"''"'': 0, ''"''"''optional_unknown_skip_count''"''"'': 0, ''"''"''optional_unknown_failure_fixture_count''"''"'':
+      2, ''"''"''sdk_fixture_authority_leak_accept_count''"''"'': 0}; assert all(m[k]==v for k,v in expected.items()), {k:(m.get(k),v)
+      for k,v in expected.items() if m.get(k)!=v}; downstream=d[''"''"''downstream_host_conformance''"''"'']; assert downstream[''"''"''status''"''"'']==''"''"''not-run''"''"''
+      and downstream[''"''"''producer''"''"'']==''"''"''harness-host''"''"'' and downstream[''"''"''artifact_id''"''"'']==''"''"''harness-host-gate-evidence''"''"''
+      and downstream[''"''"''artifact_path''"''"'']==''"''"''artifacts/harness-host/gate-evidence.json''"''"'' and downstream[''"''"''combined_owner''"''"'']==''"''"''contracts-extension''"''"'';
+      assert set(downstream[''"''"''required_obligations''"''"''])=={''"''"''registered-gate-positive''"''"'',''"''"''service-authority-positive''"''"'',''"''"''authenticated-transport''"''"'',''"''"''expiry-and-key-rotation''"''"'',''"''"''accepted-then-replayed-cross-receiver-and-restart''"''"''};
+      tests=[json.loads(x) for x in Path(''"''"''artifacts/harness-sdk/conformance-tests.json''"''"'').read_text().splitlines()
+      if x.strip()]; required=[''"''"''TestHarnessSDKDescribeAndTypedInvocationConformance''"''"'', ''"''"''TestHarnessSDKObserveBeforeRetryAndCancelConformance''"''"'',
+      ''"''"''TestHarnessSDKPermissionAndFailureConformance''"''"'', ''"''"''TestHarnessSDKRejectsSelfAttestedHostEvidence''"''"'',
+      ''"''"''TestHarnessSDKServiceEnvelopeRejectsConsistentUntrustedHandoff''"''"'', ''"''"''TestHarnessSDKServiceModeRejectsMissingAttestation''"''"'',
+      ''"''"''TestHarnessSDKServiceModeRejectsAlteredAttestation''"''"'', ''"''"''TestHarnessSDKServiceModeRejectsExpiredAttestation''"''"'',
+      ''"''"''TestHarnessSDKServiceModeRejectsReplayedAttestation''"''"'', ''"''"''TestHarnessSDKServiceModeRejectsMismatchedScope''"''"'',
+      ''"''"''TestHarnessSDKServiceModeRejectsMismatchedDigest''"''"'', ''"''"''TestHarnessSDKServiceModeRejectsMismatchedInvocationIdentity''"''"'',
+      ''"''"''TestHarnessSDKServiceConsumerRejectsCallerRotationClaims''"''"'', ''"''"''TestHarnessSDKComputationalGuideMonotonicConformance''"''"'',
+      ''"''"''TestHarnessSDKInferentialGuideAppendOnlyConformance''"''"'', ''"''"''TestHarnessSDKExecutorSideEffectLifecycleConformance''"''"'',
+      ''"''"''TestHarnessSDKComputationalSensorAppendOnlyConformance''"''"'', ''"''"''TestHarnessSDKInferentialSensorAppendOnlyConformance''"''"'',
+      ''"''"''TestHarnessSDKTriggerConformance''"''"'', ''"''"''TestHarnessSDKEventHandlerSideEffectLifecycleConformance''"''"'',
+      ''"''"''TestHarnessSDKRequiredOptionalFailureObservationConformance''"''"'', ''"''"''TestHarnessSDKTargetBindingConformance''"''"'',
+      ''"''"''TestHarnessSDKRegisteredGateEvaluatorPurityFailClosedConformance''"''"'', ''"''"''TestHarnessSDKTypeSpecificDescribeSchemaConformance''"''"'',
+      ''"''"''TestHarnessSDKTypedOperationAndPayloadBindingConformance''"''"'', ''"''"''TestHarnessSDKGateEvaluatorRegistryProvenanceConformance''"''"'',
+      ''"''"''TestPublicServiceConsumerRejectsCallerHandoffForEveryTypedOperation''"''"'', ''"''"''TestPublicServiceConsumerRejectsUntrustedReplayAcrossReceivers''"''"'',
+      ''"''"''TestPublicServiceConsumerRejectsMissingOrMalformedHostIngress''"''"'', ''"''"''TestHarnessSDKRetryProofBindsCompleteObserveScopeAndServicePayload''"''"'',
+      ''"''"''TestHarnessSDKTargetBindingIdentityMismatchesRejectWithoutImplementationCalls''"''"'', ''"''"''TestPublicServiceConsumerRejectsUnverifiedIssuerOutput''"''"'',
+      ''"''"''TestPublicGateEvaluatorRegistryRejectsCallerForgedHostCapability''"''"'', ''"''"''TestHarnessSDKGateCapabilityBoundaryFailures''"''"'',
+      ''"''"''TestPublicServiceConsumerRejectsAlternatePayload''"''"'', ''"''"''TestHarnessSDKObserveSchemaRejectsInvalidPayloadWithoutImplementationCall''"''"'',
+      ''"''"''TestHarnessSDKCancelSchemaRejectsInvalidPayloadWithoutImplementationCall''"''"'', ''"''"''TestHarnessSDKTriggerAndEventHandlerPositiveFixturesRejectErrorOnlyImplementations''"''"'',
+      ''"''"''TestHarnessSDKRejectsExternalSchemaReferencesWithoutIO''"''"'', ''"''"''TestHarnessSDKBoundsSchemaPayloadSizeAndDepth''"''"'',
+      ''"''"''TestPublicGateEvaluationRejectsCallerSuppliedEvaluator''"''"'', ''"''"''TestExternalPackageCannotForgeCurrentHostGateHandoff''"''"'',
+      ''"''"''TestHarnessSDKSemanticLedgerPreservesChildExecutionEvidence''"''"'', ''"''"''TestHarnessSDKSemanticLedgerRejectsHelperOnlyOrLiteralPassRows''"''"'',
+      ''"''"''TestHarnessSDKTypedResponseValidationPrecedesReceiptAcceptance''"''"'', ''"''"''TestHarnessSDKOptionalUnknownFailureRequiresObservation''"''"'',
+      ''"''"''TestHarnessSDKConformanceEvidenceCannotAuthorizeHostIngress''"''"'', ''"''"''TestHarnessSDKSemanticEvidenceConformance''"''"'',
+      ''"''"''TestPublicHostAuthorityCannotBeSelectedByCaller''"''"'', ''"''"''TestCurrentPublicGateForgeryRejectsWithoutBindingReceiptOrEvaluatorCall''"''"''];
+      assert {r.get(''"''"''Test''"''"'') for r in tests if r.get(''"''"''Action''"''"'')==''"''"''pass''"''"'' and r.get(''"''"''Test''"''"'')
+      in required}==set(required); assert not any(r.get(''"''"''Test''"''"'') in required and r.get(''"''"''Action''"''"'')
+      in {''"''"''skip''"''"'',''"''"''fail''"''"''} for r in tests)'''
+    exit_code: 1
+    summary: 'KeyError: required_harness_conformance_test_count after full uncached suite rewrites the semantic artifact.'
+blockers:
+- root_cause_key: harness-sdk-repair-published-semantic-ledger-overwritten-by-full-suite
+  obligation_id: dimension:evidence
+  classification: new
+  owner: harness-sdk
+  severity: high
+  summary: The immutable repair publication contains the post-full-suite semantic file, which no longer passes the unchanged
+    fixed 50-test ledger gate.
+  impact: Source binding and byte integrity now hold, and the compile-only repair passes locally, but the delivered semantic
+    evidence cannot reproduce harness-sdk-gate command 18. The required immutable SDK gate evidence remains incomplete, so
+    this review cannot approve merge or unblock Audit.
+  evidence: 'At publication commit 8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96, artifacts/harness-sdk-build-repair-evidence/semantic-evidence.json
+    has SHA-256 2dcaeae5cd056b2e0c06152fed7b155c73fd4e36a12b609fee14fa04ab90e307 and omits metrics.required_harness_conformance_test_count.
+    Its archive contains the identical bytes. With these delivered payloads at the inherited paths and git HEAD=1ebf12d36d29c2a3726257bd03685139f5bc568a,
+    exact command 18 exits 1: KeyError: ''required_harness_conformance_test_count''. I independently ran all 23 exact commands
+    in original order: all exited 0 when executed. A read-only checkpoint immediately after command 18 contained the measured
+    count 50 and SHA-256 5e709ad69d68c6971a655a70f75a3cb754930b9f0f7c864a6f8d29304ee27670. Command 23 rewrote that file to
+    the exact published hash, removing only this metric. The source cause is sdk/harness/semantic_evidence_test.go:319-325
+    (metric emitted only with HARNESS_SDK_SEMANTIC_EVIDENCE set) and :386-396 (unset env still writes the default gate path).
+    The final transcript independently contains all 50 passing required tests, so this is an evidence-harvesting failure,
+    not missing executed tests or a production SDK behavior defect.'
+  required_fix: Keep PR90 and its one-line production diff. At its stable committed submitted HEAD, run all 23 commands unchanged
+    in original order and the required native environment, preserving the actual validated semantic bytes from the fixed-selector
+    generation/command-18 checkpoint before the unchanged full suite rewrites its default output. Publish that measured checkpoint
+    together with all other required fresh same-HEAD artifacts, command exits and source bundle in a new immutable evidence
+    set; recompute and verify index/archive hashes and rerun exact command 18 against the published bytes. Preserve prior
+    publications as history. Do not synthesize the metric, relabel an unvalidated output, change SDK/test behavior, alter
+    the original commands or gates, create a dummy source commit, or claim Host90/whole-SDK90/merge/Audit completion.
+nits: []
