@@ -1,0 +1,172 @@
+{
+  "source_revision": "1ebf12d36d29c2a3726257bd03685139f5bc568a",
+  "base_revision": "e3e6221ba743dcb1e851c535ef41d9da68aae89e",
+  "branch": "agent/codex-macmini-newapi/f7cfdac73b8c",
+  "scope": "sdk/harness/**",
+  "file_digest_algorithm": "SHA-256 over file bytes",
+  "tree_digest_algorithm": "SHA-256 over UTF-8 sorted lines path<TAB>file_sha256<LF>",
+  "source_tree_sha256": "78520de92125c85c6d5ddb39283172036548dd42c796d6c0d86bbb9215e925f0",
+  "files": [
+    {
+      "path": "sdk/harness/conformance.go",
+      "sha256": "aae3525d4f2f2326bd55fe22d03df405444ccb61a9b9a5446ff5931bd1a43066",
+      "bytes": 72232
+    },
+    {
+      "path": "sdk/harness/conformance_evidence_boundary_test.go",
+      "sha256": "52f747ef073d8cf42764da8be0e87cd8e68fc30ac678189ae708bf3adcd89c63",
+      "bytes": 6590
+    },
+    {
+      "path": "sdk/harness/conformance_test.go",
+      "sha256": "44d2a1d426a84bb9ea81cfdb89dd4a9340cfedc2a0acf23dec6bce273d72f6b7",
+      "bytes": 21907
+    },
+    {
+      "path": "sdk/harness/coverage_closure_test.go",
+      "sha256": "a47a04756c38fd5b66237a41b5a7fc9a5872c76e5bed4b2997a02392a752d522",
+      "bytes": 63685
+    },
+    {
+      "path": "sdk/harness/coverage_safe_paths_test.go",
+      "sha256": "83494c5287236421729dc63ea885c9f7c86e4d4ae90e607111272f18405acf06",
+      "bytes": 14805
+    },
+    {
+      "path": "sdk/harness/current_amendment_test.go",
+      "sha256": "601afd559e5cb252f46eba68f28a00fb76c5339ba6fd2fdaa0265d6659bb2dfa",
+      "bytes": 7572
+    },
+    {
+      "path": "sdk/harness/execution_measurement_tree.go",
+      "sha256": "71352fc7c1b6ae922b9ab3c1cfeee6dbb803d72de7d8048d7768e43b29fc1ef0",
+      "bytes": 7056
+    },
+    {
+      "path": "sdk/harness/execution_measurement_tree_test.go",
+      "sha256": "70c7da40220736324357b2b507d49ce650408206514f4ea710847c87b7a7a801",
+      "bytes": 31896
+    },
+    {
+      "path": "sdk/harness/execution_receipt.go",
+      "sha256": "505e3ab008108053b45d17abb55aa30b326a053439201f6b04db79322ab7ccc2",
+      "bytes": 23401
+    },
+    {
+      "path": "sdk/harness/execution_receipt_test.go",
+      "sha256": "35a1a4275507772e634d5e672b1e49165733d7cce0f4fb235f4192f4889329c1",
+      "bytes": 11260
+    },
+    {
+      "path": "sdk/harness/executor_operation_conformance_test.go",
+      "sha256": "f79e1cf9d8aef183a40ea919ddc0963ce792acd7e03eef147a4b0145131e4b55",
+      "bytes": 10068
+    },
+    {
+      "path": "sdk/harness/extension_points.go",
+      "sha256": "71fb28b34e95a96ff3d6f74f0dd17bf870b36952fbcf722270f4ccd1f86cf349",
+      "bytes": 26113
+    },
+    {
+      "path": "sdk/harness/harness.go",
+      "sha256": "b30aa45d66a06618820b1d9e0c0ea072621e5a05a2bc3cf505ea0069859943bd",
+      "bytes": 59383
+    },
+    {
+      "path": "sdk/harness/non_authoritative_operation_test.go",
+      "sha256": "efca4201c215afc09b5178502691301fe77fab88e74097a120f208e40b46542d",
+      "bytes": 2054
+    },
+    {
+      "path": "sdk/harness/public_authority_conformance_test.go",
+      "sha256": "43e549cdc8da7290c15142152470712884f08bd8f8aabc3b89b40a4a9fb43d73",
+      "bytes": 10959
+    },
+    {
+      "path": "sdk/harness/public_gate_evaluator_conformance_test.go",
+      "sha256": "6951914a5fbdb5b8b63604397d8f81aee2137df675da4dcded8825d6c5bdfc81",
+      "bytes": 4173
+    },
+    {
+      "path": "sdk/harness/public_service_binding_conformance_test.go",
+      "sha256": "fcaec634d269d95b3666611e85706a7d0cd4d0acbb5c7af1aaa0478f55b46996",
+      "bytes": 3065
+    },
+    {
+      "path": "sdk/harness/public_transport_test.go",
+      "sha256": "e022a9e70e58b5043e01ce18134d2ad6964039c4f3fe529aa16d1b8ec26da112",
+      "bytes": 2911
+    },
+    {
+      "path": "sdk/harness/review_additional_test.go",
+      "sha256": "3a5c6503dd2ef79cfdcffdd30ff3cda26c2bfe33296b432541e777aa9384d0f8",
+      "bytes": 12031
+    },
+    {
+      "path": "sdk/harness/review_closure_test.go",
+      "sha256": "4cec36c1edff50da231937f96e3c457b56345bb38430229b494faa1db96fd5c0",
+      "bytes": 26117
+    },
+    {
+      "path": "sdk/harness/schema.go",
+      "sha256": "81ff5e32f40de503eb979b4c445d08d2e7d5db20b46d34f0570605564038e94b",
+      "bytes": 5201
+    },
+    {
+      "path": "sdk/harness/semantic_evidence_test.go",
+      "sha256": "4274de3546deea0aa2c6efbe2e48e5f177311b04c9553764cfa00928c0de5d6b",
+      "bytes": 27563
+    },
+    {
+      "path": "sdk/harness/semantic_measurements_test.go",
+      "sha256": "754e8e7242e14a4df4361ede27d54261a3ed276a87e117de315b16db833ffa16",
+      "bytes": 78548
+    },
+    {
+      "path": "sdk/harness/service.go",
+      "sha256": "f9fee210d5151c7355bc4f5d9939ab6114f7802b83c563470760753f92ea9bcc",
+      "bytes": 6942
+    },
+    {
+      "path": "sdk/harness/service_conformance_test.go",
+      "sha256": "4b0fc1ef2bc784cc07362e3526284b8da8bca7fadcae7a765014b853831e8939",
+      "bytes": 17500
+    },
+    {
+      "path": "sdk/harness/service_ingress_test.go",
+      "sha256": "adcb10fb1235de64ee9856ba9ceeb100d5e0de2e15d0463b8297ce66e03f757f",
+      "bytes": 1014
+    },
+    {
+      "path": "sdk/harness/staged_coverage_test.go",
+      "sha256": "5bde7bacf064f4bc98cb64f18c39abd779d2d17efe7f2b083c432b4d5d849c83",
+      "bytes": 40156
+    },
+    {
+      "path": "sdk/harness/typed_execution_receipt.go",
+      "sha256": "5396755f1bee317e14ea52aec6efeb2301111c72d050c19d440760e603d1d2c0",
+      "bytes": 13450
+    },
+    {
+      "path": "sdk/harness/typed_execution_receipt_test.go",
+      "sha256": "16c19592798e52840350c64bb72ce9daaee149311a07202309edf521608da83d",
+      "bytes": 10551
+    },
+    {
+      "path": "sdk/harness/typed_response_validation_test.go",
+      "sha256": "71b5dfa3345cc1e9883f4538966f2cea8581dff499a404faa3171e0b9e83898f",
+      "bytes": 12312
+    },
+    {
+      "path": "sdk/harness/validation_test.go",
+      "sha256": "77f85d1bea4d352324b565c82f77e04a9b04f4c7e37584c9fc234c01f1ebab42",
+      "bytes": 37951
+    }
+  ],
+  "patch_algorithm": "git diff --binary e3e6221ba743dcb1e851c535ef41d9da68aae89e..1ebf12d36d29c2a3726257bd03685139f5bc568a -- sdk/harness",
+  "source_patch_artifact": "artifacts/harness-sdk-build-repair-evidence/source.patch.gz",
+  "source_patch_compression": "gzip; mtime=0",
+  "source_patch_bytes": 943,
+  "source_patch_sha256": "007550f79b42bb2ead97945d8dfe6c126ace20406544f6b32121d3778e30edbe",
+  "source_patch_compressed_sha256": "dececf1032705da4fcf2a4913ce9a289730ae562938cf88ff9e82d4a01788fba"
+}

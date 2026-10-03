@@ -102,7 +102,11 @@ def _command(call):
         return []
     try:
         words = shlex.split(value.removeprefix("$ "))
-        if len(words) == 3 and words[:2] in (["/bin/zsh", "-lc"], ["/bin/bash", "-lc"]):
+        if (
+            len(words) == 3
+            and words[0] in {"/bin/zsh", "/bin/bash", "/usr/bin/zsh", "/usr/bin/bash"}
+            and words[1] == "-lc"
+        ):
             words = shlex.split(words[2])
         while words and re.fullmatch(r"[A-Z][A-Z0-9_]*=[^\s]*", words[0]):
             if words[0].split("=", 1)[0] not in {
@@ -338,10 +342,22 @@ def _publication(store, index_url, item, original, expected=None, *, download=Tr
     return result
 
 
-def _verify(store, runtime, manifest, key, index_url, prepared=None, *, download=True):
+def _verify(
+    store, runtime, manifest, key, index_url, prepared=None, *, download=True, sdk=False
+):
+    bound_key, bound_root, artifact = KEY, ROOT, KEY + "-evidence"
+    source_reader, publication_reader = _source_reference, _publication
+    if sdk:
+        from . import sdk_publication_review as profile
+
+        bound_key, bound_root, artifact = profile.KEY, profile.ROOT, profile.ARTIFACT
+        source_reader, publication_reader = (
+            profile._source_reference,
+            profile._publication,
+        )
     node = manifest.nodes.get(key)
     if (
-        key != KEY
+        key != bound_key
         or node is None
         or not node.work_item_id
         or not node.reviewer
@@ -379,7 +395,7 @@ def _verify(store, runtime, manifest, key, index_url, prepared=None, *, download
         or handoff.review_context_binding != review_context_binding(item)
         or review_context_binding(item)["contract_sha256"]
         != _digest(_dump_contract(node.contract))
-        or item.contract.get("produces") != [{"artifact_id": KEY + "-evidence"}]
+        or item.contract.get("produces") != [{"artifact_id": artifact}]
     ):
         _fail("Issue, contract, generation and intact reject handoff must match")
     contract = _attachment(store, item.id, item.contract_ref)
@@ -423,7 +439,7 @@ def _verify(store, runtime, manifest, key, index_url, prepared=None, *, download
     latest = ledger["cycles"][-1] if ledger["cycles"] else {}
     if (
         len(blockers) != 1
-        or blockers[0].get("root_cause_key") != ROOT
+        or blockers[0].get("root_cause_key") != bound_root
         or latest.get("subject_digest") != handoff.source_review_subject_digest
         or latest.get("verdict") != "reject"
         or latest.get("report_digest") != _review_report_digest(report)
@@ -441,7 +457,7 @@ def _verify(store, runtime, manifest, key, index_url, prepared=None, *, download
         or item.review_ledger_ref != ledger_ref
         or item.review_ledger != ledger
         or any(
-            b.get("root_cause_key") != ROOT
+            b.get("root_cause_key") != bound_root
             for b in ledger["blockers"]
             if b.get("status") == "open"
         )
@@ -465,7 +481,7 @@ def _verify(store, runtime, manifest, key, index_url, prepared=None, *, download
         )
     ):
         _fail("Original report/ledger must belong to independent formal Reviewer")
-    original_ref, source_read = _source_reference(store, runtime, item, review)
+    original_ref, source_read = source_reader(store, runtime, item, review)
     original_blob = _attachment(store, item.id, original_ref)
     original_run = next((r for r in workers if r.id == original_blob.task_id), None)
     if (
@@ -497,7 +513,7 @@ def _verify(store, runtime, manifest, key, index_url, prepared=None, *, download
     )
     if identity.pr_head_sha != handoff.baseline_pr_head_sha:
         _fail("This profile requires exact original rejected HEAD")
-    publication = _publication(
+    publication = publication_reader(
         store,
         index_url,
         item,
@@ -550,6 +566,21 @@ def _verify(store, runtime, manifest, key, index_url, prepared=None, *, download
             }
         ),
     }
+    if sdk:
+        value.update(
+            profile._chain(
+                store,
+                runtime,
+                manifest,
+                key,
+                item,
+                handoff,
+                target,
+                candidate,
+                runs,
+                prepared,
+            )
+        )
     return item, value, identity, runs
 
 
@@ -621,13 +652,23 @@ def _obligations(obligations, value):
 
 
 def apply_publication_review(
-    store, runtime, manifest_path, key, request, *, approved_request_sha256
+    store, runtime, manifest_path, key, request, *, approved_request_sha256, _sdk=False
 ):
+    schema, journal, initial, obligations = SCHEMA, JOURNAL, _initial, _obligations
+    if _sdk:
+        from . import sdk_publication_review as profile
+
+        schema, journal, initial, obligations = (
+            profile.SCHEMA,
+            profile.JOURNAL,
+            profile._initial,
+            profile._obligations,
+        )
     if (
         not isinstance(request, dict)
         or set(request)
         != {"schema", "reason", "tuple", "expected_control", "runs_sha256"}
-        or request.get("schema") != SCHEMA
+        or request.get("schema") != schema
         or not isinstance(request.get("tuple"), dict)
         or not isinstance(request.get("expected_control"), dict)
         or not isinstance(request.get("reason"), str)
@@ -646,11 +687,13 @@ def apply_publication_review(
     token = _digest(request)
 
     def verify(manifest):
-        return _verify(store, runtime, manifest, key, index_url, value, download=True)
+        return _verify(
+            store, runtime, manifest, key, index_url, value, download=True, sdk=_sdk
+        )
 
     def pre_write(manifest, expected):
         actual = _verify(
-            store, runtime, manifest, key, index_url, value, download=False
+            store, runtime, manifest, key, index_url, value, download=False, sdk=_sdk
         )[1]
         if actual != expected:
             _fail("Approval source tuple changed before Controller recovery write")
@@ -662,18 +705,26 @@ def apply_publication_review(
         key,
         request,
         token,
-        schema=SCHEMA,
-        journal=JOURNAL,
+        schema=schema,
+        journal=journal,
         verifier=verify,
-        initial_control=_initial,
-        obligation_transform=_obligations,
+        initial_control=initial,
+        obligation_transform=obligations,
         subject_builder=_review_subject_for_current_delivery,
         pre_write_verify=pre_write,
     )
 
 
-def ensure_publication_review_complete(manifest, manifest_path):
-    entries = manifest.meta.get(JOURNAL, {})
+def ensure_publication_review_complete(
+    manifest,
+    manifest_path,
+    *,
+    journal=JOURNAL,
+    schema=SCHEMA,
+    node=KEY,
+    command="review-publication",
+):
+    entries = manifest.meta.get(journal, {})
     if not isinstance(entries, dict):
         _fail("Publication review journal is malformed")
     for token, entry in entries.items():
@@ -683,7 +734,7 @@ def ensure_publication_review_complete(manifest, manifest_path):
             or set(entry) != {"request", "request_sha256", "state", "step"}
             or set(request)
             != {"schema", "reason", "tuple", "expected_control", "runs_sha256"}
-            or request.get("schema") != SCHEMA
+            or request.get("schema") != schema
             or token != _digest(request)
             or entry["request_sha256"] != token
             or type(entry["step"]) is not int
@@ -696,9 +747,11 @@ def ensure_publication_review_complete(manifest, manifest_path):
             )
         if entry["state"] == "pending":
             raise NeedsDecision(
-                "Publication review preparation is incomplete; resume the identical approved request using omac node review-publication "
+                "Publication review preparation is incomplete; resume the identical approved request using omac node "
+                + command
+                + " "
                 + str(manifest_path)
                 + " "
-                + KEY
+                + node
                 + " --help before starting a Runner"
             )

@@ -525,9 +525,13 @@ class WorkItemStore(ABC):
         """Read exact release/asset identities and optionally verify their bytes."""
         raise PlatformError("This Store cannot observe pinned release assets")
 
-    def read_verification_reference(self, item_id: str, comment_id: str) -> Dict[str, Any]:
+    def read_verification_reference(self, item_id: str, comment_id: str | None = None, *, attachment_id: str | None = None) -> Dict[str, Any]:
         """Read the one original verification reference in a native comment."""
         raise PlatformError("This Store cannot read the native verification index")
+
+    def observe_git_artifacts(self, urls: List[str], *, download: bool = True):
+        """Observe bounded native commit/tree/blob identities and optional bytes."""
+        raise PlatformError("This Store cannot observe native Git publications")
 
     # ==================== 便捷方法(基类实现) ====================
 

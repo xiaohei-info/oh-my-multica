@@ -1,0 +1,230 @@
+[
+  {
+    "url": "https://github.com/xiaohei-info/open-agent-cluster/blob/8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96/artifacts/harness-sdk-build-repair-evidence/evidence-index.json",
+    "repository": "xiaohei-info/open-agent-cluster",
+    "commit_sha": "8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96",
+    "tree_sha": "896add22311bd98e8e610e08d4909b44b0b0ca5f",
+    "parent_shas": [
+      "1ebf12d36d29c2a3726257bd03685139f5bc568a"
+    ],
+    "path": "artifacts/harness-sdk-build-repair-evidence/evidence-index.json",
+    "blob_oid": "7f3361be69877ec072399e5d603bc375302441b1",
+    "bytes": 5978
+  },
+  {
+    "url": "https://github.com/xiaohei-info/open-agent-cluster/blob/8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96/artifacts/harness-sdk-build-repair-evidence/bundle-digest.txt",
+    "repository": "xiaohei-info/open-agent-cluster",
+    "commit_sha": "8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96",
+    "tree_sha": "896add22311bd98e8e610e08d4909b44b0b0ca5f",
+    "parent_shas": [
+      "1ebf12d36d29c2a3726257bd03685139f5bc568a"
+    ],
+    "path": "artifacts/harness-sdk-build-repair-evidence/bundle-digest.txt",
+    "blob_oid": "f2e0226c9f79ca6b9d911910f35dc80ec6f9116d",
+    "bytes": 65
+  },
+  {
+    "url": "https://github.com/xiaohei-info/open-agent-cluster/blob/8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96/artifacts/harness-sdk-build-repair-evidence/component-manifest.json",
+    "repository": "xiaohei-info/open-agent-cluster",
+    "commit_sha": "8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96",
+    "tree_sha": "896add22311bd98e8e610e08d4909b44b0b0ca5f",
+    "parent_shas": [
+      "1ebf12d36d29c2a3726257bd03685139f5bc568a"
+    ],
+    "path": "artifacts/harness-sdk-build-repair-evidence/component-manifest.json",
+    "blob_oid": "e5e2eb88141eeedad3bb7e4a195a160d39e8beab",
+    "bytes": 6652
+  },
+  {
+    "url": "https://github.com/xiaohei-info/open-agent-cluster/blob/8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96/artifacts/harness-sdk-build-repair-evidence/conformance-tests.json",
+    "repository": "xiaohei-info/open-agent-cluster",
+    "commit_sha": "8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96",
+    "tree_sha": "896add22311bd98e8e610e08d4909b44b0b0ca5f",
+    "parent_shas": [
+      "1ebf12d36d29c2a3726257bd03685139f5bc568a"
+    ],
+    "path": "artifacts/harness-sdk-build-repair-evidence/conformance-tests.json",
+    "blob_oid": "4e7afbc721a619c174b9fa88cc74488fd8cd8697",
+    "bytes": 86297
+  },
+  {
+    "url": "https://github.com/xiaohei-info/open-agent-cluster/blob/8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96/artifacts/harness-sdk-build-repair-evidence/coverage-attribution.json",
+    "repository": "xiaohei-info/open-agent-cluster",
+    "commit_sha": "8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96",
+    "tree_sha": "896add22311bd98e8e610e08d4909b44b0b0ca5f",
+    "parent_shas": [
+      "1ebf12d36d29c2a3726257bd03685139f5bc568a"
+    ],
+    "path": "artifacts/harness-sdk-build-repair-evidence/coverage-attribution.json",
+    "blob_oid": "110919bc5e6d216978ad0f7ca4f06fc5ba26082a",
+    "bytes": 1038928
+  },
+  {
+    "url": "https://github.com/xiaohei-info/open-agent-cluster/blob/8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96/artifacts/harness-sdk-build-repair-evidence/coverage-audit.md",
+    "repository": "xiaohei-info/open-agent-cluster",
+    "commit_sha": "8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96",
+    "tree_sha": "896add22311bd98e8e610e08d4909b44b0b0ca5f",
+    "parent_shas": [
+      "1ebf12d36d29c2a3726257bd03685139f5bc568a"
+    ],
+    "path": "artifacts/harness-sdk-build-repair-evidence/coverage-audit.md",
+    "blob_oid": "2913c77e767349ea2cee211a9cc8eaadf7ec4ed5",
+    "bytes": 1737
+  },
+  {
+    "url": "https://github.com/xiaohei-info/open-agent-cluster/blob/8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96/artifacts/harness-sdk-build-repair-evidence/coverage-block-audit.json",
+    "repository": "xiaohei-info/open-agent-cluster",
+    "commit_sha": "8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96",
+    "tree_sha": "896add22311bd98e8e610e08d4909b44b0b0ca5f",
+    "parent_shas": [
+      "1ebf12d36d29c2a3726257bd03685139f5bc568a"
+    ],
+    "path": "artifacts/harness-sdk-build-repair-evidence/coverage-block-audit.json",
+    "blob_oid": "c4930fad0f7e8c2503cdc6d07e14814848d53055",
+    "bytes": 1923627
+  },
+  {
+    "url": "https://github.com/xiaohei-info/open-agent-cluster/blob/8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96/artifacts/harness-sdk-build-repair-evidence/coverage-block-audit.md",
+    "repository": "xiaohei-info/open-agent-cluster",
+    "commit_sha": "8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96",
+    "tree_sha": "896add22311bd98e8e610e08d4909b44b0b0ca5f",
+    "parent_shas": [
+      "1ebf12d36d29c2a3726257bd03685139f5bc568a"
+    ],
+    "path": "artifacts/harness-sdk-build-repair-evidence/coverage-block-audit.md",
+    "blob_oid": "8708acf5f5731f20f12481fb59f64f1c93df4c29",
+    "bytes": 1524
+  },
+  {
+    "url": "https://github.com/xiaohei-info/open-agent-cluster/blob/8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96/artifacts/harness-sdk-build-repair-evidence/coverage.out",
+    "repository": "xiaohei-info/open-agent-cluster",
+    "commit_sha": "8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96",
+    "tree_sha": "896add22311bd98e8e610e08d4909b44b0b0ca5f",
+    "parent_shas": [
+      "1ebf12d36d29c2a3726257bd03685139f5bc568a"
+    ],
+    "path": "artifacts/harness-sdk-build-repair-evidence/coverage.out",
+    "blob_oid": "253db74ff0e2d85c06babcfe0d04ad6062a1967a",
+    "bytes": 165570
+  },
+  {
+    "url": "https://github.com/xiaohei-info/open-agent-cluster/blob/8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96/artifacts/harness-sdk-build-repair-evidence/harness-sdk-build-repair-evidence.tar.gz",
+    "repository": "xiaohei-info/open-agent-cluster",
+    "commit_sha": "8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96",
+    "tree_sha": "896add22311bd98e8e610e08d4909b44b0b0ca5f",
+    "parent_shas": [
+      "1ebf12d36d29c2a3726257bd03685139f5bc568a"
+    ],
+    "path": "artifacts/harness-sdk-build-repair-evidence/harness-sdk-build-repair-evidence.tar.gz",
+    "blob_oid": "2d28a109227317c5d08b54b8839682ef0df58a5c",
+    "bytes": 305762
+  },
+  {
+    "url": "https://github.com/xiaohei-info/open-agent-cluster/blob/8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96/artifacts/harness-sdk-build-repair-evidence/owner-repair.md",
+    "repository": "xiaohei-info/open-agent-cluster",
+    "commit_sha": "8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96",
+    "tree_sha": "896add22311bd98e8e610e08d4909b44b0b0ca5f",
+    "parent_shas": [
+      "1ebf12d36d29c2a3726257bd03685139f5bc568a"
+    ],
+    "path": "artifacts/harness-sdk-build-repair-evidence/owner-repair.md",
+    "blob_oid": "17b1f56751ea998d64f11e3d20f7a2aa685e8cec",
+    "bytes": 3528
+  },
+  {
+    "url": "https://github.com/xiaohei-info/open-agent-cluster/blob/8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96/artifacts/harness-sdk-build-repair-evidence/receipt-tree-design-evidence.md",
+    "repository": "xiaohei-info/open-agent-cluster",
+    "commit_sha": "8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96",
+    "tree_sha": "896add22311bd98e8e610e08d4909b44b0b0ca5f",
+    "parent_shas": [
+      "1ebf12d36d29c2a3726257bd03685139f5bc568a"
+    ],
+    "path": "artifacts/harness-sdk-build-repair-evidence/receipt-tree-design-evidence.md",
+    "blob_oid": "70c7bd68c0619896d6e9c85a2ad2b0ee7cdebd54",
+    "bytes": 1872
+  },
+  {
+    "url": "https://github.com/xiaohei-info/open-agent-cluster/blob/8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96/artifacts/harness-sdk-build-repair-evidence/receipt-tree-tests.json",
+    "repository": "xiaohei-info/open-agent-cluster",
+    "commit_sha": "8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96",
+    "tree_sha": "896add22311bd98e8e610e08d4909b44b0b0ca5f",
+    "parent_shas": [
+      "1ebf12d36d29c2a3726257bd03685139f5bc568a"
+    ],
+    "path": "artifacts/harness-sdk-build-repair-evidence/receipt-tree-tests.json",
+    "blob_oid": "369af507b2590a63a959f52e13ec9f25a77ac0dd",
+    "bytes": 4284
+  },
+  {
+    "url": "https://github.com/xiaohei-info/open-agent-cluster/blob/8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96/artifacts/harness-sdk-build-repair-evidence/semantic-evidence.json",
+    "repository": "xiaohei-info/open-agent-cluster",
+    "commit_sha": "8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96",
+    "tree_sha": "896add22311bd98e8e610e08d4909b44b0b0ca5f",
+    "parent_shas": [
+      "1ebf12d36d29c2a3726257bd03685139f5bc568a"
+    ],
+    "path": "artifacts/harness-sdk-build-repair-evidence/semantic-evidence.json",
+    "blob_oid": "3d705493d0989d88c89ebe9349630b0e072a774d",
+    "bytes": 169510
+  },
+  {
+    "url": "https://github.com/xiaohei-info/open-agent-cluster/blob/8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96/artifacts/harness-sdk-build-repair-evidence/source-bundle.tar.zst",
+    "repository": "xiaohei-info/open-agent-cluster",
+    "commit_sha": "8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96",
+    "tree_sha": "896add22311bd98e8e610e08d4909b44b0b0ca5f",
+    "parent_shas": [
+      "1ebf12d36d29c2a3726257bd03685139f5bc568a"
+    ],
+    "path": "artifacts/harness-sdk-build-repair-evidence/source-bundle.tar.zst",
+    "blob_oid": "26248eaa0df456f100cb7ad76787d56c0b758e15",
+    "bytes": 86973
+  },
+  {
+    "url": "https://github.com/xiaohei-info/open-agent-cluster/blob/8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96/artifacts/harness-sdk-build-repair-evidence/source-snapshot.json",
+    "repository": "xiaohei-info/open-agent-cluster",
+    "commit_sha": "8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96",
+    "tree_sha": "896add22311bd98e8e610e08d4909b44b0b0ca5f",
+    "parent_shas": [
+      "1ebf12d36d29c2a3726257bd03685139f5bc568a"
+    ],
+    "path": "artifacts/harness-sdk-build-repair-evidence/source-snapshot.json",
+    "blob_oid": "1612c367ba28484d9260fa8ac85c5f8cefa931f4",
+    "bytes": 6346
+  },
+  {
+    "url": "https://github.com/xiaohei-info/open-agent-cluster/blob/8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96/artifacts/harness-sdk-build-repair-evidence/source-snapshot.md",
+    "repository": "xiaohei-info/open-agent-cluster",
+    "commit_sha": "8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96",
+    "tree_sha": "896add22311bd98e8e610e08d4909b44b0b0ca5f",
+    "parent_shas": [
+      "1ebf12d36d29c2a3726257bd03685139f5bc568a"
+    ],
+    "path": "artifacts/harness-sdk-build-repair-evidence/source-snapshot.md",
+    "blob_oid": "5fd5a124a57122a7071d1ddcc9ec6dbb37f69483",
+    "bytes": 1711
+  },
+  {
+    "url": "https://github.com/xiaohei-info/open-agent-cluster/blob/8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96/artifacts/harness-sdk-build-repair-evidence/source.patch.gz",
+    "repository": "xiaohei-info/open-agent-cluster",
+    "commit_sha": "8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96",
+    "tree_sha": "896add22311bd98e8e610e08d4909b44b0b0ca5f",
+    "parent_shas": [
+      "1ebf12d36d29c2a3726257bd03685139f5bc568a"
+    ],
+    "path": "artifacts/harness-sdk-build-repair-evidence/source.patch.gz",
+    "blob_oid": "014f046a5002b0d64cc9214b85a259575ecb7388",
+    "bytes": 416
+  },
+  {
+    "url": "https://github.com/xiaohei-info/open-agent-cluster/blob/8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96/artifacts/harness-sdk-build-repair-evidence/verification-results.json",
+    "repository": "xiaohei-info/open-agent-cluster",
+    "commit_sha": "8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96",
+    "tree_sha": "896add22311bd98e8e610e08d4909b44b0b0ca5f",
+    "parent_shas": [
+      "1ebf12d36d29c2a3726257bd03685139f5bc568a"
+    ],
+    "path": "artifacts/harness-sdk-build-repair-evidence/verification-results.json",
+    "blob_oid": "ceadc2a2f15d053cc3cd65d46cd0e7e430fb1d8d",
+    "bytes": 33512
+  }
+]

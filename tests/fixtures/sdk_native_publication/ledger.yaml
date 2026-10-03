@@ -1,0 +1,78 @@
+schema: omac.review-ledger/v2
+cycles:
+- round: 1
+  subject_digest: f19b526aaa80ab217f6285c561cd78fe6deebf6dce07a5c095d765977a614a78
+  report_digest: 60834ff4c423ba092f6492ddd1ad66b7ccf5321f461e2eecd2dadc32bb9c665b
+  verdict: reject
+  obligation_results:
+    dimension:authority: pass
+    dimension:structure: pass
+    dimension:execution: pass
+    dimension:ownership: pass
+    dimension:evidence: fail
+    dimension:regression: pass
+    integration:harness-sdk-gate: pass
+    integration:harness-sdk-production-build-repair-gate: pass
+  new_count: 1
+  fixed_count: 0
+  regressed_count: 0
+  unchanged_count: 0
+  open_count: 1
+  prior_open_blocker_ids: []
+  open_blocker_ids: &id001
+  - BLK-30900928f802
+  reported_blocker_ids: *id001
+  blocker_facts_schema: omac.review-cycle-blocker-facts/v1
+  blocker_facts:
+  - blocker_id: BLK-30900928f802
+    root_cause_key: harness-sdk-repair-published-evidence-not-pr-head
+    obligation_id: dimension:evidence
+    summary: Fresh repair evidence and verification are bound to the source-parent
+      commit rather than the submitted final PR HEAD.
+    evidence: 'PR90 HEAD and delivery_identity: 1ebf12d36d29c2a3726257bd03685139f5bc568a.
+      Published artifacts/harness-sdk-build-repair-evidence/{semantic-evidence.json,component-manifest.json,source-snapshot.json,verification-results.json,evidence-index.json}
+      identify 96020d5faf6d4bbb399c068da50d1885fa9dcb5a. owner-repair.md:18-23 and
+      44-46 explicitly document the parent-commit execution/evidence strategy. In
+      an isolated submitted-HEAD checkout with the delivered repair payloads placed
+      at the inherited gate paths, exact commands 16 and 20 both exit 1 at source_revision==git
+      rev-parse HEAD. Separately regenerating the outputs at HEAD makes all 23 unchanged
+      commands pass.'
+    required_fix: Preserve PR90 and its one-line SDK diff. At the stable final submitted
+      PR HEAD rerun all 23 commands in the original order/environment, regenerate
+      every required SDK/repair artifact with that exact source_revision, and publish
+      a new immutable source-bound evidence set plus fresh OMAC verification identifying
+      the same HEAD. Use external immutable publication/attachments if needed to avoid
+      an artifact-only commit advancing HEAD after generation; do not relabel old
+      outputs, weaken equality gates, overwrite historical deliveries, create a duplicate
+      PR, or change SDK behavior.
+    status: open
+    classification: new
+    owner: harness-sdk
+blockers:
+- blocker_id: BLK-30900928f802
+  root_cause_key: harness-sdk-repair-published-evidence-not-pr-head
+  obligation_id: dimension:evidence
+  summary: Fresh repair evidence and verification are bound to the source-parent commit
+    rather than the submitted final PR HEAD.
+  evidence: 'PR90 HEAD and delivery_identity: 1ebf12d36d29c2a3726257bd03685139f5bc568a.
+    Published artifacts/harness-sdk-build-repair-evidence/{semantic-evidence.json,component-manifest.json,source-snapshot.json,verification-results.json,evidence-index.json}
+    identify 96020d5faf6d4bbb399c068da50d1885fa9dcb5a. owner-repair.md:18-23 and 44-46
+    explicitly document the parent-commit execution/evidence strategy. In an isolated
+    submitted-HEAD checkout with the delivered repair payloads placed at the inherited
+    gate paths, exact commands 16 and 20 both exit 1 at source_revision==git rev-parse
+    HEAD. Separately regenerating the outputs at HEAD makes all 23 unchanged commands
+    pass.'
+  required_fix: Preserve PR90 and its one-line SDK diff. At the stable final submitted
+    PR HEAD rerun all 23 commands in the original order/environment, regenerate every
+    required SDK/repair artifact with that exact source_revision, and publish a new
+    immutable source-bound evidence set plus fresh OMAC verification identifying the
+    same HEAD. Use external immutable publication/attachments if needed to avoid an
+    artifact-only commit advancing HEAD after generation; do not relabel old outputs,
+    weaken equality gates, overwrite historical deliveries, create a duplicate PR,
+    or change SDK behavior.
+  status: open
+  classification: new
+  owner: harness-sdk
+  first_seen_round: 1
+  last_seen_round: 1
+  seen_count: 1

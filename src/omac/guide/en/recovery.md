@@ -825,3 +825,45 @@ their existing observation/recovery paths. The shared dispatch checks the fresh
 seal, subject, baseline, phase/status and assignment again before assign/wake.
 Resume the normal single-controller Runner; do not replay the consumed apply,
 clear its journal, hand-write metadata or grant another Worker/budget attempt.
+
+### Held SDK native-publication review
+
+`omac node review-sdk-publication` is a separate, single-use profile for the
+explicitly supported AITEAM-1040 SDK chain. Preview, Executor and historical
+session authorizations do not apply. Prepare requires the exact unassigned
+BLOCKED/AUTHORING operator hold, original independent publication-only reject,
+latest formal Worker and accepted terminal submit, current contract/generation,
+and the separate immutable Git publication. Native commit/tree/blob metadata,
+the index and all eighteen payload SHA256/size/OIDs are checked. The first
+Reviewer query's native comment/attachment response prefix is only an association
+proof; original verification bytes and attribution are read afresh from Store.
+No truncated body or session file becomes a historical seal.
+
+```bash
+omac node review-sdk-publication <manifest> harness-sdk-production-build-repair \
+  --index-url 'https://github.com/xiaohei-info/open-agent-cluster/blob/8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96/artifacts/harness-sdk-build-repair-evidence/evidence-index.json' \
+  --reason '<bounded SDK recovery reason>' --output json > sdk-request.json
+# Review and explicitly approve the complete canonical request SHA256 separately.
+omac node review-sdk-publication <manifest> harness-sdk-production-build-repair \
+  --apply-request sdk-request.json --approve-request-sha256 '<approved request digest>' \
+  --output json
+```
+
+Capability-work approval does not clear the hold or authorize production apply.
+The canonical digest is SHA256 of sorted compact UTF-8 JSON with ensure_ascii=False.
+Apply validates the exact request under the existing single-controller/file-lock
+boundary and uses the shared eight-step durable seal/review transition. An
+accepted unknown write is observed and checkpointed before another write.
+Resume only the same pending request/digest; consumed requests refuse replay and
+pending journals block Runner tick. Host-local locks are not distributed atomic CAS.
+
+The latest Worker uploaded corrected verification; the twenty-three executions
+remain attributed to the preceding formal execution Run and its verification.
+Their native records and unchanged command results are retained for inspection;
+publication integrity does not prove technical closure. Full original reject,
+SDK23/raw85/wholeSDK90/Host90/security/downstream obligations, counters and the
+zero budget baseline remain unchanged. All other manifest nodes/meta are frozen.
+Apply prepares REVIEW/IN_REVIEW without dispatch, verdict, merge or done. The
+normal Runner later performs one guarded independent Reviewer assignment/wake,
+retaining the frozen SDK obligations. Do not use authoring amendment, retry,
+dummy commit, metadata editing or budget reset to bypass a refusal.

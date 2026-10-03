@@ -1,0 +1,127 @@
+{
+  "schema": "aiteam.evidence-index/v1",
+  "artifact_id": "harness-sdk-build-repair-evidence",
+  "component_owner": "harness-sdk",
+  "dag_key": "harness-sdk-production-build-repair",
+  "source_commit": "1ebf12d36d29c2a3726257bd03685139f5bc568a",
+  "final_pr_head": "1ebf12d36d29c2a3726257bd03685139f5bc568a",
+  "base_commit": "e3e6221ba743dcb1e851c535ef41d9da68aae89e",
+  "source_pr": "https://github.com/xiaohei-info/open-agent-cluster/pull/90",
+  "publication_ref": "evidence/aiteam-1040-repair-1ebf12d3",
+  "publication": {
+    "kind": "separate-content-addressed-git-commit",
+    "binding": "Every command and source artifact was generated at source_commit, which equals final_pr_head. The OMAC verification pins the separate immutable evidence commit without moving PR #90.",
+    "immutability": "Git commits and blobs are content-addressed; the evidence index records each payload blob OID, SHA-256, and byte size.",
+    "historical_delivery": "The prior PR/main commit remains an unchanged parent and retains the historical evidence bytes."
+  },
+  "files": [
+    {
+      "path": "artifacts/harness-sdk-build-repair-evidence/bundle-digest.txt",
+      "git_blob_oid": "f2e0226c9f79ca6b9d911910f35dc80ec6f9116d",
+      "sha256": "fe82d6059dd3f25b2f108ea3d7726db2402901c6a11cad98e8803aefb0cac6f1",
+      "size_bytes": 65
+    },
+    {
+      "path": "artifacts/harness-sdk-build-repair-evidence/component-manifest.json",
+      "git_blob_oid": "e5e2eb88141eeedad3bb7e4a195a160d39e8beab",
+      "sha256": "3982c8151fa3c76881969d7d87d856f7f24c6b08f41071ca8d199152ebfb4ccb",
+      "size_bytes": 6652
+    },
+    {
+      "path": "artifacts/harness-sdk-build-repair-evidence/conformance-tests.json",
+      "git_blob_oid": "4e7afbc721a619c174b9fa88cc74488fd8cd8697",
+      "sha256": "6e17b7c9b917cf3543dee9e00cf23ac16a03e51eadc4e913ac5c9c95c125ae34",
+      "size_bytes": 86297
+    },
+    {
+      "path": "artifacts/harness-sdk-build-repair-evidence/coverage-attribution.json",
+      "git_blob_oid": "110919bc5e6d216978ad0f7ca4f06fc5ba26082a",
+      "sha256": "6c7759624b574093ce7500826a2cee1ac494f772f6df5406c8d677edc8b68a8e",
+      "size_bytes": 1038928
+    },
+    {
+      "path": "artifacts/harness-sdk-build-repair-evidence/coverage-audit.md",
+      "git_blob_oid": "2913c77e767349ea2cee211a9cc8eaadf7ec4ed5",
+      "sha256": "85dadcd10fd1e6e3e8ced8d13cd28c2a0c3d7ac3fd2400fb71a06b1f6828a211",
+      "size_bytes": 1737
+    },
+    {
+      "path": "artifacts/harness-sdk-build-repair-evidence/coverage-block-audit.json",
+      "git_blob_oid": "c4930fad0f7e8c2503cdc6d07e14814848d53055",
+      "sha256": "e700974b97abb6f069a62b5ca2d9b71cac4ee7bb08d8c2b025ff0c19e2fe8bdd",
+      "size_bytes": 1923627
+    },
+    {
+      "path": "artifacts/harness-sdk-build-repair-evidence/coverage-block-audit.md",
+      "git_blob_oid": "8708acf5f5731f20f12481fb59f64f1c93df4c29",
+      "sha256": "ab9886907e3dd1a2e5d7126da18a91d07bf2fe9dc55c69d6de33904cba9b3d67",
+      "size_bytes": 1524
+    },
+    {
+      "path": "artifacts/harness-sdk-build-repair-evidence/coverage.out",
+      "git_blob_oid": "253db74ff0e2d85c06babcfe0d04ad6062a1967a",
+      "sha256": "d86aca5fc0b7c9caa9d5781dd79ccac9b9b7769578976d65c314c5789ffba93e",
+      "size_bytes": 165570
+    },
+    {
+      "path": "artifacts/harness-sdk-build-repair-evidence/harness-sdk-build-repair-evidence.tar.gz",
+      "git_blob_oid": "2d28a109227317c5d08b54b8839682ef0df58a5c",
+      "sha256": "9b849f60a8dbca4b60fa276c6fcafd51bbdfc35b226908aa0e09611eccb6fafe",
+      "size_bytes": 305762
+    },
+    {
+      "path": "artifacts/harness-sdk-build-repair-evidence/owner-repair.md",
+      "git_blob_oid": "17b1f56751ea998d64f11e3d20f7a2aa685e8cec",
+      "sha256": "149edf0240af2302a12629cc2c96077f53d5b6ef6a542189fc37ab6c51ea4296",
+      "size_bytes": 3528
+    },
+    {
+      "path": "artifacts/harness-sdk-build-repair-evidence/receipt-tree-design-evidence.md",
+      "git_blob_oid": "70c7bd68c0619896d6e9c85a2ad2b0ee7cdebd54",
+      "sha256": "ad959254de4b0de8c571fd114f13879a31ca31f80d5097309216f7c5083ab0c8",
+      "size_bytes": 1872
+    },
+    {
+      "path": "artifacts/harness-sdk-build-repair-evidence/receipt-tree-tests.json",
+      "git_blob_oid": "369af507b2590a63a959f52e13ec9f25a77ac0dd",
+      "sha256": "ac7e6a39561112775c8cc88767e2de5f39fac64f06e6c98b5ac372f7377b38aa",
+      "size_bytes": 4284
+    },
+    {
+      "path": "artifacts/harness-sdk-build-repair-evidence/semantic-evidence.json",
+      "git_blob_oid": "3d705493d0989d88c89ebe9349630b0e072a774d",
+      "sha256": "2dcaeae5cd056b2e0c06152fed7b155c73fd4e36a12b609fee14fa04ab90e307",
+      "size_bytes": 169510
+    },
+    {
+      "path": "artifacts/harness-sdk-build-repair-evidence/source-bundle.tar.zst",
+      "git_blob_oid": "26248eaa0df456f100cb7ad76787d56c0b758e15",
+      "sha256": "51fe5c84fbaf2f962ced040c99940521c994614721955231afad23ce911f5887",
+      "size_bytes": 86973
+    },
+    {
+      "path": "artifacts/harness-sdk-build-repair-evidence/source-snapshot.json",
+      "git_blob_oid": "1612c367ba28484d9260fa8ac85c5f8cefa931f4",
+      "sha256": "bd204d9475952fdfa8438f106a07938c45476ad08fa17710690257a0bad4eb0e",
+      "size_bytes": 6346
+    },
+    {
+      "path": "artifacts/harness-sdk-build-repair-evidence/source-snapshot.md",
+      "git_blob_oid": "5fd5a124a57122a7071d1ddcc9ec6dbb37f69483",
+      "sha256": "83332ce4d4af9cbfeba1b941acf6d00210885e0848a3dadfd858a499c5f3e0a4",
+      "size_bytes": 1711
+    },
+    {
+      "path": "artifacts/harness-sdk-build-repair-evidence/source.patch.gz",
+      "git_blob_oid": "014f046a5002b0d64cc9214b85a259575ecb7388",
+      "sha256": "dececf1032705da4fcf2a4913ce9a289730ae562938cf88ff9e82d4a01788fba",
+      "size_bytes": 416
+    },
+    {
+      "path": "artifacts/harness-sdk-build-repair-evidence/verification-results.json",
+      "git_blob_oid": "ceadc2a2f15d053cc3cd65d46cd0e7e430fb1d8d",
+      "sha256": "73c212305fd2c9f3027cd1dd15b1d43b05137f6dc37661d88c368395d4dfb31a",
+      "size_bytes": 33512
+    }
+  ]
+}
