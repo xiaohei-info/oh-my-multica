@@ -154,6 +154,16 @@ conflict or cannot be reproduced, do not infer pass.
     Report all issues in one review, including every blocker and nit found in the
     pass. Each blocker states the fact, impact, and actionable repair direction.
 
+A reject may record an integration gate with `status: fail`, retaining integer
+nonzero exit codes, below-threshold numbers and failed Boolean metrics. It still
+requires every contract command, required metric and its type, artifact,
+`source_of_truth` and `delivery_goal`. A gate marked `pass` in a reject, all
+pass/pass-with-nits gates, and Worker gates still require successful commands and
+passing metrics. Admitting failure evidence does not approve quality. Each failed
+obligation still needs a blocker's singular `obligation_id`; prose references or
+an undefined `obligation_ids` field do not provide that association. Do not copy
+one root or change a result to a false pass to evade report-format validation.
+
 ## Completion conditions
 
 - You inspected the real diff or artifact and independently ran the required

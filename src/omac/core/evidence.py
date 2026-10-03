@@ -33,18 +33,21 @@ def _commands_by_text(commands):
     return {
         command.get("cmd"): command
         for command in commands
-        if isinstance(command, dict) and command.get("cmd")
+        if isinstance(command, dict) and isinstance(command.get("cmd"), str) and command["cmd"].strip()
     }
 
 
-def _validate_expected_commands(command_by_text, expected_commands, *, missing_prefix, failed_prefix):
+def _validate_expected_commands(command_by_text, expected_commands, *, missing_prefix, failed_prefix, allow_failed_results=False):
     errors = []
     for expected_cmd in expected_commands:
         actual = command_by_text.get(expected_cmd) if command_by_text is not None else None
         if actual is None:
             errors.append(f"{missing_prefix}: {expected_cmd}")
             continue
-        if not _command_succeeded(actual):
+        if allow_failed_results:
+            if type(actual.get("exit_code")) is not int:
+                errors.append(f"{failed_prefix} (exit_code must be integer): {expected_cmd}")
+        elif not _command_succeeded(actual):
             errors.append(f"{failed_prefix}: {expected_cmd}")
     return errors
 
@@ -143,7 +146,7 @@ def _metric_satisfies(actual, expected) -> bool:
     return actual == expected
 
 
-def _validate_integration_gate_evidence(expected_gate, actual_gate, *, prefix):
+def _validate_integration_gate_evidence(expected_gate, actual_gate, *, prefix, allow_failed_results=False):
     errors = []
     gate_name = expected_gate.get("name")
     if actual_gate is None:
@@ -159,6 +162,7 @@ def _validate_integration_gate_evidence(expected_gate, actual_gate, *, prefix):
                 expected_gate.get("commands", []),
                 missing_prefix=f"{prefix} missing integration command for {gate_name}",
                 failed_prefix=f"{prefix} integration command failed for {gate_name}",
+                allow_failed_results=allow_failed_results,
             )
         )
 
@@ -169,6 +173,17 @@ def _validate_integration_gate_evidence(expected_gate, actual_gate, *, prefix):
     for metric, expected_value in expected_gate.get("required_metrics", {}).items():
         if metric not in actual_metrics:
             errors.append(f"{prefix} missing integration metric for {gate_name}: {metric}")
+        elif allow_failed_results:
+            # A reject records measured failure, while retaining required metric types.
+            actual = actual_metrics[metric]
+            if isinstance(expected_value, bool):
+                valid_type = type(actual) is bool
+            elif isinstance(expected_value, (int, float)):
+                valid_type = isinstance(actual, (int, float)) and not isinstance(actual, bool)
+            else:
+                valid_type = type(actual) is type(expected_value)
+            if not valid_type:
+                errors.append(f"{prefix} integration metric type must match contract for {gate_name}: {metric}")
         elif not _metric_satisfies(actual_metrics.get(metric), expected_value):
             errors.append(f"{prefix} integration metric below gate for {gate_name}: {metric}")
 
@@ -350,7 +365,11 @@ def validate_review_evidence(node, item) -> list:
             mapping_by_gate = {
                 mapping.get("gate"): mapping
                 for mapping in integration_mappings
-                if isinstance(mapping, dict) and mapping.get("status") == "pass"
+                if isinstance(mapping, dict)
+                and isinstance(mapping.get("gate"), str)
+                and mapping.get("status") in (
+                    ("pass", "fail") if verdict == "reject" else ("pass",)
+                )
             }
             for expected_gate in contract.integration_gates:
                 errors.extend(
@@ -358,6 +377,8 @@ def validate_review_evidence(node, item) -> list:
                         expected_gate,
                         mapping_by_gate.get(expected_gate.get("name")),
                         prefix="review_report",
+                        allow_failed_results=(verdict == "reject" and
+                            mapping_by_gate.get(expected_gate.get("name"), {}).get("status") == "fail"),
                     )
                 )
 

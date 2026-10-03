@@ -108,6 +108,14 @@
     `obligation_results` 和 `prior_blocker_results`；develop review 还必须覆盖
     `acceptance_mapping` 和 `integration_gate_mapping`。blockers 和 nits 必须一次性包含本轮发现的全部问题，并让其与 verdict 一致；每个 blocker 写清事实、影响和可执行修复方向。
 
+reject 的 integration gate 可如实标记 `status: fail`，保留原始整数非零退出码、
+未达阈值的数值和失败布尔指标；仍须完整提供合同命令、必需 metric 及其类型、
+artifact、`source_of_truth` 和 `delivery_goal`。reject 中标记 `pass` 的 gate，
+以及 pass/pass-with-nits 和 Worker 交付的 gate，仍须命令成功且指标达标。
+失败证据被接纳不表示质量通过。每个 failed obligation 仍须有结构化 blocker 的
+单一 `obligation_id` 对应；在 prose 中提到另一个 blocker 或增加未定义的
+`obligation_ids` 字段不能代替关联，不能复制同一 root 或改成假 pass 绕过格式校验。
+
 ## 完成条件
 
 - 已查看真实 diff 或交付物，并独立复跑当前实例要求的验证，而不是信任自述。
