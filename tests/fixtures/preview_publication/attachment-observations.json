@@ -1,0 +1,47 @@
+{
+  "contract_ref": {
+    "attachment_id": "01a0fbda-9193-7299-9ee4-e2184abf703f",
+    "comment_id": "01a0fbda-928b-7148-9e16-5add813be31f",
+    "sha256": "395fb2bc0e42bf8683ce3098898d390d0edf8e91448b91acc24b95948659edec",
+    "uploader_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "uploader_type": "member",
+    "task_id": null,
+    "created_at": "2026-10-02T09:03:20Z"
+  },
+  "verification_ref": {
+    "attachment_id": "01a0fccb-2a9b-77f5-b8a4-776d0c6644a2",
+    "comment_id": "01a0fccb-2b78-78ff-8151-57e8895a298d",
+    "sha256": "b044e29bcfabd8da6715a179f10e0e64993a44bee7279eee4176268ab7467937",
+    "uploader_id": "037ad7f0-98f9-489f-bf43-0d1148233356",
+    "uploader_type": "agent",
+    "task_id": "01a0fca3-1807-7814-96f0-683b2eff8773",
+    "created_at": "2026-10-02T13:26:08Z"
+  },
+  "review_ledger_ref": {
+    "attachment_id": "01a0fc0a-939c-71f6-adf0-a9ebb2742c02",
+    "comment_id": "01a0fc0a-9402-7c95-b46e-c1877303038e",
+    "sha256": "081af40a3750f49901058ca870e45a0898208d2df38fe1a11967c8f5666ad66b",
+    "uploader_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+    "uploader_type": "agent",
+    "task_id": "01a0fc04-b1eb-758c-b60e-4fe19e5d3dfb",
+    "created_at": "2026-10-02T09:55:46Z"
+  },
+  "review_obligations_ref": {
+    "attachment_id": "01a0fc04-31c4-77e0-96a0-d9feb8502469",
+    "comment_id": "01a0fc04-32a1-72ac-8d8a-7a8249cff1e4",
+    "sha256": "c1c8be9b9e37783e2a14401244d7b53413ba0e812c3acce28bea7b2bf9be1ac4",
+    "uploader_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "uploader_type": "member",
+    "task_id": null,
+    "created_at": "2026-10-02T09:48:48Z"
+  },
+  "report_ref": {
+    "attachment_id": "01a0fc0a-9004-70d6-9350-c4a888ea9182",
+    "comment_id": "01a0fc0a-9068-76c9-8c4c-1ae1a38dcbc4",
+    "sha256": "86ac81cad4b4b5bd9a170e8289d925cdd6d6620227dbe876554be1ea9a60f869",
+    "uploader_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+    "uploader_type": "agent",
+    "task_id": "01a0fc04-b1eb-758c-b60e-4fe19e5d3dfb",
+    "created_at": "2026-10-02T09:55:45Z"
+  }
+}

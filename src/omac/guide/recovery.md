@@ -609,3 +609,20 @@ OMAC 将完整 intent 发布到不可变附件，原 metadata 键只存 issue/ke
 ### Authoring retry 的中断恢复
 
 已有 reject 的 `omac node retry <manifest> <node> --stage authoring` 先持久化完整返工 handoff，再清理旧 review。准备阶段的 `recovering` intent 不允许派发 Worker；响应未知时先读回确认。若命令中断，检查 `omac work show <work-item-id> --output json` 后重复同一 retry 命令，继续原 generation；不要清除 intent 或重置计数。来源的 contract、HEAD、verification 引用或计数发生漂移时命令会拒绝继续。成功只表示恢复准备完成，后续仍需通过正常 DAG 执行交付、评审和合并。三项等返工反馈使用有界摘要；完整修复要求通过保留的 immutable report/ledger refs 阅读。累计 bounce 审计计数及 manifest 保留的预算授权不变。
+
+### Preview 发布证据重评
+
+`omac node review-publication` 仅适用于 Preview 原发布证据 blocker 和仍完整的原 reject 因果链。它读取原 Reviewer 的平台工具查询、当前完整 immutable comment refs、最新 Worker 的正式 terminal submit，以及 index 和八份文件，绑定 PR/HEAD、合同、Run/actor、原 report/ledger、asset ID/SHA256/字节数与原预算。可变 GitHub release 明确记录为可变；文件可下载不等于永久不可变，也不代替独立评审。
+
+```bash
+omac node review-publication <manifest> release-preview-audit-vocabulary-repair \
+  --index-url '<已发布 evidence-index.json URL>' --reason '<批准的范围>' \
+  --output json > publication-review.json
+omac node review-publication <manifest> release-preview-audit-vocabulary-repair \
+  --apply-request publication-review.json \
+  --approve-request-sha256 '<明确批准的整份请求 canonical SHA256>' --output json
+```
+
+prepare 只读；应批准完整生成请求及 source tuple，能力实现授权不等于生产恢复授权。canonical SHA256 对 sorted compact UTF-8 JSON（`ensure_ascii=False`）计算。apply 每次写入前复核来源，只封存最新真实 Worker 交付并准备独立评审，保留累计计数和原 budget authority，不派发、不给 verdict、不 merge/done。后续由单一正常 DAG Controller 送真实独立 Reviewer；本机锁及语义检查不是跨主机原子 CAS。
+
+中断留下 pending receipt，Runner tick 会拒绝继续。仅用同一请求和 digest 续接；不要手改 receipt、清 handoff、重试 Worker 或重置预算。来源变化需先调查。已 consumed 请求不可再消费，不接受 historical session 导入或手写 delivery identity。

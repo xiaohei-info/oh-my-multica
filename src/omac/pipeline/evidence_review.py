@@ -520,51 +520,14 @@ def preview_evidence_review(
     }
 
 
-def apply_evidence_review(store, runtime, manifest_path, key, witness_path, request):
-    if (
-        not isinstance(request, dict)
-        or set(request)
-        != {"schema", "reason", "tuple", "expected_control", "runs_sha256"}
-        or request["schema"] != SCHEMA
-    ):
-        _fail(
-            "Use the exact prepared request; supplied identities and extra fields are forbidden"
-        )
+def _apply_review_request(store, runtime, manifest_path, key, request, token, *,
+                          schema, journal, verifier, initial_control,
+                          obligation_transform=None, subject_builder=None,
+                          pre_write_verify=None):
+    """Shared one-time Controller seal/review transition; no Agent dispatch or verdict."""
     manifest = load_manifest(manifest_path)
     value = request["tuple"]
-    if (
-        not isinstance(value, dict)
-        or not isinstance(value.get("witness"), dict)
-        or type(value["witness"].get("line")) is not int
-        or not isinstance(request["expected_control"], dict)
-        or not isinstance(request["reason"], str)
-        or not request["reason"].strip()
-        or len(request["reason"].encode()) > 2048
-    ):
-        _fail("Malformed prepared request")
-    try:
-        token = _digest(
-            {
-                k: value[k]
-                for k in (
-                    "issue_id",
-                    "node_id",
-                    "binding",
-                    "pr_url",
-                    "head_sha",
-                    "run",
-                    "historical_handoff",
-                    "verification_ref",
-                    "reject_report_ref",
-                    "artifact_set_sha256",
-                )
-            }
-        )
-    except KeyError as exc:
-        raise ValidationError(
-            "Prepared tuple is incomplete; prepare a fresh request"
-        ) from exc
-    entries = manifest.meta.get(JOURNAL, {})
+    entries = manifest.meta.get(journal, {})
     if not isinstance(entries, dict):
         _fail("Authorization journal is not a mapping")
     existing = entries.get(token)
@@ -584,9 +547,7 @@ def apply_evidence_review(store, runtime, manifest_path, key, witness_path, requ
             "Authorization already consumed; inspect the independent review, do not replay it"
         )
     with store.worker_control_lock(value.get("issue_id", "")):
-        item, actual, identity, runs = _verify(
-            store, runtime, manifest, key, witness_path, value["witness"]["line"]
-        )
+        item, actual, identity, runs = verifier(manifest)
         if (
             actual != value
             or _digest(sorted((_plain(r) for r in runs), key=lambda r: r["id"]))
@@ -594,9 +555,9 @@ def apply_evidence_review(store, runtime, manifest_path, key, witness_path, requ
         ):
             _fail("Prepared tuple or Run set changed")
         if existing is None:
-            _initial_control(item, actual)
+            initial_control(item, actual)
             prepared = {
-                "schema": SCHEMA,
+                "schema": schema,
                 "reason": request["reason"],
                 "tuple": actual,
                 "expected_control": _state(item),
@@ -612,7 +573,10 @@ def apply_evidence_review(store, runtime, manifest_path, key, witness_path, requ
             review_ledger_generation=item.review_generation,
         )
         obligations = build_review_obligations(bound)
-        subject = stage_recovery_subject(manifest.nodes[key], bound)
+        if obligation_transform is not None:
+            obligations = obligation_transform(obligations, actual)
+        subject = (subject_builder(manifest, key, bound) if subject_builder is not None
+                   else stage_recovery_subject(manifest.nodes[key], bound))
         states = [deepcopy(request["expected_control"])]
         changes = [
             {"delivery_identity": identity.as_dict()},
@@ -634,7 +598,7 @@ def apply_evidence_review(store, runtime, manifest_path, key, witness_path, requ
             _fail("Control changed outside the recorded recovery step")
         progress = max(matches)
         if existing is None:
-            entries = manifest.meta.setdefault(JOURNAL, {})
+            entries = manifest.meta.setdefault(journal, {})
             existing = entries[token] = {
                 "request_sha256": _digest(request),
                 "request": deepcopy(request),
@@ -681,6 +645,8 @@ def apply_evidence_review(store, runtime, manifest_path, key, witness_path, requ
                 _fail("Remote PR HEAD or state changed before recovery write")
             if _state(store.get_work_item(item.id)) != states[progress]:
                 _fail("Control changed before recovery write")
+            if pre_write_verify is not None:
+                pre_write_verify(manifest, actual)
             operations[progress]()
             if _state(store.get_work_item(item.id)) != states[progress + 1]:
                 raise PlatformError(
@@ -702,3 +668,52 @@ def apply_evidence_review(store, runtime, manifest_path, key, witness_path, requ
             "verdict": None,
             "next_action": f"Inspect facts, then use omac dag run {manifest_path} under the existing single controller",
         }
+
+def apply_evidence_review(store, runtime, manifest_path, key, witness_path, request):
+    if (
+        not isinstance(request, dict)
+        or set(request)
+        != {"schema", "reason", "tuple", "expected_control", "runs_sha256"}
+        or request["schema"] != SCHEMA
+    ):
+        _fail(
+            "Use the exact prepared request; supplied identities and extra fields are forbidden"
+        )
+    value = request["tuple"]
+    if (
+        not isinstance(value, dict)
+        or not isinstance(value.get("witness"), dict)
+        or type(value["witness"].get("line")) is not int
+        or not isinstance(request["expected_control"], dict)
+        or not isinstance(request["reason"], str)
+        or not request["reason"].strip()
+        or len(request["reason"].encode()) > 2048
+    ):
+        _fail("Malformed prepared request")
+    try:
+        token = _digest(
+            {
+                k: value[k]
+                for k in (
+                    "issue_id",
+                    "node_id",
+                    "binding",
+                    "pr_url",
+                    "head_sha",
+                    "run",
+                    "historical_handoff",
+                    "verification_ref",
+                    "reject_report_ref",
+                    "artifact_set_sha256",
+                )
+            }
+        )
+    except KeyError as exc:
+        raise ValidationError(
+            "Prepared tuple is incomplete; prepare a fresh request"
+        ) from exc
+    return _apply_review_request(
+        store, runtime, manifest_path, key, request, token, schema=SCHEMA, journal=JOURNAL,
+        verifier=lambda current: _verify(store, runtime, current, key, witness_path, value["witness"]["line"]),
+        initial_control=_initial_control,
+    )

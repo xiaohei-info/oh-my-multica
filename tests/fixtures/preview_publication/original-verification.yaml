@@ -1,0 +1,154 @@
+{
+  "commands": [
+    {
+      "cmd": "mkdir -p artifacts/release-preview-audit-vocabulary-repair && go test -covermode=atomic -coverprofile=artifacts/release-preview-audit-vocabulary-repair/coverage.out ./internal/softwaredelivery/release/... ./internal/softwaredelivery/preview/...",
+      "exit_code": 0,
+      "summary": "Release/Preview suites pass; coverage is 90.2% and 90.8%."
+    },
+    {
+      "cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/release-preview-audit-vocabulary-repair/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+      "exit_code": 0,
+      "summary": "Combined statement coverage is 90.6%, meeting the 90% gate."
+    },
+    {
+      "cmd": "mkdir -p artifacts/release-preview-audit-vocabulary-repair && go test -json ./internal/softwaredelivery/release/... ./internal/softwaredelivery/preview/... -run '^(TestPreviewDecisionIdempotencyUsesCanonicalInputDigestNotClock|TestPreviewEvidenceSubjectRequiresExactInputDigestEquality|TestPreviewGeneratorRecordsExpectedActualRegressionDifference|TestPreviewDecisionIdentityReuseCannotOverwriteGovernedRecords|TestPreviewChangedFactsReturnStaleSubjectForApproveAndRequestChanges)$' -count=1 > artifacts/release-preview-audit-vocabulary-repair/preview-recovery-tests.json",
+      "exit_code": 0,
+      "summary": "All five named Preview recovery regressions pass; transcript saved."
+    },
+    {
+      "cmd": "python3 -c \"import json; required={'TestPreviewDecisionIdempotencyUsesCanonicalInputDigestNotClock', 'TestPreviewChangedFactsReturnStaleSubjectForApproveAndRequestChanges', 'TestPreviewGeneratorRecordsExpectedActualRegressionDifference', 'TestPreviewDecisionIdentityReuseCannotOverwriteGovernedRecords', 'TestPreviewEvidenceSubjectRequiresExactInputDigestEquality'}; rows=[json.loads(x) for x in open('artifacts/release-preview-audit-vocabulary-repair/preview-recovery-tests.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing required passing preview recovery tests: {sorted(required-passed)}'\"",
+      "exit_code": 0,
+      "summary": "All five required recovery-test events are present and passing."
+    },
+    {
+      "cmd": "python3 scripts/release/package_component.py --component release-preview --kind platform-core-dependency-source --input internal/softwaredelivery/release --input internal/softwaredelivery/preview --bundle artifacts/release-preview-audit-vocabulary-repair/source-bundle.tar.zst --component-manifest artifacts/release-preview-audit-vocabulary-repair/component-manifest.json --digest-output artifacts/release-preview-audit-vocabulary-repair/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner release-preview --require-all-owner-sources-accounted",
+      "exit_code": 0,
+      "summary": "release-preview source bundle and manifest packaged; all owner sources accounted."
+    },
+    {
+      "cmd": "go test -count=1 ./internal/softwaredelivery/release/... ./internal/softwaredelivery/preview/... ./contracts/governance/audit/... ./contracts/governance/credential/...",
+      "exit_code": 0,
+      "summary": "Uncached Release, Preview, canonical Audit, and credential suites pass."
+    },
+    {
+      "cmd": "go vet ./internal/softwaredelivery/preview/...",
+      "exit_code": 0,
+      "summary": "Preview go vet passes."
+    },
+    {
+      "cmd": "CGO_ENABLED=1 go test -race -count=1 ./internal/softwaredelivery/preview/...",
+      "exit_code": 0,
+      "summary": "Uncached Preview race suite passes with CGO enabled."
+    },
+    {
+      "cmd": "mkdir -p artifacts/release-preview-audit-vocabulary-repair && go test -json -count=1 ./internal/softwaredelivery/preview/... -run '^(TestPreviewCanonicalAuthorizationAuditAllowsGovernedCommit|TestPreviewCanonicalAuthorizationAuditRejectsNonCanonicalControls|TestPreviewCanonicalAuthorizationAuditRejectsConflictingProvenance)$' > artifacts/release-preview-audit-vocabulary-repair/canonical-audit-tests.json",
+      "exit_code": 0,
+      "summary": "All three named canonical-audit regressions pass; transcript saved."
+    },
+    {
+      "cmd": "python3 -c 'import json; from pathlib import Path; required={'\"'\"'TestPreviewCanonicalAuthorizationAuditRejectsConflictingProvenance'\"'\"', '\"'\"'TestPreviewCanonicalAuthorizationAuditRejectsNonCanonicalControls'\"'\"', '\"'\"'TestPreviewCanonicalAuthorizationAuditAllowsGovernedCommit'\"'\"'}; rows=[json.loads(x) for x in Path('\"'\"'artifacts/release-preview-audit-vocabulary-repair/canonical-audit-tests.json'\"'\"').read_text().splitlines() if x.strip()]; assert {r.get('\"'\"'Test'\"'\"') for r in rows if r.get('\"'\"'Action'\"'\"')=='\"'\"'pass'\"'\"' and r.get('\"'\"'Test'\"'\"') in required}==required; assert not any(r.get('\"'\"'Action'\"'\"') in {'\"'\"'fail'\"'\"','\"'\"'skip'\"'\"'} for r in rows)'",
+      "exit_code": 0,
+      "summary": "All three required regression events are present; no fail or skip events."
+    }
+  ],
+  "integration_gates": [
+    {
+      "name": "release-preview-vocabulary-owner-gate",
+      "source_of_truth": [
+        "docs/design/detailed/11-software-delivery-detailed-design.md:L402-L482",
+        "docs/references/software-delivery/artifacts-release-and-deployment.md:L138-L185",
+        "docs/references/software-delivery/artifacts-release-and-deployment.md:L261-L317",
+        "docs/delivery/acceptance-and-validation.md:L907-L961",
+        "five-nodes-recovery-decisions.md"
+      ],
+      "delivery_goal": "Preserve every original release-preview gate and packaging identity while correcting the consumer to the current merged canonical Audit control vocabulary.",
+      "commands": [
+        {
+          "cmd": "mkdir -p artifacts/release-preview-audit-vocabulary-repair && go test -covermode=atomic -coverprofile=artifacts/release-preview-audit-vocabulary-repair/coverage.out ./internal/softwaredelivery/release/... ./internal/softwaredelivery/preview/...",
+          "exit_code": 0
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/release-preview-audit-vocabulary-repair/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+          "exit_code": 0
+        },
+        {
+          "cmd": "mkdir -p artifacts/release-preview-audit-vocabulary-repair && go test -json ./internal/softwaredelivery/release/... ./internal/softwaredelivery/preview/... -run '^(TestPreviewDecisionIdempotencyUsesCanonicalInputDigestNotClock|TestPreviewEvidenceSubjectRequiresExactInputDigestEquality|TestPreviewGeneratorRecordsExpectedActualRegressionDifference|TestPreviewDecisionIdentityReuseCannotOverwriteGovernedRecords|TestPreviewChangedFactsReturnStaleSubjectForApproveAndRequestChanges)$' -count=1 > artifacts/release-preview-audit-vocabulary-repair/preview-recovery-tests.json",
+          "exit_code": 0
+        },
+        {
+          "cmd": "python3 -c \"import json; required={'TestPreviewDecisionIdempotencyUsesCanonicalInputDigestNotClock', 'TestPreviewChangedFactsReturnStaleSubjectForApproveAndRequestChanges', 'TestPreviewGeneratorRecordsExpectedActualRegressionDifference', 'TestPreviewDecisionIdentityReuseCannotOverwriteGovernedRecords', 'TestPreviewEvidenceSubjectRequiresExactInputDigestEquality'}; rows=[json.loads(x) for x in open('artifacts/release-preview-audit-vocabulary-repair/preview-recovery-tests.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing required passing preview recovery tests: {sorted(required-passed)}'\"",
+          "exit_code": 0
+        },
+        {
+          "cmd": "python3 scripts/release/package_component.py --component release-preview --kind platform-core-dependency-source --input internal/softwaredelivery/release --input internal/softwaredelivery/preview --bundle artifacts/release-preview-audit-vocabulary-repair/source-bundle.tar.zst --component-manifest artifacts/release-preview-audit-vocabulary-repair/component-manifest.json --digest-output artifacts/release-preview-audit-vocabulary-repair/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner release-preview --require-all-owner-sources-accounted",
+          "exit_code": 0
+        }
+      ],
+      "metrics": {
+        "statement_coverage_percent": 90.6,
+        "declared_artifact_count": 5,
+        "required_preview_recovery_test_count": 5,
+        "clock_derived_idempotency_identity_count": 0,
+        "non_exact_evidence_subject_accept_count": 0,
+        "missing_same_input_regression_record_count": 0,
+        "duplicate_governed_decision_commit_count": 0,
+        "stale_subject_reported_not_ready_count": 0
+      },
+      "artifacts": [
+        "artifacts/release-preview-audit-vocabulary-repair/coverage.out",
+        "artifacts/release-preview-audit-vocabulary-repair/preview-recovery-tests.json",
+        "artifacts/release-preview-audit-vocabulary-repair/source-bundle.tar.zst",
+        "artifacts/release-preview-audit-vocabulary-repair/bundle-digest.txt",
+        "artifacts/release-preview-audit-vocabulary-repair/component-manifest.json"
+      ]
+    },
+    {
+      "name": "preview-canonical-audit-compatibility",
+      "source_of_truth": [
+        "docs/design/detailed/09-governance-and-security-detailed-design.md",
+        "contracts/governance/audit/audit.go",
+        "git:c2ed79ccdccc1b6b278270ac767580dfb887c36d:contracts/governance/audit/audit.go",
+        "git:e8b8dfb6430208e4bd32c8134dbb6c19f24ad566:internal/softwaredelivery/preview/decision_writer.go:L363-L379",
+        "git:e8b8dfb6430208e4bd32c8134dbb6c19f24ad566:internal/softwaredelivery/preview/acceptance_test.go:L483-L518"
+      ],
+      "delivery_goal": "Canonical allowed authorization reaches the unchanged governed Preview commit path; incompatible/denied/duplicate/provenance-conflicting evidence fails closed with no partial records.",
+      "commands": [
+        {
+          "cmd": "go test -count=1 ./internal/softwaredelivery/release/... ./internal/softwaredelivery/preview/... ./contracts/governance/audit/... ./contracts/governance/credential/...",
+          "exit_code": 0
+        },
+        {
+          "cmd": "go vet ./internal/softwaredelivery/preview/...",
+          "exit_code": 0
+        },
+        {
+          "cmd": "CGO_ENABLED=1 go test -race -count=1 ./internal/softwaredelivery/preview/...",
+          "exit_code": 0
+        },
+        {
+          "cmd": "mkdir -p artifacts/release-preview-audit-vocabulary-repair && go test -json -count=1 ./internal/softwaredelivery/preview/... -run '^(TestPreviewCanonicalAuthorizationAuditAllowsGovernedCommit|TestPreviewCanonicalAuthorizationAuditRejectsNonCanonicalControls|TestPreviewCanonicalAuthorizationAuditRejectsConflictingProvenance)$' > artifacts/release-preview-audit-vocabulary-repair/canonical-audit-tests.json",
+          "exit_code": 0
+        },
+        {
+          "cmd": "python3 -c 'import json; from pathlib import Path; required={'\"'\"'TestPreviewCanonicalAuthorizationAuditRejectsConflictingProvenance'\"'\"', '\"'\"'TestPreviewCanonicalAuthorizationAuditRejectsNonCanonicalControls'\"'\"', '\"'\"'TestPreviewCanonicalAuthorizationAuditAllowsGovernedCommit'\"'\"'}; rows=[json.loads(x) for x in Path('\"'\"'artifacts/release-preview-audit-vocabulary-repair/canonical-audit-tests.json'\"'\"').read_text().splitlines() if x.strip()]; assert {r.get('\"'\"'Test'\"'\"') for r in rows if r.get('\"'\"'Action'\"'\"')=='\"'\"'pass'\"'\"' and r.get('\"'\"'Test'\"'\"') in required}==required; assert not any(r.get('\"'\"'Action'\"'\"') in {'\"'\"'fail'\"'\"','\"'\"'skip'\"'\"'} for r in rows)'",
+          "exit_code": 0
+        }
+      ],
+      "metrics": {
+        "required_canonical_audit_regression_count": 3,
+        "noncanonical_authorization_commit_count": 0,
+        "conflicting_provenance_commit_count": 0
+      },
+      "artifacts": [
+        "artifacts/release-preview-audit-vocabulary-repair/canonical-audit-tests.json",
+        "artifacts/release-preview-audit-vocabulary-repair/owner-repair.md"
+      ]
+    }
+  ],
+  "pr_base": "main",
+  "coverage": 90.6,
+  "env_setup": [
+    "Go 1.26.5 (darwin/arm64) and Python 3.14.6 were available.",
+    "CGO_ENABLED=1 was set for the declared Preview race suite."
+  ]
+}

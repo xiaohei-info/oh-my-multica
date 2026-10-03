@@ -1,0 +1,80 @@
+schema: omac.review-ledger/v2
+cycles:
+- round: 1
+  subject_digest: ef837a3cdfbf7bcbae969da65fdc149ef46261cf710a3bb2644567e4995b4d97
+  report_digest: cd98a9df6d189868dcd6524b42cafbcb13633609e0b1eab7bc9b0ed2714f6351
+  verdict: reject
+  obligation_results:
+    dimension:authority: pass
+    dimension:structure: pass
+    dimension:execution: pass
+    dimension:ownership: pass
+    dimension:evidence: fail
+    dimension:regression: pass
+    integration:preview-canonical-audit-compatibility: pass
+    integration:release-preview-vocabulary-owner-gate: pass
+  new_count: 1
+  fixed_count: 0
+  regressed_count: 0
+  unchanged_count: 0
+  open_count: 1
+  prior_open_blocker_ids: []
+  open_blocker_ids: &id001
+  - BLK-6b4334e9ca3d
+  reported_blocker_ids: *id001
+  blocker_facts_schema: omac.review-cycle-blocker-facts/v1
+  blocker_facts:
+  - blocker_id: BLK-6b4334e9ca3d
+    root_cause_key: preview-repair-immutable-evidence-not-published
+    obligation_id: dimension:evidence
+    summary: Required release-preview-audit-vocabulary-repair-evidence is not retrievable;
+      owner-repair.md is absent.
+    evidence: PR91 at 1dd603b45fe0ef9ac4bbc2ac75b0d1e64f2ed277 changes only acceptance_test.go,
+      decision_writer.go and decision_writer_test.go. git ls-tree -r --name-only HEAD
+      artifacts/release-preview-audit-vocabulary-repair returns no paths. GitHub releases
+      and Actions artifacts are empty; PR comments/reviews provide no alternative
+      artifact location. The issue has only contract, verification and review-obligations
+      YAML attachments; work-show verification declares runtime-relative artifact
+      paths, not retrievable content or URLs. No owner-repair.md or publication index
+      is in the submitted tree. Independently regenerated artifacts exist only in
+      the reviewer checkout and do not replace the required producer delivery.
+    required_fix: Publish the complete immutable release-preview-audit-vocabulary-repair-evidence
+      with a retrievable URL/attachment/index and per-file digests. Include coverage.out,
+      all five-recovery and three-canonical JSON test transcripts, source-bundle.tar.zst,
+      component-manifest.json, bundle-digest.txt, and owner-repair.md with before/after
+      source SHAs, exact patch, environment and command exits, root cause and no-API/security-regression
+      analysis. Preserve owner/component release-preview and bind all published artifacts
+      to the final committed submitted PR HEAD. Resubmit the actual artifact lineage,
+      not local paths or pass counters.
+    status: open
+    classification: new
+    owner: codex-macmini-newapi
+blockers:
+- blocker_id: BLK-6b4334e9ca3d
+  root_cause_key: preview-repair-immutable-evidence-not-published
+  obligation_id: dimension:evidence
+  summary: Required release-preview-audit-vocabulary-repair-evidence is not retrievable;
+    owner-repair.md is absent.
+  evidence: PR91 at 1dd603b45fe0ef9ac4bbc2ac75b0d1e64f2ed277 changes only acceptance_test.go,
+    decision_writer.go and decision_writer_test.go. git ls-tree -r --name-only HEAD
+    artifacts/release-preview-audit-vocabulary-repair returns no paths. GitHub releases
+    and Actions artifacts are empty; PR comments/reviews provide no alternative artifact
+    location. The issue has only contract, verification and review-obligations YAML
+    attachments; work-show verification declares runtime-relative artifact paths,
+    not retrievable content or URLs. No owner-repair.md or publication index is in
+    the submitted tree. Independently regenerated artifacts exist only in the reviewer
+    checkout and do not replace the required producer delivery.
+  required_fix: Publish the complete immutable release-preview-audit-vocabulary-repair-evidence
+    with a retrievable URL/attachment/index and per-file digests. Include coverage.out,
+    all five-recovery and three-canonical JSON test transcripts, source-bundle.tar.zst,
+    component-manifest.json, bundle-digest.txt, and owner-repair.md with before/after
+    source SHAs, exact patch, environment and command exits, root cause and no-API/security-regression
+    analysis. Preserve owner/component release-preview and bind all published artifacts
+    to the final committed submitted PR HEAD. Resubmit the actual artifact lineage,
+    not local paths or pass counters.
+  status: open
+  classification: new
+  owner: codex-macmini-newapi
+  first_seen_round: 1
+  last_seen_round: 1
+  seen_count: 1

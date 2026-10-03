@@ -1,0 +1,267 @@
+{
+  "review_protocol": "omac.review/v2",
+  "review_goals": [
+    "Verify the Preview production consumer and fixtures use canonical allowed authorization without changing shared Audit contracts or governed write invariants.",
+    "Independently reproduce all ten declared verification commands and both integration gates at submitted PR HEAD.",
+    "Verify immutable owner evidence publication, original release-preview packaging identity, and source lineage."
+  ],
+  "diff_reviewed": true,
+  "tests_rerun": true,
+  "integration_tests_rerun": true,
+  "coverage_checked": true,
+  "full_review_completed": true,
+  "reviewed_pr": "https://github.com/xiaohei-info/open-agent-cluster/pull/91",
+  "reviewed_head_sha": "1dd603b45fe0ef9ac4bbc2ac75b0d1e64f2ed277",
+  "summary": "Reject: implementation and all declared command checks pass, but the required immutable repair evidence and owner-repair.md are not delivered or retrievable. No additional production-code defect found in the complete three-file diff.",
+  "environment": [
+    "Independent dedicated checkout at submitted HEAD; no worker source edits.",
+    "Go 1.26.0 linux/arm64, Python 3.14.3; CGO_ENABLED=1 for declared race suite. Author environment was Go 1.26.5 darwin/arm64 and Python 3.14.6."
+  ],
+  "commands": [
+    {
+      "cmd": "mkdir -p artifacts/release-preview-audit-vocabulary-repair && go test -covermode=atomic -coverprofile=artifacts/release-preview-audit-vocabulary-repair/coverage.out ./internal/softwaredelivery/release/... ./internal/softwaredelivery/preview/...",
+      "exit_code": 0,
+      "output": "ok  \tgithub.com/xiaohei-info/open-agent-cluster/internal/softwaredelivery/release\t0.028s\tcoverage: 90.2% of statements\nok  \tgithub.com/xiaohei-info/open-agent-cluster/internal/softwaredelivery/preview\t0.226s\tcoverage: 89.9% of statements"
+    },
+    {
+      "cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/release-preview-audit-vocabulary-repair/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+      "exit_code": 0,
+      "output": ""
+    },
+    {
+      "cmd": "mkdir -p artifacts/release-preview-audit-vocabulary-repair && go test -json ./internal/softwaredelivery/release/... ./internal/softwaredelivery/preview/... -run '^(TestPreviewDecisionIdempotencyUsesCanonicalInputDigestNotClock|TestPreviewEvidenceSubjectRequiresExactInputDigestEquality|TestPreviewGeneratorRecordsExpectedActualRegressionDifference|TestPreviewDecisionIdentityReuseCannotOverwriteGovernedRecords|TestPreviewChangedFactsReturnStaleSubjectForApproveAndRequestChanges)$' -count=1 > artifacts/release-preview-audit-vocabulary-repair/preview-recovery-tests.json",
+      "exit_code": 0,
+      "output": ""
+    },
+    {
+      "cmd": "python3 -c \"import json; required={'TestPreviewDecisionIdempotencyUsesCanonicalInputDigestNotClock', 'TestPreviewChangedFactsReturnStaleSubjectForApproveAndRequestChanges', 'TestPreviewGeneratorRecordsExpectedActualRegressionDifference', 'TestPreviewDecisionIdentityReuseCannotOverwriteGovernedRecords', 'TestPreviewEvidenceSubjectRequiresExactInputDigestEquality'}; rows=[json.loads(x) for x in open('artifacts/release-preview-audit-vocabulary-repair/preview-recovery-tests.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing required passing preview recovery tests: {sorted(required-passed)}'\"",
+      "exit_code": 0,
+      "output": ""
+    },
+    {
+      "cmd": "python3 scripts/release/package_component.py --component release-preview --kind platform-core-dependency-source --input internal/softwaredelivery/release --input internal/softwaredelivery/preview --bundle artifacts/release-preview-audit-vocabulary-repair/source-bundle.tar.zst --component-manifest artifacts/release-preview-audit-vocabulary-repair/component-manifest.json --digest-output artifacts/release-preview-audit-vocabulary-repair/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner release-preview --require-all-owner-sources-accounted",
+      "exit_code": 0,
+      "output": "bundle=artifacts/release-preview-audit-vocabulary-repair/source-bundle.tar.zst\nmanifest=artifacts/release-preview-audit-vocabulary-repair/component-manifest.json"
+    },
+    {
+      "cmd": "go test -count=1 ./internal/softwaredelivery/release/... ./internal/softwaredelivery/preview/... ./contracts/governance/audit/... ./contracts/governance/credential/...",
+      "exit_code": 0,
+      "output": "ok  \tgithub.com/xiaohei-info/open-agent-cluster/internal/softwaredelivery/release\t0.011s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/internal/softwaredelivery/preview\t0.285s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/contracts/governance/audit\t0.006s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/contracts/governance/credential\t0.012s"
+    },
+    {
+      "cmd": "go vet ./internal/softwaredelivery/preview/...",
+      "exit_code": 0,
+      "output": ""
+    },
+    {
+      "cmd": "CGO_ENABLED=1 go test -race -count=1 ./internal/softwaredelivery/preview/...",
+      "exit_code": 0,
+      "output": "ok  \tgithub.com/xiaohei-info/open-agent-cluster/internal/softwaredelivery/preview\t1.442s"
+    },
+    {
+      "cmd": "mkdir -p artifacts/release-preview-audit-vocabulary-repair && go test -json -count=1 ./internal/softwaredelivery/preview/... -run '^(TestPreviewCanonicalAuthorizationAuditAllowsGovernedCommit|TestPreviewCanonicalAuthorizationAuditRejectsNonCanonicalControls|TestPreviewCanonicalAuthorizationAuditRejectsConflictingProvenance)$' > artifacts/release-preview-audit-vocabulary-repair/canonical-audit-tests.json",
+      "exit_code": 0,
+      "output": ""
+    },
+    {
+      "cmd": "python3 -c 'import json; from pathlib import Path; required={'\"'\"'TestPreviewCanonicalAuthorizationAuditRejectsConflictingProvenance'\"'\"', '\"'\"'TestPreviewCanonicalAuthorizationAuditRejectsNonCanonicalControls'\"'\"', '\"'\"'TestPreviewCanonicalAuthorizationAuditAllowsGovernedCommit'\"'\"'}; rows=[json.loads(x) for x in Path('\"'\"'artifacts/release-preview-audit-vocabulary-repair/canonical-audit-tests.json'\"'\"').read_text().splitlines() if x.strip()]; assert {r.get('\"'\"'Test'\"'\"') for r in rows if r.get('\"'\"'Action'\"'\"')=='\"'\"'pass'\"'\"' and r.get('\"'\"'Test'\"'\"') in required}==required; assert not any(r.get('\"'\"'Action'\"'\"') in {'\"'\"'fail'\"'\"','\"'\"'skip'\"'\"'} for r in rows)'",
+      "exit_code": 0,
+      "output": ""
+    }
+  ],
+  "coverage": 90.0,
+  "coverage_notes": "The exact declared go-tool-based threshold command exits 0 and reports combined coverage 90.0% (Release 90.2%, Preview 89.9%). Raw covered statements are 1221/1357 = 89.97789240972735%; author 90.6% is not reproduced on Linux. Judgment preserves the explicitly declared rounded go tool cover gate rather than substituting a new gate.",
+  "obligation_results": [
+    {
+      "obligation_id": "dimension:authority",
+      "status": "pass",
+      "evidence": "Current work-show contract and obligations read; canonical audit.go:36-50,84-106 and historical e8b8dfb decision validator checked against owning delivery/security designs, exact Release/Preview reference sections, acceptance trace anchors and five-nodes-recovery-decisions.md:62-71."
+    },
+    {
+      "obligation_id": "dimension:structure",
+      "status": "pass",
+      "evidence": "Complete three-file diff inspected. Production change is only canonical ControlOutcomeAllowed comparison/error text; fixtures remove the undeclared preview-decision control. Existing Audit/credential schemas, dependencies, persistence format, identity and CAS algorithms unchanged. Three named tests are implemented."
+    },
+    {
+      "obligation_id": "dimension:execution",
+      "status": "pass",
+      "evidence": "All ten exact declared commands independently exit 0, including uncached Release/Preview/Audit/credential suites, Preview vet and CGO race; JSON checkers verify all five recovery and all three canonical tests. Declared rounded coverage gate reports 90.0% and passes."
+    },
+    {
+      "obligation_id": "dimension:ownership",
+      "status": "pass",
+      "evidence": "Diff stays in internal/softwaredelivery/preview; no shared Audit/credential/Usage/SDK/Kernel/Runtime/Platform code or manifests modified. Existing submission and atomic commit paths retained. Independently generated manifest uses component release-preview and source revision 1dd603b45fe0ef9ac4bbc2ac75b0d1e64f2ed277; bundle hash agrees."
+    },
+    {
+      "obligation_id": "dimension:evidence",
+      "status": "fail",
+      "evidence": "Required immutable producer artifact cannot be retrieved and owner-repair.md is missing. See preview-repair-immutable-evidence-not-published. Reviewer-generated local evidence is explicitly not treated as producer publication."
+    },
+    {
+      "obligation_id": "dimension:regression",
+      "status": "pass",
+      "evidence": "No prior open blockers. Existing tampering/rollback assertions retained; all five recovery regressions pass. acceptance_test.go:580-646 exercises real durable approve/request_changes commit and restart plus rejected controls with zero governed records; decision_writer_test.go:195-261 rejects duplicate/conflicting/version/digest evidence before store calls and at atomic commit."
+    },
+    {
+      "obligation_id": "integration:preview-canonical-audit-compatibility",
+      "status": "pass",
+      "evidence": "All five gate commands exit 0; all three named regressions pass with no fail/skip events. Canonical allowed reaches real durable commit/restart, invalid evidence remains fail-closed. Gate delivery incomplete because required owner-repair.md and published canonical transcript are absent. Command/behavior reproduction passes; publication deficiency is classified once under dimension:evidence, not a second independent root cause."
+    },
+    {
+      "obligation_id": "integration:release-preview-vocabulary-owner-gate",
+      "status": "pass",
+      "evidence": "All five original commands exit 0, combined rounded coverage 90.0%, all five named recovery tests pass, all release-preview sources packaged at submitted HEAD. Required immutable coverage/transcripts/bundle/manifest/digest publication is absent. Command/behavior reproduction passes; publication deficiency is classified once under dimension:evidence, not a second independent root cause."
+    }
+  ],
+  "prior_blocker_results": [],
+  "acceptance_mapping": [
+    {
+      "acceptance": "UJ-RELEASE-CANDIDATE-001",
+      "status": "pass",
+      "evidence": "Trace-only alignment, not a full user-journey claim: owning design and acceptance source checked; declared Release/Preview suites and recovery regressions pass. Canonical authorization regression proves approve/request_changes governed persistence only. No live deployment, UI journey or downstream SDK acceptance claimed."
+    },
+    {
+      "acceptance": "UJ-PREVIEW-FINAL-ACCEPTANCE-001",
+      "status": "pass",
+      "evidence": "Trace-only alignment, not a full user-journey claim: owning design and acceptance source checked; declared Release/Preview suites and recovery regressions pass. Canonical authorization regression proves approve/request_changes governed persistence only. No live deployment, UI journey or downstream SDK acceptance claimed."
+    },
+    {
+      "acceptance": "UJ-PREVIEW-REQUEST-CHANGES-001",
+      "status": "pass",
+      "evidence": "Trace-only alignment, not a full user-journey claim: owning design and acceptance source checked; declared Release/Preview suites and recovery regressions pass. Canonical authorization regression proves approve/request_changes governed persistence only. No live deployment, UI journey or downstream SDK acceptance claimed."
+    }
+  ],
+  "integration_gate_mapping": [
+    {
+      "layer": "L1",
+      "source_of_truth": [
+        "docs/design/detailed/11-software-delivery-detailed-design.md:L402-L482",
+        "docs/references/software-delivery/artifacts-release-and-deployment.md:L138-L185",
+        "docs/references/software-delivery/artifacts-release-and-deployment.md:L261-L317",
+        "docs/delivery/acceptance-and-validation.md:L907-L961",
+        "five-nodes-recovery-decisions.md"
+      ],
+      "delivery_goal": "Preserve every original release-preview gate and packaging identity while correcting the consumer to the current merged canonical Audit control vocabulary.",
+      "covers": [
+        "release-preview"
+      ],
+      "acceptance_refs": [
+        "UJ-RELEASE-CANDIDATE-001",
+        "UJ-PREVIEW-FINAL-ACCEPTANCE-001",
+        "UJ-PREVIEW-REQUEST-CHANGES-001"
+      ],
+      "commands": [
+        {
+          "cmd": "mkdir -p artifacts/release-preview-audit-vocabulary-repair && go test -covermode=atomic -coverprofile=artifacts/release-preview-audit-vocabulary-repair/coverage.out ./internal/softwaredelivery/release/... ./internal/softwaredelivery/preview/...",
+          "exit_code": 0
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/release-preview-audit-vocabulary-repair/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+          "exit_code": 0
+        },
+        {
+          "cmd": "mkdir -p artifacts/release-preview-audit-vocabulary-repair && go test -json ./internal/softwaredelivery/release/... ./internal/softwaredelivery/preview/... -run '^(TestPreviewDecisionIdempotencyUsesCanonicalInputDigestNotClock|TestPreviewEvidenceSubjectRequiresExactInputDigestEquality|TestPreviewGeneratorRecordsExpectedActualRegressionDifference|TestPreviewDecisionIdentityReuseCannotOverwriteGovernedRecords|TestPreviewChangedFactsReturnStaleSubjectForApproveAndRequestChanges)$' -count=1 > artifacts/release-preview-audit-vocabulary-repair/preview-recovery-tests.json",
+          "exit_code": 0
+        },
+        {
+          "cmd": "python3 -c \"import json; required={'TestPreviewDecisionIdempotencyUsesCanonicalInputDigestNotClock', 'TestPreviewChangedFactsReturnStaleSubjectForApproveAndRequestChanges', 'TestPreviewGeneratorRecordsExpectedActualRegressionDifference', 'TestPreviewDecisionIdentityReuseCannotOverwriteGovernedRecords', 'TestPreviewEvidenceSubjectRequiresExactInputDigestEquality'}; rows=[json.loads(x) for x in open('artifacts/release-preview-audit-vocabulary-repair/preview-recovery-tests.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing required passing preview recovery tests: {sorted(required-passed)}'\"",
+          "exit_code": 0
+        },
+        {
+          "cmd": "python3 scripts/release/package_component.py --component release-preview --kind platform-core-dependency-source --input internal/softwaredelivery/release --input internal/softwaredelivery/preview --bundle artifacts/release-preview-audit-vocabulary-repair/source-bundle.tar.zst --component-manifest artifacts/release-preview-audit-vocabulary-repair/component-manifest.json --digest-output artifacts/release-preview-audit-vocabulary-repair/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner release-preview --require-all-owner-sources-accounted",
+          "exit_code": 0
+        }
+      ],
+      "artifacts": [
+        "artifacts/release-preview-audit-vocabulary-repair/coverage.out",
+        "artifacts/release-preview-audit-vocabulary-repair/preview-recovery-tests.json",
+        "artifacts/release-preview-audit-vocabulary-repair/source-bundle.tar.zst",
+        "artifacts/release-preview-audit-vocabulary-repair/bundle-digest.txt",
+        "artifacts/release-preview-audit-vocabulary-repair/component-manifest.json"
+      ],
+      "gate": "release-preview-vocabulary-owner-gate",
+      "status": "pass",
+      "metrics": {
+        "statement_coverage_percent": 90.0,
+        "declared_artifact_count": 5,
+        "required_preview_recovery_test_count": 5,
+        "clock_derived_idempotency_identity_count": 0,
+        "non_exact_evidence_subject_accept_count": 0,
+        "missing_same_input_regression_record_count": 0,
+        "duplicate_governed_decision_commit_count": 0,
+        "stale_subject_reported_not_ready_count": 0
+      },
+      "evidence": "Independent gate commands, metrics and original-owner packaging checks pass. This status describes reproduction only, not artifact acceptance. Producer publication and owner-repair.md are still missing; dimension:evidence fails and overall verdict remains reject.",
+      "name": "release-preview-vocabulary-owner-gate"
+    },
+    {
+      "layer": "L1",
+      "source_of_truth": [
+        "docs/design/detailed/09-governance-and-security-detailed-design.md",
+        "contracts/governance/audit/audit.go",
+        "git:c2ed79ccdccc1b6b278270ac767580dfb887c36d:contracts/governance/audit/audit.go",
+        "git:e8b8dfb6430208e4bd32c8134dbb6c19f24ad566:internal/softwaredelivery/preview/decision_writer.go:L363-L379",
+        "git:e8b8dfb6430208e4bd32c8134dbb6c19f24ad566:internal/softwaredelivery/preview/acceptance_test.go:L483-L518"
+      ],
+      "delivery_goal": "Canonical allowed authorization reaches the unchanged governed Preview commit path; incompatible/denied/duplicate/provenance-conflicting evidence fails closed with no partial records.",
+      "covers": [
+        "release-preview-audit-vocabulary-repair"
+      ],
+      "acceptance_refs": [
+        "UJ-RELEASE-CANDIDATE-001",
+        "UJ-PREVIEW-FINAL-ACCEPTANCE-001",
+        "UJ-PREVIEW-REQUEST-CHANGES-001"
+      ],
+      "commands": [
+        {
+          "cmd": "go test -count=1 ./internal/softwaredelivery/release/... ./internal/softwaredelivery/preview/... ./contracts/governance/audit/... ./contracts/governance/credential/...",
+          "exit_code": 0
+        },
+        {
+          "cmd": "go vet ./internal/softwaredelivery/preview/...",
+          "exit_code": 0
+        },
+        {
+          "cmd": "CGO_ENABLED=1 go test -race -count=1 ./internal/softwaredelivery/preview/...",
+          "exit_code": 0
+        },
+        {
+          "cmd": "mkdir -p artifacts/release-preview-audit-vocabulary-repair && go test -json -count=1 ./internal/softwaredelivery/preview/... -run '^(TestPreviewCanonicalAuthorizationAuditAllowsGovernedCommit|TestPreviewCanonicalAuthorizationAuditRejectsNonCanonicalControls|TestPreviewCanonicalAuthorizationAuditRejectsConflictingProvenance)$' > artifacts/release-preview-audit-vocabulary-repair/canonical-audit-tests.json",
+          "exit_code": 0
+        },
+        {
+          "cmd": "python3 -c 'import json; from pathlib import Path; required={'\"'\"'TestPreviewCanonicalAuthorizationAuditRejectsConflictingProvenance'\"'\"', '\"'\"'TestPreviewCanonicalAuthorizationAuditRejectsNonCanonicalControls'\"'\"', '\"'\"'TestPreviewCanonicalAuthorizationAuditAllowsGovernedCommit'\"'\"'}; rows=[json.loads(x) for x in Path('\"'\"'artifacts/release-preview-audit-vocabulary-repair/canonical-audit-tests.json'\"'\"').read_text().splitlines() if x.strip()]; assert {r.get('\"'\"'Test'\"'\"') for r in rows if r.get('\"'\"'Action'\"'\"')=='\"'\"'pass'\"'\"' and r.get('\"'\"'Test'\"'\"') in required}==required; assert not any(r.get('\"'\"'Action'\"'\"') in {'\"'\"'fail'\"'\"','\"'\"'skip'\"'\"'} for r in rows)'",
+          "exit_code": 0
+        }
+      ],
+      "artifacts": [
+        "artifacts/release-preview-audit-vocabulary-repair/canonical-audit-tests.json",
+        "artifacts/release-preview-audit-vocabulary-repair/owner-repair.md"
+      ],
+      "gate": "preview-canonical-audit-compatibility",
+      "status": "pass",
+      "metrics": {
+        "required_canonical_audit_regression_count": 3,
+        "noncanonical_authorization_commit_count": 0,
+        "conflicting_provenance_commit_count": 0
+      },
+      "evidence": "Independent gate commands, metrics and original-owner packaging checks pass. This status describes reproduction only, not artifact acceptance. Producer publication and owner-repair.md are still missing; dimension:evidence fails and overall verdict remains reject.",
+      "name": "preview-canonical-audit-compatibility"
+    }
+  ],
+  "blockers": [
+    {
+      "root_cause_key": "preview-repair-immutable-evidence-not-published",
+      "obligation_id": "dimension:evidence",
+      "classification": "new",
+      "owner": "codex-macmini-newapi",
+      "severity": "high",
+      "summary": "Required release-preview-audit-vocabulary-repair-evidence is not retrievable; owner-repair.md is absent.",
+      "impact": "A local successful rerun cannot establish immutable author artifact lineage or satisfy the explicit repair handoff. The original-owner bundle, transcripts, coverage and before/after repair analysis cannot be independently retrieved as one HEAD-bound delivery; SDK recovery must remain gated.",
+      "evidence": "PR91 at 1dd603b45fe0ef9ac4bbc2ac75b0d1e64f2ed277 changes only acceptance_test.go, decision_writer.go and decision_writer_test.go. git ls-tree -r --name-only HEAD artifacts/release-preview-audit-vocabulary-repair returns no paths. GitHub releases and Actions artifacts are empty; PR comments/reviews provide no alternative artifact location. The issue has only contract, verification and review-obligations YAML attachments; work-show verification declares runtime-relative artifact paths, not retrievable content or URLs. No owner-repair.md or publication index is in the submitted tree. Independently regenerated artifacts exist only in the reviewer checkout and do not replace the required producer delivery.",
+      "required_fix": "Publish the complete immutable release-preview-audit-vocabulary-repair-evidence with a retrievable URL/attachment/index and per-file digests. Include coverage.out, all five-recovery and three-canonical JSON test transcripts, source-bundle.tar.zst, component-manifest.json, bundle-digest.txt, and owner-repair.md with before/after source SHAs, exact patch, environment and command exits, root cause and no-API/security-regression analysis. Preserve owner/component release-preview and bind all published artifacts to the final committed submitted PR HEAD. Resubmit the actual artifact lineage, not local paths or pass counters.",
+      "required_evidence_mode": "artifact"
+    }
+  ],
+  "nits": []
+}

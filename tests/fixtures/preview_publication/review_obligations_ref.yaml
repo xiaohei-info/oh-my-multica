@@ -1,0 +1,26 @@
+- obligation_id: dimension:authority
+  category: dimension
+  requirement: Authoritative inputs and source references
+- obligation_id: dimension:structure
+  category: dimension
+  requirement: Structure, schema, dependency, and completeness
+- obligation_id: dimension:execution
+  category: dimension
+  requirement: Executable commands and fail-closed verification
+- obligation_id: dimension:ownership
+  category: dimension
+  requirement: Ownership, boundaries, and unique write paths
+- obligation_id: dimension:evidence
+  category: dimension
+  requirement: Artifact lineage and evidence traceability
+- obligation_id: dimension:regression
+  category: dimension
+  requirement: Prior blocker regression and changed-scope review
+- obligation_id: integration:preview-canonical-audit-compatibility
+  category: integration
+  requirement: Independently verify integration gate preview-canonical-audit-compatibility
+  subject: preview-canonical-audit-compatibility
+- obligation_id: integration:release-preview-vocabulary-owner-gate
+  category: integration
+  requirement: Independently verify integration gate release-preview-vocabulary-owner-gate
+  subject: release-preview-vocabulary-owner-gate

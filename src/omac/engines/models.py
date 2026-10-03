@@ -136,6 +136,13 @@ class VerificationAttachmentObservation:
 
 
 @dataclass(frozen=True)
+class ReleaseAssetObservation:
+    """Pinned GitHub identities/byte digest; release URLs are not immutable proof."""
+    reference: Dict[str, Any]
+    content: bytes = b""
+
+
+@dataclass(frozen=True)
 class RuntimeCapabilities:
     """Runtime observation/dispatch guarantees exposed to the pipeline."""
 

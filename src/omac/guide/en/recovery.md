@@ -781,3 +781,37 @@ preserve the accepted review and counters instead of fabricating identity fields
 ### Interrupted authoring retry
 
 For an existing reject, `omac node retry <manifest> <node> --stage authoring` persists the complete rework handoff before clearing the old review. A `recovering` intent cannot dispatch a Worker; unknown responses are observed before continuing. After interruption, inspect `omac work show <work-item-id> --output json` and repeat the same retry command to finish the original generation. Do not clear the intent or reset counters. Contract, HEAD, verification-reference or counter drift blocks recovery. Success prepares recovery; normal DAG execution must still deliver, review and merge. Rework text is bounded; read the retained immutable report/ledger refs for full requirements. Cumulative bounce audit counters and retained manifest budget authority are unchanged.
+
+### Preview publication review
+
+`omac node review-publication` is restricted to the Preview publication blocker and
+its intact original reject chain. It reads the original Reviewer tool query and
+fresh immutable comment refs, the latest Worker's accepted terminal submit, and
+all nine release assets (index plus eight files). It pins PR/HEAD, contract,
+actors/Runs, source report/ledger, asset IDs/SHA256/size and unchanged budgets.
+A mutable GitHub release is recorded as mutable; retrievable bytes do not prove
+permanent immutability or close the independent review obligation.
+
+```bash
+omac node review-publication <manifest> release-preview-audit-vocabulary-repair \
+  --index-url '<published evidence-index.json URL>' --reason '<approved scope>' \
+  --output json > publication-review.json
+omac node review-publication <manifest> release-preview-audit-vocabulary-repair \
+  --apply-request publication-review.json \
+  --approve-request-sha256 '<explicitly approved canonical request SHA256>' --output json
+```
+
+Preparation is read-only. Approve the entire generated request, including its
+source tuple; implementation approval alone is not production recovery approval.
+Canonical SHA256 uses sorted compact UTF-8 JSON (`ensure_ascii=False`). Apply
+revalidates every source before each write, seals the latest real Worker delivery,
+and preserves counters and budget authority. It does not dispatch an Agent or
+produce a verdict, merge, or done state. Normal single-controller DAG execution
+must perform the independent review separately. Do not run concurrent controllers
+across hosts: these locks and semantic checks are not distributed atomic CAS.
+
+An interrupted apply leaves a durable pending receipt and blocks Runner tick.
+Resume with the exact same request and digest; do not edit the receipt, clear the
+handoff, retry the Worker, or reset budgets. Changed sources require investigation.
+Consumed requests cannot be applied again. No historical session import or
+hand-written delivery identity is accepted.

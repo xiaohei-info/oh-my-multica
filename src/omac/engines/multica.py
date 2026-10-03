@@ -2572,6 +2572,120 @@ class MulticaStore(WorkItemStore):
             return body
         return self._run_idempotent_read("immutable artifact download", download)
 
+    def read_verification_reference(self, item_id: str, comment_id: str) -> Dict[str, Any]:
+        comments = self._run_idempotent_read(
+            "native verification index",
+            lambda: self._run_multica(["issue", "comment", "list", item_id,
+                                      "--thread", comment_id, "--output", "json", "--full"]),
+        )
+        refs = []
+        for comment in comments if isinstance(comments, list) else []:
+            if comment.get("id") != comment_id:
+                continue
+            for attachment in comment.get("attachments") or []:
+                ref = self._review_attachment_ref(comment, attachment, "verification")
+                if ref:
+                    refs.append(ref)
+        if len(refs) != 1:
+            raise PlatformError("Native source comment must identify exactly one verification attachment")
+        return refs[0]
+
+    def observe_release_assets(self, urls: List[str], *, download: bool = True):
+        """Pin identities and digests; never treat a mutable download URL as immutable."""
+        from urllib.parse import urlsplit
+        from .models import ReleaseAssetObservation
+        if not isinstance(urls, list) or not 1 <= len(urls) <= 9 or len(set(urls)) != len(urls):
+            raise PlatformError("A unique bounded release asset set is required")
+        paths = []
+        for url in urls:
+            parsed = urlsplit(url)
+            match = re.fullmatch(r"/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/releases/download/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)", parsed.path)
+            if parsed.scheme != "https" or parsed.netloc != "github.com" or parsed.query or parsed.fragment or not match:
+                raise PlatformError("Only exact GitHub release download URLs are supported")
+            paths.append(match.groups())
+        owner, repo, tag, _ = paths[0]
+        if any(row[:3] != (owner, repo, tag) for row in paths):
+            raise PlatformError("Release assets must share the exact repository and tag")
+        prefix = f"repos/{owner}/{repo}"
+
+        def api(endpoint, binary=False):
+            def read():
+                try:
+                    result = subprocess.run(
+                        ["gh", "api", "--method", "GET", endpoint, "-H",
+                         "Accept: application/octet-stream" if binary else "Accept: application/vnd.github+json"],
+                        capture_output=True, timeout=60,
+                    )
+                except (OSError, subprocess.TimeoutExpired) as exc:
+                    raise PlatformError(f"Release observation failed: {exc}") from exc
+                if result.returncode:
+                    raise PlatformError("Release observation failed: " +
+                                        (result.stderr or b"").decode("utf-8", errors="replace")[:500])
+                if binary:
+                    return result.stdout
+                try:
+                    return json.loads(result.stdout)
+                except (ValueError, TypeError) as exc:
+                    raise PlatformError("Release API returned invalid JSON") from exc
+            return self._run_idempotent_read("release asset observation", read)
+
+        def observe():
+            release = api(f"{prefix}/releases/tags/{tag}")
+            if not isinstance(release, dict) or release.get("draft") or release.get("tag_name") != tag:
+                raise PlatformError("Release must be published under the exact tag")
+            if type(release.get("id")) is not int or not release.get("node_id") or type(release.get("immutable")) is not bool:
+                raise PlatformError("Release stable identity and immutability flag are unavailable")
+            git_ref = api(f"{prefix}/git/ref/tags/{tag}")
+            obj = git_ref.get("object", {}) if isinstance(git_ref, dict) else {}
+            seen = set()
+            for _ in range(4):
+                if obj.get("type") == "commit":
+                    break
+                sha = obj.get("sha")
+                if obj.get("type") != "tag" or not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{40}", sha) or sha in seen:
+                    raise PlatformError("Release tag does not resolve to a unique commit")
+                seen.add(sha)
+                payload = api(f"{prefix}/git/tags/{sha}")
+                obj = payload.get("object", {}) if isinstance(payload, dict) else {}
+            commit = obj.get("sha")
+            if obj.get("type") != "commit" or not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{40}", commit):
+                raise PlatformError("Release tag commit is unavailable")
+            rows = []
+            for url, (_, _, _, name) in zip(urls, paths):
+                matches = [a for a in release.get("assets", []) if a.get("name") == name]
+                if len(matches) != 1:
+                    raise PlatformError("Release asset is absent or ambiguous: " + name)
+                asset = matches[0]
+                digest = asset.get("digest")
+                if (asset.get("browser_download_url") != url or asset.get("state") != "uploaded"
+                        or type(asset.get("id")) is not int or asset["id"] <= 0
+                        or not asset.get("node_id") or not asset.get("updated_at")
+                        or type(asset.get("size")) is not int or not 0 < asset["size"] <= 16 * 1024 * 1024
+                        or not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest)):
+                    raise PlatformError("Release asset identity, SHA256 or bounded size is unavailable")
+                rows.append({
+                    "url": url, "repository": f"{owner}/{repo}", "release_id": release["id"],
+                    "release_node_id": release["node_id"], "tag": tag, "tag_commit_sha": commit,
+                    "target_commitish": release.get("target_commitish"),
+                    "release_immutable": release["immutable"],
+                    "asset_id": asset["id"], "asset_node_id": asset["node_id"], "name": name,
+                    "updated_at": asset["updated_at"], "sha256": digest[7:], "bytes": asset["size"],
+                })
+            if sum(row["bytes"] for row in rows) > 64 * 1024 * 1024:
+                raise PlatformError("Release asset set exceeds 64 MiB")
+            return rows
+
+        before = observe()
+        bodies = []
+        for row in before:
+            body = api(f"{prefix}/releases/assets/{row['asset_id']}", binary=True) if download else b""
+            if download and (len(body) != row["bytes"] or hashlib.sha256(body).hexdigest() != row["sha256"]):
+                raise PlatformError("Downloaded release asset SHA256 or bytes differ")
+            bodies.append(body)
+        if download and observe() != before:
+            raise PlatformError("Release asset identities changed during download")
+        return [ReleaseAssetObservation(row, body) for row, body in zip(before, bodies)]
+
     def read_pull_request_readiness(
         self, pr_url: str,
     ) -> PullRequestReadiness | PullRequestReadinessFailure:

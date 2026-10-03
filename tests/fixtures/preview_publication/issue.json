@@ -1,0 +1,30 @@
+{
+  "id": "01a0fbda-754c-70c8-8a42-d0449091216b",
+  "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1",
+  "metadata": {
+    "artifacts": "{\"pr_url\": \"https://github.com/xiaohei-info/open-agent-cluster/pull/91\", \"head_sha\": \"1dd603b45fe0ef9ac4bbc2ac75b0d1e64f2ed277\"}",
+    "blocked_by": "[\"release-preview\", \"contracts-credential\"]",
+    "contract_ref": "{\"comment_id\": \"01a0fbda-928b-7148-9e16-5add813be31f\", \"attachment_id\": \"01a0fbda-9193-7299-9ee4-e2184abf703f\", \"sha256\": \"395fb2bc0e42bf8683ce3098898d390d0edf8e91448b91acc24b95948659edec\", \"bytes\": 17727, \"filename\": \"omac-contract-395fb2bc0e42.yaml\"}",
+    "dag_key": "release-preview-audit-vocabulary-repair",
+    "delivery_identity": "{}",
+    "kind": "develop",
+    "machine_feedback_ref": "{}",
+    "phase": "authoring",
+    "review_bounce": 1,
+    "review_comment": "",
+    "review_ledger_generation": "",
+    "review_ledger_ref": "{\"comment_id\": \"01a0fc0a-9402-7c95-b46e-c1877303038e\", \"attachment_id\": \"01a0fc0a-939c-71f6-adf0-a9ebb2742c02\", \"sha256\": \"081af40a3750f49901058ca870e45a0898208d2df38fe1a11967c8f5666ad66b\", \"bytes\": 4439, \"filename\": \"omac-review-ledger-081af40a3750.yaml\"}",
+    "review_obligations_ref": "{\"comment_id\": \"01a0fc04-32a1-72ac-8d8a-7a8249cff1e4\", \"attachment_id\": \"01a0fc04-31c4-77e0-96a0-d9feb8502469\", \"sha256\": \"c1c8be9b9e37783e2a14401244d7b53413ba0e812c3acce28bea7b2bf9be1ac4\", \"bytes\": 1185, \"filename\": \"omac-review-obligations-c1c8be9b9e37.yaml\"}",
+    "review_report_ref": "{}",
+    "review_subject_digest": "",
+    "review_verdict": "",
+    "reviewer": "",
+    "reviewer_run_baseline": "{}",
+    "source_refs": "[{\"issue_id\": \"289a13bf-cede-4b5b-ba86-d72f0bef8164\", \"label\": \"设计方案\"}, {\"issue_id\": \"8e6bd282-6039-41d2-aa00-969a0bf1554a\", \"label\": \"验收文档\"}, {\"issue_id\": \"7255d20c-6e63-4fc3-974c-09e449481219\", \"label\": \"前置开发任务 · Implement ReleaseCandidate and Preview acceptance\"}, {\"issue_id\": \"30335cd6-d2e8-4c9d-8988-7f7b134ed6e9\", \"label\": \"前置开发任务 · Create credential contracts\"}]",
+    "verification_ref": "{\"comment_id\": \"01a0fccb-2b78-78ff-8151-57e8895a298d\", \"attachment_id\": \"01a0fccb-2a9b-77f5-b8a4-776d0c6644a2\", \"sha256\": \"b044e29bcfabd8da6715a179f10e0e64993a44bee7279eee4176268ab7467937\", \"bytes\": 14758, \"filename\": \"omac-verification-b044e29bcfab.yaml\"}",
+    "worker": "codex-macmini-newapi",
+    "worker_bounce": 4,
+    "worker_handoff": "{\"schema\": \"omac.worker-handoff/v1\", \"state\": \"pending\", \"target_worker\": \"codex-macmini-newapi\", \"gate\": \"review\", \"source_review_subject_digest\": \"ef837a3cdfbf7bcbae969da65fdc149ef46261cf710a3bb2644567e4995b4d97\", \"source_review_round\": 1, \"source_review_verdict\": \"reject\", \"source_review_feedback\": {\"schema\": \"omac.worker-rework-feedback/v1\", \"verdict\": \"reject\", \"report_ref\": {\"comment_id\": \"01a0fc0a-9068-76c9-8c4c-1ae1a38dcbc4\", \"attachment_id\": \"01a0fc0a-9004-70d6-9350-c4a888ea9182\", \"sha256\": \"86ac81cad4b4b5bd9a170e8289d925cdd6d6620227dbe876554be1ea9a60f869\", \"bytes\": 22653, \"filename\": \"omac-review-report-86ac81cad4b4.yaml\"}, \"ledger_ref\": {\"comment_id\": \"01a0fc0a-9402-7c95-b46e-c1877303038e\", \"attachment_id\": \"01a0fc0a-939c-71f6-adf0-a9ebb2742c02\", \"sha256\": \"081af40a3750f49901058ca870e45a0898208d2df38fe1a11967c8f5666ad66b\", \"bytes\": 4439, \"filename\": \"omac-review-ledger-081af40a3750.yaml\"}, \"blockers\": [{\"root_cause_key\": \"preview-repair-immutable-evidence-not-published\", \"summary\": \"Required release-preview-audit-vocabulary-repair-evidence is not retrievable; owner-repair.md is absent.\", \"required_fix\": \"Publish the complete immutable release-preview-audit-vocabulary-repair-evidence with a retrievable URL/attachment/index and per-file digests. Include coverage.out, all five-recovery and three-canonical JSON test transcripts, source-bundle.tar.zst, componen\"}]}, \"review_context_binding\": {\"generation\": null, \"contract_sha256\": \"399be97bf1a82711d21194ed7c83e51191892913577816ffcdd4719826301543\"}, \"target_review_bounce\": 1, \"generation\": \"handoff-b5c4fb138fed4b0f\", \"target_agent_id\": \"037ad7f0-98f9-489f-bf43-0d1148233356\", \"baseline_direct_run_ids\": [\"01a0fbdb-2863-76c5-bb32-7fab60b587df\", \"01a0fc04-b1eb-758c-b60e-4fe19e5d3dfb\", \"01a0fc0b-ac3c-7f3b-98d0-1561e8510ca8\", \"01a0fc25-d056-796e-8f00-74536c54aaff\", \"01a0fc64-3269-776c-aa46-f3307c658ddf\", \"01a0fc69-be92-743e-98aa-891ae376b47f\"], \"baseline_cutoff_created_at\": null, \"baseline_verification_attachment_id\": \"01a0fc82-ff9d-7c52-afb2-a8da93e41c38\", \"baseline_pr_head_sha\": \"1dd603b45fe0ef9ac4bbc2ac75b0d1e64f2ed277\", \"target_run_id\": \"01a0fca3-1807-7814-96f0-683b2eff8773\", \"target_worker_bounce\": 4, \"terminal_observed_at\": null}"
+  },
+  "status": "done"
+}

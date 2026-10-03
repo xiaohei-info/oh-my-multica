@@ -1,0 +1,59 @@
+{
+  "schema": "aiteam.evidence-index/v1",
+  "artifact_id": "release-preview-audit-vocabulary-repair-evidence",
+  "component_owner": "release-preview",
+  "dag_key": "release-preview-audit-vocabulary-repair",
+  "source_revision": "1dd603b45fe0ef9ac4bbc2ac75b0d1e64f2ed277",
+  "source_pr": "https://github.com/xiaohei-info/open-agent-cluster/pull/91",
+  "release_url": "https://github.com/xiaohei-info/open-agent-cluster/releases/tag/aiteam-1042-repair-evidence-1dd603b45-r3",
+  "files": [
+    {
+      "path": "release-preview-audit-vocabulary-repair/coverage.out",
+      "url": "https://github.com/xiaohei-info/open-agent-cluster/releases/download/aiteam-1042-repair-evidence-1dd603b45-r3/coverage.out",
+      "sha256": "0dbea4c91cbd479c80f8342c1a106c91a3287992c3fa7a93f728e1f298196ead",
+      "size_bytes": 127303
+    },
+    {
+      "path": "release-preview-audit-vocabulary-repair/preview-recovery-tests.json",
+      "url": "https://github.com/xiaohei-info/open-agent-cluster/releases/download/aiteam-1042-repair-evidence-1dd603b45-r3/preview-recovery-tests.json",
+      "sha256": "eb3a2c602f02994bb54c914942cd66bd542b8c9847d0c272021a4b84cb94428b",
+      "size_bytes": 9466
+    },
+    {
+      "path": "release-preview-audit-vocabulary-repair/canonical-audit-tests.json",
+      "url": "https://github.com/xiaohei-info/open-agent-cluster/releases/download/aiteam-1042-repair-evidence-1dd603b45-r3/canonical-audit-tests.json",
+      "sha256": "68e0ae751d444dd194091a9b38597ce281574ede72be7e89274b723ae4932091",
+      "size_bytes": 16265
+    },
+    {
+      "path": "release-preview-audit-vocabulary-repair/source-bundle.tar.zst",
+      "url": "https://github.com/xiaohei-info/open-agent-cluster/releases/download/aiteam-1042-repair-evidence-1dd603b45-r3/source-bundle.tar.zst",
+      "sha256": "efc76f0786f0d0adf20a5c35c0d74da2a74fd9e31e4cd48f53681a0b097ec790",
+      "size_bytes": 38195
+    },
+    {
+      "path": "release-preview-audit-vocabulary-repair/component-manifest.json",
+      "url": "https://github.com/xiaohei-info/open-agent-cluster/releases/download/aiteam-1042-repair-evidence-1dd603b45-r3/component-manifest.json",
+      "sha256": "72404e9b0b46fec85196ba86c5b72fbf9381dc878bf1dd0d155690b247e342af",
+      "size_bytes": 2034
+    },
+    {
+      "path": "release-preview-audit-vocabulary-repair/bundle-digest.txt",
+      "url": "https://github.com/xiaohei-info/open-agent-cluster/releases/download/aiteam-1042-repair-evidence-1dd603b45-r3/bundle-digest.txt",
+      "sha256": "95a7cdd1e83fbe0a8afe5cff82aab5a566a84dd7090e035b3293ed4082b9a847",
+      "size_bytes": 65
+    },
+    {
+      "path": "release-preview-audit-vocabulary-repair/owner-repair.md",
+      "url": "https://github.com/xiaohei-info/open-agent-cluster/releases/download/aiteam-1042-repair-evidence-1dd603b45-r3/owner-repair.md",
+      "sha256": "c3cab67dbc765c9dbf4c5e13bb3837a72f13f3d1ce86c9792404f36c66894465",
+      "size_bytes": 23964
+    },
+    {
+      "path": "release-preview-audit-vocabulary-repair/verification.yaml",
+      "url": "https://github.com/xiaohei-info/open-agent-cluster/releases/download/aiteam-1042-repair-evidence-1dd603b45-r3/verification.yaml",
+      "sha256": "b044e29bcfabd8da6715a179f10e0e64993a44bee7279eee4176268ab7467937",
+      "size_bytes": 14758
+    }
+  ]
+}
