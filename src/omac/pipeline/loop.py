@@ -2036,12 +2036,23 @@ def _dispatch_reviewer_for_current_subject_locked(
         raise _ReviewerDispatchUnresolved(
             "persisted reviewer assignment has no uniquely observable target Run")
 
+    assignment = (current.reviewer, current.platform_assignee_id)
     _refresh_develop_issue_body(
         store, manifest, key, phase=TaskPhase.REVIEW)
     store.update_status(item_id, WorkItemStatus.IN_REVIEW)
     if _guard_reviewer_dispatch_control(
         store, manifest, key, item_id) is not None:
         return False
+    current = store.get_work_item(item_id)
+    _validate_controller_sealed_delivery(store, current)
+    if (
+        _review_subject_for_current_delivery(manifest, key, current) != subject_digest
+        or current.reviewer_run_baseline != baseline
+        or current.phase != TaskPhase.REVIEW
+        or current.status != WorkItemStatus.IN_REVIEW
+        or (current.reviewer, current.platform_assignee_id) != assignment
+    ):
+        raise PlatformError("Reviewer source or Run baseline changed before dispatch")
     dispatched = runtime.dispatch_reviewer(store, item_id, node.reviewer)
     if not dispatched:
         _guard_reviewer_dispatch_control(store, manifest, key, item_id)
@@ -4089,6 +4100,21 @@ def collect_results(
                             store, manifest, manifest_path, key, item,
                             "reviewer-run-dispatch-unresolved",
                             "persisted retry generation has no target Run")
+                        continue
+                    if (
+                        observed.state == "missing"
+                        and baseline.attempt == 1
+                        and baseline.target_run_id is None
+                        and item.status == WorkItemStatus.IN_REVIEW
+                        and item.phase == TaskPhase.REVIEW
+                        and not item.reviewer
+                        and not item.platform_assignee_id
+                    ):
+                        # A current subject can be prepared without dispatching.
+                        # Reuse guarded initial dispatch; assigned or bound
+                        # attempts stay on their existing observation path.
+                        pending_review.append(
+                            (key, node.work_item_id, node.reviewer))
                         continue
                     reviewer_terminal = observed.terminal
                     retry_kind = None

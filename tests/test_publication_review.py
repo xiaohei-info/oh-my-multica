@@ -684,3 +684,261 @@ def test_real_adapter_pins_assets_and_rejects_changed_native_facts(
     else:
         with pytest.raises(PlatformError):
             store.observe_release_assets([url])
+
+
+@pytest.fixture
+def collected_review(case):
+    from types import MethodType
+    from omac.engines.runtime import AgentRuntime
+
+    c = case
+    request = prepare(c)
+    apply(c, request)
+    c.manifest = load_manifest(c.path)
+    c.runtime.capabilities.stable_direct_run_identity = True
+    c.runtime.dispatch_reviewer = MethodType(AgentRuntime.dispatch_reviewer, c.runtime)
+    c.runtime.wake_reviewer = MethodType(AgentRuntime.wake_reviewer, c.runtime)
+    runs = c.runtime.list_runs.return_value
+    reviewer_id = c.store.resolve_agent_id("hermes-reviewer")
+
+    def wake(iid, agent, role):
+        assert (iid, agent, role) == (c.item.id, "hermes-reviewer", "reviewer")
+        runs.append(
+            AgentRunObservation(
+                id="new-formal-reviewer",
+                kind="direct",
+                status="running",
+                agent_id=reviewer_id,
+                created_at="2026-10-03T02:29:00Z",
+                trigger_kind="rerun",
+            )
+        )
+
+    c.runtime.wake = Mock(side_effect=wake)
+    c.runtime.is_active.side_effect = lambda _: any(r.active for r in runs)
+    c.store.assign_work_item = Mock(wraps=c.store.assign_work_item)
+    return c
+
+
+def normal_review_collection(c):
+    from omac.pipeline import loop
+
+    observed = loop.reconcile_with_observations(c.store, c.manifest, c.path)
+    return loop.collect_results(
+        c.store, c.runtime, c.manifest, c.path, observations=observed.observations
+    )
+
+
+@pytest.mark.parametrize("persisted_baseline", [False, True])
+def test_applied_publication_enters_normal_reviewer_dispatch(
+    collected_review, persisted_baseline
+):
+    from omac.core.taskmeta import ReviewerRunBaseline
+
+    c = collected_review
+    if persisted_baseline:
+        c.item.reviewer_run_baseline = ReviewerRunBaseline(
+            schema="omac.reviewer-run-baseline/v1",
+            subject_digest=c.item.review_subject_digest,
+            target_reviewer="hermes-reviewer",
+            target_agent_id=c.store.resolve_agent_id("hermes-reviewer"),
+            cutoff_created_at=c.item.delivery_identity.verification_created_at,
+            generation="review-5d159f823ee463da",
+            baseline_direct_run_ids=("01a0fc04-b1eb-758c-b60e-4fe19e5d3dfb",),
+        )
+    before = deepcopy(c.item)
+    journal = deepcopy(c.manifest.meta[JOURNAL])
+    assert normal_review_collection(c) == {}
+    c.store.assign_work_item.assert_called_once_with(
+        c.item.id, "hermes-reviewer", "reviewer", start_run=False
+    )
+    c.runtime.wake.assert_called_once()
+    assert normal_review_collection(c) == {}
+    assert normal_review_collection(c) == {}
+    assert c.runtime.wake.call_count == 1
+    assert c.store.assign_work_item.call_count == 1
+    assert c.item.reviewer_run_baseline.target_run_id == "new-formal-reviewer"
+    if persisted_baseline:
+        assert (
+            c.item.reviewer_run_baseline.generation
+            == before.reviewer_run_baseline.generation
+        )
+    assert c.item.review_subject_digest == before.review_subject_digest
+    assert c.item.review_obligations == before.review_obligations
+    assert c.item.review_ledger == before.review_ledger
+    assert c.item.review_ledger_ref == before.review_ledger_ref
+    assert c.item.delivery_identity == before.delivery_identity
+    assert c.item.bounces == before.bounces
+    assert c.item.bounce_baseline == before.bounce_baseline
+    assert c.manifest.meta[JOURNAL] == journal
+    assert c.item.review_verdict is None
+
+
+@pytest.mark.parametrize(
+    "status,bound",
+    [
+        ("running", False),
+        ("running", True),
+        ("completed", False),
+        ("completed", True),
+        ("missing", True),
+    ],
+)
+def test_existing_reviewer_attempt_is_not_initial_dispatch(
+    collected_review, monkeypatch, status, bound
+):
+    from omac.pipeline import loop
+
+    c = collected_review
+    reviewer_id = c.store.resolve_agent_id("hermes-reviewer")
+    baseline, error = loop._reviewer_run_baseline_for_observation(
+        c.store, c.runtime, c.manifest, KEY, c.item, "hermes-reviewer", reviewer_id
+    )
+    assert error is None
+    if bound:
+        c.item.reviewer_run_baseline = replace(
+            baseline, target_run_id="existing-review"
+        )
+    if status != "missing":
+        c.runtime.list_runs.return_value.append(
+            AgentRunObservation(
+                id="existing-review",
+                kind="direct",
+                status=status,
+                agent_id=reviewer_id,
+                created_at="2026-10-03T02:29:00Z",
+                updated_at="2026-10-03T02:30:00Z" if status == "completed" else None,
+                trigger_kind="rerun",
+            )
+        )
+    monkeypatch.setattr(loop, "_reviewer_no_submit_grace_state", lambda *_: "waiting")
+    normal_review_collection(c)
+    c.store.assign_work_item.assert_not_called()
+    c.runtime.wake.assert_not_called()
+    assert c.item.reviewer_run_baseline.target_run_id == "existing-review"
+
+
+@pytest.mark.parametrize(
+    "boundary", ["assignment-before", "assignment-after", "wake-before", "wake-after"]
+)
+def test_prepared_dispatch_unknown_response_does_not_duplicate(
+    collected_review, monkeypatch, boundary
+):
+    from omac.pipeline import loop
+
+    c = collected_review
+    monkeypatch.setattr(loop.time, "sleep", lambda *_: None)
+    original_assign = c.store.assign_work_item
+    original_wake = c.runtime.wake.side_effect
+
+    def assign(*args, **kwargs):
+        if boundary == "assignment-after":
+            original_assign(*args, **kwargs)
+        raise PlatformError("unknown assignment response")
+
+    def wake(*args, **kwargs):
+        if boundary == "wake-after":
+            original_wake(*args, **kwargs)
+        raise PlatformError("unknown wake response")
+
+    if boundary.startswith("assignment"):
+        c.store.assign_work_item = Mock(side_effect=assign)
+    else:
+        c.runtime.wake.side_effect = wake
+    obligations = deepcopy(c.item.review_obligations)
+    counters = deepcopy(c.item.bounces)
+    failures = normal_review_collection(c)
+    assert failures and c.item.decision_required
+    first_assignment = c.store.assign_work_item.call_count
+    first_wake = c.runtime.wake.call_count
+    c.manifest = load_manifest(c.path)
+    normal_review_collection(c)
+    assert c.store.assign_work_item.call_count == first_assignment
+    assert c.runtime.wake.call_count == first_wake
+    assert c.item.review_obligations == obligations
+    assert c.item.bounces == counters
+    assert (
+        c.manifest.meta[JOURNAL][next(iter(c.manifest.meta[JOURNAL]))]["state"]
+        == "consumed"
+    )
+
+
+@pytest.mark.parametrize(
+    "drift",
+    [
+        "decision",
+        "head",
+        "verification",
+        "cutoff",
+        "phase",
+        "status",
+        "assignee",
+        "baseline",
+    ],
+)
+def test_prepared_dispatch_rechecks_fresh_control_and_seal(collected_review, drift):
+    c = collected_review
+    observe = c.store.observe_work_item_control
+    count = 0
+
+    def changed(iid):
+        nonlocal count
+        result = observe(iid)
+        count += 1
+        # Initial reconcile reads the intact source; dispatch must see the newer fact.
+        if count == 2:
+            if drift == "decision":
+                c.item.decision_required = {"reason_code": "external-stop"}
+            elif drift == "head":
+                c.item.artifacts["head_sha"] = "f" * 40
+            elif drift == "verification":
+                original = c.blobs[c.item.verification_ref["attachment_id"]]
+                c.blobs["changed-reference"] = replace(
+                    original, attachment_id="changed-reference"
+                )
+                c.item.verification_ref["attachment_id"] = "changed-reference"
+            elif drift == "phase":
+                c.item.phase = TaskPhase.CONFIRMATION
+            elif drift == "status":
+                c.item.status = WorkItemStatus.DONE
+            elif drift == "assignee":
+                c.item.platform_assignee_id = "foreign-agent"
+            elif drift == "baseline":
+                c.item.reviewer_run_baseline = replace(
+                    c.item.reviewer_run_baseline, generation="foreign-generation"
+                )
+            else:
+                c.item.delivery_identity = replace(
+                    c.item.delivery_identity,
+                    verification_created_at="2026-10-02T13:27:08Z",
+                )
+        return result
+
+    c.store.observe_work_item_control = changed
+    assert normal_review_collection(c)
+    c.store.assign_work_item.assert_not_called()
+    c.runtime.wake.assert_not_called()
+
+
+def test_ambiguous_prepared_reviewer_assignment_is_observed_not_woken(
+    collected_review, monkeypatch
+):
+    from omac.pipeline import loop
+
+    c = collected_review
+    c.item.reviewer = "hermes-reviewer"
+    c.item.platform_assignee_id = c.store.resolve_agent_id("hermes-reviewer")
+    monkeypatch.setattr(loop.time, "sleep", lambda *_: None)
+    assert normal_review_collection(c) == {}
+    assert c.item.decision_required in (None, {})
+    c.store.assign_work_item.assert_not_called()
+    c.runtime.wake.assert_not_called()
+
+
+def test_prepared_confirmation_is_not_a_reviewer_dispatch(collected_review):
+    c = collected_review
+    c.item.phase = TaskPhase.CONFIRMATION
+    normal_review_collection(c)
+    c.store.assign_work_item.assert_not_called()
+    c.runtime.wake.assert_not_called()
+    assert c.item.phase == TaskPhase.CONFIRMATION
