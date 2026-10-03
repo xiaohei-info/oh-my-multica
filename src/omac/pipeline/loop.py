@@ -4833,6 +4833,8 @@ def tick(
     与「自动重试」不同 —— tick 不会把已 blocked 节点重置为 todo
     (必须经 `omac node retry` 显式决策);retry_limits 是节点内的有界往返。
     """
+    from .publication_review import ensure_publication_review_complete
+    ensure_publication_review_complete(manifest, manifest_path)
     ensure_amendment_apply_complete(manifest, manifest_path)
     manifest._recovery_manifest_path = manifest_path
 

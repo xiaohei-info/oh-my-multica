@@ -521,6 +521,14 @@ class WorkItemStore(ABC):
         """Read a supported immutable published artifact; unsupported engines fail closed."""
         raise PlatformError("This Store cannot independently read immutable published artifacts")
 
+    def observe_release_assets(self, urls: List[str], *, download: bool = True):
+        """Read exact release/asset identities and optionally verify their bytes."""
+        raise PlatformError("This Store cannot observe pinned release assets")
+
+    def read_verification_reference(self, item_id: str, comment_id: str) -> Dict[str, Any]:
+        """Read the one original verification reference in a native comment."""
+        raise PlatformError("This Store cannot read the native verification index")
+
     # ==================== 便捷方法(基类实现) ====================
 
     def check_member_exists(self, workspace_id: str, member_name: str) -> bool:
