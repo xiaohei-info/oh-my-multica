@@ -3615,9 +3615,10 @@ def collect_results(
                     f"Fresh reconcile observation is missing for running node {key}")
             required = _build_work_item_hydration_plan(node, projection)
             if key in reserved_keys:
-                projection = store.hydrate_work_item_evidence(
-                    projection, frozenset(WorkItemPayload))
+                projection = _hydrate_work_item_payloads(
+                    store, projection, frozenset(WorkItemPayload))
                 required = frozenset(WorkItemPayload)
+                _validate_structured_recovery_payloads(projection, required)
             missing = required & projection.deferred_payloads
             if missing:
                 names = ", ".join(sorted(payload.value for payload in missing))
