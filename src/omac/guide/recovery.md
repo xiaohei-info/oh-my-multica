@@ -697,3 +697,5 @@ Unknown 写结果先读回并持久化已观察步骤，再安全续接同一批
 只返回已消费，不重置新 cycle、不回退计数或重复派发。pending 时出现新提交、Run、合同、
 generation、计数、预算或 done/merged 漂移均拒绝，不能以通用 amendment 绕过该门。
 宿主锁不是跨主机原子 CAS；保持单一 Controller，pending 请求完成并核对结果前不要恢复执行。
+
+恢复 receipt 在清除 assignment 后允许 Multica 的 `reviewer=""` 和 Mock 的 `None` 两种已清除表示，仅用于该 receipt 后续状态的观测；原请求和其余控制事实仍按原值比较。若 clear 已接受但回执仍为 pending/step0，重用相同请求和批准摘要，先观测并 checkpoint 已发生的 clear，再继续下一步；不重新清除、重开周期或调整预算。
