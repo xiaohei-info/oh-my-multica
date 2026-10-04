@@ -3,6 +3,7 @@
 from copy import deepcopy
 from dataclasses import asdict, is_dataclass
 from enum import Enum
+from datetime import datetime, timezone
 import hashlib
 import json
 
@@ -466,3 +467,341 @@ def apply_operator_review_recovery(
         "verdict": None,
         "next_action": f"Inspect receipt, then use omac dag run {manifest_path} under the single controller",
     }
+
+
+DISPATCH_JOURNAL = "operator_review_reservation_dispatch"
+
+
+def _reservation_candidates(manifest, key):
+    """Completed history is retained but cannot authorize another dispatch."""
+    entries = manifest.meta.get(JOURNAL, {})
+    progress = manifest.meta.get(DISPATCH_JOURNAL, {})
+    if not isinstance(entries, dict) or not isinstance(progress, dict):
+        return []
+    return [
+        (token, entry)
+        for token, entry in entries.items()
+        if isinstance(entry, dict)
+        and isinstance(entry.get("request"), dict)
+        and entry["request"].get("node_id") == key
+        and entry.get("state") == "consumed"
+        and (
+            not isinstance(progress.get(token), dict)
+            or progress[token].get("step") != "complete"
+        )
+    ]
+
+
+def reservation_candidate(manifest, key):
+    """Select only for validation; neither receipt state nor marker is authority."""
+    return bool(_reservation_candidates(manifest, key))
+
+
+def _reservation_source(store, runtime, manifest, key, config, record):
+    """Prove full consumed request and protected current facts before each effect."""
+    from .loop import _classify_reviewer_recovery_decision
+
+    matches = _reservation_candidates(manifest, key)
+    if len(matches) != 1:
+        _fail("one complete consumed infrastructure reservation is required")
+    token, entry = matches[0]
+    request = entry["request"]
+    if (
+        entry.get("step") != 4
+        or entry.get("request_sha256") != token
+        or _digest(request) != token
+        or request.get("schema") != SCHEMA
+    ):
+        _fail("consumed receipt/request digest or stage changed")
+    try:
+        source = request["source"]
+        states, reserved = _states(request, token)
+    except (KeyError, TypeError, ValueError):
+        _fail("consumed reservation source is malformed")
+    node = manifest.nodes[key]
+    node_state = _plain(node)
+    expected_node = deepcopy(source["node"])
+    if node.status not in {"blocked", "in_review"} or node.merged:
+        _fail("reserved review is done/merged or no longer review-stage")
+    node_state["status"] = expected_node["status"]
+    node_state["recovery_marker"] = expected_node["recovery_marker"]
+    if node_state != expected_node:
+        _fail("reserved node/contract/source changed")
+    current = store.get_work_item(source["control"]["id"])
+    expected = deepcopy(states[-1])
+    observed = _control(current)
+    decision_class = _classify_reviewer_recovery_decision(
+        getattr(manifest, "_recovery_manifest_path", ""), key, current
+    )
+    if current.decision_required not in (None, {}):
+        if record and record.get("step") != "release":
+            _fail("new decision stopped the reserved Reviewer dispatch")
+        if (
+            decision_class != "canonical-baseline-unavailable"
+            or current.decision_required.get("reason_code")
+            != "reviewer-run-dispatch-unresolved"
+        ):
+            _fail("current decision is not the exact reserved dispatch guard")
+        expected["decision_required"] = deepcopy(current.decision_required)
+    if current.status == WorkItemStatus.BLOCKED:
+        if current.decision_required in (None, {}) and not (
+            record
+            and record.get("step") == "release"
+            and record.get("release_status_attempted")
+        ):
+            _fail("platform BLOCKED is not the exact reserved dispatch decision")
+        if record and record.get("step") != "release":
+            _fail("platform BLOCKED stopped the reserved Reviewer dispatch")
+        expected["status"] = "blocked"
+    elif current.status != WorkItemStatus.IN_REVIEW:
+        _fail("reserved review control status changed")
+    step = record.get("step") if record else None
+    if step == "assign":
+        # Assignment metadata can precede the suppressed platform assignment.
+        if current.reviewer == node.reviewer:
+            expected["reviewer"] = node.reviewer
+        if current.platform_assignee_id == reserved["target_agent_id"]:
+            expected["platform_assignee_id"] = reserved["target_agent_id"]
+    elif step in {"assigned", "wake", "binding"}:
+        expected["reviewer"] = node.reviewer
+        expected["platform_assignee_id"] = reserved["target_agent_id"]
+    if (
+        step == "binding"
+        and record.get("target_run_id")
+        and current.reviewer_run_baseline.target_run_id == record["target_run_id"]
+    ):
+        expected["reviewer_run_baseline"]["target_run_id"] = record["target_run_id"]
+    if not _same_control(observed, expected, assignment_cleared=True):
+        _fail("protected reserved control/source/subject/generation/budget drift")
+    if record:
+        if manifest.meta.get(DISPATCH_JOURNAL, {}).get(
+            token
+        ) is not record or record.get("checkpoint_sha256") != _digest(
+            {k: v for k, v in record.items() if k != "checkpoint_sha256"}
+        ):
+            _fail("dispatch checkpoint changed before effect")
+        if (
+            record.get("request_sha256") != token
+            or record.get("reservation") != reserved
+        ):
+            _fail("dispatch checkpoint does not identify the complete reservation")
+        if (
+            _digest(manifest.meta.get("amendment_apply"))
+            != record["approved_meta_sha256"]
+        ):
+            _fail("approved retained budgets changed during reservation dispatch")
+        for done_key, sha in record["done_nodes"].items():
+            if (
+                done_key not in manifest.nodes
+                or _digest(_plain(manifest.nodes[done_key])) != sha
+            ):
+                _fail("a protected complete DONE object changed")
+    runs = runtime.list_runs(current.id)
+    if not isinstance(runs, list) or any(
+        not isinstance(r, AgentRunObservation) for r in runs
+    ):
+        _fail("complete stable native Run observations unavailable")
+    if len({r.id for r in runs}) != len(runs):
+        _fail("ambiguous native Run identities")
+    original_ids = {r["id"] for r in source["runs"]}
+    original_runs = [r for r in runs if r.id in original_ids]
+    fresh = [r for r in runs if r.id not in original_ids]
+    if _plain(sorted(original_runs, key=lambda r: r.id)) != source["runs"]:
+        _fail("original native Run facts changed or disappeared")
+    # Revalidate original authorization through the existing complete guard.
+    original = deepcopy(current)
+    original.reviewer = source["control"]["reviewer"]
+    original.platform_assignee_id = source["control"]["platform_assignee_id"]
+    original.status = WorkItemStatus.BLOCKED
+    original.decision_required = deepcopy(source["control"]["decision_required"])
+    original.reviewer_run_baseline = ReviewerRunBaseline(
+        **source["control"]["reviewer_run_baseline"]
+    )
+    verify_manifest = deepcopy(manifest)
+    verify_manifest.nodes[key].status = "blocked"
+
+    class OriginalRuns:
+        capabilities = runtime.capabilities
+
+        def list_runs(self, _item_id):
+            return original_runs
+
+    budget, frozen_runs, ids, next_attempt = _verify(
+        store, OriginalRuns(), verify_manifest, key, original, config
+    )
+    if (
+        budget != source["budget"]
+        or frozen_runs != source["runs"]
+        or ids != source["next_baseline_ids"]
+        or next_attempt != source["next_attempt"]
+    ):
+        _fail("reserved effective absolute/relative budgets or causal source changed")
+    if fresh:
+        if step not in {"wake", "binding"} or len(fresh) != 1:
+            _fail(
+                "new delayed/active/queued/unknown or ambiguous Run before owned wake"
+            )
+        target = fresh[0]
+        from .loop import _parse_platform_time
+
+        created = _parse_platform_time(target.created_at)
+        wake_started = _parse_platform_time(record.get("wake_started_at"))
+        if (
+            created is None
+            or created.tzinfo is None
+            or wake_started is None
+            or wake_started.tzinfo is None
+            or created < wake_started
+        ):
+            _fail("delayed native Run predates this owned wake intent")
+        if (
+            not target.formal
+            or target.agent_id != reserved["target_agent_id"]
+            or target.status not in {"running", "completed", "failed", "cancelled"}
+        ):
+            _fail("unproven native reservation wake outcome")
+        observed_run = _observe_direct_run_attempt(
+            runs,
+            reserved["target_agent_id"],
+            baseline_direct_run_ids=reserved["baseline_direct_run_ids"],
+            cutoff_created_at=reserved["cutoff_created_at"],
+            attempt=reserved["attempt"],
+        )
+        actual, error = _formal_dispatch_target(runs, observed_run)
+        if error or actual.id != target.id:
+            _fail(error or "reservation target is not unique")
+    else:
+        target = None
+    return token, current, reserved, target
+
+
+def dispatch_operator_reservation(store, runtime, manifest, manifest_path, key, config):
+    """Once-only assignment/wake for a fully proven consumed reservation."""
+    manifest._recovery_manifest_path = manifest_path
+    entries = manifest.meta.get(DISPATCH_JOURNAL, {})
+    if not isinstance(entries, dict):
+        _fail("reservation dispatch journal is malformed")
+    candidates = _reservation_candidates(manifest, key)
+    record = entries.get(candidates[0][0]) if len(candidates) == 1 else None
+    if record is not None and (
+        not isinstance(record, dict)
+        or record.get("schema") != "omac.operator-review-reservation-dispatch/v1"
+        or record.get("checkpoint_sha256")
+        != _digest({k: v for k, v in record.items() if k != "checkpoint_sha256"})
+        or not isinstance(record.get("done_nodes"), dict)
+        or not isinstance(record.get("approved_meta_sha256"), str)
+        or type(record.get("release_status_attempted")) is not bool
+        or type(record.get("release_decision_attempted")) is not bool
+        or record.get("step")
+        not in {"release", "ready", "assign", "assigned", "wake", "binding"}
+    ):
+        _fail("reservation dispatch checkpoint is malformed")
+    token, current, reserved, target = _reservation_source(
+        store, runtime, manifest, key, config, record
+    )
+    if record is None:
+        record = {
+            "schema": "omac.operator-review-reservation-dispatch/v1",
+            "release_status_attempted": False,
+            "release_decision_attempted": False,
+            "request_sha256": token,
+            "reservation": deepcopy(reserved),
+            "step": "release",
+            "approved_meta_sha256": _digest(manifest.meta.get("amendment_apply")),
+            "done_nodes": {
+                k: _digest(_plain(n))
+                for k, n in manifest.nodes.items()
+                if n.status == "done"
+            },
+        }
+        record["checkpoint_sha256"] = _digest(record)
+        manifest.meta.setdefault(DISPATCH_JOURNAL, {})[token] = record
+        save_manifest(manifest, manifest_path)
+
+    def verify():
+        return _reservation_source(store, runtime, manifest, key, config, record)
+
+    def checkpoint(step):
+        record["step"] = step
+        record["checkpoint_sha256"] = _digest(
+            {k: v for k, v in record.items() if k != "checkpoint_sha256"}
+        )
+        save_manifest(manifest, manifest_path)
+
+    if record["step"] == "release":
+        if current.status == WorkItemStatus.BLOCKED:
+            verify()
+            if record["release_status_attempted"]:
+                raise PlatformError(
+                    "Reserved status release outcome pending; observe before retry"
+                )
+            record["release_status_attempted"] = True
+            checkpoint("release")
+            store.update_status(current.id, WorkItemStatus.IN_REVIEW)
+        _, current, _, _ = verify()
+        if current.decision_required not in (None, {}):
+            verify()
+            if record["release_decision_attempted"]:
+                raise PlatformError(
+                    "Reserved decision release outcome pending; observe before retry"
+                )
+            record["release_decision_attempted"] = True
+            checkpoint("release")
+            store.update_work_item_metadata(current.id, decision_required={})
+        _, current, _, _ = verify()
+        if (
+            current.status != WorkItemStatus.IN_REVIEW
+            or current.decision_required not in (None, {})
+        ):
+            raise PlatformError(
+                "Reserved review release not yet observable; observe the same dispatch checkpoint"
+            )
+        manifest.nodes[key].status = "in_review"
+        checkpoint("ready")
+    if record["step"] == "ready":
+        verify()
+        checkpoint("assign")  # Persist before an assignment can be accepted.
+        store.assign_reviewer(
+            current.id, manifest.nodes[key].reviewer, admission=verify
+        )
+    if record["step"] == "assign":
+        _, current, _, _ = verify()
+        if (
+            current.reviewer != reserved["target_reviewer"]
+            or current.platform_assignee_id != reserved["target_agent_id"]
+        ):
+            raise PlatformError(
+                "Reserved suppressed assignment outcome pending; observe before any retry"
+            )
+        checkpoint("assigned")
+    if record["step"] == "assigned":
+        verify()
+        record["wake_started_at"] = datetime.now(timezone.utc).isoformat()
+        checkpoint("wake")  # A missing outcome never permits another wake.
+        runtime.wake_reviewer(
+            store, current.id, manifest.nodes[key].reviewer, admission=verify
+        )
+    _, current, reserved, target = verify()
+    if target is None:
+        raise PlatformError(
+            "Reserved Reviewer wake outcome pending; do not dispatch another Run"
+        )
+    if (
+        current.reviewer != reserved["target_reviewer"]
+        or current.platform_assignee_id != reserved["target_agent_id"]
+    ):
+        _fail("owned Reviewer assignment changed before binding native target")
+    if record["step"] == "wake":
+        record["target_run_id"] = target.id
+        checkpoint("binding")
+    if current.reviewer_run_baseline.target_run_id != target.id:
+        verify()
+        store.update_work_item_metadata(
+            current.id,
+            reviewer_run_baseline=ReviewerRunBaseline(
+                **{**reserved, "target_run_id": target.id}
+            ),
+        )
+    verify()
+    checkpoint("complete")
+    return True

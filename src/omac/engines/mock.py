@@ -1301,7 +1301,7 @@ class MockRuntime(AgentRuntime):
         return RuntimeCapabilities(stable_direct_run_identity=True)
 
     def wake_reviewer(
-        self, store, item_id: str, agent: str,
+        self, store, item_id: str, agent: str, *, admission=None,
     ) -> bool:
         """Create the mock Run at the guarded wake boundary before callbacks."""
         from .store import reviewer_dispatch_stopped
@@ -1310,6 +1310,8 @@ class MockRuntime(AgentRuntime):
             current = store.observe_work_item_control(item_id).work_item
             if reviewer_dispatch_stopped(current):
                 return False
+            if admission is not None:
+                admission()
             agent_id = store.resolve_agent_id(agent)
             before_ids = {
                 run.id for run in _shared_runs.get(item_id, [])
@@ -1325,6 +1327,8 @@ class MockRuntime(AgentRuntime):
                 current = store.observe_work_item_control(item_id).work_item
                 if reviewer_dispatch_stopped(current):
                     return False
+                if admission is not None:
+                    admission()
                 store._start_assigned_run(
                     item_id, agent_id, "rerun", allow_foreign_active=True)
             current = store.observe_work_item_control(item_id).work_item

@@ -699,3 +699,7 @@ generation、计数、预算或 done/merged 漂移均拒绝，不能以通用 am
 宿主锁不是跨主机原子 CAS；保持单一 Controller，pending 请求完成并核对结果前不要恢复执行。
 
 恢复 receipt 在清除 assignment 后允许 Multica 的 `reviewer=""` 和 Mock 的 `None` 两种已清除表示，仅用于该 receipt 后续状态的观测；原请求和其余控制事实仍按原值比较。若 clear 已接受但回执仍为 pending/step0，重用相同请求和批准摘要，先观测并 checkpoint 已发生的 clear，再继续下一步；不重新清除、重开周期或调整预算。
+
+已 consumed/step4 的基础设施 review 恢复不代表已经派发 Reviewer。正常 result collection 会根据完整原请求、receipt、当前封存交付、subject/generation、Run 集合和有效预算验证原 reservation；只有未派发且完全匹配的 reservation 才能保留原 attempt、generation 和排除 Run 集合进入既有 guarded assignment/wake。当前 canonical `reviewer-run-dispatch-unresolved` 可在该验证下解除，任意其他 decision 不解除。
+
+独立的 `operator_review_reservation_dispatch` 持久记录释放、suppressed assignment、wake 和 native target 绑定，不修改原 consumed receipt。每次 effect 前都复核原 source 和当前完整 DONE/批准预算事实，guarded assignment/wake 的锁内最终读取也执行 admission 复核。未知结果只观察同一 intent；assignment 或 wake 尚未证明时不重复调用，也不清除 baseline、重开周期或回退 attempt。新 Run 必须是 intent 后唯一的正式当前 Reviewer Run；已有 submitted/delayed/active/queued/unknown/ambiguous 或 source/control/budget 漂移不会获得新的派发许可。锁为 host-local，不能声称分布式 atomic CAS；单 Controller 是前置。
