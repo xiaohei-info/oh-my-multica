@@ -161,6 +161,7 @@ def register(parser):
     propose.add_argument("--reviewer", action="append", help="Reviewer agent；可重复，缺省读 roles.reviewers")
     propose.add_argument("--max-revisions", type=int, help="Orchestrator↔Reviewer 最大修订轮次")
     propose.add_argument("--output-file", help="reviewed amendment 输出文件")
+    propose.add_argument("--owner-request-file", help="Exact explicitly resolved source-bound owner assessment request")
     propose.add_argument("--resume-issue-id", help="恢复已有 amendment issue，不新建")
     propose.add_argument(
         "--restart-authoring",
@@ -179,6 +180,24 @@ def register(parser):
     propose.add_argument("--engine", help="引擎类型覆盖")
     propose.add_argument("--workspace", help="workspace 覆盖")
     add_output_flag(propose, default="json")
+
+    owner_prepare = amend_sub.add_parser("prepare-owner", help="Read-only full source-bound minimal amendment assessment request")
+    owner_prepare.add_argument("manifest")
+    owner_prepare.add_argument("--blocked-node", action="append", required=True)
+    owner_prepare.add_argument("--allowed-node", action="append", required=True)
+    owner_prepare.add_argument("--report-file", required=True)
+    owner_prepare.add_argument("--docs", action="append", required=True)
+    owner_prepare.add_argument("--output-file", required=True)
+    owner_resolve = amend_sub.add_parser("resolve-owner", help="Explicit exact coordinator resolution for assessment only")
+    owner_resolve.add_argument("manifest")
+    owner_resolve.add_argument("request_file")
+    owner_resolve.add_argument("--request-sha256", required=True)
+    owner_resolve.add_argument("--authority", required=True)
+    owner_resolve.add_argument("--reason", required=True)
+    for owner_parser in (owner_prepare, owner_resolve):
+        owner_parser.add_argument("--engine")
+        owner_parser.add_argument("--workspace")
+        add_output_flag(owner_parser, default="json")
 
     budget_preview = amend_sub.add_parser("budget-preview", help="Read-only existing recovery budgets and renewal comparison")
     budget_preview.add_argument("manifest")
@@ -575,6 +594,19 @@ def _amend_locked(args) -> int:
     engine, _ = _assemble_engine(args)
     config = _load_config_for_manifest(args.manifest)
     roles = config.get("roles") or {}
+    if args.amend_action in {"prepare-owner", "resolve-owner"}:
+        from ...pipeline.owner_amendment import prepare_owner_amendment, resolve_owner_amendment
+        if args.amend_action == "prepare-owner":
+            result = prepare_owner_amendment(
+                engine, args.manifest, blocked_nodes=args.blocked_node,
+                allowed_nodes=args.allowed_node, report_file=args.report_file,
+                docs=args.docs, output_file=args.output_file)
+        else:
+            result = resolve_owner_amendment(
+                engine, args.manifest, args.request_file,
+                request_sha256=args.request_sha256, authority=args.authority, reason=args.reason)
+        print_json(result)
+        return exit_codes.OK
     if args.amend_action == "budget-preview":
         from pathlib import Path
         from ...core.amendment import preview_amendment_budgets
@@ -638,6 +670,7 @@ def _amend_locked(args) -> int:
                 restart_authoring=args.restart_authoring,
                 new_attempt=args.new_attempt,
                 supersedes_issue_id=args.supersedes_issue_id,
+                owner_request_file=getattr(args, "owner_request_file", None),
             )
         except NeedsDecision as exc:
             print_json(exc.report)
