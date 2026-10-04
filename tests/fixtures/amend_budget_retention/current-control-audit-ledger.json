@@ -1,0 +1,346 @@
+{
+  "id": "01a10385-45be-77c8-9507-5bff8ce578b9",
+  "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1",
+  "title": "[DAG:audit-ledger] Implement local audit authority and explorer queries",
+  "description": "> **OMAC 控制的执行。第一动作必须严格执行：**\n\n```bash\nOMAC_ENGINE=multica OMAC_WORKSPACE_ID=410ade5e-8ae0-4402-b975-813dea2ff3e1 OMAC_PROJECT_ID=732ce83f-5cbd-4485-850d-1b8a1bf16340 omac work show 01a10385-45be-77c8-9507-5bff8ce578b9 --output json\n```\n\n> `omac work show` 和 `omac work submit` 都可能长时间运行。任何工具调用在拿到最终 tool_result 和终态退出码前都不完整。若工具返回 running/session、缺少最终 tool_result、出现空输出或不完整输出，必须等待或轮询到终态。使用足够长的 wait/yield，或保留并恢复续接句柄；这是通用终态规则，不绑定某个具体工具 API。timeout/yield 不是空结果，也不允许据此停止。`omac work show` 只有在退出码 0 且得到可解析 JSON 后才能继续。`omac work submit` 只有在最终 tool_result 明确给出退出码 0，且 JSON 包含 `\"ok\": true`、`\"terminal\": true` 和 `\"next_action\": \"stop\"` 时才可宣称成功。结果未知时不得宣称成功或结束；validation error 必须修复后重新提交。submit 成功就是本次执行的最后动作，立即停止，不再执行任何平台写入。\n\n> 在上方精确的 `omac work show` 命令以退出码 0 成功返回可解析 JSON 前，不得执行任何其他 Issue 查询（包括 `multica issue get`、`multica issue comment list` 或 metadata 查询），也不得开始分析任务内容。work show 成功后，只能在返回上下文确有需要时使用只读 Issue 查询。禁止任何会创建、修改或删除 Issue 状态的 `multica issue` 写操作。这是语义边界，不是穷举命令清单；禁止示例包括 `multica issue status`、`multica issue assign`、`multica issue comment`、`multica issue metadata`、`multica issue rerun`、`multica issue cancel-task`、`multica issue update`、`multica issue create`、`multica issue label`、`multica issue property`、`multica issue reorder` 和 `multica issue subscriber`。只允许使用上方给出的精确 `omac work show` 命令，以及 work show 返回的精确 `omac work submit` 命令作为 OMAC 控制命令；已有手工附件或 verification 但缺少 `delivery_identity` 时也必须通过该 submit 命令封存。\n\n# Implement local audit authority and explorer queries\n\n## 任务摘要\n- 类型: 开发实现（`develop`）\n- 执行角色: 开发执行者（`worker`）\n- 目标: Deliver the existing append-only local AuditEvent authority, governed query/pagination/export and evidence-chain assembly, with a concrete built-in PostgreSQL adapter that issues the existing sealed detail binding only after loading and validating the exact committed canonical record; keep the published Audit contract and private receipt seal unchanged.\n- 依据: `docs/design/detailed/09-governance-and-security-detailed-design.md:L553-L682`\n- 依据: `docs/references/governance/security-and-enterprise.md:L301-L401`\n- 依据: `docs/delivery/acceptance-and-validation.md:L1003-L1022`\n- 依据: `docs/design/open-agent-cluster-overview-design.md`\n- 依据: `docs/design/detailed/09-governance-and-security-detailed-design.md:8.1,8.4-8.6,13-14`\n- 依据: `docs/references/software-delivery/artifacts-release-and-deployment.md`\n- 依据: `contracts/governance/audit/contract.go:1128-1354 (source e4dc2f94b033adbbe3dbb979be88b351d72481c8)`\n- 依据: `contracts/governance/audit/internal/auditstore/receipt.go (same source)`\n- 依据: `contracts/release/source-ownership-baseline.yaml:114-118,133-141,162-166`\n- 依据: `contracts/release/source-ownership-catalog.yaml`\n- 依据: `AITEAM-1061 issue 01a10385-45be-77c8-9507-5bff8ce578b9; original omac.worker-blocker/v2 from direct Run 01a10385-f4c4-798b-94bd-77898cf39fab, terminal 2026-10-03T21:08:37Z; retained owner-decision evidence, not implementation acceptance`\n\n## 任务详情\nSource-bound repair for the actual AITEAM-1061 owner-decision stop, not a reopen of contracts-audit-usage. Keep worker codex-macmini-newapi, issue 01a10385-45be-77c8-9507-5bff8ce578b9, existing dependencies, main PR base and all historical facts. The source packet pins clean worker HEAD e4dc2f94b033adbbe3dbb979be88b351d72481c8, sealed audit/contract.go:1139-1258 and private internal/auditstore/receipt.go. The old test adapter under internal/store is evidence of the handoff shape, not a production persistence implementation. This node now owns the concrete implementation of that missing handoff, in the same independently testable PR as the real ledger; a second compensating node would split one persistence/security boundary without delivering an independent capability.\n\nExact package/API decision (new names are required deliverables):\n1. internal/audit remains the application owner: append/query/detail/export use cases, RequestContext/Authorization sequencing, typed repository ports, transactional/idempotent commit and evidence assembly. Define a narrow detail-load port returning audit.AuditEventStoreBinding from exact authorized scope/project/event selectors. Never accept a client-selected event or authority. Keep public product QueryAuditEvents/GetAuditEventDetail/ExportAuditEvents unchanged.\n2. internal/audit/platformstore is trusted composition/infrastructure only. Add an opaque Handle with private fields and a root-internal factory binding the one platform PostgreSQL *sql.DB; reject nil and zero handles. It carries only the platform connection, not caller event bytes/receipts/callbacks. Only trusted composition code can construct it. Its internal import boundary prevents an external Go consumer from manufacturing the argument; never return the Handle or a factory through public audit/API entrypoints. Restrict any handle accessor to this internal package boundary; never expose it through a contract DTO.\n3. Add contracts/governance/audit/store, a distinct outer-adapter Go package, not code in package audit. Its NewPostgresStore takes only the opaque platformstore.Handle (not *sql.DB, a DSN, an interface/callback, payload, receipt or event), validates the handle and returns the built-in concrete adapter/error. That package may legally import contracts/governance/audit/internal/auditstore. Its LoadDetailBinding uses fixed parameterized SQL and exact authorized scope/project/event keys to read the canonical committed row, verifies requested identity/scope/project, immutable record fields and stored canonical content digest, validates the event, snapshots canonical bytes, calls internal auditstore.NewReceipt, then audit.NewAuditEventStoreCapability and audit.LoadAuditEventStoreBinding. Receipt pointers never leave this adapter; the application receives only the existing opaque binding, calls NewAuditEventDetailViewFromStore, fills authorized/redacted related evidence and validates before serialization. Query handlers cannot choose a database, schema, table or authority. The concrete adapter also implements the canonical append/query storage ports over that same table; no second storage path. Receipt issuance uses a committed read, never a transaction's pending append argument, caller-supplied serialization, cache or mock.\n4. api/audit owns composition wiring of the trusted platform handle, concrete adapter and application ports. Framework/database types stay out of contract/domain/application interfaces. The root-internal handle is the minimum guarded wiring needed to keep the public adapter from becoming a new self-signing authority API. Existing contracts/governance/audit/contract.go and internal/auditstore/receipt.go remain byte-for-byte unchanged. New adapter tests live in its own subtree and application tests under existing audit scope.\n\nTest-first mapping (all names in audit-receipt-store-boundary-gate are NEW required tests): TestAuditPostgresReceiptCommittedDetail proves a real durable committed row reaches a valid detail with exact context/control/causal provenance. TestAuditPostgresReceiptRejectsUncommittedOrMissingRecord covers pending transaction, rollback, absent/retained-away row, connection/read/decode errors and closed/nil store. TestAuditPostgresReceiptRejectsIdentityScopeDigestMismatch covers altered event/scope/project/context IDs, canonical digest, record/provenance and post-load caller mutation. TestAuditReceiptForgeryAndImportBoundary proves zero/nil/typed-nil capabilities and reconstructed or JSON-decoded proofs fail closed without panic; a separately compiled external-consumer fixture cannot import either internal receipt or platformstore factory and cannot construct a raw-event/DB/callback-based public receipt authority. TestAuditDetailAuthorizationAndRedaction covers audit.read versus resource rights, cross-scope/project denial, per-linked-subject visibility and structured unavailable/redacted/not_authorized, independent sensitive permissions and forbidden payload fields. TestAuditAtomicCommitRollbackAndIdempotency proves domain/CommandRecord/Outbox/Audit atomicity where applicable, failure rollback, same-key/same-digest replay and different-digest conflict. TestAuditConcurrentAppendAndStableCursor uses concurrent connections/instances, same-time events, immutable IDs and bound keyset filters/cursors with no duplicate or omitted existing row. TestAuditPostgresRestartAndRestore closes and replaces the application/DB connection, restores an isolated database backup and rebuilds allowed read indexes, then proves exact persisted facts still validate and old serialized DTOs cannot become receipts. TestAuditBoundedCanonicalExportAndNoRecursiveReadAudit proves CSV/JSONL binding/order/limits, denied/export audit recording, no ordinary-read recursive events and independence from a failed external exporter; it does not take ownership of external sink delivery. TestAuditSourceReleaseOwnershipAndCompatibility verifies the unchanged ownership mapping, source dependency direction, unchanged existing contract bytes/wire compatibility, complete changed-source accounting and idempotent schema setup.\n\nOwn a repeatable isolated local PostgreSQL fixture helper under internal/audit/testsupport, including setup/seed/failure injection/teardown and backup/restore. Use a pinned actual PostgreSQL binary/container version/digest and record it in evidence; require a real database for the storage/concurrency/restore tests, fail (not skip) if unavailable, clean only that fixture and never use a production database. This local conformance fixture does not grant deferred Workspace external-environment authority or substitute for downstream full-flow acceptance.\n\nExecuted ownership and release accounting: the explicit supporting subtree exception authorizes audit-ledger to write only NEW contracts/governance/audit/store/** files. Their published source owner/component remains contracts-audit-usage; the historical broad source root already accounts for them. Keep the historical baseline and current catalog unchanged, including all Kernel roots. Package the full audit+usage source roots at the new reviewed HEAD in a separate contracts-audit-usage component bundle alongside the unchanged audit-ledger bundle; do not put the adapter in both. The root-internal Handle is covered by internal/audit in the audit-ledger bundle. Add only the necessary pinned PostgreSQL driver module entries in go.mod/go.sum and package the full existing bootstrap-go roots at that same HEAD under bootstrap-go. This is explicit current implementation/supporting-file authority, not a transfer of historical release component identity or completed-node acceptance responsibility. Record a path-to-executing-node-to-release-component map and exact diff in the PR/evidence; no baseline/catalog reassignment, new owner, completed-node replay or unrelated source edits.\n\nCompatibility and delivery: commit the implementation before source packaging, run the existing commands plus the new gates at the actual PR HEAD, and package Git blobs from that clean source. Publish complete native test outputs, coverage, fixture/version/restore evidence, all three source bundles and component manifests, ownership/compatibility map and original blocker references at immutable Git commit/blob URLs. Publish an evidence-index.json with product PR URL/HEAD/tree, evidence commit identity, each file's repository path/URL/blob OID/SHA256/byte size, exact argv/exit result and test mapping. Use a separate evidence commit if necessary to avoid a circular source-HEAD/index hash claim; never present mutable branch URLs, local paths or self-reported counts as independent evidence. Independent Reviewer must freshly fetch/check these bytes and reproduce the guarded positive/negative/authorization/concurrency/restore path, preserve all existing non-goals and obtain normal product review/merge. Existing done PR78/PR94 are prerequisites and history, not a PASS for this implementation.\n\nRecovery: audit-ledger resumes AUTHORING because no code/PR/verification was delivered and this changes implementation/scope. No review or merging shortcut is justified. Native minimal-impact classification also derives AUTHORING for the already-started blocked authentication-methods and direct-deployment consumers; do not conceal these impacts or add duplicate resume operations. Their complete contracts, agents, scopes, gates and retained rejects remain unchanged, and execution must still wait for all original prerequisites. Before apply, the single controller must re-read their actual Store evidence and terminal/unknown Run state, preserve existing recovery obligations and every approved budget baseline, and refuse application if this proposal would reset/grant a budget, retire an unproven delivery or disturb an active healthy Agent. No parent or downstream status/phase/counter edits are encoded here. Remaining descendants are unstarted and retain their runtime state; all 68 completed nodes and all other definitions/meta remain exact. Apply only through normal fresh independent amendment review, actual base/CAS/stage/minimal/related-terminal-Run/done/budget guards and coordinator acceptance under delegation9512. No authority to apply is granted by this proposal itself.\n\n## 非目标\n- Do not change adjacent domain ownership or introduce a competing source of truth.\n- Do not bypass authorization, admission, CAS, idempotency, review or evidence gates.\n- Do not preserve unpublished prototype behavior unless the owning design explicitly requires it.\n- The only executed-scope extension is the new built-in adapter subtree contracts/governance/audit/store/**, authored by audit-ledger as an explicit supporting-file exception under the unchanged contracts-audit-usage source-release component. Do not edit any pre-existing file in contracts/governance/audit/** or contracts/governance/usage/**, especially contract.go, internal/auditstore/receipt.go, their seals/validators and existing regressions. Do not reopen or modify the completed contracts-audit-usage node, PR78, or historical source bundles.\n- No public API may accept an AuditEvent, bytes, receipt, authority callback, generic repository, SQL executor interface, DSN or raw *sql.DB in exchange for a binding. The new store constructor accepts only the opaque root-internal platformstore.Handle described in this node; zero/nil handles fail closed. Never re-export its factory from contracts, API DTOs or clients. Do not unseal AuditEventStore, export receipt issuance, serialize a reusable proof, embed a bypass, use unsafe/reflection/linkname, or add a generic plugin/factory.\n- Keep application dependency direction: internal/audit declares typed persistence/query ports and imports the existing audit contract, not the concrete SQL adapter. api/audit owns composition. internal/audit/platformstore is a platform-only infrastructure wiring package, not domain code; the concrete adapter may import it and audit, but audit contract/domain must not import SQL, platformstore, adapter, HTTP, or application packages.\n- One canonical PostgreSQL AuditEvent table and commit path only. No in-memory production fallback, parallel ledger, receipt registry, durable receipt/proof table, SIEM readback authority, event import API or synthetic success. The scoped adapter must read committed records itself; an append argument is never sufficient detail authority. Domain facts, CommandRecord/Outbox and AuditEvent share the required transaction; rollback, read failure and unknown outcomes fail closed.\n- Preserve RequestContext.RequestID versus persisted request_context_id, all exact record/scope/project/event identity and canonical digest validation, immutable evaluated controls, stable query/filter/cursor binding, field/link authorization and redaction, bounded canonical CSV/JSONL export, and no-recursive-successful-read auditing. Resource access never implies audit.read; audit.export and audit.sensitive.read remain separate.\n- Only go.mod and go.sum may additionally change to pin the concrete github.com/jackc/pgx/v5/stdlib PostgreSQL driver and its necessary resolved dependencies. The inspected source has no PostgreSQL driver. No unrelated dependency/toolchain upgrade, bootstrap refactor, or ownership baseline/catalog edit is authorized; release identity of these supporting files stays bootstrap-go. Record the resolved version/checksums and compatibility in the PR.\n- The existing wire schemas, persisted AuditEvent identity/shape and validators are unchanged. The new adapter/handle are additive platform wiring, not an external extension contract; existing query callers are rewired by api/audit without a new public product operation. Own new SQL schema/index setup beneath the adapter subtree; use idempotent, versioned installation for the single canonical local table, preserve existing rows/IDs/digests, and prove reopen/restore. Never reinterpret or rewrite pre-existing records; unexpected deployed schema incompatibility is an owner-decision blocker, not permission for destructive migration.\n- All old audit-ledger commands/gate/90% threshold remain verbatim. The adapter must independently reach 90% coverage and the new named tests must actually execute against an isolated real PostgreSQL fixture where specified, with no skip or test-only stand-in for production persistence. Missing fixture, driver, source or a failed unrelated repository check is an explicit blocker, not a waiver or permission to repair another producer.\n- Do not claim full UJ acceptance or product PASS from this proposal, unit tests, historical PR78 PASS, or packaging. Keep acceptance_refs exactly UJ-AUDIT-001 and no new acceptance_claims/contributions. Fresh independent amendment review/confirmation precedes apply; actual Worker PR to main, independent product review and normal merge remain mandatory.\n\n## 主要代码归属范围\n- `internal/audit/**`\n- `api/audit/**`\n- `contracts/governance/audit/store/**`\n\n## 交付约束\n- PR 基线: `main`\n- 改动分支覆盖率: `≥ 90%`\n- PR 关联标识: `AITEAM-1061`\n\n## 上游 issue（防跑偏）\n本任务承接以下上游 issue，用于追溯需求与决策；若与当前 contract 冲突，先请求确认：\n- 设计方案: `289a13bf-cede-4b5b-ba86-d72f0bef8164`\n- 验收文档: `8e6bd282-6039-41d2-aa00-969a0bf1554a`\n- 前置开发任务 · Bootstrap Go module and quality harness: `5849f786-8c97-42ac-adf9-1c96957f28ee`\n- 前置开发任务 · Create audit and usage contracts: `7b568083-2a29-47d5-a56e-3509b79ebb6c`\n- 前置开发任务 · Create authorization and admission contracts: `8fc120a0-23c5-4119-96c1-b827222ed9dd`\n- 前置开发任务 · Implement deterministic release artifact packaging: `152d735a-c373-4967-8ae0-45c191de2eff`",
+  "status": "WorkItemStatus.BLOCKED",
+  "dag_key": "audit-ledger",
+  "identifier": "AITEAM-1061",
+  "worker": "codex-macmini-newapi",
+  "reviewer": "",
+  "blocked_by": [
+    "bootstrap-go",
+    "contracts-audit-usage",
+    "contracts-authz-admission",
+    "release-artifact-tooling"
+  ],
+  "wave": null,
+  "artifacts": null,
+  "verification": null,
+  "verification_ref": null,
+  "review_verdict": null,
+  "review_comment": null,
+  "machine_feedback": null,
+  "machine_feedback_ref": null,
+  "review_report": null,
+  "review_report_ref": null,
+  "review_subject_digest": null,
+  "review_obligations": [],
+  "review_obligations_ref": null,
+  "review_ledger": null,
+  "review_ledger_ref": null,
+  "review_generation": "amendment-8117ab576ffc1e4f3669a8e4",
+  "review_ledger_generation": null,
+  "review_continuation": null,
+  "reviewer_run_baseline": null,
+  "worker_handoff": {
+    "schema": "omac.worker-handoff/v1",
+    "state": "pending",
+    "target_worker": "codex-macmini-newapi",
+    "gate": "explicit-dispatch",
+    "source_review_subject_digest": "33f2b002c105bca3afb2b15aa98e81506eba019787709b4c83fa49072120dc9d",
+    "source_review_round": 1,
+    "source_review_verdict": null,
+    "source_review_feedback": null,
+    "review_context_binding": {
+      "generation": "amendment-8117ab576ffc1e4f3669a8e4",
+      "contract_sha256": "e63582ddc419d524937d366448d48f85037fc421fdbb37577f4b17ca12d75ca2"
+    },
+    "target_review_bounce": 0,
+    "generation": "handoff-eb02d9407c1ffcbd",
+    "target_agent_id": "037ad7f0-98f9-489f-bf43-0d1148233356",
+    "baseline_direct_run_ids": [
+      "01a10385-f4c4-798b-94bd-77898cf39fab"
+    ],
+    "baseline_cutoff_created_at": null,
+    "baseline_verification_attachment_id": null,
+    "baseline_pr_head_sha": null,
+    "target_run_id": "01a103e3-815e-7300-8f4a-5e8bd4c69ee5",
+    "target_worker_bounce": 0,
+    "terminal_observed_at": null,
+    "authoring_recovery": null
+  },
+  "delivery_identity": null,
+  "decision_required": {
+    "schema": "omac.decision-required/v1",
+    "reason_code": "worker-decision-required",
+    "kind": "develop",
+    "phase": "authoring",
+    "gate": "worker",
+    "resume_issue_id": "01a10385-45be-77c8-9507-5bff8ce578b9",
+    "review_context_binding": {
+      "generation": "amendment-8117ab576ffc1e4f3669a8e4",
+      "contract_sha256": "e63582ddc419d524937d366448d48f85037fc421fdbb37577f4b17ca12d75ca2"
+    },
+    "blocker": {
+      "schema": "omac.worker-blocker/v2",
+      "reason_code": "owner-decision-required",
+      "issue_id": "01a10385-45be-77c8-9507-5bff8ce578b9",
+      "review_context_binding": {
+        "generation": "amendment-8117ab576ffc1e4f3669a8e4",
+        "contract_sha256": "e63582ddc419d524937d366448d48f85037fc421fdbb37577f4b17ca12d75ca2"
+      },
+      "handoff_generation": "handoff-eb02d9407c1ffcbd",
+      "worker": "codex-macmini-newapi",
+      "run_id": "01a103e3-815e-7300-8f4a-5e8bd4c69ee5",
+      "summary": "Required full-suite gate `go test -count=1 ./...` exited 1 after audit gates passed.",
+      "decision_needed": "Resolve unrelated repository test prerequisites, then re-dispatch AITEAM-1061; do not waive the gate or modify other producers from this task.",
+      "contract_ref": "integration_gates",
+      "evidence": [
+        {
+          "ref": "current-run full-suite result for `go test -count=1 ./...`",
+          "observation": "Exit 1: cmd/agentrun-job reports vendor digest and /proc failures; bootstrap requires Go 1.26.0 but runtime is 1.26.5; filesystem reports identity-atomic mutation unsupported."
+        },
+        {
+          "ref": "open-agent-cluster/artifacts/audit-ledger/receipt-boundary/tests.json",
+          "observation": "All ten required audit conformance tests passed with no skips."
+        },
+        {
+          "ref": "open-agent-cluster/artifacts/audit-ledger coverage artifacts",
+          "observation": "Audit/API 93.3%, adapter 90.4%, audit/usage 90.6%; all coverage gates passed."
+        }
+      ]
+    },
+    "next_action": "Resolve the reported decision, then explicitly run omac node retry <manifest> audit-ledger"
+  },
+  "amendment_attempt": null,
+  "contract": {
+    "objective": "Deliver the existing append-only local AuditEvent authority, governed query/pagination/export and evidence-chain assembly, with a concrete built-in PostgreSQL adapter that issues the existing sealed detail binding only after loading and validating the exact committed canonical record; keep the published Audit contract and private receipt seal unchanged.",
+    "non_goals": [
+      "Do not change adjacent domain ownership or introduce a competing source of truth.",
+      "Do not bypass authorization, admission, CAS, idempotency, review or evidence gates.",
+      "Do not preserve unpublished prototype behavior unless the owning design explicitly requires it.",
+      "The only executed-scope extension is the new built-in adapter subtree contracts/governance/audit/store/**, authored by audit-ledger as an explicit supporting-file exception under the unchanged contracts-audit-usage source-release component. Do not edit any pre-existing file in contracts/governance/audit/** or contracts/governance/usage/**, especially contract.go, internal/auditstore/receipt.go, their seals/validators and existing regressions. Do not reopen or modify the completed contracts-audit-usage node, PR78, or historical source bundles.",
+      "No public API may accept an AuditEvent, bytes, receipt, authority callback, generic repository, SQL executor interface, DSN or raw *sql.DB in exchange for a binding. The new store constructor accepts only the opaque root-internal platformstore.Handle described in this node; zero/nil handles fail closed. Never re-export its factory from contracts, API DTOs or clients. Do not unseal AuditEventStore, export receipt issuance, serialize a reusable proof, embed a bypass, use unsafe/reflection/linkname, or add a generic plugin/factory.",
+      "Keep application dependency direction: internal/audit declares typed persistence/query ports and imports the existing audit contract, not the concrete SQL adapter. api/audit owns composition. internal/audit/platformstore is a platform-only infrastructure wiring package, not domain code; the concrete adapter may import it and audit, but audit contract/domain must not import SQL, platformstore, adapter, HTTP, or application packages.",
+      "One canonical PostgreSQL AuditEvent table and commit path only. No in-memory production fallback, parallel ledger, receipt registry, durable receipt/proof table, SIEM readback authority, event import API or synthetic success. The scoped adapter must read committed records itself; an append argument is never sufficient detail authority. Domain facts, CommandRecord/Outbox and AuditEvent share the required transaction; rollback, read failure and unknown outcomes fail closed.",
+      "Preserve RequestContext.RequestID versus persisted request_context_id, all exact record/scope/project/event identity and canonical digest validation, immutable evaluated controls, stable query/filter/cursor binding, field/link authorization and redaction, bounded canonical CSV/JSONL export, and no-recursive-successful-read auditing. Resource access never implies audit.read; audit.export and audit.sensitive.read remain separate.",
+      "Only go.mod and go.sum may additionally change to pin the concrete github.com/jackc/pgx/v5/stdlib PostgreSQL driver and its necessary resolved dependencies. The inspected source has no PostgreSQL driver. No unrelated dependency/toolchain upgrade, bootstrap refactor, or ownership baseline/catalog edit is authorized; release identity of these supporting files stays bootstrap-go. Record the resolved version/checksums and compatibility in the PR.",
+      "The existing wire schemas, persisted AuditEvent identity/shape and validators are unchanged. The new adapter/handle are additive platform wiring, not an external extension contract; existing query callers are rewired by api/audit without a new public product operation. Own new SQL schema/index setup beneath the adapter subtree; use idempotent, versioned installation for the single canonical local table, preserve existing rows/IDs/digests, and prove reopen/restore. Never reinterpret or rewrite pre-existing records; unexpected deployed schema incompatibility is an owner-decision blocker, not permission for destructive migration.",
+      "All old audit-ledger commands/gate/90% threshold remain verbatim. The adapter must independently reach 90% coverage and the new named tests must actually execute against an isolated real PostgreSQL fixture where specified, with no skip or test-only stand-in for production persistence. Missing fixture, driver, source or a failed unrelated repository check is an explicit blocker, not a waiver or permission to repair another producer.",
+      "Do not claim full UJ acceptance or product PASS from this proposal, unit tests, historical PR78 PASS, or packaging. Keep acceptance_refs exactly UJ-AUDIT-001 and no new acceptance_claims/contributions. Fresh independent amendment review/confirmation precedes apply; actual Worker PR to main, independent product review and normal merge remain mandatory."
+    ],
+    "verification_commands": [
+      "mkdir -p artifacts/audit-ledger && go test -covermode=atomic -coverprofile=artifacts/audit-ledger/coverage.out ./internal/audit/... ./api/audit/...",
+      "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/audit-ledger/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+      "python3 scripts/release/package_component.py --component audit-ledger --kind platform-core-dependency-source --input internal/audit --input api/audit --bundle artifacts/audit-ledger/source-bundle.tar.zst --component-manifest artifacts/audit-ledger/component-manifest.json --digest-output artifacts/audit-ledger/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner audit-ledger --require-all-owner-sources-accounted",
+      "mkdir -p artifacts/audit-ledger/receipt-boundary && go test -count=1 -covermode=atomic -coverprofile=artifacts/audit-ledger/receipt-boundary/adapter-coverage.out ./contracts/governance/audit/store/...",
+      "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/audit-ledger/receipt-boundary/adapter-coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+      "go test -count=1 -json ./contracts/governance/audit/store/... ./internal/audit/... ./api/audit/... -run '^(TestAuditPostgresReceiptCommittedDetail|TestAuditPostgresReceiptRejectsUncommittedOrMissingRecord|TestAuditPostgresReceiptRejectsIdentityScopeDigestMismatch|TestAuditReceiptForgeryAndImportBoundary|TestAuditDetailAuthorizationAndRedaction|TestAuditAtomicCommitRollbackAndIdempotency|TestAuditConcurrentAppendAndStableCursor|TestAuditPostgresRestartAndRestore|TestAuditBoundedCanonicalExportAndNoRecursiveReadAudit|TestAuditSourceReleaseOwnershipAndCompatibility)$' > artifacts/audit-ledger/receipt-boundary/tests.json",
+      "python3 -c 'import json; required={'\"'\"'TestAuditPostgresReceiptRejectsIdentityScopeDigestMismatch'\"'\"', '\"'\"'TestAuditPostgresRestartAndRestore'\"'\"', '\"'\"'TestAuditConcurrentAppendAndStableCursor'\"'\"', '\"'\"'TestAuditReceiptForgeryAndImportBoundary'\"'\"', '\"'\"'TestAuditDetailAuthorizationAndRedaction'\"'\"', '\"'\"'TestAuditPostgresReceiptRejectsUncommittedOrMissingRecord'\"'\"', '\"'\"'TestAuditAtomicCommitRollbackAndIdempotency'\"'\"', '\"'\"'TestAuditBoundedCanonicalExportAndNoRecursiveReadAudit'\"'\"', '\"'\"'TestAuditSourceReleaseOwnershipAndCompatibility'\"'\"', '\"'\"'TestAuditPostgresReceiptCommittedDetail'\"'\"'}; rows=[json.loads(s) for s in open('\"'\"'artifacts/audit-ledger/receipt-boundary/tests.json'\"'\"') if s.strip()]; passed={r.get('\"'\"'Test'\"'\"') for r in rows if r.get('\"'\"'Action'\"'\"')=='\"'\"'pass'\"'\"'}; assert required <= passed, sorted(required-passed); assert not any(r.get('\"'\"'Action'\"'\"') in ('\"'\"'skip'\"'\"','\"'\"'fail'\"'\"') for r in rows), '\"'\"'failed or skipped receipt-boundary test'\"'\"'; print('\"'\"'all required receipt-boundary tests executed and passed'\"'\"')'",
+      "go test -race -count=1 ./contracts/governance/audit/... ./internal/audit/... ./api/audit/...",
+      "go test -count=1 -covermode=atomic -coverprofile=artifacts/audit-ledger/receipt-boundary/contract-coverage.out ./contracts/governance/audit/... ./contracts/governance/usage/...",
+      "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/audit-ledger/receipt-boundary/contract-coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+      "go vet ./...",
+      "go build ./...",
+      "go test -count=1 ./...",
+      "python3 scripts/release/package_component.py --component contracts-audit-usage --kind platform-core-dependency-source --input contracts/governance/audit --input contracts/governance/usage --bundle artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/source-bundle.tar.zst --component-manifest artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/component-manifest.json --digest-output artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner contracts-audit-usage --require-all-owner-sources-accounted --reviewed-revision HEAD --package-git-blobs --require-clean-index-and-worktree --record-tree-and-blob-identities",
+      "python3 scripts/release/package_component.py --component bootstrap-go --kind platform-core-dependency-source --input go.mod --input go.sum --input Makefile --input scripts/go-quality --input internal/bootstrap --input scripts/bootstrap/package_go_module.py --bundle artifacts/audit-ledger/receipt-boundary/bootstrap-go/source-bundle.tar.zst --component-manifest artifacts/audit-ledger/receipt-boundary/bootstrap-go/component-manifest.json --digest-output artifacts/audit-ledger/receipt-boundary/bootstrap-go/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner bootstrap-go --require-all-owner-sources-accounted --reviewed-revision HEAD --package-git-blobs --require-clean-index-and-worktree --record-tree-and-blob-identities",
+      "python3 scripts/release/verify_component_manifest.py --manifest artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/component-manifest.json --bundle artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/source-bundle.tar.zst",
+      "python3 scripts/release/verify_component_manifest.py --manifest artifacts/audit-ledger/receipt-boundary/bootstrap-go/component-manifest.json --bundle artifacts/audit-ledger/receipt-boundary/bootstrap-go/source-bundle.tar.zst"
+    ],
+    "integration_gates": [
+      {
+        "name": "audit-ledger-gate",
+        "layer": "L1",
+        "source_of_truth": [
+          "docs/design/detailed/09-governance-and-security-detailed-design.md:L553-L682",
+          "docs/references/governance/security-and-enterprise.md:L301-L401",
+          "docs/delivery/acceptance-and-validation.md:L1003-L1022"
+        ],
+        "delivery_goal": "Deliver append-only AuditEvent storage, governed query/pagination/export and evidence-chain assembly.",
+        "covers": [
+          "audit-ledger"
+        ],
+        "acceptance_refs": [
+          "UJ-AUDIT-001"
+        ],
+        "commands": [
+          "mkdir -p artifacts/audit-ledger && go test -covermode=atomic -coverprofile=artifacts/audit-ledger/coverage.out ./internal/audit/... ./api/audit/...",
+          "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/audit-ledger/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+          "python3 scripts/release/package_component.py --component audit-ledger --kind platform-core-dependency-source --input internal/audit --input api/audit --bundle artifacts/audit-ledger/source-bundle.tar.zst --component-manifest artifacts/audit-ledger/component-manifest.json --digest-output artifacts/audit-ledger/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner audit-ledger --require-all-owner-sources-accounted"
+        ],
+        "required_metrics": {
+          "statement_coverage_percent": 90,
+          "declared_artifact_count": 4
+        },
+        "artifacts": [
+          "artifacts/audit-ledger/coverage.out",
+          "artifacts/audit-ledger/source-bundle.tar.zst",
+          "artifacts/audit-ledger/bundle-digest.txt",
+          "artifacts/audit-ledger/component-manifest.json"
+        ]
+      },
+      {
+        "name": "audit-receipt-store-boundary-gate",
+        "layer": "L1",
+        "source_of_truth": [
+          "docs/design/detailed/09-governance-and-security-detailed-design.md:L553-L682",
+          "docs/references/governance/security-and-enterprise.md:L301-L401",
+          "docs/delivery/acceptance-and-validation.md:L1003-L1022",
+          "docs/design/open-agent-cluster-overview-design.md",
+          "docs/design/detailed/09-governance-and-security-detailed-design.md:8.1,8.4-8.6,13-14",
+          "docs/references/software-delivery/artifacts-release-and-deployment.md",
+          "contracts/governance/audit/contract.go:1128-1354 (source e4dc2f94b033adbbe3dbb979be88b351d72481c8)",
+          "contracts/governance/audit/internal/auditstore/receipt.go (same source)",
+          "contracts/release/source-ownership-baseline.yaml:114-118,133-141,162-166",
+          "contracts/release/source-ownership-catalog.yaml",
+          "AITEAM-1061 issue 01a10385-45be-77c8-9507-5bff8ce578b9; original omac.worker-blocker/v2 from direct Run 01a10385-f4c4-798b-94bd-77898cf39fab, terminal 2026-10-03T21:08:37Z; retained owner-decision evidence, not implementation acceptance"
+        ],
+        "delivery_goal": "Prove the actual canonical PostgreSQL store-to-receipt-to-detail path, its private wiring boundary and all negative/concurrency/authorization/restore cases without changing the published seal or creating another audit authority. Test names below are new required implementation deliverables, not claims that tests already exist.",
+        "covers": [
+          "audit-ledger"
+        ],
+        "acceptance_refs": [
+          "UJ-AUDIT-001"
+        ],
+        "commands": [
+          "mkdir -p artifacts/audit-ledger/receipt-boundary && go test -count=1 -covermode=atomic -coverprofile=artifacts/audit-ledger/receipt-boundary/adapter-coverage.out ./contracts/governance/audit/store/...",
+          "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/audit-ledger/receipt-boundary/adapter-coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+          "go test -count=1 -json ./contracts/governance/audit/store/... ./internal/audit/... ./api/audit/... -run '^(TestAuditPostgresReceiptCommittedDetail|TestAuditPostgresReceiptRejectsUncommittedOrMissingRecord|TestAuditPostgresReceiptRejectsIdentityScopeDigestMismatch|TestAuditReceiptForgeryAndImportBoundary|TestAuditDetailAuthorizationAndRedaction|TestAuditAtomicCommitRollbackAndIdempotency|TestAuditConcurrentAppendAndStableCursor|TestAuditPostgresRestartAndRestore|TestAuditBoundedCanonicalExportAndNoRecursiveReadAudit|TestAuditSourceReleaseOwnershipAndCompatibility)$' > artifacts/audit-ledger/receipt-boundary/tests.json",
+          "python3 -c 'import json; required={'\"'\"'TestAuditPostgresReceiptRejectsIdentityScopeDigestMismatch'\"'\"', '\"'\"'TestAuditPostgresRestartAndRestore'\"'\"', '\"'\"'TestAuditConcurrentAppendAndStableCursor'\"'\"', '\"'\"'TestAuditReceiptForgeryAndImportBoundary'\"'\"', '\"'\"'TestAuditDetailAuthorizationAndRedaction'\"'\"', '\"'\"'TestAuditPostgresReceiptRejectsUncommittedOrMissingRecord'\"'\"', '\"'\"'TestAuditAtomicCommitRollbackAndIdempotency'\"'\"', '\"'\"'TestAuditBoundedCanonicalExportAndNoRecursiveReadAudit'\"'\"', '\"'\"'TestAuditSourceReleaseOwnershipAndCompatibility'\"'\"', '\"'\"'TestAuditPostgresReceiptCommittedDetail'\"'\"'}; rows=[json.loads(s) for s in open('\"'\"'artifacts/audit-ledger/receipt-boundary/tests.json'\"'\"') if s.strip()]; passed={r.get('\"'\"'Test'\"'\"') for r in rows if r.get('\"'\"'Action'\"'\"')=='\"'\"'pass'\"'\"'}; assert required <= passed, sorted(required-passed); assert not any(r.get('\"'\"'Action'\"'\"') in ('\"'\"'skip'\"'\"','\"'\"'fail'\"'\"') for r in rows), '\"'\"'failed or skipped receipt-boundary test'\"'\"'; print('\"'\"'all required receipt-boundary tests executed and passed'\"'\"')'",
+          "go test -race -count=1 ./contracts/governance/audit/... ./internal/audit/... ./api/audit/...",
+          "go test -count=1 -covermode=atomic -coverprofile=artifacts/audit-ledger/receipt-boundary/contract-coverage.out ./contracts/governance/audit/... ./contracts/governance/usage/...",
+          "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/audit-ledger/receipt-boundary/contract-coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+          "go vet ./...",
+          "go build ./...",
+          "go test -count=1 ./..."
+        ],
+        "required_metrics": {
+          "adapter_statement_coverage_percent": 90,
+          "audit_usage_statement_coverage_percent": 90,
+          "required_named_test_count": 10,
+          "skipped_required_test_count": 0,
+          "caller_forged_receipt_accept_count": 0,
+          "cross_scope_detail_accept_count": 0,
+          "uncommitted_record_receipt_count": 0,
+          "sensitive_wire_leak_count": 0,
+          "duplicate_idempotent_append_count": 0
+        },
+        "artifacts": [
+          "artifacts/audit-ledger/receipt-boundary/adapter-coverage.out",
+          "artifacts/audit-ledger/receipt-boundary/contract-coverage.out",
+          "artifacts/audit-ledger/receipt-boundary/tests.json"
+        ]
+      },
+      {
+        "name": "audit-receipt-source-release-gate",
+        "layer": "L1",
+        "source_of_truth": [
+          "contracts/release/source-ownership-baseline.yaml",
+          "contracts/release/source-ownership-catalog.yaml",
+          "docs/references/software-delivery/artifacts-release-and-deployment.md"
+        ],
+        "delivery_goal": "Keep source-release ownership unchanged and package every supporting adapter source under contracts-audit-usage, every driver/module change under bootstrap-go, and every application/wiring source under the original audit-ledger bundle at the same reviewed product HEAD. Publish immutable source-bound evidence and obtain fresh independent technical review; no historical completed-node artifact is overwritten.",
+        "covers": [
+          "audit-ledger"
+        ],
+        "acceptance_refs": [
+          "UJ-AUDIT-001"
+        ],
+        "commands": [
+          "python3 scripts/release/package_component.py --component contracts-audit-usage --kind platform-core-dependency-source --input contracts/governance/audit --input contracts/governance/usage --bundle artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/source-bundle.tar.zst --component-manifest artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/component-manifest.json --digest-output artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner contracts-audit-usage --require-all-owner-sources-accounted --reviewed-revision HEAD --package-git-blobs --require-clean-index-and-worktree --record-tree-and-blob-identities",
+          "python3 scripts/release/package_component.py --component bootstrap-go --kind platform-core-dependency-source --input go.mod --input go.sum --input Makefile --input scripts/go-quality --input internal/bootstrap --input scripts/bootstrap/package_go_module.py --bundle artifacts/audit-ledger/receipt-boundary/bootstrap-go/source-bundle.tar.zst --component-manifest artifacts/audit-ledger/receipt-boundary/bootstrap-go/component-manifest.json --digest-output artifacts/audit-ledger/receipt-boundary/bootstrap-go/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner bootstrap-go --require-all-owner-sources-accounted --reviewed-revision HEAD --package-git-blobs --require-clean-index-and-worktree --record-tree-and-blob-identities",
+          "python3 scripts/release/verify_component_manifest.py --manifest artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/component-manifest.json --bundle artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/source-bundle.tar.zst",
+          "python3 scripts/release/verify_component_manifest.py --manifest artifacts/audit-ledger/receipt-boundary/bootstrap-go/component-manifest.json --bundle artifacts/audit-ledger/receipt-boundary/bootstrap-go/source-bundle.tar.zst"
+        ],
+        "required_metrics": {
+          "missing_changed_source_count": 0,
+          "duplicate_source_owner_count": 0,
+          "changed_historical_ownership_root_count": 0
+        },
+        "artifacts": [
+          "artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/source-bundle.tar.zst",
+          "artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/component-manifest.json",
+          "artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/bundle-digest.txt",
+          "artifacts/audit-ledger/receipt-boundary/bootstrap-go/source-bundle.tar.zst",
+          "artifacts/audit-ledger/receipt-boundary/bootstrap-go/component-manifest.json",
+          "artifacts/audit-ledger/receipt-boundary/bootstrap-go/bundle-digest.txt",
+          "artifacts/audit-ledger/receipt-boundary/evidence-index.json"
+        ]
+      }
+    ],
+    "pr_base": "main",
+    "acceptance_refs": [
+      "UJ-AUDIT-001"
+    ],
+    "source_of_truth": [
+      "docs/design/detailed/09-governance-and-security-detailed-design.md:L553-L682",
+      "docs/references/governance/security-and-enterprise.md:L301-L401",
+      "docs/delivery/acceptance-and-validation.md:L1003-L1022",
+      "docs/design/open-agent-cluster-overview-design.md",
+      "docs/design/detailed/09-governance-and-security-detailed-design.md:8.1,8.4-8.6,13-14",
+      "docs/references/software-delivery/artifacts-release-and-deployment.md",
+      "contracts/governance/audit/contract.go:1128-1354 (source e4dc2f94b033adbbe3dbb979be88b351d72481c8)",
+      "contracts/governance/audit/internal/auditstore/receipt.go (same source)",
+      "contracts/release/source-ownership-baseline.yaml:114-118,133-141,162-166",
+      "contracts/release/source-ownership-catalog.yaml",
+      "AITEAM-1061 issue 01a10385-45be-77c8-9507-5bff8ce578b9; original omac.worker-blocker/v2 from direct Run 01a10385-f4c4-798b-94bd-77898cf39fab, terminal 2026-10-03T21:08:37Z; retained owner-decision evidence, not implementation acceptance"
+    ],
+    "required_contracts": [
+      "docs/references/governance/security-and-enterprise.md"
+    ],
+    "scope_paths": [
+      "internal/audit/**",
+      "api/audit/**",
+      "contracts/governance/audit/store/**"
+    ]
+  },
+  "contract_ref": {
+    "comment_id": "01a103da-6fd9-771a-9d61-6bd3bd4f5665",
+    "attachment_id": "01a103da-6e9a-760f-b887-7b613af990d1",
+    "sha256": "c1b33aefca17a9e3b23d7532709fd1f8b35754f7cf167aac00a99579bce72425",
+    "bytes": 22644,
+    "filename": "omac-contract-c1b33aefca17.yaml"
+  },
+  "source_refs": [
+    {
+      "issue_id": "289a13bf-cede-4b5b-ba86-d72f0bef8164",
+      "label": "设计方案"
+    },
+    {
+      "issue_id": "8e6bd282-6039-41d2-aa00-969a0bf1554a",
+      "label": "验收文档"
+    },
+    {
+      "issue_id": "5849f786-8c97-42ac-adf9-1c96957f28ee",
+      "label": "前置开发任务 · Bootstrap Go module and quality harness"
+    },
+    {
+      "issue_id": "7b568083-2a29-47d5-a56e-3509b79ebb6c",
+      "label": "前置开发任务 · Create audit and usage contracts"
+    },
+    {
+      "issue_id": "8fc120a0-23c5-4119-96c1-b827222ed9dd",
+      "label": "前置开发任务 · Create authorization and admission contracts"
+    },
+    {
+      "issue_id": "152d735a-c373-4967-8ae0-45c191de2eff",
+      "label": "前置开发任务 · Implement deterministic release artifact packaging"
+    }
+  ],
+  "kind": "TaskKind.DEVELOP",
+  "phase": "TaskPhase.AUTHORING",
+  "bounces": {
+    "worker": 0,
+    "ci": 0,
+    "review": 0,
+    "merge": 0
+  },
+  "bounce_baseline": {
+    "merge": 0,
+    "review": 0,
+    "worker": 0
+  },
+  "deliverable": null,
+  "deliverable_ref": null,
+  "project_rules": null,
+  "project_rules_ref": null,
+  "agent_run_finished_without_submit": false,
+  "agent_run_failed": false,
+  "created_at": "2026-10-03T20:47:08Z",
+  "updated_at": "2026-10-04T00:45:46Z",
+  "platform_assignee_id": "037ad7f0-98f9-489f-bf43-0d1148233356",
+  "unknown_persisted_fields": {},
+  "review_nits_acceptance": null
+}

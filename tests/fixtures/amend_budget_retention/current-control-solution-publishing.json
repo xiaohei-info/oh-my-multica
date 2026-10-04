@@ -1,0 +1,847 @@
+{
+  "id": "01a03bd1-ee03-7e06-a21e-c169ca530ebc",
+  "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1",
+  "title": "[DAG:solution-publishing] Implement SolutionPackage check, publish and installation",
+  "description": "> **OMAC 控制的执行。第一动作必须严格执行：**\n\n```bash\nOMAC_ENGINE=multica OMAC_WORKSPACE_ID=410ade5e-8ae0-4402-b975-813dea2ff3e1 OMAC_PROJECT_ID=732ce83f-5cbd-4485-850d-1b8a1bf16340 omac work show 01a03bd1-ee03-7e06-a21e-c169ca530ebc --output json\n```\n\n> `omac work show` 和 `omac work submit` 都可能长时间运行。任何工具调用在拿到最终 tool_result 和终态退出码前都不完整。若工具返回 running/session、缺少最终 tool_result、出现空输出或不完整输出，必须等待或轮询到终态。使用足够长的 wait/yield，或保留并恢复续接句柄；这是通用终态规则，不绑定某个具体工具 API。timeout/yield 不是空结果，也不允许据此停止。`omac work show` 只有在退出码 0 且得到可解析 JSON 后才能继续。`omac work submit` 只有在最终 tool_result 明确给出退出码 0，且 JSON 包含 `\"ok\": true`、`\"terminal\": true` 和 `\"next_action\": \"stop\"` 时才可宣称成功。结果未知时不得宣称成功或结束；validation error 必须修复后重新提交。submit 成功就是本次执行的最后动作，立即停止，不再执行任何平台写入。\n\n> 在上方精确的 `omac work show` 命令以退出码 0 成功返回可解析 JSON 前，不得执行任何其他 Issue 查询（包括 `multica issue get`、`multica issue comment list` 或 metadata 查询），也不得开始分析任务内容。work show 成功后，只能在返回上下文确有需要时使用只读 Issue 查询。禁止任何会创建、修改或删除 Issue 状态的 `multica issue` 写操作。这是语义边界，不是穷举命令清单；禁止示例包括 `multica issue status`、`multica issue assign`、`multica issue comment`、`multica issue metadata`、`multica issue rerun`、`multica issue cancel-task`、`multica issue update`、`multica issue create`、`multica issue label`、`multica issue property`、`multica issue reorder` 和 `multica issue subscriber`。只允许使用上方给出的精确 `omac work show` 命令，以及 work show 返回的精确 `omac work submit` 命令作为 OMAC 控制命令；已有手工附件或 verification 但缺少 `delivery_identity` 时也必须通过该 submit 命令封存。\n\n# Implement SolutionPackage check, publish and installation\n\n## 任务摘要\n- 类型: 开发实现（`develop`）\n- 执行角色: 开发执行者（`worker`）\n- 目标: Deliver deterministic SolutionPackage checks, immutable publication, and exact-version installation and enablement through one governed lifecycle that resolves immutable package, descriptor, content, interface, provenance, and applicable SDK-verification facts from the authoritative scoped Package Envelope/catalog record; executes only the exact package-owned semantic corpus payload selected by the release; binds canonical corpus bytes/order and verifier identity into the release artifact; reuses the same verified facts through publish, final verification, atomic ComponentInstall activation, and idempotent replay; fails closed on catalog drift; and preserves every accepted UJ-SOLUTION-005/006 authorization, isolation, conflict, builtin-path, LockedComponentSet, and recovery behavior.\n- 依据: `solution-publishing-current-amendment-decision.md`\n- 依据: `solution-publishing-amendment-decision.md`\n- 依据: `docs/design/open-agent-cluster-overview-design.md:L335-L355`\n- 依据: `docs/design/open-agent-cluster-overview-design.md:L581-L609`\n- 依据: `docs/design/open-agent-cluster-overview-design.md:L720-L739`\n- 依据: `docs/design/detailed/01-solution-definition-detailed-design.md:L69-L79`\n- 依据: `docs/design/detailed/01-solution-definition-detailed-design.md:L239-L306`\n- 依据: `docs/design/detailed/01-solution-definition-detailed-design.md:L331-L353`\n- 依据: `docs/design/detailed/08-component-and-extension-detailed-design.md:L127-L205`\n- 依据: `docs/design/detailed/08-component-and-extension-detailed-design.md:L461-L500`\n- 依据: `docs/design/detailed/09-governance-and-security-detailed-design.md:L27-L46`\n- 依据: `docs/references/solution/solution-definition.md:L17-L32`\n- 依据: `docs/references/solution/solution-definition.md:L298-L380`\n- 依据: `docs/references/extension/component-governance.md:L157-L201`\n- 依据: `docs/references/extension/component-governance.md:L270-L281`\n- 依据: `docs/delivery/acceptance-and-validation.md:L619-L649`\n\n## 任务详情\nRework the existing SolutionPackage lifecycle so authoritative Package Envelope/descriptor/provenance and applicable SDK records, exact typed external content, and a package-owned executable semantic corpus are bound into one immutable release and reused unchanged through publish, install, final verification, and atomic ComponentInstall activation.\n\n## 非目标\n- Do not change adjacent domain ownership, add a generic plugin system, or introduce a second package, approval, catalog, installation, or verification source of truth.\n- Do not broaden implementation ownership beyond internal/solutions/packages/** or change the existing worker, reviewer, dependencies, acceptance responsibility, or PR base.\n- Do not let synthetic RegisterComponent/default facts, caller-shaped package records, an unscoped resolver, identity-only lookup, a self-hashed descriptor, or mutable catalog reads satisfy governed publish/install authority.\n- Do not classify every generic ContentPackage as a data contract; resolve the exact Package Envelope descriptor and apply only the context-specific package/content/interface checks owned by that immutable release.\n- Do not select production fixture source through OAC_SEMANTIC_FIXTURE_CORPUS, module-global embedded fallback, reference-only metadata, a legacy error-only/recording verifier, or hard-coded assertion labels; the selected SolutionPackage must own the canonical executable corpus payload.\n- Do not make published releases mutable, partially activate Required members, replace an active Workflow LockedComponentSet, or treat retry as permission to overwrite an immutable release.\n- Do not bypass authorization, admission, CAS, idempotency, PlanningAuthority, ValidatedPlan, Package/interface checks, audit/provenance evidence, or the Package/Solution lifecycle through generic Artifact approval.\n- Do not replace already accepted publish/install lifecycle regressions with package-authority, corpus-ownership, descriptor/provenance, or catalog-drift regressions; all groups are mandatory in the same exact gate.\n\n## 主要代码归属范围\n- `internal/solutions/packages/**`\n\n## 交付约束\n- PR 基线: `main`\n- 改动分支覆盖率: `≥ 90%`\n- PR 关联标识: `AITEAM-948`\n\n## 上游 issue（防跑偏）\n本任务承接以下上游 issue，用于追溯需求与决策；若与当前 contract 冲突，先请求确认：\n- 设计方案: `289a13bf-cede-4b5b-ba86-d72f0bef8164`\n- 验收文档: `8e6bd282-6039-41d2-aa00-969a0bf1554a`\n- 前置开发任务 · Bootstrap Go module and quality harness: `5849f786-8c97-42ac-adf9-1c96957f28ee`\n- 前置开发任务 · Create Solution package contracts: `4755e861-257f-44b9-8749-970812f66d92`\n- 前置开发任务 · Publish Package, Harness and ComponentRun wire contracts: `01a032bd-188a-7c88-b4b8-06e682c7b907`\n- 前置开发任务 · Implement deterministic release artifact packaging: `152d735a-c373-4967-8ae0-45c191de2eff`",
+  "status": "WorkItemStatus.TODO",
+  "dag_key": "solution-publishing",
+  "identifier": "AITEAM-948",
+  "worker": "codex-ubuntu-newapi",
+  "reviewer": "",
+  "blocked_by": [
+    "bootstrap-go",
+    "contracts-solution",
+    "contracts-extension-wire",
+    "release-artifact-tooling"
+  ],
+  "wave": null,
+  "artifacts": {
+    "pr_url": "https://github.com/xiaohei-info/open-agent-cluster/pull/71",
+    "head_sha": "52996c54be89c679ada505acfb8c6b0f3b5c126a"
+  },
+  "verification": {
+    "commands": [
+      {
+        "cmd": "mkdir -p artifacts/solution-publishing && OAC_SEMANTIC_FIXTURE_RESULTS=artifacts/solution-publishing/semantic-fixture-results.json go test -covermode=atomic -coverprofile=artifacts/solution-publishing/coverage.out ./internal/solutions/packages/...",
+        "exit_code": 0
+      },
+      {
+        "cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/solution-publishing/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+        "exit_code": 0
+      },
+      {
+        "cmd": "OAC_SEMANTIC_FIXTURE_RESULTS=artifacts/solution-publishing/semantic-fixture-results.json go test -json -count=1 ./internal/solutions/packages/... -run '^(TestFixtureVerifierRunsOnPublishAndInstallAndFailsClosed|TestPublicationClonePreservesResolvedExternalContent|TestScopeIsolationAndAuthorization|TestTypedComponentKindIsPartOfMemberIdentity|TestPublishInstallAndReplayLifecycle|TestInstallFailureDoesNotActivateAndCanRetry|TestDefaultGovernedWiringPersistsScopedFixtureEvidenceAndNestedMembers|TestDefaultComponentResolverFailsClosedOnAmbiguousKind|TestCommitInstallationRejectsOmittedNestedExternalMember|TestScopedResolverFixtureEvidenceAndSemanticGuards|TestMemoryResolverAndClosureFailureBranches|TestComponentResolverAgreementBranches|TestCheckerUsesAuthoritativeFieldAndDependencyPorts|TestGovernedSemanticFixturesProveGenericWebBranchRecoveryAndTerminalPaths|TestPublishAndInstallReexecuteSemanticFixtureCorpus|TestGovernedPublishInstallRejectsEmptyOrInvalidFixtureCorpus|TestGovernedPublishInstallRejectsLegacyErrorOnlyFixtureVerifier|TestGovernedPublishInstallRejectsUnscopedComponentResolver|TestScopedComponentCatalogResolvesExactNestedExternalPackageAndInterfaceFacts|TestScopedComponentCatalogRejectsNestedExternalInterfaceMismatch|TestComponentInstallPersistsVerifiedMemberFacts|TestPublishInstallReplayUsesSameTypedCatalogFacts|TestPublishInstallAuthorizationMatrix|TestPublishInstallRejectsIdempotencyAndPackageDigestConflicts|TestEmbeddedBundleUsesGovernedPathWithoutWorkflowBypass|TestActiveLockedComponentSetRemainsImmutableAcrossUpgrade|TestInstallUnknownAndKnownFailureRecovery)$' > artifacts/solution-publishing/lifecycle-evidence.json",
+        "exit_code": 0
+      },
+      {
+        "cmd": "python3 -c \"from pathlib import Path; import json; required=set('TestFixtureVerifierRunsOnPublishAndInstallAndFailsClosed TestPublicationClonePreservesResolvedExternalContent TestScopeIsolationAndAuthorization TestTypedComponentKindIsPartOfMemberIdentity TestPublishInstallAndReplayLifecycle TestInstallFailureDoesNotActivateAndCanRetry TestDefaultGovernedWiringPersistsScopedFixtureEvidenceAndNestedMembers TestDefaultComponentResolverFailsClosedOnAmbiguousKind TestCommitInstallationRejectsOmittedNestedExternalMember TestScopedResolverFixtureEvidenceAndSemanticGuards TestMemoryResolverAndClosureFailureBranches TestComponentResolverAgreementBranches TestCheckerUsesAuthoritativeFieldAndDependencyPorts TestGovernedSemanticFixturesProveGenericWebBranchRecoveryAndTerminalPaths TestPublishAndInstallReexecuteSemanticFixtureCorpus TestGovernedPublishInstallRejectsEmptyOrInvalidFixtureCorpus TestGovernedPublishInstallRejectsLegacyErrorOnlyFixtureVerifier TestGovernedPublishInstallRejectsUnscopedComponentResolver TestScopedComponentCatalogResolvesExactNestedExternalPackageAndInterfaceFacts TestScopedComponentCatalogRejectsNestedExternalInterfaceMismatch TestComponentInstallPersistsVerifiedMemberFacts TestPublishInstallReplayUsesSameTypedCatalogFacts TestPublishInstallAuthorizationMatrix TestPublishInstallRejectsIdempotencyAndPackageDigestConflicts TestEmbeddedBundleUsesGovernedPathWithoutWorkflowBypass TestActiveLockedComponentSetRemainsImmutableAcrossUpgrade TestInstallUnknownAndKnownFailureRecovery'.split()); rows=[json.loads(x) for x in open('artifacts/solution-publishing/lifecycle-evidence.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing required lifecycle tests: {sorted(required-passed)}'; groups={'authorization_matrix':set('TestScopeIsolationAndAuthorization TestPublishInstallAuthorizationMatrix'.split()),'cross_scope_isolation':{'TestScopeIsolationAndAuthorization'},'idempotency_digest_conflict':{'TestPublishInstallRejectsIdempotencyAndPackageDigestConflicts'},'builtin_no_workflow_bypass':{'TestEmbeddedBundleUsesGovernedPathWithoutWorkflowBypass'},'locked_component_set_immutability':{'TestActiveLockedComponentSetRemainsImmutableAcrossUpgrade'},'unknown_known_failure_recovery':set('TestInstallFailureDoesNotActivateAndCanRetry TestInstallUnknownAndKnownFailureRecovery'.split()),'semantic_fixture_guards':set('TestGovernedSemanticFixturesProveGenericWebBranchRecoveryAndTerminalPaths TestPublishAndInstallReexecuteSemanticFixtureCorpus TestGovernedPublishInstallRejectsEmptyOrInvalidFixtureCorpus TestGovernedPublishInstallRejectsLegacyErrorOnlyFixtureVerifier'.split()),'typed_component_authority':set('TestGovernedPublishInstallRejectsUnscopedComponentResolver TestScopedComponentCatalogResolvesExactNestedExternalPackageAndInterfaceFacts TestScopedComponentCatalogRejectsNestedExternalInterfaceMismatch TestComponentInstallPersistsVerifiedMemberFacts TestPublishInstallReplayUsesSameTypedCatalogFacts'.split())}; metrics={'required_lifecycle_test_count':len(passed),**{k+'_test_count':len(passed&v) for k,v in groups.items()}}; expected={'required_lifecycle_test_count':27,'authorization_matrix_test_count':2,'cross_scope_isolation_test_count':1,'idempotency_digest_conflict_test_count':1,'builtin_no_workflow_bypass_test_count':1,'locked_component_set_immutability_test_count':1,'unknown_known_failure_recovery_test_count':2,'semantic_fixture_guards_test_count':4,'typed_component_authority_test_count':5}; assert metrics==expected, (metrics,expected); Path('artifacts/solution-publishing/gate-metrics.json').write_text(json.dumps({'schema':'oac.solution-publishing-gate-metrics/v1','metrics':metrics},sort_keys=True,separators=(',',':'))+'\\n')\"",
+        "exit_code": 0
+      },
+      {
+        "cmd": "go test -json -count=1 ./internal/solutions/packages/... -run '^(TestScopeIsolationAndAuthorization|TestPublishInstallAuthorizationMatrix|TestPublishInstallRejectsIdempotencyAndPackageDigestConflicts|TestEmbeddedBundleUsesGovernedPathWithoutWorkflowBypass|TestActiveLockedComponentSetRemainsImmutableAcrossUpgrade|TestInstallFailureDoesNotActivateAndCanRetry|TestInstallUnknownAndKnownFailureRecovery)$' > artifacts/solution-publishing/retained-lifecycle-evidence.json",
+        "exit_code": 0
+      },
+      {
+        "cmd": "python3 -c \"from pathlib import Path; import json; required=set('TestPublishInstallAuthorizationMatrix/publish-only-cannot-activate TestPublishInstallAuthorizationMatrix/activate-only-cannot-publish TestPublishInstallAuthorizationMatrix/both-permissions-checked-before-write TestScopeIsolationAndAuthorization/same-scope-allowed TestScopeIsolationAndAuthorization/cross-scope-denied TestPublishInstallRejectsIdempotencyAndPackageDigestConflicts/same-key-same-digest-replays TestPublishInstallRejectsIdempotencyAndPackageDigestConflicts/same-key-different-request-rejected TestPublishInstallRejectsIdempotencyAndPackageDigestConflicts/same-package-version-different-digest-rejected TestPublishInstallRejectsIdempotencyAndPackageDigestConflicts/cas-conflict-rejected TestEmbeddedBundleUsesGovernedPathWithoutWorkflowBypass/embedded-bundle-uses-common-path TestEmbeddedBundleUsesGovernedPathWithoutWorkflowBypass/package-lifecycle-creates-no-workflow TestActiveLockedComponentSetRemainsImmutableAcrossUpgrade/active-locked-set-unchanged TestActiveLockedComponentSetRemainsImmutableAcrossUpgrade/new-project-can-select-new-release TestInstallUnknownAndKnownFailureRecovery/unknown-failure-observed-before-retry TestInstallUnknownAndKnownFailureRecovery/known-failure-can-retry'.split()); rows=[json.loads(x) for x in open('artifacts/solution-publishing/retained-lifecycle-evidence.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing retained lifecycle scenarios: {sorted(required-passed)}'; prefixes={'authorization_matrix':'TestPublishInstallAuthorizationMatrix/','cross_scope_isolation':'TestScopeIsolationAndAuthorization/','idempotency_digest_conflict':'TestPublishInstallRejectsIdempotencyAndPackageDigestConflicts/','builtin_no_workflow_bypass':'TestEmbeddedBundleUsesGovernedPathWithoutWorkflowBypass/','locked_component_set_immutability':'TestActiveLockedComponentSetRemainsImmutableAcrossUpgrade/','unknown_known_failure_recovery':'TestInstallUnknownAndKnownFailureRecovery/'}; metrics={'retained_lifecycle_scenario_count':len(passed),**{k+'_scenario_count':sum(x.startswith(v) for x in passed) for k,v in prefixes.items()}}; expected={'retained_lifecycle_scenario_count':15,'authorization_matrix_scenario_count':3,'cross_scope_isolation_scenario_count':2,'idempotency_digest_conflict_scenario_count':4,'builtin_no_workflow_bypass_scenario_count':2,'locked_component_set_immutability_scenario_count':2,'unknown_known_failure_recovery_scenario_count':2}; assert metrics==expected,(metrics,expected); Path('artifacts/solution-publishing/retained-lifecycle-metrics.json').write_text(json.dumps({'schema':'oac.solution-publishing-retained-lifecycle-metrics/v1','metrics':metrics},sort_keys=True,separators=(',',':'))+'\\n')\"",
+        "exit_code": 0
+      },
+      {
+        "cmd": "rm -f artifacts/solution-publishing/semantic-fixture-results-a.json artifacts/solution-publishing/semantic-fixture-results-b.json && OAC_SEMANTIC_FIXTURE_RESULTS=artifacts/solution-publishing/semantic-fixture-results-a.json go test -count=1 ./internal/solutions/packages/... -run '^TestGovernedSemanticFixturesProveGenericWebBranchRecoveryAndTerminalPaths$' && OAC_SEMANTIC_FIXTURE_RESULTS=artifacts/solution-publishing/semantic-fixture-results-b.json go test -count=1 ./internal/solutions/packages/... -run '^TestGovernedSemanticFixturesProveGenericWebBranchRecoveryAndTerminalPaths$' && cmp -s artifacts/solution-publishing/semantic-fixture-results-a.json artifacts/solution-publishing/semantic-fixture-results-b.json && cp artifacts/solution-publishing/semantic-fixture-results-a.json artifacts/solution-publishing/semantic-fixture-results.json && rm artifacts/solution-publishing/semantic-fixture-results-a.json artifacts/solution-publishing/semantic-fixture-results-b.json",
+        "exit_code": 0
+      },
+      {
+        "cmd": "python3 -c \"from pathlib import Path; import hashlib,json; corpus=json.load(open('internal/solutions/packages/testdata/semantic-fixtures/v1/corpus.json')); results=json.load(open('artifacts/solution-publishing/semantic-fixture-results.json')); required={'generic-web-operability-positive':'accept','generic-web-operability-negative':'reject','branch-closure-positive':'accept','branch-closure-negative':'reject','recovery-positive':'accept','recovery-unknown-negative':'reject','terminal-path-positive':'accept','terminal-path-negative':'reject'}; assert corpus.get('schema')=='oac.solution-package-semantic-fixture-corpus/v1' and corpus.get('version')=='1.0.0'; fixtures=corpus.get('fixtures'); assert isinstance(fixtures,list) and len(fixtures)==len(required); by_id={x.get('fixture_id'):x for x in fixtures}; assert len(by_id)==len(fixtures) and set(by_id)==set(required); digest='sha256:'+hashlib.sha256(json.dumps(fixtures,sort_keys=True,separators=(',',':')).encode()).hexdigest(); assert corpus.get('content_digest')==digest; assert results.get('schema')=='oac.solution-package-semantic-fixture-results/v1' and results.get('corpus_version')==corpus['version'] and results.get('corpus_digest')==digest and isinstance(results.get('verifier_version'),str) and results['verifier_version']; rows=results.get('fixtures'); assert isinstance(rows,list) and len(rows)==len(required); observed={x.get('fixture_id'):x for x in rows}; assert len(observed)==len(rows) and set(observed)==set(required); assert all(isinstance(by_id[k].get('payload'),dict) and by_id[k]['payload'] and isinstance(by_id[k].get('assertions'),list) and by_id[k]['assertions'] for k in required); assert all(by_id[k].get('expected_outcome')==required[k] for k in required); assert all(observed[k].get('expected_outcome')==required[k] and observed[k].get('observed_outcome')==required[k] and observed[k].get('status')=='pass' and observed[k].get('verifier_version')==results['verifier_version'] for k in required); assert all({a.get('assertion_id') for a in observed[k].get('assertions',[])}=={a.get('assertion_id') for a in by_id[k]['assertions']} and all(a.get('status')=='pass' and a.get('expected')==a.get('observed') for a in observed[k]['assertions']) for k in required); assertion_count=sum(len(observed[k]['assertions']) for k in required); metrics={'fixture_count':8,'passed_fixture_count':8,'failed_fixture_count':0,'unresolved_fixture_count':0,'label_only_fixture_count':0,'corpus_digest_match_count':1,'semantic_assertion_count':assertion_count}; assert assertion_count>=8 and results.get('metrics')==metrics; assert not ({'generated_at','timestamp','run_id'}&set(results)); print(json.dumps(metrics,sort_keys=True))\"",
+        "exit_code": 0
+      },
+      {
+        "cmd": "python3 scripts/release/package_component.py --component solution-publishing --kind platform-core-dependency-source --input internal/solutions/packages --bundle artifacts/solution-publishing/source-bundle.tar.zst --component-manifest artifacts/solution-publishing/component-manifest.json --digest-output artifacts/solution-publishing/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner solution-publishing --require-all-owner-sources-accounted",
+        "exit_code": 0
+      },
+      {
+        "cmd": "OAC_SOLUTION_PACKAGE_AUTHORITY_RESULTS=artifacts/solution-publishing/authority-binding-evidence.json go test -json -count=1 ./internal/solutions/packages/... -run '^(TestPackageOwnedSemanticFixtureCorpusExecutesSelectedPayload|TestPackageOwnedSemanticFixtureCorpusRejectsSourceOrderAndContentDrift|TestArtifactDigestBindsPackageOwnedCorpusAndVerifierIdentity|TestScopedComponentCatalogRequiresAuthoritativePackageEnvelopeAndSDKVerification|TestScopedComponentCatalogRejectsDescriptorProvenanceAPIAndContentMismatch|TestScopedComponentCatalogPreservesContextSpecificContentKinds|TestActivationRejectsCatalogFactDrift)$' > artifacts/solution-publishing/authority-lifecycle-evidence.json",
+        "exit_code": 0
+      },
+      {
+        "cmd": "python3 -c \"from pathlib import Path; import json; required=set('TestPackageOwnedSemanticFixtureCorpusExecutesSelectedPayload TestPackageOwnedSemanticFixtureCorpusRejectsSourceOrderAndContentDrift TestArtifactDigestBindsPackageOwnedCorpusAndVerifierIdentity TestScopedComponentCatalogRequiresAuthoritativePackageEnvelopeAndSDKVerification TestScopedComponentCatalogRejectsDescriptorProvenanceAPIAndContentMismatch TestScopedComponentCatalogPreservesContextSpecificContentKinds TestActivationRejectsCatalogFactDrift'.split()); rows=[json.loads(x) for x in open('artifacts/solution-publishing/authority-lifecycle-evidence.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing authority tests: {sorted(required-passed)}'; e=json.load(open('artifacts/solution-publishing/authority-binding-evidence.json')); assert e.get('schema')=='oac.solution-package-authority-evidence/v1'; release=e.get('release'); envelope=e.get('envelope'); corpus=e.get('corpus'); bindings=e.get('bindings'); members=e.get('members'); assert isinstance(release,dict) and release.get('package_kind')=='solution' and all(isinstance(release.get(k),str) and release[k] for k in ('package_id','package_version','artifact_digest')); assert isinstance(envelope,dict) and all(isinstance(envelope.get(k),str) and envelope[k] for k in ('descriptor_path','descriptor_api_version','descriptor_digest','origin','provenance_digest')); assert isinstance(corpus,dict) and all(isinstance(corpus.get(k),str) and corpus[k] for k in ('content_id','descriptor_digest','content_digest','order_digest','verifier_identity_digest')); assert isinstance(members,list) and members and all(isinstance(x,dict) and all(isinstance(x.get(k),str) and x[k] for k in ('package_kind','package_id','package_version','artifact_digest','descriptor_digest','content_digest','provenance_digest','verification_digest')) for x in members); assert isinstance(bindings,dict) and bindings.get('publish_verified_facts_digest')==bindings.get('install_verified_facts_digest')==bindings.get('component_install_verified_facts_digest') and isinstance(bindings.get('publish_verified_facts_digest'),str) and bindings['publish_verified_facts_digest']; metrics={'authority_binding_test_count':len(passed),**e.get('metrics',{})}; expected={'authority_binding_test_count':7,'package_owned_corpus_publish_install_execution_count':2,'package_envelope_authority_match_count':1,'descriptor_content_digest_match_count':1,'applicable_sdk_verification_match_count':1,'artifact_corpus_verifier_binding_count':1,'component_install_fact_binding_count':1,'catalog_fact_drift_rejection_count':1,'synthetic_registration_accept_count':0,'production_corpus_environment_override_accept_count':0}; assert metrics==expected,(metrics,expected); print(json.dumps(metrics,sort_keys=True))\"",
+        "exit_code": 0
+      }
+    ],
+    "integration_gates": [
+      {
+        "name": "solution-publishing-gate",
+        "source_of_truth": [
+          "solution-publishing-current-amendment-decision.md",
+          "solution-publishing-amendment-decision.md",
+          "docs/design/open-agent-cluster-overview-design.md:L335-L355",
+          "docs/design/open-agent-cluster-overview-design.md:L581-L609",
+          "docs/design/open-agent-cluster-overview-design.md:L720-L739",
+          "docs/design/detailed/01-solution-definition-detailed-design.md:L69-L79",
+          "docs/design/detailed/01-solution-definition-detailed-design.md:L239-L306",
+          "docs/design/detailed/01-solution-definition-detailed-design.md:L331-L353",
+          "docs/design/detailed/08-component-and-extension-detailed-design.md:L127-L205",
+          "docs/design/detailed/08-component-and-extension-detailed-design.md:L461-L500",
+          "docs/design/detailed/09-governance-and-security-detailed-design.md:L27-L46",
+          "docs/references/solution/solution-definition.md:L17-L32",
+          "docs/references/solution/solution-definition.md:L298-L380",
+          "docs/references/extension/component-governance.md:L157-L201",
+          "docs/references/extension/component-governance.md:L270-L281",
+          "docs/delivery/acceptance-and-validation.md:L619-L649"
+        ],
+        "delivery_goal": "Prove that publish and install use one authoritative scoped Package Envelope/catalog record and the applicable SDK checks; execute only an immutable package-owned corpus payload with canonical byte/order digest and verifier identity bound into the release artifact; reuse identical package, descriptor, content, interface, provenance, corpus, and verifier facts in publish, install, final verification, ComponentInstall activation, and idempotent replay; reject synthetic registration, descriptor/API/content/provenance mismatch, production environment-selected corpus source, and catalog mutation before activation; and preserve the accepted authorization matrix, cross-scope isolation, digest/CAS conflict, builtin common path, no-Workflow bypass, active LockedComponentSet, unknown/known recovery, Generic Web, branch-closure, terminal-path, and fixture fail-closed regressions.",
+        "commands": [
+          {
+            "cmd": "mkdir -p artifacts/solution-publishing && OAC_SEMANTIC_FIXTURE_RESULTS=artifacts/solution-publishing/semantic-fixture-results.json go test -covermode=atomic -coverprofile=artifacts/solution-publishing/coverage.out ./internal/solutions/packages/...",
+            "exit_code": 0
+          },
+          {
+            "cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/solution-publishing/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+            "exit_code": 0
+          },
+          {
+            "cmd": "OAC_SEMANTIC_FIXTURE_RESULTS=artifacts/solution-publishing/semantic-fixture-results.json go test -json -count=1 ./internal/solutions/packages/... -run '^(TestFixtureVerifierRunsOnPublishAndInstallAndFailsClosed|TestPublicationClonePreservesResolvedExternalContent|TestScopeIsolationAndAuthorization|TestTypedComponentKindIsPartOfMemberIdentity|TestPublishInstallAndReplayLifecycle|TestInstallFailureDoesNotActivateAndCanRetry|TestDefaultGovernedWiringPersistsScopedFixtureEvidenceAndNestedMembers|TestDefaultComponentResolverFailsClosedOnAmbiguousKind|TestCommitInstallationRejectsOmittedNestedExternalMember|TestScopedResolverFixtureEvidenceAndSemanticGuards|TestMemoryResolverAndClosureFailureBranches|TestComponentResolverAgreementBranches|TestCheckerUsesAuthoritativeFieldAndDependencyPorts|TestGovernedSemanticFixturesProveGenericWebBranchRecoveryAndTerminalPaths|TestPublishAndInstallReexecuteSemanticFixtureCorpus|TestGovernedPublishInstallRejectsEmptyOrInvalidFixtureCorpus|TestGovernedPublishInstallRejectsLegacyErrorOnlyFixtureVerifier|TestGovernedPublishInstallRejectsUnscopedComponentResolver|TestScopedComponentCatalogResolvesExactNestedExternalPackageAndInterfaceFacts|TestScopedComponentCatalogRejectsNestedExternalInterfaceMismatch|TestComponentInstallPersistsVerifiedMemberFacts|TestPublishInstallReplayUsesSameTypedCatalogFacts|TestPublishInstallAuthorizationMatrix|TestPublishInstallRejectsIdempotencyAndPackageDigestConflicts|TestEmbeddedBundleUsesGovernedPathWithoutWorkflowBypass|TestActiveLockedComponentSetRemainsImmutableAcrossUpgrade|TestInstallUnknownAndKnownFailureRecovery)$' > artifacts/solution-publishing/lifecycle-evidence.json",
+            "exit_code": 0
+          },
+          {
+            "cmd": "python3 -c \"from pathlib import Path; import json; required=set('TestFixtureVerifierRunsOnPublishAndInstallAndFailsClosed TestPublicationClonePreservesResolvedExternalContent TestScopeIsolationAndAuthorization TestTypedComponentKindIsPartOfMemberIdentity TestPublishInstallAndReplayLifecycle TestInstallFailureDoesNotActivateAndCanRetry TestDefaultGovernedWiringPersistsScopedFixtureEvidenceAndNestedMembers TestDefaultComponentResolverFailsClosedOnAmbiguousKind TestCommitInstallationRejectsOmittedNestedExternalMember TestScopedResolverFixtureEvidenceAndSemanticGuards TestMemoryResolverAndClosureFailureBranches TestComponentResolverAgreementBranches TestCheckerUsesAuthoritativeFieldAndDependencyPorts TestGovernedSemanticFixturesProveGenericWebBranchRecoveryAndTerminalPaths TestPublishAndInstallReexecuteSemanticFixtureCorpus TestGovernedPublishInstallRejectsEmptyOrInvalidFixtureCorpus TestGovernedPublishInstallRejectsLegacyErrorOnlyFixtureVerifier TestGovernedPublishInstallRejectsUnscopedComponentResolver TestScopedComponentCatalogResolvesExactNestedExternalPackageAndInterfaceFacts TestScopedComponentCatalogRejectsNestedExternalInterfaceMismatch TestComponentInstallPersistsVerifiedMemberFacts TestPublishInstallReplayUsesSameTypedCatalogFacts TestPublishInstallAuthorizationMatrix TestPublishInstallRejectsIdempotencyAndPackageDigestConflicts TestEmbeddedBundleUsesGovernedPathWithoutWorkflowBypass TestActiveLockedComponentSetRemainsImmutableAcrossUpgrade TestInstallUnknownAndKnownFailureRecovery'.split()); rows=[json.loads(x) for x in open('artifacts/solution-publishing/lifecycle-evidence.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing required lifecycle tests: {sorted(required-passed)}'; groups={'authorization_matrix':set('TestScopeIsolationAndAuthorization TestPublishInstallAuthorizationMatrix'.split()),'cross_scope_isolation':{'TestScopeIsolationAndAuthorization'},'idempotency_digest_conflict':{'TestPublishInstallRejectsIdempotencyAndPackageDigestConflicts'},'builtin_no_workflow_bypass':{'TestEmbeddedBundleUsesGovernedPathWithoutWorkflowBypass'},'locked_component_set_immutability':{'TestActiveLockedComponentSetRemainsImmutableAcrossUpgrade'},'unknown_known_failure_recovery':set('TestInstallFailureDoesNotActivateAndCanRetry TestInstallUnknownAndKnownFailureRecovery'.split()),'semantic_fixture_guards':set('TestGovernedSemanticFixturesProveGenericWebBranchRecoveryAndTerminalPaths TestPublishAndInstallReexecuteSemanticFixtureCorpus TestGovernedPublishInstallRejectsEmptyOrInvalidFixtureCorpus TestGovernedPublishInstallRejectsLegacyErrorOnlyFixtureVerifier'.split()),'typed_component_authority':set('TestGovernedPublishInstallRejectsUnscopedComponentResolver TestScopedComponentCatalogResolvesExactNestedExternalPackageAndInterfaceFacts TestScopedComponentCatalogRejectsNestedExternalInterfaceMismatch TestComponentInstallPersistsVerifiedMemberFacts TestPublishInstallReplayUsesSameTypedCatalogFacts'.split())}; metrics={'required_lifecycle_test_count':len(passed),**{k+'_test_count':len(passed&v) for k,v in groups.items()}}; expected={'required_lifecycle_test_count':27,'authorization_matrix_test_count':2,'cross_scope_isolation_test_count':1,'idempotency_digest_conflict_test_count':1,'builtin_no_workflow_bypass_test_count':1,'locked_component_set_immutability_test_count':1,'unknown_known_failure_recovery_test_count':2,'semantic_fixture_guards_test_count':4,'typed_component_authority_test_count':5}; assert metrics==expected, (metrics,expected); Path('artifacts/solution-publishing/gate-metrics.json').write_text(json.dumps({'schema':'oac.solution-publishing-gate-metrics/v1','metrics':metrics},sort_keys=True,separators=(',',':'))+'\\n')\"",
+            "exit_code": 0
+          },
+          {
+            "cmd": "go test -json -count=1 ./internal/solutions/packages/... -run '^(TestScopeIsolationAndAuthorization|TestPublishInstallAuthorizationMatrix|TestPublishInstallRejectsIdempotencyAndPackageDigestConflicts|TestEmbeddedBundleUsesGovernedPathWithoutWorkflowBypass|TestActiveLockedComponentSetRemainsImmutableAcrossUpgrade|TestInstallFailureDoesNotActivateAndCanRetry|TestInstallUnknownAndKnownFailureRecovery)$' > artifacts/solution-publishing/retained-lifecycle-evidence.json",
+            "exit_code": 0
+          },
+          {
+            "cmd": "python3 -c \"from pathlib import Path; import json; required=set('TestPublishInstallAuthorizationMatrix/publish-only-cannot-activate TestPublishInstallAuthorizationMatrix/activate-only-cannot-publish TestPublishInstallAuthorizationMatrix/both-permissions-checked-before-write TestScopeIsolationAndAuthorization/same-scope-allowed TestScopeIsolationAndAuthorization/cross-scope-denied TestPublishInstallRejectsIdempotencyAndPackageDigestConflicts/same-key-same-digest-replays TestPublishInstallRejectsIdempotencyAndPackageDigestConflicts/same-key-different-request-rejected TestPublishInstallRejectsIdempotencyAndPackageDigestConflicts/same-package-version-different-digest-rejected TestPublishInstallRejectsIdempotencyAndPackageDigestConflicts/cas-conflict-rejected TestEmbeddedBundleUsesGovernedPathWithoutWorkflowBypass/embedded-bundle-uses-common-path TestEmbeddedBundleUsesGovernedPathWithoutWorkflowBypass/package-lifecycle-creates-no-workflow TestActiveLockedComponentSetRemainsImmutableAcrossUpgrade/active-locked-set-unchanged TestActiveLockedComponentSetRemainsImmutableAcrossUpgrade/new-project-can-select-new-release TestInstallUnknownAndKnownFailureRecovery/unknown-failure-observed-before-retry TestInstallUnknownAndKnownFailureRecovery/known-failure-can-retry'.split()); rows=[json.loads(x) for x in open('artifacts/solution-publishing/retained-lifecycle-evidence.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing retained lifecycle scenarios: {sorted(required-passed)}'; prefixes={'authorization_matrix':'TestPublishInstallAuthorizationMatrix/','cross_scope_isolation':'TestScopeIsolationAndAuthorization/','idempotency_digest_conflict':'TestPublishInstallRejectsIdempotencyAndPackageDigestConflicts/','builtin_no_workflow_bypass':'TestEmbeddedBundleUsesGovernedPathWithoutWorkflowBypass/','locked_component_set_immutability':'TestActiveLockedComponentSetRemainsImmutableAcrossUpgrade/','unknown_known_failure_recovery':'TestInstallUnknownAndKnownFailureRecovery/'}; metrics={'retained_lifecycle_scenario_count':len(passed),**{k+'_scenario_count':sum(x.startswith(v) for x in passed) for k,v in prefixes.items()}}; expected={'retained_lifecycle_scenario_count':15,'authorization_matrix_scenario_count':3,'cross_scope_isolation_scenario_count':2,'idempotency_digest_conflict_scenario_count':4,'builtin_no_workflow_bypass_scenario_count':2,'locked_component_set_immutability_scenario_count':2,'unknown_known_failure_recovery_scenario_count':2}; assert metrics==expected,(metrics,expected); Path('artifacts/solution-publishing/retained-lifecycle-metrics.json').write_text(json.dumps({'schema':'oac.solution-publishing-retained-lifecycle-metrics/v1','metrics':metrics},sort_keys=True,separators=(',',':'))+'\\n')\"",
+            "exit_code": 0
+          },
+          {
+            "cmd": "rm -f artifacts/solution-publishing/semantic-fixture-results-a.json artifacts/solution-publishing/semantic-fixture-results-b.json && OAC_SEMANTIC_FIXTURE_RESULTS=artifacts/solution-publishing/semantic-fixture-results-a.json go test -count=1 ./internal/solutions/packages/... -run '^TestGovernedSemanticFixturesProveGenericWebBranchRecoveryAndTerminalPaths$' && OAC_SEMANTIC_FIXTURE_RESULTS=artifacts/solution-publishing/semantic-fixture-results-b.json go test -count=1 ./internal/solutions/packages/... -run '^TestGovernedSemanticFixturesProveGenericWebBranchRecoveryAndTerminalPaths$' && cmp -s artifacts/solution-publishing/semantic-fixture-results-a.json artifacts/solution-publishing/semantic-fixture-results-b.json && cp artifacts/solution-publishing/semantic-fixture-results-a.json artifacts/solution-publishing/semantic-fixture-results.json && rm artifacts/solution-publishing/semantic-fixture-results-a.json artifacts/solution-publishing/semantic-fixture-results-b.json",
+            "exit_code": 0
+          },
+          {
+            "cmd": "python3 -c \"from pathlib import Path; import hashlib,json; corpus=json.load(open('internal/solutions/packages/testdata/semantic-fixtures/v1/corpus.json')); results=json.load(open('artifacts/solution-publishing/semantic-fixture-results.json')); required={'generic-web-operability-positive':'accept','generic-web-operability-negative':'reject','branch-closure-positive':'accept','branch-closure-negative':'reject','recovery-positive':'accept','recovery-unknown-negative':'reject','terminal-path-positive':'accept','terminal-path-negative':'reject'}; assert corpus.get('schema')=='oac.solution-package-semantic-fixture-corpus/v1' and corpus.get('version')=='1.0.0'; fixtures=corpus.get('fixtures'); assert isinstance(fixtures,list) and len(fixtures)==len(required); by_id={x.get('fixture_id'):x for x in fixtures}; assert len(by_id)==len(fixtures) and set(by_id)==set(required); digest='sha256:'+hashlib.sha256(json.dumps(fixtures,sort_keys=True,separators=(',',':')).encode()).hexdigest(); assert corpus.get('content_digest')==digest; assert results.get('schema')=='oac.solution-package-semantic-fixture-results/v1' and results.get('corpus_version')==corpus['version'] and results.get('corpus_digest')==digest and isinstance(results.get('verifier_version'),str) and results['verifier_version']; rows=results.get('fixtures'); assert isinstance(rows,list) and len(rows)==len(required); observed={x.get('fixture_id'):x for x in rows}; assert len(observed)==len(rows) and set(observed)==set(required); assert all(isinstance(by_id[k].get('payload'),dict) and by_id[k]['payload'] and isinstance(by_id[k].get('assertions'),list) and by_id[k]['assertions'] for k in required); assert all(by_id[k].get('expected_outcome')==required[k] for k in required); assert all(observed[k].get('expected_outcome')==required[k] and observed[k].get('observed_outcome')==required[k] and observed[k].get('status')=='pass' and observed[k].get('verifier_version')==results['verifier_version'] for k in required); assert all({a.get('assertion_id') for a in observed[k].get('assertions',[])}=={a.get('assertion_id') for a in by_id[k]['assertions']} and all(a.get('status')=='pass' and a.get('expected')==a.get('observed') for a in observed[k]['assertions']) for k in required); assertion_count=sum(len(observed[k]['assertions']) for k in required); metrics={'fixture_count':8,'passed_fixture_count':8,'failed_fixture_count':0,'unresolved_fixture_count':0,'label_only_fixture_count':0,'corpus_digest_match_count':1,'semantic_assertion_count':assertion_count}; assert assertion_count>=8 and results.get('metrics')==metrics; assert not ({'generated_at','timestamp','run_id'}&set(results)); print(json.dumps(metrics,sort_keys=True))\"",
+            "exit_code": 0
+          },
+          {
+            "cmd": "python3 scripts/release/package_component.py --component solution-publishing --kind platform-core-dependency-source --input internal/solutions/packages --bundle artifacts/solution-publishing/source-bundle.tar.zst --component-manifest artifacts/solution-publishing/component-manifest.json --digest-output artifacts/solution-publishing/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner solution-publishing --require-all-owner-sources-accounted",
+            "exit_code": 0
+          },
+          {
+            "cmd": "OAC_SOLUTION_PACKAGE_AUTHORITY_RESULTS=artifacts/solution-publishing/authority-binding-evidence.json go test -json -count=1 ./internal/solutions/packages/... -run '^(TestPackageOwnedSemanticFixtureCorpusExecutesSelectedPayload|TestPackageOwnedSemanticFixtureCorpusRejectsSourceOrderAndContentDrift|TestArtifactDigestBindsPackageOwnedCorpusAndVerifierIdentity|TestScopedComponentCatalogRequiresAuthoritativePackageEnvelopeAndSDKVerification|TestScopedComponentCatalogRejectsDescriptorProvenanceAPIAndContentMismatch|TestScopedComponentCatalogPreservesContextSpecificContentKinds|TestActivationRejectsCatalogFactDrift)$' > artifacts/solution-publishing/authority-lifecycle-evidence.json",
+            "exit_code": 0
+          },
+          {
+            "cmd": "python3 -c \"from pathlib import Path; import json; required=set('TestPackageOwnedSemanticFixtureCorpusExecutesSelectedPayload TestPackageOwnedSemanticFixtureCorpusRejectsSourceOrderAndContentDrift TestArtifactDigestBindsPackageOwnedCorpusAndVerifierIdentity TestScopedComponentCatalogRequiresAuthoritativePackageEnvelopeAndSDKVerification TestScopedComponentCatalogRejectsDescriptorProvenanceAPIAndContentMismatch TestScopedComponentCatalogPreservesContextSpecificContentKinds TestActivationRejectsCatalogFactDrift'.split()); rows=[json.loads(x) for x in open('artifacts/solution-publishing/authority-lifecycle-evidence.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing authority tests: {sorted(required-passed)}'; e=json.load(open('artifacts/solution-publishing/authority-binding-evidence.json')); assert e.get('schema')=='oac.solution-package-authority-evidence/v1'; release=e.get('release'); envelope=e.get('envelope'); corpus=e.get('corpus'); bindings=e.get('bindings'); members=e.get('members'); assert isinstance(release,dict) and release.get('package_kind')=='solution' and all(isinstance(release.get(k),str) and release[k] for k in ('package_id','package_version','artifact_digest')); assert isinstance(envelope,dict) and all(isinstance(envelope.get(k),str) and envelope[k] for k in ('descriptor_path','descriptor_api_version','descriptor_digest','origin','provenance_digest')); assert isinstance(corpus,dict) and all(isinstance(corpus.get(k),str) and corpus[k] for k in ('content_id','descriptor_digest','content_digest','order_digest','verifier_identity_digest')); assert isinstance(members,list) and members and all(isinstance(x,dict) and all(isinstance(x.get(k),str) and x[k] for k in ('package_kind','package_id','package_version','artifact_digest','descriptor_digest','content_digest','provenance_digest','verification_digest')) for x in members); assert isinstance(bindings,dict) and bindings.get('publish_verified_facts_digest')==bindings.get('install_verified_facts_digest')==bindings.get('component_install_verified_facts_digest') and isinstance(bindings.get('publish_verified_facts_digest'),str) and bindings['publish_verified_facts_digest']; metrics={'authority_binding_test_count':len(passed),**e.get('metrics',{})}; expected={'authority_binding_test_count':7,'package_owned_corpus_publish_install_execution_count':2,'package_envelope_authority_match_count':1,'descriptor_content_digest_match_count':1,'applicable_sdk_verification_match_count':1,'artifact_corpus_verifier_binding_count':1,'component_install_fact_binding_count':1,'catalog_fact_drift_rejection_count':1,'synthetic_registration_accept_count':0,'production_corpus_environment_override_accept_count':0}; assert metrics==expected,(metrics,expected); print(json.dumps(metrics,sort_keys=True))\"",
+            "exit_code": 0
+          }
+        ],
+        "metrics": {
+          "applicable_sdk_verification_match_count": 1,
+          "artifact_corpus_verifier_binding_count": 1,
+          "authority_binding_test_count": 7,
+          "authorization_matrix_scenario_count": 3,
+          "authorization_matrix_test_count": 2,
+          "builtin_no_workflow_bypass_scenario_count": 2,
+          "builtin_no_workflow_bypass_test_count": 1,
+          "catalog_fact_drift_rejection_count": 1,
+          "component_install_fact_binding_count": 1,
+          "corpus_digest_match_count": 1,
+          "cross_scope_isolation_scenario_count": 2,
+          "cross_scope_isolation_test_count": 1,
+          "declared_artifact_count": 12,
+          "descriptor_content_digest_match_count": 1,
+          "failed_fixture_count": 0,
+          "fixture_count": 8,
+          "idempotency_digest_conflict_scenario_count": 4,
+          "idempotency_digest_conflict_test_count": 1,
+          "label_only_fixture_count": 0,
+          "locked_component_set_immutability_scenario_count": 2,
+          "locked_component_set_immutability_test_count": 1,
+          "package_envelope_authority_match_count": 1,
+          "package_owned_corpus_publish_install_execution_count": 2,
+          "passed_fixture_count": 8,
+          "production_corpus_environment_override_accept_count": 0,
+          "required_lifecycle_test_count": 27,
+          "retained_lifecycle_scenario_count": 15,
+          "semantic_assertion_count": 22,
+          "semantic_assertion_minimum": 22,
+          "semantic_fixture_guards_test_count": 4,
+          "statement_coverage_percent": 90.0,
+          "synthetic_registration_accept_count": 0,
+          "typed_component_authority_test_count": 5,
+          "unknown_known_failure_recovery_scenario_count": 2,
+          "unknown_known_failure_recovery_test_count": 2,
+          "unresolved_fixture_count": 0
+        },
+        "artifacts": [
+          "artifacts/solution-publishing/coverage.out",
+          "artifacts/solution-publishing/lifecycle-evidence.json",
+          "artifacts/solution-publishing/gate-metrics.json",
+          "artifacts/solution-publishing/retained-lifecycle-evidence.json",
+          "artifacts/solution-publishing/retained-lifecycle-metrics.json",
+          "internal/solutions/packages/testdata/semantic-fixtures/v1/corpus.json",
+          "artifacts/solution-publishing/semantic-fixture-results.json",
+          "artifacts/solution-publishing/source-bundle.tar.zst",
+          "artifacts/solution-publishing/bundle-digest.txt",
+          "artifacts/solution-publishing/component-manifest.json",
+          "artifacts/solution-publishing/authority-lifecycle-evidence.json",
+          "artifacts/solution-publishing/authority-binding-evidence.json"
+        ]
+      }
+    ],
+    "pr_base": "main",
+    "coverage": 90.0,
+    "env_setup": [
+      "export PATH=/home/linuxbrew/.linuxbrew/Cellar/go/1.26.0/bin:$PATH",
+      "export GOTOOLCHAIN=local",
+      "Run from the repository root with Python 3 available; no external service is required."
+    ]
+  },
+  "verification_ref": {
+    "comment_id": "01a0de17-2023-7ba5-be35-1691313750f8",
+    "attachment_id": "01a0de17-1fb8-70f9-b578-b698b3291570",
+    "sha256": "4ed64f86bd8e92c1fc54b07551fdc0d700a266e820e8996bf85f833999d19266",
+    "bytes": 39662,
+    "filename": "omac-verification-4ed64f86bd8e.yaml"
+  },
+  "review_verdict": null,
+  "review_comment": null,
+  "machine_feedback": null,
+  "machine_feedback_ref": null,
+  "review_report": null,
+  "review_report_ref": null,
+  "review_subject_digest": null,
+  "review_obligations": [],
+  "review_obligations_ref": null,
+  "review_ledger": {
+    "schema": "omac.review-ledger/v2",
+    "cycles": [
+      {
+        "round": 1,
+        "subject_digest": "de2f0fbd76f05b983bad369ba6194e9afd204888c4e48ee2577bd3423c750acf",
+        "report_digest": "c2b6212c88df3f7d86de6c0a32a3b9fb49e509dd21c45af58c76a599b54a5daa",
+        "verdict": "reject",
+        "obligation_results": {
+          "dimension:authority": "fail",
+          "dimension:structure": "fail",
+          "dimension:execution": "fail",
+          "dimension:ownership": "fail",
+          "dimension:evidence": "fail",
+          "dimension:regression": "pass",
+          "integration:solution-publishing-gate": "fail"
+        },
+        "new_count": 7,
+        "fixed_count": 0,
+        "regressed_count": 0,
+        "unchanged_count": 0,
+        "open_count": 7,
+        "prior_open_blocker_ids": [],
+        "open_blocker_ids": [
+          "BLK-20a1d01e9c90",
+          "BLK-3de40ebc5b85",
+          "BLK-49715dbe0d3d",
+          "BLK-4a6f07a16efe",
+          "BLK-a4347cef4e60",
+          "BLK-b584db17ea2b",
+          "BLK-f353c59b473f"
+        ],
+        "reported_blocker_ids": [
+          "BLK-20a1d01e9c90",
+          "BLK-3de40ebc5b85",
+          "BLK-49715dbe0d3d",
+          "BLK-4a6f07a16efe",
+          "BLK-a4347cef4e60",
+          "BLK-b584db17ea2b",
+          "BLK-f353c59b473f"
+        ],
+        "blocker_facts_schema": "omac.review-cycle-blocker-facts/v1",
+        "blocker_facts": [
+          {
+            "blocker_id": "BLK-20a1d01e9c90",
+            "root_cause_key": "mutable-exact-catalog-record",
+            "obligation_id": "dimension:ownership",
+            "summary": "RegisterComponentFacts overwrites a scoped exact component release without an immutable conflict check.",
+            "evidence": "internal/solutions/packages/packages.go:2466-2482 and :2509-2525 assign store.components[scopedComponentKey(...)] unconditionally; activation stores prior facts separately at :2654-2663.",
+            "required_fix": "Use insert-once semantics keyed by scoped exact release, permit identical idempotent replay only, and reject differing facts; apply the same invariant to failure-with-facts registration.",
+            "status": "open",
+            "classification": "new",
+            "owner": "solution-publishing"
+          },
+          {
+            "blocker_id": "BLK-3de40ebc5b85",
+            "root_cause_key": "fixtures-detached-from-release-behavior",
+            "obligation_id": "dimension:execution",
+            "summary": "The executable semantic corpus checks independent sample payloads rather than exercising the selected Solution release’s Generic Web, branch, recovery and terminal paths.",
+            "evidence": "internal/solutions/packages/packages.go:352-392 validates the package separately, then executes the corpus; semantic_fixtures.go:426-452 and :488-529 evaluate only fixture payload, with example nodes/states in testdata/semantic-fixtures/v1/corpus.json:43-135.",
+            "required_fix": "Bind fixture cases to the selected release’s actual template/schema/paths and run the owning validators/compiled plan and governed recovery behavior against those facts; retain canonical payload/order/verifier evidence.",
+            "status": "open",
+            "classification": "new",
+            "owner": "solution-publishing"
+          },
+          {
+            "blocker_id": "BLK-49715dbe0d3d",
+            "root_cause_key": "fixture-evidence-not-release-specific",
+            "obligation_id": "dimension:evidence",
+            "summary": "Fixture evidence binds digests but does not trace asserted Generic Web/branch/recovery/terminal outcomes to the selected release objects.",
+            "evidence": "internal/solutions/packages/semantic_fixtures.go:488-529 evaluates the payload alone; packages.go:400-403 persists result digests without linking individual assertions to release nodes/forms.",
+            "required_fix": "Include selected release object identities and actual validator/plan execution results per fixture in immutable evidence, and fail on mismatch.",
+            "status": "open",
+            "classification": "new",
+            "owner": "solution-publishing"
+          },
+          {
+            "blocker_id": "BLK-4a6f07a16efe",
+            "root_cause_key": "recommended-agent-template-untyped",
+            "obligation_id": "dimension:structure",
+            "summary": "Recommended AgentTemplate dependencies require only the generic package interface and the catalog supports only three contract-like Content kinds.",
+            "evidence": "internal/solutions/packages/packages.go:1244-1247 requests ComponentInterfacePackage for recommendedAgentTemplates; component_catalog.go:530-536 accepts only data_contract/work_unit_contract/harness_definition and :350-372 exposes generic package plus one of those interfaces. docs/design/detailed/01-solution-definition-detailed-design.md:272 requires Content Catalog template/Skill closure.",
+            "required_fix": "Resolve AgentTemplate and SkillPackage via their authoritative typed Content descriptor/interfaces, verify the complete exact Skill dependency closure, and reject unrelated Content kinds for template slots.",
+            "status": "open",
+            "classification": "new",
+            "owner": "solution-publishing"
+          },
+          {
+            "blocker_id": "BLK-a4347cef4e60",
+            "root_cause_key": "catalog-proof-sdk-self-attestation",
+            "obligation_id": "dimension:execution",
+            "summary": "Source proof and applicable SDK verification are recreated from supplied fields with a hard-coded passed outcome, not consumed as independently verified catalog results.",
+            "evidence": "internal/solutions/packages/component_catalog.go:447-497 hashes supplied fields and generates an SDK outcome of passed; :302-405 does not compute Content/Extension artifact_digest from complete artifact bytes, and only calls descriptor Validate. contracts/extension/extension.go:424-450 validates wire shape, not SDK behavior.",
+            "required_fix": "Consume immutable package-tool/source and applicable SDK verification records from the owning authority; verify complete package bytes/signature/digest and actual interface checks, and refuse locally recomputed success as authorization.",
+            "status": "open",
+            "classification": "new",
+            "owner": "component-governance"
+          },
+          {
+            "blocker_id": "BLK-b584db17ea2b",
+            "root_cause_key": "integration-gate-authority-coverage-gap",
+            "obligation_id": "integration:solution-publishing-gate",
+            "summary": "The named integration gate is green while the source-of-truth and typed-content lifecycle it claims to verify remains unexercised.",
+            "evidence": "internal/solutions/packages/authority_contract_test.go:58-82 uses NewMemoryService and generated facts; :175-205 only rejects identity-only or tampered synthetic fields. packages.go:1213-1219 generates the root, and component_catalog.go:465-480 generates the passed SDK result.",
+            "required_fix": "Extend the exact gate with an end-to-end scoped authoritative root/catalog plus real applicable SDK result and typed AgentTemplate/Skill closure, checking the same immutable facts through replay and activation.",
+            "status": "open",
+            "classification": "new",
+            "owner": "solution-publishing"
+          },
+          {
+            "blocker_id": "BLK-f353c59b473f",
+            "root_cause_key": "solution-root-synthetic-authority",
+            "obligation_id": "dimension:authority",
+            "summary": "Solution root authority is synthesized from the caller package rather than resolved from a scoped immutable Package Envelope/catalog record.",
+            "evidence": "internal/solutions/packages/authority.go:86-109 builds its own origin/envelope/proofs; packages.go:1213-1219 inserts that synthetic root into the closure; packages.go:2121-2125 skips the root in catalog drift checks.",
+            "required_fix": "Resolve and verify the root Package Envelope, descriptor, provenance, content, corpus and applicable SDK facts through the same scoped authoritative catalog/release record; bind those immutable facts at publication and compare at final activation.",
+            "status": "open",
+            "classification": "new",
+            "owner": "solution-publishing"
+          }
+        ]
+      },
+      {
+        "round": 2,
+        "subject_digest": "bc24282db67f5f5dda7f960eec81a8d69b3cc0556e78f35cb462b0c277808e7e",
+        "report_digest": "3857320b65cee97405b7387a67a7cd45ce6b93b45265508153a501e9d07e49b3",
+        "verdict": "reject",
+        "obligation_results": {
+          "dimension:authority": "fail",
+          "dimension:structure": "fail",
+          "dimension:execution": "fail",
+          "dimension:ownership": "pass",
+          "dimension:evidence": "fail",
+          "dimension:regression": "pass",
+          "integration:solution-publishing-gate": "fail"
+        },
+        "new_count": 1,
+        "fixed_count": 2,
+        "regressed_count": 0,
+        "unchanged_count": 1,
+        "open_count": 6,
+        "prior_open_blocker_ids": [
+          "BLK-20a1d01e9c90",
+          "BLK-3de40ebc5b85",
+          "BLK-49715dbe0d3d",
+          "BLK-4a6f07a16efe",
+          "BLK-a4347cef4e60",
+          "BLK-b584db17ea2b",
+          "BLK-f353c59b473f"
+        ],
+        "open_blocker_ids": [
+          "BLK-3de40ebc5b85",
+          "BLK-49715dbe0d3d",
+          "BLK-4a6f07a16efe",
+          "BLK-7de7aefc750d",
+          "BLK-a4347cef4e60",
+          "BLK-b584db17ea2b"
+        ],
+        "reported_blocker_ids": [
+          "BLK-3de40ebc5b85",
+          "BLK-49715dbe0d3d",
+          "BLK-4a6f07a16efe",
+          "BLK-7de7aefc750d",
+          "BLK-a4347cef4e60",
+          "BLK-b584db17ea2b"
+        ],
+        "blocker_facts_schema": "omac.review-cycle-blocker-facts/v1",
+        "blocker_facts": [
+          {
+            "blocker_id": "BLK-20a1d01e9c90",
+            "root_cause_key": "mutable-exact-catalog-record",
+            "obligation_id": "dimension:ownership",
+            "summary": "RegisterComponentFacts overwrites a scoped exact component release without an immutable conflict check.",
+            "evidence": "internal/solutions/packages/packages.go:2466-2482 and :2509-2525 assign store.components[scopedComponentKey(...)] unconditionally; activation stores prior facts separately at :2654-2663.",
+            "required_fix": "Use insert-once semantics keyed by scoped exact release, permit identical idempotent replay only, and reject differing facts; apply the same invariant to failure-with-facts registration.",
+            "status": "fixed",
+            "classification": "fixed",
+            "last_evidence": "RegisterComponentFacts and RegisterComponentFailureWithFacts reject divergent facts for the same scoped exact release (packages.go:2546-2555,2595-2609); identical replay remains allowed.",
+            "owner": "solution-publishing"
+          },
+          {
+            "blocker_id": "BLK-3de40ebc5b85",
+            "root_cause_key": "fixtures-detached-from-release-behavior",
+            "obligation_id": "dimension:execution",
+            "summary": "Corpus cases do not exercise the release plan or governed recovery path",
+            "evidence": "semantic_fixtures.go:545-563 and :574-608 call package.Validate, not the Plan Compiler; :729-766 constructs a new MemoryStore and only toggles a synthetic registration failure. The fixed corpus is in testdata/semantic-fixtures/v1/corpus.json:73-224.",
+            "required_fix": "Instantiate/compile the selected BaselinePlanTemplate and exercise the actual governed branch, terminal and recovery semantics against release-bound facts; keep the selected corpus bytes/order/verifier binding.",
+            "status": "open",
+            "classification": "deeper",
+            "owner": "solution-publishing",
+            "last_evidence": "Fixtures now select release fields/template/Harness, but branch and terminal cases invoke SolutionPackage.Validate, not the required instantiated Plan Compiler or governed path execution; recovery exercises a fresh MemoryStore, not the installed release (semantic_fixtures.go:545-608,729-766)."
+          },
+          {
+            "blocker_id": "BLK-49715dbe0d3d",
+            "root_cause_key": "fixture-evidence-not-release-specific",
+            "obligation_id": "dimension:evidence",
+            "summary": "Per-fixture evidence does not identify the object actually checked",
+            "evidence": "semantic_fixtures.go:454-459 attaches semanticFixtureReleaseObjects(memberFacts) wholesale to every result; :634-645 copies every member regardless of selected path; :617-631 records only generic facts/assertions.",
+            "required_fix": "Persist the exact selected field, template node, Harness and applicable compiled-plan/recovery result per fixture, bind them to the individual immutable assertions and fail on mismatch.",
+            "status": "open",
+            "classification": "deeper",
+            "owner": "solution-publishing",
+            "last_evidence": "FixtureReleaseObjects is the entire member list for every case; individual assertions still carry neither the selected field/node/Harness identity nor a compiled-plan/recovery result (semantic_fixtures.go:454-459,634-645)."
+          },
+          {
+            "blocker_id": "BLK-4a6f07a16efe",
+            "root_cause_key": "recommended-agent-template-untyped",
+            "obligation_id": "dimension:structure",
+            "summary": "Recommended AgentTemplate capability and Skill content checks are incomplete",
+            "evidence": "packages.go:1314-1317 and :1239-1268 resolve the template/Skill interfaces but never compare slot.CapabilityRequirements to AgentTemplate.CapabilityLabels; component_catalog.go:492-496 accepts any nonempty SkillPackage bytes; authority_contract_test.go:559-589 uses an arbitrary string as Skill content.",
+            "required_fix": "Verify each recommended template satisfies the owning slot capability requirements, decode/validate the actual typed SkillPackage content and applicable SDK result, and reject unrelated content.",
+            "status": "open",
+            "classification": "deeper",
+            "owner": "solution-publishing",
+            "last_evidence": "AgentTemplate is decoded and exact Skill refs resolved, but no comparison of Template.CapabilityLabels with ResponsibilitySlot.CapabilityRequirements; SkillPackage accepts any nonempty opaque bytes (packages.go:1239-1268; component_catalog.go:486-496)."
+          },
+          {
+            "blocker_id": "BLK-7de7aefc750d",
+            "root_cause_key": "idempotent-replay-skips-catalog-drift",
+            "obligation_id": "dimension:execution",
+            "summary": "Installation replay returns before catalog drift verification",
+            "evidence": "packages.go:2104-2112 returns replay before LookupRelease, FixtureEvidence.ValidateFor and verifyCatalogFacts at :2113-2142; governed_contract_test.go:324-329 explicitly asserts zero catalog calls on replay.",
+            "required_fix": "On replay, compare the stored release and its root/dependency facts to the current scoped authoritative catalog before returning the original response, or prove immutable catalog membership atomically from the owning store; test drift/unavailability on replay.",
+            "status": "open",
+            "classification": "new",
+            "owner": "solution-publishing"
+          },
+          {
+            "blocker_id": "BLK-a4347cef4e60",
+            "root_cause_key": "catalog-proof-sdk-self-attestation",
+            "obligation_id": "dimension:authority",
+            "summary": "Source proof and SDK passed outcome remain self-attestable",
+            "evidence": "component_catalog.go:299-306 checks syntax/field equality only; packages.go:2534-2555 registers it; packages_test.go:1004-1023 synthesizes all passed proof and SDK fields used in the gate.",
+            "required_fix": "Consume and validate immutable package-tool/source and applicable SDK verification results from their owning authority; bind issuer, exact complete bytes, provenance, interface checks and release in the scoped catalog, and reject locally constructed success.",
+            "status": "open",
+            "classification": "unchanged",
+            "owner": "component-governance",
+            "last_evidence": "PackageCatalogRecord.SourceProof.ProofDigest and SDKVerification.VerificationDigest need only hash syntax and passed fields; there is no independent issuer/result lookup (component_catalog.go:281-327). Gate fixtures synthesize passed proofs from local fields (packages_test.go:1004-1023)."
+          },
+          {
+            "blocker_id": "BLK-b584db17ea2b",
+            "root_cause_key": "integration-gate-authority-coverage-gap",
+            "obligation_id": "integration:solution-publishing-gate",
+            "summary": "Green named gate does not verify an independent authority handoff",
+            "evidence": "authority_contract_test.go:49-127 uses mustComponentFactsForPackageWithCorpus and registerSolutionPackageFacts; packages_test.go:818-862 and :1004-1023 generate the source proof and SDK passed outcome used by the gate.",
+            "required_fix": "Extend this exact gate with a scoped authoritative root/dependency record and a real applicable SDK verification result from the owning producer, checking them through publication, replay and activation without replacing retained lifecycle tests.",
+            "status": "open",
+            "classification": "deeper",
+            "owner": "solution-publishing",
+            "last_evidence": "Seven authority tests and typed AgentTemplate/Skill tests now run, but the green gate constructs records and passed SDK results in testAuthoritativePackageRecord; it does not consume an independent package-tool/source or real applicable SDK record (packages_test.go:1004-1023; authority_contract_test.go:102-127,605-636)."
+          },
+          {
+            "blocker_id": "BLK-f353c59b473f",
+            "root_cause_key": "solution-root-synthetic-authority",
+            "obligation_id": "dimension:authority",
+            "summary": "Solution root authority is synthesized from the caller package rather than resolved from a scoped immutable Package Envelope/catalog record.",
+            "evidence": "internal/solutions/packages/authority.go:86-109 builds its own origin/envelope/proofs; packages.go:1213-1219 inserts that synthetic root into the closure; packages.go:2121-2125 skips the root in catalog drift checks.",
+            "required_fix": "Resolve and verify the root Package Envelope, descriptor, provenance, content, corpus and applicable SDK facts through the same scoped authoritative catalog/release record; bind those immutable facts at publication and compare at final activation.",
+            "status": "fixed",
+            "classification": "fixed",
+            "last_evidence": "Root is now resolved from the same scoped catalog and its full record/corpus identity validated; install compares every member including root (packages.go:1270-1289,2195-2211).",
+            "owner": "solution-publishing"
+          }
+        ]
+      }
+    ],
+    "blockers": [
+      {
+        "blocker_id": "BLK-20a1d01e9c90",
+        "root_cause_key": "mutable-exact-catalog-record",
+        "obligation_id": "dimension:ownership",
+        "summary": "RegisterComponentFacts overwrites a scoped exact component release without an immutable conflict check.",
+        "evidence": "internal/solutions/packages/packages.go:2466-2482 and :2509-2525 assign store.components[scopedComponentKey(...)] unconditionally; activation stores prior facts separately at :2654-2663.",
+        "required_fix": "Use insert-once semantics keyed by scoped exact release, permit identical idempotent replay only, and reject differing facts; apply the same invariant to failure-with-facts registration.",
+        "status": "fixed",
+        "classification": "fixed",
+        "owner": "solution-publishing",
+        "first_seen_round": 1,
+        "last_seen_round": 2,
+        "seen_count": 1,
+        "last_evidence": "RegisterComponentFacts and RegisterComponentFailureWithFacts reject divergent facts for the same scoped exact release (packages.go:2546-2555,2595-2609); identical replay remains allowed."
+      },
+      {
+        "blocker_id": "BLK-3de40ebc5b85",
+        "root_cause_key": "fixtures-detached-from-release-behavior",
+        "obligation_id": "dimension:execution",
+        "summary": "Corpus cases do not exercise the release plan or governed recovery path",
+        "evidence": "semantic_fixtures.go:545-563 and :574-608 call package.Validate, not the Plan Compiler; :729-766 constructs a new MemoryStore and only toggles a synthetic registration failure. The fixed corpus is in testdata/semantic-fixtures/v1/corpus.json:73-224.",
+        "required_fix": "Instantiate/compile the selected BaselinePlanTemplate and exercise the actual governed branch, terminal and recovery semantics against release-bound facts; keep the selected corpus bytes/order/verifier binding.",
+        "status": "open",
+        "classification": "deeper",
+        "owner": "solution-publishing",
+        "first_seen_round": 1,
+        "last_seen_round": 2,
+        "seen_count": 2,
+        "last_evidence": "Fixtures now select release fields/template/Harness, but branch and terminal cases invoke SolutionPackage.Validate, not the required instantiated Plan Compiler or governed path execution; recovery exercises a fresh MemoryStore, not the installed release (semantic_fixtures.go:545-608,729-766)."
+      },
+      {
+        "blocker_id": "BLK-49715dbe0d3d",
+        "root_cause_key": "fixture-evidence-not-release-specific",
+        "obligation_id": "dimension:evidence",
+        "summary": "Per-fixture evidence does not identify the object actually checked",
+        "evidence": "semantic_fixtures.go:454-459 attaches semanticFixtureReleaseObjects(memberFacts) wholesale to every result; :634-645 copies every member regardless of selected path; :617-631 records only generic facts/assertions.",
+        "required_fix": "Persist the exact selected field, template node, Harness and applicable compiled-plan/recovery result per fixture, bind them to the individual immutable assertions and fail on mismatch.",
+        "status": "open",
+        "classification": "deeper",
+        "owner": "solution-publishing",
+        "first_seen_round": 1,
+        "last_seen_round": 2,
+        "seen_count": 2,
+        "last_evidence": "FixtureReleaseObjects is the entire member list for every case; individual assertions still carry neither the selected field/node/Harness identity nor a compiled-plan/recovery result (semantic_fixtures.go:454-459,634-645)."
+      },
+      {
+        "blocker_id": "BLK-4a6f07a16efe",
+        "root_cause_key": "recommended-agent-template-untyped",
+        "obligation_id": "dimension:structure",
+        "summary": "Recommended AgentTemplate capability and Skill content checks are incomplete",
+        "evidence": "packages.go:1314-1317 and :1239-1268 resolve the template/Skill interfaces but never compare slot.CapabilityRequirements to AgentTemplate.CapabilityLabels; component_catalog.go:492-496 accepts any nonempty SkillPackage bytes; authority_contract_test.go:559-589 uses an arbitrary string as Skill content.",
+        "required_fix": "Verify each recommended template satisfies the owning slot capability requirements, decode/validate the actual typed SkillPackage content and applicable SDK result, and reject unrelated content.",
+        "status": "open",
+        "classification": "deeper",
+        "owner": "solution-publishing",
+        "first_seen_round": 1,
+        "last_seen_round": 2,
+        "seen_count": 2,
+        "last_evidence": "AgentTemplate is decoded and exact Skill refs resolved, but no comparison of Template.CapabilityLabels with ResponsibilitySlot.CapabilityRequirements; SkillPackage accepts any nonempty opaque bytes (packages.go:1239-1268; component_catalog.go:486-496)."
+      },
+      {
+        "blocker_id": "BLK-7de7aefc750d",
+        "root_cause_key": "idempotent-replay-skips-catalog-drift",
+        "obligation_id": "dimension:execution",
+        "summary": "Installation replay returns before catalog drift verification",
+        "evidence": "packages.go:2104-2112 returns replay before LookupRelease, FixtureEvidence.ValidateFor and verifyCatalogFacts at :2113-2142; governed_contract_test.go:324-329 explicitly asserts zero catalog calls on replay.",
+        "required_fix": "On replay, compare the stored release and its root/dependency facts to the current scoped authoritative catalog before returning the original response, or prove immutable catalog membership atomically from the owning store; test drift/unavailability on replay.",
+        "status": "open",
+        "classification": "new",
+        "owner": "solution-publishing",
+        "first_seen_round": 2,
+        "last_seen_round": 2,
+        "seen_count": 1
+      },
+      {
+        "blocker_id": "BLK-a4347cef4e60",
+        "root_cause_key": "catalog-proof-sdk-self-attestation",
+        "obligation_id": "dimension:authority",
+        "summary": "Source proof and SDK passed outcome remain self-attestable",
+        "evidence": "component_catalog.go:299-306 checks syntax/field equality only; packages.go:2534-2555 registers it; packages_test.go:1004-1023 synthesizes all passed proof and SDK fields used in the gate.",
+        "required_fix": "Consume and validate immutable package-tool/source and applicable SDK verification results from their owning authority; bind issuer, exact complete bytes, provenance, interface checks and release in the scoped catalog, and reject locally constructed success.",
+        "status": "open",
+        "classification": "unchanged",
+        "owner": "component-governance",
+        "first_seen_round": 1,
+        "last_seen_round": 2,
+        "seen_count": 2,
+        "last_evidence": "PackageCatalogRecord.SourceProof.ProofDigest and SDKVerification.VerificationDigest need only hash syntax and passed fields; there is no independent issuer/result lookup (component_catalog.go:281-327). Gate fixtures synthesize passed proofs from local fields (packages_test.go:1004-1023)."
+      },
+      {
+        "blocker_id": "BLK-b584db17ea2b",
+        "root_cause_key": "integration-gate-authority-coverage-gap",
+        "obligation_id": "integration:solution-publishing-gate",
+        "summary": "Green named gate does not verify an independent authority handoff",
+        "evidence": "authority_contract_test.go:49-127 uses mustComponentFactsForPackageWithCorpus and registerSolutionPackageFacts; packages_test.go:818-862 and :1004-1023 generate the source proof and SDK passed outcome used by the gate.",
+        "required_fix": "Extend this exact gate with a scoped authoritative root/dependency record and a real applicable SDK verification result from the owning producer, checking them through publication, replay and activation without replacing retained lifecycle tests.",
+        "status": "open",
+        "classification": "deeper",
+        "owner": "solution-publishing",
+        "first_seen_round": 1,
+        "last_seen_round": 2,
+        "seen_count": 2,
+        "last_evidence": "Seven authority tests and typed AgentTemplate/Skill tests now run, but the green gate constructs records and passed SDK results in testAuthoritativePackageRecord; it does not consume an independent package-tool/source or real applicable SDK record (packages_test.go:1004-1023; authority_contract_test.go:102-127,605-636)."
+      },
+      {
+        "blocker_id": "BLK-f353c59b473f",
+        "root_cause_key": "solution-root-synthetic-authority",
+        "obligation_id": "dimension:authority",
+        "summary": "Solution root authority is synthesized from the caller package rather than resolved from a scoped immutable Package Envelope/catalog record.",
+        "evidence": "internal/solutions/packages/authority.go:86-109 builds its own origin/envelope/proofs; packages.go:1213-1219 inserts that synthetic root into the closure; packages.go:2121-2125 skips the root in catalog drift checks.",
+        "required_fix": "Resolve and verify the root Package Envelope, descriptor, provenance, content, corpus and applicable SDK facts through the same scoped authoritative catalog/release record; bind those immutable facts at publication and compare at final activation.",
+        "status": "fixed",
+        "classification": "fixed",
+        "owner": "solution-publishing",
+        "first_seen_round": 1,
+        "last_seen_round": 2,
+        "seen_count": 1,
+        "last_evidence": "Root is now resolved from the same scoped catalog and its full record/corpus identity validated; install compares every member including root (packages.go:1270-1289,2195-2211)."
+      }
+    ]
+  },
+  "review_ledger_ref": {
+    "comment_id": "01a0de23-b21e-71d4-bbcd-6397e8dfdfdc",
+    "attachment_id": "01a0de23-b1ba-7ae6-8831-8bafcea9a5f7",
+    "sha256": "4188629635445fc9a207d89ec76b76581228c85e2f41b3e55ea943dbeb2d1a56",
+    "bytes": 25232,
+    "filename": "omac-review-ledger-418862963544.yaml"
+  },
+  "review_generation": "amendment-3c072e714793fbc0d10eb3cd",
+  "review_ledger_generation": "authoring-083f601bdd9aa836f5108317",
+  "review_continuation": null,
+  "reviewer_run_baseline": null,
+  "worker_handoff": null,
+  "delivery_identity": null,
+  "decision_required": null,
+  "amendment_attempt": null,
+  "contract": {
+    "objective": "Deliver deterministic SolutionPackage checks, immutable publication, and exact-version installation and enablement through one governed lifecycle that resolves immutable package, descriptor, content, interface, provenance, and applicable SDK-verification facts from the authoritative scoped Package Envelope/catalog record; executes only the exact package-owned semantic corpus payload selected by the release; binds canonical corpus bytes/order and verifier identity into the release artifact; reuses the same verified facts through publish, final verification, atomic ComponentInstall activation, and idempotent replay; fails closed on catalog drift; and preserves every accepted UJ-SOLUTION-005/006 authorization, isolation, conflict, builtin-path, LockedComponentSet, and recovery behavior. Consume common Package verification, immutable catalog records and ComponentInstall results only from the existing extension-package producer through its independently reviewed production surface; preserve Solution-specific deterministic validation and use the existing kernel-planning compiler for release-bound semantic checks. Do not equate a source distribution bundle or a locally constructed passed record with Package Governance authority.",
+    "non_goals": [
+      "Do not change adjacent domain ownership, add a generic plugin system, or introduce a second package, approval, catalog, installation, or verification source of truth.",
+      "Do not broaden primary implementation ownership beyond internal/solutions/packages/** or change the existing worker, reviewer, acceptance responsibility, or PR base. The only dependency additions are the existing extension-package authority and already-completed kernel-planning implementation; supporting consumer adapters and external-package integration tests remain in this scope.",
+      "Do not let synthetic RegisterComponent/default facts, caller-shaped package records, an unscoped resolver, identity-only lookup, a self-hashed descriptor, or mutable catalog reads satisfy governed publish/install authority.",
+      "Do not classify every generic ContentPackage as a data contract; resolve the exact Package Envelope descriptor and apply only the context-specific package/content/interface checks owned by that immutable release.",
+      "Do not select production fixture source through OAC_SEMANTIC_FIXTURE_CORPUS, module-global embedded fallback, reference-only metadata, a legacy error-only/recording verifier, or hard-coded assertion labels; the selected SolutionPackage must own the canonical executable corpus payload.",
+      "Do not make published releases mutable, partially activate Required members, replace an active Workflow LockedComponentSet, or treat retry as permission to overwrite an immutable release.",
+      "Do not bypass authorization, admission, CAS, idempotency, PlanningAuthority, ValidatedPlan, Package/interface checks, audit/provenance evidence, or the Package/Solution lifecycle through generic Artifact approval.",
+      "Do not replace already accepted publish/install lifecycle regressions with package-authority, corpus-ownership, descriptor/provenance, or catalog-drift regressions; all groups are mandatory in the same exact gate.",
+      "Do not implement Package verification issuers, signing authority, SDK conformance suites, a new Package catalog, or ComponentInstall writes in the Solution module. The existing extension-package node owns those results and the committed-record/read boundary. Its existing contract must be delivered, independently reviewed and merged before this consumer resumes. Missing producer APIs, trust configuration or records are prerequisites to report, never permission to generate success locally.",
+      "Do not interpret reviewer labels component-governance, package-source-proof-record, applicable-sdk-verification-record or authoritative-catalog-sdk-fixture as new DAG nodes or independently established authorities: they map to the existing extension-package production verification/catalog boundary and its extension-package-governance-evidence delivery. contracts-extension-wire supplies structural wire values only; release-artifact-tooling packages source only. Neither issues Package verification or SDK pass decisions.",
+      "Do not require a fictitious SDK pass for Solution/Content: these use their owning static publication validators. For each Extension dependency use the declared interface_api SDK-owned structural AND behavioral checks through Component Governance, not a Solution validator, caller-selected check list, or a hand-written replacement suite. Keep Harness and Convergence contracts, state, budgets and reviews unchanged.",
+      "Do not turn this engineering review requirement into a product Solution approval workflow: draft checks remain transient diagnostics; publication reruns deterministic checks and produces an immutable release; installation/activation is delegated to Component Governance. An existing Active root release must not be required to publish a new root: verify exact current candidate bytes during publication and install the resulting immutable release afterward. Never seed a fake already-published root to break this order.",
+      "Do not discharge BLK-a4347cef4e60 or BLK-b584db17ea2b from test names, hashes of caller-controlled fields or a green local fixture log. The new external-package integration test must execute the actual independently reviewed producer and its verification/read path, retain its immutable package/interface report and exact source/SDK execution identity, and show consumer rejection of forged records. Raw candidate fixtures are test inputs, not trusted outputs. Trust configuration belongs to the producer; consumer-generated signing keys or caller-selected trust roots cannot establish authority.",
+      "Do not mark the remaining previous-review obligations fixed by this amendment: BLK-3de40ebc5b85, BLK-49715dbe0d3d, BLK-4a6f07a16efe and BLK-7de7aefc750d require independent verification of release-bound compilation/recovery, per-assertion targets, typed template/Skill compatibility and replay drift/unavailability. Retain immutable catalog/root fixes BLK-20a1d01e9c90 and BLK-f353c59b473f as regressions. The latest worker head is evidence to review, not approval."
+    ],
+    "verification_commands": [
+      "mkdir -p artifacts/solution-publishing && OAC_SEMANTIC_FIXTURE_RESULTS=artifacts/solution-publishing/semantic-fixture-results.json go test -covermode=atomic -coverprofile=artifacts/solution-publishing/coverage.out ./internal/solutions/packages/...",
+      "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/solution-publishing/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+      "OAC_SEMANTIC_FIXTURE_RESULTS=artifacts/solution-publishing/semantic-fixture-results.json go test -json -count=1 ./internal/solutions/packages/... -run '^(TestFixtureVerifierRunsOnPublishAndInstallAndFailsClosed|TestPublicationClonePreservesResolvedExternalContent|TestScopeIsolationAndAuthorization|TestTypedComponentKindIsPartOfMemberIdentity|TestPublishInstallAndReplayLifecycle|TestInstallFailureDoesNotActivateAndCanRetry|TestDefaultGovernedWiringPersistsScopedFixtureEvidenceAndNestedMembers|TestDefaultComponentResolverFailsClosedOnAmbiguousKind|TestCommitInstallationRejectsOmittedNestedExternalMember|TestScopedResolverFixtureEvidenceAndSemanticGuards|TestMemoryResolverAndClosureFailureBranches|TestComponentResolverAgreementBranches|TestCheckerUsesAuthoritativeFieldAndDependencyPorts|TestGovernedSemanticFixturesProveGenericWebBranchRecoveryAndTerminalPaths|TestPublishAndInstallReexecuteSemanticFixtureCorpus|TestGovernedPublishInstallRejectsEmptyOrInvalidFixtureCorpus|TestGovernedPublishInstallRejectsLegacyErrorOnlyFixtureVerifier|TestGovernedPublishInstallRejectsUnscopedComponentResolver|TestScopedComponentCatalogResolvesExactNestedExternalPackageAndInterfaceFacts|TestScopedComponentCatalogRejectsNestedExternalInterfaceMismatch|TestComponentInstallPersistsVerifiedMemberFacts|TestPublishInstallReplayUsesSameTypedCatalogFacts|TestPublishInstallAuthorizationMatrix|TestPublishInstallRejectsIdempotencyAndPackageDigestConflicts|TestEmbeddedBundleUsesGovernedPathWithoutWorkflowBypass|TestActiveLockedComponentSetRemainsImmutableAcrossUpgrade|TestInstallUnknownAndKnownFailureRecovery)$' > artifacts/solution-publishing/lifecycle-evidence.json",
+      "python3 -c \"from pathlib import Path; import json; required=set('TestFixtureVerifierRunsOnPublishAndInstallAndFailsClosed TestPublicationClonePreservesResolvedExternalContent TestScopeIsolationAndAuthorization TestTypedComponentKindIsPartOfMemberIdentity TestPublishInstallAndReplayLifecycle TestInstallFailureDoesNotActivateAndCanRetry TestDefaultGovernedWiringPersistsScopedFixtureEvidenceAndNestedMembers TestDefaultComponentResolverFailsClosedOnAmbiguousKind TestCommitInstallationRejectsOmittedNestedExternalMember TestScopedResolverFixtureEvidenceAndSemanticGuards TestMemoryResolverAndClosureFailureBranches TestComponentResolverAgreementBranches TestCheckerUsesAuthoritativeFieldAndDependencyPorts TestGovernedSemanticFixturesProveGenericWebBranchRecoveryAndTerminalPaths TestPublishAndInstallReexecuteSemanticFixtureCorpus TestGovernedPublishInstallRejectsEmptyOrInvalidFixtureCorpus TestGovernedPublishInstallRejectsLegacyErrorOnlyFixtureVerifier TestGovernedPublishInstallRejectsUnscopedComponentResolver TestScopedComponentCatalogResolvesExactNestedExternalPackageAndInterfaceFacts TestScopedComponentCatalogRejectsNestedExternalInterfaceMismatch TestComponentInstallPersistsVerifiedMemberFacts TestPublishInstallReplayUsesSameTypedCatalogFacts TestPublishInstallAuthorizationMatrix TestPublishInstallRejectsIdempotencyAndPackageDigestConflicts TestEmbeddedBundleUsesGovernedPathWithoutWorkflowBypass TestActiveLockedComponentSetRemainsImmutableAcrossUpgrade TestInstallUnknownAndKnownFailureRecovery'.split()); rows=[json.loads(x) for x in open('artifacts/solution-publishing/lifecycle-evidence.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing required lifecycle tests: {sorted(required-passed)}'; groups={'authorization_matrix':set('TestScopeIsolationAndAuthorization TestPublishInstallAuthorizationMatrix'.split()),'cross_scope_isolation':{'TestScopeIsolationAndAuthorization'},'idempotency_digest_conflict':{'TestPublishInstallRejectsIdempotencyAndPackageDigestConflicts'},'builtin_no_workflow_bypass':{'TestEmbeddedBundleUsesGovernedPathWithoutWorkflowBypass'},'locked_component_set_immutability':{'TestActiveLockedComponentSetRemainsImmutableAcrossUpgrade'},'unknown_known_failure_recovery':set('TestInstallFailureDoesNotActivateAndCanRetry TestInstallUnknownAndKnownFailureRecovery'.split()),'semantic_fixture_guards':set('TestGovernedSemanticFixturesProveGenericWebBranchRecoveryAndTerminalPaths TestPublishAndInstallReexecuteSemanticFixtureCorpus TestGovernedPublishInstallRejectsEmptyOrInvalidFixtureCorpus TestGovernedPublishInstallRejectsLegacyErrorOnlyFixtureVerifier'.split()),'typed_component_authority':set('TestGovernedPublishInstallRejectsUnscopedComponentResolver TestScopedComponentCatalogResolvesExactNestedExternalPackageAndInterfaceFacts TestScopedComponentCatalogRejectsNestedExternalInterfaceMismatch TestComponentInstallPersistsVerifiedMemberFacts TestPublishInstallReplayUsesSameTypedCatalogFacts'.split())}; metrics={'required_lifecycle_test_count':len(passed),**{k+'_test_count':len(passed&v) for k,v in groups.items()}}; expected={'required_lifecycle_test_count':27,'authorization_matrix_test_count':2,'cross_scope_isolation_test_count':1,'idempotency_digest_conflict_test_count':1,'builtin_no_workflow_bypass_test_count':1,'locked_component_set_immutability_test_count':1,'unknown_known_failure_recovery_test_count':2,'semantic_fixture_guards_test_count':4,'typed_component_authority_test_count':5}; assert metrics==expected, (metrics,expected); Path('artifacts/solution-publishing/gate-metrics.json').write_text(json.dumps({'schema':'oac.solution-publishing-gate-metrics/v1','metrics':metrics},sort_keys=True,separators=(',',':'))+'\\n')\"",
+      "go test -json -count=1 ./internal/solutions/packages/... -run '^(TestScopeIsolationAndAuthorization|TestPublishInstallAuthorizationMatrix|TestPublishInstallRejectsIdempotencyAndPackageDigestConflicts|TestEmbeddedBundleUsesGovernedPathWithoutWorkflowBypass|TestActiveLockedComponentSetRemainsImmutableAcrossUpgrade|TestInstallFailureDoesNotActivateAndCanRetry|TestInstallUnknownAndKnownFailureRecovery)$' > artifacts/solution-publishing/retained-lifecycle-evidence.json",
+      "python3 -c \"from pathlib import Path; import json; required=set('TestPublishInstallAuthorizationMatrix/publish-only-cannot-activate TestPublishInstallAuthorizationMatrix/activate-only-cannot-publish TestPublishInstallAuthorizationMatrix/both-permissions-checked-before-write TestScopeIsolationAndAuthorization/same-scope-allowed TestScopeIsolationAndAuthorization/cross-scope-denied TestPublishInstallRejectsIdempotencyAndPackageDigestConflicts/same-key-same-digest-replays TestPublishInstallRejectsIdempotencyAndPackageDigestConflicts/same-key-different-request-rejected TestPublishInstallRejectsIdempotencyAndPackageDigestConflicts/same-package-version-different-digest-rejected TestPublishInstallRejectsIdempotencyAndPackageDigestConflicts/cas-conflict-rejected TestEmbeddedBundleUsesGovernedPathWithoutWorkflowBypass/embedded-bundle-uses-common-path TestEmbeddedBundleUsesGovernedPathWithoutWorkflowBypass/package-lifecycle-creates-no-workflow TestActiveLockedComponentSetRemainsImmutableAcrossUpgrade/active-locked-set-unchanged TestActiveLockedComponentSetRemainsImmutableAcrossUpgrade/new-project-can-select-new-release TestInstallUnknownAndKnownFailureRecovery/unknown-failure-observed-before-retry TestInstallUnknownAndKnownFailureRecovery/known-failure-can-retry'.split()); rows=[json.loads(x) for x in open('artifacts/solution-publishing/retained-lifecycle-evidence.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing retained lifecycle scenarios: {sorted(required-passed)}'; prefixes={'authorization_matrix':'TestPublishInstallAuthorizationMatrix/','cross_scope_isolation':'TestScopeIsolationAndAuthorization/','idempotency_digest_conflict':'TestPublishInstallRejectsIdempotencyAndPackageDigestConflicts/','builtin_no_workflow_bypass':'TestEmbeddedBundleUsesGovernedPathWithoutWorkflowBypass/','locked_component_set_immutability':'TestActiveLockedComponentSetRemainsImmutableAcrossUpgrade/','unknown_known_failure_recovery':'TestInstallUnknownAndKnownFailureRecovery/'}; metrics={'retained_lifecycle_scenario_count':len(passed),**{k+'_scenario_count':sum(x.startswith(v) for x in passed) for k,v in prefixes.items()}}; expected={'retained_lifecycle_scenario_count':15,'authorization_matrix_scenario_count':3,'cross_scope_isolation_scenario_count':2,'idempotency_digest_conflict_scenario_count':4,'builtin_no_workflow_bypass_scenario_count':2,'locked_component_set_immutability_scenario_count':2,'unknown_known_failure_recovery_scenario_count':2}; assert metrics==expected,(metrics,expected); Path('artifacts/solution-publishing/retained-lifecycle-metrics.json').write_text(json.dumps({'schema':'oac.solution-publishing-retained-lifecycle-metrics/v1','metrics':metrics},sort_keys=True,separators=(',',':'))+'\\n')\"",
+      "rm -f artifacts/solution-publishing/semantic-fixture-results-a.json artifacts/solution-publishing/semantic-fixture-results-b.json && OAC_SEMANTIC_FIXTURE_RESULTS=artifacts/solution-publishing/semantic-fixture-results-a.json go test -count=1 ./internal/solutions/packages/... -run '^TestGovernedSemanticFixturesProveGenericWebBranchRecoveryAndTerminalPaths$' && OAC_SEMANTIC_FIXTURE_RESULTS=artifacts/solution-publishing/semantic-fixture-results-b.json go test -count=1 ./internal/solutions/packages/... -run '^TestGovernedSemanticFixturesProveGenericWebBranchRecoveryAndTerminalPaths$' && cmp -s artifacts/solution-publishing/semantic-fixture-results-a.json artifacts/solution-publishing/semantic-fixture-results-b.json && cp artifacts/solution-publishing/semantic-fixture-results-a.json artifacts/solution-publishing/semantic-fixture-results.json && rm artifacts/solution-publishing/semantic-fixture-results-a.json artifacts/solution-publishing/semantic-fixture-results-b.json",
+      "python3 -c \"from pathlib import Path; import hashlib,json; corpus=json.load(open('internal/solutions/packages/testdata/semantic-fixtures/v1/corpus.json')); results=json.load(open('artifacts/solution-publishing/semantic-fixture-results.json')); required={'generic-web-operability-positive':'accept','generic-web-operability-negative':'reject','branch-closure-positive':'accept','branch-closure-negative':'reject','recovery-positive':'accept','recovery-unknown-negative':'reject','terminal-path-positive':'accept','terminal-path-negative':'reject'}; assert corpus.get('schema')=='oac.solution-package-semantic-fixture-corpus/v1' and corpus.get('version')=='1.0.0'; fixtures=corpus.get('fixtures'); assert isinstance(fixtures,list) and len(fixtures)==len(required); by_id={x.get('fixture_id'):x for x in fixtures}; assert len(by_id)==len(fixtures) and set(by_id)==set(required); digest='sha256:'+hashlib.sha256(json.dumps(fixtures,sort_keys=True,separators=(',',':')).encode()).hexdigest(); assert corpus.get('content_digest')==digest; assert results.get('schema')=='oac.solution-package-semantic-fixture-results/v1' and results.get('corpus_version')==corpus['version'] and results.get('corpus_digest')==digest and isinstance(results.get('verifier_version'),str) and results['verifier_version']; rows=results.get('fixtures'); assert isinstance(rows,list) and len(rows)==len(required); observed={x.get('fixture_id'):x for x in rows}; assert len(observed)==len(rows) and set(observed)==set(required); assert all(isinstance(by_id[k].get('payload'),dict) and by_id[k]['payload'] and isinstance(by_id[k].get('assertions'),list) and by_id[k]['assertions'] for k in required); assert all(by_id[k].get('expected_outcome')==required[k] for k in required); assert all(observed[k].get('expected_outcome')==required[k] and observed[k].get('observed_outcome')==required[k] and observed[k].get('status')=='pass' and observed[k].get('verifier_version')==results['verifier_version'] for k in required); assert all({a.get('assertion_id') for a in observed[k].get('assertions',[])}=={a.get('assertion_id') for a in by_id[k]['assertions']} and all(a.get('status')=='pass' and a.get('expected')==a.get('observed') for a in observed[k]['assertions']) for k in required); assertion_count=sum(len(observed[k]['assertions']) for k in required); metrics={'fixture_count':8,'passed_fixture_count':8,'failed_fixture_count':0,'unresolved_fixture_count':0,'label_only_fixture_count':0,'corpus_digest_match_count':1,'semantic_assertion_count':assertion_count}; assert assertion_count>=8 and results.get('metrics')==metrics; assert not ({'generated_at','timestamp','run_id'}&set(results)); print(json.dumps(metrics,sort_keys=True))\"",
+      "python3 scripts/release/package_component.py --component solution-publishing --kind platform-core-dependency-source --input internal/solutions/packages --bundle artifacts/solution-publishing/source-bundle.tar.zst --component-manifest artifacts/solution-publishing/component-manifest.json --digest-output artifacts/solution-publishing/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner solution-publishing --require-all-owner-sources-accounted",
+      "mkdir -p artifacts/solution-publishing && rm -f artifacts/solution-publishing/authority-binding-evidence.json artifacts/solution-publishing/producer-handoff-evidence.json && go test -json -count=1 ./internal/solutions/packages/... -run '^(TestPackageOwnedSemanticFixtureCorpusExecutesSelectedPayload|TestPackageOwnedSemanticFixtureCorpusRejectsSourceOrderAndContentDrift|TestArtifactDigestBindsPackageOwnedCorpusAndVerifierIdentity|TestScopedComponentCatalogRequiresAuthoritativePackageEnvelopeAndSDKVerification|TestScopedComponentCatalogRejectsDescriptorProvenanceAPIAndContentMismatch|TestScopedComponentCatalogPreservesContextSpecificContentKinds|TestActivationRejectsCatalogFactDrift)$' > artifacts/solution-publishing/authority-lifecycle-evidence.json && OAC_SOLUTION_PACKAGE_AUTHORITY_RESULTS=\"$PWD/artifacts/solution-publishing/authority-binding-evidence.json\" OAC_SOLUTION_PACKAGE_HANDOFF_RESULTS=\"$PWD/artifacts/solution-publishing/producer-handoff-evidence.json\" go test -json -count=1 ./internal/solutions/packages/... -run '^TestExternalSolutionPublishingConsumesComponentGovernanceAuthority$' >> artifacts/solution-publishing/authority-lifecycle-evidence.json",
+      "python3 -c \"from pathlib import Path; import json; required=set('TestPackageOwnedSemanticFixtureCorpusExecutesSelectedPayload TestPackageOwnedSemanticFixtureCorpusRejectsSourceOrderAndContentDrift TestArtifactDigestBindsPackageOwnedCorpusAndVerifierIdentity TestScopedComponentCatalogRequiresAuthoritativePackageEnvelopeAndSDKVerification TestScopedComponentCatalogRejectsDescriptorProvenanceAPIAndContentMismatch TestScopedComponentCatalogPreservesContextSpecificContentKinds TestActivationRejectsCatalogFactDrift'.split()); rows=[json.loads(x) for x in open('artifacts/solution-publishing/authority-lifecycle-evidence.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing authority tests: {sorted(required-passed)}'; e=json.load(open('artifacts/solution-publishing/authority-binding-evidence.json')); assert e.get('schema')=='oac.solution-package-authority-evidence/v1'; release=e.get('release'); envelope=e.get('envelope'); corpus=e.get('corpus'); bindings=e.get('bindings'); members=e.get('members'); assert isinstance(release,dict) and release.get('package_kind')=='solution' and all(isinstance(release.get(k),str) and release[k] for k in ('package_id','package_version','artifact_digest')); assert isinstance(envelope,dict) and all(isinstance(envelope.get(k),str) and envelope[k] for k in ('descriptor_path','descriptor_api_version','descriptor_digest','origin','provenance_digest')); assert isinstance(corpus,dict) and all(isinstance(corpus.get(k),str) and corpus[k] for k in ('content_id','descriptor_digest','content_digest','order_digest','verifier_identity_digest')); assert isinstance(members,list) and members and all(isinstance(x,dict) and all(isinstance(x.get(k),str) and x[k] for k in ('package_kind','package_id','package_version','artifact_digest','descriptor_digest','content_digest','provenance_digest','verification_digest')) for x in members); assert isinstance(bindings,dict) and bindings.get('publish_verified_facts_digest')==bindings.get('install_verified_facts_digest')==bindings.get('component_install_verified_facts_digest') and isinstance(bindings.get('publish_verified_facts_digest'),str) and bindings['publish_verified_facts_digest']; metrics={'authority_binding_test_count':len(passed),**e.get('metrics',{})}; expected={'authority_binding_test_count':7,'package_owned_corpus_publish_install_execution_count':2,'package_envelope_authority_match_count':1,'descriptor_content_digest_match_count':1,'applicable_sdk_verification_match_count':1,'artifact_corpus_verifier_binding_count':1,'component_install_fact_binding_count':1,'catalog_fact_drift_rejection_count':1,'synthetic_registration_accept_count':0,'production_corpus_environment_override_accept_count':0}; assert metrics==expected,(metrics,expected); print(json.dumps(metrics,sort_keys=True))\" && python3 -c 'from pathlib import Path\nimport hashlib,json,re,subprocess\nbase=Path('\"'\"'artifacts/solution-publishing'\"'\"')\nname='\"'\"'TestExternalSolutionPublishingConsumesComponentGovernanceAuthority'\"'\"'\nscenarios=['\"'\"'publish-install-replay-authority'\"'\"', '\"'\"'reject-consumer-minted-source-proof'\"'\"', '\"'\"'reject-consumer-minted-sdk-result'\"'\"', '\"'\"'reject-unknown-issuer'\"'\"', '\"'\"'reject-wrong-scope-release'\"'\"', '\"'\"'reject-package-byte-tamper'\"'\"', '\"'\"'reject-sdk-failure-or-unknown'\"'\"', '\"'\"'reject-replay-catalog-drift-or-unavailable'\"'\"', '\"'\"'release-bound-compiled-semantic-paths'\"'\"', '\"'\"'typed-template-skill-closure'\"'\"']\nrows=[json.loads(x) for x in (base/'\"'\"'authority-lifecycle-evidence.json'\"'\"').read_text().splitlines() if x.strip()]\nrequired={name}|{name+'\"'\"'/'\"'\"'+s for s in scenarios}\npassed={r.get('\"'\"'Test'\"'\"') for r in rows if r.get('\"'\"'Action'\"'\"')=='\"'\"'pass'\"'\"'}\nassert required <= passed, sorted(required-passed)\nassert not any(r.get('\"'\"'Action'\"'\"') in {'\"'\"'skip'\"'\"','\"'\"'fail'\"'\"'} and (r.get('\"'\"'Test'\"'\"')==name or str(r.get('\"'\"'Test'\"'\"','\"'\"''\"'\"')).startswith(name+'\"'\"'/'\"'\"')) for r in rows)\nsrc=Path('\"'\"'internal/solutions/packages/producer_handoff_external_test.go'\"'\"').read_text()\nassert re.search(r'\"'\"'^package\\s+packages_test\\s*$'\"'\"',src,re.M)\nd=json.loads((base/'\"'\"'producer-handoff-evidence.json'\"'\"').read_text())\nassert d['\"'\"'schema'\"'\"']=='\"'\"'oac.solution-package-producer-handoff/v1'\"'\"'\nassert d['\"'\"'consumer_revision'\"'\"']==subprocess.check_output(['\"'\"'git'\"'\"','\"'\"'rev-parse'\"'\"','\"'\"'HEAD'\"'\"'],text=True).strip()\nassert d['\"'\"'producer_node'\"'\"']=='\"'\"'extension-package'\"'\"' and d['\"'\"'producer_artifact_id'\"'\"']=='\"'\"'extension-package-governance-evidence'\"'\"'\nassert re.fullmatch('\"'\"'[0-9a-f]{40}'\"'\"',d['\"'\"'producer_revision'\"'\"'])\nassert d['\"'\"'producer_surface'\"'\"'] and d['\"'\"'producer_verification_identity'\"'\"']\nassert set(d['\"'\"'scenarios'\"'\"'])==set(scenarios) and all(x=='\"'\"'pass'\"'\"' for x in d['\"'\"'scenarios'\"'\"'].values())\nrecords=d['\"'\"'records'\"'\"']; assert isinstance(records,list) and records\nassert {'\"'\"'solution'\"'\"','\"'\"'content'\"'\"','\"'\"'extension'\"'\"'} <= {r['\"'\"'package_kind'\"'\"'] for r in records}\nassert len({(r['\"'\"'scope_id'\"'\"'],r['\"'\"'package_kind'\"'\"'],r['\"'\"'package_id'\"'\"'],r['\"'\"'package_version'\"'\"'],r['\"'\"'artifact_digest'\"'\"']) for r in records})==len(records)\nfor r in records:\n    assert all(isinstance(r.get(k),str) and r[k] for k in ('\"'\"'scope_id'\"'\"','\"'\"'package_id'\"'\"','\"'\"'package_version'\"'\"','\"'\"'artifact_digest'\"'\"','\"'\"'issuer_identity'\"'\"','\"'\"'verification_identity'\"'\"','\"'\"'report_sha256'\"'\"','\"'\"'report_file'\"'\"','\"'\"'source_execution_identity'\"'\"','\"'\"'validation_execution_identity'\"'\"'))\n    p=base/r['\"'\"'report_file'\"'\"']; assert p.resolve().is_relative_to(base.resolve())\n    assert hashlib.sha256(p.read_bytes()).hexdigest()==r['\"'\"'report_sha256'\"'\"']\n    assert r['\"'\"'package_check'\"'\"']=='\"'\"'passed'\"'\"'\n    assert r['\"'\"'validation_kind'\"'\"']==('\"'\"'sdk-interface'\"'\"' if r['\"'\"'package_kind'\"'\"']=='\"'\"'extension'\"'\"' else '\"'\"'static-publication'\"'\"')\n    assert r['\"'\"'validation_outcome'\"'\"']=='\"'\"'passed'\"'\"'\n    if r['\"'\"'package_kind'\"'\"']=='\"'\"'extension'\"'\"':\n        assert r['\"'\"'interface_api'\"'\"'] and r['\"'\"'sdk_verifier_identity'\"'\"'] and r['\"'\"'sdk_behavior_execution_identity'\"'\"']\n    assert set(r['\"'\"'stages'\"'\"'])=={'\"'\"'publish'\"'\"','\"'\"'install'\"'\"','\"'\"'activation'\"'\"','\"'\"'replay'\"'\"'}\n    assert len(set(r['\"'\"'stages'\"'\"'].values()))==1 and next(iter(r['\"'\"'stages'\"'\"'].values()))==r['\"'\"'verification_identity'\"'\"']\nassert d['\"'\"'forged_record_accept_count'\"'\"']==0 and d['\"'\"'failed_or_unknown_verification_accept_count'\"'\"']==0\nassert d['\"'\"'replay_drift_or_unavailable_accept_count'\"'\"']==0\nassert d['\"'\"'consumer_issued_authority_record_count'\"'\"']==0\nassert d['\"'\"'production_producer_execution_count'\"'\"']>0 and d['\"'\"'sdk_behavior_execution_count'\"'\"']>0\nprint(json.dumps({'\"'\"'independent_producer_handoff_test_count'\"'\"':1,'\"'\"'producer_handoff_scenario_count'\"'\"':len(scenarios),'\"'\"'producer_handoff_record_count'\"'\"':len(records),'\"'\"'forged_record_accept_count'\"'\"':d['\"'\"'forged_record_accept_count'\"'\"']},sort_keys=True))\n'"
+    ],
+    "integration_gates": [
+      {
+        "name": "solution-publishing-gate",
+        "layer": "L1",
+        "source_of_truth": [
+          "solution-publishing-current-amendment-decision.md",
+          "solution-publishing-amendment-decision.md",
+          "docs/design/open-agent-cluster-overview-design.md:L335-L355",
+          "docs/design/open-agent-cluster-overview-design.md:L581-L609",
+          "docs/design/open-agent-cluster-overview-design.md:L720-L739",
+          "docs/design/detailed/01-solution-definition-detailed-design.md:L69-L79",
+          "docs/design/detailed/01-solution-definition-detailed-design.md:L239-L306",
+          "docs/design/detailed/01-solution-definition-detailed-design.md:L331-L353",
+          "docs/design/detailed/08-component-and-extension-detailed-design.md:L127-L205",
+          "docs/design/detailed/08-component-and-extension-detailed-design.md:L461-L500",
+          "docs/design/detailed/09-governance-and-security-detailed-design.md:L27-L46",
+          "docs/references/solution/solution-definition.md:L17-L32",
+          "docs/references/solution/solution-definition.md:L298-L380",
+          "docs/references/extension/component-governance.md:L157-L201",
+          "docs/references/extension/component-governance.md:L270-L281",
+          "docs/delivery/acceptance-and-validation.md:L619-L649",
+          "docs/references/extension/component-governance.md:L274-L281",
+          "docs/design/detailed/01-solution-definition-detailed-design.md:L251-L278",
+          "docs/design/detailed/11-software-delivery-detailed-design.md:L654-L683"
+        ],
+        "delivery_goal": "Prove that publish and install use one authoritative scoped Package Envelope/catalog record and the applicable SDK checks; execute only an immutable package-owned corpus payload with canonical byte/order digest and verifier identity bound into the release artifact; reuse identical package, descriptor, content, interface, provenance, corpus, and verifier facts in publish, install, final verification, ComponentInstall activation, and idempotent replay; reject synthetic registration, descriptor/API/content/provenance mismatch, production environment-selected corpus source, and catalog mutation before activation; and preserve the accepted authorization matrix, cross-scope isolation, digest/CAS conflict, builtin common path, no-Workflow bypass, active LockedComponentSet, unknown/known recovery, Generic Web, branch-closure, terminal-path, and fixture fail-closed regressions. Gate commands 1-9 and all seven existing authority regressions remain mandatory. Command 10 additionally runs the new TestExternalSolutionPublishingConsumesComponentGovernanceAuthority and its ten named scenarios from package packages_test in internal/solutions/packages/producer_handoff_external_test.go; implementing this test and the production consumer adapter is part of this recovery, not a claim they already exist. Only this external integration may write authority-binding-evidence.json and producer-handoff-evidence.json; remove authority output emission from synthetic same-package helpers. Exercise the producer-owned production surface, complete package-byte/provenance verification and the declared SDK behavioral entry point, then use the resulting immutable reports through Solution publication and delegated install/atomic activation/replay. Re-read committed owner records; bind root and every external member, including AgentTemplate/Skill closure. Export original producer reports unmodified beneath artifacts/solution-publishing/producer-reports/ with their SHA256, report/issuer/execution identities and producer source revision. producer_surface names the actual exported production API exercised; producer_verification_identity identifies the independently reviewed producer delivery, not a new consumer-issued certificate. The handoff JSON is an observation index, never an authority or substitute for validating these reports through the owning producer. Metrics and scenario results must derive from actual assertions/invocations, not literal counters. Command 11 keeps its original assertions and checks this additional handoff; Reviewer inspects production wiring and reproduces the same gate in isolation. Missing, stale, mismatched, failed or Unknown owner facts fail the gate without skip/fallback. A caller-minted source proof/SDK result, unknown issuer, cross-scope/release record, altered complete bytes, SDK failure/Unknown, replay drift/unavailability must be rejected without successful publish/activation. Branch, terminal and recovery assertions must name the selected immutable release objects and actual compiler/governed execution results, not independent sample plans.",
+        "covers": [
+          "solution-publishing"
+        ],
+        "acceptance_refs": [
+          "UJ-SOLUTION-005",
+          "UJ-SOLUTION-006"
+        ],
+        "commands": [
+          "mkdir -p artifacts/solution-publishing && OAC_SEMANTIC_FIXTURE_RESULTS=artifacts/solution-publishing/semantic-fixture-results.json go test -covermode=atomic -coverprofile=artifacts/solution-publishing/coverage.out ./internal/solutions/packages/...",
+          "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/solution-publishing/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+          "OAC_SEMANTIC_FIXTURE_RESULTS=artifacts/solution-publishing/semantic-fixture-results.json go test -json -count=1 ./internal/solutions/packages/... -run '^(TestFixtureVerifierRunsOnPublishAndInstallAndFailsClosed|TestPublicationClonePreservesResolvedExternalContent|TestScopeIsolationAndAuthorization|TestTypedComponentKindIsPartOfMemberIdentity|TestPublishInstallAndReplayLifecycle|TestInstallFailureDoesNotActivateAndCanRetry|TestDefaultGovernedWiringPersistsScopedFixtureEvidenceAndNestedMembers|TestDefaultComponentResolverFailsClosedOnAmbiguousKind|TestCommitInstallationRejectsOmittedNestedExternalMember|TestScopedResolverFixtureEvidenceAndSemanticGuards|TestMemoryResolverAndClosureFailureBranches|TestComponentResolverAgreementBranches|TestCheckerUsesAuthoritativeFieldAndDependencyPorts|TestGovernedSemanticFixturesProveGenericWebBranchRecoveryAndTerminalPaths|TestPublishAndInstallReexecuteSemanticFixtureCorpus|TestGovernedPublishInstallRejectsEmptyOrInvalidFixtureCorpus|TestGovernedPublishInstallRejectsLegacyErrorOnlyFixtureVerifier|TestGovernedPublishInstallRejectsUnscopedComponentResolver|TestScopedComponentCatalogResolvesExactNestedExternalPackageAndInterfaceFacts|TestScopedComponentCatalogRejectsNestedExternalInterfaceMismatch|TestComponentInstallPersistsVerifiedMemberFacts|TestPublishInstallReplayUsesSameTypedCatalogFacts|TestPublishInstallAuthorizationMatrix|TestPublishInstallRejectsIdempotencyAndPackageDigestConflicts|TestEmbeddedBundleUsesGovernedPathWithoutWorkflowBypass|TestActiveLockedComponentSetRemainsImmutableAcrossUpgrade|TestInstallUnknownAndKnownFailureRecovery)$' > artifacts/solution-publishing/lifecycle-evidence.json",
+          "python3 -c \"from pathlib import Path; import json; required=set('TestFixtureVerifierRunsOnPublishAndInstallAndFailsClosed TestPublicationClonePreservesResolvedExternalContent TestScopeIsolationAndAuthorization TestTypedComponentKindIsPartOfMemberIdentity TestPublishInstallAndReplayLifecycle TestInstallFailureDoesNotActivateAndCanRetry TestDefaultGovernedWiringPersistsScopedFixtureEvidenceAndNestedMembers TestDefaultComponentResolverFailsClosedOnAmbiguousKind TestCommitInstallationRejectsOmittedNestedExternalMember TestScopedResolverFixtureEvidenceAndSemanticGuards TestMemoryResolverAndClosureFailureBranches TestComponentResolverAgreementBranches TestCheckerUsesAuthoritativeFieldAndDependencyPorts TestGovernedSemanticFixturesProveGenericWebBranchRecoveryAndTerminalPaths TestPublishAndInstallReexecuteSemanticFixtureCorpus TestGovernedPublishInstallRejectsEmptyOrInvalidFixtureCorpus TestGovernedPublishInstallRejectsLegacyErrorOnlyFixtureVerifier TestGovernedPublishInstallRejectsUnscopedComponentResolver TestScopedComponentCatalogResolvesExactNestedExternalPackageAndInterfaceFacts TestScopedComponentCatalogRejectsNestedExternalInterfaceMismatch TestComponentInstallPersistsVerifiedMemberFacts TestPublishInstallReplayUsesSameTypedCatalogFacts TestPublishInstallAuthorizationMatrix TestPublishInstallRejectsIdempotencyAndPackageDigestConflicts TestEmbeddedBundleUsesGovernedPathWithoutWorkflowBypass TestActiveLockedComponentSetRemainsImmutableAcrossUpgrade TestInstallUnknownAndKnownFailureRecovery'.split()); rows=[json.loads(x) for x in open('artifacts/solution-publishing/lifecycle-evidence.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing required lifecycle tests: {sorted(required-passed)}'; groups={'authorization_matrix':set('TestScopeIsolationAndAuthorization TestPublishInstallAuthorizationMatrix'.split()),'cross_scope_isolation':{'TestScopeIsolationAndAuthorization'},'idempotency_digest_conflict':{'TestPublishInstallRejectsIdempotencyAndPackageDigestConflicts'},'builtin_no_workflow_bypass':{'TestEmbeddedBundleUsesGovernedPathWithoutWorkflowBypass'},'locked_component_set_immutability':{'TestActiveLockedComponentSetRemainsImmutableAcrossUpgrade'},'unknown_known_failure_recovery':set('TestInstallFailureDoesNotActivateAndCanRetry TestInstallUnknownAndKnownFailureRecovery'.split()),'semantic_fixture_guards':set('TestGovernedSemanticFixturesProveGenericWebBranchRecoveryAndTerminalPaths TestPublishAndInstallReexecuteSemanticFixtureCorpus TestGovernedPublishInstallRejectsEmptyOrInvalidFixtureCorpus TestGovernedPublishInstallRejectsLegacyErrorOnlyFixtureVerifier'.split()),'typed_component_authority':set('TestGovernedPublishInstallRejectsUnscopedComponentResolver TestScopedComponentCatalogResolvesExactNestedExternalPackageAndInterfaceFacts TestScopedComponentCatalogRejectsNestedExternalInterfaceMismatch TestComponentInstallPersistsVerifiedMemberFacts TestPublishInstallReplayUsesSameTypedCatalogFacts'.split())}; metrics={'required_lifecycle_test_count':len(passed),**{k+'_test_count':len(passed&v) for k,v in groups.items()}}; expected={'required_lifecycle_test_count':27,'authorization_matrix_test_count':2,'cross_scope_isolation_test_count':1,'idempotency_digest_conflict_test_count':1,'builtin_no_workflow_bypass_test_count':1,'locked_component_set_immutability_test_count':1,'unknown_known_failure_recovery_test_count':2,'semantic_fixture_guards_test_count':4,'typed_component_authority_test_count':5}; assert metrics==expected, (metrics,expected); Path('artifacts/solution-publishing/gate-metrics.json').write_text(json.dumps({'schema':'oac.solution-publishing-gate-metrics/v1','metrics':metrics},sort_keys=True,separators=(',',':'))+'\\n')\"",
+          "go test -json -count=1 ./internal/solutions/packages/... -run '^(TestScopeIsolationAndAuthorization|TestPublishInstallAuthorizationMatrix|TestPublishInstallRejectsIdempotencyAndPackageDigestConflicts|TestEmbeddedBundleUsesGovernedPathWithoutWorkflowBypass|TestActiveLockedComponentSetRemainsImmutableAcrossUpgrade|TestInstallFailureDoesNotActivateAndCanRetry|TestInstallUnknownAndKnownFailureRecovery)$' > artifacts/solution-publishing/retained-lifecycle-evidence.json",
+          "python3 -c \"from pathlib import Path; import json; required=set('TestPublishInstallAuthorizationMatrix/publish-only-cannot-activate TestPublishInstallAuthorizationMatrix/activate-only-cannot-publish TestPublishInstallAuthorizationMatrix/both-permissions-checked-before-write TestScopeIsolationAndAuthorization/same-scope-allowed TestScopeIsolationAndAuthorization/cross-scope-denied TestPublishInstallRejectsIdempotencyAndPackageDigestConflicts/same-key-same-digest-replays TestPublishInstallRejectsIdempotencyAndPackageDigestConflicts/same-key-different-request-rejected TestPublishInstallRejectsIdempotencyAndPackageDigestConflicts/same-package-version-different-digest-rejected TestPublishInstallRejectsIdempotencyAndPackageDigestConflicts/cas-conflict-rejected TestEmbeddedBundleUsesGovernedPathWithoutWorkflowBypass/embedded-bundle-uses-common-path TestEmbeddedBundleUsesGovernedPathWithoutWorkflowBypass/package-lifecycle-creates-no-workflow TestActiveLockedComponentSetRemainsImmutableAcrossUpgrade/active-locked-set-unchanged TestActiveLockedComponentSetRemainsImmutableAcrossUpgrade/new-project-can-select-new-release TestInstallUnknownAndKnownFailureRecovery/unknown-failure-observed-before-retry TestInstallUnknownAndKnownFailureRecovery/known-failure-can-retry'.split()); rows=[json.loads(x) for x in open('artifacts/solution-publishing/retained-lifecycle-evidence.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing retained lifecycle scenarios: {sorted(required-passed)}'; prefixes={'authorization_matrix':'TestPublishInstallAuthorizationMatrix/','cross_scope_isolation':'TestScopeIsolationAndAuthorization/','idempotency_digest_conflict':'TestPublishInstallRejectsIdempotencyAndPackageDigestConflicts/','builtin_no_workflow_bypass':'TestEmbeddedBundleUsesGovernedPathWithoutWorkflowBypass/','locked_component_set_immutability':'TestActiveLockedComponentSetRemainsImmutableAcrossUpgrade/','unknown_known_failure_recovery':'TestInstallUnknownAndKnownFailureRecovery/'}; metrics={'retained_lifecycle_scenario_count':len(passed),**{k+'_scenario_count':sum(x.startswith(v) for x in passed) for k,v in prefixes.items()}}; expected={'retained_lifecycle_scenario_count':15,'authorization_matrix_scenario_count':3,'cross_scope_isolation_scenario_count':2,'idempotency_digest_conflict_scenario_count':4,'builtin_no_workflow_bypass_scenario_count':2,'locked_component_set_immutability_scenario_count':2,'unknown_known_failure_recovery_scenario_count':2}; assert metrics==expected,(metrics,expected); Path('artifacts/solution-publishing/retained-lifecycle-metrics.json').write_text(json.dumps({'schema':'oac.solution-publishing-retained-lifecycle-metrics/v1','metrics':metrics},sort_keys=True,separators=(',',':'))+'\\n')\"",
+          "rm -f artifacts/solution-publishing/semantic-fixture-results-a.json artifacts/solution-publishing/semantic-fixture-results-b.json && OAC_SEMANTIC_FIXTURE_RESULTS=artifacts/solution-publishing/semantic-fixture-results-a.json go test -count=1 ./internal/solutions/packages/... -run '^TestGovernedSemanticFixturesProveGenericWebBranchRecoveryAndTerminalPaths$' && OAC_SEMANTIC_FIXTURE_RESULTS=artifacts/solution-publishing/semantic-fixture-results-b.json go test -count=1 ./internal/solutions/packages/... -run '^TestGovernedSemanticFixturesProveGenericWebBranchRecoveryAndTerminalPaths$' && cmp -s artifacts/solution-publishing/semantic-fixture-results-a.json artifacts/solution-publishing/semantic-fixture-results-b.json && cp artifacts/solution-publishing/semantic-fixture-results-a.json artifacts/solution-publishing/semantic-fixture-results.json && rm artifacts/solution-publishing/semantic-fixture-results-a.json artifacts/solution-publishing/semantic-fixture-results-b.json",
+          "python3 -c \"from pathlib import Path; import hashlib,json; corpus=json.load(open('internal/solutions/packages/testdata/semantic-fixtures/v1/corpus.json')); results=json.load(open('artifacts/solution-publishing/semantic-fixture-results.json')); required={'generic-web-operability-positive':'accept','generic-web-operability-negative':'reject','branch-closure-positive':'accept','branch-closure-negative':'reject','recovery-positive':'accept','recovery-unknown-negative':'reject','terminal-path-positive':'accept','terminal-path-negative':'reject'}; assert corpus.get('schema')=='oac.solution-package-semantic-fixture-corpus/v1' and corpus.get('version')=='1.0.0'; fixtures=corpus.get('fixtures'); assert isinstance(fixtures,list) and len(fixtures)==len(required); by_id={x.get('fixture_id'):x for x in fixtures}; assert len(by_id)==len(fixtures) and set(by_id)==set(required); digest='sha256:'+hashlib.sha256(json.dumps(fixtures,sort_keys=True,separators=(',',':')).encode()).hexdigest(); assert corpus.get('content_digest')==digest; assert results.get('schema')=='oac.solution-package-semantic-fixture-results/v1' and results.get('corpus_version')==corpus['version'] and results.get('corpus_digest')==digest and isinstance(results.get('verifier_version'),str) and results['verifier_version']; rows=results.get('fixtures'); assert isinstance(rows,list) and len(rows)==len(required); observed={x.get('fixture_id'):x for x in rows}; assert len(observed)==len(rows) and set(observed)==set(required); assert all(isinstance(by_id[k].get('payload'),dict) and by_id[k]['payload'] and isinstance(by_id[k].get('assertions'),list) and by_id[k]['assertions'] for k in required); assert all(by_id[k].get('expected_outcome')==required[k] for k in required); assert all(observed[k].get('expected_outcome')==required[k] and observed[k].get('observed_outcome')==required[k] and observed[k].get('status')=='pass' and observed[k].get('verifier_version')==results['verifier_version'] for k in required); assert all({a.get('assertion_id') for a in observed[k].get('assertions',[])}=={a.get('assertion_id') for a in by_id[k]['assertions']} and all(a.get('status')=='pass' and a.get('expected')==a.get('observed') for a in observed[k]['assertions']) for k in required); assertion_count=sum(len(observed[k]['assertions']) for k in required); metrics={'fixture_count':8,'passed_fixture_count':8,'failed_fixture_count':0,'unresolved_fixture_count':0,'label_only_fixture_count':0,'corpus_digest_match_count':1,'semantic_assertion_count':assertion_count}; assert assertion_count>=8 and results.get('metrics')==metrics; assert not ({'generated_at','timestamp','run_id'}&set(results)); print(json.dumps(metrics,sort_keys=True))\"",
+          "python3 scripts/release/package_component.py --component solution-publishing --kind platform-core-dependency-source --input internal/solutions/packages --bundle artifacts/solution-publishing/source-bundle.tar.zst --component-manifest artifacts/solution-publishing/component-manifest.json --digest-output artifacts/solution-publishing/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner solution-publishing --require-all-owner-sources-accounted",
+          "mkdir -p artifacts/solution-publishing && rm -f artifacts/solution-publishing/authority-binding-evidence.json artifacts/solution-publishing/producer-handoff-evidence.json && go test -json -count=1 ./internal/solutions/packages/... -run '^(TestPackageOwnedSemanticFixtureCorpusExecutesSelectedPayload|TestPackageOwnedSemanticFixtureCorpusRejectsSourceOrderAndContentDrift|TestArtifactDigestBindsPackageOwnedCorpusAndVerifierIdentity|TestScopedComponentCatalogRequiresAuthoritativePackageEnvelopeAndSDKVerification|TestScopedComponentCatalogRejectsDescriptorProvenanceAPIAndContentMismatch|TestScopedComponentCatalogPreservesContextSpecificContentKinds|TestActivationRejectsCatalogFactDrift)$' > artifacts/solution-publishing/authority-lifecycle-evidence.json && OAC_SOLUTION_PACKAGE_AUTHORITY_RESULTS=\"$PWD/artifacts/solution-publishing/authority-binding-evidence.json\" OAC_SOLUTION_PACKAGE_HANDOFF_RESULTS=\"$PWD/artifacts/solution-publishing/producer-handoff-evidence.json\" go test -json -count=1 ./internal/solutions/packages/... -run '^TestExternalSolutionPublishingConsumesComponentGovernanceAuthority$' >> artifacts/solution-publishing/authority-lifecycle-evidence.json",
+          "python3 -c \"from pathlib import Path; import json; required=set('TestPackageOwnedSemanticFixtureCorpusExecutesSelectedPayload TestPackageOwnedSemanticFixtureCorpusRejectsSourceOrderAndContentDrift TestArtifactDigestBindsPackageOwnedCorpusAndVerifierIdentity TestScopedComponentCatalogRequiresAuthoritativePackageEnvelopeAndSDKVerification TestScopedComponentCatalogRejectsDescriptorProvenanceAPIAndContentMismatch TestScopedComponentCatalogPreservesContextSpecificContentKinds TestActivationRejectsCatalogFactDrift'.split()); rows=[json.loads(x) for x in open('artifacts/solution-publishing/authority-lifecycle-evidence.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing authority tests: {sorted(required-passed)}'; e=json.load(open('artifacts/solution-publishing/authority-binding-evidence.json')); assert e.get('schema')=='oac.solution-package-authority-evidence/v1'; release=e.get('release'); envelope=e.get('envelope'); corpus=e.get('corpus'); bindings=e.get('bindings'); members=e.get('members'); assert isinstance(release,dict) and release.get('package_kind')=='solution' and all(isinstance(release.get(k),str) and release[k] for k in ('package_id','package_version','artifact_digest')); assert isinstance(envelope,dict) and all(isinstance(envelope.get(k),str) and envelope[k] for k in ('descriptor_path','descriptor_api_version','descriptor_digest','origin','provenance_digest')); assert isinstance(corpus,dict) and all(isinstance(corpus.get(k),str) and corpus[k] for k in ('content_id','descriptor_digest','content_digest','order_digest','verifier_identity_digest')); assert isinstance(members,list) and members and all(isinstance(x,dict) and all(isinstance(x.get(k),str) and x[k] for k in ('package_kind','package_id','package_version','artifact_digest','descriptor_digest','content_digest','provenance_digest','verification_digest')) for x in members); assert isinstance(bindings,dict) and bindings.get('publish_verified_facts_digest')==bindings.get('install_verified_facts_digest')==bindings.get('component_install_verified_facts_digest') and isinstance(bindings.get('publish_verified_facts_digest'),str) and bindings['publish_verified_facts_digest']; metrics={'authority_binding_test_count':len(passed),**e.get('metrics',{})}; expected={'authority_binding_test_count':7,'package_owned_corpus_publish_install_execution_count':2,'package_envelope_authority_match_count':1,'descriptor_content_digest_match_count':1,'applicable_sdk_verification_match_count':1,'artifact_corpus_verifier_binding_count':1,'component_install_fact_binding_count':1,'catalog_fact_drift_rejection_count':1,'synthetic_registration_accept_count':0,'production_corpus_environment_override_accept_count':0}; assert metrics==expected,(metrics,expected); print(json.dumps(metrics,sort_keys=True))\" && python3 -c 'from pathlib import Path\nimport hashlib,json,re,subprocess\nbase=Path('\"'\"'artifacts/solution-publishing'\"'\"')\nname='\"'\"'TestExternalSolutionPublishingConsumesComponentGovernanceAuthority'\"'\"'\nscenarios=['\"'\"'publish-install-replay-authority'\"'\"', '\"'\"'reject-consumer-minted-source-proof'\"'\"', '\"'\"'reject-consumer-minted-sdk-result'\"'\"', '\"'\"'reject-unknown-issuer'\"'\"', '\"'\"'reject-wrong-scope-release'\"'\"', '\"'\"'reject-package-byte-tamper'\"'\"', '\"'\"'reject-sdk-failure-or-unknown'\"'\"', '\"'\"'reject-replay-catalog-drift-or-unavailable'\"'\"', '\"'\"'release-bound-compiled-semantic-paths'\"'\"', '\"'\"'typed-template-skill-closure'\"'\"']\nrows=[json.loads(x) for x in (base/'\"'\"'authority-lifecycle-evidence.json'\"'\"').read_text().splitlines() if x.strip()]\nrequired={name}|{name+'\"'\"'/'\"'\"'+s for s in scenarios}\npassed={r.get('\"'\"'Test'\"'\"') for r in rows if r.get('\"'\"'Action'\"'\"')=='\"'\"'pass'\"'\"'}\nassert required <= passed, sorted(required-passed)\nassert not any(r.get('\"'\"'Action'\"'\"') in {'\"'\"'skip'\"'\"','\"'\"'fail'\"'\"'} and (r.get('\"'\"'Test'\"'\"')==name or str(r.get('\"'\"'Test'\"'\"','\"'\"''\"'\"')).startswith(name+'\"'\"'/'\"'\"')) for r in rows)\nsrc=Path('\"'\"'internal/solutions/packages/producer_handoff_external_test.go'\"'\"').read_text()\nassert re.search(r'\"'\"'^package\\s+packages_test\\s*$'\"'\"',src,re.M)\nd=json.loads((base/'\"'\"'producer-handoff-evidence.json'\"'\"').read_text())\nassert d['\"'\"'schema'\"'\"']=='\"'\"'oac.solution-package-producer-handoff/v1'\"'\"'\nassert d['\"'\"'consumer_revision'\"'\"']==subprocess.check_output(['\"'\"'git'\"'\"','\"'\"'rev-parse'\"'\"','\"'\"'HEAD'\"'\"'],text=True).strip()\nassert d['\"'\"'producer_node'\"'\"']=='\"'\"'extension-package'\"'\"' and d['\"'\"'producer_artifact_id'\"'\"']=='\"'\"'extension-package-governance-evidence'\"'\"'\nassert re.fullmatch('\"'\"'[0-9a-f]{40}'\"'\"',d['\"'\"'producer_revision'\"'\"'])\nassert d['\"'\"'producer_surface'\"'\"'] and d['\"'\"'producer_verification_identity'\"'\"']\nassert set(d['\"'\"'scenarios'\"'\"'])==set(scenarios) and all(x=='\"'\"'pass'\"'\"' for x in d['\"'\"'scenarios'\"'\"'].values())\nrecords=d['\"'\"'records'\"'\"']; assert isinstance(records,list) and records\nassert {'\"'\"'solution'\"'\"','\"'\"'content'\"'\"','\"'\"'extension'\"'\"'} <= {r['\"'\"'package_kind'\"'\"'] for r in records}\nassert len({(r['\"'\"'scope_id'\"'\"'],r['\"'\"'package_kind'\"'\"'],r['\"'\"'package_id'\"'\"'],r['\"'\"'package_version'\"'\"'],r['\"'\"'artifact_digest'\"'\"']) for r in records})==len(records)\nfor r in records:\n    assert all(isinstance(r.get(k),str) and r[k] for k in ('\"'\"'scope_id'\"'\"','\"'\"'package_id'\"'\"','\"'\"'package_version'\"'\"','\"'\"'artifact_digest'\"'\"','\"'\"'issuer_identity'\"'\"','\"'\"'verification_identity'\"'\"','\"'\"'report_sha256'\"'\"','\"'\"'report_file'\"'\"','\"'\"'source_execution_identity'\"'\"','\"'\"'validation_execution_identity'\"'\"'))\n    p=base/r['\"'\"'report_file'\"'\"']; assert p.resolve().is_relative_to(base.resolve())\n    assert hashlib.sha256(p.read_bytes()).hexdigest()==r['\"'\"'report_sha256'\"'\"']\n    assert r['\"'\"'package_check'\"'\"']=='\"'\"'passed'\"'\"'\n    assert r['\"'\"'validation_kind'\"'\"']==('\"'\"'sdk-interface'\"'\"' if r['\"'\"'package_kind'\"'\"']=='\"'\"'extension'\"'\"' else '\"'\"'static-publication'\"'\"')\n    assert r['\"'\"'validation_outcome'\"'\"']=='\"'\"'passed'\"'\"'\n    if r['\"'\"'package_kind'\"'\"']=='\"'\"'extension'\"'\"':\n        assert r['\"'\"'interface_api'\"'\"'] and r['\"'\"'sdk_verifier_identity'\"'\"'] and r['\"'\"'sdk_behavior_execution_identity'\"'\"']\n    assert set(r['\"'\"'stages'\"'\"'])=={'\"'\"'publish'\"'\"','\"'\"'install'\"'\"','\"'\"'activation'\"'\"','\"'\"'replay'\"'\"'}\n    assert len(set(r['\"'\"'stages'\"'\"'].values()))==1 and next(iter(r['\"'\"'stages'\"'\"'].values()))==r['\"'\"'verification_identity'\"'\"']\nassert d['\"'\"'forged_record_accept_count'\"'\"']==0 and d['\"'\"'failed_or_unknown_verification_accept_count'\"'\"']==0\nassert d['\"'\"'replay_drift_or_unavailable_accept_count'\"'\"']==0\nassert d['\"'\"'consumer_issued_authority_record_count'\"'\"']==0\nassert d['\"'\"'production_producer_execution_count'\"'\"']>0 and d['\"'\"'sdk_behavior_execution_count'\"'\"']>0\nprint(json.dumps({'\"'\"'independent_producer_handoff_test_count'\"'\"':1,'\"'\"'producer_handoff_scenario_count'\"'\"':len(scenarios),'\"'\"'producer_handoff_record_count'\"'\"':len(records),'\"'\"'forged_record_accept_count'\"'\"':d['\"'\"'forged_record_accept_count'\"'\"']},sort_keys=True))\n'"
+        ],
+        "required_metrics": {
+          "statement_coverage_percent": 90,
+          "declared_artifact_count": 14,
+          "required_lifecycle_test_count": 27,
+          "fixture_count": 8,
+          "passed_fixture_count": 8,
+          "failed_fixture_count": 0,
+          "unresolved_fixture_count": 0,
+          "label_only_fixture_count": 0,
+          "corpus_digest_match_count": 1,
+          "semantic_assertion_minimum": 8,
+          "authorization_matrix_test_count": 2,
+          "cross_scope_isolation_test_count": 1,
+          "idempotency_digest_conflict_test_count": 1,
+          "builtin_no_workflow_bypass_test_count": 1,
+          "locked_component_set_immutability_test_count": 1,
+          "unknown_known_failure_recovery_test_count": 2,
+          "semantic_fixture_guards_test_count": 4,
+          "typed_component_authority_test_count": 5,
+          "retained_lifecycle_scenario_count": 15,
+          "authorization_matrix_scenario_count": 3,
+          "cross_scope_isolation_scenario_count": 2,
+          "idempotency_digest_conflict_scenario_count": 4,
+          "builtin_no_workflow_bypass_scenario_count": 2,
+          "locked_component_set_immutability_scenario_count": 2,
+          "unknown_known_failure_recovery_scenario_count": 2,
+          "authority_binding_test_count": 7,
+          "package_owned_corpus_publish_install_execution_count": 2,
+          "package_envelope_authority_match_count": 1,
+          "descriptor_content_digest_match_count": 1,
+          "applicable_sdk_verification_match_count": 1,
+          "artifact_corpus_verifier_binding_count": 1,
+          "component_install_fact_binding_count": 1,
+          "catalog_fact_drift_rejection_count": 1,
+          "synthetic_registration_accept_count": 0,
+          "production_corpus_environment_override_accept_count": 0,
+          "independent_producer_handoff_test_count": 1,
+          "producer_handoff_scenario_count": 10,
+          "forged_record_accept_count": 0,
+          "failed_or_unknown_verification_accept_count": 0,
+          "replay_drift_or_unavailable_accept_count": 0,
+          "consumer_issued_authority_record_count": 0
+        },
+        "artifacts": [
+          "artifacts/solution-publishing/coverage.out",
+          "artifacts/solution-publishing/lifecycle-evidence.json",
+          "artifacts/solution-publishing/gate-metrics.json",
+          "artifacts/solution-publishing/retained-lifecycle-evidence.json",
+          "artifacts/solution-publishing/retained-lifecycle-metrics.json",
+          "internal/solutions/packages/testdata/semantic-fixtures/v1/corpus.json",
+          "artifacts/solution-publishing/semantic-fixture-results.json",
+          "artifacts/solution-publishing/source-bundle.tar.zst",
+          "artifacts/solution-publishing/bundle-digest.txt",
+          "artifacts/solution-publishing/component-manifest.json",
+          "artifacts/solution-publishing/authority-lifecycle-evidence.json",
+          "artifacts/solution-publishing/authority-binding-evidence.json",
+          "artifacts/solution-publishing/producer-handoff-evidence.json",
+          "artifacts/solution-publishing/producer-reports/"
+        ]
+      }
+    ],
+    "pr_base": "main",
+    "acceptance_refs": [
+      "UJ-SOLUTION-005",
+      "UJ-SOLUTION-006"
+    ],
+    "source_of_truth": [
+      "solution-publishing-current-amendment-decision.md",
+      "solution-publishing-amendment-decision.md",
+      "docs/design/open-agent-cluster-overview-design.md:L335-L355",
+      "docs/design/open-agent-cluster-overview-design.md:L581-L609",
+      "docs/design/open-agent-cluster-overview-design.md:L720-L739",
+      "docs/design/detailed/01-solution-definition-detailed-design.md:L69-L79",
+      "docs/design/detailed/01-solution-definition-detailed-design.md:L239-L306",
+      "docs/design/detailed/01-solution-definition-detailed-design.md:L331-L353",
+      "docs/design/detailed/08-component-and-extension-detailed-design.md:L127-L205",
+      "docs/design/detailed/08-component-and-extension-detailed-design.md:L461-L500",
+      "docs/design/detailed/09-governance-and-security-detailed-design.md:L27-L46",
+      "docs/references/solution/solution-definition.md:L17-L32",
+      "docs/references/solution/solution-definition.md:L298-L380",
+      "docs/references/extension/component-governance.md:L157-L201",
+      "docs/references/extension/component-governance.md:L270-L281",
+      "docs/delivery/acceptance-and-validation.md:L619-L649",
+      "docs/references/extension/component-governance.md:L274-L281",
+      "docs/design/detailed/01-solution-definition-detailed-design.md:L251-L278",
+      "docs/design/detailed/11-software-delivery-detailed-design.md:L654-L683"
+    ],
+    "required_contracts": [
+      "docs/references/solution/solution-definition.md",
+      "docs/references/extension/component-governance.md"
+    ],
+    "scope_paths": [
+      "internal/solutions/packages/**"
+    ]
+  },
+  "contract_ref": {
+    "comment_id": "01a0fbbf-a4d4-70aa-8ebd-46c0a952e1d6",
+    "attachment_id": "01a0fbbf-a402-7224-9fae-255ed2de7dd8",
+    "sha256": "bc14c821264262ebd487e799fe2f4f98a5265c4b2285d4e89da39f915b849564",
+    "bytes": 61403,
+    "filename": "omac-contract-bc14c8212642.yaml"
+  },
+  "source_refs": [
+    {
+      "issue_id": "289a13bf-cede-4b5b-ba86-d72f0bef8164",
+      "label": "设计方案"
+    },
+    {
+      "issue_id": "8e6bd282-6039-41d2-aa00-969a0bf1554a",
+      "label": "验收文档"
+    },
+    {
+      "issue_id": "5849f786-8c97-42ac-adf9-1c96957f28ee",
+      "label": "前置开发任务 · Bootstrap Go module and quality harness"
+    },
+    {
+      "issue_id": "4755e861-257f-44b9-8749-970812f66d92",
+      "label": "前置开发任务 · Create Solution package contracts"
+    },
+    {
+      "issue_id": "01a032bd-188a-7c88-b4b8-06e682c7b907",
+      "label": "前置开发任务 · Publish Package, Harness and ComponentRun wire contracts"
+    },
+    {
+      "issue_id": "152d735a-c373-4967-8ae0-45c191de2eff",
+      "label": "前置开发任务 · Implement deterministic release artifact packaging"
+    }
+  ],
+  "kind": "TaskKind.DEVELOP",
+  "phase": "TaskPhase.AUTHORING",
+  "bounces": {
+    "worker": 0,
+    "ci": 0,
+    "review": 7,
+    "merge": 0
+  },
+  "bounce_baseline": {
+    "merge": 0,
+    "review": 7,
+    "worker": 0
+  },
+  "deliverable": null,
+  "deliverable_ref": null,
+  "project_rules": null,
+  "project_rules_ref": null,
+  "agent_run_finished_without_submit": false,
+  "agent_run_failed": false,
+  "created_at": "2026-08-26T02:06:48Z",
+  "updated_at": "2026-10-02T08:33:59Z",
+  "platform_assignee_id": null,
+  "unknown_persisted_fields": {},
+  "review_nits_acceptance": null
+}

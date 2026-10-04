@@ -1,0 +1,1449 @@
+schema: omac.dag-amendment/v1
+reason: 'Source-bound producer-responsibility repair under delegation9512, using the exact bound manifest
+  SHA256 87111694c7412fa66490a68151249b8052330933eae686dfb509cd77adca5f72 (183 nodes, 68 done) and the
+  eight supplied owning design/reference/acceptance documents. The remote manifest-runtime checkout is
+  older and is not substituted for this bound authority. Fresh work-show contracts for authorization,
+  audit-ledger and extension-package equal the bound contracts. Current Package is todo/authoring with
+  absolute0/4/0 after planning admission, not an ordinary dispatch authorization; retain the genuine earlier
+  owner-decision and source history.
+
+
+  Exactly three definition updates are necessary: Authorization must own the actual canonical production
+  proof command and its immutable typed publication; AuditLedger already owns receipt967''s concrete committed-record
+  boundary but must publish its typed source/conformance identity; Package must depend on those real producers
+  and permit their exact typed outputs. No workers/scope roots/release-component ownership or acceptance
+  responsibilities migrate. All original contract fields, commands, metrics, sources and non-goals are
+  preserved unless explicitly augmented here; owners'' omitted consumes remain omitted and Package''s
+  prior strict Wire consume remains unchanged. No new nodes, broad plan rewrite, removal, empty resume,
+  runtime patch, completed-node edit or claim of technical PASS.
+
+
+  Scope of the result is a partial producer/topology/publication repair, NOT complete Package unblocking.
+  The independent amendment Reviewer must explicitly judge this narrower repair with the unresolved
+  Wire STOP intact; if complete unblocking is required for acceptance, reject rather than infer a waiver.
+  Read-only local validation uses the native OMAC proposal validator and authoritative acceptance file:
+  no schema/lint errors, no done-descendant conflict, all 68 done full objects and 180 unaffected full
+  node objects preserved, original commands/gates/metrics/sources and all acceptance fields unchanged.
+  Both original and disposable amended 183-node manifests pass omac dag check --no-review; shell syntax
+  and inline Python compilation pass for all 41 resulting verification commands. These are structural
+  checks only: no product tests, producer publication, live apply, dispatch or technical verdict occurred.
+
+
+  Wire evidence is NOT recovered: the exact-label OMAC work read on Package (source: 前置开发任务 · Publish
+  Package, Harness and ComponentRun wire contracts) still exits 5 because upstream issue01a032bd-188a-7c88-b4b8-06e682c7b907
+  has no readable deliverable. Its declared verification fae4c939574eb4f2e4906f62a3b121aed784d12c237ee758af9f00d3ab443fa2
+  and report64b2b095ba07cb7512587277a19169481fb30e1e5e512f53b4cd748df9147956/ledger7ba3b143d7d7d2c3950d65d90ae12d9305935f2839f4b2f2fc0ab8369fd2c9ce
+  are metadata/evidence references, not the three declared artifact payloads. Complete GitHub tree at
+  the sealed PR59 head d4453dc96fa0e0d84b9b4484127ee6f396988fce has none of artifacts/contracts-extension-wire/{coverage.out,wire-contract-tests.json,evidence.json};
+  the issue attachment scan has no physical Wire payload, Actions artifact total_count is 0 and visible
+  releases are Preview-only. These reads prove non-retrieval from checked locations, not global nonexistence.
+
+
+  Keep contracts-extension-wire-evidence with the same completed producer and strict artifact policy.
+  Do not approve merged source as the input, manufacture missing hashes, generate a replacement and label
+  it historical, remove the consume, reopen the completed producer, or modify other consumers. Package
+  remains FAIL-CLOSED on this prerequisite. Before any Package Worker dispatch the single coordinator
+  must retrieve the original declared bytes from a real retained producer publication, prove their linkage
+  to the sealed delivery and exact source, publish/refer to immutable retrievable bytes without changing
+  the old producer facts, and have independent review verify evidence.json digests plus all four named
+  passing test events and coverage90. If that cannot be proved, STOP with the missing-artifact blocker;
+  this amendment grants no substitute-input or unchanged-scope retry. A genuinely necessary new production/evidence
+  repair would require its own source-bound independent amendment, not an implicit operation or fake success
+  here.
+
+
+  Retain PR70/head304a6e and full verification7470bbac4ef8a10cbbacfbf38ce9121af7f75d163e6bfb060ae4c82a99feddd3
+  plus ledgerc6280c80c697810292c6208e42b9b0ec2ce9a26c3de562112630acc090136812, every cycle/root cause/test/control
+  and fixed/open classification, and the original owner-decision-required v2 from direct Run01a1039e-745d-72a2-a1e7-1929d5911c01.
+  Preserve the clean unpushed Package merge HEAD1b0e9796048e394b2c5aa91db88b85a9468b282c as source history,
+  never overwrite/push it as a planning side effect. Absolute Package counters remain worker/review/merge=0/4/0
+  and all configured/current approved budget authority remains unchanged. This proposal closes no product
+  blocker by itself.
+
+
+  Recovery classification is AUTHORING, not review or merging: implementation/input/publication obligations
+  changed and there is no adequate reviewed production delivery for them. No duplicate resume operation
+  is added. Native downstream classification must be exposed, not suppressed: authentication-methods,
+  direct-deployment, contracts-extension and solution-publishing are already-started descendants that
+  require AUTHORING validation against the changed upstream input; their complete contracts, workers/scopes,
+  prior rejects, evidence and budget authority remain unchanged. Unstarted descendants keep their runtime
+  state. No ordinary Package dispatch is authorized by proposal submission or planning admission. The
+  single Root controller may accept only after fresh independent complete PASS and current base/CAS, minimal/stage,
+  related-terminal-Run, done-object and budget guards; refuse while any affected/related Run is active/unknown,
+  any producer/source has drifted, or any apply would erase reject evidence or reset/grant budget. Do
+  not cancel healthy owner work, run a parallel controller, hand-write runtime fields, reopen done nodes,
+  or apply this file directly.'
+operations:
+- op: update
+  node: authorization
+  set:
+    description: 'Keep the existing authorization issue/Worker, Policy CRUD/candidate/adoption implementation,
+      canonical authz contracts, ownership and main PR. The current PR98 at 37b9d6f08fd116a07ea8e29d827d4a0d3574bb9d
+      is OPEN and independently rejected, not a merged production issuer. Preserve full report c9def33ac947ba2b5e72d6e986022e708914d9d57f40150d121b4e63a6a336c0,
+      ledger c6d5cfbc200c2f85066090e9b41a0298c4c551f1626f0afd6fa420180e5fba19, both original root causes
+      (verified AuthenticationContext strength; exception-to-Deny) and ordinary rejected-head rework rules.
+      This is additional owner implementation/publication responsibility, not a verdict or a retry of
+      unchanged Package scope.
+
+
+      Deliver a narrow production owner command over the existing Engine.Authorize and published authz.AuthorizationRequest/AuthorizationDecision.
+      The command is created only by trusted Platform Core composition with its authoritative current
+      Scope policy, local identity/access/subject resolution and verified RequestContext; product request
+      callers and Package composition cannot select a PolicyStore, resolver, decision, signer/verifier,
+      descriptor or trust root. It must call the one built-in engine for each governed request and return
+      its exact canonical decision/provenance, not sign or approve a supplied decision/digest. Bind exact
+      principal/scope/project, action, typed subject ID/digest, canonical request and current policy ID/revision/digest.
+      Package release/install, operation and lifecycle CAS/idempotency binding are carried through the
+      owning application command; Authorization must not import internal/extensions or own Package/Project/Solution/Admission/Audit
+      state.
+
+
+      Use an owner-authenticated command/result rather than another public grant constructor. Return
+      the complete canonical evaluated request/decision provenance to the governed application command;
+      the downstream Package composition and Audit owner, not Authorization, persist and reload that
+      exact historical proof through the existing canonical transaction/store boundary. No JSON-decoded
+      private seal or caller-computed digest becomes authority. Re-evaluate current authorization separately
+      on a replay; a new decision
+      ID/EvaluatedAt must not change the stable logical Package request identity or rewrite its original
+      committed proof. Do not create a second mutable decision store, receipt registry, proof service,
+      signer selection API or local Package authorization engine. If an owner resource needed by real
+      composition is unavailable, fail closed; ports returning structural values or fixtures alone are
+      not completion. Audit implementation and the eventual Package transaction/composition remain their
+      owners'' duties, so no dependency from Authorization back to Package or a redundant audit implementation
+      is introduced.
+
+
+      The NEW named owner-command tests below are implementation deliverables under internal/authorization,
+      not existing-test claims. They must exercise only exported production composition with real canonical
+      owner-backed fixture storage/resolvers, never a caller-selected permissive engine. Cover canonical-engine
+      allow and deny, authentication provenance and both original review failures, exact request/subject/policy
+      and resource substitution, unknown/stale owner revision, denied/error/cancelled paths with no protected
+      mutation, reload of the canonical current policy after owner restart, and current-policy reauthorization
+      with stable logical replay identity. The Authorization restart test proves its own real policy/command
+      boundary only; the original Package external tests and Audit receipt967 tests still prove the full
+      committed-proof round trip. Do not import or require downstream Package/Audit implementation to
+      make this upstream command independently testable. A fixture may seed the authoritative stores via their normal
+      trusted setup; it may not substitute fake owner ports/keys for the production command. Source audit
+      records the actual production constructor and call graph, exact imported owners and any supporting
+      files, proves no import of extensions/no duplicate authorization evaluator/no caller decision or
+      trust injection, and accounts for every changed source under the unchanged authorization component.
+
+
+      Typed output authorization-owner-command-evidence is a reviewed immutable source/API/conformance
+      publication, not a reusable authorization capability. Its runtime command must still evaluate the
+      actual caller and policy. Add evidence_mode artifact and produces only; consumes remains OMITTED
+      (unchanged transitional legacy upstream policy), not [] or null.
+
+
+      Publish the complete declared artifacts and raw command/test receipts from the actual committed
+      product PR HEAD at immutable full-commit GitHub blob/raw URLs in xiaohei-info/open-agent-cluster.
+      An evidence commit may be separate from the product commit to avoid circular self-hashing. The evidence
+      index must bind product PR URL, full product HEAD/tree, producer node, typed artifact ID, each payload
+      repository path, full-commit raw URL, Git blob OID, SHA256 and byte size; retain the original verification/reject/blocker
+      references. Include the exact source bundle/component-manifest, coverage, all required native JSON
+      test events, production composition/source-ownership map, concrete dependency/fixture versions and
+      executed argv/exit results. Reference the immutable index URL and every payload in formal verification
+      retrievable_artifacts. Reviewer must freshly retrieve actual bytes, independently verify Git/source
+      identity and reproduce the required gates before ordinary merge. An index or local file alone, mutable
+      PR/branch/release URL, declared count, structural DTO, fixture result or merged contracts PR is
+      not a production owner proof. Do not include private keys, credentials, live request secrets or
+      unredacted sensitive data. Local conformance uses only an isolated owned fixture with real production
+      implementation and explicit setup/teardown, not a live environment grant.
+
+
+      Recovery classification is AUTHORING, not review or merging: implementation/input/publication obligations
+      changed and there is no adequate reviewed production delivery for them. No duplicate resume operation
+      is added. Native downstream classification must be exposed, not suppressed: authentication-methods,
+      direct-deployment, contracts-extension and solution-publishing are already-started descendants that
+      require AUTHORING validation against the changed upstream input; their complete contracts, workers/scopes,
+      prior rejects, evidence and budget authority remain unchanged. Unstarted descendants keep their
+      runtime state. No ordinary Package dispatch is authorized by proposal submission or planning admission.
+      The single Root controller may accept only after fresh independent complete PASS and current base/CAS,
+      minimal/stage, related-terminal-Run, done-object and budget guards; refuse while any affected/related
+      Run is active/unknown, any producer/source has drifted, or any apply would erase reject evidence
+      or reset/grant budget. Do not cancel healthy owner work, run a parallel controller, hand-write runtime
+      fields, reopen done nodes, or apply this file directly.'
+    contract:
+      objective: Deliver policy CRUD/evaluation and one explainable decision path reused by every adapter.
+        Also deliver and independently prove a production owner-authenticated command over that same engine,
+        with exact canonical request/policy provenance consumable by Package Governance and immutable
+        source-bound publication; no caller-issued decisions or alternate authorization authority.
+      non_goals:
+      - Do not change adjacent domain ownership or introduce a competing source of truth.
+      - Do not bypass authorization, admission, CAS, idempotency, review or evidence gates.
+      - Do not preserve unpublished prototype behavior unless the owning design explicitly requires it.
+      - Do not retire or reinterpret the PR98 independent reject root causes authorization-authentication-strength-not-bound-to-verified-context
+        and authorization-internal-exceptions-escape-decision-boundary, its full report/ledger, original
+        gate, coverage floor or ordinary same-HEAD rework guard.
+      - Do not accept a public caller-selected PolicyStore, resolver, RequestContext authority, AuthorizationDecision,
+        digest, signer/verifier or trust descriptor as production proof. An internal dependency-injection
+        seam is not a production authorization issuer; the one real engine and trusted composition must
+        be exercised.
+      - Do not import Package Governance/SDK, duplicate Project/Solution/Admission/Audit decisions, mint
+        Audit receipts, create another mutable decision/receipt truth store, change published authz or
+        identity wire types, or reopen completed contracts nodes.
+      - Do not equate published test artifacts with runtime capabilities. Serialized canonical decisions
+        are evidence only; current authorization requires owner evaluation and historical proof requires
+        the committed owner record. No generated test key or permissive test adapter is a production issuer.
+      - Do not claim this amendment, PR98 author publication, an old merged contract, or fixture execution
+        is independent production PASS or full UJ acceptance. Keep all acceptance responsibilities unchanged.
+      - The new delivery index is oac.owner-publication/v1 with producer, artifact_id, product_pr, product_head,
+        product_tree and files[].{path,url,blob_oid,sha256,bytes}; SHA256 is bare lowercase hex, URLs
+        are full-commit raw GitHub URLs. Do not include the index in its own files list. Publish its own
+        immutable URL separately in formal verification, with its independently checked hash/size. This
+        delivery-only schema neither changes public domain DTOs nor grants runtime authority.
+      verification_commands:
+      - mkdir -p artifacts/authorization && go test -covermode=atomic -coverprofile=artifacts/authorization/coverage.out
+        ./internal/authorization/...
+      - python3 -c "from pathlib import Path; import re,subprocess; p=Path('artifacts/authorization/coverage.out');
+        assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True);
+        m=re.search(r'^total:\s+\(statements\)\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1))
+        >= 90"
+      - python3 scripts/release/package_component.py --component authorization --kind platform-core-dependency-source
+        --input internal/authorization --bundle artifacts/authorization/source-bundle.tar.zst --component-manifest
+        artifacts/authorization/component-manifest.json --digest-output artifacts/authorization/bundle-digest.txt
+        --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner authorization --require-all-owner-sources-accounted
+      - mkdir -p artifacts/authorization/owner-command
+      - go test -count=1 -json ./internal/authorization/... -run '^(TestAuthorizationOwnerCommandUsesCanonicalEngine|TestAuthorizationOwnerCommandRejectsCallerAuthority|TestAuthorizationOwnerCommandBindsExactRequestAndPolicy|TestAuthorizationOwnerCommandRejectsUnknownStaleAndMismatchedFacts|TestAuthorizationOwnerCommandCanonicalAuthenticationStrength|TestAuthorizationOwnerCommandFailClosedExceptions|TestAuthorizationOwnerCommandRestartAndCanonicalReplay|TestAuthorizationOwnerCommandProductionSourceOwnership)$'
+        > artifacts/authorization/owner-command/tests.json
+      - python3 -c 'import json; required={'"'"'TestAuthorizationOwnerCommandUsesCanonicalEngine'"'"',
+        '"'"'TestAuthorizationOwnerCommandRejectsUnknownStaleAndMismatchedFacts'"'"', '"'"'TestAuthorizationOwnerCommandRejectsCallerAuthority'"'"',
+        '"'"'TestAuthorizationOwnerCommandRestartAndCanonicalReplay'"'"', '"'"'TestAuthorizationOwnerCommandBindsExactRequestAndPolicy'"'"',
+        '"'"'TestAuthorizationOwnerCommandFailClosedExceptions'"'"', '"'"'TestAuthorizationOwnerCommandProductionSourceOwnership'"'"',
+        '"'"'TestAuthorizationOwnerCommandCanonicalAuthenticationStrength'"'"'}; rows=[json.loads(s) for
+        s in open('"'"'artifacts/authorization/owner-command/tests.json'"'"') if s.strip()]; passed={r.get('"'"'Test'"'"')
+        for r in rows if r.get('"'"'Action'"'"')=='"'"'pass'"'"'}; assert required <= passed, sorted(required-passed);
+        assert not any(r.get('"'"'Action'"'"') in ('"'"'skip'"'"','"'"'fail'"'"') for r in rows); print('"'"'all
+        required named tests executed and passed'"'"')'
+      - CGO_ENABLED=1 go test -race -count=1 ./internal/authorization/...
+      - go vet ./internal/authorization/...
+      - python3 scripts/release/package_component.py --component authorization --kind platform-core-dependency-source
+        --input internal/authorization --bundle artifacts/authorization/owner-command/source-bundle.tar.zst
+        --component-manifest artifacts/authorization/owner-command/component-manifest.json --digest-output
+        artifacts/authorization/owner-command/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml
+        --owner authorization --require-all-owner-sources-accounted --reviewed-revision HEAD --package-git-blobs
+        --require-clean-index-and-worktree --record-tree-and-blob-identities
+      - python3 scripts/release/verify_component_manifest.py --manifest artifacts/authorization/owner-command/component-manifest.json
+        --bundle artifacts/authorization/owner-command/source-bundle.tar.zst
+      - "python3 -c 'import hashlib,json,re,subprocess,sys,urllib.request\nfrom pathlib import Path\n\
+        p=Path(sys.argv[1]); producer=sys.argv[2]; artifact_id=sys.argv[3]\nr=json.loads(p.read_text());\
+        \ assert r['\"'\"'schema'\"'\"']=='\"'\"'oac.owner-publication/v1'\"'\"'; assert r['\"'\"'producer'\"\
+        '\"']==producer and r['\"'\"'artifact_id'\"'\"']==artifact_id\nassert re.fullmatch('\"'\"'[0-9a-f]{40}'\"\
+        '\"',r['\"'\"'product_head'\"'\"']) and re.fullmatch('\"'\"'[0-9a-f]{40}'\"'\"',r['\"'\"'product_tree'\"\
+        '\"'])\nassert re.fullmatch(r'\"'\"'https://github.com/xiaohei-info/open-agent-cluster/pull/[0-9]+'\"\
+        '\"',r['\"'\"'product_pr'\"'\"'])\nassert r['\"'\"'product_head'\"'\"']==subprocess.check_output(['\"\
+        '\"'git'\"'\"','\"'\"'rev-parse'\"'\"','\"'\"'HEAD'\"'\"'],text=True).strip()\nassert r['\"'\"\
+        'product_tree'\"'\"']==subprocess.check_output(['\"'\"'git'\"'\"','\"'\"'rev-parse'\"'\"','\"\
+        '\"'HEAD^{tree}'\"'\"'],text=True).strip()\nfiles=r['\"'\"'files'\"'\"']; assert files and len({f['\"\
+        '\"'path'\"'\"'] for f in files})==len(files)\nrequired=set(json.loads(sys.argv[4])); assert required\
+        \ <= {f['\"'\"'path'\"'\"'] for f in files}, sorted(required-{f['\"'\"'path'\"'\"'] for f in files})\n\
+        for f in files:\n assert re.fullmatch(r'\"'\"'https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/[0-9a-f]{40}/[^?#]+'\"\
+        '\"',f['\"'\"'url'\"'\"'])\n assert f['\"'\"'url'\"'\"'].split('\"'\"'/'\"'\"',6)[6]==f['\"'\"\
+        'path'\"'\"'] and '\"'\"'..'\"'\"' not in Path(f['\"'\"'path'\"'\"']).parts\n assert type(f['\"\
+        '\"'bytes'\"'\"']) is int and f['\"'\"'bytes'\"'\"']>0 and re.fullmatch('\"'\"'[0-9a-f]{64}'\"\
+        '\"',f['\"'\"'sha256'\"'\"'])\n with urllib.request.urlopen(f['\"'\"'url'\"'\"'],timeout=60) as\
+        \ response:\n  assert response.geturl()==f['\"'\"'url'\"'\"']; b=response.read()\n assert len(b)==f['\"\
+        '\"'bytes'\"'\"'] and hashlib.sha256(b).hexdigest()==f['\"'\"'sha256'\"'\"']\n assert hashlib.sha1(b'\"\
+        '\"'blob '\"'\"'+str(len(b)).encode()+b'\"'\"'\\0'\"'\"'+b).hexdigest()==f['\"'\"'blob_oid'\"\
+        '\"']\n assert Path(f['\"'\"'path'\"'\"']).read_bytes()==b\nprint('\"'\"'immutable producer bytes\
+        \ and exact source HEAD verified'\"'\"')\n' artifacts/authorization/owner-command/evidence-index.json\
+        \ authorization authorization-owner-command-evidence '[\"artifacts/authorization/bundle-digest.txt\"\
+        , \"artifacts/authorization/component-manifest.json\", \"artifacts/authorization/coverage.out\"\
+        , \"artifacts/authorization/owner-command/bundle-digest.txt\", \"artifacts/authorization/owner-command/component-manifest.json\"\
+        , \"artifacts/authorization/owner-command/production-composition-and-ownership.json\", \"artifacts/authorization/owner-command/source-bundle.tar.zst\"\
+        , \"artifacts/authorization/owner-command/tests.json\", \"artifacts/authorization/source-bundle.tar.zst\"\
+        ]'"
+      integration_gates:
+      - name: authorization-gate
+        layer: L1
+        source_of_truth:
+        - docs/design/detailed/09-governance-and-security-detailed-design.md:L214-L311
+        - docs/references/governance/security-and-enterprise.md:L184-L262
+        - docs/delivery/acceptance-and-validation.md:L188-L207
+        delivery_goal: Deliver policy CRUD/evaluation and one explainable decision path reused by every
+          adapter.
+        covers:
+        - authorization
+        acceptance_refs:
+        - UJ-AUTHORIZATION-POLICY-001
+        commands:
+        - mkdir -p artifacts/authorization && go test -covermode=atomic -coverprofile=artifacts/authorization/coverage.out
+          ./internal/authorization/...
+        - python3 -c "from pathlib import Path; import re,subprocess; p=Path('artifacts/authorization/coverage.out');
+          assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True);
+          m=re.search(r'^total:\s+\(statements\)\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1))
+          >= 90"
+        - python3 scripts/release/package_component.py --component authorization --kind platform-core-dependency-source
+          --input internal/authorization --bundle artifacts/authorization/source-bundle.tar.zst --component-manifest
+          artifacts/authorization/component-manifest.json --digest-output artifacts/authorization/bundle-digest.txt
+          --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner authorization
+          --require-all-owner-sources-accounted
+        required_metrics:
+          statement_coverage_percent: 90
+          declared_artifact_count: 4
+        artifacts:
+        - artifacts/authorization/coverage.out
+        - artifacts/authorization/source-bundle.tar.zst
+        - artifacts/authorization/bundle-digest.txt
+        - artifacts/authorization/component-manifest.json
+      - name: authorization-owner-command-gate
+        layer: L1
+        source_of_truth:
+        - docs/design/detailed/09-governance-and-security-detailed-design.md:L214-L311
+        - docs/references/governance/security-and-enterprise.md:L184-L262
+        - docs/delivery/acceptance-and-validation.md:L188-L207
+        - docs/design/open-agent-cluster-overview-design.md:L335-L355
+        - docs/design/detailed/08-component-and-extension-detailed-design.md:L445-L455
+        - docs/design/detailed/09-governance-and-security-detailed-design.md:L808-L854
+        - docs/references/software-delivery/artifacts-release-and-deployment.md
+        - contracts/governance/authz/contract.go
+        - contracts/identity/requestcontext/request_context.go
+        delivery_goal: Execute the real owner-authenticated command, retain both PR98 rejection obligations,
+          reject caller authority and stale/cross-request provenance, and publish exact clean-HEAD source
+          and native conformance evidence. All named tests are new required deliverables.
+        covers:
+        - authorization
+        acceptance_refs:
+        - UJ-AUTHORIZATION-POLICY-001
+        commands:
+        - mkdir -p artifacts/authorization/owner-command
+        - go test -count=1 -json ./internal/authorization/... -run '^(TestAuthorizationOwnerCommandUsesCanonicalEngine|TestAuthorizationOwnerCommandRejectsCallerAuthority|TestAuthorizationOwnerCommandBindsExactRequestAndPolicy|TestAuthorizationOwnerCommandRejectsUnknownStaleAndMismatchedFacts|TestAuthorizationOwnerCommandCanonicalAuthenticationStrength|TestAuthorizationOwnerCommandFailClosedExceptions|TestAuthorizationOwnerCommandRestartAndCanonicalReplay|TestAuthorizationOwnerCommandProductionSourceOwnership)$'
+          > artifacts/authorization/owner-command/tests.json
+        - python3 -c 'import json; required={'"'"'TestAuthorizationOwnerCommandUsesCanonicalEngine'"'"',
+          '"'"'TestAuthorizationOwnerCommandRejectsUnknownStaleAndMismatchedFacts'"'"', '"'"'TestAuthorizationOwnerCommandRejectsCallerAuthority'"'"',
+          '"'"'TestAuthorizationOwnerCommandRestartAndCanonicalReplay'"'"', '"'"'TestAuthorizationOwnerCommandBindsExactRequestAndPolicy'"'"',
+          '"'"'TestAuthorizationOwnerCommandFailClosedExceptions'"'"', '"'"'TestAuthorizationOwnerCommandProductionSourceOwnership'"'"',
+          '"'"'TestAuthorizationOwnerCommandCanonicalAuthenticationStrength'"'"'}; rows=[json.loads(s)
+          for s in open('"'"'artifacts/authorization/owner-command/tests.json'"'"') if s.strip()]; passed={r.get('"'"'Test'"'"')
+          for r in rows if r.get('"'"'Action'"'"')=='"'"'pass'"'"'}; assert required <= passed, sorted(required-passed);
+          assert not any(r.get('"'"'Action'"'"') in ('"'"'skip'"'"','"'"'fail'"'"') for r in rows); print('"'"'all
+          required named tests executed and passed'"'"')'
+        - CGO_ENABLED=1 go test -race -count=1 ./internal/authorization/...
+        - go vet ./internal/authorization/...
+        - python3 scripts/release/package_component.py --component authorization --kind platform-core-dependency-source
+          --input internal/authorization --bundle artifacts/authorization/owner-command/source-bundle.tar.zst
+          --component-manifest artifacts/authorization/owner-command/component-manifest.json --digest-output
+          artifacts/authorization/owner-command/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml
+          --owner authorization --require-all-owner-sources-accounted --reviewed-revision HEAD --package-git-blobs
+          --require-clean-index-and-worktree --record-tree-and-blob-identities
+        - python3 scripts/release/verify_component_manifest.py --manifest artifacts/authorization/owner-command/component-manifest.json
+          --bundle artifacts/authorization/owner-command/source-bundle.tar.zst
+        required_metrics:
+          required_named_test_count: 8
+          skipped_required_test_count: 0
+          caller_authored_authority_accept_count: 0
+          stale_or_cross_request_proof_accept_count: 0
+          duplicate_authorization_engine_count: 0
+        artifacts:
+        - artifacts/authorization/owner-command/tests.json
+        - artifacts/authorization/owner-command/source-bundle.tar.zst
+        - artifacts/authorization/owner-command/component-manifest.json
+        - artifacts/authorization/owner-command/bundle-digest.txt
+        - artifacts/authorization/owner-command/production-composition-and-ownership.json
+        - artifacts/authorization/owner-command/evidence-index.json
+      - name: authorization-immutable-owner-publication-gate
+        layer: L1
+        source_of_truth:
+        - docs/design/detailed/09-governance-and-security-detailed-design.md:L214-L311
+        - docs/references/governance/security-and-enterprise.md:L184-L262
+        - docs/delivery/acceptance-and-validation.md:L188-L207
+        - docs/design/open-agent-cluster-overview-design.md:L335-L355
+        - docs/design/detailed/08-component-and-extension-detailed-design.md:L445-L455
+        - docs/design/detailed/09-governance-and-security-detailed-design.md:L808-L854
+        - docs/references/software-delivery/artifacts-release-and-deployment.md
+        - contracts/governance/authz/contract.go
+        - contracts/identity/requestcontext/request_context.go
+        delivery_goal: Fetch every indexed source-bound owner payload at immutable commit URLs and verify
+          exact SHA256, size, Git blob identity, local equality and product HEAD/tree; reviewers independently
+          bind this index to the actual formal delivery. Publication alone is not product PASS.
+        covers:
+        - authorization
+        acceptance_refs:
+        - UJ-AUTHORIZATION-POLICY-001
+        commands:
+        - "python3 -c 'import hashlib,json,re,subprocess,sys,urllib.request\nfrom pathlib import Path\n\
+          p=Path(sys.argv[1]); producer=sys.argv[2]; artifact_id=sys.argv[3]\nr=json.loads(p.read_text());\
+          \ assert r['\"'\"'schema'\"'\"']=='\"'\"'oac.owner-publication/v1'\"'\"'; assert r['\"'\"'producer'\"\
+          '\"']==producer and r['\"'\"'artifact_id'\"'\"']==artifact_id\nassert re.fullmatch('\"'\"'[0-9a-f]{40}'\"\
+          '\"',r['\"'\"'product_head'\"'\"']) and re.fullmatch('\"'\"'[0-9a-f]{40}'\"'\"',r['\"'\"'product_tree'\"\
+          '\"'])\nassert re.fullmatch(r'\"'\"'https://github.com/xiaohei-info/open-agent-cluster/pull/[0-9]+'\"\
+          '\"',r['\"'\"'product_pr'\"'\"'])\nassert r['\"'\"'product_head'\"'\"']==subprocess.check_output(['\"\
+          '\"'git'\"'\"','\"'\"'rev-parse'\"'\"','\"'\"'HEAD'\"'\"'],text=True).strip()\nassert r['\"\
+          '\"'product_tree'\"'\"']==subprocess.check_output(['\"'\"'git'\"'\"','\"'\"'rev-parse'\"'\"\
+          ','\"'\"'HEAD^{tree}'\"'\"'],text=True).strip()\nfiles=r['\"'\"'files'\"'\"']; assert files\
+          \ and len({f['\"'\"'path'\"'\"'] for f in files})==len(files)\nrequired=set(json.loads(sys.argv[4]));\
+          \ assert required <= {f['\"'\"'path'\"'\"'] for f in files}, sorted(required-{f['\"'\"'path'\"\
+          '\"'] for f in files})\nfor f in files:\n assert re.fullmatch(r'\"'\"'https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/[0-9a-f]{40}/[^?#]+'\"\
+          '\"',f['\"'\"'url'\"'\"'])\n assert f['\"'\"'url'\"'\"'].split('\"'\"'/'\"'\"',6)[6]==f['\"\
+          '\"'path'\"'\"'] and '\"'\"'..'\"'\"' not in Path(f['\"'\"'path'\"'\"']).parts\n assert type(f['\"\
+          '\"'bytes'\"'\"']) is int and f['\"'\"'bytes'\"'\"']>0 and re.fullmatch('\"'\"'[0-9a-f]{64}'\"\
+          '\"',f['\"'\"'sha256'\"'\"'])\n with urllib.request.urlopen(f['\"'\"'url'\"'\"'],timeout=60)\
+          \ as response:\n  assert response.geturl()==f['\"'\"'url'\"'\"']; b=response.read()\n assert\
+          \ len(b)==f['\"'\"'bytes'\"'\"'] and hashlib.sha256(b).hexdigest()==f['\"'\"'sha256'\"'\"']\n\
+          \ assert hashlib.sha1(b'\"'\"'blob '\"'\"'+str(len(b)).encode()+b'\"'\"'\\0'\"'\"'+b).hexdigest()==f['\"\
+          '\"'blob_oid'\"'\"']\n assert Path(f['\"'\"'path'\"'\"']).read_bytes()==b\nprint('\"'\"'immutable\
+          \ producer bytes and exact source HEAD verified'\"'\"')\n' artifacts/authorization/owner-command/evidence-index.json\
+          \ authorization authorization-owner-command-evidence '[\"artifacts/authorization/bundle-digest.txt\"\
+          , \"artifacts/authorization/component-manifest.json\", \"artifacts/authorization/coverage.out\"\
+          , \"artifacts/authorization/owner-command/bundle-digest.txt\", \"artifacts/authorization/owner-command/component-manifest.json\"\
+          , \"artifacts/authorization/owner-command/production-composition-and-ownership.json\", \"artifacts/authorization/owner-command/source-bundle.tar.zst\"\
+          , \"artifacts/authorization/owner-command/tests.json\", \"artifacts/authorization/source-bundle.tar.zst\"\
+          ]'"
+        required_metrics:
+          unretrievable_payload_count: 0
+          payload_digest_mismatch_count: 0
+          product_revision_mismatch_count: 0
+        artifacts:
+        - artifacts/authorization/owner-command/evidence-index.json
+      pr_base: main
+      acceptance_refs:
+      - UJ-AUTHORIZATION-POLICY-001
+      source_of_truth:
+      - docs/design/detailed/09-governance-and-security-detailed-design.md:L214-L311
+      - docs/references/governance/security-and-enterprise.md:L184-L262
+      - docs/delivery/acceptance-and-validation.md:L188-L207
+      - docs/design/open-agent-cluster-overview-design.md:L335-L355
+      - docs/design/detailed/08-component-and-extension-detailed-design.md:L445-L455
+      - docs/design/detailed/09-governance-and-security-detailed-design.md:L808-L854
+      - docs/references/software-delivery/artifacts-release-and-deployment.md
+      - contracts/governance/authz/contract.go
+      - contracts/identity/requestcontext/request_context.go
+      required_contracts:
+      - docs/references/governance/security-and-enterprise.md
+      scope_paths:
+      - internal/authorization/**
+      evidence_mode: artifact
+      produces:
+      - artifact_id: authorization-owner-command-evidence
+- op: update
+  node: audit-ledger
+  set:
+    description: 'Source-bound repair for the actual AITEAM-1061 owner-decision stop, not a reopen of
+      contracts-audit-usage. Keep worker codex-macmini-newapi, issue 01a10385-45be-77c8-9507-5bff8ce578b9,
+      existing dependencies, main PR base and all historical facts. The source packet pins clean worker
+      HEAD e4dc2f94b033adbbe3dbb979be88b351d72481c8, sealed audit/contract.go:1139-1258 and private internal/auditstore/receipt.go.
+      The old test adapter under internal/store is evidence of the handoff shape, not a production persistence
+      implementation. This node now owns the concrete implementation of that missing handoff, in the same
+      independently testable PR as the real ledger; a second compensating node would split one persistence/security
+      boundary without delivering an independent capability.
+
+
+      Exact package/API decision (new names are required deliverables):
+
+      1. internal/audit remains the application owner: append/query/detail/export use cases, RequestContext/Authorization
+      sequencing, typed repository ports, transactional/idempotent commit and evidence assembly. Define
+      a narrow detail-load port returning audit.AuditEventStoreBinding from exact authorized scope/project/event
+      selectors. Never accept a client-selected event or authority. Keep public product QueryAuditEvents/GetAuditEventDetail/ExportAuditEvents
+      unchanged.
+
+      2. internal/audit/platformstore is trusted composition/infrastructure only. Add an opaque Handle
+      with private fields and a root-internal factory binding the one platform PostgreSQL *sql.DB; reject
+      nil and zero handles. It carries only the platform connection, not caller event bytes/receipts/callbacks.
+      Only trusted composition code can construct it. Its internal import boundary prevents an external
+      Go consumer from manufacturing the argument; never return the Handle or a factory through public
+      audit/API entrypoints. Restrict any handle accessor to this internal package boundary; never expose
+      it through a contract DTO.
+
+      3. Add contracts/governance/audit/store, a distinct outer-adapter Go package, not code in package
+      audit. Its NewPostgresStore takes only the opaque platformstore.Handle (not *sql.DB, a DSN, an interface/callback,
+      payload, receipt or event), validates the handle and returns the built-in concrete adapter/error.
+      That package may legally import contracts/governance/audit/internal/auditstore. Its LoadDetailBinding
+      uses fixed parameterized SQL and exact authorized scope/project/event keys to read the canonical
+      committed row, verifies requested identity/scope/project, immutable record fields and stored canonical
+      content digest, validates the event, snapshots canonical bytes, calls internal auditstore.NewReceipt,
+      then audit.NewAuditEventStoreCapability and audit.LoadAuditEventStoreBinding. Receipt pointers never
+      leave this adapter; the application receives only the existing opaque binding, calls NewAuditEventDetailViewFromStore,
+      fills authorized/redacted related evidence and validates before serialization. Query handlers cannot
+      choose a database, schema, table or authority. The concrete adapter also implements the canonical
+      append/query storage ports over that same table; no second storage path. Receipt issuance uses a
+      committed read, never a transaction''s pending append argument, caller-supplied serialization, cache
+      or mock.
+
+      4. api/audit owns composition wiring of the trusted platform handle, concrete adapter and application
+      ports. Framework/database types stay out of contract/domain/application interfaces. The root-internal
+      handle is the minimum guarded wiring needed to keep the public adapter from becoming a new self-signing
+      authority API. Existing contracts/governance/audit/contract.go and internal/auditstore/receipt.go
+      remain byte-for-byte unchanged. New adapter tests live in its own subtree and application tests
+      under existing audit scope.
+
+
+      Test-first mapping (all names in audit-receipt-store-boundary-gate are NEW required tests): TestAuditPostgresReceiptCommittedDetail
+      proves a real durable committed row reaches a valid detail with exact context/control/causal provenance.
+      TestAuditPostgresReceiptRejectsUncommittedOrMissingRecord covers pending transaction, rollback,
+      absent/retained-away row, connection/read/decode errors and closed/nil store. TestAuditPostgresReceiptRejectsIdentityScopeDigestMismatch
+      covers altered event/scope/project/context IDs, canonical digest, record/provenance and post-load
+      caller mutation. TestAuditReceiptForgeryAndImportBoundary proves zero/nil/typed-nil capabilities
+      and reconstructed or JSON-decoded proofs fail closed without panic; a separately compiled external-consumer
+      fixture cannot import either internal receipt or platformstore factory and cannot construct a raw-event/DB/callback-based
+      public receipt authority. TestAuditDetailAuthorizationAndRedaction covers audit.read versus resource
+      rights, cross-scope/project denial, per-linked-subject visibility and structured unavailable/redacted/not_authorized,
+      independent sensitive permissions and forbidden payload fields. TestAuditAtomicCommitRollbackAndIdempotency
+      proves domain/CommandRecord/Outbox/Audit atomicity where applicable, failure rollback, same-key/same-digest
+      replay and different-digest conflict. TestAuditConcurrentAppendAndStableCursor uses concurrent connections/instances,
+      same-time events, immutable IDs and bound keyset filters/cursors with no duplicate or omitted existing
+      row. TestAuditPostgresRestartAndRestore closes and replaces the application/DB connection, restores
+      an isolated database backup and rebuilds allowed read indexes, then proves exact persisted facts
+      still validate and old serialized DTOs cannot become receipts. TestAuditBoundedCanonicalExportAndNoRecursiveReadAudit
+      proves CSV/JSONL binding/order/limits, denied/export audit recording, no ordinary-read recursive
+      events and independence from a failed external exporter; it does not take ownership of external
+      sink delivery. TestAuditSourceReleaseOwnershipAndCompatibility verifies the unchanged ownership
+      mapping, source dependency direction, unchanged existing contract bytes/wire compatibility, complete
+      changed-source accounting and idempotent schema setup.
+
+
+      Own a repeatable isolated local PostgreSQL fixture helper under internal/audit/testsupport, including
+      setup/seed/failure injection/teardown and backup/restore. Use a pinned actual PostgreSQL binary/container
+      version/digest and record it in evidence; require a real database for the storage/concurrency/restore
+      tests, fail (not skip) if unavailable, clean only that fixture and never use a production database.
+      This local conformance fixture does not grant deferred Workspace external-environment authority
+      or substitute for downstream full-flow acceptance.
+
+
+      Executed ownership and release accounting: the explicit supporting subtree exception authorizes
+      audit-ledger to write only NEW contracts/governance/audit/store/** files. Their published source
+      owner/component remains contracts-audit-usage; the historical broad source root already accounts
+      for them. Keep the historical baseline and current catalog unchanged, including all Kernel roots.
+      Package the full audit+usage source roots at the new reviewed HEAD in a separate contracts-audit-usage
+      component bundle alongside the unchanged audit-ledger bundle; do not put the adapter in both. The
+      root-internal Handle is covered by internal/audit in the audit-ledger bundle. Add only the necessary
+      pinned PostgreSQL driver module entries in go.mod/go.sum and package the full existing bootstrap-go
+      roots at that same HEAD under bootstrap-go. This is explicit current implementation/supporting-file
+      authority, not a transfer of historical release component identity or completed-node acceptance
+      responsibility. Record a path-to-executing-node-to-release-component map and exact diff in the PR/evidence;
+      no baseline/catalog reassignment, new owner, completed-node replay or unrelated source edits.
+
+
+      Compatibility and delivery: commit the implementation before source packaging, run the existing
+      commands plus the new gates at the actual PR HEAD, and package Git blobs from that clean source.
+      Publish complete native test outputs, coverage, fixture/version/restore evidence, all three source
+      bundles and component manifests, ownership/compatibility map and original blocker references at
+      immutable Git commit/blob URLs. Publish an evidence-index.json with product PR URL/HEAD/tree, evidence
+      commit identity, each file''s repository path/URL/blob OID/SHA256/byte size, exact argv/exit result
+      and test mapping. Use a separate evidence commit if necessary to avoid a circular source-HEAD/index
+      hash claim; never present mutable branch URLs, local paths or self-reported counts as independent
+      evidence. Independent Reviewer must freshly fetch/check these bytes and reproduce the guarded positive/negative/authorization/concurrency/restore
+      path, preserve all existing non-goals and obtain normal product review/merge. Existing done PR78/PR94
+      are prerequisites and history, not a PASS for this implementation.
+
+
+      Recovery: audit-ledger resumes AUTHORING because no code/PR/verification was delivered and this
+      changes implementation/scope. No review or merging shortcut is justified. Native minimal-impact
+      classification also derives AUTHORING for the already-started blocked authentication-methods and
+      direct-deployment consumers; do not conceal these impacts or add duplicate resume operations. Their
+      complete contracts, agents, scopes, gates and retained rejects remain unchanged, and execution must
+      still wait for all original prerequisites. Before apply, the single controller must re-read their
+      actual Store evidence and terminal/unknown Run state, preserve existing recovery obligations and
+      every approved budget baseline, and refuse application if this proposal would reset/grant a budget,
+      retire an unproven delivery or disturb an active healthy Agent. No parent or downstream status/phase/counter
+      edits are encoded here. Remaining descendants are unstarted and retain their runtime state; all
+      68 completed nodes and all other definitions/meta remain exact. Apply only through normal fresh
+      independent amendment review, actual base/CAS/stage/minimal/related-terminal-Run/done/budget guards
+      and coordinator acceptance under delegation9512. No authority to apply is granted by this proposal
+      itself.
+
+
+      Package producer handoff addition (this does not replace any receipt967 decision above): Declare
+      audit-ledger-receipt-evidence as the immutable publication of this already-owned real committed
+      PostgreSQL receipt boundary. Preserve the exact adapter/Handle/import restrictions, seals, single
+      canonical table/transaction, PostgreSQL fixture and all tests/source packaging. The producer returns
+      the existing opaque audit.AuditEventStoreBinding only after an authorized exact committed-row load;
+      NewAuditEventDetailViewFromStore/ValidateWithStore remain the consumer validation path. A serialized
+      detail, AuditEvent, control digest, pre-commit append argument or verification artifact never becomes
+      a receipt. Package persists complete canonical event/control/causal provenance and the exact event
+      identity/digest alongside its own command; after restart it must re-load the canonical Audit record
+      through the same owner and compare that immutable provenance before accepting historical proof.
+      Revalidate current access separately. Do not create a Package-local Audit truth store or expose
+      a receipt minting API. This gives Package the already-designed owner capability without widening
+      the receipt967 API or adding a second adapter.
+
+
+      The existing receipt-boundary tests must include a consumer outside the audit implementation that
+      follows this exact read/rebind path, demonstrates committed-row-only issuance and rejects substituted/serialized-only
+      proof across restart. No new authority or product operation is authorized. The existing source-release
+      evidence-index.json must publish the audit application bundle, both supporting component bundles
+      and all raw receipt tests, coverage, PostgreSQL fixture/restore records and ownership map at exact
+      immutable Git URLs, with the actual reviewed PR HEAD/tree. Wire output type is a delivery identity
+      only; no stored reusable receipt is published. Add evidence_mode artifact and produces only; preserves
+      the OMITTED consumes transitional policy.
+
+
+      Publish the complete declared artifacts and raw command/test receipts from the actual committed
+      product PR HEAD at immutable full-commit GitHub blob/raw URLs in xiaohei-info/open-agent-cluster.
+      An evidence commit may be separate from the product commit to avoid circular self-hashing. The evidence
+      index must bind product PR URL, full product HEAD/tree, producer node, typed artifact ID, each payload
+      repository path, full-commit raw URL, Git blob OID, SHA256 and byte size; retain the original verification/reject/blocker
+      references. Include the exact source bundle/component-manifest, coverage, all required native JSON
+      test events, production composition/source-ownership map, concrete dependency/fixture versions and
+      executed argv/exit results. Reference the immutable index URL and every payload in formal verification
+      retrievable_artifacts. Reviewer must freshly retrieve actual bytes, independently verify Git/source
+      identity and reproduce the required gates before ordinary merge. An index or local file alone, mutable
+      PR/branch/release URL, declared count, structural DTO, fixture result or merged contracts PR is
+      not a production owner proof. Do not include private keys, credentials, live request secrets or
+      unredacted sensitive data. Local conformance uses only an isolated owned fixture with real production
+      implementation and explicit setup/teardown, not a live environment grant.
+
+
+      Recovery classification is AUTHORING, not review or merging: implementation/input/publication obligations
+      changed and there is no adequate reviewed production delivery for them. No duplicate resume operation
+      is added. Native downstream classification must be exposed, not suppressed: authentication-methods,
+      direct-deployment, contracts-extension and solution-publishing are already-started descendants that
+      require AUTHORING validation against the changed upstream input; their complete contracts, workers/scopes,
+      prior rejects, evidence and budget authority remain unchanged. Unstarted descendants keep their
+      runtime state. No ordinary Package dispatch is authorized by proposal submission or planning admission.
+      The single Root controller may accept only after fresh independent complete PASS and current base/CAS,
+      minimal/stage, related-terminal-Run, done-object and budget guards; refuse while any affected/related
+      Run is active/unknown, any producer/source has drifted, or any apply would erase reject evidence
+      or reset/grant budget. Do not cancel healthy owner work, run a parallel controller, hand-write runtime
+      fields, reopen done nodes, or apply this file directly.'
+    contract:
+      objective: Deliver the existing append-only local AuditEvent authority, governed query/pagination/export
+        and evidence-chain assembly, with a concrete built-in PostgreSQL adapter that issues the existing
+        sealed detail binding only after loading and validating the exact committed canonical record;
+        keep the published Audit contract and private receipt seal unchanged.
+      non_goals:
+      - Do not change adjacent domain ownership or introduce a competing source of truth.
+      - Do not bypass authorization, admission, CAS, idempotency, review or evidence gates.
+      - Do not preserve unpublished prototype behavior unless the owning design explicitly requires it.
+      - The only executed-scope extension is the new built-in adapter subtree contracts/governance/audit/store/**,
+        authored by audit-ledger as an explicit supporting-file exception under the unchanged contracts-audit-usage
+        source-release component. Do not edit any pre-existing file in contracts/governance/audit/** or
+        contracts/governance/usage/**, especially contract.go, internal/auditstore/receipt.go, their seals/validators
+        and existing regressions. Do not reopen or modify the completed contracts-audit-usage node, PR78,
+        or historical source bundles.
+      - No public API may accept an AuditEvent, bytes, receipt, authority callback, generic repository,
+        SQL executor interface, DSN or raw *sql.DB in exchange for a binding. The new store constructor
+        accepts only the opaque root-internal platformstore.Handle described in this node; zero/nil handles
+        fail closed. Never re-export its factory from contracts, API DTOs or clients. Do not unseal AuditEventStore,
+        export receipt issuance, serialize a reusable proof, embed a bypass, use unsafe/reflection/linkname,
+        or add a generic plugin/factory.
+      - 'Keep application dependency direction: internal/audit declares typed persistence/query ports
+        and imports the existing audit contract, not the concrete SQL adapter. api/audit owns composition.
+        internal/audit/platformstore is a platform-only infrastructure wiring package, not domain code;
+        the concrete adapter may import it and audit, but audit contract/domain must not import SQL, platformstore,
+        adapter, HTTP, or application packages.'
+      - One canonical PostgreSQL AuditEvent table and commit path only. No in-memory production fallback,
+        parallel ledger, receipt registry, durable receipt/proof table, SIEM readback authority, event
+        import API or synthetic success. The scoped adapter must read committed records itself; an append
+        argument is never sufficient detail authority. Domain facts, CommandRecord/Outbox and AuditEvent
+        share the required transaction; rollback, read failure and unknown outcomes fail closed.
+      - Preserve RequestContext.RequestID versus persisted request_context_id, all exact record/scope/project/event
+        identity and canonical digest validation, immutable evaluated controls, stable query/filter/cursor
+        binding, field/link authorization and redaction, bounded canonical CSV/JSONL export, and no-recursive-successful-read
+        auditing. Resource access never implies audit.read; audit.export and audit.sensitive.read remain
+        separate.
+      - Only go.mod and go.sum may additionally change to pin the concrete github.com/jackc/pgx/v5/stdlib
+        PostgreSQL driver and its necessary resolved dependencies. The inspected source has no PostgreSQL
+        driver. No unrelated dependency/toolchain upgrade, bootstrap refactor, or ownership baseline/catalog
+        edit is authorized; release identity of these supporting files stays bootstrap-go. Record the
+        resolved version/checksums and compatibility in the PR.
+      - The existing wire schemas, persisted AuditEvent identity/shape and validators are unchanged. The
+        new adapter/handle are additive platform wiring, not an external extension contract; existing
+        query callers are rewired by api/audit without a new public product operation. Own new SQL schema/index
+        setup beneath the adapter subtree; use idempotent, versioned installation for the single canonical
+        local table, preserve existing rows/IDs/digests, and prove reopen/restore. Never reinterpret or
+        rewrite pre-existing records; unexpected deployed schema incompatibility is an owner-decision
+        blocker, not permission for destructive migration.
+      - All old audit-ledger commands/gate/90% threshold remain verbatim. The adapter must independently
+        reach 90% coverage and the new named tests must actually execute against an isolated real PostgreSQL
+        fixture where specified, with no skip or test-only stand-in for production persistence. Missing
+        fixture, driver, source or a failed unrelated repository check is an explicit blocker, not a waiver
+        or permission to repair another producer.
+      - Do not claim full UJ acceptance or product PASS from this proposal, unit tests, historical PR78
+        PASS, or packaging. Keep acceptance_refs exactly UJ-AUDIT-001 and no new acceptance_claims/contributions.
+        Fresh independent amendment review/confirmation precedes apply; actual Worker PR to main, independent
+        product review and normal merge remain mandatory.
+      - 'Do not treat the typed audit-ledger-receipt-evidence publication as a serialized capability or
+        a new receipt store. Preserve receipt967 verbatim: only the reviewed canonical committed-row adapter
+        issues the unchanged opaque binding; Package consumes an authorized exact reread, never self-issues
+        or rehydrates a private seal from JSON.'
+      - Do not drop any pre-existing receipt-boundary, query/export/redaction, concurrency/rollback/restart/restore,
+        source-release/compatibility or 90% coverage requirement to satisfy the Package handoff. All old
+        commands and three existing gates remain verbatim.
+      - The new delivery index is oac.owner-publication/v1 with producer, artifact_id, product_pr, product_head,
+        product_tree and files[].{path,url,blob_oid,sha256,bytes}; SHA256 is bare lowercase hex, URLs
+        are full-commit raw GitHub URLs. Do not include the index in its own files list. Publish its own
+        immutable URL separately in formal verification, with its independently checked hash/size. This
+        delivery-only schema neither changes public domain DTOs nor grants runtime authority.
+      verification_commands:
+      - mkdir -p artifacts/audit-ledger && go test -covermode=atomic -coverprofile=artifacts/audit-ledger/coverage.out
+        ./internal/audit/... ./api/audit/...
+      - python3 -c "from pathlib import Path; import re,subprocess; p=Path('artifacts/audit-ledger/coverage.out');
+        assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True);
+        m=re.search(r'^total:\s+\(statements\)\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1))
+        >= 90"
+      - python3 scripts/release/package_component.py --component audit-ledger --kind platform-core-dependency-source
+        --input internal/audit --input api/audit --bundle artifacts/audit-ledger/source-bundle.tar.zst
+        --component-manifest artifacts/audit-ledger/component-manifest.json --digest-output artifacts/audit-ledger/bundle-digest.txt
+        --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner audit-ledger --require-all-owner-sources-accounted
+      - mkdir -p artifacts/audit-ledger/receipt-boundary && go test -count=1 -covermode=atomic -coverprofile=artifacts/audit-ledger/receipt-boundary/adapter-coverage.out
+        ./contracts/governance/audit/store/...
+      - python3 -c "from pathlib import Path; import re,subprocess; p=Path('artifacts/audit-ledger/receipt-boundary/adapter-coverage.out');
+        assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True);
+        m=re.search(r'^total:\s+\(statements\)\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1))
+        >= 90"
+      - go test -count=1 -json ./contracts/governance/audit/store/... ./internal/audit/... ./api/audit/...
+        -run '^(TestAuditPostgresReceiptCommittedDetail|TestAuditPostgresReceiptRejectsUncommittedOrMissingRecord|TestAuditPostgresReceiptRejectsIdentityScopeDigestMismatch|TestAuditReceiptForgeryAndImportBoundary|TestAuditDetailAuthorizationAndRedaction|TestAuditAtomicCommitRollbackAndIdempotency|TestAuditConcurrentAppendAndStableCursor|TestAuditPostgresRestartAndRestore|TestAuditBoundedCanonicalExportAndNoRecursiveReadAudit|TestAuditSourceReleaseOwnershipAndCompatibility)$'
+        > artifacts/audit-ledger/receipt-boundary/tests.json
+      - python3 -c 'import json; required={'"'"'TestAuditPostgresReceiptRejectsIdentityScopeDigestMismatch'"'"',
+        '"'"'TestAuditPostgresRestartAndRestore'"'"', '"'"'TestAuditConcurrentAppendAndStableCursor'"'"',
+        '"'"'TestAuditReceiptForgeryAndImportBoundary'"'"', '"'"'TestAuditDetailAuthorizationAndRedaction'"'"',
+        '"'"'TestAuditPostgresReceiptRejectsUncommittedOrMissingRecord'"'"', '"'"'TestAuditAtomicCommitRollbackAndIdempotency'"'"',
+        '"'"'TestAuditBoundedCanonicalExportAndNoRecursiveReadAudit'"'"', '"'"'TestAuditSourceReleaseOwnershipAndCompatibility'"'"',
+        '"'"'TestAuditPostgresReceiptCommittedDetail'"'"'}; rows=[json.loads(s) for s in open('"'"'artifacts/audit-ledger/receipt-boundary/tests.json'"'"')
+        if s.strip()]; passed={r.get('"'"'Test'"'"') for r in rows if r.get('"'"'Action'"'"')=='"'"'pass'"'"'};
+        assert required <= passed, sorted(required-passed); assert not any(r.get('"'"'Action'"'"') in
+        ('"'"'skip'"'"','"'"'fail'"'"') for r in rows), '"'"'failed or skipped receipt-boundary test'"'"';
+        print('"'"'all required receipt-boundary tests executed and passed'"'"')'
+      - go test -race -count=1 ./contracts/governance/audit/... ./internal/audit/... ./api/audit/...
+      - go test -count=1 -covermode=atomic -coverprofile=artifacts/audit-ledger/receipt-boundary/contract-coverage.out
+        ./contracts/governance/audit/... ./contracts/governance/usage/...
+      - python3 -c "from pathlib import Path; import re,subprocess; p=Path('artifacts/audit-ledger/receipt-boundary/contract-coverage.out');
+        assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True);
+        m=re.search(r'^total:\s+\(statements\)\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1))
+        >= 90"
+      - go vet ./...
+      - go build ./...
+      - go test -count=1 ./...
+      - python3 scripts/release/package_component.py --component contracts-audit-usage --kind platform-core-dependency-source
+        --input contracts/governance/audit --input contracts/governance/usage --bundle artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/source-bundle.tar.zst
+        --component-manifest artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/component-manifest.json
+        --digest-output artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/bundle-digest.txt
+        --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner contracts-audit-usage
+        --require-all-owner-sources-accounted --reviewed-revision HEAD --package-git-blobs --require-clean-index-and-worktree
+        --record-tree-and-blob-identities
+      - python3 scripts/release/package_component.py --component bootstrap-go --kind platform-core-dependency-source
+        --input go.mod --input go.sum --input Makefile --input scripts/go-quality --input internal/bootstrap
+        --input scripts/bootstrap/package_go_module.py --bundle artifacts/audit-ledger/receipt-boundary/bootstrap-go/source-bundle.tar.zst
+        --component-manifest artifacts/audit-ledger/receipt-boundary/bootstrap-go/component-manifest.json
+        --digest-output artifacts/audit-ledger/receipt-boundary/bootstrap-go/bundle-digest.txt --ownership-baseline
+        contracts/release/source-ownership-baseline.yaml --owner bootstrap-go --require-all-owner-sources-accounted
+        --reviewed-revision HEAD --package-git-blobs --require-clean-index-and-worktree --record-tree-and-blob-identities
+      - python3 scripts/release/verify_component_manifest.py --manifest artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/component-manifest.json
+        --bundle artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/source-bundle.tar.zst
+      - python3 scripts/release/verify_component_manifest.py --manifest artifacts/audit-ledger/receipt-boundary/bootstrap-go/component-manifest.json
+        --bundle artifacts/audit-ledger/receipt-boundary/bootstrap-go/source-bundle.tar.zst
+      - "python3 -c 'import hashlib,json,re,subprocess,sys,urllib.request\nfrom pathlib import Path\n\
+        p=Path(sys.argv[1]); producer=sys.argv[2]; artifact_id=sys.argv[3]\nr=json.loads(p.read_text());\
+        \ assert r['\"'\"'schema'\"'\"']=='\"'\"'oac.owner-publication/v1'\"'\"'; assert r['\"'\"'producer'\"\
+        '\"']==producer and r['\"'\"'artifact_id'\"'\"']==artifact_id\nassert re.fullmatch('\"'\"'[0-9a-f]{40}'\"\
+        '\"',r['\"'\"'product_head'\"'\"']) and re.fullmatch('\"'\"'[0-9a-f]{40}'\"'\"',r['\"'\"'product_tree'\"\
+        '\"'])\nassert re.fullmatch(r'\"'\"'https://github.com/xiaohei-info/open-agent-cluster/pull/[0-9]+'\"\
+        '\"',r['\"'\"'product_pr'\"'\"'])\nassert r['\"'\"'product_head'\"'\"']==subprocess.check_output(['\"\
+        '\"'git'\"'\"','\"'\"'rev-parse'\"'\"','\"'\"'HEAD'\"'\"'],text=True).strip()\nassert r['\"'\"\
+        'product_tree'\"'\"']==subprocess.check_output(['\"'\"'git'\"'\"','\"'\"'rev-parse'\"'\"','\"\
+        '\"'HEAD^{tree}'\"'\"'],text=True).strip()\nfiles=r['\"'\"'files'\"'\"']; assert files and len({f['\"\
+        '\"'path'\"'\"'] for f in files})==len(files)\nrequired=set(json.loads(sys.argv[4])); assert required\
+        \ <= {f['\"'\"'path'\"'\"'] for f in files}, sorted(required-{f['\"'\"'path'\"'\"'] for f in files})\n\
+        for f in files:\n assert re.fullmatch(r'\"'\"'https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/[0-9a-f]{40}/[^?#]+'\"\
+        '\"',f['\"'\"'url'\"'\"'])\n assert f['\"'\"'url'\"'\"'].split('\"'\"'/'\"'\"',6)[6]==f['\"'\"\
+        'path'\"'\"'] and '\"'\"'..'\"'\"' not in Path(f['\"'\"'path'\"'\"']).parts\n assert type(f['\"\
+        '\"'bytes'\"'\"']) is int and f['\"'\"'bytes'\"'\"']>0 and re.fullmatch('\"'\"'[0-9a-f]{64}'\"\
+        '\"',f['\"'\"'sha256'\"'\"'])\n with urllib.request.urlopen(f['\"'\"'url'\"'\"'],timeout=60) as\
+        \ response:\n  assert response.geturl()==f['\"'\"'url'\"'\"']; b=response.read()\n assert len(b)==f['\"\
+        '\"'bytes'\"'\"'] and hashlib.sha256(b).hexdigest()==f['\"'\"'sha256'\"'\"']\n assert hashlib.sha1(b'\"\
+        '\"'blob '\"'\"'+str(len(b)).encode()+b'\"'\"'\\0'\"'\"'+b).hexdigest()==f['\"'\"'blob_oid'\"\
+        '\"']\n assert Path(f['\"'\"'path'\"'\"']).read_bytes()==b\nprint('\"'\"'immutable producer bytes\
+        \ and exact source HEAD verified'\"'\"')\n' artifacts/audit-ledger/receipt-boundary/evidence-index.json\
+        \ audit-ledger audit-ledger-receipt-evidence '[\"artifacts/audit-ledger/bundle-digest.txt\", \"\
+        artifacts/audit-ledger/component-manifest.json\", \"artifacts/audit-ledger/coverage.out\", \"\
+        artifacts/audit-ledger/receipt-boundary/adapter-coverage.out\", \"artifacts/audit-ledger/receipt-boundary/bootstrap-go/bundle-digest.txt\"\
+        , \"artifacts/audit-ledger/receipt-boundary/bootstrap-go/component-manifest.json\", \"artifacts/audit-ledger/receipt-boundary/bootstrap-go/source-bundle.tar.zst\"\
+        , \"artifacts/audit-ledger/receipt-boundary/contract-coverage.out\", \"artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/bundle-digest.txt\"\
+        , \"artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/component-manifest.json\", \"\
+        artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/source-bundle.tar.zst\", \"artifacts/audit-ledger/receipt-boundary/tests.json\"\
+        , \"artifacts/audit-ledger/source-bundle.tar.zst\"]'"
+      integration_gates:
+      - name: audit-ledger-gate
+        layer: L1
+        source_of_truth:
+        - docs/design/detailed/09-governance-and-security-detailed-design.md:L553-L682
+        - docs/references/governance/security-and-enterprise.md:L301-L401
+        - docs/delivery/acceptance-and-validation.md:L1003-L1022
+        delivery_goal: Deliver append-only AuditEvent storage, governed query/pagination/export and evidence-chain
+          assembly.
+        covers:
+        - audit-ledger
+        acceptance_refs:
+        - UJ-AUDIT-001
+        commands:
+        - mkdir -p artifacts/audit-ledger && go test -covermode=atomic -coverprofile=artifacts/audit-ledger/coverage.out
+          ./internal/audit/... ./api/audit/...
+        - python3 -c "from pathlib import Path; import re,subprocess; p=Path('artifacts/audit-ledger/coverage.out');
+          assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True);
+          m=re.search(r'^total:\s+\(statements\)\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1))
+          >= 90"
+        - python3 scripts/release/package_component.py --component audit-ledger --kind platform-core-dependency-source
+          --input internal/audit --input api/audit --bundle artifacts/audit-ledger/source-bundle.tar.zst
+          --component-manifest artifacts/audit-ledger/component-manifest.json --digest-output artifacts/audit-ledger/bundle-digest.txt
+          --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner audit-ledger --require-all-owner-sources-accounted
+        required_metrics:
+          statement_coverage_percent: 90
+          declared_artifact_count: 4
+        artifacts:
+        - artifacts/audit-ledger/coverage.out
+        - artifacts/audit-ledger/source-bundle.tar.zst
+        - artifacts/audit-ledger/bundle-digest.txt
+        - artifacts/audit-ledger/component-manifest.json
+      - name: audit-receipt-store-boundary-gate
+        layer: L1
+        source_of_truth:
+        - docs/design/detailed/09-governance-and-security-detailed-design.md:L553-L682
+        - docs/references/governance/security-and-enterprise.md:L301-L401
+        - docs/delivery/acceptance-and-validation.md:L1003-L1022
+        - docs/design/open-agent-cluster-overview-design.md
+        - docs/design/detailed/09-governance-and-security-detailed-design.md:8.1,8.4-8.6,13-14
+        - docs/references/software-delivery/artifacts-release-and-deployment.md
+        - contracts/governance/audit/contract.go:1128-1354 (source e4dc2f94b033adbbe3dbb979be88b351d72481c8)
+        - contracts/governance/audit/internal/auditstore/receipt.go (same source)
+        - contracts/release/source-ownership-baseline.yaml:114-118,133-141,162-166
+        - contracts/release/source-ownership-catalog.yaml
+        - AITEAM-1061 issue 01a10385-45be-77c8-9507-5bff8ce578b9; original omac.worker-blocker/v2 from
+          direct Run 01a10385-f4c4-798b-94bd-77898cf39fab, terminal 2026-10-03T21:08:37Z; retained owner-decision
+          evidence, not implementation acceptance
+        delivery_goal: Prove the actual canonical PostgreSQL store-to-receipt-to-detail path, its private
+          wiring boundary and all negative/concurrency/authorization/restore cases without changing the
+          published seal or creating another audit authority. Test names below are new required implementation
+          deliverables, not claims that tests already exist.
+        covers:
+        - audit-ledger
+        acceptance_refs:
+        - UJ-AUDIT-001
+        commands:
+        - mkdir -p artifacts/audit-ledger/receipt-boundary && go test -count=1 -covermode=atomic -coverprofile=artifacts/audit-ledger/receipt-boundary/adapter-coverage.out
+          ./contracts/governance/audit/store/...
+        - python3 -c "from pathlib import Path; import re,subprocess; p=Path('artifacts/audit-ledger/receipt-boundary/adapter-coverage.out');
+          assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True);
+          m=re.search(r'^total:\s+\(statements\)\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1))
+          >= 90"
+        - go test -count=1 -json ./contracts/governance/audit/store/... ./internal/audit/... ./api/audit/...
+          -run '^(TestAuditPostgresReceiptCommittedDetail|TestAuditPostgresReceiptRejectsUncommittedOrMissingRecord|TestAuditPostgresReceiptRejectsIdentityScopeDigestMismatch|TestAuditReceiptForgeryAndImportBoundary|TestAuditDetailAuthorizationAndRedaction|TestAuditAtomicCommitRollbackAndIdempotency|TestAuditConcurrentAppendAndStableCursor|TestAuditPostgresRestartAndRestore|TestAuditBoundedCanonicalExportAndNoRecursiveReadAudit|TestAuditSourceReleaseOwnershipAndCompatibility)$'
+          > artifacts/audit-ledger/receipt-boundary/tests.json
+        - python3 -c 'import json; required={'"'"'TestAuditPostgresReceiptRejectsIdentityScopeDigestMismatch'"'"',
+          '"'"'TestAuditPostgresRestartAndRestore'"'"', '"'"'TestAuditConcurrentAppendAndStableCursor'"'"',
+          '"'"'TestAuditReceiptForgeryAndImportBoundary'"'"', '"'"'TestAuditDetailAuthorizationAndRedaction'"'"',
+          '"'"'TestAuditPostgresReceiptRejectsUncommittedOrMissingRecord'"'"', '"'"'TestAuditAtomicCommitRollbackAndIdempotency'"'"',
+          '"'"'TestAuditBoundedCanonicalExportAndNoRecursiveReadAudit'"'"', '"'"'TestAuditSourceReleaseOwnershipAndCompatibility'"'"',
+          '"'"'TestAuditPostgresReceiptCommittedDetail'"'"'}; rows=[json.loads(s) for s in open('"'"'artifacts/audit-ledger/receipt-boundary/tests.json'"'"')
+          if s.strip()]; passed={r.get('"'"'Test'"'"') for r in rows if r.get('"'"'Action'"'"')=='"'"'pass'"'"'};
+          assert required <= passed, sorted(required-passed); assert not any(r.get('"'"'Action'"'"') in
+          ('"'"'skip'"'"','"'"'fail'"'"') for r in rows), '"'"'failed or skipped receipt-boundary test'"'"';
+          print('"'"'all required receipt-boundary tests executed and passed'"'"')'
+        - go test -race -count=1 ./contracts/governance/audit/... ./internal/audit/... ./api/audit/...
+        - go test -count=1 -covermode=atomic -coverprofile=artifacts/audit-ledger/receipt-boundary/contract-coverage.out
+          ./contracts/governance/audit/... ./contracts/governance/usage/...
+        - python3 -c "from pathlib import Path; import re,subprocess; p=Path('artifacts/audit-ledger/receipt-boundary/contract-coverage.out');
+          assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True);
+          m=re.search(r'^total:\s+\(statements\)\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1))
+          >= 90"
+        - go vet ./...
+        - go build ./...
+        - go test -count=1 ./...
+        required_metrics:
+          adapter_statement_coverage_percent: 90
+          audit_usage_statement_coverage_percent: 90
+          required_named_test_count: 10
+          skipped_required_test_count: 0
+          caller_forged_receipt_accept_count: 0
+          cross_scope_detail_accept_count: 0
+          uncommitted_record_receipt_count: 0
+          sensitive_wire_leak_count: 0
+          duplicate_idempotent_append_count: 0
+        artifacts:
+        - artifacts/audit-ledger/receipt-boundary/adapter-coverage.out
+        - artifacts/audit-ledger/receipt-boundary/contract-coverage.out
+        - artifacts/audit-ledger/receipt-boundary/tests.json
+      - name: audit-receipt-source-release-gate
+        layer: L1
+        source_of_truth:
+        - contracts/release/source-ownership-baseline.yaml
+        - contracts/release/source-ownership-catalog.yaml
+        - docs/references/software-delivery/artifacts-release-and-deployment.md
+        delivery_goal: Keep source-release ownership unchanged and package every supporting adapter source
+          under contracts-audit-usage, every driver/module change under bootstrap-go, and every application/wiring
+          source under the original audit-ledger bundle at the same reviewed product HEAD. Publish immutable
+          source-bound evidence and obtain fresh independent technical review; no historical completed-node
+          artifact is overwritten.
+        covers:
+        - audit-ledger
+        acceptance_refs:
+        - UJ-AUDIT-001
+        commands:
+        - python3 scripts/release/package_component.py --component contracts-audit-usage --kind platform-core-dependency-source
+          --input contracts/governance/audit --input contracts/governance/usage --bundle artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/source-bundle.tar.zst
+          --component-manifest artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/component-manifest.json
+          --digest-output artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/bundle-digest.txt
+          --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner contracts-audit-usage
+          --require-all-owner-sources-accounted --reviewed-revision HEAD --package-git-blobs --require-clean-index-and-worktree
+          --record-tree-and-blob-identities
+        - python3 scripts/release/package_component.py --component bootstrap-go --kind platform-core-dependency-source
+          --input go.mod --input go.sum --input Makefile --input scripts/go-quality --input internal/bootstrap
+          --input scripts/bootstrap/package_go_module.py --bundle artifacts/audit-ledger/receipt-boundary/bootstrap-go/source-bundle.tar.zst
+          --component-manifest artifacts/audit-ledger/receipt-boundary/bootstrap-go/component-manifest.json
+          --digest-output artifacts/audit-ledger/receipt-boundary/bootstrap-go/bundle-digest.txt --ownership-baseline
+          contracts/release/source-ownership-baseline.yaml --owner bootstrap-go --require-all-owner-sources-accounted
+          --reviewed-revision HEAD --package-git-blobs --require-clean-index-and-worktree --record-tree-and-blob-identities
+        - python3 scripts/release/verify_component_manifest.py --manifest artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/component-manifest.json
+          --bundle artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/source-bundle.tar.zst
+        - python3 scripts/release/verify_component_manifest.py --manifest artifacts/audit-ledger/receipt-boundary/bootstrap-go/component-manifest.json
+          --bundle artifacts/audit-ledger/receipt-boundary/bootstrap-go/source-bundle.tar.zst
+        required_metrics:
+          missing_changed_source_count: 0
+          duplicate_source_owner_count: 0
+          changed_historical_ownership_root_count: 0
+        artifacts:
+        - artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/source-bundle.tar.zst
+        - artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/component-manifest.json
+        - artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/bundle-digest.txt
+        - artifacts/audit-ledger/receipt-boundary/bootstrap-go/source-bundle.tar.zst
+        - artifacts/audit-ledger/receipt-boundary/bootstrap-go/component-manifest.json
+        - artifacts/audit-ledger/receipt-boundary/bootstrap-go/bundle-digest.txt
+        - artifacts/audit-ledger/receipt-boundary/evidence-index.json
+      - name: audit-ledger-immutable-owner-publication-gate
+        layer: L1
+        source_of_truth:
+        - docs/design/detailed/09-governance-and-security-detailed-design.md:L553-L682
+        - docs/references/governance/security-and-enterprise.md:L301-L401
+        - docs/delivery/acceptance-and-validation.md:L1003-L1022
+        - docs/design/open-agent-cluster-overview-design.md
+        - docs/design/detailed/09-governance-and-security-detailed-design.md:8.1,8.4-8.6,13-14
+        - docs/references/software-delivery/artifacts-release-and-deployment.md
+        - contracts/governance/audit/contract.go:1128-1354 (source e4dc2f94b033adbbe3dbb979be88b351d72481c8)
+        - contracts/governance/audit/internal/auditstore/receipt.go (same source)
+        - contracts/release/source-ownership-baseline.yaml:114-118,133-141,162-166
+        - contracts/release/source-ownership-catalog.yaml
+        - AITEAM-1061 issue 01a10385-45be-77c8-9507-5bff8ce578b9; original omac.worker-blocker/v2 from
+          direct Run 01a10385-f4c4-798b-94bd-77898cf39fab, terminal 2026-10-03T21:08:37Z; retained owner-decision
+          evidence, not implementation acceptance
+        delivery_goal: Fetch every indexed source-bound owner payload at immutable commit URLs and verify
+          exact SHA256, size, Git blob identity, local equality and product HEAD/tree; reviewers independently
+          bind this index to the actual formal delivery. Publication alone is not product PASS.
+        covers:
+        - audit-ledger
+        acceptance_refs:
+        - UJ-AUDIT-001
+        commands:
+        - "python3 -c 'import hashlib,json,re,subprocess,sys,urllib.request\nfrom pathlib import Path\n\
+          p=Path(sys.argv[1]); producer=sys.argv[2]; artifact_id=sys.argv[3]\nr=json.loads(p.read_text());\
+          \ assert r['\"'\"'schema'\"'\"']=='\"'\"'oac.owner-publication/v1'\"'\"'; assert r['\"'\"'producer'\"\
+          '\"']==producer and r['\"'\"'artifact_id'\"'\"']==artifact_id\nassert re.fullmatch('\"'\"'[0-9a-f]{40}'\"\
+          '\"',r['\"'\"'product_head'\"'\"']) and re.fullmatch('\"'\"'[0-9a-f]{40}'\"'\"',r['\"'\"'product_tree'\"\
+          '\"'])\nassert re.fullmatch(r'\"'\"'https://github.com/xiaohei-info/open-agent-cluster/pull/[0-9]+'\"\
+          '\"',r['\"'\"'product_pr'\"'\"'])\nassert r['\"'\"'product_head'\"'\"']==subprocess.check_output(['\"\
+          '\"'git'\"'\"','\"'\"'rev-parse'\"'\"','\"'\"'HEAD'\"'\"'],text=True).strip()\nassert r['\"\
+          '\"'product_tree'\"'\"']==subprocess.check_output(['\"'\"'git'\"'\"','\"'\"'rev-parse'\"'\"\
+          ','\"'\"'HEAD^{tree}'\"'\"'],text=True).strip()\nfiles=r['\"'\"'files'\"'\"']; assert files\
+          \ and len({f['\"'\"'path'\"'\"'] for f in files})==len(files)\nrequired=set(json.loads(sys.argv[4]));\
+          \ assert required <= {f['\"'\"'path'\"'\"'] for f in files}, sorted(required-{f['\"'\"'path'\"\
+          '\"'] for f in files})\nfor f in files:\n assert re.fullmatch(r'\"'\"'https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/[0-9a-f]{40}/[^?#]+'\"\
+          '\"',f['\"'\"'url'\"'\"'])\n assert f['\"'\"'url'\"'\"'].split('\"'\"'/'\"'\"',6)[6]==f['\"\
+          '\"'path'\"'\"'] and '\"'\"'..'\"'\"' not in Path(f['\"'\"'path'\"'\"']).parts\n assert type(f['\"\
+          '\"'bytes'\"'\"']) is int and f['\"'\"'bytes'\"'\"']>0 and re.fullmatch('\"'\"'[0-9a-f]{64}'\"\
+          '\"',f['\"'\"'sha256'\"'\"'])\n with urllib.request.urlopen(f['\"'\"'url'\"'\"'],timeout=60)\
+          \ as response:\n  assert response.geturl()==f['\"'\"'url'\"'\"']; b=response.read()\n assert\
+          \ len(b)==f['\"'\"'bytes'\"'\"'] and hashlib.sha256(b).hexdigest()==f['\"'\"'sha256'\"'\"']\n\
+          \ assert hashlib.sha1(b'\"'\"'blob '\"'\"'+str(len(b)).encode()+b'\"'\"'\\0'\"'\"'+b).hexdigest()==f['\"\
+          '\"'blob_oid'\"'\"']\n assert Path(f['\"'\"'path'\"'\"']).read_bytes()==b\nprint('\"'\"'immutable\
+          \ producer bytes and exact source HEAD verified'\"'\"')\n' artifacts/audit-ledger/receipt-boundary/evidence-index.json\
+          \ audit-ledger audit-ledger-receipt-evidence '[\"artifacts/audit-ledger/bundle-digest.txt\"\
+          , \"artifacts/audit-ledger/component-manifest.json\", \"artifacts/audit-ledger/coverage.out\"\
+          , \"artifacts/audit-ledger/receipt-boundary/adapter-coverage.out\", \"artifacts/audit-ledger/receipt-boundary/bootstrap-go/bundle-digest.txt\"\
+          , \"artifacts/audit-ledger/receipt-boundary/bootstrap-go/component-manifest.json\", \"artifacts/audit-ledger/receipt-boundary/bootstrap-go/source-bundle.tar.zst\"\
+          , \"artifacts/audit-ledger/receipt-boundary/contract-coverage.out\", \"artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/bundle-digest.txt\"\
+          , \"artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/component-manifest.json\"\
+          , \"artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/source-bundle.tar.zst\", \"\
+          artifacts/audit-ledger/receipt-boundary/tests.json\", \"artifacts/audit-ledger/source-bundle.tar.zst\"\
+          ]'"
+        required_metrics:
+          unretrievable_payload_count: 0
+          payload_digest_mismatch_count: 0
+          product_revision_mismatch_count: 0
+        artifacts:
+        - artifacts/audit-ledger/receipt-boundary/evidence-index.json
+      pr_base: main
+      acceptance_refs:
+      - UJ-AUDIT-001
+      source_of_truth:
+      - docs/design/detailed/09-governance-and-security-detailed-design.md:L553-L682
+      - docs/references/governance/security-and-enterprise.md:L301-L401
+      - docs/delivery/acceptance-and-validation.md:L1003-L1022
+      - docs/design/open-agent-cluster-overview-design.md
+      - docs/design/detailed/09-governance-and-security-detailed-design.md:8.1,8.4-8.6,13-14
+      - docs/references/software-delivery/artifacts-release-and-deployment.md
+      - contracts/governance/audit/contract.go:1128-1354 (source e4dc2f94b033adbbe3dbb979be88b351d72481c8)
+      - contracts/governance/audit/internal/auditstore/receipt.go (same source)
+      - contracts/release/source-ownership-baseline.yaml:114-118,133-141,162-166
+      - contracts/release/source-ownership-catalog.yaml
+      - AITEAM-1061 issue 01a10385-45be-77c8-9507-5bff8ce578b9; original omac.worker-blocker/v2 from direct
+        Run 01a10385-f4c4-798b-94bd-77898cf39fab, terminal 2026-10-03T21:08:37Z; retained owner-decision
+        evidence, not implementation acceptance
+      required_contracts:
+      - docs/references/governance/security-and-enterprise.md
+      scope_paths:
+      - internal/audit/**
+      - api/audit/**
+      - contracts/governance/audit/store/**
+      evidence_mode: artifact
+      produces:
+      - artifact_id: audit-ledger-receipt-evidence
+- op: update
+  node: extension-package
+  set:
+    description: 'Rework the existing Package Governance delivery around authenticated Host/Platform Core
+      and owner-issued authority attestations, canonical installer-owned artifact verification, committed-record
+      concurrent idempotency, portable gate execution, and exact audit binding while preserving the published
+      extension wire boundary and owned source paths.
+
+
+      Retain PR70/head304a6e and full verification7470bbac4ef8a10cbbacfbf38ce9121af7f75d163e6bfb060ae4c82a99feddd3
+      plus ledgerc6280c80c697810292c6208e42b9b0ec2ce9a26c3de562112630acc090136812, every cycle/root cause/test/control
+      and fixed/open classification, and the original owner-decision-required v2 from direct Run01a1039e-745d-72a2-a1e7-1929d5911c01.
+      Preserve the clean unpushed Package merge HEAD1b0e9796048e394b2c5aa91db88b85a9468b282c as source
+      history, never overwrite/push it as a planning side effect. Absolute Package counters remain worker/review/merge=0/4/0
+      and all configured/current approved budget authority remains unchanged. This proposal closes no
+      product blocker by itself.
+
+
+      Add the two missing real prerequisites authorization and audit-ledger and their typed immutable
+      publications; existing wire prerequisite/input remains exact. These edges are genuine prerequisites
+      for the production proof path, not coordination serialization. Source inspection at the preserved
+      Package HEAD contains only structural AuthorizationDecision validation and the sealed Audit contract
+      without its production store issuer. Fresh current owner facts show Authorization PR98 remains rejected/reworking
+      and AuditLedger is implementing receipt967. Merged contracts PR59/PR78 do not establish owner production
+      readiness.
+
+
+      After actual owner publication, independent product review and normal merge, trusted Platform Core
+      composition must call the Authorization owner''s production command, the canonical Admission engine
+      and existing Project/Solution owners; consume the AuditLedger built-in committed-record store/binding
+      path. Package owns only its original installer/provenance/Describe/conformance/lifecycle/CAS/idempotency
+      implementation and narrow adapters; it cannot choose trust or construct substitutes. Persist full
+      original request/decision/owner/provenance/SDK conformance and canonical Audit record bindings atomically
+      with the committed ComponentInstall/command. On restart validate portable historical evidence via
+      immutable owner provenance and exact canonical Audit reread, not Go pointer identity or serialized
+      private receipts; separately evaluate current authorization and compare only stable logical replay
+      identity. Never rewrite old records to reflect current policy, never create another mutable audit/authorization
+      truth store, and never substitute a raw Event/detail DTO for an opaque owner binding.
+
+
+      Retain EVERY existing verification command, 18 exact external-production tests, race execution,
+      source-audit zero counts, 90% coverage, nine declared artifacts, gates/metrics and all non_goals
+      unchanged. New owner inputs do not waive real SDK conformance, installer-owned signature/source/entrypoint/Describe
+      verification, trust and permission intersection, authenticated RequestContext/Host provenance, refusal
+      of caller-selected verifier/ports, or the production store/restart/concurrent committed replay requirements.
+      Downstream Harness Host positive isolation/Gate/lineage/recovery, contracts-extension aggregation
+      and Solution/full-user-journey duties remain exact. Add no dependency back to Harness Host or final
+      contracts-extension (that would form a cycle and move responsibility).
+
+
+      Materialize the actual immutable publications from each current upstream formal verification''s
+      retrievable_artifacts before the Package gate. The new authorization-owner-command-evidence and
+      audit-ledger-receipt-evidence are delivery/source/conformance evidence; they are not bearer permissions.
+      The runtime APIs must independently validate the current request. Preserve old typed evidence_mode/produces
+      and extend only the strict consumes list to these two real owners.
+
+
+      Wire evidence is NOT recovered: the exact-label OMAC work read on Package (source: 前置开发任务 · Publish
+      Package, Harness and ComponentRun wire contracts) still exits 5 because upstream issue01a032bd-188a-7c88-b4b8-06e682c7b907
+      has no readable deliverable. Its declared verification fae4c939574eb4f2e4906f62a3b121aed784d12c237ee758af9f00d3ab443fa2
+      and report64b2b095ba07cb7512587277a19169481fb30e1e5e512f53b4cd748df9147956/ledger7ba3b143d7d7d2c3950d65d90ae12d9305935f2839f4b2f2fc0ab8369fd2c9ce
+      are metadata/evidence references, not the three declared artifact payloads. Complete GitHub tree
+      at the sealed PR59 head d4453dc96fa0e0d84b9b4484127ee6f396988fce has none of artifacts/contracts-extension-wire/{coverage.out,wire-contract-tests.json,evidence.json};
+      the issue attachment scan has no physical Wire payload, Actions artifact total_count is 0 and visible
+      releases are Preview-only. These reads prove non-retrieval from checked locations, not global nonexistence.
+
+
+      Keep contracts-extension-wire-evidence with the same completed producer and strict artifact policy.
+      Do not approve merged source as the input, manufacture missing hashes, generate a replacement and
+      label it historical, remove the consume, reopen the completed producer, or modify other consumers.
+      Package remains FAIL-CLOSED on this prerequisite. Before any Package Worker dispatch the single
+      coordinator must retrieve the original declared bytes from a real retained producer publication,
+      prove their linkage to the sealed delivery and exact source, publish/refer to immutable retrievable
+      bytes without changing the old producer facts, and have independent review verify evidence.json
+      digests plus all four named passing test events and coverage90. If that cannot be proved, STOP with
+      the missing-artifact blocker; this amendment grants no substitute-input or unchanged-scope retry.
+      A genuinely necessary new production/evidence repair would require its own source-bound independent
+      amendment, not an implicit operation or fake success here.
+
+
+      Publish the complete declared artifacts and raw command/test receipts from the actual committed
+      product PR HEAD at immutable full-commit GitHub blob/raw URLs in xiaohei-info/open-agent-cluster.
+      An evidence commit may be separate from the product commit to avoid circular self-hashing. The evidence
+      index must bind product PR URL, full product HEAD/tree, producer node, typed artifact ID, each payload
+      repository path, full-commit raw URL, Git blob OID, SHA256 and byte size; retain the original verification/reject/blocker
+      references. Include the exact source bundle/component-manifest, coverage, all required native JSON
+      test events, production composition/source-ownership map, concrete dependency/fixture versions and
+      executed argv/exit results. Reference the immutable index URL and every payload in formal verification
+      retrievable_artifacts. Reviewer must freshly retrieve actual bytes, independently verify Git/source
+      identity and reproduce the required gates before ordinary merge. An index or local file alone, mutable
+      PR/branch/release URL, declared count, structural DTO, fixture result or merged contracts PR is
+      not a production owner proof. Do not include private keys, credentials, live request secrets or
+      unredacted sensitive data. Local conformance uses only an isolated owned fixture with real production
+      implementation and explicit setup/teardown, not a live environment grant.
+
+
+      Recovery classification is AUTHORING, not review or merging: implementation/input/publication obligations
+      changed and there is no adequate reviewed production delivery for them. No duplicate resume operation
+      is added. Native downstream classification must be exposed, not suppressed: authentication-methods,
+      direct-deployment, contracts-extension and solution-publishing are already-started descendants that
+      require AUTHORING validation against the changed upstream input; their complete contracts, workers/scopes,
+      prior rejects, evidence and budget authority remain unchanged. Unstarted descendants keep their
+      runtime state. No ordinary Package dispatch is authorized by proposal submission or planning admission.
+      The single Root controller may accept only after fresh independent complete PASS and current base/CAS,
+      minimal/stage, related-terminal-Run, done-object and budget guards; refuse while any affected/related
+      Run is active/unknown, any producer/source has drifted, or any apply would erase reject evidence
+      or reset/grant budget. Do not cancel healthy owner work, run a parallel controller, hand-write runtime
+      fields, reopen done nodes, or apply this file directly.'
+    blocked_by:
+    - bootstrap-go
+    - contracts-runtime
+    - contracts-workspace
+    - contracts-extension-wire
+    - contracts-identity
+    - contracts-authz-admission
+    - contracts-audit-usage
+    - contracts-project
+    - contracts-solution
+    - release-artifact-tooling
+    - authorization
+    - audit-ledger
+    contract:
+      objective: Deliver Package Governance as the sole owner of exact Package release, artifact/provenance
+        and SDK conformance verification, interface, entrypoint and Describe results, durable ComponentInstall
+        identity, lifecycle state, and point/effect permission ceilings through a real production composition
+        that consumes canonical RequestContext, Project, Solution, Authorization, Admission, Audit, and
+        extension-wire contracts; atomically persist portable owner proofs and return only the committed
+        record for exact concurrent or retried requests.
+      non_goals:
+      - Do not change adjacent domain ownership or introduce a competing source of truth.
+      - Do not bypass authorization, admission, CAS, idempotency, review, or evidence gates.
+      - Do not preserve unpublished prototype behavior unless the owning design explicitly requires it.
+      - Do not redefine or replace contracts-extension-wire, RequestContext, Project, Solution, Authorization,
+        Admission, or Audit records, engines, identities, revisions, or digests inside Package Governance.
+      - Do not move Platform Core audit, credential, authorization, admission, Host, Project, or Solution
+        ownership into this node; consume their canonical contracts through narrow production adapters
+        or an owner-issued command.
+      - Do not accept caller-selected production verifiers, owner ports, inspectors, authority descriptors,
+        Project/Solution snapshots, governance decisions, or RequestContext values as proof of ownership.
+      - Do not expose a production CommitInstall or CommitLifecycle path that can mutate state from public
+        structural records without a capability-bound or independently verifiable owner command.
+      - Do not discard signed provenance, Describe/conformance, authorization, admission, lifecycle, removal,
+        or Audit witnesses after validating them; the committed record must retain portable proof and
+        exact bindings.
+      - Do not include transient owner decision IDs, issuance IDs, or issue/expiry timestamps in the stable
+        logical replay identity; validate current authorization separately from exact-request idempotency.
+      - Do not expose unsigned development installers, caller-controlled Describe, MemoryStore, fake owner
+        ports, generated test keys, or synthetic conformance success in production composition or release
+        evidence.
+      - Do not satisfy the production gate with same-package tests that can reach package-private helpers;
+        every named production-boundary test must run from package extensions_test against only exported
+        production surfaces.
+      - Do not allow release evidence to reference MemoryStore, externalJSONStore, fake or mock owner
+        ports, generated signing keys, //go:linkname, unsafe package-private access, the no-verifier invocation
+        constructor, or the public development installer; the gate must emit and assert a zero-count source
+        audit for these paths.
+      - Do not execute Gate evaluators or claim Harness Host isolation, ComponentRun recovery, EventHandler
+        lineage, or end-to-end user acceptance in this node.
+      - Do not add a universal extension invoke path, a generic plugin category, or a builtin bypass.
+      - Do not dispatch or treat production prerequisites as satisfied until Authorization and AuditLedger
+        actual owner implementations have been independently reviewed/merged and their exact immutable
+        typed payloads retrieved; current PR98 rejection and receipt967 planning approval are not readiness
+        evidence.
+      - Do not substitute PR59 merged source, OMAC verification/report/ledger metadata, regenerated bytes
+        or a synthetic index for the original contracts-extension-wire-evidence payload. Retain the strict
+        existing producer consume and fail closed while its original bytes and sealed-delivery linkage
+        are unretrievable.
+      - Do not persist a reusable unsealed Audit receipt or treat serialized Authorization/Audit records
+        as self-authenticating permission. Preserve portable immutable canonical provenance in the original
+        commit path and re-load the exact owner record across restart; current authorization remains a
+        separate mandatory evaluation.
+      verification_commands:
+      - mkdir -p artifacts/extension-package && go test -covermode=atomic -coverprofile=artifacts/extension-package/coverage.out
+        ./sdk/extension/... ./internal/extensions/...
+      - python3 -c "from pathlib import Path; import re,subprocess; p=Path('artifacts/extension-package/coverage.out');
+        assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True);
+        m=re.search(r'^total:\s+\(statements\)\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1))
+        >= 90"
+      - mkdir -p artifacts/extension-package && go list -f '{{range .Imports}}{{.}}{{"\n"}}{{end}}' ./internal/extensions/...
+        | sort -u > artifacts/extension-package/canonical-owner-imports.txt
+      - 'python3 -c "from pathlib import Path; required={ ''github.com/xiaohei-info/open-agent-cluster/contracts/extension'',
+        ''github.com/xiaohei-info/open-agent-cluster/contracts/identity/requestcontext'', ''github.com/xiaohei-info/open-agent-cluster/contracts/governance/authz'',
+        ''github.com/xiaohei-info/open-agent-cluster/contracts/governance/admission'', ''github.com/xiaohei-info/open-agent-cluster/contracts/governance/audit'',
+        ''github.com/xiaohei-info/open-agent-cluster/contracts/project'', ''github.com/xiaohei-info/open-agent-cluster/contracts/solution''};
+        actual=set(Path(''artifacts/extension-package/canonical-owner-imports.txt'').read_text().splitlines());
+        assert required <= actual, f''missing canonical owner imports: {sorted(required-actual)}''"'
+      - python3 -c "from pathlib import Path; import json,re; p=Path('internal/extensions/production_boundary_external_test.go');
+        s=p.read_text(); required={ 'TestExternalProductionPackageGovernanceUsesCanonicalOwnerAdapters',
+        'TestExternalProductionPackageGovernancePersistsOwnerProofsAcrossRestart', 'TestExternalProductionPackageGovernanceRejectsUnattestedStoreWrites',
+        'TestExternalProductionPackageGovernanceRejectsUnknownAndStaleOwnerRevisions', 'TestExternalPackageGovernanceBindsProjectSolutionAuthorizationAdmissionAndAudit',
+        'TestExternalPackageGovernancePersistsProvenanceDescribeAndConformanceAttestations', 'TestExternalPackageGovernanceRejectsSyntheticConformanceEvidence',
+        'TestExternalComponentInstallConcurrentCanonicalReplayReturnsCommittedRecord', 'TestExternalComponentInstallChangedRequestContextConflicts',
+        'TestExternalProductionPackageGovernanceRejectsDevelopmentBypass', 'TestExternalProductionLifecyclePersistsAuthorizationAdmissionAndAuditProof',
+        'TestExternalProductionLifecycleRejectsDirectUnattestedCommitAndPersistsRemovalProof', 'TestExternalComponentInstallBindsExactReleaseDigestInterfaceAndEntrypoint',
+        'TestExternalPackageGovernanceRejectsMismatchedPackageBinding', 'TestExternalDescribePermissionCeilingBindsInstallPointEffectAndRequestContext',
+        'TestExternalPermissionCeilingIntersectsCanonicalOwnerGrants', 'TestExternalPermissionCeilingRejectsUnsupportedEffectAndResource',
+        'TestExternalPermissionCeilingRejectsMismatchedOwnerIdentities'}; missing=sorted(n for n in required
+        if ('func '+n+'(') not in s); prod=[q for root in ('sdk/extension','internal/extensions') for
+        q in Path(root).rglob('*.go') if not q.name.endswith('_test.go')]; prod_text='\n'.join(q.read_text()
+        for q in prod); counters={ 'memory_store_reference_count':len(re.findall(r'\bMemoryStore\b|\bexternalJSONStore\b',s+prod_text)),
+        'fake_owner_port_reference_count':len(re.findall(r'\b(?:fake|mock|stub)[A-Za-z0-9_]*Owner',s,re.I)),
+        'generated_key_reference_count':len(re.findall(r'(?:ed25519|rsa|ecdsa)\.GenerateKey',s)), 'package_private_helper_reference_count':len(re.findall(r'//go:linkname|\bunsafe\.',s)),
+        'development_bypass_reference_count':len(re.findall(r'\bNewDevelopmentInstaller\b|\bNewAuthenticatedInvocationContext\s*\(',prod_text))};
+        report={'schema':'oac.extension-package-production-source-audit/v1', 'external_test_package':'extensions_test'
+        if re.search(r'^package\s+extensions_test\s*$',s,re.M) else '', 'required_external_test_count':len(required),'missing_external_tests':missing,
+        'production_constructor_reference_count':s.count('NewProductionPackageGovernance('), 'persistent_store_constructor_reference_count':s.count('OpenPersistentInstallerStore('),**counters};
+        out=Path('artifacts/extension-package/production-boundary-source-audit.json'); out.parent.mkdir(parents=True,exist_ok=True);
+        out.write_text(json.dumps(report,sort_keys=True)+'\n'); assert report['external_test_package']=='extensions_test'
+        and not missing; assert report['production_constructor_reference_count']>0 and report['persistent_store_constructor_reference_count']>1;
+        assert not any(counters.values()), counters"
+      - mkdir -p artifacts/extension-package && OAC_EXTENSION_PRODUCTION_EVIDENCE="$PWD/artifacts/extension-package/production-boundary-evidence.json"
+        go test -json ./sdk/extension/... ./internal/extensions/... -run '^(TestExternalProductionPackageGovernanceUsesCanonicalOwnerAdapters|TestExternalProductionPackageGovernancePersistsOwnerProofsAcrossRestart|TestExternalProductionPackageGovernanceRejectsUnattestedStoreWrites|TestExternalProductionPackageGovernanceRejectsUnknownAndStaleOwnerRevisions|TestExternalPackageGovernanceBindsProjectSolutionAuthorizationAdmissionAndAudit|TestExternalPackageGovernancePersistsProvenanceDescribeAndConformanceAttestations|TestExternalPackageGovernanceRejectsSyntheticConformanceEvidence|TestExternalComponentInstallConcurrentCanonicalReplayReturnsCommittedRecord|TestExternalComponentInstallChangedRequestContextConflicts|TestExternalProductionPackageGovernanceRejectsDevelopmentBypass|TestExternalProductionLifecyclePersistsAuthorizationAdmissionAndAuditProof|TestExternalProductionLifecycleRejectsDirectUnattestedCommitAndPersistsRemovalProof|TestExternalComponentInstallBindsExactReleaseDigestInterfaceAndEntrypoint|TestExternalPackageGovernanceRejectsMismatchedPackageBinding|TestExternalDescribePermissionCeilingBindsInstallPointEffectAndRequestContext|TestExternalPermissionCeilingIntersectsCanonicalOwnerGrants|TestExternalPermissionCeilingRejectsUnsupportedEffectAndResource|TestExternalPermissionCeilingRejectsMismatchedOwnerIdentities)$'
+        -count=1 > artifacts/extension-package/production-owner-tests.json
+      - 'python3 -c "import json; required={ ''TestExternalProductionPackageGovernanceUsesCanonicalOwnerAdapters'',
+        ''TestExternalProductionPackageGovernancePersistsOwnerProofsAcrossRestart'', ''TestExternalProductionPackageGovernanceRejectsUnattestedStoreWrites'',
+        ''TestExternalProductionPackageGovernanceRejectsUnknownAndStaleOwnerRevisions'', ''TestExternalPackageGovernanceBindsProjectSolutionAuthorizationAdmissionAndAudit'',
+        ''TestExternalPackageGovernancePersistsProvenanceDescribeAndConformanceAttestations'', ''TestExternalPackageGovernanceRejectsSyntheticConformanceEvidence'',
+        ''TestExternalComponentInstallConcurrentCanonicalReplayReturnsCommittedRecord'', ''TestExternalComponentInstallChangedRequestContextConflicts'',
+        ''TestExternalProductionPackageGovernanceRejectsDevelopmentBypass'', ''TestExternalProductionLifecyclePersistsAuthorizationAdmissionAndAuditProof'',
+        ''TestExternalProductionLifecycleRejectsDirectUnattestedCommitAndPersistsRemovalProof'', ''TestExternalComponentInstallBindsExactReleaseDigestInterfaceAndEntrypoint'',
+        ''TestExternalPackageGovernanceRejectsMismatchedPackageBinding'', ''TestExternalDescribePermissionCeilingBindsInstallPointEffectAndRequestContext'',
+        ''TestExternalPermissionCeilingIntersectsCanonicalOwnerGrants'', ''TestExternalPermissionCeilingRejectsUnsupportedEffectAndResource'',
+        ''TestExternalPermissionCeilingRejectsMismatchedOwnerIdentities''}; rows=[json.loads(x) for x
+        in open(''artifacts/extension-package/production-owner-tests.json'') if x.strip()]; passed={x.get(''Test'')
+        for x in rows if x.get(''Action'')==''pass'' and x.get(''Test'') in required}; assert passed==required,
+        f''missing required passing tests: {sorted(required-passed)}''"'
+      - 'python3 -c "import json; from pathlib import Path; r=json.loads(Path(''artifacts/extension-package/production-boundary-evidence.json'').read_text());
+        s=json.loads(Path(''artifacts/extension-package/production-boundary-source-audit.json'').read_text());
+        true_fields={''production_constructor_exercised'',''owner_proofs_preserved_after_restart'',''exact_package_binding_verified'',''permission_ceiling_intersection_verified'',''describe_point_effect_binding_verified''};
+        zero_fields={''exact_package_binding_mismatch_accept_count'',''exact_release_mismatch_accept_count'',''artifact_digest_mismatch_accept_count'',''interface_api_mismatch_accept_count'',''entrypoint_mismatch_accept_count'',''permission_ceiling_intersection_failure_count'',''unsupported_effect_accept_count'',''unsupported_resource_accept_count'',''owner_identity_mismatch_accept_count'',''unattested_write_accept_count'',''stale_owner_revision_accept_count'',''owner_proof_loss_after_restart_count'',''transient_issuance_replay_conflict_count'',''changed_request_replay_accept_count'',''production_development_bypass_accept_count'',''synthetic_conformance_evidence_accept_count''};
+        assert r.get(''schema'')==''oac.extension-package-production-boundary-evidence/v1''; assert true_fields|zero_fields
+        <= set(r), f''missing evidence fields: {sorted((true_fields|zero_fields)-set(r))}''; assert all(r[k]
+        is True for k in true_fields); assert all(r[k]==0 for k in zero_fields); assert r.get(''persistent_store_backend'')
+        not in {None,'''',''memory'',''MemoryStore'',''fake''} and r.get(''persistent_store_reopen_count'',0)>0;
+        assert set(r.get(''canonical_owner_adapters'',[]))=={''request-context'',''project'',''solution'',''authorization'',''admission'',''audit''};
+        source_zero={''memory_store_reference_count'',''fake_owner_port_reference_count'',''generated_key_reference_count'',''package_private_helper_reference_count'',''development_bypass_reference_count''};
+        assert s.get(''schema'')==''oac.extension-package-production-source-audit/v1'' and s.get(''external_test_package'')==''extensions_test'';
+        assert s.get(''required_external_test_count'')==18 and s.get(''missing_external_tests'')==[];
+        assert s.get(''production_constructor_reference_count'',0)>0 and s.get(''persistent_store_constructor_reference_count'',0)>1;
+        assert all(s.get(k)==0 for k in source_zero)"'
+      - mkdir -p artifacts/extension-package && CGO_ENABLED=1 go test -race -json ./sdk/extension/...
+        ./internal/extensions/... -run '^TestExternalComponentInstallConcurrentCanonicalReplayReturnsCommittedRecord$'
+        -count=1 > artifacts/extension-package/concurrent-canonical-replay-race.json
+      - python3 -c "import json; name='TestExternalComponentInstallConcurrentCanonicalReplayReturnsCommittedRecord';
+        rows=[json.loads(x) for x in open('artifacts/extension-package/concurrent-canonical-replay-race.json')
+        if x.strip()]; assert any(x.get('Action')=='pass' and x.get('Test')==name for x in rows)"
+      - go vet ./sdk/extension/... ./internal/extensions/...
+      - python3 scripts/release/package_component.py --component extension-package --kind platform-core-dependency-source
+        --input sdk/extension --input internal/extensions --bundle artifacts/extension-package/source-bundle.tar.zst
+        --component-manifest artifacts/extension-package/component-manifest.json --digest-output artifacts/extension-package/bundle-digest.txt
+        --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner extension-package
+        --require-all-owner-sources-accounted
+      integration_gates:
+      - name: extension-package-gate
+        layer: L1
+        source_of_truth:
+        - git:d9aa7362667411d1d7a1b4788f002413aa7dacfa:extension-package-amendment-decision.md#sha256=42a4fda1ff3fc72ca7e8c78bb58a8ab4da41e3655b15ee23f3639f5b5e700751
+        - git:e1e48af331c0d568257e0eb2cbb88c1f19c97cb0:b-class-structural-decomposition-decisions.md#sha256=bee2866be23e0d5fe6f77a245f7f3177522308d5bd3ebbd14fb2baf0d9e37f19
+        - docs/design/open-agent-cluster-overview-design.md:L335-L355
+        - docs/design/open-agent-cluster-overview-design.md:L675-L684
+        - docs/design/detailed/08-component-and-extension-detailed-design.md:L127-L205
+        - docs/design/detailed/08-component-and-extension-detailed-design.md:L238-L257
+        - docs/design/detailed/08-component-and-extension-detailed-design.md:L298-L325
+        - docs/design/detailed/08-component-and-extension-detailed-design.md:L441-L500
+        - docs/design/detailed/09-governance-and-security-detailed-design.md:L11-L45
+        - docs/design/detailed/09-governance-and-security-detailed-design.md:L259-L287
+        - docs/design/detailed/09-governance-and-security-detailed-design.md:L312-L406
+        - docs/design/detailed/09-governance-and-security-detailed-design.md:L808-L854
+        - docs/references/extension/component-governance.md:L28-L80
+        - docs/references/extension/component-governance.md:L157-L190
+        - docs/references/extension/component-governance.md:L253-L281
+        - docs/references/extension/plugin-contracts.md:L7-L18
+        - docs/references/extension/plugin-contracts.md:L63-L92
+        - docs/references/governance/security-and-enterprise.md:L7-L31
+        - docs/references/governance/security-and-enterprise.md:L184-L315
+        - docs/delivery/acceptance-and-validation.md:L171-L187
+        delivery_goal: Deliver a production Package Governance composition that consumes canonical owner
+          contracts, excludes caller-owned authority and development bypasses, atomically persists portable
+          provenance, conformance, authorization, admission, lifecycle and Audit proofs, survives store
+          restart, rejects unattested direct writes, and returns only the committed record for exact concurrent
+          or retried requests.
+        covers:
+        - extension-package
+        acceptance_refs:
+        - UJ-EXTENSION-PACKAGE-001
+        commands:
+        - mkdir -p artifacts/extension-package && go test -covermode=atomic -coverprofile=artifacts/extension-package/coverage.out
+          ./sdk/extension/... ./internal/extensions/...
+        - python3 -c "from pathlib import Path; import re,subprocess; p=Path('artifacts/extension-package/coverage.out');
+          assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True);
+          m=re.search(r'^total:\s+\(statements\)\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1))
+          >= 90"
+        - mkdir -p artifacts/extension-package && go list -f '{{range .Imports}}{{.}}{{"\n"}}{{end}}'
+          ./internal/extensions/... | sort -u > artifacts/extension-package/canonical-owner-imports.txt
+        - 'python3 -c "from pathlib import Path; required={ ''github.com/xiaohei-info/open-agent-cluster/contracts/extension'',
+          ''github.com/xiaohei-info/open-agent-cluster/contracts/identity/requestcontext'', ''github.com/xiaohei-info/open-agent-cluster/contracts/governance/authz'',
+          ''github.com/xiaohei-info/open-agent-cluster/contracts/governance/admission'', ''github.com/xiaohei-info/open-agent-cluster/contracts/governance/audit'',
+          ''github.com/xiaohei-info/open-agent-cluster/contracts/project'', ''github.com/xiaohei-info/open-agent-cluster/contracts/solution''};
+          actual=set(Path(''artifacts/extension-package/canonical-owner-imports.txt'').read_text().splitlines());
+          assert required <= actual, f''missing canonical owner imports: {sorted(required-actual)}''"'
+        - python3 -c "from pathlib import Path; import json,re; p=Path('internal/extensions/production_boundary_external_test.go');
+          s=p.read_text(); required={ 'TestExternalProductionPackageGovernanceUsesCanonicalOwnerAdapters',
+          'TestExternalProductionPackageGovernancePersistsOwnerProofsAcrossRestart', 'TestExternalProductionPackageGovernanceRejectsUnattestedStoreWrites',
+          'TestExternalProductionPackageGovernanceRejectsUnknownAndStaleOwnerRevisions', 'TestExternalPackageGovernanceBindsProjectSolutionAuthorizationAdmissionAndAudit',
+          'TestExternalPackageGovernancePersistsProvenanceDescribeAndConformanceAttestations', 'TestExternalPackageGovernanceRejectsSyntheticConformanceEvidence',
+          'TestExternalComponentInstallConcurrentCanonicalReplayReturnsCommittedRecord', 'TestExternalComponentInstallChangedRequestContextConflicts',
+          'TestExternalProductionPackageGovernanceRejectsDevelopmentBypass', 'TestExternalProductionLifecyclePersistsAuthorizationAdmissionAndAuditProof',
+          'TestExternalProductionLifecycleRejectsDirectUnattestedCommitAndPersistsRemovalProof', 'TestExternalComponentInstallBindsExactReleaseDigestInterfaceAndEntrypoint',
+          'TestExternalPackageGovernanceRejectsMismatchedPackageBinding', 'TestExternalDescribePermissionCeilingBindsInstallPointEffectAndRequestContext',
+          'TestExternalPermissionCeilingIntersectsCanonicalOwnerGrants', 'TestExternalPermissionCeilingRejectsUnsupportedEffectAndResource',
+          'TestExternalPermissionCeilingRejectsMismatchedOwnerIdentities'}; missing=sorted(n for n in
+          required if ('func '+n+'(') not in s); prod=[q for root in ('sdk/extension','internal/extensions')
+          for q in Path(root).rglob('*.go') if not q.name.endswith('_test.go')]; prod_text='\n'.join(q.read_text()
+          for q in prod); counters={ 'memory_store_reference_count':len(re.findall(r'\bMemoryStore\b|\bexternalJSONStore\b',s+prod_text)),
+          'fake_owner_port_reference_count':len(re.findall(r'\b(?:fake|mock|stub)[A-Za-z0-9_]*Owner',s,re.I)),
+          'generated_key_reference_count':len(re.findall(r'(?:ed25519|rsa|ecdsa)\.GenerateKey',s)), 'package_private_helper_reference_count':len(re.findall(r'//go:linkname|\bunsafe\.',s)),
+          'development_bypass_reference_count':len(re.findall(r'\bNewDevelopmentInstaller\b|\bNewAuthenticatedInvocationContext\s*\(',prod_text))};
+          report={'schema':'oac.extension-package-production-source-audit/v1', 'external_test_package':'extensions_test'
+          if re.search(r'^package\s+extensions_test\s*$',s,re.M) else '', 'required_external_test_count':len(required),'missing_external_tests':missing,
+          'production_constructor_reference_count':s.count('NewProductionPackageGovernance('), 'persistent_store_constructor_reference_count':s.count('OpenPersistentInstallerStore('),**counters};
+          out=Path('artifacts/extension-package/production-boundary-source-audit.json'); out.parent.mkdir(parents=True,exist_ok=True);
+          out.write_text(json.dumps(report,sort_keys=True)+'\n'); assert report['external_test_package']=='extensions_test'
+          and not missing; assert report['production_constructor_reference_count']>0 and report['persistent_store_constructor_reference_count']>1;
+          assert not any(counters.values()), counters"
+        - mkdir -p artifacts/extension-package && OAC_EXTENSION_PRODUCTION_EVIDENCE="$PWD/artifacts/extension-package/production-boundary-evidence.json"
+          go test -json ./sdk/extension/... ./internal/extensions/... -run '^(TestExternalProductionPackageGovernanceUsesCanonicalOwnerAdapters|TestExternalProductionPackageGovernancePersistsOwnerProofsAcrossRestart|TestExternalProductionPackageGovernanceRejectsUnattestedStoreWrites|TestExternalProductionPackageGovernanceRejectsUnknownAndStaleOwnerRevisions|TestExternalPackageGovernanceBindsProjectSolutionAuthorizationAdmissionAndAudit|TestExternalPackageGovernancePersistsProvenanceDescribeAndConformanceAttestations|TestExternalPackageGovernanceRejectsSyntheticConformanceEvidence|TestExternalComponentInstallConcurrentCanonicalReplayReturnsCommittedRecord|TestExternalComponentInstallChangedRequestContextConflicts|TestExternalProductionPackageGovernanceRejectsDevelopmentBypass|TestExternalProductionLifecyclePersistsAuthorizationAdmissionAndAuditProof|TestExternalProductionLifecycleRejectsDirectUnattestedCommitAndPersistsRemovalProof|TestExternalComponentInstallBindsExactReleaseDigestInterfaceAndEntrypoint|TestExternalPackageGovernanceRejectsMismatchedPackageBinding|TestExternalDescribePermissionCeilingBindsInstallPointEffectAndRequestContext|TestExternalPermissionCeilingIntersectsCanonicalOwnerGrants|TestExternalPermissionCeilingRejectsUnsupportedEffectAndResource|TestExternalPermissionCeilingRejectsMismatchedOwnerIdentities)$'
+          -count=1 > artifacts/extension-package/production-owner-tests.json
+        - 'python3 -c "import json; required={ ''TestExternalProductionPackageGovernanceUsesCanonicalOwnerAdapters'',
+          ''TestExternalProductionPackageGovernancePersistsOwnerProofsAcrossRestart'', ''TestExternalProductionPackageGovernanceRejectsUnattestedStoreWrites'',
+          ''TestExternalProductionPackageGovernanceRejectsUnknownAndStaleOwnerRevisions'', ''TestExternalPackageGovernanceBindsProjectSolutionAuthorizationAdmissionAndAudit'',
+          ''TestExternalPackageGovernancePersistsProvenanceDescribeAndConformanceAttestations'', ''TestExternalPackageGovernanceRejectsSyntheticConformanceEvidence'',
+          ''TestExternalComponentInstallConcurrentCanonicalReplayReturnsCommittedRecord'', ''TestExternalComponentInstallChangedRequestContextConflicts'',
+          ''TestExternalProductionPackageGovernanceRejectsDevelopmentBypass'', ''TestExternalProductionLifecyclePersistsAuthorizationAdmissionAndAuditProof'',
+          ''TestExternalProductionLifecycleRejectsDirectUnattestedCommitAndPersistsRemovalProof'', ''TestExternalComponentInstallBindsExactReleaseDigestInterfaceAndEntrypoint'',
+          ''TestExternalPackageGovernanceRejectsMismatchedPackageBinding'', ''TestExternalDescribePermissionCeilingBindsInstallPointEffectAndRequestContext'',
+          ''TestExternalPermissionCeilingIntersectsCanonicalOwnerGrants'', ''TestExternalPermissionCeilingRejectsUnsupportedEffectAndResource'',
+          ''TestExternalPermissionCeilingRejectsMismatchedOwnerIdentities''}; rows=[json.loads(x) for
+          x in open(''artifacts/extension-package/production-owner-tests.json'') if x.strip()]; passed={x.get(''Test'')
+          for x in rows if x.get(''Action'')==''pass'' and x.get(''Test'') in required}; assert passed==required,
+          f''missing required passing tests: {sorted(required-passed)}''"'
+        - 'python3 -c "import json; from pathlib import Path; r=json.loads(Path(''artifacts/extension-package/production-boundary-evidence.json'').read_text());
+          s=json.loads(Path(''artifacts/extension-package/production-boundary-source-audit.json'').read_text());
+          true_fields={''production_constructor_exercised'',''owner_proofs_preserved_after_restart'',''exact_package_binding_verified'',''permission_ceiling_intersection_verified'',''describe_point_effect_binding_verified''};
+          zero_fields={''exact_package_binding_mismatch_accept_count'',''exact_release_mismatch_accept_count'',''artifact_digest_mismatch_accept_count'',''interface_api_mismatch_accept_count'',''entrypoint_mismatch_accept_count'',''permission_ceiling_intersection_failure_count'',''unsupported_effect_accept_count'',''unsupported_resource_accept_count'',''owner_identity_mismatch_accept_count'',''unattested_write_accept_count'',''stale_owner_revision_accept_count'',''owner_proof_loss_after_restart_count'',''transient_issuance_replay_conflict_count'',''changed_request_replay_accept_count'',''production_development_bypass_accept_count'',''synthetic_conformance_evidence_accept_count''};
+          assert r.get(''schema'')==''oac.extension-package-production-boundary-evidence/v1''; assert
+          true_fields|zero_fields <= set(r), f''missing evidence fields: {sorted((true_fields|zero_fields)-set(r))}'';
+          assert all(r[k] is True for k in true_fields); assert all(r[k]==0 for k in zero_fields); assert
+          r.get(''persistent_store_backend'') not in {None,'''',''memory'',''MemoryStore'',''fake''} and
+          r.get(''persistent_store_reopen_count'',0)>0; assert set(r.get(''canonical_owner_adapters'',[]))=={''request-context'',''project'',''solution'',''authorization'',''admission'',''audit''};
+          source_zero={''memory_store_reference_count'',''fake_owner_port_reference_count'',''generated_key_reference_count'',''package_private_helper_reference_count'',''development_bypass_reference_count''};
+          assert s.get(''schema'')==''oac.extension-package-production-source-audit/v1'' and s.get(''external_test_package'')==''extensions_test'';
+          assert s.get(''required_external_test_count'')==18 and s.get(''missing_external_tests'')==[];
+          assert s.get(''production_constructor_reference_count'',0)>0 and s.get(''persistent_store_constructor_reference_count'',0)>1;
+          assert all(s.get(k)==0 for k in source_zero)"'
+        - mkdir -p artifacts/extension-package && CGO_ENABLED=1 go test -race -json ./sdk/extension/...
+          ./internal/extensions/... -run '^TestExternalComponentInstallConcurrentCanonicalReplayReturnsCommittedRecord$'
+          -count=1 > artifacts/extension-package/concurrent-canonical-replay-race.json
+        - python3 -c "import json; name='TestExternalComponentInstallConcurrentCanonicalReplayReturnsCommittedRecord';
+          rows=[json.loads(x) for x in open('artifacts/extension-package/concurrent-canonical-replay-race.json')
+          if x.strip()]; assert any(x.get('Action')=='pass' and x.get('Test')==name for x in rows)"
+        - go vet ./sdk/extension/... ./internal/extensions/...
+        - python3 scripts/release/package_component.py --component extension-package --kind platform-core-dependency-source
+          --input sdk/extension --input internal/extensions --bundle artifacts/extension-package/source-bundle.tar.zst
+          --component-manifest artifacts/extension-package/component-manifest.json --digest-output artifacts/extension-package/bundle-digest.txt
+          --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner extension-package
+          --require-all-owner-sources-accounted
+        required_metrics:
+          statement_coverage_percent: 90
+          required_production_owner_test_count: 18
+          external_production_boundary_test_count: 18
+          canonical_owner_contract_missing_count: 0
+          canonical_owner_adapter_coverage_gap_count: 0
+          production_constructor_execution_failure_count: 0
+          persistent_store_reopen_failure_count: 0
+          exact_package_binding_verification_failure_count: 0
+          describe_point_effect_binding_failure_count: 0
+          exact_package_binding_mismatch_accept_count: 0
+          exact_release_mismatch_accept_count: 0
+          artifact_digest_mismatch_accept_count: 0
+          interface_api_mismatch_accept_count: 0
+          entrypoint_mismatch_accept_count: 0
+          permission_ceiling_intersection_failure_count: 0
+          unsupported_effect_accept_count: 0
+          unsupported_resource_accept_count: 0
+          owner_identity_mismatch_accept_count: 0
+          unattested_write_accept_count: 0
+          stale_owner_revision_accept_count: 0
+          owner_proof_loss_after_restart_count: 0
+          transient_issuance_replay_conflict_count: 0
+          changed_request_replay_accept_count: 0
+          production_development_bypass_accept_count: 0
+          synthetic_conformance_evidence_accept_count: 0
+          memory_store_reference_count: 0
+          fake_owner_port_reference_count: 0
+          generated_key_reference_count: 0
+          package_private_helper_reference_count: 0
+          development_bypass_reference_count: 0
+          race_failure_count: 0
+          declared_artifact_count: 9
+        artifacts:
+        - artifacts/extension-package/coverage.out
+        - artifacts/extension-package/canonical-owner-imports.txt
+        - artifacts/extension-package/production-boundary-source-audit.json
+        - artifacts/extension-package/production-boundary-evidence.json
+        - artifacts/extension-package/production-owner-tests.json
+        - artifacts/extension-package/concurrent-canonical-replay-race.json
+        - artifacts/extension-package/source-bundle.tar.zst
+        - artifacts/extension-package/bundle-digest.txt
+        - artifacts/extension-package/component-manifest.json
+      pr_base: main
+      acceptance_refs:
+      - UJ-EXTENSION-PACKAGE-001
+      source_of_truth:
+      - git:d9aa7362667411d1d7a1b4788f002413aa7dacfa:extension-package-amendment-decision.md#sha256=42a4fda1ff3fc72ca7e8c78bb58a8ab4da41e3655b15ee23f3639f5b5e700751
+      - git:e1e48af331c0d568257e0eb2cbb88c1f19c97cb0:b-class-structural-decomposition-decisions.md#sha256=bee2866be23e0d5fe6f77a245f7f3177522308d5bd3ebbd14fb2baf0d9e37f19
+      - docs/design/open-agent-cluster-overview-design.md:L335-L355
+      - docs/design/open-agent-cluster-overview-design.md:L675-L684
+      - docs/design/detailed/08-component-and-extension-detailed-design.md:L127-L205
+      - docs/design/detailed/08-component-and-extension-detailed-design.md:L238-L257
+      - docs/design/detailed/08-component-and-extension-detailed-design.md:L298-L325
+      - docs/design/detailed/08-component-and-extension-detailed-design.md:L441-L500
+      - docs/design/detailed/09-governance-and-security-detailed-design.md:L11-L45
+      - docs/design/detailed/09-governance-and-security-detailed-design.md:L259-L287
+      - docs/design/detailed/09-governance-and-security-detailed-design.md:L312-L406
+      - docs/design/detailed/09-governance-and-security-detailed-design.md:L808-L854
+      - docs/references/extension/component-governance.md:L28-L80
+      - docs/references/extension/component-governance.md:L157-L190
+      - docs/references/extension/component-governance.md:L253-L281
+      - docs/references/extension/plugin-contracts.md:L7-L18
+      - docs/references/extension/plugin-contracts.md:L63-L92
+      - docs/references/governance/security-and-enterprise.md:L7-L31
+      - docs/references/governance/security-and-enterprise.md:L184-L315
+      - docs/delivery/acceptance-and-validation.md:L171-L187
+      required_contracts:
+      - docs/design/detailed/08-component-and-extension-detailed-design.md
+      - docs/design/detailed/09-governance-and-security-detailed-design.md
+      - docs/references/extension/component-governance.md
+      - docs/references/extension/plugin-contracts.md
+      - docs/references/governance/security-and-enterprise.md
+      - contracts/extension
+      - contracts/identity/requestcontext
+      - contracts/governance/authz
+      - contracts/governance/admission
+      - contracts/governance/audit
+      - contracts/project
+      - contracts/solution
+      scope_paths:
+      - sdk/extension/**
+      - internal/extensions/**
+      evidence_mode: artifact
+      produces:
+      - artifact_id: extension-package-governance-evidence
+      consumes:
+      - artifact_id: contracts-extension-wire-evidence
+        producer: contracts-extension-wire
+        evidence_mode: artifact
+      - artifact_id: authorization-owner-command-evidence
+        producer: authorization
+        evidence_mode: artifact
+      - artifact_id: audit-ledger-receipt-evidence
+        producer: audit-ledger
+        evidence_mode: artifact

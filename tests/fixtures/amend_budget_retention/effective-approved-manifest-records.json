@@ -1,0 +1,192 @@
+{
+  "contracts-platform-resource-dispatch": {
+    "amendment_id": "amend-111d3c4c6488",
+    "work_item_id": "01a05335-c003-71aa-b9de-4d400c652f25",
+    "contract_sha256": "1928dae6f54726d9ca2b7cae8163cc000cdaded1d39b5ccfe344a09d820a9abc",
+    "bounce_baseline": {
+      "merge": 0,
+      "review": 21,
+      "worker": 2
+    }
+  },
+  "contracts-platform-resource-convergence": {
+    "amendment_id": "amend-492c390da222",
+    "work_item_id": "01a0e28c-0705-7851-940d-c12b4eebad50",
+    "contract_sha256": "51e529f79d6f1258c445e66faaa909b83347cb1e0203f22e78102e26a2422f40",
+    "bounce_baseline": {
+      "merge": 0,
+      "review": 1,
+      "worker": 20
+    }
+  },
+  "harness-sdk": {
+    "amendment_id": "amend-b335f1e7d657",
+    "work_item_id": "01a03bd2-6ef8-7b75-a86c-466f6aaabc1e",
+    "contract_sha256": "b9525a949380d9695cfe741aa70d19c2420151b67aaba7fe4efd30e1bfc50dfe",
+    "bounce_baseline": {
+      "merge": 0,
+      "review": 1,
+      "worker": 88
+    }
+  },
+  "runtime-sdk-mcp-launch-compatibility": {
+    "amendment_id": "amend-1d3a069885d9",
+    "work_item_id": "01a0f017-0014-7e9b-846e-ed9f33477036",
+    "contract_sha256": "7ba4003d4c1aa983b13be6f23fc76631b93b80566fb2321c05af7454206c7a26",
+    "bounce_baseline": {
+      "merge": 0,
+      "review": 0,
+      "worker": 0
+    }
+  },
+  "agentrun-cancellation-prerequisite": {
+    "amendment_id": "amend-f1a9c5ba10ff",
+    "work_item_id": "01a0f396-a507-7db4-b0f2-39dc38aa6dce",
+    "contract_sha256": "4908eb01d51bcef171877aabf88d3126e811736c003d61beb739acc8461c0575",
+    "bounce_baseline": {
+      "merge": 0,
+      "review": 5,
+      "worker": 0
+    }
+  },
+  "harness-sdk-production-build-repair": {
+    "amendment_id": "amend-0a6a353dea1c",
+    "work_item_id": "01a0fb38-0558-7ae0-a2b1-23b00e56190a",
+    "contract_sha256": "9af6bfb0d160406d11d53d7403bd45750e1c0b71f35523c35d1b8b774c08ee05",
+    "bounce_baseline": {
+      "merge": 0,
+      "review": 0,
+      "worker": 0
+    }
+  },
+  "contracts-audit-usage": {
+    "amendment_id": "amend-0a6a353dea1c",
+    "work_item_id": "7b568083-2a29-47d5-a56e-3509b79ebb6c",
+    "contract_sha256": "f1a4804c619a456d3a094834357544d2db368ecb50e50b918ee2f451f3d654e6",
+    "bounce_baseline": {
+      "merge": 0,
+      "review": 3,
+      "worker": 21
+    }
+  },
+  "ui-foundation": {
+    "amendment_id": "amend-0a6a353dea1c",
+    "work_item_id": "7873a3df-67eb-457a-90ca-1356c1253f76",
+    "contract_sha256": "76331e1e281469ae8dd4ff213e0530c9a5b094c2ac70e983232720e50c0f21d9",
+    "bounce_baseline": {
+      "merge": 0,
+      "review": 7,
+      "worker": 8
+    }
+  },
+  "model-catalog": {
+    "amendment_id": "amend-0a6a353dea1c",
+    "work_item_id": "01a03a19-212d-7586-8884-86981457457e",
+    "contract_sha256": "cf2bc11c1ee98fa43459476ddf77bef668d39596240f6a984f2337fbb0a2d2fd",
+    "bounce_baseline": {
+      "merge": 0,
+      "review": 2,
+      "worker": 0
+    }
+  },
+  "extension-package": {
+    "amendment_id": "amend-0a6a353dea1c",
+    "work_item_id": "01a03bd0-2014-733f-91d5-31e2324cbacf",
+    "contract_sha256": "0ad1b1298b0c4f1fb1c9eb385b0a2ed1c76d070db3fe25289fb4168e6b365b58",
+    "bounce_baseline": {
+      "merge": 0,
+      "review": 4,
+      "worker": 0
+    }
+  },
+  "solution-publishing": {
+    "amendment_id": "amend-0a6a353dea1c",
+    "work_item_id": "01a03bd1-ee03-7e06-a21e-c169ca530ebc",
+    "contract_sha256": "b60fcee9f025492188a18c188dc4109a07a161a32e2e2189a095436f8e077a78",
+    "bounce_baseline": {
+      "merge": 0,
+      "review": 7,
+      "worker": 0
+    }
+  },
+  "api-mcp": {
+    "amendment_id": "amend-0a6a353dea1c",
+    "work_item_id": "01a03ba6-c6c2-7e64-bb25-de46a3fe7e32",
+    "contract_sha256": "56983c0e66f5134703390e7606993f27357cd6f7d77bca909505ae3123b38e20",
+    "bounce_baseline": {
+      "merge": 0,
+      "review": 2,
+      "worker": 0
+    }
+  },
+  "contracts-platform-resource-artifact-integrity": {
+    "amendment_id": "amend-946bc00548d8",
+    "work_item_id": "01a1023b-7528-76a4-881a-dc94fc12871b",
+    "contract_sha256": "033a6069f0d49f0a00dcccdb7d6fe3cc83aed87388df66956c83d0dd6138ad44",
+    "bounce_baseline": {
+      "merge": 0,
+      "review": 1,
+      "worker": 0
+    }
+  },
+  "contracts-platform-resource": {
+    "amendment_id": "amend-946bc00548d8",
+    "work_item_id": "1b8e6ca8-4372-4974-a909-8994d0b05990",
+    "contract_sha256": "ca23ff4564ee56a5d91afd9117c879e8c384d7b7a8343ceebd69743ecbeafcfa",
+    "bounce_baseline": {
+      "merge": 0,
+      "review": 12,
+      "worker": 20
+    }
+  },
+  "contracts-extension": {
+    "amendment_id": "amend-946bc00548d8",
+    "work_item_id": "2e0890b7-ede3-45f1-9071-1fd5dfdd037f",
+    "contract_sha256": "79122ae2bc10f1afa6ed16d8d17790b56f599b2a13183cdeebadca5623e46970",
+    "bounce_baseline": {
+      "merge": 0,
+      "review": 19,
+      "worker": 20
+    }
+  },
+  "audit-ledger": {
+    "amendment_id": "amend-967171cc8557",
+    "work_item_id": "01a10385-45be-77c8-9507-5bff8ce578b9",
+    "contract_sha256": "e63582ddc419d524937d366448d48f85037fc421fdbb37577f4b17ca12d75ca2",
+    "bounce_baseline": {
+      "merge": 0,
+      "review": 0,
+      "worker": 0
+    }
+  },
+  "authentication-methods": {
+    "amendment_id": "amend-967171cc8557",
+    "work_item_id": "01a03bcf-a6bc-7a45-a745-7f6f08c06ecf",
+    "contract_sha256": "d94a95703b18be557d4231509af552d235ffc6877db3593ab1c00108c12db734",
+    "bounce_baseline": {
+      "merge": 0,
+      "review": 9,
+      "worker": 0
+    }
+  },
+  "direct-deployment": {
+    "amendment_id": "amend-967171cc8557",
+    "work_item_id": "01a03a1a-876e-7f2e-923b-80aa45982b5d",
+    "contract_sha256": "489ba3052d34b1f74a4fa258f5a66eba863131a9b84e6ab046e4e680a47752dd",
+    "bounce_baseline": {
+      "merge": 0,
+      "review": 4,
+      "worker": 0
+    }
+  },
+  "installer": {
+    "amendment_id": "amend-8ee2359cead6",
+    "work_item_id": "01a10382-2e37-743b-92c9-d1cc22e52c9b",
+    "contract_sha256": "53a985a11999e436a05d920285593f3bf8de7ed7948e23d3555572c96505948e",
+    "bounce_baseline": {
+      "merge": 0,
+      "review": 0,
+      "worker": 0
+    }
+  }
+}

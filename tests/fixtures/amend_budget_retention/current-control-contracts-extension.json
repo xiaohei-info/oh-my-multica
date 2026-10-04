@@ -1,0 +1,921 @@
+{
+  "id": "2e0890b7-ede3-45f1-9071-1fd5dfdd037f",
+  "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1",
+  "title": "[DAG:contracts-extension] Create Package and Extension contracts",
+  "description": "> **OMAC 控制的执行。第一动作必须严格执行：**\n\n```bash\nOMAC_ENGINE=multica OMAC_WORKSPACE_ID=410ade5e-8ae0-4402-b975-813dea2ff3e1 OMAC_PROJECT_ID=732ce83f-5cbd-4485-850d-1b8a1bf16340 omac work show 2e0890b7-ede3-45f1-9071-1fd5dfdd037f --output json\n```\n\n> `omac work show` 和 `omac work submit` 都可能长时间运行。任何工具调用在拿到最终 tool_result 和终态退出码前都不完整。若工具返回 running/session、缺少最终 tool_result、出现空输出或不完整输出，必须等待或轮询到终态。使用足够长的 wait/yield，或保留并恢复续接句柄；这是通用终态规则，不绑定某个具体工具 API。timeout/yield 不是空结果，也不允许据此停止。`omac work show` 只有在退出码 0 且得到可解析 JSON 后才能继续。`omac work submit` 只有在最终 tool_result 明确给出退出码 0，且 JSON 包含 `\"ok\": true`、`\"terminal\": true` 和 `\"next_action\": \"stop\"` 时才可宣称成功。结果未知时不得宣称成功或结束；validation error 必须修复后重新提交。submit 成功就是本次执行的最后动作，立即停止，不再执行任何平台写入。\n\n> 在上方精确的 `omac work show` 命令以退出码 0 成功返回可解析 JSON 前，不得执行任何其他 Issue 查询（包括 `multica issue get`、`multica issue comment list` 或 metadata 查询），也不得开始分析任务内容。work show 成功后，只能在返回上下文确有需要时使用只读 Issue 查询。禁止任何会创建、修改或删除 Issue 状态的 `multica issue` 写操作。这是语义边界，不是穷举命令清单；禁止示例包括 `multica issue status`、`multica issue assign`、`multica issue comment`、`multica issue metadata`、`multica issue rerun`、`multica issue cancel-task`、`multica issue update`、`multica issue create`、`multica issue label`、`multica issue property`、`multica issue reorder` 和 `multica issue subscriber`。只允许使用上方给出的精确 `omac work show` 命令，以及 work show 返回的精确 `omac work submit` 命令作为 OMAC 控制命令；已有手工附件或 verification 但缺少 `delivery_identity` 时也必须通过该 submit 命令封存。\n\n# Create Package and Extension contracts\n\n## 任务摘要\n- 类型: 开发实现（`develop`）\n- 执行角色: 独立评审者（`reviewer`）\n- 目标: Publish Package, Harness and ComponentRun contracts with owner-facing durable records and opaque typed capabilities that bind authenticated RequestContext, exact package release/digest/interface/entrypoint, WorkUnit/Run/ComponentRun and event identities, verified Describe permission ceilings, evaluator implementation identity, and persisted recovery/lineage evidence, while keeping actual Host enforcement in its owning downstream nodes.\n- 依据: `docs/design/detailed/08-component-and-extension-detailed-design.md:L23-L453`\n- 依据: `docs/references/extension/plugin-contracts.md`\n- 依据: `docs/references/extension/component-governance.md`\n- 依据: `git:42d187637c4a99b1b8716b521d51f73652f9a00d:second-batch-amend-decisions.md#sha256=53525c354644d259e6f8eb87ad10b6aaa23f990c3712999a4cbce3ec64ac135b`\n\n## 任务详情\nResume the existing extension-contract work item at authoring because the rejected surface still uses private process-local attestations and caller-provided authority inputs; it must publish usable owner-facing typed capabilities and durable evidence boundaries before downstream installer and Harness Host work can start.\n\n## 非目标\n- Do not treat caller-provided package roots, resolver callbacks, copied validation contexts, granted permission slices, evaluator IDs, invocation identities, or event lineage as authority.\n- Do not use private process-local tokens, static all-true isolation reports, self-authored recovery evidence, or ordinary JSON/YAML-omitted fields as durable provenance.\n- Do not implement sandboxing, Gate execution, package installation, persisted Observe lookup, Workflow resolution, or other Host/Governance effects in contracts/extension/**; publish the typed boundary consumed by extension-package and harness-host.\n- Do not allow a Gate capability unless installer-owned evidence binds the exact ComponentInstall, package digest, interface, entrypoint, binding, evaluator implementation, and verified worker identity.\n- Do not grant scoped services unless the owner capability derives the point/effect ceiling from the verified Describe snapshot and the current invocation scope.\n- Do not accept Unknown/Cancelling retry or side-effecting EventHandler reports without persisted operation/observation and complete Host-created lineage.\n- Do not weaken validators or rely on same-package private fixtures; positive and negative conformance must use the public owner-facing path and durable round trips.\n\n## 主要代码归属范围\n- `contracts/extension/**`\n\n## 交付约束\n- PR 基线: `main`\n- 改动分支覆盖率: `≥ 90%`\n- PR 关联标识: `AITEAM-827`\n\n## 上游 issue（防跑偏）\n本任务承接以下上游 issue，用于追溯需求与决策；若与当前 contract 冲突，先请求确认：\n- 设计方案: `289a13bf-cede-4b5b-ba86-d72f0bef8164`\n- 验收文档: `8e6bd282-6039-41d2-aa00-969a0bf1554a`\n- 前置开发任务 · Bootstrap Go module and quality harness: `5849f786-8c97-42ac-adf9-1c96957f28ee`\n- 前置开发任务 · Implement deterministic release artifact packaging: `152d735a-c373-4967-8ae0-45c191de2eff`",
+  "status": "WorkItemStatus.TODO",
+  "dag_key": "contracts-extension",
+  "identifier": "AITEAM-827",
+  "worker": "pi-ubuntu-newapi",
+  "reviewer": "",
+  "blocked_by": [
+    "bootstrap-go",
+    "release-artifact-tooling"
+  ],
+  "wave": null,
+  "artifacts": {
+    "pr_url": "https://github.com/xiaohei-info/open-agent-cluster/pull/45",
+    "head_sha": "d2c79eefc58b078f4a9137e1501aaea23c13284a"
+  },
+  "verification": {
+    "commands": [
+      {
+        "cmd": "mkdir -p artifacts/contracts-extension && go test -covermode=atomic -coverprofile=artifacts/contracts-extension/coverage.out ./contracts/extension/...",
+        "exit_code": 0,
+        "summary": "Passed at PR HEAD d2c79eefc58b078f4a9137e1501aaea23c13284a with 90.3% atomic statement coverage."
+      },
+      {
+        "cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/contracts-extension/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+        "exit_code": 0,
+        "summary": "Passed with 90.3% statement coverage, above the 90% gate."
+      },
+      {
+        "cmd": "mkdir -p artifacts/contracts-extension && go test -json ./contracts/extension/... -run '^(TestOwnerFactoriesAreUsableFromExternalPackage|TestPackageVerificationEvidenceRequiresInstallerRecord|TestGateCapabilityBindsEvaluatorImplementation|TestGateIsolationEvidenceRequiresHostExecutionRecord|TestPermissionEvidenceBindsDescribeAndPointEffect|TestRecoveryEvidenceRoundTripRequiresPersistedObserveRecord|TestEventHandlerReportRequiresPersistedLineage|TestForgedHostAuthorityInputsFailClosed)$' -count=1 > artifacts/contracts-extension/authority-contract-tests.json",
+        "exit_code": 0,
+        "summary": "Passed all eight external-package owner authority contract tests."
+      },
+      {
+        "cmd": "python3 -c \"import json; required={'TestEventHandlerReportRequiresPersistedLineage', 'TestPackageVerificationEvidenceRequiresInstallerRecord', 'TestRecoveryEvidenceRoundTripRequiresPersistedObserveRecord', 'TestOwnerFactoriesAreUsableFromExternalPackage', 'TestGateIsolationEvidenceRequiresHostExecutionRecord', 'TestGateCapabilityBindsEvaluatorImplementation', 'TestPermissionEvidenceBindsDescribeAndPointEffect', 'TestForgedHostAuthorityInputsFailClosed'}; rows=[json.loads(x) for x in open('artifacts/contracts-extension/authority-contract-tests.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing required passing extension authority tests: {sorted(required-passed)}'\"",
+        "exit_code": 0,
+        "summary": "Confirmed all eight required authority tests passed."
+      },
+      {
+        "cmd": "python3 scripts/release/package_component.py --component contracts-extension --kind platform-core-dependency-source --input contracts/extension --bundle artifacts/contracts-extension/source-bundle.tar.zst --component-manifest artifacts/contracts-extension/component-manifest.json --digest-output artifacts/contracts-extension/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner contracts-extension --require-all-owner-sources-accounted",
+        "exit_code": 0,
+        "summary": "Passed at PR HEAD d2c79eefc58b078f4a9137e1501aaea23c13284a; deterministic bundle digest is c474227655b8eeac0d7307e63ab7f83ec29256ac7cb1652173041f2b498f6f4e."
+      },
+      {
+        "cmd": "CGO_ENABLED=1 go test -race ./contracts/extension/...",
+        "exit_code": 0,
+        "summary": "Passed race tests for the extension contracts."
+      },
+      {
+        "cmd": "go vet ./contracts/extension/...",
+        "exit_code": 0,
+        "summary": "Passed vet for the extension contracts."
+      },
+      {
+        "cmd": "go test ./...",
+        "exit_code": 0,
+        "summary": "Passed the repository Go test suite."
+      },
+      {
+        "cmd": "git diff --check",
+        "exit_code": 0,
+        "summary": "Passed whitespace validation."
+      }
+    ],
+    "integration_gates": [
+      {
+        "name": "contracts-extension-gate",
+        "source_of_truth": [
+          "docs/design/detailed/08-component-and-extension-detailed-design.md:L23-L453",
+          "docs/references/extension/plugin-contracts.md",
+          "docs/references/extension/component-governance.md",
+          "git:42d187637c4a99b1b8716b521d51f73652f9a00d:second-batch-amend-decisions.md#sha256=53525c354644d259e6f8eb87ad10b6aaa23f990c3712999a4cbce3ec64ac135b"
+        ],
+        "delivery_goal": "Publish Package, Harness and ComponentRun contracts with owner-facing durable records and opaque typed capabilities that bind authenticated RequestContext, exact package release/digest/interface/entrypoint, WorkUnit/Run/ComponentRun and event identities, verified Describe permission ceilings, evaluator implementation identity, and persisted recovery/lineage evidence, while keeping actual Host enforcement in its owning downstream nodes.",
+        "commands": [
+          {
+            "cmd": "mkdir -p artifacts/contracts-extension && go test -covermode=atomic -coverprofile=artifacts/contracts-extension/coverage.out ./contracts/extension/...",
+            "exit_code": 0
+          },
+          {
+            "cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/contracts-extension/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+            "exit_code": 0
+          },
+          {
+            "cmd": "mkdir -p artifacts/contracts-extension && go test -json ./contracts/extension/... -run '^(TestOwnerFactoriesAreUsableFromExternalPackage|TestPackageVerificationEvidenceRequiresInstallerRecord|TestGateCapabilityBindsEvaluatorImplementation|TestGateIsolationEvidenceRequiresHostExecutionRecord|TestPermissionEvidenceBindsDescribeAndPointEffect|TestRecoveryEvidenceRoundTripRequiresPersistedObserveRecord|TestEventHandlerReportRequiresPersistedLineage|TestForgedHostAuthorityInputsFailClosed)$' -count=1 > artifacts/contracts-extension/authority-contract-tests.json",
+            "exit_code": 0
+          },
+          {
+            "cmd": "python3 -c \"import json; required={'TestEventHandlerReportRequiresPersistedLineage', 'TestPackageVerificationEvidenceRequiresInstallerRecord', 'TestRecoveryEvidenceRoundTripRequiresPersistedObserveRecord', 'TestOwnerFactoriesAreUsableFromExternalPackage', 'TestGateIsolationEvidenceRequiresHostExecutionRecord', 'TestGateCapabilityBindsEvaluatorImplementation', 'TestPermissionEvidenceBindsDescribeAndPointEffect', 'TestForgedHostAuthorityInputsFailClosed'}; rows=[json.loads(x) for x in open('artifacts/contracts-extension/authority-contract-tests.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing required passing extension authority tests: {sorted(required-passed)}'\"",
+            "exit_code": 0
+          },
+          {
+            "cmd": "python3 scripts/release/package_component.py --component contracts-extension --kind platform-core-dependency-source --input contracts/extension --bundle artifacts/contracts-extension/source-bundle.tar.zst --component-manifest artifacts/contracts-extension/component-manifest.json --digest-output artifacts/contracts-extension/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner contracts-extension --require-all-owner-sources-accounted",
+            "exit_code": 0
+          }
+        ],
+        "metrics": {
+          "statement_coverage_percent": 90.3,
+          "declared_artifact_count": 5,
+          "required_authority_contract_test_count": 8,
+          "caller_controlled_authority_accept_count": 0,
+          "wrong_evaluator_capability_accept_count": 0,
+          "unenforced_isolation_evidence_accept_count": 0,
+          "describe_unbound_permission_accept_count": 0,
+          "self_authored_recovery_evidence_accept_count": 0,
+          "forged_event_lineage_accept_count": 0,
+          "durable_evidence_roundtrip_failure_count": 0
+        },
+        "artifacts": [
+          "artifacts/contracts-extension/coverage.out",
+          "artifacts/contracts-extension/source-bundle.tar.zst",
+          "artifacts/contracts-extension/bundle-digest.txt",
+          "artifacts/contracts-extension/component-manifest.json",
+          "artifacts/contracts-extension/authority-contract-tests.json"
+        ]
+      }
+    ],
+    "pr_base": "main",
+    "coverage": 90.3,
+    "env_setup": [
+      "Go 1.26.0; CGO_ENABLED=1 go test -race ./contracts/extension/... passed at PR HEAD d2c79eefc58b078f4a9137e1501aaea23c13284a.",
+      "go test ./... and go vet ./contracts/extension/... passed at the same committed head.",
+      "All eight external-package authority contract tests passed.",
+      "git diff --check passed.",
+      "PR #45 head was updated on agent/pi-ubuntu-newapi/9497c697 at d2c79eefc58b078f4a9137e1501aaea23c13284a."
+    ]
+  },
+  "verification_ref": {
+    "comment_id": "01a02429-c516-7997-b61c-cdb135827c30",
+    "attachment_id": "01a02429-c4c5-74b8-add1-d96376d59bef",
+    "sha256": "face920cba7c72b3e1ceba3554f7e0fdd670ad814940d1354a9190be404def78",
+    "bytes": 8072,
+    "filename": "omac-verification-face920cba7c.yaml"
+  },
+  "review_verdict": null,
+  "review_comment": null,
+  "machine_feedback": null,
+  "machine_feedback_ref": null,
+  "review_report": null,
+  "review_report_ref": null,
+  "review_subject_digest": null,
+  "review_obligations": [],
+  "review_obligations_ref": null,
+  "review_ledger": {
+    "schema": "omac.review-ledger/v1",
+    "cycles": [
+      {
+        "round": 1,
+        "subject_digest": "eab24896df78d0cd09cf34c0d2d36a3720e782afd95f272214de02f8a48e6bd6",
+        "report_digest": "fdddf6b0f2116a705dd4c8fc7a047462a313d3c453cee99b254f63fb79aa5cec",
+        "verdict": "reject",
+        "obligation_results": {
+          "dimension:authority": "fail",
+          "dimension:structure": "fail",
+          "dimension:execution": "fail",
+          "dimension:ownership": "fail",
+          "dimension:evidence": "fail",
+          "dimension:regression": "fail",
+          "integration:contracts-extension-gate": "pass"
+        },
+        "new_count": 9,
+        "fixed_count": 0,
+        "regressed_count": 0,
+        "unchanged_count": 0,
+        "open_count": 9,
+        "prior_open_blocker_ids": [],
+        "open_blocker_ids": [
+          "BLK-23f5b813f4dc",
+          "BLK-24fb35161ce2",
+          "BLK-3d9160cdc648",
+          "BLK-4bc9f366ac71",
+          "BLK-595611f7f07b",
+          "BLK-68648dff7c34",
+          "BLK-8f0312549e29",
+          "BLK-b4da0e6bc90a",
+          "BLK-ee0540f1636a"
+        ],
+        "reported_blocker_ids": [
+          "BLK-23f5b813f4dc",
+          "BLK-24fb35161ce2",
+          "BLK-3d9160cdc648",
+          "BLK-4bc9f366ac71",
+          "BLK-595611f7f07b",
+          "BLK-68648dff7c34",
+          "BLK-8f0312549e29",
+          "BLK-b4da0e6bc90a",
+          "BLK-ee0540f1636a"
+        ],
+        "blocker_facts_schema": "omac.review-cycle-blocker-facts/v1",
+        "blocker_facts": [
+          {
+            "blocker_id": "BLK-23f5b813f4dc",
+            "root_cause_key": "gate-verified-artifact-not-wired",
+            "obligation_id": "dimension:ownership",
+            "summary": "Verified Gate artifact evidence is structurally checked but is not an installer-owned, usable worker capability at the public Gate path.",
+            "evidence": "harness_sdk.go:396-414 exposes VerifiedPackageRootResolver and its function adapter. NewVerifiedGateEvaluatorHandleFromRecord at :332-343 accepts a caller-created VerifiedGateEvaluatorRecord, and EvaluateGateInHost at :1121-1128 receives that handle and governance resolver directly. No durable ComponentInstall/worker capability identity is resolved inside the contract.",
+            "required_fix": "Have Package Governance/Harness Host create an opaque worker capability from its canonical verified ComponentInstall record. Resolve and validate the current install, exact extracted root, entrypoint, binding, evaluator implementation, package digest, and authenticated RequestContext inside that owner capability; reject caller-provided root/resolver facts as authority.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-24fb35161ce2",
+            "root_cause_key": "gate-evaluator-object-identity-not-bound",
+            "obligation_id": "dimension:authority",
+            "summary": "Gate evaluation does not bind the selected GateEvaluatorID to the evaluator implementation or verified worker that the Host actually runs.",
+            "evidence": "GateEvaluator is only an interface at harness_sdk.go:277-280. The public record at :332-343 has no evaluator object, and VerifiedGateArtifact at :385-394 carries only EvaluatorDigest. GateEvaluatorVerificationFixture at :462-469 has no evaluator field. VerifyGateEvaluatorContract at :1099-1114 calls the Host twice and compares its returned result with Expected; the GateEvaluator implementation checked structurally at :589-592 is never passed to the Gate host or fixture.",
+            "required_fix": "Bind an opaque installer-owned evaluator-worker capability to the exact ComponentInstall, package digest, verified entrypoint, binding ID, evaluator implementation identity, and GateEvaluatorID. Make Host execution and SDK verification execute that selected capability rather than only compare a Host-returned result.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-3d9160cdc648",
+            "root_cause_key": "gate-isolation-attestation-forgeable",
+            "obligation_id": "dimension:execution",
+            "summary": "Gate isolation remains a caller-forgeable all-true attestation rather than independently verifiable evidence of actual Host enforcement.",
+            "evidence": "GateIsolationExecutionRecord at harness_sdk.go:301-311 exposes all enforcement booleans. NewGateIsolationReport at :313-318 accepts them and copies the caller-supplied digest to an unexported attestation; it does not retain HostRunID. GateIsolationReport.enforced at :297-299 only checks that digest and booleans, while EvaluateGateInHost at :1126-1128 accepts the report after the Host callback returns.",
+            "required_fix": "Keep sandbox setup and enforcement in the trusted Host. Return a Host-owned capability or durable execution record created only after controls are installed and checked, bind it to the exact Gate run/handle/input, and add a Host-level negative fixture for missing or mismatched enforcement.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-4bc9f366ac71",
+            "root_cause_key": "component-install-package-identity-rebinding",
+            "obligation_id": "dimension:authority",
+            "summary": "Package identity is compared more strictly but verified package evidence is still caller-constructible and does not prove the installer inspected the interface and entrypoint used by install and Gate resolution.",
+            "evidence": "VerifiedComponentInstallRecord at package.go:302-316 has exported mutable fields, and NewVerifiedComponentInstall at :318-323 simply copies them into ComponentInstall and calls validation. ValidateComponentInstall at :372-410 compares Verification.Subject and Interface fields to the same caller-created install; it does not resolve a persisted Package Governance verification record or RequestContext.",
+            "required_fix": "Make the installer-owned verification/install record carry the exact verified interface API, entrypoint, artifact subject, request-context provenance, and durable record identity. Expose only a narrow owner factory/capability that rehydrates and revalidates that record before Gate worker resolution; do not treat equality between caller inputs as provenance.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-595611f7f07b",
+            "root_cause_key": "public-contract-host-boundary-structure",
+            "obligation_id": "dimension:structure",
+            "summary": "The authority boundary remains structurally forgeable: public wrappers accept caller-controlled duplicate facts and the extension contracts omit the authenticated RequestContext required by the task.",
+            "evidence": "NewHostInvocationEvidence at services.go:82-90, NewHostRunValidationContext at component_run.go:190-206, NewHostRecoveryEvidence at :133-146, and NewHostEventRunLineage at harness_sdk.go:128-146 are public wrappers over arbitrary input. ResolveScopedServices and the report validators also accept public callback resolvers and copied context structs. A repository search and go doc of contracts/extension show no RequestContext field/type in the extension boundary.",
+            "required_fix": "Split durable records from in-memory capabilities. Carry an authenticated request-context identity through the owner boundary, and expose only narrow Package Governance/Harness Host factories or resolver capabilities that load canonical install, invocation, run, event, observation, permission, and operation facts. Remove caller-created duplicate authority structs and static process-local attestations from the accepted production path.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-68648dff7c34",
+            "root_cause_key": "permission-evidence-not-bound-to-describe",
+            "obligation_id": "dimension:authority",
+            "summary": "Scoped permission grants are not bound to the verified Extension Describe snapshot or an installer-owned point/effect ceiling.",
+            "evidence": "VerifiedDescribePermissionRecord at services.go:126-132 is an exported data bag. NewVerifiedPermissionCeiling at :134-139 copies it without verifying a durable record or even requiring a SHA-256 Describe digest. ResolveScopedServices at :177-206 checks optional identity equality and subset relationships; the Describe snapshot produced by CaptureHarnessExtensionVerification at harness_sdk.go:523-543 is never linked into PermissionIntersection.",
+            "required_fix": "Persist the normalized Describe digest and point-specific permission/effect ceiling with the installer-owned Extension record or locked binding. Derive request and SDK maxima from that record, reject forbidden point/effect combinations, and require only a Host-created scoped capability for final resolution.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-8f0312549e29",
+            "root_cause_key": "recovery-evidence-self-attestable",
+            "obligation_id": "dimension:evidence",
+            "summary": "Retry authorization still accepts self-consistent RecoveryEvidence rather than a persisted Host-derived Observe fact.",
+            "evidence": "NewHostRecoveryEvidence at component_run.go:133-146 copies arbitrary RecoveryEvidence and adds a static private token. validateRecoveryEvidence at :436-455 checks token presence, shape, equality, sequence, and outcome but performs no persisted observation/report lookup. The external test at authority_contract_external_test.go:99-112 verifies ordinary fields after JSON round trip only; it does not revalidate the evidence, and the private token is omitted by encoding.",
+            "required_fix": "Use a Host-created opaque recovery capability or Host-owned resolver that loads the persisted observation/report by identity, verifies the digest and full run/binding/subject/request-context lineage, and derives the safe outcome. Store durable provenance in a rehydratable signed or record form rather than a private process-local token.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-b4da0e6bc90a",
+            "root_cause_key": "changed-scope-negative-fixtures-missing",
+            "obligation_id": "dimension:regression",
+            "summary": "The changed scope still lacks negative fixtures that exercise the required owner-facing authority and durable-evidence boundaries.",
+            "evidence": "authority_contract_external_test.go:35-132 adds eight external tests, but they only assert factory usability, non-empty EvaluatorDigest, boolean isolation construction, non-nil permission construction, ordinary recovery fields, and rejection of empty records. They do not test wrong evaluator output/implementation, forged RequestContext, Describe escalation, HostRunID rebinding, persisted Observe/Event lookup, or validation after round trip. Existing review_round_three_test.go and review_rework_test.go use package extension and private issuer/fixture helpers.",
+            "required_fix": "Add external-package conformance tests and committed negative fixtures for owner-issued construction, authenticated RequestContext and install/root/ evaluator provenance, entrypoint rebinding, non-Executor permission escalation, forged recovery/report contexts, Host isolation mismatch, and durable evidence rehydration. Positive fixtures must use the same public owner-facing path as production.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-ee0540f1636a",
+            "root_cause_key": "event-handler-validation-context-forgeable",
+            "obligation_id": "dimension:evidence",
+            "summary": "Side-effecting EventHandler reports still rely on caller-provided lineage and validation context with local equality and static attestation, not persisted event/run/install/observation provenance.",
+            "evidence": "NewHostEventRunLineage at harness_sdk.go:128-146 copies arbitrary lineage and adds a private token. ValidateEventHandlerResultReportForOperation at :1440-1454 accepts hostInvocation and hostContext as caller-supplied arguments; validateSideEffectEventHandlerInvocation at :1043-1059 and validateEventHandlerLifecycleResultForOperation at :1066-1096 compare copied fields and invoke the caller-provided ComponentRun context, but do not load persisted Event, ComponentRun, current install, operation, observation, or RequestContext records.",
+            "required_fix": "Replace duplicate invocation, lineage, and context inputs with one opaque Host-created report capability. Resolve the persisted Event, ComponentRun, locked set, current install, operation, observation lineage, and authenticated RequestContext from that capability before accepting a side-effecting report.",
+            "status": "open",
+            "classification": "new"
+          }
+        ]
+      },
+      {
+        "round": 2,
+        "subject_digest": "56286a23cc7b9a0b9e6513f3b7601d934a9229e925b0eef24dc88366d7140e49",
+        "report_digest": "b3c639b0edbd2bfc25d6d05064d9367321d787ebaf5b2a0354a207f91fe81e0b",
+        "verdict": "reject",
+        "obligation_results": {
+          "dimension:authority": "fail",
+          "dimension:structure": "fail",
+          "dimension:execution": "fail",
+          "dimension:ownership": "fail",
+          "dimension:evidence": "fail",
+          "dimension:regression": "fail",
+          "integration:contracts-extension-gate": "pass"
+        },
+        "new_count": 0,
+        "fixed_count": 0,
+        "regressed_count": 0,
+        "unchanged_count": 7,
+        "open_count": 9,
+        "prior_open_blocker_ids": [
+          "BLK-23f5b813f4dc",
+          "BLK-24fb35161ce2",
+          "BLK-3d9160cdc648",
+          "BLK-4bc9f366ac71",
+          "BLK-595611f7f07b",
+          "BLK-68648dff7c34",
+          "BLK-8f0312549e29",
+          "BLK-b4da0e6bc90a",
+          "BLK-ee0540f1636a"
+        ],
+        "open_blocker_ids": [
+          "BLK-23f5b813f4dc",
+          "BLK-24fb35161ce2",
+          "BLK-3d9160cdc648",
+          "BLK-4bc9f366ac71",
+          "BLK-595611f7f07b",
+          "BLK-68648dff7c34",
+          "BLK-8f0312549e29",
+          "BLK-b4da0e6bc90a",
+          "BLK-ee0540f1636a"
+        ],
+        "reported_blocker_ids": [
+          "BLK-23f5b813f4dc",
+          "BLK-24fb35161ce2",
+          "BLK-3d9160cdc648",
+          "BLK-4bc9f366ac71",
+          "BLK-595611f7f07b",
+          "BLK-68648dff7c34",
+          "BLK-8f0312549e29",
+          "BLK-b4da0e6bc90a",
+          "BLK-ee0540f1636a"
+        ],
+        "blocker_facts_schema": "omac.review-cycle-blocker-facts/v1",
+        "blocker_facts": [
+          {
+            "blocker_id": "BLK-23f5b813f4dc",
+            "root_cause_key": "gate-verified-artifact-not-wired",
+            "obligation_id": "dimension:ownership",
+            "summary": "Verified Gate artifact evidence is structurally checked but is not an installer-owned, usable worker capability at the public Gate path.",
+            "evidence": "NewVerifiedGateEvaluatorHandleFromRecord at harness_sdk.go:350-365 accepts exported install, binding, and artifact values. The resolver/function adapter at :408-425 can return any locally consistent non-empty artifact. EvaluateGateInHost at :1133-1145 validates that copied data and delegates to a supplied Host, with no durable install/worker capability lookup.",
+            "required_fix": "Have Package Governance/Harness Host create an opaque worker capability from its canonical verified ComponentInstall record. Resolve and validate the current install, exact extraction root, entrypoint, binding, evaluator implementation, package digest, and authenticated RequestContext inside that owner capability; reject caller-provided root/resolver facts as authority.",
+            "status": "open",
+            "classification": "unchanged",
+            "last_evidence": "NewVerifiedGateEvaluatorHandleFromRecord at harness_sdk.go:350-365 still accepts a caller-created record, while VerifiedPackageRootResolver at :408-425 remains a public callback port. EvaluateGateInHost at :1133-1145 never resolves an installer-owned worker capability or durable artifact record."
+          },
+          {
+            "blocker_id": "BLK-24fb35161ce2",
+            "root_cause_key": "gate-evaluator-object-identity-not-bound",
+            "obligation_id": "dimension:authority",
+            "summary": "Gate evaluation does not bind GateEvaluatorID to the evaluator implementation or verified worker that the Host actually runs.",
+            "evidence": "GateEvaluator is only an interface at harness_sdk.go:288-292. The handle at :331-339 and record at :343-348 contain no evaluator object or executable identity beyond a caller-supplied EvaluatorDigest in VerifiedGateArtifact. GateEvaluatorVerificationFixture at :474-480 has no implementation field, and VerifyGateEvaluatorContract at :1111-1126 compares Host output rather than executing the selected evaluator.",
+            "required_fix": "Bind an opaque installer-owned evaluator-worker capability to the exact ComponentInstall, package digest, verified entrypoint, binding ID, evaluator implementation identity, GateEvaluatorID, and authenticated RequestContext. Make Host execution and SDK verification use that selected capability rather than only compare Host output.",
+            "status": "open",
+            "classification": "unchanged",
+            "last_evidence": "VerifiedGateArtifact.EvaluatorDigest is still only a digest-shaped string at harness_sdk.go:394-406. GateEvaluatorVerificationFixture at :474-480 has no evaluator implementation, and VerifyGateEvaluatorContract at :1111-1126 validates only repeated Host output and Expected; the selected GateEvaluator object is not passed to or bound by Host execution."
+          },
+          {
+            "blocker_id": "BLK-3d9160cdc648",
+            "root_cause_key": "gate-isolation-attestation-forgeable",
+            "obligation_id": "dimension:execution",
+            "summary": "Gate isolation remains a caller-forgeable all-true attestation rather than independently verifiable evidence of actual Host enforcement.",
+            "evidence": "GateIsolationExecutionRecord at harness_sdk.go:312-322 exposes every enforcement flag. NewGateIsolationReport at :324-328 accepts those flags, stores a caller-provided digest as private state, and drops HostRunID. A public GateEvaluatorHostFunc can return such a report, while EvaluateGateInHost at :1138-1145 checks only the private digest and flags.",
+            "required_fix": "Keep sandbox setup and enforcement in the trusted Host. Return a Host-owned capability or durable execution record created only after controls are installed and checked, bind it to the exact Gate run/handle/input and RequestContext, and add a Host-level negative fixture for missing or mismatched enforcement.",
+            "status": "open",
+            "classification": "unchanged",
+            "last_evidence": "NewGateIsolationReport at harness_sdk.go:324-328 accepts caller-supplied HostRunID, digest, and all enforcement booleans, stores only the supplied digest as a private attestation, and does not retain the run identity. EvaluateGateInHost at :1138-1145 checks the resulting all-true report after the Host callback without a Host-owned execution record bound to the exact Gate input and handle."
+          },
+          {
+            "blocker_id": "BLK-4bc9f366ac71",
+            "root_cause_key": "component-install-package-identity-rebinding",
+            "obligation_id": "dimension:authority",
+            "summary": "Package identity is compared strictly but verified package evidence remains caller-constructible and does not prove the installer inspected the exact interface and entrypoint used by install and Gate resolution.",
+            "evidence": "VerifiedComponentInstallRecord at package.go:311-323 has exported mutable authority fields. NewVerifiedComponentInstall at :325-330 copies them, and ValidateComponentInstall at :379-417 compares the record's verification and interface to the same caller-created install without durable governance lookup or RequestContext validation.",
+            "required_fix": "Make the installer-owned verification/install record carry the exact verified interface API, entrypoint, artifact subject, request-context provenance, and durable record identity. Expose only a narrow owner factory that rehydrates and revalidates that record before Gate worker resolution; do not treat equality between caller inputs as provenance.",
+            "status": "open",
+            "classification": "unchanged",
+            "last_evidence": "InterfaceAPI and Entrypoint comparisons are stricter, but PackageVerificationEvidence and VerifiedComponentInstallRecord remain caller-constructible. BindPackageVerification at package.go:254-269 and NewVerifiedComponentInstall at :325-330 compare values supplied by the same caller; no persisted Package Governance verification record or authenticated RequestContext is resolved before install or Gate use."
+          },
+          {
+            "blocker_id": "BLK-595611f7f07b",
+            "root_cause_key": "public-contract-host-boundary-structure",
+            "obligation_id": "dimension:structure",
+            "summary": "The authority boundary remains structurally forgeable: public wrappers accept caller-controlled duplicate facts, unbound callbacks, and an unauthenticated RequestContext field that is never validated.",
+            "evidence": "NewHostInvocationEvidence at services.go:83-97, NewHostRunValidationContext at component_run.go:196-219, NewHostRecoveryEvidence at :136-151, and NewHostEventRunLineage at harness_sdk.go:141-158 are public wrappers over arbitrary inputs. ComponentInstall, Gate records, and permission records carry RequestContext but never validate or compare it. Resolver and gate callbacks remain caller-provided.",
+            "required_fix": "Split durable records from in-memory capabilities. Carry an authenticated request-context identity through the owner boundary, and expose only narrow Package Governance/Harness Host factories or resolver capabilities that load canonical install, invocation, run, event, observation, permission, and operation facts. Remove caller-created duplicate authority structs from the accepted production path.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "The latest change adds RequestContext fields, but no extension validator calls RequestContext.Validate and no capability binds the context to an install, invocation, run, event, observation, or operation. Public owner factories and callback adapters still issue structurally valid capabilities from caller data, so the authority boundary remains forgeable rather than merely undocumented."
+          },
+          {
+            "blocker_id": "BLK-68648dff7c34",
+            "root_cause_key": "permission-evidence-not-bound-to-describe",
+            "obligation_id": "dimension:authority",
+            "summary": "Scoped permission grants are not bound to the verified Extension Describe snapshot or an installer-owned point/effect ceiling.",
+            "evidence": "VerifiedDescribePermissionRecord at services.go:133-140 is an exported data bag. NewVerifiedPermissionCeiling at :142-147 copies its fields without validating a durable record or requiring a SHA-256 Describe digest. ResolveScopedServices at :171-214 only checks optional identity and subset relationships; CaptureHarnessExtensionVerification's snapshot is never linked into PermissionIntersection.",
+            "required_fix": "Persist the normalized Describe digest and point-specific permission/effect ceiling with the installer-owned Extension record or locked binding. Derive request and SDK maxima from that record, reject forbidden point/effect combinations, validate RequestContext provenance, and require only a Host-created scoped capability for final resolution.",
+            "status": "open",
+            "classification": "unchanged",
+            "last_evidence": "VerifiedDescribePermissionRecord at services.go:133-140 and NewVerifiedPermissionCeiling at :142-147 accept caller-provided digest, ExtensionID, point, effect, and permission slice. ResolveScopedServices at :171-214 checks optional equality and subset relationships only; the stable Describe snapshot from CaptureHarnessExtensionVerification is never linked to this ceiling, and the legacy private helper still uses host-bound."
+          },
+          {
+            "blocker_id": "BLK-8f0312549e29",
+            "root_cause_key": "recovery-evidence-self-attestable",
+            "obligation_id": "dimension:evidence",
+            "summary": "Retry authorization still accepts self-consistent RecoveryEvidence rather than a persisted Host-derived Observe fact.",
+            "evidence": "RecoveryEvidenceProof at component_run.go:111-129 is ordinary exported data. NewHostRecoveryEvidence at :136-151 derives it from caller-supplied Observation, and ValidateRetry/validateRecoveryEvidence at :301-328 and :448-467 perform no persisted observation/report lookup. The proof is rehydratable but has no owner signature, record resolver, RequestContext, or operation lineage provenance.",
+            "required_fix": "Use a Host-created opaque recovery capability or Host-owned resolver that loads the persisted observation/report by identity, verifies the digest and complete run/binding/subject/request-context lineage, and derives the safe outcome. Store durable provenance in a rehydratable signed or record form, not a caller-authored equality proof.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "The private recovery attestation was replaced by an ordinary exported RecoveryEvidenceProof. NewHostRecoveryEvidence at component_run.go:136-151 derives the proof from the caller's observation, and ValidateRetry accepts any self-consistent proof at :301-328 and :448-467 without persisted Observe/report resolution. The evidence is rehydratable as data but not authoritative or independently verifiable."
+          },
+          {
+            "blocker_id": "BLK-b4da0e6bc90a",
+            "root_cause_key": "changed-scope-negative-fixtures-missing",
+            "obligation_id": "dimension:regression",
+            "summary": "The changed scope still lacks external-package negative fixtures for the required owner-facing authority and durable-evidence boundaries.",
+            "evidence": "authority_contract_external_test.go:35-132 adds eight external tests, but they only assert factory usability, non-empty EvaluatorDigest, boolean isolation construction, non-nil permission construction, ordinary recovery fields, lineage factory construction, and empty-record rejection. They do not test wrong evaluator execution, forged RequestContext, Describe escalation, HostRunID rebinding, persisted Observe/Event lookup, or rehydrated validation.",
+            "required_fix": "Add external-package conformance and committed negative fixtures for owner-issued construction, authenticated RequestContext and install/root/ evaluator provenance, entrypoint rebinding, non-Executor permission escalation, forged recovery/report contexts, Host isolation mismatch, and durable evidence rehydration. Positive fixtures must use the same public owner-facing path used in production.",
+            "status": "open",
+            "classification": "unchanged",
+            "last_evidence": "Eight external tests were added, but they cover factory usability and ordinary shape/round-trip behavior rather than owner provenance. They do not exercise wrong evaluator implementation, forged RequestContext, Describe escalation, HostRunID rebinding, persisted Observe/Event lookup, or post-rehydration validator acceptance. Package-private tests remain the main behavioral coverage source."
+          },
+          {
+            "blocker_id": "BLK-ee0540f1636a",
+            "root_cause_key": "event-handler-validation-context-forgeable",
+            "obligation_id": "dimension:evidence",
+            "summary": "Side-effecting EventHandler reports still rely on caller-provided lineage and validation context with local equality and caller-derived proof, not persisted event/run/install/observation provenance.",
+            "evidence": "NewHostEventRunLineage at harness_sdk.go:141-158 copies arbitrary lineage and derives only a matching proof. ValidateEventHandlerResultReportForOperation at :1452-1466 accepts caller-provided hostInvocation and hostContext; the validators at :1055-1071 and :1078-1108 compare copied fields and invoke the supplied context resolver, but do not load persisted Event, ComponentRun, operation, observation, install, or RequestContext records.",
+            "required_fix": "Replace duplicate invocation, lineage, and context inputs with one opaque Host-created report capability. Resolve the persisted Event, ComponentRun, locked set, current install, operation, observation lineage, and authenticated RequestContext from that capability before accepting a side-effecting report.",
+            "status": "open",
+            "classification": "unchanged",
+            "last_evidence": "NewHostEventRunLineage at harness_sdk.go:141-158 now adds a caller-derived proof, but ValidateEventHandlerResultReportForOperation at :1452-1466 still accepts caller-provided hostInvocation and hostContext. The validators at :1055-1071 and :1078-1108 compare copied fields and call the supplied context resolver; they do not load persisted Event, ComponentRun, operation, observation, install, or RequestContext lineage."
+          }
+        ]
+      },
+      {
+        "round": 3,
+        "subject_digest": "c114ea9a2c1641a5662d10e1572532be0040d915053d0c253237143420695e24",
+        "report_digest": "48da12c41cf127fbccbba4254757f5473da17a0fde8491a46ed7fafb10f997ee",
+        "verdict": "reject",
+        "obligation_results": {
+          "dimension:authority": "fail",
+          "dimension:structure": "fail",
+          "dimension:execution": "fail",
+          "dimension:ownership": "fail",
+          "dimension:evidence": "fail",
+          "dimension:regression": "fail",
+          "integration:contracts-extension-gate": "pass"
+        },
+        "new_count": 0,
+        "fixed_count": 0,
+        "regressed_count": 0,
+        "unchanged_count": 7,
+        "open_count": 9,
+        "prior_open_blocker_ids": [
+          "BLK-23f5b813f4dc",
+          "BLK-24fb35161ce2",
+          "BLK-3d9160cdc648",
+          "BLK-4bc9f366ac71",
+          "BLK-595611f7f07b",
+          "BLK-68648dff7c34",
+          "BLK-8f0312549e29",
+          "BLK-b4da0e6bc90a",
+          "BLK-ee0540f1636a"
+        ],
+        "open_blocker_ids": [
+          "BLK-23f5b813f4dc",
+          "BLK-24fb35161ce2",
+          "BLK-3d9160cdc648",
+          "BLK-4bc9f366ac71",
+          "BLK-595611f7f07b",
+          "BLK-68648dff7c34",
+          "BLK-8f0312549e29",
+          "BLK-b4da0e6bc90a",
+          "BLK-ee0540f1636a"
+        ],
+        "reported_blocker_ids": [
+          "BLK-23f5b813f4dc",
+          "BLK-24fb35161ce2",
+          "BLK-3d9160cdc648",
+          "BLK-4bc9f366ac71",
+          "BLK-595611f7f07b",
+          "BLK-68648dff7c34",
+          "BLK-8f0312549e29",
+          "BLK-b4da0e6bc90a",
+          "BLK-ee0540f1636a"
+        ],
+        "blocker_facts_schema": "omac.review-cycle-blocker-facts/v1",
+        "blocker_facts": [
+          {
+            "blocker_id": "BLK-23f5b813f4dc",
+            "root_cause_key": "gate-verified-artifact-not-wired",
+            "obligation_id": "dimension:ownership",
+            "summary": "Verified Gate artifact evidence is structurally checked but is not an installer-owned, usable worker capability at the public Gate path.",
+            "evidence": "NewVerifiedGateEvaluatorHandleFromRecord at harness_sdk.go:350-365 accepts exported install, binding, and artifact values. The resolver/function adapter at :421-438 can return any locally consistent non-empty artifact. EvaluateGateInHost at :1146-1158 validates copied data and delegates to a supplied Host, with no durable install/worker capability lookup.",
+            "required_fix": "Have Package Governance/Harness Host create an opaque worker capability from its canonical verified ComponentInstall record. Resolve and validate the current install, exact extraction root, entrypoint, binding, evaluator implementation, package digest, and authenticated RequestContext inside that owner capability; reject caller-provided root/resolver facts as authority.",
+            "status": "open",
+            "classification": "unchanged",
+            "last_evidence": "NewVerifiedGateEvaluatorHandleFromRecord at harness_sdk.go:350-365 still accepts a caller-created record, while VerifiedPackageRootResolver at :421-427 and its public function adapter at :433-438 remain callback ports. EvaluateGateInHost at :1146-1158 never resolves an installer-owned worker capability or durable artifact record."
+          },
+          {
+            "blocker_id": "BLK-24fb35161ce2",
+            "root_cause_key": "gate-evaluator-object-identity-not-bound",
+            "obligation_id": "dimension:authority",
+            "summary": "Gate evaluation does not bind GateEvaluatorID to the evaluator implementation or verified worker that the Host actually runs.",
+            "evidence": "GateEvaluator is only an interface at harness_sdk.go:295-299. The handle at :341-346 and record at :350-355 contain no evaluator object or executable identity beyond a caller-supplied EvaluatorDigest in VerifiedGateArtifact. GateEvaluatorVerificationFixture at :487-494 has no implementation field, and VerifyGateEvaluatorContract at :1124-1139 compares Host output rather than executing the selected GateEvaluator.",
+            "required_fix": "Bind an opaque installer-owned evaluator-worker capability to the exact ComponentInstall, package digest, verified entrypoint, binding ID, evaluator implementation identity, GateEvaluatorID, and authenticated RequestContext. Make Host execution and SDK verification use that selected capability rather than only compare Host output.",
+            "status": "open",
+            "classification": "unchanged",
+            "last_evidence": "VerifiedGateArtifact.EvaluatorDigest is still only a digest-shaped string at harness_sdk.go:410-419. GateEvaluatorVerificationFixture at :487-494 has no evaluator implementation, and VerifyGateEvaluatorContract at :1124-1139 validates only repeated Host output and Expected; the selected GateEvaluator object is not passed to or bound by Host execution."
+          },
+          {
+            "blocker_id": "BLK-3d9160cdc648",
+            "root_cause_key": "gate-isolation-attestation-forgeable",
+            "obligation_id": "dimension:execution",
+            "summary": "Gate isolation remains a caller-forgeable all-true attestation rather than independently verifiable evidence of actual Host enforcement.",
+            "evidence": "GateIsolationExecutionRecord at harness_sdk.go:319-329 exposes every enforcement flag. NewGateIsolationReport at :331-335 accepts those flags, stores a caller-provided digest as private state, and drops HostRunID. A public GateEvaluatorHostFunc can return such a report, while EvaluateGateInHost at :1151-1158 checks only the private digest and flags.",
+            "required_fix": "Keep sandbox setup and enforcement in the trusted Host. Return a Host-owned capability or durable execution record created only after controls are installed and checked, bind it to the exact Gate run/handle/input and RequestContext, and add a Host-level negative fixture for missing or mismatched enforcement.",
+            "status": "open",
+            "classification": "unchanged",
+            "last_evidence": "NewGateIsolationReport at harness_sdk.go:331-335 accepts caller-supplied HostRunID, digest, and all enforcement booleans, stores only the supplied digest as a private attestation, and does not retain the run identity. EvaluateGateInHost at :1151-1158 checks the resulting all-true report after the Host callback without a Host-owned execution record bound to the exact Gate input and handle."
+          },
+          {
+            "blocker_id": "BLK-4bc9f366ac71",
+            "root_cause_key": "component-install-package-identity-rebinding",
+            "obligation_id": "dimension:authority",
+            "summary": "Package identity is compared strictly but verified package evidence remains caller-constructible and does not prove the installer inspected the exact interface and entrypoint used by install and Gate resolution.",
+            "evidence": "VerifiedComponentInstallRecord at package.go:311-323 has exported mutable authority fields. NewVerifiedComponentInstall at :325-333 copies them, and ValidateComponentInstall at :382-420 compares the record's verification and interface to the same caller-created install without durable governance lookup or RequestContext provenance.",
+            "required_fix": "Make the installer-owned verification/install record carry the exact verified interface API, entrypoint, artifact subject, request-context provenance, and durable record identity. Expose only a narrow owner factory that rehydrates and revalidates that record before Gate worker resolution; do not treat equality between caller inputs as provenance.",
+            "status": "open",
+            "classification": "unchanged",
+            "last_evidence": "InterfaceAPI and Entrypoint comparisons are stricter, but PackageVerificationEvidence and VerifiedComponentInstallRecord remain caller-constructible. BindPackageVerification at package.go:254-269 and NewVerifiedComponentInstall at :325-333 compare values supplied by the same caller; no persisted Package Governance verification record or authenticated RequestContext is resolved before install or Gate use."
+          },
+          {
+            "blocker_id": "BLK-595611f7f07b",
+            "root_cause_key": "public-contract-host-boundary-structure",
+            "obligation_id": "dimension:structure",
+            "summary": "The authority boundary remains structurally forgeable: public wrappers accept caller-controlled duplicate facts, unbound callbacks, and a caller-shaped RequestContext field that is not bound to any owner record.",
+            "evidence": "NewHostInvocationEvidence at services.go:83-100, NewHostRunValidationContext at component_run.go:203-226, NewHostRecoveryEvidence at :136-158, and NewHostEventRunLineage at harness_sdk.go:141-165 are public wrappers over arbitrary inputs. ComponentInstall, Gate records, and permission records validate only local shape or equality; resolver and gate callbacks remain caller-provided. The latest ForRequest helpers do not change that ownership boundary.",
+            "required_fix": "Split durable records from in-memory capabilities. Carry an authenticated request-context identity through the owner boundary, and expose only narrow Package Governance/Harness Host factories or resolver capabilities that load canonical install, invocation, run, event, observation, permission, and operation facts. Remove caller-created duplicate authority structs from the accepted production path.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "The latest change adds RequestContext fields and shape checks, but no extension validator calls RequestContext.Validate on ComponentInstall or ComponentRun validation, and no capability binds the context to an install, invocation, run, event, observation, or operation. Public owner factories and callback adapters still issue structurally valid capabilities from caller data; NewHostEventRunLineageForRequest and NewHostRecoveryEvidenceForRequest discard the supplied context."
+          },
+          {
+            "blocker_id": "BLK-68648dff7c34",
+            "root_cause_key": "permission-evidence-not-bound-to-describe",
+            "obligation_id": "dimension:authority",
+            "summary": "Scoped permission grants are not bound to the verified Extension Describe snapshot or an installer-owned point/effect ceiling.",
+            "evidence": "VerifiedDescribePermissionRecord at services.go:136-143 is an exported data bag. NewVerifiedPermissionCeiling at :145-153 copies its fields after only checking RequestContext shape and does not require a SHA-256 Describe digest or retain context. ResolveScopedServices at :177-220 checks optional identity and subset relationships; CaptureHarnessExtensionVerification's snapshot is never linked into PermissionIntersection.",
+            "required_fix": "Persist the normalized Describe digest and point-specific permission/effect ceiling with the installer-owned Extension record or locked binding. Derive request and SDK maxima from that record, reject forbidden point/effect combinations, validate RequestContext provenance, and require only a Host-created scoped capability for final resolution.",
+            "status": "open",
+            "classification": "unchanged",
+            "last_evidence": "VerifiedDescribePermissionRecord at services.go:136-143 and NewVerifiedPermissionCeiling at :145-153 accept caller-provided digest, Extension ID, point, effect, and permission slice. The factory does not require a SHA-256 Describe digest or retain RequestContext. ResolveScopedServices at :177-220 checks subset/equality relationships only; the stable Describe snapshot from CaptureHarnessExtensionVerification is never linked to this ceiling."
+          },
+          {
+            "blocker_id": "BLK-8f0312549e29",
+            "root_cause_key": "recovery-evidence-self-attestable",
+            "obligation_id": "dimension:evidence",
+            "summary": "Retry authorization still accepts self-consistent RecoveryEvidence rather than a persisted Host-derived Observe fact.",
+            "evidence": "RecoveryEvidenceProof at component_run.go:111-129 is ordinary exported data. NewHostRecoveryEvidenceForRequest at :140-145 derives the proof from caller-supplied Observation after discarding the context, and ValidateRetry/validateRecoveryEvidence at :308-335 and :455-474 perform no persisted observation/report lookup. The proof is rehydratable but not authoritative or independently verifiable.",
+            "required_fix": "Use a Host-created opaque recovery capability or Host-owned resolver that loads the persisted observation/report by identity, verifies the digest and complete run/binding/subject/request-context lineage, and derives the safe outcome. Store durable provenance in a rehydratable signed or record form, not a caller-authored equality proof.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "The private recovery attestation was replaced by an ordinary exported RecoveryEvidenceProof. NewHostRecoveryEvidenceForRequest at component_run.go:140-145 only validates a caller-shaped RequestContext and derives the proof from caller-supplied observation data; ValidateRetry and validateRecoveryEvidence at :308-335 and :455-474 perform no persisted Observe/report resolution. The evidence is rehydratable as data but not authoritative or independently verifiable."
+          },
+          {
+            "blocker_id": "BLK-b4da0e6bc90a",
+            "root_cause_key": "changed-scope-negative-fixtures-missing",
+            "obligation_id": "dimension:regression",
+            "summary": "The changed scope still lacks external-package negative fixtures for the required owner-facing authority and durable-evidence boundaries.",
+            "evidence": "authority_contract_external_test.go:43-148 adds eight external tests, but they only assert factory usability, non-empty EvaluatorDigest, boolean isolation construction, non-nil permission construction, ordinary recovery fields, lineage factory construction, and empty-record rejection. They do not test wrong evaluator execution, forged RequestContext provenance, Describe escalation, HostRunID rebinding, persisted Observe/Event lookup, or post-rehydration validator acceptance.",
+            "required_fix": "Add external-package conformance and committed negative fixtures for owner-issued construction, authenticated RequestContext and install/root/ evaluator provenance, entrypoint rebinding, non-Executor permission escalation, forged recovery/report contexts, Host isolation mismatch, and durable evidence rehydration. Positive fixtures must use the same public owner-facing path used in production.",
+            "status": "open",
+            "classification": "unchanged",
+            "last_evidence": "Eight external tests were added, but they cover factory usability and ordinary shape/round-trip behavior rather than owner provenance. They do not exercise wrong evaluator implementation, forged RequestContext, Describe escalation, HostRunID rebinding, persisted Observe/Event lookup, or post-rehydration validator acceptance. Package-private tests remain the main behavioral coverage source."
+          },
+          {
+            "blocker_id": "BLK-ee0540f1636a",
+            "root_cause_key": "event-handler-validation-context-forgeable",
+            "obligation_id": "dimension:evidence",
+            "summary": "Side-effecting EventHandler reports still rely on caller-provided lineage and validation context with local equality and caller-derived proof, not persisted event/run/install/observation provenance.",
+            "evidence": "NewHostEventRunLineageForRequest at harness_sdk.go:145-150 accepts a syntactically valid context but discards it and copies arbitrary lineage. ValidateEventHandlerResultReportForOperation at :1465-1479 still accepts caller-provided hostInvocation and hostContext; the validators at :1068-1084 and :1105-1120 compare copied fields and invoke the supplied context resolver, but do not load persisted Event, ComponentRun, operation, observation, install, or RequestContext lineage.",
+            "required_fix": "Replace duplicate invocation, lineage, and context inputs with one opaque Host-created report capability. Resolve the persisted Event, ComponentRun, locked set, current install, operation, observation lineage, and authenticated RequestContext from that capability before accepting a side-effecting report.",
+            "status": "open",
+            "classification": "unchanged",
+            "last_evidence": "NewHostEventRunLineageForRequest at harness_sdk.go:145-150 now accepts a syntactically valid context but discards it and copies arbitrary lineage. ValidateEventHandlerResultReportForOperation at :1465-1479 still accepts caller-provided hostInvocation and hostContext; the validators at :1068-1084 and :1105-1120 compare copied fields and invoke the supplied context resolver, but do not load persisted Event, ComponentRun, operation, observation, install, or RequestContext lineage."
+          }
+        ]
+      }
+    ],
+    "blockers": [
+      {
+        "blocker_id": "BLK-23f5b813f4dc",
+        "root_cause_key": "gate-verified-artifact-not-wired",
+        "obligation_id": "dimension:ownership",
+        "summary": "Verified Gate artifact evidence is structurally checked but is not an installer-owned, usable worker capability at the public Gate path.",
+        "evidence": "NewVerifiedGateEvaluatorHandleFromRecord at harness_sdk.go:350-365 accepts exported install, binding, and artifact values. The resolver/function adapter at :421-438 can return any locally consistent non-empty artifact. EvaluateGateInHost at :1146-1158 validates copied data and delegates to a supplied Host, with no durable install/worker capability lookup.",
+        "required_fix": "Have Package Governance/Harness Host create an opaque worker capability from its canonical verified ComponentInstall record. Resolve and validate the current install, exact extraction root, entrypoint, binding, evaluator implementation, package digest, and authenticated RequestContext inside that owner capability; reject caller-provided root/resolver facts as authority.",
+        "status": "open",
+        "classification": "unchanged",
+        "first_seen_round": 1,
+        "last_seen_round": 3,
+        "seen_count": 3,
+        "last_evidence": "NewVerifiedGateEvaluatorHandleFromRecord at harness_sdk.go:350-365 still accepts a caller-created record, while VerifiedPackageRootResolver at :421-427 and its public function adapter at :433-438 remain callback ports. EvaluateGateInHost at :1146-1158 never resolves an installer-owned worker capability or durable artifact record."
+      },
+      {
+        "blocker_id": "BLK-24fb35161ce2",
+        "root_cause_key": "gate-evaluator-object-identity-not-bound",
+        "obligation_id": "dimension:authority",
+        "summary": "Gate evaluation does not bind GateEvaluatorID to the evaluator implementation or verified worker that the Host actually runs.",
+        "evidence": "GateEvaluator is only an interface at harness_sdk.go:295-299. The handle at :341-346 and record at :350-355 contain no evaluator object or executable identity beyond a caller-supplied EvaluatorDigest in VerifiedGateArtifact. GateEvaluatorVerificationFixture at :487-494 has no implementation field, and VerifyGateEvaluatorContract at :1124-1139 compares Host output rather than executing the selected GateEvaluator.",
+        "required_fix": "Bind an opaque installer-owned evaluator-worker capability to the exact ComponentInstall, package digest, verified entrypoint, binding ID, evaluator implementation identity, GateEvaluatorID, and authenticated RequestContext. Make Host execution and SDK verification use that selected capability rather than only compare Host output.",
+        "status": "open",
+        "classification": "unchanged",
+        "first_seen_round": 1,
+        "last_seen_round": 3,
+        "seen_count": 3,
+        "last_evidence": "VerifiedGateArtifact.EvaluatorDigest is still only a digest-shaped string at harness_sdk.go:410-419. GateEvaluatorVerificationFixture at :487-494 has no evaluator implementation, and VerifyGateEvaluatorContract at :1124-1139 validates only repeated Host output and Expected; the selected GateEvaluator object is not passed to or bound by Host execution."
+      },
+      {
+        "blocker_id": "BLK-3d9160cdc648",
+        "root_cause_key": "gate-isolation-attestation-forgeable",
+        "obligation_id": "dimension:execution",
+        "summary": "Gate isolation remains a caller-forgeable all-true attestation rather than independently verifiable evidence of actual Host enforcement.",
+        "evidence": "GateIsolationExecutionRecord at harness_sdk.go:319-329 exposes every enforcement flag. NewGateIsolationReport at :331-335 accepts those flags, stores a caller-provided digest as private state, and drops HostRunID. A public GateEvaluatorHostFunc can return such a report, while EvaluateGateInHost at :1151-1158 checks only the private digest and flags.",
+        "required_fix": "Keep sandbox setup and enforcement in the trusted Host. Return a Host-owned capability or durable execution record created only after controls are installed and checked, bind it to the exact Gate run/handle/input and RequestContext, and add a Host-level negative fixture for missing or mismatched enforcement.",
+        "status": "open",
+        "classification": "unchanged",
+        "first_seen_round": 1,
+        "last_seen_round": 3,
+        "seen_count": 3,
+        "last_evidence": "NewGateIsolationReport at harness_sdk.go:331-335 accepts caller-supplied HostRunID, digest, and all enforcement booleans, stores only the supplied digest as a private attestation, and does not retain the run identity. EvaluateGateInHost at :1151-1158 checks the resulting all-true report after the Host callback without a Host-owned execution record bound to the exact Gate input and handle."
+      },
+      {
+        "blocker_id": "BLK-4bc9f366ac71",
+        "root_cause_key": "component-install-package-identity-rebinding",
+        "obligation_id": "dimension:authority",
+        "summary": "Package identity is compared strictly but verified package evidence remains caller-constructible and does not prove the installer inspected the exact interface and entrypoint used by install and Gate resolution.",
+        "evidence": "VerifiedComponentInstallRecord at package.go:311-323 has exported mutable authority fields. NewVerifiedComponentInstall at :325-333 copies them, and ValidateComponentInstall at :382-420 compares the record's verification and interface to the same caller-created install without durable governance lookup or RequestContext provenance.",
+        "required_fix": "Make the installer-owned verification/install record carry the exact verified interface API, entrypoint, artifact subject, request-context provenance, and durable record identity. Expose only a narrow owner factory that rehydrates and revalidates that record before Gate worker resolution; do not treat equality between caller inputs as provenance.",
+        "status": "open",
+        "classification": "unchanged",
+        "first_seen_round": 1,
+        "last_seen_round": 3,
+        "seen_count": 3,
+        "last_evidence": "InterfaceAPI and Entrypoint comparisons are stricter, but PackageVerificationEvidence and VerifiedComponentInstallRecord remain caller-constructible. BindPackageVerification at package.go:254-269 and NewVerifiedComponentInstall at :325-333 compare values supplied by the same caller; no persisted Package Governance verification record or authenticated RequestContext is resolved before install or Gate use."
+      },
+      {
+        "blocker_id": "BLK-595611f7f07b",
+        "root_cause_key": "public-contract-host-boundary-structure",
+        "obligation_id": "dimension:structure",
+        "summary": "The authority boundary remains structurally forgeable: public wrappers accept caller-controlled duplicate facts, unbound callbacks, and a caller-shaped RequestContext field that is not bound to any owner record.",
+        "evidence": "NewHostInvocationEvidence at services.go:83-100, NewHostRunValidationContext at component_run.go:203-226, NewHostRecoveryEvidence at :136-158, and NewHostEventRunLineage at harness_sdk.go:141-165 are public wrappers over arbitrary inputs. ComponentInstall, Gate records, and permission records validate only local shape or equality; resolver and gate callbacks remain caller-provided. The latest ForRequest helpers do not change that ownership boundary.",
+        "required_fix": "Split durable records from in-memory capabilities. Carry an authenticated request-context identity through the owner boundary, and expose only narrow Package Governance/Harness Host factories or resolver capabilities that load canonical install, invocation, run, event, observation, permission, and operation facts. Remove caller-created duplicate authority structs from the accepted production path.",
+        "status": "open",
+        "classification": "deeper",
+        "first_seen_round": 1,
+        "last_seen_round": 3,
+        "seen_count": 3,
+        "last_evidence": "The latest change adds RequestContext fields and shape checks, but no extension validator calls RequestContext.Validate on ComponentInstall or ComponentRun validation, and no capability binds the context to an install, invocation, run, event, observation, or operation. Public owner factories and callback adapters still issue structurally valid capabilities from caller data; NewHostEventRunLineageForRequest and NewHostRecoveryEvidenceForRequest discard the supplied context."
+      },
+      {
+        "blocker_id": "BLK-68648dff7c34",
+        "root_cause_key": "permission-evidence-not-bound-to-describe",
+        "obligation_id": "dimension:authority",
+        "summary": "Scoped permission grants are not bound to the verified Extension Describe snapshot or an installer-owned point/effect ceiling.",
+        "evidence": "VerifiedDescribePermissionRecord at services.go:136-143 is an exported data bag. NewVerifiedPermissionCeiling at :145-153 copies its fields after only checking RequestContext shape and does not require a SHA-256 Describe digest or retain context. ResolveScopedServices at :177-220 checks optional identity and subset relationships; CaptureHarnessExtensionVerification's snapshot is never linked into PermissionIntersection.",
+        "required_fix": "Persist the normalized Describe digest and point-specific permission/effect ceiling with the installer-owned Extension record or locked binding. Derive request and SDK maxima from that record, reject forbidden point/effect combinations, validate RequestContext provenance, and require only a Host-created scoped capability for final resolution.",
+        "status": "open",
+        "classification": "unchanged",
+        "first_seen_round": 1,
+        "last_seen_round": 3,
+        "seen_count": 3,
+        "last_evidence": "VerifiedDescribePermissionRecord at services.go:136-143 and NewVerifiedPermissionCeiling at :145-153 accept caller-provided digest, Extension ID, point, effect, and permission slice. The factory does not require a SHA-256 Describe digest or retain RequestContext. ResolveScopedServices at :177-220 checks subset/equality relationships only; the stable Describe snapshot from CaptureHarnessExtensionVerification is never linked to this ceiling."
+      },
+      {
+        "blocker_id": "BLK-8f0312549e29",
+        "root_cause_key": "recovery-evidence-self-attestable",
+        "obligation_id": "dimension:evidence",
+        "summary": "Retry authorization still accepts self-consistent RecoveryEvidence rather than a persisted Host-derived Observe fact.",
+        "evidence": "RecoveryEvidenceProof at component_run.go:111-129 is ordinary exported data. NewHostRecoveryEvidenceForRequest at :140-145 derives the proof from caller-supplied Observation after discarding the context, and ValidateRetry/validateRecoveryEvidence at :308-335 and :455-474 perform no persisted observation/report lookup. The proof is rehydratable but not authoritative or independently verifiable.",
+        "required_fix": "Use a Host-created opaque recovery capability or Host-owned resolver that loads the persisted observation/report by identity, verifies the digest and complete run/binding/subject/request-context lineage, and derives the safe outcome. Store durable provenance in a rehydratable signed or record form, not a caller-authored equality proof.",
+        "status": "open",
+        "classification": "deeper",
+        "first_seen_round": 1,
+        "last_seen_round": 3,
+        "seen_count": 3,
+        "last_evidence": "The private recovery attestation was replaced by an ordinary exported RecoveryEvidenceProof. NewHostRecoveryEvidenceForRequest at component_run.go:140-145 only validates a caller-shaped RequestContext and derives the proof from caller-supplied observation data; ValidateRetry and validateRecoveryEvidence at :308-335 and :455-474 perform no persisted Observe/report resolution. The evidence is rehydratable as data but not authoritative or independently verifiable."
+      },
+      {
+        "blocker_id": "BLK-b4da0e6bc90a",
+        "root_cause_key": "changed-scope-negative-fixtures-missing",
+        "obligation_id": "dimension:regression",
+        "summary": "The changed scope still lacks external-package negative fixtures for the required owner-facing authority and durable-evidence boundaries.",
+        "evidence": "authority_contract_external_test.go:43-148 adds eight external tests, but they only assert factory usability, non-empty EvaluatorDigest, boolean isolation construction, non-nil permission construction, ordinary recovery fields, lineage factory construction, and empty-record rejection. They do not test wrong evaluator execution, forged RequestContext provenance, Describe escalation, HostRunID rebinding, persisted Observe/Event lookup, or post-rehydration validator acceptance.",
+        "required_fix": "Add external-package conformance and committed negative fixtures for owner-issued construction, authenticated RequestContext and install/root/ evaluator provenance, entrypoint rebinding, non-Executor permission escalation, forged recovery/report contexts, Host isolation mismatch, and durable evidence rehydration. Positive fixtures must use the same public owner-facing path used in production.",
+        "status": "open",
+        "classification": "unchanged",
+        "first_seen_round": 1,
+        "last_seen_round": 3,
+        "seen_count": 3,
+        "last_evidence": "Eight external tests were added, but they cover factory usability and ordinary shape/round-trip behavior rather than owner provenance. They do not exercise wrong evaluator implementation, forged RequestContext, Describe escalation, HostRunID rebinding, persisted Observe/Event lookup, or post-rehydration validator acceptance. Package-private tests remain the main behavioral coverage source."
+      },
+      {
+        "blocker_id": "BLK-ee0540f1636a",
+        "root_cause_key": "event-handler-validation-context-forgeable",
+        "obligation_id": "dimension:evidence",
+        "summary": "Side-effecting EventHandler reports still rely on caller-provided lineage and validation context with local equality and caller-derived proof, not persisted event/run/install/observation provenance.",
+        "evidence": "NewHostEventRunLineageForRequest at harness_sdk.go:145-150 accepts a syntactically valid context but discards it and copies arbitrary lineage. ValidateEventHandlerResultReportForOperation at :1465-1479 still accepts caller-provided hostInvocation and hostContext; the validators at :1068-1084 and :1105-1120 compare copied fields and invoke the supplied context resolver, but do not load persisted Event, ComponentRun, operation, observation, install, or RequestContext lineage.",
+        "required_fix": "Replace duplicate invocation, lineage, and context inputs with one opaque Host-created report capability. Resolve the persisted Event, ComponentRun, locked set, current install, operation, observation lineage, and authenticated RequestContext from that capability before accepting a side-effecting report.",
+        "status": "open",
+        "classification": "unchanged",
+        "first_seen_round": 1,
+        "last_seen_round": 3,
+        "seen_count": 3,
+        "last_evidence": "NewHostEventRunLineageForRequest at harness_sdk.go:145-150 now accepts a syntactically valid context but discards it and copies arbitrary lineage. ValidateEventHandlerResultReportForOperation at :1465-1479 still accepts caller-provided hostInvocation and hostContext; the validators at :1068-1084 and :1105-1120 compare copied fields and invoke the supplied context resolver, but do not load persisted Event, ComponentRun, operation, observation, install, or RequestContext lineage."
+      }
+    ]
+  },
+  "review_ledger_ref": {
+    "comment_id": "01a0243a-4ee2-7e81-a20b-e7cd327cac7d",
+    "attachment_id": "01a0243a-4e90-7e7e-beb4-ad7aff48449c",
+    "sha256": "5b054d7aabc1d82953d1b9973ee8c2b98c4ab2210875a0d335138c6b23538003",
+    "bytes": 58757,
+    "filename": "omac-review-ledger-5b054d7aabc1.yaml"
+  },
+  "review_generation": "amendment-180571a36db7f20d388ea68b",
+  "review_ledger_generation": "amendment-873d30f3e7e9bbec42aa722e",
+  "review_continuation": null,
+  "reviewer_run_baseline": null,
+  "worker_handoff": null,
+  "delivery_identity": null,
+  "decision_required": null,
+  "amendment_attempt": null,
+  "contract": {
+    "objective": "Act as the final cross-owner Harness conformance selector after the SDK boundary and real Host producer are independently reviewed. Consume exact extension wire, Package Governance, harness-sdk-boundary-evidence, and harness-host-gate-evidence; run the current public API positive/negative pair and generate one source-revision-bound combined semantic ledger. The ledger must contain one real Host-installed registered Gate positive receipt and one real Host-owned service authority positive path, exact Package/request/component-run/policy/evaluator and SDK/Host source lineage, and zero caller-selected authority, caller-supplied evaluator, extension-minted handoff, unregistered execution, provenance mismatch, forbidden accept, or forbidden implementation calls. Reject SDK boundary artifacts that claim a Host positive path, Host evidence that omits the SDK boundary digest or real receipt lineage, compile failure against a removed symbol, helper/internal fixtures, literal pass status, missing child execution, and mismatched source revisions. Then assemble the existing contracts-extension release component without reimplementing either owner. int-extension-generic remains the full UJ-EXTENSION-PACKAGE-001 acceptance owner.",
+    "non_goals": [
+      "Do not define or reimplement production Package Governance, Harness SDK, Host authority, Gate evaluation, signer/trust roots, or Harness Host behavior in this aggregate node.",
+      "Do not accept self-attested evaluator, isolation, permission, RequestContext, recovery, event-lineage, static counter, literal status, helper-only predicate, same-package SDK fixture, or missing-symbol compile failure as substitutes for reviewed owner artifacts and real executions.",
+      "Do not accept the SDK boundary artifact if it claims registered Host success, and do not accept a Host-positive path unless harness-host-gate-evidence binds the reviewed SDK boundary digest, real Host-installed handoff, exact receipt lineage, and source revisions.",
+      "Do not own action-level acceptance; int-extension-generic remains the complete flow owner downstream of this conformance artifact.",
+      "Do not reset, edit, or duplicate runtime facts from any predecessor, change adjacent domain ownership, or bypass authorization, admission, CAS, idempotency, review, or evidence gates."
+    ],
+    "verification_commands": [
+      "python3 -c \"from pathlib import Path; import json; wire=json.loads(Path('artifacts/contracts-extension-wire/evidence.json').read_text()); package_rows=[json.loads(x) for x in Path('artifacts/extension-package/governance-owner-tests.json').read_text().splitlines() if x.strip()]; package_required={'TestComponentInstallLoadsInstallerOwnedVerificationRecord','TestComponentInstallBindsExactReleaseDigestInterfaceAndEntrypoint','TestDescribePermissionCeilingBindsInstallPointEffectAndRequestContext','TestPackageGovernanceRejectsCallerAuthoredVerificationAndPermissionRecords','TestPackageGovernanceRejectsFullyCallerAuthoredHostContext','TestPackageGovernanceRejectsCallerControlledArtifactInspector','TestPackageGovernanceRequiresAuthenticatedArtifactProvenance','TestPermissionCeilingBindsOwnerSpecificAuthorityIdentity','TestPackageGovernanceBindsAuthorizationAdmissionAndAuditEvidence','TestComponentInstallConcurrentIdempotencyReturnsCommittedRecord'}; package_passed={r.get('Test') for r in package_rows if r.get('Action')=='pass'}; assert package_required <= package_passed, f'missing Package Governance evidence {sorted(package_required-package_passed)}'; sdk=json.loads(Path('artifacts/harness-sdk/semantic-evidence.json').read_text()); host=json.loads(Path('artifacts/harness-host/gate-evidence.json').read_text()); assert wire.get('status')=='pass'; assert sdk['evidence_scope']=='sdk-boundary'; sm=sdk['metrics']; assert sm['registered_gate_positive_path_count']==0 and sm['authoritative_gate_positive_claim_count']==0; assert host['schema']=='oac.harness-host-gate-evidence/v1'; assert host['sdk_boundary_artifact_id']=='harness-sdk-boundary-evidence'; hm=host['metrics']; assert hm['registered_gate_positive_path_count']==1 and hm['service_host_positive_path_count']==1; assert hm['caller_selected_host_authority_accept_count']==0 and hm['caller_supplied_gate_evaluator_accept_count']==0; assert hm['extension_minted_gate_handoff_accept_count']==0 and hm['gate_provenance_mismatch_accept_count']==0; assert hm['cross_owner_lineage_match_count']==1 and host.get('positive_receipt_lineage')\"",
+      "mkdir -p artifacts/contracts-extension && HARNESS_GATE_SEMANTIC_EVIDENCE=\"$PWD/artifacts/contracts-extension/harness-gate-semantic-evidence.json\" go test -json ./tests/integration/extension-governance/... -run '^(TestExtensionGovernanceEvidenceBindsExactWireAndInstall|TestHarnessHostEvidenceBindsEvaluatorIsolationAndRequestContext|TestExtensionRecoveryAndEventLineageUsePersistedOwnerRecords|TestHarnessGateProvisioningEvidenceBindsSDKAndHostAuthority|TestHarnessGateSemanticLedgerCombinesSDKBoundaryAndHostPositivePath)$' -count=1 > artifacts/contracts-extension/final-conformance-tests.json",
+      "python3 -c \"import json; required={'TestExtensionGovernanceEvidenceBindsExactWireAndInstall','TestHarnessHostEvidenceBindsEvaluatorIsolationAndRequestContext','TestExtensionRecoveryAndEventLineageUsePersistedOwnerRecords','TestHarnessGateProvisioningEvidenceBindsSDKAndHostAuthority','TestHarnessGateSemanticLedgerCombinesSDKBoundaryAndHostPositivePath'}; rows=[json.loads(x) for x in open('artifacts/contracts-extension/final-conformance-tests.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing final cross-owner tests: {sorted(required-passed)}'\"",
+      "python3 -c \"from pathlib import Path; import json,subprocess; p=Path('artifacts/contracts-extension/harness-gate-semantic-evidence.json'); assert p.is_file() and p.stat().st_size>0; d=json.loads(p.read_text()); assert d['schema']=='oac.harness-gate-semantic-evidence/v1'; assert d['source_revision']==subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(); m=d['metrics']; assert m['registered_gate_positive_path_count']==1 and m['service_host_positive_path_count']==1; assert m['sdk_boundary_authoritative_positive_claim_count']==0 and m['caller_selected_host_authority_accept_count']==0; assert m['caller_supplied_gate_evaluator_accept_count']==0 and m['extension_minted_gate_handoff_accept_count']==0; assert m['gate_provenance_mismatch_accept_count']==0 and m['unregistered_gate_execution_accept_count']==0; assert m['forbidden_accept_count']==0 and m['forbidden_implementation_call_count']==0; assert m['cross_owner_lineage_match_count']==1 and d.get('positive_receipt_lineage')\"",
+      "python3 scripts/release/package_component.py --component contracts-extension --kind platform-core-dependency-source --input contracts/extension --bundle artifacts/contracts-extension/source-bundle.tar.zst --component-manifest artifacts/contracts-extension/component-manifest.json --digest-output artifacts/contracts-extension/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner contracts-extension --require-all-owner-sources-accounted"
+    ],
+    "integration_gates": [
+      {
+        "name": "contracts-extension-final-conformance",
+        "layer": "L1",
+        "source_of_truth": [
+          "git:ff6c81d568c57d871c58e713c99c018c4e8fd95e:harness-sdk-fourth-amendment-decision.md#sha256=5560469099217e132394a970dde8568bf83b1878f682462116f79fd1694d8c06",
+          "docs/design/detailed/08-component-and-extension-detailed-design.md:L23-L205",
+          "docs/design/detailed/08-component-and-extension-detailed-design.md:L259-L452",
+          "docs/references/extension/plugin-contracts.md:L7-L176",
+          "git:e1e48af331c0d568257e0eb2cbb88c1f19c97cb0:b-class-structural-decomposition-decisions.md#sha256=bee2866be23e0d5fe6f77a245f7f3177522308d5bd3ebbd14fb2baf0d9e37f19",
+          "docs/delivery/acceptance-and-validation.md:L170-L187"
+        ],
+        "delivery_goal": "Act as the final cross-owner Harness conformance selector after the SDK boundary and real Host producer are independently reviewed. Consume exact extension wire, Package Governance, harness-sdk-boundary-evidence, and harness-host-gate-evidence; run the current public API positive/negative pair and generate one source-revision-bound combined semantic ledger. The ledger must contain one real Host-installed registered Gate positive receipt and one real Host-owned service authority positive path, exact Package/request/component-run/policy/evaluator and SDK/Host source lineage, and zero caller-selected authority, caller-supplied evaluator, extension-minted handoff, unregistered execution, provenance mismatch, forbidden accept, or forbidden implementation calls. Reject SDK boundary artifacts that claim a Host positive path, Host evidence that omits the SDK boundary digest or real receipt lineage, compile failure against a removed symbol, helper/internal fixtures, literal pass status, missing child execution, and mismatched source revisions. Then assemble the existing contracts-extension release component without reimplementing either owner. int-extension-generic remains the full UJ-EXTENSION-PACKAGE-001 acceptance owner.",
+        "covers": [
+          "contracts-extension-final-evidence-aggregation",
+          "package-host-provenance-conformance",
+          "recovery-lineage-conformance",
+          "contracts-extension-release-assembly"
+        ],
+        "acceptance_refs": [
+          "UJ-EXTENSION-PACKAGE-001",
+          "UJ-SKILL-001"
+        ],
+        "commands": [
+          "python3 -c \"from pathlib import Path; import json; wire=json.loads(Path('artifacts/contracts-extension-wire/evidence.json').read_text()); package_rows=[json.loads(x) for x in Path('artifacts/extension-package/governance-owner-tests.json').read_text().splitlines() if x.strip()]; package_required={'TestComponentInstallLoadsInstallerOwnedVerificationRecord','TestComponentInstallBindsExactReleaseDigestInterfaceAndEntrypoint','TestDescribePermissionCeilingBindsInstallPointEffectAndRequestContext','TestPackageGovernanceRejectsCallerAuthoredVerificationAndPermissionRecords','TestPackageGovernanceRejectsFullyCallerAuthoredHostContext','TestPackageGovernanceRejectsCallerControlledArtifactInspector','TestPackageGovernanceRequiresAuthenticatedArtifactProvenance','TestPermissionCeilingBindsOwnerSpecificAuthorityIdentity','TestPackageGovernanceBindsAuthorizationAdmissionAndAuditEvidence','TestComponentInstallConcurrentIdempotencyReturnsCommittedRecord'}; package_passed={r.get('Test') for r in package_rows if r.get('Action')=='pass'}; assert package_required <= package_passed, f'missing Package Governance evidence {sorted(package_required-package_passed)}'; sdk=json.loads(Path('artifacts/harness-sdk/semantic-evidence.json').read_text()); host=json.loads(Path('artifacts/harness-host/gate-evidence.json').read_text()); assert wire.get('status')=='pass'; assert sdk['evidence_scope']=='sdk-boundary'; sm=sdk['metrics']; assert sm['registered_gate_positive_path_count']==0 and sm['authoritative_gate_positive_claim_count']==0; assert host['schema']=='oac.harness-host-gate-evidence/v1'; assert host['sdk_boundary_artifact_id']=='harness-sdk-boundary-evidence'; hm=host['metrics']; assert hm['registered_gate_positive_path_count']==1 and hm['service_host_positive_path_count']==1; assert hm['caller_selected_host_authority_accept_count']==0 and hm['caller_supplied_gate_evaluator_accept_count']==0; assert hm['extension_minted_gate_handoff_accept_count']==0 and hm['gate_provenance_mismatch_accept_count']==0; assert hm['cross_owner_lineage_match_count']==1 and host.get('positive_receipt_lineage')\"",
+          "mkdir -p artifacts/contracts-extension && HARNESS_GATE_SEMANTIC_EVIDENCE=\"$PWD/artifacts/contracts-extension/harness-gate-semantic-evidence.json\" go test -json ./tests/integration/extension-governance/... -run '^(TestExtensionGovernanceEvidenceBindsExactWireAndInstall|TestHarnessHostEvidenceBindsEvaluatorIsolationAndRequestContext|TestExtensionRecoveryAndEventLineageUsePersistedOwnerRecords|TestHarnessGateProvisioningEvidenceBindsSDKAndHostAuthority|TestHarnessGateSemanticLedgerCombinesSDKBoundaryAndHostPositivePath)$' -count=1 > artifacts/contracts-extension/final-conformance-tests.json",
+          "python3 -c \"import json; required={'TestExtensionGovernanceEvidenceBindsExactWireAndInstall','TestHarnessHostEvidenceBindsEvaluatorIsolationAndRequestContext','TestExtensionRecoveryAndEventLineageUsePersistedOwnerRecords','TestHarnessGateProvisioningEvidenceBindsSDKAndHostAuthority','TestHarnessGateSemanticLedgerCombinesSDKBoundaryAndHostPositivePath'}; rows=[json.loads(x) for x in open('artifacts/contracts-extension/final-conformance-tests.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing final cross-owner tests: {sorted(required-passed)}'\"",
+          "python3 -c \"from pathlib import Path; import json,subprocess; p=Path('artifacts/contracts-extension/harness-gate-semantic-evidence.json'); assert p.is_file() and p.stat().st_size>0; d=json.loads(p.read_text()); assert d['schema']=='oac.harness-gate-semantic-evidence/v1'; assert d['source_revision']==subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(); m=d['metrics']; assert m['registered_gate_positive_path_count']==1 and m['service_host_positive_path_count']==1; assert m['sdk_boundary_authoritative_positive_claim_count']==0 and m['caller_selected_host_authority_accept_count']==0; assert m['caller_supplied_gate_evaluator_accept_count']==0 and m['extension_minted_gate_handoff_accept_count']==0; assert m['gate_provenance_mismatch_accept_count']==0 and m['unregistered_gate_execution_accept_count']==0; assert m['forbidden_accept_count']==0 and m['forbidden_implementation_call_count']==0; assert m['cross_owner_lineage_match_count']==1 and d.get('positive_receipt_lineage')\"",
+          "python3 scripts/release/package_component.py --component contracts-extension --kind platform-core-dependency-source --input contracts/extension --bundle artifacts/contracts-extension/source-bundle.tar.zst --component-manifest artifacts/contracts-extension/component-manifest.json --digest-output artifacts/contracts-extension/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner contracts-extension --require-all-owner-sources-accounted"
+        ],
+        "required_metrics": {
+          "required_upstream_evidence_count": 4,
+          "required_final_conformance_test_count": 5,
+          "caller_controlled_authority_accept_count": 0,
+          "declared_artifact_count": 5,
+          "external_host_gate_positive_path_count": 1,
+          "caller_supplied_gate_authoritative_accept_count": 0,
+          "unbound_semantic_row_accept_count": 0,
+          "registered_gate_positive_path_count": 1,
+          "service_host_positive_path_count": 1,
+          "sdk_boundary_authoritative_positive_claim_count": 0,
+          "caller_selected_host_authority_accept_count": 0,
+          "cross_owner_lineage_match_count": 1
+        },
+        "artifacts": [
+          "artifacts/contracts-extension/final-conformance-tests.json",
+          "artifacts/contracts-extension/source-bundle.tar.zst",
+          "artifacts/contracts-extension/bundle-digest.txt",
+          "artifacts/contracts-extension/component-manifest.json",
+          "artifacts/contracts-extension/harness-gate-semantic-evidence.json"
+        ]
+      }
+    ],
+    "pr_base": "main",
+    "acceptance_refs": [
+      "UJ-EXTENSION-PACKAGE-001",
+      "UJ-SKILL-001"
+    ],
+    "source_of_truth": [
+      "git:ff6c81d568c57d871c58e713c99c018c4e8fd95e:harness-sdk-fourth-amendment-decision.md#sha256=5560469099217e132394a970dde8568bf83b1878f682462116f79fd1694d8c06",
+      "docs/design/detailed/08-component-and-extension-detailed-design.md:L23-L205",
+      "docs/design/detailed/08-component-and-extension-detailed-design.md:L259-L452",
+      "docs/references/extension/plugin-contracts.md:L7-L176",
+      "git:e1e48af331c0d568257e0eb2cbb88c1f19c97cb0:b-class-structural-decomposition-decisions.md#sha256=bee2866be23e0d5fe6f77a245f7f3177522308d5bd3ebbd14fb2baf0d9e37f19",
+      "docs/delivery/acceptance-and-validation.md:L170-L187"
+    ],
+    "required_contracts": [
+      "docs/design/detailed/08-component-and-extension-detailed-design.md",
+      "docs/references/extension/plugin-contracts.md",
+      "docs/references/extension/component-governance.md",
+      "docs/design/detailed/06-agent-runtime-detailed-design.md"
+    ],
+    "scope_paths": [
+      "tests/integration/extension-governance/**"
+    ],
+    "evidence_mode": "artifact",
+    "produces": [
+      {
+        "artifact_id": "contracts-extension-final-conformance"
+      },
+      {
+        "artifact_id": "contracts-extension-component"
+      }
+    ],
+    "consumes": [
+      {
+        "artifact_id": "contracts-extension-wire-evidence",
+        "producer": "contracts-extension-wire",
+        "evidence_mode": "artifact"
+      },
+      {
+        "artifact_id": "extension-package-governance-evidence",
+        "producer": "extension-package",
+        "evidence_mode": "artifact"
+      },
+      {
+        "artifact_id": "harness-sdk-boundary-evidence",
+        "producer": "harness-sdk",
+        "evidence_mode": "artifact"
+      },
+      {
+        "artifact_id": "harness-host-gate-evidence",
+        "producer": "harness-host",
+        "evidence_mode": "artifact"
+      },
+      {
+        "artifact_id": "harness-sdk-build-repair-evidence",
+        "producer": "harness-sdk-production-build-repair",
+        "evidence_mode": "artifact"
+      }
+    ],
+    "coverage_gate": 0
+  },
+  "contract_ref": {
+    "comment_id": "01a10376-500d-73ec-befd-2b19cceec596",
+    "attachment_id": "01a10376-4f23-733e-ad21-d9a542a93a3b",
+    "sha256": "b095a3b4c6c8a5855a878f92686ae9a796f06f3b9f295175d203fd420c8c2fd3",
+    "bytes": 17106,
+    "filename": "omac-contract-b095a3b4c6c8.yaml"
+  },
+  "source_refs": [
+    {
+      "issue_id": "289a13bf-cede-4b5b-ba86-d72f0bef8164",
+      "label": "设计方案"
+    },
+    {
+      "issue_id": "8e6bd282-6039-41d2-aa00-969a0bf1554a",
+      "label": "验收文档"
+    },
+    {
+      "issue_id": "5849f786-8c97-42ac-adf9-1c96957f28ee",
+      "label": "前置开发任务 · Bootstrap Go module and quality harness"
+    },
+    {
+      "issue_id": "152d735a-c373-4967-8ae0-45c191de2eff",
+      "label": "前置开发任务 · Implement deterministic release artifact packaging"
+    }
+  ],
+  "kind": "TaskKind.DEVELOP",
+  "phase": "TaskPhase.AUTHORING",
+  "bounces": {
+    "worker": 20,
+    "ci": 0,
+    "review": 19,
+    "merge": 0
+  },
+  "bounce_baseline": {
+    "merge": 0,
+    "review": 19,
+    "worker": 20
+  },
+  "deliverable": null,
+  "deliverable_ref": null,
+  "project_rules": null,
+  "project_rules_ref": null,
+  "agent_run_finished_without_submit": false,
+  "agent_run_failed": false,
+  "created_at": "2026-07-29T17:18:49Z",
+  "updated_at": "2026-10-03T20:30:54Z",
+  "platform_assignee_id": null,
+  "unknown_persisted_fields": {
+    "metadata.blocked_reason": "Awaiting approval of a host-enforced GateEvaluator isolation contract or an owning-design revision."
+  },
+  "review_nits_acceptance": null
+}

@@ -180,6 +180,13 @@ def register(parser):
     propose.add_argument("--workspace", help="workspace 覆盖")
     add_output_flag(propose, default="json")
 
+    budget_preview = amend_sub.add_parser("budget-preview", help="Read-only existing recovery budgets and renewal comparison")
+    budget_preview.add_argument("manifest")
+    budget_preview.add_argument("proposal_file")
+    budget_preview.add_argument("--engine")
+    budget_preview.add_argument("--workspace")
+    add_output_flag(budget_preview, default="json")
+
     accept = amend_sub.add_parser(
         "accept", help=ui(
             "Accept a Reviewer-approved amendment and apply it to the current manifest",
@@ -551,6 +558,8 @@ def snapshot(args) -> int:
 
 
 def amend(args) -> int:
+    if args.amend_action == "budget-preview":
+        return _amend_locked(args)
     with manifest_write_lock(args.manifest):
         return _amend_locked(args)
 
@@ -566,6 +575,18 @@ def _amend_locked(args) -> int:
     engine, _ = _assemble_engine(args)
     config = _load_config_for_manifest(args.manifest)
     roles = config.get("roles") or {}
+    if args.amend_action == "budget-preview":
+        from pathlib import Path
+        from ...core.amendment import preview_amendment_budgets
+        try:
+            proposal_source = Path(args.proposal_file).read_text()
+        except OSError as exc:
+            raise ValidationError("Could not read proposal; run omac dag amend budget-preview --help") from exc
+        result = preview_amendment_budgets(load_manifest(args.manifest),
+            proposal_source, engine.store,
+            set(engine.store.list_members(engine.store.config.workspace_id)))
+        print_json(result)
+        return exit_codes.OK
     if args.amend_action == "prepare-literal-correction":
         from ...core.literal_correction import prepare_literal_correction
         proposal = prepare_literal_correction(

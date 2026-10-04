@@ -240,3 +240,72 @@ def review_rework_budget(
         consumed=consumed,
         authorized_through_round=authorized_through,
     )
+
+
+def preserved_amendment_budget(manifest: Any, node_id: str, item: Any) -> dict:
+    """Read existing budget authority strictly; never derive a grant from counters."""
+    from ..errors import ValidationError
+
+    def unsafe(detail):
+        raise ValidationError(f"node {node_id}: cannot preserve budget: {detail}; "
+            "inspect current authority and run omac dag amend budget-preview --help")
+
+    node = manifest.nodes.get(node_id)
+    if node is None or not node.work_item_id or item.id != node.work_item_id:
+        unsafe("work item identity is missing or changed")
+    contract_sha = review_context_binding(node)["contract_sha256"]
+    if review_context_binding(item)["contract_sha256"] != contract_sha:
+        unsafe("native and manifest contracts differ")
+    absolute = {}
+    for stage in ("worker", "review", "merge", "ci"):
+        value = getattr(item.bounces, stage, None)
+        if type(value) is not int or value < 0:
+            unsafe(f"invalid absolute {stage} counter")
+        absolute[stage] = value
+    if getattr(item, "review_continuation", None):
+        unsafe("a context-bound review continuation cannot be silently retired")
+    native = getattr(item, "bounce_baseline", None)
+    if native is not None and (projected_bounce_baseline(item) is None
+        or set(native) != _SUPPORTED_STAGES):
+        unsafe("native baseline is incomplete or malformed")
+
+    ledger = manifest.meta.get("amendment_apply")
+    authority = None
+    source = "implicit-zero"
+    if ledger is not None:
+        if (not isinstance(ledger, dict)
+            or ledger.get("schema") != "omac.amendment-apply/v1"
+            or not ledger.get("amendment_id")
+            or ledger.get("amendment_id") != manifest.meta.get("last_amendment_id")
+            or not isinstance(ledger.get("nodes"), dict)
+            or not isinstance(ledger.get("retained_bounce_baselines", {}), dict)):
+            unsafe("manifest budget ledger is missing or stale")
+        if node_id in ledger["nodes"]:
+            entry = ledger["nodes"][node_id]
+            if (not isinstance(entry, dict) or entry.get("state") not in {"synced", "observed_progress"}
+                or entry.get("stage") not in {"authoring", "review", "merging"}):
+                unsafe("newer budget recovery is incomplete or invalid")
+            authority = {"amendment_id": ledger["amendment_id"],
+                "work_item_id": entry.get("work_item_id"),
+                "contract_sha256": entry.get("expected_contract_sha256"),
+                "bounce_baseline": deepcopy(entry.get("bounce_baseline"))}
+            source = "manifest-entry"
+        elif node_id in ledger.get("retained_bounce_baselines", {}):
+            authority = deepcopy(ledger["retained_bounce_baselines"][node_id])
+            source = "manifest-retained"
+    if source != "implicit-zero":
+        effective = _retained_bounce_baseline(manifest, node_id, authority)
+        if effective is None or set(effective) != _SUPPORTED_STAGES:
+            unsafe("manifest authority identity/contract/baseline is invalid")
+        effective = {s: effective[s] for s in sorted(_SUPPORTED_STAGES)}
+    else:
+        effective = {s: 0 for s in sorted(_SUPPORTED_STAGES)}
+    if native is not None and projected_bounce_baseline(item) != effective:
+        unsafe("native baseline conflicts with existing effective manifest authority")
+    if any(effective[s] > absolute[s] for s in _SUPPORTED_STAGES):
+        unsafe("absolute audit counter regressed below its approved baseline")
+    return {"work_item_id": item.id, "contract_sha256": contract_sha,
+        "absolute": absolute, "native_baseline": deepcopy(native),
+        "effective_baseline": effective,
+        "consumed": {s: absolute[s] - effective[s] for s in sorted(_SUPPORTED_STAGES)},
+        "authority_source": source, "authority": authority}

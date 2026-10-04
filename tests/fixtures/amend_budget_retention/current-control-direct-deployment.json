@@ -1,0 +1,1035 @@
+{
+  "id": "01a03a1a-876e-7f2e-923b-80aa45982b5d",
+  "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1",
+  "title": "[DAG:direct-deployment] Implement promotion and recoverable direct Deployment",
+  "description": "> **OMAC 控制的执行。第一动作必须严格执行：**\n\n```bash\nOMAC_ENGINE=multica OMAC_WORKSPACE_ID=410ade5e-8ae0-4402-b975-813dea2ff3e1 OMAC_PROJECT_ID=732ce83f-5cbd-4485-850d-1b8a1bf16340 omac work show 01a03a1a-876e-7f2e-923b-80aa45982b5d --output json\n```\n\n> `omac work show` 和 `omac work submit` 都可能长时间运行。任何工具调用在拿到最终 tool_result 和终态退出码前都不完整。若工具返回 running/session、缺少最终 tool_result、出现空输出或不完整输出，必须等待或轮询到终态。使用足够长的 wait/yield，或保留并恢复续接句柄；这是通用终态规则，不绑定某个具体工具 API。timeout/yield 不是空结果，也不允许据此停止。`omac work show` 只有在退出码 0 且得到可解析 JSON 后才能继续。`omac work submit` 只有在最终 tool_result 明确给出退出码 0，且 JSON 包含 `\"ok\": true`、`\"terminal\": true` 和 `\"next_action\": \"stop\"` 时才可宣称成功。结果未知时不得宣称成功或结束；validation error 必须修复后重新提交。submit 成功就是本次执行的最后动作，立即停止，不再执行任何平台写入。\n\n> 在上方精确的 `omac work show` 命令以退出码 0 成功返回可解析 JSON 前，不得执行任何其他 Issue 查询（包括 `multica issue get`、`multica issue comment list` 或 metadata 查询），也不得开始分析任务内容。work show 成功后，只能在返回上下文确有需要时使用只读 Issue 查询。禁止任何会创建、修改或删除 Issue 状态的 `multica issue` 写操作。这是语义边界，不是穷举命令清单；禁止示例包括 `multica issue status`、`multica issue assign`、`multica issue comment`、`multica issue metadata`、`multica issue rerun`、`multica issue cancel-task`、`multica issue update`、`multica issue create`、`multica issue label`、`multica issue property`、`multica issue reorder` 和 `multica issue subscriber`。只允许使用上方给出的精确 `omac work show` 命令，以及 work show 返回的精确 `omac work submit` 命令作为 OMAC 控制命令；已有手工附件或 verification 但缺少 `delivery_identity` 时也必须通过该 submit 命令封存。\n\n# Implement promotion and recoverable direct Deployment\n\n## 任务摘要\n- 类型: 开发实现（`develop`）\n- 执行角色: 独立评审者（`reviewer`）\n- 目标: Deliver immutable deployment requests, additive reports, observe/cancel/retry and exact Release promotion.\n- 依据: `docs/design/detailed/11-software-delivery-detailed-design.md:L483-L599`\n- 依据: `docs/references/software-delivery/artifacts-release-and-deployment.md:L186-L260`\n- 依据: `docs/delivery/acceptance-and-validation.md:L962-L1002`\n\n## 任务详情\nSmallest independently PR-able, testable and reviewable delivery boundary for this capability.\n\n## 非目标\n- Do not change adjacent domain ownership or introduce a competing source of truth.\n- Do not bypass authorization, admission, CAS, idempotency, review or evidence gates.\n- Do not preserve unpublished prototype behavior unless the owning design explicitly requires it.\n\n## 主要代码归属范围\n- `internal/deployment/**`\n\n## 交付约束\n- PR 基线: `main`\n- 改动分支覆盖率: `≥ 90%`\n- PR 关联标识: `AITEAM-942`\n\n## 上游 issue（防跑偏）\n本任务承接以下上游 issue，用于追溯需求与决策；若与当前 contract 冲突，先请求确认：\n- 设计方案: `289a13bf-cede-4b5b-ba86-d72f0bef8164`\n- 验收文档: `8e6bd282-6039-41d2-aa00-969a0bf1554a`\n- 前置开发任务 · Bootstrap Go module and quality harness: `5849f786-8c97-42ac-adf9-1c96957f28ee`\n- 前置开发任务 · Implement ReleaseCandidate and Preview acceptance: `7255d20c-6e63-4fc3-974c-09e449481219`\n- 前置开发任务 · Create credential contracts: `30335cd6-d2e8-4c9d-8988-7f7b134ed6e9`\n- 前置开发任务 · Implement deterministic release artifact packaging: `152d735a-c373-4967-8ae0-45c191de2eff`",
+  "status": "WorkItemStatus.TODO",
+  "dag_key": "direct-deployment",
+  "identifier": "AITEAM-942",
+  "worker": "codex-ubuntu-newapi",
+  "reviewer": "",
+  "blocked_by": [
+    "bootstrap-go",
+    "release-preview",
+    "contracts-credential",
+    "release-artifact-tooling"
+  ],
+  "wave": null,
+  "artifacts": {
+    "pr_url": "https://github.com/xiaohei-info/open-agent-cluster/pull/65",
+    "head_sha": "e9cab9929d50e8f2a44dad6429956af889d720fd"
+  },
+  "verification": {
+    "schema": "oac.direct-deployment-verification/v1",
+    "issue_id": "01a03a1a-876e-7f2e-923b-80aa45982b5d",
+    "issue_key": "AITEAM-942",
+    "pr_url": "https://github.com/xiaohei-info/open-agent-cluster/pull/65",
+    "branch": "agent/codex-ubuntu-newapi/804a5e38458f",
+    "source_revision": "e9cab9929d50e8f2a44dad6429956af889d720fd",
+    "pr_base": "main",
+    "coverage": 90.0,
+    "commands": [
+      {
+        "cmd": "mkdir -p artifacts/direct-deployment && go test -covermode=atomic -coverprofile=artifacts/direct-deployment/coverage.out ./internal/deployment/...",
+        "exit_code": 0,
+        "summary": "Fresh contract run at PR HEAD e9cab9929d50e8f2a44dad6429956af889d720fd passed internal/deployment tests with 90.0% statement coverage, including the direct promotion and recovery fixtures."
+      },
+      {
+        "cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/direct-deployment/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+        "exit_code": 0,
+        "summary": "Fresh coverage artifact threshold check passed at 90.0%."
+      },
+      {
+        "cmd": "python3 scripts/release/package_component.py --component direct-deployment --kind platform-core-dependency-source --input internal/deployment --bundle artifacts/direct-deployment/source-bundle.tar.zst --component-manifest artifacts/direct-deployment/component-manifest.json --digest-output artifacts/direct-deployment/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner direct-deployment --require-all-owner-sources-accounted",
+        "exit_code": 0,
+        "summary": "Fresh source bundle, manifest, and digest packaged successfully from PR HEAD e9cab9929d50e8f2a44dad6429956af889d720fd."
+      }
+    ],
+    "integration_gates": [
+      {
+        "name": "direct-deployment-gate",
+        "source_of_truth": [
+          "docs/design/detailed/11-software-delivery-detailed-design.md:L483-L599",
+          "docs/references/software-delivery/artifacts-release-and-deployment.md:L186-L260",
+          "docs/delivery/acceptance-and-validation.md:L962-L1002"
+        ],
+        "delivery_goal": "Deliver immutable deployment requests, additive reports, observe/cancel/retry and exact Release promotion.",
+        "commands": [
+          {
+            "cmd": "mkdir -p artifacts/direct-deployment && go test -covermode=atomic -coverprofile=artifacts/direct-deployment/coverage.out ./internal/deployment/...",
+            "exit_code": 0
+          },
+          {
+            "cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/direct-deployment/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+            "exit_code": 0
+          },
+          {
+            "cmd": "python3 scripts/release/package_component.py --component direct-deployment --kind platform-core-dependency-source --input internal/deployment --bundle artifacts/direct-deployment/source-bundle.tar.zst --component-manifest artifacts/direct-deployment/component-manifest.json --digest-output artifacts/direct-deployment/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner direct-deployment --require-all-owner-sources-accounted",
+            "exit_code": 0
+          }
+        ],
+        "metrics": {
+          "statement_coverage_percent": 90.0,
+          "declared_artifact_count": 4
+        },
+        "artifacts": [
+          "artifacts/direct-deployment/coverage.out",
+          "artifacts/direct-deployment/source-bundle.tar.zst",
+          "artifacts/direct-deployment/bundle-digest.txt",
+          "artifacts/direct-deployment/component-manifest.json"
+        ]
+      }
+    ],
+    "env_setup": [
+      "cd open-agent-cluster",
+      "Reran all three contract commands after go clean -testcache from source revision e9cab9929d50e8f2a44dad6429956af889d720fd on branch agent/codex-ubuntu-newapi/804a5e38458f with the repository Go toolchain and Python 3."
+    ],
+    "artifact_hashes": {
+      "coverage_out": "sha256:e86b34277fb376f991c61e1a0535ba98746dc4914424d18a1d23c9c7ba7dc4e8",
+      "source_bundle": "sha256:3ca1578f8c78abbb27fcf45f543b02711231c3e9ca9e5c62353efd5a167b7e48",
+      "bundle_digest_file": "sha256:4bca21f21523dfe915bef6a4994cd4beddc3616d3a6b12aabe5637ad64326d55",
+      "component_manifest": "sha256:01894b39e347f8e8b42e48759c4cd5c904e6161ddfec247870b577c2d78d934b"
+    }
+  },
+  "verification_ref": {
+    "comment_id": "01a03df1-869f-7e83-b3a8-528cd10b8aa6",
+    "attachment_id": "01a03df1-8647-71b9-b20f-1bd1593ebd86",
+    "sha256": "b93a891d0de98f793316f110afbb410c64eb922550e0d2f5e0341d7d98a9da24",
+    "bytes": 4291,
+    "filename": "omac-verification-b93a891d0de9.yaml"
+  },
+  "review_verdict": null,
+  "review_comment": null,
+  "machine_feedback": null,
+  "machine_feedback_ref": null,
+  "review_report": null,
+  "review_report_ref": null,
+  "review_subject_digest": null,
+  "review_obligations": [],
+  "review_obligations_ref": null,
+  "review_ledger": {
+    "schema": "omac.review-ledger/v1",
+    "cycles": [
+      {
+        "round": 1,
+        "subject_digest": "8d931ecc11b26d4d5772775bdd74b1833526c846a0dd104f650a72bb766bebcc",
+        "report_digest": "618c019e36c2f442e262a56bf4a5dbd9cf57c53e80e6b60528b7517e0e6446a1",
+        "verdict": "reject",
+        "obligation_results": {
+          "dimension:authority": "fail",
+          "dimension:structure": "fail",
+          "dimension:execution": "fail",
+          "dimension:ownership": "fail",
+          "dimension:evidence": "fail",
+          "dimension:regression": "fail",
+          "integration:direct-deployment-gate": "fail"
+        },
+        "new_count": 7,
+        "fixed_count": 0,
+        "regressed_count": 0,
+        "unchanged_count": 0,
+        "open_count": 7,
+        "prior_open_blocker_ids": [],
+        "open_blocker_ids": [
+          "BLK-1dacd94c1cd7",
+          "BLK-3738fba07c9e",
+          "BLK-3d1dbcdf76f3",
+          "BLK-647b792fa312",
+          "BLK-8dedaad7d686",
+          "BLK-9cd8e07a1cc8",
+          "BLK-cc34e1437294"
+        ],
+        "reported_blocker_ids": [
+          "BLK-1dacd94c1cd7",
+          "BLK-3738fba07c9e",
+          "BLK-3d1dbcdf76f3",
+          "BLK-647b792fa312",
+          "BLK-8dedaad7d686",
+          "BLK-9cd8e07a1cc8",
+          "BLK-cc34e1437294"
+        ],
+        "blocker_facts_schema": "omac.review-cycle-blocker-facts/v1",
+        "blocker_facts": [
+          {
+            "blocker_id": "BLK-1dacd94c1cd7",
+            "root_cause_key": "audit-commit-operation-and-context-not-bound",
+            "obligation_id": "dimension:evidence",
+            "summary": "The atomic persistence validators allow an AuditEvent with a different semantic action or request context than the command being committed.",
+            "evidence": "ActionCommit.Validate checks only generic AuditEvent validity and exact deployment subject (deployment.go:610-635); PromotionCommit and ReportCommit omit the same action/category/outcome/context comparisons (deployment.go:526-557,568-596). CommitAction stores the unchecked event (store.go:97-164). A targeted fixture changed Audit.Action and Audit.RequestContextID to mismatched values and the store accepted the commit.",
+            "required_fix": "Bind each commit kind to its canonical Audit category, action, outcome, RequestContextID, and exact subject at the persistence boundary. Carry the report request context in ReportCommit or validate it before the store, preserve the complete authorization/admission provenance, and add negative tests for every commit kind. Deep-copy audit slices on write and read so the immutable local record cannot be mutated through caller-owned slices.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-3738fba07c9e",
+            "root_cause_key": "timestamp-derived-action-command-collision",
+            "obligation_id": "dimension:structure",
+            "summary": "Observe and Cancel command IDs are derived from action plus now.UnixNano, so two valid action requests for different report-sequence identities can collide when the clock has the same timestamp.",
+            "evidence": "commitAction builds CommandID as deploymentID-action-now.UnixNano() (service.go:363-376). CommitAction rejects an already-used CommandID after the new idempotency key has passed the replay lookup (store.go:109-115,144-149). A targeted fixture using the repository's fixed test clock accepted the first Observe and reproduced ErrDeploymentIdempotency for the next-sequence Observe.",
+            "required_fix": "Use the injected server identity generator or a collision-resistant deterministic identity derived from the canonical action identity, while retaining the action idempotency key as the replay identity. Add a permanent fixed-clock and concurrent-sequence regression proving distinct valid actions do not collide and exact same-key calls still replay.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-3d1dbcdf76f3",
+            "root_cause_key": "cancelling-report-without-cancel-intent",
+            "obligation_id": "dimension:execution",
+            "summary": "AppendReport accepts a DeploymentCancelling report even when the Deployment has no persisted CancelRequested intent, and the resulting state can accept another Cancel command.",
+            "evidence": "DeploymentReport.Validate only requires active-report scheduling fields; it has no Cancelling-to-intent invariant (deployment.go:392-433). AppendReport checks CancelRequested for Cancelled but not Cancelling (store.go:202-216). currentOutcome exposes report-created Cancelling as active and CommitAction checks only record.CancelRequested (store.go:133-142,351-365). A targeted synthetic fixture reproduced both acceptance paths.",
+            "required_fix": "In the store append boundary reject DeploymentCancelling unless the current record has a persisted CancelRequested intent. In Cancel handling reject any new Cancel when the current outcome is already Cancelling, and add a permanent service/store regression proving that no report, audit, or outbox is written for an uncaused Cancelling report.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-647b792fa312",
+            "root_cause_key": "new-state-boundaries-not-regressed",
+            "obligation_id": "dimension:regression",
+            "summary": "The reviewed revision adds recovery and evidence regressions but does not add permanent negative fixtures for an uncaused Cancelling report or a non-selected invalid eligible Release summary.",
+            "evidence": "deployment_test.go and coverage_test.go contain recovery membership and action tests but no append of DeploymentCancelling before CancelRequested and no accepted first-promotion fixture with a wrong-owner or missing-binding non-selected summary.",
+            "required_fix": "Add focused service/store regressions for both cases, assert rejected inputs leave reports, audits, outbox, and detail candidates unchanged, and keep those tests in the declared direct-deployment command.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-8dedaad7d686",
+            "root_cause_key": "direct-deployment-gate-does-not-close-new-state-semantics",
+            "obligation_id": "integration:direct-deployment-gate",
+            "summary": "The declared integration gate remains a package test/coverage/source packaging gate and does not independently assert the DD-015/DD-016 invariants.",
+            "evidence": "The exact commands passed at 90.4% coverage and produced four artifacts, but no command or permanent test currently asserts the two negative paths.",
+            "required_fix": "Add the DD-015 and DD-016 business fixtures to the scoped package gate, retain the package/coverage/source-lineage checks, and fail the gate if a Cancelling report lacks a Cancel intent or an eligible candidate lacks complete current-target binding.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-9cd8e07a1cc8",
+            "root_cause_key": "promotion-project-scope-not-bound-to-request-context",
+            "obligation_id": "dimension:ownership",
+            "summary": "StartPromotion accepts PromotionFacts whose Project.OwnerScopeID differs from the authenticated RequestContext.ScopeID.",
+            "evidence": "PromotionFacts.Validate checks ProjectID and revision, target membership, and driver/credential facts but never compares Project.OwnerScopeID with the command context (deployment.go:238-291). StartPromotion passes the context to a preferred resolver but does not perform the ownership check before CommitPromotion (service.go:73-86,93-148). A targeted fixture changed only OwnerScopeID and the promotion was persisted.",
+            "required_fix": "Bind the resolved Project owner scope to the authenticated request context before replay or commit, and require the same binding in the resolver and authorization evidence path. Add a negative initial-promotion test that proves a scope mismatch writes no Deployment, CommandRecord, AuditEvent, or Outbox entry.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-cc34e1437294",
+            "root_cause_key": "eligible-release-view-not-target-bound",
+            "obligation_id": "dimension:authority",
+            "summary": "Eligible Release summaries are optional-field values and are copied into the immutable Deployment record/detail view without requiring complete Project and target ownership binding for every entry.",
+            "evidence": "ReleaseSummary.Validate permits all target-binding fields to be empty (deployment.go:715-739), PromotionFacts.Validate stores all shape-valid summaries (deployment.go:286-290), and GetDeploymentDetail returns them directly (service.go:327-345). A targeted synthetic fixture reproduced an unbound summary in the detail view.",
+            "required_fix": "Make target-bound fields mandatory for direct-deployment ReleaseSummary, or introduce a target-bound eligible-candidate type. Before persistence or return, validate every summary against current Project, target configuration, driver, concurrency key, exact Release content digest, and expected digest set. Add a negative fixture for a non-selected wrong-owner or missing-binding summary.",
+            "status": "open",
+            "classification": "new"
+          }
+        ]
+      },
+      {
+        "round": 2,
+        "subject_digest": "650a50a8c0d66a64036638edc43220fc20841523bab1a894ca36b6337d7a789d",
+        "report_digest": "49aee2933a8faef39847f886ba17cf3ce8bdcf2aac9850df2cb2cd45d0093999",
+        "verdict": "reject",
+        "obligation_results": {
+          "dimension:authority": "fail",
+          "dimension:structure": "fail",
+          "dimension:execution": "fail",
+          "dimension:ownership": "fail",
+          "dimension:evidence": "fail",
+          "dimension:regression": "fail",
+          "integration:direct-deployment-gate": "fail"
+        },
+        "new_count": 7,
+        "fixed_count": 6,
+        "regressed_count": 0,
+        "unchanged_count": 1,
+        "open_count": 8,
+        "prior_open_blocker_ids": [
+          "BLK-1dacd94c1cd7",
+          "BLK-3738fba07c9e",
+          "BLK-3d1dbcdf76f3",
+          "BLK-647b792fa312",
+          "BLK-8dedaad7d686",
+          "BLK-9cd8e07a1cc8",
+          "BLK-cc34e1437294"
+        ],
+        "open_blocker_ids": [
+          "BLK-0ace36fd5959",
+          "BLK-18f61e204cdc",
+          "BLK-7930378f27f9",
+          "BLK-beba768c874f",
+          "BLK-c3310843f6f9",
+          "BLK-cc34e1437294",
+          "BLK-cd8cdd2552a5",
+          "BLK-f0235c9460b7"
+        ],
+        "reported_blocker_ids": [
+          "BLK-0ace36fd5959",
+          "BLK-18f61e204cdc",
+          "BLK-7930378f27f9",
+          "BLK-beba768c874f",
+          "BLK-c3310843f6f9",
+          "BLK-cc34e1437294",
+          "BLK-cd8cdd2552a5",
+          "BLK-f0235c9460b7"
+        ],
+        "blocker_facts_schema": "omac.review-cycle-blocker-facts/v1",
+        "blocker_facts": [
+          {
+            "blocker_id": "BLK-0ace36fd5959",
+            "root_cause_key": "archived-project-can-start-direct-promotion",
+            "obligation_id": "dimension:authority",
+            "summary": "StartPromotion accepts a Project whose archived_at is non-null.",
+            "evidence": "PromotionFacts.Validate checks ProjectID, revision, promotability, target, credential, and driver facts at deployment.go:238-297 but never checks Project.ArchivedAt. StartPromotionWithFacts performs only the owner-scope check before replay/commit at service.go:93-112. The Project contract explicitly prohibits direct Promotion when archived at docs/references/project-and-team/project-and-agent-team.md:16.",
+            "required_fix": "Fail closed for a non-nil Project.ArchivedAt on a new promotion before commit, while preserving the normal idempotent replay semantics for an already accepted command if the product contract requires replay after archival. Add a no-write archived-project regression.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-18f61e204cdc",
+            "root_cause_key": "promotion-replay-does-not-compare-computed-request-digest",
+            "obligation_id": "dimension:structure",
+            "summary": "Same-key promotion replay can return the old Deployment even when the newly resolved immutable target/release facts produce a different request digest.",
+            "evidence": "LookupPromotionByRequest at store.go:277-300 does not compare a stored request digest or complete immutable request. StartPromotionWithFacts performs that lookup before building the new request digest at service.go:103-111, computes the new request at service.go:120-145, and returns the old response at service.go:147-151 without comparing the two digests. The idempotency contract requires same-key/same-request replay and rejection of different content at docs/design/detailed/03-workflow-platform-core-detailed-design.md:101-109.",
+            "required_fix": "Compare the stored immutable request digest (and all request identity fields) with the freshly resolved request before returning a replay, or perform replay lookup only after canonical request construction. Add a fixed-facts mutation regression proving changed target/release identity returns ErrDeploymentIdempotency and writes nothing.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-1dacd94c1cd7",
+            "root_cause_key": "audit-commit-operation-and-context-not-bound",
+            "obligation_id": "dimension:evidence",
+            "summary": "The atomic persistence validators allow an AuditEvent with a different semantic action or request context than the command being committed.",
+            "evidence": "ActionCommit.Validate checks only generic AuditEvent validity and exact deployment subject (deployment.go:610-635); PromotionCommit and ReportCommit omit the same action/category/outcome/context comparisons (deployment.go:526-557,568-596). CommitAction stores the unchecked event (store.go:97-164). A targeted fixture changed Audit.Action and Audit.RequestContextID to mismatched values and the store accepted the commit.",
+            "required_fix": "Bind each commit kind to its canonical Audit category, action, outcome, RequestContextID, and exact subject at the persistence boundary. Carry the report request context in ReportCommit or validate it before the store, preserve the complete authorization/admission provenance, and add negative tests for every commit kind. Deep-copy audit slices on write and read so the immutable local record cannot be mutated through caller-owned slices.",
+            "status": "fixed",
+            "classification": "fixed",
+            "last_evidence": "PromotionCommit, ReportCommit, and ActionCommit now route their AuditEvent through validateCommitAudit at deployment.go:744-763, binding canonical category/action/outcome/request-context/subject. ReportCommit carries the report request context at deployment.go:568-603, and the store clones audit control slices on write/read at store.go:460-467."
+          },
+          {
+            "blocker_id": "BLK-3738fba07c9e",
+            "root_cause_key": "timestamp-derived-action-command-collision",
+            "obligation_id": "dimension:structure",
+            "summary": "Observe and Cancel command IDs are derived from action plus now.UnixNano, so two valid action requests for different report-sequence identities can collide when the clock has the same timestamp.",
+            "evidence": "commitAction builds CommandID as deploymentID-action-now.UnixNano() (service.go:363-376). CommitAction rejects an already-used CommandID after the new idempotency key has passed the replay lookup (store.go:109-115,144-149). A targeted fixture using the repository's fixed test clock accepted the first Observe and reproduced ErrDeploymentIdempotency for the next-sequence Observe.",
+            "required_fix": "Use the injected server identity generator or a collision-resistant deterministic identity derived from the canonical action identity, while retaining the action idempotency key as the replay identity. Add a permanent fixed-clock and concurrent-sequence regression proving distinct valid actions do not collide and exact same-key calls still replay.",
+            "status": "fixed",
+            "classification": "fixed",
+            "last_evidence": "Action command IDs now come from the injected server ID generator at service.go:369-382 rather than a timestamp. The permanent TestActionCommandIDsRemainUniqueAcrossReportSequences fixture covers distinct report sequences and exact replay."
+          },
+          {
+            "blocker_id": "BLK-3d1dbcdf76f3",
+            "root_cause_key": "cancelling-report-without-cancel-intent",
+            "obligation_id": "dimension:execution",
+            "summary": "AppendReport accepts a DeploymentCancelling report even when the Deployment has no persisted CancelRequested intent, and the resulting state can accept another Cancel command.",
+            "evidence": "DeploymentReport.Validate only requires active-report scheduling fields; it has no Cancelling-to-intent invariant (deployment.go:392-433). AppendReport checks CancelRequested for Cancelled but not Cancelling (store.go:202-216). currentOutcome exposes report-created Cancelling as active and CommitAction checks only record.CancelRequested (store.go:133-142,351-365). A targeted synthetic fixture reproduced both acceptance paths.",
+            "required_fix": "In the store append boundary reject DeploymentCancelling unless the current record has a persisted CancelRequested intent. In Cancel handling reject any new Cancel when the current outcome is already Cancelling, and add a permanent service/store regression proving that no report, audit, or outbox is written for an uncaused Cancelling report.",
+            "status": "fixed",
+            "classification": "fixed",
+            "last_evidence": "AppendReport rejects both Cancelling and Cancelled reports without a persisted CancelRequested intent at store.go:217-219. CommitAction and CancelDeployment reject a second cancellation while Cancelling at store.go:133-145 and service.go:267-269. TestCancellingReportRequiresPersistedCancelIntent covers the no-write path."
+          },
+          {
+            "blocker_id": "BLK-647b792fa312",
+            "root_cause_key": "new-state-boundaries-not-regressed",
+            "obligation_id": "dimension:regression",
+            "summary": "The reviewed revision adds recovery and evidence regressions but does not add permanent negative fixtures for an uncaused Cancelling report or a non-selected invalid eligible Release summary.",
+            "evidence": "deployment_test.go and coverage_test.go contain recovery membership and action tests but no append of DeploymentCancelling before CancelRequested and no accepted first-promotion fixture with a wrong-owner or missing-binding non-selected summary.",
+            "required_fix": "Add focused service/store regressions for both cases, assert rejected inputs leave reports, audits, outbox, and detail candidates unchanged, and keep those tests in the declared direct-deployment command.",
+            "status": "fixed",
+            "classification": "fixed",
+            "last_evidence": "Focused permanent regressions were added for owner/missing target-bound eligible summaries, uncaused Cancelling, fixed-clock action identity, and commit audit bindings in deployment_test.go:1048-1256."
+          },
+          {
+            "blocker_id": "BLK-7930378f27f9",
+            "root_cause_key": "governance-evidence-not-bound-to-operation-permission",
+            "obligation_id": "dimension:ownership",
+            "summary": "The deployment boundary accepts any generic Allow/Admit decision for the action digest instead of proving the required operation-specific permission and request-context evaluation.",
+            "evidence": "GovernanceEvidence.Validate at deployment.go:199-221 checks decision shape, effect, and request digest only. StartPromotionWithFacts, ObserveDeployment, CancelDeployment, and SubmitDeploymentReport call that generic method at service.go:144, 215, 256, and 297 without checking the expected grant/action. NewAllowedGovernance always supplies a release.promote grant, including test action paths at deployment_test.go:264-271. The required operation-specific permissions are documented at docs/design/detailed/03-workflow-platform-core-detailed-design.md:93 and 115-116 and docs/design/detailed/09-governance-and-security-detailed-design.md:505-507.",
+            "required_fix": "Use a typed authorization/admission evaluator or add an explicit expected operation/context binding to the evidence contract. Require the exact grant for each command, bind the evaluation to the authenticated Principal/Scope and owner subject, and verify the expected direct-deployment admission checks before any commit.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-8dedaad7d686",
+            "root_cause_key": "direct-deployment-gate-does-not-close-new-state-semantics",
+            "obligation_id": "integration:direct-deployment-gate",
+            "summary": "The declared integration gate remains a package test/coverage/source packaging gate and does not independently assert the DD-015/DD-016 invariants.",
+            "evidence": "The exact commands passed at 90.4% coverage and produced four artifacts, but no command or permanent test currently asserts the two negative paths.",
+            "required_fix": "Add the DD-015 and DD-016 business fixtures to the scoped package gate, retain the package/coverage/source-lineage checks, and fail the gate if a Cancelling report lacks a Cancel intent or an eligible candidate lacks complete current-target binding.",
+            "status": "fixed",
+            "classification": "fixed",
+            "last_evidence": "The required negative fixtures are inside internal/deployment and are executed by the exact declared package gate; the source packaging and coverage checks remain present and pass."
+          },
+          {
+            "blocker_id": "BLK-9cd8e07a1cc8",
+            "root_cause_key": "promotion-project-scope-not-bound-to-request-context",
+            "obligation_id": "dimension:ownership",
+            "summary": "StartPromotion accepts PromotionFacts whose Project.OwnerScopeID differs from the authenticated RequestContext.ScopeID.",
+            "evidence": "PromotionFacts.Validate checks ProjectID and revision, target membership, and driver/credential facts but never compares Project.OwnerScopeID with the command context (deployment.go:238-291). StartPromotion passes the context to a preferred resolver but does not perform the ownership check before CommitPromotion (service.go:73-86,93-148). A targeted fixture changed only OwnerScopeID and the promotion was persisted.",
+            "required_fix": "Bind the resolved Project owner scope to the authenticated request context before replay or commit, and require the same binding in the resolver and authorization evidence path. Add a negative initial-promotion test that proves a scope mismatch writes no Deployment, CommandRecord, AuditEvent, or Outbox entry.",
+            "status": "fixed",
+            "classification": "fixed",
+            "last_evidence": "StartPromotionWithFacts rejects a resolved Project whose OwnerScopeID differs from the authenticated RequestContext.ScopeID before replay or any commit at service.go:100-102. The permanent test proves deployment, audit, and outbox remain absent."
+          },
+          {
+            "blocker_id": "BLK-beba768c874f",
+            "root_cause_key": "append-only-physical-identities-can-be-overwritten",
+            "obligation_id": "dimension:evidence",
+            "summary": "Action/report commits do not reject reused AuditEventID values, and the promotion raw CommandID collision check is ineffective because that key is never indexed.",
+            "evidence": "CommitPromotion checks store.commands[commit.Command.CommandID] at store.go:67-69 but writes only the promotion and composite command keys at store.go:80-81. CommitAction writes its audit without an existing-ID check at store.go:147-166, and AppendReport does the same at store.go:229-242. AuditEventID is only shape-validated by validateCommitAudit; no physical collision rule covers these paths. The comparable Preview commit store rejects command, audit, and outbox identity reuse at internal/softwaredelivery/preview/decision_store.go:269-296.",
+            "required_fix": "Enforce physical identity uniqueness for every commit kind before any mutation, including raw CommandID, AuditEventID, report identity, and OutboxEntry ID. Permit only a complete exact idempotent replay to return the existing record; never overwrite an existing immutable evidence row.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-c3310843f6f9",
+            "root_cause_key": "target-snapshot-security-and-configuration-not-revalidated",
+            "obligation_id": "dimension:execution",
+            "summary": "DeploymentTarget validation permits missing security requirements and PromotionFacts compares only an opaque configuration digest, driver, and concurrency key rather than recomputing/binding the complete current target snapshot.",
+            "evidence": "DeploymentTarget.SecurityRequirements is a nullable pointer and is accepted when nil at deployment.go:141-189. The current Project comparison at deployment.go:266-278 checks only TargetConfigurationDigest, DeploymentDriver, and ConcurrencyKey; deploymentRequestDigest at deployment.go:886-912 includes only the opaque digest and omits the target security/candidate fields. The target contract requires security requirements and a digest covering endpoint, environment, credential, and security constraints at docs/references/software-delivery/artifacts-release-and-deployment.md:190-200 and docs/references/project-and-team/project-and-agent-team.md:140-144.",
+            "required_fix": "Require and validate the complete security value, recompute the canonical target configuration digest from the current binding (or compare the complete binding value), bind target type/driver compatibility, and make the exact target facts used by the host part of the immutable request identity. Add no-write mutations for endpoint, credential, and security facts.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-cc34e1437294",
+            "root_cause_key": "eligible-release-view-not-target-bound",
+            "obligation_id": "dimension:authority",
+            "summary": "Eligible history is now bound to the current Project/target shape but not to a known immutable Release. The detail view can still advertise a fabricated historical candidate.",
+            "evidence": "deployment.go:286-295 and 555-561 validate only summary shape and target fields; service.go:333-340 returns the stored list unchanged. The authoritative candidate requirements are documented at docs/design/detailed/11-software-delivery-detailed-design.md:565 and docs/references/software-delivery/artifacts-release-and-deployment.md:259.",
+            "required_fix": "Resolve each summary through the immutable Release source and verify the exact Release content digest, source workflow key, expected digest set, current Project/target binding, and user eligibility before persistence or return. Add a permanent accepted-promotion fixture with a wrong-owner or missing-binding non-selected summary that must fail the gate.",
+            "status": "open",
+            "classification": "unchanged",
+            "last_evidence": "The patch makes target-binding fields mandatory and compares them, but it still does not validate ReleaseSummary.ReleaseID/content digest/expected digests against an authoritative Release before persistence or detail return. PromotionFacts.Validate and PromotionCommit.Validate only call ReleaseSummary.Validate plus summaryMatchesTarget; no Release resolver or current immutable Release lookup exists for non-selected summaries."
+          },
+          {
+            "blocker_id": "BLK-cd8cdd2552a5",
+            "root_cause_key": "residual-direct-deployment-invariants-not-regressed",
+            "obligation_id": "dimension:regression",
+            "summary": "The permanent regression suite does not cover the remaining archived Project, full target snapshot/security, exact eligible Release, operation-specific authorization, physical identity, or replay-digest invariants identified in this review.",
+            "evidence": "deployment_test.go:1048-1256 adds the prior round's scope, target-shape, cancellation, action-ID, audit-binding, and defensive-copy fixtures, but contains no focused test for the residual paths listed above.",
+            "required_fix": "Add permanent no-write regressions for archived promotion, target snapshot/security drift, unknown eligible Release identity, wrong operation grant, audit/command physical identity reuse, and same-key request-digest drift; keep them under the declared direct-deployment gate.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-f0235c9460b7",
+            "root_cause_key": "direct-deployment-gate-semantically-incomplete",
+            "obligation_id": "integration:direct-deployment-gate",
+            "summary": "The direct-deployment integration gate is mechanically reproducible but does not establish all required fail-closed semantics at the current head.",
+            "evidence": "The three exact commands exit 0 and produce four artifacts, while the semantic findings BLK-cc34e1437294 and DD-022 through DD-027 remain open. The gate therefore needs business assertions in addition to mechanical package/coverage/lineage checks.",
+            "required_fix": "Retain the exact package, threshold, and source-lineage commands, but make the gate fail on every residual business invariant and regenerate the verification artifacts after the regressions are added.",
+            "status": "open",
+            "classification": "new"
+          }
+        ]
+      },
+      {
+        "round": 3,
+        "subject_digest": "0436e84ecf13396e607a4d43260257177f979d48f078c5a17e17bf6b10534eb1",
+        "report_digest": "092ecedbe926e0d53e1adf6f27773064999b395b6dd54557062dc3c3eb4aed59",
+        "verdict": "reject",
+        "obligation_results": {
+          "dimension:authority": "fail",
+          "dimension:structure": "fail",
+          "dimension:execution": "fail",
+          "dimension:ownership": "fail",
+          "dimension:evidence": "fail",
+          "dimension:regression": "fail",
+          "integration:direct-deployment-gate": "fail"
+        },
+        "new_count": 5,
+        "fixed_count": 4,
+        "regressed_count": 0,
+        "unchanged_count": 0,
+        "open_count": 9,
+        "prior_open_blocker_ids": [
+          "BLK-0ace36fd5959",
+          "BLK-18f61e204cdc",
+          "BLK-7930378f27f9",
+          "BLK-beba768c874f",
+          "BLK-c3310843f6f9",
+          "BLK-cc34e1437294",
+          "BLK-cd8cdd2552a5",
+          "BLK-f0235c9460b7"
+        ],
+        "open_blocker_ids": [
+          "BLK-5ef93dc46b6d",
+          "BLK-7930378f27f9",
+          "BLK-a72dc860e66f",
+          "BLK-c3310843f6f9",
+          "BLK-cc34e1437294",
+          "BLK-de5db347f8ec",
+          "BLK-e3b6b6d1c5db",
+          "BLK-f0235c9460b7",
+          "BLK-f6b501e3bbac"
+        ],
+        "reported_blocker_ids": [
+          "BLK-5ef93dc46b6d",
+          "BLK-7930378f27f9",
+          "BLK-a72dc860e66f",
+          "BLK-c3310843f6f9",
+          "BLK-cc34e1437294",
+          "BLK-de5db347f8ec",
+          "BLK-e3b6b6d1c5db",
+          "BLK-f0235c9460b7",
+          "BLK-f6b501e3bbac"
+        ],
+        "blocker_facts_schema": "omac.review-cycle-blocker-facts/v1",
+        "blocker_facts": [
+          {
+            "blocker_id": "BLK-0ace36fd5959",
+            "root_cause_key": "archived-project-can-start-direct-promotion",
+            "obligation_id": "dimension:authority",
+            "summary": "StartPromotion accepts a Project whose archived_at is non-null.",
+            "evidence": "PromotionFacts.Validate checks ProjectID, revision, promotability, target, credential, and driver facts at deployment.go:238-297 but never checks Project.ArchivedAt. StartPromotionWithFacts performs only the owner-scope check before replay/commit at service.go:93-112. The Project contract explicitly prohibits direct Promotion when archived at docs/references/project-and-team/project-and-agent-team.md:16.",
+            "required_fix": "Fail closed for a non-nil Project.ArchivedAt on a new promotion before commit, while preserving the normal idempotent replay semantics for an already accepted command if the product contract requires replay after archival. Add a no-write archived-project regression.",
+            "status": "fixed",
+            "classification": "fixed",
+            "last_evidence": "StartPromotionWithFacts returns project.ErrProjectArchived for a new request before creating the Deployment at service.go:166-177. The permanent TestArchivedProjectRejectsNewPromotionWithoutWrites fixture covers no-write behavior and confirms an already accepted command can still replay after archival."
+          },
+          {
+            "blocker_id": "BLK-18f61e204cdc",
+            "root_cause_key": "promotion-replay-does-not-compare-computed-request-digest",
+            "obligation_id": "dimension:structure",
+            "summary": "Same-key promotion replay can return the old Deployment even when the newly resolved immutable target/release facts produce a different request digest.",
+            "evidence": "LookupPromotionByRequest at store.go:277-300 does not compare a stored request digest or complete immutable request. StartPromotionWithFacts performs that lookup before building the new request digest at service.go:103-111, computes the new request at service.go:120-145, and returns the old response at service.go:147-151 without comparing the two digests. The idempotency contract requires same-key/same-request replay and rejection of different content at docs/design/detailed/03-workflow-platform-core-detailed-design.md:101-109.",
+            "required_fix": "Compare the stored immutable request digest (and all request identity fields) with the freshly resolved request before returning a replay, or perform replay lookup only after canonical request construction. Add a fixed-facts mutation regression proving changed target/release identity returns ErrDeploymentIdempotency and writes nothing.",
+            "status": "fixed",
+            "classification": "fixed",
+            "last_evidence": "StartPromotionWithFacts computes the canonical request before the final replay and rejects a found replay when samePromotionRequest differs at service.go:150-173. TestPromotionReplayRejectsImmutableFactDigestDriftWithoutWrites covers a changed immutable capability fact and verifies request, outbox, and audit state remain unchanged."
+          },
+          {
+            "blocker_id": "BLK-5ef93dc46b6d",
+            "root_cause_key": "active-report-schedules-observe-without-capability",
+            "obligation_id": "dimension:execution",
+            "summary": "Active reports always create an automatic Observe outbox entry even when the immutable target says ObserveSupported=false.",
+            "evidence": "SubmitDeploymentReport unconditionally builds AutoObserve for every active outcome at service.go:342-355. AppendReport stores it at store.go:261-270 without checking record.Request.ObserveSupported, while ObserveDeployment rejects unsupported targets at service.go:243-245 and allowedActions marks the action unavailable at service.go:592-604. No test covers this branch.",
+            "required_fix": "Require Observe capability during direct-driver admission, or reject an active report before persistence when the fixed target cannot observe; do not create an unexecutable pending intent. Add a no-write/valid-lifecycle fixture for ObserveSupported=false.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-7930378f27f9",
+            "root_cause_key": "governance-evidence-not-bound-to-operation-permission",
+            "obligation_id": "dimension:ownership",
+            "summary": "Exact grant matching was added, but authorization/admission evidence is still a caller-constructible generic decision rather than proof from the authoritative evaluators for this direct-deployment operation.",
+            "evidence": "GovernanceEvidence.ValidateFor at deployment.go:293-332 checks string and subject bindings plus a grant key, but ServiceDependencies at service.go:24-32 has no authorization/admission evaluator. NewAllowedGovernance at deployment.go:1142-1181 emits all four grants and only a deployment-target check. The real admission engine requires six named checks at internal/admission/engine.go:34-41 and :76-115, yet no deployment path constructs or validates an ExecutionAdmissionRequest against that engine.",
+            "required_fix": "Inject typed authorization and admission ports (or opaque signed decisions) and bind them to the complete request, principal/scope, operation, owner, target type/driver, credential, and concurrency facts. Require the exact evaluator-produced check set before commit, move NewAllowedGovernance to _test.go, and add a negative fixture for incomplete/synthetic admission provenance.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "ValidateFor now requires release.promote, deployment.observe, deployment.cancel, or deployment.report as appropriate, so the specific wrong-grant regression is fixed. The same root remains deeper because the decision/binding is still self-attested, NewAllowedGovernance is exported production code, and the admission decision is not tied to the typed request/evaluator or its complete direct-deployment checks."
+          },
+          {
+            "blocker_id": "BLK-a72dc860e66f",
+            "root_cause_key": "governance-evidence-not-materialized-in-audit",
+            "obligation_id": "dimension:evidence",
+            "summary": "Audit rows do not preserve the complete operation/owner binding or prove that the typed direct-deployment admission request was evaluated.",
+            "evidence": "buildAuditEvent at service.go:615-666 copies decision IDs, grants, checks, and constraints but not GovernanceBinding. ValidateFor checks the caller-provided binding in memory; no persisted field or typed admission request digest links it to internal/admission/engine.go's required check set. NewAllowedGovernance remains an exported production helper that can construct the evidence shape.",
+            "required_fix": "Persist a canonical, complete evidence envelope or an immutable evidence reference containing operation, owner, request context, target, and evaluator decision identities; validate it against the typed admission request before commit and remove the production fixture constructor.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-beba768c874f",
+            "root_cause_key": "append-only-physical-identities-can-be-overwritten",
+            "obligation_id": "dimension:evidence",
+            "summary": "Action/report commits do not reject reused AuditEventID values, and the promotion raw CommandID collision check is ineffective because that key is never indexed.",
+            "evidence": "CommitPromotion checks store.commands[commit.Command.CommandID] at store.go:67-69 but writes only the promotion and composite command keys at store.go:80-81. CommitAction writes its audit without an existing-ID check at store.go:147-166, and AppendReport does the same at store.go:229-242. AuditEventID is only shape-validated by validateCommitAudit; no physical collision rule covers these paths. The comparable Preview commit store rejects command, audit, and outbox identity reuse at internal/softwaredelivery/preview/decision_store.go:269-296.",
+            "required_fix": "Enforce physical identity uniqueness for every commit kind before any mutation, including raw CommandID, AuditEventID, report identity, and OutboxEntry ID. Permit only a complete exact idempotent replay to return the existing record; never overwrite an existing immutable evidence row.",
+            "status": "fixed",
+            "classification": "fixed",
+            "last_evidence": "CommitPromotion, CommitAction, and AppendReport use global physical identity indexes for command, report, audit, and outbox identities at store.go:74-87, 162-169, and 214-269. The permanent TestStoreRejectsPhysicalIdentityCollisions fixture covers command and audit collisions and verifies rejected report evidence leaves the record unchanged."
+          },
+          {
+            "blocker_id": "BLK-c3310843f6f9",
+            "root_cause_key": "target-snapshot-security-and-configuration-not-revalidated",
+            "obligation_id": "dimension:execution",
+            "summary": "The target snapshot is now self-consistent, but the boundary still accepts incompatible target types/drivers and caller-supplied capability/readiness facts without an authoritative compatibility check.",
+            "evidence": "DeploymentTarget.Validate at deployment.go:175-179 only calls ExternalTargetCandidate.Validate and ExactDeploymentDriverRef.Validate; the shared candidate validator accepts any non-empty TargetType. The Project comparison at deployment.go:399-420 compares the opaque driver value and trusts DriverActive, DriverSDKChecked, and CredentialReady; no target-type/driver mapping or ExtensionCatalog/SDK lookup is present.",
+            "required_fix": "Resolve the exact active ExtensionPackage from ExtensionCatalog for the current target type and policy, verify its SDK compatibility and capability set, and bind that result to the current Project target snapshot. Reject unsupported target types or driver pairings and derive readiness from authoritative ports rather than booleans supplied by the caller.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "Missing security requirements and stale endpoint/credential/security facts are now rejected by DeploymentTarget.Validate at deployment.go:194-208, and target snapshot fields are included in the request comparison. The root is not fully closed: TargetType is only non-empty, the driver is only shape-validated, capability/readiness facts are caller-supplied, and no authoritative target/ExtensionCatalog or typed admission check proves compatibility."
+          },
+          {
+            "blocker_id": "BLK-cc34e1437294",
+            "root_cause_key": "eligible-release-view-not-target-bound",
+            "obligation_id": "dimension:authority",
+            "summary": "Eligible history is checked against an immutable source only when the resolver-owned slice is empty; a non-empty caller-supplied resolved slice can still make a fabricated historical Release appear eligible.",
+            "evidence": "service.go:504 assigns facts.ResolvedEligibleReleases directly and enters the source lookup only at len(resolved)==0. The subsequent checks at service.go:524-535 validate the supplied objects but cannot establish source authority. GetDeploymentDetail at service.go:375-393 copies the stored summaries without a source or permission check; the tests only exercise the empty-resolved unknown-source path at deployment_test.go:1361-1380.",
+            "required_fix": "Always resolve every summary through an injected immutable Release source and compare ID, content digest, source Workflow, and expected digest set; do not treat a public facts field as proof of provenance. Evaluate current user eligibility for each candidate before persistence or detail return and add a fixture where a non-empty supplied resolved slice disagrees with the source.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "The normal empty-ResolvedEligibleReleases path now resolves each summary through ImmutableReleaseSource and compares exact Release identity and digests at service.go:504-535. The same function intentionally trusts any non-empty ResolvedEligibleReleases and skips that source, and detail still returns stored summaries without current eligibility authorization. The historical-candidate authority root is therefore deeper, not fixed."
+          },
+          {
+            "blocker_id": "BLK-cd8cdd2552a5",
+            "root_cause_key": "residual-direct-deployment-invariants-not-regressed",
+            "obligation_id": "dimension:regression",
+            "summary": "The permanent regression suite does not cover the remaining archived Project, full target snapshot/security, exact eligible Release, operation-specific authorization, physical identity, or replay-digest invariants identified in this review.",
+            "evidence": "deployment_test.go:1048-1256 adds the prior round's scope, target-shape, cancellation, action-ID, audit-binding, and defensive-copy fixtures, but contains no focused test for the residual paths listed above.",
+            "required_fix": "Add permanent no-write regressions for archived promotion, target snapshot/security drift, unknown eligible Release identity, wrong operation grant, audit/command physical identity reuse, and same-key request-digest drift; keep them under the declared direct-deployment gate.",
+            "status": "fixed",
+            "classification": "fixed",
+            "last_evidence": "The previously requested permanent fixtures are present under the exact package gate: archive rejection (deployment_test.go:1292-1325), target drift (1327-1359), unknown immutable Release (1361-1380), operation grant (1382-1437), physical identity (1439-1504), and same-key digest drift (1506-1537). The new gaps found in this cycle are separate from that prior list."
+          },
+          {
+            "blocker_id": "BLK-de5db347f8ec",
+            "root_cause_key": "immutable-recovery-candidate-not-part-of-verified-request",
+            "obligation_id": "dimension:structure",
+            "summary": "The accepted Deployment request and its idempotency digest do not carry the verified eligible-candidate set or a candidate-set evidence digest.",
+            "evidence": "DeploymentRequest and deploymentRequestDigest at deployment.go:436-515 and :1091-1119 contain no eligible-candidate field or digest. The service persists facts.EligibleReleases separately at service.go:210-216, while source validation is optional through the public resolved slice at service.go:504-535. The current tests do not assert candidate-set identity across replay.",
+            "required_fix": "Resolve and authorize the complete candidate set before commit, persist its canonical digest/evidence with the Deployment record, and include it in replay and audit consistency checks without making mutable candidates part of the user request.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-e3b6b6d1c5db",
+            "root_cause_key": "current-direct-deployment-gaps-not-regressed",
+            "obligation_id": "dimension:regression",
+            "summary": "The permanent suite does not guard the current source-bypass, structure, permission, compatibility, and unsupported-Observe paths.",
+            "evidence": "The newly added tests at deployment_test.go:1292-1537 cover the previous six review themes, but no test supplies a non-empty ResolvedEligibleReleases slice while the source rejects it, no test rejects an invalid TargetType/driver pairing, no detail-query authorization test exists, and no active report tests ObserveSupported=false.",
+            "required_fix": "Add focused no-write and user-visible regressions for each remaining path and keep them under the exact direct-deployment gate.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-f0235c9460b7",
+            "root_cause_key": "direct-deployment-gate-semantically-incomplete",
+            "obligation_id": "integration:direct-deployment-gate",
+            "summary": "The direct-deployment gate is mechanically reproducible but does not fail on all current semantic safety paths.",
+            "evidence": "The exact package command, threshold assertion, and packaging command all exit 0. The permanent suite has no assertions for the non-empty ResolvedEligibleReleases source bypass, invalid target type/driver pairing, unauthorized detail query, or active report with ObserveSupported=false.",
+            "required_fix": "Keep the existing three mechanical commands, add business fixtures for every listed path, and make the scoped gate fail closed when any current target, authority, permission, or outbox invariant is violated.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "The exact three-command gate is green and its four artifacts are current, but the semantic boundary is still incomplete for the unresolved candidate source bypass, target/driver compatibility, permission-aware detail query, and unsupported automatic Observe scheduling. Mechanical coverage and packaging do not close these paths."
+          },
+          {
+            "blocker_id": "BLK-f6b501e3bbac",
+            "root_cause_key": "deployment-detail-query-not-authorization-aware",
+            "obligation_id": "dimension:ownership",
+            "summary": "GetDeploymentDetail returns the full deployment request and calculates allowed actions without a RequestContext or authorization evaluation.",
+            "evidence": "GetDeploymentDetail has signature (ctx, deploymentID) and builds the full Request, EligibleReleases, Reports, and AllowedActions at service.go:362-394. allowedActions at service.go:592-612 tests only outcome, capability, and candidate count. The authoritative design requires allowed_actions to combine outcome, Executor capability, permission, and Policy at docs/design/detailed/11-software-delivery-detailed-design.md:564-566.",
+            "required_fix": "Add a typed authorized query context/evaluator, filter sensitive request fields and candidate summaries by the caller's Scope/permission, and calculate each action using the current exact grant and policy. Add a no-leak fixture for a principal without observe/cancel/recovery grants.",
+            "status": "open",
+            "classification": "new"
+          }
+        ]
+      }
+    ],
+    "blockers": [
+      {
+        "blocker_id": "BLK-0ace36fd5959",
+        "root_cause_key": "archived-project-can-start-direct-promotion",
+        "obligation_id": "dimension:authority",
+        "summary": "StartPromotion accepts a Project whose archived_at is non-null.",
+        "evidence": "PromotionFacts.Validate checks ProjectID, revision, promotability, target, credential, and driver facts at deployment.go:238-297 but never checks Project.ArchivedAt. StartPromotionWithFacts performs only the owner-scope check before replay/commit at service.go:93-112. The Project contract explicitly prohibits direct Promotion when archived at docs/references/project-and-team/project-and-agent-team.md:16.",
+        "required_fix": "Fail closed for a non-nil Project.ArchivedAt on a new promotion before commit, while preserving the normal idempotent replay semantics for an already accepted command if the product contract requires replay after archival. Add a no-write archived-project regression.",
+        "status": "fixed",
+        "classification": "fixed",
+        "first_seen_round": 2,
+        "last_seen_round": 3,
+        "seen_count": 1,
+        "last_evidence": "StartPromotionWithFacts returns project.ErrProjectArchived for a new request before creating the Deployment at service.go:166-177. The permanent TestArchivedProjectRejectsNewPromotionWithoutWrites fixture covers no-write behavior and confirms an already accepted command can still replay after archival."
+      },
+      {
+        "blocker_id": "BLK-18f61e204cdc",
+        "root_cause_key": "promotion-replay-does-not-compare-computed-request-digest",
+        "obligation_id": "dimension:structure",
+        "summary": "Same-key promotion replay can return the old Deployment even when the newly resolved immutable target/release facts produce a different request digest.",
+        "evidence": "LookupPromotionByRequest at store.go:277-300 does not compare a stored request digest or complete immutable request. StartPromotionWithFacts performs that lookup before building the new request digest at service.go:103-111, computes the new request at service.go:120-145, and returns the old response at service.go:147-151 without comparing the two digests. The idempotency contract requires same-key/same-request replay and rejection of different content at docs/design/detailed/03-workflow-platform-core-detailed-design.md:101-109.",
+        "required_fix": "Compare the stored immutable request digest (and all request identity fields) with the freshly resolved request before returning a replay, or perform replay lookup only after canonical request construction. Add a fixed-facts mutation regression proving changed target/release identity returns ErrDeploymentIdempotency and writes nothing.",
+        "status": "fixed",
+        "classification": "fixed",
+        "first_seen_round": 2,
+        "last_seen_round": 3,
+        "seen_count": 1,
+        "last_evidence": "StartPromotionWithFacts computes the canonical request before the final replay and rejects a found replay when samePromotionRequest differs at service.go:150-173. TestPromotionReplayRejectsImmutableFactDigestDriftWithoutWrites covers a changed immutable capability fact and verifies request, outbox, and audit state remain unchanged."
+      },
+      {
+        "blocker_id": "BLK-1dacd94c1cd7",
+        "root_cause_key": "audit-commit-operation-and-context-not-bound",
+        "obligation_id": "dimension:evidence",
+        "summary": "The atomic persistence validators allow an AuditEvent with a different semantic action or request context than the command being committed.",
+        "evidence": "ActionCommit.Validate checks only generic AuditEvent validity and exact deployment subject (deployment.go:610-635); PromotionCommit and ReportCommit omit the same action/category/outcome/context comparisons (deployment.go:526-557,568-596). CommitAction stores the unchecked event (store.go:97-164). A targeted fixture changed Audit.Action and Audit.RequestContextID to mismatched values and the store accepted the commit.",
+        "required_fix": "Bind each commit kind to its canonical Audit category, action, outcome, RequestContextID, and exact subject at the persistence boundary. Carry the report request context in ReportCommit or validate it before the store, preserve the complete authorization/admission provenance, and add negative tests for every commit kind. Deep-copy audit slices on write and read so the immutable local record cannot be mutated through caller-owned slices.",
+        "status": "fixed",
+        "classification": "fixed",
+        "first_seen_round": 1,
+        "last_seen_round": 2,
+        "seen_count": 1,
+        "last_evidence": "PromotionCommit, ReportCommit, and ActionCommit now route their AuditEvent through validateCommitAudit at deployment.go:744-763, binding canonical category/action/outcome/request-context/subject. ReportCommit carries the report request context at deployment.go:568-603, and the store clones audit control slices on write/read at store.go:460-467."
+      },
+      {
+        "blocker_id": "BLK-3738fba07c9e",
+        "root_cause_key": "timestamp-derived-action-command-collision",
+        "obligation_id": "dimension:structure",
+        "summary": "Observe and Cancel command IDs are derived from action plus now.UnixNano, so two valid action requests for different report-sequence identities can collide when the clock has the same timestamp.",
+        "evidence": "commitAction builds CommandID as deploymentID-action-now.UnixNano() (service.go:363-376). CommitAction rejects an already-used CommandID after the new idempotency key has passed the replay lookup (store.go:109-115,144-149). A targeted fixture using the repository's fixed test clock accepted the first Observe and reproduced ErrDeploymentIdempotency for the next-sequence Observe.",
+        "required_fix": "Use the injected server identity generator or a collision-resistant deterministic identity derived from the canonical action identity, while retaining the action idempotency key as the replay identity. Add a permanent fixed-clock and concurrent-sequence regression proving distinct valid actions do not collide and exact same-key calls still replay.",
+        "status": "fixed",
+        "classification": "fixed",
+        "first_seen_round": 1,
+        "last_seen_round": 2,
+        "seen_count": 1,
+        "last_evidence": "Action command IDs now come from the injected server ID generator at service.go:369-382 rather than a timestamp. The permanent TestActionCommandIDsRemainUniqueAcrossReportSequences fixture covers distinct report sequences and exact replay."
+      },
+      {
+        "blocker_id": "BLK-3d1dbcdf76f3",
+        "root_cause_key": "cancelling-report-without-cancel-intent",
+        "obligation_id": "dimension:execution",
+        "summary": "AppendReport accepts a DeploymentCancelling report even when the Deployment has no persisted CancelRequested intent, and the resulting state can accept another Cancel command.",
+        "evidence": "DeploymentReport.Validate only requires active-report scheduling fields; it has no Cancelling-to-intent invariant (deployment.go:392-433). AppendReport checks CancelRequested for Cancelled but not Cancelling (store.go:202-216). currentOutcome exposes report-created Cancelling as active and CommitAction checks only record.CancelRequested (store.go:133-142,351-365). A targeted synthetic fixture reproduced both acceptance paths.",
+        "required_fix": "In the store append boundary reject DeploymentCancelling unless the current record has a persisted CancelRequested intent. In Cancel handling reject any new Cancel when the current outcome is already Cancelling, and add a permanent service/store regression proving that no report, audit, or outbox is written for an uncaused Cancelling report.",
+        "status": "fixed",
+        "classification": "fixed",
+        "first_seen_round": 1,
+        "last_seen_round": 2,
+        "seen_count": 1,
+        "last_evidence": "AppendReport rejects both Cancelling and Cancelled reports without a persisted CancelRequested intent at store.go:217-219. CommitAction and CancelDeployment reject a second cancellation while Cancelling at store.go:133-145 and service.go:267-269. TestCancellingReportRequiresPersistedCancelIntent covers the no-write path."
+      },
+      {
+        "blocker_id": "BLK-5ef93dc46b6d",
+        "root_cause_key": "active-report-schedules-observe-without-capability",
+        "obligation_id": "dimension:execution",
+        "summary": "Active reports always create an automatic Observe outbox entry even when the immutable target says ObserveSupported=false.",
+        "evidence": "SubmitDeploymentReport unconditionally builds AutoObserve for every active outcome at service.go:342-355. AppendReport stores it at store.go:261-270 without checking record.Request.ObserveSupported, while ObserveDeployment rejects unsupported targets at service.go:243-245 and allowedActions marks the action unavailable at service.go:592-604. No test covers this branch.",
+        "required_fix": "Require Observe capability during direct-driver admission, or reject an active report before persistence when the fixed target cannot observe; do not create an unexecutable pending intent. Add a no-write/valid-lifecycle fixture for ObserveSupported=false.",
+        "status": "open",
+        "classification": "new",
+        "first_seen_round": 3,
+        "last_seen_round": 3,
+        "seen_count": 1
+      },
+      {
+        "blocker_id": "BLK-647b792fa312",
+        "root_cause_key": "new-state-boundaries-not-regressed",
+        "obligation_id": "dimension:regression",
+        "summary": "The reviewed revision adds recovery and evidence regressions but does not add permanent negative fixtures for an uncaused Cancelling report or a non-selected invalid eligible Release summary.",
+        "evidence": "deployment_test.go and coverage_test.go contain recovery membership and action tests but no append of DeploymentCancelling before CancelRequested and no accepted first-promotion fixture with a wrong-owner or missing-binding non-selected summary.",
+        "required_fix": "Add focused service/store regressions for both cases, assert rejected inputs leave reports, audits, outbox, and detail candidates unchanged, and keep those tests in the declared direct-deployment command.",
+        "status": "fixed",
+        "classification": "fixed",
+        "first_seen_round": 1,
+        "last_seen_round": 2,
+        "seen_count": 1,
+        "last_evidence": "Focused permanent regressions were added for owner/missing target-bound eligible summaries, uncaused Cancelling, fixed-clock action identity, and commit audit bindings in deployment_test.go:1048-1256."
+      },
+      {
+        "blocker_id": "BLK-7930378f27f9",
+        "root_cause_key": "governance-evidence-not-bound-to-operation-permission",
+        "obligation_id": "dimension:ownership",
+        "summary": "Exact grant matching was added, but authorization/admission evidence is still a caller-constructible generic decision rather than proof from the authoritative evaluators for this direct-deployment operation.",
+        "evidence": "GovernanceEvidence.ValidateFor at deployment.go:293-332 checks string and subject bindings plus a grant key, but ServiceDependencies at service.go:24-32 has no authorization/admission evaluator. NewAllowedGovernance at deployment.go:1142-1181 emits all four grants and only a deployment-target check. The real admission engine requires six named checks at internal/admission/engine.go:34-41 and :76-115, yet no deployment path constructs or validates an ExecutionAdmissionRequest against that engine.",
+        "required_fix": "Inject typed authorization and admission ports (or opaque signed decisions) and bind them to the complete request, principal/scope, operation, owner, target type/driver, credential, and concurrency facts. Require the exact evaluator-produced check set before commit, move NewAllowedGovernance to _test.go, and add a negative fixture for incomplete/synthetic admission provenance.",
+        "status": "open",
+        "classification": "deeper",
+        "first_seen_round": 2,
+        "last_seen_round": 3,
+        "seen_count": 2,
+        "last_evidence": "ValidateFor now requires release.promote, deployment.observe, deployment.cancel, or deployment.report as appropriate, so the specific wrong-grant regression is fixed. The same root remains deeper because the decision/binding is still self-attested, NewAllowedGovernance is exported production code, and the admission decision is not tied to the typed request/evaluator or its complete direct-deployment checks."
+      },
+      {
+        "blocker_id": "BLK-8dedaad7d686",
+        "root_cause_key": "direct-deployment-gate-does-not-close-new-state-semantics",
+        "obligation_id": "integration:direct-deployment-gate",
+        "summary": "The declared integration gate remains a package test/coverage/source packaging gate and does not independently assert the DD-015/DD-016 invariants.",
+        "evidence": "The exact commands passed at 90.4% coverage and produced four artifacts, but no command or permanent test currently asserts the two negative paths.",
+        "required_fix": "Add the DD-015 and DD-016 business fixtures to the scoped package gate, retain the package/coverage/source-lineage checks, and fail the gate if a Cancelling report lacks a Cancel intent or an eligible candidate lacks complete current-target binding.",
+        "status": "fixed",
+        "classification": "fixed",
+        "first_seen_round": 1,
+        "last_seen_round": 2,
+        "seen_count": 1,
+        "last_evidence": "The required negative fixtures are inside internal/deployment and are executed by the exact declared package gate; the source packaging and coverage checks remain present and pass."
+      },
+      {
+        "blocker_id": "BLK-9cd8e07a1cc8",
+        "root_cause_key": "promotion-project-scope-not-bound-to-request-context",
+        "obligation_id": "dimension:ownership",
+        "summary": "StartPromotion accepts PromotionFacts whose Project.OwnerScopeID differs from the authenticated RequestContext.ScopeID.",
+        "evidence": "PromotionFacts.Validate checks ProjectID and revision, target membership, and driver/credential facts but never compares Project.OwnerScopeID with the command context (deployment.go:238-291). StartPromotion passes the context to a preferred resolver but does not perform the ownership check before CommitPromotion (service.go:73-86,93-148). A targeted fixture changed only OwnerScopeID and the promotion was persisted.",
+        "required_fix": "Bind the resolved Project owner scope to the authenticated request context before replay or commit, and require the same binding in the resolver and authorization evidence path. Add a negative initial-promotion test that proves a scope mismatch writes no Deployment, CommandRecord, AuditEvent, or Outbox entry.",
+        "status": "fixed",
+        "classification": "fixed",
+        "first_seen_round": 1,
+        "last_seen_round": 2,
+        "seen_count": 1,
+        "last_evidence": "StartPromotionWithFacts rejects a resolved Project whose OwnerScopeID differs from the authenticated RequestContext.ScopeID before replay or any commit at service.go:100-102. The permanent test proves deployment, audit, and outbox remain absent."
+      },
+      {
+        "blocker_id": "BLK-a72dc860e66f",
+        "root_cause_key": "governance-evidence-not-materialized-in-audit",
+        "obligation_id": "dimension:evidence",
+        "summary": "Audit rows do not preserve the complete operation/owner binding or prove that the typed direct-deployment admission request was evaluated.",
+        "evidence": "buildAuditEvent at service.go:615-666 copies decision IDs, grants, checks, and constraints but not GovernanceBinding. ValidateFor checks the caller-provided binding in memory; no persisted field or typed admission request digest links it to internal/admission/engine.go's required check set. NewAllowedGovernance remains an exported production helper that can construct the evidence shape.",
+        "required_fix": "Persist a canonical, complete evidence envelope or an immutable evidence reference containing operation, owner, request context, target, and evaluator decision identities; validate it against the typed admission request before commit and remove the production fixture constructor.",
+        "status": "open",
+        "classification": "new",
+        "first_seen_round": 3,
+        "last_seen_round": 3,
+        "seen_count": 1
+      },
+      {
+        "blocker_id": "BLK-beba768c874f",
+        "root_cause_key": "append-only-physical-identities-can-be-overwritten",
+        "obligation_id": "dimension:evidence",
+        "summary": "Action/report commits do not reject reused AuditEventID values, and the promotion raw CommandID collision check is ineffective because that key is never indexed.",
+        "evidence": "CommitPromotion checks store.commands[commit.Command.CommandID] at store.go:67-69 but writes only the promotion and composite command keys at store.go:80-81. CommitAction writes its audit without an existing-ID check at store.go:147-166, and AppendReport does the same at store.go:229-242. AuditEventID is only shape-validated by validateCommitAudit; no physical collision rule covers these paths. The comparable Preview commit store rejects command, audit, and outbox identity reuse at internal/softwaredelivery/preview/decision_store.go:269-296.",
+        "required_fix": "Enforce physical identity uniqueness for every commit kind before any mutation, including raw CommandID, AuditEventID, report identity, and OutboxEntry ID. Permit only a complete exact idempotent replay to return the existing record; never overwrite an existing immutable evidence row.",
+        "status": "fixed",
+        "classification": "fixed",
+        "first_seen_round": 2,
+        "last_seen_round": 3,
+        "seen_count": 1,
+        "last_evidence": "CommitPromotion, CommitAction, and AppendReport use global physical identity indexes for command, report, audit, and outbox identities at store.go:74-87, 162-169, and 214-269. The permanent TestStoreRejectsPhysicalIdentityCollisions fixture covers command and audit collisions and verifies rejected report evidence leaves the record unchanged."
+      },
+      {
+        "blocker_id": "BLK-c3310843f6f9",
+        "root_cause_key": "target-snapshot-security-and-configuration-not-revalidated",
+        "obligation_id": "dimension:execution",
+        "summary": "The target snapshot is now self-consistent, but the boundary still accepts incompatible target types/drivers and caller-supplied capability/readiness facts without an authoritative compatibility check.",
+        "evidence": "DeploymentTarget.Validate at deployment.go:175-179 only calls ExternalTargetCandidate.Validate and ExactDeploymentDriverRef.Validate; the shared candidate validator accepts any non-empty TargetType. The Project comparison at deployment.go:399-420 compares the opaque driver value and trusts DriverActive, DriverSDKChecked, and CredentialReady; no target-type/driver mapping or ExtensionCatalog/SDK lookup is present.",
+        "required_fix": "Resolve the exact active ExtensionPackage from ExtensionCatalog for the current target type and policy, verify its SDK compatibility and capability set, and bind that result to the current Project target snapshot. Reject unsupported target types or driver pairings and derive readiness from authoritative ports rather than booleans supplied by the caller.",
+        "status": "open",
+        "classification": "deeper",
+        "first_seen_round": 2,
+        "last_seen_round": 3,
+        "seen_count": 2,
+        "last_evidence": "Missing security requirements and stale endpoint/credential/security facts are now rejected by DeploymentTarget.Validate at deployment.go:194-208, and target snapshot fields are included in the request comparison. The root is not fully closed: TargetType is only non-empty, the driver is only shape-validated, capability/readiness facts are caller-supplied, and no authoritative target/ExtensionCatalog or typed admission check proves compatibility."
+      },
+      {
+        "blocker_id": "BLK-cc34e1437294",
+        "root_cause_key": "eligible-release-view-not-target-bound",
+        "obligation_id": "dimension:authority",
+        "summary": "Eligible history is checked against an immutable source only when the resolver-owned slice is empty; a non-empty caller-supplied resolved slice can still make a fabricated historical Release appear eligible.",
+        "evidence": "service.go:504 assigns facts.ResolvedEligibleReleases directly and enters the source lookup only at len(resolved)==0. The subsequent checks at service.go:524-535 validate the supplied objects but cannot establish source authority. GetDeploymentDetail at service.go:375-393 copies the stored summaries without a source or permission check; the tests only exercise the empty-resolved unknown-source path at deployment_test.go:1361-1380.",
+        "required_fix": "Always resolve every summary through an injected immutable Release source and compare ID, content digest, source Workflow, and expected digest set; do not treat a public facts field as proof of provenance. Evaluate current user eligibility for each candidate before persistence or detail return and add a fixture where a non-empty supplied resolved slice disagrees with the source.",
+        "status": "open",
+        "classification": "deeper",
+        "first_seen_round": 1,
+        "last_seen_round": 3,
+        "seen_count": 3,
+        "last_evidence": "The normal empty-ResolvedEligibleReleases path now resolves each summary through ImmutableReleaseSource and compares exact Release identity and digests at service.go:504-535. The same function intentionally trusts any non-empty ResolvedEligibleReleases and skips that source, and detail still returns stored summaries without current eligibility authorization. The historical-candidate authority root is therefore deeper, not fixed."
+      },
+      {
+        "blocker_id": "BLK-cd8cdd2552a5",
+        "root_cause_key": "residual-direct-deployment-invariants-not-regressed",
+        "obligation_id": "dimension:regression",
+        "summary": "The permanent regression suite does not cover the remaining archived Project, full target snapshot/security, exact eligible Release, operation-specific authorization, physical identity, or replay-digest invariants identified in this review.",
+        "evidence": "deployment_test.go:1048-1256 adds the prior round's scope, target-shape, cancellation, action-ID, audit-binding, and defensive-copy fixtures, but contains no focused test for the residual paths listed above.",
+        "required_fix": "Add permanent no-write regressions for archived promotion, target snapshot/security drift, unknown eligible Release identity, wrong operation grant, audit/command physical identity reuse, and same-key request-digest drift; keep them under the declared direct-deployment gate.",
+        "status": "fixed",
+        "classification": "fixed",
+        "first_seen_round": 2,
+        "last_seen_round": 3,
+        "seen_count": 1,
+        "last_evidence": "The previously requested permanent fixtures are present under the exact package gate: archive rejection (deployment_test.go:1292-1325), target drift (1327-1359), unknown immutable Release (1361-1380), operation grant (1382-1437), physical identity (1439-1504), and same-key digest drift (1506-1537). The new gaps found in this cycle are separate from that prior list."
+      },
+      {
+        "blocker_id": "BLK-de5db347f8ec",
+        "root_cause_key": "immutable-recovery-candidate-not-part-of-verified-request",
+        "obligation_id": "dimension:structure",
+        "summary": "The accepted Deployment request and its idempotency digest do not carry the verified eligible-candidate set or a candidate-set evidence digest.",
+        "evidence": "DeploymentRequest and deploymentRequestDigest at deployment.go:436-515 and :1091-1119 contain no eligible-candidate field or digest. The service persists facts.EligibleReleases separately at service.go:210-216, while source validation is optional through the public resolved slice at service.go:504-535. The current tests do not assert candidate-set identity across replay.",
+        "required_fix": "Resolve and authorize the complete candidate set before commit, persist its canonical digest/evidence with the Deployment record, and include it in replay and audit consistency checks without making mutable candidates part of the user request.",
+        "status": "open",
+        "classification": "new",
+        "first_seen_round": 3,
+        "last_seen_round": 3,
+        "seen_count": 1
+      },
+      {
+        "blocker_id": "BLK-e3b6b6d1c5db",
+        "root_cause_key": "current-direct-deployment-gaps-not-regressed",
+        "obligation_id": "dimension:regression",
+        "summary": "The permanent suite does not guard the current source-bypass, structure, permission, compatibility, and unsupported-Observe paths.",
+        "evidence": "The newly added tests at deployment_test.go:1292-1537 cover the previous six review themes, but no test supplies a non-empty ResolvedEligibleReleases slice while the source rejects it, no test rejects an invalid TargetType/driver pairing, no detail-query authorization test exists, and no active report tests ObserveSupported=false.",
+        "required_fix": "Add focused no-write and user-visible regressions for each remaining path and keep them under the exact direct-deployment gate.",
+        "status": "open",
+        "classification": "new",
+        "first_seen_round": 3,
+        "last_seen_round": 3,
+        "seen_count": 1
+      },
+      {
+        "blocker_id": "BLK-f0235c9460b7",
+        "root_cause_key": "direct-deployment-gate-semantically-incomplete",
+        "obligation_id": "integration:direct-deployment-gate",
+        "summary": "The direct-deployment gate is mechanically reproducible but does not fail on all current semantic safety paths.",
+        "evidence": "The exact package command, threshold assertion, and packaging command all exit 0. The permanent suite has no assertions for the non-empty ResolvedEligibleReleases source bypass, invalid target type/driver pairing, unauthorized detail query, or active report with ObserveSupported=false.",
+        "required_fix": "Keep the existing three mechanical commands, add business fixtures for every listed path, and make the scoped gate fail closed when any current target, authority, permission, or outbox invariant is violated.",
+        "status": "open",
+        "classification": "deeper",
+        "first_seen_round": 2,
+        "last_seen_round": 3,
+        "seen_count": 2,
+        "last_evidence": "The exact three-command gate is green and its four artifacts are current, but the semantic boundary is still incomplete for the unresolved candidate source bypass, target/driver compatibility, permission-aware detail query, and unsupported automatic Observe scheduling. Mechanical coverage and packaging do not close these paths."
+      },
+      {
+        "blocker_id": "BLK-f6b501e3bbac",
+        "root_cause_key": "deployment-detail-query-not-authorization-aware",
+        "obligation_id": "dimension:ownership",
+        "summary": "GetDeploymentDetail returns the full deployment request and calculates allowed actions without a RequestContext or authorization evaluation.",
+        "evidence": "GetDeploymentDetail has signature (ctx, deploymentID) and builds the full Request, EligibleReleases, Reports, and AllowedActions at service.go:362-394. allowedActions at service.go:592-612 tests only outcome, capability, and candidate count. The authoritative design requires allowed_actions to combine outcome, Executor capability, permission, and Policy at docs/design/detailed/11-software-delivery-detailed-design.md:564-566.",
+        "required_fix": "Add a typed authorized query context/evaluator, filter sensitive request fields and candidate summaries by the caller's Scope/permission, and calculate each action using the current exact grant and policy. Add a no-leak fixture for a principal without observe/cancel/recovery grants.",
+        "status": "open",
+        "classification": "new",
+        "first_seen_round": 3,
+        "last_seen_round": 3,
+        "seen_count": 1
+      }
+    ]
+  },
+  "review_ledger_ref": {
+    "comment_id": "01a03e74-db1f-75cf-8a8b-3476b30dc664",
+    "attachment_id": "01a03e74-daa3-7606-8508-bb0410a05ac3",
+    "sha256": "10f799e211a94f797303efe68578a0f4d1de89a5c827470b4ca7ff1674abbfdb",
+    "bytes": 73826,
+    "filename": "omac-review-ledger-10f799e211a9.yaml"
+  },
+  "review_generation": "amendment-f9c9152adbdd1f680133c423",
+  "review_ledger_generation": "authoring-d94cf050948b8fefad529149",
+  "review_continuation": null,
+  "reviewer_run_baseline": null,
+  "worker_handoff": null,
+  "delivery_identity": null,
+  "decision_required": null,
+  "amendment_attempt": null,
+  "contract": {
+    "objective": "Deliver a fail-closed direct-promotion application boundary that authoritatively binds immutable Release and recovery candidates, the current Project target, the exact DeploymentDriver, typed Authorization and Admission, permission-aware recovery, capability-safe Observe, canonical audit, idempotency, and transaction/Outbox evidence.",
+    "non_goals": [
+      "Do not create a Workflow, Plan, WorkUnit, Run, ComponentRun, Workspace, Harness path, generic deployment runtime, or second deployment/recovery state machine.",
+      "Do not construct substitute Authorization, Admission, ExtensionCatalog, Credential, Project, Release, or Audit authority inside internal/deployment, and do not accept caller-asserted readiness, provenance, permission, or allow/admit evidence.",
+      "Do not move Credential lease materialization or DeploymentDriver start/observe/cancel execution out of the separate Deployment Host boundary.",
+      "Do not rewrite the source Workflow, immutable Release, prior Deployment request/report history, or introduce RetryDeployment, RollbackDeployment, or RolledBack semantics."
+    ],
+    "verification_commands": [
+      "mkdir -p artifacts/direct-deployment && go test -covermode=atomic -coverprofile=artifacts/direct-deployment/coverage.out ./internal/deployment/...",
+      "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/direct-deployment/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+      "python3 scripts/release/package_component.py --component direct-deployment --kind platform-core-dependency-source --input internal/deployment --bundle artifacts/direct-deployment/source-bundle.tar.zst --component-manifest artifacts/direct-deployment/component-manifest.json --digest-output artifacts/direct-deployment/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner direct-deployment --require-all-owner-sources-accounted"
+    ],
+    "integration_gates": [
+      {
+        "name": "direct-deployment-gate",
+        "layer": "L1",
+        "source_of_truth": [
+          "direct-deployment-amendment-decision.md:L3-L21",
+          "docs/design/detailed/09-governance-and-security-detailed-design.md:L214-L402",
+          "docs/design/detailed/09-governance-and-security-detailed-design.md:L553-L575",
+          "docs/design/detailed/10-web-api-cli-detailed-design.md:L1255-L1304",
+          "docs/design/detailed/11-software-delivery-detailed-design.md:L482-L597",
+          "docs/references/governance/security-and-enterprise.md:L235-L317",
+          "docs/references/software-delivery/artifacts-release-and-deployment.md:L186-L260",
+          "docs/delivery/acceptance-and-validation.md:L961-L1000"
+        ],
+        "delivery_goal": "Prove direct promotion fails closed unless authoritative Release/candidate, Project target/driver, current permission/admission/credential, Observe capability, candidate/report identity, and canonical audit/Outbox invariants hold.",
+        "covers": [
+          "direct-deployment"
+        ],
+        "acceptance_refs": [
+          "UJ-DIRECT-PROMOTION-001",
+          "UJ-DIRECT-DEPLOYMENT-RECOVERY-001"
+        ],
+        "commands": [
+          "mkdir -p artifacts/direct-deployment && go test -covermode=atomic -coverprofile=artifacts/direct-deployment/coverage.out ./internal/deployment/...",
+          "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/direct-deployment/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+          "python3 scripts/release/package_component.py --component direct-deployment --kind platform-core-dependency-source --input internal/deployment --bundle artifacts/direct-deployment/source-bundle.tar.zst --component-manifest artifacts/direct-deployment/component-manifest.json --digest-output artifacts/direct-deployment/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner direct-deployment --require-all-owner-sources-accounted"
+        ],
+        "required_metrics": {
+          "statement_coverage_percent": 90,
+          "declared_artifact_count": 4
+        },
+        "artifacts": [
+          "artifacts/direct-deployment/coverage.out",
+          "artifacts/direct-deployment/source-bundle.tar.zst",
+          "artifacts/direct-deployment/bundle-digest.txt",
+          "artifacts/direct-deployment/component-manifest.json"
+        ]
+      }
+    ],
+    "pr_base": "main",
+    "acceptance_refs": [
+      "UJ-DIRECT-PROMOTION-001",
+      "UJ-DIRECT-DEPLOYMENT-RECOVERY-001"
+    ],
+    "source_of_truth": [
+      "direct-deployment-amendment-decision.md:L3-L21",
+      "docs/design/open-agent-cluster-overview-design.md:L349-L367",
+      "docs/design/open-agent-cluster-overview-design.md:L374-L402",
+      "docs/design/open-agent-cluster-overview-design.md:L469-L487",
+      "docs/design/detailed/09-governance-and-security-detailed-design.md:L11-L45",
+      "docs/design/detailed/09-governance-and-security-detailed-design.md:L214-L402",
+      "docs/design/detailed/09-governance-and-security-detailed-design.md:L553-L575",
+      "docs/design/detailed/10-web-api-cli-detailed-design.md:L1174-L1188",
+      "docs/design/detailed/10-web-api-cli-detailed-design.md:L1255-L1304",
+      "docs/design/detailed/11-software-delivery-detailed-design.md:L482-L597",
+      "docs/deploy-ops/deployment-and-operations-design.md:L40-L84",
+      "docs/references/governance/security-and-enterprise.md:L235-L317",
+      "docs/references/software-delivery/artifacts-release-and-deployment.md:L186-L260",
+      "docs/delivery/acceptance-and-validation.md:L961-L1000"
+    ],
+    "required_contracts": [
+      "docs/references/governance/security-and-enterprise.md",
+      "docs/references/software-delivery/artifacts-release-and-deployment.md"
+    ],
+    "scope_paths": [
+      "internal/deployment/**"
+    ]
+  },
+  "contract_ref": {
+    "comment_id": "01a103da-e463-7ea8-a1ff-d0c853210e67",
+    "attachment_id": "01a103da-e314-78f2-8561-57d49208fad6",
+    "sha256": "b1f61318ca19bdc6e9ba2ade5bee16116738939630622c580d20e313fa60b047",
+    "bytes": 5674,
+    "filename": "omac-contract-b1f61318ca19.yaml"
+  },
+  "source_refs": [
+    {
+      "issue_id": "289a13bf-cede-4b5b-ba86-d72f0bef8164",
+      "label": "设计方案"
+    },
+    {
+      "issue_id": "8e6bd282-6039-41d2-aa00-969a0bf1554a",
+      "label": "验收文档"
+    },
+    {
+      "issue_id": "5849f786-8c97-42ac-adf9-1c96957f28ee",
+      "label": "前置开发任务 · Bootstrap Go module and quality harness"
+    },
+    {
+      "issue_id": "7255d20c-6e63-4fc3-974c-09e449481219",
+      "label": "前置开发任务 · Implement ReleaseCandidate and Preview acceptance"
+    },
+    {
+      "issue_id": "30335cd6-d2e8-4c9d-8988-7f7b134ed6e9",
+      "label": "前置开发任务 · Create credential contracts"
+    },
+    {
+      "issue_id": "152d735a-c373-4967-8ae0-45c191de2eff",
+      "label": "前置开发任务 · Implement deterministic release artifact packaging"
+    }
+  ],
+  "kind": "TaskKind.DEVELOP",
+  "phase": "TaskPhase.AUTHORING",
+  "bounces": {
+    "worker": 0,
+    "ci": 0,
+    "review": 4,
+    "merge": 0
+  },
+  "bounce_baseline": {
+    "merge": 0,
+    "review": 4,
+    "worker": 0
+  },
+  "deliverable": null,
+  "deliverable_ref": null,
+  "project_rules": null,
+  "project_rules_ref": null,
+  "agent_run_finished_without_submit": false,
+  "agent_run_failed": false,
+  "created_at": "2026-08-25T18:06:52Z",
+  "updated_at": "2026-10-03T22:20:43Z",
+  "platform_assignee_id": null,
+  "unknown_persisted_fields": {},
+  "review_nits_acceptance": null
+}

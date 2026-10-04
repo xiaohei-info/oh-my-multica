@@ -1,0 +1,998 @@
+{
+  "id": "01a03bd0-2014-733f-91d5-31e2324cbacf",
+  "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1",
+  "title": "[DAG:extension-package] Implement ExtensionPackage SDK and lifecycle",
+  "description": "> **OMAC 控制的执行。第一动作必须严格执行：**\n\n```bash\nOMAC_ENGINE=multica OMAC_WORKSPACE_ID=410ade5e-8ae0-4402-b975-813dea2ff3e1 OMAC_PROJECT_ID=732ce83f-5cbd-4485-850d-1b8a1bf16340 omac work show 01a03bd0-2014-733f-91d5-31e2324cbacf --output json\n```\n\n> `omac work show` 和 `omac work submit` 都可能长时间运行。任何工具调用在拿到最终 tool_result 和终态退出码前都不完整。若工具返回 running/session、缺少最终 tool_result、出现空输出或不完整输出，必须等待或轮询到终态。使用足够长的 wait/yield，或保留并恢复续接句柄；这是通用终态规则，不绑定某个具体工具 API。timeout/yield 不是空结果，也不允许据此停止。`omac work show` 只有在退出码 0 且得到可解析 JSON 后才能继续。`omac work submit` 只有在最终 tool_result 明确给出退出码 0，且 JSON 包含 `\"ok\": true`、`\"terminal\": true` 和 `\"next_action\": \"stop\"` 时才可宣称成功。结果未知时不得宣称成功或结束；validation error 必须修复后重新提交。submit 成功就是本次执行的最后动作，立即停止，不再执行任何平台写入。\n\n> 在上方精确的 `omac work show` 命令以退出码 0 成功返回可解析 JSON 前，不得执行任何其他 Issue 查询（包括 `multica issue get`、`multica issue comment list` 或 metadata 查询），也不得开始分析任务内容。work show 成功后，只能在返回上下文确有需要时使用只读 Issue 查询。禁止任何会创建、修改或删除 Issue 状态的 `multica issue` 写操作。这是语义边界，不是穷举命令清单；禁止示例包括 `multica issue status`、`multica issue assign`、`multica issue comment`、`multica issue metadata`、`multica issue rerun`、`multica issue cancel-task`、`multica issue update`、`multica issue create`、`multica issue label`、`multica issue property`、`multica issue reorder` 和 `multica issue subscriber`。只允许使用上方给出的精确 `omac work show` 命令，以及 work show 返回的精确 `omac work submit` 命令作为 OMAC 控制命令；已有手工附件或 verification 但缺少 `delivery_identity` 时也必须通过该 submit 命令封存。\n\n# Implement ExtensionPackage SDK and lifecycle\n\n## 任务摘要\n- 类型: 开发实现（`develop`）\n- 执行角色: 开发执行者（`worker`）\n- 目标: Deliver Package Governance as the sole owner of exact Package release, artifact/provenance and SDK conformance verification, interface, entrypoint and Describe results, durable ComponentInstall identity, lifecycle state, and point/effect permission ceilings through a real production composition that consumes canonical RequestContext, Project, Solution, Authorization, Admission, Audit, and extension-wire contracts; atomically persist portable owner proofs and return only the committed record for exact concurrent or retried requests.\n- 依据: `git:d9aa7362667411d1d7a1b4788f002413aa7dacfa:extension-package-amendment-decision.md#sha256=42a4fda1ff3fc72ca7e8c78bb58a8ab4da41e3655b15ee23f3639f5b5e700751`\n- 依据: `git:e1e48af331c0d568257e0eb2cbb88c1f19c97cb0:b-class-structural-decomposition-decisions.md#sha256=bee2866be23e0d5fe6f77a245f7f3177522308d5bd3ebbd14fb2baf0d9e37f19`\n- 依据: `docs/design/open-agent-cluster-overview-design.md:L335-L355`\n- 依据: `docs/design/open-agent-cluster-overview-design.md:L675-L684`\n- 依据: `docs/design/detailed/08-component-and-extension-detailed-design.md:L127-L205`\n- 依据: `docs/design/detailed/08-component-and-extension-detailed-design.md:L238-L257`\n- 依据: `docs/design/detailed/08-component-and-extension-detailed-design.md:L298-L325`\n- 依据: `docs/design/detailed/08-component-and-extension-detailed-design.md:L441-L500`\n- 依据: `docs/design/detailed/09-governance-and-security-detailed-design.md:L11-L45`\n- 依据: `docs/design/detailed/09-governance-and-security-detailed-design.md:L259-L287`\n- 依据: `docs/design/detailed/09-governance-and-security-detailed-design.md:L312-L406`\n- 依据: `docs/design/detailed/09-governance-and-security-detailed-design.md:L808-L854`\n- 依据: `docs/references/extension/component-governance.md:L28-L80`\n- 依据: `docs/references/extension/component-governance.md:L157-L190`\n- 依据: `docs/references/extension/component-governance.md:L253-L281`\n- 依据: `docs/references/extension/plugin-contracts.md:L7-L18`\n- 依据: `docs/references/extension/plugin-contracts.md:L63-L92`\n- 依据: `docs/references/governance/security-and-enterprise.md:L7-L31`\n- 依据: `docs/references/governance/security-and-enterprise.md:L184-L315`\n- 依据: `docs/delivery/acceptance-and-validation.md:L171-L187`\n\n## 任务详情\nRework the existing Package Governance delivery around authenticated Host/Platform Core and owner-issued authority attestations, canonical installer-owned artifact verification, committed-record concurrent idempotency, portable gate execution, and exact audit binding while preserving the published extension wire boundary and owned source paths.\n\n## 非目标\n- Do not change adjacent domain ownership or introduce a competing source of truth.\n- Do not bypass authorization, admission, CAS, idempotency, review, or evidence gates.\n- Do not preserve unpublished prototype behavior unless the owning design explicitly requires it.\n- Do not redefine or replace contracts-extension-wire, RequestContext, Project, Solution, Authorization, Admission, or Audit records, engines, identities, revisions, or digests inside Package Governance.\n- Do not move Platform Core audit, credential, authorization, admission, Host, Project, or Solution ownership into this node; consume their canonical contracts through narrow production adapters or an owner-issued command.\n- Do not accept caller-selected production verifiers, owner ports, inspectors, authority descriptors, Project/Solution snapshots, governance decisions, or RequestContext values as proof of ownership.\n- Do not expose a production CommitInstall or CommitLifecycle path that can mutate state from public structural records without a capability-bound or independently verifiable owner command.\n- Do not discard signed provenance, Describe/conformance, authorization, admission, lifecycle, removal, or Audit witnesses after validating them; the committed record must retain portable proof and exact bindings.\n- Do not include transient owner decision IDs, issuance IDs, or issue/expiry timestamps in the stable logical replay identity; validate current authorization separately from exact-request idempotency.\n- Do not expose unsigned development installers, caller-controlled Describe, MemoryStore, fake owner ports, generated test keys, or synthetic conformance success in production composition or release evidence.\n- Do not satisfy the production gate with same-package tests that can reach package-private helpers; every named production-boundary test must run from package extensions_test against only exported production surfaces.\n- Do not allow release evidence to reference MemoryStore, externalJSONStore, fake or mock owner ports, generated signing keys, //go:linkname, unsafe package-private access, the no-verifier invocation constructor, or the public development installer; the gate must emit and assert a zero-count source audit for these paths.\n- Do not execute Gate evaluators or claim Harness Host isolation, ComponentRun recovery, EventHandler lineage, or end-to-end user acceptance in this node.\n- Do not add a universal extension invoke path, a generic plugin category, or a builtin bypass.\n\n## 主要代码归属范围\n- `sdk/extension/**`\n- `internal/extensions/**`\n\n## 责任边界\n- 证据模式: `artifact`\n- 输入策略: `allowlist`\n- 允许输入: `contracts-extension-wire-evidence`，来自 `contracts-extension-wire`（`artifact`）\n- 产物: `extension-package-governance-evidence`\n- 边界: 只允许 consumes 明确声明的外部输入；非上游或下游节点产物不属于当前 contract。\n\n## 交付约束\n- PR 基线: `main`\n- 改动分支覆盖率: `≥ 90%`\n- PR 关联标识: `AITEAM-945`\n\n## 上游 issue（防跑偏）\n本任务承接以下上游 issue，用于追溯需求与决策；若与当前 contract 冲突，先请求确认：\n- 设计方案: `289a13bf-cede-4b5b-ba86-d72f0bef8164`\n- 验收文档: `8e6bd282-6039-41d2-aa00-969a0bf1554a`\n- 前置开发任务 · Bootstrap Go module and quality harness: `5849f786-8c97-42ac-adf9-1c96957f28ee`\n- 前置开发任务 · Create Runtime and AgentRun contracts: `5db9df26-acb7-451d-b5e7-899b274e8547`\n- 前置开发任务 · Create Workspace contracts: `6094130b-838f-492f-a699-692f5731817b`\n- 前置开发任务 · Publish Package, Harness and ComponentRun wire contracts: `01a032bd-188a-7c88-b4b8-06e682c7b907`\n- 前置开发任务 · Create identity and authentication contracts: `d5f92ac5-6836-49c5-b218-d24164e3c2e9`\n- 前置开发任务 · Create authorization and admission contracts: `8fc120a0-23c5-4119-96c1-b827222ed9dd`\n- 前置开发任务 · Create audit and usage contracts: `7b568083-2a29-47d5-a56e-3509b79ebb6c`\n- 前置开发任务 · Create Project setup contracts: `f21eaedd-4460-419a-9354-c5c32b717d1f`\n- 前置开发任务 · Create Solution package contracts: `4755e861-257f-44b9-8749-970812f66d92`\n- 前置开发任务 · Implement deterministic release artifact packaging: `152d735a-c373-4967-8ae0-45c191de2eff`",
+  "status": "WorkItemStatus.TODO",
+  "dag_key": "extension-package",
+  "identifier": "AITEAM-945",
+  "worker": "codex-macmini-newapi",
+  "reviewer": "",
+  "blocked_by": [
+    "bootstrap-go",
+    "contracts-runtime",
+    "contracts-workspace",
+    "contracts-extension-wire",
+    "contracts-identity",
+    "contracts-authz-admission",
+    "contracts-audit-usage",
+    "contracts-project",
+    "contracts-solution",
+    "release-artifact-tooling"
+  ],
+  "wave": null,
+  "artifacts": {
+    "pr_url": "https://github.com/xiaohei-info/open-agent-cluster/pull/70",
+    "head_sha": "304a6e3755aa545b879f1c6b2ed27e32210d8e9c"
+  },
+  "verification": {
+    "schema": "oac.extension-package-governance-evidence/v1",
+    "issue_id": "01a03bd0-2014-733f-91d5-31e2324cbacf",
+    "issue_key": "AITEAM-945",
+    "source_revision": "304a6e3755aa545b879f1c6b2ed27e32210d8e9c",
+    "pr_base": "main",
+    "coverage": 90.2,
+    "commands": [
+      {
+        "cmd": "mkdir -p artifacts/extension-package && go test -covermode=atomic -coverprofile=artifacts/extension-package/coverage.out ./sdk/extension/... ./internal/extensions/...",
+        "exit_code": 0,
+        "summary": "Scoped SDK and Package Governance tests pass with 90.2% total atomic statement coverage."
+      },
+      {
+        "cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/extension-package/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+        "exit_code": 0,
+        "summary": "The exact contract coverage assertion passes at 90.2%."
+      },
+      {
+        "cmd": "mkdir -p artifacts/extension-package && go test -json ./sdk/extension/... ./internal/extensions/... -run '^(TestComponentInstallLoadsInstallerOwnedVerificationRecord|TestComponentInstallBindsExactReleaseDigestInterfaceAndEntrypoint|TestDescribePermissionCeilingBindsInstallPointEffectAndRequestContext|TestPackageGovernanceRejectsCallerAuthoredVerificationAndPermissionRecords|TestPackageGovernanceRejectsFullyCallerAuthoredHostContext|TestPackageGovernanceRejectsCallerControlledArtifactInspector|TestPackageGovernanceRequiresAuthenticatedArtifactProvenance|TestPermissionCeilingBindsOwnerSpecificAuthorityIdentity|TestPackageGovernanceBindsAuthorizationAdmissionAndAuditEvidence|TestComponentInstallConcurrentIdempotencyReturnsCommittedRecord)$' -count=1 > artifacts/extension-package/governance-owner-tests.json",
+        "exit_code": 0,
+        "summary": "All ten required Package Governance owner tests pass."
+      },
+      {
+        "cmd": "python3 -c \"import json; required={'TestComponentInstallLoadsInstallerOwnedVerificationRecord','TestComponentInstallBindsExactReleaseDigestInterfaceAndEntrypoint','TestDescribePermissionCeilingBindsInstallPointEffectAndRequestContext','TestPackageGovernanceRejectsCallerAuthoredVerificationAndPermissionRecords','TestPackageGovernanceRejectsFullyCallerAuthoredHostContext','TestPackageGovernanceRejectsCallerControlledArtifactInspector','TestPackageGovernanceRequiresAuthenticatedArtifactProvenance','TestPermissionCeilingBindsOwnerSpecificAuthorityIdentity','TestPackageGovernanceBindsAuthorizationAdmissionAndAuditEvidence','TestComponentInstallConcurrentIdempotencyReturnsCommittedRecord'}; rows=[json.loads(x) for x in open('artifacts/extension-package/governance-owner-tests.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing required passing tests: {sorted(required-passed)}'\"",
+        "exit_code": 0,
+        "summary": "The owner-test JSON artifact contains a passing result for each required test."
+      },
+      {
+        "cmd": "mkdir -p artifacts/extension-package && CGO_ENABLED=1 go test -race -json ./sdk/extension/... ./internal/extensions/... -run '^TestComponentInstallConcurrentIdempotencyReturnsCommittedRecord$' -count=1 > artifacts/extension-package/concurrent-idempotency-race.json",
+        "exit_code": 0,
+        "summary": "The concurrent idempotency test passes under the race detector."
+      },
+      {
+        "cmd": "python3 -c \"import json; name='TestComponentInstallConcurrentIdempotencyReturnsCommittedRecord'; rows=[json.loads(x) for x in open('artifacts/extension-package/concurrent-idempotency-race.json') if x.strip()]; assert any(x.get('Action')=='pass' and x.get('Test')==name for x in rows)\"",
+        "exit_code": 0,
+        "summary": "The race-test JSON artifact confirms a passing concurrent idempotency test."
+      },
+      {
+        "cmd": "python3 scripts/release/package_component.py --component extension-package --kind platform-core-dependency-source --input sdk/extension --input internal/extensions --bundle artifacts/extension-package/source-bundle.tar.zst --component-manifest artifacts/extension-package/component-manifest.json --digest-output artifacts/extension-package/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner extension-package --require-all-owner-sources-accounted",
+        "exit_code": 0,
+        "summary": "The deterministic source bundle and ownership manifest were generated from the final source revision."
+      }
+    ],
+    "integration_gates": [
+      {
+        "name": "extension-package-gate",
+        "layer": "L1",
+        "source_of_truth": [
+          "git:d9aa7362667411d1d7a1b4788f002413aa7dacfa:extension-package-amendment-decision.md#sha256=42a4fda1ff3fc72ca7e8c78bb58a8ab4da41e3655b15ee23f3639f5b5e700751",
+          "git:e1e48af331c0d568257e0eb2cbb88c1f19c97cb0:b-class-structural-decomposition-decisions.md#sha256=bee2866be23e0d5fe6f77a245f7f3177522308d5bd3ebbd14fb2baf0d9e37f19",
+          "docs/design/open-agent-cluster-overview-design.md:L335-L355",
+          "docs/design/open-agent-cluster-overview-design.md:L675-L684",
+          "docs/design/detailed/08-component-and-extension-detailed-design.md:L127-L205",
+          "docs/design/detailed/08-component-and-extension-detailed-design.md:L238-L257",
+          "docs/design/detailed/08-component-and-extension-detailed-design.md:L298-L325",
+          "docs/design/detailed/08-component-and-extension-detailed-design.md:L441-L500",
+          "docs/design/detailed/09-governance-and-security-detailed-design.md:L11-L45",
+          "docs/design/detailed/09-governance-and-security-detailed-design.md:L259-L287",
+          "docs/design/detailed/09-governance-and-security-detailed-design.md:L312-L406",
+          "docs/design/detailed/09-governance-and-security-detailed-design.md:L808-L854",
+          "docs/references/extension/component-governance.md:L28-L80",
+          "docs/references/extension/component-governance.md:L157-L190",
+          "docs/references/extension/component-governance.md:L253-L281",
+          "docs/references/extension/plugin-contracts.md:L7-L18",
+          "docs/references/extension/plugin-contracts.md:L63-L92",
+          "docs/references/governance/security-and-enterprise.md:L7-L31",
+          "docs/references/governance/security-and-enterprise.md:L184-L299",
+          "docs/delivery/acceptance-and-validation.md:L171-L187"
+        ],
+        "delivery_goal": "Implement Package Governance as the sole owner of exact Package release, artifact and provenance verification, interface/entrypoint and Describe results, durable ComponentInstall identity, and point/effect permission ceilings, consuming authenticated Host/Platform Core and owner-issued project, solution, authorization and admission attestations so every install and replay returns only the committed auditable record.",
+        "covers": [
+          "extension-package"
+        ],
+        "acceptance_refs": [
+          "UJ-EXTENSION-PACKAGE-001"
+        ],
+        "commands": [
+          {
+            "cmd": "mkdir -p artifacts/extension-package && go test -covermode=atomic -coverprofile=artifacts/extension-package/coverage.out ./sdk/extension/... ./internal/extensions/...",
+            "exit_code": 0
+          },
+          {
+            "cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/extension-package/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+            "exit_code": 0
+          },
+          {
+            "cmd": "mkdir -p artifacts/extension-package && go test -json ./sdk/extension/... ./internal/extensions/... -run '^(TestComponentInstallLoadsInstallerOwnedVerificationRecord|TestComponentInstallBindsExactReleaseDigestInterfaceAndEntrypoint|TestDescribePermissionCeilingBindsInstallPointEffectAndRequestContext|TestPackageGovernanceRejectsCallerAuthoredVerificationAndPermissionRecords|TestPackageGovernanceRejectsFullyCallerAuthoredHostContext|TestPackageGovernanceRejectsCallerControlledArtifactInspector|TestPackageGovernanceRequiresAuthenticatedArtifactProvenance|TestPermissionCeilingBindsOwnerSpecificAuthorityIdentity|TestPackageGovernanceBindsAuthorizationAdmissionAndAuditEvidence|TestComponentInstallConcurrentIdempotencyReturnsCommittedRecord)$' -count=1 > artifacts/extension-package/governance-owner-tests.json",
+            "exit_code": 0
+          },
+          {
+            "cmd": "python3 -c \"import json; required={'TestComponentInstallLoadsInstallerOwnedVerificationRecord','TestComponentInstallBindsExactReleaseDigestInterfaceAndEntrypoint','TestDescribePermissionCeilingBindsInstallPointEffectAndRequestContext','TestPackageGovernanceRejectsCallerAuthoredVerificationAndPermissionRecords','TestPackageGovernanceRejectsFullyCallerAuthoredHostContext','TestPackageGovernanceRejectsCallerControlledArtifactInspector','TestPackageGovernanceRequiresAuthenticatedArtifactProvenance','TestPermissionCeilingBindsOwnerSpecificAuthorityIdentity','TestPackageGovernanceBindsAuthorizationAdmissionAndAuditEvidence','TestComponentInstallConcurrentIdempotencyReturnsCommittedRecord'}; rows=[json.loads(x) for x in open('artifacts/extension-package/governance-owner-tests.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing required passing tests: {sorted(required-passed)}'\"",
+            "exit_code": 0
+          },
+          {
+            "cmd": "mkdir -p artifacts/extension-package && CGO_ENABLED=1 go test -race -json ./sdk/extension/... ./internal/extensions/... -run '^TestComponentInstallConcurrentIdempotencyReturnsCommittedRecord$' -count=1 > artifacts/extension-package/concurrent-idempotency-race.json",
+            "exit_code": 0
+          },
+          {
+            "cmd": "python3 -c \"import json; name='TestComponentInstallConcurrentIdempotencyReturnsCommittedRecord'; rows=[json.loads(x) for x in open('artifacts/extension-package/concurrent-idempotency-race.json') if x.strip()]; assert any(x.get('Action')=='pass' and x.get('Test')==name for x in rows)\"",
+            "exit_code": 0
+          },
+          {
+            "cmd": "python3 scripts/release/package_component.py --component extension-package --kind platform-core-dependency-source --input sdk/extension --input internal/extensions --bundle artifacts/extension-package/source-bundle.tar.zst --component-manifest artifacts/extension-package/component-manifest.json --digest-output artifacts/extension-package/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner extension-package --require-all-owner-sources-accounted",
+            "exit_code": 0
+          }
+        ],
+        "metrics": {
+          "statement_coverage_percent": 90.2,
+          "required_governance_owner_test_count": 10,
+          "caller_authored_install_accept_count": 0,
+          "caller_authored_host_context_accept_count": 0,
+          "caller_controlled_inspector_accept_count": 0,
+          "self_attested_provenance_accept_count": 0,
+          "owner_identity_mismatch_accept_count": 0,
+          "concurrent_idempotency_record_mismatch_count": 0,
+          "exact_contract_coverage_assertion_exit_code": 0,
+          "race_failure_count": 0,
+          "declared_artifact_count": 6
+        },
+        "artifacts": [
+          "artifacts/extension-package/coverage.out",
+          "artifacts/extension-package/governance-owner-tests.json",
+          "artifacts/extension-package/concurrent-idempotency-race.json",
+          "artifacts/extension-package/source-bundle.tar.zst",
+          "artifacts/extension-package/bundle-digest.txt",
+          "artifacts/extension-package/component-manifest.json"
+        ]
+      }
+    ],
+    "artifact_hashes": {
+      "coverage_out": "sha256:3a8f75eca91afe6fac799af703dd4f29897e6bff531a9dfac3b1963853733486",
+      "governance_owner_tests_json": "sha256:576b77d4a766277fd23ab12bc51f75b46d34770fb1d7c8461f27494d39d604de",
+      "concurrent_idempotency_race_json": "sha256:616d524da6e0086aebc6e40f54363b031e171b079a03a5ca44e09e20245f7480",
+      "source_bundle": "sha256:532aab0a3d0debbc1ac15ea6c6658ebab997b931488b1bd187ebd7b925ef6271",
+      "bundle_digest_file": "sha256:4a623128e9c6e7cc56b6f45f3e01b6a5599bbcf2cab280e3fe72205208c3477d",
+      "component_manifest": "sha256:8b02bfe2460bdc10838a3a27cb4088c5fd6c35e0be8d98a4b2f0ef2db1723a2d"
+    },
+    "env_setup": [
+      "go version",
+      "python3 --version"
+    ]
+  },
+  "verification_ref": {
+    "comment_id": "01a047fb-79ce-7cb1-8346-1aba4a25ab1e",
+    "attachment_id": "01a047fb-78dc-7ed4-b7bc-47e6e4b7ecd0",
+    "sha256": "7470bbac4ef8a10cbbacfbf38ce9121af7f75d163e6bfb060ae4c82a99feddd3",
+    "bytes": 11896,
+    "filename": "omac-verification-7470bbac4ef8.yaml"
+  },
+  "review_verdict": null,
+  "review_comment": null,
+  "machine_feedback": null,
+  "machine_feedback_ref": null,
+  "review_report": null,
+  "review_report_ref": null,
+  "review_subject_digest": null,
+  "review_obligations": [],
+  "review_obligations_ref": null,
+  "review_ledger": {
+    "schema": "omac.review-ledger/v1",
+    "cycles": [
+      {
+        "round": 1,
+        "subject_digest": "ef5b975a687c44ac12e69637c5607be43643ef5ecb0e1538ff09562b568f5b86",
+        "report_digest": "6cd750728f140257dbd82295b02d19b240f253169641685dab5796a18e81dced",
+        "verdict": "reject",
+        "obligation_results": {
+          "dimension:authority": "fail",
+          "dimension:structure": "fail",
+          "dimension:execution": "fail",
+          "dimension:ownership": "fail",
+          "dimension:evidence": "fail",
+          "dimension:regression": "fail",
+          "integration:extension-package-gate": "pass"
+        },
+        "new_count": 7,
+        "fixed_count": 0,
+        "regressed_count": 0,
+        "unchanged_count": 0,
+        "open_count": 7,
+        "prior_open_blocker_ids": [],
+        "open_blocker_ids": [
+          "BLK-05f7d0b7a6fe",
+          "BLK-07ca812b8048",
+          "BLK-4dc56686b943",
+          "BLK-6015cefb2080",
+          "BLK-bdf0962ccf8b",
+          "BLK-c45f923879b0",
+          "BLK-c947ed7f1717"
+        ],
+        "reported_blocker_ids": [
+          "BLK-05f7d0b7a6fe",
+          "BLK-07ca812b8048",
+          "BLK-4dc56686b943",
+          "BLK-6015cefb2080",
+          "BLK-bdf0962ccf8b",
+          "BLK-c45f923879b0",
+          "BLK-c947ed7f1717"
+        ],
+        "blocker_facts_schema": "omac.review-cycle-blocker-facts/v1",
+        "blocker_facts": [
+          {
+            "blocker_id": "BLK-05f7d0b7a6fe",
+            "root_cause_key": "permission-ceiling-owner-intersection-unbound",
+            "obligation_id": "dimension:ownership",
+            "summary": "Permission intersections are present, but the six authority grants and three governance decisions are not independently proven to come from their owners.",
+            "evidence": "derivePermissionCeiling at governance.go:2086-2093 intersects the listed sets, while PermissionAuthority.Validate and AuthorizationEvidence.Validate only check fixed IDs, structural fields, and digests. Project/Solution resource identity, exact operation/effect, and current owner revision are absent or not cross-bound before the ceiling is returned.",
+            "required_fix": "Consume owner-issued opaque grants/decisions and bind every layer to the exact install release, extension, Harness Binding, project/solution identity, request, subject, operation/effect, ComponentRun, authorization decision, admission decision, and audit event before performing the intersection.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-07ca812b8048",
+            "root_cause_key": "governance-authority-structure-incomplete",
+            "obligation_id": "dimension:structure",
+            "summary": "Project, Solution, Authorization, Admission, and Audit authority records remain structural values with generic identities rather than owner-issued exact attestations.",
+            "evidence": "PermissionAuthority has no project_id/solution_id and newPermissionAuthority at governance.go:1775-1803 creates the private proof from caller-provided binding, permissions, and decision digests. validateFor at :1920-1994 checks common structural equality but not ownership or current Project/Solution identity.",
+            "required_fix": "Add owner-specific opaque attestations or authenticated ports for Trust, Platform, Project, Solution, LockedComponentSet, Invocation, Authorization, Admission, and Audit. Bind each to exact project/solution, package release/install, Harness Binding, operation/effect, request, subject, current Workflow/WorkUnit/iteration/ ComponentRun, policy/rules revision, and freshness. Keep the engines in their owning modules; make Package Governance accept only the resulting attestations or an opaque post-authorization install command.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-4dc56686b943",
+            "root_cause_key": "extension-package-gate-copy-stale",
+            "obligation_id": "dimension:structure",
+            "summary": "The checked-in .omac extension-package gate is not synchronized with the current owning contract and enforces a weaker evidence set.",
+            "evidence": ".omac/open-agent-cluster.yaml:4065-4074 and :4107-4116 run/assert only four owner tests; :4123-4133 declares four metrics and five artifacts and has no race command. The current work-show contract requires ten owner tests, a concurrent idempotency race artifact, six artifacts, and the corresponding metrics. The current PR diff changes the regex but does not update this gate definition.",
+            "required_fix": "Synchronize the checked-in verification_commands, integration_gates.commands, required_metrics, and artifact list with the current owning contract; then rerun the exact gate and regenerate final evidence at the resulting revision.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-6015cefb2080",
+            "root_cause_key": "request-context-host-provenance",
+            "obligation_id": "dimension:authority",
+            "summary": "HostInvocationBinding is a process-local marker minted from caller-supplied structural values, not an authenticated Host/Platform Core issuance.",
+            "evidence": "issueHostInvocation at governance.go:1656-1703 validates public fields and then computes hostInvocationProof with the package-global hostInvocationIssuerToken. HostInvocationBinding.Validate at :1706-1737 only checks the token, recomputed digest, and non-zero IssuedAt; no owner attestation, host authentication, expiry, or replay/freshness check is present. The required host test strips this pointer from an already-issued same-package fixture rather than exercising a production owner boundary.",
+            "required_fix": "Replace local proof minting with a narrow authenticated Host/Platform Core port that returns an opaque invocation attestation. Verify exact principal, scope, Workflow, WorkUnit, Binding, ComponentRun, subject, release/install, authorization, admission, audit, and validity window before deriving the ceiling; do not derive authority from HostID/IssuanceID and caller-computed digests alone.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-bdf0962ccf8b",
+            "root_cause_key": "governance-authority-negative-paths-not-production-shaped",
+            "obligation_id": "dimension:regression",
+            "summary": "The expanded owner suite passes, but its authority tests do not validate the real production composition boundary or the observed unsigned-authority path.",
+            "evidence": "governance_test.go:153-217 constructs every authority and host context using private same-package factories. The current required suite rejects copied/mutated structural records, but it does not reject a caller-supplied Authenticated() true authority that approves an unsigned artifact, mismatched Project/Solution owner identity, stale owner decisions, or a Describer unrelated to the artifact entrypoint. The exact current commands are green, so this is an evidence/design gap rather than a test execution failure.",
+            "required_fix": "Add production-surface tests using owner-port fakes/opaque attestation fixtures: reject unsigned/self-attested provenance, mismatched Project/Solution identities, stale or cross-invocation Authorization/Admission/Audit attestations, expired host issuance, and unrelated Describe implementations. Keep the exact ten-test and race commands in the checked-in gate.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-c45f923879b0",
+            "root_cause_key": "verification-report-not-backed-by-authenticated-artifact",
+            "obligation_id": "dimension:evidence",
+            "summary": "Production artifact provenance and Describe results can still be supplied by a caller-controlled authority/implementation, including an unsigned artifact.",
+            "evidence": "NewInstallerWithArtifactAuthority at governance.go:944-949 accepts any public PackageArtifactAuthority. Inspect at artifact.go:189-208 trusts a caller's Authenticated() bool and only validates that returned source/signature values look like SHA-256 strings; validatePackageArtifactEvidence does not require a non-empty production signature. The declared owner test's artifactAuthorityStub returns true and arbitrary digests (artifact_edges_test.go:12-43), and governance_test.go:682-692 successfully installs an unsigned artifact. InstallRequest.Describer is also caller-supplied and is not bound to the inspected entrypoint.",
+            "required_fix": "Keep file-tree and entrypoint inspection inside Package Governance, but consume an opaque platform-owned source/signature attestation that carries exact artifact, source, signature, and authority identity. Enforce signature presence and exact byte/manifest binding in production; allow unsigned development artifacts only through an explicitly trusted development policy. Obtain Describe from the installer-owned artifact/entrypoint boundary or require a platform-owned attested loader instead of accepting arbitrary caller implementations as verification.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-c947ed7f1717",
+            "root_cause_key": "install-activation-missing-owner-admission-attestation",
+            "obligation_id": "dimension:execution",
+            "summary": "Install and InstallAndActivate have no typed owner authorization/admission boundary even though the public use case requires package activation permission before writes.",
+            "evidence": "Installer.Install at governance.go:995-1090 validates only the artifact, package, caller-provided Describer, and local InstallPolicy; InstallAndActivate at :1093-1106 simply calls Install and Activate. Neither accepts or validates a RequestContext, owner-issued Authorization/Admission decision, or opaque post-authorization command. The reviewed node therefore has no fail-closed proof that a caller is allowed to create or activate the durable install record.",
+            "required_fix": "Keep Authorization and Execution Admission in Platform Core, but require a Platform-Core-issued opaque install/activation command or attestation bound to the exact release, artifact, request, scope, principal, and idempotency key. Reject direct un-attested writes without duplicating the engines in Package Governance.",
+            "status": "open",
+            "classification": "new"
+          }
+        ]
+      },
+      {
+        "round": 2,
+        "subject_digest": "578f32038f5610b093523791eac3697e3acbdf05090f63de99cd17720aae2397",
+        "report_digest": "b8ee1f3faeb29c8aeccec19684a95ee95cf28556585754f2c3c16754f866e498",
+        "verdict": "reject",
+        "obligation_results": {
+          "dimension:authority": "fail",
+          "dimension:structure": "fail",
+          "dimension:execution": "fail",
+          "dimension:ownership": "fail",
+          "dimension:evidence": "fail",
+          "dimension:regression": "fail",
+          "integration:extension-package-gate": "pass"
+        },
+        "new_count": 2,
+        "fixed_count": 1,
+        "regressed_count": 0,
+        "unchanged_count": 0,
+        "open_count": 8,
+        "prior_open_blocker_ids": [
+          "BLK-05f7d0b7a6fe",
+          "BLK-07ca812b8048",
+          "BLK-4dc56686b943",
+          "BLK-6015cefb2080",
+          "BLK-bdf0962ccf8b",
+          "BLK-c45f923879b0",
+          "BLK-c947ed7f1717"
+        ],
+        "open_blocker_ids": [
+          "BLK-05f7d0b7a6fe",
+          "BLK-07ca812b8048",
+          "BLK-6015cefb2080",
+          "BLK-78d88960c96d",
+          "BLK-b06e7851985a",
+          "BLK-bdf0962ccf8b",
+          "BLK-c45f923879b0",
+          "BLK-c947ed7f1717"
+        ],
+        "reported_blocker_ids": [
+          "BLK-05f7d0b7a6fe",
+          "BLK-07ca812b8048",
+          "BLK-6015cefb2080",
+          "BLK-78d88960c96d",
+          "BLK-b06e7851985a",
+          "BLK-bdf0962ccf8b",
+          "BLK-c45f923879b0",
+          "BLK-c947ed7f1717"
+        ],
+        "blocker_facts_schema": "omac.review-cycle-blocker-facts/v1",
+        "blocker_facts": [
+          {
+            "blocker_id": "BLK-05f7d0b7a6fe",
+            "root_cause_key": "permission-ceiling-owner-intersection-unbound",
+            "obligation_id": "dimension:ownership",
+            "summary": "The six permission authorities and three governance decisions are structurally intersected but are not independently proven to come from their Project, Solution, Platform Core, Authorization, Admission, or Audit owners.",
+            "evidence": "governance.go:2224-2547 validates fixed owner strings, local proof pointers, and equality among caller-visible bindings. The local constructors at :2247-2457 accept caller-provided permissions and decision digests, and there is no owner-issued current Project/Solution identity or decision record consumed before the ceiling is returned.",
+            "required_fix": "Consume owner-issued opaque grants and decisions, bind each authority to exact project/solution, release/install, Harness Binding, request/subject, operation/effect, ComponentRun, policy/rules revision, and audit event, and perform the intersection only after those owner checks.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "governance.go:2224-2547 validates fixed owner strings and local proof pointers; it does not consume owner-issued decisions or a current Project/Solution authority."
+          },
+          {
+            "blocker_id": "BLK-07ca812b8048",
+            "root_cause_key": "governance-authority-structure-incomplete",
+            "obligation_id": "dimension:structure",
+            "summary": "Local authority records and constructors still act as a competing governance source of truth, with fixed project/solution/owner identities and no current owner revision.",
+            "evidence": "governance.go:2247-2334 hardcodes platform-core, project-owner:project-1, solution-owner:solution-1, locked-set-owner:install-1, and invocation-owner:run-1; :2357-2457 constructs Authorization, Admission, and Audit evidence locally from caller arguments. PermissionAuthorities.validateFor at :2460-2547 checks equality among those local values but not the existing authz/admission/audit records or an authenticated Project/Solution owner. governance.go imports only extension/requestcontext/sdk types at :10-25.",
+            "required_fix": "Consume the existing owner-issued authorization/admission/audit and project/solution attestations through narrow owner ports or an opaque post-authorization command. Bind every layer to exact project, solution, package release/install, Harness Binding, request/subject, operation/effect, ComponentRun, policy/rules revision, and freshness; keep the engines and records in their owning modules.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "governance.go:2247-2334 and :2357-2457 contain local owner constructors and fixed identity mappings rather than adapters for the existing governance contracts."
+          },
+          {
+            "blocker_id": "BLK-4dc56686b943",
+            "root_cause_key": "extension-package-gate-copy-stale",
+            "obligation_id": "dimension:structure",
+            "summary": "The checked-in .omac extension-package gate is not synchronized with the current owning contract and enforces a weaker evidence set.",
+            "evidence": ".omac/open-agent-cluster.yaml:4065-4074 and :4107-4116 run/assert only four owner tests; :4123-4133 declares four metrics and five artifacts and has no race command. The current work-show contract requires ten owner tests, a concurrent idempotency race artifact, six artifacts, and the corresponding metrics. The current PR diff changes the regex but does not update this gate definition.",
+            "required_fix": "Synchronize the checked-in verification_commands, integration_gates.commands, required_metrics, and artifact list with the current owning contract; then rerun the exact gate and regenerate final evidence at the resulting revision.",
+            "status": "fixed",
+            "classification": "fixed",
+            "last_evidence": ".omac/open-agent-cluster.yaml:4058-4113 now lists ten required tests, the race command, six artifacts, and matching metrics; the exact commands all exited 0."
+          },
+          {
+            "blocker_id": "BLK-6015cefb2080",
+            "root_cause_key": "request-context-host-provenance",
+            "obligation_id": "dimension:authority",
+            "summary": "HostInvocationBinding remains a process-local marker minted from structural values rather than an authenticated Host/Platform Core issuance.",
+            "evidence": "governance.go:2089-2221 validates host fields and a package-global hostInvocationIssuerToken; HostID, IssuanceID, and caller-computed digests are not verified against an external owner or replay/freshness source. owner_ports_test.go:95-121 directly constructs the private proof in the same package.",
+            "required_fix": "Replace local proof minting with an authenticated Host/Platform Core port whose opaque attestation has a verifiable serialization, exact request/run/binding/install/release and owner decision bindings, expiry/skew, and replay semantics.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "governance.go:2089-2221 and owner_ports_test.go:95-121 show the private proof path; there is no external owner issuance or durable verification mechanism."
+          },
+          {
+            "blocker_id": "BLK-78d88960c96d",
+            "root_cause_key": "idempotency-request-and-audit-binding-missing",
+            "obligation_id": "dimension:ownership",
+            "summary": "Idempotency replay identity omits the original RequestContext and owner decision, so the same key can return an old committed install for a different request context.",
+            "evidence": "ComponentInstall at governance.go:359-382 and installID at :2863-2869 bind identity to idempotency key plus ExactPackageRef only. Install at :1227-1247 authorizes the current request and then FindByIdempotencyKey returns the existing record; no original principal, scope, request digest, decision digest, or AuditEvent is stored for comparison. The authorization attestation is discarded at :1301-1323.",
+            "required_fix": "Add a durable installer-owned command/idempotency record containing the original exact RequestContext digest, principal/scope, operation, release/artifact, owner decision and audit bindings. Compare all immutable command identity on replay; return the committed record only for an exact match and return Conflict for a changed request.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-b06e7851985a",
+            "root_cause_key": "governance-owner-boundary-not-consumable",
+            "obligation_id": "dimension:authority",
+            "summary": "Production owner ports and durable storage cannot be implemented by the owning modules or survive serialization because validation relies on package-private proof pointers and package-private store methods.",
+            "evidence": "internal/extensions/governance.go:749-758 defines installerStore with unexported commitInstallerOwned, updateInstallerOwned, and authorizeRemoval methods; newInstaller at :1152-1163 requires that interface. The owner attestation structs at :178-264, :493-530, and :2089-2112 contain unexported proof fields, while MemoryStore load/commit at :830-839 and :935-941 compares pointer identity. JSON/persistent reload cannot restore those proofs, and no production adapter exists in the diff.",
+            "required_fix": "Replace pointer/token authority with an owner-defined opaque, signed or otherwise verifiable attestation that has an exported serialization/verification contract. Provide an actual Platform Core/Host adapter and an explicit durable store transaction boundary; do not make external integration depend on unexported methods or in-memory pointer identity.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-bdf0962ccf8b",
+            "root_cause_key": "governance-authority-negative-paths-not-production-shaped",
+            "obligation_id": "dimension:regression",
+            "summary": "The expanded negative suite proves mutation rejection inside the package but not the actual external owner and persistence boundary required by the task.",
+            "evidence": "owner_ports_test.go:17-121 and governance_test.go:153-235 directly construct packageDescriptionAttestationProof, installAuthorizationProof, hostInvocationProof, PermissionAuthority proofs, and local decisions. The required gate does not test an external-package adapter, serialized attestation/report reload, direct lifecycle authorization rejection, or current owner revision/project identity.",
+            "required_fix": "Add production-surface contract tests using owner ports that can be implemented outside this package, a durable round-trip store, exact Project/Solution identities and current revisions, and negative cases for unknown owner IDs, stale decisions, changed request context, direct lifecycle writes, and unsigned/self-attested provenance. Keep those tests in the exact checked-in gate.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "owner_ports_test.go:17-121 and governance_test.go:153-235 construct the attestation proofs directly; no test covers external-package composition or persisted round-trip."
+          },
+          {
+            "blocker_id": "BLK-c45f923879b0",
+            "root_cause_key": "verification-report-not-backed-by-authenticated-artifact",
+            "obligation_id": "dimension:evidence",
+            "summary": "Production provenance is not tied to a known authenticated owner, and a public policy flag exposes an unsigned caller-Describe path that bypasses owner gates.",
+            "evidence": "artifact.go:226-257 requires only a non-empty manifest signature in production and sets ProvenanceAuthenticated from inspector.development rather than an authenticated owner result; :371-384 validates local digest/private-proof relationships. It does not allowlist or authenticate AuthorityID. governance.go:1103-1108 selects the development inspector from caller-supplied InstallPolicy, :1332-1341 invokes caller Describer, :1370-1375 returns empty authorization in development, and :1613-1615 allows no host port in that mode. PackageDescriptionAttestation validation at :1435-1459 is likewise structural.",
+            "required_fix": "Remove the public development bypass from production composition or gate it with a trusted platform-issued development capability. Require a known Platform/Core artifact attestation that cryptographically or otherwise verifiably binds exact bytes, manifest, source, signature, and authority identity; reject signature/envelope mismatch before Describe. Obtain Describe only from the installer-owned loader or an equivalently attested owner port.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "artifact.go:226-257 requires a non-empty signature only in non-development mode, while governance.go:1103-1108, :1332-1341, and :1370-1375 expose the unsigned/caller-Describe development path. AuthorityID is only required to be non-empty."
+          },
+          {
+            "blocker_id": "BLK-c947ed7f1717",
+            "root_cause_key": "install-activation-missing-owner-admission-attestation",
+            "obligation_id": "dimension:execution",
+            "summary": "InstallAndActivate has only a weak local ID witness, while direct Activate/Disable/ Revoke/Remove writes have no owner authorization, execution admission, or committed audit binding.",
+            "evidence": "Install calls authorizeInstall at governance.go:1227 and then commits only install, verification, and report at :1301-1323; InstallAuthorizationAttestation at :226-257 contains no decision digests or audit record and validation at :1486-1502 accepts any non-empty decision/event IDs. Activate, Disable, Revoke, and Remove at :1524-1538 all enter transition at :1540-1589, which checks lifecycle policy/CAS/reference state but never an owner Authorization/Admission/Audit attestation.",
+            "required_fix": "Make raw lifecycle transitions private to an owner-authorized application use case, or require a Platform-Core-issued command/attestation for every state-changing operation. Persist the exact authorization, admission, request, and AuditEvent binding in the same transaction as the ComponentInstall CAS update; reject direct unattested writes.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "governance.go:226-264 and :1486-1502 validate only local structural fields, while :1524-1589 permits direct lifecycle transitions without an owner decision or audit transaction."
+          }
+        ]
+      },
+      {
+        "round": 3,
+        "subject_digest": "68d9c0a9656613bd9bdc4047a5e995e1c856eb601fc7d4ec26e1ff4091a21b49",
+        "report_digest": "6a1c8f4756ccdc7395ba129593e62c850bc916a93f68ce810a8afbd2b469cead",
+        "verdict": "reject",
+        "obligation_results": {
+          "dimension:authority": "fail",
+          "dimension:structure": "fail",
+          "dimension:execution": "fail",
+          "dimension:ownership": "fail",
+          "dimension:evidence": "fail",
+          "dimension:regression": "fail",
+          "integration:extension-package-gate": "pass"
+        },
+        "new_count": 0,
+        "fixed_count": 0,
+        "regressed_count": 0,
+        "unchanged_count": 0,
+        "open_count": 8,
+        "prior_open_blocker_ids": [
+          "BLK-05f7d0b7a6fe",
+          "BLK-07ca812b8048",
+          "BLK-6015cefb2080",
+          "BLK-78d88960c96d",
+          "BLK-b06e7851985a",
+          "BLK-bdf0962ccf8b",
+          "BLK-c45f923879b0",
+          "BLK-c947ed7f1717"
+        ],
+        "open_blocker_ids": [
+          "BLK-05f7d0b7a6fe",
+          "BLK-07ca812b8048",
+          "BLK-6015cefb2080",
+          "BLK-78d88960c96d",
+          "BLK-b06e7851985a",
+          "BLK-bdf0962ccf8b",
+          "BLK-c45f923879b0",
+          "BLK-c947ed7f1717"
+        ],
+        "reported_blocker_ids": [
+          "BLK-05f7d0b7a6fe",
+          "BLK-07ca812b8048",
+          "BLK-6015cefb2080",
+          "BLK-78d88960c96d",
+          "BLK-b06e7851985a",
+          "BLK-bdf0962ccf8b",
+          "BLK-c45f923879b0",
+          "BLK-c947ed7f1717"
+        ],
+        "blocker_facts_schema": "omac.review-cycle-blocker-facts/v1",
+        "blocker_facts": [
+          {
+            "blocker_id": "BLK-05f7d0b7a6fe",
+            "root_cause_key": "permission-ceiling-owner-intersection-unbound",
+            "obligation_id": "dimension:ownership",
+            "summary": "The six permission authorities and three governance decisions are structurally intersected but are not independently proven to come from their Project, Solution, Platform Core, Authorization, Admission, or Audit owners.",
+            "evidence": "governance.go:697-856 defines the local authority family; :3629-3757 checks structural equality and binding. The signed verifier at attestation.go:66-84 is configured by the caller, and local constructors at governance.go:3302-3626 supply fixed owner/project/ solution values. No current owner decision or Project/Solution authority is fetched from the existing owning modules before the ceiling is returned.",
+            "required_fix": "Consume owner-issued opaque grants and decisions through authenticated owner adapters or a Platform-Core-issued command. Bind every layer to exact Project/Solution, release/install, Harness Binding, request/subject, operation/effect, ComponentRun, policy/rules revision, expiry/skew, and audit event before intersecting permissions; keep engines and records in their owning modules.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "governance.go:697-856, :3629-3757, and :3302-3626; attestation.go:66-84."
+          },
+          {
+            "blocker_id": "BLK-07ca812b8048",
+            "root_cause_key": "governance-authority-structure-incomplete",
+            "obligation_id": "dimension:structure",
+            "summary": "Package Governance ships a competing local governance record family and fixed identity constructors instead of a canonical adapter over the existing owner contracts.",
+            "evidence": "governance.go:739-856 defines local AuthorizationEvidence, AdmissionEvidence, AuditEvidence, and PermissionAuthority. governance.go:3302-3626 maps authority ownership to fixed project-1/solution-1/install-1/run-1 and constructs local decisions. A source search over internal/extensions found no imports of contracts/governance/authz, admission, audit, project, or solution.",
+            "required_fix": "Replace the local engines/record constructors with narrow adapters or opaque owner-issued attestations over the canonical contracts. Require current owner identity/revision and exact cross-record digest bindings without relocating ownership into this package.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "governance.go:3302-3626 hardcodes project-1/solution-1/install-1/run-1 and constructs local Authorization, Admission, and Audit evidence; no canonical owner-contract imports occur in internal/extensions."
+          },
+          {
+            "blocker_id": "BLK-6015cefb2080",
+            "root_cause_key": "request-context-host-provenance",
+            "obligation_id": "dimension:authority",
+            "summary": "Host invocation provenance is now cryptographically checkable only against a verifier and Host port chosen by the composition caller; no trusted Host/Platform Core issuance or replay boundary is implemented.",
+            "evidence": "NewEd25519AttestationVerifier accepts caller-provided descriptors at attestation.go:66-84, and NewInstallerWithOwnerPorts accepts that verifier and all ports at governance.go:1676-1698. NewAuthenticatedInvocationContext at governance.go:3032-3064 still validates without a verifier, while freshness checks at :3110-3222 only compare local timestamps and digests; IssuanceID has no durable uniqueness/replay check.",
+            "required_fix": "Make production construction accept only a Platform-Core/Host-owned verifier or opaque attestation adapter, remove or gate the no-verifier path, and persist/consult owner replay and freshness semantics. Bind the signed value to exact request, run, binding, install, release, subject, owner decisions, current revision, and audit event.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "attestation.go:38-120; governance.go:3032-3064 and :3110-3222; no production Host adapter exists in the PR."
+          },
+          {
+            "blocker_id": "BLK-78d88960c96d",
+            "root_cause_key": "idempotency-request-and-audit-binding-missing",
+            "obligation_id": "dimension:ownership",
+            "summary": "Replay now records request context and owner references, but it compares transient owner issuance identity/timestamps as command identity, so same-request retries can fail instead of returning the committed record; the original signed witness remains absent.",
+            "evidence": "Install authorizes before lookup at governance.go:1789-1810. newInstallCommandRecord at :4537-4568 copies AuthorizationDecisionID, AdmissionDecisionID, AuditEventID, attestation digest, IssuedAt, and ExpiresAt. sameInstallCommandIdentity at :4533-4534 compares all of those fields. InstallAuthorizationPort does not require deterministic decision IDs or timestamps for a repeated idempotency key.",
+            "required_fix": "Define stable command identity from the exact logical request (idempotency key, operation, request digest, release/artifact) and separately validate current owner authorization. Store/retrieve the original owner decision and signed proof atomically; changed request context must conflict while an exact replay returns the committed record.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "governance.go:1789-1810 and :4533-4568; sameInstallCommandIdentity compares decision IDs, digests, and timestamps, while authorizeInstall is called before lookup."
+          },
+          {
+            "blocker_id": "BLK-b06e7851985a",
+            "root_cause_key": "governance-owner-boundary-not-consumable",
+            "obligation_id": "dimension:authority",
+            "summary": "The old private-method limitation is partially fixed with exported interfaces, but the PR still has no real owner adapter or persistent store, and the exported write transaction is not capability- or owner-bound.",
+            "evidence": "governance.go:954-998 now exposes InstallerStore/InstallerTransaction, and owner_ports_external_test.go:604-695 implements them from extensions_test. That test store delegates to ext.MemoryStore and only JSON-round-trips returned values; MemoryStore itself is map-backed at governance.go:1054-1079. Its public CommitInstall/CommitLifecycle paths accept structural public records at :1173-1288 without a trusted owner proof.",
+            "required_fix": "Provide an actual Platform Core/Host and durable-store adapter, persist portable signed attestations and command/audit bindings, and make commits capability-bound or require a verifiable owner command. Keep the public read contract narrow and reject all direct unattested writes.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "governance.go:954-998 exposes the boundary; owner_ports_external_test.go:604-695 wraps ext.MemoryStore rather than implementing persistence; governance.go:1173-1288 accepts public structural commits."
+          },
+          {
+            "blocker_id": "BLK-bdf0962ccf8b",
+            "root_cause_key": "governance-authority-negative-paths-not-production-shaped",
+            "obligation_id": "dimension:regression",
+            "summary": "The negative suite is broader and externally packageable, but it still uses fixture-owned keys/fakes and a memory-backed JSON wrapper rather than the required production owner and persistence boundary.",
+            "evidence": "owner_ports_external_test.go:729-918 creates its own Ed25519 keys, descriptor map, owner ports, and externalJSONStore. The wrapper delegates commits to MemoryStore at :604-695; no test performs a process restart against a durable store, consumes canonical Project/ Solution/Authz/Admission/Audit records, or checks a live current revision. The exact gate selects only ten parent tests and excludes TestExternal....",
+            "required_fix": "Add production-surface contract tests with real owner adapters and a persistent round-trip store, then keep them in the exact gate. Cover unknown/stale owner revision, changed request context, replay, direct lifecycle writes, unsigned provenance, and exact Project/Solution/Authz/Admission/Audit bindings.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "owner_ports_external_test.go:729-918; the exact gate regex selects ten same-package governance tests and excludes TestExternal... tests."
+          },
+          {
+            "blocker_id": "BLK-c45f923879b0",
+            "root_cause_key": "verification-report-not-backed-by-authenticated-artifact",
+            "obligation_id": "dimension:evidence",
+            "summary": "Strict artifact signature verification is present, but the durable verification report drops the owner attestation and does not prove the fixed SDK interface/behavior check suite; a public development path still bypasses those gates.",
+            "evidence": "artifact.go:427-446 verifies the fixed artifact authority only through caller-supplied verifier configuration, while PackageArtifactEvidence at :62-80 has no attestation proof or digest. buildVerificationReport at governance.go:4113-4182 sets both Passed fields true and computes ChecksDigest only from SDK version/package/interface. NewDevelopmentInstaller at governance.go:1622-1637 and caller Describe at :1927-1936 remain public.",
+            "required_fix": "Remove the public bypass or require a trusted Platform-Core development capability. Persist a portable owner-issued provenance/Describe/conformance attestation (or a signed digest of the canonical check output) and validate it against exact bytes, envelope, entrypoint, interface, required behavior, source, current owner, and expiry before committing.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "artifact.go:246-286 and :427-446; governance.go:1622-1637, :1927-1967, and :4113-4182."
+          },
+          {
+            "blocker_id": "BLK-c947ed7f1717",
+            "root_cause_key": "install-activation-missing-owner-admission-attestation",
+            "obligation_id": "dimension:execution",
+            "summary": "InstallAndActivate and ApplyLifecycle now call owner ports, but the signed authorization, admission, and audit witness is flattened to IDs/digests and direct public transactions can still commit unattested lifecycle records.",
+            "evidence": "Install passes Authorization to the transaction at governance.go:1892-1897, but commitInstallTransaction at :1173-1230 never validates or stores it. ApplyLifecycle and transitionWithAttestation at :2345-2467 persist only LifecycleCommandRecord. The public LifecycleCommandRecord validator allows an empty authorization at :4514-4518, and CommitLifecycle at :1233-1288 does not check install.AllowDevelopmentArtifacts or an owner proof. Removal uses local reference/policy evidence at :1291-1328.",
+            "required_fix": "Route every lifecycle and install write through one owner-authorized application boundary, or require a Platform-Core-issued signed command in the transaction. Persist the exact authorization/admission/AuditEvent binding and portable proof atomically with the CAS update; make removal authorization an owner decision plus current reference check.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "governance.go:2317-2467 and :4501-4661; CommitLifecycle at :1233-1288 does not require AuthorizationAttestationDigest or install production mode."
+          }
+        ]
+      }
+    ],
+    "blockers": [
+      {
+        "blocker_id": "BLK-05f7d0b7a6fe",
+        "root_cause_key": "permission-ceiling-owner-intersection-unbound",
+        "obligation_id": "dimension:ownership",
+        "summary": "The six permission authorities and three governance decisions are structurally intersected but are not independently proven to come from their Project, Solution, Platform Core, Authorization, Admission, or Audit owners.",
+        "evidence": "governance.go:697-856 defines the local authority family; :3629-3757 checks structural equality and binding. The signed verifier at attestation.go:66-84 is configured by the caller, and local constructors at governance.go:3302-3626 supply fixed owner/project/ solution values. No current owner decision or Project/Solution authority is fetched from the existing owning modules before the ceiling is returned.",
+        "required_fix": "Consume owner-issued opaque grants and decisions through authenticated owner adapters or a Platform-Core-issued command. Bind every layer to exact Project/Solution, release/install, Harness Binding, request/subject, operation/effect, ComponentRun, policy/rules revision, expiry/skew, and audit event before intersecting permissions; keep engines and records in their owning modules.",
+        "status": "open",
+        "classification": "deeper",
+        "first_seen_round": 1,
+        "last_seen_round": 3,
+        "seen_count": 3,
+        "last_evidence": "governance.go:697-856, :3629-3757, and :3302-3626; attestation.go:66-84."
+      },
+      {
+        "blocker_id": "BLK-07ca812b8048",
+        "root_cause_key": "governance-authority-structure-incomplete",
+        "obligation_id": "dimension:structure",
+        "summary": "Package Governance ships a competing local governance record family and fixed identity constructors instead of a canonical adapter over the existing owner contracts.",
+        "evidence": "governance.go:739-856 defines local AuthorizationEvidence, AdmissionEvidence, AuditEvidence, and PermissionAuthority. governance.go:3302-3626 maps authority ownership to fixed project-1/solution-1/install-1/run-1 and constructs local decisions. A source search over internal/extensions found no imports of contracts/governance/authz, admission, audit, project, or solution.",
+        "required_fix": "Replace the local engines/record constructors with narrow adapters or opaque owner-issued attestations over the canonical contracts. Require current owner identity/revision and exact cross-record digest bindings without relocating ownership into this package.",
+        "status": "open",
+        "classification": "deeper",
+        "first_seen_round": 1,
+        "last_seen_round": 3,
+        "seen_count": 3,
+        "last_evidence": "governance.go:3302-3626 hardcodes project-1/solution-1/install-1/run-1 and constructs local Authorization, Admission, and Audit evidence; no canonical owner-contract imports occur in internal/extensions."
+      },
+      {
+        "blocker_id": "BLK-4dc56686b943",
+        "root_cause_key": "extension-package-gate-copy-stale",
+        "obligation_id": "dimension:structure",
+        "summary": "The checked-in .omac extension-package gate is not synchronized with the current owning contract and enforces a weaker evidence set.",
+        "evidence": ".omac/open-agent-cluster.yaml:4065-4074 and :4107-4116 run/assert only four owner tests; :4123-4133 declares four metrics and five artifacts and has no race command. The current work-show contract requires ten owner tests, a concurrent idempotency race artifact, six artifacts, and the corresponding metrics. The current PR diff changes the regex but does not update this gate definition.",
+        "required_fix": "Synchronize the checked-in verification_commands, integration_gates.commands, required_metrics, and artifact list with the current owning contract; then rerun the exact gate and regenerate final evidence at the resulting revision.",
+        "status": "fixed",
+        "classification": "fixed",
+        "first_seen_round": 1,
+        "last_seen_round": 2,
+        "seen_count": 1,
+        "last_evidence": ".omac/open-agent-cluster.yaml:4058-4113 now lists ten required tests, the race command, six artifacts, and matching metrics; the exact commands all exited 0."
+      },
+      {
+        "blocker_id": "BLK-6015cefb2080",
+        "root_cause_key": "request-context-host-provenance",
+        "obligation_id": "dimension:authority",
+        "summary": "Host invocation provenance is now cryptographically checkable only against a verifier and Host port chosen by the composition caller; no trusted Host/Platform Core issuance or replay boundary is implemented.",
+        "evidence": "NewEd25519AttestationVerifier accepts caller-provided descriptors at attestation.go:66-84, and NewInstallerWithOwnerPorts accepts that verifier and all ports at governance.go:1676-1698. NewAuthenticatedInvocationContext at governance.go:3032-3064 still validates without a verifier, while freshness checks at :3110-3222 only compare local timestamps and digests; IssuanceID has no durable uniqueness/replay check.",
+        "required_fix": "Make production construction accept only a Platform-Core/Host-owned verifier or opaque attestation adapter, remove or gate the no-verifier path, and persist/consult owner replay and freshness semantics. Bind the signed value to exact request, run, binding, install, release, subject, owner decisions, current revision, and audit event.",
+        "status": "open",
+        "classification": "deeper",
+        "first_seen_round": 1,
+        "last_seen_round": 3,
+        "seen_count": 3,
+        "last_evidence": "attestation.go:38-120; governance.go:3032-3064 and :3110-3222; no production Host adapter exists in the PR."
+      },
+      {
+        "blocker_id": "BLK-78d88960c96d",
+        "root_cause_key": "idempotency-request-and-audit-binding-missing",
+        "obligation_id": "dimension:ownership",
+        "summary": "Replay now records request context and owner references, but it compares transient owner issuance identity/timestamps as command identity, so same-request retries can fail instead of returning the committed record; the original signed witness remains absent.",
+        "evidence": "Install authorizes before lookup at governance.go:1789-1810. newInstallCommandRecord at :4537-4568 copies AuthorizationDecisionID, AdmissionDecisionID, AuditEventID, attestation digest, IssuedAt, and ExpiresAt. sameInstallCommandIdentity at :4533-4534 compares all of those fields. InstallAuthorizationPort does not require deterministic decision IDs or timestamps for a repeated idempotency key.",
+        "required_fix": "Define stable command identity from the exact logical request (idempotency key, operation, request digest, release/artifact) and separately validate current owner authorization. Store/retrieve the original owner decision and signed proof atomically; changed request context must conflict while an exact replay returns the committed record.",
+        "status": "open",
+        "classification": "deeper",
+        "first_seen_round": 2,
+        "last_seen_round": 3,
+        "seen_count": 2,
+        "last_evidence": "governance.go:1789-1810 and :4533-4568; sameInstallCommandIdentity compares decision IDs, digests, and timestamps, while authorizeInstall is called before lookup."
+      },
+      {
+        "blocker_id": "BLK-b06e7851985a",
+        "root_cause_key": "governance-owner-boundary-not-consumable",
+        "obligation_id": "dimension:authority",
+        "summary": "The old private-method limitation is partially fixed with exported interfaces, but the PR still has no real owner adapter or persistent store, and the exported write transaction is not capability- or owner-bound.",
+        "evidence": "governance.go:954-998 now exposes InstallerStore/InstallerTransaction, and owner_ports_external_test.go:604-695 implements them from extensions_test. That test store delegates to ext.MemoryStore and only JSON-round-trips returned values; MemoryStore itself is map-backed at governance.go:1054-1079. Its public CommitInstall/CommitLifecycle paths accept structural public records at :1173-1288 without a trusted owner proof.",
+        "required_fix": "Provide an actual Platform Core/Host and durable-store adapter, persist portable signed attestations and command/audit bindings, and make commits capability-bound or require a verifiable owner command. Keep the public read contract narrow and reject all direct unattested writes.",
+        "status": "open",
+        "classification": "deeper",
+        "first_seen_round": 2,
+        "last_seen_round": 3,
+        "seen_count": 2,
+        "last_evidence": "governance.go:954-998 exposes the boundary; owner_ports_external_test.go:604-695 wraps ext.MemoryStore rather than implementing persistence; governance.go:1173-1288 accepts public structural commits."
+      },
+      {
+        "blocker_id": "BLK-bdf0962ccf8b",
+        "root_cause_key": "governance-authority-negative-paths-not-production-shaped",
+        "obligation_id": "dimension:regression",
+        "summary": "The negative suite is broader and externally packageable, but it still uses fixture-owned keys/fakes and a memory-backed JSON wrapper rather than the required production owner and persistence boundary.",
+        "evidence": "owner_ports_external_test.go:729-918 creates its own Ed25519 keys, descriptor map, owner ports, and externalJSONStore. The wrapper delegates commits to MemoryStore at :604-695; no test performs a process restart against a durable store, consumes canonical Project/ Solution/Authz/Admission/Audit records, or checks a live current revision. The exact gate selects only ten parent tests and excludes TestExternal....",
+        "required_fix": "Add production-surface contract tests with real owner adapters and a persistent round-trip store, then keep them in the exact gate. Cover unknown/stale owner revision, changed request context, replay, direct lifecycle writes, unsigned provenance, and exact Project/Solution/Authz/Admission/Audit bindings.",
+        "status": "open",
+        "classification": "deeper",
+        "first_seen_round": 1,
+        "last_seen_round": 3,
+        "seen_count": 3,
+        "last_evidence": "owner_ports_external_test.go:729-918; the exact gate regex selects ten same-package governance tests and excludes TestExternal... tests."
+      },
+      {
+        "blocker_id": "BLK-c45f923879b0",
+        "root_cause_key": "verification-report-not-backed-by-authenticated-artifact",
+        "obligation_id": "dimension:evidence",
+        "summary": "Strict artifact signature verification is present, but the durable verification report drops the owner attestation and does not prove the fixed SDK interface/behavior check suite; a public development path still bypasses those gates.",
+        "evidence": "artifact.go:427-446 verifies the fixed artifact authority only through caller-supplied verifier configuration, while PackageArtifactEvidence at :62-80 has no attestation proof or digest. buildVerificationReport at governance.go:4113-4182 sets both Passed fields true and computes ChecksDigest only from SDK version/package/interface. NewDevelopmentInstaller at governance.go:1622-1637 and caller Describe at :1927-1936 remain public.",
+        "required_fix": "Remove the public bypass or require a trusted Platform-Core development capability. Persist a portable owner-issued provenance/Describe/conformance attestation (or a signed digest of the canonical check output) and validate it against exact bytes, envelope, entrypoint, interface, required behavior, source, current owner, and expiry before committing.",
+        "status": "open",
+        "classification": "deeper",
+        "first_seen_round": 1,
+        "last_seen_round": 3,
+        "seen_count": 3,
+        "last_evidence": "artifact.go:246-286 and :427-446; governance.go:1622-1637, :1927-1967, and :4113-4182."
+      },
+      {
+        "blocker_id": "BLK-c947ed7f1717",
+        "root_cause_key": "install-activation-missing-owner-admission-attestation",
+        "obligation_id": "dimension:execution",
+        "summary": "InstallAndActivate and ApplyLifecycle now call owner ports, but the signed authorization, admission, and audit witness is flattened to IDs/digests and direct public transactions can still commit unattested lifecycle records.",
+        "evidence": "Install passes Authorization to the transaction at governance.go:1892-1897, but commitInstallTransaction at :1173-1230 never validates or stores it. ApplyLifecycle and transitionWithAttestation at :2345-2467 persist only LifecycleCommandRecord. The public LifecycleCommandRecord validator allows an empty authorization at :4514-4518, and CommitLifecycle at :1233-1288 does not check install.AllowDevelopmentArtifacts or an owner proof. Removal uses local reference/policy evidence at :1291-1328.",
+        "required_fix": "Route every lifecycle and install write through one owner-authorized application boundary, or require a Platform-Core-issued signed command in the transaction. Persist the exact authorization/admission/AuditEvent binding and portable proof atomically with the CAS update; make removal authorization an owner decision plus current reference check.",
+        "status": "open",
+        "classification": "deeper",
+        "first_seen_round": 1,
+        "last_seen_round": 3,
+        "seen_count": 3,
+        "last_evidence": "governance.go:2317-2467 and :4501-4661; CommitLifecycle at :1233-1288 does not require AuthorizationAttestationDigest or install production mode."
+      }
+    ]
+  },
+  "review_ledger_ref": {
+    "comment_id": "01a04817-7c1e-7eea-a705-6d4277f446b7",
+    "attachment_id": "01a04817-7bc0-70cb-a462-014d39db3ac4",
+    "sha256": "c6280c80c697810292c6208e42b9b0ec2ce9a26c3de562112630acc090136812",
+    "bytes": 48383,
+    "filename": "omac-review-ledger-c6280c80c697.yaml"
+  },
+  "review_generation": "authoring-db394b66e01dd634baef98a4",
+  "review_ledger_generation": "amendment-24663e388eca4753062087e5",
+  "review_continuation": null,
+  "reviewer_run_baseline": null,
+  "worker_handoff": null,
+  "delivery_identity": null,
+  "decision_required": null,
+  "amendment_attempt": null,
+  "contract": {
+    "objective": "Deliver Package Governance as the sole owner of exact Package release, artifact/provenance and SDK conformance verification, interface, entrypoint and Describe results, durable ComponentInstall identity, lifecycle state, and point/effect permission ceilings through a real production composition that consumes canonical RequestContext, Project, Solution, Authorization, Admission, Audit, and extension-wire contracts; atomically persist portable owner proofs and return only the committed record for exact concurrent or retried requests.",
+    "non_goals": [
+      "Do not change adjacent domain ownership or introduce a competing source of truth.",
+      "Do not bypass authorization, admission, CAS, idempotency, review, or evidence gates.",
+      "Do not preserve unpublished prototype behavior unless the owning design explicitly requires it.",
+      "Do not redefine or replace contracts-extension-wire, RequestContext, Project, Solution, Authorization, Admission, or Audit records, engines, identities, revisions, or digests inside Package Governance.",
+      "Do not move Platform Core audit, credential, authorization, admission, Host, Project, or Solution ownership into this node; consume their canonical contracts through narrow production adapters or an owner-issued command.",
+      "Do not accept caller-selected production verifiers, owner ports, inspectors, authority descriptors, Project/Solution snapshots, governance decisions, or RequestContext values as proof of ownership.",
+      "Do not expose a production CommitInstall or CommitLifecycle path that can mutate state from public structural records without a capability-bound or independently verifiable owner command.",
+      "Do not discard signed provenance, Describe/conformance, authorization, admission, lifecycle, removal, or Audit witnesses after validating them; the committed record must retain portable proof and exact bindings.",
+      "Do not include transient owner decision IDs, issuance IDs, or issue/expiry timestamps in the stable logical replay identity; validate current authorization separately from exact-request idempotency.",
+      "Do not expose unsigned development installers, caller-controlled Describe, MemoryStore, fake owner ports, generated test keys, or synthetic conformance success in production composition or release evidence.",
+      "Do not satisfy the production gate with same-package tests that can reach package-private helpers; every named production-boundary test must run from package extensions_test against only exported production surfaces.",
+      "Do not allow release evidence to reference MemoryStore, externalJSONStore, fake or mock owner ports, generated signing keys, //go:linkname, unsafe package-private access, the no-verifier invocation constructor, or the public development installer; the gate must emit and assert a zero-count source audit for these paths.",
+      "Do not execute Gate evaluators or claim Harness Host isolation, ComponentRun recovery, EventHandler lineage, or end-to-end user acceptance in this node.",
+      "Do not add a universal extension invoke path, a generic plugin category, or a builtin bypass."
+    ],
+    "verification_commands": [
+      "mkdir -p artifacts/extension-package && go test -covermode=atomic -coverprofile=artifacts/extension-package/coverage.out ./sdk/extension/... ./internal/extensions/...",
+      "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/extension-package/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+      "mkdir -p artifacts/extension-package && go list -f '{{range .Imports}}{{.}}{{\"\\n\"}}{{end}}' ./internal/extensions/... | sort -u > artifacts/extension-package/canonical-owner-imports.txt",
+      "python3 -c \"from pathlib import Path; required={ 'github.com/xiaohei-info/open-agent-cluster/contracts/extension', 'github.com/xiaohei-info/open-agent-cluster/contracts/identity/requestcontext', 'github.com/xiaohei-info/open-agent-cluster/contracts/governance/authz', 'github.com/xiaohei-info/open-agent-cluster/contracts/governance/admission', 'github.com/xiaohei-info/open-agent-cluster/contracts/governance/audit', 'github.com/xiaohei-info/open-agent-cluster/contracts/project', 'github.com/xiaohei-info/open-agent-cluster/contracts/solution'}; actual=set(Path('artifacts/extension-package/canonical-owner-imports.txt').read_text().splitlines()); assert required <= actual, f'missing canonical owner imports: {sorted(required-actual)}'\"",
+      "python3 -c \"from pathlib import Path; import json,re; p=Path('internal/extensions/production_boundary_external_test.go'); s=p.read_text(); required={ 'TestExternalProductionPackageGovernanceUsesCanonicalOwnerAdapters', 'TestExternalProductionPackageGovernancePersistsOwnerProofsAcrossRestart', 'TestExternalProductionPackageGovernanceRejectsUnattestedStoreWrites', 'TestExternalProductionPackageGovernanceRejectsUnknownAndStaleOwnerRevisions', 'TestExternalPackageGovernanceBindsProjectSolutionAuthorizationAdmissionAndAudit', 'TestExternalPackageGovernancePersistsProvenanceDescribeAndConformanceAttestations', 'TestExternalPackageGovernanceRejectsSyntheticConformanceEvidence', 'TestExternalComponentInstallConcurrentCanonicalReplayReturnsCommittedRecord', 'TestExternalComponentInstallChangedRequestContextConflicts', 'TestExternalProductionPackageGovernanceRejectsDevelopmentBypass', 'TestExternalProductionLifecyclePersistsAuthorizationAdmissionAndAuditProof', 'TestExternalProductionLifecycleRejectsDirectUnattestedCommitAndPersistsRemovalProof', 'TestExternalComponentInstallBindsExactReleaseDigestInterfaceAndEntrypoint', 'TestExternalPackageGovernanceRejectsMismatchedPackageBinding', 'TestExternalDescribePermissionCeilingBindsInstallPointEffectAndRequestContext', 'TestExternalPermissionCeilingIntersectsCanonicalOwnerGrants', 'TestExternalPermissionCeilingRejectsUnsupportedEffectAndResource', 'TestExternalPermissionCeilingRejectsMismatchedOwnerIdentities'}; missing=sorted(n for n in required if ('func '+n+'(') not in s); prod=[q for root in ('sdk/extension','internal/extensions') for q in Path(root).rglob('*.go') if not q.name.endswith('_test.go')]; prod_text='\\n'.join(q.read_text() for q in prod); counters={ 'memory_store_reference_count':len(re.findall(r'\\bMemoryStore\\b|\\bexternalJSONStore\\b',s+prod_text)), 'fake_owner_port_reference_count':len(re.findall(r'\\b(?:fake|mock|stub)[A-Za-z0-9_]*Owner',s,re.I)), 'generated_key_reference_count':len(re.findall(r'(?:ed25519|rsa|ecdsa)\\.GenerateKey',s)), 'package_private_helper_reference_count':len(re.findall(r'//go:linkname|\\bunsafe\\.',s)), 'development_bypass_reference_count':len(re.findall(r'\\bNewDevelopmentInstaller\\b|\\bNewAuthenticatedInvocationContext\\s*\\(',prod_text))}; report={'schema':'oac.extension-package-production-source-audit/v1', 'external_test_package':'extensions_test' if re.search(r'^package\\s+extensions_test\\s*$',s,re.M) else '', 'required_external_test_count':len(required),'missing_external_tests':missing, 'production_constructor_reference_count':s.count('NewProductionPackageGovernance('), 'persistent_store_constructor_reference_count':s.count('OpenPersistentInstallerStore('),**counters}; out=Path('artifacts/extension-package/production-boundary-source-audit.json'); out.parent.mkdir(parents=True,exist_ok=True); out.write_text(json.dumps(report,sort_keys=True)+'\\n'); assert report['external_test_package']=='extensions_test' and not missing; assert report['production_constructor_reference_count']>0 and report['persistent_store_constructor_reference_count']>1; assert not any(counters.values()), counters\"",
+      "mkdir -p artifacts/extension-package && OAC_EXTENSION_PRODUCTION_EVIDENCE=\"$PWD/artifacts/extension-package/production-boundary-evidence.json\" go test -json ./sdk/extension/... ./internal/extensions/... -run '^(TestExternalProductionPackageGovernanceUsesCanonicalOwnerAdapters|TestExternalProductionPackageGovernancePersistsOwnerProofsAcrossRestart|TestExternalProductionPackageGovernanceRejectsUnattestedStoreWrites|TestExternalProductionPackageGovernanceRejectsUnknownAndStaleOwnerRevisions|TestExternalPackageGovernanceBindsProjectSolutionAuthorizationAdmissionAndAudit|TestExternalPackageGovernancePersistsProvenanceDescribeAndConformanceAttestations|TestExternalPackageGovernanceRejectsSyntheticConformanceEvidence|TestExternalComponentInstallConcurrentCanonicalReplayReturnsCommittedRecord|TestExternalComponentInstallChangedRequestContextConflicts|TestExternalProductionPackageGovernanceRejectsDevelopmentBypass|TestExternalProductionLifecyclePersistsAuthorizationAdmissionAndAuditProof|TestExternalProductionLifecycleRejectsDirectUnattestedCommitAndPersistsRemovalProof|TestExternalComponentInstallBindsExactReleaseDigestInterfaceAndEntrypoint|TestExternalPackageGovernanceRejectsMismatchedPackageBinding|TestExternalDescribePermissionCeilingBindsInstallPointEffectAndRequestContext|TestExternalPermissionCeilingIntersectsCanonicalOwnerGrants|TestExternalPermissionCeilingRejectsUnsupportedEffectAndResource|TestExternalPermissionCeilingRejectsMismatchedOwnerIdentities)$' -count=1 > artifacts/extension-package/production-owner-tests.json",
+      "python3 -c \"import json; required={ 'TestExternalProductionPackageGovernanceUsesCanonicalOwnerAdapters', 'TestExternalProductionPackageGovernancePersistsOwnerProofsAcrossRestart', 'TestExternalProductionPackageGovernanceRejectsUnattestedStoreWrites', 'TestExternalProductionPackageGovernanceRejectsUnknownAndStaleOwnerRevisions', 'TestExternalPackageGovernanceBindsProjectSolutionAuthorizationAdmissionAndAudit', 'TestExternalPackageGovernancePersistsProvenanceDescribeAndConformanceAttestations', 'TestExternalPackageGovernanceRejectsSyntheticConformanceEvidence', 'TestExternalComponentInstallConcurrentCanonicalReplayReturnsCommittedRecord', 'TestExternalComponentInstallChangedRequestContextConflicts', 'TestExternalProductionPackageGovernanceRejectsDevelopmentBypass', 'TestExternalProductionLifecyclePersistsAuthorizationAdmissionAndAuditProof', 'TestExternalProductionLifecycleRejectsDirectUnattestedCommitAndPersistsRemovalProof', 'TestExternalComponentInstallBindsExactReleaseDigestInterfaceAndEntrypoint', 'TestExternalPackageGovernanceRejectsMismatchedPackageBinding', 'TestExternalDescribePermissionCeilingBindsInstallPointEffectAndRequestContext', 'TestExternalPermissionCeilingIntersectsCanonicalOwnerGrants', 'TestExternalPermissionCeilingRejectsUnsupportedEffectAndResource', 'TestExternalPermissionCeilingRejectsMismatchedOwnerIdentities'}; rows=[json.loads(x) for x in open('artifacts/extension-package/production-owner-tests.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing required passing tests: {sorted(required-passed)}'\"",
+      "python3 -c \"import json; from pathlib import Path; r=json.loads(Path('artifacts/extension-package/production-boundary-evidence.json').read_text()); s=json.loads(Path('artifacts/extension-package/production-boundary-source-audit.json').read_text()); true_fields={'production_constructor_exercised','owner_proofs_preserved_after_restart','exact_package_binding_verified','permission_ceiling_intersection_verified','describe_point_effect_binding_verified'}; zero_fields={'exact_package_binding_mismatch_accept_count','exact_release_mismatch_accept_count','artifact_digest_mismatch_accept_count','interface_api_mismatch_accept_count','entrypoint_mismatch_accept_count','permission_ceiling_intersection_failure_count','unsupported_effect_accept_count','unsupported_resource_accept_count','owner_identity_mismatch_accept_count','unattested_write_accept_count','stale_owner_revision_accept_count','owner_proof_loss_after_restart_count','transient_issuance_replay_conflict_count','changed_request_replay_accept_count','production_development_bypass_accept_count','synthetic_conformance_evidence_accept_count'}; assert r.get('schema')=='oac.extension-package-production-boundary-evidence/v1'; assert true_fields|zero_fields <= set(r), f'missing evidence fields: {sorted((true_fields|zero_fields)-set(r))}'; assert all(r[k] is True for k in true_fields); assert all(r[k]==0 for k in zero_fields); assert r.get('persistent_store_backend') not in {None,'','memory','MemoryStore','fake'} and r.get('persistent_store_reopen_count',0)>0; assert set(r.get('canonical_owner_adapters',[]))=={'request-context','project','solution','authorization','admission','audit'}; source_zero={'memory_store_reference_count','fake_owner_port_reference_count','generated_key_reference_count','package_private_helper_reference_count','development_bypass_reference_count'}; assert s.get('schema')=='oac.extension-package-production-source-audit/v1' and s.get('external_test_package')=='extensions_test'; assert s.get('required_external_test_count')==18 and s.get('missing_external_tests')==[]; assert s.get('production_constructor_reference_count',0)>0 and s.get('persistent_store_constructor_reference_count',0)>1; assert all(s.get(k)==0 for k in source_zero)\"",
+      "mkdir -p artifacts/extension-package && CGO_ENABLED=1 go test -race -json ./sdk/extension/... ./internal/extensions/... -run '^TestExternalComponentInstallConcurrentCanonicalReplayReturnsCommittedRecord$' -count=1 > artifacts/extension-package/concurrent-canonical-replay-race.json",
+      "python3 -c \"import json; name='TestExternalComponentInstallConcurrentCanonicalReplayReturnsCommittedRecord'; rows=[json.loads(x) for x in open('artifacts/extension-package/concurrent-canonical-replay-race.json') if x.strip()]; assert any(x.get('Action')=='pass' and x.get('Test')==name for x in rows)\"",
+      "go vet ./sdk/extension/... ./internal/extensions/...",
+      "python3 scripts/release/package_component.py --component extension-package --kind platform-core-dependency-source --input sdk/extension --input internal/extensions --bundle artifacts/extension-package/source-bundle.tar.zst --component-manifest artifacts/extension-package/component-manifest.json --digest-output artifacts/extension-package/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner extension-package --require-all-owner-sources-accounted"
+    ],
+    "integration_gates": [
+      {
+        "name": "extension-package-gate",
+        "layer": "L1",
+        "source_of_truth": [
+          "git:d9aa7362667411d1d7a1b4788f002413aa7dacfa:extension-package-amendment-decision.md#sha256=42a4fda1ff3fc72ca7e8c78bb58a8ab4da41e3655b15ee23f3639f5b5e700751",
+          "git:e1e48af331c0d568257e0eb2cbb88c1f19c97cb0:b-class-structural-decomposition-decisions.md#sha256=bee2866be23e0d5fe6f77a245f7f3177522308d5bd3ebbd14fb2baf0d9e37f19",
+          "docs/design/open-agent-cluster-overview-design.md:L335-L355",
+          "docs/design/open-agent-cluster-overview-design.md:L675-L684",
+          "docs/design/detailed/08-component-and-extension-detailed-design.md:L127-L205",
+          "docs/design/detailed/08-component-and-extension-detailed-design.md:L238-L257",
+          "docs/design/detailed/08-component-and-extension-detailed-design.md:L298-L325",
+          "docs/design/detailed/08-component-and-extension-detailed-design.md:L441-L500",
+          "docs/design/detailed/09-governance-and-security-detailed-design.md:L11-L45",
+          "docs/design/detailed/09-governance-and-security-detailed-design.md:L259-L287",
+          "docs/design/detailed/09-governance-and-security-detailed-design.md:L312-L406",
+          "docs/design/detailed/09-governance-and-security-detailed-design.md:L808-L854",
+          "docs/references/extension/component-governance.md:L28-L80",
+          "docs/references/extension/component-governance.md:L157-L190",
+          "docs/references/extension/component-governance.md:L253-L281",
+          "docs/references/extension/plugin-contracts.md:L7-L18",
+          "docs/references/extension/plugin-contracts.md:L63-L92",
+          "docs/references/governance/security-and-enterprise.md:L7-L31",
+          "docs/references/governance/security-and-enterprise.md:L184-L315",
+          "docs/delivery/acceptance-and-validation.md:L171-L187"
+        ],
+        "delivery_goal": "Deliver a production Package Governance composition that consumes canonical owner contracts, excludes caller-owned authority and development bypasses, atomically persists portable provenance, conformance, authorization, admission, lifecycle and Audit proofs, survives store restart, rejects unattested direct writes, and returns only the committed record for exact concurrent or retried requests.",
+        "covers": [
+          "extension-package"
+        ],
+        "acceptance_refs": [
+          "UJ-EXTENSION-PACKAGE-001"
+        ],
+        "commands": [
+          "mkdir -p artifacts/extension-package && go test -covermode=atomic -coverprofile=artifacts/extension-package/coverage.out ./sdk/extension/... ./internal/extensions/...",
+          "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/extension-package/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+          "mkdir -p artifacts/extension-package && go list -f '{{range .Imports}}{{.}}{{\"\\n\"}}{{end}}' ./internal/extensions/... | sort -u > artifacts/extension-package/canonical-owner-imports.txt",
+          "python3 -c \"from pathlib import Path; required={ 'github.com/xiaohei-info/open-agent-cluster/contracts/extension', 'github.com/xiaohei-info/open-agent-cluster/contracts/identity/requestcontext', 'github.com/xiaohei-info/open-agent-cluster/contracts/governance/authz', 'github.com/xiaohei-info/open-agent-cluster/contracts/governance/admission', 'github.com/xiaohei-info/open-agent-cluster/contracts/governance/audit', 'github.com/xiaohei-info/open-agent-cluster/contracts/project', 'github.com/xiaohei-info/open-agent-cluster/contracts/solution'}; actual=set(Path('artifacts/extension-package/canonical-owner-imports.txt').read_text().splitlines()); assert required <= actual, f'missing canonical owner imports: {sorted(required-actual)}'\"",
+          "python3 -c \"from pathlib import Path; import json,re; p=Path('internal/extensions/production_boundary_external_test.go'); s=p.read_text(); required={ 'TestExternalProductionPackageGovernanceUsesCanonicalOwnerAdapters', 'TestExternalProductionPackageGovernancePersistsOwnerProofsAcrossRestart', 'TestExternalProductionPackageGovernanceRejectsUnattestedStoreWrites', 'TestExternalProductionPackageGovernanceRejectsUnknownAndStaleOwnerRevisions', 'TestExternalPackageGovernanceBindsProjectSolutionAuthorizationAdmissionAndAudit', 'TestExternalPackageGovernancePersistsProvenanceDescribeAndConformanceAttestations', 'TestExternalPackageGovernanceRejectsSyntheticConformanceEvidence', 'TestExternalComponentInstallConcurrentCanonicalReplayReturnsCommittedRecord', 'TestExternalComponentInstallChangedRequestContextConflicts', 'TestExternalProductionPackageGovernanceRejectsDevelopmentBypass', 'TestExternalProductionLifecyclePersistsAuthorizationAdmissionAndAuditProof', 'TestExternalProductionLifecycleRejectsDirectUnattestedCommitAndPersistsRemovalProof', 'TestExternalComponentInstallBindsExactReleaseDigestInterfaceAndEntrypoint', 'TestExternalPackageGovernanceRejectsMismatchedPackageBinding', 'TestExternalDescribePermissionCeilingBindsInstallPointEffectAndRequestContext', 'TestExternalPermissionCeilingIntersectsCanonicalOwnerGrants', 'TestExternalPermissionCeilingRejectsUnsupportedEffectAndResource', 'TestExternalPermissionCeilingRejectsMismatchedOwnerIdentities'}; missing=sorted(n for n in required if ('func '+n+'(') not in s); prod=[q for root in ('sdk/extension','internal/extensions') for q in Path(root).rglob('*.go') if not q.name.endswith('_test.go')]; prod_text='\\n'.join(q.read_text() for q in prod); counters={ 'memory_store_reference_count':len(re.findall(r'\\bMemoryStore\\b|\\bexternalJSONStore\\b',s+prod_text)), 'fake_owner_port_reference_count':len(re.findall(r'\\b(?:fake|mock|stub)[A-Za-z0-9_]*Owner',s,re.I)), 'generated_key_reference_count':len(re.findall(r'(?:ed25519|rsa|ecdsa)\\.GenerateKey',s)), 'package_private_helper_reference_count':len(re.findall(r'//go:linkname|\\bunsafe\\.',s)), 'development_bypass_reference_count':len(re.findall(r'\\bNewDevelopmentInstaller\\b|\\bNewAuthenticatedInvocationContext\\s*\\(',prod_text))}; report={'schema':'oac.extension-package-production-source-audit/v1', 'external_test_package':'extensions_test' if re.search(r'^package\\s+extensions_test\\s*$',s,re.M) else '', 'required_external_test_count':len(required),'missing_external_tests':missing, 'production_constructor_reference_count':s.count('NewProductionPackageGovernance('), 'persistent_store_constructor_reference_count':s.count('OpenPersistentInstallerStore('),**counters}; out=Path('artifacts/extension-package/production-boundary-source-audit.json'); out.parent.mkdir(parents=True,exist_ok=True); out.write_text(json.dumps(report,sort_keys=True)+'\\n'); assert report['external_test_package']=='extensions_test' and not missing; assert report['production_constructor_reference_count']>0 and report['persistent_store_constructor_reference_count']>1; assert not any(counters.values()), counters\"",
+          "mkdir -p artifacts/extension-package && OAC_EXTENSION_PRODUCTION_EVIDENCE=\"$PWD/artifacts/extension-package/production-boundary-evidence.json\" go test -json ./sdk/extension/... ./internal/extensions/... -run '^(TestExternalProductionPackageGovernanceUsesCanonicalOwnerAdapters|TestExternalProductionPackageGovernancePersistsOwnerProofsAcrossRestart|TestExternalProductionPackageGovernanceRejectsUnattestedStoreWrites|TestExternalProductionPackageGovernanceRejectsUnknownAndStaleOwnerRevisions|TestExternalPackageGovernanceBindsProjectSolutionAuthorizationAdmissionAndAudit|TestExternalPackageGovernancePersistsProvenanceDescribeAndConformanceAttestations|TestExternalPackageGovernanceRejectsSyntheticConformanceEvidence|TestExternalComponentInstallConcurrentCanonicalReplayReturnsCommittedRecord|TestExternalComponentInstallChangedRequestContextConflicts|TestExternalProductionPackageGovernanceRejectsDevelopmentBypass|TestExternalProductionLifecyclePersistsAuthorizationAdmissionAndAuditProof|TestExternalProductionLifecycleRejectsDirectUnattestedCommitAndPersistsRemovalProof|TestExternalComponentInstallBindsExactReleaseDigestInterfaceAndEntrypoint|TestExternalPackageGovernanceRejectsMismatchedPackageBinding|TestExternalDescribePermissionCeilingBindsInstallPointEffectAndRequestContext|TestExternalPermissionCeilingIntersectsCanonicalOwnerGrants|TestExternalPermissionCeilingRejectsUnsupportedEffectAndResource|TestExternalPermissionCeilingRejectsMismatchedOwnerIdentities)$' -count=1 > artifacts/extension-package/production-owner-tests.json",
+          "python3 -c \"import json; required={ 'TestExternalProductionPackageGovernanceUsesCanonicalOwnerAdapters', 'TestExternalProductionPackageGovernancePersistsOwnerProofsAcrossRestart', 'TestExternalProductionPackageGovernanceRejectsUnattestedStoreWrites', 'TestExternalProductionPackageGovernanceRejectsUnknownAndStaleOwnerRevisions', 'TestExternalPackageGovernanceBindsProjectSolutionAuthorizationAdmissionAndAudit', 'TestExternalPackageGovernancePersistsProvenanceDescribeAndConformanceAttestations', 'TestExternalPackageGovernanceRejectsSyntheticConformanceEvidence', 'TestExternalComponentInstallConcurrentCanonicalReplayReturnsCommittedRecord', 'TestExternalComponentInstallChangedRequestContextConflicts', 'TestExternalProductionPackageGovernanceRejectsDevelopmentBypass', 'TestExternalProductionLifecyclePersistsAuthorizationAdmissionAndAuditProof', 'TestExternalProductionLifecycleRejectsDirectUnattestedCommitAndPersistsRemovalProof', 'TestExternalComponentInstallBindsExactReleaseDigestInterfaceAndEntrypoint', 'TestExternalPackageGovernanceRejectsMismatchedPackageBinding', 'TestExternalDescribePermissionCeilingBindsInstallPointEffectAndRequestContext', 'TestExternalPermissionCeilingIntersectsCanonicalOwnerGrants', 'TestExternalPermissionCeilingRejectsUnsupportedEffectAndResource', 'TestExternalPermissionCeilingRejectsMismatchedOwnerIdentities'}; rows=[json.loads(x) for x in open('artifacts/extension-package/production-owner-tests.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing required passing tests: {sorted(required-passed)}'\"",
+          "python3 -c \"import json; from pathlib import Path; r=json.loads(Path('artifacts/extension-package/production-boundary-evidence.json').read_text()); s=json.loads(Path('artifacts/extension-package/production-boundary-source-audit.json').read_text()); true_fields={'production_constructor_exercised','owner_proofs_preserved_after_restart','exact_package_binding_verified','permission_ceiling_intersection_verified','describe_point_effect_binding_verified'}; zero_fields={'exact_package_binding_mismatch_accept_count','exact_release_mismatch_accept_count','artifact_digest_mismatch_accept_count','interface_api_mismatch_accept_count','entrypoint_mismatch_accept_count','permission_ceiling_intersection_failure_count','unsupported_effect_accept_count','unsupported_resource_accept_count','owner_identity_mismatch_accept_count','unattested_write_accept_count','stale_owner_revision_accept_count','owner_proof_loss_after_restart_count','transient_issuance_replay_conflict_count','changed_request_replay_accept_count','production_development_bypass_accept_count','synthetic_conformance_evidence_accept_count'}; assert r.get('schema')=='oac.extension-package-production-boundary-evidence/v1'; assert true_fields|zero_fields <= set(r), f'missing evidence fields: {sorted((true_fields|zero_fields)-set(r))}'; assert all(r[k] is True for k in true_fields); assert all(r[k]==0 for k in zero_fields); assert r.get('persistent_store_backend') not in {None,'','memory','MemoryStore','fake'} and r.get('persistent_store_reopen_count',0)>0; assert set(r.get('canonical_owner_adapters',[]))=={'request-context','project','solution','authorization','admission','audit'}; source_zero={'memory_store_reference_count','fake_owner_port_reference_count','generated_key_reference_count','package_private_helper_reference_count','development_bypass_reference_count'}; assert s.get('schema')=='oac.extension-package-production-source-audit/v1' and s.get('external_test_package')=='extensions_test'; assert s.get('required_external_test_count')==18 and s.get('missing_external_tests')==[]; assert s.get('production_constructor_reference_count',0)>0 and s.get('persistent_store_constructor_reference_count',0)>1; assert all(s.get(k)==0 for k in source_zero)\"",
+          "mkdir -p artifacts/extension-package && CGO_ENABLED=1 go test -race -json ./sdk/extension/... ./internal/extensions/... -run '^TestExternalComponentInstallConcurrentCanonicalReplayReturnsCommittedRecord$' -count=1 > artifacts/extension-package/concurrent-canonical-replay-race.json",
+          "python3 -c \"import json; name='TestExternalComponentInstallConcurrentCanonicalReplayReturnsCommittedRecord'; rows=[json.loads(x) for x in open('artifacts/extension-package/concurrent-canonical-replay-race.json') if x.strip()]; assert any(x.get('Action')=='pass' and x.get('Test')==name for x in rows)\"",
+          "go vet ./sdk/extension/... ./internal/extensions/...",
+          "python3 scripts/release/package_component.py --component extension-package --kind platform-core-dependency-source --input sdk/extension --input internal/extensions --bundle artifacts/extension-package/source-bundle.tar.zst --component-manifest artifacts/extension-package/component-manifest.json --digest-output artifacts/extension-package/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner extension-package --require-all-owner-sources-accounted"
+        ],
+        "required_metrics": {
+          "statement_coverage_percent": 90,
+          "required_production_owner_test_count": 18,
+          "external_production_boundary_test_count": 18,
+          "canonical_owner_contract_missing_count": 0,
+          "canonical_owner_adapter_coverage_gap_count": 0,
+          "production_constructor_execution_failure_count": 0,
+          "persistent_store_reopen_failure_count": 0,
+          "exact_package_binding_verification_failure_count": 0,
+          "describe_point_effect_binding_failure_count": 0,
+          "exact_package_binding_mismatch_accept_count": 0,
+          "exact_release_mismatch_accept_count": 0,
+          "artifact_digest_mismatch_accept_count": 0,
+          "interface_api_mismatch_accept_count": 0,
+          "entrypoint_mismatch_accept_count": 0,
+          "permission_ceiling_intersection_failure_count": 0,
+          "unsupported_effect_accept_count": 0,
+          "unsupported_resource_accept_count": 0,
+          "owner_identity_mismatch_accept_count": 0,
+          "unattested_write_accept_count": 0,
+          "stale_owner_revision_accept_count": 0,
+          "owner_proof_loss_after_restart_count": 0,
+          "transient_issuance_replay_conflict_count": 0,
+          "changed_request_replay_accept_count": 0,
+          "production_development_bypass_accept_count": 0,
+          "synthetic_conformance_evidence_accept_count": 0,
+          "memory_store_reference_count": 0,
+          "fake_owner_port_reference_count": 0,
+          "generated_key_reference_count": 0,
+          "package_private_helper_reference_count": 0,
+          "development_bypass_reference_count": 0,
+          "race_failure_count": 0,
+          "declared_artifact_count": 9
+        },
+        "artifacts": [
+          "artifacts/extension-package/coverage.out",
+          "artifacts/extension-package/canonical-owner-imports.txt",
+          "artifacts/extension-package/production-boundary-source-audit.json",
+          "artifacts/extension-package/production-boundary-evidence.json",
+          "artifacts/extension-package/production-owner-tests.json",
+          "artifacts/extension-package/concurrent-canonical-replay-race.json",
+          "artifacts/extension-package/source-bundle.tar.zst",
+          "artifacts/extension-package/bundle-digest.txt",
+          "artifacts/extension-package/component-manifest.json"
+        ]
+      }
+    ],
+    "pr_base": "main",
+    "acceptance_refs": [
+      "UJ-EXTENSION-PACKAGE-001"
+    ],
+    "source_of_truth": [
+      "git:d9aa7362667411d1d7a1b4788f002413aa7dacfa:extension-package-amendment-decision.md#sha256=42a4fda1ff3fc72ca7e8c78bb58a8ab4da41e3655b15ee23f3639f5b5e700751",
+      "git:e1e48af331c0d568257e0eb2cbb88c1f19c97cb0:b-class-structural-decomposition-decisions.md#sha256=bee2866be23e0d5fe6f77a245f7f3177522308d5bd3ebbd14fb2baf0d9e37f19",
+      "docs/design/open-agent-cluster-overview-design.md:L335-L355",
+      "docs/design/open-agent-cluster-overview-design.md:L675-L684",
+      "docs/design/detailed/08-component-and-extension-detailed-design.md:L127-L205",
+      "docs/design/detailed/08-component-and-extension-detailed-design.md:L238-L257",
+      "docs/design/detailed/08-component-and-extension-detailed-design.md:L298-L325",
+      "docs/design/detailed/08-component-and-extension-detailed-design.md:L441-L500",
+      "docs/design/detailed/09-governance-and-security-detailed-design.md:L11-L45",
+      "docs/design/detailed/09-governance-and-security-detailed-design.md:L259-L287",
+      "docs/design/detailed/09-governance-and-security-detailed-design.md:L312-L406",
+      "docs/design/detailed/09-governance-and-security-detailed-design.md:L808-L854",
+      "docs/references/extension/component-governance.md:L28-L80",
+      "docs/references/extension/component-governance.md:L157-L190",
+      "docs/references/extension/component-governance.md:L253-L281",
+      "docs/references/extension/plugin-contracts.md:L7-L18",
+      "docs/references/extension/plugin-contracts.md:L63-L92",
+      "docs/references/governance/security-and-enterprise.md:L7-L31",
+      "docs/references/governance/security-and-enterprise.md:L184-L315",
+      "docs/delivery/acceptance-and-validation.md:L171-L187"
+    ],
+    "required_contracts": [
+      "docs/design/detailed/08-component-and-extension-detailed-design.md",
+      "docs/design/detailed/09-governance-and-security-detailed-design.md",
+      "docs/references/extension/component-governance.md",
+      "docs/references/extension/plugin-contracts.md",
+      "docs/references/governance/security-and-enterprise.md",
+      "contracts/extension",
+      "contracts/identity/requestcontext",
+      "contracts/governance/authz",
+      "contracts/governance/admission",
+      "contracts/governance/audit",
+      "contracts/project",
+      "contracts/solution"
+    ],
+    "scope_paths": [
+      "sdk/extension/**",
+      "internal/extensions/**"
+    ],
+    "evidence_mode": "artifact",
+    "produces": [
+      {
+        "artifact_id": "extension-package-governance-evidence"
+      }
+    ],
+    "consumes": [
+      {
+        "artifact_id": "contracts-extension-wire-evidence",
+        "producer": "contracts-extension-wire",
+        "evidence_mode": "artifact"
+      }
+    ]
+  },
+  "contract_ref": {
+    "comment_id": "01a1043a-78d3-7a7a-b30a-eda6e9ce8ef5",
+    "attachment_id": "01a1043a-77b4-71b0-9991-45708cda331d",
+    "sha256": "e7a51dcc3c1365076c2d17fb83fb7164064e67410578dd06638b8cd6d1c35e96",
+    "bytes": 32800,
+    "filename": "omac-contract-e7a51dcc3c13.yaml"
+  },
+  "source_refs": [
+    {
+      "issue_id": "289a13bf-cede-4b5b-ba86-d72f0bef8164",
+      "label": "设计方案"
+    },
+    {
+      "issue_id": "8e6bd282-6039-41d2-aa00-969a0bf1554a",
+      "label": "验收文档"
+    },
+    {
+      "issue_id": "5849f786-8c97-42ac-adf9-1c96957f28ee",
+      "label": "前置开发任务 · Bootstrap Go module and quality harness"
+    },
+    {
+      "issue_id": "5db9df26-acb7-451d-b5e7-899b274e8547",
+      "label": "前置开发任务 · Create Runtime and AgentRun contracts"
+    },
+    {
+      "issue_id": "6094130b-838f-492f-a699-692f5731817b",
+      "label": "前置开发任务 · Create Workspace contracts"
+    },
+    {
+      "issue_id": "01a032bd-188a-7c88-b4b8-06e682c7b907",
+      "label": "前置开发任务 · Publish Package, Harness and ComponentRun wire contracts"
+    },
+    {
+      "issue_id": "d5f92ac5-6836-49c5-b218-d24164e3c2e9",
+      "label": "前置开发任务 · Create identity and authentication contracts"
+    },
+    {
+      "issue_id": "8fc120a0-23c5-4119-96c1-b827222ed9dd",
+      "label": "前置开发任务 · Create authorization and admission contracts"
+    },
+    {
+      "issue_id": "7b568083-2a29-47d5-a56e-3509b79ebb6c",
+      "label": "前置开发任务 · Create audit and usage contracts"
+    },
+    {
+      "issue_id": "f21eaedd-4460-419a-9354-c5c32b717d1f",
+      "label": "前置开发任务 · Create Project setup contracts"
+    },
+    {
+      "issue_id": "4755e861-257f-44b9-8749-970812f66d92",
+      "label": "前置开发任务 · Create Solution package contracts"
+    },
+    {
+      "issue_id": "152d735a-c373-4967-8ae0-45c191de2eff",
+      "label": "前置开发任务 · Implement deterministic release artifact packaging"
+    }
+  ],
+  "kind": "TaskKind.DEVELOP",
+  "phase": "TaskPhase.AUTHORING",
+  "bounces": {
+    "worker": 0,
+    "ci": 0,
+    "review": 4,
+    "merge": 0
+  },
+  "bounce_baseline": null,
+  "deliverable": null,
+  "deliverable_ref": null,
+  "project_rules": null,
+  "project_rules_ref": null,
+  "agent_run_finished_without_submit": false,
+  "agent_run_failed": false,
+  "created_at": "2026-08-26T02:04:50Z",
+  "updated_at": "2026-10-04T00:05:08Z",
+  "platform_assignee_id": null,
+  "unknown_persisted_fields": {},
+  "review_nits_acceptance": null
+}

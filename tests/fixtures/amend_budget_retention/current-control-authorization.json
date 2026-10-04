@@ -1,0 +1,430 @@
+{
+  "id": "01a10383-b5e2-71ee-bc1e-d5cc5214e55b",
+  "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1",
+  "title": "[DAG:authorization] Implement unified authorization engine",
+  "description": "> **OMAC 控制的执行。第一动作必须严格执行：**\n\n```bash\nOMAC_ENGINE=multica OMAC_WORKSPACE_ID=410ade5e-8ae0-4402-b975-813dea2ff3e1 OMAC_PROJECT_ID=732ce83f-5cbd-4485-850d-1b8a1bf16340 omac work show 01a10383-b5e2-71ee-bc1e-d5cc5214e55b --output json\n```\n\n> `omac work show` 和 `omac work submit` 都可能长时间运行。任何工具调用在拿到最终 tool_result 和终态退出码前都不完整。若工具返回 running/session、缺少最终 tool_result、出现空输出或不完整输出，必须等待或轮询到终态。使用足够长的 wait/yield，或保留并恢复续接句柄；这是通用终态规则，不绑定某个具体工具 API。timeout/yield 不是空结果，也不允许据此停止。`omac work show` 只有在退出码 0 且得到可解析 JSON 后才能继续。`omac work submit` 只有在最终 tool_result 明确给出退出码 0，且 JSON 包含 `\"ok\": true`、`\"terminal\": true` 和 `\"next_action\": \"stop\"` 时才可宣称成功。结果未知时不得宣称成功或结束；validation error 必须修复后重新提交。submit 成功就是本次执行的最后动作，立即停止，不再执行任何平台写入。\n\n> 在上方精确的 `omac work show` 命令以退出码 0 成功返回可解析 JSON 前，不得执行任何其他 Issue 查询（包括 `multica issue get`、`multica issue comment list` 或 metadata 查询），也不得开始分析任务内容。work show 成功后，只能在返回上下文确有需要时使用只读 Issue 查询。禁止任何会创建、修改或删除 Issue 状态的 `multica issue` 写操作。这是语义边界，不是穷举命令清单；禁止示例包括 `multica issue status`、`multica issue assign`、`multica issue comment`、`multica issue metadata`、`multica issue rerun`、`multica issue cancel-task`、`multica issue update`、`multica issue create`、`multica issue label`、`multica issue property`、`multica issue reorder` 和 `multica issue subscriber`。只允许使用上方给出的精确 `omac work show` 命令，以及 work show 返回的精确 `omac work submit` 命令作为 OMAC 控制命令；已有手工附件或 verification 但缺少 `delivery_identity` 时也必须通过该 submit 命令封存。\n\n# Implement unified authorization engine\n\n## 任务摘要\n- 类型: 开发实现（`develop`）\n- 执行角色: 开发执行者（`worker`）\n- 目标: Deliver policy CRUD/evaluation and one explainable decision path reused by every adapter.\n- 依据: `docs/design/detailed/09-governance-and-security-detailed-design.md:L214-L311`\n- 依据: `docs/references/governance/security-and-enterprise.md:L184-L262`\n- 依据: `docs/delivery/acceptance-and-validation.md:L188-L207`\n\n## 任务详情\nSmallest independently PR-able, testable and reviewable delivery boundary for this capability.\n\n## 非目标\n- Do not change adjacent domain ownership or introduce a competing source of truth.\n- Do not bypass authorization, admission, CAS, idempotency, review or evidence gates.\n- Do not preserve unpublished prototype behavior unless the owning design explicitly requires it.\n\n## 主要代码归属范围\n- `internal/authorization/**`\n\n## 交付约束\n- PR 基线: `main`\n- 改动分支覆盖率: `≥ 90%`\n- PR 关联标识: `AITEAM-1059`\n\n## 上游 issue（防跑偏）\n本任务承接以下上游 issue，用于追溯需求与决策；若与当前 contract 冲突，先请求确认：\n- 设计方案: `289a13bf-cede-4b5b-ba86-d72f0bef8164`\n- 验收文档: `8e6bd282-6039-41d2-aa00-969a0bf1554a`\n- 前置开发任务 · Bootstrap Go module and quality harness: `5849f786-8c97-42ac-adf9-1c96957f28ee`\n- 前置开发任务 · Create identity and authentication contracts: `d5f92ac5-6836-49c5-b218-d24164e3c2e9`\n- 前置开发任务 · Create authorization and admission contracts: `8fc120a0-23c5-4119-96c1-b827222ed9dd`\n- 前置开发任务 · Create audit and usage contracts: `7b568083-2a29-47d5-a56e-3509b79ebb6c`\n- 前置开发任务 · Implement deterministic release artifact packaging: `152d735a-c373-4967-8ae0-45c191de2eff`",
+  "status": "WorkItemStatus.DONE",
+  "dag_key": "authorization",
+  "identifier": "AITEAM-1059",
+  "worker": "codex-ubuntu-newapi",
+  "reviewer": "",
+  "blocked_by": [
+    "bootstrap-go",
+    "contracts-identity",
+    "contracts-authz-admission",
+    "contracts-audit-usage",
+    "release-artifact-tooling"
+  ],
+  "wave": null,
+  "artifacts": {
+    "pr_url": "https://github.com/xiaohei-info/open-agent-cluster/pull/98",
+    "head_sha": "3c57cdf0e81900c89467773c4cc39642e0359416"
+  },
+  "verification": {
+    "commands": [
+      {
+        "cmd": "mkdir -p artifacts/authorization && go test -covermode=atomic -coverprofile=artifacts/authorization/coverage.out ./internal/authorization/...",
+        "exit_code": 0,
+        "summary": "passed; 94.6% statement coverage; includes policy CRUD, verified-strength, and fail-closed panic regression tests"
+      },
+      {
+        "cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/authorization/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+        "exit_code": 0,
+        "summary": "passed; 94.6% meets the 90% threshold"
+      },
+      {
+        "cmd": "python3 scripts/release/package_component.py --component authorization --kind platform-core-dependency-source --input internal/authorization --bundle artifacts/authorization/source-bundle.tar.zst --component-manifest artifacts/authorization/component-manifest.json --digest-output artifacts/authorization/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner authorization --require-all-owner-sources-accounted",
+        "exit_code": 0,
+        "summary": "passed; source bundle digest b6b50f45b571ae84cab935377c513e108f8060dace1e250bf0c6852c425bb6bc"
+      },
+      {
+        "cmd": "CGO_ENABLED=1 go test -race ./internal/authorization/...",
+        "exit_code": 0,
+        "summary": "passed"
+      },
+      {
+        "cmd": "go test ./...",
+        "exit_code": 0,
+        "summary": "passed"
+      }
+    ],
+    "integration_gates": [
+      {
+        "name": "authorization-gate",
+        "source_of_truth": [
+          "docs/design/detailed/09-governance-and-security-detailed-design.md:L214-L311",
+          "docs/references/governance/security-and-enterprise.md:L184-L262",
+          "docs/delivery/acceptance-and-validation.md:L188-L207"
+        ],
+        "delivery_goal": "Deliver policy CRUD/evaluation and one explainable decision path reused by every adapter.",
+        "commands": [
+          {
+            "cmd": "mkdir -p artifacts/authorization && go test -covermode=atomic -coverprofile=artifacts/authorization/coverage.out ./internal/authorization/...",
+            "exit_code": 0
+          },
+          {
+            "cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/authorization/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+            "exit_code": 0
+          },
+          {
+            "cmd": "python3 scripts/release/package_component.py --component authorization --kind platform-core-dependency-source --input internal/authorization --bundle artifacts/authorization/source-bundle.tar.zst --component-manifest artifacts/authorization/component-manifest.json --digest-output artifacts/authorization/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner authorization --require-all-owner-sources-accounted",
+            "exit_code": 0
+          }
+        ],
+        "metrics": {
+          "statement_coverage_percent": 94.6,
+          "declared_artifact_count": 4
+        },
+        "artifacts": [
+          "artifacts/authorization/coverage.out",
+          "artifacts/authorization/source-bundle.tar.zst",
+          "artifacts/authorization/bundle-digest.txt",
+          "artifacts/authorization/component-manifest.json"
+        ]
+      }
+    ],
+    "pr_base": "main",
+    "coverage": 94.6,
+    "env_setup": [
+      "Local Go 1.26, Python 3, and zstd CLI; no external services."
+    ]
+  },
+  "verification_ref": {
+    "comment_id": "01a10449-f9a7-766a-b481-982020f6c897",
+    "attachment_id": "01a10449-f93d-77b2-a7b8-fae43104733d",
+    "sha256": "bb2709a16df10a5002f8a1d94a1278cdb26132b60aad999619e82cd8ec31a5b4",
+    "bytes": 3360,
+    "filename": "omac-verification-bb2709a16df1.yaml"
+  },
+  "review_verdict": null,
+  "review_comment": null,
+  "machine_feedback": null,
+  "machine_feedback_ref": null,
+  "review_report": null,
+  "review_report_ref": null,
+  "review_subject_digest": null,
+  "review_obligations": [
+    {
+      "obligation_id": "dimension:authority",
+      "category": "dimension",
+      "requirement": "Authoritative inputs and source references"
+    },
+    {
+      "obligation_id": "dimension:structure",
+      "category": "dimension",
+      "requirement": "Structure, schema, dependency, and completeness"
+    },
+    {
+      "obligation_id": "dimension:execution",
+      "category": "dimension",
+      "requirement": "Executable commands and fail-closed verification"
+    },
+    {
+      "obligation_id": "dimension:ownership",
+      "category": "dimension",
+      "requirement": "Ownership, boundaries, and unique write paths"
+    },
+    {
+      "obligation_id": "dimension:evidence",
+      "category": "dimension",
+      "requirement": "Artifact lineage and evidence traceability"
+    },
+    {
+      "obligation_id": "dimension:regression",
+      "category": "dimension",
+      "requirement": "Prior blocker regression and changed-scope review"
+    },
+    {
+      "obligation_id": "integration:authorization-gate",
+      "category": "integration",
+      "requirement": "Independently verify integration gate authorization-gate",
+      "subject": "authorization-gate"
+    }
+  ],
+  "review_obligations_ref": {
+    "comment_id": "01a103e0-9b85-7638-8b87-48e5874b5cdc",
+    "attachment_id": "01a103e0-9a30-726c-885b-5ed48838bc98",
+    "sha256": "7c7ea4b6d38b1d01af4def40d82fffa4cff265fc9774d5b3ac5554627724c258",
+    "bytes": 897,
+    "filename": "omac-review-obligations-7c7ea4b6d38b.yaml"
+  },
+  "review_ledger": {
+    "schema": "omac.review-ledger/v2",
+    "cycles": [
+      {
+        "round": 1,
+        "subject_digest": "181609f8d621ae3d16236efd9ac61872edd31a44ab27b8bdf4973b47da18e087",
+        "report_digest": "67a28720e7f02b28022503bb8f89d7d875475959848a5f2e737850cc3df95425",
+        "verdict": "reject",
+        "obligation_results": {
+          "dimension:authority": "pass",
+          "dimension:structure": "fail",
+          "dimension:execution": "fail",
+          "dimension:ownership": "pass",
+          "dimension:evidence": "pass",
+          "dimension:regression": "pass",
+          "integration:authorization-gate": "pass"
+        },
+        "new_count": 2,
+        "fixed_count": 0,
+        "regressed_count": 0,
+        "unchanged_count": 0,
+        "open_count": 2,
+        "prior_open_blocker_ids": [],
+        "open_blocker_ids": [
+          "BLK-2e50033f8e33",
+          "BLK-fdf0f7fb2b14"
+        ],
+        "reported_blocker_ids": [
+          "BLK-2e50033f8e33",
+          "BLK-fdf0f7fb2b14"
+        ],
+        "blocker_facts_schema": "omac.review-cycle-blocker-facts/v1",
+        "blocker_facts": [
+          {
+            "blocker_id": "BLK-2e50033f8e33",
+            "root_cause_key": "authorization-internal-exceptions-escape-decision-boundary",
+            "obligation_id": "dimension:execution",
+            "summary": "Internal exceptions can escape Authorize instead of producing the required Deny decision.",
+            "evidence": "internal/authorization/engine.go:211-224 invokes CurrentPolicy and evaluateWithPolicy directly; :258-275 and :311-318 call subject/access resolvers directly. There is no recover/exception-to-decision boundary anywhere in internal/authorization. Returned dependency errors are handled, but internal exceptions are not. docs/design/detailed/09-governance-and-security-detailed-design.md:287, docs/references/governance/security-and-enterprise.md:259 and docs/delivery/acceptance-and-validation.md:201 explicitly require internal errors/exceptions to return Deny. Static source finding; existing declared tests exercised returned-error paths, not an exception path.",
+            "required_fix": "Add an explicit fail-closed exception boundary for authorization evaluation that preserves safe provenance and yields a stable internal-error Deny reason without exposing raw panic content. Cover unexpected policy/access/subject evaluation exceptions in the declared suite and ensure protected policy-management evaluation paths follow the same failure semantics.",
+            "status": "open",
+            "classification": "new",
+            "owner": "authorization"
+          },
+          {
+            "blocker_id": "BLK-fdf0f7fb2b14",
+            "root_cause_key": "authorization-authentication-strength-not-bound-to-verified-context",
+            "obligation_id": "dimension:structure",
+            "summary": "Authentication-strength requirements do not consume the verified AuthenticationContext.",
+            "evidence": "internal/authorization/engine.go:342-363 handles only principal_kind and different_principal_id specially; every other qualification compares against request.Attributes. No production code in this package reads RequestContext.Authentication.AuthenticationStrength. contracts/identity/requestcontext/request_context.go:21-29 defines that verified fact; docs/references/governance/security-and-enterprise.md:29 and :245 require it to support authorization tightening. Existing requirement tests at internal/authorization/engine_test.go:210-245 cover principal kind, independence, environment and source, but not authentication strength. Static source finding; no additional security experiment was constructed.",
+            "required_fix": "Define the supported authentication-strength requirement and evaluate it from RequestContext.Authentication.AuthenticationStrength with explicit supported semantics; do not let generic attributes shadow canonical authenticated identity facts. Add positive, insufficient-strength, missing-fact and conflicting-attribute regression coverage to the declared authorization suite.",
+            "status": "open",
+            "classification": "new",
+            "owner": "authorization"
+          }
+        ]
+      }
+    ],
+    "blockers": [
+      {
+        "blocker_id": "BLK-2e50033f8e33",
+        "root_cause_key": "authorization-internal-exceptions-escape-decision-boundary",
+        "obligation_id": "dimension:execution",
+        "summary": "Internal exceptions can escape Authorize instead of producing the required Deny decision.",
+        "evidence": "internal/authorization/engine.go:211-224 invokes CurrentPolicy and evaluateWithPolicy directly; :258-275 and :311-318 call subject/access resolvers directly. There is no recover/exception-to-decision boundary anywhere in internal/authorization. Returned dependency errors are handled, but internal exceptions are not. docs/design/detailed/09-governance-and-security-detailed-design.md:287, docs/references/governance/security-and-enterprise.md:259 and docs/delivery/acceptance-and-validation.md:201 explicitly require internal errors/exceptions to return Deny. Static source finding; existing declared tests exercised returned-error paths, not an exception path.",
+        "required_fix": "Add an explicit fail-closed exception boundary for authorization evaluation that preserves safe provenance and yields a stable internal-error Deny reason without exposing raw panic content. Cover unexpected policy/access/subject evaluation exceptions in the declared suite and ensure protected policy-management evaluation paths follow the same failure semantics.",
+        "status": "open",
+        "classification": "new",
+        "owner": "authorization",
+        "first_seen_round": 1,
+        "last_seen_round": 1,
+        "seen_count": 1
+      },
+      {
+        "blocker_id": "BLK-fdf0f7fb2b14",
+        "root_cause_key": "authorization-authentication-strength-not-bound-to-verified-context",
+        "obligation_id": "dimension:structure",
+        "summary": "Authentication-strength requirements do not consume the verified AuthenticationContext.",
+        "evidence": "internal/authorization/engine.go:342-363 handles only principal_kind and different_principal_id specially; every other qualification compares against request.Attributes. No production code in this package reads RequestContext.Authentication.AuthenticationStrength. contracts/identity/requestcontext/request_context.go:21-29 defines that verified fact; docs/references/governance/security-and-enterprise.md:29 and :245 require it to support authorization tightening. Existing requirement tests at internal/authorization/engine_test.go:210-245 cover principal kind, independence, environment and source, but not authentication strength. Static source finding; no additional security experiment was constructed.",
+        "required_fix": "Define the supported authentication-strength requirement and evaluate it from RequestContext.Authentication.AuthenticationStrength with explicit supported semantics; do not let generic attributes shadow canonical authenticated identity facts. Add positive, insufficient-strength, missing-fact and conflicting-attribute regression coverage to the declared authorization suite.",
+        "status": "open",
+        "classification": "new",
+        "owner": "authorization",
+        "first_seen_round": 1,
+        "last_seen_round": 1,
+        "seen_count": 1
+      }
+    ]
+  },
+  "review_ledger_ref": {
+    "comment_id": "01a103ed-b677-7aaf-9c70-1d15129d5f7b",
+    "attachment_id": "01a103ed-b623-73b6-a104-31ebd2a0959f",
+    "sha256": "c6d5cfbc200c2f85066090e9b41a0298c4c551f1626f0afd6fa420180e5fba19",
+    "bytes": 6734,
+    "filename": "omac-review-ledger-c6d5cfbc200c.yaml"
+  },
+  "review_generation": null,
+  "review_ledger_generation": null,
+  "review_continuation": null,
+  "reviewer_run_baseline": null,
+  "worker_handoff": {
+    "schema": "omac.worker-handoff/v1",
+    "state": "pending",
+    "target_worker": "codex-ubuntu-newapi",
+    "gate": "review",
+    "source_review_subject_digest": "181609f8d621ae3d16236efd9ac61872edd31a44ab27b8bdf4973b47da18e087",
+    "source_review_round": 1,
+    "source_review_verdict": "reject",
+    "source_review_feedback": {
+      "schema": "omac.worker-rework-feedback/v1",
+      "verdict": "reject",
+      "report_ref": {
+        "comment_id": "01a103ed-b3ca-751e-9528-5cd7f42269c0",
+        "attachment_id": "01a103ed-b365-7985-93f9-8cbb651bc566",
+        "sha256": "c9def33ac947ba2b5e72d6e986022e708914d9d57f40150d121b4e63a6a336c0",
+        "bytes": 12523,
+        "filename": "omac-review-report-c9def33ac947.yaml"
+      },
+      "ledger_ref": {
+        "comment_id": "01a103ed-b677-7aaf-9c70-1d15129d5f7b",
+        "attachment_id": "01a103ed-b623-73b6-a104-31ebd2a0959f",
+        "sha256": "c6d5cfbc200c2f85066090e9b41a0298c4c551f1626f0afd6fa420180e5fba19",
+        "bytes": 6734,
+        "filename": "omac-review-ledger-c6d5cfbc200c.yaml"
+      },
+      "blockers": [
+        {
+          "root_cause_key": "authorization-authentication-strength-not-bound-to-verified-context",
+          "summary": "Authentication-strength requirements do not consume the verified AuthenticationContext.",
+          "required_fix": "Define the supported authentication-strength requirement and evaluate it from RequestContext.Authentication.AuthenticationStrength with explicit supported semantics; do not let generic attributes shadow canonical authenticated identity facts. Add positive,"
+        },
+        {
+          "root_cause_key": "authorization-internal-exceptions-escape-decision-boundary",
+          "summary": "Internal exceptions can escape Authorize instead of producing the required Deny decision.",
+          "required_fix": "Add an explicit fail-closed exception boundary for authorization evaluation that preserves safe provenance and yields a stable internal-error Deny reason without exposing raw panic content. Cover unexpected policy/access/subject evaluation exceptions in th"
+        }
+      ]
+    },
+    "review_context_binding": {
+      "generation": null,
+      "contract_sha256": "72f75011a8d291321edc3b8c24d4fc5b3a6578e1d86aacb98c6d7c855cca59e2"
+    },
+    "target_review_bounce": 1,
+    "generation": "handoff-68b6f57ce035e163",
+    "target_agent_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "baseline_direct_run_ids": [
+      "01a10384-54d7-7689-abe3-f98bab3a4117",
+      "01a103e1-38ad-7a77-8508-a6d45826c47b",
+      "01a1042e-f1bb-7a34-9b2e-b1719da8d05b"
+    ],
+    "baseline_cutoff_created_at": null,
+    "baseline_verification_attachment_id": "01a103c2-cf0a-7922-b369-dd1c2be40a9f",
+    "baseline_pr_head_sha": "37b9d6f08fd116a07ea8e29d827d4a0d3574bb9d",
+    "target_run_id": "01a10436-68fe-72ed-91db-acb2e040d038",
+    "target_worker_bounce": 1,
+    "terminal_observed_at": null,
+    "authoring_recovery": null
+  },
+  "delivery_identity": null,
+  "decision_required": null,
+  "amendment_attempt": null,
+  "contract": {
+    "objective": "Deliver policy CRUD/evaluation and one explainable decision path reused by every adapter.",
+    "non_goals": [
+      "Do not change adjacent domain ownership or introduce a competing source of truth.",
+      "Do not bypass authorization, admission, CAS, idempotency, review or evidence gates.",
+      "Do not preserve unpublished prototype behavior unless the owning design explicitly requires it."
+    ],
+    "verification_commands": [
+      "mkdir -p artifacts/authorization && go test -covermode=atomic -coverprofile=artifacts/authorization/coverage.out ./internal/authorization/...",
+      "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/authorization/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+      "python3 scripts/release/package_component.py --component authorization --kind platform-core-dependency-source --input internal/authorization --bundle artifacts/authorization/source-bundle.tar.zst --component-manifest artifacts/authorization/component-manifest.json --digest-output artifacts/authorization/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner authorization --require-all-owner-sources-accounted"
+    ],
+    "integration_gates": [
+      {
+        "name": "authorization-gate",
+        "layer": "L1",
+        "source_of_truth": [
+          "docs/design/detailed/09-governance-and-security-detailed-design.md:L214-L311",
+          "docs/references/governance/security-and-enterprise.md:L184-L262",
+          "docs/delivery/acceptance-and-validation.md:L188-L207"
+        ],
+        "delivery_goal": "Deliver policy CRUD/evaluation and one explainable decision path reused by every adapter.",
+        "covers": [
+          "authorization"
+        ],
+        "acceptance_refs": [
+          "UJ-AUTHORIZATION-POLICY-001"
+        ],
+        "commands": [
+          "mkdir -p artifacts/authorization && go test -covermode=atomic -coverprofile=artifacts/authorization/coverage.out ./internal/authorization/...",
+          "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/authorization/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+          "python3 scripts/release/package_component.py --component authorization --kind platform-core-dependency-source --input internal/authorization --bundle artifacts/authorization/source-bundle.tar.zst --component-manifest artifacts/authorization/component-manifest.json --digest-output artifacts/authorization/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner authorization --require-all-owner-sources-accounted"
+        ],
+        "required_metrics": {
+          "statement_coverage_percent": 90,
+          "declared_artifact_count": 4
+        },
+        "artifacts": [
+          "artifacts/authorization/coverage.out",
+          "artifacts/authorization/source-bundle.tar.zst",
+          "artifacts/authorization/bundle-digest.txt",
+          "artifacts/authorization/component-manifest.json"
+        ]
+      }
+    ],
+    "pr_base": "main",
+    "acceptance_refs": [
+      "UJ-AUTHORIZATION-POLICY-001"
+    ],
+    "source_of_truth": [
+      "docs/design/detailed/09-governance-and-security-detailed-design.md:L214-L311",
+      "docs/references/governance/security-and-enterprise.md:L184-L262",
+      "docs/delivery/acceptance-and-validation.md:L188-L207"
+    ],
+    "required_contracts": [
+      "docs/references/governance/security-and-enterprise.md"
+    ],
+    "scope_paths": [
+      "internal/authorization/**"
+    ]
+  },
+  "contract_ref": {
+    "comment_id": "01a10383-d835-7b50-b794-81ee649edd16",
+    "attachment_id": "01a10383-d6ec-7560-a02c-9de6b66a0516",
+    "sha256": "591e23d329f9c0013bf2d43dc71f2fb05faa57d736c22b1f4a044a0afaa608c5",
+    "bytes": 3495,
+    "filename": "omac-contract-591e23d329f9.yaml"
+  },
+  "source_refs": [
+    {
+      "issue_id": "289a13bf-cede-4b5b-ba86-d72f0bef8164",
+      "label": "设计方案"
+    },
+    {
+      "issue_id": "8e6bd282-6039-41d2-aa00-969a0bf1554a",
+      "label": "验收文档"
+    },
+    {
+      "issue_id": "5849f786-8c97-42ac-adf9-1c96957f28ee",
+      "label": "前置开发任务 · Bootstrap Go module and quality harness"
+    },
+    {
+      "issue_id": "d5f92ac5-6836-49c5-b218-d24164e3c2e9",
+      "label": "前置开发任务 · Create identity and authentication contracts"
+    },
+    {
+      "issue_id": "8fc120a0-23c5-4119-96c1-b827222ed9dd",
+      "label": "前置开发任务 · Create authorization and admission contracts"
+    },
+    {
+      "issue_id": "7b568083-2a29-47d5-a56e-3509b79ebb6c",
+      "label": "前置开发任务 · Create audit and usage contracts"
+    },
+    {
+      "issue_id": "152d735a-c373-4967-8ae0-45c191de2eff",
+      "label": "前置开发任务 · Implement deterministic release artifact packaging"
+    }
+  ],
+  "kind": "TaskKind.DEVELOP",
+  "phase": "TaskPhase.AUTHORING",
+  "bounces": {
+    "worker": 1,
+    "ci": 0,
+    "review": 1,
+    "merge": 0
+  },
+  "bounce_baseline": null,
+  "deliverable": null,
+  "deliverable_ref": null,
+  "project_rules": null,
+  "project_rules_ref": null,
+  "agent_run_finished_without_submit": false,
+  "agent_run_failed": false,
+  "created_at": "2026-10-03T20:45:25Z",
+  "updated_at": "2026-10-04T00:22:01Z",
+  "platform_assignee_id": null,
+  "unknown_persisted_fields": {},
+  "review_nits_acceptance": null
+}

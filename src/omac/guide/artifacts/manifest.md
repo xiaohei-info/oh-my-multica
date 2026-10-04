@@ -247,3 +247,39 @@ omac work submit <issue-id> --amendment-file <file>
 ```
 
 解析或 lint 失败会以校验错误返回；按错误逐项修正后重试，不要绕过校验或手动改平台状态。
+
+### Amendment 的预算策略
+
+proposal 可在顶层显式声明 `budget_policy: preserve`。它适用于全部最小恢复集合，
+包括派生的既有 WorkItem：保留原有效 baseline、绝对审计计数和相对已消费次数，
+不增加 limit，因此既有配置下的剩余预算不变。Controller 从当前已批准 manifest
+authority 解析 baseline；native 为 None 时可采用匹配的 manifest 记录；两者都没有
+授权记录时延续旧绝对计数语义（有效 baseline 为零）。native 投影不能单独制造新授权。
+冲突、缺失的既有授权身份、错误合同、未完成 ledger、非法计数或计数回退均失败关闭。
+
+省略此字段或显式 `budget_policy: renew` 保持历史行为：经独立评审和接受后，以当前
+绝对计数捕获新 baseline，授予新一轮相对预算。保留模式不会悄改这个默认语义。
+策略、所有受影响预算事实及目标 stage/contract 都绑定到新的 reviewed amendment
+身份；不能对旧 reviewed/rejected 文件补字段后直接接受。
+
+```bash
+omac dag amend budget-preview <manifest> <proposal.yaml> --output json
+```
+
+该命令只读取 manifest 与 WorkItemStore，输出当前 preserve 事实和 renew 对照；
+不取写锁、不写 manifest/Store、不创建或派发 Run、不生成 pass/审批。
+保留模式在普通 reviewed export 中冻结事实，在 accept 和未知写续接时复验；
+pending apply 阶段计数必须仍等于冻结值，漂移不能被静默重基或补偿。完整同步后允许
+合法的单调新消费，重复 accept 只观察，不能回滚或再次退款。现有 context-bound
+review continuation 无法自动迁移，保留模式会明确拒绝，不能悄清或复制它。
+保留模式目前不支持与 historical responsibility correction 混用；此类纯定义纠正
+没有普通恢复目标，不能删除必需 owner operations 来绕过这个边界。
+
+独立 Reviewer 必须核对保留策略、完整派生集合与真实授权；接受仍走：
+
+```bash
+omac dag amend accept <manifest> <new-reviewed-amendment.yaml> --reason '<明确的接受依据>'
+```
+
+只读 preview 不替代新方案的独立技术结论和完整请求审批。宿主锁不是跨主机原子 CAS；
+应用时仍须保持单一 Controller，pending ledger 未完成前不能启动执行。
