@@ -35,7 +35,7 @@ class AgentRuntime(ABC):
         """
 
     def wake_reviewer(
-        self, store: "WorkItemStore", item_id: str, agent: str,
+        self, store: "WorkItemStore", item_id: str, agent: str, *, admission=None,
     ) -> bool:
         """Recheck control under the Store lock before waking a Reviewer.
 
@@ -50,6 +50,8 @@ class AgentRuntime(ABC):
             current = store.observe_work_item_control(item_id).work_item
             if reviewer_dispatch_stopped(current):
                 return False
+            if admission is not None:
+                admission()
             self.wake(item_id, agent, "reviewer")
             current = store.observe_work_item_control(item_id).work_item
             return not reviewer_dispatch_stopped(current)

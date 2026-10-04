@@ -229,7 +229,7 @@ class WorkItemStore(ABC):
                 held[lock_path] = (fd, depth - 1)
             lock.release()
 
-    def assign_reviewer(self, item_id: str, assignee: str) -> bool:
+    def assign_reviewer(self, item_id: str, assignee: str, *, admission=None) -> bool:
         """Assign a Reviewer without starting a Run when control is stopped.
 
         The lock and read are deliberately separate from platform assignment:
@@ -240,6 +240,8 @@ class WorkItemStore(ABC):
             current = self.observe_work_item_control(item_id).work_item
             if reviewer_dispatch_stopped(current):
                 return False
+            if admission is not None:
+                admission()
             self.assign_work_item(
                 item_id, assignee, "reviewer", start_run=False)
             return True

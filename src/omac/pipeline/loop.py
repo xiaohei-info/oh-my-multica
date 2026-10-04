@@ -54,7 +54,7 @@ from ..engines.models import (
 )
 from ..engines.runtime import AgentRuntime
 from ..engines.store import WorkItemStore
-from ..errors import AuthError, PlatformError, WorkItemNotFoundError
+from ..errors import AuthError, PlatformError, ValidationError, WorkItemNotFoundError
 from ..i18n import current_language, ui
 from .convergence import (
     ConvergenceResolution, ResolutionState, persist_decision,
@@ -1893,10 +1893,16 @@ def _dispatch_reviewer_for_current_subject(
     runtime: AgentRuntime,
     manifest: Manifest,
     key: str,
+    *, reservation_config: dict | None = None,
 ) -> bool:
     """Run Reviewer handoff preparation and guarded assign/wake as one window."""
     item_id = manifest.nodes[key].work_item_id
     with store.reviewer_dispatch_lock(item_id):
+        if reservation_config is not None:
+            from .operator_review_recovery import dispatch_operator_reservation
+            return dispatch_operator_reservation(
+                store, runtime, manifest, manifest._recovery_manifest_path, key,
+                reservation_config)
         return _dispatch_reviewer_for_current_subject_locked(
             store, runtime, manifest, key)
 
@@ -3586,22 +3592,32 @@ def collect_results(
     # the fresh, atomic reconcile observations so collection does not repeat
     # the same Issue and attachment reads.
     manifest._recovery_manifest_path = manifest_path
+    from .operator_review_recovery import reservation_candidate
+    reserved_keys = {
+        key for key, node in manifest.nodes.items()
+        if node.status in {"blocked", "in_review"} and node.work_item_id
+        and reservation_candidate(manifest, key)
+    }
     if observations is None:
         running_observations = {
             key: WorkItemControlProjection(store.get_work_item(node.work_item_id))
             for key, node in manifest.nodes.items()
-            if node.status in RUNNING_STATUSES and node.work_item_id
+            if (node.status in RUNNING_STATUSES or key in reserved_keys) and node.work_item_id
         }
     else:
         running_observations = {}
         for key, node in manifest.nodes.items():
-            if node.status not in RUNNING_STATUSES or not node.work_item_id:
+            if (node.status not in RUNNING_STATUSES and key not in reserved_keys) or not node.work_item_id:
                 continue
             projection = observations.get(key)
             if projection is None:
                 raise PlatformError(
                     f"Fresh reconcile observation is missing for running node {key}")
             required = _build_work_item_hydration_plan(node, projection)
+            if key in reserved_keys:
+                projection = store.hydrate_work_item_evidence(
+                    projection, frozenset(WorkItemPayload))
+                required = frozenset(WorkItemPayload)
             missing = required & projection.deferred_payloads
             if missing:
                 names = ", ".join(sorted(payload.value for payload in missing))
@@ -3622,7 +3638,10 @@ def collect_results(
     no_submit_runs = resolve_no_submit_runs(config or {})
 
     for key, node in manifest.nodes.items():
-        if node.status not in RUNNING_STATUSES or not node.work_item_id:
+        if (node.status not in RUNNING_STATUSES and key not in reserved_keys) or not node.work_item_id:
+            continue
+        if key in reserved_keys:
+            pending_review.append((key, node.work_item_id, node.reviewer))
             continue
 
         projection = running_observations[key]
@@ -4385,8 +4404,17 @@ def collect_results(
     # ---- reviewer 阶段过渡(遍历后执行,避免改 manifest 影响遍历)----
     for key, item_id, reviewer in pending_review:
         try:
-            dispatched = _dispatch_reviewer_for_current_subject(
-                store, runtime, manifest, key)
+            if key in reserved_keys:
+                try:
+                    dispatched = _dispatch_reviewer_for_current_subject(
+                        store, runtime, manifest, key,
+                        reservation_config=config or {})
+                except (ValidationError, PlatformError) as exc:
+                    failures[key] = str(exc)
+                    continue
+            else:
+                dispatched = _dispatch_reviewer_for_current_subject(
+                    store, runtime, manifest, key)
             if manifest.nodes[key].status == "blocked":
                 failures[key] = ui(
                     "Reviewer dispatch is blocked by the existing decision.",
