@@ -941,3 +941,5 @@ Consumed replay only observes consumption: no new reset, rollback or dispatch. P
 submitted/Run/contract/generation/counter/budget/done drift is refused; do not bypass this gate
 with a generic amendment. Host locks are not distributed atomic CAS. Keep one Controller and
 do not resume execution until the pending request is complete and its actual outcome verified.
+
+After this receipt clears assignment, its outcome observation accepts Multica's `reviewer=""` and Mock's `None` cleared representations only in the subsequent receipt states. The original request and all other control facts remain exact. If clear was accepted while the receipt remains pending/step0, resume the identical request and approved digest: observe and checkpoint the accepted clear before the next write, without clearing again, restarting a cycle or changing budgets.

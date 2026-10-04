@@ -308,8 +308,17 @@ def _states(request, token):
     return states, baseline
 
 
-def _same_control(actual, expected):
+def _same_control(actual, expected, *, assignment_cleared=False):
     actual, expected = deepcopy(actual), deepcopy(expected)
+    # Multica clear_assignment persists reviewer="", while Mock uses None.
+    # Accept this representation only when observing this receipt's cleared
+    # assignment states; preparation and the original source remain exact.
+    if (
+        assignment_cleared
+        and expected.get("reviewer") is None
+        and actual.get("reviewer") == ""
+    ):
+        actual["reviewer"] = None
     # Retain the original timestamp in the receipt; successful owned writes
     # legitimately change only updated_at, not other protected control facts.
     actual.pop("updated_at", None)
@@ -332,7 +341,11 @@ def _observe_apply(
         _fail("protected manifest/contract/done/budget facts changed")
     current = store.get_work_item(source["control"]["id"])
     allowed = [progress] + ([progress + 1] if progress < 4 else [])
-    matches = [i for i in allowed if _same_control(_control(current), states[i])]
+    matches = [
+        i
+        for i in allowed
+        if _same_control(_control(current), states[i], assignment_cleared=i > 0)
+    ]
     if not matches:
         _fail("control drift outside this receipt step; do not reset a new cycle")
     original = deepcopy(current)
@@ -432,7 +445,9 @@ def apply_operator_review_recovery(
                 continue
             operations[progress]()
             if not _same_control(
-                _control(store.get_work_item(item_id)), states[progress + 1]
+                _control(store.get_work_item(item_id)),
+                states[progress + 1],
+                assignment_cleared=True,
             ):
                 raise PlatformError(
                     "Recovery write not yet observable; resume the identical approved request"
