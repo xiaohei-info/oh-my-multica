@@ -23,7 +23,8 @@ from .lint import lint
 from .manifest import (
     Manifest, Node, _dump_contract, _load_contract, load_manifest, save_manifest,
 )
-from .retry_budget import amendment_bounce_baseline, carry_forward_bounce_baselines
+from .retry_budget import amendment_bounce_baseline, carry_forward_bounce_baselines, preserved_amendment_budget
+from .taskmeta import review_context_binding
 from .stage_recovery import (
     classify_stage_recovery_observation,
     prepare_stage_recovery,
@@ -308,6 +309,8 @@ def parse_proposal(source: str | dict[str, Any]) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise ValidationError(ui(
             "Amendment must be a YAML object.", "amendment 必须是 YAML object。"))
+    if "budget_policy" in raw and raw["budget_policy"] not in ("renew", "preserve"):
+        raise ValidationError("budget_policy must be renew or preserve; run omac dag amend budget-preview --help")
     return raw
 
 
@@ -645,6 +648,10 @@ def validate_proposal(
     operations = proposal.get("operations")
     if not isinstance(operations, list) or not operations:
         return errors + ["operations must be a non-empty list"]
+    if proposal.get("budget_policy") == "preserve" and any(
+        isinstance(op, dict) and op.get("historical_contract_correction") is True for op in operations
+    ):
+        return errors + ["preserve budget policy does not support historical responsibility corrections; do not omit required owner operations to bypass this boundary"]
 
     try:
         literal_operation(proposal)
@@ -926,11 +933,14 @@ def _minimal_rerun(
 
 
 def _proposal_core(proposal: dict[str, Any]) -> dict[str, Any]:
-    return {
+    result = {
         "schema": proposal.get("schema"),
         "reason": proposal.get("reason"),
         "operations": copy.deepcopy(proposal.get("operations") or []),
     }
+    if "budget_policy" in proposal:
+        result["budget_policy"] = proposal["budget_policy"]
+    return result
 
 
 def _amendment_id(
@@ -945,6 +955,7 @@ def _amendment_id(
     issue_id: str | None = None,
     reviewer_verdict: str | None = None,
     literal_binding: dict | None = None,
+    budget_bindings: dict | None = None,
 ) -> str:
     # Bind the reviewed envelope as well as the definition.  Otherwise a
     # tampered base digest or review issue could turn a reviewed amendment into
@@ -957,6 +968,8 @@ def _amendment_id(
     }
     if literal_binding is not None:
         envelope["literal_review_binding"] = literal_binding
+    if budget_bindings is not None:
+        envelope["budget_bindings"] = budget_bindings
     identity_parts = [
         definition_digest, _proposal_core(proposal), minimal,
         historical_corrections, evidence,
@@ -1022,12 +1035,16 @@ def build_reviewed_amendment(
             )
     historical_corrections = _historical_contract_corrections(
         manifest, proposal, evidence)
+    budget_bindings = (_capture_preserved_budgets(manifest, minimal, store, proposal)
+        if proposal.get("budget_policy") == "preserve" else None)
     definition_digest = manifest_definition_digest(manifest)
     base = {
         "manifest_sha256": manifest_digest(manifest),
         "definition_sha256": definition_digest,
         "evidence_sha256": evidence,
     }
+    if budget_bindings is not None:
+        base["budget_bindings"] = budget_bindings
     acceptance_sha256 = _acceptance_digest(acceptance)
     if acceptance_sha256:
         base["acceptance_sha256"] = acceptance_sha256
@@ -1038,6 +1055,7 @@ def build_reviewed_amendment(
         issue_id=issue_id,
         reviewer_verdict=reviewer_verdict,
         literal_binding=literal_binding,
+        budget_bindings=budget_bindings,
     )
     review = {"issue_id": issue_id, "verdict": reviewer_verdict}
     if literal_binding is not None:
@@ -1113,6 +1131,7 @@ def _prepare_apply_ledger(
     store: Any,
     amendment_file: str | None,
     responsibility_merge_sync_nodes: set[str],
+    budget_bindings: dict | None = None,
 ) -> dict[str, Any]:
     entries: dict[str, Any] = {}
     for correction in historical_corrections:
@@ -1142,15 +1161,24 @@ def _prepare_apply_ledger(
                 }
                 continue
             item = store.get_work_item(node.work_item_id)
+            budget = budget_bindings["nodes"].get(node_id) if budget_bindings is not None else None
+            if budget_bindings is not None:
+                _check_preserved_budget_item(node_id, budget, item, completed=False)
+                if (review_context_binding(item)["contract_sha256"] != budget["contract_sha256"]
+                    or item.bounce_baseline != budget["native_baseline"]):
+                    raise ValidationError(f"node {node_id}: native budget/contract changed before ledger preparation")
             entry = {
                 "stage": stage,
                 "state": "pending",
                 "work_item_id": item.id,
                 "baseline": recovery_control_snapshot(item),
-                "bounce_baseline": amendment_bounce_baseline(item),
+                "bounce_baseline": (copy.deepcopy(budget["effective_baseline"])
+                    if budget is not None else amendment_bounce_baseline(item)),
                 "expected_contract_sha256": _digest(
                     _dump_contract(node.contract) if node.contract else None),
             }
+            if budget is not None:
+                entry["budget_binding"] = copy.deepcopy(budget)
             if stage == "review":
                 entry["expected_review_subject"] = stage_recovery_subject(node, item)
             if stage == "authoring":
@@ -1166,6 +1194,8 @@ def _prepare_apply_ledger(
         "amendment_file": amendment_file,
         "nodes": entries,
     }
+    if budget_bindings is not None:
+        ledger["budget_policy"] = "preserve"
     retained = {
         key: record for key, record in carry_forward_bounce_baselines(manifest).items()
         if key not in entries
@@ -1331,6 +1361,7 @@ def _resume_apply_ledger(
         raise ValidationError(
             "Applied amendment is missing a valid per-node apply ledger")
     _preflight_authoring_repair_ledger(manifest)
+    _preflight_preserved_budget_items(manifest, ledger, store)
     summary = {"synced": [], "observed_progress": [], "already_complete": []}
     for node_id, entry in ledger.get("nodes", {}).items():
         state = entry.get("state")
@@ -1378,6 +1409,10 @@ def _resume_apply_ledger(
             summary["synced"].append(node_id)
             continue
         item = store.get_work_item(node.work_item_id)
+        if ledger.get("budget_policy") == "preserve":
+            _check_preserved_budget_item(node_id, entry.get("budget_binding"), item,
+                completed=state in {"synced", "observed_progress"},
+                target_contract=entry.get("expected_contract_sha256"))
         current = recovery_control_snapshot(item)
         if legacy_repair_needs_baseline:
             entry["expected_review_generation"] = _authoring_review_generation(
@@ -1601,6 +1636,13 @@ def apply_amendment(
             "issue_id": review.get("issue_id"),
             "reviewer_verdict": review.get("verdict"),
         }
+    budget_bindings = base.get("budget_bindings")
+    if amendment.get("budget_policy") == "preserve":
+        if identity_schema != AMENDMENT_IDENTITY_SCHEMA or not isinstance(budget_bindings, dict):
+            raise ValidationError("Budget preservation requires a newly reviewed bound amendment")
+        identity_kwargs["budget_bindings"] = budget_bindings
+    elif budget_bindings is not None:
+        raise ValidationError("Budget bindings require explicit preserve policy")
     if literal_operation(amendment) is not None:
         if identity_schema != AMENDMENT_IDENTITY_SCHEMA or not review.get("literal_review_binding"):
             raise ValidationError("Literal correction requires the bound independent review identity")
@@ -1685,6 +1727,13 @@ def apply_amendment(
             raise ValidationError(
                 "Historical contract correction audit changed after amendment review. "
                 "Generate and review a new amendment.")
+        if budget_bindings is not None:
+            for key, binding in budget_bindings.get("nodes", {}).items():
+                node = current.nodes.get(key)
+                if node is None or node.work_item_id != binding.get("work_item_id"):
+                    raise ValidationError(f"node {key}: preserved work item identity changed after review")
+            if _capture_preserved_budgets(current, recomputed_minimal, store, amendment) != budget_bindings:
+                raise ValidationError("Budget facts changed after amendment review; inspect and review a fresh amendment")
         _verify_evidence(current, amendment, store)
         amended = _apply_definition(current, amendment)
         minimal = recomputed_minimal
@@ -1712,6 +1761,7 @@ def apply_amendment(
                     and operation.get("resume_stage") == "merging"
                 )
             },
+            budget_bindings=budget_bindings,
         )
         amended.meta["last_amendment_id"] = amendment.get("amendment_id")
         save_manifest(amended, manifest_path)
@@ -1727,6 +1777,8 @@ def apply_amendment(
             ledger["amendment_file"] = amendment_file
             _save_ledger(current, manifest_path, ledger)
 
+    if budget_bindings is not None:
+        _validate_preserved_budget_ledger(current.meta.get("amendment_apply") or {}, budget_bindings)
     sync_summary = _resume_apply_ledger(
         current, manifest_path, store)
 
@@ -1738,3 +1790,123 @@ def apply_amendment(
         "apply_semantics": "manifest-atomic-with-restart-safe-store-compensation",
         "sync": sync_summary,
     }
+
+
+def _capture_preserved_budgets(manifest, minimal, store, proposal):
+    target = _apply_definition(manifest, proposal)
+    stages = {node_id: stage for stage, ids in minimal.items() for node_id in ids}
+    nodes = {}
+    for node_id in sorted({n for group in minimal.values() for n in group}):
+        node = manifest.nodes.get(node_id)
+        if node is not None and node.work_item_id:
+            nodes[node_id] = preserved_amendment_budget(
+                manifest, node_id, store.get_work_item(node.work_item_id))
+            nodes[node_id]["target_contract_sha256"] = _digest(_dump_contract(target.nodes[node_id].contract) if target.nodes[node_id].contract else None)
+            nodes[node_id]["target_stage"] = stages[node_id]
+    return {"schema": "omac.amendment-budget-preservation/v1", "nodes": nodes}
+
+
+def preview_amendment_budgets(manifest, proposal_source, store, agent_pool):
+    """Read-only current authority and renewal comparison; never export approval."""
+    proposal = parse_proposal(proposal_source)
+    errors = validate_proposal(manifest, proposal, agent_pool)
+    if errors:
+        raise ValidationError("Amendment budget preview failed:\n  - " + "\n  - ".join(errors))
+    minimal, _, immutable = _minimal_rerun(manifest, proposal)
+    if immutable:
+        raise ValidationError("Budget preview reaches immutable nodes")
+    binding = _capture_preserved_budgets(manifest, minimal, store, proposal)
+    return {"read_only": True, "budget_policy": proposal.get("budget_policy", "renew"),
+        "minimal_rerun": minimal, "preserve": binding,
+        "renew_baselines": {k: {s: b["absolute"][s] for s in ("worker", "review", "merge")}
+            for k, b in binding["nodes"].items()},
+        "remaining_authority": "unchanged for existing limits under preserve; no limit or continuation grant"}
+
+
+def _check_preserved_budget_item(node_id, binding, item, *, completed, target_contract=None):
+    def unsafe(detail):
+        raise ValidationError(f"node {node_id}: preserved budget changed: {detail}; "
+            "inspect facts and run omac dag amend budget-preview --help")
+    fields = {"work_item_id", "contract_sha256", "absolute", "native_baseline",
+        "effective_baseline", "consumed", "authority_source", "authority",
+        "target_contract_sha256", "target_stage"}
+    if not isinstance(binding, dict) or set(binding) != fields:
+        unsafe("missing reviewed budget identity")
+    if binding["work_item_id"] != item.id or not isinstance(binding["contract_sha256"], str):
+        unsafe("work item identity")
+    if (not isinstance(binding["target_contract_sha256"], str)
+        or binding["target_stage"] not in ("authoring", "review", "merging")
+        or (target_contract is not None and target_contract != binding["target_contract_sha256"])):
+        unsafe("reviewed recovery target")
+    counters = binding["absolute"]
+    baseline = binding["effective_baseline"]
+    if (not isinstance(counters, dict) or set(counters) != {"worker", "review", "merge", "ci"}
+        or any(type(v) is not int or v < 0 for v in counters.values())
+        or not isinstance(baseline, dict) or set(baseline) != {"worker", "review", "merge"}
+        or any(type(v) is not int or v < 0 or v > counters[s] for s, v in baseline.items())
+        or binding["consumed"] != {s: counters[s] - baseline[s] for s in baseline}):
+        unsafe("malformed counters or effective authority")
+    native_before = binding["native_baseline"]
+    if native_before is not None and native_before != baseline:
+        unsafe("native and effective authority conflict")
+    authority = binding["authority"]
+    if binding["authority_source"] == "implicit-zero":
+        if authority is not None or any(baseline.values()):
+            unsafe("implicit baseline must be zero")
+    elif binding["authority_source"] in ("manifest-entry", "manifest-retained"):
+        if (not isinstance(authority, dict) or not authority.get("amendment_id")
+            or authority.get("work_item_id") != item.id
+            or authority.get("contract_sha256") != binding["contract_sha256"]
+            or authority.get("bounce_baseline") != baseline):
+            unsafe("reviewed manifest authority")
+    else:
+        unsafe("unknown authority source")
+    for stage, original in counters.items():
+        observed = getattr(item.bounces, stage, None)
+        if type(observed) is not int or (observed < original if completed else observed != original):
+            unsafe(f"absolute {stage} audit counter")
+    if getattr(item, "review_continuation", None):
+        unsafe("context-bound continuation appeared")
+    if review_context_binding(item)["contract_sha256"] not in {
+        binding["contract_sha256"], binding["target_contract_sha256"]
+    }:
+        unsafe("contract")
+    if item.bounce_baseline != native_before and item.bounce_baseline != baseline:
+        unsafe("native baseline")
+
+
+def _validate_preserved_budget_ledger(ledger, bindings):
+    if (not isinstance(bindings, dict)
+        or set(bindings) != {"schema", "nodes"}
+        or bindings["schema"] != "omac.amendment-budget-preservation/v1"
+        or not isinstance(bindings["nodes"], dict)
+        or ledger.get("budget_policy") != "preserve"):
+        raise ValidationError("Missing exact reviewed budget preservation ledger; run omac dag amend budget-preview --help")
+    entries = ledger.get("nodes", {})
+    actual = {k: e.get("budget_binding") for k, e in entries.items() if "budget_binding" in e}
+    if actual != bindings["nodes"]:
+        raise ValidationError("Apply ledger budget bindings differ from the reviewed amendment")
+    for key, binding in actual.items():
+        entry = entries[key]
+        if (entry.get("work_item_id") != binding.get("work_item_id")
+            or entry.get("bounce_baseline") != binding.get("effective_baseline")
+            or entry.get("expected_contract_sha256") != binding.get("target_contract_sha256")
+            or entry.get("stage") != binding.get("target_stage")):
+            raise ValidationError(f"node {key}: apply ledger cannot change preserved budget")
+
+
+def _preflight_preserved_budget_items(manifest, ledger, store):
+    if ledger.get("budget_policy") != "preserve":
+        return
+    for key, entry in ledger["nodes"].items():
+        if "budget_binding" not in entry:
+            if entry.get("work_item_id"):
+                raise ValidationError(f"node {key}: missing preserved budget binding")
+            continue
+        node = manifest.nodes.get(key)
+        if (node is None or node.work_item_id != entry.get("work_item_id")
+            or _digest(_dump_contract(node.contract) if node.contract else None) != entry["budget_binding"].get("target_contract_sha256")):
+            raise ValidationError(f"node {key}: preserved work item identity/target contract changed")
+        _check_preserved_budget_item(key, entry["budget_binding"], store.get_work_item(node.work_item_id),
+            completed=entry["state"] in {"synced", "observed_progress"},
+            target_contract=entry.get("expected_contract_sha256"))

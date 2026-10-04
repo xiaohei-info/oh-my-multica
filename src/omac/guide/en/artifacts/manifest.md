@@ -266,3 +266,50 @@ omac work submit <issue-id> --amendment-file <file>
 
 Fix parser or lint errors one by one. Do not bypass validation or manually move
 platform state.
+
+### Amendment budget policy
+
+A proposal may explicitly declare top-level `budget_policy: preserve`. It covers
+the complete minimum recovery set, including derived existing WorkItems. It keeps
+the effective baseline, absolute audit counters and relative consumption; limits
+are not increased, so remaining authority under existing configuration is unchanged.
+The Controller resolves existing approved manifest authority. A native None
+projection can use a matching manifest record; absent both, legacy absolute
+semantics use an effective zero baseline. A native projection alone cannot grant
+new authority. Conflicting or missing existing identities, stale contracts,
+incomplete ledgers, invalid counters or counter regression fail closed.
+
+Omitting the field or explicitly choosing `budget_policy: renew` retains the
+historical reviewed/accepted behavior: capture current absolute counters as the
+new relative-budget baseline. Preserve does not silently change this default.
+The policy, all affected budget facts and target stages/contracts enter the new
+reviewed amendment identity. Do not add the field to an old reviewed/rejected
+file and then accept it.
+
+```bash
+omac dag amend budget-preview <manifest> <proposal.yaml> --output json
+```
+
+Preview reads only manifest and WorkItemStore and shows preservation facts beside
+renewal baselines. It takes no write lock, writes no manifest/Store, creates or
+dispatches no Run and grants no approval. Normal reviewed export freezes the facts;
+accept and unknown-write resume recheck them. Pending apply counters must still
+equal the frozen values; drift is not silently rebased or compensated. After full
+sync, legitimate monotonic consumption is allowed; repeated accept only observes
+and cannot roll back or refund again. Context-bound review continuations cannot
+be automatically migrated, so preserve explicitly refuses them rather than
+clearing or copying them.
+Preserve currently refuses combinations with historical responsibility corrections,
+which have no normal recovery target. Do not remove required owner operations to
+evade this boundary.
+
+The independent Reviewer checks the policy, derived scope and real authority.
+Acceptance still uses the normal entry point:
+
+```bash
+omac dag amend accept <manifest> <new-reviewed-amendment.yaml> --reason '<explicit acceptance basis>'
+```
+
+Preview does not replace independent technical review or approval of the complete
+new request. Host locks are not distributed atomic CAS; use one Controller and do
+not start execution while an apply ledger is pending.
