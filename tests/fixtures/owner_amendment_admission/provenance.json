@@ -1,0 +1,354 @@
+{
+  "base_OMAC": "e5beaadcc1c5ddecdb2f1b9e01587551ed30509e",
+  "captured_FULLDONE": 77,
+  "full_immutable_source_files": {
+    "current77.yaml": {
+      "bytes": 2595033,
+      "sha256": "ad90692d02ccc8d090061a3f7be06ed1d05a919a0a83368b09e70c5ff24ed95a"
+    },
+    "done77.json": {
+      "bytes": 1006292,
+      "sha256": "98cd2f46cd9257dd6879b58c308fd6316967913ea041cc8d75e9517679f125df"
+    },
+    "failed-byte-proof.json": {
+      "bytes": 4997,
+      "sha256": "b1daa6c4175f069873fab644ecd9653ee06f2caf961f3b2b63475082980e47d5"
+    },
+    "open-agent-cluster.acceptance.yaml": {
+      "bytes": 1439865,
+      "sha256": "9f3969e0052f1eb3cd7101481150e96a52fd2035705ef91db42a2ed898b5f082"
+    },
+    "current-six-full-controls/extension-package.json": {
+      "bytes": 125254,
+      "sha256": "b58e466a18bba3f43215819b5f4c0471c9f52187e586e39afd66c7fbb7ae9d3a"
+    },
+    "current-six-full-controls/observation.json": {
+      "bytes": 1454,
+      "sha256": "50b0169cb8cc10ae179d73eabae25e6f45e572377808348cb0dcce75ef3d41cc"
+    },
+    "current-six-full-controls/api-agent.json": {
+      "bytes": 41936,
+      "sha256": "7758ee60767c500eabbaf6c0a5f3bcbe785c4069fcb89d81d25bfe59d31e6405"
+    },
+    "current-six-full-controls/audit-ledger.json": {
+      "bytes": 123847,
+      "sha256": "9fee6f33b656419b3f7ead5d001953d3bf7931dc433d4b4efe1be893058cf3e0"
+    },
+    "current-six-full-controls/identity-local.json": {
+      "bytes": 83000,
+      "sha256": "c79a95ed00cda2a09c327f3e8553c278dfc2fbf6314b879e3d8ef7356fa983e7"
+    },
+    "current-six-full-controls/mcp-catalog-governed-hardening.json": {
+      "bytes": 51211,
+      "sha256": "e3635c2612dcb0797c888a1b931a6baca4ecd991c5427260b30dfb7ff05bc6a6"
+    },
+    "current-six-full-controls/credential-store.json": {
+      "bytes": 72332,
+      "sha256": "3de0e6139f7722346858442ff7ce21547f8f514a33e5c29dacbc0712b6d4d2af"
+    },
+    "original-complete-failed-report-ledger-bytes/audit-ledger-retained_report_ref.yaml": {
+      "bytes": 25163,
+      "sha256": "b0849be7effb1a3e71629c1ae26f2787647ab934c79e1e2b85574849f65af3b5"
+    },
+    "original-complete-failed-report-ledger-bytes/extension-package-original_package_amend_reject.yaml": {
+      "bytes": 15833,
+      "sha256": "8f2d099cc011598276de15573153f24e2bc28470aaba2eb550b55208f6566324"
+    },
+    "original-complete-failed-report-ledger-bytes/credential-store-retained_report_ref.yaml": {
+      "bytes": 21914,
+      "sha256": "d4b44c80ad70cb6d63231afb8af079316bccbaf55a5f9cf9ab0d00fc3bf0e321"
+    },
+    "original-complete-failed-report-ledger-bytes/api-agent-retained_report_ref.yaml": {
+      "bytes": 14987,
+      "sha256": "cb08fc44a86dbf7682bb22bb58d7a1b887a86f5981ebe9f6e3095a85dcee99af"
+    },
+    "original-complete-failed-report-ledger-bytes/identity-local-retained_ledger_ref.yaml": {
+      "bytes": 45330,
+      "sha256": "b116b01b16757abbe0b4afabe9e6a287319ab60a62f41a0b733fea38a41318dc"
+    },
+    "original-complete-failed-report-ledger-bytes/mcp-catalog-governed-hardening-retained_ledger_ref.yaml": {
+      "bytes": 13065,
+      "sha256": "82ea8c08452f336d5a47bc50aee22d9da2f38430af48dc45057e6f7b9c5b7f8c"
+    },
+    "original-complete-failed-report-ledger-bytes/credential-store-retained_ledger_ref.yaml": {
+      "bytes": 30595,
+      "sha256": "df637f5349894ccd92cea533d21dad5678e3d0383c2db267b5fdaed6a517550b"
+    },
+    "original-complete-failed-report-ledger-bytes/audit-ledger-retained_ledger_ref.yaml": {
+      "bytes": 36306,
+      "sha256": "3dfb7fdc07a88522ba276001acfcba44b3e28469301fab0eed97b176a0463414"
+    },
+    "original-complete-failed-report-ledger-bytes/extension-package-original_package_amend_ledger.yaml": {
+      "bytes": 5181,
+      "sha256": "1368e0d58cace1a5217a31bf067c885ee831f0096e2a213dec0c176048956e0d"
+    },
+    "original-complete-failed-report-ledger-bytes/api-agent-retained_ledger_ref.yaml": {
+      "bytes": 9124,
+      "sha256": "3bdc754ebc7f580358a579a7b8e79c87d8ac25be3dab2fe23c8f4db7229d6655"
+    },
+    "original-complete-failed-report-ledger-bytes/mcp-catalog-governed-hardening-retained_report_ref.yaml": {
+      "bytes": 19510,
+      "sha256": "83c997d95bd850e1ae40941d35ae68f8c4c94207929dc15d6d7d982999095ce3"
+    },
+    "original-complete-failed-report-ledger-bytes/identity-local-retained_report_ref.yaml": {
+      "bytes": 17541,
+      "sha256": "2027651b5ad18ad04b65a2fe37c6118e75390919914e363950070359c7a91b9c"
+    },
+    "required-contracts/model-catalog-amendment-decision.md": {
+      "bytes": 2825,
+      "sha256": "0bc406351af09ca337327507f28621567b4ebcf62dee4a655566d1e307f6d3eb"
+    },
+    "required-contracts/harness-sdk-amendment-decision.md": {
+      "bytes": 2578,
+      "sha256": "5e54869413ba98a1654df82aa425fa39e93be409dc07ebf29aabb4e2a5faa821"
+    },
+    "required-contracts/account-locale-ownership-decision.md": {
+      "bytes": 4959,
+      "sha256": "2ee85c6551db299f14f4903e5b0086e678208b38c6a3cba276c8a32a5f1a5be6"
+    },
+    "required-contracts/five-nodes-recovery-decisions.md": {
+      "bytes": 5913,
+      "sha256": "7bd38663b73a6175947bc1343df993019b8c6570be7413620eed89f64cf1e1af"
+    },
+    "required-contracts/authentication-sdk/authentication.go": {
+      "bytes": 51297,
+      "sha256": "9e5a1164791115eb1d1c4e7ef3b6e24a1a855c16a96805944a2fb63244437cb0"
+    },
+    "required-contracts/contracts/extension/extension_test.go": {
+      "bytes": 33867,
+      "sha256": "7c59cd485d92367cedf736b02a03dd345eccedc0f0d4de480bd443c9d7690c84"
+    },
+    "required-contracts/contracts/extension/extension.go": {
+      "bytes": 37622,
+      "sha256": "cd49cfd14052987a7d9367234df542e41ddf3223743091eb980c31c461ccdddb"
+    },
+    "required-contracts/contracts/workspace/workspace.go": {
+      "bytes": 45912,
+      "sha256": "a5f43729f290f2255a8745dc43f587f4f014c4b1cca3eb888fbd7cbdb281df12"
+    },
+    "required-contracts/contracts/release/source-ownership-catalog.yaml": {
+      "bytes": 18606,
+      "sha256": "f7e96c861be3e8aef085da65c157c1d1d38290765df0bcc701f1d41e6fb0e820"
+    },
+    "required-contracts/contracts/release/source-ownership-baseline.yaml": {
+      "bytes": 16822,
+      "sha256": "69a6f8b5bce02e9d1b9992d6949e169121010911dd5c3781f78b9f39994b55f5"
+    },
+    "required-contracts/contracts/release/kernel-lifecycle-contract-ownership.yaml": {
+      "bytes": 5694,
+      "sha256": "a268a0fff5fb82529383856b5940395600bbd70daba211ec015766254028dfdc"
+    },
+    "required-contracts/contracts/solution/solution.go": {
+      "bytes": 54268,
+      "sha256": "50e96cc89bff6f98f981762895a44ee8541dffe6c5fe6e33209c51c385bcc10d"
+    },
+    "required-contracts/contracts/solution/solution_test.go": {
+      "bytes": 11670,
+      "sha256": "1c375bb7e85ade2dccaa9488fa36b7c6f752987130ed286ec4a6147a99d0a6dc"
+    },
+    "required-contracts/contracts/solution/rework_test.go": {
+      "bytes": 50473,
+      "sha256": "878d6bec7a9f17ba229da352e01e727768ea835a15aca90ac0117d62cb5d955c"
+    },
+    "required-contracts/contracts/project/types.go": {
+      "bytes": 16572,
+      "sha256": "0bf0a702ffbd68e04a29393b3728551aef18dcf04c5704d465d9f4d267038053"
+    },
+    "required-contracts/contracts/project/convergence_regression_test.go": {
+      "bytes": 37211,
+      "sha256": "903c6ad6f47dffc9332e5b7be2796a1a08f213ad51ae3a3004a9d0448420b420"
+    },
+    "required-contracts/contracts/project/canonical.go": {
+      "bytes": 7213,
+      "sha256": "2acd4963293a42b564f1f9f52b49d40f05c8c4a8f55e4f38a1a99f1916b5d5ec"
+    },
+    "required-contracts/contracts/project/review_regression_test.go": {
+      "bytes": 14021,
+      "sha256": "cd6fd5b15a095f6d332a0cebe3dac1328c69b1605d0be7c0daec03ee3d83c08b"
+    },
+    "required-contracts/contracts/project/validation.go": {
+      "bytes": 50180,
+      "sha256": "0d66039f6e2bfde6a5a840c4a823506cd1bacd9c1a227eb2f2b948b64ce3cc5c"
+    },
+    "required-contracts/contracts/project/contracts_test.go": {
+      "bytes": 8404,
+      "sha256": "b734aa52d6e66df4862c1284576a2cf800aac1950840aa4d706ca80d771b9b83"
+    },
+    "required-contracts/contracts/project/validation_test.go": {
+      "bytes": 25091,
+      "sha256": "01dcacea78d868e2af1f355b66b256691887270142404c4f3a4fdf33dba83339"
+    },
+    "required-contracts/contracts/identity/requestcontext/request_context.go": {
+      "bytes": 3364,
+      "sha256": "f4d43dcb917cd5ac7c7c3df6a90a476f14c27338583c1e42460c45bb71b0bfeb"
+    },
+    "required-contracts/contracts/identity/requestcontext/request_context_test.go": {
+      "bytes": 3026,
+      "sha256": "ee2824c63e94b4ae296b9bafab674f52d72f32f7c6cee368938cedf61422c222"
+    },
+    "required-contracts/contracts/identity/externalidentitylink/external_identity_link.go": {
+      "bytes": 1113,
+      "sha256": "af77aef1af8b20b54baa7dfae83c1776640cc5a2215c7910be06badea40da044"
+    },
+    "required-contracts/contracts/identity/session/session.go": {
+      "bytes": 996,
+      "sha256": "ed121bd11e09a46703f5c4aa5b952246d4b1004d84c8e5e087e6bfbd1a933e69"
+    },
+    "required-contracts/contracts/governance/credential/wire.go": {
+      "bytes": 26657,
+      "sha256": "dbc02ed64ceea60923248ad73f7254b7573b1909f0354f599a0fd9e1e9417c5c"
+    },
+    "required-contracts/contracts/governance/admission/contract_test.go": {
+      "bytes": 17067,
+      "sha256": "115d5019f5279696db440b799ce0960477b4058c9cf426ad6f798a72cc07baed"
+    },
+    "required-contracts/contracts/governance/admission/contract.go": {
+      "bytes": 19871,
+      "sha256": "2645fb0cc36ef5dd1ec210ab0af3031f1ba17ee5ec0aa4f17530f3ae0f756926"
+    },
+    "required-contracts/contracts/governance/audit/audit.go": {
+      "bytes": 96,
+      "sha256": "0b6e29778ecafd32b29d492239f752ec6cd987a5cd9062f37caa3d845da75535"
+    },
+    "required-contracts/contracts/governance/audit/wire_contract_test.go": {
+      "bytes": 8888,
+      "sha256": "d7fbeb37d42b99141a71304294a90cb5e5f9919218a5d3a555faa9d0fb69f66d"
+    },
+    "required-contracts/contracts/governance/audit/export_contract_test.go": {
+      "bytes": 4146,
+      "sha256": "8a535023b744db03dc432c1ea4305de2fcdf53a5efc7dedb354763d8c0c7a55d"
+    },
+    "required-contracts/contracts/governance/audit/new_review_test.go": {
+      "bytes": 42882,
+      "sha256": "fd80f2c17d324df0320ec0e98ea4a7a25d56a33efc2efbb125ff9ac6d57c61bb"
+    },
+    "required-contracts/contracts/governance/audit/coverage_test.go": {
+      "bytes": 34808,
+      "sha256": "910e76aa948c6f4e49f123931a87bc6ae6baa98fd0d046e117c78ab0d49ca661"
+    },
+    "required-contracts/contracts/governance/audit/store_boundary_test.go": {
+      "bytes": 1746,
+      "sha256": "aed783625b6e3692b9263ba20faf6aa83c44f4d7e97aa9882b395d412cd7c156"
+    },
+    "required-contracts/contracts/governance/audit/review_regression_test.go": {
+      "bytes": 36809,
+      "sha256": "9d42bf64fcdbf6e1267cde51be60f2db1f860689b0ff88bdce98239d356b54b8"
+    },
+    "required-contracts/contracts/governance/audit/contract_test.go": {
+      "bytes": 9994,
+      "sha256": "d9e6098143081a92dee4ea6a083c38cd35a2b4ea1be3bc1f1de1751f2cf8e50f"
+    },
+    "required-contracts/contracts/governance/audit/control_outcome_test.go": {
+      "bytes": 1305,
+      "sha256": "f58c8a20b7b6f853ee9ad5b97356e0e9aa159ab68a9cdedf365c1b074b0f1ed1"
+    },
+    "required-contracts/contracts/governance/audit/contract.go": {
+      "bytes": 104939,
+      "sha256": "bc1777f387b8908a1173cf2e0238af9f41542016f9bd426a0126fca0916ce174"
+    },
+    "required-contracts/contracts/governance/audit/review_contract_test.go": {
+      "bytes": 27040,
+      "sha256": "1a6394935c5e5787a43256e5312a9b1b41420c77b8b1b0b999fe5e899a4ef61a"
+    },
+    "required-contracts/contracts/governance/authz/contract_test.go": {
+      "bytes": 10405,
+      "sha256": "74a2ec5b1fb10b9fffd689991f8184cdfbbf29777d08e0400fad9e7eafce9cd9"
+    },
+    "required-contracts/contracts/governance/authz/contract.go": {
+      "bytes": 8630,
+      "sha256": "ea144e4ee917672eb49051ccebbcc812b4c150c78f2bfc0d4bd29a58da3ccd4c"
+    },
+    "required-contracts/contracts/governance/audit/internal/auditstore/receipt.go": {
+      "bytes": 1624,
+      "sha256": "014341f915069a58822febd009e110a62a9b1ede2bbdfe8916f6c46849b51775"
+    },
+    "required-contracts/contracts/governance/audit/internal/auditstore/receipt_test.go": {
+      "bytes": 995,
+      "sha256": "287d03ad1c4bb51324d9d3809d3e4a2462f8f0dad0d8c1c47131b1920ba0fd99"
+    },
+    "required-contracts/contracts/governance/audit/internal/store/store_boundary_external_test.go": {
+      "bytes": 5763,
+      "sha256": "4b115509b54f8dc78d400321f10bbbf6e4a6601418ee88647e71121f82592bbd"
+    },
+    "required-contracts/docs/design/open-agent-cluster-overview-design.md": {
+      "bytes": 102981,
+      "sha256": "d0132d814dac38f21fb8dc75cefea3c110acd4dffb15784291bf59d6be45afe7"
+    },
+    "required-contracts/docs/references/conventions.md": {
+      "bytes": 14658,
+      "sha256": "184bda55ad6432844dbe701af63d7c4a544c360e367fbf543e67e84840482c25"
+    },
+    "required-contracts/docs/delivery/acceptance-and-validation.md": {
+      "bytes": 299769,
+      "sha256": "e84705b5307724f2f8f803ee2f212e32ef144bac079013b419d16713d5edc3ac"
+    },
+    "required-contracts/docs/design/frontend/DESIGN.md": {
+      "bytes": 70456,
+      "sha256": "ceb781cde99795e57fd340e74ebfa65e9f0c8e624ec763c5fea169477315af60"
+    },
+    "required-contracts/docs/design/detailed/09-governance-and-security-detailed-design.md": {
+      "bytes": 81529,
+      "sha256": "112d7a6ff48ac97d6a8779fbd27aa88beb99d1b63f8a295a39e921c559594934"
+    },
+    "required-contracts/docs/design/detailed/06-agent-runtime-detailed-design.md": {
+      "bytes": 49187,
+      "sha256": "b186953d7cd58e239f759ed7160b904d2dccc0d265746175135843ffdd58e5e4"
+    },
+    "required-contracts/docs/design/detailed/08-component-and-extension-detailed-design.md": {
+      "bytes": 42136,
+      "sha256": "6bc50c99a5066ef613537ea14a8a99512f433405ab67afb2b09d98b187411f04"
+    },
+    "required-contracts/docs/references/project-and-team/project-and-agent-team.md": {
+      "bytes": 45342,
+      "sha256": "cb8228f14011cf36df8af2cef401b2e157f7ae10c598f7e8de42faee3e52321d"
+    },
+    "required-contracts/docs/references/cloud-native/kubernetes-resources.md": {
+      "bytes": 22093,
+      "sha256": "1e180ca347413c031d34fe426c14a635e753ef3db8bec6ea504e9dc964077882"
+    },
+    "required-contracts/docs/references/extension/component-governance.md": {
+      "bytes": 25461,
+      "sha256": "c05aceee0bc3d826c0719ad278f27492473a83018d174099786c272ce240f2d0"
+    },
+    "required-contracts/docs/references/extension/plugin-contracts.md": {
+      "bytes": 17042,
+      "sha256": "fcd02305d50c12640bec7de64b25a84f3c1c6d2ca169eae81073448b5038be6b"
+    },
+    "required-contracts/docs/references/software-delivery/artifacts-release-and-deployment.md": {
+      "bytes": 33518,
+      "sha256": "af63916ce4dde95e6a6953efc4fcde7e32b4287184c6521b5920aaf193908a27"
+    },
+    "required-contracts/docs/references/solution/solution-definition.md": {
+      "bytes": 39336,
+      "sha256": "cf23bee366def286500c8e260de0f0592f1c2c4c28d692c286706ee2f844c25e"
+    },
+    "required-contracts/docs/references/execution/workspace.md": {
+      "bytes": 3494,
+      "sha256": "9a736945d8c5ab6ede4299a3323b1fcecc422e5ce853a04088f91561ca14f9e1"
+    },
+    "required-contracts/docs/references/execution/agent-runtime.md": {
+      "bytes": 38015,
+      "sha256": "466c54051d655d562c1afe97e6c3828546edeb6a86284634ef87c5ee95d2891d"
+    },
+    "required-contracts/docs/references/workflow/workflow-and-execution.md": {
+      "bytes": 36262,
+      "sha256": "8c9b4fff0ad48c67d5ef61871799f2042b995aa68e92c602d902d83c2cee3f40"
+    },
+    "required-contracts/docs/references/orchestration/orchestration-kernel-contracts.md": {
+      "bytes": 54636,
+      "sha256": "27d2fad712a2a05953753b9bf3e5b0bc98376510bb939524e9c20483a922c2a2"
+    },
+    "required-contracts/docs/references/orchestration/kernel-contract-schema-v1.md": {
+      "bytes": 12028,
+      "sha256": "04dcec307b6d081570c714ff1d13b6980ebea4bd608b0c6aae13bf97acb2a500"
+    },
+    "required-contracts/docs/references/governance/security-and-enterprise.md": {
+      "bytes": 63725,
+      "sha256": "d4b310c4491e6ff0880bf7dc4512e61c20455fd0277596c34284124a98715a44"
+    }
+  },
+  "required_contracts_sampled_OAC_HEAD": "7d59cfda2fcf7f41358896dd70d32402d1524b33",
+  "supplemental_78_is_historical_only": true,
+  "live_eligibility": false,
+  "synthetic_test_boundary": "Only offline transport old-Package native WorkItem/IDs and fresh Mock Reviewer publication; original six full controls/Run captures, 12 original failed bytes, full77 manifest/DONE proof, authoritative acceptance and63 supplied required files unchanged. No owner technical claims adjudicated."
+}

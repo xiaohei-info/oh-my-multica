@@ -1,0 +1,102 @@
+{
+  "at": "2026-10-04T21:35:59.433749+00:00",
+  "rows": [
+    {
+      "node": "api-agent",
+      "kind": "retained_report_ref",
+      "source": "/tmp/oac-api-agent-production-owner-bound-0855-20261004/omac-review-report-cb08fc44a86d.yaml",
+      "path": "original-complete-failed-report-ledger-bytes/api-agent-retained_report_ref.yaml",
+      "bytes": 14987,
+      "sha256": "cb08fc44a86dbf7682bb22bb58d7a1b887a86f5981ebe9f6e3095a85dcee99af"
+    },
+    {
+      "node": "api-agent",
+      "kind": "retained_ledger_ref",
+      "source": "/tmp/oac-api-agent-production-owner-bound-0855-20261004/omac-review-ledger-3bdc754ebc7f.yaml",
+      "path": "original-complete-failed-report-ledger-bytes/api-agent-retained_ledger_ref.yaml",
+      "bytes": 9124,
+      "sha256": "3bdc754ebc7f580358a579a7b8e79c87d8ac25be3dab2fe23c8f4db7229d6655"
+    },
+    {
+      "node": "audit-ledger",
+      "kind": "retained_report_ref",
+      "source": "/tmp/oac-audit-owner-source-grouped-input-2041-20261004/audit-ledger-report_ref.yaml",
+      "path": "original-complete-failed-report-ledger-bytes/audit-ledger-retained_report_ref.yaml",
+      "bytes": 25163,
+      "sha256": "b0849be7effb1a3e71629c1ae26f2787647ab934c79e1e2b85574849f65af3b5"
+    },
+    {
+      "node": "audit-ledger",
+      "kind": "retained_ledger_ref",
+      "source": "/tmp/oac-audit-owner-source-grouped-input-2041-20261004/audit-ledger-ledger_ref.yaml",
+      "path": "original-complete-failed-report-ledger-bytes/audit-ledger-retained_ledger_ref.yaml",
+      "bytes": 36306,
+      "sha256": "3dfb7fdc07a88522ba276001acfcba44b3e28469301fab0eed97b176a0463414"
+    },
+    {
+      "node": "credential-store",
+      "kind": "retained_report_ref",
+      "source": "/tmp/oac-credential-conditional-expiry-owner-bound-0913-20261004/omac-review-report-d4b44c80ad70.yaml",
+      "path": "original-complete-failed-report-ledger-bytes/credential-store-retained_report_ref.yaml",
+      "bytes": 21914,
+      "sha256": "d4b44c80ad70cb6d63231afb8af079316bccbaf55a5f9cf9ab0d00fc3bf0e321"
+    },
+    {
+      "node": "credential-store",
+      "kind": "retained_ledger_ref",
+      "source": "/tmp/oac-credential-conditional-expiry-owner-bound-0913-20261004/omac-review-ledger-df637f534989.yaml",
+      "path": "original-complete-failed-report-ledger-bytes/credential-store-retained_ledger_ref.yaml",
+      "bytes": 30595,
+      "sha256": "df637f5349894ccd92cea533d21dad5678e3d0383c2db267b5fdaed6a517550b"
+    },
+    {
+      "node": "identity-local",
+      "kind": "retained_report_ref",
+      "source": "/tmp/oac-identity-local-canonical-audit-proof-owner-bound-0855-20261004/omac-review-report-2027651b5ad1.yaml",
+      "path": "original-complete-failed-report-ledger-bytes/identity-local-retained_report_ref.yaml",
+      "bytes": 17541,
+      "sha256": "2027651b5ad18ad04b65a2fe37c6118e75390919914e363950070359c7a91b9c"
+    },
+    {
+      "node": "identity-local",
+      "kind": "retained_ledger_ref",
+      "source": "/tmp/oac-identity-local-canonical-audit-proof-owner-bound-0855-20261004/omac-review-ledger-b116b01b1675.yaml",
+      "path": "original-complete-failed-report-ledger-bytes/identity-local-retained_ledger_ref.yaml",
+      "bytes": 45330,
+      "sha256": "b116b01b16757abbe0b4afabe9e6a287319ab60a62f41a0b733fea38a41318dc"
+    },
+    {
+      "node": "mcp-catalog-governed-hardening",
+      "kind": "retained_report_ref",
+      "source": "/tmp/oac-mcp-production-owner-bound-20261004/omac-review-report-83c997d95bd8.yaml",
+      "path": "original-complete-failed-report-ledger-bytes/mcp-catalog-governed-hardening-retained_report_ref.yaml",
+      "bytes": 19510,
+      "sha256": "83c997d95bd850e1ae40941d35ae68f8c4c94207929dc15d6d7d982999095ce3"
+    },
+    {
+      "node": "mcp-catalog-governed-hardening",
+      "kind": "retained_ledger_ref",
+      "source": "/tmp/oac-mcp-production-owner-bound-20261004/omac-review-ledger-82ea8c08452f.yaml",
+      "path": "original-complete-failed-report-ledger-bytes/mcp-catalog-governed-hardening-retained_ledger_ref.yaml",
+      "bytes": 13065,
+      "sha256": "82ea8c08452f336d5a47bc50aee22d9da2f38430af48dc45057e6f7b9c5b7f8c"
+    },
+    {
+      "node": "extension-package",
+      "kind": "original_package_amend_reject",
+      "source": "/tmp/oac-amend-budget-retention-bound-20261004/evidence/omac-review-report-8f2d099cc011.yaml",
+      "path": "original-complete-failed-report-ledger-bytes/extension-package-original_package_amend_reject.yaml",
+      "bytes": 15833,
+      "sha256": "8f2d099cc011598276de15573153f24e2bc28470aaba2eb550b55208f6566324"
+    },
+    {
+      "node": "extension-package",
+      "kind": "original_package_amend_ledger",
+      "source": "/tmp/oac-amend-budget-retention-bound-20261004/evidence/omac-review-ledger-1368e0d58cac.yaml",
+      "path": "original-complete-failed-report-ledger-bytes/extension-package-original_package_amend_ledger.yaml",
+      "bytes": 5181,
+      "sha256": "1368e0d58cace1a5217a31bf067c885ee831f0096e2a213dec0c176048956e0d"
+    }
+  ],
+  "missing": []
+}

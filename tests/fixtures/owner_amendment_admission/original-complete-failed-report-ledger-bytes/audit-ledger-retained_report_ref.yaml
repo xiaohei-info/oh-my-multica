@@ -1,0 +1,233 @@
+{
+  "review_protocol": "omac.review/v2",
+  "reviewed_pr": "https://github.com/xiaohei-info/open-agent-cluster/pull/104",
+  "reviewed_head": "887df9490114d54f2a7bef54c0478205f0f6bf7c",
+  "verdict": "reject",
+  "summary": "Reject: the receipt boundary, governed query/export paths, exact related-evidence selectors, schema trigger enforcement, release packaging, and declared verification reproduce successfully, but the atomicity implementation still persists audit-owned copies of Workflow command/outbox data rather than committing the owning domain facts and dispatchable records through their authoritative persistence paths.",
+  "diff_reviewed": true,
+  "tests_rerun": true,
+  "integration_tests_rerun": true,
+  "coverage_checked": true,
+  "full_review_completed": true,
+  "obligation_results": [
+    {
+      "obligation_id": "dimension:authority",
+      "status": "pass",
+      "evidence": "Reviewed the current OMAC contract, declared obligations, source references, product PR 104 at the pinned HEAD, and the trace-only UJ-AUDIT-001 mapping. No full product acceptance is claimed."
+    },
+    {
+      "obligation_id": "dimension:structure",
+      "status": "pass",
+      "evidence": "The current schema compatibility check reads pg_trigger.tgqual and tgattr in contracts/governance/audit/store/schema.go:613-637, and the schema negative/reopen tests passed. Published Audit contract, private receipt seal, ownership baseline, and ownership catalog are byte-for-byte unchanged from e4dc2f94b033adbbe3dbb979be88b351d72481c8."
+    },
+    {
+      "obligation_id": "dimension:execution",
+      "status": "pass",
+      "evidence": "Reproduced the declared adapter coverage (90.0%), combined contract coverage (90.5%), application/API coverage (93.4%), ten named PostgreSQL boundary tests with no skips/failures, CGO_ENABLED=1 race tests, go vet ./..., go build ./..., go test -count=1 ./..., and both source bundle package/manifest verification commands."
+    },
+    {
+      "obligation_id": "dimension:ownership",
+      "status": "pass",
+      "evidence": "The scoped diff from e4dc2f94b033adbbe3dbb979be88b351d72481c8 contains only the authorized audit/application/adapter files plus go.mod/go.sum; no ownership baseline/catalog or published contract/seal change was found. The external-consumer boundary tests passed."
+    },
+    {
+      "obligation_id": "dimension:evidence",
+      "status": "pass",
+      "evidence": "Verified the immutable evidence index on origin/evidence/aiteam-1061-1aade223: all 100 indexed files matched recorded byte sizes, SHA-256 digests, and Git blob OIDs at evidence commit 2d5187f5eaae65893638678c626148a5b7e5ca34. The index binds product PR 104 to source HEAD 887df9490114d54f2a7bef54c0478205f0f6bf7c, preserves acceptance_refs=[UJ-AUDIT-001], and claims no full product acceptance."
+    },
+    {
+      "obligation_id": "dimension:regression",
+      "status": "fail",
+      "evidence": "The current review continued past the first finding and dispositioned all three open prior blockers: BLK-24e444819f31 remains deeper; BLK-732e9d6d73f9 is fixed by exact credential-use and governance selectors; BLK-eca90b3218a1 is fixed by complete trigger predicate/column enforcement checks. The remaining atomicity root blocks delivery."
+    },
+    {
+      "obligation_id": "integration:audit-ledger-gate",
+      "status": "pass",
+      "evidence": "internal/audit/evidence.go:37-78 now retains exact persisted credential-use and governance identities, and assembly validates those identities at :146-147 and :207-208. The detail authorization/redaction and related-evidence tests passed."
+    },
+    {
+      "obligation_id": "integration:audit-receipt-source-release-gate",
+      "status": "pass",
+      "evidence": "The contracts-audit-usage and bootstrap-go bundles were independently packaged from a clean reviewed HEAD and both manifests verified. The immutable evidence index reports all three component bundles, complete changed-source accounting, and matching product source tree identity."
+    },
+    {
+      "obligation_id": "integration:audit-receipt-store-boundary-gate",
+      "status": "fail",
+      "evidence": "contracts/governance/audit/store/postgres.go:147-232 writes audit_events plus audit-owned workflow_command_records/workflow_outbox rows in one transaction. schema.go:65-107 creates those audit-owned participant tables, and repository-wide search finds those tables referenced only by the audit store and its tests. internal/audit/commit/commit.go:16-29 accepts serialized typed command/event/outbox values, but no owning domain persistence operation or outbox consumer is wired to this boundary. The passing TestAuditAtomicCommitRollbackAndIdempotency in internal/audit/application_test.go:156-255 only verifies rows in these audit-owned tables; it cannot establish atomicity with authoritative Workflow/domain state. This is static production-path inspection, with no extra exploit experiment."
+    }
+  ],
+  "prior_blocker_results": [
+    {
+      "blocker_id": "BLK-24e444819f31",
+      "root_cause_key": "audit-shared-business-transaction-missing",
+      "status": "deeper",
+      "severity": "high",
+      "summary": "Atomic commit still stores shadow participant payloads rather than the owning domain facts and applicable real CommandRecord/Outbox persistence.",
+      "impact": "CommitAudit can report success while no owning domain record is changed and no real outbox consumer can deliver the command; a later domain write cannot share this transaction. This violates the fail-closed state-write/audit invariant and creates a competing audit-owned persistence path.",
+      "evidence": "contracts/governance/audit/store/postgres.go:147-232 and schema.go:65-107; internal/audit/commit/commit.go:16-29; repository-wide search shows workflow_command_records/workflow_outbox only in this audit subtree and its tests; internal/audit/application_test.go:156-255 asserts only those tables.",
+      "required_fix": "Replace the shadow participant tables as proof of business atomicity with a platform-internal typed commit boundary that invokes the owning domain persistence operation and applicable real CommandRecord/Outbox persistence in the same transaction as AuditEvent. Preserve Workflow CR ownership, avoid generic SQL/callback authority APIs, and test authoritative domain/dispatch state, rollback, replay, and digest/CAS conflicts."
+    },
+    {
+      "blocker_id": "BLK-732e9d6d73f9",
+      "root_cause_key": "audit-evidence-assembly-only-in-test-doubles",
+      "status": "fixed",
+      "evidence": "Current evidence.go retains UseID, AuditEventID, RequestContextID, Revision, and Digest in the typed references and validates loaded facts against them; the required detail test passed."
+    },
+    {
+      "blocker_id": "BLK-eca90b3218a1",
+      "root_cause_key": "audit-schema-compatibility-verified-by-names-only",
+      "status": "fixed",
+      "evidence": "Current schema.go:622-627 reads tgqual and tgattr and schema.go:634 rejects non-unconditional/non-all-column enforcement; the declared schema compatibility tests passed."
+    }
+  ],
+  "review_goals": [
+    "Independently verify the PostgreSQL store-to-private-receipt-to-governed-detail path without changing the published Audit contract or receipt seal.",
+    "Verify transaction semantics, exact evidence identity, authorization/redaction, schema compatibility, release ownership, and evidence lineage.",
+    "Reproduce every declared command and disposition all prior blockers without stopping at the first finding."
+  ],
+  "blockers": [
+    {
+      "blocker_id": "BLK-24e444819f31",
+      "root_cause_key": "audit-shared-business-transaction-missing",
+      "obligation_id": "integration:audit-receipt-store-boundary-gate",
+      "classification": "deeper",
+      "severity": "high",
+      "summary": "The transaction persists audit-owned copies of Workflow command/outbox data, not the owning domain facts and real dispatch path.",
+      "impact": "Commit success does not establish durable authoritative domain state or a real dispatchable command, and separate domain writes cannot share this transaction.",
+      "evidence": "contracts/governance/audit/store/postgres.go:147-232; contracts/governance/audit/store/schema.go:65-107; internal/audit/commit/commit.go:16-29; repository-wide search found no domain writer or outbox consumer for these tables.",
+      "required_fix": "Replace the shadow participant tables with a platform-internal typed commit boundary that invokes the owning domain persistence operation and applicable real CommandRecord/Outbox persistence in the same transaction as AuditEvent."
+    },
+    {
+      "blocker_id": "BLK-24e444819f31-regression",
+      "root_cause_key": "audit-shared-business-transaction-regression",
+      "obligation_id": "dimension:regression",
+      "classification": "deeper",
+      "severity": "high",
+      "summary": "The prior atomicity blocker remains open at the reviewed HEAD.",
+      "impact": "The declared atomicity test exercises only the audit-owned shadow tables, so the prior blocker is not regressed to fixed.",
+      "evidence": "internal/audit/application_test.go:156-255 verifies workflow_command_records/workflow_outbox rows rather than authoritative domain state.",
+      "required_fix": "Disposition BLK-24e444819f31 only after the authoritative domain and dispatch transaction is wired and tested."
+    }
+  ],
+  "integration_gate_mapping": [
+    {
+      "gate": "audit-ledger-gate",
+      "status": "pass",
+      "source_of_truth": [
+        "docs/design/detailed/09-governance-and-security-detailed-design.md:L553-L682",
+        "docs/references/governance/security-and-enterprise.md:L301-L401",
+        "docs/delivery/acceptance-and-validation.md:L1003-L1022"
+      ],
+      "delivery_goal": "Deliver append-only AuditEvent storage, governed query/pagination/export and evidence-chain assembly.",
+      "commands": [
+        {"cmd": "go test -covermode=atomic -coverprofile=artifacts/audit-ledger/coverage.out ./internal/audit/... ./api/audit/...", "exit_code": 0, "summary": "Audit application/API tests passed."},
+        {"cmd": "mkdir -p artifacts/audit-ledger && go test -covermode=atomic -coverprofile=artifacts/audit-ledger/coverage.out ./internal/audit/... ./api/audit/...", "exit_code": 0, "summary": "Audit application/API tests passed; total statement coverage 93.4%."},
+        {"cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/audit-ledger/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"", "exit_code": 0, "summary": "Audit application/API coverage threshold passed at 93.4%."},
+        {"cmd": "python3 scripts/release/package_component.py --component audit-ledger --kind platform-core-dependency-source --input internal/audit --input api/audit --bundle artifacts/audit-ledger/source-bundle.tar.zst --component-manifest artifacts/audit-ledger/component-manifest.json --digest-output artifacts/audit-ledger/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner audit-ledger --require-all-owner-sources-accounted", "exit_code": 0, "summary": "Audit-ledger source bundle reproduced from the reviewed HEAD."}
+        ,{"cmd": "python3 scripts/release/package_component.py --component audit-ledger --kind platform-core-dependency-source --input internal/audit --input api/audit --bundle artifacts/audit-ledger/source-bundle.tar.zst --component-manifest artifacts/audit-ledger/component-manifest.json --digest-output artifacts/audit-ledger/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner audit-ledger --require-all-owner-sources-accounted", "exit_code": 0, "summary": "Audit-ledger source bundle reproduced from the reviewed HEAD."}
+      ],
+      "metrics": {"statement_coverage_percent": 93.4, "declared_artifact_count": 4},
+      "artifacts": [
+        "artifacts/audit-ledger/coverage.out",
+        "artifacts/audit-ledger/source-bundle.tar.zst",
+        "artifacts/audit-ledger/bundle-digest.txt",
+        "artifacts/audit-ledger/component-manifest.json"
+      ],
+      "evidence": "The application/API gate passed its declared tests and coverage; the separate store-boundary gate remains failed."
+    },
+    {
+      "gate": "audit-receipt-store-boundary-gate",
+      "status": "fail",
+      "source_of_truth": [
+        "docs/design/detailed/09-governance-and-security-detailed-design.md:L553-L682",
+        "docs/references/governance/security-and-enterprise.md:L301-L401",
+        "docs/delivery/acceptance-and-validation.md:L1003-L1022",
+        "docs/design/open-agent-cluster-overview-design.md",
+        "docs/design/detailed/09-governance-and-security-detailed-design.md:8.1,8.4-8.6,13-14",
+        "docs/references/software-delivery/artifacts-release-and-deployment.md",
+        "contracts/governance/audit/contract.go:1128-1354 (source e4dc2f94b033adbbe3dbb979be88b351d72481c8)",
+        "contracts/governance/audit/internal/auditstore/receipt.go (same source)",
+        "contracts/release/source-ownership-baseline.yaml:114-118,133-141,162-166",
+        "contracts/release/source-ownership-catalog.yaml",
+        "AITEAM-1061 issue 01a10385-45be-77c8-9507-5bff8ce578b9; original omac.worker-blocker/v2 from direct Run 01a10385-f4c4-798b-94bd-77898cf39fab, terminal 2026-10-03T21:08:37Z; retained owner-decision evidence, not implementation acceptance"
+      ],
+      "delivery_goal": "Prove the actual canonical PostgreSQL store-to-receipt-to-detail path, its private wiring boundary and all negative/concurrency/authorization/restore cases without changing the published seal or creating another audit authority. Test names below are new required implementation deliverables, not claims that tests already exist.",
+      "commands": [
+        {"cmd": "mkdir -p artifacts/audit-ledger/receipt-boundary && go test -count=1 -covermode=atomic -coverprofile=artifacts/audit-ledger/receipt-boundary/adapter-coverage.out ./contracts/governance/audit/store/...", "exit_code": 0, "summary": "PostgreSQL adapter tests passed; statement coverage measured 90.0%."},
+        {"cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/audit-ledger/receipt-boundary/adapter-coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"", "exit_code": 0, "summary": "Adapter statement coverage passed at 90.0%, meeting the 90% gate."},
+        {"cmd": "go test -count=1 -json ./contracts/governance/audit/store/... ./internal/audit/... ./api/audit/... -run '^(TestAuditPostgresReceiptCommittedDetail|TestAuditPostgresReceiptRejectsUncommittedOrMissingRecord|TestAuditPostgresReceiptRejectsIdentityScopeDigestMismatch|TestAuditReceiptForgeryAndImportBoundary|TestAuditDetailAuthorizationAndRedaction|TestAuditAtomicCommitRollbackAndIdempotency|TestAuditConcurrentAppendAndStableCursor|TestAuditPostgresRestartAndRestore|TestAuditBoundedCanonicalExportAndNoRecursiveReadAudit|TestAuditSourceReleaseOwnershipAndCompatibility)$' > artifacts/audit-ledger/receipt-boundary/tests.json", "exit_code": 0, "summary": "All ten required PostgreSQL receipt-boundary tests passed without skips."},
+        {"cmd": "python3 -c 'import json; required={'\"'\"'TestAuditPostgresReceiptRejectsIdentityScopeDigestMismatch'\"'\"', '\"'\"'TestAuditPostgresRestartAndRestore'\"'\"', '\"'\"'TestAuditConcurrentAppendAndStableCursor'\"'\"', '\"'\"'TestAuditReceiptForgeryAndImportBoundary'\"'\"', '\"'\"'TestAuditDetailAuthorizationAndRedaction'\"'\"', '\"'\"'TestAuditPostgresReceiptRejectsUncommittedOrMissingRecord'\"'\"', '\"'\"'TestAuditAtomicCommitRollbackAndIdempotency'\"'\"', '\"'\"'TestAuditBoundedCanonicalExportAndNoRecursiveReadAudit'\"'\"', '\"'\"'TestAuditSourceReleaseOwnershipAndCompatibility'\"'\"', '\"'\"'TestAuditPostgresReceiptCommittedDetail'\"'\"'}; rows=[json.loads(s) for s in open('\"'\"'artifacts/audit-ledger/receipt-boundary/tests.json'\"'\"') if s.strip()]; passed={r.get('\"'\"'Test'\"'\"') for r in rows if r.get('\"'\"'Action'\"'\"')=='\"'\"'pass'\"'\"'}; assert required <= passed, sorted(required-passed); assert not any(r.get('\"'\"'Action'\"'\"') in ('\"'\"'skip'\"'\"','\"'\"'fail'\"'\"') for r in rows), '\"'\"'failed or skipped receipt-boundary test'\"'\"'; print('\"'\"'all required receipt-boundary tests executed and passed'\"'\"')'", "exit_code": 0, "summary": "The completeness check confirmed every required named test passed with no skips or failures."},
+        {"cmd": "go test -race -count=1 ./contracts/governance/audit/... ./internal/audit/... ./api/audit/...", "exit_code": 0, "environment": {"CGO_ENABLED": "1"}, "summary": "Audit, adapter, application, and API race tests passed with CGO_ENABLED=1 for this process."},
+        {"cmd": "go test -count=1 -covermode=atomic -coverprofile=artifacts/audit-ledger/receipt-boundary/contract-coverage.out ./contracts/governance/audit/... ./contracts/governance/usage/...", "exit_code": 0, "summary": "Audit and usage contract tests passed; statement coverage measured 90.5%."},
+        {"cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/audit-ledger/receipt-boundary/contract-coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"", "exit_code": 0, "summary": "Audit and usage statement coverage passed at 90.5%, above the 90% gate."},
+        {"cmd": "go vet ./...", "exit_code": 0, "summary": "go vet ./... passed."},
+        {"cmd": "go build ./...", "exit_code": 0, "summary": "go build ./... passed."},
+        {"cmd": "go test -count=1 ./...", "exit_code": 0, "summary": "The unfiltered repository suite passed across 61 packages; three packages contained no tests."},
+        {"cmd": "go test -count=1 -covermode=atomic -coverprofile=artifacts/audit-ledger/receipt-boundary/adapter-coverage.out ./contracts/governance/audit/store/...", "exit_code": 0, "summary": "Real PostgreSQL adapter tests passed; adapter statement coverage 90.0%."},
+        {"cmd": "go test -count=1 -json ./contracts/governance/audit/store/... ./internal/audit/... ./api/audit/... -run required-receipt-boundary-tests", "exit_code": 0, "summary": "All ten required PostgreSQL boundary tests passed with no skips."},
+        {"cmd": "CGO_ENABLED=1 go test -race -count=1 ./contracts/governance/audit/... ./internal/audit/... ./api/audit/...", "exit_code": 0, "summary": "Declared race suite passed."},
+        {"cmd": "go vet ./... && go build ./... && go test -count=1 ./...", "exit_code": 0, "summary": "Repository vet, build, and unfiltered test suite passed."}
+      ],
+      "metrics": {
+        "adapter_statement_coverage_percent": 90.0,
+        "audit_usage_statement_coverage_percent": 90.5,
+        "required_named_test_count": 10,
+        "skipped_required_test_count": 0,
+        "caller_forged_receipt_accept_count": 0,
+        "cross_scope_detail_accept_count": 0,
+        "uncommitted_record_receipt_count": 0,
+        "sensitive_wire_leak_count": 0,
+        "duplicate_idempotent_append_count": 0
+      },
+      "artifacts": [
+        "artifacts/audit-ledger/receipt-boundary/adapter-coverage.out",
+        "artifacts/audit-ledger/receipt-boundary/contract-coverage.out",
+        "artifacts/audit-ledger/receipt-boundary/tests.json"
+      ],
+      "evidence": "All executable checks pass, but static production-path review shows that atomicity is only across audit-owned shadow participant tables."
+    },
+    {
+      "gate": "audit-receipt-source-release-gate",
+      "status": "pass",
+      "source_of_truth": [
+        "contracts/release/source-ownership-baseline.yaml",
+        "contracts/release/source-ownership-catalog.yaml",
+        "docs/references/software-delivery/artifacts-release-and-deployment.md"
+      ],
+      "delivery_goal": "Keep source-release ownership unchanged and package every supporting adapter source under contracts-audit-usage, every driver/module change under bootstrap-go, and every application/wiring source under the original audit-ledger bundle at the same reviewed product HEAD. Publish immutable source-bound evidence and obtain fresh independent technical review; no historical completed-node artifact is overwritten.",
+      "commands": [
+        {"cmd": "python3 scripts/release/package_component.py --component contracts-audit-usage --kind platform-core-dependency-source --input contracts/governance/audit --input contracts/governance/usage --bundle artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/source-bundle.tar.zst --component-manifest artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/component-manifest.json --digest-output artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner contracts-audit-usage --require-all-owner-sources-accounted --reviewed-revision HEAD --package-git-blobs --require-clean-index-and-worktree --record-tree-and-blob-identities", "exit_code": 0, "summary": "The contracts-audit-usage Git-blob bundle and manifest were generated at the reviewed HEAD."},
+        {"cmd": "python3 scripts/release/package_component.py --component bootstrap-go --kind platform-core-dependency-source --input go.mod --input go.sum --input Makefile --input scripts/go-quality --input internal/bootstrap --input scripts/bootstrap/package_go_module.py --bundle artifacts/audit-ledger/receipt-boundary/bootstrap-go/source-bundle.tar.zst --component-manifest artifacts/audit-ledger/receipt-boundary/bootstrap-go/component-manifest.json --digest-output artifacts/audit-ledger/receipt-boundary/bootstrap-go/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner bootstrap-go --require-all-owner-sources-accounted --reviewed-revision HEAD --package-git-blobs --require-clean-index-and-worktree --record-tree-and-blob-identities", "exit_code": 0, "summary": "The bootstrap-go Git-blob bundle and manifest were generated at the reviewed HEAD."},
+        {"cmd": "python3 scripts/release/verify_component_manifest.py --manifest artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/component-manifest.json --bundle artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/source-bundle.tar.zst", "exit_code": 0, "summary": "The contracts-audit-usage bundle and component manifest verified."},
+        {"cmd": "python3 scripts/release/verify_component_manifest.py --manifest artifacts/audit-ledger/receipt-boundary/bootstrap-go/component-manifest.json --bundle artifacts/audit-ledger/receipt-boundary/bootstrap-go/source-bundle.tar.zst", "exit_code": 0, "summary": "The bootstrap-go bundle and component manifest verified."},
+        {"cmd": "python3 scripts/release/package_component.py --component contracts-audit-usage ... --require-clean-index-and-worktree --record-tree-and-blob-identities", "exit_code": 0, "summary": "contracts-audit-usage bundle reproduced from the clean reviewed HEAD."},
+        {"cmd": "python3 scripts/release/package_component.py --component bootstrap-go ... --require-clean-index-and-worktree --record-tree-and-blob-identities", "exit_code": 0, "summary": "bootstrap-go bundle reproduced from the clean reviewed HEAD."},
+        {"cmd": "python3 scripts/release/verify_component_manifest.py --manifest ... --bundle ...", "exit_code": 0, "summary": "Both component manifests and bundles verified."}
+      ],
+      "metrics": {"missing_changed_source_count": 0, "duplicate_source_owner_count": 0, "changed_historical_ownership_root_count": 0},
+      "artifacts": [
+        "artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/source-bundle.tar.zst",
+        "artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/component-manifest.json",
+        "artifacts/audit-ledger/receipt-boundary/contracts-audit-usage/bundle-digest.txt",
+        "artifacts/audit-ledger/receipt-boundary/bootstrap-go/source-bundle.tar.zst",
+        "artifacts/audit-ledger/receipt-boundary/bootstrap-go/component-manifest.json",
+        "artifacts/audit-ledger/receipt-boundary/bootstrap-go/bundle-digest.txt",
+        "artifacts/audit-ledger/receipt-boundary/evidence-index.json"
+      ],
+      "evidence": "Immutable evidence-index integrity and both source component bundle manifests verified."
+    }
+  ],
+  "acceptance_mapping": [
+    {
+      "acceptance": "UJ-AUDIT-001",
+      "status": "fail",
+      "evidence": "Trace-only implementation reference; no full UJ or product PASS is claimed. The atomicity finding blocks acceptance."
+    }
+  ],
+  "coverage": {
+    "application_api": 93.4,
+    "adapter": 90.0,
+    "audit_usage_contracts": 90.5
+  },
+  "nits": []
+}

@@ -1,0 +1,55 @@
+{
+  "at": "2026-10-04T20:54:27.688479+00:00",
+  "rows": [
+    {
+      "node": "identity-local",
+      "status": "blocked",
+      "phase": "authoring",
+      "decision_reason": "worker-decision-required",
+      "blocker_reason": "owner-decision-required",
+      "active": []
+    },
+    {
+      "node": "credential-store",
+      "status": "blocked",
+      "phase": "authoring",
+      "decision_reason": "worker-decision-required",
+      "blocker_reason": "owner-decision-required",
+      "active": []
+    },
+    {
+      "node": "api-agent",
+      "status": "blocked",
+      "phase": "authoring",
+      "decision_reason": "worker-decision-required",
+      "blocker_reason": "owner-decision-required",
+      "active": []
+    },
+    {
+      "node": "mcp-catalog-governed-hardening",
+      "status": "blocked",
+      "phase": "authoring",
+      "decision_reason": "worker-decision-required",
+      "blocker_reason": "owner-decision-required",
+      "active": []
+    },
+    {
+      "node": "extension-package",
+      "status": "blocked",
+      "phase": "authoring",
+      "decision_reason": "omac-budget-preserving-amendment-recovery-required",
+      "blocker_reason": null,
+      "active": []
+    },
+    {
+      "node": "audit-ledger",
+      "status": "blocked",
+      "phase": "authoring",
+      "decision_reason": "worker-decision-required",
+      "blocker_reason": "owner-decision-required",
+      "active": []
+    }
+  ],
+  "errors": 0,
+  "Root_writes": 0
+}

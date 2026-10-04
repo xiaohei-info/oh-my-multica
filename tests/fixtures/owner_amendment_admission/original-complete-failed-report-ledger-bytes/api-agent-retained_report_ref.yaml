@@ -1,0 +1,203 @@
+review_protocol: omac.review/v2
+review_goals:
+- Verify the complete PR against the authoritative Agent API and Project/Team contracts without requiring trace-only
+  acceptance refs to prove full UI journeys.
+- Independently reproduce all declared commands, coverage, stable generation, upstream manifest lineage and release
+  ownership closure.
+- Check that HTTP operations reach owning governed use cases, preserve immutable publication/CAS/idempotency, and
+  document public failure semantics.
+summary: 'Reject: all four declared verification commands pass and total statement coverage is 93.4%, but the API
+  is connected only to a test implementation of a new interface, and the public command error/governance contracts
+  are incomplete.'
+pr_url: https://github.com/xiaohei-info/open-agent-cluster/pull/105
+reviewed_head_sha: f0987a71ee760836601bb676e2bcd59b72ba0d08
+pr_base: main
+diff_reviewed: true
+tests_rerun: true
+integration_tests_rerun: true
+coverage_checked: true
+full_review_completed: true
+obligation_results:
+- obligation_id: dimension:authority
+  status: fail
+  evidence: Verified contract attachment SHA-256 93553b7c0e6b0717921b2ab8677f1a83da5c47cc08667eb378738ce4320fcbb4,
+    all named detailed-design anchors, Project/Team reference and UJ-AGENT-001..006. API command declarations omit
+    required failure/governance semantics; see api-agent-public-command-contract-incomplete.
+- obligation_id: dimension:structure
+  status: fail
+  evidence: Inspected every one of the 10 added PR files and traced Application methods and constructor usages throughout
+    the repository. Only testApplication implements the new interface. Real template and definition application
+    contracts are incompatible and no production translator connects them; see api-agent-owner-use-cases-disconnected.
+- obligation_id: dimension:execution
+  status: pass
+  evidence: Independently ran all four exact contract verification commands to exit 0 in a clean checkout of the
+    sealed head with Go 1.26.0, Python 3.14.3 and zstd 1.5.7. Existing transport/security-negative cases ran as
+    part of the declared package tests; no undeclared probes or attack experiments were added. The passing command
+    suite does not prove the missing production composition.
+- obligation_id: dimension:ownership
+  status: pass
+  evidence: The complete main-relative diff changes only api/openapi/agents/** and internal/httpapi/agents/**. Handler
+    holds only an Application dependency and does not persist catalog, publication, workflow, runtime, audit or
+    lifecycle business state. Both API source roots passed the canonical ownership closure check; upstream ownership/catalog/tools
+    remained unchanged.
+- obligation_id: dimension:evidence
+  status: pass
+  evidence: Reproduced the three upstream manifests at cb1bc1c94c92fe69a2cb7191078f999bbe472b93, 74327d6fe453374055771bbf8ef5926c2db48326
+    and e91e20ef2e47e62c057ac25e4fc00066488c3245 using their declared package commands, not fabricated fixtures.
+    Canonical API manifest verifier passed exact component api-agent, both owned roots and all three generated inputs.
+    AgentDefinition adaptation retains component_id agent-definition. All four declared artifacts exist and are
+    nonempty.
+- obligation_id: dimension:regression
+  status: pass
+  evidence: work show has no prior_open_blockers and review cycle_count 0. Inspected the full changed scope rather
+    than limiting review to packaging or worker summaries. Source generation leaves no tracked or untracked drift
+    and reviewed source remains unchanged.
+- obligation_id: integration:api-agent-gate
+  status: pass
+  evidence: All four api-agent-gate command invocations exit 0. Reproduced total statement coverage 93.4% against
+    minimum 90, four nonempty declared artifacts, stable OpenAPI generation, and exact ownership/generated-input
+    packaging verification. This is a pass of the declared executable gate, not a waiver of the structural and public-contract
+    findings.
+prior_blocker_results: []
+acceptance_mapping:
+- acceptance: UJ-AGENT-001
+  status: fail
+  evidence: 'Trace-only API-boundary assessment, not a full-journey claim: Template inheritance is exercised via
+    a test-only closure invoking templates.Application.Instantiate; template-backed production publication is not
+    connected.'
+- acceptance: UJ-AGENT-002
+  status: fail
+  evidence: 'Trace-only API-boundary assessment, not a full-journey claim: Confirmed custom Skill removal and ordering
+    are exercised through a test-only template closure; no production bridge publishes the customized immutable
+    definition.'
+- acceptance: UJ-AGENT-003
+  status: fail
+  evidence: 'Trace-only API-boundary assessment, not a full-journey claim: Fixed model identities round-trip in
+    OpenAPI DTO tests, but the production publication bridge is absent.'
+- acceptance: UJ-AGENT-004
+  status: fail
+  evidence: 'Trace-only API-boundary assessment, not a full-journey claim: Ordered cross-provider identities are
+    preserved by mock publication; the real publication use case is not connected.'
+- acceptance: UJ-AGENT-005
+  status: fail
+  evidence: 'Trace-only API-boundary assessment, not a full-journey claim: CAS/idempotency fields are forwarded
+    to testApplication, but real owner-side refusal/atomic publication and safe error translation are not exercised
+    by production composition.'
+- acceptance: UJ-AGENT-006
+  status: fail
+  evidence: 'Trace-only API-boundary assessment, not a full-journey claim: Blank publication test returns a fabricated
+    definition instead of calling definitions.Application.PublishBlank; actual request-to-owner translation is missing.'
+integration_gate_mapping:
+- gate: api-agent-gate
+  status: pass
+  source_of_truth:
+  - docs/design/detailed/10-web-api-cli-detailed-design.md:L1392-L1428
+  - docs/design/detailed/10-web-api-cli-detailed-design.md:L355-L638
+  - docs/design/detailed/10-web-api-cli-detailed-design.md:L1375-L1545
+  delivery_goal: Expose AgentTemplate, model policy and AgentDefinition lifecycle operations without adapter-owned
+    business state.
+  commands:
+  - cmd: mkdir -p artifacts/api-agent && go test -covermode=atomic -coverprofile=artifacts/api-agent/coverage.out
+      ./api/openapi/agents/... ./internal/httpapi/agents/...
+    exit_code: 0
+    summary: "ok  \tgithub.com/xiaohei-info/open-agent-cluster/api/openapi/agents\t(cached)\tcoverage: 100.0% of\
+      \ statements\nok  \tgithub.com/xiaohei-info/open-agent-cluster/api/openapi/agents/generator\t(cached)\tcoverage:\
+      \ 75.0% of statements\nok  \tgithub.com/xiaohei-info/open-agent-cluster/internal/httpapi/agents\t(cached)\t\
+      coverage: 92.7% of statements"
+  - cmd: python3 -c "from pathlib import Path; import re,subprocess; p=Path('artifacts/api-agent/coverage.out');
+      assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True);
+      m=re.search(r'^total:\s+\(statements\)\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90"
+    exit_code: 0
+    summary: Completed successfully with no output.
+  - cmd: go list ./api/openapi/agents/... | grep -q . && go generate ./api/openapi/agents/... && git diff --exit-code
+      -- api/openapi/agents && test -z "$(git ls-files --others --exclude-standard -- api/openapi/agents)"
+    exit_code: 0
+    summary: Completed successfully with no output.
+  - cmd: python3 scripts/release/package_component.py --component api-agent --kind platform-core-adapter-source
+      --input api/openapi/agents --input internal/httpapi/agents --generated-input artifacts/agent-template/component-manifest.json
+      --generated-input artifacts/agent-model-policy/component-manifest.json --generated-input artifacts/agent-definition-audit-consumer-adaptation/component-manifest.json
+      --require-generated-input-digest --bundle artifacts/api-agent/source-bundle.tar.zst --component-manifest artifacts/api-agent/component-manifest.json
+      --digest-output artifacts/api-agent/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml
+      --ownership-catalog contracts/release/source-ownership-catalog.yaml --owner api-agent --require-all-owner-sources-accounted
+      && python3 scripts/release/verify_component_manifest.py --manifest artifacts/api-agent/component-manifest.json
+      --bundle artifacts/api-agent/source-bundle.tar.zst --expected-component api-agent --require-owned-source api/openapi/agents
+      --require-owned-source internal/httpapi/agents --require-generated-input artifacts/agent-template/component-manifest.json
+      --require-generated-input artifacts/agent-model-policy/component-manifest.json --require-generated-input artifacts/agent-definition-audit-consumer-adaptation/component-manifest.json
+      --ownership-catalog contracts/release/source-ownership-catalog.yaml --require-all-owner-sources-accounted
+    exit_code: 0
+    summary: 'bundle=artifacts/api-agent/source-bundle.tar.zst
+
+      manifest=artifacts/api-agent/component-manifest.json
+
+      component manifest verification passed'
+  metrics:
+    statement_coverage_percent: 93.4
+    declared_artifact_count: 4
+  artifacts:
+  - artifacts/api-agent/coverage.out
+  - artifacts/api-agent/bundle-digest.txt
+  - artifacts/api-agent/component-manifest.json
+  - artifacts/api-agent/source-bundle.tar.zst
+  notes: Declared commands reproduce successfully. Publication and lifecycle tests substitute testApplication; passing
+    this gate is not evidence that owning production use cases are exposed.
+blockers:
+- root_cause_key: api-agent-owner-use-cases-disconnected
+  obligation_id: dimension:structure
+  classification: new
+  owner: api-agent
+  severity: high
+  summary: HTTP operations have no production bridge to the owning Agent application use cases.
+  impact: The delivered package can dispatch to mocks but cannot instantiate/publish/manage Agents using the checked-in
+    upstream applications. Governance, server-resolved runtime defaults, immutable publication and lifecycle reference
+    protection remain promises of an unimplemented interface rather than an exposed capability.
+  evidence: internal/httpapi/agents/handler.go:50-65 introduces a 10-method Application interface taking API-owned
+    DTOs; handler.go:71-73 only injects it. Repository-wide symbol searches find its methods implemented solely
+    in handler_test.go:503-572 and all constructor uses in tests. Actual templates.Application.Instantiate at internal/agents/templates/templates.go:120
+    takes templates.InstantiateRequest, whereas definitions.Application.PublishBlank at internal/agents/definitions/definitions.go:332
+    takes PublishBlankRequest with RequestContextID, an existing Agent/CAS and already-resolved runtime bindings.
+    No production code translates the public request, calculates instruction digests, resolves runtime requests/defaults,
+    preserves template provenance, or bridges catalog/lifecycle calls. Publication/lifecycle tests at handler_test.go:130-225,263-284
+    return fabricated test results rather than exercising these owner boundaries; only template test closures at
+    :60-65,:91-95 invoke an actual upstream application.
+  required_fix: Supply production transport-to-owner composition using the actual inward-facing use-case contracts
+    (or explicitly resolve an owner-contract prerequisite through the authorized process). Translate the public
+    inputs/results and safe classified failures; derive server-owned values at the owning application boundary;
+    preserve RequestContext/audit provenance, CAS/idempotency, template provenance and reference protection. Do
+    not add business state or lifecycle rules in the HTTP adapter and do not force inner application modules to
+    import API DTOs. Extend the declared package suite to exercise this production bridge with deterministic owner-port
+    fixtures, including template and blank publication and lifecycle refusal paths.
+- root_cause_key: api-agent-public-command-contract-incomplete
+  obligation_id: dimension:authority
+  classification: new
+  owner: api-agent
+  severity: medium
+  summary: Published command schemas do not specify the required governance and actual failure outcomes.
+  impact: Web/oactl/third-party clients cannot rely on the single published OpenAPI contract to authenticate, handle
+    lifecycle denial/not-found/unavailability, or distinguish protected-reference/business refusal from a stale
+    CAS retry. Required command semantics are not defined consistently across clients.
+  evidence: docs/design/detailed/10-web-api-cli-detailed-design.md:1398-1409 requires each command to define RequestContext,
+    authorization action, Admission boundary, business refusal, conflict, retryable/nonretryable errors and audit
+    semantics. api/openapi/agents/openapi.yaml:169-225 declares only 200/409 for each lifecycle command, despite
+    handler.go:80-83 returning 403 for missing governance context, :216-220 returning 400, and :318-331 mapping
+    404/403/503/500. The document has no security scheme/security requirement and lifecycle operations contain no
+    authorization, Admission or audit contract. Its Conflict response at :259-263 combines CAS, idempotency and
+    protected-reference conflicts, while handler.go:324-325 provides the same refresh-and-retry message for all
+    of them. Publication describes governance generically at openapi.yaml:106-111 but does not define its authorization
+    action or retry semantics.
+  required_fix: Complete the authoritative OpenAPI command contracts with the supported authenticated RequestContext
+    transport, authorization actions, Admission applicability and audit semantics (link the owning governance contract
+    where appropriate). Declare every supported HTTP failure or a typed default error response, including lifecycle
+    400/403/404/503/internal failures. Preserve safe machine-readable distinctions and next actions for stale revision,
+    idempotency mismatch and protected-reference/business refusal. Add schema/HTTP conformance checks to the existing
+    declared suite instead of testing only spec substring presence.
+nits: []
+evidence:
+  coverage_total_percent: 93.4
+  bundle_sha256: 84d87b4ea43c9d23079e1d33acdaf022f379acffd851a1f2537f9c58d7cded4e
+  source_revision: f0987a71ee760836601bb676e2bcd59b72ba0d08
+  upstream_manifest_digests:
+    artifacts/agent-definition-audit-consumer-adaptation/component-manifest.json: 11ba585edda7a6a402c1883efcafd70cd3d5e94ceabc025a49364aed52bb0d22
+    artifacts/agent-model-policy/component-manifest.json: 4fa8ff20b72b0c37de6f7398bd98681976d4e552786610a776f2802ee70bb0d7
+    artifacts/agent-template/component-manifest.json: 95e2b81f7a74b920677154a556b7dda935b5ffcdd30cbcf408bb8ba2ae9b0ca7
+  scope_note: UJ refs are trace-only; no missing screenshots, frontend journeys, undeclared live service, or downstream
+    runtime evidence was treated as a blocker. Findings concern the current API deliverable itself.

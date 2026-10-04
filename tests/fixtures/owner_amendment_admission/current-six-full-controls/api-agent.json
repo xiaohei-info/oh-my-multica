@@ -1,0 +1,521 @@
+{
+  "at": "2026-10-04T20:54:14.654901+00:00",
+  "node": "api-agent",
+  "control": {
+    "id": "01a1048e-0327-70a5-84b8-d2967af606ea",
+    "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1",
+    "title": "[DAG:api-agent] Implement Agent Platform API",
+    "description": "> **OMAC \u63a7\u5236\u7684\u6267\u884c\u3002\u7b2c\u4e00\u52a8\u4f5c\u5fc5\u987b\u4e25\u683c\u6267\u884c\uff1a**\n\n```bash\nOMAC_ENGINE=multica OMAC_WORKSPACE_ID=410ade5e-8ae0-4402-b975-813dea2ff3e1 OMAC_PROJECT_ID=732ce83f-5cbd-4485-850d-1b8a1bf16340 omac work show 01a1048e-0327-70a5-84b8-d2967af606ea --output json\n```\n\n> `omac work show` \u548c `omac work submit` \u90fd\u53ef\u80fd\u957f\u65f6\u95f4\u8fd0\u884c\u3002\u4efb\u4f55\u5de5\u5177\u8c03\u7528\u5728\u62ff\u5230\u6700\u7ec8 tool_result \u548c\u7ec8\u6001\u9000\u51fa\u7801\u524d\u90fd\u4e0d\u5b8c\u6574\u3002\u82e5\u5de5\u5177\u8fd4\u56de running/session\u3001\u7f3a\u5c11\u6700\u7ec8 tool_result\u3001\u51fa\u73b0\u7a7a\u8f93\u51fa\u6216\u4e0d\u5b8c\u6574\u8f93\u51fa\uff0c\u5fc5\u987b\u7b49\u5f85\u6216\u8f6e\u8be2\u5230\u7ec8\u6001\u3002\u4f7f\u7528\u8db3\u591f\u957f\u7684 wait/yield\uff0c\u6216\u4fdd\u7559\u5e76\u6062\u590d\u7eed\u63a5\u53e5\u67c4\uff1b\u8fd9\u662f\u901a\u7528\u7ec8\u6001\u89c4\u5219\uff0c\u4e0d\u7ed1\u5b9a\u67d0\u4e2a\u5177\u4f53\u5de5\u5177 API\u3002timeout/yield \u4e0d\u662f\u7a7a\u7ed3\u679c\uff0c\u4e5f\u4e0d\u5141\u8bb8\u636e\u6b64\u505c\u6b62\u3002`omac work show` \u53ea\u6709\u5728\u9000\u51fa\u7801 0 \u4e14\u5f97\u5230\u53ef\u89e3\u6790 JSON \u540e\u624d\u80fd\u7ee7\u7eed\u3002`omac work submit` \u53ea\u6709\u5728\u6700\u7ec8 tool_result \u660e\u786e\u7ed9\u51fa\u9000\u51fa\u7801 0\uff0c\u4e14 JSON \u5305\u542b `\"ok\": true`\u3001`\"terminal\": true` \u548c `\"next_action\": \"stop\"` \u65f6\u624d\u53ef\u5ba3\u79f0\u6210\u529f\u3002\u7ed3\u679c\u672a\u77e5\u65f6\u4e0d\u5f97\u5ba3\u79f0\u6210\u529f\u6216\u7ed3\u675f\uff1bvalidation error \u5fc5\u987b\u4fee\u590d\u540e\u91cd\u65b0\u63d0\u4ea4\u3002submit \u6210\u529f\u5c31\u662f\u672c\u6b21\u6267\u884c\u7684\u6700\u540e\u52a8\u4f5c\uff0c\u7acb\u5373\u505c\u6b62\uff0c\u4e0d\u518d\u6267\u884c\u4efb\u4f55\u5e73\u53f0\u5199\u5165\u3002\n\n> \u5728\u4e0a\u65b9\u7cbe\u786e\u7684 `omac work show` \u547d\u4ee4\u4ee5\u9000\u51fa\u7801 0 \u6210\u529f\u8fd4\u56de\u53ef\u89e3\u6790 JSON \u524d\uff0c\u4e0d\u5f97\u6267\u884c\u4efb\u4f55\u5176\u4ed6 Issue \u67e5\u8be2\uff08\u5305\u62ec `multica issue get`\u3001`multica issue comment list` \u6216 metadata \u67e5\u8be2\uff09\uff0c\u4e5f\u4e0d\u5f97\u5f00\u59cb\u5206\u6790\u4efb\u52a1\u5185\u5bb9\u3002work show \u6210\u529f\u540e\uff0c\u53ea\u80fd\u5728\u8fd4\u56de\u4e0a\u4e0b\u6587\u786e\u6709\u9700\u8981\u65f6\u4f7f\u7528\u53ea\u8bfb Issue \u67e5\u8be2\u3002\u7981\u6b62\u4efb\u4f55\u4f1a\u521b\u5efa\u3001\u4fee\u6539\u6216\u5220\u9664 Issue \u72b6\u6001\u7684 `multica issue` \u5199\u64cd\u4f5c\u3002\u8fd9\u662f\u8bed\u4e49\u8fb9\u754c\uff0c\u4e0d\u662f\u7a77\u4e3e\u547d\u4ee4\u6e05\u5355\uff1b\u7981\u6b62\u793a\u4f8b\u5305\u62ec `multica issue status`\u3001`multica issue assign`\u3001`multica issue comment`\u3001`multica issue metadata`\u3001`multica issue rerun`\u3001`multica issue cancel-task`\u3001`multica issue update`\u3001`multica issue create`\u3001`multica issue label`\u3001`multica issue property`\u3001`multica issue reorder` \u548c `multica issue subscriber`\u3002\u53ea\u5141\u8bb8\u4f7f\u7528\u4e0a\u65b9\u7ed9\u51fa\u7684\u7cbe\u786e `omac work show` \u547d\u4ee4\uff0c\u4ee5\u53ca work show \u8fd4\u56de\u7684\u7cbe\u786e `omac work submit` \u547d\u4ee4\u4f5c\u4e3a OMAC \u63a7\u5236\u547d\u4ee4\uff1b\u5df2\u6709\u624b\u5de5\u9644\u4ef6\u6216 verification \u4f46\u7f3a\u5c11 `delivery_identity` \u65f6\u4e5f\u5fc5\u987b\u901a\u8fc7\u8be5 submit \u547d\u4ee4\u5c01\u5b58\u3002\n\n# Implement Agent Platform API\n\n## \u4efb\u52a1\u6458\u8981\n- \u7c7b\u578b: \u5f00\u53d1\u5b9e\u73b0\uff08`develop`\uff09\n- \u6267\u884c\u89d2\u8272: \u5f00\u53d1\u6267\u884c\u8005\uff08`worker`\uff09\n- \u76ee\u6807: Expose AgentTemplate, model policy and AgentDefinition lifecycle operations without adapter-owned business state.\n- \u4f9d\u636e: `docs/design/detailed/10-web-api-cli-detailed-design.md:L1392-L1428`\n- \u4f9d\u636e: `docs/design/detailed/10-web-api-cli-detailed-design.md:L355-L638`\n- \u4f9d\u636e: `docs/design/detailed/10-web-api-cli-detailed-design.md:L1375-L1545`\n\n## \u4efb\u52a1\u8be6\u60c5\nDefinition-only topology and artifact-consumer correction for an unstarted node. Replace the completed historical agent-definition predecessor with its owner-approved audit consumer adaptation, then use the checked-in package_component.py generated-input contract to digest-bind the three exact upstream component manifests and both owned API source roots into the four declared api-agent artifacts. The matching verifier checks the exact output bundle, component identity, owned roots, generated inputs, and ownership closure. No work item or runtime evidence exists, so no resume stage is requested.\n\n## \u975e\u76ee\u6807\n- Do not change adjacent domain ownership or introduce a competing source of truth.\n- Do not bypass authorization, admission, CAS, idempotency, review or evidence gates.\n- Do not preserve unpublished prototype behavior unless the owning design explicitly requires it.\n\n## \u4e3b\u8981\u4ee3\u7801\u5f52\u5c5e\u8303\u56f4\n- `api/openapi/agents/**`\n- `internal/httpapi/agents/**`\n\n## \u4ea4\u4ed8\u7ea6\u675f\n- PR \u57fa\u7ebf: `main`\n- \u6539\u52a8\u5206\u652f\u8986\u76d6\u7387: `\u2265 90%`\n- PR \u5173\u8054\u6807\u8bc6: `AITEAM-1069`\n\n## \u4e0a\u6e38 issue\uff08\u9632\u8dd1\u504f\uff09\n\u672c\u4efb\u52a1\u627f\u63a5\u4ee5\u4e0b\u4e0a\u6e38 issue\uff0c\u7528\u4e8e\u8ffd\u6eaf\u9700\u6c42\u4e0e\u51b3\u7b56\uff1b\u82e5\u4e0e\u5f53\u524d contract \u51b2\u7a81\uff0c\u5148\u8bf7\u6c42\u786e\u8ba4\uff1a\n- \u8bbe\u8ba1\u65b9\u6848: `289a13bf-cede-4b5b-ba86-d72f0bef8164`\n- \u9a8c\u6536\u6587\u6863: `8e6bd282-6039-41d2-aa00-969a0bf1554a`\n- \u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Implement AgentTemplate instantiation and Skill inheritance: `01a03bd1-285c-725d-8edd-effbaa3a58a0`\n- \u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Implement fixed and ordered-fallback Agent model policies: `748043b0-7ec8-4264-9900-50e285700508`\n- \u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Adapt AgentDefinition audit consumer to canonical governance contracts: `01a10389-0699-7520-af1f-91718d288b7d`\n- \u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Implement deterministic release artifact packaging: `152d735a-c373-4967-8ae0-45c191de2eff`",
+    "status": "blocked",
+    "dag_key": "api-agent",
+    "identifier": "AITEAM-1069",
+    "worker": "codex-ubuntu-newapi",
+    "reviewer": "hermes-reviewer",
+    "blocked_by": [
+      "agent-template",
+      "agent-model-policy",
+      "agent-definition-audit-consumer-adaptation",
+      "release-artifact-tooling"
+    ],
+    "wave": null,
+    "artifacts": {
+      "pr_url": "https://github.com/xiaohei-info/open-agent-cluster/pull/105",
+      "head_sha": "f0987a71ee760836601bb676e2bcd59b72ba0d08"
+    },
+    "verification": {
+      "commands": [
+        {
+          "cmd": "mkdir -p artifacts/api-agent && go test -covermode=atomic -coverprofile=artifacts/api-agent/coverage.out ./api/openapi/agents/... ./internal/httpapi/agents/...",
+          "exit_code": 0,
+          "summary": "Agent API package tests passed; total statement coverage is 93.4%."
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/api-agent/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+          "exit_code": 0,
+          "summary": "Total statement coverage is 93.4%, above the 90% gate."
+        },
+        {
+          "cmd": "go list ./api/openapi/agents/... | grep -q . && go generate ./api/openapi/agents/... && git diff --exit-code -- api/openapi/agents && test -z \"$(git ls-files --others --exclude-standard -- api/openapi/agents)\"",
+          "exit_code": 0,
+          "summary": "OpenAPI generation is stable and all package source is tracked."
+        },
+        {
+          "cmd": "python3 scripts/release/package_component.py --component api-agent --kind platform-core-adapter-source --input api/openapi/agents --input internal/httpapi/agents --generated-input artifacts/agent-template/component-manifest.json --generated-input artifacts/agent-model-policy/component-manifest.json --generated-input artifacts/agent-definition-audit-consumer-adaptation/component-manifest.json --require-generated-input-digest --bundle artifacts/api-agent/source-bundle.tar.zst --component-manifest artifacts/api-agent/component-manifest.json --digest-output artifacts/api-agent/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --ownership-catalog contracts/release/source-ownership-catalog.yaml --owner api-agent --require-all-owner-sources-accounted && python3 scripts/release/verify_component_manifest.py --manifest artifacts/api-agent/component-manifest.json --bundle artifacts/api-agent/source-bundle.tar.zst --expected-component api-agent --require-owned-source api/openapi/agents --require-owned-source internal/httpapi/agents --require-generated-input artifacts/agent-template/component-manifest.json --require-generated-input artifacts/agent-model-policy/component-manifest.json --require-generated-input artifacts/agent-definition-audit-consumer-adaptation/component-manifest.json --ownership-catalog contracts/release/source-ownership-catalog.yaml --require-all-owner-sources-accounted",
+          "exit_code": 0,
+          "summary": "api-agent bundle and component manifest passed verification."
+        }
+      ],
+      "integration_gates": [
+        {
+          "name": "api-agent-gate",
+          "source_of_truth": [
+            "docs/design/detailed/10-web-api-cli-detailed-design.md:L1392-L1428",
+            "docs/design/detailed/10-web-api-cli-detailed-design.md:L355-L638",
+            "docs/design/detailed/10-web-api-cli-detailed-design.md:L1375-L1545"
+          ],
+          "delivery_goal": "Expose AgentTemplate, model policy and AgentDefinition lifecycle operations without adapter-owned business state.",
+          "commands": [
+            {
+              "cmd": "mkdir -p artifacts/api-agent && go test -covermode=atomic -coverprofile=artifacts/api-agent/coverage.out ./api/openapi/agents/... ./internal/httpapi/agents/...",
+              "exit_code": 0
+            },
+            {
+              "cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/api-agent/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+              "exit_code": 0
+            },
+            {
+              "cmd": "go list ./api/openapi/agents/... | grep -q . && go generate ./api/openapi/agents/... && git diff --exit-code -- api/openapi/agents && test -z \"$(git ls-files --others --exclude-standard -- api/openapi/agents)\"",
+              "exit_code": 0
+            },
+            {
+              "cmd": "python3 scripts/release/package_component.py --component api-agent --kind platform-core-adapter-source --input api/openapi/agents --input internal/httpapi/agents --generated-input artifacts/agent-template/component-manifest.json --generated-input artifacts/agent-model-policy/component-manifest.json --generated-input artifacts/agent-definition-audit-consumer-adaptation/component-manifest.json --require-generated-input-digest --bundle artifacts/api-agent/source-bundle.tar.zst --component-manifest artifacts/api-agent/component-manifest.json --digest-output artifacts/api-agent/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --ownership-catalog contracts/release/source-ownership-catalog.yaml --owner api-agent --require-all-owner-sources-accounted && python3 scripts/release/verify_component_manifest.py --manifest artifacts/api-agent/component-manifest.json --bundle artifacts/api-agent/source-bundle.tar.zst --expected-component api-agent --require-owned-source api/openapi/agents --require-owned-source internal/httpapi/agents --require-generated-input artifacts/agent-template/component-manifest.json --require-generated-input artifacts/agent-model-policy/component-manifest.json --require-generated-input artifacts/agent-definition-audit-consumer-adaptation/component-manifest.json --ownership-catalog contracts/release/source-ownership-catalog.yaml --require-all-owner-sources-accounted",
+              "exit_code": 0
+            }
+          ],
+          "metrics": {
+            "statement_coverage_percent": 93.4,
+            "declared_artifact_count": 4
+          },
+          "artifacts": [
+            "artifacts/api-agent/coverage.out",
+            "artifacts/api-agent/bundle-digest.txt",
+            "artifacts/api-agent/component-manifest.json",
+            "artifacts/api-agent/source-bundle.tar.zst"
+          ]
+        }
+      ],
+      "pr_base": "main",
+      "coverage": 93.4,
+      "env_setup": [
+        "No external services are required; Go 1.26, Python 3, and the zstd CLI are available locally.",
+        "The three generated-input manifests were reproduced with their upstream package commands at source revisions cb1bc1c94c92fe69a2cb7191078f999bbe472b93, 74327d6fe453374055771bbf8ef5926c2db48326, and e91e20ef2e47e62c057ac25e4fc00066488c3245."
+      ]
+    },
+    "verification_ref": {
+      "comment_id": "01a104cd-63e2-7aa6-b0ec-8b996fbbeec5",
+      "attachment_id": "01a104cd-637d-7060-b6ab-4f0856d64889",
+      "sha256": "466ee34a0dee7d39403e06de437accf2f227a239537fbd0a2f7309abfbec000b",
+      "bytes": 6012,
+      "filename": "omac-verification-466ee34a0dee.yaml"
+    },
+    "review_verdict": null,
+    "review_comment": null,
+    "machine_feedback": null,
+    "machine_feedback_ref": null,
+    "review_report": null,
+    "review_report_ref": null,
+    "review_subject_digest": null,
+    "review_obligations": [
+      {
+        "obligation_id": "dimension:authority",
+        "category": "dimension",
+        "requirement": "Authoritative inputs and source references"
+      },
+      {
+        "obligation_id": "dimension:structure",
+        "category": "dimension",
+        "requirement": "Structure, schema, dependency, and completeness"
+      },
+      {
+        "obligation_id": "dimension:execution",
+        "category": "dimension",
+        "requirement": "Executable commands and fail-closed verification"
+      },
+      {
+        "obligation_id": "dimension:ownership",
+        "category": "dimension",
+        "requirement": "Ownership, boundaries, and unique write paths"
+      },
+      {
+        "obligation_id": "dimension:evidence",
+        "category": "dimension",
+        "requirement": "Artifact lineage and evidence traceability"
+      },
+      {
+        "obligation_id": "dimension:regression",
+        "category": "dimension",
+        "requirement": "Prior blocker regression and changed-scope review"
+      },
+      {
+        "obligation_id": "integration:api-agent-gate",
+        "category": "integration",
+        "requirement": "Independently verify integration gate api-agent-gate",
+        "subject": "api-agent-gate"
+      }
+    ],
+    "review_obligations_ref": {
+      "comment_id": "01a105c5-cd5f-7b47-9fbd-8f12d7d0d955",
+      "attachment_id": "01a105c5-cc05-7066-9542-08a8d6aa7d19",
+      "sha256": "8121daf82228d4f06eb151d41b39ac36174046e5f9be056953869c8f9fc8e704",
+      "bytes": 885,
+      "filename": "omac-review-obligations-8121daf82228.yaml"
+    },
+    "review_ledger": {
+      "schema": "omac.review-ledger/v2",
+      "cycles": [
+        {
+          "round": 1,
+          "subject_digest": "4855c4853513dccc8aceabd2f3bf32ce801eea0a9e46cc656235691d43926043",
+          "report_digest": "4d39b4447264f66ce888b2ba2230165bc82821f607f062c896758082f7b90d4e",
+          "verdict": "reject",
+          "obligation_results": {
+            "dimension:authority": "fail",
+            "dimension:structure": "fail",
+            "dimension:execution": "pass",
+            "dimension:ownership": "pass",
+            "dimension:evidence": "pass",
+            "dimension:regression": "pass",
+            "integration:api-agent-gate": "pass"
+          },
+          "new_count": 2,
+          "fixed_count": 0,
+          "regressed_count": 0,
+          "unchanged_count": 0,
+          "open_count": 2,
+          "prior_open_blocker_ids": [],
+          "open_blocker_ids": [
+            "BLK-3ae8ac149441",
+            "BLK-9beec89d4933"
+          ],
+          "reported_blocker_ids": [
+            "BLK-3ae8ac149441",
+            "BLK-9beec89d4933"
+          ],
+          "blocker_facts_schema": "omac.review-cycle-blocker-facts/v1",
+          "blocker_facts": [
+            {
+              "blocker_id": "BLK-3ae8ac149441",
+              "root_cause_key": "api-agent-public-command-contract-incomplete",
+              "obligation_id": "dimension:authority",
+              "summary": "Published command schemas do not specify the required governance and actual failure outcomes.",
+              "evidence": "docs/design/detailed/10-web-api-cli-detailed-design.md:1398-1409 requires each command to define RequestContext, authorization action, Admission boundary, business refusal, conflict, retryable/nonretryable errors and audit semantics. api/openapi/agents/openapi.yaml:169-225 declares only 200/409 for each lifecycle command, despite handler.go:80-83 returning 403 for missing governance context, :216-220 returning 400, and :318-331 mapping 404/403/503/500. The document has no security scheme/security requirement and lifecycle operations contain no authorization, Admission or audit contract. Its Conflict response at :259-263 combines CAS, idempotency and protected-reference conflicts, while handler.go:324-325 provides the same refresh-and-retry message for all of them. Publication describes governance generically at openapi.yaml:106-111 but does not define its authorization action or retry semantics.",
+              "required_fix": "Complete the authoritative OpenAPI command contracts with the supported authenticated RequestContext transport, authorization actions, Admission applicability and audit semantics (link the owning governance contract where appropriate). Declare every supported HTTP failure or a typed default error response, including lifecycle 400/403/404/503/internal failures. Preserve safe machine-readable distinctions and next actions for stale revision, idempotency mismatch and protected-reference/business refusal. Add schema/HTTP conformance checks to the existing declared suite instead of testing only spec substring presence.",
+              "status": "open",
+              "classification": "new",
+              "owner": "api-agent"
+            },
+            {
+              "blocker_id": "BLK-9beec89d4933",
+              "root_cause_key": "api-agent-owner-use-cases-disconnected",
+              "obligation_id": "dimension:structure",
+              "summary": "HTTP operations have no production bridge to the owning Agent application use cases.",
+              "evidence": "internal/httpapi/agents/handler.go:50-65 introduces a 10-method Application interface taking API-owned DTOs; handler.go:71-73 only injects it. Repository-wide symbol searches find its methods implemented solely in handler_test.go:503-572 and all constructor uses in tests. Actual templates.Application.Instantiate at internal/agents/templates/templates.go:120 takes templates.InstantiateRequest, whereas definitions.Application.PublishBlank at internal/agents/definitions/definitions.go:332 takes PublishBlankRequest with RequestContextID, an existing Agent/CAS and already-resolved runtime bindings. No production code translates the public request, calculates instruction digests, resolves runtime requests/defaults, preserves template provenance, or bridges catalog/lifecycle calls. Publication/lifecycle tests at handler_test.go:130-225,263-284 return fabricated test results rather than exercising these owner boundaries; only template test closures at :60-65,:91-95 invoke an actual upstream application.",
+              "required_fix": "Supply production transport-to-owner composition using the actual inward-facing use-case contracts (or explicitly resolve an owner-contract prerequisite through the authorized process). Translate the public inputs/results and safe classified failures; derive server-owned values at the owning application boundary; preserve RequestContext/audit provenance, CAS/idempotency, template provenance and reference protection. Do not add business state or lifecycle rules in the HTTP adapter and do not force inner application modules to import API DTOs. Extend the declared package suite to exercise this production bridge with deterministic owner-port fixtures, including template and blank publication and lifecycle refusal paths.",
+              "status": "open",
+              "classification": "new",
+              "owner": "api-agent"
+            }
+          ]
+        }
+      ],
+      "blockers": [
+        {
+          "blocker_id": "BLK-3ae8ac149441",
+          "root_cause_key": "api-agent-public-command-contract-incomplete",
+          "obligation_id": "dimension:authority",
+          "summary": "Published command schemas do not specify the required governance and actual failure outcomes.",
+          "evidence": "docs/design/detailed/10-web-api-cli-detailed-design.md:1398-1409 requires each command to define RequestContext, authorization action, Admission boundary, business refusal, conflict, retryable/nonretryable errors and audit semantics. api/openapi/agents/openapi.yaml:169-225 declares only 200/409 for each lifecycle command, despite handler.go:80-83 returning 403 for missing governance context, :216-220 returning 400, and :318-331 mapping 404/403/503/500. The document has no security scheme/security requirement and lifecycle operations contain no authorization, Admission or audit contract. Its Conflict response at :259-263 combines CAS, idempotency and protected-reference conflicts, while handler.go:324-325 provides the same refresh-and-retry message for all of them. Publication describes governance generically at openapi.yaml:106-111 but does not define its authorization action or retry semantics.",
+          "required_fix": "Complete the authoritative OpenAPI command contracts with the supported authenticated RequestContext transport, authorization actions, Admission applicability and audit semantics (link the owning governance contract where appropriate). Declare every supported HTTP failure or a typed default error response, including lifecycle 400/403/404/503/internal failures. Preserve safe machine-readable distinctions and next actions for stale revision, idempotency mismatch and protected-reference/business refusal. Add schema/HTTP conformance checks to the existing declared suite instead of testing only spec substring presence.",
+          "status": "open",
+          "classification": "new",
+          "owner": "api-agent",
+          "first_seen_round": 1,
+          "last_seen_round": 1,
+          "seen_count": 1
+        },
+        {
+          "blocker_id": "BLK-9beec89d4933",
+          "root_cause_key": "api-agent-owner-use-cases-disconnected",
+          "obligation_id": "dimension:structure",
+          "summary": "HTTP operations have no production bridge to the owning Agent application use cases.",
+          "evidence": "internal/httpapi/agents/handler.go:50-65 introduces a 10-method Application interface taking API-owned DTOs; handler.go:71-73 only injects it. Repository-wide symbol searches find its methods implemented solely in handler_test.go:503-572 and all constructor uses in tests. Actual templates.Application.Instantiate at internal/agents/templates/templates.go:120 takes templates.InstantiateRequest, whereas definitions.Application.PublishBlank at internal/agents/definitions/definitions.go:332 takes PublishBlankRequest with RequestContextID, an existing Agent/CAS and already-resolved runtime bindings. No production code translates the public request, calculates instruction digests, resolves runtime requests/defaults, preserves template provenance, or bridges catalog/lifecycle calls. Publication/lifecycle tests at handler_test.go:130-225,263-284 return fabricated test results rather than exercising these owner boundaries; only template test closures at :60-65,:91-95 invoke an actual upstream application.",
+          "required_fix": "Supply production transport-to-owner composition using the actual inward-facing use-case contracts (or explicitly resolve an owner-contract prerequisite through the authorized process). Translate the public inputs/results and safe classified failures; derive server-owned values at the owning application boundary; preserve RequestContext/audit provenance, CAS/idempotency, template provenance and reference protection. Do not add business state or lifecycle rules in the HTTP adapter and do not force inner application modules to import API DTOs. Extend the declared package suite to exercise this production bridge with deterministic owner-port fixtures, including template and blank publication and lifecycle refusal paths.",
+          "status": "open",
+          "classification": "new",
+          "owner": "api-agent",
+          "first_seen_round": 1,
+          "last_seen_round": 1,
+          "seen_count": 1
+        }
+      ]
+    },
+    "review_ledger_ref": {
+      "comment_id": "01a105d4-e667-7add-9f45-a317c62643fd",
+      "attachment_id": "01a105d4-e5fd-77b9-8194-9be33845cb7d",
+      "sha256": "3bdc754ebc7f580358a579a7b8e79c87d8ac25be3dab2fe23c8f4db7229d6655",
+      "bytes": 9124,
+      "filename": "omac-review-ledger-3bdc754ebc7f.yaml"
+    },
+    "review_generation": null,
+    "review_ledger_generation": null,
+    "review_continuation": null,
+    "reviewer_run_baseline": null,
+    "worker_handoff": {
+      "schema": "omac.worker-handoff/v1",
+      "state": "pending",
+      "target_worker": "codex-ubuntu-newapi",
+      "gate": "review",
+      "source_review_subject_digest": "4855c4853513dccc8aceabd2f3bf32ce801eea0a9e46cc656235691d43926043",
+      "source_review_round": 1,
+      "source_review_verdict": "reject",
+      "source_review_feedback": {
+        "schema": "omac.worker-rework-feedback/v1",
+        "verdict": "reject",
+        "report_ref": {
+          "comment_id": "01a105d4-e381-7755-b9a9-64ef40de5edb",
+          "attachment_id": "01a105d4-e32e-74b1-906f-22549ea2bfba",
+          "sha256": "cb08fc44a86dbf7682bb22bb58d7a1b887a86f5981ebe9f6e3095a85dcee99af",
+          "bytes": 14987,
+          "filename": "omac-review-report-cb08fc44a86d.yaml"
+        },
+        "ledger_ref": {
+          "comment_id": "01a105d4-e667-7add-9f45-a317c62643fd",
+          "attachment_id": "01a105d4-e5fd-77b9-8194-9be33845cb7d",
+          "sha256": "3bdc754ebc7f580358a579a7b8e79c87d8ac25be3dab2fe23c8f4db7229d6655",
+          "bytes": 9124,
+          "filename": "omac-review-ledger-3bdc754ebc7f.yaml"
+        },
+        "blockers": [
+          {
+            "root_cause_key": "api-agent-owner-use-cases-disconnected",
+            "summary": "HTTP operations have no production bridge to the owning Agent application use cases.",
+            "required_fix": "Supply production transport-to-owner composition using the actual inward-facing use-case contracts (or explicitly resolve an owner-contract prerequisite through the authorized process). Translate the public inputs/results and safe classified failures; deri"
+          },
+          {
+            "root_cause_key": "api-agent-public-command-contract-incomplete",
+            "summary": "Published command schemas do not specify the required governance and actual failure outcomes.",
+            "required_fix": "Complete the authoritative OpenAPI command contracts with the supported authenticated RequestContext transport, authorization actions, Admission applicability and audit semantics (link the owning governance contract where appropriate). Declare every suppor"
+          }
+        ]
+      },
+      "review_context_binding": {
+        "generation": null,
+        "contract_sha256": "00e6b23e3aae5efc470582490c449846c4a2e4ea2a367fb20aa11213bf8a78a4"
+      },
+      "target_review_bounce": 1,
+      "generation": "handoff-ff3d38610deb25e3",
+      "target_agent_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "baseline_direct_run_ids": [
+        "01a1048e-9f46-7be0-863f-c6be0b391d2b",
+        "01a105c6-7a3f-758a-b304-15753e50d423"
+      ],
+      "baseline_cutoff_created_at": null,
+      "baseline_verification_attachment_id": "01a104cd-637d-7060-b6ab-4f0856d64889",
+      "baseline_pr_head_sha": "f0987a71ee760836601bb676e2bcd59b72ba0d08",
+      "target_run_id": "01a105d6-f4ad-7dfe-a340-25d512f9488f",
+      "target_worker_bounce": 0,
+      "terminal_observed_at": null,
+      "authoring_recovery": null
+    },
+    "delivery_identity": null,
+    "decision_required": {
+      "schema": "omac.decision-required/v1",
+      "reason_code": "worker-decision-required",
+      "kind": "develop",
+      "phase": "authoring",
+      "gate": "worker",
+      "resume_issue_id": "01a1048e-0327-70a5-84b8-d2967af606ea",
+      "review_context_binding": {
+        "generation": null,
+        "contract_sha256": "00e6b23e3aae5efc470582490c449846c4a2e4ea2a367fb20aa11213bf8a78a4"
+      },
+      "blocker": {
+        "schema": "omac.worker-blocker/v2",
+        "reason_code": "owner-decision-required",
+        "issue_id": "01a1048e-0327-70a5-84b8-d2967af606ea",
+        "review_context_binding": {
+          "generation": null,
+          "contract_sha256": "00e6b23e3aae5efc470582490c449846c4a2e4ea2a367fb20aa11213bf8a78a4"
+        },
+        "handoff_generation": "handoff-ff3d38610deb25e3",
+        "worker": "codex-ubuntu-newapi",
+        "run_id": "01a105d6-f4ad-7dfe-a340-25d512f9488f",
+        "summary": "The Agent API needs owner use cases missing from this repository; implementing their rules in HTTP would duplicate domain behavior.",
+        "decision_needed": "Identify Project & Team owner contracts/composition for Agent creation, blank/template publication, queries, policy resolution, and archive/restore/delete. Specify RequestContext ID and typed safe errors; preserve governance, preflight, CAS/idempotency, template provenance, and deletion reference checks.",
+        "contract_ref": "required_contracts",
+        "evidence": [
+          {
+            "ref": "PR #105 f0987a71; internal/agents/templates/templates.go; internal/agents/definitions/definitions.go",
+            "observation": "templates.Application returns a snapshot only; PublishBlank requires an existing Agent/revision and RequestContextID. AgentCatalog only reads; no create or template-publish command exists."
+          },
+          {
+            "ref": "PR #105 f0987a71; internal/projects/lifecycle/lifecycle.go; repository symbol search",
+            "observation": "Project lifecycle handles Project setup. No Agent archive/restore/delete use case exists outside this API adapter."
+          },
+          {
+            "ref": "PR #105 f0987a71; internal/agents/modelpolicy/policy.go",
+            "observation": "modelpolicy.Resolve is pure and takes caller-supplied catalogs/probes; no owner command loads or rechecks them."
+          },
+          {
+            "ref": "docs/references/project-and-team/project-and-agent-team.md:405-411",
+            "observation": "The owner requires active Workflows/AgentRuns to survive archive and deletion to atomically reject retained references."
+          }
+        ]
+      },
+      "next_action": "Resolve the reported decision, then explicitly run omac node retry <manifest> api-agent"
+    },
+    "amendment_attempt": null,
+    "contract": {
+      "objective": "Expose AgentTemplate, model policy and AgentDefinition lifecycle operations without adapter-owned business state.",
+      "non_goals": [
+        "Do not change adjacent domain ownership or introduce a competing source of truth.",
+        "Do not bypass authorization, admission, CAS, idempotency, review or evidence gates.",
+        "Do not preserve unpublished prototype behavior unless the owning design explicitly requires it."
+      ],
+      "verification_commands": [
+        "mkdir -p artifacts/api-agent && go test -covermode=atomic -coverprofile=artifacts/api-agent/coverage.out ./api/openapi/agents/... ./internal/httpapi/agents/...",
+        "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/api-agent/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+        "go list ./api/openapi/agents/... | grep -q . && go generate ./api/openapi/agents/... && git diff --exit-code -- api/openapi/agents && test -z \"$(git ls-files --others --exclude-standard -- api/openapi/agents)\"",
+        "python3 scripts/release/package_component.py --component api-agent --kind platform-core-adapter-source --input api/openapi/agents --input internal/httpapi/agents --generated-input artifacts/agent-template/component-manifest.json --generated-input artifacts/agent-model-policy/component-manifest.json --generated-input artifacts/agent-definition-audit-consumer-adaptation/component-manifest.json --require-generated-input-digest --bundle artifacts/api-agent/source-bundle.tar.zst --component-manifest artifacts/api-agent/component-manifest.json --digest-output artifacts/api-agent/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --ownership-catalog contracts/release/source-ownership-catalog.yaml --owner api-agent --require-all-owner-sources-accounted && python3 scripts/release/verify_component_manifest.py --manifest artifacts/api-agent/component-manifest.json --bundle artifacts/api-agent/source-bundle.tar.zst --expected-component api-agent --require-owned-source api/openapi/agents --require-owned-source internal/httpapi/agents --require-generated-input artifacts/agent-template/component-manifest.json --require-generated-input artifacts/agent-model-policy/component-manifest.json --require-generated-input artifacts/agent-definition-audit-consumer-adaptation/component-manifest.json --ownership-catalog contracts/release/source-ownership-catalog.yaml --require-all-owner-sources-accounted"
+      ],
+      "integration_gates": [
+        {
+          "name": "api-agent-gate",
+          "layer": "L1",
+          "source_of_truth": [
+            "docs/design/detailed/10-web-api-cli-detailed-design.md:L1392-L1428",
+            "docs/design/detailed/10-web-api-cli-detailed-design.md:L355-L638",
+            "docs/design/detailed/10-web-api-cli-detailed-design.md:L1375-L1545"
+          ],
+          "delivery_goal": "Expose AgentTemplate, model policy and AgentDefinition lifecycle operations without adapter-owned business state.",
+          "covers": [
+            "api-agent"
+          ],
+          "acceptance_refs": [
+            "UJ-AGENT-001",
+            "UJ-AGENT-002",
+            "UJ-AGENT-003",
+            "UJ-AGENT-004",
+            "UJ-AGENT-005",
+            "UJ-AGENT-006"
+          ],
+          "commands": [
+            "mkdir -p artifacts/api-agent && go test -covermode=atomic -coverprofile=artifacts/api-agent/coverage.out ./api/openapi/agents/... ./internal/httpapi/agents/...",
+            "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/api-agent/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+            "go list ./api/openapi/agents/... | grep -q . && go generate ./api/openapi/agents/... && git diff --exit-code -- api/openapi/agents && test -z \"$(git ls-files --others --exclude-standard -- api/openapi/agents)\"",
+            "python3 scripts/release/package_component.py --component api-agent --kind platform-core-adapter-source --input api/openapi/agents --input internal/httpapi/agents --generated-input artifacts/agent-template/component-manifest.json --generated-input artifacts/agent-model-policy/component-manifest.json --generated-input artifacts/agent-definition-audit-consumer-adaptation/component-manifest.json --require-generated-input-digest --bundle artifacts/api-agent/source-bundle.tar.zst --component-manifest artifacts/api-agent/component-manifest.json --digest-output artifacts/api-agent/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --ownership-catalog contracts/release/source-ownership-catalog.yaml --owner api-agent --require-all-owner-sources-accounted && python3 scripts/release/verify_component_manifest.py --manifest artifacts/api-agent/component-manifest.json --bundle artifacts/api-agent/source-bundle.tar.zst --expected-component api-agent --require-owned-source api/openapi/agents --require-owned-source internal/httpapi/agents --require-generated-input artifacts/agent-template/component-manifest.json --require-generated-input artifacts/agent-model-policy/component-manifest.json --require-generated-input artifacts/agent-definition-audit-consumer-adaptation/component-manifest.json --ownership-catalog contracts/release/source-ownership-catalog.yaml --require-all-owner-sources-accounted"
+          ],
+          "required_metrics": {
+            "statement_coverage_percent": 90,
+            "declared_artifact_count": 4
+          },
+          "artifacts": [
+            "artifacts/api-agent/coverage.out",
+            "artifacts/api-agent/bundle-digest.txt",
+            "artifacts/api-agent/component-manifest.json",
+            "artifacts/api-agent/source-bundle.tar.zst"
+          ]
+        }
+      ],
+      "pr_base": "main",
+      "acceptance_refs": [
+        "UJ-AGENT-001",
+        "UJ-AGENT-002",
+        "UJ-AGENT-003",
+        "UJ-AGENT-004",
+        "UJ-AGENT-005",
+        "UJ-AGENT-006"
+      ],
+      "source_of_truth": [
+        "docs/design/detailed/10-web-api-cli-detailed-design.md:L1392-L1428",
+        "docs/design/detailed/10-web-api-cli-detailed-design.md:L355-L638",
+        "docs/design/detailed/10-web-api-cli-detailed-design.md:L1375-L1545"
+      ],
+      "required_contracts": [
+        "docs/references/project-and-team/project-and-agent-team.md"
+      ],
+      "scope_paths": [
+        "api/openapi/agents/**",
+        "internal/httpapi/agents/**"
+      ]
+    },
+    "contract_ref": {
+      "comment_id": "01a1048e-23ce-7df0-be0e-116b3e28ad06",
+      "attachment_id": "01a1048e-2299-7e42-b1ca-531a4a86d5d4",
+      "sha256": "93553b7c0e6b0717921b2ab8677f1a83da5c47cc08667eb378738ce4320fcbb4",
+      "bytes": 6177,
+      "filename": "omac-contract-93553b7c0e6b.yaml"
+    },
+    "source_refs": [
+      {
+        "issue_id": "289a13bf-cede-4b5b-ba86-d72f0bef8164",
+        "label": "\u8bbe\u8ba1\u65b9\u6848"
+      },
+      {
+        "issue_id": "8e6bd282-6039-41d2-aa00-969a0bf1554a",
+        "label": "\u9a8c\u6536\u6587\u6863"
+      },
+      {
+        "issue_id": "01a03bd1-285c-725d-8edd-effbaa3a58a0",
+        "label": "\u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Implement AgentTemplate instantiation and Skill inheritance"
+      },
+      {
+        "issue_id": "748043b0-7ec8-4264-9900-50e285700508",
+        "label": "\u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Implement fixed and ordered-fallback Agent model policies"
+      },
+      {
+        "issue_id": "01a10389-0699-7520-af1f-91718d288b7d",
+        "label": "\u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Adapt AgentDefinition audit consumer to canonical governance contracts"
+      },
+      {
+        "issue_id": "152d735a-c373-4967-8ae0-45c191de2eff",
+        "label": "\u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Implement deterministic release artifact packaging"
+      }
+    ],
+    "kind": "develop",
+    "phase": "authoring",
+    "bounces": {
+      "worker": 0,
+      "ci": 0,
+      "review": 1,
+      "merge": 0
+    },
+    "bounce_baseline": null,
+    "deliverable": null,
+    "deliverable_ref": null,
+    "project_rules": null,
+    "project_rules_ref": null,
+    "agent_run_finished_without_submit": false,
+    "agent_run_failed": false,
+    "created_at": "2026-10-04T01:36:18Z",
+    "updated_at": "2026-10-04T07:47:48Z",
+    "platform_assignee_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "unknown_persisted_fields": {},
+    "review_nits_acceptance": null
+  },
+  "runs": [
+    {
+      "id": "01a105d6-f4ad-7dfe-a340-25d512f9488f",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "created_at": "2026-10-04T07:35:35Z",
+      "updated_at": "2026-10-04T07:47:48Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "01a105c6-7a3f-758a-b304-15753e50d423",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+      "created_at": "2026-10-04T07:17:35Z",
+      "updated_at": "2026-10-04T07:33:34Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "01a1048e-9f46-7be0-863f-c6be0b391d2b",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "created_at": "2026-10-04T01:36:58Z",
+      "updated_at": "2026-10-04T02:45:45Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    }
+  ]
+}

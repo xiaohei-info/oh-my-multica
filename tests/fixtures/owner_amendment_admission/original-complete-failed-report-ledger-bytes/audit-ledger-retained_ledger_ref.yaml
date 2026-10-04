@@ -1,0 +1,569 @@
+schema: omac.review-ledger/v2
+cycles:
+- round: 1
+  subject_digest: b75b86ec79ddaeedb5865fd1480a67977bb9842f9edb76d0be756f3fcbce4418
+  report_digest: 5d87580528a0512a3cda9b4db7ac60631894866e219785113b14f1aac420618b
+  verdict: reject
+  obligation_results:
+    dimension:authority: pass
+    dimension:structure: fail
+    dimension:execution: fail
+    dimension:ownership: pass
+    dimension:evidence: pass
+    dimension:regression: pass
+    integration:audit-ledger-gate: fail
+    integration:audit-receipt-source-release-gate: pass
+    integration:audit-receipt-store-boundary-gate: fail
+  new_count: 4
+  fixed_count: 0
+  regressed_count: 0
+  unchanged_count: 0
+  open_count: 4
+  prior_open_blocker_ids: []
+  open_blocker_ids: &id001
+  - BLK-22c78fb9f46d
+  - BLK-24e444819f31
+  - BLK-732e9d6d73f9
+  - BLK-eca90b3218a1
+  reported_blocker_ids: *id001
+  blocker_facts_schema: omac.review-cycle-blocker-facts/v1
+  blocker_facts:
+  - blocker_id: BLK-22c78fb9f46d
+    root_cause_key: audit-authorization-decision-not-bound-to-request
+    obligation_id: dimension:execution
+    summary: Audit authorization consumes any structurally valid decision without
+      checking its RequestDigest against the current authorization request.
+    evidence: internal/audit/application.go:289-304 builds an AuthorizationRequest
+      but, after Authorize, only calls decision.Validate. contracts/governance/authz/contract.go:185-196
+      defines the decision as provenance for one RequestDigest; Validate:209-232 merely
+      requires the digest to be nonempty and validates structural fields. No comparison
+      to the submitted request occurs in the complete production audit paths. Existing
+      independently passing tests use partial invented request digests (application_test.go:303-312;
+      api/audit/api_test.go:118-122) and test invalid/empty decisions, not structurally
+      valid mismatched decisions. Finding is from source inspection; no undeclared
+      bypass experiment was run.
+    required_fix: Bind the returned decision to the exact authorization request under
+      the platform’s canonical request-digest contract before consuming its effect
+      or writing provenance; reject mismatched/unknown decision authority. Apply this
+      consistently through the shared authorize helper and extend the declared authorization
+      tests to cover structurally valid decisions bound to another scope/project/principal/action/subject
+      and sensitive-read request.
+    status: open
+    classification: new
+    owner: audit-ledger
+  - blocker_id: BLK-24e444819f31
+    root_cause_key: audit-shared-business-transaction-missing
+    obligation_id: integration:audit-receipt-store-boundary-gate
+    summary: The only production append path commits an audit-only transaction; it
+      cannot participate in the required domain/CommandRecord/Outbox transaction.
+    evidence: contracts/governance/audit/store/postgres.go:63-107 unconditionally
+      begins its own transaction, inserts only audit_events and commits it. internal/audit/application.go:48-54,106-118
+      exposes only independent Append, with no application unit-of-work path. TestAuditAtomicCommitRollbackAndIdempotency
+      (postgres_test.go:221-254) passed independently, but inspects only audit_events;
+      it never writes or rolls back a domain row, CommandRecord or Outbox. The complete
+      PR diff contains no other shared-commit implementation. This conflicts with
+      design section 8.1 (09-governance-and-security-detailed-design.md:574), section
+      13:829, and the node contract’s shared transaction requirement.
+    required_fix: Provide a typed, platform-internal unit-of-work/commit path that
+      atomically includes business facts and applicable CommandRecord/Outbox plus
+      the canonical AuditEvent, without exposing a generic public SQL executor or
+      receipt authority. Keep receipt issuance on a separate committed read. Extend
+      the declared atomicity test to drive the production shared-commit path and prove
+      rollback of every participant on audit and business failures, replay and conflicting
+      digests.
+    status: open
+    classification: new
+    owner: audit-ledger
+  - blocker_id: BLK-732e9d6d73f9
+    root_cause_key: audit-evidence-assembly-only-in-test-doubles
+    obligation_id: integration:audit-ledger-gate
+    summary: Production detail evidence resolution and per-linked-subject authorization
+      are not implemented; the application delegates them to an assembled-DTO callback.
+    evidence: internal/audit/application.go:62-75 declares BuildDetail returning an
+      already-assembled DetailEvidence; lines 201-211 copy it into the sealed view
+      and structurally validate it. api/audit/api.go:14-18,27-43 requires the caller
+      to supply that implementation. Repository symbol/usages inspection found BuildDetail
+      implementations only in test files. internal/audit/application_test.go:338-369
+      fabricates RequestContextSummary from the event, supplies a fixed RequestID
+      and predetermined availability/redaction values, ignores the caller, and performs
+      no linked-subject authorization. TestAuditDetailAuthorizationAndRedaction:47-98
+      passed, but its not_authorized assertion checks that hard-coded fixture rather
+      than an authorization decision for a loaded linked subject. api/audit/api_test.go:128-133
+      likewise synthesizes context evidence. Contract Validate:1281-1353 checks shape/provenance
+      consistency, not the caller’s right to a linked subject. Design sections 8.4-8.5
+      require exact identity resolution and per-subject visibility.
+    required_fix: Implement evidence assembly in internal/audit using narrow typed
+      ports for exact persisted context and related facts, plus the platform authorizer
+      for each linked subject/field. Wire the actual assembler in api/audit rather
+      than requiring a caller-supplied complete detail DTO. Keep underlying repository
+      dependencies injectable, but retain application-owned authorization/redaction
+      and explicit unavailable/redacted/not_authorized results. Revise the declared
+      detail test to resolve distinct persisted context and related records and prove
+      real caller-specific authorization, missing/retained-away records and sensitive-field
+      denial.
+    status: open
+    classification: new
+    owner: audit-ledger
+  - blocker_id: BLK-eca90b3218a1
+    root_cause_key: audit-schema-compatibility-verified-by-names-only
+    obligation_id: dimension:structure
+    summary: Reopen accepts a migration checksum without verifying the actual deployed
+      table, constraints, indexes or append-only trigger semantics.
+    evidence: contracts/governance/audit/store/schema.go:86-105 compares the stored
+      version/checksum with a checksum of local statement strings. verifySchema:131-158
+      then uses SELECT ... LIMIT 0, counts seven index names, and checks only trigger
+      name/relation existence. It does not inspect column types/nullability/collations,
+      primary/unique/check constraints, index definitions/validity, or trigger enabled
+      state, event mask and function identity. On the already-versioned branch it
+      does not execute the schema statements. schema_test.go:80-99 covers absent indexes/triggers,
+      not present-but-incompatible definitions. This is a static source finding, not
+      an additional attack experiment; the existing declared schema tests all passed.
+    required_fix: Validate the supported schema’s real PostgreSQL catalog definitions
+      and enabled append-only enforcement, including immutable identity/idempotency
+      constraints and numeric key ordering. Fail closed with an owner-decision error
+      for incompatible existing structures; do not rewrite records or destructively
+      migrate. Extend the declared schema compatibility tests to cover present-but-incompatible
+      columns, constraints, indexes and disabled/wrong triggers, retaining idempotent
+      valid reopen and restore.
+    status: open
+    classification: new
+    owner: audit-ledger
+- round: 2
+  subject_digest: 77f207bb472a926e6fcea78b97450c1782e527e35e73b19c95fb09c30027b570
+  report_digest: c72b7e18a4f81406952e590d501f364a542dc6bea5d5fcfbcb0ac62d3a385139
+  verdict: reject
+  obligation_results:
+    dimension:authority: pass
+    dimension:structure: fail
+    dimension:execution: pass
+    dimension:ownership: pass
+    dimension:evidence: pass
+    dimension:regression: pass
+    integration:audit-ledger-gate: fail
+    integration:audit-receipt-source-release-gate: pass
+    integration:audit-receipt-store-boundary-gate: fail
+  new_count: 0
+  fixed_count: 1
+  regressed_count: 0
+  unchanged_count: 0
+  open_count: 3
+  prior_open_blocker_ids:
+  - BLK-22c78fb9f46d
+  - BLK-24e444819f31
+  - BLK-732e9d6d73f9
+  - BLK-eca90b3218a1
+  open_blocker_ids: &id002
+  - BLK-24e444819f31
+  - BLK-732e9d6d73f9
+  - BLK-eca90b3218a1
+  reported_blocker_ids: *id002
+  blocker_facts_schema: omac.review-cycle-blocker-facts/v1
+  blocker_facts:
+  - blocker_id: BLK-22c78fb9f46d
+    root_cause_key: audit-authorization-decision-not-bound-to-request
+    obligation_id: dimension:execution
+    summary: Audit authorization consumes any structurally valid decision without
+      checking its RequestDigest against the current authorization request.
+    evidence: internal/audit/application.go:289-304 builds an AuthorizationRequest
+      but, after Authorize, only calls decision.Validate. contracts/governance/authz/contract.go:185-196
+      defines the decision as provenance for one RequestDigest; Validate:209-232 merely
+      requires the digest to be nonempty and validates structural fields. No comparison
+      to the submitted request occurs in the complete production audit paths. Existing
+      independently passing tests use partial invented request digests (application_test.go:303-312;
+      api/audit/api_test.go:118-122) and test invalid/empty decisions, not structurally
+      valid mismatched decisions. Finding is from source inspection; no undeclared
+      bypass experiment was run.
+    required_fix: Bind the returned decision to the exact authorization request under
+      the platform’s canonical request-digest contract before consuming its effect
+      or writing provenance; reject mismatched/unknown decision authority. Apply this
+      consistently through the shared authorize helper and extend the declared authorization
+      tests to cover structurally valid decisions bound to another scope/project/principal/action/subject
+      and sensitive-read request.
+    status: fixed
+    classification: fixed
+    last_evidence: internal/audit/application.go:279-298 now compares the returned
+      RequestDigest with CredentialAuthorizationRequestDigest of the exact submitted
+      request before effect/provenance consumption. TestAuditAuthorizationBindsDecisionToExactRequest
+      at application_test.go:117-154 covers scope/project/principal/action/subject
+      and sensitive-read mismatch; the complete declared tests, race suite and repository
+      suite passed independently.
+    owner: audit-ledger
+  - blocker_id: BLK-24e444819f31
+    root_cause_key: audit-shared-business-transaction-missing
+    obligation_id: integration:audit-receipt-store-boundary-gate
+    summary: The new unit of work atomically stores JSON copies of participants, not
+      the domain facts and actionable CommandRecord/Outbox in their authoritative
+      persistence paths.
+    evidence: At reviewed HEAD, internal/audit/commit/commit.go:19-43 defines generic
+      Kind/ID/Revision/RawMessage business facts. contracts/governance/audit/store/postgres.go:71-132
+      starts its own transaction and only inserts audit_commit_records plus audit_events;
+      schema.go:64-80 puts business_facts, command_payload and outbox_payload in the
+      audit-owned commit row. Complete production usage inspection finds no domain
+      writer or command/outbox consumer for these fields. The independently passing
+      TestAuditAtomicCommitRollbackAndIdempotency (internal/audit/application_test.go:156-255)
+      reads and rolls back only those two audit-owned tables; its business failure
+      is an INSERT failure on audit_commit_records, not an authoritative domain mutation.
+      The copied workflow-state fact at application_test.go:224-240 also cannot be
+      a PostgreSQL authority for active Workflow state. Design 09-governance-and-security-detailed-design.md:574,829
+      and the contract require the real facts/CommandRecord/Outbox and AuditEvent
+      to share the transaction. Static inspection and declared tests only; no added
+      experiments.
+    required_fix: Replace the shadow participant payload store as the proof of business
+      atomicity with a platform-internal typed commit boundary that applies the owning
+      domain persistence operation and applicable real CommandRecord/Outbox persistence
+      in the same transaction as the canonical AuditEvent. Preserve domain ownership
+      and the Workflow CR authority; do not expose generic SQL executors or receipt
+      issuance. Exercise that production boundary in the declared atomicity tests
+      and assert authoritative domain and dispatchable command/outbox state, rollback
+      on either participant failure, replay and digest/CAS conflicts. Keep receipts
+      on subsequent committed reads.
+    status: open
+    classification: deeper
+    owner: audit-ledger
+    last_evidence: At reviewed HEAD, internal/audit/commit/commit.go:19-43 defines
+      generic Kind/ID/Revision/RawMessage business facts. contracts/governance/audit/store/postgres.go:71-132
+      starts its own transaction and only inserts audit_commit_records plus audit_events;
+      schema.go:64-80 puts business_facts, command_payload and outbox_payload in the
+      audit-owned commit row. Complete production usage inspection finds no domain
+      writer or command/outbox consumer for these fields. The independently passing
+      TestAuditAtomicCommitRollbackAndIdempotency (internal/audit/application_test.go:156-255)
+      reads and rolls back only those two audit-owned tables; its business failure
+      is an INSERT failure on audit_commit_records, not an authoritative domain mutation.
+      The copied workflow-state fact at application_test.go:224-240 also cannot be
+      a PostgreSQL authority for active Workflow state. Design 09-governance-and-security-detailed-design.md:574,829
+      and the contract require the real facts/CommandRecord/Outbox and AuditEvent
+      to share the transaction. Static inspection and declared tests only; no added
+      experiments.
+  - blocker_id: BLK-732e9d6d73f9
+    root_cause_key: audit-evidence-assembly-only-in-test-doubles
+    obligation_id: integration:audit-ledger-gate
+    summary: Application-owned evidence assembly now exists, but related-fact ports
+      discard the exact historical identities needed to resolve the committed evidence
+      chain.
+    evidence: internal/audit/evidence.go:37-62 gives CredentialUseReference only BindingID/Purpose
+      and GovernanceRecordReference only Kind/ID. The credential list gets event/context
+      IDs at :155, but LoadCredentialUse at :180 receives only scope/project and that
+      lossy reference; PersistedCredentialUse has no persisted-use/event/context identity
+      to verify at :184-186. Governance assembly :111-130 uses anchor revision/digest
+      for authorization but drops both before LoadGovernanceRecord, which returns
+      only availability. Tests still supply binding-keyed facts and Kind/ID-keyed
+      availability (application_test.go:744-785); the declared detail tests pass but
+      cannot distinguish two persisted uses of the same binding or two revisions of
+      a policy. Exact persisted RequestContext identity and per-linked-subject authorization
+      are substantially improved (:95-108, :217-228); those improvements do not repair
+      exact related-fact resolution required by design :650-663. Static inspection
+      and declared tests only.
+    required_fix: Retain an exact immutable persisted credential-use selector and
+      its event/request-context binding in the narrow reference/load result, and validate
+      it against the committed anchor before using the fact. Pass the evaluated control
+      revision/digest (and any required immutable record identity) through the governance
+      reader so availability describes that historical record, not merely its stable
+      policy ID. Keep assembly/authorization/redaction application-owned. Extend the
+      declared detail tests with distinct persisted uses sharing one binding and distinct
+      policy revisions, including missing/retained-away historical evidence and mismatch
+      rejection; do not change the published Audit wire/seal.
+    status: open
+    classification: deeper
+    owner: audit-ledger
+    last_evidence: internal/audit/evidence.go:37-62 gives CredentialUseReference only
+      BindingID/Purpose and GovernanceRecordReference only Kind/ID. The credential
+      list gets event/context IDs at :155, but LoadCredentialUse at :180 receives
+      only scope/project and that lossy reference; PersistedCredentialUse has no persisted-use/event/context
+      identity to verify at :184-186. Governance assembly :111-130 uses anchor revision/digest
+      for authorization but drops both before LoadGovernanceRecord, which returns
+      only availability. Tests still supply binding-keyed facts and Kind/ID-keyed
+      availability (application_test.go:744-785); the declared detail tests pass but
+      cannot distinguish two persisted uses of the same binding or two revisions of
+      a policy. Exact persisted RequestContext identity and per-linked-subject authorization
+      are substantially improved (:95-108, :217-228); those improvements do not repair
+      exact related-fact resolution required by design :650-663. Static inspection
+      and declared tests only.
+  - blocker_id: BLK-eca90b3218a1
+    root_cause_key: audit-schema-compatibility-verified-by-names-only
+    obligation_id: dimension:structure
+    summary: Catalog validation was expanded, but reopen still does not establish
+      unconditional append-only trigger enforcement.
+    evidence: contracts/governance/audit/store/schema.go:498-519 validates tgenabled,
+      tgtype, function identity/language/security mode and normalized function source,
+      but never reads pg_trigger.tgqual or tgattr. Those catalogs independently determine
+      trigger predicates and UPDATE-column applicability and are not represented by
+      the checked event mask/function identity. On the existing supported-version
+      branch (:141-150), migration only validates and does not replace the trigger.
+      The declared incompatible-schema tests (schema_test.go:183-348) cover types/nullability/collation/constraints/index
+      ordering/disabled/wrong-event/wrong-timing/wrong-function triggers, and all
+      passed; none cover conditional or column-limited enforcement. The original name-only
+      checks are substantially repaired, but this same enforcement root remains incomplete.
+      This is a static finding; no additional negative experiment or payload was constructed.
+    required_fix: Compare the complete supported trigger enforcement definition, explicitly
+      requiring no WHEN predicate and no restricted UPDATE-column list, as well as
+      the existing event/timing/function checks. Reject incompatible deployed definitions
+      with an owner-decision error rather than repairing them destructively. Add these
+      compatibility cases to the declared schema tests, retaining valid idempotent
+      reopen, v1 upgrade and restore.
+    status: open
+    classification: deeper
+    owner: audit-ledger
+    last_evidence: contracts/governance/audit/store/schema.go:498-519 validates tgenabled,
+      tgtype, function identity/language/security mode and normalized function source,
+      but never reads pg_trigger.tgqual or tgattr. Those catalogs independently determine
+      trigger predicates and UPDATE-column applicability and are not represented by
+      the checked event mask/function identity. On the existing supported-version
+      branch (:141-150), migration only validates and does not replace the trigger.
+      The declared incompatible-schema tests (schema_test.go:183-348) cover types/nullability/collation/constraints/index
+      ordering/disabled/wrong-event/wrong-timing/wrong-function triggers, and all
+      passed; none cover conditional or column-limited enforcement. The original name-only
+      checks are substantially repaired, but this same enforcement root remains incomplete.
+      This is a static finding; no additional negative experiment or payload was constructed.
+- round: 3
+  subject_digest: dbb6f8025317a8318383cacd55b14339005c9603f83b1432582f9e9a4c12daab
+  report_digest: 0d4965bdafdca3cabcba57805c471d4ee5031755f62369bf50566f347a05f7a8
+  verdict: reject
+  obligation_results:
+    dimension:authority: pass
+    dimension:structure: pass
+    dimension:execution: pass
+    dimension:ownership: pass
+    dimension:evidence: pass
+    dimension:regression: fail
+    integration:audit-ledger-gate: pass
+    integration:audit-receipt-source-release-gate: pass
+    integration:audit-receipt-store-boundary-gate: fail
+  new_count: 1
+  fixed_count: 2
+  regressed_count: 0
+  unchanged_count: 0
+  open_count: 2
+  prior_open_blocker_ids:
+  - BLK-24e444819f31
+  - BLK-732e9d6d73f9
+  - BLK-eca90b3218a1
+  open_blocker_ids: &id003
+  - BLK-24e444819f31
+  - BLK-4b4da39e40e9
+  reported_blocker_ids: *id003
+  blocker_facts_schema: omac.review-cycle-blocker-facts/v1
+  blocker_facts:
+  - blocker_id: BLK-24e444819f31
+    root_cause_key: audit-shared-business-transaction-missing
+    obligation_id: integration:audit-receipt-store-boundary-gate
+    summary: The transaction persists audit-owned copies of Workflow command/outbox
+      data, not the owning domain facts and real dispatch path.
+    evidence: contracts/governance/audit/store/postgres.go:147-232; contracts/governance/audit/store/schema.go:65-107;
+      internal/audit/commit/commit.go:16-29; repository-wide search found no domain
+      writer or outbox consumer for these tables.
+    required_fix: Replace the shadow participant tables with a platform-internal typed
+      commit boundary that invokes the owning domain persistence operation and applicable
+      real CommandRecord/Outbox persistence in the same transaction as AuditEvent.
+    status: open
+    classification: deeper
+    owner: audit-ledger
+    last_evidence: contracts/governance/audit/store/postgres.go:147-232 and schema.go:65-107;
+      internal/audit/commit/commit.go:16-29; repository-wide search shows workflow_command_records/workflow_outbox
+      only in this audit subtree and its tests; internal/audit/application_test.go:156-255
+      asserts only those tables.
+  - blocker_id: BLK-4b4da39e40e9
+    root_cause_key: audit-shared-business-transaction-regression
+    obligation_id: dimension:regression
+    summary: The prior atomicity blocker remains open at the reviewed HEAD.
+    evidence: internal/audit/application_test.go:156-255 verifies workflow_command_records/workflow_outbox
+      rows rather than authoritative domain state.
+    required_fix: Disposition BLK-24e444819f31 only after the authoritative domain
+      and dispatch transaction is wired and tested.
+    status: open
+    classification: new
+  - blocker_id: BLK-732e9d6d73f9
+    root_cause_key: audit-evidence-assembly-only-in-test-doubles
+    obligation_id: integration:audit-ledger-gate
+    summary: Application-owned evidence assembly now exists, but related-fact ports
+      discard the exact historical identities needed to resolve the committed evidence
+      chain.
+    evidence: internal/audit/evidence.go:37-62 gives CredentialUseReference only BindingID/Purpose
+      and GovernanceRecordReference only Kind/ID. The credential list gets event/context
+      IDs at :155, but LoadCredentialUse at :180 receives only scope/project and that
+      lossy reference; PersistedCredentialUse has no persisted-use/event/context identity
+      to verify at :184-186. Governance assembly :111-130 uses anchor revision/digest
+      for authorization but drops both before LoadGovernanceRecord, which returns
+      only availability. Tests still supply binding-keyed facts and Kind/ID-keyed
+      availability (application_test.go:744-785); the declared detail tests pass but
+      cannot distinguish two persisted uses of the same binding or two revisions of
+      a policy. Exact persisted RequestContext identity and per-linked-subject authorization
+      are substantially improved (:95-108, :217-228); those improvements do not repair
+      exact related-fact resolution required by design :650-663. Static inspection
+      and declared tests only.
+    required_fix: Retain an exact immutable persisted credential-use selector and
+      its event/request-context binding in the narrow reference/load result, and validate
+      it against the committed anchor before using the fact. Pass the evaluated control
+      revision/digest (and any required immutable record identity) through the governance
+      reader so availability describes that historical record, not merely its stable
+      policy ID. Keep assembly/authorization/redaction application-owned. Extend the
+      declared detail tests with distinct persisted uses sharing one binding and distinct
+      policy revisions, including missing/retained-away historical evidence and mismatch
+      rejection; do not change the published Audit wire/seal.
+    status: fixed
+    classification: fixed
+    last_evidence: Current evidence.go retains UseID, AuditEventID, RequestContextID,
+      Revision, and Digest in the typed references and validates loaded facts against
+      them; the required detail test passed.
+    owner: audit-ledger
+  - blocker_id: BLK-eca90b3218a1
+    root_cause_key: audit-schema-compatibility-verified-by-names-only
+    obligation_id: dimension:structure
+    summary: Catalog validation was expanded, but reopen still does not establish
+      unconditional append-only trigger enforcement.
+    evidence: contracts/governance/audit/store/schema.go:498-519 validates tgenabled,
+      tgtype, function identity/language/security mode and normalized function source,
+      but never reads pg_trigger.tgqual or tgattr. Those catalogs independently determine
+      trigger predicates and UPDATE-column applicability and are not represented by
+      the checked event mask/function identity. On the existing supported-version
+      branch (:141-150), migration only validates and does not replace the trigger.
+      The declared incompatible-schema tests (schema_test.go:183-348) cover types/nullability/collation/constraints/index
+      ordering/disabled/wrong-event/wrong-timing/wrong-function triggers, and all
+      passed; none cover conditional or column-limited enforcement. The original name-only
+      checks are substantially repaired, but this same enforcement root remains incomplete.
+      This is a static finding; no additional negative experiment or payload was constructed.
+    required_fix: Compare the complete supported trigger enforcement definition, explicitly
+      requiring no WHEN predicate and no restricted UPDATE-column list, as well as
+      the existing event/timing/function checks. Reject incompatible deployed definitions
+      with an owner-decision error rather than repairing them destructively. Add these
+      compatibility cases to the declared schema tests, retaining valid idempotent
+      reopen, v1 upgrade and restore.
+    status: fixed
+    classification: fixed
+    last_evidence: Current schema.go:622-627 reads tgqual and tgattr and schema.go:634
+      rejects non-unconditional/non-all-column enforcement; the declared schema compatibility
+      tests passed.
+    owner: audit-ledger
+blockers:
+- blocker_id: BLK-22c78fb9f46d
+  root_cause_key: audit-authorization-decision-not-bound-to-request
+  obligation_id: dimension:execution
+  summary: Audit authorization consumes any structurally valid decision without checking
+    its RequestDigest against the current authorization request.
+  evidence: internal/audit/application.go:289-304 builds an AuthorizationRequest but,
+    after Authorize, only calls decision.Validate. contracts/governance/authz/contract.go:185-196
+    defines the decision as provenance for one RequestDigest; Validate:209-232 merely
+    requires the digest to be nonempty and validates structural fields. No comparison
+    to the submitted request occurs in the complete production audit paths. Existing
+    independently passing tests use partial invented request digests (application_test.go:303-312;
+    api/audit/api_test.go:118-122) and test invalid/empty decisions, not structurally
+    valid mismatched decisions. Finding is from source inspection; no undeclared bypass
+    experiment was run.
+  required_fix: Bind the returned decision to the exact authorization request under
+    the platform’s canonical request-digest contract before consuming its effect or
+    writing provenance; reject mismatched/unknown decision authority. Apply this consistently
+    through the shared authorize helper and extend the declared authorization tests
+    to cover structurally valid decisions bound to another scope/project/principal/action/subject
+    and sensitive-read request.
+  status: fixed
+  classification: fixed
+  owner: audit-ledger
+  first_seen_round: 1
+  last_seen_round: 2
+  seen_count: 1
+  last_evidence: internal/audit/application.go:279-298 now compares the returned RequestDigest
+    with CredentialAuthorizationRequestDigest of the exact submitted request before
+    effect/provenance consumption. TestAuditAuthorizationBindsDecisionToExactRequest
+    at application_test.go:117-154 covers scope/project/principal/action/subject and
+    sensitive-read mismatch; the complete declared tests, race suite and repository
+    suite passed independently.
+- blocker_id: BLK-24e444819f31
+  root_cause_key: audit-shared-business-transaction-missing
+  obligation_id: integration:audit-receipt-store-boundary-gate
+  summary: The transaction persists audit-owned copies of Workflow command/outbox
+    data, not the owning domain facts and real dispatch path.
+  evidence: contracts/governance/audit/store/postgres.go:147-232; contracts/governance/audit/store/schema.go:65-107;
+    internal/audit/commit/commit.go:16-29; repository-wide search found no domain
+    writer or outbox consumer for these tables.
+  required_fix: Replace the shadow participant tables with a platform-internal typed
+    commit boundary that invokes the owning domain persistence operation and applicable
+    real CommandRecord/Outbox persistence in the same transaction as AuditEvent.
+  status: open
+  classification: deeper
+  owner: audit-ledger
+  first_seen_round: 1
+  last_seen_round: 3
+  seen_count: 3
+  last_evidence: contracts/governance/audit/store/postgres.go:147-232 and schema.go:65-107;
+    internal/audit/commit/commit.go:16-29; repository-wide search shows workflow_command_records/workflow_outbox
+    only in this audit subtree and its tests; internal/audit/application_test.go:156-255
+    asserts only those tables.
+- blocker_id: BLK-4b4da39e40e9
+  root_cause_key: audit-shared-business-transaction-regression
+  obligation_id: dimension:regression
+  summary: The prior atomicity blocker remains open at the reviewed HEAD.
+  evidence: internal/audit/application_test.go:156-255 verifies workflow_command_records/workflow_outbox
+    rows rather than authoritative domain state.
+  required_fix: Disposition BLK-24e444819f31 only after the authoritative domain and
+    dispatch transaction is wired and tested.
+  status: open
+  classification: new
+  first_seen_round: 3
+  last_seen_round: 3
+  seen_count: 1
+- blocker_id: BLK-732e9d6d73f9
+  root_cause_key: audit-evidence-assembly-only-in-test-doubles
+  obligation_id: integration:audit-ledger-gate
+  summary: Application-owned evidence assembly now exists, but related-fact ports
+    discard the exact historical identities needed to resolve the committed evidence
+    chain.
+  evidence: internal/audit/evidence.go:37-62 gives CredentialUseReference only BindingID/Purpose
+    and GovernanceRecordReference only Kind/ID. The credential list gets event/context
+    IDs at :155, but LoadCredentialUse at :180 receives only scope/project and that
+    lossy reference; PersistedCredentialUse has no persisted-use/event/context identity
+    to verify at :184-186. Governance assembly :111-130 uses anchor revision/digest
+    for authorization but drops both before LoadGovernanceRecord, which returns only
+    availability. Tests still supply binding-keyed facts and Kind/ID-keyed availability
+    (application_test.go:744-785); the declared detail tests pass but cannot distinguish
+    two persisted uses of the same binding or two revisions of a policy. Exact persisted
+    RequestContext identity and per-linked-subject authorization are substantially
+    improved (:95-108, :217-228); those improvements do not repair exact related-fact
+    resolution required by design :650-663. Static inspection and declared tests only.
+  required_fix: Retain an exact immutable persisted credential-use selector and its
+    event/request-context binding in the narrow reference/load result, and validate
+    it against the committed anchor before using the fact. Pass the evaluated control
+    revision/digest (and any required immutable record identity) through the governance
+    reader so availability describes that historical record, not merely its stable
+    policy ID. Keep assembly/authorization/redaction application-owned. Extend the
+    declared detail tests with distinct persisted uses sharing one binding and distinct
+    policy revisions, including missing/retained-away historical evidence and mismatch
+    rejection; do not change the published Audit wire/seal.
+  status: fixed
+  classification: fixed
+  owner: audit-ledger
+  first_seen_round: 1
+  last_seen_round: 3
+  seen_count: 2
+  last_evidence: Current evidence.go retains UseID, AuditEventID, RequestContextID,
+    Revision, and Digest in the typed references and validates loaded facts against
+    them; the required detail test passed.
+- blocker_id: BLK-eca90b3218a1
+  root_cause_key: audit-schema-compatibility-verified-by-names-only
+  obligation_id: dimension:structure
+  summary: Catalog validation was expanded, but reopen still does not establish unconditional
+    append-only trigger enforcement.
+  evidence: contracts/governance/audit/store/schema.go:498-519 validates tgenabled,
+    tgtype, function identity/language/security mode and normalized function source,
+    but never reads pg_trigger.tgqual or tgattr. Those catalogs independently determine
+    trigger predicates and UPDATE-column applicability and are not represented by
+    the checked event mask/function identity. On the existing supported-version branch
+    (:141-150), migration only validates and does not replace the trigger. The declared
+    incompatible-schema tests (schema_test.go:183-348) cover types/nullability/collation/constraints/index
+    ordering/disabled/wrong-event/wrong-timing/wrong-function triggers, and all passed;
+    none cover conditional or column-limited enforcement. The original name-only checks
+    are substantially repaired, but this same enforcement root remains incomplete.
+    This is a static finding; no additional negative experiment or payload was constructed.
+  required_fix: Compare the complete supported trigger enforcement definition, explicitly
+    requiring no WHEN predicate and no restricted UPDATE-column list, as well as the
+    existing event/timing/function checks. Reject incompatible deployed definitions
+    with an owner-decision error rather than repairing them destructively. Add these
+    compatibility cases to the declared schema tests, retaining valid idempotent reopen,
+    v1 upgrade and restore.
+  status: fixed
+  classification: fixed
+  owner: audit-ledger
+  first_seen_round: 1
+  last_seen_round: 3
+  seen_count: 2
+  last_evidence: Current schema.go:622-627 reads tgqual and tgattr and schema.go:634
+    rejects non-unconditional/non-all-column enforcement; the declared schema compatibility
+    tests passed.

@@ -1,0 +1,95 @@
+schema: omac.kernel-lifecycle-contract-ownership/v1
+historical_catalog:
+  canonical_sha256: 0f487c6c1f850478a36a2a71cd95df22e6f8f3646ac3a5bf0f710b93dba19364
+  owner_count: 133
+  component_count: 133
+  source_path_count: 247
+new_owners:
+  - owner_id: contracts-kernel-executor-resolution-evidence-v1
+    component_id: contracts-kernel-executor-resolution-evidence-v1
+    source_paths:
+      - contracts/kernel/contracts.go
+      - contracts/kernel/contracts_test.go
+      - contracts/kernel/lifecycle_contract_test.go
+      - contracts/kernel/validation.go
+      - contracts/spec/kernel/executor-resolution-evidence-v1.json
+      - contracts/spec/kernel/lifecycle-transition-v1.json
+      - docs/references/orchestration/orchestration-kernel-contracts.md
+      - scripts/contracts/validate_kernel_contract_schema.py
+      - scripts/contracts/verify_kernel_v1_compatibility.py
+    addition_reason: The corrective Kernel evidence component owns the exact public, schema-support, reference, and validator roots required by the reviewed migration.
+  - owner_id: contracts-platform-resource-executor-resolution-v1
+    component_id: contracts-platform-resource-executor-resolution-v1
+    source_paths:
+      - contracts/workflow/resource/kernel_compatibility.go
+      - contracts/workflow/resource/kernel_compatibility_test.go
+      - contracts/workflow/resource/kernel_wire.go
+      - contracts/workflow/resource/kernel_wire_test.go
+    addition_reason: The corrective Platform resource component owns only the exact wire and compatibility roots required to consume Kernel executor-resolution evidence.
+  - owner_id: kernel-lifecycle-contract-ownership
+    component_id: kernel-lifecycle-contract-ownership
+    source_paths:
+      - contracts/release/kernel-lifecycle-contract-ownership.yaml
+      - schemas/kernel-lifecycle-contract-ownership.schema.json
+      - scripts/release/verify_kernel_lifecycle_contract_ownership.py
+      - tests/kernel-lifecycle-contract-ownership/**
+    addition_reason: This component is the single authoring authority for the versioned ownership migration, its schema, verifier, and permanent regression tests.
+owner_residuals:
+  - owner_id: contracts-kernel-public
+    component_id: contracts-kernel-public
+    source_paths:
+      - contracts/kernel/review_regression_test.go
+      - contracts/kernel/validation_coverage_test.go
+    residual_reason: Retain the two unaffected historical Kernel public regressions after removing only the transferred corrective files from the parent root.
+  - owner_id: contracts-platform-resource
+    component_id: contracts-platform-resource
+    source_paths:
+      - contracts/workflow/resource/decision.go
+      - contracts/workflow/resource/decision_test.go
+      - contracts/workflow/resource/evidence.go
+      - contracts/workflow/resource/evidence_test.go
+      - contracts/workflow/resource/plan.go
+      - contracts/workflow/resource/plan_test.go
+      - contracts/workflow/resource/schema.go
+      - contracts/workflow/resource/schema_conformance_test.go
+      - contracts/workflow/resource/schema_test.go
+    residual_reason: Retain every non-target historical Platform resource file as an exact residual root after transferring only the Kernel wire and compatibility files.
+completed_node_transfers:
+  - from_node_id: contracts-kernel-public
+    to_owner_id: contracts-kernel-executor-resolution-evidence-v1
+    source_paths:
+      - contracts/kernel/contracts.go
+      - contracts/kernel/contracts_test.go
+      - contracts/kernel/lifecycle_contract_test.go
+      - contracts/kernel/validation.go
+    transfer_reason: Move only the four corrective public Kernel files from the completed parent boundary; all residual public regressions remain with contracts-kernel-public.
+  - from_node_id: contracts-kernel-schema-v1
+    to_owner_id: contracts-kernel-executor-resolution-evidence-v1
+    source_paths:
+      - scripts/contracts/validate_kernel_contract_schema.py
+    transfer_reason: Move the schema validator required by the corrective Kernel evidence component to its single canonical owner.
+  - from_node_id: contracts-kernel-schema-v1
+    to_owner_id: contracts-kernel-executor-resolution-evidence-v1
+    source_paths:
+      - scripts/contracts/verify_kernel_v1_compatibility.py
+    transfer_reason: Move the schema compatibility validator required by the corrective Kernel evidence component to its single canonical owner.
+  - from_node_id: contracts-platform-resource-kernel-wire
+    to_owner_id: contracts-platform-resource-executor-resolution-v1
+    source_paths:
+      - contracts/workflow/resource/kernel_wire.go
+    transfer_reason: Move the completed Platform raw-wire implementation into the corrective executor-resolution component.
+  - from_node_id: contracts-platform-resource-kernel-wire
+    to_owner_id: contracts-platform-resource-executor-resolution-v1
+    source_paths:
+      - contracts/workflow/resource/kernel_wire_test.go
+    transfer_reason: Keep the raw-wire regression coverage with its transferred Platform implementation.
+  - from_node_id: contracts-platform-resource-kernel-compatibility
+    to_owner_id: contracts-platform-resource-executor-resolution-v1
+    source_paths:
+      - contracts/workflow/resource/kernel_compatibility.go
+    transfer_reason: Move the completed Platform compatibility implementation into the corrective executor-resolution component.
+  - from_node_id: contracts-platform-resource-kernel-compatibility
+    to_owner_id: contracts-platform-resource-executor-resolution-v1
+    source_paths:
+      - contracts/workflow/resource/kernel_compatibility_test.go
+    transfer_reason: Keep the compatibility regression coverage with its transferred Platform implementation.

@@ -1,0 +1,601 @@
+{
+  "at": "2026-10-04T20:54:17.446893+00:00",
+  "node": "mcp-catalog-governed-hardening",
+  "control": {
+    "id": "01a103e4-4377-7af9-b3c9-dd1b118c6af1",
+    "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1",
+    "title": "[DAG:mcp-catalog-governed-hardening] Harden governed MCP catalog and materialization proof",
+    "description": "> **OMAC \u63a7\u5236\u7684\u6267\u884c\u3002\u7b2c\u4e00\u52a8\u4f5c\u5fc5\u987b\u4e25\u683c\u6267\u884c\uff1a**\n\n```bash\nOMAC_ENGINE=multica OMAC_WORKSPACE_ID=410ade5e-8ae0-4402-b975-813dea2ff3e1 OMAC_PROJECT_ID=732ce83f-5cbd-4485-850d-1b8a1bf16340 omac work show 01a103e4-4377-7af9-b3c9-dd1b118c6af1 --output json\n```\n\n> `omac work show` \u548c `omac work submit` \u90fd\u53ef\u80fd\u957f\u65f6\u95f4\u8fd0\u884c\u3002\u4efb\u4f55\u5de5\u5177\u8c03\u7528\u5728\u62ff\u5230\u6700\u7ec8 tool_result \u548c\u7ec8\u6001\u9000\u51fa\u7801\u524d\u90fd\u4e0d\u5b8c\u6574\u3002\u82e5\u5de5\u5177\u8fd4\u56de running/session\u3001\u7f3a\u5c11\u6700\u7ec8 tool_result\u3001\u51fa\u73b0\u7a7a\u8f93\u51fa\u6216\u4e0d\u5b8c\u6574\u8f93\u51fa\uff0c\u5fc5\u987b\u7b49\u5f85\u6216\u8f6e\u8be2\u5230\u7ec8\u6001\u3002\u4f7f\u7528\u8db3\u591f\u957f\u7684 wait/yield\uff0c\u6216\u4fdd\u7559\u5e76\u6062\u590d\u7eed\u63a5\u53e5\u67c4\uff1b\u8fd9\u662f\u901a\u7528\u7ec8\u6001\u89c4\u5219\uff0c\u4e0d\u7ed1\u5b9a\u67d0\u4e2a\u5177\u4f53\u5de5\u5177 API\u3002timeout/yield \u4e0d\u662f\u7a7a\u7ed3\u679c\uff0c\u4e5f\u4e0d\u5141\u8bb8\u636e\u6b64\u505c\u6b62\u3002`omac work show` \u53ea\u6709\u5728\u9000\u51fa\u7801 0 \u4e14\u5f97\u5230\u53ef\u89e3\u6790 JSON \u540e\u624d\u80fd\u7ee7\u7eed\u3002`omac work submit` \u53ea\u6709\u5728\u6700\u7ec8 tool_result \u660e\u786e\u7ed9\u51fa\u9000\u51fa\u7801 0\uff0c\u4e14 JSON \u5305\u542b `\"ok\": true`\u3001`\"terminal\": true` \u548c `\"next_action\": \"stop\"` \u65f6\u624d\u53ef\u5ba3\u79f0\u6210\u529f\u3002\u7ed3\u679c\u672a\u77e5\u65f6\u4e0d\u5f97\u5ba3\u79f0\u6210\u529f\u6216\u7ed3\u675f\uff1bvalidation error \u5fc5\u987b\u4fee\u590d\u540e\u91cd\u65b0\u63d0\u4ea4\u3002submit \u6210\u529f\u5c31\u662f\u672c\u6b21\u6267\u884c\u7684\u6700\u540e\u52a8\u4f5c\uff0c\u7acb\u5373\u505c\u6b62\uff0c\u4e0d\u518d\u6267\u884c\u4efb\u4f55\u5e73\u53f0\u5199\u5165\u3002\n\n> \u5728\u4e0a\u65b9\u7cbe\u786e\u7684 `omac work show` \u547d\u4ee4\u4ee5\u9000\u51fa\u7801 0 \u6210\u529f\u8fd4\u56de\u53ef\u89e3\u6790 JSON \u524d\uff0c\u4e0d\u5f97\u6267\u884c\u4efb\u4f55\u5176\u4ed6 Issue \u67e5\u8be2\uff08\u5305\u62ec `multica issue get`\u3001`multica issue comment list` \u6216 metadata \u67e5\u8be2\uff09\uff0c\u4e5f\u4e0d\u5f97\u5f00\u59cb\u5206\u6790\u4efb\u52a1\u5185\u5bb9\u3002work show \u6210\u529f\u540e\uff0c\u53ea\u80fd\u5728\u8fd4\u56de\u4e0a\u4e0b\u6587\u786e\u6709\u9700\u8981\u65f6\u4f7f\u7528\u53ea\u8bfb Issue \u67e5\u8be2\u3002\u7981\u6b62\u4efb\u4f55\u4f1a\u521b\u5efa\u3001\u4fee\u6539\u6216\u5220\u9664 Issue \u72b6\u6001\u7684 `multica issue` \u5199\u64cd\u4f5c\u3002\u8fd9\u662f\u8bed\u4e49\u8fb9\u754c\uff0c\u4e0d\u662f\u7a77\u4e3e\u547d\u4ee4\u6e05\u5355\uff1b\u7981\u6b62\u793a\u4f8b\u5305\u62ec `multica issue status`\u3001`multica issue assign`\u3001`multica issue comment`\u3001`multica issue metadata`\u3001`multica issue rerun`\u3001`multica issue cancel-task`\u3001`multica issue update`\u3001`multica issue create`\u3001`multica issue label`\u3001`multica issue property`\u3001`multica issue reorder` \u548c `multica issue subscriber`\u3002\u53ea\u5141\u8bb8\u4f7f\u7528\u4e0a\u65b9\u7ed9\u51fa\u7684\u7cbe\u786e `omac work show` \u547d\u4ee4\uff0c\u4ee5\u53ca work show \u8fd4\u56de\u7684\u7cbe\u786e `omac work submit` \u547d\u4ee4\u4f5c\u4e3a OMAC \u63a7\u5236\u547d\u4ee4\uff1b\u5df2\u6709\u624b\u5de5\u9644\u4ef6\u6216 verification \u4f46\u7f3a\u5c11 `delivery_identity` \u65f6\u4e5f\u5fc5\u987b\u901a\u8fc7\u8be5 submit \u547d\u4ee4\u5c01\u5b58\u3002\n\n# Harden governed MCP catalog and materialization proof\n\n## \u4efb\u52a1\u6458\u8981\n- \u7c7b\u578b: \u5f00\u53d1\u5b9e\u73b0\uff08`develop`\uff09\n- \u6267\u884c\u89d2\u8272: \u5f00\u53d1\u6267\u884c\u8005\uff08`worker`\uff09\n- \u76ee\u6807: Harden the existing mcp-catalog component with system-owned definition identity and digest, binding-only secret handling, durable restart-safe command reservation and replay, canonical governance and credential-use lineage, and exact runtime materialization proof without creating feature-local authorities.\n- \u4f9d\u636e: `api-mcp-amendment-decision.md`\n- \u4f9d\u636e: `docs/design/open-agent-cluster-overview-design.md:L68-L95`\n- \u4f9d\u636e: `docs/design/open-agent-cluster-overview-design.md:L189-L243`\n- \u4f9d\u636e: `docs/design/open-agent-cluster-overview-design.md:L585-L590`\n- \u4f9d\u636e: `docs/design/detailed/09-governance-and-security-detailed-design.md:L11-L45`\n- \u4f9d\u636e: `docs/design/detailed/09-governance-and-security-detailed-design.md:L278-L402`\n- \u4f9d\u636e: `docs/design/detailed/09-governance-and-security-detailed-design.md:L408-L474`\n- \u4f9d\u636e: `docs/design/detailed/09-governance-and-security-detailed-design.md:L553-L572`\n- \u4f9d\u636e: `docs/design/detailed/10-web-api-cli-detailed-design.md:L426-L486`\n- \u4f9d\u636e: `docs/design/detailed/10-web-api-cli-detailed-design.md:L1375-L1545`\n- \u4f9d\u636e: `docs/references/governance/security-and-enterprise.md:L236-L317`\n- \u4f9d\u636e: `docs/references/governance/security-and-enterprise.md:L402-L488`\n- \u4f9d\u636e: `docs/references/execution/agent-runtime.md:L130-L223`\n- \u4f9d\u636e: `contracts/agentrun/agentrun.go:L618-L735`\n- \u4f9d\u636e: `docs/delivery/acceptance-and-validation.md:L300-L313`\n\n## \u4efb\u52a1\u8be6\u60c5\nCompensating authoring delivery for the immutable completed mcp-catalog node. It preserves the mcp-catalog release component and source-owner identity, writes evidence under a new directory, and closes only the durable persistence, fail-closed secret, canonical governance, and exact materialization-proof roots exposed by api-mcp review.\n\n## \u975e\u76ee\u6807\n- Do not rewrite the completed mcp-catalog node, its merged delivery, review evidence, or runtime facts.\n- Do not create an MCP-local authorization engine, admission engine, credential store, audit ledger, Runtime, Workspace provider, or second persistence authority.\n- Do not accept caller-authored definition identity, caller-asserted non-secret classification, inline Header or Environment secret material, or incomplete materialization evidence.\n- Do not convert an unknown persistence, connector, or runtime outcome into success or a safe duplicate execution.\n- Do not change public HTTP or OpenAPI wire DTOs; api-mcp owns that adapter boundary.\n\n## \u4e3b\u8981\u4ee3\u7801\u5f52\u5c5e\u8303\u56f4\n- `internal/mcp/**`\n\n## \u4ea4\u4ed8\u7ea6\u675f\n- PR \u57fa\u7ebf: `main`\n- \u6539\u52a8\u5206\u652f\u8986\u76d6\u7387: `\u2265 90%`\n- PR \u5173\u8054\u6807\u8bc6: `AITEAM-1066`\n\n## \u4e0a\u6e38 issue\uff08\u9632\u8dd1\u504f\uff09\n\u672c\u4efb\u52a1\u627f\u63a5\u4ee5\u4e0b\u4e0a\u6e38 issue\uff0c\u7528\u4e8e\u8ffd\u6eaf\u9700\u6c42\u4e0e\u51b3\u7b56\uff1b\u82e5\u4e0e\u5f53\u524d contract \u51b2\u7a81\uff0c\u5148\u8bf7\u6c42\u786e\u8ba4\uff1a\n- \u8bbe\u8ba1\u65b9\u6848: `289a13bf-cede-4b5b-ba86-d72f0bef8164`\n- \u9a8c\u6536\u6587\u6863: `8e6bd282-6039-41d2-aa00-969a0bf1554a`\n- \u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Implement MCP Server import and test: `01a03a19-8f8b-7601-a728-d8b49b949d12`\n- \u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Create authorization and admission contracts: `8fc120a0-23c5-4119-96c1-b827222ed9dd`\n- \u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Create audit and usage contracts: `7b568083-2a29-47d5-a56e-3509b79ebb6c`\n- \u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Create Workspace contracts: `6094130b-838f-492f-a699-692f5731817b`\n- \u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Implement deterministic release artifact packaging: `152d735a-c373-4967-8ae0-45c191de2eff`",
+    "status": "blocked",
+    "dag_key": "mcp-catalog-governed-hardening",
+    "identifier": "AITEAM-1066",
+    "worker": "codex-macmini-newapi",
+    "reviewer": "hermes-reviewer",
+    "blocked_by": [
+      "mcp-catalog",
+      "contracts-authz-admission",
+      "contracts-audit-usage",
+      "contracts-workspace",
+      "release-artifact-tooling"
+    ],
+    "wave": null,
+    "artifacts": {
+      "pr_url": "https://github.com/xiaohei-info/open-agent-cluster/pull/103",
+      "head_sha": "13da87159867368a30634d04cf45500894d91f98"
+    },
+    "verification": {
+      "commands": [
+        {
+          "cmd": "mkdir -p artifacts/mcp-catalog-governed-hardening && go test -covermode=atomic -coverprofile=artifacts/mcp-catalog-governed-hardening/coverage.out ./internal/mcp/...",
+          "exit_code": 0,
+          "summary": "The internal/mcp package suite passed with 90.2% statement coverage."
+        },
+        {
+          "cmd": "go test ./internal/mcp/... -run '^(TestGovernedMCPUseCaseSystemOwnsIdentityAndDigest|TestGovernedMCPUseCaseRejectsInlineSecretValues|TestGovernedMCPUseCaseDurableCreateReplaySurvivesRestart|TestGovernedMCPUseCaseDurableProbeReplaySurvivesRestart|TestGovernedMCPUseCaseDurableMaterializationReplaySurvivesRestart|TestGovernedMCPUseCasePreservesUnknownCommitOutcome|TestGovernedMCPUseCaseUsesCanonicalGovernanceLineage|TestGovernedMCPUseCaseValidatesExactMaterializationProof)$' -count=1",
+          "exit_code": 0,
+          "summary": "All eight required governed MCP hardening regressions passed."
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/mcp-catalog-governed-hardening/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+          "exit_code": 0,
+          "summary": "The coverage artifact verified at 90.2%, above the 90% contract threshold."
+        },
+        {
+          "cmd": "python3 scripts/release/package_component.py --component mcp-catalog --kind platform-core-dependency-source --input internal/mcp --bundle artifacts/mcp-catalog-governed-hardening/source-bundle.tar.zst --component-manifest artifacts/mcp-catalog-governed-hardening/component-manifest.json --digest-output artifacts/mcp-catalog-governed-hardening/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner mcp-catalog --require-all-owner-sources-accounted",
+          "exit_code": 0,
+          "summary": "The mcp-catalog source bundle, digest, and component manifest were generated."
+        },
+        {
+          "cmd": "python3 scripts/release/verify_component_manifest.py --manifest artifacts/mcp-catalog-governed-hardening/component-manifest.json --bundle artifacts/mcp-catalog-governed-hardening/source-bundle.tar.zst --expected-component mcp-catalog --check-schema schemas/release-component-manifest.schema.json --require-owned-source internal/mcp/types.go --require-owned-source internal/mcp/import.go --ownership-catalog contracts/release/source-ownership-catalog.yaml --require-all-owner-sources-accounted",
+          "exit_code": 0,
+          "summary": "The component manifest and bundle ownership checks passed."
+        }
+      ],
+      "integration_gates": [
+        {
+          "name": "mcp-catalog-governed-hardening-gate",
+          "source_of_truth": [
+            "api-mcp-amendment-decision.md",
+            "docs/design/open-agent-cluster-overview-design.md:L68-L95",
+            "docs/design/open-agent-cluster-overview-design.md:L189-L243",
+            "docs/design/open-agent-cluster-overview-design.md:L585-L590",
+            "docs/design/detailed/09-governance-and-security-detailed-design.md:L11-L45",
+            "docs/design/detailed/09-governance-and-security-detailed-design.md:L278-L402",
+            "docs/design/detailed/09-governance-and-security-detailed-design.md:L408-L474",
+            "docs/design/detailed/09-governance-and-security-detailed-design.md:L553-L572",
+            "docs/design/detailed/10-web-api-cli-detailed-design.md:L426-L486",
+            "docs/design/detailed/10-web-api-cli-detailed-design.md:L1375-L1545",
+            "docs/references/governance/security-and-enterprise.md:L236-L317",
+            "docs/references/governance/security-and-enterprise.md:L402-L488",
+            "docs/references/execution/agent-runtime.md:L130-L223",
+            "contracts/agentrun/agentrun.go:L618-L735",
+            "docs/delivery/acceptance-and-validation.md:L300-L313"
+          ],
+          "delivery_goal": "Prove the canonical mcp-catalog component persists stable definitions and command records durably, rejects every inline-secret path, uses exact governance and credential-use identities, and returns ready only for a complete runtime materialization proof.",
+          "commands": [
+            {
+              "cmd": "mkdir -p artifacts/mcp-catalog-governed-hardening && go test -covermode=atomic -coverprofile=artifacts/mcp-catalog-governed-hardening/coverage.out ./internal/mcp/...",
+              "exit_code": 0
+            },
+            {
+              "cmd": "go test ./internal/mcp/... -run '^(TestGovernedMCPUseCaseSystemOwnsIdentityAndDigest|TestGovernedMCPUseCaseRejectsInlineSecretValues|TestGovernedMCPUseCaseDurableCreateReplaySurvivesRestart|TestGovernedMCPUseCaseDurableProbeReplaySurvivesRestart|TestGovernedMCPUseCaseDurableMaterializationReplaySurvivesRestart|TestGovernedMCPUseCasePreservesUnknownCommitOutcome|TestGovernedMCPUseCaseUsesCanonicalGovernanceLineage|TestGovernedMCPUseCaseValidatesExactMaterializationProof)$' -count=1",
+              "exit_code": 0
+            },
+            {
+              "cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/mcp-catalog-governed-hardening/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+              "exit_code": 0
+            },
+            {
+              "cmd": "python3 scripts/release/package_component.py --component mcp-catalog --kind platform-core-dependency-source --input internal/mcp --bundle artifacts/mcp-catalog-governed-hardening/source-bundle.tar.zst --component-manifest artifacts/mcp-catalog-governed-hardening/component-manifest.json --digest-output artifacts/mcp-catalog-governed-hardening/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner mcp-catalog --require-all-owner-sources-accounted",
+              "exit_code": 0
+            },
+            {
+              "cmd": "python3 scripts/release/verify_component_manifest.py --manifest artifacts/mcp-catalog-governed-hardening/component-manifest.json --bundle artifacts/mcp-catalog-governed-hardening/source-bundle.tar.zst --expected-component mcp-catalog --check-schema schemas/release-component-manifest.schema.json --require-owned-source internal/mcp/types.go --require-owned-source internal/mcp/import.go --ownership-catalog contracts/release/source-ownership-catalog.yaml --require-all-owner-sources-accounted",
+              "exit_code": 0
+            }
+          ],
+          "metrics": {
+            "statement_coverage_percent": 90.2,
+            "required_hardening_regression_test_count": 8,
+            "caller_authored_definition_identity_accept_count": 0,
+            "inline_secret_value_accept_count": 0,
+            "unknown_outcome_promoted_to_success_count": 0,
+            "materialization_binding_or_payload_mismatch_accept_count": 0,
+            "declared_artifact_count": 4
+          },
+          "artifacts": [
+            "artifacts/mcp-catalog-governed-hardening/coverage.out",
+            "artifacts/mcp-catalog-governed-hardening/source-bundle.tar.zst",
+            "artifacts/mcp-catalog-governed-hardening/bundle-digest.txt",
+            "artifacts/mcp-catalog-governed-hardening/component-manifest.json"
+          ]
+        }
+      ],
+      "pr_base": "main",
+      "coverage": 90.2,
+      "env_setup": [
+        "Repository Go and Python 3 toolchains were available; no external services were required."
+      ]
+    },
+    "verification_ref": {
+      "comment_id": "01a1045a-c554-7dfd-ba60-99cdaf8b322a",
+      "attachment_id": "01a1045a-c44d-79ed-8adc-7d3cd3d779a4",
+      "sha256": "3c67a12078b23322fd1a56322a3c6a7b61bedba9d36e10e1f0aa6410f693e1ae",
+      "bytes": 7316,
+      "filename": "omac-verification-3c67a12078b2.yaml"
+    },
+    "review_verdict": null,
+    "review_comment": null,
+    "machine_feedback": null,
+    "machine_feedback_ref": null,
+    "review_report": null,
+    "review_report_ref": null,
+    "review_subject_digest": null,
+    "review_obligations": [
+      {
+        "obligation_id": "dimension:authority",
+        "category": "dimension",
+        "requirement": "Authoritative inputs and source references"
+      },
+      {
+        "obligation_id": "dimension:structure",
+        "category": "dimension",
+        "requirement": "Structure, schema, dependency, and completeness"
+      },
+      {
+        "obligation_id": "dimension:execution",
+        "category": "dimension",
+        "requirement": "Executable commands and fail-closed verification"
+      },
+      {
+        "obligation_id": "dimension:ownership",
+        "category": "dimension",
+        "requirement": "Ownership, boundaries, and unique write paths"
+      },
+      {
+        "obligation_id": "dimension:evidence",
+        "category": "dimension",
+        "requirement": "Artifact lineage and evidence traceability"
+      },
+      {
+        "obligation_id": "dimension:regression",
+        "category": "dimension",
+        "requirement": "Prior blocker regression and changed-scope review"
+      },
+      {
+        "obligation_id": "integration:mcp-catalog-governed-hardening-gate",
+        "category": "integration",
+        "requirement": "Independently verify integration gate mcp-catalog-governed-hardening-gate",
+        "subject": "mcp-catalog-governed-hardening-gate"
+      }
+    ],
+    "review_obligations_ref": {
+      "comment_id": "01a10483-94ab-73f5-9d88-dff6e39c78db",
+      "attachment_id": "01a10483-9369-7358-b9e7-e3a084afe243",
+      "sha256": "2b8dbec54f907c94759c5c1184c8dc23729909dfc5110214205708094a101db4",
+      "bytes": 948,
+      "filename": "omac-review-obligations-2b8dbec54f90.yaml"
+    },
+    "review_ledger": {
+      "schema": "omac.review-ledger/v2",
+      "cycles": [
+        {
+          "round": 1,
+          "subject_digest": "35ca65598134682065e2f07235305bdf231d887ea0dc046ca280aa22b007fe73",
+          "report_digest": "d3a4231824f50dbdeb4b24fca5588caa2f228113f71b1c34ec59392844308f2e",
+          "verdict": "reject",
+          "obligation_results": {
+            "dimension:authority": "pass",
+            "dimension:structure": "fail",
+            "dimension:execution": "fail",
+            "dimension:ownership": "fail",
+            "dimension:evidence": "fail",
+            "dimension:regression": "pass",
+            "integration:mcp-catalog-governed-hardening-gate": "pass"
+          },
+          "new_count": 4,
+          "fixed_count": 0,
+          "regressed_count": 0,
+          "unchanged_count": 0,
+          "open_count": 4,
+          "prior_open_blocker_ids": [],
+          "open_blocker_ids": [
+            "BLK-41716b28a81a",
+            "BLK-5bc1614d11c7",
+            "BLK-c17700bf1f0d",
+            "BLK-dd6dac26dc8c"
+          ],
+          "reported_blocker_ids": [
+            "BLK-41716b28a81a",
+            "BLK-5bc1614d11c7",
+            "BLK-c17700bf1f0d",
+            "BLK-dd6dac26dc8c"
+          ],
+          "blocker_facts_schema": "omac.review-cycle-blocker-facts/v1",
+          "blocker_facts": [
+            {
+              "blocker_id": "BLK-41716b28a81a",
+              "root_cause_key": "mcp-governance-audit-projection-used-as-decision",
+              "obligation_id": "dimension:ownership",
+              "summary": "Authorization and Admission ports return audit projections instead of exact canonical decisions.",
+              "evidence": "internal/mcp/governed.go:73-79 returns audit.EvaluatedControl for both decisions; :865-907 validates only that projection. audit.EvaluatedControl and its provenance at contracts/governance/audit/contract.go:78-158 have no request digest or evaluation time. In contrast, contracts/governance/authz/contract.go:185-232 defines AuthorizationDecision with request digest, policy provenance, paired matched grants, obligations, and evaluated time; contracts/governance/admission/contract.go:471-553 defines ExecutionAdmissionDecision with request digest, required check keys, temporal validation, and constraints. The MCP tests return fixed controls at internal/mcp/governed_test.go:409-430 and do not exercise canonical decisions. docs/design/detailed/09-governance-and-security-detailed-design.md:296 and :367-402 prohibit cross-request reuse and require the exact decisions in the persistence boundary.",
+              "required_fix": "Consume the existing typed AuthorizationDecision and ExecutionAdmissionDecision contracts through canonical owner adapters. Verify exact request-digest linkage, retain full decision lineage, and propagate/enforce any tightening obligations and constraints before connector/runtime execution. Derive audit EvaluatedControl only after validating authoritative decisions; persist the decisions and audit links through the canonical transaction owner.",
+              "status": "open",
+              "classification": "new"
+            },
+            {
+              "blocker_id": "BLK-5bc1614d11c7",
+              "root_cause_key": "mcp-hardening-disconnected-canonical-owners",
+              "obligation_id": "dimension:structure",
+              "summary": "Durable persistence and runtime consumption are delivered only as interfaces and test implementations.",
+              "evidence": "internal/mcp/governed.go:258-267 declares MCPStore; :320-333 declares/injects runtime and governance ports. Repository-wide symbol/implementation searches find ReserveCommand and CommitCommand(MCPCommandCommit) implementations only in internal/mcp/governed_test.go:650-730, and the new runtime signature only in the same test file at :555-578. GovernedMCPUseCase has no non-test composition site. The restart tests reopen testMCPStore JSON at :624-634; testMCPRuntime calculates a launch and manufactures a ready proof at :573-578 without consuming it. All seven changed files are under internal/mcp. The contract calls for durable command reservation/replay and exact authoritative runtime materialization, not just a port declaration.",
+              "required_fix": "Implement and exercise adapters into the existing canonical Platform Core transaction/persistence owner and Runtime/AgentRun owner, with production-capable component composition. Prove atomic definition/command/audit persistence, durable restart/replay, unknown reservation retention, and proof emitted by actual launch consumption. Keep these adapters on the canonical authorities; do not add an MCP-local persistence store, runtime, or audit ledger, and do not change public HTTP/OpenAPI DTOs.",
+              "status": "open",
+              "classification": "new"
+            },
+            {
+              "blocker_id": "BLK-c17700bf1f0d",
+              "root_cause_key": "mcp-inline-secret-heuristic-classification",
+              "obligation_id": "dimension:execution",
+              "summary": "Inline Header and Environment values are still classified by heuristics, not an authoritative binding-only boundary.",
+              "evidence": "internal/mcp/types.go:439-447 and :471-480 accept values whenever isSensitiveName and looksLikeSecretValue are false; internal/mcp/import.go:197-220 copies those values into the candidate. internal/mcp/import.go:309-328 is a marker/prefix/length detector, not authoritative non-secret classification. The declared negative regression at internal/mcp/governed_test.go:93-111 exercises only one heuristic-positive value. api-mcp-amendment-decision.md:9 explicitly rejects heuristic secret bypasses and requires approved CredentialBinding handling. This is static evidence; no additional bypass experiment was constructed.",
+              "required_fix": "Replace caller-value heuristic classification with the approved authoritative binding-only flow for Header/Environment material. If the product retains non-sensitive literals, their admissibility must be determined by a system-owned constrained schema, not by caller assertions or absence of secret markers. Apply the same rule to import, create, update, persisted validation, and materialization, and extend the declared regressions accordingly.",
+              "status": "open",
+              "classification": "new"
+            },
+            {
+              "blocker_id": "BLK-dd6dac26dc8c",
+              "root_cause_key": "mcp-audit-request-id-context-id-conflation",
+              "obligation_id": "dimension:evidence",
+              "summary": "Audit validation incorrectly equates external request_id with persisted request_context_id.",
+              "evidence": "internal/mcp/governed.go:928 requires event.RequestContextID == command.RequestContext.RequestID. internal/mcp/governed_test.go:446 fabricates the event using the same equality. contracts/identity/requestcontext/request_context.go:37 exposes external RequestID; docs/references/governance/security-and-enterprise.md:305-317 expressly distinguishes persisted request_context_id and external request_id and requires authority-issued store binding.",
+              "required_fix": "Carry the canonical persisted RequestContext identity/receipt from the existing governance persistence boundary separately from the external request ID. Validate audit attribution against that canonical identity and preserve both identities in their intended fields. Update the declared lineage regression to use distinct request and persisted context IDs.",
+              "status": "open",
+              "classification": "new"
+            }
+          ]
+        }
+      ],
+      "blockers": [
+        {
+          "blocker_id": "BLK-41716b28a81a",
+          "root_cause_key": "mcp-governance-audit-projection-used-as-decision",
+          "obligation_id": "dimension:ownership",
+          "summary": "Authorization and Admission ports return audit projections instead of exact canonical decisions.",
+          "evidence": "internal/mcp/governed.go:73-79 returns audit.EvaluatedControl for both decisions; :865-907 validates only that projection. audit.EvaluatedControl and its provenance at contracts/governance/audit/contract.go:78-158 have no request digest or evaluation time. In contrast, contracts/governance/authz/contract.go:185-232 defines AuthorizationDecision with request digest, policy provenance, paired matched grants, obligations, and evaluated time; contracts/governance/admission/contract.go:471-553 defines ExecutionAdmissionDecision with request digest, required check keys, temporal validation, and constraints. The MCP tests return fixed controls at internal/mcp/governed_test.go:409-430 and do not exercise canonical decisions. docs/design/detailed/09-governance-and-security-detailed-design.md:296 and :367-402 prohibit cross-request reuse and require the exact decisions in the persistence boundary.",
+          "required_fix": "Consume the existing typed AuthorizationDecision and ExecutionAdmissionDecision contracts through canonical owner adapters. Verify exact request-digest linkage, retain full decision lineage, and propagate/enforce any tightening obligations and constraints before connector/runtime execution. Derive audit EvaluatedControl only after validating authoritative decisions; persist the decisions and audit links through the canonical transaction owner.",
+          "status": "open",
+          "classification": "new",
+          "first_seen_round": 1,
+          "last_seen_round": 1,
+          "seen_count": 1
+        },
+        {
+          "blocker_id": "BLK-5bc1614d11c7",
+          "root_cause_key": "mcp-hardening-disconnected-canonical-owners",
+          "obligation_id": "dimension:structure",
+          "summary": "Durable persistence and runtime consumption are delivered only as interfaces and test implementations.",
+          "evidence": "internal/mcp/governed.go:258-267 declares MCPStore; :320-333 declares/injects runtime and governance ports. Repository-wide symbol/implementation searches find ReserveCommand and CommitCommand(MCPCommandCommit) implementations only in internal/mcp/governed_test.go:650-730, and the new runtime signature only in the same test file at :555-578. GovernedMCPUseCase has no non-test composition site. The restart tests reopen testMCPStore JSON at :624-634; testMCPRuntime calculates a launch and manufactures a ready proof at :573-578 without consuming it. All seven changed files are under internal/mcp. The contract calls for durable command reservation/replay and exact authoritative runtime materialization, not just a port declaration.",
+          "required_fix": "Implement and exercise adapters into the existing canonical Platform Core transaction/persistence owner and Runtime/AgentRun owner, with production-capable component composition. Prove atomic definition/command/audit persistence, durable restart/replay, unknown reservation retention, and proof emitted by actual launch consumption. Keep these adapters on the canonical authorities; do not add an MCP-local persistence store, runtime, or audit ledger, and do not change public HTTP/OpenAPI DTOs.",
+          "status": "open",
+          "classification": "new",
+          "first_seen_round": 1,
+          "last_seen_round": 1,
+          "seen_count": 1
+        },
+        {
+          "blocker_id": "BLK-c17700bf1f0d",
+          "root_cause_key": "mcp-inline-secret-heuristic-classification",
+          "obligation_id": "dimension:execution",
+          "summary": "Inline Header and Environment values are still classified by heuristics, not an authoritative binding-only boundary.",
+          "evidence": "internal/mcp/types.go:439-447 and :471-480 accept values whenever isSensitiveName and looksLikeSecretValue are false; internal/mcp/import.go:197-220 copies those values into the candidate. internal/mcp/import.go:309-328 is a marker/prefix/length detector, not authoritative non-secret classification. The declared negative regression at internal/mcp/governed_test.go:93-111 exercises only one heuristic-positive value. api-mcp-amendment-decision.md:9 explicitly rejects heuristic secret bypasses and requires approved CredentialBinding handling. This is static evidence; no additional bypass experiment was constructed.",
+          "required_fix": "Replace caller-value heuristic classification with the approved authoritative binding-only flow for Header/Environment material. If the product retains non-sensitive literals, their admissibility must be determined by a system-owned constrained schema, not by caller assertions or absence of secret markers. Apply the same rule to import, create, update, persisted validation, and materialization, and extend the declared regressions accordingly.",
+          "status": "open",
+          "classification": "new",
+          "first_seen_round": 1,
+          "last_seen_round": 1,
+          "seen_count": 1
+        },
+        {
+          "blocker_id": "BLK-dd6dac26dc8c",
+          "root_cause_key": "mcp-audit-request-id-context-id-conflation",
+          "obligation_id": "dimension:evidence",
+          "summary": "Audit validation incorrectly equates external request_id with persisted request_context_id.",
+          "evidence": "internal/mcp/governed.go:928 requires event.RequestContextID == command.RequestContext.RequestID. internal/mcp/governed_test.go:446 fabricates the event using the same equality. contracts/identity/requestcontext/request_context.go:37 exposes external RequestID; docs/references/governance/security-and-enterprise.md:305-317 expressly distinguishes persisted request_context_id and external request_id and requires authority-issued store binding.",
+          "required_fix": "Carry the canonical persisted RequestContext identity/receipt from the existing governance persistence boundary separately from the external request ID. Validate audit attribution against that canonical identity and preserve both identities in their intended fields. Update the declared lineage regression to use distinct request and persisted context IDs.",
+          "status": "open",
+          "classification": "new",
+          "first_seen_round": 1,
+          "last_seen_round": 1,
+          "seen_count": 1
+        }
+      ]
+    },
+    "review_ledger_ref": {
+      "comment_id": "01a10492-c0aa-7e2c-96f5-801284e66705",
+      "attachment_id": "01a10492-c059-7519-81e1-2789e86ad699",
+      "sha256": "82ea8c08452f336d5a47bc50aee22d9da2f38430af48dc45057e6f7b9c5b7f8c",
+      "bytes": 13065,
+      "filename": "omac-review-ledger-82ea8c08452f.yaml"
+    },
+    "review_generation": null,
+    "review_ledger_generation": null,
+    "review_continuation": null,
+    "reviewer_run_baseline": null,
+    "worker_handoff": {
+      "schema": "omac.worker-handoff/v1",
+      "state": "pending",
+      "target_worker": "codex-macmini-newapi",
+      "gate": "review",
+      "source_review_subject_digest": "35ca65598134682065e2f07235305bdf231d887ea0dc046ca280aa22b007fe73",
+      "source_review_round": 1,
+      "source_review_verdict": "reject",
+      "source_review_feedback": {
+        "schema": "omac.worker-rework-feedback/v1",
+        "verdict": "reject",
+        "report_ref": {
+          "comment_id": "01a10492-bdd0-711b-911a-539dee771def",
+          "attachment_id": "01a10492-bd60-7955-9191-3cd7a96f19dd",
+          "sha256": "83c997d95bd850e1ae40941d35ae68f8c4c94207929dc15d6d7d982999095ce3",
+          "bytes": 19510,
+          "filename": "omac-review-report-83c997d95bd8.yaml"
+        },
+        "ledger_ref": {
+          "comment_id": "01a10492-c0aa-7e2c-96f5-801284e66705",
+          "attachment_id": "01a10492-c059-7519-81e1-2789e86ad699",
+          "sha256": "82ea8c08452f336d5a47bc50aee22d9da2f38430af48dc45057e6f7b9c5b7f8c",
+          "bytes": 13065,
+          "filename": "omac-review-ledger-82ea8c08452f.yaml"
+        },
+        "blockers": [
+          {
+            "root_cause_key": "mcp-inline-secret-heuristic-classification",
+            "summary": "Inline Header and Environment values are still classified by heuristics, not an authoritative binding-only boundary.",
+            "required_fix": "Replace caller-value heuristic classification with the approved authoritative binding-only flow for Header/Environment material. If the product retains non-sensitive literals, their admissibility must be determined by a system-owned constrained schema, not"
+          },
+          {
+            "root_cause_key": "mcp-hardening-disconnected-canonical-owners",
+            "summary": "Durable persistence and runtime consumption are delivered only as interfaces and test implementations.",
+            "required_fix": "Implement and exercise adapters into the existing canonical Platform Core transaction/persistence owner and Runtime/AgentRun owner, with production-capable component composition. Prove atomic definition/command/audit persistence, durable restart/replay, un"
+          },
+          {
+            "root_cause_key": "mcp-governance-audit-projection-used-as-decision",
+            "summary": "Authorization and Admission ports return audit projections instead of exact canonical decisions.",
+            "required_fix": "Consume the existing typed AuthorizationDecision and ExecutionAdmissionDecision contracts through canonical owner adapters. Verify exact request-digest linkage, retain full decision lineage, and propagate/enforce any tightening obligations and constraints "
+          },
+          {
+            "root_cause_key": "mcp-audit-request-id-context-id-conflation",
+            "summary": "Audit validation incorrectly equates external request_id with persisted request_context_id.",
+            "required_fix": "Carry the canonical persisted RequestContext identity/receipt from the existing governance persistence boundary separately from the external request ID. Validate audit attribution against that canonical identity and preserve both identities in their intend"
+          }
+        ]
+      },
+      "review_context_binding": {
+        "generation": null,
+        "contract_sha256": "0d05320b8b3317af156d1834b421afbf800c630368cca2550f5a479d293dd52a"
+      },
+      "target_review_bounce": 1,
+      "generation": "handoff-17979b921971475e",
+      "target_agent_id": "037ad7f0-98f9-489f-bf43-0d1148233356",
+      "baseline_direct_run_ids": [
+        "01a103e4-fcf1-7792-a73c-020ee2a354e2",
+        "01a10484-2f67-7076-8302-43bb24e8c651"
+      ],
+      "baseline_cutoff_created_at": null,
+      "baseline_verification_attachment_id": "01a1045a-c44d-79ed-8adc-7d3cd3d779a4",
+      "baseline_pr_head_sha": "13da87159867368a30634d04cf45500894d91f98",
+      "target_run_id": "01a10497-db0d-799c-9d0b-19bc6e184b36",
+      "target_worker_bounce": 0,
+      "terminal_observed_at": null,
+      "authoring_recovery": null
+    },
+    "delivery_identity": null,
+    "decision_required": {
+      "schema": "omac.decision-required/v1",
+      "reason_code": "worker-decision-required",
+      "kind": "develop",
+      "phase": "authoring",
+      "gate": "worker",
+      "resume_issue_id": "01a103e4-4377-7af9-b3c9-dd1b118c6af1",
+      "review_context_binding": {
+        "generation": null,
+        "contract_sha256": "0d05320b8b3317af156d1834b421afbf800c630368cca2550f5a479d293dd52a"
+      },
+      "blocker": {
+        "schema": "omac.worker-blocker/v2",
+        "reason_code": "owner-decision-required",
+        "issue_id": "01a103e4-4377-7af9-b3c9-dd1b118c6af1",
+        "review_context_binding": {
+          "generation": null,
+          "contract_sha256": "0d05320b8b3317af156d1834b421afbf800c630368cca2550f5a479d293dd52a"
+        },
+        "handoff_generation": "handoff-17979b921971475e",
+        "worker": "codex-macmini-newapi",
+        "run_id": "01a10497-db0d-799c-9d0b-19bc6e184b36",
+        "summary": "The review requires production MCP persistence and consumed-launch proof, but this checkout has no canonical owners for either. Adding local authorities would violate the contract.",
+        "decision_needed": "Identify the canonical Platform Core transaction/receipt API and AgentRun consumed-launch receipt API for MCP, or approve extending the canonical owner scope. Do not add an MCP-local store or runtime.",
+        "contract_ref": "non_goals",
+        "evidence": [
+          {
+            "ref": "internal/platformcore/agentrun/application.go:881",
+            "observation": "The Platform Core Store commits AgentRun runs/events/completion only; it exposes no MCP catalog transaction."
+          },
+          {
+            "ref": "internal/agents/definitions/definitions.go:302",
+            "observation": "DefinitionStore persists AgentDefinition publication, not MCP definitions or MCP command/audit transactions."
+          },
+          {
+            "ref": "internal/mcp/governed.go:278,336",
+            "observation": "MCPStore and MCPRuntimeMaterializer are ports with no non-test implementation in this checkout."
+          },
+          {
+            "ref": "internal/agentrun/runner.go:30",
+            "observation": "AgentRun's MCPInjectionMaterializer returns an injection path, not a consumed-launch receipt. Full MCP tests and all five declared commands pass at 90.0% coverage; they cannot prove the missing production owners."
+          }
+        ]
+      },
+      "next_action": "Resolve the reported decision, then explicitly run omac node retry <manifest> mcp-catalog-governed-hardening"
+    },
+    "amendment_attempt": null,
+    "contract": {
+      "objective": "Harden the existing mcp-catalog component with system-owned definition identity and digest, binding-only secret handling, durable restart-safe command reservation and replay, canonical governance and credential-use lineage, and exact runtime materialization proof without creating feature-local authorities.",
+      "non_goals": [
+        "Do not rewrite the completed mcp-catalog node, its merged delivery, review evidence, or runtime facts.",
+        "Do not create an MCP-local authorization engine, admission engine, credential store, audit ledger, Runtime, Workspace provider, or second persistence authority.",
+        "Do not accept caller-authored definition identity, caller-asserted non-secret classification, inline Header or Environment secret material, or incomplete materialization evidence.",
+        "Do not convert an unknown persistence, connector, or runtime outcome into success or a safe duplicate execution.",
+        "Do not change public HTTP or OpenAPI wire DTOs; api-mcp owns that adapter boundary."
+      ],
+      "verification_commands": [
+        "mkdir -p artifacts/mcp-catalog-governed-hardening && go test -covermode=atomic -coverprofile=artifacts/mcp-catalog-governed-hardening/coverage.out ./internal/mcp/...",
+        "go test ./internal/mcp/... -run '^(TestGovernedMCPUseCaseSystemOwnsIdentityAndDigest|TestGovernedMCPUseCaseRejectsInlineSecretValues|TestGovernedMCPUseCaseDurableCreateReplaySurvivesRestart|TestGovernedMCPUseCaseDurableProbeReplaySurvivesRestart|TestGovernedMCPUseCaseDurableMaterializationReplaySurvivesRestart|TestGovernedMCPUseCasePreservesUnknownCommitOutcome|TestGovernedMCPUseCaseUsesCanonicalGovernanceLineage|TestGovernedMCPUseCaseValidatesExactMaterializationProof)$' -count=1",
+        "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/mcp-catalog-governed-hardening/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+        "python3 scripts/release/package_component.py --component mcp-catalog --kind platform-core-dependency-source --input internal/mcp --bundle artifacts/mcp-catalog-governed-hardening/source-bundle.tar.zst --component-manifest artifacts/mcp-catalog-governed-hardening/component-manifest.json --digest-output artifacts/mcp-catalog-governed-hardening/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner mcp-catalog --require-all-owner-sources-accounted",
+        "python3 scripts/release/verify_component_manifest.py --manifest artifacts/mcp-catalog-governed-hardening/component-manifest.json --bundle artifacts/mcp-catalog-governed-hardening/source-bundle.tar.zst --expected-component mcp-catalog --check-schema schemas/release-component-manifest.schema.json --require-owned-source internal/mcp/types.go --require-owned-source internal/mcp/import.go --ownership-catalog contracts/release/source-ownership-catalog.yaml --require-all-owner-sources-accounted"
+      ],
+      "integration_gates": [
+        {
+          "name": "mcp-catalog-governed-hardening-gate",
+          "layer": "L1",
+          "source_of_truth": [
+            "api-mcp-amendment-decision.md",
+            "docs/design/open-agent-cluster-overview-design.md:L68-L95",
+            "docs/design/open-agent-cluster-overview-design.md:L189-L243",
+            "docs/design/open-agent-cluster-overview-design.md:L585-L590",
+            "docs/design/detailed/09-governance-and-security-detailed-design.md:L11-L45",
+            "docs/design/detailed/09-governance-and-security-detailed-design.md:L278-L402",
+            "docs/design/detailed/09-governance-and-security-detailed-design.md:L408-L474",
+            "docs/design/detailed/09-governance-and-security-detailed-design.md:L553-L572",
+            "docs/design/detailed/10-web-api-cli-detailed-design.md:L426-L486",
+            "docs/design/detailed/10-web-api-cli-detailed-design.md:L1375-L1545",
+            "docs/references/governance/security-and-enterprise.md:L236-L317",
+            "docs/references/governance/security-and-enterprise.md:L402-L488",
+            "docs/references/execution/agent-runtime.md:L130-L223",
+            "contracts/agentrun/agentrun.go:L618-L735",
+            "docs/delivery/acceptance-and-validation.md:L300-L313"
+          ],
+          "delivery_goal": "Prove the canonical mcp-catalog component persists stable definitions and command records durably, rejects every inline-secret path, uses exact governance and credential-use identities, and returns ready only for a complete runtime materialization proof.",
+          "covers": [
+            "mcp-catalog-governed-hardening"
+          ],
+          "acceptance_refs": [
+            "UJ-MCP-001"
+          ],
+          "commands": [
+            "mkdir -p artifacts/mcp-catalog-governed-hardening && go test -covermode=atomic -coverprofile=artifacts/mcp-catalog-governed-hardening/coverage.out ./internal/mcp/...",
+            "go test ./internal/mcp/... -run '^(TestGovernedMCPUseCaseSystemOwnsIdentityAndDigest|TestGovernedMCPUseCaseRejectsInlineSecretValues|TestGovernedMCPUseCaseDurableCreateReplaySurvivesRestart|TestGovernedMCPUseCaseDurableProbeReplaySurvivesRestart|TestGovernedMCPUseCaseDurableMaterializationReplaySurvivesRestart|TestGovernedMCPUseCasePreservesUnknownCommitOutcome|TestGovernedMCPUseCaseUsesCanonicalGovernanceLineage|TestGovernedMCPUseCaseValidatesExactMaterializationProof)$' -count=1",
+            "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/mcp-catalog-governed-hardening/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+            "python3 scripts/release/package_component.py --component mcp-catalog --kind platform-core-dependency-source --input internal/mcp --bundle artifacts/mcp-catalog-governed-hardening/source-bundle.tar.zst --component-manifest artifacts/mcp-catalog-governed-hardening/component-manifest.json --digest-output artifacts/mcp-catalog-governed-hardening/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner mcp-catalog --require-all-owner-sources-accounted",
+            "python3 scripts/release/verify_component_manifest.py --manifest artifacts/mcp-catalog-governed-hardening/component-manifest.json --bundle artifacts/mcp-catalog-governed-hardening/source-bundle.tar.zst --expected-component mcp-catalog --check-schema schemas/release-component-manifest.schema.json --require-owned-source internal/mcp/types.go --require-owned-source internal/mcp/import.go --ownership-catalog contracts/release/source-ownership-catalog.yaml --require-all-owner-sources-accounted"
+          ],
+          "required_metrics": {
+            "statement_coverage_percent": 90,
+            "required_hardening_regression_test_count": 8,
+            "caller_authored_definition_identity_accept_count": 0,
+            "inline_secret_value_accept_count": 0,
+            "unknown_outcome_promoted_to_success_count": 0,
+            "materialization_binding_or_payload_mismatch_accept_count": 0,
+            "declared_artifact_count": 4
+          },
+          "artifacts": [
+            "artifacts/mcp-catalog-governed-hardening/coverage.out",
+            "artifacts/mcp-catalog-governed-hardening/source-bundle.tar.zst",
+            "artifacts/mcp-catalog-governed-hardening/bundle-digest.txt",
+            "artifacts/mcp-catalog-governed-hardening/component-manifest.json"
+          ]
+        }
+      ],
+      "pr_base": "main",
+      "acceptance_refs": [
+        "UJ-MCP-001"
+      ],
+      "source_of_truth": [
+        "api-mcp-amendment-decision.md",
+        "docs/design/open-agent-cluster-overview-design.md:L68-L95",
+        "docs/design/open-agent-cluster-overview-design.md:L189-L243",
+        "docs/design/open-agent-cluster-overview-design.md:L585-L590",
+        "docs/design/detailed/09-governance-and-security-detailed-design.md:L11-L45",
+        "docs/design/detailed/09-governance-and-security-detailed-design.md:L278-L402",
+        "docs/design/detailed/09-governance-and-security-detailed-design.md:L408-L474",
+        "docs/design/detailed/09-governance-and-security-detailed-design.md:L553-L572",
+        "docs/design/detailed/10-web-api-cli-detailed-design.md:L426-L486",
+        "docs/design/detailed/10-web-api-cli-detailed-design.md:L1375-L1545",
+        "docs/references/governance/security-and-enterprise.md:L236-L317",
+        "docs/references/governance/security-and-enterprise.md:L402-L488",
+        "docs/references/execution/agent-runtime.md:L130-L223",
+        "contracts/agentrun/agentrun.go:L618-L735",
+        "docs/delivery/acceptance-and-validation.md:L300-L313"
+      ],
+      "required_contracts": [
+        "docs/references/execution/agent-runtime.md",
+        "docs/references/governance/security-and-enterprise.md"
+      ],
+      "scope_paths": [
+        "internal/mcp/**"
+      ]
+    },
+    "contract_ref": {
+      "comment_id": "01a103e4-670e-79bb-b4e3-49f22b4dbba6",
+      "attachment_id": "01a103e4-65ef-7b4a-a23a-484b02dbd88d",
+      "sha256": "6ca5358d243cc09bd6fc8358308239ab5910c05c5624f9eb0206f9665dd98bb0",
+      "bytes": 8321,
+      "filename": "omac-contract-6ca5358d243c.yaml"
+    },
+    "source_refs": [],
+    "kind": "develop",
+    "phase": "authoring",
+    "bounces": {
+      "worker": 0,
+      "ci": 0,
+      "review": 1,
+      "merge": 0
+    },
+    "bounce_baseline": null,
+    "deliverable": null,
+    "deliverable_ref": null,
+    "project_rules": null,
+    "project_rules_ref": null,
+    "agent_run_finished_without_submit": false,
+    "agent_run_failed": false,
+    "created_at": "2026-10-03T22:30:53Z",
+    "updated_at": "2026-10-04T03:21:03Z",
+    "platform_assignee_id": "037ad7f0-98f9-489f-bf43-0d1148233356",
+    "unknown_persisted_fields": {},
+    "review_nits_acceptance": null
+  },
+  "runs": [
+    {
+      "id": "01a10497-db0d-799c-9d0b-19bc6e184b36",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "037ad7f0-98f9-489f-bf43-0d1148233356",
+      "created_at": "2026-10-04T01:47:03Z",
+      "updated_at": "2026-10-04T03:21:03Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "01a10484-2f67-7076-8302-43bb24e8c651",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+      "created_at": "2026-10-04T01:25:34Z",
+      "updated_at": "2026-10-04T01:41:40Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "01a103e4-fcf1-7792-a73c-020ee2a354e2",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "037ad7f0-98f9-489f-bf43-0d1148233356",
+      "created_at": "2026-10-03T22:31:41Z",
+      "updated_at": "2026-10-04T00:40:52Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    }
+  ]
+}

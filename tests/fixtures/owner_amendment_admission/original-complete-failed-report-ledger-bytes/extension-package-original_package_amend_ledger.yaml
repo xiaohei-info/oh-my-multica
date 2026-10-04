@@ -1,0 +1,89 @@
+schema: omac.review-ledger/v2
+cycles:
+- round: 1
+  subject_digest: e4bb11308e55fd073417e779c3d36104e054f7f7b0f48072cfe45e34c8eb6dc7
+  report_digest: d60a7b13a29ed0db36f83941463501b54418d989efc3761d38e86805067d1326
+  verdict: reject
+  obligation_results:
+    dimension:authority: pass
+    dimension:structure: pass
+    dimension:execution: fail
+    dimension:ownership: pass
+    dimension:evidence: pass
+    dimension:regression: pass
+    acceptance:Done/merged facts and unaffected node runtime state remain immutable: pass
+    acceptance:The amendment is schema-valid and changes only the minimum required nodes: pass
+    acceptance:The output states why each changed node resumes at review, authoring, or merging: pass
+    integration:running-dag-amendment: pass
+    acceptance-responsibility:amendment-matrix: pass
+  new_count: 1
+  fixed_count: 0
+  regressed_count: 0
+  unchanged_count: 0
+  open_count: 1
+  prior_open_blocker_ids: []
+  open_blocker_ids: &id001
+  - BLK-5594b54e9956
+  reported_blocker_ids: *id001
+  blocker_facts_schema: omac.review-cycle-blocker-facts/v1
+  blocker_facts:
+  - blocker_id: BLK-5594b54e9956
+    root_cause_key: amendment-authoring-recovery-rebases-protected-budget
+    obligation_id: dimension:execution
+    summary: The proposed mandatory normal AUTHORING recovery cannot currently preserve
+      the expressly protected consumed budget.
+    evidence: Fresh omac work show Authorization 01a10383-b5e2-71ee-bc1e-d5cc5214e55b
+      reports worker_bounce=1, review_bounce=1 and no bounce_budget baseline; bound
+      meta.amendment_apply has no Authorization retained baseline. Native core/amendment.py:1144-1158
+      initializes every existing recovery entry with amendment_bounce_baseline(item);
+      :1169-1172 excludes recovered nodes from preserved older baselines; core/stage_recovery.py:283-285
+      passes that baseline to restore_authoring_generation. core/retry_budget.py:32-37
+      captures absolute counters and :170-215 computes current minus baseline. Thus
+      present consumed 1/1 becomes 0/0 after a normal new baseline. Native _minimal_rerun
+      independently includes Authorization in AUTHORING. The proposal repeatedly requires
+      every current approved budget authority to remain unchanged and refusal of any
+      reset/grant. No apply was run; evidence is current CLI facts plus static production
+      control-path inspection.
+    required_fix: Provide a source-bound, independently reviewable supported recovery
+      path that retains the existing absolute/relative budget authority and consumed
+      amounts for every affected WorkItem, including Authorization, and prove it without
+      live apply or manual runtime edits. If the installed normal path cannot do this,
+      retain STOP and obtain a separate explicit lawful budget/recovery decision or
+      supported control-plane repair before requesting executable amendment PASS.
+      Do not change limits, clear counters, remove required owner obligations, hand-write
+      a baseline, or treat this review as granting budget.
+    status: open
+    classification: new
+    owner: amendment-orchestrator
+blockers:
+- blocker_id: BLK-5594b54e9956
+  root_cause_key: amendment-authoring-recovery-rebases-protected-budget
+  obligation_id: dimension:execution
+  summary: The proposed mandatory normal AUTHORING recovery cannot currently preserve
+    the expressly protected consumed budget.
+  evidence: Fresh omac work show Authorization 01a10383-b5e2-71ee-bc1e-d5cc5214e55b
+    reports worker_bounce=1, review_bounce=1 and no bounce_budget baseline; bound
+    meta.amendment_apply has no Authorization retained baseline. Native core/amendment.py:1144-1158
+    initializes every existing recovery entry with amendment_bounce_baseline(item);
+    :1169-1172 excludes recovered nodes from preserved older baselines; core/stage_recovery.py:283-285
+    passes that baseline to restore_authoring_generation. core/retry_budget.py:32-37
+    captures absolute counters and :170-215 computes current minus baseline. Thus
+    present consumed 1/1 becomes 0/0 after a normal new baseline. Native _minimal_rerun
+    independently includes Authorization in AUTHORING. The proposal repeatedly requires
+    every current approved budget authority to remain unchanged and refusal of any
+    reset/grant. No apply was run; evidence is current CLI facts plus static production
+    control-path inspection.
+  required_fix: Provide a source-bound, independently reviewable supported recovery
+    path that retains the existing absolute/relative budget authority and consumed
+    amounts for every affected WorkItem, including Authorization, and prove it without
+    live apply or manual runtime edits. If the installed normal path cannot do this,
+    retain STOP and obtain a separate explicit lawful budget/recovery decision or
+    supported control-plane repair before requesting executable amendment PASS. Do
+    not change limits, clear counters, remove required owner obligations, hand-write
+    a baseline, or treat this review as granting budget.
+  status: open
+  classification: new
+  owner: amendment-orchestrator
+  first_seen_round: 1
+  last_seen_round: 1
+  seen_count: 1

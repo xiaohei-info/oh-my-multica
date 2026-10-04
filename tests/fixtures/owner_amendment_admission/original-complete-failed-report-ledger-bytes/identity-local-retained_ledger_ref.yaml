@@ -1,0 +1,688 @@
+schema: omac.review-ledger/v2
+cycles:
+- round: 1
+  subject_digest: 8fb4b93a41bc8d44629f81d919199e67e206ef206ede979664e34fdcce60bd83
+  report_digest: 66ea718b189247163324e9c7071af21f45781be63babfd45212aa51010d29cbb
+  verdict: reject
+  obligation_results:
+    dimension:authority: pass
+    dimension:structure: fail
+    dimension:execution: fail
+    dimension:ownership: pass
+    dimension:evidence: fail
+    dimension:regression: pass
+    integration:identity-local-gate: pass
+  new_count: 4
+  fixed_count: 0
+  regressed_count: 0
+  unchanged_count: 0
+  open_count: 4
+  prior_open_blocker_ids: []
+  open_blocker_ids: &id001
+  - BLK-62858e200019
+  - BLK-7e002b74f69c
+  - BLK-8646e42ba221
+  - BLK-8c9128c2b72c
+  reported_blocker_ids: *id001
+  blocker_facts_schema: omac.review-cycle-blocker-facts/v1
+  blocker_facts:
+  - blocker_id: BLK-62858e200019
+    root_cause_key: identity-recovery-session-issuance-not-serialized
+    obligation_id: dimension:structure
+    summary: Session issuance is not fenced against concurrent password recovery.
+    evidence: 'Static control-flow evidence: internal/identity/service.go:362-370
+      authenticates outside the session-write transaction; createSession at service.go:294-355
+      resolves identity and access before a transaction containing only CreateSession
+      and AppendAudit. internal/identity/recovery.go:247-255 replaces the credential
+      and revokes currently stored sessions in a separate transaction. SessionRecord/Tx
+      at types.go:81-86,125-127 carry no credential generation or conditional issuance
+      fence. TestRecoveryIssueCompletionRevokesSessionsAndIsIdempotent and TestUJIdentity001BootstrapInvitationLocaleRecoveryAndSessionLifecycle
+      exercise already-persisted sessions sequentially; they do not cover in-flight
+      authentication. This finding is based on code inspection, not an additional
+      security experiment.'
+    required_fix: Serialize local credential validation/session issuance with recovery,
+      or bind the verified authentication to a credential/session generation checked
+      atomically at session creation and session resolution. Apply the same boundary
+      to login and bootstrap/invitation auto-login. Add a deterministic local regression
+      proving recovery invalidates pre-recovery authentication even when session persistence
+      completes later, without retaining plaintext credentials.
+    status: open
+    classification: new
+    owner: identity-local
+  - blocker_id: BLK-7e002b74f69c
+    root_cause_key: identity-concurrent-idempotency-omits-password-equivalence
+    obligation_id: dimension:structure
+    summary: Concurrent replay branches skip the password-equivalence checks used
+      for ordinary idempotent retries.
+    evidence: 'Static evidence: recovery.go:195 hashes only the token digest; completedRecoveryReplay
+      at 271-311 verifies password equivalence, but the transaction replay branch
+      at 228-232 directly unmarshals the saved result. service.go:128-130 omits password
+      from the bootstrap digest and 177-183 skips bootstrapReplay verification when
+      the record appears between the initial lookup and transaction. invitation.go:308
+      similarly omits password and 326-330 skips acceptedInvitationReplay verification.
+      Existing concurrent tests use different idempotency keys; ordinary replay tests
+      validate sequential changed-input rejection, not this race. No additional negative-test
+      input was constructed.'
+    required_fix: Make password-equivalence validation part of every idempotency replay
+      decision, including the atomic transaction branch, using the same protected
+      comparison semantics as the ordinary replay path. Do not store plaintext or
+      an unkeyed low-entropy request-password digest. Add deterministic concurrent
+      same-key tests for identical input and changed input across bootstrap, invitation
+      acceptance, and recovery; changed input must return a conflict rather than success.
+    status: open
+    classification: new
+    owner: identity-local
+  - blocker_id: BLK-8646e42ba221
+    root_cause_key: identity-dependency-errors-mapped-to-user-denials
+    obligation_id: dimension:execution
+    summary: Authentication and governance dependency failures are flattened into
+      credential or permission errors.
+    evidence: service.go:366-368 turns every LocalAuthenticator.Authenticate error
+      into ErrInvalidCredentials; service.go:435-437 and invitation.go:467-469 turn
+      Policy lookup errors into ErrForbidden; recovery.go:217-219 turns LocalScopeID
+      errors into ErrNotFound. bootstrapReplay service.go:268-270, acceptedInvitationReplay
+      invitation.go:415-417, and completedRecoveryReplay recovery.go:308-310 also
+      flatten VerifyPassword operational errors into idempotency conflicts. The independently
+      executed declared suite includes TestSessionAndAuthorizationFailureMatrix (failure_paths_test.go:194-275),
+      which injects an operational driver failure at identity_test.go:485-487 and
+      currently asserts ErrInvalidCredentials at failure_paths_test.go:248-251. handler.go:337-353
+      already supports sanitized 500 responses, and its handler-only internal-error
+      test does not exercise this Service path.
+    required_fix: Distinguish known invalid-credential/authorization/not-found outcomes
+      from operational errors through typed port/SDK errors. Preserve or wrap operational
+      errors at the service boundary and return sanitized 5xx responses at HTTP boundaries.
+      Update the declared failure tests to assert propagation for outages/cancellation
+      and user-facing denial only for genuine credential or permission failures. Retain
+      the intentionally designed post-commit login and notification fallbacks.
+    status: open
+    classification: new
+    owner: identity-local
+  - blocker_id: BLK-8c9128c2b72c
+    root_cause_key: identity-request-metadata-regenerated-within-http-request
+    obligation_id: dimension:evidence
+    summary: Protected HTTP mutations regenerate request identity instead of propagating
+      the resolved request metadata.
+    evidence: handler.go:267 obtains requestMetadata for ResolveBrowserSession and
+      273 exposes that RequestID; protected route callbacks invoke requestMetadata(r)
+      again (e.g. 204 and 252). requestMetadata at 292-303 generates a new random
+      RequestID each call and does not attach it to the request. locale.go:54-56 and
+      recovery.go:40-42 overwrite the RequestContext IDs with the second metadata.
+      The shared governance reference security-and-enterprise.md:13-15 requires request
+      identity propagation and causal tracing. Handler tests use testApplication,
+      returning a fixed context at handler_test.go:119-124, and do not assert identity
+      equality between resolution, authorization, audit, and response. Static code
+      inspection establishes this discrepancy; no new request experiment was run.
+    required_fix: Normalize metadata exactly once at the HTTP entry and pass the same
+      immutable metadata through session resolution and the application call. Preserve
+      the resolved RequestContext request/causation/correlation IDs instead of overwriting
+      them with independently generated ones. Add handler-to-service regression assertions
+      for absent and supplied request IDs across locale, recovery, invitation, and
+      logout paths.
+    status: open
+    classification: new
+    owner: identity-local
+- round: 2
+  subject_digest: 208b06850fad83b3aad1386432bec49e9d219562b7f2030cb4dc6f1058027944
+  report_digest: 1d3baab9c1ca027c3fa775d840f944d6db615dc5c5a5ce2e6c4498e0e9bc1ce6
+  verdict: reject
+  obligation_results:
+    dimension:authority: pass
+    dimension:structure: fail
+    dimension:execution: fail
+    dimension:ownership: pass
+    dimension:evidence: pass
+    dimension:regression: pass
+    integration:identity-local-gate: pass
+  new_count: 1
+  fixed_count: 3
+  regressed_count: 0
+  unchanged_count: 0
+  open_count: 2
+  prior_open_blocker_ids:
+  - BLK-62858e200019
+  - BLK-7e002b74f69c
+  - BLK-8646e42ba221
+  - BLK-8c9128c2b72c
+  open_blocker_ids: &id002
+  - BLK-8646e42ba221
+  - BLK-9a7d286279b9
+  reported_blocker_ids: *id002
+  blocker_facts_schema: omac.review-cycle-blocker-facts/v1
+  blocker_facts:
+  - blocker_id: BLK-62858e200019
+    root_cause_key: identity-recovery-session-issuance-not-serialized
+    obligation_id: dimension:structure
+    summary: Session issuance is not fenced against concurrent password recovery.
+    evidence: 'Static control-flow evidence: internal/identity/service.go:362-370
+      authenticates outside the session-write transaction; createSession at service.go:294-355
+      resolves identity and access before a transaction containing only CreateSession
+      and AppendAudit. internal/identity/recovery.go:247-255 replaces the credential
+      and revokes currently stored sessions in a separate transaction. SessionRecord/Tx
+      at types.go:81-86,125-127 carry no credential generation or conditional issuance
+      fence. TestRecoveryIssueCompletionRevokesSessionsAndIsIdempotent and TestUJIdentity001BootstrapInvitationLocaleRecoveryAndSessionLifecycle
+      exercise already-persisted sessions sequentially; they do not cover in-flight
+      authentication. This finding is based on code inspection, not an additional
+      security experiment.'
+    required_fix: Serialize local credential validation/session issuance with recovery,
+      or bind the verified authentication to a credential/session generation checked
+      atomically at session creation and session resolution. Apply the same boundary
+      to login and bootstrap/invitation auto-login. Add a deterministic local regression
+      proving recovery invalidates pre-recovery authentication even when session persistence
+      completes later, without retaining plaintext credentials.
+    status: fixed
+    classification: fixed
+    last_evidence: internal/identity/service.go:338-353 revalidates the current password
+      inside the session-write transaction; recovery.go:253-260 replaces the credential
+      and revokes sessions in the same Store transaction boundary. Login, bootstrap
+      auto-login (service.go:271), and invitation auto-login (invitation.go:420) share
+      createSession. Independently rerun full declared suite includes TestRecoveryFencesAuthenticationBeforeSessionIssue
+      (identity_test.go:1134-1179), which deterministically pauses authenticated login,
+      completes recovery, and asserts no late session is created. No undeclared experiment
+      was run.
+    owner: identity-local
+  - blocker_id: BLK-7e002b74f69c
+    root_cause_key: identity-concurrent-idempotency-omits-password-equivalence
+    obligation_id: dimension:structure
+    summary: Concurrent replay branches skip the password-equivalence checks used
+      for ordinary idempotent retries.
+    evidence: 'Static evidence: recovery.go:195 hashes only the token digest; completedRecoveryReplay
+      at 271-311 verifies password equivalence, but the transaction replay branch
+      at 228-232 directly unmarshals the saved result. service.go:128-130 omits password
+      from the bootstrap digest and 177-183 skips bootstrapReplay verification when
+      the record appears between the initial lookup and transaction. invitation.go:308
+      similarly omits password and 326-330 skips acceptedInvitationReplay verification.
+      Existing concurrent tests use different idempotency keys; ordinary replay tests
+      validate sequential changed-input rejection, not this race. No additional negative-test
+      input was constructed.'
+    required_fix: Make password-equivalence validation part of every idempotency replay
+      decision, including the atomic transaction branch, using the same protected
+      comparison semantics as the ordinary replay path. Do not store plaintext or
+      an unkeyed low-entropy request-password digest. Add deterministic concurrent
+      same-key tests for identical input and changed input across bootstrap, invitation
+      acceptance, and recovery; changed input must return a conflict rather than success.
+    status: fixed
+    classification: fixed
+    last_evidence: Transaction replay branches at service.go:178-184, invitation.go:326-332,
+      recovery.go:231-237 all invoke verifyReplayPassword (service.go:572-583), as
+      do ordinary replay paths. This reads the protected credential hash and compares
+      through the authenticator, with no persisted plaintext or added password request
+      digest. Declared full suite independently passed TestConcurrentBootstrapIdempotencyChecksPasswordEquivalence,
+      TestConcurrentInvitationIdempotencyChecksPasswordEquivalence, and TestConcurrentRecoveryIdempotencyChecksPasswordEquivalence;
+      deterministic hashing barriers exercise same-input success and changed-input
+      conflict.
+    owner: identity-local
+  - blocker_id: BLK-8646e42ba221
+    root_cause_key: identity-dependency-errors-mapped-to-user-denials
+    obligation_id: dimension:execution
+    summary: Installer-authority outages and cancellation are still converted into
+      permission denials.
+    evidence: 'Static control-flow evidence at internal/identity/service.go:93-95
+      and internal/identity/recovery.go:121-123: any InstallerAuthority error is replaced
+      with ErrForbidden. The port at types.go:163-166 returns a general error, with
+      no denial-only restriction. fakeInstaller at identity_test.go:713-732 returns
+      only business denials; TestBootstrapInstallerAndPersistenceFailureMatrix and
+      TestRecoveryIssueAndBreakGlassFailureMatrix therefore do not exercise these
+      operational failure paths. All existing declared commands passed; no additional
+      negative test was constructed.'
+    required_fix: Preserve or wrap operational/cancellation errors from both InstallerAuthority
+      calls; map only an explicitly typed/sentinel authorization denial to ErrForbidden.
+      Keep missing/invalid proof fail-closed and retain the intentional post-commit
+      session and notification fallbacks. Add coverage in the existing declared suite
+      for actual denial versus operational failure and cancellation for both installer
+      entry points.
+    status: open
+    classification: deeper
+    owner: identity-local
+    last_evidence: 'Previously cited authentication, replay-verification, Policy and
+      LocalScopeID errors are now preserved at service.go:365-367,572-601,434-439;
+      invitation.go:457-462; recovery.go:217-219. TestSessionAndAuthorizationFailureMatrix
+      and TestIdempotencyReplayPreservesPasswordVerifierFailures passed independently.
+      However the same error-flattening defect remains at installer-authority dependencies:
+      service.go:93-95 maps every error to ErrForbidden and recovery.go:121-123 does
+      likewise. The error-returning InstallerAuthority port (types.go:163-166) provides
+      no guarantee that only business denials can be returned. Current installer tests
+      cover denial/missing proof, not operational errors or cancellation. See the
+      retained root-cause blocker.'
+  - blocker_id: BLK-8c9128c2b72c
+    root_cause_key: identity-request-metadata-regenerated-within-http-request
+    obligation_id: dimension:evidence
+    summary: Protected HTTP mutations regenerate request identity instead of propagating
+      the resolved request metadata.
+    evidence: handler.go:267 obtains requestMetadata for ResolveBrowserSession and
+      273 exposes that RequestID; protected route callbacks invoke requestMetadata(r)
+      again (e.g. 204 and 252). requestMetadata at 292-303 generates a new random
+      RequestID each call and does not attach it to the request. locale.go:54-56 and
+      recovery.go:40-42 overwrite the RequestContext IDs with the second metadata.
+      The shared governance reference security-and-enterprise.md:13-15 requires request
+      identity propagation and causal tracing. Handler tests use testApplication,
+      returning a fixed context at handler_test.go:119-124, and do not assert identity
+      equality between resolution, authorization, audit, and response. Static code
+      inspection establishes this discrepancy; no new request experiment was run.
+    required_fix: Normalize metadata exactly once at the HTTP entry and pass the same
+      immutable metadata through session resolution and the application call. Preserve
+      the resolved RequestContext request/causation/correlation IDs instead of overwriting
+      them with independently generated ones. Add handler-to-service regression assertions
+      for absent and supplied request IDs across locale, recovery, invitation, and
+      logout paths.
+    status: fixed
+    classification: fixed
+    last_evidence: api/auth/local/handler.go:63,294-321 resolves request metadata
+      once in the outer middleware and caches it in the request context. Session resolution
+      and protected callbacks receive the same metadata; RequestContext IDs are carried
+      to authorization and canonical audit in internal/identity/locale.go:50-57,99
+      and recovery.go:40-43,94. The independently rerun TestProtectedMutationsPropagateOneRequestMetadataValue
+      checks generated and supplied IDs, correlation/causation, application RequestContext,
+      and response headers for locale, recovery, invitation create/reissue/revoke,
+      and logout.
+    owner: identity-local
+  - blocker_id: BLK-9a7d286279b9
+    root_cause_key: identity-breakglass-concurrent-replay-returns-unpersisted-token
+    obligation_id: dimension:structure
+    summary: Concurrent break-glass recovery replay can return a successful response
+      with a recovery link that was never persisted.
+    evidence: 'Static evidence: internal/identity/recovery.go:134-145 performs an
+      initial replay read, then allocates a fresh challenge identity and token. If
+      another identical request commits before this call enters Transact, lines 148-151
+      load the prior result and return from the callback without storing this call''s
+      challenge/token digest. After that successful transaction, line 178 unconditionally
+      attaches this call''s fresh token to the replayed result. Ordinary recovery
+      issue at recovery.go:102-104, invitation create at invitation.go:112-114, and
+      reissue at invitation.go:205-207 already guard this exact branch by comparing
+      the committed result identity. TestRecoveryAuthorizationScopeAndBreakGlassReplayFailures
+      at failure_paths_test.go:910-917 only checks sequential replay, so the declared
+      passing suite does not rule this out. This finding is based solely on code inspection,
+      not a new security experiment.'
+    required_fix: Track whether this call actually committed the newly generated break-glass
+      challenge and only expose its one-time link on that branch. Return the persisted
+      token-free result on concurrent replay, consistently with ordinary recovery/invitation
+      issuance, without storing plaintext tokens. Add a deterministic concurrent same-key
+      regression to the existing declared suite proving that every emitted link corresponds
+      to a committed challenge, only one challenge/audit is created, and replay emits
+      no new link.
+    status: open
+    classification: new
+    owner: identity-local
+- round: 3
+  subject_digest: 235a8e4f0b3b413af689babf309f65d66f51db88d0b0b4d38042697e2cbd43ed
+  report_digest: 7dc767b988f3a6a5e0c8ca6606fc4cb15bb184d61998098011e4233195bcc244
+  verdict: reject
+  obligation_results:
+    dimension:authority: pass
+    dimension:structure: fail
+    dimension:execution: pass
+    dimension:ownership: fail
+    dimension:evidence: pass
+    dimension:regression: pass
+    integration:identity-local-gate: pass
+  new_count: 2
+  fixed_count: 2
+  regressed_count: 0
+  unchanged_count: 0
+  open_count: 2
+  prior_open_blocker_ids:
+  - BLK-8646e42ba221
+  - BLK-9a7d286279b9
+  open_blocker_ids: &id003
+  - BLK-36b4b6bd212e
+  - BLK-6edcc5450e8d
+  reported_blocker_ids: *id003
+  blocker_facts_schema: omac.review-cycle-blocker-facts/v1
+  blocker_facts:
+  - blocker_id: BLK-36b4b6bd212e
+    root_cause_key: identity-one-time-proof-audit-fabricates-authorization-policy-provenance
+    obligation_id: dimension:ownership
+    summary: One-time proof audits manufacture AuthorizationPolicy and matched-grant
+      provenance instead of recording the controls actually evaluated.
+    evidence: 'Static evidence: internal/identity/audit.go:22-43 constructs a fresh
+      authz.AuthorizationDecision with an identity.one-time.<proof-kind> policy ID,
+      revision 1, the proof digest as PolicyDigest and a hard-coded one-time/valid-<proof-kind>
+      matched grant. It never obtains an AuthorizationDecision from Authorizer or
+      a persisted policy from Governance. authorizationControl at audit.go:59-80 presents
+      those fields as ControlAuthorization provenance. Callers are service.go:220,
+      invitation.go:366 and recovery.go:175,277. Required security-and-enterprise.md:184-201,247-259
+      requires the single engine/current Scope policy and real immutable policy provenance;
+      docs/design/detailed/10-web-api-cli-detailed-design.md:304 states one Scope
+      has one current policy. The helper creates a parallel fictional policy family
+      solely to satisfy audit validation. AuditEvent.Validate (contracts/governance/audit/contract.go:373-390)
+      requires evaluated controls but does not establish that their policy/grant references
+      exist. No exploit, network probe or new negative test was performed.'
+    required_fix: Remove the synthesized AuthorizationDecision/policy/grant family.
+      Record truthful evaluated-control evidence from the actual installer authority,
+      bootstrap/current governance policy, invitation authorization and/or authentication
+      receipt as appropriate to each entry point, keeping pre-authentication proof
+      checks distinct from a Scope AuthorizationEngine decision. Do not relabel a
+      token digest as a policy digest or invent a Provider release. If the upstream
+      canonical audit schema cannot represent the required proof control, expose that
+      precise contract-boundary conflict rather than fabricating provenance. Add existing-suite
+      assertions that policy/control identities, revisions, digests and grants resolve
+      to the real evaluated source.
+    status: open
+    classification: new
+    owner: identity-local
+  - blocker_id: BLK-6edcc5450e8d
+    root_cause_key: identity-audit-context-reference-is-external-request-id
+    obligation_id: dimension:structure
+    summary: Identity audit events use the external request ID as a persisted RequestContext
+      reference without a context persistence/binding boundary.
+    evidence: 'Static evidence on reviewed head: internal/identity/audit.go:14-19
+      drops the authenticated RequestContext down to three correlation fields; audit.go:83-99
+      unconditionally sets AuditEvent.RequestContextID to metadata.RequestID. RequestMetadata
+      at types.go:192-197 has no persisted context reference; Tx at types.go:113-134
+      exposes only AppendAudit(AuditEvent), with no operation receiving/binding the
+      trusted context. ResolveBrowserSession at service.go:444-464 constructs and
+      returns the transient context, without issuing a persisted reference. The HTTP
+      request ID may originate from a caller header (api/auth/local/handler.go:310-321).
+      This conflicts with required security-and-enterprise.md:305-306,317 and contracts/governance/audit/contract.go:1075-1083,
+      which explicitly distinguish the persisted RequestContextID from the external
+      RequestID. Test store AppendAudit at identity_test.go:408-416 only validates/appends
+      the event; locale audit tests count events/denials, not persisted context bindings.
+      All declared tests pass; no additional negative experiment was constructed.'
+    required_fix: Provide an explicit canonical audit/context persistence boundary
+      in the owned identity port that receives the trusted context and supplies a
+      server-issued persisted reference. Set AuditEvent.RequestContextID to that reference
+      and retain external RequestID in the context record/summary, preserving correlation
+      and causation. Apply this to successful writes, denials and the explicitly supported
+      pre-authentication/installer evidence paths without inventing anonymous administrator
+      contexts. Extend the existing declared tests to prove the event resolves to
+      the correct persisted context and that external RequestID is not substituted
+      for its identity. This is a module port/binding requirement, not a demand for
+      an undeclared downstream live database.
+    status: open
+    classification: new
+    owner: identity-local
+  - blocker_id: BLK-8646e42ba221
+    root_cause_key: identity-dependency-errors-mapped-to-user-denials
+    obligation_id: dimension:execution
+    summary: Installer-authority outages and cancellation are still converted into
+      permission denials.
+    evidence: 'Static control-flow evidence at internal/identity/service.go:93-95
+      and internal/identity/recovery.go:121-123: any InstallerAuthority error is replaced
+      with ErrForbidden. The port at types.go:163-166 returns a general error, with
+      no denial-only restriction. fakeInstaller at identity_test.go:713-732 returns
+      only business denials; TestBootstrapInstallerAndPersistenceFailureMatrix and
+      TestRecoveryIssueAndBreakGlassFailureMatrix therefore do not exercise these
+      operational failure paths. All existing declared commands passed; no additional
+      negative test was constructed.'
+    required_fix: Preserve or wrap operational/cancellation errors from both InstallerAuthority
+      calls; map only an explicitly typed/sentinel authorization denial to ErrForbidden.
+      Keep missing/invalid proof fail-closed and retain the intentional post-commit
+      session and notification fallbacks. Add coverage in the existing declared suite
+      for actual denial versus operational failure and cancellation for both installer
+      entry points.
+    status: fixed
+    classification: fixed
+    last_evidence: service.go:93-97 and recovery.go:122-130 map only errors.Is(ErrForbidden)
+      to denial, wrap all other installer errors and reject missing proof. The independently
+      executed TestBootstrapInstallerAndPersistenceFailureMatrix and TestRecoveryAuthorizationScopeAndBreakGlassReplayFailures
+      include operational error and cancellation cases and distinguish them from actual
+      denial. Existing credential/governance error propagation and intentional post-commit
+      fallbacks remain intact.
+    owner: identity-local
+  - blocker_id: BLK-9a7d286279b9
+    root_cause_key: identity-breakglass-concurrent-replay-returns-unpersisted-token
+    obligation_id: dimension:structure
+    summary: Concurrent break-glass recovery replay can return a successful response
+      with a recovery link that was never persisted.
+    evidence: 'Static evidence: internal/identity/recovery.go:134-145 performs an
+      initial replay read, then allocates a fresh challenge identity and token. If
+      another identical request commits before this call enters Transact, lines 148-151
+      load the prior result and return from the callback without storing this call''s
+      challenge/token digest. After that successful transaction, line 178 unconditionally
+      attaches this call''s fresh token to the replayed result. Ordinary recovery
+      issue at recovery.go:102-104, invitation create at invitation.go:112-114, and
+      reissue at invitation.go:205-207 already guard this exact branch by comparing
+      the committed result identity. TestRecoveryAuthorizationScopeAndBreakGlassReplayFailures
+      at failure_paths_test.go:910-917 only checks sequential replay, so the declared
+      passing suite does not rule this out. This finding is based solely on code inspection,
+      not a new security experiment.'
+    required_fix: Track whether this call actually committed the newly generated break-glass
+      challenge and only expose its one-time link on that branch. Return the persisted
+      token-free result on concurrent replay, consistently with ordinary recovery/invitation
+      issuance, without storing plaintext tokens. Add a deterministic concurrent same-key
+      regression to the existing declared suite proving that every emitted link corresponds
+      to a committed challenge, only one challenge/audit is created, and replay emits
+      no new link.
+    status: fixed
+    classification: fixed
+    last_evidence: recovery.go:154-193 resets a created flag for each transaction
+      callback, sets it only after challenge/audit/idempotency persistence succeeds,
+      and attaches the token URL only for created=true. Concurrent replay returns
+      the persisted token-free summary. TestConcurrentBreakGlassReplayOnlyReturnsPersistedToken
+      at failure_paths_test.go:959-1025 uses a deterministic ID barrier, asserts one
+      persisted challenge, one matching emitted link, one audit and a token-free subsequent
+      replay; it passed in the uncached full declared suite.
+    owner: identity-local
+blockers:
+- blocker_id: BLK-36b4b6bd212e
+  root_cause_key: identity-one-time-proof-audit-fabricates-authorization-policy-provenance
+  obligation_id: dimension:ownership
+  summary: One-time proof audits manufacture AuthorizationPolicy and matched-grant
+    provenance instead of recording the controls actually evaluated.
+  evidence: 'Static evidence: internal/identity/audit.go:22-43 constructs a fresh
+    authz.AuthorizationDecision with an identity.one-time.<proof-kind> policy ID,
+    revision 1, the proof digest as PolicyDigest and a hard-coded one-time/valid-<proof-kind>
+    matched grant. It never obtains an AuthorizationDecision from Authorizer or a
+    persisted policy from Governance. authorizationControl at audit.go:59-80 presents
+    those fields as ControlAuthorization provenance. Callers are service.go:220, invitation.go:366
+    and recovery.go:175,277. Required security-and-enterprise.md:184-201,247-259 requires
+    the single engine/current Scope policy and real immutable policy provenance; docs/design/detailed/10-web-api-cli-detailed-design.md:304
+    states one Scope has one current policy. The helper creates a parallel fictional
+    policy family solely to satisfy audit validation. AuditEvent.Validate (contracts/governance/audit/contract.go:373-390)
+    requires evaluated controls but does not establish that their policy/grant references
+    exist. No exploit, network probe or new negative test was performed.'
+  required_fix: Remove the synthesized AuthorizationDecision/policy/grant family.
+    Record truthful evaluated-control evidence from the actual installer authority,
+    bootstrap/current governance policy, invitation authorization and/or authentication
+    receipt as appropriate to each entry point, keeping pre-authentication proof checks
+    distinct from a Scope AuthorizationEngine decision. Do not relabel a token digest
+    as a policy digest or invent a Provider release. If the upstream canonical audit
+    schema cannot represent the required proof control, expose that precise contract-boundary
+    conflict rather than fabricating provenance. Add existing-suite assertions that
+    policy/control identities, revisions, digests and grants resolve to the real evaluated
+    source.
+  status: open
+  classification: new
+  owner: identity-local
+  first_seen_round: 3
+  last_seen_round: 3
+  seen_count: 1
+- blocker_id: BLK-62858e200019
+  root_cause_key: identity-recovery-session-issuance-not-serialized
+  obligation_id: dimension:structure
+  summary: Session issuance is not fenced against concurrent password recovery.
+  evidence: 'Static control-flow evidence: internal/identity/service.go:362-370 authenticates
+    outside the session-write transaction; createSession at service.go:294-355 resolves
+    identity and access before a transaction containing only CreateSession and AppendAudit.
+    internal/identity/recovery.go:247-255 replaces the credential and revokes currently
+    stored sessions in a separate transaction. SessionRecord/Tx at types.go:81-86,125-127
+    carry no credential generation or conditional issuance fence. TestRecoveryIssueCompletionRevokesSessionsAndIsIdempotent
+    and TestUJIdentity001BootstrapInvitationLocaleRecoveryAndSessionLifecycle exercise
+    already-persisted sessions sequentially; they do not cover in-flight authentication.
+    This finding is based on code inspection, not an additional security experiment.'
+  required_fix: Serialize local credential validation/session issuance with recovery,
+    or bind the verified authentication to a credential/session generation checked
+    atomically at session creation and session resolution. Apply the same boundary
+    to login and bootstrap/invitation auto-login. Add a deterministic local regression
+    proving recovery invalidates pre-recovery authentication even when session persistence
+    completes later, without retaining plaintext credentials.
+  status: fixed
+  classification: fixed
+  owner: identity-local
+  first_seen_round: 1
+  last_seen_round: 2
+  seen_count: 1
+  last_evidence: internal/identity/service.go:338-353 revalidates the current password
+    inside the session-write transaction; recovery.go:253-260 replaces the credential
+    and revokes sessions in the same Store transaction boundary. Login, bootstrap
+    auto-login (service.go:271), and invitation auto-login (invitation.go:420) share
+    createSession. Independently rerun full declared suite includes TestRecoveryFencesAuthenticationBeforeSessionIssue
+    (identity_test.go:1134-1179), which deterministically pauses authenticated login,
+    completes recovery, and asserts no late session is created. No undeclared experiment
+    was run.
+- blocker_id: BLK-6edcc5450e8d
+  root_cause_key: identity-audit-context-reference-is-external-request-id
+  obligation_id: dimension:structure
+  summary: Identity audit events use the external request ID as a persisted RequestContext
+    reference without a context persistence/binding boundary.
+  evidence: 'Static evidence on reviewed head: internal/identity/audit.go:14-19 drops
+    the authenticated RequestContext down to three correlation fields; audit.go:83-99
+    unconditionally sets AuditEvent.RequestContextID to metadata.RequestID. RequestMetadata
+    at types.go:192-197 has no persisted context reference; Tx at types.go:113-134
+    exposes only AppendAudit(AuditEvent), with no operation receiving/binding the
+    trusted context. ResolveBrowserSession at service.go:444-464 constructs and returns
+    the transient context, without issuing a persisted reference. The HTTP request
+    ID may originate from a caller header (api/auth/local/handler.go:310-321). This
+    conflicts with required security-and-enterprise.md:305-306,317 and contracts/governance/audit/contract.go:1075-1083,
+    which explicitly distinguish the persisted RequestContextID from the external
+    RequestID. Test store AppendAudit at identity_test.go:408-416 only validates/appends
+    the event; locale audit tests count events/denials, not persisted context bindings.
+    All declared tests pass; no additional negative experiment was constructed.'
+  required_fix: Provide an explicit canonical audit/context persistence boundary in
+    the owned identity port that receives the trusted context and supplies a server-issued
+    persisted reference. Set AuditEvent.RequestContextID to that reference and retain
+    external RequestID in the context record/summary, preserving correlation and causation.
+    Apply this to successful writes, denials and the explicitly supported pre-authentication/installer
+    evidence paths without inventing anonymous administrator contexts. Extend the
+    existing declared tests to prove the event resolves to the correct persisted context
+    and that external RequestID is not substituted for its identity. This is a module
+    port/binding requirement, not a demand for an undeclared downstream live database.
+  status: open
+  classification: new
+  owner: identity-local
+  first_seen_round: 3
+  last_seen_round: 3
+  seen_count: 1
+- blocker_id: BLK-7e002b74f69c
+  root_cause_key: identity-concurrent-idempotency-omits-password-equivalence
+  obligation_id: dimension:structure
+  summary: Concurrent replay branches skip the password-equivalence checks used for
+    ordinary idempotent retries.
+  evidence: 'Static evidence: recovery.go:195 hashes only the token digest; completedRecoveryReplay
+    at 271-311 verifies password equivalence, but the transaction replay branch at
+    228-232 directly unmarshals the saved result. service.go:128-130 omits password
+    from the bootstrap digest and 177-183 skips bootstrapReplay verification when
+    the record appears between the initial lookup and transaction. invitation.go:308
+    similarly omits password and 326-330 skips acceptedInvitationReplay verification.
+    Existing concurrent tests use different idempotency keys; ordinary replay tests
+    validate sequential changed-input rejection, not this race. No additional negative-test
+    input was constructed.'
+  required_fix: Make password-equivalence validation part of every idempotency replay
+    decision, including the atomic transaction branch, using the same protected comparison
+    semantics as the ordinary replay path. Do not store plaintext or an unkeyed low-entropy
+    request-password digest. Add deterministic concurrent same-key tests for identical
+    input and changed input across bootstrap, invitation acceptance, and recovery;
+    changed input must return a conflict rather than success.
+  status: fixed
+  classification: fixed
+  owner: identity-local
+  first_seen_round: 1
+  last_seen_round: 2
+  seen_count: 1
+  last_evidence: Transaction replay branches at service.go:178-184, invitation.go:326-332,
+    recovery.go:231-237 all invoke verifyReplayPassword (service.go:572-583), as do
+    ordinary replay paths. This reads the protected credential hash and compares through
+    the authenticator, with no persisted plaintext or added password request digest.
+    Declared full suite independently passed TestConcurrentBootstrapIdempotencyChecksPasswordEquivalence,
+    TestConcurrentInvitationIdempotencyChecksPasswordEquivalence, and TestConcurrentRecoveryIdempotencyChecksPasswordEquivalence;
+    deterministic hashing barriers exercise same-input success and changed-input conflict.
+- blocker_id: BLK-8646e42ba221
+  root_cause_key: identity-dependency-errors-mapped-to-user-denials
+  obligation_id: dimension:execution
+  summary: Installer-authority outages and cancellation are still converted into permission
+    denials.
+  evidence: 'Static control-flow evidence at internal/identity/service.go:93-95 and
+    internal/identity/recovery.go:121-123: any InstallerAuthority error is replaced
+    with ErrForbidden. The port at types.go:163-166 returns a general error, with
+    no denial-only restriction. fakeInstaller at identity_test.go:713-732 returns
+    only business denials; TestBootstrapInstallerAndPersistenceFailureMatrix and TestRecoveryIssueAndBreakGlassFailureMatrix
+    therefore do not exercise these operational failure paths. All existing declared
+    commands passed; no additional negative test was constructed.'
+  required_fix: Preserve or wrap operational/cancellation errors from both InstallerAuthority
+    calls; map only an explicitly typed/sentinel authorization denial to ErrForbidden.
+    Keep missing/invalid proof fail-closed and retain the intentional post-commit
+    session and notification fallbacks. Add coverage in the existing declared suite
+    for actual denial versus operational failure and cancellation for both installer
+    entry points.
+  status: fixed
+  classification: fixed
+  owner: identity-local
+  first_seen_round: 1
+  last_seen_round: 3
+  seen_count: 2
+  last_evidence: service.go:93-97 and recovery.go:122-130 map only errors.Is(ErrForbidden)
+    to denial, wrap all other installer errors and reject missing proof. The independently
+    executed TestBootstrapInstallerAndPersistenceFailureMatrix and TestRecoveryAuthorizationScopeAndBreakGlassReplayFailures
+    include operational error and cancellation cases and distinguish them from actual
+    denial. Existing credential/governance error propagation and intentional post-commit
+    fallbacks remain intact.
+- blocker_id: BLK-8c9128c2b72c
+  root_cause_key: identity-request-metadata-regenerated-within-http-request
+  obligation_id: dimension:evidence
+  summary: Protected HTTP mutations regenerate request identity instead of propagating
+    the resolved request metadata.
+  evidence: handler.go:267 obtains requestMetadata for ResolveBrowserSession and 273
+    exposes that RequestID; protected route callbacks invoke requestMetadata(r) again
+    (e.g. 204 and 252). requestMetadata at 292-303 generates a new random RequestID
+    each call and does not attach it to the request. locale.go:54-56 and recovery.go:40-42
+    overwrite the RequestContext IDs with the second metadata. The shared governance
+    reference security-and-enterprise.md:13-15 requires request identity propagation
+    and causal tracing. Handler tests use testApplication, returning a fixed context
+    at handler_test.go:119-124, and do not assert identity equality between resolution,
+    authorization, audit, and response. Static code inspection establishes this discrepancy;
+    no new request experiment was run.
+  required_fix: Normalize metadata exactly once at the HTTP entry and pass the same
+    immutable metadata through session resolution and the application call. Preserve
+    the resolved RequestContext request/causation/correlation IDs instead of overwriting
+    them with independently generated ones. Add handler-to-service regression assertions
+    for absent and supplied request IDs across locale, recovery, invitation, and logout
+    paths.
+  status: fixed
+  classification: fixed
+  owner: identity-local
+  first_seen_round: 1
+  last_seen_round: 2
+  seen_count: 1
+  last_evidence: api/auth/local/handler.go:63,294-321 resolves request metadata once
+    in the outer middleware and caches it in the request context. Session resolution
+    and protected callbacks receive the same metadata; RequestContext IDs are carried
+    to authorization and canonical audit in internal/identity/locale.go:50-57,99 and
+    recovery.go:40-43,94. The independently rerun TestProtectedMutationsPropagateOneRequestMetadataValue
+    checks generated and supplied IDs, correlation/causation, application RequestContext,
+    and response headers for locale, recovery, invitation create/reissue/revoke, and
+    logout.
+- blocker_id: BLK-9a7d286279b9
+  root_cause_key: identity-breakglass-concurrent-replay-returns-unpersisted-token
+  obligation_id: dimension:structure
+  summary: Concurrent break-glass recovery replay can return a successful response
+    with a recovery link that was never persisted.
+  evidence: 'Static evidence: internal/identity/recovery.go:134-145 performs an initial
+    replay read, then allocates a fresh challenge identity and token. If another identical
+    request commits before this call enters Transact, lines 148-151 load the prior
+    result and return from the callback without storing this call''s challenge/token
+    digest. After that successful transaction, line 178 unconditionally attaches this
+    call''s fresh token to the replayed result. Ordinary recovery issue at recovery.go:102-104,
+    invitation create at invitation.go:112-114, and reissue at invitation.go:205-207
+    already guard this exact branch by comparing the committed result identity. TestRecoveryAuthorizationScopeAndBreakGlassReplayFailures
+    at failure_paths_test.go:910-917 only checks sequential replay, so the declared
+    passing suite does not rule this out. This finding is based solely on code inspection,
+    not a new security experiment.'
+  required_fix: Track whether this call actually committed the newly generated break-glass
+    challenge and only expose its one-time link on that branch. Return the persisted
+    token-free result on concurrent replay, consistently with ordinary recovery/invitation
+    issuance, without storing plaintext tokens. Add a deterministic concurrent same-key
+    regression to the existing declared suite proving that every emitted link corresponds
+    to a committed challenge, only one challenge/audit is created, and replay emits
+    no new link.
+  status: fixed
+  classification: fixed
+  owner: identity-local
+  first_seen_round: 2
+  last_seen_round: 3
+  seen_count: 1
+  last_evidence: recovery.go:154-193 resets a created flag for each transaction callback,
+    sets it only after challenge/audit/idempotency persistence succeeds, and attaches
+    the token URL only for created=true. Concurrent replay returns the persisted token-free
+    summary. TestConcurrentBreakGlassReplayOnlyReturnsPersistedToken at failure_paths_test.go:959-1025
+    uses a deterministic ID barrier, asserts one persisted challenge, one matching
+    emitted link, one audit and a token-free subsequent replay; it passed in the uncached
+    full declared suite.

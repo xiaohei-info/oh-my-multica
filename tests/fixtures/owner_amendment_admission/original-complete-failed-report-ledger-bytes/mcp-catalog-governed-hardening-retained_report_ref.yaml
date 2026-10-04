@@ -1,0 +1,205 @@
+{
+  "review_protocol": "omac.review/v2",
+  "review_goals": [
+    "Verify system-owned definition identity and digest, binding-only secret handling, durable restart-safe reservation/replay, canonical governance/credential lineage, and exact runtime materialization proof.",
+    "Independently rerun every declared L1 gate command at the sealed PR head and inspect the complete changed scope without modifying author code or platform state."
+  ],
+  "summary": "Reject PR #103 at 13da87159867368a30634d04cf45500894d91f98. Every declared executable gate command passes and coverage is 90.2%, but four contract defects remain: heuristic inline-secret handling, interfaces-only canonical persistence/runtime delivery, audit projections used as authorization/admission decisions, and request/context audit identity conflation.",
+  "pr_url": "https://github.com/xiaohei-info/open-agent-cluster/pull/103",
+  "reviewed_head_sha": "13da87159867368a30634d04cf45500894d91f98",
+  "pr_base": "main",
+  "diff_reviewed": true,
+  "tests_rerun": true,
+  "integration_tests_rerun": true,
+  "coverage_checked": true,
+  "full_review_completed": true,
+  "environment": [
+    "Independent detached clone at the exact sealed PR head; Go 1.26.0 linux/arm64 and Python 3.14.3.",
+    "No external services required by env_setup; only the contract-declared local verification was executed."
+  ],
+  "obligation_results": [
+    {
+      "obligation_id": "dimension:authority",
+      "status": "pass",
+      "evidence": "Current work-show contract, sealed delivery identity, PR main base/head, amendment decision, and all cited design/reference anchors were inspected. Semantic conflicts are explicitly reported as blockers rather than silently resolved."
+    },
+    {
+      "obligation_id": "dimension:structure",
+      "status": "fail",
+      "evidence": "New production file declares ports, while canonical persistence/runtime implementations and production-capable composition are absent; restart/runtime proof exists only in test fixtures. See mcp-hardening-disconnected-canonical-owners."
+    },
+    {
+      "obligation_id": "dimension:execution",
+      "status": "fail",
+      "evidence": "All five exact declared commands pass at the reviewed head, but Header/Environment handling remains heuristic and does not establish binding-only fail-closed semantics. See mcp-inline-secret-heuristic-classification."
+    },
+    {
+      "obligation_id": "dimension:ownership",
+      "status": "fail",
+      "evidence": "Existing authz/admission canonical decision contracts are replaced at the MCP port boundary by insufficient audit-control projections. See mcp-governance-audit-projection-used-as-decision. No new database, HTTP DTO, Runtime implementation, or audit ledger was introduced."
+    },
+    {
+      "obligation_id": "dimension:evidence",
+      "status": "fail",
+      "evidence": "Bundle/manifest source revision and ownership verified, but audit validation conflates external request_id with persisted request_context_id. See mcp-audit-request-id-context-id-conflation."
+    },
+    {
+      "obligation_id": "dimension:regression",
+      "status": "pass",
+      "evidence": "No prior_open_blockers in current work-show context. All seven changed files, the complete new use case and tests, changed helper paths, and neighboring canonical contracts were reviewed; all eight required regressions were independently rerun. Their proof limitations are reported, not treated as full acceptance."
+    },
+    {
+      "obligation_id": "integration:mcp-catalog-governed-hardening-gate",
+      "status": "pass",
+      "evidence": "The exact five declared gate commands passed; 90.2% coverage, eight named regressions present and passing, four nonempty artifacts, canonical mcp-catalog packaging/ownership verified. This status records executable gate reproduction only, not closure of the semantic blockers."
+    }
+  ],
+  "prior_blocker_results": [],
+  "acceptance_mapping": [
+    {
+      "acceptance": "UJ-MCP-001",
+      "status": "fail",
+      "evidence": "Trace-only acceptance reference, not a complete UI journey claim. Catalog contribution is not acceptable because inline-secret and canonical-owner/lineage requirements remain open. No full UI end-to-end execution was required or claimed."
+    }
+  ],
+  "integration_gate_mapping": [
+    {
+      "gate": "mcp-catalog-governed-hardening-gate",
+      "status": "pass",
+      "source_of_truth": [
+        "api-mcp-amendment-decision.md",
+        "docs/design/open-agent-cluster-overview-design.md:L68-L95",
+        "docs/design/open-agent-cluster-overview-design.md:L189-L243",
+        "docs/design/open-agent-cluster-overview-design.md:L585-L590",
+        "docs/design/detailed/09-governance-and-security-detailed-design.md:L11-L45",
+        "docs/design/detailed/09-governance-and-security-detailed-design.md:L278-L402",
+        "docs/design/detailed/09-governance-and-security-detailed-design.md:L408-L474",
+        "docs/design/detailed/09-governance-and-security-detailed-design.md:L553-L572",
+        "docs/design/detailed/10-web-api-cli-detailed-design.md:L426-L486",
+        "docs/design/detailed/10-web-api-cli-detailed-design.md:L1375-L1545",
+        "docs/references/governance/security-and-enterprise.md:L236-L317",
+        "docs/references/governance/security-and-enterprise.md:L402-L488",
+        "docs/references/execution/agent-runtime.md:L130-L223",
+        "contracts/agentrun/agentrun.go:L618-L735",
+        "docs/delivery/acceptance-and-validation.md:L300-L313"
+      ],
+      "delivery_goal": "Prove the canonical mcp-catalog component persists stable definitions and command records durably, rejects every inline-secret path, uses exact governance and credential-use identities, and returns ready only for a complete runtime materialization proof.",
+      "commands": [
+        {
+          "cmd": "mkdir -p artifacts/mcp-catalog-governed-hardening && go test -covermode=atomic -coverprofile=artifacts/mcp-catalog-governed-hardening/coverage.out ./internal/mcp/...",
+          "exit_code": 0,
+          "summary": "Package suite passed; 90.2% statement coverage."
+        },
+        {
+          "cmd": "go test ./internal/mcp/... -run '^(TestGovernedMCPUseCaseSystemOwnsIdentityAndDigest|TestGovernedMCPUseCaseRejectsInlineSecretValues|TestGovernedMCPUseCaseDurableCreateReplaySurvivesRestart|TestGovernedMCPUseCaseDurableProbeReplaySurvivesRestart|TestGovernedMCPUseCaseDurableMaterializationReplaySurvivesRestart|TestGovernedMCPUseCasePreservesUnknownCommitOutcome|TestGovernedMCPUseCaseUsesCanonicalGovernanceLineage|TestGovernedMCPUseCaseValidatesExactMaterializationProof)$' -count=1",
+          "exit_code": 0,
+          "summary": "All eight named regressions passed."
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/mcp-catalog-governed-hardening/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+          "exit_code": 0,
+          "summary": "Coverage threshold assertion passed at 90.2%."
+        },
+        {
+          "cmd": "python3 scripts/release/package_component.py --component mcp-catalog --kind platform-core-dependency-source --input internal/mcp --bundle artifacts/mcp-catalog-governed-hardening/source-bundle.tar.zst --component-manifest artifacts/mcp-catalog-governed-hardening/component-manifest.json --digest-output artifacts/mcp-catalog-governed-hardening/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner mcp-catalog --require-all-owner-sources-accounted",
+          "exit_code": 0,
+          "summary": "Generated canonical mcp-catalog bundle, digest, and manifest."
+        },
+        {
+          "cmd": "python3 scripts/release/verify_component_manifest.py --manifest artifacts/mcp-catalog-governed-hardening/component-manifest.json --bundle artifacts/mcp-catalog-governed-hardening/source-bundle.tar.zst --expected-component mcp-catalog --check-schema schemas/release-component-manifest.schema.json --require-owned-source internal/mcp/types.go --require-owned-source internal/mcp/import.go --ownership-catalog contracts/release/source-ownership-catalog.yaml --require-all-owner-sources-accounted",
+          "exit_code": 0,
+          "summary": "Schema, bundle, and source-ownership verification passed."
+        }
+      ],
+      "metrics": {
+        "statement_coverage_percent": 90.2,
+        "required_hardening_regression_test_count": 8,
+        "caller_authored_definition_identity_accept_count": 0,
+        "inline_secret_value_accept_count": 0,
+        "unknown_outcome_promoted_to_success_count": 0,
+        "materialization_binding_or_payload_mismatch_accept_count": 0,
+        "declared_artifact_count": 4
+      },
+      "metric_scope": "Zero acceptance counts describe only the supplied negative regression fixtures that ran successfully. They do not prove universal rejection or production behavior; blockers explain the unproven secret/governance/persistence/runtime invariants.",
+      "artifacts": [
+        "artifacts/mcp-catalog-governed-hardening/coverage.out",
+        "artifacts/mcp-catalog-governed-hardening/source-bundle.tar.zst",
+        "artifacts/mcp-catalog-governed-hardening/bundle-digest.txt",
+        "artifacts/mcp-catalog-governed-hardening/component-manifest.json"
+      ],
+      "source_revision": "13da87159867368a30634d04cf45500894d91f98",
+      "bundle_sha256": "a4a61efb6bfb19a1bf9853f750373b947c869582f72ccac823985031fa5fca57"
+    }
+  ],
+  "commands": [
+    {
+      "cmd": "mkdir -p artifacts/mcp-catalog-governed-hardening && go test -covermode=atomic -coverprofile=artifacts/mcp-catalog-governed-hardening/coverage.out ./internal/mcp/...",
+      "exit_code": 0,
+      "summary": "Package suite passed; 90.2% statement coverage."
+    },
+    {
+      "cmd": "go test ./internal/mcp/... -run '^(TestGovernedMCPUseCaseSystemOwnsIdentityAndDigest|TestGovernedMCPUseCaseRejectsInlineSecretValues|TestGovernedMCPUseCaseDurableCreateReplaySurvivesRestart|TestGovernedMCPUseCaseDurableProbeReplaySurvivesRestart|TestGovernedMCPUseCaseDurableMaterializationReplaySurvivesRestart|TestGovernedMCPUseCasePreservesUnknownCommitOutcome|TestGovernedMCPUseCaseUsesCanonicalGovernanceLineage|TestGovernedMCPUseCaseValidatesExactMaterializationProof)$' -count=1",
+      "exit_code": 0,
+      "summary": "All eight named regressions passed."
+    },
+    {
+      "cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/mcp-catalog-governed-hardening/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+      "exit_code": 0,
+      "summary": "Coverage threshold assertion passed at 90.2%."
+    },
+    {
+      "cmd": "python3 scripts/release/package_component.py --component mcp-catalog --kind platform-core-dependency-source --input internal/mcp --bundle artifacts/mcp-catalog-governed-hardening/source-bundle.tar.zst --component-manifest artifacts/mcp-catalog-governed-hardening/component-manifest.json --digest-output artifacts/mcp-catalog-governed-hardening/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner mcp-catalog --require-all-owner-sources-accounted",
+      "exit_code": 0,
+      "summary": "Generated canonical mcp-catalog bundle, digest, and manifest."
+    },
+    {
+      "cmd": "python3 scripts/release/verify_component_manifest.py --manifest artifacts/mcp-catalog-governed-hardening/component-manifest.json --bundle artifacts/mcp-catalog-governed-hardening/source-bundle.tar.zst --expected-component mcp-catalog --check-schema schemas/release-component-manifest.schema.json --require-owned-source internal/mcp/types.go --require-owned-source internal/mcp/import.go --ownership-catalog contracts/release/source-ownership-catalog.yaml --require-all-owner-sources-accounted",
+      "exit_code": 0,
+      "summary": "Schema, bundle, and source-ownership verification passed."
+    }
+  ],
+  "blockers": [
+    {
+      "root_cause_key": "mcp-inline-secret-heuristic-classification",
+      "obligation_id": "dimension:execution",
+      "classification": "new",
+      "severity": "high",
+      "summary": "Inline Header and Environment values are still classified by heuristics, not an authoritative binding-only boundary.",
+      "impact": "Caller-provided values that do not trigger the name/value heuristic are retained in definitions, configuration digests, launch payloads, and durable records. The hardening does not establish the required zero inline-secret acceptance invariant.",
+      "evidence": "internal/mcp/types.go:439-447 and :471-480 accept values whenever isSensitiveName and looksLikeSecretValue are false; internal/mcp/import.go:197-220 copies those values into the candidate. internal/mcp/import.go:309-328 is a marker/prefix/length detector, not authoritative non-secret classification. The declared negative regression at internal/mcp/governed_test.go:93-111 exercises only one heuristic-positive value. api-mcp-amendment-decision.md:9 explicitly rejects heuristic secret bypasses and requires approved CredentialBinding handling. This is static evidence; no additional bypass experiment was constructed.",
+      "required_fix": "Replace caller-value heuristic classification with the approved authoritative binding-only flow for Header/Environment material. If the product retains non-sensitive literals, their admissibility must be determined by a system-owned constrained schema, not by caller assertions or absence of secret markers. Apply the same rule to import, create, update, persisted validation, and materialization, and extend the declared regressions accordingly."
+    },
+    {
+      "root_cause_key": "mcp-hardening-disconnected-canonical-owners",
+      "obligation_id": "dimension:structure",
+      "classification": "new",
+      "severity": "high",
+      "summary": "Durable persistence and runtime consumption are delivered only as interfaces and test implementations.",
+      "impact": "The delivery proves application behavior against a private JSON fixture, not restart-safe canonical persistence or actual runtime consumption. No production implementation can instantiate the new governed path at this head using the delivered ports.",
+      "evidence": "internal/mcp/governed.go:258-267 declares MCPStore; :320-333 declares/injects runtime and governance ports. Repository-wide symbol/implementation searches find ReserveCommand and CommitCommand(MCPCommandCommit) implementations only in internal/mcp/governed_test.go:650-730, and the new runtime signature only in the same test file at :555-578. GovernedMCPUseCase has no non-test composition site. The restart tests reopen testMCPStore JSON at :624-634; testMCPRuntime calculates a launch and manufactures a ready proof at :573-578 without consuming it. All seven changed files are under internal/mcp. The contract calls for durable command reservation/replay and exact authoritative runtime materialization, not just a port declaration.",
+      "required_fix": "Implement and exercise adapters into the existing canonical Platform Core transaction/persistence owner and Runtime/AgentRun owner, with production-capable component composition. Prove atomic definition/command/audit persistence, durable restart/replay, unknown reservation retention, and proof emitted by actual launch consumption. Keep these adapters on the canonical authorities; do not add an MCP-local persistence store, runtime, or audit ledger, and do not change public HTTP/OpenAPI DTOs."
+    },
+    {
+      "root_cause_key": "mcp-governance-audit-projection-used-as-decision",
+      "obligation_id": "dimension:ownership",
+      "classification": "new",
+      "severity": "high",
+      "summary": "Authorization and Admission ports return audit projections instead of exact canonical decisions.",
+      "impact": "The use case cannot verify that an allow/admit result belongs to the evaluated request or retain/enforce the canonical decision obligations, constraints, required checks, and freshness. A syntactically populated audit control is accepted as authority.",
+      "evidence": "internal/mcp/governed.go:73-79 returns audit.EvaluatedControl for both decisions; :865-907 validates only that projection. audit.EvaluatedControl and its provenance at contracts/governance/audit/contract.go:78-158 have no request digest or evaluation time. In contrast, contracts/governance/authz/contract.go:185-232 defines AuthorizationDecision with request digest, policy provenance, paired matched grants, obligations, and evaluated time; contracts/governance/admission/contract.go:471-553 defines ExecutionAdmissionDecision with request digest, required check keys, temporal validation, and constraints. The MCP tests return fixed controls at internal/mcp/governed_test.go:409-430 and do not exercise canonical decisions. docs/design/detailed/09-governance-and-security-detailed-design.md:296 and :367-402 prohibit cross-request reuse and require the exact decisions in the persistence boundary.",
+      "required_fix": "Consume the existing typed AuthorizationDecision and ExecutionAdmissionDecision contracts through canonical owner adapters. Verify exact request-digest linkage, retain full decision lineage, and propagate/enforce any tightening obligations and constraints before connector/runtime execution. Derive audit EvaluatedControl only after validating authoritative decisions; persist the decisions and audit links through the canonical transaction owner."
+    },
+    {
+      "root_cause_key": "mcp-audit-request-id-context-id-conflation",
+      "obligation_id": "dimension:evidence",
+      "classification": "new",
+      "severity": "medium",
+      "summary": "Audit validation incorrectly equates external request_id with persisted request_context_id.",
+      "impact": "A canonical audit event carrying a distinct persisted RequestContext identity is rejected. Events built to satisfy the current check instead lose the canonical persisted context linkage required by Audit Explorer.",
+      "evidence": "internal/mcp/governed.go:928 requires event.RequestContextID == command.RequestContext.RequestID. internal/mcp/governed_test.go:446 fabricates the event using the same equality. contracts/identity/requestcontext/request_context.go:37 exposes external RequestID; docs/references/governance/security-and-enterprise.md:305-317 expressly distinguishes persisted request_context_id and external request_id and requires authority-issued store binding.",
+      "required_fix": "Carry the canonical persisted RequestContext identity/receipt from the existing governance persistence boundary separately from the external request ID. Validate audit attribution against that canonical identity and preserve both identities in their intended fields. Update the declared lineage regression to use distinct request and persisted context IDs."
+    }
+  ],
+  "nits": [],
+  "evidence_boundary": "No additional exploit/bypass, network-target probe, or security experiment was constructed. Findings beyond the declared negative tests are from static code/contract and implementation-usage inspection; no sensitive payloads or raw sensitive logs are reproduced."
+}

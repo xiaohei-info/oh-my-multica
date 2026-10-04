@@ -1,0 +1,215 @@
+schema: omac.review-ledger/v2
+cycles:
+- round: 1
+  subject_digest: 35ca65598134682065e2f07235305bdf231d887ea0dc046ca280aa22b007fe73
+  report_digest: d3a4231824f50dbdeb4b24fca5588caa2f228113f71b1c34ec59392844308f2e
+  verdict: reject
+  obligation_results:
+    dimension:authority: pass
+    dimension:structure: fail
+    dimension:execution: fail
+    dimension:ownership: fail
+    dimension:evidence: fail
+    dimension:regression: pass
+    integration:mcp-catalog-governed-hardening-gate: pass
+  new_count: 4
+  fixed_count: 0
+  regressed_count: 0
+  unchanged_count: 0
+  open_count: 4
+  prior_open_blocker_ids: []
+  open_blocker_ids: &id001
+  - BLK-41716b28a81a
+  - BLK-5bc1614d11c7
+  - BLK-c17700bf1f0d
+  - BLK-dd6dac26dc8c
+  reported_blocker_ids: *id001
+  blocker_facts_schema: omac.review-cycle-blocker-facts/v1
+  blocker_facts:
+  - blocker_id: BLK-41716b28a81a
+    root_cause_key: mcp-governance-audit-projection-used-as-decision
+    obligation_id: dimension:ownership
+    summary: Authorization and Admission ports return audit projections instead of
+      exact canonical decisions.
+    evidence: internal/mcp/governed.go:73-79 returns audit.EvaluatedControl for both
+      decisions; :865-907 validates only that projection. audit.EvaluatedControl and
+      its provenance at contracts/governance/audit/contract.go:78-158 have no request
+      digest or evaluation time. In contrast, contracts/governance/authz/contract.go:185-232
+      defines AuthorizationDecision with request digest, policy provenance, paired
+      matched grants, obligations, and evaluated time; contracts/governance/admission/contract.go:471-553
+      defines ExecutionAdmissionDecision with request digest, required check keys,
+      temporal validation, and constraints. The MCP tests return fixed controls at
+      internal/mcp/governed_test.go:409-430 and do not exercise canonical decisions.
+      docs/design/detailed/09-governance-and-security-detailed-design.md:296 and :367-402
+      prohibit cross-request reuse and require the exact decisions in the persistence
+      boundary.
+    required_fix: Consume the existing typed AuthorizationDecision and ExecutionAdmissionDecision
+      contracts through canonical owner adapters. Verify exact request-digest linkage,
+      retain full decision lineage, and propagate/enforce any tightening obligations
+      and constraints before connector/runtime execution. Derive audit EvaluatedControl
+      only after validating authoritative decisions; persist the decisions and audit
+      links through the canonical transaction owner.
+    status: open
+    classification: new
+  - blocker_id: BLK-5bc1614d11c7
+    root_cause_key: mcp-hardening-disconnected-canonical-owners
+    obligation_id: dimension:structure
+    summary: Durable persistence and runtime consumption are delivered only as interfaces
+      and test implementations.
+    evidence: internal/mcp/governed.go:258-267 declares MCPStore; :320-333 declares/injects
+      runtime and governance ports. Repository-wide symbol/implementation searches
+      find ReserveCommand and CommitCommand(MCPCommandCommit) implementations only
+      in internal/mcp/governed_test.go:650-730, and the new runtime signature only
+      in the same test file at :555-578. GovernedMCPUseCase has no non-test composition
+      site. The restart tests reopen testMCPStore JSON at :624-634; testMCPRuntime
+      calculates a launch and manufactures a ready proof at :573-578 without consuming
+      it. All seven changed files are under internal/mcp. The contract calls for durable
+      command reservation/replay and exact authoritative runtime materialization,
+      not just a port declaration.
+    required_fix: Implement and exercise adapters into the existing canonical Platform
+      Core transaction/persistence owner and Runtime/AgentRun owner, with production-capable
+      component composition. Prove atomic definition/command/audit persistence, durable
+      restart/replay, unknown reservation retention, and proof emitted by actual launch
+      consumption. Keep these adapters on the canonical authorities; do not add an
+      MCP-local persistence store, runtime, or audit ledger, and do not change public
+      HTTP/OpenAPI DTOs.
+    status: open
+    classification: new
+  - blocker_id: BLK-c17700bf1f0d
+    root_cause_key: mcp-inline-secret-heuristic-classification
+    obligation_id: dimension:execution
+    summary: Inline Header and Environment values are still classified by heuristics,
+      not an authoritative binding-only boundary.
+    evidence: internal/mcp/types.go:439-447 and :471-480 accept values whenever isSensitiveName
+      and looksLikeSecretValue are false; internal/mcp/import.go:197-220 copies those
+      values into the candidate. internal/mcp/import.go:309-328 is a marker/prefix/length
+      detector, not authoritative non-secret classification. The declared negative
+      regression at internal/mcp/governed_test.go:93-111 exercises only one heuristic-positive
+      value. api-mcp-amendment-decision.md:9 explicitly rejects heuristic secret bypasses
+      and requires approved CredentialBinding handling. This is static evidence; no
+      additional bypass experiment was constructed.
+    required_fix: Replace caller-value heuristic classification with the approved
+      authoritative binding-only flow for Header/Environment material. If the product
+      retains non-sensitive literals, their admissibility must be determined by a
+      system-owned constrained schema, not by caller assertions or absence of secret
+      markers. Apply the same rule to import, create, update, persisted validation,
+      and materialization, and extend the declared regressions accordingly.
+    status: open
+    classification: new
+  - blocker_id: BLK-dd6dac26dc8c
+    root_cause_key: mcp-audit-request-id-context-id-conflation
+    obligation_id: dimension:evidence
+    summary: Audit validation incorrectly equates external request_id with persisted
+      request_context_id.
+    evidence: internal/mcp/governed.go:928 requires event.RequestContextID == command.RequestContext.RequestID.
+      internal/mcp/governed_test.go:446 fabricates the event using the same equality.
+      contracts/identity/requestcontext/request_context.go:37 exposes external RequestID;
+      docs/references/governance/security-and-enterprise.md:305-317 expressly distinguishes
+      persisted request_context_id and external request_id and requires authority-issued
+      store binding.
+    required_fix: Carry the canonical persisted RequestContext identity/receipt from
+      the existing governance persistence boundary separately from the external request
+      ID. Validate audit attribution against that canonical identity and preserve
+      both identities in their intended fields. Update the declared lineage regression
+      to use distinct request and persisted context IDs.
+    status: open
+    classification: new
+blockers:
+- blocker_id: BLK-41716b28a81a
+  root_cause_key: mcp-governance-audit-projection-used-as-decision
+  obligation_id: dimension:ownership
+  summary: Authorization and Admission ports return audit projections instead of exact
+    canonical decisions.
+  evidence: internal/mcp/governed.go:73-79 returns audit.EvaluatedControl for both
+    decisions; :865-907 validates only that projection. audit.EvaluatedControl and
+    its provenance at contracts/governance/audit/contract.go:78-158 have no request
+    digest or evaluation time. In contrast, contracts/governance/authz/contract.go:185-232
+    defines AuthorizationDecision with request digest, policy provenance, paired matched
+    grants, obligations, and evaluated time; contracts/governance/admission/contract.go:471-553
+    defines ExecutionAdmissionDecision with request digest, required check keys, temporal
+    validation, and constraints. The MCP tests return fixed controls at internal/mcp/governed_test.go:409-430
+    and do not exercise canonical decisions. docs/design/detailed/09-governance-and-security-detailed-design.md:296
+    and :367-402 prohibit cross-request reuse and require the exact decisions in the
+    persistence boundary.
+  required_fix: Consume the existing typed AuthorizationDecision and ExecutionAdmissionDecision
+    contracts through canonical owner adapters. Verify exact request-digest linkage,
+    retain full decision lineage, and propagate/enforce any tightening obligations
+    and constraints before connector/runtime execution. Derive audit EvaluatedControl
+    only after validating authoritative decisions; persist the decisions and audit
+    links through the canonical transaction owner.
+  status: open
+  classification: new
+  first_seen_round: 1
+  last_seen_round: 1
+  seen_count: 1
+- blocker_id: BLK-5bc1614d11c7
+  root_cause_key: mcp-hardening-disconnected-canonical-owners
+  obligation_id: dimension:structure
+  summary: Durable persistence and runtime consumption are delivered only as interfaces
+    and test implementations.
+  evidence: internal/mcp/governed.go:258-267 declares MCPStore; :320-333 declares/injects
+    runtime and governance ports. Repository-wide symbol/implementation searches find
+    ReserveCommand and CommitCommand(MCPCommandCommit) implementations only in internal/mcp/governed_test.go:650-730,
+    and the new runtime signature only in the same test file at :555-578. GovernedMCPUseCase
+    has no non-test composition site. The restart tests reopen testMCPStore JSON at
+    :624-634; testMCPRuntime calculates a launch and manufactures a ready proof at
+    :573-578 without consuming it. All seven changed files are under internal/mcp.
+    The contract calls for durable command reservation/replay and exact authoritative
+    runtime materialization, not just a port declaration.
+  required_fix: Implement and exercise adapters into the existing canonical Platform
+    Core transaction/persistence owner and Runtime/AgentRun owner, with production-capable
+    component composition. Prove atomic definition/command/audit persistence, durable
+    restart/replay, unknown reservation retention, and proof emitted by actual launch
+    consumption. Keep these adapters on the canonical authorities; do not add an MCP-local
+    persistence store, runtime, or audit ledger, and do not change public HTTP/OpenAPI
+    DTOs.
+  status: open
+  classification: new
+  first_seen_round: 1
+  last_seen_round: 1
+  seen_count: 1
+- blocker_id: BLK-c17700bf1f0d
+  root_cause_key: mcp-inline-secret-heuristic-classification
+  obligation_id: dimension:execution
+  summary: Inline Header and Environment values are still classified by heuristics,
+    not an authoritative binding-only boundary.
+  evidence: internal/mcp/types.go:439-447 and :471-480 accept values whenever isSensitiveName
+    and looksLikeSecretValue are false; internal/mcp/import.go:197-220 copies those
+    values into the candidate. internal/mcp/import.go:309-328 is a marker/prefix/length
+    detector, not authoritative non-secret classification. The declared negative regression
+    at internal/mcp/governed_test.go:93-111 exercises only one heuristic-positive
+    value. api-mcp-amendment-decision.md:9 explicitly rejects heuristic secret bypasses
+    and requires approved CredentialBinding handling. This is static evidence; no
+    additional bypass experiment was constructed.
+  required_fix: Replace caller-value heuristic classification with the approved authoritative
+    binding-only flow for Header/Environment material. If the product retains non-sensitive
+    literals, their admissibility must be determined by a system-owned constrained
+    schema, not by caller assertions or absence of secret markers. Apply the same
+    rule to import, create, update, persisted validation, and materialization, and
+    extend the declared regressions accordingly.
+  status: open
+  classification: new
+  first_seen_round: 1
+  last_seen_round: 1
+  seen_count: 1
+- blocker_id: BLK-dd6dac26dc8c
+  root_cause_key: mcp-audit-request-id-context-id-conflation
+  obligation_id: dimension:evidence
+  summary: Audit validation incorrectly equates external request_id with persisted
+    request_context_id.
+  evidence: internal/mcp/governed.go:928 requires event.RequestContextID == command.RequestContext.RequestID.
+    internal/mcp/governed_test.go:446 fabricates the event using the same equality.
+    contracts/identity/requestcontext/request_context.go:37 exposes external RequestID;
+    docs/references/governance/security-and-enterprise.md:305-317 expressly distinguishes
+    persisted request_context_id and external request_id and requires authority-issued
+    store binding.
+  required_fix: Carry the canonical persisted RequestContext identity/receipt from
+    the existing governance persistence boundary separately from the external request
+    ID. Validate audit attribution against that canonical identity and preserve both
+    identities in their intended fields. Update the declared lineage regression to
+    use distinct request and persisted context IDs.
+  status: open
+  classification: new
+  first_seen_round: 1
+  last_seen_round: 1
+  seen_count: 1

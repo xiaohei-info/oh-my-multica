@@ -1,0 +1,163 @@
+{
+  "review_protocol": "omac.review/v2",
+  "review_goals": [
+    "Independently review the full identity lifecycle and Principal-owned locale implementation against current authoritative sources and non-goals.",
+    "Reproduce every declared command, integration gate, coverage threshold and packaged-source lineage.",
+    "Disposition both prior blockers and inspect the complete source/test/evidence changes for regressions and remaining canonical audit defects."
+  ],
+  "diff_reviewed": true,
+  "tests_rerun": true,
+  "integration_tests_rerun": true,
+  "coverage_checked": true,
+  "full_review_completed": true,
+  "reviewed_pr": "https://github.com/xiaohei-info/open-agent-cluster/pull/101",
+  "reviewed_head_sha": "ce2e24013d151c41c9d058cb2262f64d8374281a",
+  "pr_base": "main",
+  "coverage": 90.6,
+  "summary": "Reject: both prior blockers are fixed and all six declared commands pass with 90.6% aggregate coverage. Two statically established canonical-audit blockers remain: external request IDs are used as persisted context references, and one-time proof audits manufacture policy/grant provenance. Packaged source reproduces byte-for-byte.",
+  "obligation_results": [
+    {
+      "obligation_id": "dimension:authority",
+      "status": "pass",
+      "evidence": "Current work-show facts, contract, reviewer/evidence guides and bounded comment threads were checked. Approved locale document hash matches exactly. Cited design/acceptance sections and required security-and-enterprise reference were read, along with upstream identity, SDK, authorization and audit contracts. UJ-IDENTITY-001 is trace-only; no full browser/live acceptance or downstream input was imposed. Source conflicts are explicitly reported under structure and ownership."
+    },
+    {
+      "obligation_id": "dimension:structure",
+      "status": "fail",
+      "evidence": "Inspected the complete 18-file PR source/test/artifact change set and revised source diff. Lifecycle operations, atomic ports, CAS/idempotency and HTTP routes are implemented. Persisted RequestContext linkage required for canonical audit is absent and replaced by the external RequestID; see identity-audit-context-reference-is-external-request-id."
+    },
+    {
+      "obligation_id": "dimension:execution",
+      "status": "pass",
+      "evidence": "All six exact contract commands exited 0 independently in the pinned checkout. Fresh package execution used GOFLAGS=-count=1 to exclude cache; identity 89.3%, HTTP 98.4%, aggregate 90.6%. Declared suites exercise transactional rollback, one-time token behavior, operational failure/cancellation versus denial, session revocation/fencing, replay password equivalence and locale authorization/CAS. Focused locale selector has no matching HTTP-package tests; the full package suite covers the HTTP adapter. Passing execution does not resolve the statically identified audit contract defects."
+    },
+    {
+      "obligation_id": "dimension:ownership",
+      "status": "fail",
+      "evidence": "Principal locale has one query and CAS writer, only PrincipalID/Locale/Revision, no non-Principal or anonymous persisted locale; packaging ownership passed and upstream dependencies are reused. However proofAuditEvent fabricates a parallel AuthorizationPolicy/grant family for proof checks instead of preserving actual canonical evaluated-control provenance; see identity-one-time-proof-audit-fabricates-authorization-policy-provenance."
+    },
+    {
+      "obligation_id": "dimension:evidence",
+      "status": "pass",
+      "evidence": "PR #101 is open/non-draft against main, references AITEAM-1058 and has the pinned head. Current verification attachment is c6f4b9851daa79d214480300891efc2135334b82fcb3fba77b691030e35df717. All committed manifest source-file SHA-256 hashes match current files. Independently regenerated bundle is byte-identical to committed f7ea40f84c65438263ca708632e1d91cae6a0ce196a88b0eeb5b93b66ee54ec3. Manifest revision 9e2acf9798a558ea9a9301bfedb9354916813ece differs from the PR head only by artifact/verification refresh files. Required artifacts exist and are nonempty. This obligation assesses release-evidence lineage, not the broken runtime context provenance reported under structure."
+    },
+    {
+      "obligation_id": "dimension:regression",
+      "status": "pass",
+      "evidence": "Both prior blockers are independently dispositioned fixed. Installer error wrapping now preserves operational/cancellation errors, while explicit denial and invalid proof remain closed. Concurrent break-glass replay emits a link only on the branch that committed the challenge. Deterministic tests for both fixes were inspected and executed inside the full declared suite. Complete source and supporting evidence review also identified both new audit roots; historical verdicts were not reused."
+    },
+    {
+      "obligation_id": "integration:identity-local-gate",
+      "status": "pass",
+      "evidence": "Every declared gate command, metric, artifact and exact source/delivery-goal mapping was reproduced. Coverage is 90.6% and locale tests reject revision conflicts, including the forced CAS-loss branch, with zero accepted conflicts. This pass covers the declared executable gate only; functional delivery is rejected for the two canonical audit findings in structure/ownership."
+    }
+  ],
+  "prior_blocker_results": [
+    {
+      "blocker_id": "BLK-8646e42ba221",
+      "status": "fixed",
+      "evidence": "service.go:93-97 and recovery.go:122-130 map only errors.Is(ErrForbidden) to denial, wrap all other installer errors and reject missing proof. The independently executed TestBootstrapInstallerAndPersistenceFailureMatrix and TestRecoveryAuthorizationScopeAndBreakGlassReplayFailures include operational error and cancellation cases and distinguish them from actual denial. Existing credential/governance error propagation and intentional post-commit fallbacks remain intact."
+    },
+    {
+      "blocker_id": "BLK-9a7d286279b9",
+      "status": "fixed",
+      "evidence": "recovery.go:154-193 resets a created flag for each transaction callback, sets it only after challenge/audit/idempotency persistence succeeds, and attaches the token URL only for created=true. Concurrent replay returns the persisted token-free summary. TestConcurrentBreakGlassReplayOnlyReturnsPersistedToken at failure_paths_test.go:959-1025 uses a deterministic ID barrier, asserts one persisted challenge, one matching emitted link, one audit and a token-free subsequent replay; it passed in the uncached full declared suite."
+    }
+  ],
+  "acceptance_mapping": [
+    {
+      "acceptance": "UJ-IDENTITY-001",
+      "status": "pass",
+      "scope": "trace-only module behavior; not full-flow or live acceptance",
+      "evidence": "TestUJIdentity001BootstrapInvitationLocaleRecoveryAndSessionLifecycle executed in the declared package suite and establishes module-level bootstrap, invitation, saved locale, recovery session invalidation, relogin, logout and plaintext redaction. No full-flow claims or business-Action contributions exist in this contract. Functional approval is withheld for the two static audit defects."
+    }
+  ],
+  "acceptance_notes": "acceptance_refs are trace-only; no full-flow or business-Action acceptance was invented. Database/installer/browser wiring downstream is not a prerequisite for this component review.",
+  "integration_gate_mapping": [
+    {
+      "gate": "identity-local-gate",
+      "status": "pass",
+      "functional_delivery_status": "fail",
+      "source_of_truth": [
+        "docs/design/detailed/09-governance-and-security-detailed-design.md:L100-L213",
+        "docs/design/detailed/10-web-api-cli-detailed-design.md:L170-L354",
+        "docs/delivery/acceptance-and-validation.md:L129-L150",
+        "account-locale-ownership-decision.md"
+      ],
+      "delivery_goal": "Deliver first-admin, invitation, recovery and browser-session behavior plus one Principal-owned saved locale preference restricted to zh-CN|en-US, updated by Authorization and expected_revision CAS, audited without storing locale on Scope, Project, Workflow or Solution.",
+      "commands": [
+        {
+          "cmd": "python3 -c \"from pathlib import Path; import hashlib; p=Path('account-locale-ownership-decision.md'); assert p.is_file() and hashlib.sha256(p.read_bytes()).hexdigest()=='2ee85c6551db299f14f4903e5b0086e678208b38c6a3cba276c8a32a5f1a5be6'\"",
+          "exit_code": 0,
+          "summary": "Passed (no stdout)."
+        },
+        {
+          "cmd": "mkdir -p artifacts/identity-local && go test -covermode=atomic -coverprofile=artifacts/identity-local/coverage.out ./internal/identity/... ./api/auth/local/...",
+          "exit_code": 0,
+          "summary": "Fresh uncached run with GOFLAGS=-count=1: identity package passed at 89.3% statement coverage; local HTTP API passed at 98.4%; aggregate 90.6%."
+        },
+        {
+          "cmd": "go test ./internal/identity/... ./api/auth/local/... -run \"Test.*LocalePreference.*(Create|Read|CAS|Conflict|Authorization|Audit|Session|Fallback)\" -count=1",
+          "exit_code": 0,
+          "summary": "ok  \tgithub.com/xiaohei-info/open-agent-cluster/internal/identity\t0.019s\nok  \tgithub.com/xiaohei-info/open-agent-cluster/api/auth/local\t0.019s [no tests to run]"
+        },
+        {
+          "cmd": "go test ./internal/identity/... -run \"Test.*LocalePreference.*Rejects(Scope|Project|Workflow|Solution|UnsupportedLocale|AnonymousWrite)\" -count=1",
+          "exit_code": 0,
+          "summary": "ok  \tgithub.com/xiaohei-info/open-agent-cluster/internal/identity\t0.008s"
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/identity-local/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+          "exit_code": 0,
+          "summary": "Passed (no stdout)."
+        },
+        {
+          "cmd": "python3 scripts/release/package_component.py --component identity-local --kind platform-core-dependency-source --input internal/identity --input api/auth/local --bundle artifacts/identity-local/source-bundle.tar.zst --component-manifest artifacts/identity-local/component-manifest.json --digest-output artifacts/identity-local/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner identity-local --require-all-owner-sources-accounted",
+          "exit_code": 0,
+          "summary": "bundle=artifacts/identity-local/source-bundle.tar.zst\nmanifest=artifacts/identity-local/component-manifest.json"
+        }
+      ],
+      "metrics": {
+        "statement_coverage_percent": 90.6,
+        "locale_preference_conflict_accept_count": 0
+      },
+      "artifacts": [
+        "artifacts/identity-local/coverage.out",
+        "artifacts/identity-local/source-bundle.tar.zst",
+        "artifacts/identity-local/bundle-digest.txt",
+        "artifacts/identity-local/component-manifest.json"
+      ],
+      "evidence": "All executable checks and artifact requirements passed independently. Locale behavior tests assert stale revisions and forced CAS loss are rejected without successful conflicting mutation; the static canonical-audit findings are outside the assertions of this otherwise passing suite. No live/browser E2E approval is claimed."
+    }
+  ],
+  "blockers": [
+    {
+      "root_cause_key": "identity-audit-context-reference-is-external-request-id",
+      "obligation_id": "dimension:structure",
+      "classification": "new",
+      "owner": "identity-local",
+      "severity": "medium",
+      "summary": "Identity audit events use the external request ID as a persisted RequestContext reference without a context persistence/binding boundary.",
+      "impact": "Canonical audit cannot reliably restore the authenticated context, authentication provenance and policy context for identity/locale writes or denials. External request correlation is conflated with the authoritative persisted context identity, so event shape validation and matching request headers do not establish audit traceability.",
+      "evidence": "Static evidence on reviewed head: internal/identity/audit.go:14-19 drops the authenticated RequestContext down to three correlation fields; audit.go:83-99 unconditionally sets AuditEvent.RequestContextID to metadata.RequestID. RequestMetadata at types.go:192-197 has no persisted context reference; Tx at types.go:113-134 exposes only AppendAudit(AuditEvent), with no operation receiving/binding the trusted context. ResolveBrowserSession at service.go:444-464 constructs and returns the transient context, without issuing a persisted reference. The HTTP request ID may originate from a caller header (api/auth/local/handler.go:310-321). This conflicts with required security-and-enterprise.md:305-306,317 and contracts/governance/audit/contract.go:1075-1083, which explicitly distinguish the persisted RequestContextID from the external RequestID. Test store AppendAudit at identity_test.go:408-416 only validates/appends the event; locale audit tests count events/denials, not persisted context bindings. All declared tests pass; no additional negative experiment was constructed.",
+      "required_fix": "Provide an explicit canonical audit/context persistence boundary in the owned identity port that receives the trusted context and supplies a server-issued persisted reference. Set AuditEvent.RequestContextID to that reference and retain external RequestID in the context record/summary, preserving correlation and causation. Apply this to successful writes, denials and the explicitly supported pre-authentication/installer evidence paths without inventing anonymous administrator contexts. Extend the existing declared tests to prove the event resolves to the correct persisted context and that external RequestID is not substituted for its identity. This is a module port/binding requirement, not a demand for an undeclared downstream live database."
+    },
+    {
+      "root_cause_key": "identity-one-time-proof-audit-fabricates-authorization-policy-provenance",
+      "obligation_id": "dimension:ownership",
+      "classification": "new",
+      "owner": "identity-local",
+      "severity": "medium",
+      "summary": "One-time proof audits manufacture AuthorizationPolicy and matched-grant provenance instead of recording the controls actually evaluated.",
+      "impact": "Bootstrap, invitation acceptance, recovery completion and installer recovery are recorded as Allow decisions under nonexistent policy/grant identities. Audit consumers cannot replay or resolve the reported policy provenance; a token/proof digest is mislabeled as a policy digest. The operations do validate their proofs, but that does not justify synthetic Authorization evidence.",
+      "evidence": "Static evidence: internal/identity/audit.go:22-43 constructs a fresh authz.AuthorizationDecision with an identity.one-time.<proof-kind> policy ID, revision 1, the proof digest as PolicyDigest and a hard-coded one-time/valid-<proof-kind> matched grant. It never obtains an AuthorizationDecision from Authorizer or a persisted policy from Governance. authorizationControl at audit.go:59-80 presents those fields as ControlAuthorization provenance. Callers are service.go:220, invitation.go:366 and recovery.go:175,277. Required security-and-enterprise.md:184-201,247-259 requires the single engine/current Scope policy and real immutable policy provenance; docs/design/detailed/10-web-api-cli-detailed-design.md:304 states one Scope has one current policy. The helper creates a parallel fictional policy family solely to satisfy audit validation. AuditEvent.Validate (contracts/governance/audit/contract.go:373-390) requires evaluated controls but does not establish that their policy/grant references exist. No exploit, network probe or new negative test was performed.",
+      "required_fix": "Remove the synthesized AuthorizationDecision/policy/grant family. Record truthful evaluated-control evidence from the actual installer authority, bootstrap/current governance policy, invitation authorization and/or authentication receipt as appropriate to each entry point, keeping pre-authentication proof checks distinct from a Scope AuthorizationEngine decision. Do not relabel a token digest as a policy digest or invent a Provider release. If the upstream canonical audit schema cannot represent the required proof control, expose that precise contract-boundary conflict rather than fabricating provenance. Add existing-suite assertions that policy/control identities, revisions, digests and grants resolve to the real evaluated source."
+    }
+  ],
+  "nits": [],
+  "environment_notes": [
+    "Isolated task checkout pinned to reviewed head; Go 1.26.0 linux/arm64, Python 3.14.3 and zstd 1.5.7 available; no external service required.",
+    "Initial path-dependent invocation failed outside the checkout; all exact contract commands subsequently ran successfully with the explicit absolute checkout workdir. Package execution was repeated uncached.",
+    "Only contract-declared local verification was executed. New findings are static inspection, not additional exploit/negative-test experiments. No worker source, upstream contract or platform state was changed by the reviewer. Reproduction rewrote the local component manifest to the reviewed-head revision; committed source bundle bytes remain identical."
+  ]
+}

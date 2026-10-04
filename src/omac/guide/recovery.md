@@ -703,3 +703,25 @@ generation、计数、预算或 done/merged 漂移均拒绝，不能以通用 am
 已 consumed/step4 的基础设施 review 恢复不代表已经派发 Reviewer。正常 result collection 会根据完整原请求、receipt、当前封存交付、subject/generation、Run 集合和有效预算验证原 reservation；只有未派发且完全匹配的 reservation 才能保留原 attempt、generation 和排除 Run 集合进入既有 guarded assignment/wake。当前 canonical `reviewer-run-dispatch-unresolved` 可在该验证下解除，任意其他 decision 不解除。
 
 独立的 `operator_review_reservation_dispatch` 持久记录释放、suppressed assignment、wake 和 native target 绑定，不修改原 consumed receipt。每次 effect 前都复核原 source 和当前完整 DONE/批准预算事实，guarded assignment/wake 的锁内最终读取也执行 admission 复核。未知结果只观察同一 intent；assignment 或 wake 尚未证明时不重复调用，也不清除 baseline、重开周期或回退 attempt。新 Run 必须是 intent 后唯一的正式当前 Reviewer Run；已有 submitted/delayed/active/queued/unknown/ambiguous 或 source/control/budget 漂移不会获得新的派发许可。锁为 host-local，不能声称分布式 atomic CAS；单 Controller 是前置。
+
+
+## Source-bound owner amendment assessment
+
+当 terminal Worker 的有效 `omac.worker-blocker/v2` 是 `owner-decision-required`，或存在独立的 `omac-budget-preserving-amendment-recovery-required` Package 决定时，可准备一个仅授权最小一致 amendment **评估**的请求。它不裁决 Worker 产品主张，不预先批准 scope/owner 转移、操作或 producer readiness。
+
+```bash
+omac dag amend prepare-owner <manifest> --blocked-node <held-node> --allowed-node <held-node> --allowed-node <other-existing-affected-node> --report-file <assessment.md> --docs <authoritative-docs> --output-file <immutable-request.json>
+omac dag amend resolve-owner <manifest> <immutable-request.json> --request-sha256 <returned-request-sha256> --authority <coordinator> --reason '<exact new assessment resolution>'
+omac dag amend propose <manifest> --owner-request-file <immutable-request.json> --blocked-node <held-node> --report-file <assessment.md> --docs <authoritative-docs> --orchestrator <planner> --reviewer <independent-reviewer> --output-file <reviewed.yaml>
+omac dag amend accept <manifest> <reviewed.yaml> --reason '<accepted fresh reviewed amendment>'
+```
+
+`prepare-owner` 只读平台事实并写离线请求文件；`resolve-owner` 显式写 manifest 中的 `owner_amendment_resolutions` 授权记录。请求 SHA 是完整内容的 canonical JSON SHA256，不是 YAML 文件的格式字节摘要。原决定、v2、失败报告/ledger 完整原字节、handoff、generation（包括实际 null）、Run 因果、计数、预算和完整 DONE/历史事实保留；不以 retry、清分类或省略 blocked-node 获得 admission。旧 9512 文件不自动构成这次 resolution。
+
+每个实际 changed/derived/recovered 既有节点均须包含在精确 `--allowed-node` 中；每个实际 owner-held 节点还须在 `--blocked-node` 中并具有完整来源。不得只授权 caller selector 后忽略派生集合。此入口当前仅支持**既有**节点；不存在的新节点 ID 失败关闭，不隐式授予新节点预算。Planner 必须提交精确 `owner_resolution` 和返回的 `owner_resolution_approval`，以及 `budget_policy: preserve`；正常 structural/minimal/stage/independent Review/CAS/apply 门继续有效。原 Package reject 永不 replay；未取回的 Wire 字节不会因部署预算能力或批准评估而变成已验证。
+
+同一 request 有独立 assessment/Review 意图 checkpoint。Unknown create、尚未观察到完整产物的 assignment/wake 和 pending Review 不重发；先只读观察同一 deterministic attempt。若已观察到同一 Planner 的完整交付且所有相关 Run 明确 terminal，可进入首次独立 Review；若 Review 已意图派发，须等待其真实绑定 verdict，再用同一请求续接。重复调用不替换批准、agents、bounds 或已评审完整证据。完整来源/预算/DONE/report/docs 漂移要求新的真实准备和 resolution，不能把 unresolved unknown 当作没有 effect。
+
+所有受管写命令继续持有 host-local manifest 锁。它不是跨主机 atomic CAS：运行这些控制写操作前必须在两台主机维持单一 manifest/controlwriter；当前 source/Run 观测夹住外部调用，但不声称能阻止未经受管的并发写。任何未来部署需另行使用当时最新 ALL FULLDONE、预算、receipts、native quiescence 和新的精确部署批准；捕获夹具不是 live eligibility。
+
+已接受 definition 后，未完成的 owner recovery 仍核验完整原 Source、历史失败字节、ALL DONE/consumed history、实际 required-contract/acceptance 字节和配置中的 retry 上限/remaining。每个 recovery 意图先落盘；未知 restore 只观察原 target，完全达到目标才可完成 checkpoint，不重新 apply。部分或未证明的 target 保持 STOP，不能用私有 metadata 修改、回退预算或重准备原 consumed receipt 修复。

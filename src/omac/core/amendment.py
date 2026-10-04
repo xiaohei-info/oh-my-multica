@@ -940,6 +940,9 @@ def _proposal_core(proposal: dict[str, Any]) -> dict[str, Any]:
     }
     if "budget_policy" in proposal:
         result["budget_policy"] = proposal["budget_policy"]
+    if "owner_resolution" in proposal:
+        result["owner_resolution"] = proposal["owner_resolution"]
+        result["owner_resolution_approval"] = proposal.get("owner_resolution_approval")
     return result
 
 
@@ -1003,6 +1006,8 @@ def build_reviewed_amendment(
         raise ValidationError(
             "Only a reviewer pass or pass-with-nits can enter human confirmation")
 
+    from .owner_amendment import validate_affected
+    validate_affected(manifest, proposal, store, runtime)
     verify_literal_correction(manifest, proposal, store, runtime)
     literal_binding = literal_review_binding(proposal, store, runtime, issue_id)
     minimal, derived, immutable = _minimal_rerun(manifest, proposal)
@@ -1355,6 +1360,7 @@ def _resume_apply_ledger(
     manifest: Manifest,
     manifest_path: str,
     store: Any,
+    before_recovery=None,
 ) -> dict[str, list[str]]:
     ledger = manifest.meta.get("amendment_apply")
     if not isinstance(ledger, dict) or ledger.get("schema") != APPLY_LEDGER_SCHEMA:
@@ -1514,10 +1520,16 @@ def _resume_apply_ledger(
             _save_ledger(manifest, manifest_path, ledger)
             summary["observed_progress"].append(node_id)
             continue
+        if before_recovery is not None:
+            before_recovery(manifest, node_id)
         entry["state"] = (
             "repairing" if legacy_synced_authoring else "syncing")
         entry["attempt_baseline"] = current
         _save_ledger(manifest, manifest_path, ledger)
+        if before_recovery is not None:
+            confirmed = load_manifest(manifest_path)
+            if confirmed != manifest:
+                raise ValidationError("Owner recovery intention/checkpoint was not confirmed; observe without restoring")
         prepare_stage_recovery(
             node,
             store,
@@ -1692,6 +1704,8 @@ def apply_amendment(
     already_applied = current.meta.get("last_amendment_id") == amendment.get("amendment_id")
     runtime_rebased = False
     if not already_applied:
+        from .owner_amendment import verify_reviewed_resolution
+        verify_reviewed_resolution(current, amendment, store, runtime, manifest_path)
         verify_literal_correction(current, amendment, store, runtime)
         if literal_operation(amendment) is not None and literal_review_binding(
             amendment, store, runtime, review.get("issue_id")
@@ -1779,8 +1793,14 @@ def apply_amendment(
 
     if budget_bindings is not None:
         _validate_preserved_budget_ledger(current.meta.get("amendment_apply") or {}, budget_bindings)
+    before_recovery = None
+    if amendment.get("owner_resolution"):
+        from .owner_amendment import guard_apply_resume
+        guard_apply_resume(current, amendment, store, runtime)
+        before_recovery = lambda manifest, node_id: guard_apply_resume(
+            manifest, amendment, store, runtime, before_node=node_id)
     sync_summary = _resume_apply_ledger(
-        current, manifest_path, store)
+        current, manifest_path, store, before_recovery=before_recovery)
 
     return {
         "amendment_id": amendment.get("amendment_id"),

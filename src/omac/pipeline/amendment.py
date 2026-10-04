@@ -330,7 +330,7 @@ def _docs_snapshot(
     }
 
 
-def _write_yaml_atomic(path: str, payload: dict[str, Any]) -> None:
+def _write_yaml_atomic(path: str, payload: dict[str, Any], *, as_json: bool = False) -> None:
     target = os.path.abspath(path)
     directory = os.path.dirname(target) or "."
     os.makedirs(directory, exist_ok=True)
@@ -338,7 +338,10 @@ def _write_yaml_atomic(path: str, payload: dict[str, Any]) -> None:
         prefix=f".{os.path.basename(target)}.", suffix=".tmp", dir=directory)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            yaml.safe_dump(payload, stream, allow_unicode=True, sort_keys=False)
+            if as_json:
+                json.dump(payload, stream, ensure_ascii=False, sort_keys=True)
+            else:
+                yaml.safe_dump(payload, stream, allow_unicode=True, sort_keys=False)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, target)
@@ -375,7 +378,7 @@ def _acceptance_for_manifest(manifest, manifest_path: str):
     path = os.path.join(os.path.dirname(manifest_path), configured)
     try:
         return load_acceptance_doc_file(path)
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, yaml.YAMLError) as exc:
         raise ValidationError(ui(
             f"Could not load the authoritative acceptance document {path}: {exc}",
             f"无法读取权威 acceptance 文档 {path}: {exc}")) from exc
@@ -463,6 +466,7 @@ def propose_amendment(
     restart_authoring: bool = False,
     new_attempt: bool = False,
     supersedes_issue_id: str | None = None,
+    owner_request_file: str | None = None,
     poll=None,
 ) -> dict[str, Any]:
     requested_docs = list(docs)
@@ -520,14 +524,21 @@ def propose_amendment(
         raise ValidationError(
             "Amendment agents are not in the workspace pool: "
             + ", ".join(sorted(set(missing_agents))))
-    _validate_amendment_admission(
-        engine,
-        manifest,
-        manifest_path,
-        blocked_nodes,
-        new_attempt=new_attempt,
-        supersedes_issue_id=supersedes_issue_id,
-    )
+    owner_digest = owner_key = owner_resume = None
+    if owner_request_file:
+        if new_attempt or supersedes_issue_id or resume_issue_id or restart_authoring:
+            raise ValidationError("Owner assessment uses its exact once-only request identity; legacy resume/new-attempt flags are not allowed")
+        from .owner_amendment import begin_assessment
+        owner_digest, owner_key, owner_resume = begin_assessment(
+            engine, manifest_path, owner_request_file,
+            report_file=report_file, docs=requested_docs, blocked_nodes=blocked_nodes,
+            orchestrator=orchestrator, reviewers=reviewers, max_revisions=max_revisions)
+        manifest = load_manifest(manifest_path)
+    else:
+        _validate_amendment_admission(
+            engine, manifest, manifest_path, blocked_nodes,
+            new_attempt=new_attempt, supersedes_issue_id=supersedes_issue_id,
+        )
 
     description = (
         "A DAG already approved and running has exposed a contract/topology defect. "
@@ -573,11 +584,21 @@ def propose_amendment(
             project_root=project_root),
     }
 
+    if owner_digest:
+        description += ("\n\nThis is only an operator-authorized source-bound amendment assessment, "
+                        "not product PASS or approval of owner claims/operations. Preserve full sources "
+                        "and use budget_policy: preserve. Exact proposal owner_resolution: " + owner_digest +
+                        "\nExact owner_resolution_approval: " + manifest.meta["owner_amendment_resolutions"][owner_digest]["approval_sha256"])
+        payload["description"] = description
+        payload["contract"].source_of_truth.append(owner_request_file)
     attempt = None
     source_refs = None
     dag_key = f"amend-{Path(manifest_path).stem}"
     effective_resume_issue_id = resume_issue_id
-    if new_attempt:
+    if owner_digest:
+        dag_key = owner_key
+        effective_resume_issue_id = owner_resume
+    elif new_attempt:
         superseded = engine.store.get_work_item(supersedes_issue_id)
         if superseded.kind != TaskKind.AMENDMENT:
             raise ValidationError("--supersedes-issue-id must reference an amendment issue")
@@ -633,9 +654,29 @@ def propose_amendment(
     def guard(item) -> list[str]:
         if not item.deliverable:
             return ["amendment deliverable is empty"]
-        return validate_proposal(
-            manifest, item.deliverable, pool, acceptance=acceptance)
+        proposal = parse_proposal(item.deliverable)
+        if owner_digest and proposal.get("owner_resolution") != owner_digest:
+            raise ValidationError("Planner delivery must bind the exact approved owner_resolution")
+        errors = validate_proposal(manifest, proposal, pool, acceptance=acceptance)
+        if errors:
+            return errors
+        from ..core.owner_amendment import validate_affected
+        current = load_manifest(manifest_path)
+        validate_affected(current, proposal, engine.store, engine.runtime)
+        if owner_digest:
+            from ..core.amendment import _minimal_rerun, _apply_definition, _validate_stage_preconditions
+            minimal, _, _ = _minimal_rerun(current, proposal)
+            _validate_stage_preconditions(_apply_definition(current, proposal), minimal, engine.store)
+        return []
 
+    assessment_kwargs = {}
+    if owner_digest:
+        from .owner_amendment import checkpoint_review_dispatch
+        from .owner_amendment import checkpoint_authoring_dispatch
+        assessment_kwargs["before_authoring_dispatch"] = lambda item_id, stage: checkpoint_authoring_dispatch(
+            engine, manifest_path, owner_digest, item_id, stage)
+        assessment_kwargs["before_review_dispatch"] = lambda item, reviewer: checkpoint_review_dispatch(
+            engine, manifest_path, owner_digest, item, reviewer)
     try:
         outcome = run_task(
             engine,
@@ -655,6 +696,7 @@ def propose_amendment(
             reuse_dag_key=new_attempt,
             review_acceptance_doc=acceptance,
             review_amendment_manifest=manifest,
+            **assessment_kwargs,
         )
     except NeedsDecision as exc:
         if exc.report.get("reason_code") == "amendment-resume-contract-drift":
@@ -704,6 +746,10 @@ def propose_amendment(
         raise ValidationError(
             "Amendment did not reach Reviewer-pass or pass-with-nits confirmation")
 
+    if owner_digest:
+        from .owner_amendment import record_review
+        guard(issue)
+        manifest = record_review(engine, manifest_path, owner_digest, issue)
     reviewed = build_reviewed_amendment(
         manifest,
         outcome["delivery"]["amendment"],

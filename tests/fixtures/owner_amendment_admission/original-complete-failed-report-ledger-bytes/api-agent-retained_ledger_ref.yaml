@@ -1,0 +1,150 @@
+schema: omac.review-ledger/v2
+cycles:
+- round: 1
+  subject_digest: 4855c4853513dccc8aceabd2f3bf32ce801eea0a9e46cc656235691d43926043
+  report_digest: 4d39b4447264f66ce888b2ba2230165bc82821f607f062c896758082f7b90d4e
+  verdict: reject
+  obligation_results:
+    dimension:authority: fail
+    dimension:structure: fail
+    dimension:execution: pass
+    dimension:ownership: pass
+    dimension:evidence: pass
+    dimension:regression: pass
+    integration:api-agent-gate: pass
+  new_count: 2
+  fixed_count: 0
+  regressed_count: 0
+  unchanged_count: 0
+  open_count: 2
+  prior_open_blocker_ids: []
+  open_blocker_ids: &id001
+  - BLK-3ae8ac149441
+  - BLK-9beec89d4933
+  reported_blocker_ids: *id001
+  blocker_facts_schema: omac.review-cycle-blocker-facts/v1
+  blocker_facts:
+  - blocker_id: BLK-3ae8ac149441
+    root_cause_key: api-agent-public-command-contract-incomplete
+    obligation_id: dimension:authority
+    summary: Published command schemas do not specify the required governance and
+      actual failure outcomes.
+    evidence: docs/design/detailed/10-web-api-cli-detailed-design.md:1398-1409 requires
+      each command to define RequestContext, authorization action, Admission boundary,
+      business refusal, conflict, retryable/nonretryable errors and audit semantics.
+      api/openapi/agents/openapi.yaml:169-225 declares only 200/409 for each lifecycle
+      command, despite handler.go:80-83 returning 403 for missing governance context,
+      :216-220 returning 400, and :318-331 mapping 404/403/503/500. The document has
+      no security scheme/security requirement and lifecycle operations contain no
+      authorization, Admission or audit contract. Its Conflict response at :259-263
+      combines CAS, idempotency and protected-reference conflicts, while handler.go:324-325
+      provides the same refresh-and-retry message for all of them. Publication describes
+      governance generically at openapi.yaml:106-111 but does not define its authorization
+      action or retry semantics.
+    required_fix: Complete the authoritative OpenAPI command contracts with the supported
+      authenticated RequestContext transport, authorization actions, Admission applicability
+      and audit semantics (link the owning governance contract where appropriate).
+      Declare every supported HTTP failure or a typed default error response, including
+      lifecycle 400/403/404/503/internal failures. Preserve safe machine-readable
+      distinctions and next actions for stale revision, idempotency mismatch and protected-reference/business
+      refusal. Add schema/HTTP conformance checks to the existing declared suite instead
+      of testing only spec substring presence.
+    status: open
+    classification: new
+    owner: api-agent
+  - blocker_id: BLK-9beec89d4933
+    root_cause_key: api-agent-owner-use-cases-disconnected
+    obligation_id: dimension:structure
+    summary: HTTP operations have no production bridge to the owning Agent application
+      use cases.
+    evidence: internal/httpapi/agents/handler.go:50-65 introduces a 10-method Application
+      interface taking API-owned DTOs; handler.go:71-73 only injects it. Repository-wide
+      symbol searches find its methods implemented solely in handler_test.go:503-572
+      and all constructor uses in tests. Actual templates.Application.Instantiate
+      at internal/agents/templates/templates.go:120 takes templates.InstantiateRequest,
+      whereas definitions.Application.PublishBlank at internal/agents/definitions/definitions.go:332
+      takes PublishBlankRequest with RequestContextID, an existing Agent/CAS and already-resolved
+      runtime bindings. No production code translates the public request, calculates
+      instruction digests, resolves runtime requests/defaults, preserves template
+      provenance, or bridges catalog/lifecycle calls. Publication/lifecycle tests
+      at handler_test.go:130-225,263-284 return fabricated test results rather than
+      exercising these owner boundaries; only template test closures at :60-65,:91-95
+      invoke an actual upstream application.
+    required_fix: Supply production transport-to-owner composition using the actual
+      inward-facing use-case contracts (or explicitly resolve an owner-contract prerequisite
+      through the authorized process). Translate the public inputs/results and safe
+      classified failures; derive server-owned values at the owning application boundary;
+      preserve RequestContext/audit provenance, CAS/idempotency, template provenance
+      and reference protection. Do not add business state or lifecycle rules in the
+      HTTP adapter and do not force inner application modules to import API DTOs.
+      Extend the declared package suite to exercise this production bridge with deterministic
+      owner-port fixtures, including template and blank publication and lifecycle
+      refusal paths.
+    status: open
+    classification: new
+    owner: api-agent
+blockers:
+- blocker_id: BLK-3ae8ac149441
+  root_cause_key: api-agent-public-command-contract-incomplete
+  obligation_id: dimension:authority
+  summary: Published command schemas do not specify the required governance and actual
+    failure outcomes.
+  evidence: docs/design/detailed/10-web-api-cli-detailed-design.md:1398-1409 requires
+    each command to define RequestContext, authorization action, Admission boundary,
+    business refusal, conflict, retryable/nonretryable errors and audit semantics.
+    api/openapi/agents/openapi.yaml:169-225 declares only 200/409 for each lifecycle
+    command, despite handler.go:80-83 returning 403 for missing governance context,
+    :216-220 returning 400, and :318-331 mapping 404/403/503/500. The document has
+    no security scheme/security requirement and lifecycle operations contain no authorization,
+    Admission or audit contract. Its Conflict response at :259-263 combines CAS, idempotency
+    and protected-reference conflicts, while handler.go:324-325 provides the same
+    refresh-and-retry message for all of them. Publication describes governance generically
+    at openapi.yaml:106-111 but does not define its authorization action or retry
+    semantics.
+  required_fix: Complete the authoritative OpenAPI command contracts with the supported
+    authenticated RequestContext transport, authorization actions, Admission applicability
+    and audit semantics (link the owning governance contract where appropriate). Declare
+    every supported HTTP failure or a typed default error response, including lifecycle
+    400/403/404/503/internal failures. Preserve safe machine-readable distinctions
+    and next actions for stale revision, idempotency mismatch and protected-reference/business
+    refusal. Add schema/HTTP conformance checks to the existing declared suite instead
+    of testing only spec substring presence.
+  status: open
+  classification: new
+  owner: api-agent
+  first_seen_round: 1
+  last_seen_round: 1
+  seen_count: 1
+- blocker_id: BLK-9beec89d4933
+  root_cause_key: api-agent-owner-use-cases-disconnected
+  obligation_id: dimension:structure
+  summary: HTTP operations have no production bridge to the owning Agent application
+    use cases.
+  evidence: internal/httpapi/agents/handler.go:50-65 introduces a 10-method Application
+    interface taking API-owned DTOs; handler.go:71-73 only injects it. Repository-wide
+    symbol searches find its methods implemented solely in handler_test.go:503-572
+    and all constructor uses in tests. Actual templates.Application.Instantiate at
+    internal/agents/templates/templates.go:120 takes templates.InstantiateRequest,
+    whereas definitions.Application.PublishBlank at internal/agents/definitions/definitions.go:332
+    takes PublishBlankRequest with RequestContextID, an existing Agent/CAS and already-resolved
+    runtime bindings. No production code translates the public request, calculates
+    instruction digests, resolves runtime requests/defaults, preserves template provenance,
+    or bridges catalog/lifecycle calls. Publication/lifecycle tests at handler_test.go:130-225,263-284
+    return fabricated test results rather than exercising these owner boundaries;
+    only template test closures at :60-65,:91-95 invoke an actual upstream application.
+  required_fix: Supply production transport-to-owner composition using the actual
+    inward-facing use-case contracts (or explicitly resolve an owner-contract prerequisite
+    through the authorized process). Translate the public inputs/results and safe
+    classified failures; derive server-owned values at the owning application boundary;
+    preserve RequestContext/audit provenance, CAS/idempotency, template provenance
+    and reference protection. Do not add business state or lifecycle rules in the
+    HTTP adapter and do not force inner application modules to import API DTOs. Extend
+    the declared package suite to exercise this production bridge with deterministic
+    owner-port fixtures, including template and blank publication and lifecycle refusal
+    paths.
+  status: open
+  classification: new
+  owner: api-agent
+  first_seen_round: 1
+  last_seen_round: 1
+  seen_count: 1

@@ -1,0 +1,241 @@
+schema: omac.review-report/v2
+review_protocol: omac.review/v2
+verdict: reject
+summary: Reject the executable recovery claim for one budget-preservation conflict.
+  The three-node producer/dependency/publication definition repair otherwise passes
+  independent structural/ownership/regression review. Wire remains STOP; no product
+  PASS, dispatch or apply is authorized.
+review_goals:
+- Independently validate the exact sealed amendment against owning designs, current
+  source/owner facts and acceptance responsibility.
+- Inspect the complete minimum definition diff, typed dependencies, retained rejection/receipt/wire
+  evidence and AUTHORING impacts.
+- Reproduce current-task structural gates and check the claimed budget-preserving
+  normal recovery path.
+acceptance_mapping:
+- acceptance: The amendment is schema-valid and changes only the minimum required nodes
+  status: pass
+  evidence: Native proposal/acceptance lint has zero errors; exactly three definition changes repair the owner production/publication dependencies without replacing the whole plan. This structural pass is not a safe-recovery or product PASS.
+- acceptance: Done/merged facts and unaffected node runtime state remain immutable
+  status: pass
+  evidence: In-memory definition application preserves all 68 completed full objects, 180 unaffected full objects and manifest meta. Future budget recovery separately fails dimension execution; no live apply was attempted.
+- acceptance: The output states why each changed node resumes at review, authoring, or merging
+  status: pass
+  evidence: All three explicit changes require AUTHORING for changed implementation/input/publication. Native classification also derives the four started descendants at AUTHORING; no review/merge shortcut or duplicate resume.
+integration_gate_mapping:
+- name: running-dag-amendment
+  gate: running-dag-amendment
+  status: pass
+  layer: control-plane
+  delivery_goal: reviewable minimal manifest diff
+  source_of_truth:
+  - .omac/open-agent-cluster.yaml
+  - docs/design/open-agent-cluster-overview-design.md
+  - docs/design/detailed/08-component-and-extension-detailed-design.md
+  - docs/design/detailed/09-governance-and-security-detailed-design.md
+  - docs/references/extension/component-governance.md
+  - docs/references/extension/plugin-contracts.md
+  - docs/references/governance/security-and-enterprise.md
+  - docs/references/software-delivery/artifacts-release-and-deployment.md
+  - docs/delivery/acceptance-and-validation.md
+  commands:
+  - cmd: omac dag show .omac/open-agent-cluster.yaml --output json
+    exit_code: 0
+    summary: Read exact bound manifest; inspected complete diff and in-memory native classification.
+  metrics:
+    definition_update_count: 3
+    unchanged_node_count: 180
+    completed_full_object_count: 68
+    native_schema_error_count: 0
+    authoring_recovery_count: 7
+  evidence: Declared integration read and native structural checks pass. Safe executable recovery remains rejected for the protected-budget rebase conflict; no product tests, publication or apply implied.
+full_review_completed: true
+diff_reviewed: true
+tests_rerun: true
+integration_tests_rerun: true
+coverage_checked: true
+verification_scope: Amendment/control-plane review only. Executed declared DAG verification
+  and integration commands; independently parsed/compiled all 41 proposed node verification
+  commands. Product gates are future implementation obligations and were not run;
+  this is not a product security/conformance or coverage verdict.
+env_setup:
+- Independent shallow manifest-runtime checkout dee38b8ea0664fe4a171f0d01aecc099c9f19148
+  supplies real required-contract paths. Exact bound manifest/acceptance and all eight
+  supplied docs are the review authority, not the older checkout manifest. Packet-only
+  check initially failed for missing other required-contract paths; repeating from
+  the complete dependency checkout passes.
+- Use installed OMAC interpreter at /home/ubuntu/.local/share/pipx/venvs/omac/bin/python
+  for native read-only validate_proposal/_apply_definition/_minimal_rerun; no shared
+  tree or platform state mutated.
+obligation_results:
+- obligation_id: dimension:authority
+  status: pass
+  evidence: Sealed work-show proposal is 131265 bytes, SHA256 88786e7cddecefb374bd7481ead2259b0ddfd9ba962024f79329c466afad0cc0.
+    Independently checked all 163 indexed packet files; bound manifest SHA256 87111694c7412fa66490a68151249b8052330933eae686dfb509cd77adca5f72.
+    Read the eight owning documents, current owner contracts, Package v2 and retained
+    complete rejection records. Fresh PR98 is OPEN at 3c57cdf0e81900c89467773c4cc39642e0359416,
+    not the historical rejected 37b9d6f head; no merge/product PASS inferred.
+- obligation_id: dimension:structure
+  status: pass
+  evidence: 'Native validate_proposal with the bound acceptance artifact returns no
+    errors from a complete dependency checkout. Exactly three definition updates:
+    authorization production command/publication, audit-ledger existing committed-row
+    publication/handoff, extension-package two genuine prerequisites/strict typed
+    consumes. No new node, cycle, completed-node modification, acceptance migration
+    or redundant resume operation. Omitted upstream consumes remain omitted; existing
+    strict Wire consume is unchanged.'
+- obligation_id: dimension:execution
+  status: fail
+  evidence: 'Both declared current-task commands succeed in the complete reviewer
+    checkout and all 41 resulting shell commands/inline Python programs parse/compile.
+    However the required normal AUTHORING apply captures a new cumulative bounce baseline,
+    contradicting the proposal prohibition on resetting/granting budget: current Authorization
+    has consumed worker/review 1/1 with no accepted baseline; normal apply rebases
+    them to zero consumed. This is a control-plane executability failure, not a failed
+    unimplemented product test. See amendment-authoring-recovery-rebases-protected-budget.'
+- obligation_id: dimension:ownership
+  status: pass
+  evidence: Unchanged workers, primary source scopes, PR bases, coverage gates, required
+    contracts and all acceptance fields. Authorization owns the one canonical evaluator
+    and current request evaluation, not Package/Audit storage. Audit retains receipt967
+    opaque Handle, committed-row issuer, unchanged sealed contracts and three release
+    bundles. Package remains narrow installer/lifecycle composition; no second truth
+    store, caller-selected issuer/trust, wire producer reopening or reverse Harness/aggregation
+    dependency.
+- obligation_id: dimension:evidence
+  status: pass
+  evidence: Existing raw tests, release metrics and artifacts remain exact. Auth adds
+    eight named production owner tests, race/vet and immutable publication; Audit
+    retains real PostgreSQL receipt/restore gates and adds publication. Owner indexes
+    bind immutable repository bytes to product HEAD/tree, typed producer, hashes/size/blob
+    OIDs, with formal verification separately publishing the index. No runtime permission
+    is inferred from artifacts. Fresh complete PR59 Git tree reports truncated=false
+    and zero artifacts/contracts-extension-wire payloads; current Wire work-show has
+    no deliverable. Missing original bytes remain a strict pre-dispatch STOP, not
+    a synthetic recovery.
+- obligation_id: dimension:regression
+  status: pass
+  evidence: No prior open blocker belongs to this amendment review. Inspected Package
+    ledger c6280c80 (all three cycles, eight open roots and one fixed root) and verification7470bbac,
+    original owner-decision v2, Auth c9def/c6d5 and applied Audit receipt967 review.
+    The complete original Package commands, 18-test requirement, race/source-audit
+    zero metrics, nine artifacts and default 90% floor are preserved; all original
+    Audit gates and both Authorization rejected-root obligations persist. No product
+    blocker is marked fixed by this planning review.
+- obligation_id: acceptance:Done/merged facts and unaffected node runtime state remain
+    immutable
+  status: pass
+  evidence: Pure definition application preserves all 68 done/merged complete objects,
+    all 180 unchanged complete node objects and meta exactly. No shared manifest or
+    platform status/assignee/counter changed by review. Native derived recovery includes
+    already-started descendants; their definition invariance is not represented as
+    immunity from recovery. Budget safety of actual future recovery fails the separate
+    execution obligation.
+- obligation_id: acceptance:The amendment is schema-valid and changes only the minimum
+    required nodes
+  status: pass
+  evidence: Native schema/lint/acceptance validation returns []. Full diff only authorization,
+    audit-ledger and extension-package; changed sources/outputs and two additional
+    edges correspond to actual missing owner capabilities. Audit implementation is
+    not split from its receipt persistence boundary. Remaining Wire blocker is explicitly
+    excluded from claims of complete unblocking; no relaxed input policy is approved.
+- obligation_id: acceptance:The output states why each changed node resumes at review,
+    authoring, or merging
+  status: pass
+  evidence: The proposal expressly classifies all three updates AUTHORING for changed
+    implementation/input/publication obligations without adequate reviewed production
+    delivery. Native minimal rerun derives AUTHORING for contracts-extension, authentication-methods,
+    solution-publishing and direct-deployment, no review/merging and no done-descendant
+    conflict. Seven existing WorkItems are affected; no duplicate resume operation
+    or manual phase patch is encoded.
+- obligation_id: integration:running-dag-amendment
+  status: pass
+  evidence: omac dag check on the exact bound manifest exits 0 (183 nodes) in the
+    complete dependency checkout; omac dag show exits 0. Native in-memory proposal/acceptance
+    validation passes, definition diff and minimal recovery independently inspected.
+    Initial missing-file failures in the packet-only/wrong-CWD environments were resolved
+    by using the complete repository dependencies, never replacing the bound manifest
+    with remote manifest-runtime. This gate proves structure, not producer production
+    readiness or safe apply budget.
+- obligation_id: acceptance-responsibility:amendment-matrix
+  status: pass
+  evidence: 'Compared every before/after entry: all 61 flow matrices are exactly equal,
+    all 495 business Actions covered (495 contributed), no missing/unknown Actions
+    or unreachable contributor, unchanged full-owner/dependency closure and contribution
+    owners. Historical contract corrections list is empty. Verified changed contracts
+    preserve acceptance_claims, acceptance_contributions, acceptance_refs and legacy
+    acceptance exactly; no responsibility transfer is hidden in a complete replacement.'
+prior_blocker_results: []
+blockers:
+- root_cause_key: amendment-authoring-recovery-rebases-protected-budget
+  obligation_id: dimension:execution
+  classification: new
+  owner: amendment-orchestrator
+  severity: high
+  summary: The proposed mandatory normal AUTHORING recovery cannot currently preserve
+    the expressly protected consumed budget.
+  impact: Applying through the named normal OMAC path would grant a fresh relative
+    Worker/Reviewer allowance to Authorization while keeping its absolute counters
+    unchanged. Enforcing the proposal no-grant STOP instead prevents the claimed executable
+    repair. A prose safety guard cannot prove a supported budget-preserving apply.
+  evidence: Fresh omac work show Authorization 01a10383-b5e2-71ee-bc1e-d5cc5214e55b
+    reports worker_bounce=1, review_bounce=1 and no bounce_budget baseline; bound
+    meta.amendment_apply has no Authorization retained baseline. Native core/amendment.py:1144-1158
+    initializes every existing recovery entry with amendment_bounce_baseline(item);
+    :1169-1172 excludes recovered nodes from preserved older baselines; core/stage_recovery.py:283-285
+    passes that baseline to restore_authoring_generation. core/retry_budget.py:32-37
+    captures absolute counters and :170-215 computes current minus baseline. Thus
+    present consumed 1/1 becomes 0/0 after a normal new baseline. Native _minimal_rerun
+    independently includes Authorization in AUTHORING. The proposal repeatedly requires
+    every current approved budget authority to remain unchanged and refusal of any
+    reset/grant. No apply was run; evidence is current CLI facts plus static production
+    control-path inspection.
+  required_fix: Provide a source-bound, independently reviewable supported recovery
+    path that retains the existing absolute/relative budget authority and consumed
+    amounts for every affected WorkItem, including Authorization, and prove it without
+    live apply or manual runtime edits. If the installed normal path cannot do this,
+    retain STOP and obtain a separate explicit lawful budget/recovery decision or
+    supported control-plane repair before requesting executable amendment PASS. Do
+    not change limits, clear counters, remove required owner obligations, hand-write
+    a baseline, or treat this review as granting budget.
+nits: []
+commands:
+- cmd: omac dag check .omac/open-agent-cluster.yaml --no-review
+  exit_code: 0
+  summary: 'Exact bound manifest, run with complete dependency checkout CWD: lint
+    passed, 183 nodes. Packet-only attempt exit 5 was an incomplete reviewer environment,
+    not silently counted as pass.'
+- cmd: omac dag show .omac/open-agent-cluster.yaml --output json
+  exit_code: 0
+  summary: Exact bound manifest read, no platform writes.
+- cmd: installed OMAC native validate_proposal(bound_manifest, sealed_proposal, pool,
+    acceptance=bound_acceptance); _apply_definition; _minimal_rerun
+  exit_code: 0
+  summary: Zero schema/lint errors; 3 changed nodes; 68 done complete objects and
+    180 unaffected complete objects preserved; seven AUTHORING recoveries, four derived,
+    no immutable conflict.
+- cmd: bash -n and Python compile for every resulting verification command
+  exit_code: 0
+  summary: 41 commands, no syntax/compile error. No future product result fabricated.
+current_facts:
+- PR98 rework has advanced to 3c57cdf0e81900c89467773c4cc39642e0359416; fresh issue
+  is done/authoring with submitted verification, original reject retained; GitHub
+  OPEN and mergedAt=null. Neither Worker submission nor the old reject head is a merged
+  owner-command proof. Update the proposal current-source narration before later acceptance,
+  retaining the historical reject head/report/ledger unchanged.
+- Fresh AuditLedger remains in_progress/authoring; Package todo/authoring with absolute
+  worker/review/merge=0/4/0. Four derived consumers are now todo/authoring with original
+  contracts/baselines rather than the bound blocked projections. This drift is not
+  authorization to retire their obligations or overwrite work.
+- Before any apply, the single controller must obtain fresh complete manifest/Store/CAS
+  and terminal/unknown Run evidence. This reviewer did not clear or cancel healthy
+  Runs, reopen completed producers or run an operator recovery.
+limitations:
+- This is a partial producer/topology repair, not complete Package unblocking. Original
+  Wire bytes have not been recovered; preserving their strict gate is lawful but does
+  not satisfy dispatch prerequisites.
+- All immutable source/API/conformance publication and real local PostgreSQL/owner
+  conformance remain future owner deliverables. No local structural test, DTO or historical
+  merged contract is labeled production proof.
+- Native budget conflict is determined without live apply, hand-written runtime state,
+  synthetic receipts or extra security experiments.
