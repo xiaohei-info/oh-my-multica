@@ -1,0 +1,260 @@
+review_protocol: omac.review/v2
+submission_status: blocked
+submission_blocker:
+  type: review-report-validator-contract-conflict
+  attempts: 2
+  last_exit_code: 5
+  last_error: 'review_report missing integration gate: model-catalog-gate'
+  evidence: The report contains the exact gate with status fail, matching the rejected delivery goal.
+    The installed OMAC validator at omac/core/evidence.py:350-354 builds its gate lookup only from
+    status-pass mappings, even for reject verdicts, so this present failed gate is reported as missing.
+    The artifact guide permits independently reproduced gate results with pass/fail. The guide and
+    validator therefore conflict; no successful submission, issue comment or issue transition is claimed.
+  required_fix: Allow failed integration-gate mappings for reject verdicts while preserving independent
+    evidence, or provide an authoritative supported submission path for this tooling blocker.
+  safety: The technical verdict and failed delivery-goal status were not changed to pass to evade validation.
+review_goals:
+- Check authoritative contract, amendment, acceptance trace and strict no-external-input ownership boundary.
+- Inspect the complete PR diff, production code and tests for governed commands, canonical audit, egress/credential
+  order and fail-closed provider behavior.
+- Independently reproduce all declared verification and integration commands and verify the coverage and generated
+  artifacts.
+- Check revision/predecessor CAS, snapshot-scoped probe provenance, idempotency and restart-safe post-attempt
+  recovery.
+- Disposition current obligations and review historical regressions without requiring removed model-manual
+  conformance inputs.
+pr_url: https://github.com/xiaohei-info/open-agent-cluster/pull/66
+reviewed_head_sha: c3947114299cc7cdefac2a10340e08ded19e0b04
+pr_base: main
+summary: 'Reject: declared commands pass (combined coverage 90.1%, 10/10 required hardening tests), but durable
+  probe recovery, canonical audit provenance/time, and protocol-result validation remain blocking.'
+diff_reviewed: true
+tests_rerun: true
+integration_tests_rerun: true
+coverage_checked: true
+full_review_completed: true
+env_setup:
+- No external services were required; Go tests and deterministic source packaging ran locally from the checked-out
+  repository.
+commands: &id001
+- cmd: mkdir -p artifacts/model-catalog && go test -covermode=atomic -coverprofile=artifacts/model-catalog/coverage.out
+    ./internal/modelcatalog/core/... ./internal/modelcatalog/providers/...
+  exit_code: 0
+  summary: Core and provider suites passed (88.7% and 96.4% package coverage); combined coverage 90.1%.
+- cmd: python3 -c "from pathlib import Path; import re,subprocess; p=Path('artifacts/model-catalog/coverage.out');
+    assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True);
+    m=re.search(r'^total:\s+\(statements\)\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90"
+  exit_code: 0
+  summary: Combined 90% statement-coverage gate passed at 90.1%.
+- cmd: go test -json ./internal/modelcatalog/core/... ./internal/modelcatalog/providers/... -run '^(TestProductionConstructionRequiresGovernedRequestContext|TestCatalogMutationUsesCanonicalAuditTransaction|TestPostAttemptFinalizeFailurePersistsUnknownAndReconciles|TestProviderRequiresScopeBoundEgressBeforeCredentialResolution|TestNonSecretHeadersRequireTypedProjection|TestModelCatalogExcludesManualSnapshotAndDigestAuthority|TestModelCatalogRejectsManualConformanceArtifactInputs|TestSnapshotPublicationRejectsStaleConnectionRevision|TestProbeEvidenceIsScopedBySnapshot|TestLegacyConcreteWritersAreUnavailable)$'
+    -count=1 > artifacts/model-catalog/hardening-tests.json
+  exit_code: 0
+  summary: All 10 exact required hardening test names passed independently.
+- cmd: python3 scripts/release/package_component.py --component model-catalog --kind platform-core-dependency-source
+    --input internal/modelcatalog/core --input internal/modelcatalog/providers --bundle artifacts/model-catalog/source-bundle.tar.zst
+    --component-manifest artifacts/model-catalog/component-manifest.json --digest-output artifacts/model-catalog/bundle-digest.txt
+    --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner model-catalog --require-all-owner-sources-accounted
+  exit_code: 0
+  summary: Generated source bundle, component manifest and bundle digest; verified all 16 manifest file hashes
+    against the checked-out source.
+- cmd: 'python3 -c "from pathlib import Path; import json,subprocess; required={''TestProductionConstructionRequiresGovernedRequestContext'',''TestCatalogMutationUsesCanonicalAuditTransaction'',''TestPostAttemptFinalizeFailurePersistsUnknownAndReconciles'',''TestProviderRequiresScopeBoundEgressBeforeCredentialResolution'',''TestNonSecretHeadersRequireTypedProjection'',''TestModelCatalogExcludesManualSnapshotAndDigestAuthority'',''TestModelCatalogRejectsManualConformanceArtifactInputs'',''TestSnapshotPublicationRejectsStaleConnectionRevision'',''TestProbeEvidenceIsScopedBySnapshot'',''TestLegacyConcreteWritersAreUnavailable''};
+    rows=[json.loads(x) for x in open(''artifacts/model-catalog/hardening-tests.json'') if x.strip()]; passed={x.get(''Test'')
+    for x in rows if x.get(''Action'')==''pass'' and x.get(''Test'') in required}; assert passed==required,
+    f''missing required passing hardening tests: {sorted(required-passed)}''; manifest=json.loads(Path(''artifacts/model-catalog/component-manifest.json'').read_text());
+    packaged=[x[''path''] for x in manifest[''files''] if x[''path'']==''internal/modelcatalog/manual'' or
+    x[''path''].startswith(''internal/modelcatalog/manual/'')]; assert not packaged, f''model-manual paths
+    packaged by model-catalog: {packaged}''; base=subprocess.check_output([''git'',''merge-base'',''HEAD'',''origin/main''],text=True).strip();
+    changed=[x for x in subprocess.check_output([''git'',''diff'',''--name-only'',base+''...HEAD'',''--'',''internal/modelcatalog/manual''],text=True).splitlines()
+    if x]; assert not changed, f''model-manual owner paths changed by model-catalog: {changed}''; report={''schema'':''oac.model-catalog-hardening-evidence/v2'',''required_hardening_test_count'':len(required),''passing_hardening_test_count'':len(passed),''manual_authority_mode'':''excluded-from-model-catalog'',''model_manual_packaged_path_count'':len(packaged),''model_manual_changed_path_count'':len(changed)};
+    out=Path(''artifacts/model-catalog/hardening-evidence.json''); out.write_text(json.dumps(report,sort_keys=True)+''\n'');
+    print(json.dumps(report,sort_keys=True))"'
+  exit_code: 0
+  summary: Evidence confirms 10 required passes and zero changed or packaged model-manual paths.
+coverage: 90.1
+obligation_results:
+- obligation_id: dimension:authority
+  status: pass
+  evidence: 'Reviewed current OMAC contract/amendment, responsibility with consumes: [], authoritative design/reference
+    anchors, PR base main and pinned head c3947114299cc7cdefac2a10340e08ded19e0b04. Historical ledger is background,
+    not an input requirement.'
+- obligation_id: dimension:structure
+  status: pass
+  evidence: Defined discovery/probe/exact-selection DTOs and ports were fully inspected, have no external conformance input,
+    and preserve the assigned package boundary. This structure review does not certify durable recovery semantics;
+    that defect is assessed directly under integration:model-catalog-gate.
+- obligation_id: dimension:execution
+  status: fail
+  evidence: All five declared commands exited 0 and coverage is 90.1%; nevertheless the declared provider suite
+    encodes empty 2xx message results as success, and the response-validation implementation is missing.
+- obligation_id: dimension:ownership
+  status: pass
+  evidence: All 16 changed files are confined to core/providers. Production construction is governed, fixture
+    constructors are confined to application_test.go, memory store/constructor and application fields are unexported,
+    provider egress has no default allow policy, and no manual writer/source/digest authority remains in model-catalog.
+    The separate manual owner is unchanged and excluded from the bundle.
+- obligation_id: dimension:evidence
+  status: fail
+  evidence: Bundle/manifest hashes and all six declared artifacts were checked, but canonical audit context
+    linkage/selection occurrence time are incorrect and a pending attempted claim may never produce durable
+    terminal evidence. See both stable historical audit/governance roots.
+- obligation_id: dimension:regression
+  status: pass
+  evidence: Reproduced all 10 required hardening passes and reviewed the entire diff/test suite after earlier
+    findings. Parent deadlines, canonical provider errors, exact selection, revision CAS and snapshot-scoped
+    evidence are repaired. Current recovery test proves only fail-once behavior and no test binds distinct
+    persisted-context/request identities; declared provider fixtures affirm invalid successful responses.
+- obligation_id: integration:model-catalog-gate
+  status: fail
+  evidence: Independently reran every exact gate command; 10/10 required named tests passed, combined coverage
+    90.1%, six artifacts generated, source bundle hashes verified, no manual paths changed/packaged. The behavioral
+    zero-defect claims are not established because of the three blockers; passing execution does not establish
+    the gate delivery goal.
+prior_blocker_results: []
+prior_blocker_context: 'Current work-show lists prior_open_blockers: [] after contract correction. The historical
+  ledger was checked; classification deeper preserves audit/governance root identities without adding historical
+  blockers to the mandatory current disposition list.'
+acceptance_mapping:
+- acceptance: UJ-MODEL-001
+  status: fail
+  evidence: Trace-only acceptance reference, not a full UI/live journey claim. Component create/discover/probe/select
+    behavior was exercised by TestCreateAndUpdateConnectionUseRevisionAndNonSecretDigest, TestDiscoverModelsPublishesOnlyProviderEvidence,
+    TestSendTestMessageStoresSuccessAndFailureProbeAndSelectsExactModel, and provider HTTP fixtures. Component
+    readiness/audit/recovery semantics remain blocked; UI/API/screenshots and downstream api-model composition
+    are outside this node contract.
+integration_gate_mapping:
+- gate: model-catalog-gate
+  name: model-catalog-gate
+  status: fail
+  source_of_truth:
+  - model-catalog-amendment-decision.md
+  - docs/design/open-agent-cluster-overview-design.md
+  - docs/design/detailed/06-agent-runtime-detailed-design.md:L176-L219
+  - docs/design/detailed/09-governance-and-security-detailed-design.md:L11-L46
+  - docs/design/detailed/09-governance-and-security-detailed-design.md:L408-L475
+  - docs/design/detailed/09-governance-and-security-detailed-design.md:L553-L575
+  - docs/design/detailed/09-governance-and-security-detailed-design.md:L808-L854
+  - docs/references/execution/agent-runtime.md:L25-L129
+  - docs/references/governance/security-and-enterprise.md:L7-L20
+  - docs/references/governance/security-and-enterprise.md:L301-L317
+  - docs/references/governance/security-and-enterprise.md:L402-L487
+  - docs/delivery/acceptance-and-validation.md:L273-L297
+  - contracts/governance/audit/audit.go:L1-L110
+  - contracts/release/source-ownership-baseline.yaml:L296-L304
+  - internal/modelcatalog/manual/manual.go:L1-L123
+  delivery_goal: Prove one governed model-catalog implementation with canonical governance/audit ownership,
+    scope-bound pre-credential egress, typed non-secret metadata, atomic mutation and probe recovery, stale-publication
+    rejection, immutable snapshot-scoped probe evidence, no legacy write bypass, and no manual model/snapshot/digest
+    authority; the separate model-manual owner remains unchanged and is composed only by its existing downstream
+    integration boundary.
+  commands: *id001
+  metrics:
+    statement_coverage_percent: 90.1
+    required_hardening_test_count: 10
+    passing_hardening_test_count: 10
+    declared_artifact_count: 6
+    model_manual_packaged_path_count: 0
+    model_manual_changed_path_count: 0
+  metric_notes: These are independently measured values. Do not infer zero permanently-in-progress claims or
+    zero noncanonical audit facts from test-name passes; static control flow disproves those universal guarantees.
+    Other behavioral absence claims were inspected rather than copied as numerical measurements from worker
+    verification.
+  artifacts:
+  - artifacts/model-catalog/coverage.out
+  - artifacts/model-catalog/hardening-tests.json
+  - artifacts/model-catalog/hardening-evidence.json
+  - artifacts/model-catalog/source-bundle.tar.zst
+  - artifacts/model-catalog/bundle-digest.txt
+  - artifacts/model-catalog/component-manifest.json
+  bundle_sha256: 1aa318d934e1252a49efb92b0def31e1ca9a08788cb22ce6a6ff299bf77bfd3c
+  source_revision: c3947114299cc7cdefac2a10340e08ded19e0b04
+  evidence: All command exits and package evidence reproduce, but the delivery-goal semantics fail for the
+    blockers listed below.
+blockers:
+- root_cause_key: modelcatalog-audit-commit-atomicity
+  obligation_id: integration:model-catalog-gate
+  classification: deeper
+  owner: model-catalog
+  severity: high
+  summary: Two immediate finalization attempts are not a durable recovery protocol; attempted probes can remain
+    permanently in progress.
+  impact: A persistence/audit outage spanning both attempts, or a process exit after provider invocation, leaves
+    the committed claim non-terminal. Even after the store recovers, same-key retries return ErrProbeInProgress
+    indefinitely; an older successful probe can remain selectable without evidence of the later unknown attempt.
+  evidence: 'Static inspection: application.go:410-452 commits the reservation and keeps attemptStarted only
+    in process memory; application.go:506-540 tries result persistence and one Unknown fallback, then returns
+    on the second error. store.go:277-288 returns ErrProbeInProgress whenever the existing record has no Probe.
+    ProbeIdempotencyClaim at types.go:474-483 contains no persisted attempt/recovery context, and Store/transaction
+    ports at types.go:735-767 expose no reconciliation operation. The independently passing TestPostAttemptFinalizeFailurePersistsUnknownAndReconciles
+    (review_regressions_test.go:568-618) injects only one transient failure; it does not exercise failure of
+    both writes or restart recovery. No additional failure experiment was constructed.'
+  required_fix: Define a restart-safe pending-attempt/recovery contract with sufficient durable identity/context
+    and a governed reconciliation path. Once persistence is available again, reconcile the reserved attempt
+    to a terminal redacted Unknown without repeating the external message; preserve atomic canonical audit
+    evidence. Add deterministic owning regressions for both finalize writes failing, store recovery, and restart
+    after the external attempt, including selection safety.
+- root_cause_key: modelcatalog-governed-auth-audit-boundary
+  obligation_id: dimension:evidence
+  classification: deeper
+  owner: model-catalog
+  severity: high
+  summary: Canonical audit DTOs are populated with the external request ID rather than persisted RequestContext
+    identity, and selection audit time is backdated.
+  impact: The events cannot reliably join to the authoritative persisted governance context when its ID differs
+    from request_id. A store enforcing that identity can reject otherwise valid commands; a permissive store
+    retains misleading provenance. SelectModel records occurrence at the snapshot creation time rather than
+    the actual selection time, distorting audit chronology.
+  evidence: application.go:896-903 assigns AuditEvent.RequestContextID = requestContext.RequestID for all events.
+    All five command inputs carry RequestContext but no separate persisted-context identity or canonical audit
+    preparation receipt; contracts/identity/requestcontext/request_context.go:34-44 exposes only RequestID.
+    docs/references/governance/security-and-enterprise.md:305-317 explicitly distinguishes persisted request_context_id
+    from external request_id. The canonical AuditEvent.Validate at contracts/governance/audit/contract.go:360-399
+    checks presence/shape, not this store linkage, and review_regressions_test.go:139 repeats the same conflation.
+    application.go:624 passes snapshot.CreatedAt as the selection event occurrence time. For comparison, internal/agents/definitions/definitions.go:463-480
+    passes an explicit RequestContextID to the owning audit preparation and atomic publication boundaries.
+  required_fix: Carry the Platform Core-owned persisted RequestContext identity (or obtain a canonical prepared
+    audit fact/receipt through its port), bind it to the authenticated context, and use it without substituting
+    RequestID. Record selection occurrence using the injected current clock. Add an owning regression with
+    distinct persisted-context/request IDs and a selection time later than discovery; keep governance persistence
+    ownership outside model-catalog.
+- root_cause_key: modelcatalog-probe-response-validation
+  obligation_id: dimension:execution
+  classification: new
+  owner: model-catalog
+  severity: medium
+  summary: All three message connectors mark any readable 2xx HTTP response as a successful model probe without
+    validating the protocol result.
+  impact: A response that does not establish a completed model operation still becomes ProbeSucceeded and satisfies
+    exact selection. This can incorrectly present an incompatible or unusable provider/model as ready.
+  evidence: providers/http.go:152-160 checks only body-read bounds and HTTP status. providers/openai.go:43-46
+    and :93-96 and providers/anthropic.go:54-57 discard the response bytes and unconditionally return Succeeded:true.
+    The independently rerun full suite includes TestOpenAIResponsesAndChatErrorBranches (providers/coverage_test.go:74-85),
+    which explicitly treats a 204 empty Responses response as success; TestOpenAIChatCompletionsTestMessageUsesExactProtocolShape
+    (providers/providers_test.go:65-85) similarly asserts success on an empty object. Application.go:462-503
+    persists the resulting green probe, and :598-610 accepts it for selection. This is evidence from the declared
+    suite and static inspection, not an extra network experiment.
+  required_fix: Validate a bounded minimal success response for the selected message protocol, including completed-success
+    versus acceptance/error/non-result semantics, before reporting Succeeded. Convert malformed or non-terminal
+    results to canonical failed/unknown observations as appropriate and never persist raw response content.
+    Replace success fixtures that encode invalid responses and add protocol-negative tests for each connector.
+nits: []
+regression_notes:
+- Governed production constructor and test-only helper isolation fixed the exported unauthenticated-constructor
+  defect; all commands validate RequestContext and scope.
+- Canonical AuditEvent transactions now bind mutation/audit together rather than calling an audit writer before
+  commit; remaining failures concern canonical linkage and durable recovery, not the old split commit.
+- Nil provider egress policy now fails closed; application policy runs before credential resolution and adapter
+  policy before injection; redirects are not followed.
+- Typed NonSecretHeader projections replace raw header maps, with bounded identifier/name policy applied consistently
+  at persistence and HTTP boundaries.
+- Manual model writer, manual source/merge/digest and model-manual conformance inputs are removed; the authoritative
+  removal option is satisfied without modifying or packaging manual owner sources.
+- Snapshot publication checks connection revision/configuration digest and predecessor under one transaction;
+  probe key now includes exact snapshot ID.
+- Parent-context timeout/cancellation after an attempt records canonical Unknown in normal persistence conditions,
+  and retries bind complete request digest without another provider call.
+- One immediate Unknown fallback repairs fail-once persistence only; the durable recovery root is deeper, not
+  fixed.
+evidence_boundary: Only declared local repository verification was executed. No additional security-negative
+  payloads, attack experiments or external network probing were constructed. Findings beyond declared assertions
+  are static inspections, explicitly labeled; reports omit credential material, raw sensitive inputs and network
+  targets.

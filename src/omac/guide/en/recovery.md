@@ -903,3 +903,41 @@ Pending receipts block Runner tick before I/O; resume only the exact request and
 digest. A consumed receipt cannot be replayed. The normal single-controller
 Runner subsequently assigns and wakes one independent Reviewer. Implementation,
 deployment and production request approval are separate actions.
+
+
+### Bound infrastructure-hold review recovery
+
+For a currently blocked develop/REVIEW issue with an infrastructure operator hold, no formal
+verdict/report/ref, current ledger or continuation, a complete sealed delivery and one uniquely
+completed original Reviewer Run, prepare a current-bound request:
+
+```bash
+omac node review-infrastructure <manifest> <node> --reason '<bounded reason>' --output json
+omac node review-infrastructure <manifest> <node> --apply-request <saved-request.json> --approve-request-sha256 <canonical-sha256> --output json
+```
+
+Preparation is read-only: no Store/manifest write, manifest write lock, assignment or wake.
+Application requires explicit approval of the complete canonical JSON SHA256 (sorted keys,
+compact JSON, UTF-8). An already authorized operator/coordinator may make that decision.
+Ordinary review retry retains its submitted/delayed Reviewer causal guards. Never fabricate
+a canonical runtime-failure reason or clear a hold manually.
+
+Only the current complete `omac-reject-integration-evidence-recovery-required` hold is supported.
+Contract, sealed PR/verification, subject/generation (including actual None), original Reviewer
+identity/terminal state, no active/queued/unknown/ambiguous/delayed-owned Runs and effective
+budgets must match. Marker/reason/gate/authority strings are insufficient. Drift requires fresh
+preparation and approval.
+
+Before the first write, `operator_review_recovery` retains the full original hold/control/source
+and budget receipt. PR, seal, verification, raw old reports/ledgers, done objects, approved apply
+and bounce budgets remain intact; no limit grant or refund occurs. The next permitted no-submit
+attempt retains previous exclusions and consumption instead of restarting at 1; an exhausted
+limit is refused. Application clears the old assignment, stores the next baseline, restores
+in_review and releases the hold last. Only the normal Runner dispatches the independent Reviewer;
+unsubmitted local reports never become a verdict.
+
+Unknown writes are observed and checkpointed before safely resuming the identical request.
+Consumed replay only observes consumption: no new reset, rollback or dispatch. Pending
+submitted/Run/contract/generation/counter/budget/done drift is refused; do not bypass this gate
+with a generic amendment. Host locks are not distributed atomic CAS. Keep one Controller and
+do not resume execution until the pending request is complete and its actual outcome verified.

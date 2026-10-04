@@ -1,0 +1,1158 @@
+{
+  "id": "01a03a19-212d-7586-8884-86981457457e",
+  "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1",
+  "title": "[DAG:model-catalog] Implement model provider catalog and discovery",
+  "description": "> **OMAC \u63a7\u5236\u7684\u6267\u884c\u3002\u7b2c\u4e00\u52a8\u4f5c\u5fc5\u987b\u4e25\u683c\u6267\u884c\uff1a**\n\n```bash\nOMAC_ENGINE=multica OMAC_WORKSPACE_ID=410ade5e-8ae0-4402-b975-813dea2ff3e1 OMAC_PROJECT_ID=732ce83f-5cbd-4485-850d-1b8a1bf16340 omac work show 01a03a19-212d-7586-8884-86981457457e --output json\n```\n\n> `omac work show` \u548c `omac work submit` \u90fd\u53ef\u80fd\u957f\u65f6\u95f4\u8fd0\u884c\u3002\u4efb\u4f55\u5de5\u5177\u8c03\u7528\u5728\u62ff\u5230\u6700\u7ec8 tool_result \u548c\u7ec8\u6001\u9000\u51fa\u7801\u524d\u90fd\u4e0d\u5b8c\u6574\u3002\u82e5\u5de5\u5177\u8fd4\u56de running/session\u3001\u7f3a\u5c11\u6700\u7ec8 tool_result\u3001\u51fa\u73b0\u7a7a\u8f93\u51fa\u6216\u4e0d\u5b8c\u6574\u8f93\u51fa\uff0c\u5fc5\u987b\u7b49\u5f85\u6216\u8f6e\u8be2\u5230\u7ec8\u6001\u3002\u4f7f\u7528\u8db3\u591f\u957f\u7684 wait/yield\uff0c\u6216\u4fdd\u7559\u5e76\u6062\u590d\u7eed\u63a5\u53e5\u67c4\uff1b\u8fd9\u662f\u901a\u7528\u7ec8\u6001\u89c4\u5219\uff0c\u4e0d\u7ed1\u5b9a\u67d0\u4e2a\u5177\u4f53\u5de5\u5177 API\u3002timeout/yield \u4e0d\u662f\u7a7a\u7ed3\u679c\uff0c\u4e5f\u4e0d\u5141\u8bb8\u636e\u6b64\u505c\u6b62\u3002`omac work show` \u53ea\u6709\u5728\u9000\u51fa\u7801 0 \u4e14\u5f97\u5230\u53ef\u89e3\u6790 JSON \u540e\u624d\u80fd\u7ee7\u7eed\u3002`omac work submit` \u53ea\u6709\u5728\u6700\u7ec8 tool_result \u660e\u786e\u7ed9\u51fa\u9000\u51fa\u7801 0\uff0c\u4e14 JSON \u5305\u542b `\"ok\": true`\u3001`\"terminal\": true` \u548c `\"next_action\": \"stop\"` \u65f6\u624d\u53ef\u5ba3\u79f0\u6210\u529f\u3002\u7ed3\u679c\u672a\u77e5\u65f6\u4e0d\u5f97\u5ba3\u79f0\u6210\u529f\u6216\u7ed3\u675f\uff1bvalidation error \u5fc5\u987b\u4fee\u590d\u540e\u91cd\u65b0\u63d0\u4ea4\u3002submit \u6210\u529f\u5c31\u662f\u672c\u6b21\u6267\u884c\u7684\u6700\u540e\u52a8\u4f5c\uff0c\u7acb\u5373\u505c\u6b62\uff0c\u4e0d\u518d\u6267\u884c\u4efb\u4f55\u5e73\u53f0\u5199\u5165\u3002\n\n> \u5728\u4e0a\u65b9\u7cbe\u786e\u7684 `omac work show` \u547d\u4ee4\u4ee5\u9000\u51fa\u7801 0 \u6210\u529f\u8fd4\u56de\u53ef\u89e3\u6790 JSON \u524d\uff0c\u4e0d\u5f97\u6267\u884c\u4efb\u4f55\u5176\u4ed6 Issue \u67e5\u8be2\uff08\u5305\u62ec `multica issue get`\u3001`multica issue comment list` \u6216 metadata \u67e5\u8be2\uff09\uff0c\u4e5f\u4e0d\u5f97\u5f00\u59cb\u5206\u6790\u4efb\u52a1\u5185\u5bb9\u3002work show \u6210\u529f\u540e\uff0c\u53ea\u80fd\u5728\u8fd4\u56de\u4e0a\u4e0b\u6587\u786e\u6709\u9700\u8981\u65f6\u4f7f\u7528\u53ea\u8bfb Issue \u67e5\u8be2\u3002\u7981\u6b62\u4efb\u4f55\u4f1a\u521b\u5efa\u3001\u4fee\u6539\u6216\u5220\u9664 Issue \u72b6\u6001\u7684 `multica issue` \u5199\u64cd\u4f5c\u3002\u8fd9\u662f\u8bed\u4e49\u8fb9\u754c\uff0c\u4e0d\u662f\u7a77\u4e3e\u547d\u4ee4\u6e05\u5355\uff1b\u7981\u6b62\u793a\u4f8b\u5305\u62ec `multica issue status`\u3001`multica issue assign`\u3001`multica issue comment`\u3001`multica issue metadata`\u3001`multica issue rerun`\u3001`multica issue cancel-task`\u3001`multica issue update`\u3001`multica issue create`\u3001`multica issue label`\u3001`multica issue property`\u3001`multica issue reorder` \u548c `multica issue subscriber`\u3002\u53ea\u5141\u8bb8\u4f7f\u7528\u4e0a\u65b9\u7ed9\u51fa\u7684\u7cbe\u786e `omac work show` \u547d\u4ee4\uff0c\u4ee5\u53ca work show \u8fd4\u56de\u7684\u7cbe\u786e `omac work submit` \u547d\u4ee4\u4f5c\u4e3a OMAC \u63a7\u5236\u547d\u4ee4\uff1b\u5df2\u6709\u624b\u5de5\u9644\u4ef6\u6216 verification \u4f46\u7f3a\u5c11 `delivery_identity` \u65f6\u4e5f\u5fc5\u987b\u901a\u8fc7\u8be5 submit \u547d\u4ee4\u5c01\u5b58\u3002\n\n# Implement model provider catalog and discovery\n\n## \u4efb\u52a1\u6458\u8981\n- \u7c7b\u578b: \u5f00\u53d1\u5b9e\u73b0\uff08`develop`\uff09\n- \u6267\u884c\u89d2\u8272: \u72ec\u7acb\u8bc4\u5ba1\u8005\uff08`reviewer`\uff09\n- \u76ee\u6807: Deliver the governed Model Catalog boundary for provider connections, discovery snapshots, snapshot-scoped probes, and exact selection: require authenticated RequestContext, scope, authorization/admission, canonical audit evidence, and mandatory scope-bound egress before credential use; atomically bind mutations to canonical audit/outbox facts, durably finalize attempted probes, reject stale publication by connection revision/digest and predecessor CAS, and contain no manual model definition, AddManualModel, manual snapshot, or manual digest authority; the immutable model-manual owner remains separate and api-model composes both owners downstream.\n- \u4f9d\u636e: `model-catalog-amendment-decision.md`\n- \u4f9d\u636e: `docs/design/open-agent-cluster-overview-design.md`\n- \u4f9d\u636e: `docs/design/detailed/06-agent-runtime-detailed-design.md:L176-L219`\n- \u4f9d\u636e: `docs/design/detailed/09-governance-and-security-detailed-design.md:L11-L46`\n- \u4f9d\u636e: `docs/design/detailed/09-governance-and-security-detailed-design.md:L408-L475`\n- \u4f9d\u636e: `docs/design/detailed/09-governance-and-security-detailed-design.md:L553-L575`\n- \u4f9d\u636e: `docs/design/detailed/09-governance-and-security-detailed-design.md:L808-L854`\n- \u4f9d\u636e: `docs/references/execution/agent-runtime.md:L25-L129`\n- \u4f9d\u636e: `docs/references/governance/security-and-enterprise.md:L7-L20`\n- \u4f9d\u636e: `docs/references/governance/security-and-enterprise.md:L301-L317`\n- \u4f9d\u636e: `docs/references/governance/security-and-enterprise.md:L402-L487`\n- \u4f9d\u636e: `docs/delivery/acceptance-and-validation.md:L273-L297`\n- \u4f9d\u636e: `contracts/governance/audit/audit.go:L1-L110`\n- \u4f9d\u636e: `contracts/release/source-ownership-baseline.yaml:L296-L304`\n- \u4f9d\u636e: `internal/modelcatalog/manual/manual.go:L1-L123`\n\n## \u4efb\u52a1\u8be6\u60c5\nAuthoring recovery for the existing model-catalog delivery: consume the canonical RequestContext, authorization/admission, AuditEvent, and Credential contracts; remove production bypasses and every duplicate manual model/snapshot/digest path from core; and close the rejected concurrency, recovery, provenance, and fail-closed transport boundaries without changing adjacent owners or requiring an unmaterialized upstream artifact.\n\n## \u975e\u76ee\u6807\n- Do not modify internal/modelcatalog/manual/**, migrate model-manual ownership, consume or regenerate a model-manual component manifest, or define Model, Snapshot, AddManualModel, manual merge, or manual content digest behavior inside model-catalog. Do not create a conformance-artifact handoff when the authoritative removal option eliminates that input; any supplied model-manual artifact is outside the explicit `consumes: []` boundary and must fail closed.\n- Do not move RequestContext, authorization, admission, canonical AuditEvent, CredentialBroker, or durable outbox ownership into model-catalog, and do not introduce feature-local replacements for those platform facts.\n- Do not retain exported ungoverned production constructors, fallback actor/scope paths, origin-only default egress, credential materialization before policy approval, or public concrete store writers that bypass the governed application protocol.\n- Do not persist caller-controlled raw strings as non-secret headers, place Secret material in connection state or digests, leak credentials or raw provider errors, or weaken fail-closed classification at the HTTP adapter.\n- Do not publish a snapshot without atomic current-connection revision/configuration-digest and predecessor checks, key probe evidence without ModelCatalogSnapshotID, or leave an attempted provider call as an unrecoverable in-progress claim.\n- Do not add a generic provider/plugin runtime, make an external provider the source of truth, change northbound API/UI ownership, or broaden source ownership beyond internal/modelcatalog/core/** and internal/modelcatalog/providers/** plus exact tests and generated evidence.\n\n## \u4e3b\u8981\u4ee3\u7801\u5f52\u5c5e\u8303\u56f4\n- `internal/modelcatalog/core/**`\n- `internal/modelcatalog/providers/**`\n\n## \u8d23\u4efb\u8fb9\u754c\n- \u8bc1\u636e\u6a21\u5f0f: `artifact`\n- \u8f93\u5165\u7b56\u7565: `none`\n- \u4ea7\u7269: `model-catalog-component`\n- \u8fb9\u754c: \u4e0d\u5141\u8bb8\u4efb\u4f55\u5916\u90e8\u8f93\u5165\u3002\n\n## \u4ea4\u4ed8\u7ea6\u675f\n- PR \u57fa\u7ebf: `main`\n- \u6539\u52a8\u5206\u652f\u8986\u76d6\u7387: `\u2265 90%`\n- PR \u5173\u8054\u6807\u8bc6: `AITEAM-939`\n\n## \u4e0a\u6e38 issue\uff08\u9632\u8dd1\u504f\uff09\n\u672c\u4efb\u52a1\u627f\u63a5\u4ee5\u4e0b\u4e0a\u6e38 issue\uff0c\u7528\u4e8e\u8ffd\u6eaf\u9700\u6c42\u4e0e\u51b3\u7b56\uff1b\u82e5\u4e0e\u5f53\u524d contract \u51b2\u7a81\uff0c\u5148\u8bf7\u6c42\u786e\u8ba4\uff1a\n- \u8bbe\u8ba1\u65b9\u6848: `289a13bf-cede-4b5b-ba86-d72f0bef8164`\n- \u9a8c\u6536\u6587\u6863: `8e6bd282-6039-41d2-aa00-969a0bf1554a`\n- \u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Bootstrap Go module and quality harness: `5849f786-8c97-42ac-adf9-1c96957f28ee`\n- \u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Create Runtime and AgentRun contracts: `5db9df26-acb7-451d-b5e7-899b274e8547`\n- \u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Create identity and authentication contracts: `d5f92ac5-6836-49c5-b218-d24164e3c2e9`\n- \u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Create authorization and admission contracts: `8fc120a0-23c5-4119-96c1-b827222ed9dd`\n- \u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Create audit and usage contracts: `7b568083-2a29-47d5-a56e-3509b79ebb6c`\n- \u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Create credential contracts: `30335cd6-d2e8-4c9d-8988-7f7b134ed6e9`\n- \u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Implement deterministic release artifact packaging: `152d735a-c373-4967-8ae0-45c191de2eff`",
+  "status": "WorkItemStatus.BLOCKED",
+  "dag_key": "model-catalog",
+  "identifier": "AITEAM-939",
+  "worker": "codex-ubuntu-newapi",
+  "reviewer": "hermes-reviewer",
+  "blocked_by": [
+    "bootstrap-go",
+    "contracts-runtime",
+    "contracts-identity",
+    "contracts-authz-admission",
+    "contracts-audit-usage",
+    "contracts-credential",
+    "release-artifact-tooling"
+  ],
+  "wave": null,
+  "artifacts": {
+    "pr_url": "https://github.com/xiaohei-info/open-agent-cluster/pull/66",
+    "head_sha": "c3947114299cc7cdefac2a10340e08ded19e0b04"
+  },
+  "verification": {
+    "commands": [
+      {
+        "cmd": "mkdir -p artifacts/model-catalog && go test -covermode=atomic -coverprofile=artifacts/model-catalog/coverage.out ./internal/modelcatalog/core/... ./internal/modelcatalog/providers/...",
+        "exit_code": 0,
+        "summary": "Passed; combined statement coverage is 90.1%."
+      },
+      {
+        "cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/model-catalog/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+        "exit_code": 0,
+        "summary": "Combined statement coverage threshold passed at 90.1%."
+      },
+      {
+        "cmd": "go test -json ./internal/modelcatalog/core/... ./internal/modelcatalog/providers/... -run '^(TestProductionConstructionRequiresGovernedRequestContext|TestCatalogMutationUsesCanonicalAuditTransaction|TestPostAttemptFinalizeFailurePersistsUnknownAndReconciles|TestProviderRequiresScopeBoundEgressBeforeCredentialResolution|TestNonSecretHeadersRequireTypedProjection|TestModelCatalogExcludesManualSnapshotAndDigestAuthority|TestModelCatalogRejectsManualConformanceArtifactInputs|TestSnapshotPublicationRejectsStaleConnectionRevision|TestProbeEvidenceIsScopedBySnapshot|TestLegacyConcreteWritersAreUnavailable)$' -count=1 > artifacts/model-catalog/hardening-tests.json",
+        "exit_code": 0,
+        "summary": "All 10 required governance, recovery, ownership, and snapshot tests passed."
+      },
+      {
+        "cmd": "python3 scripts/release/package_component.py --component model-catalog --kind platform-core-dependency-source --input internal/modelcatalog/core --input internal/modelcatalog/providers --bundle artifacts/model-catalog/source-bundle.tar.zst --component-manifest artifacts/model-catalog/component-manifest.json --digest-output artifacts/model-catalog/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner model-catalog --require-all-owner-sources-accounted",
+        "exit_code": 0,
+        "summary": "Generated the source bundle, component manifest, and bundle digest."
+      },
+      {
+        "cmd": "python3 -c \"from pathlib import Path; import json,subprocess; required={'TestProductionConstructionRequiresGovernedRequestContext','TestCatalogMutationUsesCanonicalAuditTransaction','TestPostAttemptFinalizeFailurePersistsUnknownAndReconciles','TestProviderRequiresScopeBoundEgressBeforeCredentialResolution','TestNonSecretHeadersRequireTypedProjection','TestModelCatalogExcludesManualSnapshotAndDigestAuthority','TestModelCatalogRejectsManualConformanceArtifactInputs','TestSnapshotPublicationRejectsStaleConnectionRevision','TestProbeEvidenceIsScopedBySnapshot','TestLegacyConcreteWritersAreUnavailable'}; rows=[json.loads(x) for x in open('artifacts/model-catalog/hardening-tests.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing required passing hardening tests: {sorted(required-passed)}'; manifest=json.loads(Path('artifacts/model-catalog/component-manifest.json').read_text()); packaged=[x['path'] for x in manifest['files'] if x['path']=='internal/modelcatalog/manual' or x['path'].startswith('internal/modelcatalog/manual/')]; assert not packaged, f'model-manual paths packaged by model-catalog: {packaged}'; base=subprocess.check_output(['git','merge-base','HEAD','origin/main'],text=True).strip(); changed=[x for x in subprocess.check_output(['git','diff','--name-only',base+'...HEAD','--','internal/modelcatalog/manual'],text=True).splitlines() if x]; assert not changed, f'model-manual owner paths changed by model-catalog: {changed}'; report={'schema':'oac.model-catalog-hardening-evidence/v2','required_hardening_test_count':len(required),'passing_hardening_test_count':len(passed),'manual_authority_mode':'excluded-from-model-catalog','model_manual_packaged_path_count':len(packaged),'model_manual_changed_path_count':len(changed)}; out=Path('artifacts/model-catalog/hardening-evidence.json'); out.write_text(json.dumps(report,sort_keys=True)+'\\n'); print(json.dumps(report,sort_keys=True))\"",
+        "exit_code": 0,
+        "summary": "Evidence checks passed; no manual owner paths were changed or packaged."
+      }
+    ],
+    "pr_base": "main",
+    "coverage": 90.1,
+    "env_setup": [
+      "No external services were required; Go tests and deterministic source packaging ran locally from the checked-out repository."
+    ],
+    "integration_gates": [
+      {
+        "name": "model-catalog-gate",
+        "layer": "L1",
+        "covers": [
+          "model-catalog"
+        ],
+        "acceptance_refs": [
+          "UJ-MODEL-001"
+        ],
+        "source_of_truth": [
+          "model-catalog-amendment-decision.md",
+          "docs/design/open-agent-cluster-overview-design.md",
+          "docs/design/detailed/06-agent-runtime-detailed-design.md:L176-L219",
+          "docs/design/detailed/09-governance-and-security-detailed-design.md:L11-L46",
+          "docs/design/detailed/09-governance-and-security-detailed-design.md:L408-L475",
+          "docs/design/detailed/09-governance-and-security-detailed-design.md:L553-L575",
+          "docs/design/detailed/09-governance-and-security-detailed-design.md:L808-L854",
+          "docs/references/execution/agent-runtime.md:L25-L129",
+          "docs/references/governance/security-and-enterprise.md:L7-L20",
+          "docs/references/governance/security-and-enterprise.md:L301-L317",
+          "docs/references/governance/security-and-enterprise.md:L402-L487",
+          "docs/delivery/acceptance-and-validation.md:L273-L297",
+          "contracts/governance/audit/audit.go:L1-L110",
+          "contracts/release/source-ownership-baseline.yaml:L296-L304",
+          "internal/modelcatalog/manual/manual.go:L1-L123"
+        ],
+        "delivery_goal": "Prove one governed model-catalog implementation with canonical governance/audit ownership, scope-bound pre-credential egress, typed non-secret metadata, atomic mutation and probe recovery, stale-publication rejection, immutable snapshot-scoped probe evidence, no legacy write bypass, and no manual model/snapshot/digest authority; the separate model-manual owner remains unchanged and is composed only by its existing downstream integration boundary.",
+        "commands": [
+          {
+            "cmd": "mkdir -p artifacts/model-catalog && go test -covermode=atomic -coverprofile=artifacts/model-catalog/coverage.out ./internal/modelcatalog/core/... ./internal/modelcatalog/providers/...",
+            "exit_code": 0
+          },
+          {
+            "cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/model-catalog/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+            "exit_code": 0
+          },
+          {
+            "cmd": "go test -json ./internal/modelcatalog/core/... ./internal/modelcatalog/providers/... -run '^(TestProductionConstructionRequiresGovernedRequestContext|TestCatalogMutationUsesCanonicalAuditTransaction|TestPostAttemptFinalizeFailurePersistsUnknownAndReconciles|TestProviderRequiresScopeBoundEgressBeforeCredentialResolution|TestNonSecretHeadersRequireTypedProjection|TestModelCatalogExcludesManualSnapshotAndDigestAuthority|TestModelCatalogRejectsManualConformanceArtifactInputs|TestSnapshotPublicationRejectsStaleConnectionRevision|TestProbeEvidenceIsScopedBySnapshot|TestLegacyConcreteWritersAreUnavailable)$' -count=1 > artifacts/model-catalog/hardening-tests.json",
+            "exit_code": 0
+          },
+          {
+            "cmd": "python3 scripts/release/package_component.py --component model-catalog --kind platform-core-dependency-source --input internal/modelcatalog/core --input internal/modelcatalog/providers --bundle artifacts/model-catalog/source-bundle.tar.zst --component-manifest artifacts/model-catalog/component-manifest.json --digest-output artifacts/model-catalog/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner model-catalog --require-all-owner-sources-accounted",
+            "exit_code": 0
+          },
+          {
+            "cmd": "python3 -c \"from pathlib import Path; import json,subprocess; required={'TestProductionConstructionRequiresGovernedRequestContext','TestCatalogMutationUsesCanonicalAuditTransaction','TestPostAttemptFinalizeFailurePersistsUnknownAndReconciles','TestProviderRequiresScopeBoundEgressBeforeCredentialResolution','TestNonSecretHeadersRequireTypedProjection','TestModelCatalogExcludesManualSnapshotAndDigestAuthority','TestModelCatalogRejectsManualConformanceArtifactInputs','TestSnapshotPublicationRejectsStaleConnectionRevision','TestProbeEvidenceIsScopedBySnapshot','TestLegacyConcreteWritersAreUnavailable'}; rows=[json.loads(x) for x in open('artifacts/model-catalog/hardening-tests.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing required passing hardening tests: {sorted(required-passed)}'; manifest=json.loads(Path('artifacts/model-catalog/component-manifest.json').read_text()); packaged=[x['path'] for x in manifest['files'] if x['path']=='internal/modelcatalog/manual' or x['path'].startswith('internal/modelcatalog/manual/')]; assert not packaged, f'model-manual paths packaged by model-catalog: {packaged}'; base=subprocess.check_output(['git','merge-base','HEAD','origin/main'],text=True).strip(); changed=[x for x in subprocess.check_output(['git','diff','--name-only',base+'...HEAD','--','internal/modelcatalog/manual'],text=True).splitlines() if x]; assert not changed, f'model-manual owner paths changed by model-catalog: {changed}'; report={'schema':'oac.model-catalog-hardening-evidence/v2','required_hardening_test_count':len(required),'passing_hardening_test_count':len(passed),'manual_authority_mode':'excluded-from-model-catalog','model_manual_packaged_path_count':len(packaged),'model_manual_changed_path_count':len(changed)}; out=Path('artifacts/model-catalog/hardening-evidence.json'); out.write_text(json.dumps(report,sort_keys=True)+'\\n'); print(json.dumps(report,sort_keys=True))\"",
+            "exit_code": 0
+          }
+        ],
+        "metrics": {
+          "statement_coverage_percent": 90.1,
+          "required_hardening_test_count": 10,
+          "ungoverned_production_path_count": 0,
+          "noncanonical_audit_fact_count": 0,
+          "permanently_in_progress_post_attempt_claim_count": 0,
+          "implicit_egress_policy_count": 0,
+          "raw_non_secret_header_string_path_count": 0,
+          "duplicate_manual_snapshot_authority_count": 0,
+          "legacy_concrete_writer_count": 0,
+          "stale_publication_accept_count": 0,
+          "cross_snapshot_probe_overwrite_count": 0,
+          "model_manual_packaged_path_count": 0,
+          "model_manual_changed_path_count": 0,
+          "declared_artifact_count": 6
+        },
+        "artifacts": [
+          "artifacts/model-catalog/coverage.out",
+          "artifacts/model-catalog/hardening-tests.json",
+          "artifacts/model-catalog/hardening-evidence.json",
+          "artifacts/model-catalog/source-bundle.tar.zst",
+          "artifacts/model-catalog/bundle-digest.txt",
+          "artifacts/model-catalog/component-manifest.json"
+        ]
+      }
+    ]
+  },
+  "verification_ref": {
+    "comment_id": "01a103fe-dd65-707b-85ce-0cdf3678edd8",
+    "attachment_id": "01a103fe-dd12-792f-ae62-3bf1b9f6aa32",
+    "sha256": "adc2836899b78a58d5d746b6b1d2b6f2e9a3e41857749f1ca7e99a227cbfe949",
+    "bytes": 10963,
+    "filename": "omac-verification-adc2836899b7.yaml"
+  },
+  "review_verdict": null,
+  "review_comment": null,
+  "machine_feedback": null,
+  "machine_feedback_ref": null,
+  "review_report": null,
+  "review_report_ref": null,
+  "review_subject_digest": "e4dc9cc6f23f3ce568d15fed5cd0ea21bbe124b4bbeec1e969e0a6a9934e6f97",
+  "review_obligations": [
+    {
+      "obligation_id": "dimension:authority",
+      "category": "dimension",
+      "requirement": "Authoritative inputs and source references"
+    },
+    {
+      "obligation_id": "dimension:structure",
+      "category": "dimension",
+      "requirement": "Structure, schema, dependency, and completeness"
+    },
+    {
+      "obligation_id": "dimension:execution",
+      "category": "dimension",
+      "requirement": "Executable commands and fail-closed verification"
+    },
+    {
+      "obligation_id": "dimension:ownership",
+      "category": "dimension",
+      "requirement": "Ownership, boundaries, and unique write paths"
+    },
+    {
+      "obligation_id": "dimension:evidence",
+      "category": "dimension",
+      "requirement": "Artifact lineage and evidence traceability"
+    },
+    {
+      "obligation_id": "dimension:regression",
+      "category": "dimension",
+      "requirement": "Prior blocker regression and changed-scope review"
+    },
+    {
+      "obligation_id": "integration:model-catalog-gate",
+      "category": "integration",
+      "requirement": "Independently verify integration gate model-catalog-gate",
+      "subject": "model-catalog-gate"
+    }
+  ],
+  "review_obligations_ref": {
+    "comment_id": "01a10431-5030-703f-9804-c183b98c6fd3",
+    "attachment_id": "01a10431-4f12-7d05-a103-000305e81c4c",
+    "sha256": "b1a5af07c6803e470fefb529052bb9bc582554f5d4650c1ccc4eb1521aba5a71",
+    "bytes": 897,
+    "filename": "omac-review-obligations-b1a5af07c680.yaml"
+  },
+  "review_ledger": {
+    "schema": "omac.review-ledger/v1",
+    "cycles": [
+      {
+        "round": 1,
+        "subject_digest": "a73a478fb1e4cc5529cbda0c19f5e0651a4f40eb02a4ee9f7a98cec3051a6064",
+        "report_digest": "de5fc52434aed60ba419f890cbe21311c91876a1f3ce07021b63254eb3207c7d",
+        "verdict": "reject",
+        "obligation_results": {
+          "dimension:authority": "pass",
+          "dimension:structure": "fail",
+          "dimension:execution": "pass",
+          "dimension:ownership": "fail",
+          "dimension:evidence": "fail",
+          "dimension:regression": "fail",
+          "integration:model-catalog-gate": "pass"
+        },
+        "new_count": 10,
+        "fixed_count": 0,
+        "regressed_count": 0,
+        "unchanged_count": 0,
+        "open_count": 10,
+        "prior_open_blocker_ids": [],
+        "open_blocker_ids": [
+          "BLK-08f9dbac0696",
+          "BLK-1690a08ed6bf",
+          "BLK-267e89a81ad0",
+          "BLK-3cba8b37ad48",
+          "BLK-6929a6f39bf5",
+          "BLK-80c11bbf5e16",
+          "BLK-8bf13a8adab2",
+          "BLK-b6e90f244608",
+          "BLK-be09e2ddecd7",
+          "BLK-d2777516637a"
+        ],
+        "reported_blocker_ids": [
+          "BLK-08f9dbac0696",
+          "BLK-1690a08ed6bf",
+          "BLK-267e89a81ad0",
+          "BLK-3cba8b37ad48",
+          "BLK-6929a6f39bf5",
+          "BLK-80c11bbf5e16",
+          "BLK-8bf13a8adab2",
+          "BLK-b6e90f244608",
+          "BLK-be09e2ddecd7",
+          "BLK-d2777516637a"
+        ],
+        "blocker_facts_schema": "omac.review-cycle-blocker-facts/v1",
+        "blocker_facts": [
+          {
+            "blocker_id": "BLK-08f9dbac0696",
+            "root_cause_key": "modelcatalog-timeout-probe-staleness",
+            "obligation_id": "dimension:regression",
+            "summary": "A provider timeout returns before saving a failed/unknown probe, leaving an older success selectable.",
+            "evidence": "providers/http.go:119-127 maps timeout to context.DeadlineExceeded; application.go:367-370 returns before probe persistence; selection accepts the old successful key.",
+            "required_fix": "Persist a redacted failed/unknown observation or invalidate prior success and define safe retry semantics for an unknown external outcome.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-1690a08ed6bf",
+            "root_cause_key": "modelcatalog-moving-latest-selection",
+            "obligation_id": "dimension:structure",
+            "summary": "SelectModel ignores requested snapshot provenance and resolves LatestSnapshot.",
+            "evidence": "application.go:398-450 reads LatestSnapshot at line 409 and never consumes SelectModelRequest.ModelCatalogSnapshotID.",
+            "required_fix": "Separate browse-latest from exact resolution and require a stable snapshot plus fixed revision/digest for materialization.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-267e89a81ad0",
+            "root_cause_key": "modelcatalog-probe-provenance-validation",
+            "obligation_id": "dimension:evidence",
+            "summary": "Exact selection checks only Probe.Outcome after FindProbe and not the returned provenance fields.",
+            "evidence": "application.go:427-436 trusts the store result; ProbeKey at types.go:445-450 defines the fields that must match.",
+            "required_fix": "Validate and compare connection, revision, digest, model, and API type on every returned probe.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-3cba8b37ad48",
+            "root_cause_key": "modelcatalog-secret-header-classification",
+            "obligation_id": "dimension:evidence",
+            "summary": "Sensitive non-secret headers are protected by an incomplete denylist.",
+            "evidence": "core/types.go:725-748 and providers/http.go:155-190 accept unlisted credential-bearing header names and values that are persisted and transmitted.",
+            "required_fix": "Use an explicit safe-header allowlist or typed CredentialBinding mapping at both core and adapter boundaries, with regression tests.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-6929a6f39bf5",
+            "root_cause_key": "modelcatalog-duplicate-manual-contract",
+            "obligation_id": "dimension:structure",
+            "summary": "The PR duplicates manual snapshot merge/validation beside the existing manual package.",
+            "evidence": "internal/modelcatalog/manual/manual.go:62-232 and core/application.go:243-284,567-592 define separate manual publication behavior and core/types.go:249-367 defines a second digest contract.",
+            "required_fix": "Select one canonical manual snapshot contract and adapt or retire the other implementation.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-80c11bbf5e16",
+            "root_cause_key": "modelcatalog-governed-auth-audit-boundary",
+            "obligation_id": "dimension:ownership",
+            "summary": "Governed commands lack authenticated RequestContext, authorization/admission, and canonical audit ownership.",
+            "evidence": "core/types.go:171-193 accepts scope/actor fields from input; application.go:54-117 writes directly; no authorization/audit port exists.",
+            "required_fix": "Derive scope and actor from authenticated context, invoke authorization/admission, and emit connection and credential-use audit evidence.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-8bf13a8adab2",
+            "root_cause_key": "modelcatalog-stale-discovered-lineage",
+            "obligation_id": "dimension:structure",
+            "summary": "Manual fallback copies discovered entries across changed connection provenance.",
+            "evidence": "application.go:261-275 loads prior snapshot without provenance filtering; manualSuccessorModels at 567-592 clones every prior model.",
+            "required_fix": "Carry forward only manual/mixed entries when revision/configuration changes; retain discovered entries only with matching provenance.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-b6e90f244608",
+            "root_cause_key": "modelcatalog-egress-policy-boundary",
+            "obligation_id": "dimension:ownership",
+            "summary": "HTTP connectors can use an unrestricted default client against any HTTP(S) host and follow redirects.",
+            "evidence": "core/types.go:710-722 validates only URI shape; providers/http.go:42-60 defaults to &http.Client{} and 99-119 sends without an egress/origin policy.",
+            "required_fix": "Require a scope-bound policy-enforcing resolver/transport and reject or validate redirects before credential injection.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-be09e2ddecd7",
+            "root_cause_key": "modelcatalog-error-redaction-trust",
+            "obligation_id": "dimension:evidence",
+            "summary": "Connector-supplied sanitized error fields and ProviderError summaries are persisted without central redaction.",
+            "evidence": "application.go:367-380 and 654-660 copy connector fields; types.go:426-431 checks formatting only, not safe content or cardinality.",
+            "required_fix": "Use typed low-cardinality error categories or central fail-closed sanitization before persistence and exposure.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-d2777516637a",
+            "root_cause_key": "modelcatalog-snapshot-publication-race",
+            "obligation_id": "dimension:regression",
+            "summary": "Read-then-append snapshot publication has no predecessor CAS or idempotency.",
+            "evidence": "application.go:220-235 and 268-283 read LatestSnapshot then SaveSnapshot; store.go:99-118 only appends, so concurrent manual updates can lose entries.",
+            "required_fix": "Add atomic expected-predecessor publication and stable command idempotency, including test-message retry semantics.",
+            "status": "open",
+            "classification": "new"
+          }
+        ]
+      },
+      {
+        "round": 2,
+        "subject_digest": "29132ef2b5f5ef79cba47ca8c35f61fda7422e2b67b65d7f69a9ef4e393f98cd",
+        "report_digest": "19a37cbbd5840de80d9dbcc93ebe0c7075d7c5cc7f375a51c8ba30643f49ae18",
+        "verdict": "reject",
+        "obligation_results": {
+          "dimension:authority": "pass",
+          "dimension:structure": "fail",
+          "dimension:execution": "pass",
+          "dimension:ownership": "fail",
+          "dimension:evidence": "fail",
+          "dimension:regression": "fail",
+          "integration:model-catalog-gate": "pass"
+        },
+        "new_count": 1,
+        "fixed_count": 0,
+        "regressed_count": 0,
+        "unchanged_count": 0,
+        "open_count": 11,
+        "prior_open_blocker_ids": [
+          "BLK-08f9dbac0696",
+          "BLK-1690a08ed6bf",
+          "BLK-267e89a81ad0",
+          "BLK-3cba8b37ad48",
+          "BLK-6929a6f39bf5",
+          "BLK-80c11bbf5e16",
+          "BLK-8bf13a8adab2",
+          "BLK-b6e90f244608",
+          "BLK-be09e2ddecd7",
+          "BLK-d2777516637a"
+        ],
+        "open_blocker_ids": [
+          "BLK-08f9dbac0696",
+          "BLK-1690a08ed6bf",
+          "BLK-267e89a81ad0",
+          "BLK-2fef98491191",
+          "BLK-3cba8b37ad48",
+          "BLK-6929a6f39bf5",
+          "BLK-80c11bbf5e16",
+          "BLK-8bf13a8adab2",
+          "BLK-b6e90f244608",
+          "BLK-be09e2ddecd7",
+          "BLK-d2777516637a"
+        ],
+        "reported_blocker_ids": [
+          "BLK-08f9dbac0696",
+          "BLK-1690a08ed6bf",
+          "BLK-267e89a81ad0",
+          "BLK-2fef98491191",
+          "BLK-3cba8b37ad48",
+          "BLK-6929a6f39bf5",
+          "BLK-80c11bbf5e16",
+          "BLK-8bf13a8adab2",
+          "BLK-b6e90f244608",
+          "BLK-be09e2ddecd7",
+          "BLK-d2777516637a"
+        ],
+        "blocker_facts_schema": "omac.review-cycle-blocker-facts/v1",
+        "blocker_facts": [
+          {
+            "blocker_id": "BLK-08f9dbac0696",
+            "root_cause_key": "modelcatalog-timeout-probe-staleness",
+            "obligation_id": "dimension:regression",
+            "summary": "A caller context deadline still returns before persisting an unknown probe, so an older successful probe can remain selectable.",
+            "evidence": "internal/modelcatalog/core/application.go:459-470 returns immediately when ctx.Err() is context.DeadlineExceeded; probe persistence occurs only at :485-495, while selection accepts ProbeSucceeded at :563-572.",
+            "required_fix": "Persist a redacted ProbeUnknown observation for any provider timeout after the attempt may have started, including a parent-context deadline; distinguish only a preflight cancellation that is known not to have reached the provider.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "Internal connector timeouts now persist ProbeUnknown, but the parent-context deadline branch still returns before persistence."
+          },
+          {
+            "blocker_id": "BLK-1690a08ed6bf",
+            "root_cause_key": "modelcatalog-moving-latest-selection",
+            "obligation_id": "dimension:structure",
+            "summary": "Exact SelectModel is pinned, but alternate probe/materialization paths still expose moving LatestSnapshot semantics.",
+            "evidence": "SelectModel now uses Store.Snapshot, but SendTestMessage falls back to Store.LatestSnapshot when ModelCatalogSnapshotID is blank at internal/modelcatalog/core/application.go:387-392, and LatestSnapshot remains a public SnapshotStore operation at types.go:789-795.",
+            "required_fix": "Keep LatestSnapshot exclusively in explicit browse/current-catalog operations; require an exact snapshot/provenance for any command whose evidence can be consumed by materialization, or make the current choice explicit and non-replayable.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "SelectModel now pins Store.Snapshot, but SendTestMessage still falls back to LatestSnapshot when no snapshot ID is supplied and the public store port still exposes moving latest reads to alternate callers."
+          },
+          {
+            "blocker_id": "BLK-267e89a81ad0",
+            "root_cause_key": "modelcatalog-probe-provenance-validation",
+            "obligation_id": "dimension:evidence",
+            "summary": "SendTestMessage returns a prior idempotent probe before checking that its connection, revision, digest, model, and API type match the current request.",
+            "evidence": "internal/modelcatalog/core/application.go:407-417 returns FindProbeByIdempotency results directly; provenance validation exists only later at :881-892 during selection. internal/modelcatalog/core/store.go:263-273 indexes probe commands by the raw idempotency key without a request digest.",
+            "required_fix": "Bind idempotency to an operation-scoped request digest covering connection/provenance/model/API type and the test command; reject key reuse with different evidence, validate the stored result before returning it, and reserve the key atomically before the external call to prevent concurrent duplicates.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "Selection now calls validateProbeProvenance, but SendTestMessage returns FindProbeByIdempotency results before that validation and the raw key is not bound to the current request provenance."
+          },
+          {
+            "blocker_id": "BLK-2fef98491191",
+            "root_cause_key": "modelcatalog-audit-commit-atomicity",
+            "obligation_id": "dimension:evidence",
+            "summary": "Governed commands report audit failure after the domain write has already committed.",
+            "evidence": "CreateConnection and UpdateConnection call Store.CreateConnection/UpdateConnection before recordAudit; discovery, manual publication, probe save, and selection follow the same post-write audit pattern in internal/modelcatalog/core/application.go:285-290, :344-350, :488-502, and :583-587.",
+            "required_fix": "Use the canonical audit authority as part of the same durable transaction or append an idempotent outbox/evidence record with the domain mutation; do not return a failed command after a committed change without a recoverable audit fact.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-3cba8b37ad48",
+            "root_cause_key": "modelcatalog-secret-header-classification",
+            "obligation_id": "dimension:evidence",
+            "summary": "The name allowlist rejects unknown headers but does not provide a typed/value-level secret boundary for the allowlisted map.",
+            "evidence": "ValidateNonSecretHeaders checks header names and newlines at internal/modelcatalog/core/application.go:930-941; values for X-Tenant, X-Workspace-Id, X-Project-Id, and X-Request-Id are still persisted and included in ConfigurationDigest without a typed non-secret value contract.",
+            "required_fix": "Use typed non-secret metadata values with policy validation, or move all caller-supplied headers behind explicit CredentialBinding/typed bindings; preserve the same fail-closed rule in the adapter.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "The narrow name allowlist rejects arbitrary connection headers, but allowed header values remain untyped caller-controlled strings that are persisted and included in the configuration digest without a value-level secret contract."
+          },
+          {
+            "blocker_id": "BLK-6929a6f39bf5",
+            "root_cause_key": "modelcatalog-duplicate-manual-contract",
+            "obligation_id": "dimension:structure",
+            "summary": "The PR changes the separately owned model-manual package and still leaves an independently callable reduced Snapshot contract outside the packaged model-catalog component.",
+            "evidence": "The PR changes internal/modelcatalog/manual/manual.go and manual_test.go, while contracts/release/source-ownership-baseline.yaml:296-304 assigns internal/modelcatalog/core and providers to model-catalog and internal/modelcatalog/manual to model-manual. The generated model-catalog manifest for head 976c971 contains 14 core/provider files and no manual paths. internal/modelcatalog/manual/manual.go:25-77 retains its own Snapshot/AddManualModel shape, even though merge/validation/digest helpers delegate to core.",
+            "required_fix": "Do not modify the model-manual owner from this PR; coordinate a separate owner-approved adapter/removal, or amend the ownership/contract and package the adapter explicitly. If the compatibility API remains, make its conformance and lifecycle boundary explicit rather than retaining a second independently writable snapshot contract.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "Core owns a canonical merge projection, but the PR still changes and retains a separately owned manual Snapshot/AddManualModel API and does not package that changed owner source."
+          },
+          {
+            "blocker_id": "BLK-80c11bbf5e16",
+            "root_cause_key": "modelcatalog-governed-auth-audit-boundary",
+            "obligation_id": "dimension:ownership",
+            "summary": "The unsafe ungoverned constructor remains production-capable, and its audit boundary is not fail-closed with the mutation.",
+            "evidence": "internal/modelcatalog/core/application.go:863-895 leaves NewApplication/NewDefaultApplication usable without Governance; in that mode caller-supplied ScopeID/CreatedBy/UpdatedBy are accepted. Create/update persist at :102-105 and :157-160 before recordAudit at :736-750 can fail. The local ModelCatalogAuditEvent DTO at internal/modelcatalog/core/types.go:746-775 is not the canonical audit.AuditEvent fact defined by contracts/governance/audit/audit.go:53-81.",
+            "required_fix": "Make the production application boundary require authenticated RequestContext, authorization, admission, and the canonical audit owner; isolate any ungoverned test helper explicitly. Commit the mutation and audit fact atomically through the owning Platform Core transaction/outbox, or otherwise guarantee that a failed audit cannot leave an unaudited write.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "NewGovernedApplication adds the missing port, but NewApplication remains an ungoverned bypass and audit is post-write rather than atomic/canonical."
+          },
+          {
+            "blocker_id": "BLK-8bf13a8adab2",
+            "root_cause_key": "modelcatalog-stale-discovered-lineage",
+            "obligation_id": "dimension:structure",
+            "summary": "Manual/mixed carry-forward across an API-type change can retain the old model API type in the new snapshot.",
+            "evidence": "manualSuccessorModelsForConnection carries prior manual/mixed entries at internal/modelcatalog/core/application.go:823-829 without updating APIType; SendTestMessage and SelectModel reject a model/API-type mismatch at :404-405 and :554-555, leaving a current snapshot with unusable carried entries.",
+            "required_fix": "Treat an API-type change as a provenance boundary: drop incompatible carried entries or require an explicit re-registration that assigns the current API type before publication.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "Discovered carry-forward is filtered by provenance, but manual/mixed entries survive an API-type change with their old APIType and remain in the current snapshot even though test/selection rejects them as incompatible."
+          },
+          {
+            "blocker_id": "BLK-b6e90f244608",
+            "root_cause_key": "modelcatalog-egress-policy-boundary",
+            "obligation_id": "dimension:ownership",
+            "summary": "The default egress control is not scope-bound and is evaluated only after a short-lived credential lease has been resolved.",
+            "evidence": "internal/modelcatalog/providers/http.go:50-72 installs configuredOriginPolicy by default, which only compares scheme/host and checks that ScopeID is non-empty; arbitrary HTTP(S) BaseURI values remain accepted by internal/modelcatalog/core/types.go:911-923. The application resolves credentials at core/application.go:253-262 and :423-427 before providers/http.go:112-117 evaluates EgressPolicy. Redirect following is disabled, but policy enforcement is not required at construction.",
+            "required_fix": "Require a scope/platform policy-enforcing resolver or transport in the governed constructor, fail closed when absent, enforce it before credential resolution/injection, and retain redirect rejection or revalidation against the same policy.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "Redirect following is blocked and a policy seam exists, but the default policy accepts any configured origin and is evaluated after credential resolution."
+          },
+          {
+            "blocker_id": "BLK-be09e2ddecd7",
+            "root_cause_key": "modelcatalog-error-redaction-trust",
+            "obligation_id": "dimension:evidence",
+            "summary": "SendTestMessage can return a connector-supplied error verbatim on timeout paths even though stored probe fields are canonicalized.",
+            "evidence": "The timeout branches return connectorErr directly at internal/modelcatalog/core/application.go:459-465 and :504-505; ProviderError.Error exposes its Summary at types.go:722-735. The connector port accepts arbitrary implementations, so a wrapped timeout can carry unredacted text to the caller.",
+            "required_fix": "Return only canonical context/provider error categories from every application path, including unknown-timeout responses; never return a connector error object directly across the application boundary.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "Stored probe fields are canonicalized through SafeProviderError, but SendTestMessage returns connectorErr directly on timeout paths, so an arbitrary connector can still expose a wrapped unredacted summary."
+          },
+          {
+            "blocker_id": "BLK-d2777516637a",
+            "root_cause_key": "modelcatalog-snapshot-publication-race",
+            "obligation_id": "dimension:ownership",
+            "summary": "The canonical store interface still exposes a non-CAS SaveSnapshot writer, and test messages may opt out of idempotency.",
+            "evidence": "internal/modelcatalog/core/types.go:789-810 includes SaveSnapshot and SaveProbe alongside the guarded methods; internal/modelcatalog/core/store.go:104-124 appends snapshots without a predecessor or idempotency check. internal/modelcatalog/core/application.go:488-495 calls SaveProbe when IdempotencyKey is blank.",
+            "required_fix": "Remove the legacy append writer from the production snapshot port or make every publication require expected predecessor and idempotency; require an operation key or an equivalent durable attempt protocol for external test messages.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "PublishSnapshot adds predecessor CAS and idempotency for application calls, but SaveSnapshot remains a public bypass and probe idempotency does not reserve or bind the external test command before execution."
+          }
+        ]
+      },
+      {
+        "round": 3,
+        "subject_digest": "3ed5f4036fee44a5fc6db9cc5c8b9f123ee3462557b62e78b9a6055baad75d31",
+        "report_digest": "9c3f093ef889a0860191900e67a0aa25384d7b8fb9f854229541e2af7684d569",
+        "verdict": "reject",
+        "obligation_results": {
+          "dimension:authority": "pass",
+          "dimension:structure": "fail",
+          "dimension:execution": "pass",
+          "dimension:ownership": "fail",
+          "dimension:evidence": "fail",
+          "dimension:regression": "fail",
+          "integration:model-catalog-gate": "pass"
+        },
+        "new_count": 2,
+        "fixed_count": 5,
+        "regressed_count": 0,
+        "unchanged_count": 0,
+        "open_count": 8,
+        "prior_open_blocker_ids": [
+          "BLK-08f9dbac0696",
+          "BLK-1690a08ed6bf",
+          "BLK-267e89a81ad0",
+          "BLK-2fef98491191",
+          "BLK-3cba8b37ad48",
+          "BLK-6929a6f39bf5",
+          "BLK-80c11bbf5e16",
+          "BLK-8bf13a8adab2",
+          "BLK-b6e90f244608",
+          "BLK-be09e2ddecd7",
+          "BLK-d2777516637a"
+        ],
+        "open_blocker_ids": [
+          "BLK-2fef98491191",
+          "BLK-3cba8b37ad48",
+          "BLK-416995b164fe",
+          "BLK-48d5c3f9c7a8",
+          "BLK-6929a6f39bf5",
+          "BLK-80c11bbf5e16",
+          "BLK-b6e90f244608",
+          "BLK-d2777516637a"
+        ],
+        "reported_blocker_ids": [
+          "BLK-2fef98491191",
+          "BLK-3cba8b37ad48",
+          "BLK-416995b164fe",
+          "BLK-48d5c3f9c7a8",
+          "BLK-6929a6f39bf5",
+          "BLK-80c11bbf5e16",
+          "BLK-b6e90f244608",
+          "BLK-d2777516637a"
+        ],
+        "blocker_facts_schema": "omac.review-cycle-blocker-facts/v1",
+        "blocker_facts": [
+          {
+            "blocker_id": "BLK-08f9dbac0696",
+            "root_cause_key": "modelcatalog-timeout-probe-staleness",
+            "obligation_id": "dimension:regression",
+            "summary": "A caller context deadline still returns before persisting an unknown probe, so an older successful probe can remain selectable.",
+            "evidence": "internal/modelcatalog/core/application.go:459-470 returns immediately when ctx.Err() is context.DeadlineExceeded; probe persistence occurs only at :485-495, while selection accepts ProbeSucceeded at :563-572.",
+            "required_fix": "Persist a redacted ProbeUnknown observation for any provider timeout after the attempt may have started, including a parent-context deadline; distinguish only a preflight cancellation that is known not to have reached the provider.",
+            "status": "fixed",
+            "classification": "fixed",
+            "last_evidence": "Current SendTestMessage marks an attempted context timeout unknown and persists with context.WithoutCancel at application.go:550-585. The declared suite and TestParentDeadlinePersistsUnknownProbeAndReturnsCanonicalError both pass; preflight cancellation is separately rejected before provider invocation."
+          },
+          {
+            "blocker_id": "BLK-1690a08ed6bf",
+            "root_cause_key": "modelcatalog-moving-latest-selection",
+            "obligation_id": "dimension:structure",
+            "summary": "Exact SelectModel is pinned, but alternate probe/materialization paths still expose moving LatestSnapshot semantics.",
+            "evidence": "SelectModel now uses Store.Snapshot, but SendTestMessage falls back to Store.LatestSnapshot when ModelCatalogSnapshotID is blank at internal/modelcatalog/core/application.go:387-392, and LatestSnapshot remains a public SnapshotStore operation at types.go:789-795.",
+            "required_fix": "Keep LatestSnapshot exclusively in explicit browse/current-catalog operations; require an exact snapshot/provenance for any command whose evidence can be consumed by materialization, or make the current choice explicit and non-replayable.",
+            "status": "fixed",
+            "classification": "fixed",
+            "last_evidence": "SendTestMessage now requires a normalized exact snapshot ID at application.go:418-444, and SelectModel reads Store.Snapshot at :632-645. LatestSnapshot is used only while constructing explicit discovery/manual successors, not by the exact test/selection commands."
+          },
+          {
+            "blocker_id": "BLK-267e89a81ad0",
+            "root_cause_key": "modelcatalog-probe-provenance-validation",
+            "obligation_id": "dimension:evidence",
+            "summary": "SendTestMessage returns a prior idempotent probe before checking that its connection, revision, digest, model, and API type match the current request.",
+            "evidence": "internal/modelcatalog/core/application.go:407-417 returns FindProbeByIdempotency results directly; provenance validation exists only later at :881-892 during selection. internal/modelcatalog/core/store.go:263-273 indexes probe commands by the raw idempotency key without a request digest.",
+            "required_fix": "Bind idempotency to an operation-scoped request digest covering connection/provenance/model/API type and the test command; reject key reuse with different evidence, validate the stored result before returning it, and reserve the key atomically before the external call to prevent concurrent duplicates.",
+            "status": "fixed",
+            "classification": "fixed",
+            "last_evidence": "ClaimProbe reserves before the provider call, binds connection/revision/ digest/snapshot/model/API/message in RequestDigest, rejects mismatched reuse at store.go:270-282 and validates an existing result at application.go:489-493. The remaining snapshot-index collision is tracked separately as a new finding."
+          },
+          {
+            "blocker_id": "BLK-2fef98491191",
+            "root_cause_key": "modelcatalog-audit-commit-atomicity",
+            "obligation_id": "dimension:evidence",
+            "summary": "Audit delivery is called outside the durable transaction, and a failed probe finalization can strand an attempted external operation.",
+            "evidence": "application.go:730-750 stages a mutation, calls Governance.RecordModelCatalogAudit at :746, and only then calls transaction.CommitModelCatalogAudit. The in-memory transaction appends a second local ModelCatalogAuditEvent at store.go:490-514. For probes, claimProbe commits the reservation before the provider call at application.go:753-781; after attemptStarted becomes true at :498-503, any SaveClaimedProbe/commitMutation failure at :587-599 cannot release the claim. store.go:270-282 then returns ErrProbeInProgress indefinitely.",
+            "required_fix": "Make the canonical audit fact and domain mutation one durable transaction or an idempotent outbox record. Finalize every claimed provider attempt with a durable terminal observation, including an unknown result on post-attempt persistence failure, and define a safe recovery/reconciliation path instead of leaving a permanent in-progress claim.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "The new transaction staging prevents the in-memory audit-failure test from committing the mutation, but canonical audit delivery still occurs outside the durable transaction at application.go:730-750, and a post-attempt probe finalization failure strands the already committed claim."
+          },
+          {
+            "blocker_id": "BLK-3cba8b37ad48",
+            "root_cause_key": "modelcatalog-secret-header-classification",
+            "obligation_id": "dimension:evidence",
+            "summary": "The allowlisted non-secret header values are still untyped caller-controlled strings.",
+            "evidence": "ModelProviderConnection.NonSecretHeaders remains map[string]string at core/types.go:101-110 and the request inputs use the same map at :181-205. NonSecretHeaderValue.Validate at :956-983 is only a heuristic called by ValidateNonSecretHeaders at :991-1006; the raw values are then persisted and included in ConfigurationDigest at :1034-1048.",
+            "required_fix": "Replace the raw map with typed, policy-validated metadata values or move all caller-supplied headers behind explicit typed CredentialBinding bindings. Preserve the same fail-closed classification in the HTTP adapter and digest only the validated non-secret projection.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "The value heuristic at types.go:956-983 is an improvement, but the persisted input remains map[string]string and is included in the digest without a typed non-secret/credential binding boundary."
+          },
+          {
+            "blocker_id": "BLK-416995b164fe",
+            "root_cause_key": "modelcatalog-regression-coverage-boundary",
+            "obligation_id": "dimension:regression",
+            "summary": "The current regression suite does not exercise the remaining concurrency, bypass-writer, and post-attempt finalization boundaries.",
+            "evidence": "The focused suite passes the repaired parent-deadline, cancellation, exact-selection, and audit-rollback cases, but no test covers the concrete SaveSnapshot/SaveProbe bypass, a connection revision changing during discovery, two snapshots sharing a ProbeKey, or SaveClaimedProbe/audit failure after attemptStarted.",
+            "required_fix": "Add deterministic regressions for each remaining boundary, including concurrent revision CAS, snapshot-scoped probe retention, post-attempt finalization recovery, and rejection of legacy writer paths. Keep them in the owning model-catalog gate.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-48d5c3f9c7a8",
+            "root_cause_key": "modelcatalog-probe-snapshot-provenance-index",
+            "obligation_id": "dimension:evidence",
+            "summary": "Probe storage keys omit catalog snapshot identity even though selection requires exact snapshot provenance.",
+            "evidence": "ProbeKey at core/types.go:472-476 contains connection ID, revision, configuration digest, model ID, and API type but not ModelCatalogSnapshotID. SaveClaimedProbe indexes store.probes with that key at store.go:303-320, while SelectModel looks up the same key at application.go:657-666 and then validates the returned probe against the requested snapshot.",
+            "required_fix": "Include ModelCatalogSnapshotID in the durable probe evidence key and all FindProbe/SaveClaimedProbe paths, or use a snapshot-scoped evidence index. Add a regression covering two snapshots with the same connection/model/API tuple and independent probe results.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-6929a6f39bf5",
+            "root_cause_key": "modelcatalog-duplicate-manual-contract",
+            "obligation_id": "dimension:structure",
+            "summary": "The new core implementation and the separately owned manual package remain independent model/snapshot contracts.",
+            "evidence": "The PR adds CatalogModel/ModelCatalogSnapshot and core manual merge logic in core/types.go:240-272 and application.go:1013-1047. The repository base already contains internal/modelcatalog/manual/manual.go:28-47 and :62-123 with its own Model, Snapshot, digest, and AddManualModel shape; the release baseline assigns that path to owner model-manual while core and providers belong to model-catalog. The generated model-catalog manifest intentionally contains no manual paths.",
+            "required_fix": "Select one owning contract. Either make model-catalog consume an owner-approved model-manual adapter with explicit conformance and release evidence, or remove the duplicate manual contract through a coordinated model-manual change before this component is accepted.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "The current PR file list contains only core/providers, but the newly added core canonical snapshot/manual path still coexists with the base model-manual Snapshot/AddManualModel/digest contract under a separate owner. The component manifest does not provide conformance evidence for that second contract."
+          },
+          {
+            "blocker_id": "BLK-80c11bbf5e16",
+            "root_cause_key": "modelcatalog-governed-auth-audit-boundary",
+            "obligation_id": "dimension:ownership",
+            "summary": "The production-facing application boundary can still be bypassed, and its audit input is not the canonical governance fact.",
+            "evidence": "internal/modelcatalog/core/types.go:884-925 exports NewTestApplication and NewDefaultTestApplication with requireGovernance=false. In that mode application.go:813-836 accepts fallback ScopeID/actor values and the connection commands write through the ungoverned branch at :730-733. The feature-local ModelCatalogAuditEvent at types.go:757-768 lacks the AuditEventID, RequestContextID, category, and canonical validation required by contracts/governance/audit/audit.go:53-109.",
+            "required_fix": "Keep the production constructor fail-closed and isolate any ungoverned fixture helper in test-only code or an explicitly non-production package. Accept and persist the canonical governance audit fact through the owning Platform Core transaction/outbox rather than a feature-local replacement.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "NewGovernedApplication now requires a governance port, transactional store, and egress policy, but NewTestApplication remains exported and write-capable without governance, and the local audit DTO is not audit.AuditEvent."
+          },
+          {
+            "blocker_id": "BLK-8bf13a8adab2",
+            "root_cause_key": "modelcatalog-stale-discovered-lineage",
+            "obligation_id": "dimension:structure",
+            "summary": "Manual/mixed carry-forward across an API-type change can retain the old model API type in the new snapshot.",
+            "evidence": "manualSuccessorModelsForConnection carries prior manual/mixed entries at internal/modelcatalog/core/application.go:823-829 without updating APIType; SendTestMessage and SelectModel reject a model/API-type mismatch at :404-405 and :554-555, leaving a current snapshot with unusable carried entries.",
+            "required_fix": "Treat an API-type change as a provenance boundary: drop incompatible carried entries or require an explicit re-registration that assigns the current API type before publication.",
+            "status": "fixed",
+            "classification": "fixed",
+            "last_evidence": "mergeDiscoveredModels and manualSuccessorModelsForConnection filter carry-forward by APIType at application.go:978-1047. The declared suite passes TestManualEvidenceCannotCrossAnAPITypeBoundary and TestManualFallbackDropsStaleDiscoveredEvidence."
+          },
+          {
+            "blocker_id": "BLK-b6e90f244608",
+            "root_cause_key": "modelcatalog-egress-policy-boundary",
+            "obligation_id": "dimension:ownership",
+            "summary": "The default provider transport policy is origin-only and does not enforce a scope-bound destination decision.",
+            "evidence": "providers/http.go:48-70 installs configuredOriginPolicy whenever Config.EgressPolicy is nil; it only requires a non-empty ScopeID and compares scheme/host with the configured BaseURI. core/types.go:941-953 accepts any absolute HTTP(S) BaseURI. The governed application now requires a supplied EgressPolicy and checks it before credential resolution at application.go:270-280 and :459-464, but direct exported provider constructors still use the permissive default, and providers/http.go:104-115 evaluates its policy after the connector has already received the credential lease.",
+            "required_fix": "Require a scope-bound policy/resolver at the provider construction boundary or make provider construction internal to the governed composition path. Fail closed when absent, enforce the same policy before credential resolution/injection, and keep redirect rejection/revalidation tied to it.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "Governed application preflight now checks a supplied policy before lease resolution, but providers/http.go:61-70 still installs a permissive origin-only default and direct provider constructors remain callable with a credential lease."
+          },
+          {
+            "blocker_id": "BLK-be09e2ddecd7",
+            "root_cause_key": "modelcatalog-error-redaction-trust",
+            "obligation_id": "dimension:evidence",
+            "summary": "SendTestMessage can return a connector-supplied error verbatim on timeout paths even though stored probe fields are canonicalized.",
+            "evidence": "The timeout branches return connectorErr directly at internal/modelcatalog/core/application.go:459-465 and :504-505; ProviderError.Error exposes its Summary at types.go:722-735. The connector port accepts arbitrary implementations, so a wrapped timeout can carry unredacted text to the caller.",
+            "required_fix": "Return only canonical context/provider error categories from every application path, including unknown-timeout responses; never return a connector error object directly across the application boundary.",
+            "status": "fixed",
+            "classification": "fixed",
+            "last_evidence": "Current connector errors are canonicalized through canonicalConnectorError/providerErrorFrom and stored via SafeProviderError at application.go:550-570; the declared provider/core redaction tests pass."
+          },
+          {
+            "blocker_id": "BLK-d2777516637a",
+            "root_cause_key": "modelcatalog-snapshot-publication-race",
+            "obligation_id": "dimension:ownership",
+            "summary": "Legacy concrete writers remain callable, and publication does not verify that the connection revision is still current.",
+            "evidence": "SnapshotStore no longer lists SaveSnapshot, but the public concrete MemoryStore still exposes SaveSnapshot at store.go:112-132 and SaveProbe at :238-252, plus SaveProbeWithIdempotency at :351-378. Separately, DiscoverModels reads a connection at application.go:252-260, performs external discovery, and publishes using only the snapshot predecessor at :292-320; MemoryStore.PublishSnapshot at store.go:138-175 never compares the snapshot revision/digest with the current stored connection.",
+            "required_fix": "Remove or test-scope all legacy append/overwrite writers. Make publication atomically require the expected connection revision/configuration digest as well as the predecessor and command key, and reject stale in-flight discoveries/manual publications.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "Application publication now uses predecessor CAS and requires a probe idempotency key, but public MemoryStore SaveSnapshot/SaveProbe bypasses remain and publication still lacks a current connection revision CAS."
+          }
+        ]
+      }
+    ],
+    "blockers": [
+      {
+        "blocker_id": "BLK-08f9dbac0696",
+        "root_cause_key": "modelcatalog-timeout-probe-staleness",
+        "obligation_id": "dimension:regression",
+        "summary": "A caller context deadline still returns before persisting an unknown probe, so an older successful probe can remain selectable.",
+        "evidence": "internal/modelcatalog/core/application.go:459-470 returns immediately when ctx.Err() is context.DeadlineExceeded; probe persistence occurs only at :485-495, while selection accepts ProbeSucceeded at :563-572.",
+        "required_fix": "Persist a redacted ProbeUnknown observation for any provider timeout after the attempt may have started, including a parent-context deadline; distinguish only a preflight cancellation that is known not to have reached the provider.",
+        "status": "fixed",
+        "classification": "fixed",
+        "first_seen_round": 1,
+        "last_seen_round": 3,
+        "seen_count": 2,
+        "last_evidence": "Current SendTestMessage marks an attempted context timeout unknown and persists with context.WithoutCancel at application.go:550-585. The declared suite and TestParentDeadlinePersistsUnknownProbeAndReturnsCanonicalError both pass; preflight cancellation is separately rejected before provider invocation."
+      },
+      {
+        "blocker_id": "BLK-1690a08ed6bf",
+        "root_cause_key": "modelcatalog-moving-latest-selection",
+        "obligation_id": "dimension:structure",
+        "summary": "Exact SelectModel is pinned, but alternate probe/materialization paths still expose moving LatestSnapshot semantics.",
+        "evidence": "SelectModel now uses Store.Snapshot, but SendTestMessage falls back to Store.LatestSnapshot when ModelCatalogSnapshotID is blank at internal/modelcatalog/core/application.go:387-392, and LatestSnapshot remains a public SnapshotStore operation at types.go:789-795.",
+        "required_fix": "Keep LatestSnapshot exclusively in explicit browse/current-catalog operations; require an exact snapshot/provenance for any command whose evidence can be consumed by materialization, or make the current choice explicit and non-replayable.",
+        "status": "fixed",
+        "classification": "fixed",
+        "first_seen_round": 1,
+        "last_seen_round": 3,
+        "seen_count": 2,
+        "last_evidence": "SendTestMessage now requires a normalized exact snapshot ID at application.go:418-444, and SelectModel reads Store.Snapshot at :632-645. LatestSnapshot is used only while constructing explicit discovery/manual successors, not by the exact test/selection commands."
+      },
+      {
+        "blocker_id": "BLK-267e89a81ad0",
+        "root_cause_key": "modelcatalog-probe-provenance-validation",
+        "obligation_id": "dimension:evidence",
+        "summary": "SendTestMessage returns a prior idempotent probe before checking that its connection, revision, digest, model, and API type match the current request.",
+        "evidence": "internal/modelcatalog/core/application.go:407-417 returns FindProbeByIdempotency results directly; provenance validation exists only later at :881-892 during selection. internal/modelcatalog/core/store.go:263-273 indexes probe commands by the raw idempotency key without a request digest.",
+        "required_fix": "Bind idempotency to an operation-scoped request digest covering connection/provenance/model/API type and the test command; reject key reuse with different evidence, validate the stored result before returning it, and reserve the key atomically before the external call to prevent concurrent duplicates.",
+        "status": "fixed",
+        "classification": "fixed",
+        "first_seen_round": 1,
+        "last_seen_round": 3,
+        "seen_count": 2,
+        "last_evidence": "ClaimProbe reserves before the provider call, binds connection/revision/ digest/snapshot/model/API/message in RequestDigest, rejects mismatched reuse at store.go:270-282 and validates an existing result at application.go:489-493. The remaining snapshot-index collision is tracked separately as a new finding."
+      },
+      {
+        "blocker_id": "BLK-2fef98491191",
+        "root_cause_key": "modelcatalog-audit-commit-atomicity",
+        "obligation_id": "dimension:evidence",
+        "summary": "Audit delivery is called outside the durable transaction, and a failed probe finalization can strand an attempted external operation.",
+        "evidence": "application.go:730-750 stages a mutation, calls Governance.RecordModelCatalogAudit at :746, and only then calls transaction.CommitModelCatalogAudit. The in-memory transaction appends a second local ModelCatalogAuditEvent at store.go:490-514. For probes, claimProbe commits the reservation before the provider call at application.go:753-781; after attemptStarted becomes true at :498-503, any SaveClaimedProbe/commitMutation failure at :587-599 cannot release the claim. store.go:270-282 then returns ErrProbeInProgress indefinitely.",
+        "required_fix": "Make the canonical audit fact and domain mutation one durable transaction or an idempotent outbox record. Finalize every claimed provider attempt with a durable terminal observation, including an unknown result on post-attempt persistence failure, and define a safe recovery/reconciliation path instead of leaving a permanent in-progress claim.",
+        "status": "open",
+        "classification": "deeper",
+        "first_seen_round": 2,
+        "last_seen_round": 3,
+        "seen_count": 2,
+        "last_evidence": "The new transaction staging prevents the in-memory audit-failure test from committing the mutation, but canonical audit delivery still occurs outside the durable transaction at application.go:730-750, and a post-attempt probe finalization failure strands the already committed claim."
+      },
+      {
+        "blocker_id": "BLK-3cba8b37ad48",
+        "root_cause_key": "modelcatalog-secret-header-classification",
+        "obligation_id": "dimension:evidence",
+        "summary": "The allowlisted non-secret header values are still untyped caller-controlled strings.",
+        "evidence": "ModelProviderConnection.NonSecretHeaders remains map[string]string at core/types.go:101-110 and the request inputs use the same map at :181-205. NonSecretHeaderValue.Validate at :956-983 is only a heuristic called by ValidateNonSecretHeaders at :991-1006; the raw values are then persisted and included in ConfigurationDigest at :1034-1048.",
+        "required_fix": "Replace the raw map with typed, policy-validated metadata values or move all caller-supplied headers behind explicit typed CredentialBinding bindings. Preserve the same fail-closed classification in the HTTP adapter and digest only the validated non-secret projection.",
+        "status": "open",
+        "classification": "deeper",
+        "first_seen_round": 1,
+        "last_seen_round": 3,
+        "seen_count": 3,
+        "last_evidence": "The value heuristic at types.go:956-983 is an improvement, but the persisted input remains map[string]string and is included in the digest without a typed non-secret/credential binding boundary."
+      },
+      {
+        "blocker_id": "BLK-416995b164fe",
+        "root_cause_key": "modelcatalog-regression-coverage-boundary",
+        "obligation_id": "dimension:regression",
+        "summary": "The current regression suite does not exercise the remaining concurrency, bypass-writer, and post-attempt finalization boundaries.",
+        "evidence": "The focused suite passes the repaired parent-deadline, cancellation, exact-selection, and audit-rollback cases, but no test covers the concrete SaveSnapshot/SaveProbe bypass, a connection revision changing during discovery, two snapshots sharing a ProbeKey, or SaveClaimedProbe/audit failure after attemptStarted.",
+        "required_fix": "Add deterministic regressions for each remaining boundary, including concurrent revision CAS, snapshot-scoped probe retention, post-attempt finalization recovery, and rejection of legacy writer paths. Keep them in the owning model-catalog gate.",
+        "status": "open",
+        "classification": "new",
+        "first_seen_round": 3,
+        "last_seen_round": 3,
+        "seen_count": 1
+      },
+      {
+        "blocker_id": "BLK-48d5c3f9c7a8",
+        "root_cause_key": "modelcatalog-probe-snapshot-provenance-index",
+        "obligation_id": "dimension:evidence",
+        "summary": "Probe storage keys omit catalog snapshot identity even though selection requires exact snapshot provenance.",
+        "evidence": "ProbeKey at core/types.go:472-476 contains connection ID, revision, configuration digest, model ID, and API type but not ModelCatalogSnapshotID. SaveClaimedProbe indexes store.probes with that key at store.go:303-320, while SelectModel looks up the same key at application.go:657-666 and then validates the returned probe against the requested snapshot.",
+        "required_fix": "Include ModelCatalogSnapshotID in the durable probe evidence key and all FindProbe/SaveClaimedProbe paths, or use a snapshot-scoped evidence index. Add a regression covering two snapshots with the same connection/model/API tuple and independent probe results.",
+        "status": "open",
+        "classification": "new",
+        "first_seen_round": 3,
+        "last_seen_round": 3,
+        "seen_count": 1
+      },
+      {
+        "blocker_id": "BLK-6929a6f39bf5",
+        "root_cause_key": "modelcatalog-duplicate-manual-contract",
+        "obligation_id": "dimension:structure",
+        "summary": "The new core implementation and the separately owned manual package remain independent model/snapshot contracts.",
+        "evidence": "The PR adds CatalogModel/ModelCatalogSnapshot and core manual merge logic in core/types.go:240-272 and application.go:1013-1047. The repository base already contains internal/modelcatalog/manual/manual.go:28-47 and :62-123 with its own Model, Snapshot, digest, and AddManualModel shape; the release baseline assigns that path to owner model-manual while core and providers belong to model-catalog. The generated model-catalog manifest intentionally contains no manual paths.",
+        "required_fix": "Select one owning contract. Either make model-catalog consume an owner-approved model-manual adapter with explicit conformance and release evidence, or remove the duplicate manual contract through a coordinated model-manual change before this component is accepted.",
+        "status": "open",
+        "classification": "deeper",
+        "first_seen_round": 1,
+        "last_seen_round": 3,
+        "seen_count": 3,
+        "last_evidence": "The current PR file list contains only core/providers, but the newly added core canonical snapshot/manual path still coexists with the base model-manual Snapshot/AddManualModel/digest contract under a separate owner. The component manifest does not provide conformance evidence for that second contract."
+      },
+      {
+        "blocker_id": "BLK-80c11bbf5e16",
+        "root_cause_key": "modelcatalog-governed-auth-audit-boundary",
+        "obligation_id": "dimension:ownership",
+        "summary": "The production-facing application boundary can still be bypassed, and its audit input is not the canonical governance fact.",
+        "evidence": "internal/modelcatalog/core/types.go:884-925 exports NewTestApplication and NewDefaultTestApplication with requireGovernance=false. In that mode application.go:813-836 accepts fallback ScopeID/actor values and the connection commands write through the ungoverned branch at :730-733. The feature-local ModelCatalogAuditEvent at types.go:757-768 lacks the AuditEventID, RequestContextID, category, and canonical validation required by contracts/governance/audit/audit.go:53-109.",
+        "required_fix": "Keep the production constructor fail-closed and isolate any ungoverned fixture helper in test-only code or an explicitly non-production package. Accept and persist the canonical governance audit fact through the owning Platform Core transaction/outbox rather than a feature-local replacement.",
+        "status": "open",
+        "classification": "deeper",
+        "first_seen_round": 1,
+        "last_seen_round": 3,
+        "seen_count": 3,
+        "last_evidence": "NewGovernedApplication now requires a governance port, transactional store, and egress policy, but NewTestApplication remains exported and write-capable without governance, and the local audit DTO is not audit.AuditEvent."
+      },
+      {
+        "blocker_id": "BLK-8bf13a8adab2",
+        "root_cause_key": "modelcatalog-stale-discovered-lineage",
+        "obligation_id": "dimension:structure",
+        "summary": "Manual/mixed carry-forward across an API-type change can retain the old model API type in the new snapshot.",
+        "evidence": "manualSuccessorModelsForConnection carries prior manual/mixed entries at internal/modelcatalog/core/application.go:823-829 without updating APIType; SendTestMessage and SelectModel reject a model/API-type mismatch at :404-405 and :554-555, leaving a current snapshot with unusable carried entries.",
+        "required_fix": "Treat an API-type change as a provenance boundary: drop incompatible carried entries or require an explicit re-registration that assigns the current API type before publication.",
+        "status": "fixed",
+        "classification": "fixed",
+        "first_seen_round": 1,
+        "last_seen_round": 3,
+        "seen_count": 2,
+        "last_evidence": "mergeDiscoveredModels and manualSuccessorModelsForConnection filter carry-forward by APIType at application.go:978-1047. The declared suite passes TestManualEvidenceCannotCrossAnAPITypeBoundary and TestManualFallbackDropsStaleDiscoveredEvidence."
+      },
+      {
+        "blocker_id": "BLK-b6e90f244608",
+        "root_cause_key": "modelcatalog-egress-policy-boundary",
+        "obligation_id": "dimension:ownership",
+        "summary": "The default provider transport policy is origin-only and does not enforce a scope-bound destination decision.",
+        "evidence": "providers/http.go:48-70 installs configuredOriginPolicy whenever Config.EgressPolicy is nil; it only requires a non-empty ScopeID and compares scheme/host with the configured BaseURI. core/types.go:941-953 accepts any absolute HTTP(S) BaseURI. The governed application now requires a supplied EgressPolicy and checks it before credential resolution at application.go:270-280 and :459-464, but direct exported provider constructors still use the permissive default, and providers/http.go:104-115 evaluates its policy after the connector has already received the credential lease.",
+        "required_fix": "Require a scope-bound policy/resolver at the provider construction boundary or make provider construction internal to the governed composition path. Fail closed when absent, enforce the same policy before credential resolution/injection, and keep redirect rejection/revalidation tied to it.",
+        "status": "open",
+        "classification": "deeper",
+        "first_seen_round": 1,
+        "last_seen_round": 3,
+        "seen_count": 3,
+        "last_evidence": "Governed application preflight now checks a supplied policy before lease resolution, but providers/http.go:61-70 still installs a permissive origin-only default and direct provider constructors remain callable with a credential lease."
+      },
+      {
+        "blocker_id": "BLK-be09e2ddecd7",
+        "root_cause_key": "modelcatalog-error-redaction-trust",
+        "obligation_id": "dimension:evidence",
+        "summary": "SendTestMessage can return a connector-supplied error verbatim on timeout paths even though stored probe fields are canonicalized.",
+        "evidence": "The timeout branches return connectorErr directly at internal/modelcatalog/core/application.go:459-465 and :504-505; ProviderError.Error exposes its Summary at types.go:722-735. The connector port accepts arbitrary implementations, so a wrapped timeout can carry unredacted text to the caller.",
+        "required_fix": "Return only canonical context/provider error categories from every application path, including unknown-timeout responses; never return a connector error object directly across the application boundary.",
+        "status": "fixed",
+        "classification": "fixed",
+        "first_seen_round": 1,
+        "last_seen_round": 3,
+        "seen_count": 2,
+        "last_evidence": "Current connector errors are canonicalized through canonicalConnectorError/providerErrorFrom and stored via SafeProviderError at application.go:550-570; the declared provider/core redaction tests pass."
+      },
+      {
+        "blocker_id": "BLK-d2777516637a",
+        "root_cause_key": "modelcatalog-snapshot-publication-race",
+        "obligation_id": "dimension:ownership",
+        "summary": "Legacy concrete writers remain callable, and publication does not verify that the connection revision is still current.",
+        "evidence": "SnapshotStore no longer lists SaveSnapshot, but the public concrete MemoryStore still exposes SaveSnapshot at store.go:112-132 and SaveProbe at :238-252, plus SaveProbeWithIdempotency at :351-378. Separately, DiscoverModels reads a connection at application.go:252-260, performs external discovery, and publishes using only the snapshot predecessor at :292-320; MemoryStore.PublishSnapshot at store.go:138-175 never compares the snapshot revision/digest with the current stored connection.",
+        "required_fix": "Remove or test-scope all legacy append/overwrite writers. Make publication atomically require the expected connection revision/configuration digest as well as the predecessor and command key, and reject stale in-flight discoveries/manual publications.",
+        "status": "open",
+        "classification": "deeper",
+        "first_seen_round": 1,
+        "last_seen_round": 3,
+        "seen_count": 3,
+        "last_evidence": "Application publication now uses predecessor CAS and requires a probe idempotency key, but public MemoryStore SaveSnapshot/SaveProbe bypasses remain and publication still lacks a current connection revision CAS."
+      }
+    ]
+  },
+  "review_ledger_ref": {
+    "comment_id": "01a03ae6-73e0-7921-b186-b438ab325053",
+    "attachment_id": "01a03ae6-7352-7e46-b406-9cb784c3e927",
+    "sha256": "a565b046c7bd005a6bd123fc6216f54864c07d5b53c577ee7ce18c4d453eeda9",
+    "bytes": 55160,
+    "filename": "omac-review-ledger-a565b046c7bd.yaml"
+  },
+  "review_generation": "authoring-9f352984656f6146c7d5a8f7",
+  "review_ledger_generation": null,
+  "review_continuation": null,
+  "reviewer_run_baseline": {
+    "schema": "omac.reviewer-run-baseline/v1",
+    "subject_digest": "e4dc9cc6f23f3ce568d15fed5cd0ea21bbe124b4bbeec1e969e0a6a9934e6f97",
+    "target_reviewer": "hermes-reviewer",
+    "target_agent_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+    "cutoff_created_at": "2026-10-03T22:59:56Z",
+    "generation": "review-7d98e13253193094",
+    "attempt": 1,
+    "baseline_direct_run_ids": [
+      "01a03a19-80d9-7b46-b1e2-c0395d901a8e",
+      "01a03a4c-aa7b-7c29-b80c-1bf4c88d09a0",
+      "01a03a63-d9da-7066-9b47-9cd665c5445b",
+      "01a03a90-21b8-767f-ad29-0a9bfb6ac915",
+      "01a03aa3-e9ed-707a-9a12-34689089efc4",
+      "01a03ad4-568a-70ca-835b-c2f92d706056",
+      "01a10399-9dc9-7e15-9f39-75b7e49fceb8"
+    ],
+    "target_run_id": "01a10431-f30f-7c89-b1b0-94d3d56ca057"
+  },
+  "worker_handoff": null,
+  "delivery_identity": {
+    "schema": "omac.delivery-identity/v1",
+    "handoff_generation": "handoff-726680ab3b98ac1e",
+    "worker": "codex-ubuntu-newapi",
+    "agent_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "run_id": "01a10399-9dc9-7e15-9f39-75b7e49fceb8",
+    "pr_url": "https://github.com/xiaohei-info/open-agent-cluster/pull/66",
+    "pr_head_sha": "c3947114299cc7cdefac2a10340e08ded19e0b04",
+    "verification_sha256": "adc2836899b78a58d5d746b6b1d2b6f2e9a3e41857749f1ca7e99a227cbfe949",
+    "verification_attachment_id": "01a103fe-dd12-792f-ae62-3bf1b9f6aa32",
+    "verification_comment_id": "01a103fe-dd65-707b-85ce-0cdf3678edd8",
+    "verification_uploader_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "verification_uploader_type": "agent",
+    "verification_task_id": "01a10399-9dc9-7e15-9f39-75b7e49fceb8",
+    "verification_created_at": "2026-10-03T22:59:56Z"
+  },
+  "decision_required": {
+    "schema": "omac.decision-required/v1",
+    "kind": "develop",
+    "gate": "operator-recovery",
+    "resume_issue_id": "01a03a19-212d-7586-8884-86981457457e",
+    "node_id": "model-catalog",
+    "authority": "9512a6735dc4fea22961757d58bf2cceabc787186675373757fc052b72307db4",
+    "reason_code": "omac-reject-integration-evidence-recovery-required",
+    "phase": "review",
+    "source_reviewer_run_id": "01a10431-f30f-7c89-b1b0-94d3d56ca057",
+    "source_failed_submit_time": "2026-10-04T00:16:34.769464Z",
+    "source_failed_submit": "exit5 missing integration gate:model-catalog-gate",
+    "source_final_local_report_sha256": "b7944bc3067a0a35fe5c3f05f366d457ffb5b6a9a3f905ce01e931498d352f59",
+    "source_final_local_report_bytes": 20725,
+    "source_report_status": "UNSUBMITTED last edited00:19:10; not identical to either failed submitted version, not a formal verdict/ledger",
+    "review_context_binding": {
+      "generation": "authoring-9f352984656f6146c7d5a8f7",
+      "subject_digest": "e4dc9cc6f23f3ce568d15fed5cd0ea21bbe124b4bbeec1e969e0a6a9934e6f97"
+    },
+    "next_action": "Await independently reviewed 3f or integrated successor and NEW exact Root all-runs0/bothcontrollers0 deployment window. Then fresh currentseal/0target/singlewriter supported SAMEissue review-stage recovery and fresh independent Reviewer honest failed dispositions/full raw receipts. Preserve original failed versions/native calls/source/55kledger/budgets. No pass-to-fit/report fabrication/repeated Reviewer loop. Root factual infrastructure isolation only; no technical reject or human approval pending."
+  },
+  "amendment_attempt": null,
+  "contract": {
+    "objective": "Deliver the governed Model Catalog boundary for provider connections, discovery snapshots, snapshot-scoped probes, and exact selection: require authenticated RequestContext, scope, authorization/admission, canonical audit evidence, and mandatory scope-bound egress before credential use; atomically bind mutations to canonical audit/outbox facts, durably finalize attempted probes, reject stale publication by connection revision/digest and predecessor CAS, and contain no manual model definition, AddManualModel, manual snapshot, or manual digest authority; the immutable model-manual owner remains separate and api-model composes both owners downstream.",
+    "non_goals": [
+      "Do not modify internal/modelcatalog/manual/**, migrate model-manual ownership, consume or regenerate a model-manual component manifest, or define Model, Snapshot, AddManualModel, manual merge, or manual content digest behavior inside model-catalog. Do not create a conformance-artifact handoff when the authoritative removal option eliminates that input; any supplied model-manual artifact is outside the explicit `consumes: []` boundary and must fail closed.",
+      "Do not move RequestContext, authorization, admission, canonical AuditEvent, CredentialBroker, or durable outbox ownership into model-catalog, and do not introduce feature-local replacements for those platform facts.",
+      "Do not retain exported ungoverned production constructors, fallback actor/scope paths, origin-only default egress, credential materialization before policy approval, or public concrete store writers that bypass the governed application protocol.",
+      "Do not persist caller-controlled raw strings as non-secret headers, place Secret material in connection state or digests, leak credentials or raw provider errors, or weaken fail-closed classification at the HTTP adapter.",
+      "Do not publish a snapshot without atomic current-connection revision/configuration-digest and predecessor checks, key probe evidence without ModelCatalogSnapshotID, or leave an attempted provider call as an unrecoverable in-progress claim.",
+      "Do not add a generic provider/plugin runtime, make an external provider the source of truth, change northbound API/UI ownership, or broaden source ownership beyond internal/modelcatalog/core/** and internal/modelcatalog/providers/** plus exact tests and generated evidence."
+    ],
+    "verification_commands": [
+      "mkdir -p artifacts/model-catalog && go test -covermode=atomic -coverprofile=artifacts/model-catalog/coverage.out ./internal/modelcatalog/core/... ./internal/modelcatalog/providers/...",
+      "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/model-catalog/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+      "go test -json ./internal/modelcatalog/core/... ./internal/modelcatalog/providers/... -run '^(TestProductionConstructionRequiresGovernedRequestContext|TestCatalogMutationUsesCanonicalAuditTransaction|TestPostAttemptFinalizeFailurePersistsUnknownAndReconciles|TestProviderRequiresScopeBoundEgressBeforeCredentialResolution|TestNonSecretHeadersRequireTypedProjection|TestModelCatalogExcludesManualSnapshotAndDigestAuthority|TestModelCatalogRejectsManualConformanceArtifactInputs|TestSnapshotPublicationRejectsStaleConnectionRevision|TestProbeEvidenceIsScopedBySnapshot|TestLegacyConcreteWritersAreUnavailable)$' -count=1 > artifacts/model-catalog/hardening-tests.json",
+      "python3 scripts/release/package_component.py --component model-catalog --kind platform-core-dependency-source --input internal/modelcatalog/core --input internal/modelcatalog/providers --bundle artifacts/model-catalog/source-bundle.tar.zst --component-manifest artifacts/model-catalog/component-manifest.json --digest-output artifacts/model-catalog/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner model-catalog --require-all-owner-sources-accounted",
+      "python3 -c \"from pathlib import Path; import json,subprocess; required={'TestProductionConstructionRequiresGovernedRequestContext','TestCatalogMutationUsesCanonicalAuditTransaction','TestPostAttemptFinalizeFailurePersistsUnknownAndReconciles','TestProviderRequiresScopeBoundEgressBeforeCredentialResolution','TestNonSecretHeadersRequireTypedProjection','TestModelCatalogExcludesManualSnapshotAndDigestAuthority','TestModelCatalogRejectsManualConformanceArtifactInputs','TestSnapshotPublicationRejectsStaleConnectionRevision','TestProbeEvidenceIsScopedBySnapshot','TestLegacyConcreteWritersAreUnavailable'}; rows=[json.loads(x) for x in open('artifacts/model-catalog/hardening-tests.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing required passing hardening tests: {sorted(required-passed)}'; manifest=json.loads(Path('artifacts/model-catalog/component-manifest.json').read_text()); packaged=[x['path'] for x in manifest['files'] if x['path']=='internal/modelcatalog/manual' or x['path'].startswith('internal/modelcatalog/manual/')]; assert not packaged, f'model-manual paths packaged by model-catalog: {packaged}'; base=subprocess.check_output(['git','merge-base','HEAD','origin/main'],text=True).strip(); changed=[x for x in subprocess.check_output(['git','diff','--name-only',base+'...HEAD','--','internal/modelcatalog/manual'],text=True).splitlines() if x]; assert not changed, f'model-manual owner paths changed by model-catalog: {changed}'; report={'schema':'oac.model-catalog-hardening-evidence/v2','required_hardening_test_count':len(required),'passing_hardening_test_count':len(passed),'manual_authority_mode':'excluded-from-model-catalog','model_manual_packaged_path_count':len(packaged),'model_manual_changed_path_count':len(changed)}; out=Path('artifacts/model-catalog/hardening-evidence.json'); out.write_text(json.dumps(report,sort_keys=True)+'\\n'); print(json.dumps(report,sort_keys=True))\""
+    ],
+    "integration_gates": [
+      {
+        "name": "model-catalog-gate",
+        "layer": "L1",
+        "source_of_truth": [
+          "model-catalog-amendment-decision.md",
+          "docs/design/open-agent-cluster-overview-design.md",
+          "docs/design/detailed/06-agent-runtime-detailed-design.md:L176-L219",
+          "docs/design/detailed/09-governance-and-security-detailed-design.md:L11-L46",
+          "docs/design/detailed/09-governance-and-security-detailed-design.md:L408-L475",
+          "docs/design/detailed/09-governance-and-security-detailed-design.md:L553-L575",
+          "docs/design/detailed/09-governance-and-security-detailed-design.md:L808-L854",
+          "docs/references/execution/agent-runtime.md:L25-L129",
+          "docs/references/governance/security-and-enterprise.md:L7-L20",
+          "docs/references/governance/security-and-enterprise.md:L301-L317",
+          "docs/references/governance/security-and-enterprise.md:L402-L487",
+          "docs/delivery/acceptance-and-validation.md:L273-L297",
+          "contracts/governance/audit/audit.go:L1-L110",
+          "contracts/release/source-ownership-baseline.yaml:L296-L304",
+          "internal/modelcatalog/manual/manual.go:L1-L123"
+        ],
+        "delivery_goal": "Prove one governed model-catalog implementation with canonical governance/audit ownership, scope-bound pre-credential egress, typed non-secret metadata, atomic mutation and probe recovery, stale-publication rejection, immutable snapshot-scoped probe evidence, no legacy write bypass, and no manual model/snapshot/digest authority; the separate model-manual owner remains unchanged and is composed only by its existing downstream integration boundary.",
+        "covers": [
+          "model-catalog"
+        ],
+        "acceptance_refs": [
+          "UJ-MODEL-001"
+        ],
+        "commands": [
+          "mkdir -p artifacts/model-catalog && go test -covermode=atomic -coverprofile=artifacts/model-catalog/coverage.out ./internal/modelcatalog/core/... ./internal/modelcatalog/providers/...",
+          "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/model-catalog/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+          "go test -json ./internal/modelcatalog/core/... ./internal/modelcatalog/providers/... -run '^(TestProductionConstructionRequiresGovernedRequestContext|TestCatalogMutationUsesCanonicalAuditTransaction|TestPostAttemptFinalizeFailurePersistsUnknownAndReconciles|TestProviderRequiresScopeBoundEgressBeforeCredentialResolution|TestNonSecretHeadersRequireTypedProjection|TestModelCatalogExcludesManualSnapshotAndDigestAuthority|TestModelCatalogRejectsManualConformanceArtifactInputs|TestSnapshotPublicationRejectsStaleConnectionRevision|TestProbeEvidenceIsScopedBySnapshot|TestLegacyConcreteWritersAreUnavailable)$' -count=1 > artifacts/model-catalog/hardening-tests.json",
+          "python3 scripts/release/package_component.py --component model-catalog --kind platform-core-dependency-source --input internal/modelcatalog/core --input internal/modelcatalog/providers --bundle artifacts/model-catalog/source-bundle.tar.zst --component-manifest artifacts/model-catalog/component-manifest.json --digest-output artifacts/model-catalog/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner model-catalog --require-all-owner-sources-accounted",
+          "python3 -c \"from pathlib import Path; import json,subprocess; required={'TestProductionConstructionRequiresGovernedRequestContext','TestCatalogMutationUsesCanonicalAuditTransaction','TestPostAttemptFinalizeFailurePersistsUnknownAndReconciles','TestProviderRequiresScopeBoundEgressBeforeCredentialResolution','TestNonSecretHeadersRequireTypedProjection','TestModelCatalogExcludesManualSnapshotAndDigestAuthority','TestModelCatalogRejectsManualConformanceArtifactInputs','TestSnapshotPublicationRejectsStaleConnectionRevision','TestProbeEvidenceIsScopedBySnapshot','TestLegacyConcreteWritersAreUnavailable'}; rows=[json.loads(x) for x in open('artifacts/model-catalog/hardening-tests.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing required passing hardening tests: {sorted(required-passed)}'; manifest=json.loads(Path('artifacts/model-catalog/component-manifest.json').read_text()); packaged=[x['path'] for x in manifest['files'] if x['path']=='internal/modelcatalog/manual' or x['path'].startswith('internal/modelcatalog/manual/')]; assert not packaged, f'model-manual paths packaged by model-catalog: {packaged}'; base=subprocess.check_output(['git','merge-base','HEAD','origin/main'],text=True).strip(); changed=[x for x in subprocess.check_output(['git','diff','--name-only',base+'...HEAD','--','internal/modelcatalog/manual'],text=True).splitlines() if x]; assert not changed, f'model-manual owner paths changed by model-catalog: {changed}'; report={'schema':'oac.model-catalog-hardening-evidence/v2','required_hardening_test_count':len(required),'passing_hardening_test_count':len(passed),'manual_authority_mode':'excluded-from-model-catalog','model_manual_packaged_path_count':len(packaged),'model_manual_changed_path_count':len(changed)}; out=Path('artifacts/model-catalog/hardening-evidence.json'); out.write_text(json.dumps(report,sort_keys=True)+'\\n'); print(json.dumps(report,sort_keys=True))\""
+        ],
+        "required_metrics": {
+          "statement_coverage_percent": 90,
+          "required_hardening_test_count": 10,
+          "ungoverned_production_path_count": 0,
+          "noncanonical_audit_fact_count": 0,
+          "permanently_in_progress_post_attempt_claim_count": 0,
+          "implicit_egress_policy_count": 0,
+          "raw_non_secret_header_string_path_count": 0,
+          "duplicate_manual_snapshot_authority_count": 0,
+          "legacy_concrete_writer_count": 0,
+          "stale_publication_accept_count": 0,
+          "cross_snapshot_probe_overwrite_count": 0,
+          "model_manual_packaged_path_count": 0,
+          "model_manual_changed_path_count": 0,
+          "declared_artifact_count": 6
+        },
+        "artifacts": [
+          "artifacts/model-catalog/coverage.out",
+          "artifacts/model-catalog/hardening-tests.json",
+          "artifacts/model-catalog/hardening-evidence.json",
+          "artifacts/model-catalog/source-bundle.tar.zst",
+          "artifacts/model-catalog/bundle-digest.txt",
+          "artifacts/model-catalog/component-manifest.json"
+        ]
+      }
+    ],
+    "pr_base": "main",
+    "acceptance_refs": [
+      "UJ-MODEL-001"
+    ],
+    "source_of_truth": [
+      "model-catalog-amendment-decision.md",
+      "docs/design/open-agent-cluster-overview-design.md",
+      "docs/design/detailed/06-agent-runtime-detailed-design.md:L176-L219",
+      "docs/design/detailed/09-governance-and-security-detailed-design.md:L11-L46",
+      "docs/design/detailed/09-governance-and-security-detailed-design.md:L408-L475",
+      "docs/design/detailed/09-governance-and-security-detailed-design.md:L553-L575",
+      "docs/design/detailed/09-governance-and-security-detailed-design.md:L808-L854",
+      "docs/references/execution/agent-runtime.md:L25-L129",
+      "docs/references/governance/security-and-enterprise.md:L7-L20",
+      "docs/references/governance/security-and-enterprise.md:L301-L317",
+      "docs/references/governance/security-and-enterprise.md:L402-L487",
+      "docs/delivery/acceptance-and-validation.md:L273-L297",
+      "contracts/governance/audit/audit.go:L1-L110",
+      "contracts/release/source-ownership-baseline.yaml:L296-L304",
+      "internal/modelcatalog/manual/manual.go:L1-L123"
+    ],
+    "required_contracts": [
+      "model-catalog-amendment-decision.md",
+      "docs/references/execution/agent-runtime.md",
+      "docs/references/governance/security-and-enterprise.md",
+      "contracts/governance/audit/audit.go",
+      "contracts/release/source-ownership-baseline.yaml"
+    ],
+    "scope_paths": [
+      "internal/modelcatalog/core/**",
+      "internal/modelcatalog/providers/**"
+    ],
+    "evidence_mode": "artifact",
+    "produces": [
+      {
+        "artifact_id": "model-catalog-component"
+      }
+    ],
+    "consumes": []
+  },
+  "contract_ref": {
+    "comment_id": "01a10394-1995-77bb-b84b-07179956892b",
+    "attachment_id": "01a10394-18c0-7226-8774-634eef9daa7a",
+    "sha256": "c5467627f8fb1deebc70d846a267418cab2ca76925cadedafef875cf881def69",
+    "bytes": 14045,
+    "filename": "omac-contract-c5467627f8fb.yaml"
+  },
+  "source_refs": [
+    {
+      "issue_id": "289a13bf-cede-4b5b-ba86-d72f0bef8164",
+      "label": "\u8bbe\u8ba1\u65b9\u6848"
+    },
+    {
+      "issue_id": "8e6bd282-6039-41d2-aa00-969a0bf1554a",
+      "label": "\u9a8c\u6536\u6587\u6863"
+    },
+    {
+      "issue_id": "5849f786-8c97-42ac-adf9-1c96957f28ee",
+      "label": "\u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Bootstrap Go module and quality harness"
+    },
+    {
+      "issue_id": "5db9df26-acb7-451d-b5e7-899b274e8547",
+      "label": "\u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Create Runtime and AgentRun contracts"
+    },
+    {
+      "issue_id": "d5f92ac5-6836-49c5-b218-d24164e3c2e9",
+      "label": "\u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Create identity and authentication contracts"
+    },
+    {
+      "issue_id": "8fc120a0-23c5-4119-96c1-b827222ed9dd",
+      "label": "\u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Create authorization and admission contracts"
+    },
+    {
+      "issue_id": "7b568083-2a29-47d5-a56e-3509b79ebb6c",
+      "label": "\u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Create audit and usage contracts"
+    },
+    {
+      "issue_id": "30335cd6-d2e8-4c9d-8988-7f7b134ed6e9",
+      "label": "\u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Create credential contracts"
+    },
+    {
+      "issue_id": "152d735a-c373-4967-8ae0-45c191de2eff",
+      "label": "\u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Implement deterministic release artifact packaging"
+    }
+  ],
+  "kind": "TaskKind.DEVELOP",
+  "phase": "TaskPhase.REVIEW",
+  "bounces": {
+    "worker": 0,
+    "ci": 0,
+    "review": 2,
+    "merge": 0
+  },
+  "bounce_baseline": null,
+  "deliverable": null,
+  "deliverable_ref": null,
+  "project_rules": null,
+  "project_rules_ref": null,
+  "agent_run_finished_without_submit": false,
+  "agent_run_failed": false,
+  "created_at": "2026-08-25T18:05:20Z",
+  "updated_at": "2026-10-04T07:04:48Z",
+  "platform_assignee_id": null,
+  "unknown_persisted_fields": {},
+  "review_nits_acceptance": null
+}
