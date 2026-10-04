@@ -89,6 +89,15 @@ def register(parser):
     evidence_review.add_argument("--reason", help="Operator authorization reason (preview)")
     evidence_review.add_argument("--apply-request", help="Consume the exact previously prepared JSON request; does not dispatch review")
 
+    infrastructure = sub.add_parser(
+        "review-infrastructure", help="Prepare/apply exact operator infrastructure-hold review recovery")
+    infrastructure.add_argument("manifest")
+    infrastructure.add_argument("node_key")
+    infrastructure.add_argument("--reason", help="Bounded operator reason (prepare only)")
+    infrastructure.add_argument("--apply-request", help="Exact saved JSON request (apply only)")
+    infrastructure.add_argument("--approve-request-sha256", help="Approved canonical request SHA256 (apply only)")
+    add_output_flag(infrastructure)
+
     for action, description in (
         ("review-publication", "Prepare or consume one exact Preview publication re-review authorization"),
         ("review-sdk-publication", "Prepare or consume one held SDK native-publication authorization"),
@@ -917,6 +926,39 @@ def _cmd_review_evidence(args) -> int:
     return exit_codes.OK
 
 
+def _cmd_review_infrastructure(args) -> int:
+    import json
+    from pathlib import Path
+    from ...core.manifest import manifest_write_lock
+    from ...pipeline.operator_review_recovery import (
+        apply_operator_review_recovery, prepare_operator_review_recovery,
+    )
+    config = load_config()
+    engine = _build_engine(config)
+    help_command = "omac node review-infrastructure --help"
+    if engine is None:
+        raise ValidationError(f"Configure an engine, then run {help_command}")
+    try:
+        if args.apply_request:
+            if args.reason or not args.approve_request_sha256:
+                raise ValidationError(f"Apply requires only --apply-request and --approve-request-sha256; run {help_command}")
+            request = json.loads(Path(args.apply_request).read_text())
+            with manifest_write_lock(args.manifest):
+                result = apply_operator_review_recovery(
+                    engine.store, engine.runtime, args.manifest, args.node_key, request,
+                    args.approve_request_sha256, config)
+        else:
+            if not args.reason or args.approve_request_sha256:
+                raise ValidationError(f"Prepare requires only --reason; run {help_command}")
+            result = prepare_operator_review_recovery(
+                engine.store, engine.runtime, _load_or_raise(args.manifest),
+                args.node_key, args.reason, config)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValidationError(f"Could not read the exact request: {exc}; run {help_command}") from exc
+    print_json(result)
+    return exit_codes.OK
+
+
 def _cmd_review_publication(args) -> int:
     import json
     from pathlib import Path
@@ -953,6 +995,8 @@ def _cmd_review_publication(args) -> int:
 
 
 def run(args) -> int:
+    if args.action == "review-infrastructure":
+        return _cmd_review_infrastructure(args)
     if args.action in {"review-publication", "review-sdk-publication", "review-sdk-checkpoint"}:
         return _cmd_review_publication(args)
     if args.action == "review-evidence":

@@ -663,3 +663,37 @@ omac node review-sdk-checkpoint <manifest> harness-sdk-production-build-repair \
 prepare 只读。完整原生 runner receipt 绑定同 Run 的 23 条原命令，以及 command23 改写前保存的 command18 原始检查点 `5e709ad…`/169561 字节；原生 Git index/payload 和归档的 17 个普通文件必须逐字节一致。原 Reviewer 的截断回复前缀只证明来源关联，完整旧 verification 重新通过 Store 附件读取，不导入历史 seal。远程 publication revalidation 的截断输出不能称完整成功 receipt；新 Reviewer 仍须独立核验实际出版字节、原命令和完整原报告，不将 Controller 校验当技术 pass。
 
 apply 复用八步 journal，保留两轮拒绝、计数、实际缺省 typed baseline、所有其他节点/meta，准备独立 review，不派发、不出 verdict/merge/done。pending receipt 在 I/O 前阻止 Runner tick；仅用原请求和 digest 续接，consumed 不重放。正常单一 Controller 后续只 assign/wake 一次独立 Reviewer。能力实现、部署与生产精确请求批准分别处理。
+
+
+### 受控基础设施 hold 的 review 恢复
+
+当当前 develop/REVIEW 工单仅有 `operator-recovery` 基础设施隔离，
+没有正式 verdict/report/ref、当前 ledger 或 continuation，并保留完整封存交付和唯一
+已完成的原 Reviewer Run 时，可以显式准备一个绑定当前事实的请求：
+
+```bash
+omac node review-infrastructure <manifest> <node> --reason '<恢复依据>' --output json
+omac node review-infrastructure <manifest> <node> --apply-request <saved-request.json> --approve-request-sha256 <canonical-sha256> --output json
+```
+
+prepare 只读取，不写 Store/manifest、不取 manifest 写锁、不派发 Actor。apply 要求明确
+批准完整 JSON 的 canonical SHA256（键排序、紧凑 JSON，UTF-8）；策略决定可由已经获得
+授权的 operator/协调者作出。普通 `node retry --stage review` 的 submitted/delayed
+因果保护保持不变，不能伪造 canonical runtime-failure reason 或手工清 hold 来绕过它。
+
+该能力只支持 `omac-reject-integration-evidence-recovery-required` 的现行完整 hold，
+并验证合同、封存 PR/verification、subject/generation（真实 None 仍为 None）、原 Reviewer
+身份/终态、没有 active/queued/unknown/ambiguous/delayed-owned Run 和既有预算授权。
+不能用 marker、reason、gate 或 authority 字符串代替这些事实；任何漂移须重新准备和批准。
+
+首次写前在 manifest 的 `operator_review_recovery` 保存完整原 hold/control/来源和预算
+审计记录。保留 PR、seal、verification、旧原始报告/ledger、done 对象、approved apply
+和既有 bounce 预算，不增加 limit 或退款。保留原 direct-Run 排除集合，并预留既有
+no-submit 上限内的下一 attempt，不从 1 重置；该上限已耗尽时拒绝，不授予新预算。
+准备阶段只解除旧 assignment、持久化下一 baseline、恢复 in_review，最后释放 hold；
+正式独立 Reviewer 仍由正常 Runner 派发，不把未提交本地报告变成 verdict。
+
+Unknown 写结果先读回并持久化已观察步骤，再安全续接同一批准请求。重复 consumed 请求
+只返回已消费，不重置新 cycle、不回退计数或重复派发。pending 时出现新提交、Run、合同、
+generation、计数、预算或 done/merged 漂移均拒绝，不能以通用 amendment 绕过该门。
+宿主锁不是跨主机原子 CAS；保持单一 Controller，pending 请求完成并核对结果前不要恢复执行。
