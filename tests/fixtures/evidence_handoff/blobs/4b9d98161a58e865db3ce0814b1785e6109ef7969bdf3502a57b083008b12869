@@ -1,0 +1,126 @@
+{
+  "causal_boundary": {
+    "observation": "The bounded PR90 overlay reproduced the missing post-write marker after malformed bytes were written and cancellation was observed. The repaired fixture now publishes prepared, write, cancellation, trigger, and publication-failure records atomically and binds them to one trigger/process chain. Historical AITEAM-820 cancellation cause remains unknown.",
+    "production_change": "none; all changes remain in test/testdata paths."
+  },
+  "controls": [
+    {
+      "evidence_artifacts": [
+        "artifacts/agentrun-malformed-marker-fixture/before-control/legacy-control.json",
+        "artifacts/agentrun-malformed-marker-fixture/before-control/legacy-tests.json",
+        "artifacts/agentrun-malformed-marker-fixture/fixture-tests.json"
+      ],
+      "id": "legacy-marker-publication-race",
+      "observed": {
+        "legacy_marker_absent_before_release": true,
+        "legacy_marker_written_after_release": true,
+        "trigger_observed_while_runtime_live": true
+      },
+      "test_ref": "TestBuiltEntrypointHoldsOriginalWaitAcrossCleanupDeadlines/malformed_legacy_marker_publication_window"
+    },
+    {
+      "evidence_artifacts": [
+        "artifacts/agentrun-malformed-marker-fixture/fixture-tests.json",
+        "artifacts/agentrun-malformed-marker-fixture/held-wait-focused.jsonl"
+      ],
+      "id": "bound-positive-trigger",
+      "observed": {
+        "cancellation_phase": "cancellation-observed",
+        "prepared_bytes": 0,
+        "scenario": "malformed stream",
+        "trigger_id": "AITEAM-1055/held-wait-malformed",
+        "trigger_phase": "rejection-trigger-observed",
+        "written_bytes": 9
+      },
+      "test_ref": "TestBuiltEntrypointHoldsOriginalWaitAcrossCleanupDeadlines/malformed_stream"
+    },
+    {
+      "evidence_artifacts": [
+        "artifacts/agentrun-malformed-marker-fixture/fixture-tests.json",
+        "artifacts/agentrun-malformed-marker-fixture/verifier-negative-controls.log"
+      ],
+      "id": "unbound-marker-rejections",
+      "observed": {
+        "decoder_controls": [
+          "prepared_marker",
+          "write_without_cancellation",
+          "unwritten_bytes",
+          "foreign_trigger",
+          "foreign_process",
+          "reused_pid",
+          "partial_write",
+          "wrong_signal"
+        ],
+        "verifier_negative_test_count": 8
+      },
+      "test_ref": "TestMalformedStreamMarkerEvidenceControls"
+    },
+    {
+      "evidence_artifacts": [
+        "artifacts/agentrun-malformed-marker-fixture/held-wait-focused.jsonl",
+        "artifacts/agentrun-malformed-marker-fixture/held-wait-scope.jsonl",
+        "artifacts/agentrun-malformed-marker-fixture/held-wait-full-suite.jsonl",
+        "artifacts/agentrun-malformed-marker-fixture/held-wait-coverage.jsonl",
+        "artifacts/agentrun-malformed-marker-fixture/built-production-chain-process.json"
+      ],
+      "id": "wait-reaping-boundary",
+      "observed": {
+        "h_process_observation": "pending Wait before release and reaping after release",
+        "snapshot_scenario_count": 7
+      },
+      "test_ref": "TestBuiltEntrypointHoldsOriginalWaitAcrossCleanupDeadlines"
+    },
+    {
+      "evidence_artifacts": [
+        "artifacts/agentrun-malformed-marker-fixture/fixture-tests.json",
+        "artifacts/agentrun-malformed-marker-fixture/held-wait-focused.jsonl"
+      ],
+      "id": "built-chain-unwritten-input",
+      "observed": {
+        "bytes_written": 0,
+        "malformed_trigger_absent": true,
+        "malformed_written_absent_before_release": true,
+        "scenario": "malformed bytes remain unwritten",
+        "trigger_id": "AITEAM-1055/unwritten-input"
+      },
+      "test_ref": "TestBuiltEntrypointHoldsOriginalWaitAcrossCleanupDeadlines/malformed_bytes_remain_unwritten"
+    },
+    {
+      "evidence_artifacts": [
+        "artifacts/agentrun-malformed-marker-fixture/fixture-tests.json",
+        "artifacts/agentrun-malformed-marker-fixture/held-wait-focused.jsonl"
+      ],
+      "id": "built-chain-marker-publication-failure",
+      "observed": {
+        "failure_phase": "publication-failed",
+        "malformed_trigger_absent": true,
+        "scenario": "malformed trigger marker publication failure",
+        "trigger_id": "AITEAM-1055/publication-failure",
+        "trigger_marker_path_is_directory": true,
+        "write_phase": "write-succeeded"
+      },
+      "test_ref": "TestBuiltEntrypointHoldsOriginalWaitAcrossCleanupDeadlines/malformed_trigger_marker_publication_failure"
+    }
+  ],
+  "history": {
+    "historical_cause": "unknown",
+    "marker_ordering": "hypothesis; independently controlled, not asserted as historical cause",
+    "preserved_attempts": [
+      "artifacts/agentrun-malformed-marker-fixture/attempts/source-0bbeed0b8a3f2086",
+      "artifacts/agentrun-malformed-marker-fixture/attempts/source-c106fbf63",
+      "artifacts/agentrun-malformed-marker-fixture/attempts/source-4ec04ccd",
+      "artifacts/agentrun-malformed-marker-fixture/attempts/source-f0263abee"
+    ]
+  },
+  "reviewed_pre_fix_source": {
+    "commit": "1ebf12d36d29c2a3726257bd03685139f5bc568a",
+    "source_index_sha256": "d142170558033036320af38464f105e8c663d8c7af39ce0bafe6993a9d43b895",
+    "tree": "8c1c9a6d8f392b3f23c73cd64ca104fbdbf3b80e"
+  },
+  "schema": "oac.agentrun-malformed-marker-causal-controls/v1",
+  "source": {
+    "base_commit": "89f1854a46c4cfb59bc1a344d42d6513ca9d704c",
+    "commit": "e9b4440f9c119275ccbacf989087b8b067385ca7",
+    "tree": "5e1ed8236e1e4f22058016ebc533e76be019b0c0"
+  }
+}

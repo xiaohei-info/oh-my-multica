@@ -1,0 +1,364 @@
+// Command vendor is the deterministic stream-json vendor fixture used by the
+// AgentRun Job process tests. It implements the vendor side of the
+// oac.stream-json-driver/v1 protocol: read one JSON launch line from stdin,
+// emit the acceptance, native events, and the terminal result as NDJSON.
+//
+// AGENTRUN_FIXTURE_MODE selects the deterministic behavior:
+//   - default:        started, message, succeeded terminal
+//   - all-events:     started, thinking, tool_call, tool_result, status,
+//     error, message, succeeded terminal
+//   - no-terminal:    started, message, then EOF (no terminal)
+//   - invalid-outcome: started, terminal with an unsupported outcome
+//   - duplicate-acceptance: started, then a second started line
+//   - empty:          exit without writing anything
+//   - message-first:  emit a message before the acceptance
+//   - no-session-id:  started without a vendor_session_id
+//   - wrong-resume-id: resumed with a vendor_session_id that does not match
+//   - invalid-after-acceptance: started, then a non-JSON line
+//   - event-after-terminal: started, terminal, then a message
+//   - unsupported-event: started, then an unknown native event type
+//   - terminal-wrong-session: started with session A, terminal with session B
+//   - terminal-missing-session: started, terminal without a vendor_session_id
+//   - terminal-then-hang: started, message, succeeded terminal, then block
+//   - slow:           started, then block forever (used to prove cancellation)
+//
+// AGENTRUN_FIXTURE_PID_FILE, when set, receives this process and its two
+// ancestors' PIDs and Linux start-time ticks so tests can bind the wait chain.
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"os/signal"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
+)
+
+type fixtureLaunch struct {
+	Protocol string `json:"protocol"`
+	Session  struct {
+		Mode            string `json:"mode"`
+		VendorSessionID string `json:"vendor_session_id,omitempty"`
+	} `json:"session"`
+	Request struct {
+		Instructions struct {
+			AgentInstructions struct {
+				Digest string
+			}
+			CollaborationBootstrap struct {
+				Digest string
+			}
+			WorkspaceInstructions *struct {
+				Digest string
+			}
+			InstructionSetDigest string
+		}
+		MCPServers []struct {
+			ServerID      string
+			InjectionPath string
+		} `json:"MCPServers"`
+	} `json:"request"`
+}
+
+// blockForever keeps the vendor process alive without a Go deadlock.
+func blockForever() {
+	for {
+		time.Sleep(time.Hour)
+	}
+}
+
+func main() {
+	var launch fixtureLaunch
+	decoder := json.NewDecoder(os.Stdin)
+	if err := decoder.Decode(&launch); err != nil {
+		fmt.Fprintf(os.Stderr, "vendor: decode launch: %v\n", err)
+		os.Exit(1)
+	}
+	if launch.Protocol != "oac.stream-json-driver/v1" {
+		fmt.Fprintf(os.Stderr, "vendor: unexpected protocol %q\n", launch.Protocol)
+		os.Exit(1)
+	}
+	markerPath := os.Getenv("AGENTRUN_FIXTURE_MARKER")
+	pidPath := os.Getenv("AGENTRUN_FIXTURE_PID_FILE")
+	mode := os.Getenv("AGENTRUN_FIXTURE_MODE")
+	for index := 1; index < len(os.Args); index++ {
+		switch os.Args[index] {
+		case "--mode":
+			if index+1 >= len(os.Args) {
+				fmt.Fprintln(os.Stderr, "vendor: --mode requires a value")
+				return
+			}
+			mode, index = os.Args[index+1], index+1
+		case "--marker":
+			if index+1 >= len(os.Args) {
+				fmt.Fprintln(os.Stderr, "vendor: --marker requires a value")
+				return
+			}
+			markerPath, index = os.Args[index+1], index+1
+		case "--pid-file":
+			if index+1 >= len(os.Args) {
+				fmt.Fprintln(os.Stderr, "vendor: --pid-file requires a value")
+				return
+			}
+			pidPath, index = os.Args[index+1], index+1
+		}
+	}
+	if markerPath != "" {
+		file, err := os.OpenFile(markerPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+		if err == nil {
+			for _, server := range launch.Request.MCPServers {
+				fmt.Fprintf(file, "%s\n", server.InjectionPath)
+			}
+			_ = file.Close()
+		}
+	}
+	if pidPath != "" {
+		child, err := processIdentityFor(os.Getpid())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "vendor: read process identity: %v\n", err)
+			os.Exit(1)
+		}
+		parent, err := processIdentityFor(child.ParentPID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "vendor: read parent identity: %v\n", err)
+			os.Exit(1)
+		}
+		owner, err := processIdentityFor(parent.ParentPID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "vendor: read wait-owner identity: %v\n", err)
+			os.Exit(1)
+		}
+		identity, err := json.Marshal(processChain{Child: child, Parent: parent, Owner: owner})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "vendor: encode process identity: %v\n", err)
+			os.Exit(1)
+		}
+		if err := os.WriteFile(pidPath, identity, 0o600); err != nil {
+			fmt.Fprintf(os.Stderr, "vendor: write process identity: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	sessionID := "fixture-session"
+	instruction := launch.Request.Instructions
+	acceptance := func(kind, id string) {
+		workspaceDigest := ""
+		if instruction.WorkspaceInstructions != nil {
+			workspaceDigest = instruction.WorkspaceInstructions.Digest
+		}
+		fmt.Printf(`{"type":%q,"vendor_session_id":%q,"agent_instructions_digest":%q,"collaboration_bootstrap_digest":%q,"workspace_instructions_digest":%q,"instruction_set_digest":%q}`+"\n", kind, id, instruction.AgentInstructions.Digest, instruction.CollaborationBootstrap.Digest, workspaceDigest, instruction.InstructionSetDigest)
+	}
+	acceptanceWith := func(kind, id, agentDigest, bootstrapDigest, workspaceDigest, setDigest string) {
+		fmt.Printf(`{"type":%q,"vendor_session_id":%q,"agent_instructions_digest":%q,"collaboration_bootstrap_digest":%q,"workspace_instructions_digest":%q,"instruction_set_digest":%q}`+"\n", kind, id, agentDigest, bootstrapDigest, workspaceDigest, setDigest)
+	}
+
+	// Modes that terminate before an acceptance.
+	switch mode {
+	case "empty":
+		return
+	case "message-first":
+		fmt.Println(`{"type":"message","message_id":"m-1","content":"hello"}`)
+		return
+	case "missing-receipt-digest":
+		time.Sleep(time.Second)
+		acceptanceWith("started", sessionID, "", instruction.CollaborationBootstrap.Digest, "", instruction.InstructionSetDigest)
+		blockForever()
+		return
+	case "mismatched-receipt-digest":
+		time.Sleep(time.Second)
+		acceptanceWith("started", sessionID, "wrong-agent-digest", instruction.CollaborationBootstrap.Digest, "", instruction.InstructionSetDigest)
+		blockForever()
+		return
+	case "no-acceptance-delayed-termination":
+		stopped := make(chan os.Signal, 1)
+		signal.Notify(stopped, syscall.SIGTERM)
+		defer signal.Stop(stopped)
+		<-stopped
+		if pidPath != "" {
+			_ = os.WriteFile(pidPath+".term", []byte("received"), 0o600)
+		}
+		for {
+			if _, err := os.Stat(pidPath + ".release"); err == nil {
+				if pidPath != "" {
+					_ = os.WriteFile(pidPath+".exit", []byte("exited"), 0o600)
+				}
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	case "no-session-id":
+		acceptance("started", "")
+		return
+	case "wrong-resume-id":
+		acceptance("resumed", "other-session")
+		return
+	case "acceptance-kind-mismatch":
+		if launch.Session.Mode == "new" {
+			acceptance("resumed", sessionID)
+		} else {
+			acceptance("started", sessionID)
+		}
+		return
+	case "foreign-event-session":
+		acceptance("started", sessionID)
+		fmt.Println(`{"type":"message","vendor_session_id":"foreign-session","message_id":"foreign","content":"foreign"}`)
+		return
+	case "invalid-after-acceptance":
+		acceptance("started", sessionID)
+		time.Sleep(time.Second)
+		if _, err := fmt.Println("not json"); err != nil {
+			return
+		}
+		if pidPath != "" {
+			_ = os.WriteFile(pidPath+".malformed-prepared", []byte("write-returned"), 0o600)
+			for {
+				if _, err := os.Stat(pidPath + ".malformed-release"); err == nil {
+					break
+				} else if !os.IsNotExist(err) {
+					break
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			_ = os.WriteFile(pidPath+".malformed", []byte("emitted"), 0o600)
+		}
+		blockForever()
+	case "event-after-terminal":
+		acceptance("started", sessionID)
+		fmt.Println(`{"type":"terminal","vendor_session_id":"fixture-session","outcome":"succeeded"}`)
+		fmt.Println(`{"type":"message","message_id":"m-2","content":"late"}`)
+		return
+	case "unsupported-event":
+		acceptance("started", sessionID)
+		time.Sleep(time.Second)
+		fmt.Println(`{"type":"mystery","message_id":"x"}`)
+		blockForever()
+	case "terminal-wrong-session":
+		acceptance("started", sessionID)
+		fmt.Println(`{"type":"message","vendor_session_id":"fixture-session","message_id":"m-1","content":"hello"}`)
+		fmt.Println(`{"type":"terminal","vendor_session_id":"other-session","outcome":"succeeded"}`)
+		return
+	case "terminal-missing-session":
+		acceptance("started", sessionID)
+		fmt.Println(`{"type":"message","vendor_session_id":"fixture-session","message_id":"m-1","content":"hello"}`)
+		fmt.Println(`{"type":"terminal","outcome":"succeeded"}`)
+		return
+	case "terminal-then-hang":
+		acceptance("started", sessionID)
+		fmt.Println(`{"type":"message","vendor_session_id":"fixture-session","message_id":"m-1","content":"hello"}`)
+		fmt.Println(`{"type":"terminal","vendor_session_id":"fixture-session","outcome":"succeeded","visible_output":"vendor completed"}`)
+		blockForever()
+	case "slow":
+		acceptance("started", sessionID)
+		blockForever()
+	case "delayed-termination":
+		stopped := make(chan os.Signal, 1)
+		signal.Notify(stopped, syscall.SIGTERM)
+		defer signal.Stop(stopped)
+		acceptance("started", sessionID)
+		<-stopped
+		if pidPath != "" {
+			_ = os.WriteFile(pidPath+".term", []byte("received"), 0o600)
+		}
+		for {
+			if _, err := os.Stat(pidPath + ".release"); err == nil {
+				if pidPath != "" {
+					_ = os.WriteFile(pidPath+".exit", []byte("exited"), 0o600)
+				}
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	// Emit the acceptance for normal modes.
+	if launch.Session.Mode == "resume" {
+		sessionID = launch.Session.VendorSessionID
+		outcome := "resumed"
+		if sessionID == "" {
+			outcome = "started"
+			sessionID = "fixture-session"
+		}
+		acceptance(outcome, sessionID)
+	} else {
+		acceptance("started", sessionID)
+	}
+
+	// Modes that follow an acceptance.
+	switch mode {
+	case "many-events":
+		for index := 0; index < 100; index++ {
+			fmt.Printf(`{"type":"message","vendor_session_id":%q,"message_id":%q,"content":"event"}`+"\n", sessionID, fmt.Sprintf("m-%d", index))
+		}
+		blockForever()
+	case "message-chunks":
+		fmt.Println(`{"type":"message","vendor_session_id":"fixture-session","message_id":"m-1","content":"chunk one"}`)
+		fmt.Println(`{"type":"message","vendor_session_id":"fixture-session","message_id":"m-1","content":"chunk two"}`)
+		fmt.Println(`{"type":"terminal","vendor_session_id":"fixture-session","outcome":"succeeded","visible_output":"vendor completed"}`)
+	case "all-events":
+		fmt.Println(`{"type":"thinking","vendor_session_id":"fixture-session","message_id":"t-1","summary":"reasoning summary"}`)
+		fmt.Println(`{"type":"tool_call","vendor_session_id":"fixture-session","turn_id":"turn-1","tool_call_id":"tc-1","tool_name":"read","arguments_summary":"path"}`)
+		fmt.Println(`{"type":"tool_result","vendor_session_id":"fixture-session","tool_call_id":"tc-1","content":"file contents","outcome":"succeeded"}`)
+		fmt.Println(`{"type":"command","event_id":"cmd-1","vendor_session_id":"fixture-session","command":"go test ./...","stdout_chunk":"ok","exit_code":0,"duration_nanos":1000}`)
+		fmt.Println(`{"type":"file_change","event_id":"file-1","vendor_session_id":"fixture-session","path":"result.txt","diff":"+ok","operation":"created"}`)
+		fmt.Println(`{"type":"memory","event_id":"memory-1","vendor_session_id":"fixture-session","operation":"read","memory_id":"mem-1","scope":"run","redacted_summary":"read memory","outcome":"succeeded"}`)
+		fmt.Println(`{"type":"mcp","event_id":"mcp-1","vendor_session_id":"fixture-session","server_id":"mcp-1","operation":"call","outcome":"succeeded"}`)
+		fmt.Println(`{"type":"usage","event_id":"usage-1","vendor_session_id":"fixture-session","usage":{"Kind":"runtime","Source":"runtime-native","ObservedAt":"2026-01-01T00:00:02Z","Runtime":{"StartedAt":"2026-01-01T00:00:00Z","CompletedAt":"2026-01-01T00:00:01Z","Outcome":"succeeded"}}}`)
+		fmt.Println(`{"type":"status","vendor_session_id":"fixture-session","message_id":"s-1","summary":"running"}`)
+		fmt.Println(`{"type":"heartbeat","event_id":"heartbeat-1","vendor_session_id":"fixture-session","summary":"alive"}`)
+		fmt.Println(`{"type":"error","vendor_session_id":"fixture-session","message_id":"e-1","error_type":"timeout","summary":"request timed out"}`)
+		fmt.Println(`{"type":"message","vendor_session_id":"fixture-session","message_id":"m-1","content":"hello from vendor"}`)
+		fmt.Println(`{"type":"terminal","vendor_session_id":"fixture-session","outcome":"succeeded","visible_output":"vendor completed"}`)
+	case "no-terminal":
+		fmt.Println(`{"type":"message","vendor_session_id":"fixture-session","message_id":"m-1","content":"hello from vendor"}`)
+	case "invalid-outcome":
+		fmt.Printf(`{"type":"terminal","vendor_session_id":%q,"outcome":"banana","visible_output":"bad"}`+"\n", sessionID)
+	case "duplicate-acceptance":
+		fmt.Printf(`{"type":"started","vendor_session_id":%q}`+"\n", sessionID)
+		fmt.Println(`{"type":"message","vendor_session_id":"fixture-session","message_id":"m-1","content":"hello from vendor"}`)
+		fmt.Printf(`{"type":"terminal","vendor_session_id":%q,"outcome":"succeeded"}`+"\n", sessionID)
+	default:
+		fmt.Println(`{"type":"message","vendor_session_id":"fixture-session","message_id":"m-1","content":"hello from vendor"}`)
+		fmt.Printf(`{"type":"terminal","vendor_session_id":%q,"outcome":"succeeded","visible_output":"vendor completed"}`+"\n", sessionID)
+	}
+	_, _ = io.Copy(io.Discard, os.Stdin)
+}
+
+type processIdentity struct {
+	PID        int    `json:"pid"`
+	ParentPID  int    `json:"parent_pid"`
+	StartTicks uint64 `json:"start_ticks"`
+}
+
+type processChain struct {
+	Child  processIdentity `json:"child"`
+	Parent processIdentity `json:"parent"`
+	Owner  processIdentity `json:"owner"`
+}
+
+func processIdentityFor(pid int) (processIdentity, error) {
+	stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return processIdentity{}, err
+	}
+	closeCommand := strings.LastIndexByte(string(stat), ')')
+	if closeCommand < 0 {
+		return processIdentity{}, fmt.Errorf("malformed process stat for pid %d", pid)
+	}
+	fields := strings.Fields(string(stat[closeCommand+1:]))
+	if len(fields) <= 19 {
+		return processIdentity{}, fmt.Errorf("incomplete process stat for pid %d", pid)
+	}
+	parentPID, err := strconv.Atoi(fields[1])
+	if err != nil || parentPID <= 0 {
+		return processIdentity{}, fmt.Errorf("invalid parent pid for pid %d", pid)
+	}
+	startTicks, err := strconv.ParseUint(fields[19], 10, 64)
+	if err != nil || startTicks == 0 {
+		return processIdentity{}, fmt.Errorf("invalid start ticks for pid %d", pid)
+	}
+	return processIdentity{PID: pid, ParentPID: parentPID, StartTicks: startTicks}, nil
+}

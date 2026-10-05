@@ -1,0 +1,38 @@
+[
+  {
+    "attachments": [
+      {
+        "chat_message_id": null,
+        "chat_session_id": null,
+        "comment_id": "01a108fc-697c-71a1-bf08-3b55be61a026",
+        "content_type": "text/plain; charset=utf-8",
+        "created_at": "2026-10-04T22:15:22Z",
+        "download_url": "/api/attachments/01a108fc-690f-73ed-b4e1-5f82622c079c/download",
+        "filename": "omac-verification-8e4740766896.yaml",
+        "id": "01a108fc-690f-73ed-b4e1-5f82622c079c",
+        "issue_id": "01a10302-109c-7097-b200-4dd71a531aba",
+        "markdown_url": "https://multica.ai/api/attachments/01a108fc-690f-73ed-b4e1-5f82622c079c/download",
+        "size_bytes": 31263,
+        "uploader_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+        "uploader_type": "agent",
+        "url": "https://static.multica.ai/workspaces/410ade5e-8ae0-4402-b975-813dea2ff3e1/01a108fc-690f-73ed-b4e1-5f82622c079c.yaml",
+        "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1"
+      }
+    ],
+    "author_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "author_type": "agent",
+    "content": "## omac verification\nVerification evidence file was uploaded as an attachment.\n\n- attachment: omac-verification-8e4740766896.yaml\n- sha256: 8e4740766896d9ed9ad4346b11514e1108e3e14ae4b4cf2ccff175d6a156e2da\n- bytes: 31263\n- metadata: `verification_ref`\n\nLater Agents should read handoff context through `omac work show \u003cissue-id\u003e --output json`; programmatic references are stored in issue metadata.",
+    "created_at": "2026-10-04T22:15:22Z",
+    "id": "01a108fc-697c-71a1-bf08-3b55be61a026",
+    "issue_id": "01a10302-109c-7097-b200-4dd71a531aba",
+    "parent_id": null,
+    "reactions": [],
+    "resolved_at": null,
+    "resolved_by_id": null,
+    "resolved_by_type": null,
+    "revision": 1,
+    "source_task_id": "01a108a4-c8d4-7c52-9fe3-b9d4b7b012b3",
+    "type": "comment",
+    "updated_at": "2026-10-04T22:15:22Z"
+  }
+]

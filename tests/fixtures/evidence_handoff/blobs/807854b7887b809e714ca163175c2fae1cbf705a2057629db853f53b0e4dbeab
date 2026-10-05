@@ -1,0 +1,22 @@
+{
+  "classification": "atomic-marker-publication targeted retest after diagnosed partial-file-read failure",
+  "command": "GOTOOLCHAIN=go1.26.0 go test -count=1 ./cmd/agentrun-job -run '^TestBuiltEntrypointHoldsOriginalWaitAcrossCleanupDeadlines$/^malformed bytes remain unwritten$' -v",
+  "exit_code": 0,
+  "retained_files": [
+    {
+      "bytes": 5566,
+      "path": "unwritten-selective.log",
+      "sha256": "8b86139bd13a2e252c996caca0d8b4430b5b5fdd42f7ae48f19dd6b11c22ba8b"
+    },
+    {
+      "bytes": 2508,
+      "path": "unwritten-selective.jsonl",
+      "sha256": "9ce7ac3649612539234d11cd14c1d46fa334f7830ab0ce97a9bda8c01e41c915"
+    }
+  ],
+  "schema": "oac.agentrun-malformed-marker-focused-attempt/v1",
+  "source": {
+    "commit": "f0263abee210d80e9854addd6d3bcafa2d731225",
+    "tree": "523674978363af3f9491116a7fd5d4c12344f978"
+  }
+}

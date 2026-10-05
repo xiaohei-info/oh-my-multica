@@ -1,0 +1,650 @@
+schema: omac.source-ownership-catalog/v1
+baseline_sha256: ed452f39d2c7e0e5e7f7b78d0cbf09a37ec2cae872680d0d931c9b4424050872
+canonical_sha256: 0f487c6c1f850478a36a2a71cd95df22e6f8f3646ac3a5bf0f710b93dba19364
+owners:
+- owner_id: agent-definition
+  component_id: agent-definition
+  source_paths:
+  - internal/agents/definitions
+- owner_id: agent-model-policy
+  component_id: agent-model-policy
+  source_paths:
+  - internal/agents/modelpolicy
+- owner_id: agent-run-job
+  component_id: agent-run-job
+  source_paths:
+  - cmd/agentrun-job
+  - internal/agentrun
+- owner_id: agent-template
+  component_id: agent-template
+  source_paths:
+  - internal/agents/templates
+- owner_id: agentrun-job-image
+  component_id: agentrun-job-image
+  source_paths:
+  - images/agentrun-job-image
+- owner_id: api-agent
+  component_id: api-agent
+  source_paths:
+  - api/openapi/agents
+  - internal/httpapi/agents
+- owner_id: api-audit
+  component_id: api-audit
+  source_paths:
+  - api/openapi/audit
+  - internal/httpapi/audit
+- owner_id: api-audit-export
+  component_id: api-audit-export
+  source_paths:
+  - api/openapi/auditexport
+  - internal/httpapi/auditexport
+- owner_id: api-authorization-admission
+  component_id: api-authorization-admission
+  source_paths:
+  - api/openapi/authorization
+  - internal/httpapi/authorization
+- owner_id: api-capability-extension-skill
+  component_id: api-capability-extension-skill
+  source_paths:
+  - api/openapi/capabilities
+  - internal/httpapi/capabilities
+- owner_id: api-credentials
+  component_id: api-credentials
+  source_paths:
+  - api/openapi/credentials
+  - internal/httpapi/credentials
+- owner_id: api-delivery
+  component_id: api-delivery
+  source_paths:
+  - api/openapi/delivery
+  - internal/httpapi/delivery
+- owner_id: api-identity-authentication
+  component_id: api-identity-authentication
+  source_paths:
+  - api/openapi/identity
+  - internal/httpapi/identity
+- owner_id: api-mcp
+  component_id: api-mcp
+  source_paths:
+  - api/openapi/mcp
+  - internal/httpapi/mcp
+- owner_id: api-model
+  component_id: api-model
+  source_paths:
+  - api/openapi/models
+  - internal/httpapi/models
+- owner_id: api-operations
+  component_id: api-operations
+  source_paths:
+  - api/openapi/operations
+  - internal/httpapi/operations
+- owner_id: api-project
+  component_id: api-project
+  source_paths:
+  - api/openapi/project
+  - internal/httpapi/project
+- owner_id: api-resource-lifecycle
+  component_id: api-resource-lifecycle
+  source_paths:
+  - api/openapi/lifecycle
+  - internal/httpapi/lifecycle
+- owner_id: api-solution
+  component_id: api-solution
+  source_paths:
+  - api/openapi/solutions
+  - internal/httpapi/solutions
+- owner_id: api-usage
+  component_id: api-usage
+  source_paths:
+  - api/openapi/usage
+  - internal/httpapi/usage
+- owner_id: api-workflow
+  component_id: api-workflow
+  source_paths:
+  - api/openapi/workflow
+  - internal/httpapi/workflow
+- owner_id: artifact-decision
+  component_id: artifact-decision
+  source_paths:
+  - internal/platformcore/artifacts
+  - internal/platformcore/decisions
+- owner_id: audit-export
+  component_id: audit-export
+  source_paths:
+  - internal/auditexport
+- owner_id: audit-ledger
+  component_id: audit-ledger
+  source_paths:
+  - api/audit
+  - internal/audit
+- owner_id: authentication-methods
+  component_id: authentication-methods
+  source_paths:
+  - api/auth/methods
+  - internal/authentication/flows
+  - internal/authentication/methods
+- owner_id: authentication-sdk
+  component_id: authentication-sdk
+  source_paths:
+  - authentication-sdk
+- owner_id: authorization
+  component_id: authorization
+  source_paths:
+  - internal/authorization
+- owner_id: bootstrap-go
+  component_id: bootstrap-go
+  source_paths:
+  - Makefile
+  - go.mod
+  - go.sum
+  - internal/bootstrap
+  - scripts/bootstrap/package_go_module.py
+  - scripts/go-quality
+- owner_id: capability-routing
+  component_id: capability-routing
+  source_paths:
+  - internal/capabilities
+- owner_id: console-base-artifact
+  component_id: console-base-artifact
+  source_paths:
+  - packaging/console/base
+- owner_id: console-bundle
+  component_id: console-bundle
+  source_paths:
+  - packaging/console/link
+- owner_id: console-shell
+  component_id: console-shell
+  source_paths:
+  - apps/console/src/shell
+- owner_id: contracts-agent
+  component_id: contracts-agent
+  source_paths:
+  - contracts/agent
+- owner_id: contracts-audit-usage
+  component_id: contracts-audit-usage
+  source_paths:
+  - contracts/governance/audit
+  - contracts/governance/usage
+- owner_id: contracts-authz-admission
+  component_id: contracts-authz-admission
+  source_paths:
+  - contracts/governance/admission
+  - contracts/governance/authz
+- owner_id: contracts-credential
+  component_id: contracts-credential
+  source_paths:
+  - contracts/governance/credential
+- owner_id: contracts-extension
+  component_id: contracts-extension
+  source_paths:
+  - contracts/extension
+- owner_id: contracts-identity
+  component_id: contracts-identity
+  source_paths:
+  - contracts/identity/externalidentitylink
+  - contracts/identity/invitation
+  - contracts/identity/principal
+  - contracts/identity/recovery
+  - contracts/identity/requestcontext
+  - contracts/identity/session
+- owner_id: contracts-kernel-public
+  component_id: contracts-kernel-public
+  source_paths:
+  - contracts/kernel
+- owner_id: contracts-platform-resource
+  component_id: contracts-platform-resource
+  source_paths:
+  - contracts/workflow/resource
+- owner_id: contracts-project
+  component_id: contracts-project
+  source_paths:
+  - contracts/project
+- owner_id: contracts-runtime
+  component_id: contracts-runtime
+  source_paths:
+  - contracts/agentrun
+  - contracts/runtime-adapter
+- owner_id: contracts-solution
+  component_id: contracts-solution
+  source_paths:
+  - contracts/solution
+- owner_id: contracts-workflow-command-event
+  component_id: contracts-workflow-command-event
+  source_paths:
+  - contracts/workflow/commands
+  - contracts/workflow/events
+- owner_id: contracts-workspace
+  component_id: contracts-workspace
+  source_paths:
+  - contracts/workspace
+- owner_id: credential-store
+  component_id: credential-store
+  source_paths:
+  - internal/credentials
+- owner_id: deployment-host
+  component_id: deployment-host
+  source_paths:
+  - internal/hosts/deployment
+- owner_id: deployment-sdk
+  component_id: deployment-sdk
+  source_paths:
+  - sdk/deployment
+- owner_id: direct-deployment
+  component_id: direct-deployment
+  source_paths:
+  - internal/deployment
+- owner_id: execution-admission
+  component_id: execution-admission
+  source_paths:
+  - internal/admission
+- owner_id: execution-host
+  component_id: execution-host
+  source_paths:
+  - cmd/execution-host
+  - internal/execution
+  - internal/hosts/execution
+- owner_id: execution-host-image
+  component_id: execution-host-image
+  source_paths:
+  - images/execution-host-image
+- owner_id: extension-package
+  component_id: extension-package
+  source_paths:
+  - internal/extensions
+  - sdk/extension
+- owner_id: harness-host
+  component_id: harness-host
+  source_paths:
+  - internal/hosts/harness
+- owner_id: harness-sdk
+  component_id: harness-sdk
+  source_paths:
+  - sdk/harness
+- owner_id: identity-local
+  component_id: identity-local
+  source_paths:
+  - api/auth/local
+  - internal/identity
+- owner_id: installer
+  component_id: installer
+  source_paths:
+  - cmd/oac-installer/install
+  - internal/installer
+- owner_id: installer-binary
+  component_id: installer-binary
+  source_paths:
+  - packaging/installer
+- owner_id: installer-entrypoint
+  component_id: installer-entrypoint
+  source_paths:
+  - cmd/oac-installer/entrypoint
+  - cmd/oac-installer/main.go
+  - tests/entrypoints/installer
+- owner_id: kernel-lifecycle-oacok
+  component_id: kernel-lifecycle-oacok
+  source_paths:
+  - cmd/oacok
+  - kernel/lifecycle
+  - sdk/oacok
+- owner_id: kernel-planning
+  component_id: kernel-planning
+  source_paths:
+  - kernel/planning
+- owner_id: mcp-catalog
+  component_id: mcp-catalog
+  source_paths:
+  - internal/mcp
+- owner_id: model-catalog
+  component_id: model-catalog
+  source_paths:
+  - internal/modelcatalog/core
+  - internal/modelcatalog/providers
+- owner_id: model-manual
+  component_id: model-manual
+  source_paths:
+  - internal/modelcatalog/manual
+- owner_id: oacok-binary
+  component_id: oacok-binary
+  source_paths:
+  - packaging/oacok
+- owner_id: oactl-agent
+  component_id: oactl-agent
+  source_paths:
+  - clients/go/agents/manage
+  - cmd/oactl/agents/manage
+- owner_id: oactl-audit-export
+  component_id: oactl-audit-export
+  source_paths:
+  - clients/go/audit
+  - cmd/oactl/audit
+- owner_id: oactl-authorization-admission
+  component_id: oactl-authorization-admission
+  source_paths:
+  - clients/go/authorization
+  - cmd/oactl/authorization
+- owner_id: oactl-binary
+  component_id: oactl-binary
+  source_paths:
+  - packaging/oactl
+- owner_id: oactl-capability-extension-skill
+  component_id: oactl-capability-extension-skill
+  source_paths:
+  - clients/go/extensions
+  - cmd/oactl/extensions
+- owner_id: oactl-credentials
+  component_id: oactl-credentials
+  source_paths:
+  - clients/go/credentials
+  - cmd/oactl/credentials
+- owner_id: oactl-delivery
+  component_id: oactl-delivery
+  source_paths:
+  - clients/go/delivery
+  - cmd/oactl/delivery
+- owner_id: oactl-entrypoint
+  component_id: oactl-entrypoint
+  source_paths:
+  - cmd/oactl/entrypoint
+  - cmd/oactl/main.go
+  - tests/entrypoints/oactl
+- owner_id: oactl-identity-authentication
+  component_id: oactl-identity-authentication
+  source_paths:
+  - clients/go/identity
+  - cmd/oactl/identity
+- owner_id: oactl-model-mcp
+  component_id: oactl-model-mcp
+  source_paths:
+  - clients/go/runtime-settings
+  - cmd/oactl/runtime-settings
+- owner_id: oactl-project
+  component_id: oactl-project
+  source_paths:
+  - clients/go/project/setup
+  - cmd/oactl/project/setup
+- owner_id: oactl-resource-lifecycle
+  component_id: oactl-resource-lifecycle
+  source_paths:
+  - clients/go/resource-lifecycle
+  - cmd/oactl/agents/lifecycle-registration
+  - cmd/oactl/project/lifecycle-registration
+  - cmd/oactl/resource-lifecycle
+  - cmd/oactl/workflow/lifecycle-registration
+- owner_id: oactl-solution
+  component_id: oactl-solution
+  source_paths:
+  - clients/go/solutions
+  - cmd/oactl/solutions
+- owner_id: oactl-usage-operations
+  component_id: oactl-usage-operations
+  source_paths:
+  - clients/go/operations
+  - cmd/oactl/operations
+- owner_id: oactl-workflow
+  component_id: oactl-workflow
+  source_paths:
+  - clients/go/workflow/operations
+  - cmd/oactl/workflow/operations
+- owner_id: platform-agentrun
+  component_id: platform-agentrun
+  source_paths:
+  - internal/platformcore/agentrun
+- owner_id: platform-core-entrypoint
+  component_id: platform-core-entrypoint
+  source_paths:
+  - cmd/platform-core
+  - tests/entrypoints/platform-core
+- owner_id: platform-core-image
+  component_id: platform-core-image
+  source_paths:
+  - images/platform-core-image
+- owner_id: platform-operations
+  component_id: platform-operations
+  source_paths:
+  - internal/operations
+- owner_id: platform-schema-migration-bundle
+  component_id: platform-schema-migration-bundle
+  source_paths:
+  - deploy/crds
+  - migrations
+  - packaging/schema-migration
+  - scripts/release/verify_schema_migration_bundle.py
+- owner_id: platform-workflow-store
+  component_id: platform-workflow-store
+  source_paths:
+  - internal/platformcore/workflow
+- owner_id: platform-workload-manifest-bundle
+  component_id: platform-workload-manifest-bundle
+  source_paths:
+  - deploy/ingress
+  - deploy/manifests
+  - deploy/monitoring
+  - deploy/network
+  - deploy/postgres
+  - deploy/rbac
+- owner_id: project-lifecycle
+  component_id: project-lifecycle
+  source_paths:
+  - internal/projects/lifecycle
+- owner_id: project-repository-team
+  component_id: project-repository-team
+  source_paths:
+  - internal/projects/bindings
+- owner_id: project-setup-adopt
+  component_id: project-setup-adopt
+  source_paths:
+  - internal/projects/adoption
+- owner_id: project-setup-check
+  component_id: project-setup-check
+  source_paths:
+  - internal/projects/precheck
+- owner_id: public-site
+  component_id: public-site
+  source_paths:
+  - apps/web-public
+  - content
+- owner_id: release-preview
+  component_id: release-preview
+  source_paths:
+  - internal/softwaredelivery/preview
+  - internal/softwaredelivery/release
+- owner_id: resource-lifecycle
+  component_id: resource-lifecycle
+  source_paths:
+  - internal/lifecycle
+- owner_id: runtime-sdk
+  component_id: runtime-sdk
+  source_paths:
+  - runtime-sdk
+- owner_id: skill-import
+  component_id: skill-import
+  source_paths:
+  - internal/skills
+- owner_id: software-artifacts
+  component_id: software-artifacts
+  source_paths:
+  - internal/softwaredelivery/artifacts
+- owner_id: solution-definition
+  component_id: solution-definition
+  source_paths:
+  - internal/solutions/definition
+- owner_id: solution-publishing
+  component_id: solution-publishing
+  source_paths:
+  - internal/solutions/packages
+- owner_id: system-release-assembly
+  component_id: system-release-assembly
+  source_paths:
+  - packaging/system-release/**
+  - scripts/release/assemble.py
+  - scripts/release/verify_assembly.py
+- owner_id: system-release-tooling
+  component_id: system-release-tooling
+  source_paths:
+  - contracts/acceptance/platform-release-action-scenario-map.yaml
+  - contracts/acceptance/platform-release-required-scenarios.yaml
+  - contracts/release/source-ownership-catalog.yaml
+  - contracts/release/system-release-tooling-ownership.yaml
+  - schemas/platform-release-evidence.schema.json
+  - schemas/release-component-manifest.schema.json
+  - schemas/system-release-tooling-ownership.schema.json
+  - scripts/release/build_go_binaries.py
+  - scripts/release/build_image.py
+  - scripts/release/link_console.py
+  - scripts/release/link_go_component.py
+  - scripts/release/package_component.py
+  - scripts/release/sign_installers.py
+  - scripts/release/sign_release.py
+  - scripts/release/verify_component_manifest.py
+  - scripts/release/verify_fixture.py
+  - scripts/release/verify_generated_contract.py
+  - scripts/release/verify_installer_signatures.py
+  - scripts/release/verify_platform_release_evidence.py
+  - scripts/release/verify_release_handoff.py
+  - scripts/release/verify_source_closure.py
+  - scripts/release/verify_system_release_tooling_ownership.py
+  - scripts/release/verify_workload_manifests.py
+  - tests/release-evidence-contract/**
+  - tests/release-tooling-ownership/**
+  - tests/release-tooling/**
+- owner_id: system-upgrade
+  component_id: system-upgrade
+  source_paths:
+  - cmd/oac-installer/upgrade
+  - internal/systemrelease/upgrade
+- owner_id: ui-admission
+  component_id: ui-admission
+  source_paths:
+  - apps/console/src/features/governance/admission
+- owner_id: ui-agent-definition
+  component_id: ui-agent-definition
+  source_paths:
+  - apps/console/src/features/agents/definitions
+- owner_id: ui-agent-model
+  component_id: ui-agent-model
+  source_paths:
+  - apps/console/src/features/agents/model-policy
+- owner_id: ui-agent-template
+  component_id: ui-agent-template
+  source_paths:
+  - apps/console/src/features/agents/templates
+- owner_id: ui-artifact-review
+  component_id: ui-artifact-review
+  source_paths:
+  - apps/console/src/features/workflows/artifact-review
+- owner_id: ui-audit
+  component_id: ui-audit
+  source_paths:
+  - apps/console/src/features/audit
+- owner_id: ui-authorization
+  component_id: ui-authorization
+  source_paths:
+  - apps/console/src/features/governance/authorization
+- owner_id: ui-capability-extension
+  component_id: ui-capability-extension
+  source_paths:
+  - apps/console/src/features/settings/capabilities
+  - apps/console/src/features/settings/extensions
+  - apps/console/src/features/settings/skills
+- owner_id: ui-credentials
+  component_id: ui-credentials
+  source_paths:
+  - apps/console/src/features/credentials
+- owner_id: ui-delivery
+  component_id: ui-delivery
+  source_paths:
+  - apps/console/src/features/delivery
+- owner_id: ui-foundation
+  component_id: ui-foundation
+  source_paths:
+  - apps/console/package.json
+  - apps/console/src/foundations/**
+  - apps/console/src/i18n
+  - apps/console/src/main.tsx
+  - apps/console/src/test
+  - packages/ui
+  - pnpm-lock.yaml
+  - pnpm-workspace.yaml
+- owner_id: ui-generic-solution
+  component_id: ui-generic-solution
+  source_paths:
+  - apps/console/src/features/generic-solution
+- owner_id: ui-human-executor
+  component_id: ui-human-executor
+  source_paths:
+  - apps/console/src/features/workflows/human-work
+- owner_id: ui-identity
+  component_id: ui-identity
+  source_paths:
+  - apps/console/src/features/identity
+- owner_id: ui-mcp
+  component_id: ui-mcp
+  source_paths:
+  - apps/console/src/features/mcp
+- owner_id: ui-models
+  component_id: ui-models
+  source_paths:
+  - apps/console/src/features/models
+- owner_id: ui-new-delivery
+  component_id: ui-new-delivery
+  source_paths:
+  - apps/console/src/features/workflows/new-delivery
+- owner_id: ui-operations-usage
+  component_id: ui-operations-usage
+  source_paths:
+  - apps/console/src/features/operations
+  - apps/console/src/features/usage
+- owner_id: ui-project-adopt
+  component_id: ui-project-adopt
+  source_paths:
+  - apps/console/src/features/projects/adoption
+- owner_id: ui-project-bindings
+  component_id: ui-project-bindings
+  source_paths:
+  - apps/console/src/features/projects/setup
+- owner_id: ui-project-create
+  component_id: ui-project-create
+  source_paths:
+  - apps/console/src/features/projects/create
+- owner_id: ui-resource-lifecycle
+  component_id: ui-resource-lifecycle
+  source_paths:
+  - apps/console/src/features/resource-lifecycle
+- owner_id: ui-solution-authoring
+  component_id: ui-solution-authoring
+  source_paths:
+  - apps/console/src/features/solutions/authoring
+- owner_id: ui-solution-package
+  component_id: ui-solution-package
+  source_paths:
+  - apps/console/src/features/solutions/packages
+- owner_id: ui-workflow-control
+  component_id: ui-workflow-control
+  source_paths:
+  - apps/console/src/features/workflows/control
+- owner_id: ui-workflow-view
+  component_id: ui-workflow-view
+  source_paths:
+  - apps/console/src/features/workflows/views
+- owner_id: usage-readmodel
+  component_id: usage-readmodel
+  source_paths:
+  - api/usage
+  - internal/usage
+- owner_id: web-image
+  component_id: web-image
+  source_paths:
+  - images/web-image
+- owner_id: workflow-controller
+  component_id: workflow-controller
+  source_paths:
+  - cmd/workflow-controller
+  - controllers/workflow
+- owner_id: workflow-controller-image
+  component_id: workflow-controller-image
+  source_paths:
+  - images/workflow-controller-image
+- owner_id: workspace-sdk
+  component_id: workspace-sdk
+  source_paths:
+  - internal/workspace

@@ -1,0 +1,1250 @@
+{
+  "at": "2026-10-05T01:35:34.249257+00:00",
+  "node": "agentrun-malformed-marker-fixture",
+  "control": {
+    "id": "01a10302-109c-7097-b200-4dd71a531aba",
+    "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1",
+    "title": "[DAG:agentrun-malformed-marker-fixture] Make AgentRun malformed-stream fixture evidence deterministic without changing production",
+    "description": "> **OMAC \u63a7\u5236\u7684\u6267\u884c\u3002\u7b2c\u4e00\u52a8\u4f5c\u5fc5\u987b\u4e25\u683c\u6267\u884c\uff1a**\n\n```bash\nOMAC_ENGINE=multica OMAC_WORKSPACE_ID=410ade5e-8ae0-4402-b975-813dea2ff3e1 OMAC_PROJECT_ID=732ce83f-5cbd-4485-850d-1b8a1bf16340 omac work show 01a10302-109c-7097-b200-4dd71a531aba --output json\n```\n\n> `omac work show` \u548c `omac work submit` \u90fd\u53ef\u80fd\u957f\u65f6\u95f4\u8fd0\u884c\u3002\u4efb\u4f55\u5de5\u5177\u8c03\u7528\u5728\u62ff\u5230\u6700\u7ec8 tool_result \u548c\u7ec8\u6001\u9000\u51fa\u7801\u524d\u90fd\u4e0d\u5b8c\u6574\u3002\u82e5\u5de5\u5177\u8fd4\u56de running/session\u3001\u7f3a\u5c11\u6700\u7ec8 tool_result\u3001\u51fa\u73b0\u7a7a\u8f93\u51fa\u6216\u4e0d\u5b8c\u6574\u8f93\u51fa\uff0c\u5fc5\u987b\u7b49\u5f85\u6216\u8f6e\u8be2\u5230\u7ec8\u6001\u3002\u4f7f\u7528\u8db3\u591f\u957f\u7684 wait/yield\uff0c\u6216\u4fdd\u7559\u5e76\u6062\u590d\u7eed\u63a5\u53e5\u67c4\uff1b\u8fd9\u662f\u901a\u7528\u7ec8\u6001\u89c4\u5219\uff0c\u4e0d\u7ed1\u5b9a\u67d0\u4e2a\u5177\u4f53\u5de5\u5177 API\u3002timeout/yield \u4e0d\u662f\u7a7a\u7ed3\u679c\uff0c\u4e5f\u4e0d\u5141\u8bb8\u636e\u6b64\u505c\u6b62\u3002`omac work show` \u53ea\u6709\u5728\u9000\u51fa\u7801 0 \u4e14\u5f97\u5230\u53ef\u89e3\u6790 JSON \u540e\u624d\u80fd\u7ee7\u7eed\u3002`omac work submit` \u53ea\u6709\u5728\u6700\u7ec8 tool_result \u660e\u786e\u7ed9\u51fa\u9000\u51fa\u7801 0\uff0c\u4e14 JSON \u5305\u542b `\"ok\": true`\u3001`\"terminal\": true` \u548c `\"next_action\": \"stop\"` \u65f6\u624d\u53ef\u5ba3\u79f0\u6210\u529f\u3002\u7ed3\u679c\u672a\u77e5\u65f6\u4e0d\u5f97\u5ba3\u79f0\u6210\u529f\u6216\u7ed3\u675f\uff1bvalidation error \u5fc5\u987b\u4fee\u590d\u540e\u91cd\u65b0\u63d0\u4ea4\u3002submit \u6210\u529f\u5c31\u662f\u672c\u6b21\u6267\u884c\u7684\u6700\u540e\u52a8\u4f5c\uff0c\u7acb\u5373\u505c\u6b62\uff0c\u4e0d\u518d\u6267\u884c\u4efb\u4f55\u5e73\u53f0\u5199\u5165\u3002\n\n> \u5728\u4e0a\u65b9\u7cbe\u786e\u7684 `omac work show` \u547d\u4ee4\u4ee5\u9000\u51fa\u7801 0 \u6210\u529f\u8fd4\u56de\u53ef\u89e3\u6790 JSON \u524d\uff0c\u4e0d\u5f97\u6267\u884c\u4efb\u4f55\u5176\u4ed6 Issue \u67e5\u8be2\uff08\u5305\u62ec `multica issue get`\u3001`multica issue comment list` \u6216 metadata \u67e5\u8be2\uff09\uff0c\u4e5f\u4e0d\u5f97\u5f00\u59cb\u5206\u6790\u4efb\u52a1\u5185\u5bb9\u3002work show \u6210\u529f\u540e\uff0c\u53ea\u80fd\u5728\u8fd4\u56de\u4e0a\u4e0b\u6587\u786e\u6709\u9700\u8981\u65f6\u4f7f\u7528\u53ea\u8bfb Issue \u67e5\u8be2\u3002\u7981\u6b62\u4efb\u4f55\u4f1a\u521b\u5efa\u3001\u4fee\u6539\u6216\u5220\u9664 Issue \u72b6\u6001\u7684 `multica issue` \u5199\u64cd\u4f5c\u3002\u8fd9\u662f\u8bed\u4e49\u8fb9\u754c\uff0c\u4e0d\u662f\u7a77\u4e3e\u547d\u4ee4\u6e05\u5355\uff1b\u7981\u6b62\u793a\u4f8b\u5305\u62ec `multica issue status`\u3001`multica issue assign`\u3001`multica issue comment`\u3001`multica issue metadata`\u3001`multica issue rerun`\u3001`multica issue cancel-task`\u3001`multica issue update`\u3001`multica issue create`\u3001`multica issue label`\u3001`multica issue property`\u3001`multica issue reorder` \u548c `multica issue subscriber`\u3002\u53ea\u5141\u8bb8\u4f7f\u7528\u4e0a\u65b9\u7ed9\u51fa\u7684\u7cbe\u786e `omac work show` \u547d\u4ee4\uff0c\u4ee5\u53ca work show \u8fd4\u56de\u7684\u7cbe\u786e `omac work submit` \u547d\u4ee4\u4f5c\u4e3a OMAC \u63a7\u5236\u547d\u4ee4\uff1b\u5df2\u6709\u624b\u5de5\u9644\u4ef6\u6216 verification \u4f46\u7f3a\u5c11 `delivery_identity` \u65f6\u4e5f\u5fc5\u987b\u901a\u8fc7\u8be5 submit \u547d\u4ee4\u5c01\u5b58\u3002\n\n# Make AgentRun malformed-stream fixture evidence deterministic without changing production\n\n## \u4efb\u52a1\u6458\u8981\n- \u7c7b\u578b: \u5f00\u53d1\u5b9e\u73b0\uff08`develop`\uff09\n- \u6267\u884c\u89d2\u8272: \u5f00\u53d1\u6267\u884c\u8005\uff08`worker`\uff09\n- \u76ee\u6807: Deliver a deterministic, source-proven repair of NIT-agent-run-job-malformed-marker-timing in the non-release AgentRun malformed-stream fixture and its evidence assertions, with permanent positive/negative regression controls, preserved H/S lifecycle and release guarantees, and an independently reviewable main-based PR plus exact-source publication.\n- \u4f9d\u636e: `docs/design/open-agent-cluster-overview-design.md`\n- \u4f9d\u636e: `docs/design/detailed/06-agent-runtime-detailed-design.md#8-runtime-sdk-\u8c03\u7528\u4e0e\u5b9e\u65f6\u4e8b\u4ef6\u6d41`\n- \u4f9d\u636e: `docs/design/detailed/06-agent-runtime-detailed-design.md#10-runtime-sdk-\u4e0e-agent-job-\u63a5\u53e3\u68c0\u67e5`\n- \u4f9d\u636e: `docs/references/execution/agent-runtime.md#7-runtime-sdk`\n- \u4f9d\u636e: `docs/references/execution/agent-runtime.md#9-oac-agent-job-\u4e0e-agentrunevent`\n- \u4f9d\u636e: `docs/references/software-delivery/artifacts-release-and-deployment.md#8-release`\n- \u4f9d\u636e: `docs/delivery/acceptance-and-validation.md#28-agent-execution-\u4e0e-workspace`\n- \u4f9d\u636e: `five-nodes-recovery-decisions.md#2-agent-run-job`\n- \u4f9d\u636e: `.omac/open-agent-cluster.acceptance.yaml:UJ-RUN-001 (trace only; no acceptance ownership migration)`\n- \u4f9d\u636e: `.omac/open-agent-cluster.yaml:agent-run-job; agentrun-cancellation-prerequisite; runtime-sdk-mcp-launch-compatibility (immutable completed contracts)`\n- \u4f9d\u636e: `.omac/agentrun-bounded-wait-reviewed-20261001.yaml`\n- \u4f9d\u636e: `.omac/agentrun-historical-evidence-reviewed-20261001.yaml`\n- \u4f9d\u636e: `.omac/agentrun-source-binding-sealed-rebase-reviewed-20261002.yaml`\n- \u4f9d\u636e: `.omac/agentrun-malformed-marker-owner-request-20261003.md`\n- \u4f9d\u636e: `https://github.com/xiaohei-info/open-agent-cluster/blob/1ebf12d36d29c2a3726257bd03685139f5bc568a/cmd/agentrun-job/main_test.go#L409-L856`\n- \u4f9d\u636e: `https://github.com/xiaohei-info/open-agent-cluster/blob/1ebf12d36d29c2a3726257bd03685139f5bc568a/cmd/agentrun-job/testdata/vendor/main.go#L210-L217`\n- \u4f9d\u636e: `Bound input packet /tmp/oac-agentrun-malformed-marker-bound-inputs-20261003/input-index.json and source-index.json; verify every indexed byte/size/SHA256 before use; this packet is input authority, not a new output publication.`\n- \u4f9d\u636e: `SDK independent report SHA256 2a8b2d912ca95a4b6ba9c832e6018ccc8d722ea1a0b226b5bbd2840054492566 (129691 bytes); ledger SHA256 1d90f40ec2ae024e466d330aab4b1b4085921a3d3ef4dc8600ea4193495cbbde (19794 bytes); NIT-agent-run-job-malformed-marker-timing.`\n- \u4f9d\u636e: `Audit independent report SHA256 9e44c0ff8a3f7c902c51ff82d3dcb8e1df33b8cd4d8537082e9e6f723848964d (36949 bytes); ledger SHA256 14d7b7f1a0ee46207a6445ee63b0167efb9670eba8bf0b746c51eefb8083ee58 (7524 bytes); separate unrelated current Audit blockers.`\n- \u4f9d\u636e: `Approved H: AITEAM-1031 comment 01a0f794-0aed-7dc7-aea0-88af97e36814 / amend-c64d7709f7a5. Approved S: comment 01a0f592-f317-7d9f-a49b-43af3fac6b1d / amend-82e0c1a4d969. Neither is a fixture implementation pass.`\n\n## \u4efb\u52a1\u8be6\u60c5\nCompensating non-release fixture repair for NIT-agent-run-job-malformed-marker-timing. Prove the source-bound causal boundary, implement permanent controls, preserve H/S and all inherited exact-byte gates, and deliver a real main-based PR with immutable evidence. New authoring only; no completed owner or current Audit/Snapshot/Artifact Run is reopened.\n\n## \u975e\u76ee\u6807\n- Only repair and independently prove the non-release malformed-stream fixture/evidence boundary in cmd/agentrun-job tests and testdata. Primary scope cmd/agentrun-job/** does not authorize released production edits: cmd/agentrun-job/vendor non-test sources, driver.go, main.go, transport.go, adapters.go, mcp.go and driver_identity.json remain unchanged, as do internal/agentrun production code and runtime-sdk. Test-only supporting changes must be causally necessary and explained. If a real production/lifecycle or external-environment defect must change this boundary, preserve evidence and stop for an explicit owner decision; do not hide it with a fixture adjustment.\n- Do not prescribe the hypothesized marker-before-cancellation fix as an established cause. Prove a reproducible source/fixture mechanism before correcting it. A marker being present is not proof malformed bytes were written, consumed or rejected, and a prepared marker must not be mislabeled emitted. A fixture remedy must retain the real built Job -> linked driver -> adapter -> configured Runtime path and independently distinguish triggering evidence from Wait, reaping and terminal facts.\n- Do not skip, quarantine, delete, soften or enlarge existing deadlines/assertions, add sleeps/retries to obtain green, select only successful attempts, or treat an unchanged-tree pass as closure. Preserve the original eight-second malformed-marker observation and ten-second process-disappearance obligation. New deterministic schedule/negative controls are test-only; a bounded predeclared control run is not repeat-until-green authorization. Record any unexpected failure and block closure pending diagnosis.\n- Preserve approved H and S, original rejected verdicts and all failed/passing evidence. The original AITEAM-820 cancellation cause remains unknown; the numeric PID was recorded but its start identity/PPID/state/owning-Wait were not established. New PID/start/PPID/state/Wait before/after observations are prospective only. Do not reopen completed agent-run-job, agentrun-cancellation-prerequisite, runtime-sdk or SDK repair, invent new H/S approval needs, or represent this fixture follow-up as historical reconstruction.\n- Preserve the original owning Wait and held-Wait 5/10/20/30-second evidence: five-second TERM grace then escalation, ten-second observation, twenty-second SDK cancellation channel-close deadline and thirty-second runner drain where applicable. Keep startup/no-acceptance, malformed-stream, persistent-append and timeout siblings, post-Wait nonclosing Events/Result unknown/no-completion behavior, one bounded redacted diagnostic and bounded fixture teardown. An actually pending Wait retains its owner; never kill the adapter just to discard the Runtime Wait, return early, fabricate reaping or promise finite OS completion. A test-held Wait proves the safety rule, not an unkillable kernel process. Owner loss preserves Unknown/observe-before-retry/new-AgentRun semantics and existing availability/residual-access risks.\n- Preserve actual cancellation propagation, process exit AND single-owner reaping, PID-reuse/zombie/probe-error/live-child controls, bounded pipes/drain/backpressure, exactly one Execute/stream, unchanged SDK event identity, terminal/clean EOF ordering and critical-tail persistence. Persistent append failure must never call CompleteAgentRun. No synthetic terminal/result or marker is a lifecycle unlock.\n- Do not place fixture mode/marker/PID hooks, blockForever, test-selected behavior or synthetic vendor events into released source or packages. Keep test instrumentation outside production; the published pair must use the unchanged real stream-json adapter and exact external executable/ordered arguments with no PATH/environment reselection or bundled third-party Runtime.\n- Do not modify Audit/Usage, Harness SDK, Platform Snapshot/Artifact work, image assembly, source ownership catalogs, canonical schemas, product designs, go.mod/go.sum, shared release tooling, .omac live manifest/config, completed node objects, runtime fields, retry/coverage/security budgets or retained approved baselines. Do not broaden privileges, install a supervisor/reaper/daemon, change host/cluster policy, require new deployment capabilities, or delegate to the OMAC fixer.\n- Do not claim product PASS/merge/done from amendment review or policy approval. This owner must deliver a real non-draft PR based on main, source-bound retrievable artifacts, fresh independent product review and normal merge. Preserve all previous publications; new evidence must not overwrite canonical artifacts of agent-run-job or agentrun-cancellation-prerequisite.\n\n## \u4e3b\u8981\u4ee3\u7801\u5f52\u5c5e\u8303\u56f4\n- `cmd/agentrun-job/**`\n\n## \u8d23\u4efb\u8fb9\u754c\n- \u8bc1\u636e\u6a21\u5f0f: `fixture`\n- \u8f93\u5165\u7b56\u7565: `transitional-upstream`\n- \u4ea7\u7269: `agentrun-malformed-marker-fixture-evidence`\n- \u8fb9\u754c: consumes \u5904\u4e8e\u8fc7\u6e21\u671f\u672a\u58f0\u660e\u72b6\u6001\uff1a\u53ea\u5141\u8bb8\u4f20\u9012\u4e0a\u6e38\u8f93\u5165\uff1b\u975e\u4e0a\u6e38\u548c\u4e0b\u6e38\u4ea7\u7269\u4ecd\u4e0d\u5c5e\u4e8e\u5f53\u524d contract\u3002\n\n## \u4ea4\u4ed8\u7ea6\u675f\n- PR \u57fa\u7ebf: `main`\n- \u6539\u52a8\u5206\u652f\u8986\u76d6\u7387: `\u2265 90%`\n- PR \u5173\u8054\u6807\u8bc6: `AITEAM-1055`\n\n## \u4e0a\u6e38 issue\uff08\u9632\u8dd1\u504f\uff09\n\u672c\u4efb\u52a1\u627f\u63a5\u4ee5\u4e0b\u4e0a\u6e38 issue\uff0c\u7528\u4e8e\u8ffd\u6eaf\u9700\u6c42\u4e0e\u51b3\u7b56\uff1b\u82e5\u4e0e\u5f53\u524d contract \u51b2\u7a81\uff0c\u5148\u8bf7\u6c42\u786e\u8ba4\uff1a\n- \u8bbe\u8ba1\u65b9\u6848: `289a13bf-cede-4b5b-ba86-d72f0bef8164`\n- \u9a8c\u6536\u6587\u6863: `8e6bd282-6039-41d2-aa00-969a0bf1554a`\n- \u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Implement AgentRun Job event and result pipeline: `33999d9a-0535-4e13-8926-111e57ce5fe5`\n- \u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Resolve the retained AgentRun cancellation prerequisite with owner diagnosis and verified remedy: `01a0f396-a507-7db4-b0f2-39dc38aa6dce`",
+    "status": "done",
+    "dag_key": "agentrun-malformed-marker-fixture",
+    "identifier": "AITEAM-1055",
+    "worker": "codex-ubuntu-newapi",
+    "reviewer": "",
+    "blocked_by": [
+      "agent-run-job",
+      "agentrun-cancellation-prerequisite"
+    ],
+    "wave": null,
+    "artifacts": {
+      "pr_url": "https://github.com/xiaohei-info/open-agent-cluster/pull/96",
+      "head_sha": "e9b4440f9c119275ccbacf989087b8b067385ca7"
+    },
+    "verification": {
+      "commands": [
+        {
+          "cmd": "GOTOOLCHAIN=go1.26.0 go version",
+          "exit_code": 0,
+          "summary": "Pinned Go toolchain reports Go 1.26.0 on linux/arm64."
+        },
+        {
+          "cmd": "mkdir -p artifacts/agentrun-malformed-marker-fixture && GOTOOLCHAIN=go1.26.0 go test -count=1 -json ./cmd/agentrun-job -run '^(TestMalformedStreamMarkerEvidenceControls|TestBuiltEntrypointHoldsOriginalWaitAcrossCleanupDeadlines|TestBuiltEntrypointCancelsVendorOnPersistentAppendFailure|TestBuiltEntrypointWaitsForRuntimeWaitOnPersistentAppendFailure)$' > artifacts/agentrun-malformed-marker-fixture/fixture-tests.json",
+          "exit_code": 0,
+          "summary": "Focused built-chain marker and held-Wait suite passed; required top-level tests and subtests ran without skips."
+        },
+        {
+          "cmd": "python3 -c \"import json; rows=[json.loads(x) for x in open('artifacts/agentrun-malformed-marker-fixture/fixture-tests.json') if x.strip()]; required={'TestMalformedStreamMarkerEvidenceControls','TestBuiltEntrypointHoldsOriginalWaitAcrossCleanupDeadlines','TestBuiltEntrypointCancelsVendorOnPersistentAppendFailure','TestBuiltEntrypointWaitsForRuntimeWaitOnPersistentAppendFailure'}; assert {r.get('Test') for r in rows if r.get('Action')=='pass' and r.get('Test') in required}==required; assert not any(r.get('Action') in ('fail','skip') for r in rows)\"",
+          "exit_code": 0,
+          "summary": "Required focused test event assertions passed with no fail or skip events."
+        },
+        {
+          "cmd": "cp artifacts/agentrun-cancellation-prerequisite/held-wait-process-evidence.jsonl artifacts/agentrun-malformed-marker-fixture/held-wait-focused.jsonl",
+          "exit_code": 0,
+          "summary": "Retained historical failed reproduction only; this copy reads the obsolete four-scenario upstream snapshot and is rejected as current evidence."
+        },
+        {
+          "cmd": "cp artifacts/agentrun-malformed-marker-fixture/held-wait-process-evidence.jsonl artifacts/agentrun-malformed-marker-fixture/held-wait-focused.jsonl",
+          "exit_code": 0,
+          "summary": "Captured the current-namespace held-Wait process snapshot immediately after focused tests; this capture overwrites the retained stale reproduction and is authoritative."
+        },
+        {
+          "cmd": "GOTOOLCHAIN=go1.26.0 go test -count=1 -json ./runtime-sdk/... ./internal/agentrun/... ./cmd/agentrun-job/... > artifacts/agentrun-malformed-marker-fixture/uncached-scope-tests.json",
+          "exit_code": 0,
+          "summary": "Uncached runtime-sdk, internal/agentrun, and cmd/agentrun-job suites passed."
+        },
+        {
+          "cmd": "cp artifacts/agentrun-cancellation-prerequisite/held-wait-process-evidence.jsonl artifacts/agentrun-malformed-marker-fixture/held-wait-scope.jsonl",
+          "exit_code": 0,
+          "summary": "Retained historical failed reproduction only; this copy reads the obsolete four-scenario upstream snapshot and is rejected as current evidence."
+        },
+        {
+          "cmd": "cp artifacts/agentrun-malformed-marker-fixture/held-wait-process-evidence.jsonl artifacts/agentrun-malformed-marker-fixture/held-wait-scope.jsonl",
+          "exit_code": 0,
+          "summary": "Captured the current-namespace held-Wait process snapshot immediately after scope tests; this capture overwrites the retained stale reproduction and is authoritative."
+        },
+        {
+          "cmd": "GOTOOLCHAIN=go1.26.0 go vet ./runtime-sdk/... ./internal/agentrun/... ./cmd/agentrun-job/...",
+          "exit_code": 0,
+          "summary": "go vet passed for the declared scope."
+        },
+        {
+          "cmd": "GOTOOLCHAIN=go1.26.0 go build ./cmd/agentrun-job/...",
+          "exit_code": 0,
+          "summary": "AgentRun Job packages built successfully."
+        },
+        {
+          "cmd": "GOTOOLCHAIN=go1.26.0 go test -count=1 ./... > artifacts/agentrun-malformed-marker-fixture/first-full-suite.log 2>&1",
+          "exit_code": 0,
+          "summary": "The first unfiltered full suite at the final source passed."
+        },
+        {
+          "cmd": "cp artifacts/agentrun-cancellation-prerequisite/held-wait-process-evidence.jsonl artifacts/agentrun-malformed-marker-fixture/held-wait-full-suite.jsonl",
+          "exit_code": 0,
+          "summary": "Retained historical failed reproduction only; this copy reads the obsolete four-scenario upstream snapshot and is rejected as current evidence."
+        },
+        {
+          "cmd": "cp artifacts/agentrun-malformed-marker-fixture/held-wait-process-evidence.jsonl artifacts/agentrun-malformed-marker-fixture/held-wait-full-suite.jsonl",
+          "exit_code": 0,
+          "summary": "Captured the current-namespace held-Wait process snapshot immediately after the full suite; this capture overwrites the retained stale reproduction and is authoritative."
+        },
+        {
+          "cmd": "mkdir -p artifacts/agentrun-malformed-marker-fixture/release && GOTOOLCHAIN=go1.26.0 go test -covermode=atomic -coverprofile=artifacts/agentrun-malformed-marker-fixture/release/coverage.out ./internal/agentrun/... ./cmd/agentrun-job/...",
+          "exit_code": 0,
+          "summary": "Combined coverage suite passed."
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/agentrun-malformed-marker-fixture/release/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+          "exit_code": 0,
+          "summary": "Combined statement coverage was 90.2%, above the 90% minimum."
+        },
+        {
+          "cmd": "cp artifacts/agentrun-malformed-marker-fixture/held-wait-process-evidence.jsonl artifacts/agentrun-malformed-marker-fixture/held-wait-coverage.jsonl",
+          "exit_code": 0,
+          "summary": "Captured the current-namespace held-Wait process snapshot immediately after the coverage producer; this seven-scenario capture is authoritative."
+        },
+        {
+          "cmd": "mkdir -p artifacts/agentrun-malformed-marker-fixture/release && GOTOOLCHAIN=go1.26.0 go test -json ./cmd/agentrun-job/... -run '^(TestProductionStreamJSONAdapterLaunchesConfiguredCommand|TestPublishedRuntimeAdapterContainsNoFixtureHooks|TestStreamJSONRejectsDuplicateAcceptanceAndPostTerminalData|TestStreamJSONCleansUpAcceptanceKindMismatch|TestStreamJSONRejectsForeignSessionEvents)$' -count=1 > artifacts/agentrun-malformed-marker-fixture/release/stream-json-hardening.json",
+          "exit_code": 0,
+          "summary": "All five required stream-json hardening tests passed."
+        },
+        {
+          "cmd": "python3 -c \"import json; required={'TestStreamJSONRejectsDuplicateAcceptanceAndPostTerminalData', 'TestPublishedRuntimeAdapterContainsNoFixtureHooks', 'TestStreamJSONRejectsForeignSessionEvents', 'TestStreamJSONCleansUpAcceptanceKindMismatch', 'TestProductionStreamJSONAdapterLaunchesConfiguredCommand'}; rows=[json.loads(x) for x in open('artifacts/agentrun-malformed-marker-fixture/release/stream-json-hardening.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing required passing stream-json tests: {sorted(required-passed)}'\"",
+          "exit_code": 0,
+          "summary": "Required stream-json hardening event assertions passed."
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; roots=[Path('cmd/agentrun-job/vendor'),Path('cmd/agentrun-job/driver.go')]; files=[]; [files.extend(p for p in ([r] if r.is_file() else r.rglob('*')) if p.is_file() and 'testdata' not in p.parts and not p.name.endswith('_test.go')) for r in roots]; forbidden=('AGENTRUN_FIXTURE_MODE','AGENTRUN_FIXTURE_MARKER','AGENTRUN_FIXTURE_PID_FILE','blockForever'); hits=[f'{p}:{token}' for p in files for token in forbidden if token in p.read_text(errors='ignore')]; assert not hits, f'published fixture hooks: {hits}'\"",
+          "exit_code": 0,
+          "summary": "No production fixture hooks were found in the inspected published source."
+        },
+        {
+          "cmd": "test \"$(docker run --rm --platform linux/arm64 golang@sha256:1ee99c345f8179002a0de40728e0eaa8865b81257b3924ef150ee65b3f1d3fc7 go version)\" = \"go version go1.26.0 linux/arm64\"",
+          "exit_code": 0,
+          "summary": "Pinned linux/arm64 build image reported Go 1.26.0."
+        },
+        {
+          "cmd": "python3 cmd/agentrun-job/build_release.py --source-revision HEAD --target linux/arm64 --build-image golang@sha256:1ee99c345f8179002a0de40728e0eaa8865b81257b3924ef150ee65b3f1d3fc7 --vendor-package ./cmd/agentrun-job/vendor --driver-identity cmd/agentrun-job/driver_identity.json --output artifacts/agentrun-malformed-marker-fixture/release --network-policy module-download-only",
+          "exit_code": 0,
+          "summary": "Pinned linux/arm64 release package was built from the exact source HEAD."
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; import json; d=json.loads(Path('artifacts/agentrun-malformed-marker-fixture/release/runtime-driver-release-manifest.json').read_text()); assert d['build']=={'image':'golang@sha256:1ee99c345f8179002a0de40728e0eaa8865b81257b3924ef150ee65b3f1d3fc7','go_version':'1.26.0','goos':'linux','goarch':'arm64'}; assert set(d['binaries'])=={'agentrun-job','agentrun-vendor'}; assert d['vendor_source']=='cmd/agentrun-job/vendor' and d['vendor_role']=='stream-json-protocol-adapter' and d['bundled_third_party_runtime_count']==0\"",
+          "exit_code": 0,
+          "summary": "Release manifest binds the pinned build and exactly the shipped AgentRun pair."
+        },
+        {
+          "cmd": "python3 cmd/agentrun-job/verify_package.py --package-root artifacts/agentrun-malformed-marker-fixture/release --component-manifest artifacts/agentrun-malformed-marker-fixture/release/component-manifest.json --binaries-manifest artifacts/agentrun-malformed-marker-fixture/release/go-binaries-manifest.json --component-link artifacts/agentrun-malformed-marker-fixture/release/immutable-component-link.json --release-manifest artifacts/agentrun-malformed-marker-fixture/release/runtime-driver-release-manifest.json --driver-identity cmd/agentrun-job/driver_identity.json --expected-target linux/arm64 --expected-build-image golang@sha256:1ee99c345f8179002a0de40728e0eaa8865b81257b3924ef150ee65b3f1d3fc7 --execute-shipped-pair --forbid-build --forbid-fixture-staging --report artifacts/agentrun-malformed-marker-fixture/release/package-verification.json",
+          "exit_code": 0,
+          "summary": "Shipped-pair verifier passed without build or fixture staging."
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; import json; r=json.loads(Path('artifacts/agentrun-malformed-marker-fixture/release/package-verification.json').read_text()); assert r['schema']=='oac.agentrun-package-verification/v1' and r['build_attempted'] is False and r['fixture_staging_attempted'] is False and r['shipped_pair_executed'] is True and r['process_tests_passed'] is True and r['published_fixture_hook_count']==0 and r['external_stream_json_command_executed'] is True and r['native_event_provenance_verified'] is True\"",
+          "exit_code": 0,
+          "summary": "Package report assertions passed: one shipped pair run, native provenance verified, zero hooks and bundled Runtime."
+        },
+        {
+          "cmd": "python3 cmd/agentrun-job/testdata/malformed-marker/verify_evidence.py --index artifacts/agentrun-malformed-marker-fixture/evidence-index.json --expected-source HEAD --require-immutable-publication",
+          "exit_code": 0,
+          "summary": "Final evidence verifier passed against immutable Git publication c88b12b6faa488262462a5c939759f10b56a7c02 with zero source or retrieval/hash mismatches."
+        }
+      ],
+      "integration_gates": [
+        {
+          "name": "agentrun-malformed-marker-causal-fixture-gate",
+          "source_of_truth": [
+            "docs/design/open-agent-cluster-overview-design.md",
+            "docs/design/detailed/06-agent-runtime-detailed-design.md#8-runtime-sdk-\u8c03\u7528\u4e0e\u5b9e\u65f6\u4e8b\u4ef6\u6d41",
+            "docs/design/detailed/06-agent-runtime-detailed-design.md#10-runtime-sdk-\u4e0e-agent-job-\u63a5\u53e3\u68c0\u67e5",
+            "docs/references/execution/agent-runtime.md#7-runtime-sdk",
+            "docs/references/execution/agent-runtime.md#9-oac-agent-job-\u4e0e-agentrunevent",
+            "docs/references/software-delivery/artifacts-release-and-deployment.md#8-release",
+            "docs/delivery/acceptance-and-validation.md#28-agent-execution-\u4e0e-workspace",
+            "five-nodes-recovery-decisions.md#2-agent-run-job",
+            ".omac/open-agent-cluster.acceptance.yaml:UJ-RUN-001 (trace only; no acceptance ownership migration)",
+            ".omac/open-agent-cluster.yaml:agent-run-job; agentrun-cancellation-prerequisite; runtime-sdk-mcp-launch-compatibility (immutable completed contracts)",
+            ".omac/agentrun-bounded-wait-reviewed-20261001.yaml",
+            ".omac/agentrun-historical-evidence-reviewed-20261001.yaml",
+            ".omac/agentrun-source-binding-sealed-rebase-reviewed-20261002.yaml",
+            ".omac/agentrun-malformed-marker-owner-request-20261003.md",
+            "https://github.com/xiaohei-info/open-agent-cluster/blob/1ebf12d36d29c2a3726257bd03685139f5bc568a/cmd/agentrun-job/main_test.go#L409-L856",
+            "https://github.com/xiaohei-info/open-agent-cluster/blob/1ebf12d36d29c2a3726257bd03685139f5bc568a/cmd/agentrun-job/testdata/vendor/main.go#L210-L217",
+            "Bound input packet /tmp/oac-agentrun-malformed-marker-bound-inputs-20261003/input-index.json and source-index.json; verify every indexed byte/size/SHA256 before use; this packet is input authority, not a new output publication.",
+            "SDK independent report SHA256 2a8b2d912ca95a4b6ba9c832e6018ccc8d722ea1a0b226b5bbd2840054492566 (129691 bytes); ledger SHA256 1d90f40ec2ae024e466d330aab4b1b4085921a3d3ef4dc8600ea4193495cbbde (19794 bytes); NIT-agent-run-job-malformed-marker-timing.",
+            "Audit independent report SHA256 9e44c0ff8a3f7c902c51ff82d3dcb8e1df33b8cd4d8537082e9e6f723848964d (36949 bytes); ledger SHA256 14d7b7f1a0ee46207a6445ee63b0167efb9670eba8bf0b746c51eefb8083ee58 (7524 bytes); separate unrelated current Audit blockers.",
+            "Approved H: AITEAM-1031 comment 01a0f794-0aed-7dc7-aea0-88af97e36814 / amend-c64d7709f7a5. Approved S: comment 01a0f592-f317-7d9f-a49b-43af3fac6b1d / amend-82e0c1a4d969. Neither is a fixture implementation pass."
+          ],
+          "delivery_goal": "Worker must implement the new TestMalformedStreamMarkerEvidenceControls and testdata/malformed-marker/verify_evidence.py verification entry points in this PR; they are required deliverables, not existing APIs. First bind reviewed PR90 HEAD 1ebf12d36d29c2a3726257bd03685139f5bc568a and the indexed source blobs to the observed first failure and later pass without inventing the original schedule. Establish a controlled failing-before/passing-after fixture regression (with immutable before/after source SHA/tree, any test-only overlay digest, exact commands and exits) through the actual built ownership chain. Controls must cover valid malformed input with deterministic evidence, absent/unwritten input and failed evidence publication rejected rather than a false pass, rapid cancellation around the observation boundary, and genuine pending/live child versus reaped child. Do not fix production or prescribe marker reordering without causal proof. The new test must detect the old defect under a declared bounded deterministic schedule, and reject markers unbound to the current process/trigger. Independently retain all existing held-original-Wait sibling controls, 5/10/20/30-second assertions, channel-close unknown/no-completion, one redacted diagnostic, PID/start/PPID/state/Wait identity and bounded teardown. Preserve the old H prospective regression and unknown historical cause; rerun its actual built-chain assertions on the new source. Use native Linux with /proc and Go1.26.0 for process evidence; record architecture, compiler and reaper conditions. First full uncached unfiltered suite result at final source must be retained even if it fails; no repeat-until-green. Every required top-level test and its required subtests must run/pass with no skips. Snapshot test-generated held-wait evidence after each producing command before a later test overwrites the default scratch file; never run in the retained historical evidence directory. Reviewer independently reruns all these declared commands and the exact bounded before/after/control commands recorded in env_setup, verifying actual assertions rather than file existence.",
+          "commands": [
+            {
+              "cmd": "GOTOOLCHAIN=go1.26.0 go version",
+              "exit_code": 0
+            },
+            {
+              "cmd": "mkdir -p artifacts/agentrun-malformed-marker-fixture && GOTOOLCHAIN=go1.26.0 go test -count=1 -json ./cmd/agentrun-job -run '^(TestMalformedStreamMarkerEvidenceControls|TestBuiltEntrypointHoldsOriginalWaitAcrossCleanupDeadlines|TestBuiltEntrypointCancelsVendorOnPersistentAppendFailure|TestBuiltEntrypointWaitsForRuntimeWaitOnPersistentAppendFailure)$' > artifacts/agentrun-malformed-marker-fixture/fixture-tests.json",
+              "exit_code": 0
+            },
+            {
+              "cmd": "python3 -c \"import json; rows=[json.loads(x) for x in open('artifacts/agentrun-malformed-marker-fixture/fixture-tests.json') if x.strip()]; required={'TestMalformedStreamMarkerEvidenceControls','TestBuiltEntrypointHoldsOriginalWaitAcrossCleanupDeadlines','TestBuiltEntrypointCancelsVendorOnPersistentAppendFailure','TestBuiltEntrypointWaitsForRuntimeWaitOnPersistentAppendFailure'}; assert {r.get('Test') for r in rows if r.get('Action')=='pass' and r.get('Test') in required}==required; assert not any(r.get('Action') in ('fail','skip') for r in rows)\"",
+              "exit_code": 0
+            },
+            {
+              "cmd": "cp artifacts/agentrun-cancellation-prerequisite/held-wait-process-evidence.jsonl artifacts/agentrun-malformed-marker-fixture/held-wait-focused.jsonl",
+              "exit_code": 0
+            },
+            {
+              "cmd": "cp artifacts/agentrun-malformed-marker-fixture/held-wait-process-evidence.jsonl artifacts/agentrun-malformed-marker-fixture/held-wait-focused.jsonl",
+              "exit_code": 0
+            },
+            {
+              "cmd": "GOTOOLCHAIN=go1.26.0 go test -count=1 -json ./runtime-sdk/... ./internal/agentrun/... ./cmd/agentrun-job/... > artifacts/agentrun-malformed-marker-fixture/uncached-scope-tests.json",
+              "exit_code": 0
+            },
+            {
+              "cmd": "cp artifacts/agentrun-cancellation-prerequisite/held-wait-process-evidence.jsonl artifacts/agentrun-malformed-marker-fixture/held-wait-scope.jsonl",
+              "exit_code": 0
+            },
+            {
+              "cmd": "cp artifacts/agentrun-malformed-marker-fixture/held-wait-process-evidence.jsonl artifacts/agentrun-malformed-marker-fixture/held-wait-scope.jsonl",
+              "exit_code": 0
+            },
+            {
+              "cmd": "GOTOOLCHAIN=go1.26.0 go vet ./runtime-sdk/... ./internal/agentrun/... ./cmd/agentrun-job/...",
+              "exit_code": 0
+            },
+            {
+              "cmd": "GOTOOLCHAIN=go1.26.0 go build ./cmd/agentrun-job/...",
+              "exit_code": 0
+            },
+            {
+              "cmd": "GOTOOLCHAIN=go1.26.0 go test -count=1 ./... > artifacts/agentrun-malformed-marker-fixture/first-full-suite.log 2>&1",
+              "exit_code": 0
+            },
+            {
+              "cmd": "cp artifacts/agentrun-cancellation-prerequisite/held-wait-process-evidence.jsonl artifacts/agentrun-malformed-marker-fixture/held-wait-full-suite.jsonl",
+              "exit_code": 0
+            },
+            {
+              "cmd": "cp artifacts/agentrun-malformed-marker-fixture/held-wait-process-evidence.jsonl artifacts/agentrun-malformed-marker-fixture/held-wait-full-suite.jsonl",
+              "exit_code": 0
+            }
+          ],
+          "metrics": {
+            "unexpected_failed_or_skipped_required_tests": 0,
+            "new_production_fixture_hooks": 0,
+            "minimum_statement_coverage_percent": 90.2
+          },
+          "artifacts": [
+            "artifacts/agentrun-malformed-marker-fixture/diagnosis.md",
+            "artifacts/agentrun-malformed-marker-fixture/fixture-tests.json",
+            "artifacts/agentrun-malformed-marker-fixture/held-wait-focused.jsonl",
+            "artifacts/agentrun-malformed-marker-fixture/held-wait-scope.jsonl",
+            "artifacts/agentrun-malformed-marker-fixture/held-wait-full-suite.jsonl",
+            "artifacts/agentrun-malformed-marker-fixture/held-wait-coverage.jsonl",
+            "artifacts/agentrun-malformed-marker-fixture/snapshot-captures.json",
+            "artifacts/agentrun-malformed-marker-fixture/uncached-scope-tests.json",
+            "artifacts/agentrun-malformed-marker-fixture/first-full-suite.log",
+            "artifacts/agentrun-malformed-marker-fixture/causal-controls.json"
+          ]
+        },
+        {
+          "name": "agentrun-malformed-marker-preserved-release-gate",
+          "source_of_truth": [
+            "docs/design/detailed/06-agent-runtime-detailed-design.md:L38-L175",
+            "docs/design/detailed/06-agent-runtime-detailed-design.md:L305-L451",
+            "docs/references/execution/agent-runtime.md",
+            "docs/references/software-delivery/artifacts-release-and-deployment.md:L138-L209",
+            "five-nodes-recovery-decisions.md"
+          ],
+          "delivery_goal": "Independently reproduce the inherited AgentRun 90-percent, protocol/security and pinned linux/arm64 exact shipped-byte guarantees at this new fixture PR source. This is separate fresh evidence, not replacement of any old publication or reassignment of production/image ownership.",
+          "commands": [
+            {
+              "cmd": "mkdir -p artifacts/agentrun-malformed-marker-fixture/release && GOTOOLCHAIN=go1.26.0 go test -covermode=atomic -coverprofile=artifacts/agentrun-malformed-marker-fixture/release/coverage.out ./internal/agentrun/... ./cmd/agentrun-job/...",
+              "exit_code": 0
+            },
+            {
+              "cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/agentrun-malformed-marker-fixture/release/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+              "exit_code": 0
+            },
+            {
+              "cmd": "cp artifacts/agentrun-malformed-marker-fixture/held-wait-process-evidence.jsonl artifacts/agentrun-malformed-marker-fixture/held-wait-coverage.jsonl",
+              "exit_code": 0
+            },
+            {
+              "cmd": "mkdir -p artifacts/agentrun-malformed-marker-fixture/release && GOTOOLCHAIN=go1.26.0 go test -json ./cmd/agentrun-job/... -run '^(TestProductionStreamJSONAdapterLaunchesConfiguredCommand|TestPublishedRuntimeAdapterContainsNoFixtureHooks|TestStreamJSONRejectsDuplicateAcceptanceAndPostTerminalData|TestStreamJSONCleansUpAcceptanceKindMismatch|TestStreamJSONRejectsForeignSessionEvents)$' -count=1 > artifacts/agentrun-malformed-marker-fixture/release/stream-json-hardening.json",
+              "exit_code": 0
+            },
+            {
+              "cmd": "python3 -c \"import json; required={'TestStreamJSONRejectsDuplicateAcceptanceAndPostTerminalData', 'TestPublishedRuntimeAdapterContainsNoFixtureHooks', 'TestStreamJSONRejectsForeignSessionEvents', 'TestStreamJSONCleansUpAcceptanceKindMismatch', 'TestProductionStreamJSONAdapterLaunchesConfiguredCommand'}; rows=[json.loads(x) for x in open('artifacts/agentrun-malformed-marker-fixture/release/stream-json-hardening.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing required passing stream-json tests: {sorted(required-passed)}'\"",
+              "exit_code": 0
+            },
+            {
+              "cmd": "python3 -c \"from pathlib import Path; roots=[Path('cmd/agentrun-job/vendor'),Path('cmd/agentrun-job/driver.go')]; files=[]; [files.extend(p for p in ([r] if r.is_file() else r.rglob('*')) if p.is_file() and 'testdata' not in p.parts and not p.name.endswith('_test.go')) for r in roots]; forbidden=('AGENTRUN_FIXTURE_MODE','AGENTRUN_FIXTURE_MARKER','AGENTRUN_FIXTURE_PID_FILE','blockForever'); hits=[f'{p}:{token}' for p in files for token in forbidden if token in p.read_text(errors='ignore')]; assert not hits, f'published fixture hooks: {hits}'\"",
+              "exit_code": 0
+            },
+            {
+              "cmd": "test \"$(docker run --rm --platform linux/arm64 golang@sha256:1ee99c345f8179002a0de40728e0eaa8865b81257b3924ef150ee65b3f1d3fc7 go version)\" = \"go version go1.26.0 linux/arm64\"",
+              "exit_code": 0
+            },
+            {
+              "cmd": "python3 cmd/agentrun-job/build_release.py --source-revision HEAD --target linux/arm64 --build-image golang@sha256:1ee99c345f8179002a0de40728e0eaa8865b81257b3924ef150ee65b3f1d3fc7 --vendor-package ./cmd/agentrun-job/vendor --driver-identity cmd/agentrun-job/driver_identity.json --output artifacts/agentrun-malformed-marker-fixture/release --network-policy module-download-only",
+              "exit_code": 0
+            },
+            {
+              "cmd": "python3 -c \"from pathlib import Path; import json; d=json.loads(Path('artifacts/agentrun-malformed-marker-fixture/release/runtime-driver-release-manifest.json').read_text()); assert d['build']=={'image':'golang@sha256:1ee99c345f8179002a0de40728e0eaa8865b81257b3924ef150ee65b3f1d3fc7','go_version':'1.26.0','goos':'linux','goarch':'arm64'}; assert set(d['binaries'])=={'agentrun-job','agentrun-vendor'}; assert d['vendor_source']=='cmd/agentrun-job/vendor' and d['vendor_role']=='stream-json-protocol-adapter' and d['bundled_third_party_runtime_count']==0\"",
+              "exit_code": 0
+            },
+            {
+              "cmd": "python3 cmd/agentrun-job/verify_package.py --package-root artifacts/agentrun-malformed-marker-fixture/release --component-manifest artifacts/agentrun-malformed-marker-fixture/release/component-manifest.json --binaries-manifest artifacts/agentrun-malformed-marker-fixture/release/go-binaries-manifest.json --component-link artifacts/agentrun-malformed-marker-fixture/release/immutable-component-link.json --release-manifest artifacts/agentrun-malformed-marker-fixture/release/runtime-driver-release-manifest.json --driver-identity cmd/agentrun-job/driver_identity.json --expected-target linux/arm64 --expected-build-image golang@sha256:1ee99c345f8179002a0de40728e0eaa8865b81257b3924ef150ee65b3f1d3fc7 --execute-shipped-pair --forbid-build --forbid-fixture-staging --report artifacts/agentrun-malformed-marker-fixture/release/package-verification.json",
+              "exit_code": 0
+            },
+            {
+              "cmd": "python3 -c \"from pathlib import Path; import json; r=json.loads(Path('artifacts/agentrun-malformed-marker-fixture/release/package-verification.json').read_text()); assert r['schema']=='oac.agentrun-package-verification/v1' and r['build_attempted'] is False and r['fixture_staging_attempted'] is False and r['shipped_pair_executed'] is True and r['process_tests_passed'] is True and r['published_fixture_hook_count']==0 and r['external_stream_json_command_executed'] is True and r['native_event_provenance_verified'] is True\"",
+              "exit_code": 0
+            }
+          ],
+          "metrics": {
+            "statement_coverage_percent": 90.2,
+            "declared_artifact_count": 11,
+            "published_fixture_hook_count": 0,
+            "bundled_third_party_runtime_count": 0,
+            "required_stream_json_hardening_test_count": 5,
+            "shipped_pair_execution_count": 1,
+            "external_stream_json_command_execution_count": 1,
+            "native_event_provenance_failure_count": 0
+          },
+          "artifacts": [
+            "artifacts/agentrun-malformed-marker-fixture/release/coverage.out",
+            "artifacts/agentrun-malformed-marker-fixture/release/stream-json-hardening.json",
+            "artifacts/agentrun-malformed-marker-fixture/release/source-bundle.tar.zst",
+            "artifacts/agentrun-malformed-marker-fixture/release/component-manifest.json",
+            "artifacts/agentrun-malformed-marker-fixture/release/agentrun-job",
+            "artifacts/agentrun-malformed-marker-fixture/release/agentrun-vendor",
+            "artifacts/agentrun-malformed-marker-fixture/release/go-binaries-manifest.json",
+            "artifacts/agentrun-malformed-marker-fixture/release/immutable-component-link.json",
+            "artifacts/agentrun-malformed-marker-fixture/release/runtime-driver-release-manifest.json",
+            "artifacts/agentrun-malformed-marker-fixture/release/release-package.tar",
+            "artifacts/agentrun-malformed-marker-fixture/release/package-verification.json"
+          ]
+        },
+        {
+          "name": "agentrun-malformed-marker-source-publication-gate",
+          "source_of_truth": [
+            "docs/design/open-agent-cluster-overview-design.md",
+            "docs/design/detailed/06-agent-runtime-detailed-design.md#8-runtime-sdk-\u8c03\u7528\u4e0e\u5b9e\u65f6\u4e8b\u4ef6\u6d41",
+            "docs/design/detailed/06-agent-runtime-detailed-design.md#10-runtime-sdk-\u4e0e-agent-job-\u63a5\u53e3\u68c0\u67e5",
+            "docs/references/execution/agent-runtime.md#7-runtime-sdk",
+            "docs/references/execution/agent-runtime.md#9-oac-agent-job-\u4e0e-agentrunevent",
+            "docs/references/software-delivery/artifacts-release-and-deployment.md#8-release",
+            "docs/delivery/acceptance-and-validation.md#28-agent-execution-\u4e0e-workspace",
+            "five-nodes-recovery-decisions.md#2-agent-run-job",
+            ".omac/open-agent-cluster.acceptance.yaml:UJ-RUN-001 (trace only; no acceptance ownership migration)",
+            ".omac/open-agent-cluster.yaml:agent-run-job; agentrun-cancellation-prerequisite; runtime-sdk-mcp-launch-compatibility (immutable completed contracts)",
+            ".omac/agentrun-bounded-wait-reviewed-20261001.yaml",
+            ".omac/agentrun-historical-evidence-reviewed-20261001.yaml",
+            ".omac/agentrun-source-binding-sealed-rebase-reviewed-20261002.yaml",
+            ".omac/agentrun-malformed-marker-owner-request-20261003.md",
+            "https://github.com/xiaohei-info/open-agent-cluster/blob/1ebf12d36d29c2a3726257bd03685139f5bc568a/cmd/agentrun-job/main_test.go#L409-L856",
+            "https://github.com/xiaohei-info/open-agent-cluster/blob/1ebf12d36d29c2a3726257bd03685139f5bc568a/cmd/agentrun-job/testdata/vendor/main.go#L210-L217",
+            "Bound input packet /tmp/oac-agentrun-malformed-marker-bound-inputs-20261003/input-index.json and source-index.json; verify every indexed byte/size/SHA256 before use; this packet is input authority, not a new output publication.",
+            "SDK independent report SHA256 2a8b2d912ca95a4b6ba9c832e6018ccc8d722ea1a0b226b5bbd2840054492566 (129691 bytes); ledger SHA256 1d90f40ec2ae024e466d330aab4b1b4085921a3d3ef4dc8600ea4193495cbbde (19794 bytes); NIT-agent-run-job-malformed-marker-timing.",
+            "Audit independent report SHA256 9e44c0ff8a3f7c902c51ff82d3dcb8e1df33b8cd4d8537082e9e6f723848964d (36949 bytes); ledger SHA256 14d7b7f1a0ee46207a6445ee63b0167efb9670eba8bf0b746c51eefb8083ee58 (7524 bytes); separate unrelated current Audit blockers.",
+            "Approved H: AITEAM-1031 comment 01a0f794-0aed-7dc7-aea0-88af97e36814 / amend-c64d7709f7a5. Approved S: comment 01a0f592-f317-7d9f-a49b-43af3fac6b1d / amend-82e0c1a4d969. Neither is a fixture implementation pass."
+          ],
+          "delivery_goal": "Publish a new evidence-index.json and diagnosis.md under the distinct artifacts/agentrun-malformed-marker-fixture namespace with the real PR URL, exact tested code-source commit/tree, final delivery HEAD, source file SHA256/size, environment, every command/exit, every failed/passing attempt and causal control, preserved old report/ledger hashes, and per-claim raw evidence SHA256/size plus retrievable immutable locations. Include the source bundle, release-package, binary/component/link/release manifests and package-only shipped-pair report from the preserved release gate. Use a separate content-addressed evidence publication (for example a separate Git publication commit/blob locations or immutable attachment) after freezing the tested PR HEAD so no artifact must self-name its containing commit. Distinguish evidence-publication commit from tested source and OMAC sealed delivery; do not advance/relabel the tested PR merely to store generated evidence. verify_evidence.py must independently validate index structure, exact source equality to git rev-parse HEAD/tree, all indexed bytes/hashes and immutable retrievability, reject missing/drifted entries and false/missing test/subtest/causal mappings, and verify source/package provenance and preserved production files against the declared pre-fix baseline. A local file path, successful hash of invented output, or old package is not publication or causal proof. Independently retrieve and validate the exact published bytes, not newly regenerated substitutes. Readiness for product review requires both other gates and this gate; closure still requires fresh independent product review and normal merge. No Audit, SDK, full UJ journey, image or DAG completion is inferred.",
+          "commands": [
+            {
+              "cmd": "python3 cmd/agentrun-job/testdata/malformed-marker/verify_evidence.py --index artifacts/agentrun-malformed-marker-fixture/evidence-index.json --expected-source HEAD --require-immutable-publication",
+              "exit_code": 0
+            }
+          ],
+          "metrics": {
+            "source_binding_mismatch_count": 0,
+            "unretrievable_or_hash_mismatched_artifact_count": 0
+          },
+          "artifacts": [
+            "artifacts/agentrun-malformed-marker-fixture/evidence-index.json",
+            "artifacts/agentrun-malformed-marker-fixture/diagnosis.md",
+            "artifacts/agentrun-malformed-marker-fixture/causal-controls.json"
+          ]
+        }
+      ],
+      "pr_base": "main",
+      "coverage": 90.2,
+      "env_setup": [
+        "Native Linux/aarch64 host, linux/arm64 Go toolchain, readable /proc; process controls retain child/parent/owner PID, start tick, PPID, owning-Wait and post-release reaping observations.",
+        "GOTOOLCHAIN=go1.26.0 go version returned go version go1.26.0 linux/arm64. Docker server is 29.2.1 linux/arm64; pinned release image is golang@sha256:1ee99c345f8179002a0de40728e0eaa8865b81257b3924ef150ee65b3f1d3fc7.",
+        "Pre-fix bounded command (expected exit 1): GOTOOLCHAIN=go1.26.0 GOFLAGS=-overlay=artifacts/agentrun-malformed-marker-fixture/before-control/legacy-overlay.json go test -count=1 -json ./cmd/agentrun-job -run '^TestBuiltEntrypointHoldsOriginalWaitAcrossCleanupDeadlines$/^malformed stream$' > artifacts/agentrun-malformed-marker-fixture/before-control/legacy-tests.json; run at reviewed PR90 HEAD 1ebf12d36d29c2a3726257bd03685139f5bc568a after reconstructing the test-only overlay from the published overlay source files and verifying the 88-file input packet.",
+        "After-source bounded command (exit 0): mkdir -p artifacts/agentrun-malformed-marker-fixture && GOTOOLCHAIN=go1.26.0 go test -count=1 -json ./cmd/agentrun-job -run '^(TestMalformedStreamMarkerEvidenceControls|TestBuiltEntrypointHoldsOriginalWaitAcrossCleanupDeadlines|TestBuiltEntrypointCancelsVendorOnPersistentAppendFailure|TestBuiltEntrypointWaitsForRuntimeWaitOnPersistentAppendFailure)$' > artifacts/agentrun-malformed-marker-fixture/fixture-tests.json; exercises the positive malformed-stream and controlled legacy-marker schedules through the built Job chain.",
+        "Evidence-verifier negative controls were run with python3 cmd/agentrun-job/testdata/malformed-marker/test_verify_evidence.py; four tests passed for missing/drifted bytes, false mappings and failed/mismatched immutable retrieval.",
+        "The final source is e9b4440f9c119275ccbacf989087b8b067385ca7 (tree 5e1ed8236e1e4f22058016ebc533e76be019b0c0), PR #96 base main, non-draft. The source was frozen before the separate immutable evidence publication payload commit 5a8285d7c892fd6a930c2929ddb3360440d89586 and index commit c88b12b6faa488262462a5c939759f10b56a7c02.",
+        "Snapshot correction: after each producer, copy artifacts/agentrun-malformed-marker-fixture/held-wait-process-evidence.jsonl to the matching current-namespace snapshot (held-wait-focused.jsonl, held-wait-scope.jsonl, held-wait-full-suite.jsonl, held-wait-coverage.jsonl); snapshot-captures.json records the exact commands, raw/snapshot hashes, and seven-scenario counts.",
+        "Focused and scope Go JSON outputs are chunked; reconstruct the held Wait scenario records by concatenating output chunks per test, then compare canonical JSON records with held-wait-focused.jsonl and held-wait-scope.jsonl. Full-suite and coverage snapshots are copied from the current namespace before any later producer.",
+        "The upstream artifacts/agentrun-cancellation-prerequisite/held-wait-process-evidence.jsonl remains historical input and is not used as current fixture evidence."
+      ]
+    },
+    "verification_ref": {
+      "comment_id": "01a10958-feeb-7c30-9c49-0d3e22fdf89c",
+      "attachment_id": "01a10958-fe9c-7c07-8994-7a36f8d6adc8",
+      "sha256": "e492ed873f91737499d3a083158d07cdcf24e8a0043f9bfc7c9e9319f984e927",
+      "bytes": 34577,
+      "filename": "omac-verification-e492ed873f91.yaml"
+    },
+    "review_verdict": null,
+    "review_comment": null,
+    "machine_feedback": null,
+    "machine_feedback_ref": null,
+    "review_report": null,
+    "review_report_ref": null,
+    "review_subject_digest": null,
+    "review_obligations": [
+      {
+        "obligation_id": "dimension:authority",
+        "category": "dimension",
+        "requirement": "Authoritative inputs and source references"
+      },
+      {
+        "obligation_id": "dimension:structure",
+        "category": "dimension",
+        "requirement": "Structure, schema, dependency, and completeness"
+      },
+      {
+        "obligation_id": "dimension:execution",
+        "category": "dimension",
+        "requirement": "Executable commands and fail-closed verification"
+      },
+      {
+        "obligation_id": "dimension:ownership",
+        "category": "dimension",
+        "requirement": "Ownership, boundaries, and unique write paths"
+      },
+      {
+        "obligation_id": "dimension:evidence",
+        "category": "dimension",
+        "requirement": "Artifact lineage and evidence traceability"
+      },
+      {
+        "obligation_id": "dimension:regression",
+        "category": "dimension",
+        "requirement": "Prior blocker regression and changed-scope review"
+      },
+      {
+        "obligation_id": "integration:agentrun-malformed-marker-causal-fixture-gate",
+        "category": "integration",
+        "requirement": "Independently verify integration gate agentrun-malformed-marker-causal-fixture-gate",
+        "subject": "agentrun-malformed-marker-causal-fixture-gate"
+      },
+      {
+        "obligation_id": "integration:agentrun-malformed-marker-preserved-release-gate",
+        "category": "integration",
+        "requirement": "Independently verify integration gate agentrun-malformed-marker-preserved-release-gate",
+        "subject": "agentrun-malformed-marker-preserved-release-gate"
+      },
+      {
+        "obligation_id": "integration:agentrun-malformed-marker-source-publication-gate",
+        "category": "integration",
+        "requirement": "Independently verify integration gate agentrun-malformed-marker-source-publication-gate",
+        "subject": "agentrun-malformed-marker-source-publication-gate"
+      }
+    ],
+    "review_obligations_ref": {
+      "comment_id": "01a108fd-4f27-7bd1-880e-092b3b4fe8a0",
+      "attachment_id": "01a108fd-4ddf-717a-a26d-93cf69c40b88",
+      "sha256": "4f36d4b9769b03222d4e77130cc2d7bbb64d40b9742754a4fca8a1bb09fc9bbb",
+      "bytes": 1509,
+      "filename": "omac-review-obligations-4f36d4b9769b.yaml"
+    },
+    "review_ledger": {
+      "schema": "omac.review-ledger/v2",
+      "cycles": [
+        {
+          "round": 1,
+          "subject_digest": "dfd8614a1fdc784d054c0272401c964e26fb895be53b13436700dac1b094bd61",
+          "report_digest": "3abe802df62d517f8fda5939c1cf0b0f5a234f16498c790e2f7a4e2d74c92a8b",
+          "verdict": "reject",
+          "obligation_results": {
+            "dimension:authority": "pass",
+            "dimension:structure": "pass",
+            "dimension:execution": "pass",
+            "dimension:ownership": "pass",
+            "dimension:evidence": "fail",
+            "dimension:regression": "pass",
+            "integration:agentrun-malformed-marker-causal-fixture-gate": "fail",
+            "integration:agentrun-malformed-marker-preserved-release-gate": "pass",
+            "integration:agentrun-malformed-marker-source-publication-gate": "fail"
+          },
+          "new_count": 3,
+          "fixed_count": 0,
+          "regressed_count": 0,
+          "unchanged_count": 0,
+          "open_count": 3,
+          "prior_open_blocker_ids": [],
+          "open_blocker_ids": [
+            "BLK-169609a51ab4",
+            "BLK-2ebb49b74749",
+            "BLK-f3b2bdbbff98"
+          ],
+          "reported_blocker_ids": [
+            "BLK-169609a51ab4",
+            "BLK-2ebb49b74749",
+            "BLK-f3b2bdbbff98"
+          ],
+          "blocker_facts_schema": "omac.review-cycle-blocker-facts/v1",
+          "blocker_facts": [
+            {
+              "blocker_id": "BLK-169609a51ab4",
+              "root_cause_key": "nested-held-wait-control-overwrites-sibling-evidence",
+              "obligation_id": "dimension:evidence",
+              "summary": "The nested legacy control still truncates the shared held-Wait evidence and erases the required sibling records.",
+              "evidence": "main_test.go:413-418 writes nil to the fixed artifacts/agentrun-cancellation-prerequisite/held-wait-process-evidence.jsonl on each invocation. TestMalformedStreamMarkerEvidenceControls at main_test.go:918-919 runs TestBuiltEntrypointHoldsOriginalWaitAcrossCleanupDeadlines in a subprocess after the parent invocation. The immutable evidence publication has exactly one JSONL record in each held-wait snapshot, with scenario malformed legacy marker publication window and deadlines_checked_seconds [10]. verify_evidence.py does not parse those snapshots to enforce completeness.",
+              "required_fix": "Give parent and nested invocations independent test-only evidence paths or merge records without truncation. Snapshot every producing command before later invocations, publish all five scenarios with the original deadline assertions, and make the verifier reject missing, duplicate or overwritten sibling records.",
+              "status": "open",
+              "classification": "new",
+              "owner": "codex-ubuntu-newapi"
+            },
+            {
+              "blocker_id": "BLK-2ebb49b74749",
+              "root_cause_key": "missing-built-chain-negative-input-publication-controls",
+              "obligation_id": "integration:agentrun-malformed-marker-causal-fixture-gate",
+              "summary": "Absent/unwritten malformed input and failed marker publication are still not exercised through the real built ownership chain.",
+              "evidence": "main_test.go:883-908 constructs processIdentity and malformedFixtureMarker values in memory for all absent/unwritten/partial-write controls. The only built-chain legacy/positive controls use successful writes. testdata/vendor/main.go:348-350 returns from the write-error branch, but no test selects a deterministic write/publication failure through Job -> driver -> adapter -> Runtime. writeMalformedMarker errors are discarded at lines 342, 354, 364 and 372. test_verify_evidence.py only tests temporary bytes, mappings and mocked retrieval failure.",
+              "required_fix": "Add bounded test-only built-chain schedules for absent/unwritten malformed bytes and failed trigger-marker publication, assert no false trigger or lifecycle completion, retain actual Wait/reaping and terminal facts separately, and preserve the existing decoder/verifier unit controls. Handle fixture publication errors explicitly.",
+              "status": "open",
+              "classification": "new",
+              "owner": "codex-ubuntu-newapi"
+            },
+            {
+              "blocker_id": "BLK-f3b2bdbbff98",
+              "root_cause_key": "published-marker-verifier-does-not-bind-trigger-identity",
+              "obligation_id": "integration:agentrun-malformed-marker-source-publication-gate",
+              "summary": "The Python publication verifier still accepts process records whose markers are not bound to the expected trigger as one causal chain.",
+              "evidence": "verify_evidence.py:320-323 only requires prepared.trigger_id to be non-empty. Its positive branch at 337-339 checks phase/length/signal/process but not marker schema, trigger_id, or equality with prepared.trigger_id. Its legacy branch at 332-335 compares cancellation.trigger_id only to written.trigger_id and does not bind either to prepared.trigger_id or an expected scenario trigger. test_verify_evidence.py has no process-record foreign/mismatched-trigger negative control. The current verifier nevertheless returned 0 after validating 33 immutable artifacts, proving the semantic gap is not caught by the publication check.",
+              "required_fix": "Validate exact marker schemas and expected per-scenario trigger IDs in verify_malformed_process_record, require equality across prepared/write/cancellation/positive records and the expected scenario, and add permanent verifier negative controls for foreign and mismatched trigger records.",
+              "status": "open",
+              "classification": "new",
+              "owner": "codex-ubuntu-newapi"
+            }
+          ]
+        },
+        {
+          "round": 2,
+          "subject_digest": "4ee29d89a2665319a9d0022f490a5c28ea4977a104f36bc7141494158fe0f6b5",
+          "report_digest": "34824cfebae4cfe3cc22e556a6100a9e26fe1761974cefc3218ab1686e6eff33",
+          "verdict": "reject",
+          "obligation_results": {
+            "dimension:authority": "pass",
+            "dimension:structure": "pass",
+            "dimension:execution": "pass",
+            "dimension:ownership": "pass",
+            "dimension:evidence": "pass",
+            "dimension:regression": "pass",
+            "integration:agentrun-malformed-marker-causal-fixture-gate": "fail",
+            "integration:agentrun-malformed-marker-preserved-release-gate": "pass",
+            "integration:agentrun-malformed-marker-source-publication-gate": "pass"
+          },
+          "new_count": 1,
+          "fixed_count": 3,
+          "regressed_count": 0,
+          "unchanged_count": 0,
+          "open_count": 1,
+          "prior_open_blocker_ids": [
+            "BLK-169609a51ab4",
+            "BLK-2ebb49b74749",
+            "BLK-f3b2bdbbff98"
+          ],
+          "open_blocker_ids": [
+            "BLK-0675c00874c5"
+          ],
+          "reported_blocker_ids": [
+            "BLK-0675c00874c5"
+          ],
+          "blocker_facts_schema": "omac.review-cycle-blocker-facts/v1",
+          "blocker_facts": [
+            {
+              "blocker_id": "BLK-0675c00874c5",
+              "root_cause_key": "held-wait-snapshot-commands-read-obsolete-historical-path",
+              "obligation_id": "integration:agentrun-malformed-marker-causal-fixture-gate",
+              "summary": "The declared snapshot recipe is no longer connected to the current test output; independent reproduction copies stale historical four-scenario evidence instead of seven current scenarios.",
+              "evidence": "main_test.go:413-415 writes artifacts/agentrun-malformed-marker-fixture/held-wait-process-evidence.jsonl. Contract commands 4, 6 and 10 and published diagnosis.md:49,51,55 instead copy artifacts/agentrun-cancellation-prerequisite/held-wait-process-evidence.jsonl. Independent focused/scope JSON streams show all seven scenarios; the exact copy products each have only startup without acceptance, malformed stream, persistent append failure and runtime timeout. Full-suite copy likewise has four. Those copied bytes equal the retained historical file (2745 bytes, SHA256 8957ee77a264b913a588c8fe8fb079d3ca0b897349bb131727ba786865a1f948). Published snapshots have seven, so they require an unrecorded corrective capture step; verify_evidence.py:459-465 rejects four-scenario snapshots and :643-645 requires focused snapshot/log equality.",
+              "required_fix": "Preserve the new namespace and historical files. Explicitly record in env_setup and command/exit inventory the corrected snapshot captures from artifacts/agentrun-malformed-marker-fixture/held-wait-process-evidence.jsonl immediately after each producing command (including coverage); do not silently attribute those bytes to the obsolete cp commands. Regenerate/retain source-bound snapshots and publication using that declared recipe, and independently demonstrate all seven current records plus focused-log equality without restoring author bytes over failed fresh snapshots. Retain this failed reproduction evidence; no fixture/lifecycle deadline relaxation or historical artifact overwrite.",
+              "status": "open",
+              "classification": "new",
+              "owner": "codex-ubuntu-newapi"
+            },
+            {
+              "blocker_id": "BLK-169609a51ab4",
+              "root_cause_key": "nested-held-wait-control-overwrites-sibling-evidence",
+              "obligation_id": "dimension:evidence",
+              "summary": "The nested legacy control still truncates the shared held-Wait evidence and erases the required sibling records.",
+              "evidence": "main_test.go:413-418 writes nil to the fixed artifacts/agentrun-cancellation-prerequisite/held-wait-process-evidence.jsonl on each invocation. TestMalformedStreamMarkerEvidenceControls at main_test.go:918-919 runs TestBuiltEntrypointHoldsOriginalWaitAcrossCleanupDeadlines in a subprocess after the parent invocation. The immutable evidence publication has exactly one JSONL record in each held-wait snapshot, with scenario malformed legacy marker publication window and deadlines_checked_seconds [10]. verify_evidence.py does not parse those snapshots to enforce completeness.",
+              "required_fix": "Give parent and nested invocations independent test-only evidence paths or merge records without truncation. Snapshot every producing command before later invocations, publish all five scenarios with the original deadline assertions, and make the verifier reject missing, duplicate or overwritten sibling records.",
+              "status": "fixed",
+              "classification": "fixed",
+              "last_evidence": "main_test.go:413-420 now writes the distinct malformed-marker namespace; main_test.go:1027-1029 gives nested legacy invocation an isolated evidence path. Fresh focused/scope logs contain seven unique sibling records; final live test output and all four published snapshots contain seven. The old nested truncation root is fixed; a distinct stale snapshot-command root is reported as new.",
+              "owner": "codex-ubuntu-newapi"
+            },
+            {
+              "blocker_id": "BLK-2ebb49b74749",
+              "root_cause_key": "missing-built-chain-negative-input-publication-controls",
+              "obligation_id": "integration:agentrun-malformed-marker-causal-fixture-gate",
+              "summary": "Absent/unwritten malformed input and failed marker publication are still not exercised through the real built ownership chain.",
+              "evidence": "main_test.go:883-908 constructs processIdentity and malformedFixtureMarker values in memory for all absent/unwritten/partial-write controls. The only built-chain legacy/positive controls use successful writes. testdata/vendor/main.go:348-350 returns from the write-error branch, but no test selects a deterministic write/publication failure through Job -> driver -> adapter -> Runtime. writeMalformedMarker errors are discarded at lines 342, 354, 364 and 372. test_verify_evidence.py only tests temporary bytes, mappings and mocked retrieval failure.",
+              "required_fix": "Add bounded test-only built-chain schedules for absent/unwritten malformed bytes and failed trigger-marker publication, assert no false trigger or lifecycle completion, retain actual Wait/reaping and terminal facts separately, and preserve the existing decoder/verifier unit controls. Handle fixture publication errors explicitly.",
+              "status": "fixed",
+              "classification": "fixed",
+              "last_evidence": "main_test.go:440-446 includes built-chain unwritten input and trigger-publication-failure schedules. Both subtests independently pass in focused/scope suites; wait/reaping, no pre-release terminal/completion and absent false trigger assertions run. testdata/vendor/main.go:371-450 explicitly reports publication failures and atomically publishes marker records.",
+              "owner": "codex-ubuntu-newapi"
+            },
+            {
+              "blocker_id": "BLK-f3b2bdbbff98",
+              "root_cause_key": "published-marker-verifier-does-not-bind-trigger-identity",
+              "obligation_id": "integration:agentrun-malformed-marker-source-publication-gate",
+              "summary": "The Python publication verifier still accepts process records whose markers are not bound to the expected trigger as one causal chain.",
+              "evidence": "verify_evidence.py:320-323 only requires prepared.trigger_id to be non-empty. Its positive branch at 337-339 checks phase/length/signal/process but not marker schema, trigger_id, or equality with prepared.trigger_id. Its legacy branch at 332-335 compares cancellation.trigger_id only to written.trigger_id and does not bind either to prepared.trigger_id or an expected scenario trigger. test_verify_evidence.py has no process-record foreign/mismatched-trigger negative control. The current verifier nevertheless returned 0 after validating 33 immutable artifacts, proving the semantic gap is not caught by the publication check.",
+              "required_fix": "Validate exact marker schemas and expected per-scenario trigger IDs in verify_malformed_process_record, require equality across prepared/write/cancellation/positive records and the expected scenario, and add permanent verifier negative controls for foreign and mismatched trigger records.",
+              "status": "fixed",
+              "classification": "fixed",
+              "last_evidence": "verify_evidence.py:358-441 validates exact schema, expected per-scenario trigger and equal prepared/write/cancellation/trigger/failure process bindings. test_verify_evidence.py:146-176 adds permanent foreign/mismatched trigger controls; all eight Python tests and immutable verifier independently pass.",
+              "owner": "codex-ubuntu-newapi"
+            }
+          ]
+        }
+      ],
+      "blockers": [
+        {
+          "blocker_id": "BLK-0675c00874c5",
+          "root_cause_key": "held-wait-snapshot-commands-read-obsolete-historical-path",
+          "obligation_id": "integration:agentrun-malformed-marker-causal-fixture-gate",
+          "summary": "The declared snapshot recipe is no longer connected to the current test output; independent reproduction copies stale historical four-scenario evidence instead of seven current scenarios.",
+          "evidence": "main_test.go:413-415 writes artifacts/agentrun-malformed-marker-fixture/held-wait-process-evidence.jsonl. Contract commands 4, 6 and 10 and published diagnosis.md:49,51,55 instead copy artifacts/agentrun-cancellation-prerequisite/held-wait-process-evidence.jsonl. Independent focused/scope JSON streams show all seven scenarios; the exact copy products each have only startup without acceptance, malformed stream, persistent append failure and runtime timeout. Full-suite copy likewise has four. Those copied bytes equal the retained historical file (2745 bytes, SHA256 8957ee77a264b913a588c8fe8fb079d3ca0b897349bb131727ba786865a1f948). Published snapshots have seven, so they require an unrecorded corrective capture step; verify_evidence.py:459-465 rejects four-scenario snapshots and :643-645 requires focused snapshot/log equality.",
+          "required_fix": "Preserve the new namespace and historical files. Explicitly record in env_setup and command/exit inventory the corrected snapshot captures from artifacts/agentrun-malformed-marker-fixture/held-wait-process-evidence.jsonl immediately after each producing command (including coverage); do not silently attribute those bytes to the obsolete cp commands. Regenerate/retain source-bound snapshots and publication using that declared recipe, and independently demonstrate all seven current records plus focused-log equality without restoring author bytes over failed fresh snapshots. Retain this failed reproduction evidence; no fixture/lifecycle deadline relaxation or historical artifact overwrite.",
+          "status": "open",
+          "classification": "new",
+          "owner": "codex-ubuntu-newapi",
+          "first_seen_round": 2,
+          "last_seen_round": 2,
+          "seen_count": 1
+        },
+        {
+          "blocker_id": "BLK-169609a51ab4",
+          "root_cause_key": "nested-held-wait-control-overwrites-sibling-evidence",
+          "obligation_id": "dimension:evidence",
+          "summary": "The nested legacy control still truncates the shared held-Wait evidence and erases the required sibling records.",
+          "evidence": "main_test.go:413-418 writes nil to the fixed artifacts/agentrun-cancellation-prerequisite/held-wait-process-evidence.jsonl on each invocation. TestMalformedStreamMarkerEvidenceControls at main_test.go:918-919 runs TestBuiltEntrypointHoldsOriginalWaitAcrossCleanupDeadlines in a subprocess after the parent invocation. The immutable evidence publication has exactly one JSONL record in each held-wait snapshot, with scenario malformed legacy marker publication window and deadlines_checked_seconds [10]. verify_evidence.py does not parse those snapshots to enforce completeness.",
+          "required_fix": "Give parent and nested invocations independent test-only evidence paths or merge records without truncation. Snapshot every producing command before later invocations, publish all five scenarios with the original deadline assertions, and make the verifier reject missing, duplicate or overwritten sibling records.",
+          "status": "fixed",
+          "classification": "fixed",
+          "owner": "codex-ubuntu-newapi",
+          "first_seen_round": 1,
+          "last_seen_round": 2,
+          "seen_count": 1,
+          "last_evidence": "main_test.go:413-420 now writes the distinct malformed-marker namespace; main_test.go:1027-1029 gives nested legacy invocation an isolated evidence path. Fresh focused/scope logs contain seven unique sibling records; final live test output and all four published snapshots contain seven. The old nested truncation root is fixed; a distinct stale snapshot-command root is reported as new."
+        },
+        {
+          "blocker_id": "BLK-2ebb49b74749",
+          "root_cause_key": "missing-built-chain-negative-input-publication-controls",
+          "obligation_id": "integration:agentrun-malformed-marker-causal-fixture-gate",
+          "summary": "Absent/unwritten malformed input and failed marker publication are still not exercised through the real built ownership chain.",
+          "evidence": "main_test.go:883-908 constructs processIdentity and malformedFixtureMarker values in memory for all absent/unwritten/partial-write controls. The only built-chain legacy/positive controls use successful writes. testdata/vendor/main.go:348-350 returns from the write-error branch, but no test selects a deterministic write/publication failure through Job -> driver -> adapter -> Runtime. writeMalformedMarker errors are discarded at lines 342, 354, 364 and 372. test_verify_evidence.py only tests temporary bytes, mappings and mocked retrieval failure.",
+          "required_fix": "Add bounded test-only built-chain schedules for absent/unwritten malformed bytes and failed trigger-marker publication, assert no false trigger or lifecycle completion, retain actual Wait/reaping and terminal facts separately, and preserve the existing decoder/verifier unit controls. Handle fixture publication errors explicitly.",
+          "status": "fixed",
+          "classification": "fixed",
+          "owner": "codex-ubuntu-newapi",
+          "first_seen_round": 1,
+          "last_seen_round": 2,
+          "seen_count": 1,
+          "last_evidence": "main_test.go:440-446 includes built-chain unwritten input and trigger-publication-failure schedules. Both subtests independently pass in focused/scope suites; wait/reaping, no pre-release terminal/completion and absent false trigger assertions run. testdata/vendor/main.go:371-450 explicitly reports publication failures and atomically publishes marker records."
+        },
+        {
+          "blocker_id": "BLK-f3b2bdbbff98",
+          "root_cause_key": "published-marker-verifier-does-not-bind-trigger-identity",
+          "obligation_id": "integration:agentrun-malformed-marker-source-publication-gate",
+          "summary": "The Python publication verifier still accepts process records whose markers are not bound to the expected trigger as one causal chain.",
+          "evidence": "verify_evidence.py:320-323 only requires prepared.trigger_id to be non-empty. Its positive branch at 337-339 checks phase/length/signal/process but not marker schema, trigger_id, or equality with prepared.trigger_id. Its legacy branch at 332-335 compares cancellation.trigger_id only to written.trigger_id and does not bind either to prepared.trigger_id or an expected scenario trigger. test_verify_evidence.py has no process-record foreign/mismatched-trigger negative control. The current verifier nevertheless returned 0 after validating 33 immutable artifacts, proving the semantic gap is not caught by the publication check.",
+          "required_fix": "Validate exact marker schemas and expected per-scenario trigger IDs in verify_malformed_process_record, require equality across prepared/write/cancellation/positive records and the expected scenario, and add permanent verifier negative controls for foreign and mismatched trigger records.",
+          "status": "fixed",
+          "classification": "fixed",
+          "owner": "codex-ubuntu-newapi",
+          "first_seen_round": 1,
+          "last_seen_round": 2,
+          "seen_count": 1,
+          "last_evidence": "verify_evidence.py:358-441 validates exact schema, expected per-scenario trigger and equal prepared/write/cancellation/trigger/failure process bindings. test_verify_evidence.py:146-176 adds permanent foreign/mismatched trigger controls; all eight Python tests and immutable verifier independently pass."
+        }
+      ]
+    },
+    "review_ledger_ref": {
+      "comment_id": "01a10918-3609-7eb5-980c-8e4e9fb748de",
+      "attachment_id": "01a10918-359c-7c06-ae43-af0da99f00e9",
+      "sha256": "5a97fe34cfd53318ef030c3fb0d07e63f874afe779cfe0dc4bf52957d3afbb1d",
+      "bytes": 20989,
+      "filename": "omac-review-ledger-5a97fe34cfd5.yaml"
+    },
+    "review_generation": null,
+    "review_ledger_generation": null,
+    "review_continuation": null,
+    "reviewer_run_baseline": null,
+    "worker_handoff": {
+      "schema": "omac.worker-handoff/v1",
+      "state": "pending",
+      "target_worker": "codex-ubuntu-newapi",
+      "gate": "review",
+      "source_review_subject_digest": "4ee29d89a2665319a9d0022f490a5c28ea4977a104f36bc7141494158fe0f6b5",
+      "source_review_round": 2,
+      "source_review_verdict": "reject",
+      "source_review_feedback": {
+        "schema": "omac.worker-rework-feedback/v1",
+        "verdict": "reject",
+        "report_ref": {
+          "comment_id": "01a10918-32dd-7a3e-9b23-70b293d9dd15",
+          "attachment_id": "01a10918-3275-7498-b16e-cb1258b2edf6",
+          "sha256": "cbaf163d01aca43f131837e584ee7643e722b05b6c74332eb5a3ccf9abc14d7f",
+          "bytes": 44266,
+          "filename": "omac-review-report-cbaf163d01ac.yaml"
+        },
+        "ledger_ref": {
+          "comment_id": "01a10918-3609-7eb5-980c-8e4e9fb748de",
+          "attachment_id": "01a10918-359c-7c06-ae43-af0da99f00e9",
+          "sha256": "5a97fe34cfd53318ef030c3fb0d07e63f874afe779cfe0dc4bf52957d3afbb1d",
+          "bytes": 20989,
+          "filename": "omac-review-ledger-5a97fe34cfd5.yaml"
+        },
+        "blockers": [
+          {
+            "root_cause_key": "held-wait-snapshot-commands-read-obsolete-historical-path",
+            "summary": "The declared snapshot recipe is no longer connected to the current test output; independent reproduction copies stale historical four-scenario evidence instead of seven current scenarios.",
+            "required_fix": "Preserve the new namespace and historical files. Explicitly record in env_setup and command/exit inventory the corrected snapshot captures from artifacts/agentrun-malformed-marker-fixture/held-wait-process-evidence.jsonl immediately after each producing co"
+          }
+        ]
+      },
+      "review_context_binding": {
+        "generation": null,
+        "contract_sha256": "fe2a443210fadb2a0c7b937fc749b972498a651324c357084f6417601f1a0486"
+      },
+      "target_review_bounce": 2,
+      "generation": "handoff-cd1fea99efb03d54",
+      "target_agent_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "baseline_direct_run_ids": [
+        "01a10302-b1ea-7970-8032-f14181019a43",
+        "01a103aa-61f1-7828-bf87-6bb4361a4c6a",
+        "01a1086b-04be-7287-916f-fe5e12e9b6b1",
+        "01a108a4-c8d4-7c52-9fe3-b9d4b7b012b3",
+        "01a108fd-ea65-779d-a8a3-73fbd8f7f71d",
+        "01a10919-1da8-7eb9-9c2c-8b65ce12bd98",
+        "01a1091e-ff94-7ec0-8bbc-8d52fe3a7c28",
+        "01a10938-fa95-7c11-8807-d311592e9f9e",
+        "01a1093e-c3d2-7c43-8b01-38f64054cbff",
+        "01a10949-0a44-7761-a183-6d1ced5c4398",
+        "01a1094b-2361-77af-b13d-b8a76953aa17",
+        "01a1094d-041e-7cea-aea9-5a8a5c934083",
+        "01a1094f-142f-774f-9409-fc3d76fc2468",
+        "01a10951-e8e5-7f19-a944-0c14a68628f1",
+        "01a10954-194d-7ae5-870c-27a71cac9103",
+        "01a10956-5361-72dd-a2c5-88ad8f14a1ec"
+      ],
+      "baseline_cutoff_created_at": null,
+      "baseline_verification_attachment_id": "01a10956-dab1-7e72-abfe-207e76b2e0d1",
+      "baseline_pr_head_sha": "e9b4440f9c119275ccbacf989087b8b067385ca7",
+      "target_run_id": "01a10958-3483-750c-8635-a3d8373bd57a",
+      "target_worker_bounce": 11,
+      "terminal_observed_at": "2026-10-04T23:57:23.733109+00:00",
+      "authoring_recovery": null
+    },
+    "delivery_identity": null,
+    "decision_required": null,
+    "amendment_attempt": null,
+    "contract": {
+      "objective": "Deliver a deterministic, source-proven repair of NIT-agent-run-job-malformed-marker-timing in the non-release AgentRun malformed-stream fixture and its evidence assertions, with permanent positive/negative regression controls, preserved H/S lifecycle and release guarantees, and an independently reviewable main-based PR plus exact-source publication.",
+      "non_goals": [
+        "Only repair and independently prove the non-release malformed-stream fixture/evidence boundary in cmd/agentrun-job tests and testdata. Primary scope cmd/agentrun-job/** does not authorize released production edits: cmd/agentrun-job/vendor non-test sources, driver.go, main.go, transport.go, adapters.go, mcp.go and driver_identity.json remain unchanged, as do internal/agentrun production code and runtime-sdk. Test-only supporting changes must be causally necessary and explained. If a real production/lifecycle or external-environment defect must change this boundary, preserve evidence and stop for an explicit owner decision; do not hide it with a fixture adjustment.",
+        "Do not prescribe the hypothesized marker-before-cancellation fix as an established cause. Prove a reproducible source/fixture mechanism before correcting it. A marker being present is not proof malformed bytes were written, consumed or rejected, and a prepared marker must not be mislabeled emitted. A fixture remedy must retain the real built Job -> linked driver -> adapter -> configured Runtime path and independently distinguish triggering evidence from Wait, reaping and terminal facts.",
+        "Do not skip, quarantine, delete, soften or enlarge existing deadlines/assertions, add sleeps/retries to obtain green, select only successful attempts, or treat an unchanged-tree pass as closure. Preserve the original eight-second malformed-marker observation and ten-second process-disappearance obligation. New deterministic schedule/negative controls are test-only; a bounded predeclared control run is not repeat-until-green authorization. Record any unexpected failure and block closure pending diagnosis.",
+        "Preserve approved H and S, original rejected verdicts and all failed/passing evidence. The original AITEAM-820 cancellation cause remains unknown; the numeric PID was recorded but its start identity/PPID/state/owning-Wait were not established. New PID/start/PPID/state/Wait before/after observations are prospective only. Do not reopen completed agent-run-job, agentrun-cancellation-prerequisite, runtime-sdk or SDK repair, invent new H/S approval needs, or represent this fixture follow-up as historical reconstruction.",
+        "Preserve the original owning Wait and held-Wait 5/10/20/30-second evidence: five-second TERM grace then escalation, ten-second observation, twenty-second SDK cancellation channel-close deadline and thirty-second runner drain where applicable. Keep startup/no-acceptance, malformed-stream, persistent-append and timeout siblings, post-Wait nonclosing Events/Result unknown/no-completion behavior, one bounded redacted diagnostic and bounded fixture teardown. An actually pending Wait retains its owner; never kill the adapter just to discard the Runtime Wait, return early, fabricate reaping or promise finite OS completion. A test-held Wait proves the safety rule, not an unkillable kernel process. Owner loss preserves Unknown/observe-before-retry/new-AgentRun semantics and existing availability/residual-access risks.",
+        "Preserve actual cancellation propagation, process exit AND single-owner reaping, PID-reuse/zombie/probe-error/live-child controls, bounded pipes/drain/backpressure, exactly one Execute/stream, unchanged SDK event identity, terminal/clean EOF ordering and critical-tail persistence. Persistent append failure must never call CompleteAgentRun. No synthetic terminal/result or marker is a lifecycle unlock.",
+        "Do not place fixture mode/marker/PID hooks, blockForever, test-selected behavior or synthetic vendor events into released source or packages. Keep test instrumentation outside production; the published pair must use the unchanged real stream-json adapter and exact external executable/ordered arguments with no PATH/environment reselection or bundled third-party Runtime.",
+        "Do not modify Audit/Usage, Harness SDK, Platform Snapshot/Artifact work, image assembly, source ownership catalogs, canonical schemas, product designs, go.mod/go.sum, shared release tooling, .omac live manifest/config, completed node objects, runtime fields, retry/coverage/security budgets or retained approved baselines. Do not broaden privileges, install a supervisor/reaper/daemon, change host/cluster policy, require new deployment capabilities, or delegate to the OMAC fixer.",
+        "Do not claim product PASS/merge/done from amendment review or policy approval. This owner must deliver a real non-draft PR based on main, source-bound retrievable artifacts, fresh independent product review and normal merge. Preserve all previous publications; new evidence must not overwrite canonical artifacts of agent-run-job or agentrun-cancellation-prerequisite."
+      ],
+      "verification_commands": [
+        "GOTOOLCHAIN=go1.26.0 go version",
+        "mkdir -p artifacts/agentrun-malformed-marker-fixture && GOTOOLCHAIN=go1.26.0 go test -count=1 -json ./cmd/agentrun-job -run '^(TestMalformedStreamMarkerEvidenceControls|TestBuiltEntrypointHoldsOriginalWaitAcrossCleanupDeadlines|TestBuiltEntrypointCancelsVendorOnPersistentAppendFailure|TestBuiltEntrypointWaitsForRuntimeWaitOnPersistentAppendFailure)$' > artifacts/agentrun-malformed-marker-fixture/fixture-tests.json",
+        "python3 -c \"import json; rows=[json.loads(x) for x in open('artifacts/agentrun-malformed-marker-fixture/fixture-tests.json') if x.strip()]; required={'TestMalformedStreamMarkerEvidenceControls','TestBuiltEntrypointHoldsOriginalWaitAcrossCleanupDeadlines','TestBuiltEntrypointCancelsVendorOnPersistentAppendFailure','TestBuiltEntrypointWaitsForRuntimeWaitOnPersistentAppendFailure'}; assert {r.get('Test') for r in rows if r.get('Action')=='pass' and r.get('Test') in required}==required; assert not any(r.get('Action') in ('fail','skip') for r in rows)\"",
+        "cp artifacts/agentrun-cancellation-prerequisite/held-wait-process-evidence.jsonl artifacts/agentrun-malformed-marker-fixture/held-wait-focused.jsonl",
+        "GOTOOLCHAIN=go1.26.0 go test -count=1 -json ./runtime-sdk/... ./internal/agentrun/... ./cmd/agentrun-job/... > artifacts/agentrun-malformed-marker-fixture/uncached-scope-tests.json",
+        "cp artifacts/agentrun-cancellation-prerequisite/held-wait-process-evidence.jsonl artifacts/agentrun-malformed-marker-fixture/held-wait-scope.jsonl",
+        "GOTOOLCHAIN=go1.26.0 go vet ./runtime-sdk/... ./internal/agentrun/... ./cmd/agentrun-job/...",
+        "GOTOOLCHAIN=go1.26.0 go build ./cmd/agentrun-job/...",
+        "GOTOOLCHAIN=go1.26.0 go test -count=1 ./... > artifacts/agentrun-malformed-marker-fixture/first-full-suite.log 2>&1",
+        "cp artifacts/agentrun-cancellation-prerequisite/held-wait-process-evidence.jsonl artifacts/agentrun-malformed-marker-fixture/held-wait-full-suite.jsonl",
+        "mkdir -p artifacts/agentrun-malformed-marker-fixture/release && GOTOOLCHAIN=go1.26.0 go test -covermode=atomic -coverprofile=artifacts/agentrun-malformed-marker-fixture/release/coverage.out ./internal/agentrun/... ./cmd/agentrun-job/...",
+        "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/agentrun-malformed-marker-fixture/release/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+        "mkdir -p artifacts/agentrun-malformed-marker-fixture/release && GOTOOLCHAIN=go1.26.0 go test -json ./cmd/agentrun-job/... -run '^(TestProductionStreamJSONAdapterLaunchesConfiguredCommand|TestPublishedRuntimeAdapterContainsNoFixtureHooks|TestStreamJSONRejectsDuplicateAcceptanceAndPostTerminalData|TestStreamJSONCleansUpAcceptanceKindMismatch|TestStreamJSONRejectsForeignSessionEvents)$' -count=1 > artifacts/agentrun-malformed-marker-fixture/release/stream-json-hardening.json",
+        "python3 -c \"import json; required={'TestStreamJSONRejectsDuplicateAcceptanceAndPostTerminalData', 'TestPublishedRuntimeAdapterContainsNoFixtureHooks', 'TestStreamJSONRejectsForeignSessionEvents', 'TestStreamJSONCleansUpAcceptanceKindMismatch', 'TestProductionStreamJSONAdapterLaunchesConfiguredCommand'}; rows=[json.loads(x) for x in open('artifacts/agentrun-malformed-marker-fixture/release/stream-json-hardening.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing required passing stream-json tests: {sorted(required-passed)}'\"",
+        "python3 -c \"from pathlib import Path; roots=[Path('cmd/agentrun-job/vendor'),Path('cmd/agentrun-job/driver.go')]; files=[]; [files.extend(p for p in ([r] if r.is_file() else r.rglob('*')) if p.is_file() and 'testdata' not in p.parts and not p.name.endswith('_test.go')) for r in roots]; forbidden=('AGENTRUN_FIXTURE_MODE','AGENTRUN_FIXTURE_MARKER','AGENTRUN_FIXTURE_PID_FILE','blockForever'); hits=[f'{p}:{token}' for p in files for token in forbidden if token in p.read_text(errors='ignore')]; assert not hits, f'published fixture hooks: {hits}'\"",
+        "test \"$(docker run --rm --platform linux/arm64 golang@sha256:1ee99c345f8179002a0de40728e0eaa8865b81257b3924ef150ee65b3f1d3fc7 go version)\" = \"go version go1.26.0 linux/arm64\"",
+        "python3 cmd/agentrun-job/build_release.py --source-revision HEAD --target linux/arm64 --build-image golang@sha256:1ee99c345f8179002a0de40728e0eaa8865b81257b3924ef150ee65b3f1d3fc7 --vendor-package ./cmd/agentrun-job/vendor --driver-identity cmd/agentrun-job/driver_identity.json --output artifacts/agentrun-malformed-marker-fixture/release --network-policy module-download-only",
+        "python3 -c \"from pathlib import Path; import json; d=json.loads(Path('artifacts/agentrun-malformed-marker-fixture/release/runtime-driver-release-manifest.json').read_text()); assert d['build']=={'image':'golang@sha256:1ee99c345f8179002a0de40728e0eaa8865b81257b3924ef150ee65b3f1d3fc7','go_version':'1.26.0','goos':'linux','goarch':'arm64'}; assert set(d['binaries'])=={'agentrun-job','agentrun-vendor'}; assert d['vendor_source']=='cmd/agentrun-job/vendor' and d['vendor_role']=='stream-json-protocol-adapter' and d['bundled_third_party_runtime_count']==0\"",
+        "python3 cmd/agentrun-job/verify_package.py --package-root artifacts/agentrun-malformed-marker-fixture/release --component-manifest artifacts/agentrun-malformed-marker-fixture/release/component-manifest.json --binaries-manifest artifacts/agentrun-malformed-marker-fixture/release/go-binaries-manifest.json --component-link artifacts/agentrun-malformed-marker-fixture/release/immutable-component-link.json --release-manifest artifacts/agentrun-malformed-marker-fixture/release/runtime-driver-release-manifest.json --driver-identity cmd/agentrun-job/driver_identity.json --expected-target linux/arm64 --expected-build-image golang@sha256:1ee99c345f8179002a0de40728e0eaa8865b81257b3924ef150ee65b3f1d3fc7 --execute-shipped-pair --forbid-build --forbid-fixture-staging --report artifacts/agentrun-malformed-marker-fixture/release/package-verification.json",
+        "python3 -c \"from pathlib import Path; import json; r=json.loads(Path('artifacts/agentrun-malformed-marker-fixture/release/package-verification.json').read_text()); assert r['schema']=='oac.agentrun-package-verification/v1' and r['build_attempted'] is False and r['fixture_staging_attempted'] is False and r['shipped_pair_executed'] is True and r['process_tests_passed'] is True and r['published_fixture_hook_count']==0 and r['external_stream_json_command_executed'] is True and r['native_event_provenance_verified'] is True\"",
+        "python3 cmd/agentrun-job/testdata/malformed-marker/verify_evidence.py --index artifacts/agentrun-malformed-marker-fixture/evidence-index.json --expected-source HEAD --require-immutable-publication"
+      ],
+      "integration_gates": [
+        {
+          "name": "agentrun-malformed-marker-causal-fixture-gate",
+          "layer": "L1",
+          "delivery_goal": "Worker must implement the new TestMalformedStreamMarkerEvidenceControls and testdata/malformed-marker/verify_evidence.py verification entry points in this PR; they are required deliverables, not existing APIs. First bind reviewed PR90 HEAD 1ebf12d36d29c2a3726257bd03685139f5bc568a and the indexed source blobs to the observed first failure and later pass without inventing the original schedule. Establish a controlled failing-before/passing-after fixture regression (with immutable before/after source SHA/tree, any test-only overlay digest, exact commands and exits) through the actual built ownership chain. Controls must cover valid malformed input with deterministic evidence, absent/unwritten input and failed evidence publication rejected rather than a false pass, rapid cancellation around the observation boundary, and genuine pending/live child versus reaped child. Do not fix production or prescribe marker reordering without causal proof. The new test must detect the old defect under a declared bounded deterministic schedule, and reject markers unbound to the current process/trigger. Independently retain all existing held-original-Wait sibling controls, 5/10/20/30-second assertions, channel-close unknown/no-completion, one redacted diagnostic, PID/start/PPID/state/Wait identity and bounded teardown. Preserve the old H prospective regression and unknown historical cause; rerun its actual built-chain assertions on the new source. Use native Linux with /proc and Go1.26.0 for process evidence; record architecture, compiler and reaper conditions. First full uncached unfiltered suite result at final source must be retained even if it fails; no repeat-until-green. Every required top-level test and its required subtests must run/pass with no skips. Snapshot test-generated held-wait evidence after each producing command before a later test overwrites the default scratch file; never run in the retained historical evidence directory. Reviewer independently reruns all these declared commands and the exact bounded before/after/control commands recorded in env_setup, verifying actual assertions rather than file existence.",
+          "source_of_truth": [
+            "docs/design/open-agent-cluster-overview-design.md",
+            "docs/design/detailed/06-agent-runtime-detailed-design.md#8-runtime-sdk-\u8c03\u7528\u4e0e\u5b9e\u65f6\u4e8b\u4ef6\u6d41",
+            "docs/design/detailed/06-agent-runtime-detailed-design.md#10-runtime-sdk-\u4e0e-agent-job-\u63a5\u53e3\u68c0\u67e5",
+            "docs/references/execution/agent-runtime.md#7-runtime-sdk",
+            "docs/references/execution/agent-runtime.md#9-oac-agent-job-\u4e0e-agentrunevent",
+            "docs/references/software-delivery/artifacts-release-and-deployment.md#8-release",
+            "docs/delivery/acceptance-and-validation.md#28-agent-execution-\u4e0e-workspace",
+            "five-nodes-recovery-decisions.md#2-agent-run-job",
+            ".omac/open-agent-cluster.acceptance.yaml:UJ-RUN-001 (trace only; no acceptance ownership migration)",
+            ".omac/open-agent-cluster.yaml:agent-run-job; agentrun-cancellation-prerequisite; runtime-sdk-mcp-launch-compatibility (immutable completed contracts)",
+            ".omac/agentrun-bounded-wait-reviewed-20261001.yaml",
+            ".omac/agentrun-historical-evidence-reviewed-20261001.yaml",
+            ".omac/agentrun-source-binding-sealed-rebase-reviewed-20261002.yaml",
+            ".omac/agentrun-malformed-marker-owner-request-20261003.md",
+            "https://github.com/xiaohei-info/open-agent-cluster/blob/1ebf12d36d29c2a3726257bd03685139f5bc568a/cmd/agentrun-job/main_test.go#L409-L856",
+            "https://github.com/xiaohei-info/open-agent-cluster/blob/1ebf12d36d29c2a3726257bd03685139f5bc568a/cmd/agentrun-job/testdata/vendor/main.go#L210-L217",
+            "Bound input packet /tmp/oac-agentrun-malformed-marker-bound-inputs-20261003/input-index.json and source-index.json; verify every indexed byte/size/SHA256 before use; this packet is input authority, not a new output publication.",
+            "SDK independent report SHA256 2a8b2d912ca95a4b6ba9c832e6018ccc8d722ea1a0b226b5bbd2840054492566 (129691 bytes); ledger SHA256 1d90f40ec2ae024e466d330aab4b1b4085921a3d3ef4dc8600ea4193495cbbde (19794 bytes); NIT-agent-run-job-malformed-marker-timing.",
+            "Audit independent report SHA256 9e44c0ff8a3f7c902c51ff82d3dcb8e1df33b8cd4d8537082e9e6f723848964d (36949 bytes); ledger SHA256 14d7b7f1a0ee46207a6445ee63b0167efb9670eba8bf0b746c51eefb8083ee58 (7524 bytes); separate unrelated current Audit blockers.",
+            "Approved H: AITEAM-1031 comment 01a0f794-0aed-7dc7-aea0-88af97e36814 / amend-c64d7709f7a5. Approved S: comment 01a0f592-f317-7d9f-a49b-43af3fac6b1d / amend-82e0c1a4d969. Neither is a fixture implementation pass."
+          ],
+          "covers": [
+            "agentrun-malformed-marker-fixture"
+          ],
+          "acceptance_refs": [
+            "UJ-RUN-001"
+          ],
+          "commands": [
+            "GOTOOLCHAIN=go1.26.0 go version",
+            "mkdir -p artifacts/agentrun-malformed-marker-fixture && GOTOOLCHAIN=go1.26.0 go test -count=1 -json ./cmd/agentrun-job -run '^(TestMalformedStreamMarkerEvidenceControls|TestBuiltEntrypointHoldsOriginalWaitAcrossCleanupDeadlines|TestBuiltEntrypointCancelsVendorOnPersistentAppendFailure|TestBuiltEntrypointWaitsForRuntimeWaitOnPersistentAppendFailure)$' > artifacts/agentrun-malformed-marker-fixture/fixture-tests.json",
+            "python3 -c \"import json; rows=[json.loads(x) for x in open('artifacts/agentrun-malformed-marker-fixture/fixture-tests.json') if x.strip()]; required={'TestMalformedStreamMarkerEvidenceControls','TestBuiltEntrypointHoldsOriginalWaitAcrossCleanupDeadlines','TestBuiltEntrypointCancelsVendorOnPersistentAppendFailure','TestBuiltEntrypointWaitsForRuntimeWaitOnPersistentAppendFailure'}; assert {r.get('Test') for r in rows if r.get('Action')=='pass' and r.get('Test') in required}==required; assert not any(r.get('Action') in ('fail','skip') for r in rows)\"",
+            "cp artifacts/agentrun-cancellation-prerequisite/held-wait-process-evidence.jsonl artifacts/agentrun-malformed-marker-fixture/held-wait-focused.jsonl",
+            "GOTOOLCHAIN=go1.26.0 go test -count=1 -json ./runtime-sdk/... ./internal/agentrun/... ./cmd/agentrun-job/... > artifacts/agentrun-malformed-marker-fixture/uncached-scope-tests.json",
+            "cp artifacts/agentrun-cancellation-prerequisite/held-wait-process-evidence.jsonl artifacts/agentrun-malformed-marker-fixture/held-wait-scope.jsonl",
+            "GOTOOLCHAIN=go1.26.0 go vet ./runtime-sdk/... ./internal/agentrun/... ./cmd/agentrun-job/...",
+            "GOTOOLCHAIN=go1.26.0 go build ./cmd/agentrun-job/...",
+            "GOTOOLCHAIN=go1.26.0 go test -count=1 ./... > artifacts/agentrun-malformed-marker-fixture/first-full-suite.log 2>&1",
+            "cp artifacts/agentrun-cancellation-prerequisite/held-wait-process-evidence.jsonl artifacts/agentrun-malformed-marker-fixture/held-wait-full-suite.jsonl"
+          ],
+          "artifacts": [
+            "artifacts/agentrun-malformed-marker-fixture/diagnosis.md",
+            "artifacts/agentrun-malformed-marker-fixture/fixture-tests.json",
+            "artifacts/agentrun-malformed-marker-fixture/held-wait-focused.jsonl",
+            "artifacts/agentrun-malformed-marker-fixture/held-wait-scope.jsonl",
+            "artifacts/agentrun-malformed-marker-fixture/held-wait-full-suite.jsonl",
+            "artifacts/agentrun-malformed-marker-fixture/uncached-scope-tests.json",
+            "artifacts/agentrun-malformed-marker-fixture/first-full-suite.log",
+            "artifacts/agentrun-malformed-marker-fixture/causal-controls.json"
+          ],
+          "required_metrics": {
+            "unexpected_failed_or_skipped_required_tests": 0,
+            "new_production_fixture_hooks": 0,
+            "minimum_statement_coverage_percent": 90
+          }
+        },
+        {
+          "name": "agentrun-malformed-marker-preserved-release-gate",
+          "layer": "L1",
+          "source_of_truth": [
+            "docs/design/detailed/06-agent-runtime-detailed-design.md:L38-L175",
+            "docs/design/detailed/06-agent-runtime-detailed-design.md:L305-L451",
+            "docs/references/execution/agent-runtime.md",
+            "docs/references/software-delivery/artifacts-release-and-deployment.md:L138-L209",
+            "five-nodes-recovery-decisions.md"
+          ],
+          "delivery_goal": "Independently reproduce the inherited AgentRun 90-percent, protocol/security and pinned linux/arm64 exact shipped-byte guarantees at this new fixture PR source. This is separate fresh evidence, not replacement of any old publication or reassignment of production/image ownership.",
+          "covers": [
+            "agentrun-malformed-marker-fixture"
+          ],
+          "acceptance_refs": [
+            "UJ-RUN-001"
+          ],
+          "commands": [
+            "mkdir -p artifacts/agentrun-malformed-marker-fixture/release && GOTOOLCHAIN=go1.26.0 go test -covermode=atomic -coverprofile=artifacts/agentrun-malformed-marker-fixture/release/coverage.out ./internal/agentrun/... ./cmd/agentrun-job/...",
+            "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/agentrun-malformed-marker-fixture/release/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+            "mkdir -p artifacts/agentrun-malformed-marker-fixture/release && GOTOOLCHAIN=go1.26.0 go test -json ./cmd/agentrun-job/... -run '^(TestProductionStreamJSONAdapterLaunchesConfiguredCommand|TestPublishedRuntimeAdapterContainsNoFixtureHooks|TestStreamJSONRejectsDuplicateAcceptanceAndPostTerminalData|TestStreamJSONCleansUpAcceptanceKindMismatch|TestStreamJSONRejectsForeignSessionEvents)$' -count=1 > artifacts/agentrun-malformed-marker-fixture/release/stream-json-hardening.json",
+            "python3 -c \"import json; required={'TestStreamJSONRejectsDuplicateAcceptanceAndPostTerminalData', 'TestPublishedRuntimeAdapterContainsNoFixtureHooks', 'TestStreamJSONRejectsForeignSessionEvents', 'TestStreamJSONCleansUpAcceptanceKindMismatch', 'TestProductionStreamJSONAdapterLaunchesConfiguredCommand'}; rows=[json.loads(x) for x in open('artifacts/agentrun-malformed-marker-fixture/release/stream-json-hardening.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing required passing stream-json tests: {sorted(required-passed)}'\"",
+            "python3 -c \"from pathlib import Path; roots=[Path('cmd/agentrun-job/vendor'),Path('cmd/agentrun-job/driver.go')]; files=[]; [files.extend(p for p in ([r] if r.is_file() else r.rglob('*')) if p.is_file() and 'testdata' not in p.parts and not p.name.endswith('_test.go')) for r in roots]; forbidden=('AGENTRUN_FIXTURE_MODE','AGENTRUN_FIXTURE_MARKER','AGENTRUN_FIXTURE_PID_FILE','blockForever'); hits=[f'{p}:{token}' for p in files for token in forbidden if token in p.read_text(errors='ignore')]; assert not hits, f'published fixture hooks: {hits}'\"",
+            "test \"$(docker run --rm --platform linux/arm64 golang@sha256:1ee99c345f8179002a0de40728e0eaa8865b81257b3924ef150ee65b3f1d3fc7 go version)\" = \"go version go1.26.0 linux/arm64\"",
+            "python3 cmd/agentrun-job/build_release.py --source-revision HEAD --target linux/arm64 --build-image golang@sha256:1ee99c345f8179002a0de40728e0eaa8865b81257b3924ef150ee65b3f1d3fc7 --vendor-package ./cmd/agentrun-job/vendor --driver-identity cmd/agentrun-job/driver_identity.json --output artifacts/agentrun-malformed-marker-fixture/release --network-policy module-download-only",
+            "python3 -c \"from pathlib import Path; import json; d=json.loads(Path('artifacts/agentrun-malformed-marker-fixture/release/runtime-driver-release-manifest.json').read_text()); assert d['build']=={'image':'golang@sha256:1ee99c345f8179002a0de40728e0eaa8865b81257b3924ef150ee65b3f1d3fc7','go_version':'1.26.0','goos':'linux','goarch':'arm64'}; assert set(d['binaries'])=={'agentrun-job','agentrun-vendor'}; assert d['vendor_source']=='cmd/agentrun-job/vendor' and d['vendor_role']=='stream-json-protocol-adapter' and d['bundled_third_party_runtime_count']==0\"",
+            "python3 cmd/agentrun-job/verify_package.py --package-root artifacts/agentrun-malformed-marker-fixture/release --component-manifest artifacts/agentrun-malformed-marker-fixture/release/component-manifest.json --binaries-manifest artifacts/agentrun-malformed-marker-fixture/release/go-binaries-manifest.json --component-link artifacts/agentrun-malformed-marker-fixture/release/immutable-component-link.json --release-manifest artifacts/agentrun-malformed-marker-fixture/release/runtime-driver-release-manifest.json --driver-identity cmd/agentrun-job/driver_identity.json --expected-target linux/arm64 --expected-build-image golang@sha256:1ee99c345f8179002a0de40728e0eaa8865b81257b3924ef150ee65b3f1d3fc7 --execute-shipped-pair --forbid-build --forbid-fixture-staging --report artifacts/agentrun-malformed-marker-fixture/release/package-verification.json",
+            "python3 -c \"from pathlib import Path; import json; r=json.loads(Path('artifacts/agentrun-malformed-marker-fixture/release/package-verification.json').read_text()); assert r['schema']=='oac.agentrun-package-verification/v1' and r['build_attempted'] is False and r['fixture_staging_attempted'] is False and r['shipped_pair_executed'] is True and r['process_tests_passed'] is True and r['published_fixture_hook_count']==0 and r['external_stream_json_command_executed'] is True and r['native_event_provenance_verified'] is True\""
+          ],
+          "required_metrics": {
+            "statement_coverage_percent": 90,
+            "declared_artifact_count": 11,
+            "published_fixture_hook_count": 0,
+            "bundled_third_party_runtime_count": 0,
+            "required_stream_json_hardening_test_count": 5,
+            "shipped_pair_execution_count": 1,
+            "external_stream_json_command_execution_count": 1,
+            "native_event_provenance_failure_count": 0
+          },
+          "artifacts": [
+            "artifacts/agentrun-malformed-marker-fixture/release/coverage.out",
+            "artifacts/agentrun-malformed-marker-fixture/release/stream-json-hardening.json",
+            "artifacts/agentrun-malformed-marker-fixture/release/source-bundle.tar.zst",
+            "artifacts/agentrun-malformed-marker-fixture/release/component-manifest.json",
+            "artifacts/agentrun-malformed-marker-fixture/release/agentrun-job",
+            "artifacts/agentrun-malformed-marker-fixture/release/agentrun-vendor",
+            "artifacts/agentrun-malformed-marker-fixture/release/go-binaries-manifest.json",
+            "artifacts/agentrun-malformed-marker-fixture/release/immutable-component-link.json",
+            "artifacts/agentrun-malformed-marker-fixture/release/runtime-driver-release-manifest.json",
+            "artifacts/agentrun-malformed-marker-fixture/release/release-package.tar",
+            "artifacts/agentrun-malformed-marker-fixture/release/package-verification.json"
+          ]
+        },
+        {
+          "name": "agentrun-malformed-marker-source-publication-gate",
+          "layer": "L1",
+          "delivery_goal": "Publish a new evidence-index.json and diagnosis.md under the distinct artifacts/agentrun-malformed-marker-fixture namespace with the real PR URL, exact tested code-source commit/tree, final delivery HEAD, source file SHA256/size, environment, every command/exit, every failed/passing attempt and causal control, preserved old report/ledger hashes, and per-claim raw evidence SHA256/size plus retrievable immutable locations. Include the source bundle, release-package, binary/component/link/release manifests and package-only shipped-pair report from the preserved release gate. Use a separate content-addressed evidence publication (for example a separate Git publication commit/blob locations or immutable attachment) after freezing the tested PR HEAD so no artifact must self-name its containing commit. Distinguish evidence-publication commit from tested source and OMAC sealed delivery; do not advance/relabel the tested PR merely to store generated evidence. verify_evidence.py must independently validate index structure, exact source equality to git rev-parse HEAD/tree, all indexed bytes/hashes and immutable retrievability, reject missing/drifted entries and false/missing test/subtest/causal mappings, and verify source/package provenance and preserved production files against the declared pre-fix baseline. A local file path, successful hash of invented output, or old package is not publication or causal proof. Independently retrieve and validate the exact published bytes, not newly regenerated substitutes. Readiness for product review requires both other gates and this gate; closure still requires fresh independent product review and normal merge. No Audit, SDK, full UJ journey, image or DAG completion is inferred.",
+          "source_of_truth": [
+            "docs/design/open-agent-cluster-overview-design.md",
+            "docs/design/detailed/06-agent-runtime-detailed-design.md#8-runtime-sdk-\u8c03\u7528\u4e0e\u5b9e\u65f6\u4e8b\u4ef6\u6d41",
+            "docs/design/detailed/06-agent-runtime-detailed-design.md#10-runtime-sdk-\u4e0e-agent-job-\u63a5\u53e3\u68c0\u67e5",
+            "docs/references/execution/agent-runtime.md#7-runtime-sdk",
+            "docs/references/execution/agent-runtime.md#9-oac-agent-job-\u4e0e-agentrunevent",
+            "docs/references/software-delivery/artifacts-release-and-deployment.md#8-release",
+            "docs/delivery/acceptance-and-validation.md#28-agent-execution-\u4e0e-workspace",
+            "five-nodes-recovery-decisions.md#2-agent-run-job",
+            ".omac/open-agent-cluster.acceptance.yaml:UJ-RUN-001 (trace only; no acceptance ownership migration)",
+            ".omac/open-agent-cluster.yaml:agent-run-job; agentrun-cancellation-prerequisite; runtime-sdk-mcp-launch-compatibility (immutable completed contracts)",
+            ".omac/agentrun-bounded-wait-reviewed-20261001.yaml",
+            ".omac/agentrun-historical-evidence-reviewed-20261001.yaml",
+            ".omac/agentrun-source-binding-sealed-rebase-reviewed-20261002.yaml",
+            ".omac/agentrun-malformed-marker-owner-request-20261003.md",
+            "https://github.com/xiaohei-info/open-agent-cluster/blob/1ebf12d36d29c2a3726257bd03685139f5bc568a/cmd/agentrun-job/main_test.go#L409-L856",
+            "https://github.com/xiaohei-info/open-agent-cluster/blob/1ebf12d36d29c2a3726257bd03685139f5bc568a/cmd/agentrun-job/testdata/vendor/main.go#L210-L217",
+            "Bound input packet /tmp/oac-agentrun-malformed-marker-bound-inputs-20261003/input-index.json and source-index.json; verify every indexed byte/size/SHA256 before use; this packet is input authority, not a new output publication.",
+            "SDK independent report SHA256 2a8b2d912ca95a4b6ba9c832e6018ccc8d722ea1a0b226b5bbd2840054492566 (129691 bytes); ledger SHA256 1d90f40ec2ae024e466d330aab4b1b4085921a3d3ef4dc8600ea4193495cbbde (19794 bytes); NIT-agent-run-job-malformed-marker-timing.",
+            "Audit independent report SHA256 9e44c0ff8a3f7c902c51ff82d3dcb8e1df33b8cd4d8537082e9e6f723848964d (36949 bytes); ledger SHA256 14d7b7f1a0ee46207a6445ee63b0167efb9670eba8bf0b746c51eefb8083ee58 (7524 bytes); separate unrelated current Audit blockers.",
+            "Approved H: AITEAM-1031 comment 01a0f794-0aed-7dc7-aea0-88af97e36814 / amend-c64d7709f7a5. Approved S: comment 01a0f592-f317-7d9f-a49b-43af3fac6b1d / amend-82e0c1a4d969. Neither is a fixture implementation pass."
+          ],
+          "covers": [
+            "agentrun-malformed-marker-fixture"
+          ],
+          "acceptance_refs": [
+            "UJ-RUN-001"
+          ],
+          "commands": [
+            "python3 cmd/agentrun-job/testdata/malformed-marker/verify_evidence.py --index artifacts/agentrun-malformed-marker-fixture/evidence-index.json --expected-source HEAD --require-immutable-publication"
+          ],
+          "artifacts": [
+            "artifacts/agentrun-malformed-marker-fixture/evidence-index.json",
+            "artifacts/agentrun-malformed-marker-fixture/diagnosis.md",
+            "artifacts/agentrun-malformed-marker-fixture/causal-controls.json"
+          ],
+          "required_metrics": {
+            "source_binding_mismatch_count": 0,
+            "unretrievable_or_hash_mismatched_artifact_count": 0
+          }
+        }
+      ],
+      "pr_base": "main",
+      "acceptance_refs": [
+        "UJ-RUN-001"
+      ],
+      "source_of_truth": [
+        "docs/design/open-agent-cluster-overview-design.md",
+        "docs/design/detailed/06-agent-runtime-detailed-design.md#8-runtime-sdk-\u8c03\u7528\u4e0e\u5b9e\u65f6\u4e8b\u4ef6\u6d41",
+        "docs/design/detailed/06-agent-runtime-detailed-design.md#10-runtime-sdk-\u4e0e-agent-job-\u63a5\u53e3\u68c0\u67e5",
+        "docs/references/execution/agent-runtime.md#7-runtime-sdk",
+        "docs/references/execution/agent-runtime.md#9-oac-agent-job-\u4e0e-agentrunevent",
+        "docs/references/software-delivery/artifacts-release-and-deployment.md#8-release",
+        "docs/delivery/acceptance-and-validation.md#28-agent-execution-\u4e0e-workspace",
+        "five-nodes-recovery-decisions.md#2-agent-run-job",
+        ".omac/open-agent-cluster.acceptance.yaml:UJ-RUN-001 (trace only; no acceptance ownership migration)",
+        ".omac/open-agent-cluster.yaml:agent-run-job; agentrun-cancellation-prerequisite; runtime-sdk-mcp-launch-compatibility (immutable completed contracts)",
+        ".omac/agentrun-bounded-wait-reviewed-20261001.yaml",
+        ".omac/agentrun-historical-evidence-reviewed-20261001.yaml",
+        ".omac/agentrun-source-binding-sealed-rebase-reviewed-20261002.yaml",
+        ".omac/agentrun-malformed-marker-owner-request-20261003.md",
+        "https://github.com/xiaohei-info/open-agent-cluster/blob/1ebf12d36d29c2a3726257bd03685139f5bc568a/cmd/agentrun-job/main_test.go#L409-L856",
+        "https://github.com/xiaohei-info/open-agent-cluster/blob/1ebf12d36d29c2a3726257bd03685139f5bc568a/cmd/agentrun-job/testdata/vendor/main.go#L210-L217",
+        "Bound input packet /tmp/oac-agentrun-malformed-marker-bound-inputs-20261003/input-index.json and source-index.json; verify every indexed byte/size/SHA256 before use; this packet is input authority, not a new output publication.",
+        "SDK independent report SHA256 2a8b2d912ca95a4b6ba9c832e6018ccc8d722ea1a0b226b5bbd2840054492566 (129691 bytes); ledger SHA256 1d90f40ec2ae024e466d330aab4b1b4085921a3d3ef4dc8600ea4193495cbbde (19794 bytes); NIT-agent-run-job-malformed-marker-timing.",
+        "Audit independent report SHA256 9e44c0ff8a3f7c902c51ff82d3dcb8e1df33b8cd4d8537082e9e6f723848964d (36949 bytes); ledger SHA256 14d7b7f1a0ee46207a6445ee63b0167efb9670eba8bf0b746c51eefb8083ee58 (7524 bytes); separate unrelated current Audit blockers.",
+        "Approved H: AITEAM-1031 comment 01a0f794-0aed-7dc7-aea0-88af97e36814 / amend-c64d7709f7a5. Approved S: comment 01a0f592-f317-7d9f-a49b-43af3fac6b1d / amend-82e0c1a4d969. Neither is a fixture implementation pass."
+      ],
+      "required_contracts": [
+        "docs/references/execution/agent-runtime.md",
+        "docs/references/workflow/workflow-and-execution.md",
+        "five-nodes-recovery-decisions.md"
+      ],
+      "scope_paths": [
+        "cmd/agentrun-job/**"
+      ],
+      "evidence_mode": "fixture",
+      "produces": [
+        {
+          "artifact_id": "agentrun-malformed-marker-fixture-evidence"
+        }
+      ]
+    },
+    "contract_ref": {
+      "comment_id": "01a10302-3414-78f9-b304-2bdcdc5b98e8",
+      "attachment_id": "01a10302-3300-7df4-98a9-0ec3fc195b2c",
+      "sha256": "6af6cac52a7f65352a9b608f973c62afdfc78e58e0b8fa0ae7dddfcf097d1fbd",
+      "bytes": 34409,
+      "filename": "omac-contract-6af6cac52a7f.yaml"
+    },
+    "source_refs": [
+      {
+        "issue_id": "289a13bf-cede-4b5b-ba86-d72f0bef8164",
+        "label": "\u8bbe\u8ba1\u65b9\u6848"
+      },
+      {
+        "issue_id": "8e6bd282-6039-41d2-aa00-969a0bf1554a",
+        "label": "\u9a8c\u6536\u6587\u6863"
+      },
+      {
+        "issue_id": "33999d9a-0535-4e13-8926-111e57ce5fe5",
+        "label": "\u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Implement AgentRun Job event and result pipeline"
+      },
+      {
+        "issue_id": "01a0f396-a507-7db4-b0f2-39dc38aa6dce",
+        "label": "\u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Resolve the retained AgentRun cancellation prerequisite with owner diagnosis and verified remedy"
+      }
+    ],
+    "kind": "develop",
+    "phase": "authoring",
+    "bounces": {
+      "worker": 11,
+      "ci": 0,
+      "review": 2,
+      "merge": 0
+    },
+    "bounce_baseline": null,
+    "deliverable": null,
+    "deliverable_ref": null,
+    "project_rules": null,
+    "project_rules_ref": null,
+    "agent_run_finished_without_submit": false,
+    "agent_run_failed": false,
+    "created_at": "2026-10-03T18:23:49Z",
+    "updated_at": "2026-10-04T23:57:26Z",
+    "platform_assignee_id": null,
+    "unknown_persisted_fields": {},
+    "review_nits_acceptance": null
+  },
+  "runs": [
+    {
+      "id": "01a10958-3483-750c-8635-a3d8373bd57a",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "created_at": "2026-10-04T23:55:37Z",
+      "updated_at": "2026-10-04T23:56:37Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "01a10956-5361-72dd-a2c5-88ad8f14a1ec",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "created_at": "2026-10-04T23:53:34Z",
+      "updated_at": "2026-10-04T23:54:17Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "01a10954-194d-7ae5-870c-27a71cac9103",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "created_at": "2026-10-04T23:51:08Z",
+      "updated_at": "2026-10-04T23:52:08Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "01a10951-e8e5-7f19-a944-0c14a68628f1",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "created_at": "2026-10-04T23:48:45Z",
+      "updated_at": "2026-10-04T23:49:46Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "01a1094f-142f-774f-9409-fc3d76fc2468",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "created_at": "2026-10-04T23:45:39Z",
+      "updated_at": "2026-10-04T23:46:30Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "01a1094d-041e-7cea-aea9-5a8a5c934083",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "created_at": "2026-10-04T23:43:24Z",
+      "updated_at": "2026-10-04T23:44:19Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "01a1094b-2361-77af-b13d-b8a76953aa17",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "created_at": "2026-10-04T23:41:21Z",
+      "updated_at": "2026-10-04T23:42:16Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "01a10949-0a44-7761-a183-6d1ced5c4398",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "created_at": "2026-10-04T23:39:04Z",
+      "updated_at": "2026-10-04T23:40:13Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "01a1093e-c3d2-7c43-8b01-38f64054cbff",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "created_at": "2026-10-04T23:27:50Z",
+      "updated_at": "2026-10-04T23:37:50Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "01a10938-fa95-7c11-8807-d311592e9f9e",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "created_at": "2026-10-04T23:21:31Z",
+      "updated_at": "2026-10-04T23:26:29Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "01a1091e-ff94-7ec0-8bbc-8d52fe3a7c28",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "created_at": "2026-10-04T22:53:08Z",
+      "updated_at": "2026-10-04T23:00:27Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "01a10919-1da8-7eb9-9c2c-8b65ce12bd98",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "created_at": "2026-10-04T22:46:43Z",
+      "updated_at": "2026-10-04T22:51:44Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "01a108fd-ea65-779d-a8a3-73fbd8f7f71d",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+      "created_at": "2026-10-04T22:17:00Z",
+      "updated_at": "2026-10-04T22:45:55Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "01a108a4-c8d4-7c52-9fe3-b9d4b7b012b3",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "created_at": "2026-10-04T20:39:39Z",
+      "updated_at": "2026-10-04T22:15:38Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "01a1086b-04be-7287-916f-fe5e12e9b6b1",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+      "created_at": "2026-10-04T19:36:33Z",
+      "updated_at": "2026-10-04T20:16:11Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "01a103aa-61f1-7828-bf87-6bb4361a4c6a",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+      "created_at": "2026-10-03T21:27:40Z",
+      "updated_at": "2026-10-03T21:56:03Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "01a10302-b1ea-7970-8032-f14181019a43",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "created_at": "2026-10-03T18:24:30Z",
+      "updated_at": "2026-10-03T21:26:21Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    }
+  ],
+  "effective_absolute_relative_budget": {
+    "work_item_id": "01a10302-109c-7097-b200-4dd71a531aba",
+    "contract_sha256": "fe2a443210fadb2a0c7b937fc749b972498a651324c357084f6417601f1a0486",
+    "absolute": {
+      "worker": 11,
+      "review": 2,
+      "merge": 0,
+      "ci": 0
+    },
+    "native_baseline": null,
+    "effective_baseline": {
+      "merge": 0,
+      "review": 0,
+      "worker": 0
+    },
+    "consumed": {
+      "merge": 0,
+      "review": 2,
+      "worker": 11
+    },
+    "authority_source": "implicit-zero",
+    "authority": null
+  },
+  "budget_validation_error": null
+}

@@ -1,0 +1,576 @@
+{
+  "delivery": {
+    "base": "main",
+    "draft": false,
+    "final_delivery_head": "e9b4440f9c119275ccbacf989087b8b067385ca7",
+    "head": "e9b4440f9c119275ccbacf989087b8b067385ca7",
+    "pr_url": "https://github.com/xiaohei-info/open-agent-cluster/pull/96",
+    "state": "OPEN",
+    "tree": "5e1ed8236e1e4f22058016ebc533e76be019b0c0"
+  },
+  "evidence_artifacts": [
+    {
+      "bytes": 1209,
+      "path": "artifacts/agentrun-malformed-marker-fixture/attempts/source-0bbeed0b8a3f2086/attempt.json",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/attempts/source-0bbeed0b8a3f2086/attempt.json",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/attempts/source-0bbeed0b8a3f2086/attempt.json"
+      },
+      "sha256": "30aa66efa2c34fe81b8691ed1fa9cb38859eaf3492181c385e25aed2c5d7352d"
+    },
+    {
+      "bytes": 5935,
+      "path": "artifacts/agentrun-malformed-marker-fixture/attempts/source-0bbeed0b8a3f2086/full-suite.log",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/attempts/source-0bbeed0b8a3f2086/full-suite.log",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/attempts/source-0bbeed0b8a3f2086/full-suite.log"
+      },
+      "sha256": "11e135a45f03aab6a2e19ebfdcfed3b9b87ca148e9ca367e0985faae15d45e6f"
+    },
+    {
+      "bytes": 1505,
+      "path": "artifacts/agentrun-malformed-marker-fixture/attempts/source-4ec04ccd/focused-failure/attempt.json",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/attempts/source-4ec04ccd/focused-failure/attempt.json",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/attempts/source-4ec04ccd/focused-failure/attempt.json"
+      },
+      "sha256": "bd37464290697b8861083c57bad4633c0b8e3138054a8e48de458ba207d7c92d"
+    },
+    {
+      "bytes": 58717,
+      "path": "artifacts/agentrun-malformed-marker-fixture/attempts/source-4ec04ccd/focused-failure/fixture-tests.json",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/attempts/source-4ec04ccd/focused-failure/fixture-tests.json",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/attempts/source-4ec04ccd/focused-failure/fixture-tests.json"
+      },
+      "sha256": "1c4f0900c8f2b609c80e2434f341952c6e0b1f1621a5abaf892027065f0cf626"
+    },
+    {
+      "bytes": 14037,
+      "path": "artifacts/agentrun-malformed-marker-fixture/attempts/source-4ec04ccd/focused-failure/partial-held-wait-process-evidence.jsonl",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/attempts/source-4ec04ccd/focused-failure/partial-held-wait-process-evidence.jsonl",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/attempts/source-4ec04ccd/focused-failure/partial-held-wait-process-evidence.jsonl"
+      },
+      "sha256": "c3c4aa46a3007eeea40e421636c75d19d94c114fb63d01fe583d1510333e4fed"
+    },
+    {
+      "bytes": 914,
+      "path": "artifacts/agentrun-malformed-marker-fixture/attempts/source-c106fbf63/attempt.json",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/attempts/source-c106fbf63/attempt.json",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/attempts/source-c106fbf63/attempt.json"
+      },
+      "sha256": "1d17a159e59097ac2ddc339d2646c3143e0e752c6f3d02da60c069b71097a2d5"
+    },
+    {
+      "bytes": 4474,
+      "path": "artifacts/agentrun-malformed-marker-fixture/attempts/source-c106fbf63/full-suite.log",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/attempts/source-c106fbf63/full-suite.log",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/attempts/source-c106fbf63/full-suite.log"
+      },
+      "sha256": "64db9acfe106af945769c73f266d1739d2f35fc04e86dfdc46dbc499777ab2c2"
+    },
+    {
+      "bytes": 1135,
+      "path": "artifacts/agentrun-malformed-marker-fixture/attempts/source-f0263abee/hardening-assertion-before-producer-finish.json",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/attempts/source-f0263abee/hardening-assertion-before-producer-finish.json",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/attempts/source-f0263abee/hardening-assertion-before-producer-finish.json"
+      },
+      "sha256": "10d6f7953e403e4853cd0f2e20239e3310bd129d7f06566cdd13a1ecd600013f"
+    },
+    {
+      "bytes": 847,
+      "path": "artifacts/agentrun-malformed-marker-fixture/attempts/source-f0263abee/unwritten-selective-attempt.json",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/attempts/source-f0263abee/unwritten-selective-attempt.json",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/attempts/source-f0263abee/unwritten-selective-attempt.json"
+      },
+      "sha256": "807854b7887b809e714ca163175c2fae1cbf705a2057629db853f53b0e4dbeab"
+    },
+    {
+      "bytes": 2508,
+      "path": "artifacts/agentrun-malformed-marker-fixture/attempts/source-f0263abee/unwritten-selective.jsonl",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/attempts/source-f0263abee/unwritten-selective.jsonl",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/attempts/source-f0263abee/unwritten-selective.jsonl"
+      },
+      "sha256": "9ce7ac3649612539234d11cd14c1d46fa334f7830ab0ce97a9bda8c01e41c915"
+    },
+    {
+      "bytes": 5566,
+      "path": "artifacts/agentrun-malformed-marker-fixture/attempts/source-f0263abee/unwritten-selective.log",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/attempts/source-f0263abee/unwritten-selective.log",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/attempts/source-f0263abee/unwritten-selective.log"
+      },
+      "sha256": "8b86139bd13a2e252c996caca0d8b4430b5b5fdd42f7ae48f19dd6b11c22ba8b"
+    },
+    {
+      "bytes": 3936,
+      "path": "artifacts/agentrun-malformed-marker-fixture/before-control/legacy-control.json",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/before-control/legacy-control.json",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/before-control/legacy-control.json"
+      },
+      "sha256": "b84084288147e541d9e6e328e059fcd7fc7bd591f132fd9016d17b26c425defa"
+    },
+    {
+      "bytes": 14746,
+      "path": "artifacts/agentrun-malformed-marker-fixture/before-control/legacy-fixture-overlay.go.txt",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/before-control/legacy-fixture-overlay.go.txt",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/before-control/legacy-fixture-overlay.go.txt"
+      },
+      "sha256": "2fa49c01de7e58b6dc5d062d3b0512037898748f221c06c305f0aff7a045834f"
+    },
+    {
+      "bytes": 57063,
+      "path": "artifacts/agentrun-malformed-marker-fixture/before-control/legacy-test-overlay.go.txt",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/before-control/legacy-test-overlay.go.txt",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/before-control/legacy-test-overlay.go.txt"
+      },
+      "sha256": "1d09330e709a2fbf92542dbcc55aa53de53c5ec1a4876819248db2b1aaabc240"
+    },
+    {
+      "bytes": 3075,
+      "path": "artifacts/agentrun-malformed-marker-fixture/before-control/legacy-tests.json",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/before-control/legacy-tests.json",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/before-control/legacy-tests.json"
+      },
+      "sha256": "d148a066f68f4c47e84ee7e7d0c023907eb6c8fd257effa9f73ee3b36a9222b7"
+    },
+    {
+      "bytes": 209,
+      "path": "artifacts/agentrun-malformed-marker-fixture/before-control/runtime.json",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/before-control/runtime.json",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/before-control/runtime.json"
+      },
+      "sha256": "0cad78c0265a8724bbdc37811c2ced71d13c26e333334c977d6e2e7289cd1501"
+    },
+    {
+      "bytes": 14,
+      "path": "artifacts/agentrun-malformed-marker-fixture/before-control/runtime.json.malformed-prepared",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/before-control/runtime.json.malformed-prepared",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/before-control/runtime.json.malformed-prepared"
+      },
+      "sha256": "68774c36a1bac5ecbe347b95b900cca361faa079d98aab95a818378d58314111"
+    },
+    {
+      "bytes": 1711,
+      "path": "artifacts/agentrun-malformed-marker-fixture/built-production-chain-process.json",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/built-production-chain-process.json",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/built-production-chain-process.json"
+      },
+      "sha256": "8015ed4cd951bfd288ee5af1ea861641916b57c94d2872be5ae23ba953ab2303"
+    },
+    {
+      "bytes": 5529,
+      "path": "artifacts/agentrun-malformed-marker-fixture/causal-controls.json",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/causal-controls.json",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/causal-controls.json"
+      },
+      "sha256": "4b9d98161a58e865db3ce0814b1785e6109ef7969bdf3502a57b083008b12869"
+    },
+    {
+      "bytes": 14506,
+      "path": "artifacts/agentrun-malformed-marker-fixture/diagnosis.md",
+      "publication": {
+        "commit": "5a8285d7c892fd6a930c2929ddb3360440d89586",
+        "path": "artifacts/agentrun-malformed-marker-fixture/diagnosis.md",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/5a8285d7c892fd6a930c2929ddb3360440d89586/artifacts/agentrun-malformed-marker-fixture/diagnosis.md"
+      },
+      "sha256": "165c965ee936d37d351c197ac67e7cc8f92b60db08f1d83c164a335cccef697b"
+    },
+    {
+      "bytes": 905,
+      "path": "artifacts/agentrun-malformed-marker-fixture/environment.json",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/environment.json",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/environment.json"
+      },
+      "sha256": "330f73e092903af40065dba5beceac7f437d44cab7bf3d04ce576c4be3926b21"
+    },
+    {
+      "bytes": 4474,
+      "path": "artifacts/agentrun-malformed-marker-fixture/first-full-suite.log",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/first-full-suite.log",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/first-full-suite.log"
+      },
+      "sha256": "b2025c79fd2229cfa334a16280623a249488c09aa924d0341b2bf0c7e3a9eceb"
+    },
+    {
+      "bytes": 65284,
+      "path": "artifacts/agentrun-malformed-marker-fixture/fixture-tests.json",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/fixture-tests.json",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/fixture-tests.json"
+      },
+      "sha256": "e8d5a69061acdb88bf429785168c882b160d213f32fddc79e64a8f77869573fe"
+    },
+    {
+      "bytes": 16545,
+      "path": "artifacts/agentrun-malformed-marker-fixture/held-wait-coverage.jsonl",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/held-wait-coverage.jsonl",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/held-wait-coverage.jsonl"
+      },
+      "sha256": "c8d6b3cae77abc5ca24de932f7cb65c0bff288bc751064acf7839ee9b1149b53"
+    },
+    {
+      "bytes": 17305,
+      "path": "artifacts/agentrun-malformed-marker-fixture/held-wait-focused.jsonl",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/held-wait-focused.jsonl",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/held-wait-focused.jsonl"
+      },
+      "sha256": "27cc81053e242c7ae2fb46c3ad692f10d4cc3abc0bf82895df6553ba5be3a6f3"
+    },
+    {
+      "bytes": 16545,
+      "path": "artifacts/agentrun-malformed-marker-fixture/held-wait-full-suite.jsonl",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/held-wait-full-suite.jsonl",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/held-wait-full-suite.jsonl"
+      },
+      "sha256": "ee8d2a37e962ebbdeb4adeff3cb5d876269abf0b8b3aef5a146200de7f7d5387"
+    },
+    {
+      "bytes": 17305,
+      "path": "artifacts/agentrun-malformed-marker-fixture/held-wait-scope.jsonl",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/held-wait-scope.jsonl",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/held-wait-scope.jsonl"
+      },
+      "sha256": "8fc12d60722b250667c96aedd8fdb0486eef5f64778bb00363dea3b54a00751c"
+    },
+    {
+      "bytes": 6475,
+      "path": "artifacts/agentrun-malformed-marker-fixture/prior/source-index.json",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/prior/source-index.json",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/prior/source-index.json"
+      },
+      "sha256": "d142170558033036320af38464f105e8c663d8c7af39ce0bafe6993a9d43b895"
+    },
+    {
+      "bytes": 6357118,
+      "path": "artifacts/agentrun-malformed-marker-fixture/release/agentrun-job",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/release/agentrun-job",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/release/agentrun-job"
+      },
+      "sha256": "e6fa73538b354ab51832de3b04d8da84ff6d5934a5d1adefe3c2c56a31295a12"
+    },
+    {
+      "bytes": 2293886,
+      "path": "artifacts/agentrun-malformed-marker-fixture/release/agentrun-vendor",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/release/agentrun-vendor",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/release/agentrun-vendor"
+      },
+      "sha256": "b0dabd3ad8efc05a89ae4ae9cda9dba85e10d1357bc40d8c84fe6092ae80ee81"
+    },
+    {
+      "bytes": 2240,
+      "path": "artifacts/agentrun-malformed-marker-fixture/release/component-manifest.json",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/release/component-manifest.json",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/release/component-manifest.json"
+      },
+      "sha256": "30234f1e5df0f1070c4302c8c05db5e3ac78e556538ac38d7c1ee09077d0fc09"
+    },
+    {
+      "bytes": 63349,
+      "path": "artifacts/agentrun-malformed-marker-fixture/release/coverage.out",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/release/coverage.out",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/release/coverage.out"
+      },
+      "sha256": "18c5f898f725d6deb22f8dfcae23b53d40fe50eb76b4a2d1277bade99597dad7"
+    },
+    {
+      "bytes": 488,
+      "path": "artifacts/agentrun-malformed-marker-fixture/release/go-binaries-manifest.json",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/release/go-binaries-manifest.json",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/release/go-binaries-manifest.json"
+      },
+      "sha256": "4d44be58f2fb33b601a74cb72564d709030553c90afc260c8a5aed8e0e841f7b"
+    },
+    {
+      "bytes": 328,
+      "path": "artifacts/agentrun-malformed-marker-fixture/release/immutable-component-link.json",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/release/immutable-component-link.json",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/release/immutable-component-link.json"
+      },
+      "sha256": "94ac09ea2be8060393beea3d14d5eb318e105a044018ef8fd5893fcdc7b1566f"
+    },
+    {
+      "bytes": 676,
+      "path": "artifacts/agentrun-malformed-marker-fixture/release/package-verification.json",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/release/package-verification.json",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/release/package-verification.json"
+      },
+      "sha256": "b310699b5e7775721d11c3dd6fc6ea3f63fa4c55c2028dbbeb8a39dc5309394d"
+    },
+    {
+      "bytes": 8683520,
+      "path": "artifacts/agentrun-malformed-marker-fixture/release/release-package.tar",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/release/release-package.tar",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/release/release-package.tar"
+      },
+      "sha256": "743b7b988535153c41a839d040a8a45da89e76c5795e994e0a4696af4025300e"
+    },
+    {
+      "bytes": 841,
+      "path": "artifacts/agentrun-malformed-marker-fixture/release/runtime-driver-release-manifest.json",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/release/runtime-driver-release-manifest.json",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/release/runtime-driver-release-manifest.json"
+      },
+      "sha256": "f9f8470eb5aea809b85a785ea2918f460381828f58a6d254874e24d57feaae18"
+    },
+    {
+      "bytes": 17842,
+      "path": "artifacts/agentrun-malformed-marker-fixture/release/source-bundle.tar.zst",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/release/source-bundle.tar.zst",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/release/source-bundle.tar.zst"
+      },
+      "sha256": "bdf8a0a61387277ce779a24841fa3fdaca1ed514b329f8b39b2e4d01c794af9c"
+    },
+    {
+      "bytes": 8612,
+      "path": "artifacts/agentrun-malformed-marker-fixture/release/stream-json-hardening.json",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/release/stream-json-hardening.json",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/release/stream-json-hardening.json"
+      },
+      "sha256": "2af00bf52714efa7b318605a0b1bf9d5af36f3d0df3f735e34b11a48bc4e6099"
+    },
+    {
+      "bytes": 3034,
+      "path": "artifacts/agentrun-malformed-marker-fixture/snapshot-captures.json",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/snapshot-captures.json",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/snapshot-captures.json"
+      },
+      "sha256": "cd09d69f91f9ff1f160b7b26a6eb4a37d4a23f1a03745f562848c796fef9c823"
+    },
+    {
+      "bytes": 277267,
+      "path": "artifacts/agentrun-malformed-marker-fixture/uncached-scope-tests.json",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/uncached-scope-tests.json",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/uncached-scope-tests.json"
+      },
+      "sha256": "e3e9f00b066346ca64c9dbb8ffa42a104a3ae8ed1a22f926e3973e398dac4d69"
+    },
+    {
+      "bytes": 106,
+      "path": "artifacts/agentrun-malformed-marker-fixture/verifier-negative-controls.log",
+      "publication": {
+        "commit": "9603ee9b68b3be0be25f0d376b7cda404c8ece3e",
+        "path": "artifacts/agentrun-malformed-marker-fixture/verifier-negative-controls.log",
+        "url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/9603ee9b68b3be0be25f0d376b7cda404c8ece3e/artifacts/agentrun-malformed-marker-fixture/verifier-negative-controls.log"
+      },
+      "sha256": "c50bec2ee50a814bec1e6876c1ba1d3006d9a3c2b7c32dba7957f7228cb55750"
+    }
+  ],
+  "issue": {
+    "id": "01a10302-109c-7097-b200-4dd71a531aba",
+    "key": "AITEAM-1055"
+  },
+  "preserved_history": {
+    "audit_ledger_sha256": "14d7b7f1a0ee46207a6445ee63b0167efb9670eba8bf0b746c51eefb8083ee58",
+    "audit_report_sha256": "9e44c0ff8a3f7c902c51ff82d3dcb8e1df33b8cd4d8537082e9e6f723848964d",
+    "bounded_identical_repeat_exit_code": 0,
+    "historical_cause": "unknown",
+    "marker_ordering": "hypothesis; independently controlled, not asserted as the historical cause",
+    "original_failure": "cmd/agentrun-job/main_test.go:621 missing runtime.json.malformed",
+    "original_first_full_suite_exit_code": 1,
+    "sdk_ledger_sha256": "1d90f40ec2ae024e466d330aab4b1b4085921a3d3ef4dc8600ea4193495cbbde",
+    "sdk_report_sha256": "2a8b2d912ca95a4b6ba9c832e6018ccc8d722ea1a0b226b5bbd2840054492566"
+  },
+  "schema": "oac.agentrun-malformed-marker-fixture-evidence/v1",
+  "source": {
+    "base": "main",
+    "base_commit": "89f1854a46c4cfb59bc1a344d42d6513ca9d704c",
+    "base_tree": "8a92e551bc827c8a6bfece4f4c4e2c1dfac74aaf",
+    "changed_files": [
+      {
+        "bytes": 69326,
+        "path": "cmd/agentrun-job/adapters_test.go",
+        "sha256": "10c63ae380db347eb229c85af5e10ed81c1753b7e9eac8081c67b3a64a36976d"
+      },
+      {
+        "bytes": 79932,
+        "path": "cmd/agentrun-job/main_test.go",
+        "sha256": "6eba639b39a97cc6a755b07bae265e6cc5559e6ff5653841861618c7a8014292"
+      },
+      {
+        "bytes": 10975,
+        "path": "cmd/agentrun-job/testdata/malformed-marker/test_verify_evidence.py",
+        "sha256": "5773f34ef3a1344f007d2e27008f1bc199750b006072810a7522da695c0e6e4b"
+      },
+      {
+        "bytes": 58738,
+        "path": "cmd/agentrun-job/testdata/malformed-marker/verify_evidence.py",
+        "sha256": "8162167b060a97df58fd4783a5c4c9c1a751bfbcfded2f338bcda3ff11e13aa9"
+      },
+      {
+        "bytes": 20139,
+        "path": "cmd/agentrun-job/testdata/vendor/main.go",
+        "sha256": "fc7e1a9bb98520fba58c1ebc1a96869771653e3234f9dd9657984eabea1e603b"
+      }
+    ],
+    "commit": "e9b4440f9c119275ccbacf989087b8b067385ca7",
+    "delivery_head": "e9b4440f9c119275ccbacf989087b8b067385ca7",
+    "protected_files": [
+      {
+        "bytes": 1123,
+        "path": "cmd/agentrun-job/adapters.go",
+        "sha256": "dacf69c2efba40a89a702af70fdb2a9a8d9dad0c4b737f28e86a37e0a16db7e3",
+        "tested_sha256": "dacf69c2efba40a89a702af70fdb2a9a8d9dad0c4b737f28e86a37e0a16db7e3"
+      },
+      {
+        "bytes": 18190,
+        "path": "cmd/agentrun-job/build_release.py",
+        "sha256": "af3faf288da669174dd35e9499e7c87c1f124e1e021d202412fd8d935625787d",
+        "tested_sha256": "af3faf288da669174dd35e9499e7c87c1f124e1e021d202412fd8d935625787d"
+      },
+      {
+        "bytes": 38596,
+        "path": "cmd/agentrun-job/driver.go",
+        "sha256": "6d951766ab7740841610de237ed52d3a2291c94c57c5be853acf3da935d1a95e",
+        "tested_sha256": "6d951766ab7740841610de237ed52d3a2291c94c57c5be853acf3da935d1a95e"
+      },
+      {
+        "bytes": 941,
+        "path": "cmd/agentrun-job/driver_identity.json",
+        "sha256": "0a82566a374b5aec7946fdef3b002e89675d4fe85a728c9d89b838297d6d0173",
+        "tested_sha256": "0a82566a374b5aec7946fdef3b002e89675d4fe85a728c9d89b838297d6d0173"
+      },
+      {
+        "bytes": 3628,
+        "path": "cmd/agentrun-job/main.go",
+        "sha256": "45850cd875ec46d71b1e54e2cbf3150f57976614ed0f62d8f80e0d1066ed0da8",
+        "tested_sha256": "45850cd875ec46d71b1e54e2cbf3150f57976614ed0f62d8f80e0d1066ed0da8"
+      },
+      {
+        "bytes": 3322,
+        "path": "cmd/agentrun-job/mcp.go",
+        "sha256": "7fadac1b19a999b3ef975453d27468e207c35fb54ba7c488f6a3ed59fed56ef5",
+        "tested_sha256": "7fadac1b19a999b3ef975453d27468e207c35fb54ba7c488f6a3ed59fed56ef5"
+      },
+      {
+        "bytes": 9464,
+        "path": "cmd/agentrun-job/transport.go",
+        "sha256": "884be1e842b1b7c1530a84215b8cf052044df19134a57e9b4036407e53a24a3a",
+        "tested_sha256": "884be1e842b1b7c1530a84215b8cf052044df19134a57e9b4036407e53a24a3a"
+      },
+      {
+        "bytes": 8615,
+        "path": "cmd/agentrun-job/vendor/main.go",
+        "sha256": "4a56ccbd82149eec78f8f1ec90e307b18e5a24ddfd943866fe50de1b15406392",
+        "tested_sha256": "4a56ccbd82149eec78f8f1ec90e307b18e5a24ddfd943866fe50de1b15406392"
+      },
+      {
+        "bytes": 27299,
+        "path": "cmd/agentrun-job/verify_package.py",
+        "sha256": "95f241b798bd432dd7776901646c5d3ab89d1e1b11d2ea57f7a250b62ac9ecca",
+        "tested_sha256": "95f241b798bd432dd7776901646c5d3ab89d1e1b11d2ea57f7a250b62ac9ecca"
+      },
+      {
+        "bytes": 2304,
+        "path": "go.mod",
+        "sha256": "cae88fa59fd0eb66eaa902e486882d20f7c12a577093be22ec1fd122c8ca9ef2",
+        "tested_sha256": "cae88fa59fd0eb66eaa902e486882d20f7c12a577093be22ec1fd122c8ca9ef2"
+      },
+      {
+        "bytes": 15265,
+        "path": "go.sum",
+        "sha256": "7f069d03a85b59955951c07a4b1b390bc94d95fe815e17d6faaf52b6bcac0027",
+        "tested_sha256": "7f069d03a85b59955951c07a4b1b390bc94d95fe815e17d6faaf52b6bcac0027"
+      },
+      {
+        "bytes": 2645,
+        "path": "internal/agentrun/assembly.go",
+        "sha256": "6d79a508af8ff2c32d6ce6c082ba7c4ce607aed359b837d79d09156f02af489a",
+        "tested_sha256": "6d79a508af8ff2c32d6ce6c082ba7c4ce607aed359b837d79d09156f02af489a"
+      },
+      {
+        "bytes": 15252,
+        "path": "internal/agentrun/runner.go",
+        "sha256": "645ce0658051fed94344d1cb1ced5bbbe2f1e6449a1343be3322f5d01b5fd7d1",
+        "tested_sha256": "645ce0658051fed94344d1cb1ced5bbbe2f1e6449a1343be3322f5d01b5fd7d1"
+      },
+      {
+        "bytes": 48011,
+        "path": "runtime-sdk/sdk.go",
+        "sha256": "f16285f753cae2404512531fc731006f8471102deda5f65eb13b225be98bbd28",
+        "tested_sha256": "f16285f753cae2404512531fc731006f8471102deda5f65eb13b225be98bbd28"
+      }
+    ],
+    "reviewed_pr90": {
+      "commit": "1ebf12d36d29c2a3726257bd03685139f5bc568a",
+      "source_index_path": "artifacts/agentrun-malformed-marker-fixture/prior/source-index.json",
+      "source_index_sha256": "d142170558033036320af38464f105e8c663d8c7af39ce0bafe6993a9d43b895",
+      "tree": "8c1c9a6d8f392b3f23c73cd64ca104fbdbf3b80e"
+    },
+    "tree": "5e1ed8236e1e4f22058016ebc533e76be019b0c0"
+  }
+}

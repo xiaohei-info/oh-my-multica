@@ -1,0 +1,85 @@
+{
+  "full_native_files": [
+    {
+      "file": "current79.yaml",
+      "origin": "current-full-manifest.yaml",
+      "sha256": "bfd1af290f645022e1c509a1667f8488fa8af3b435c4dd3d88742fd32a831a4e",
+      "bytes": 2595133
+    },
+    {
+      "file": "current-control.json",
+      "origin": "current-full-control-budget21/agentrun-malformed-marker-fixture.json",
+      "sha256": "09b3413cdd65bb79a45b803a0aa1cda8f2c618c3a34a8b41274cfa152474a807",
+      "bytes": 126605
+    },
+    {
+      "file": "limits.json",
+      "origin": "current-effective-budgets-with-2-UNRESOLVED-conflicts.json",
+      "sha256": "a8b33b7448528a65ceb7c15cbae8c9cdca54985946629ccde432b9b2d229f80f",
+      "bytes": 24827
+    },
+    {
+      "file": "source-workshow.json",
+      "origin": "review2-full-control-native-supplement/full-original-workshow-decoded.json",
+      "sha256": "f5750230811c9317afbfc7f35d6b9c5e75a6dd45b1b30bbd3e4433734f1d67b5",
+      "bytes": 98471
+    },
+    {
+      "file": "current-verification.yaml",
+      "origin": "original-preparation127/native-current-verification-full.yaml",
+      "sha256": "e492ed873f91737499d3a083158d07cdcf24e8a0043f9bfc7c9e9319f984e927",
+      "bytes": 34577
+    },
+    {
+      "file": "current-native.json",
+      "origin": "original-preparation127/native-current-verification-observation.json",
+      "sha256": "9396478a90107c183a5d5dfdae38daa4a87882024f2871fb5179057fd75aa71e",
+      "bytes": 570
+    },
+    {
+      "file": "old-verification.yaml",
+      "origin": "review2-original-delivery-supplement/original-full-native-verification.yaml",
+      "sha256": "8e4740766896d9ed9ad4346b11514e1108e3e14ae4b4cf2ccff175d6a156e2da",
+      "bytes": 31263
+    },
+    {
+      "file": "old-native-comment.json",
+      "origin": "review2-original-delivery-supplement/original-native-comment-full.json",
+      "sha256": "4507c2dae9a81bbc3972ce1b89a23abc2afbc747400c2eb0bb4a218cbf60dfe8",
+      "bytes": 1916
+    },
+    {
+      "file": "report.yaml",
+      "origin": "review2-full-control-native-supplement/report_ref-full.yaml",
+      "sha256": "cbaf163d01aca43f131837e584ee7643e722b05b6c74332eb5a3ccf9abc14d7f",
+      "bytes": 44266
+    },
+    {
+      "file": "ledger.yaml",
+      "origin": "review2-full-control-native-supplement/ledger_ref-full.yaml",
+      "sha256": "5a97fe34cfd53318ef030c3fb0d07e63f874afe779cfe0dc4bf52957d3afbb1d",
+      "bytes": 20989
+    },
+    {
+      "file": "report-ledger-native.json",
+      "origin": "review2-full-control-native-supplement/native-report-ledger-observation-proof.json",
+      "sha256": "11ca2b08866d7b59369216b78216491fcd13263bd9753fe0f1029cbd75d7755f",
+      "bytes": 1703
+    },
+    {
+      "file": "original-native181.json",
+      "origin": "original-Fixture181-full-native.json",
+      "sha256": "8339c819a9f7936ebf4402184610d3c37bf3a252728e8f93b070efa04254428a",
+      "bytes": 219947
+    },
+    {
+      "file": "unsubmitted54070.json",
+      "origin": "original-unsubmitted-Fixture-report54070.json",
+      "sha256": "2926a59aadfc4beb96015b213ed542271975306d585526be27f3fd610a9bd4fa",
+      "bytes": 54070
+    }
+  ],
+  "actual_original41_and_current42_physical_hash_verified": true,
+  "content_addressed_binary_bytes_never_executed": true,
+  "binary_files": 45
+}

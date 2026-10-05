@@ -1,0 +1,63 @@
+{
+  "observations": [
+    {
+      "adapter": {
+        "pid": 751109,
+        "ppid": 751102,
+        "probe_error": "",
+        "same_identity": true,
+        "start_ticks": 524422385,
+        "state": "S"
+      },
+      "job": {
+        "pid": 751102,
+        "ppid": 749163,
+        "probe_error": "",
+        "same_identity": true,
+        "start_ticks": 524422384,
+        "state": "S"
+      },
+      "phase": "after Runtime TERM and before release",
+      "runtime": {
+        "pid": 751118,
+        "ppid": 751109,
+        "same_identity": true,
+        "start_ticks": 524422386,
+        "state": "S"
+      },
+      "runtime_wait": "not returned; the same Runtime identity is live"
+    },
+    {
+      "adapter_identity_absent": true,
+      "job_wait_returned": true,
+      "phase": "after Job return",
+      "runtime_identity_absent": true,
+      "runtime_wait": "owner completed after fixture release"
+    }
+  ],
+  "outcome": "Job returned after fixture release and process-owner cleanup",
+  "process_chain": {
+    "child": {
+      "pid": 751118,
+      "parent_pid": 751109,
+      "start_ticks": 524422386
+    },
+    "parent": {
+      "pid": 751109,
+      "parent_pid": 751102,
+      "start_ticks": 524422385
+    },
+    "owner": {
+      "pid": 751102,
+      "parent_pid": 749163,
+      "start_ticks": 524422384
+    }
+  },
+  "runtime_wait_result": "Runtime exit observed before adapter and Job owners returned",
+  "schema": "oac.agentrun-process-cancellation-observation/v1",
+  "test": "TestBuiltEntrypointWaitsForRuntimeWaitOnPersistentAppendFailure",
+  "wait_owners": [
+    "agentrun-vendor owns the configured Runtime exec.Cmd.Wait",
+    "agentrun-job childReaper owns the adapter exec.Cmd.Wait"
+  ]
+}

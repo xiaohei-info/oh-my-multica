@@ -1,0 +1,14 @@
+{
+  "attachment_id": "01a10958-fe9c-7c07-8994-7a36f8d6adc8",
+  "comment_id": "01a10958-feeb-7c30-9c49-0d3e22fdf89c",
+  "sha256": "e492ed873f91737499d3a083158d07cdcf24e8a0043f9bfc7c9e9319f984e927",
+  "uploader_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+  "uploader_type": "agent",
+  "task_id": "01a10958-3483-750c-8635-a3d8373bd57a",
+  "created_at": "2026-10-04T23:56:29Z",
+  "at": "2026-10-05T01:05:46.628085+00:00",
+  "bytes": 34577,
+  "full_body_exact_vs_READONLY32": true,
+  "Root_production_queries": "READ ONLY native attachment observation",
+  "Root_writes": 0
+}

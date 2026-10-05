@@ -1,0 +1,331 @@
+schema: omac.review-ledger/v2
+cycles:
+- round: 1
+  subject_digest: dfd8614a1fdc784d054c0272401c964e26fb895be53b13436700dac1b094bd61
+  report_digest: 3abe802df62d517f8fda5939c1cf0b0f5a234f16498c790e2f7a4e2d74c92a8b
+  verdict: reject
+  obligation_results:
+    dimension:authority: pass
+    dimension:structure: pass
+    dimension:execution: pass
+    dimension:ownership: pass
+    dimension:evidence: fail
+    dimension:regression: pass
+    integration:agentrun-malformed-marker-causal-fixture-gate: fail
+    integration:agentrun-malformed-marker-preserved-release-gate: pass
+    integration:agentrun-malformed-marker-source-publication-gate: fail
+  new_count: 3
+  fixed_count: 0
+  regressed_count: 0
+  unchanged_count: 0
+  open_count: 3
+  prior_open_blocker_ids: []
+  open_blocker_ids: &id001
+  - BLK-169609a51ab4
+  - BLK-2ebb49b74749
+  - BLK-f3b2bdbbff98
+  reported_blocker_ids: *id001
+  blocker_facts_schema: omac.review-cycle-blocker-facts/v1
+  blocker_facts:
+  - blocker_id: BLK-169609a51ab4
+    root_cause_key: nested-held-wait-control-overwrites-sibling-evidence
+    obligation_id: dimension:evidence
+    summary: The nested legacy control still truncates the shared held-Wait evidence
+      and erases the required sibling records.
+    evidence: main_test.go:413-418 writes nil to the fixed artifacts/agentrun-cancellation-prerequisite/held-wait-process-evidence.jsonl
+      on each invocation. TestMalformedStreamMarkerEvidenceControls at main_test.go:918-919
+      runs TestBuiltEntrypointHoldsOriginalWaitAcrossCleanupDeadlines in a subprocess
+      after the parent invocation. The immutable evidence publication has exactly
+      one JSONL record in each held-wait snapshot, with scenario malformed legacy
+      marker publication window and deadlines_checked_seconds [10]. verify_evidence.py
+      does not parse those snapshots to enforce completeness.
+    required_fix: Give parent and nested invocations independent test-only evidence
+      paths or merge records without truncation. Snapshot every producing command
+      before later invocations, publish all five scenarios with the original deadline
+      assertions, and make the verifier reject missing, duplicate or overwritten sibling
+      records.
+    status: open
+    classification: new
+    owner: codex-ubuntu-newapi
+  - blocker_id: BLK-2ebb49b74749
+    root_cause_key: missing-built-chain-negative-input-publication-controls
+    obligation_id: integration:agentrun-malformed-marker-causal-fixture-gate
+    summary: Absent/unwritten malformed input and failed marker publication are still
+      not exercised through the real built ownership chain.
+    evidence: main_test.go:883-908 constructs processIdentity and malformedFixtureMarker
+      values in memory for all absent/unwritten/partial-write controls. The only built-chain
+      legacy/positive controls use successful writes. testdata/vendor/main.go:348-350
+      returns from the write-error branch, but no test selects a deterministic write/publication
+      failure through Job -> driver -> adapter -> Runtime. writeMalformedMarker errors
+      are discarded at lines 342, 354, 364 and 372. test_verify_evidence.py only tests
+      temporary bytes, mappings and mocked retrieval failure.
+    required_fix: Add bounded test-only built-chain schedules for absent/unwritten
+      malformed bytes and failed trigger-marker publication, assert no false trigger
+      or lifecycle completion, retain actual Wait/reaping and terminal facts separately,
+      and preserve the existing decoder/verifier unit controls. Handle fixture publication
+      errors explicitly.
+    status: open
+    classification: new
+    owner: codex-ubuntu-newapi
+  - blocker_id: BLK-f3b2bdbbff98
+    root_cause_key: published-marker-verifier-does-not-bind-trigger-identity
+    obligation_id: integration:agentrun-malformed-marker-source-publication-gate
+    summary: The Python publication verifier still accepts process records whose markers
+      are not bound to the expected trigger as one causal chain.
+    evidence: verify_evidence.py:320-323 only requires prepared.trigger_id to be non-empty.
+      Its positive branch at 337-339 checks phase/length/signal/process but not marker
+      schema, trigger_id, or equality with prepared.trigger_id. Its legacy branch
+      at 332-335 compares cancellation.trigger_id only to written.trigger_id and does
+      not bind either to prepared.trigger_id or an expected scenario trigger. test_verify_evidence.py
+      has no process-record foreign/mismatched-trigger negative control. The current
+      verifier nevertheless returned 0 after validating 33 immutable artifacts, proving
+      the semantic gap is not caught by the publication check.
+    required_fix: Validate exact marker schemas and expected per-scenario trigger
+      IDs in verify_malformed_process_record, require equality across prepared/write/cancellation/positive
+      records and the expected scenario, and add permanent verifier negative controls
+      for foreign and mismatched trigger records.
+    status: open
+    classification: new
+    owner: codex-ubuntu-newapi
+- round: 2
+  subject_digest: 4ee29d89a2665319a9d0022f490a5c28ea4977a104f36bc7141494158fe0f6b5
+  report_digest: 34824cfebae4cfe3cc22e556a6100a9e26fe1761974cefc3218ab1686e6eff33
+  verdict: reject
+  obligation_results:
+    dimension:authority: pass
+    dimension:structure: pass
+    dimension:execution: pass
+    dimension:ownership: pass
+    dimension:evidence: pass
+    dimension:regression: pass
+    integration:agentrun-malformed-marker-causal-fixture-gate: fail
+    integration:agentrun-malformed-marker-preserved-release-gate: pass
+    integration:agentrun-malformed-marker-source-publication-gate: pass
+  new_count: 1
+  fixed_count: 3
+  regressed_count: 0
+  unchanged_count: 0
+  open_count: 1
+  prior_open_blocker_ids:
+  - BLK-169609a51ab4
+  - BLK-2ebb49b74749
+  - BLK-f3b2bdbbff98
+  open_blocker_ids: &id002
+  - BLK-0675c00874c5
+  reported_blocker_ids: *id002
+  blocker_facts_schema: omac.review-cycle-blocker-facts/v1
+  blocker_facts:
+  - blocker_id: BLK-0675c00874c5
+    root_cause_key: held-wait-snapshot-commands-read-obsolete-historical-path
+    obligation_id: integration:agentrun-malformed-marker-causal-fixture-gate
+    summary: The declared snapshot recipe is no longer connected to the current test
+      output; independent reproduction copies stale historical four-scenario evidence
+      instead of seven current scenarios.
+    evidence: main_test.go:413-415 writes artifacts/agentrun-malformed-marker-fixture/held-wait-process-evidence.jsonl.
+      Contract commands 4, 6 and 10 and published diagnosis.md:49,51,55 instead copy
+      artifacts/agentrun-cancellation-prerequisite/held-wait-process-evidence.jsonl.
+      Independent focused/scope JSON streams show all seven scenarios; the exact copy
+      products each have only startup without acceptance, malformed stream, persistent
+      append failure and runtime timeout. Full-suite copy likewise has four. Those
+      copied bytes equal the retained historical file (2745 bytes, SHA256 8957ee77a264b913a588c8fe8fb079d3ca0b897349bb131727ba786865a1f948).
+      Published snapshots have seven, so they require an unrecorded corrective capture
+      step; verify_evidence.py:459-465 rejects four-scenario snapshots and :643-645
+      requires focused snapshot/log equality.
+    required_fix: Preserve the new namespace and historical files. Explicitly record
+      in env_setup and command/exit inventory the corrected snapshot captures from
+      artifacts/agentrun-malformed-marker-fixture/held-wait-process-evidence.jsonl
+      immediately after each producing command (including coverage); do not silently
+      attribute those bytes to the obsolete cp commands. Regenerate/retain source-bound
+      snapshots and publication using that declared recipe, and independently demonstrate
+      all seven current records plus focused-log equality without restoring author
+      bytes over failed fresh snapshots. Retain this failed reproduction evidence;
+      no fixture/lifecycle deadline relaxation or historical artifact overwrite.
+    status: open
+    classification: new
+    owner: codex-ubuntu-newapi
+  - blocker_id: BLK-169609a51ab4
+    root_cause_key: nested-held-wait-control-overwrites-sibling-evidence
+    obligation_id: dimension:evidence
+    summary: The nested legacy control still truncates the shared held-Wait evidence
+      and erases the required sibling records.
+    evidence: main_test.go:413-418 writes nil to the fixed artifacts/agentrun-cancellation-prerequisite/held-wait-process-evidence.jsonl
+      on each invocation. TestMalformedStreamMarkerEvidenceControls at main_test.go:918-919
+      runs TestBuiltEntrypointHoldsOriginalWaitAcrossCleanupDeadlines in a subprocess
+      after the parent invocation. The immutable evidence publication has exactly
+      one JSONL record in each held-wait snapshot, with scenario malformed legacy
+      marker publication window and deadlines_checked_seconds [10]. verify_evidence.py
+      does not parse those snapshots to enforce completeness.
+    required_fix: Give parent and nested invocations independent test-only evidence
+      paths or merge records without truncation. Snapshot every producing command
+      before later invocations, publish all five scenarios with the original deadline
+      assertions, and make the verifier reject missing, duplicate or overwritten sibling
+      records.
+    status: fixed
+    classification: fixed
+    last_evidence: main_test.go:413-420 now writes the distinct malformed-marker namespace;
+      main_test.go:1027-1029 gives nested legacy invocation an isolated evidence path.
+      Fresh focused/scope logs contain seven unique sibling records; final live test
+      output and all four published snapshots contain seven. The old nested truncation
+      root is fixed; a distinct stale snapshot-command root is reported as new.
+    owner: codex-ubuntu-newapi
+  - blocker_id: BLK-2ebb49b74749
+    root_cause_key: missing-built-chain-negative-input-publication-controls
+    obligation_id: integration:agentrun-malformed-marker-causal-fixture-gate
+    summary: Absent/unwritten malformed input and failed marker publication are still
+      not exercised through the real built ownership chain.
+    evidence: main_test.go:883-908 constructs processIdentity and malformedFixtureMarker
+      values in memory for all absent/unwritten/partial-write controls. The only built-chain
+      legacy/positive controls use successful writes. testdata/vendor/main.go:348-350
+      returns from the write-error branch, but no test selects a deterministic write/publication
+      failure through Job -> driver -> adapter -> Runtime. writeMalformedMarker errors
+      are discarded at lines 342, 354, 364 and 372. test_verify_evidence.py only tests
+      temporary bytes, mappings and mocked retrieval failure.
+    required_fix: Add bounded test-only built-chain schedules for absent/unwritten
+      malformed bytes and failed trigger-marker publication, assert no false trigger
+      or lifecycle completion, retain actual Wait/reaping and terminal facts separately,
+      and preserve the existing decoder/verifier unit controls. Handle fixture publication
+      errors explicitly.
+    status: fixed
+    classification: fixed
+    last_evidence: main_test.go:440-446 includes built-chain unwritten input and trigger-publication-failure
+      schedules. Both subtests independently pass in focused/scope suites; wait/reaping,
+      no pre-release terminal/completion and absent false trigger assertions run.
+      testdata/vendor/main.go:371-450 explicitly reports publication failures and
+      atomically publishes marker records.
+    owner: codex-ubuntu-newapi
+  - blocker_id: BLK-f3b2bdbbff98
+    root_cause_key: published-marker-verifier-does-not-bind-trigger-identity
+    obligation_id: integration:agentrun-malformed-marker-source-publication-gate
+    summary: The Python publication verifier still accepts process records whose markers
+      are not bound to the expected trigger as one causal chain.
+    evidence: verify_evidence.py:320-323 only requires prepared.trigger_id to be non-empty.
+      Its positive branch at 337-339 checks phase/length/signal/process but not marker
+      schema, trigger_id, or equality with prepared.trigger_id. Its legacy branch
+      at 332-335 compares cancellation.trigger_id only to written.trigger_id and does
+      not bind either to prepared.trigger_id or an expected scenario trigger. test_verify_evidence.py
+      has no process-record foreign/mismatched-trigger negative control. The current
+      verifier nevertheless returned 0 after validating 33 immutable artifacts, proving
+      the semantic gap is not caught by the publication check.
+    required_fix: Validate exact marker schemas and expected per-scenario trigger
+      IDs in verify_malformed_process_record, require equality across prepared/write/cancellation/positive
+      records and the expected scenario, and add permanent verifier negative controls
+      for foreign and mismatched trigger records.
+    status: fixed
+    classification: fixed
+    last_evidence: verify_evidence.py:358-441 validates exact schema, expected per-scenario
+      trigger and equal prepared/write/cancellation/trigger/failure process bindings.
+      test_verify_evidence.py:146-176 adds permanent foreign/mismatched trigger controls;
+      all eight Python tests and immutable verifier independently pass.
+    owner: codex-ubuntu-newapi
+blockers:
+- blocker_id: BLK-0675c00874c5
+  root_cause_key: held-wait-snapshot-commands-read-obsolete-historical-path
+  obligation_id: integration:agentrun-malformed-marker-causal-fixture-gate
+  summary: The declared snapshot recipe is no longer connected to the current test
+    output; independent reproduction copies stale historical four-scenario evidence
+    instead of seven current scenarios.
+  evidence: main_test.go:413-415 writes artifacts/agentrun-malformed-marker-fixture/held-wait-process-evidence.jsonl.
+    Contract commands 4, 6 and 10 and published diagnosis.md:49,51,55 instead copy
+    artifacts/agentrun-cancellation-prerequisite/held-wait-process-evidence.jsonl.
+    Independent focused/scope JSON streams show all seven scenarios; the exact copy
+    products each have only startup without acceptance, malformed stream, persistent
+    append failure and runtime timeout. Full-suite copy likewise has four. Those copied
+    bytes equal the retained historical file (2745 bytes, SHA256 8957ee77a264b913a588c8fe8fb079d3ca0b897349bb131727ba786865a1f948).
+    Published snapshots have seven, so they require an unrecorded corrective capture
+    step; verify_evidence.py:459-465 rejects four-scenario snapshots and :643-645
+    requires focused snapshot/log equality.
+  required_fix: Preserve the new namespace and historical files. Explicitly record
+    in env_setup and command/exit inventory the corrected snapshot captures from artifacts/agentrun-malformed-marker-fixture/held-wait-process-evidence.jsonl
+    immediately after each producing command (including coverage); do not silently
+    attribute those bytes to the obsolete cp commands. Regenerate/retain source-bound
+    snapshots and publication using that declared recipe, and independently demonstrate
+    all seven current records plus focused-log equality without restoring author bytes
+    over failed fresh snapshots. Retain this failed reproduction evidence; no fixture/lifecycle
+    deadline relaxation or historical artifact overwrite.
+  status: open
+  classification: new
+  owner: codex-ubuntu-newapi
+  first_seen_round: 2
+  last_seen_round: 2
+  seen_count: 1
+- blocker_id: BLK-169609a51ab4
+  root_cause_key: nested-held-wait-control-overwrites-sibling-evidence
+  obligation_id: dimension:evidence
+  summary: The nested legacy control still truncates the shared held-Wait evidence
+    and erases the required sibling records.
+  evidence: main_test.go:413-418 writes nil to the fixed artifacts/agentrun-cancellation-prerequisite/held-wait-process-evidence.jsonl
+    on each invocation. TestMalformedStreamMarkerEvidenceControls at main_test.go:918-919
+    runs TestBuiltEntrypointHoldsOriginalWaitAcrossCleanupDeadlines in a subprocess
+    after the parent invocation. The immutable evidence publication has exactly one
+    JSONL record in each held-wait snapshot, with scenario malformed legacy marker
+    publication window and deadlines_checked_seconds [10]. verify_evidence.py does
+    not parse those snapshots to enforce completeness.
+  required_fix: Give parent and nested invocations independent test-only evidence
+    paths or merge records without truncation. Snapshot every producing command before
+    later invocations, publish all five scenarios with the original deadline assertions,
+    and make the verifier reject missing, duplicate or overwritten sibling records.
+  status: fixed
+  classification: fixed
+  owner: codex-ubuntu-newapi
+  first_seen_round: 1
+  last_seen_round: 2
+  seen_count: 1
+  last_evidence: main_test.go:413-420 now writes the distinct malformed-marker namespace;
+    main_test.go:1027-1029 gives nested legacy invocation an isolated evidence path.
+    Fresh focused/scope logs contain seven unique sibling records; final live test
+    output and all four published snapshots contain seven. The old nested truncation
+    root is fixed; a distinct stale snapshot-command root is reported as new.
+- blocker_id: BLK-2ebb49b74749
+  root_cause_key: missing-built-chain-negative-input-publication-controls
+  obligation_id: integration:agentrun-malformed-marker-causal-fixture-gate
+  summary: Absent/unwritten malformed input and failed marker publication are still
+    not exercised through the real built ownership chain.
+  evidence: main_test.go:883-908 constructs processIdentity and malformedFixtureMarker
+    values in memory for all absent/unwritten/partial-write controls. The only built-chain
+    legacy/positive controls use successful writes. testdata/vendor/main.go:348-350
+    returns from the write-error branch, but no test selects a deterministic write/publication
+    failure through Job -> driver -> adapter -> Runtime. writeMalformedMarker errors
+    are discarded at lines 342, 354, 364 and 372. test_verify_evidence.py only tests
+    temporary bytes, mappings and mocked retrieval failure.
+  required_fix: Add bounded test-only built-chain schedules for absent/unwritten malformed
+    bytes and failed trigger-marker publication, assert no false trigger or lifecycle
+    completion, retain actual Wait/reaping and terminal facts separately, and preserve
+    the existing decoder/verifier unit controls. Handle fixture publication errors
+    explicitly.
+  status: fixed
+  classification: fixed
+  owner: codex-ubuntu-newapi
+  first_seen_round: 1
+  last_seen_round: 2
+  seen_count: 1
+  last_evidence: main_test.go:440-446 includes built-chain unwritten input and trigger-publication-failure
+    schedules. Both subtests independently pass in focused/scope suites; wait/reaping,
+    no pre-release terminal/completion and absent false trigger assertions run. testdata/vendor/main.go:371-450
+    explicitly reports publication failures and atomically publishes marker records.
+- blocker_id: BLK-f3b2bdbbff98
+  root_cause_key: published-marker-verifier-does-not-bind-trigger-identity
+  obligation_id: integration:agentrun-malformed-marker-source-publication-gate
+  summary: The Python publication verifier still accepts process records whose markers
+    are not bound to the expected trigger as one causal chain.
+  evidence: verify_evidence.py:320-323 only requires prepared.trigger_id to be non-empty.
+    Its positive branch at 337-339 checks phase/length/signal/process but not marker
+    schema, trigger_id, or equality with prepared.trigger_id. Its legacy branch at
+    332-335 compares cancellation.trigger_id only to written.trigger_id and does not
+    bind either to prepared.trigger_id or an expected scenario trigger. test_verify_evidence.py
+    has no process-record foreign/mismatched-trigger negative control. The current
+    verifier nevertheless returned 0 after validating 33 immutable artifacts, proving
+    the semantic gap is not caught by the publication check.
+  required_fix: Validate exact marker schemas and expected per-scenario trigger IDs
+    in verify_malformed_process_record, require equality across prepared/write/cancellation/positive
+    records and the expected scenario, and add permanent verifier negative controls
+    for foreign and mismatched trigger records.
+  status: fixed
+  classification: fixed
+  owner: codex-ubuntu-newapi
+  first_seen_round: 1
+  last_seen_round: 2
+  seen_count: 1
+  last_evidence: verify_evidence.py:358-441 validates exact schema, expected per-scenario
+    trigger and equal prepared/write/cancellation/trigger/failure process bindings.
+    test_verify_evidence.py:146-176 adds permanent foreign/mismatched trigger controls;
+    all eight Python tests and immutable verifier independently pass.

@@ -1,0 +1,96 @@
+{
+  "command": "GOTOOLCHAIN=go1.26.0 GOFLAGS=-overlay=artifacts/agentrun-malformed-marker-fixture/before-control/legacy-overlay.json go test -count=1 -json ./cmd/agentrun-job -run '^TestBuiltEntrypointHoldsOriginalWaitAcrossCleanupDeadlines$/^malformed stream$' > artifacts/agentrun-malformed-marker-fixture/before-control/legacy-tests.json",
+  "environment": {
+    "go": "go1.26.0",
+    "goarch": "arm64",
+    "goos": "linux",
+    "native_procfs": true
+  },
+  "exit_code": 1,
+  "expected_failure": "fixture did not create runtime.json.malformed",
+  "interpretation": "The deterministic post-write gate let the built Job and linked stream-json adapter consume and reject the malformed line, while cancellation preempted the old follow-on marker. This prospective control reproduces the marker publication race; it does not establish the historical scheduler, the held Wait result, or the original cancellation cause. The after-source controls independently establish Wait and terminal behavior.",
+  "observed_assertion_line": 624,
+  "observed_test": "TestBuiltEntrypointHoldsOriginalWaitAcrossCleanupDeadlines/malformed_stream",
+  "original_independent_record": {
+    "bounded_identical_repeat_exit_code": 0,
+    "first_full_suite_command": "go test -count=1 ./...",
+    "first_full_suite_exit_code": 1,
+    "ledger_sha256": "1d90f40ec2ae024e466d330aab4b1b4085921a3d3ef4dc8600ea4193495cbbde",
+    "report_sha256": "2a8b2d912ca95a4b6ba9c832e6018ccc8d722ea1a0b226b5bbd2840054492566"
+  },
+  "process_chain": {
+    "child": {
+      "parent_pid": 4120470,
+      "pid": 4120477,
+      "start_ticks": 514749338
+    },
+    "owner": {
+      "parent_pid": 4120364,
+      "pid": 4120461,
+      "start_ticks": 514749336
+    },
+    "parent": {
+      "parent_pid": 4120461,
+      "pid": 4120470,
+      "start_ticks": 514749337
+    }
+  },
+  "process_probe_after_test": {
+    "child": {
+      "identity": {
+        "parent_pid": 4120470,
+        "pid": 4120477,
+        "start_ticks": 514749338
+      },
+      "stat_present_after_test": false
+    },
+    "owner": {
+      "identity": {
+        "parent_pid": 4120364,
+        "pid": 4120461,
+        "start_ticks": 514749336
+      },
+      "stat_present_after_test": false
+    },
+    "parent": {
+      "identity": {
+        "parent_pid": 4120461,
+        "pid": 4120470,
+        "start_ticks": 514749337
+      },
+      "stat_present_after_test": false
+    }
+  },
+  "schedule": {
+    "fixture_overlay_sha256": "2fa49c01de7e58b6dc5d062d3b0512037898748f221c06c305f0aff7a045834f",
+    "go_overlay_json_sha256": "e99e219981a65fdff4de547447cbbf4b3a6dfee04e584dd2edcea554dbd22828",
+    "input_packet_files_verified": 88,
+    "kind": "test-only file gate after successful malformed stdout write and before the legacy post-write marker",
+    "legacy_marker_present": false,
+    "overlay_files": [
+      {
+        "artifact": "legacy-fixture-overlay.go.txt",
+        "repository_path": "cmd/agentrun-job/testdata/vendor/main.go"
+      },
+      {
+        "artifact": "legacy-test-overlay.go.txt",
+        "repository_path": "cmd/agentrun-job/main_test.go"
+      }
+    ],
+    "prepared_marker": "write-returned",
+    "test_overlay_line_mapping": {
+      "instrumented_line": 624,
+      "reviewed_source_line": 621
+    },
+    "test_overlay_sha256": "1d09330e709a2fbf92542dbcc55aa53de53c5ec1a4876819248db2b1aaabc240"
+  },
+  "schema": "oac.agentrun-malformed-marker-before-control/v1",
+  "source": {
+    "fixture_original_sha256": "d63496c83b3c59865b9fa4e07b32c2906cdb0a05b2bdae3ae00e341a2536d03f",
+    "input_index_sha256": "75fdaacaa466d9308a931f70929712726d26221180bbe4d4113a2506fd7ac622",
+    "reviewed_head": "1ebf12d36d29c2a3726257bd03685139f5bc568a",
+    "reviewed_tree": "8c1c9a6d8f392b3f23c73cd64ca104fbdbf3b80e",
+    "source_index_sha256": "d142170558033036320af38464f105e8c663d8c7af39ce0bafe6993a9d43b895",
+    "test_original_sha256": "4794a6e6201576abeabd03212ba92dce79ed7bf7c95dbfe8a90feb168fa08d61"
+  }
+}

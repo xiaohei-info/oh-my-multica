@@ -725,3 +725,22 @@ omac dag amend accept <manifest> <reviewed.yaml> --reason '<accepted fresh revie
 所有受管写命令继续持有 host-local manifest 锁。它不是跨主机 atomic CAS：运行这些控制写操作前必须在两台主机维持单一 manifest/controlwriter；当前 source/Run 观测夹住外部调用，但不声称能阻止未经受管的并发写。任何未来部署需另行使用当时最新 ALL FULLDONE、预算、receipts、native quiescence 和新的精确部署批准；捕获夹具不是 live eligibility。
 
 已接受 definition 后，未完成的 owner recovery 仍核验完整原 Source、历史失败字节、ALL DONE/consumed history、实际 required-contract/acceptance 字节和配置中的 retry 上限/remaining。每个 recovery 意图先落盘；未知 restore 只观察原 target，完全达到目标才可完成 checkpoint，不重新 apply。部分或未证明的 target 保持 STOP，不能用私有 metadata 修改、回退预算或重准备原 consumed receipt 修复。
+
+## 同 HEAD 的独立证据交接
+
+仅当 terminal Worker 已完成新的原生 verification，且完整不可变发布中的实际文件字节确实改变，才能准备此请求。当前节点须为 `in_progress`、平台 `DONE/AUTHORING`、无 decision，并保留当前 Worker handoff 和原独立 reject 的报告、ledger 与交付来源。普通同 HEAD reject 规则继续生效；新附件 ID、URI 变化或重复相同发布字节不构成新的证据。
+
+```bash
+omac node continue-evidence <manifest> <node> --rejected-source-file <original-review-workshow.json> --history-file <original-native-history.json> --history-file <unsubmitted-history.json> > <prepared-request.json>
+omac node continue-evidence <manifest> <node> --resolve-request <prepared-request.json> --request-sha256 <returned-request-sha256> --authority <coordinator> --reason '<exact new evidence-only resolution>'
+```
+
+prepare 只读；resolution 仅持久记录该精确请求的批准。实际正常 result collection 才会消费批准、封存当前 Worker 交付，并进入一个新的独立 Review。原拒绝来源通过完整原生 verification、独立报告/ledger、uploader、comment task、Run 时间和所有发布文件 SHA/字节关联。未提供的历史 seal 保持 UNKNOWN，不重构旧 subject。新 seal 只属于当前 Worker；批准不代表产品 PASS、merge 或部署许可。
+
+每次封存及 Reviewer baseline/正文/状态/assignment/wake 写入前复核完整来源、required-contract/acceptance 实际文件、所有 DONE/历史/预算、实际 generation（包括 null）和 Run 集合；意图先持久化并读回。八步封存的 Unknown 只续行相同请求，已接受步骤不重写。Unknown assignment 或尚无唯一原生 Run 的 wake 保持 STOP，不重做 assign/wake；已观察的唯一正式独立 Reviewer Run 可绑定原意图，不能产生第二个 Run 或预算消费。无关 active/queued/unknown/nonformal Run、来源变更或歧义均不获得继续许可。
+
+该入口保留原计数、批准和 consumed receipts，不 grant/reset/refund 预算，也不修复其他节点。宿主锁不是分布式 CAS；必须维持单一控制写入者。离线 captured tests 只验证 OMAC 的控制流程，不能提供 OAC 产品结论或将历史快照当成未来 live admission。
+
+新 Reviewer 的原生 obligations 包含完整原生失败历史、未提交报告全文及 SHA/字节，和完整不可变发布 index/inventory。`omac work show` 必须能读取这些完整来源。报告须为每项历史提供 `history_assessment`（精确 obligation_id、source_sha256、source_bytes、`accepted_verdict: false` 和非空 disposition）；未提交报告不能成为权威 verdict。`evidence_publication` 须声明精确 `index_commit`、`index_sha256` 和完整 `payload_commits` 集合，允许真实 index 固定多个 payload commit。新报告/ledger 的原生 Run 因果、现有全部正常 Review 门及旧 ledger 的 canonical 一次推进仍需通过。
+
+Reviewer 可在首次观测时已经提交，无需先出现 active poll。完整 publication 与保护来源验证后，原 request/receipt 保持 consumed，派发记录持久标记 `normal-review-handed-off`；该次 observation 权限结束，后续状态仅按现有正常流程处理，不能重用本请求再派发。
