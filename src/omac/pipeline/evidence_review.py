@@ -523,9 +523,13 @@ def preview_evidence_review(
 def _apply_review_request(store, runtime, manifest_path, key, request, token, *,
                           schema, journal, verifier, initial_control,
                           obligation_transform=None, subject_builder=None,
-                          pre_write_verify=None):
+                          pre_write_verify=None, checkpoint_confirm=None):
     """Shared one-time Controller seal/review transition; no Agent dispatch or verdict."""
     manifest = load_manifest(manifest_path)
+    def persist_checkpoint():
+        save_manifest(manifest, manifest_path)
+        if checkpoint_confirm is not None:
+            checkpoint_confirm(manifest)
     value = request["tuple"]
     entries = manifest.meta.get(journal, {})
     if not isinstance(entries, dict):
@@ -605,12 +609,12 @@ def _apply_review_request(store, runtime, manifest_path, key, request, token, *,
                 "state": "pending",
                 "step": 0,
             }
-            save_manifest(manifest, manifest_path)
+            persist_checkpoint()
         elif progress > existing["step"]:
             # Observe an accepted unknown write durably before another write;
             # otherwise two lost replies can outrun the one-step resume window.
             existing["step"] = progress
-            save_manifest(manifest, manifest_path)
+            persist_checkpoint()
         operations = [
             lambda: store.update_work_item_metadata(
                 item.id, delivery_identity=identity
@@ -659,12 +663,12 @@ def _apply_review_request(store, runtime, manifest_path, key, request, token, *,
                 )
             progress += 1
             existing["step"] = progress
-            save_manifest(manifest, manifest_path)
+            persist_checkpoint()
         manifest.nodes[key].status = "in_review"
         manifest.nodes[key].recovery_marker = False
         existing["step"] = len(operations)
         existing["state"] = "consumed"
-        save_manifest(manifest, manifest_path)
+        persist_checkpoint()
         return {
             "state": "ready-for-independent-review",
             "authorization_sha256": token,

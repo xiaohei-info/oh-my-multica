@@ -1921,9 +1921,16 @@ def _dispatch_reviewer_for_current_subject_locked(
         _block_existing_reviewer_decision(store, manifest, key, current)
         return False
     _validate_controller_sealed_delivery(store, current)
+    from .evidence_handoff import reviewer_preparation_write
+    evidence_config = getattr(manifest, "_evidence_handoff_config", {})
+    def prepare_write(changes=None, effect=None):
+        return reviewer_preparation_write(store, runtime, manifest, key, evidence_config, changes, effect)
+    owned_preparation = prepare_write()
     subject_digest = _review_subject_for_current_delivery(
         manifest, key, current)
     subject_changed = current.review_subject_digest != subject_digest
+    if subject_changed and owned_preparation:
+        raise ValidationError("Owned evidence Review subject changed; inspect the original intention without resetting Review")
     if subject_changed:
         # Recheck before any reset that could clear the old Reviewer facts.
         if _guard_reviewer_dispatch_control(
@@ -1992,8 +1999,8 @@ def _dispatch_reviewer_for_current_subject_locked(
         if _guard_reviewer_dispatch_control(
             store, manifest, key, item_id) is not None:
             return False
-        store.update_work_item_metadata(
-            item_id, reviewer_run_baseline=baseline)
+        prepare_write({"reviewer_run_baseline": baseline}, lambda: store.update_work_item_metadata(
+            item_id, reviewer_run_baseline=baseline))
         if _guard_reviewer_dispatch_control(
             store, manifest, key, item_id) is not None:
             return False
@@ -2043,9 +2050,10 @@ def _dispatch_reviewer_for_current_subject_locked(
             "persisted reviewer assignment has no uniquely observable target Run")
 
     assignment = (current.reviewer, current.platform_assignee_id)
-    _refresh_develop_issue_body(
-        store, manifest, key, phase=TaskPhase.REVIEW)
-    store.update_status(item_id, WorkItemStatus.IN_REVIEW)
+    _, body_metadata = _develop_issue_body_metadata(store, manifest, key, phase=TaskPhase.REVIEW)
+    prepare_write(body_metadata, lambda: _refresh_develop_issue_body(
+        store, manifest, key, phase=TaskPhase.REVIEW))
+    prepare_write({"status": WorkItemStatus.IN_REVIEW}, lambda: store.update_status(item_id, WorkItemStatus.IN_REVIEW))
     if _guard_reviewer_dispatch_control(
         store, manifest, key, item_id) is not None:
         return False
@@ -2059,7 +2067,9 @@ def _dispatch_reviewer_for_current_subject_locked(
         or (current.reviewer, current.platform_assignee_id) != assignment
     ):
         raise PlatformError("Reviewer source or Run baseline changed before dispatch")
-    dispatched = runtime.dispatch_reviewer(store, item_id, node.reviewer)
+    from .evidence_handoff import reviewer_admission
+    admission = reviewer_admission(store, runtime, manifest, key, getattr(manifest, "_evidence_handoff_config", {}))
+    dispatched = (runtime.dispatch_reviewer(store, item_id, node.reviewer) if admission is None else runtime.dispatch_reviewer(store, item_id, node.reviewer, admission=admission))
     if not dispatched:
         _guard_reviewer_dispatch_control(store, manifest, key, item_id)
         return False
@@ -3592,6 +3602,7 @@ def collect_results(
     # the fresh, atomic reconcile observations so collection does not repeat
     # the same Issue and attachment reads.
     manifest._recovery_manifest_path = manifest_path
+    manifest._evidence_handoff_config = config or {}
     from .operator_review_recovery import reservation_candidate
     reserved_keys = {
         key for key, node in manifest.nodes.items()
@@ -3645,6 +3656,17 @@ def collect_results(
             pending_review.append((key, node.work_item_id, node.reviewer))
             continue
 
+        from .evidence_handoff import consume_evidence_handoff
+        if consume_evidence_handoff(store, runtime, manifest, manifest_path, key, config or {}):
+            node = manifest.nodes[key]
+            pending_review.append((key, node.work_item_id, node.reviewer))
+            continue
+        from .evidence_handoff import observe_evidence_review
+        evidence_review_observation = observe_evidence_review(store, runtime, manifest, manifest_path, key, config or {})
+        if evidence_review_observation == "complete":
+            running_observations[key] = WorkItemControlProjection(store.get_work_item(node.work_item_id))
+        elif evidence_review_observation:
+            continue
         projection = running_observations[key]
         item = projection.work_item
         worker_gate_errors = None
@@ -4427,11 +4449,17 @@ def collect_results(
                 log.info(logsetup.EVT_REVIEW_DISPATCH, kind=_DAG_KIND, node=key,
                          id=item_id, reviewer=reviewer)
         except _ReviewerDispatchUnresolved as exc:
+            from .evidence_handoff import active_evidence_handoffs
+            if active_evidence_handoffs(manifest, key):
+                raise
             failures[key] = _block_reviewer(
                 store, manifest, manifest_path, key,
                 store.get_work_item(item_id),
                 "reviewer-run-dispatch-unresolved", str(exc))
         except PlatformError as exc:
+            from .evidence_handoff import active_evidence_handoffs
+            if active_evidence_handoffs(manifest, key):
+                raise
             failures[key] = _block_reviewer(
                 store, manifest, manifest_path, key,
                 store.get_work_item(item_id),

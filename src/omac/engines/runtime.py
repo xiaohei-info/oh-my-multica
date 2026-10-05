@@ -57,13 +57,17 @@ class AgentRuntime(ABC):
             return not reviewer_dispatch_stopped(current)
 
     def dispatch_reviewer(
-        self, store: "WorkItemStore", item_id: str, agent: str,
+        self, store: "WorkItemStore", item_id: str, agent: str, *, admission=None,
     ) -> bool:
         """Assign and wake one Reviewer through the guarded interface seam."""
         with store.reviewer_dispatch_lock(item_id):
-            if not store.assign_reviewer(item_id, agent):
+            if admission is None:
+                if not store.assign_reviewer(item_id, agent):
+                    return False
+                return self.wake_reviewer(store, item_id, agent)
+            if not store.assign_reviewer(item_id, agent, admission=lambda: admission("assign")):
                 return False
-            return self.wake_reviewer(store, item_id, agent)
+            return self.wake_reviewer(store, item_id, agent, admission=lambda: admission("wake"))
 
     @abstractmethod
     def cancel(self, item_id: str) -> bool:

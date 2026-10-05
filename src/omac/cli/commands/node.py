@@ -89,6 +89,16 @@ def register(parser):
     evidence_review.add_argument("--reason", help="Operator authorization reason (preview)")
     evidence_review.add_argument("--apply-request", help="Consume the exact previously prepared JSON request; does not dispatch review")
 
+    continuation = sub.add_parser("continue-evidence", help="Prepare/resolve exact changed rejected-evidence continuation; normal collection seals and reviews")
+    continuation.add_argument("manifest")
+    continuation.add_argument("node_key")
+    continuation.add_argument("--rejected-source-file", help="Complete original independent Reviewer workshow JSON")
+    continuation.add_argument("--history-file", action="append", default=[], help="Full retained original native/unsubmitted failure bytes")
+    continuation.add_argument("--resolve-request", help="Exact prepared JSON request")
+    continuation.add_argument("--request-sha256", help="Explicitly approved canonical request digest")
+    continuation.add_argument("--authority", help="New explicit coordinator authority")
+    continuation.add_argument("--reason", help="Exact bounded resolution reason")
+
     infrastructure = sub.add_parser(
         "review-infrastructure", help="Prepare/apply exact operator infrastructure-hold review recovery")
     infrastructure.add_argument("manifest")
@@ -926,6 +936,37 @@ def _cmd_review_evidence(args) -> int:
     return exit_codes.OK
 
 
+def _cmd_continue_evidence(args) -> int:
+    import json
+    from pathlib import Path
+    from ...core.manifest import manifest_write_lock
+    from ...pipeline.evidence_handoff import prepare_evidence_handoff, resolve_evidence_handoff
+    from ...pipeline.evidence_review import _digest
+    config = load_config()
+    engine = _build_engine(config)
+    if engine is None:
+        raise ValidationError("Configure an engine, then run `omac node continue-evidence --help`")
+    if args.resolve_request:
+        if args.rejected_source_file or args.history_file:
+            raise ValidationError("Resolution uses the exact saved request; omit preparation inputs")
+        try:
+            data = json.loads(Path(args.resolve_request).read_text())
+        except (OSError, ValueError) as exc:
+            raise ValidationError("Complete prepared request file is required") from exc
+        if not isinstance(data, dict):
+            raise ValidationError("Complete prepared request must be a JSON object")
+        request = data.get("request", data)
+        with manifest_write_lock(args.manifest):
+            result = resolve_evidence_handoff(engine.store, engine.runtime, args.manifest, args.node_key, request, request_sha256=args.request_sha256, authority=args.authority, reason=args.reason, config=config)
+    else:
+        if args.request_sha256 or args.authority or args.reason:
+            raise ValidationError("Preparation is read-only; use explicit resolution flags with --resolve-request")
+        request = prepare_evidence_handoff(engine.store, engine.runtime, _load_or_raise(args.manifest), args.manifest, args.node_key, rejected_source=args.rejected_source_file, history_files=args.history_file, config=config)
+        result = {"request_sha256": _digest(request), "request": request, "verdict": None}
+    print_json(result)
+    return exit_codes.OK
+
+
 def _cmd_review_infrastructure(args) -> int:
     import json
     from pathlib import Path
@@ -999,6 +1040,8 @@ def run(args) -> int:
         return _cmd_review_infrastructure(args)
     if args.action in {"review-publication", "review-sdk-publication", "review-sdk-checkpoint"}:
         return _cmd_review_publication(args)
+    if args.action == "continue-evidence":
+        return _cmd_continue_evidence(args)
     if args.action == "review-evidence":
         return _cmd_review_evidence(args)
     if args.action == "show":

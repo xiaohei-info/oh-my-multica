@@ -299,6 +299,33 @@ def validate_worker_evidence(node, item) -> list:
     return errors
 
 
+def _validate_bound_evidence_obligations(obligations, report):
+    """Left-shift typed evidence/historical assessment before report publication."""
+    errors = []
+    histories = [o for o in obligations or [] if isinstance(o, dict) and o.get("kind") == "history-assessment"]
+    publications = [o for o in obligations or [] if isinstance(o, dict) and o.get("kind") == "immutable-publication"]
+    if histories:
+        rows = report.get("history_assessment")
+        if not isinstance(rows, list) or len(rows) != len(histories):
+            errors.append("review_report.history_assessment must cover all full historical inputs")
+        else:
+            for obligation in histories:
+                matches = [r for r in rows if isinstance(r, dict) and r.get("obligation_id") == obligation["obligation_id"]]
+                if (len(matches) != 1 or matches[0].get("source_sha256") != obligation["source_sha256"]
+                    or matches[0].get("source_bytes") != obligation["source_bytes"]
+                    or matches[0].get("accepted_verdict") is not False
+                    or not isinstance(matches[0].get("disposition"), str) or not matches[0]["disposition"].strip()):
+                    errors.append("review_report.history_assessment must bind exact source SHA/bytes and retain unsubmitted authority=false")
+    if publications:
+        value = report.get("evidence_publication")
+        for obligation in publications:
+            if (not isinstance(value, dict) or value.get("index_commit") != obligation["index_commit"]
+                or value.get("index_sha256") != obligation["index_sha256"]
+                or value.get("payload_commits") != obligation["payload_commits"]):
+                errors.append("review_report.evidence_publication must bind exact full immutable index and payload commits")
+    return errors
+
+
 def validate_review_evidence(node, item) -> list:
     """Return gate failure messages for structured reviewer verdict/report."""
     errors = []
@@ -317,6 +344,7 @@ def validate_review_evidence(node, item) -> list:
 
     if getattr(item, "review_obligations", None):
         errors.extend(validate_convergence_review(item, verdict, report))
+        errors.extend(_validate_bound_evidence_obligations(item.review_obligations, report))
 
     if contract is None:
         return errors
