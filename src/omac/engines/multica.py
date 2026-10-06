@@ -2547,9 +2547,9 @@ class MulticaStore(WorkItemStore):
         if any(part in {"", ".", ".."} for part in path.split("/")):
             raise PlatformError("Invalid immutable artifact path")
         endpoint = f"repos/{owner}/{repo}/contents/{quote(path, safe='/')}?ref={commit}"
-        def download():
+        def request(api_endpoint):
             try:
-                result = subprocess.run(["gh", "api", endpoint], capture_output=True, timeout=30)
+                result = subprocess.run(["gh", "api", api_endpoint], capture_output=True, timeout=30)
             except subprocess.TimeoutExpired as exc:
                 raise PlatformError(f"Immutable artifact request timed out: {url}") from exc
             except OSError as exc:
@@ -2557,13 +2557,32 @@ class MulticaStore(WorkItemStore):
             if result.returncode:
                 detail = (result.stderr or b"").decode("utf-8", errors="replace")[:500]
                 raise PlatformError(f"Immutable artifact download failed for {url}: {detail}")
+            return result.stdout
+
+        def download():
             try:
-                payload = json.loads(result.stdout)
+                payload = json.loads(request(endpoint))
+                if not isinstance(payload, dict) or payload.get("type", "file") != "file":
+                    raise ValueError("file content is not a regular file object")
+                size, oid = payload.get("size"), payload.get("sha")
+                if (type(size) is not int or size < 0 or not isinstance(oid, str)
+                    or not re.fullmatch(r"[0-9a-f]{40}", oid)):
+                    raise ValueError("Git blob identity or size is invalid")
+                if size > 16 * 1024 * 1024:
+                    raise PlatformError(f"Immutable artifact exceeds 16 MiB: {url}")
+                if payload.get("encoding") == "none":
+                    if (payload.get("type") != "file" or payload.get("path") != path
+                        or payload.get("content") not in (None, "")):
+                        raise ValueError("Contents file identity or empty encoding is invalid")
+                    # Construct the endpoint from the pinned repository and blob ID;
+                    # never follow response URLs, including temporary download links.
+                    payload = json.loads(request(f"repos/{owner}/{repo}/git/blobs/{oid}"))
                 if not isinstance(payload, dict) or payload.get("encoding") != "base64":
                     raise ValueError("file content is not a base64 object")
                 body = base64.b64decode("".join(payload["content"].split()), validate=True)
                 blob_sha = hashlib.sha1(b"blob " + str(len(body)).encode() + b"\0" + body).hexdigest()
-                if payload.get("size") != len(body) or payload.get("sha") != blob_sha:
+                if (type(payload.get("size")) is not int or payload["size"] != size
+                    or len(body) != size or payload.get("sha") != oid or oid != blob_sha):
                     raise ValueError("Git blob identity does not match downloaded bytes")
             except (ValueError, KeyError, TypeError, AttributeError) as exc:
                 raise PlatformError(f"Immutable artifact response is invalid for {url}: {exc}") from exc
