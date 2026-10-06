@@ -739,6 +739,8 @@ prepare 只读；resolution 仅持久记录该精确请求的批准。实际正�
 
 每次封存及 Reviewer baseline/正文/状态/assignment/wake 写入前复核完整来源、required-contract/acceptance 实际文件、所有 DONE/历史/预算、实际 generation（包括 null）和 Run 集合；意图先持久化并读回。八步封存的 Unknown 只续行相同请求，已接受步骤不重写。Unknown assignment 或尚无唯一原生 Run 的 wake 保持 STOP，不重做 assign/wake；已观察的唯一正式独立 Reviewer Run 可绑定原意图，不能产生第二个 Run 或预算消费。无关 active/queued/unknown/nonformal Run、来源变更或歧义均不获得继续许可。
 
+不可变 GitHub 文件读取保留原 16 MiB 上限。Contents 响应合法返回 `encoding: none` 和空内容时，OMAC 通过既有认证 CLI、同仓库的规范 Git blob 端点读取完整字节；校验固定 commit/path 元数据、声明大小和 Git blob SHA 后才返回。不会跟随响应中的下载 URL 或切换认证方式；读取成功不代表产品 PASS，传输或完整性未知仍失败关闭。
+
 该入口保留原计数、批准和 consumed receipts，不 grant/reset/refund 预算，也不修复其他节点。宿主锁不是分布式 CAS；必须维持单一控制写入者。离线 captured tests 只验证 OMAC 的控制流程，不能提供 OAC 产品结论或将历史快照当成未来 live admission。
 
 新 Reviewer 的原生 obligations 包含完整原生失败历史、未提交报告全文及 SHA/字节，和完整不可变发布 index/inventory。`omac work show` 必须能读取这些完整来源。报告须为每项历史提供 `history_assessment`（精确 obligation_id、source_sha256、source_bytes、`accepted_verdict: false` 和非空 disposition）；未提交报告不能成为权威 verdict。`evidence_publication` 须声明精确 `index_commit`、`index_sha256` 和完整 `payload_commits` 集合，允许真实 index 固定多个 payload commit。新报告/ledger 的原生 Run 因果、现有全部正常 Review 门及旧 ledger 的 canonical 一次推进仍需通过。

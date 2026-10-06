@@ -1,0 +1,19 @@
+{
+  "name": "agentrun-job",
+  "path": "artifacts/agentrun-malformed-marker-fixture/release/agentrun-job",
+  "sha": "b871d9d327c809c0569f9c6748a2d3c97570921e",
+  "size": 6357118,
+  "url": "https://api.github.com/repos/xiaohei-info/open-agent-cluster/contents/artifacts/agentrun-malformed-marker-fixture/release/agentrun-job?ref=7c47fd53bcad5e3551ff2eccfe99b56f9a9d4bc4",
+  "html_url": "https://github.com/xiaohei-info/open-agent-cluster/blob/7c47fd53bcad5e3551ff2eccfe99b56f9a9d4bc4/artifacts/agentrun-malformed-marker-fixture/release/agentrun-job",
+  "git_url": "https://api.github.com/repos/xiaohei-info/open-agent-cluster/git/blobs/b871d9d327c809c0569f9c6748a2d3c97570921e",
+  "download_url": "https://raw.githubusercontent.com/xiaohei-info/open-agent-cluster/7c47fd53bcad5e3551ff2eccfe99b56f9a9d4bc4/artifacts/agentrun-malformed-marker-fixture/release/agentrun-job",
+  "type": "file",
+  "content": "",
+  "encoding": "none",
+  "_links": {
+    "self": "https://api.github.com/repos/xiaohei-info/open-agent-cluster/contents/artifacts/agentrun-malformed-marker-fixture/release/agentrun-job?ref=7c47fd53bcad5e3551ff2eccfe99b56f9a9d4bc4",
+    "git": "https://api.github.com/repos/xiaohei-info/open-agent-cluster/git/blobs/b871d9d327c809c0569f9c6748a2d3c97570921e",
+    "html": "https://github.com/xiaohei-info/open-agent-cluster/blob/7c47fd53bcad5e3551ff2eccfe99b56f9a9d4bc4/artifacts/agentrun-malformed-marker-fixture/release/agentrun-job"
+  },
+  "_evidence_redaction": "Temporary signed download URL query removed; reader must not follow arbitrary response URLs."
+}
