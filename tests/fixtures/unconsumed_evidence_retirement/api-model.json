@@ -1,0 +1,759 @@
+{
+  "at": "2026-10-06T05:30:26.909034+00:00",
+  "node": "api-model",
+  "control": {
+    "id": "01a108b7-babb-7c08-a09b-47a29df8cd87",
+    "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1",
+    "title": "[DAG:api-model] Implement Model Catalog Platform API",
+    "description": "> **OMAC \u63a7\u5236\u7684\u6267\u884c\u3002\u7b2c\u4e00\u52a8\u4f5c\u5fc5\u987b\u4e25\u683c\u6267\u884c\uff1a**\n\n```bash\nOMAC_ENGINE=multica OMAC_WORKSPACE_ID=410ade5e-8ae0-4402-b975-813dea2ff3e1 OMAC_PROJECT_ID=732ce83f-5cbd-4485-850d-1b8a1bf16340 omac work show 01a108b7-babb-7c08-a09b-47a29df8cd87 --output json\n```\n\n> `omac work show` \u548c `omac work submit` \u90fd\u53ef\u80fd\u957f\u65f6\u95f4\u8fd0\u884c\u3002\u4efb\u4f55\u5de5\u5177\u8c03\u7528\u5728\u62ff\u5230\u6700\u7ec8 tool_result \u548c\u7ec8\u6001\u9000\u51fa\u7801\u524d\u90fd\u4e0d\u5b8c\u6574\u3002\u82e5\u5de5\u5177\u8fd4\u56de running/session\u3001\u7f3a\u5c11\u6700\u7ec8 tool_result\u3001\u51fa\u73b0\u7a7a\u8f93\u51fa\u6216\u4e0d\u5b8c\u6574\u8f93\u51fa\uff0c\u5fc5\u987b\u7b49\u5f85\u6216\u8f6e\u8be2\u5230\u7ec8\u6001\u3002\u4f7f\u7528\u8db3\u591f\u957f\u7684 wait/yield\uff0c\u6216\u4fdd\u7559\u5e76\u6062\u590d\u7eed\u63a5\u53e5\u67c4\uff1b\u8fd9\u662f\u901a\u7528\u7ec8\u6001\u89c4\u5219\uff0c\u4e0d\u7ed1\u5b9a\u67d0\u4e2a\u5177\u4f53\u5de5\u5177 API\u3002timeout/yield \u4e0d\u662f\u7a7a\u7ed3\u679c\uff0c\u4e5f\u4e0d\u5141\u8bb8\u636e\u6b64\u505c\u6b62\u3002`omac work show` \u53ea\u6709\u5728\u9000\u51fa\u7801 0 \u4e14\u5f97\u5230\u53ef\u89e3\u6790 JSON \u540e\u624d\u80fd\u7ee7\u7eed\u3002`omac work submit` \u53ea\u6709\u5728\u6700\u7ec8 tool_result \u660e\u786e\u7ed9\u51fa\u9000\u51fa\u7801 0\uff0c\u4e14 JSON \u5305\u542b `\"ok\": true`\u3001`\"terminal\": true` \u548c `\"next_action\": \"stop\"` \u65f6\u624d\u53ef\u5ba3\u79f0\u6210\u529f\u3002\u7ed3\u679c\u672a\u77e5\u65f6\u4e0d\u5f97\u5ba3\u79f0\u6210\u529f\u6216\u7ed3\u675f\uff1bvalidation error \u5fc5\u987b\u4fee\u590d\u540e\u91cd\u65b0\u63d0\u4ea4\u3002submit \u6210\u529f\u5c31\u662f\u672c\u6b21\u6267\u884c\u7684\u6700\u540e\u52a8\u4f5c\uff0c\u7acb\u5373\u505c\u6b62\uff0c\u4e0d\u518d\u6267\u884c\u4efb\u4f55\u5e73\u53f0\u5199\u5165\u3002\n\n> \u5728\u4e0a\u65b9\u7cbe\u786e\u7684 `omac work show` \u547d\u4ee4\u4ee5\u9000\u51fa\u7801 0 \u6210\u529f\u8fd4\u56de\u53ef\u89e3\u6790 JSON \u524d\uff0c\u4e0d\u5f97\u6267\u884c\u4efb\u4f55\u5176\u4ed6 Issue \u67e5\u8be2\uff08\u5305\u62ec `multica issue get`\u3001`multica issue comment list` \u6216 metadata \u67e5\u8be2\uff09\uff0c\u4e5f\u4e0d\u5f97\u5f00\u59cb\u5206\u6790\u4efb\u52a1\u5185\u5bb9\u3002work show \u6210\u529f\u540e\uff0c\u53ea\u80fd\u5728\u8fd4\u56de\u4e0a\u4e0b\u6587\u786e\u6709\u9700\u8981\u65f6\u4f7f\u7528\u53ea\u8bfb Issue \u67e5\u8be2\u3002\u7981\u6b62\u4efb\u4f55\u4f1a\u521b\u5efa\u3001\u4fee\u6539\u6216\u5220\u9664 Issue \u72b6\u6001\u7684 `multica issue` \u5199\u64cd\u4f5c\u3002\u8fd9\u662f\u8bed\u4e49\u8fb9\u754c\uff0c\u4e0d\u662f\u7a77\u4e3e\u547d\u4ee4\u6e05\u5355\uff1b\u7981\u6b62\u793a\u4f8b\u5305\u62ec `multica issue status`\u3001`multica issue assign`\u3001`multica issue comment`\u3001`multica issue metadata`\u3001`multica issue rerun`\u3001`multica issue cancel-task`\u3001`multica issue update`\u3001`multica issue create`\u3001`multica issue label`\u3001`multica issue property`\u3001`multica issue reorder` \u548c `multica issue subscriber`\u3002\u53ea\u5141\u8bb8\u4f7f\u7528\u4e0a\u65b9\u7ed9\u51fa\u7684\u7cbe\u786e `omac work show` \u547d\u4ee4\uff0c\u4ee5\u53ca work show \u8fd4\u56de\u7684\u7cbe\u786e `omac work submit` \u547d\u4ee4\u4f5c\u4e3a OMAC \u63a7\u5236\u547d\u4ee4\uff1b\u5df2\u6709\u624b\u5de5\u9644\u4ef6\u6216 verification \u4f46\u7f3a\u5c11 `delivery_identity` \u65f6\u4e5f\u5fc5\u987b\u901a\u8fc7\u8be5 submit \u547d\u4ee4\u5c01\u5b58\u3002\n\n# Implement Model Catalog Platform API\n\n## \u4efb\u52a1\u6458\u8981\n- \u7c7b\u578b: \u5f00\u53d1\u5b9e\u73b0\uff08`develop`\uff09\n- \u6267\u884c\u89d2\u8272: \u72ec\u7acb\u8bc4\u5ba1\u8005\uff08`reviewer`\uff09\n- \u76ee\u6807: Expose provider connections, discovery snapshots, connectivity tests, manual fallback and exact model selection.\n- \u4f9d\u636e: `docs/design/detailed/10-web-api-cli-detailed-design.md:L1392-L1428`\n- \u4f9d\u636e: `docs/design/detailed/10-web-api-cli-detailed-design.md:L1375-L1545`\n- \u4f9d\u636e: `docs/design/detailed/09-governance-and-security-detailed-design.md:L11-L872`\n\n## \u4efb\u52a1\u8be6\u60c5\nSmallest independently PR-able, testable and reviewable delivery boundary for this capability.\n\n## \u975e\u76ee\u6807\n- Do not change adjacent domain ownership or introduce a competing source of truth.\n- Do not bypass authorization, admission, CAS, idempotency, review or evidence gates.\n- Do not preserve unpublished prototype behavior unless the owning design explicitly requires it.\n\n## \u4e3b\u8981\u4ee3\u7801\u5f52\u5c5e\u8303\u56f4\n- `api/openapi/models/**`\n- `internal/httpapi/models/**`\n\n## \u4ea4\u4ed8\u7ea6\u675f\n- PR \u57fa\u7ebf: `main`\n- \u6539\u52a8\u5206\u652f\u8986\u76d6\u7387: `\u2265 90%`\n- PR \u5173\u8054\u6807\u8bc6: `AITEAM-1075`\n\n## \u4e0a\u6e38 issue\uff08\u9632\u8dd1\u504f\uff09\n\u672c\u4efb\u52a1\u627f\u63a5\u4ee5\u4e0b\u4e0a\u6e38 issue\uff0c\u7528\u4e8e\u8ffd\u6eaf\u9700\u6c42\u4e0e\u51b3\u7b56\uff1b\u82e5\u4e0e\u5f53\u524d contract \u51b2\u7a81\uff0c\u5148\u8bf7\u6c42\u786e\u8ba4\uff1a\n- \u8bbe\u8ba1\u65b9\u6848: `289a13bf-cede-4b5b-ba86-d72f0bef8164`\n- \u9a8c\u6536\u6587\u6863: `8e6bd282-6039-41d2-aa00-969a0bf1554a`\n- \u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Implement model provider catalog and discovery: `01a03a19-212d-7586-8884-86981457457e`\n- \u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Implement manual model fallback management: `3bbc777c-42c5-457f-9217-3b09d7e87bdf`\n- \u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Implement deterministic release artifact packaging: `152d735a-c373-4967-8ae0-45c191de2eff`",
+    "status": "done",
+    "dag_key": "api-model",
+    "identifier": "AITEAM-1075",
+    "worker": "codex-macmini-newapi",
+    "reviewer": "hermes-reviewer",
+    "blocked_by": [
+      "model-catalog",
+      "model-manual",
+      "release-artifact-tooling"
+    ],
+    "wave": null,
+    "artifacts": {
+      "pr_url": "https://github.com/xiaohei-info/open-agent-cluster/pull/112",
+      "head_sha": "44876d1e3c49ddad503556f75bd80ee34cc2d4af"
+    },
+    "verification": {
+      "commands": [
+        {
+          "cmd": "mkdir -p artifacts/api-model && go test -covermode=atomic -coverprofile=artifacts/api-model/coverage.out ./api/openapi/models/... ./internal/httpapi/models/...",
+          "exit_code": 0,
+          "summary": "OpenAPI and HTTP adapter tests passed; total statement coverage is 91.4%."
+        },
+        {
+          "cmd": "go test ./api/openapi/models/... ./internal/httpapi/models/... ./internal/modelcatalog/core/... ./internal/modelcatalog/manual/... -count=1",
+          "exit_code": 0,
+          "summary": "The complete API, catalog, and manual model test suites passed."
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/api-model/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+          "exit_code": 0,
+          "summary": "Combined statement coverage meets the 90% threshold."
+        },
+        {
+          "cmd": "python3 scripts/release/verify_generated_contract.py --root api/openapi/models --require-go-generate-directive --require-generator-package ./api/openapi/models/generator --expected-outputs-file api/openapi/models/generated-files.txt && go list ./api/openapi/models/... | grep -q . && go generate ./api/openapi/models/... && git diff --exit-code -- api/openapi/models && test -z \"$(git ls-files --others --exclude-standard -- api/openapi/models)\"",
+          "exit_code": 0,
+          "summary": "Generated OpenAPI output is reproducible with no drift."
+        },
+        {
+          "cmd": "python3 scripts/release/link_go_component.py --component-manifest artifacts/model-catalog/component-manifest.json --component-manifest artifacts/model-manual/component-manifest.json --entrypoint-input internal/httpapi/models --entrypoint-input api/openapi/models --bundle artifacts/api-model/source-bundle.tar.zst --component-manifest artifacts/api-model/component-manifest.json --digest-output artifacts/api-model/bundle-digest.txt --require-all-input-digests --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner api-model --require-all-owner-sources-accounted",
+          "exit_code": 0,
+          "summary": "The api-model bundle links the current model-catalog and model-manual component digests."
+        }
+      ],
+      "integration_gates": [
+        {
+          "name": "api-model-gate",
+          "layer": "L1",
+          "source_of_truth": [
+            "docs/design/detailed/10-web-api-cli-detailed-design.md:L1392-L1428",
+            "docs/design/detailed/10-web-api-cli-detailed-design.md:L1375-L1545",
+            "docs/design/detailed/09-governance-and-security-detailed-design.md:L11-L872"
+          ],
+          "delivery_goal": "Expose provider connections, discovery snapshots, connectivity tests, manual fallback and exact model selection.",
+          "covers": [
+            "api-model"
+          ],
+          "acceptance_refs": [
+            "UJ-MODEL-001",
+            "UJ-MODEL-002"
+          ],
+          "commands": [
+            {
+              "cmd": "mkdir -p artifacts/api-model && go test -covermode=atomic -coverprofile=artifacts/api-model/coverage.out ./api/openapi/models/... ./internal/httpapi/models/...",
+              "exit_code": 0
+            },
+            {
+              "cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/api-model/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+              "exit_code": 0
+            },
+            {
+              "cmd": "python3 scripts/release/verify_generated_contract.py --root api/openapi/models --require-go-generate-directive --require-generator-package ./api/openapi/models/generator --expected-outputs-file api/openapi/models/generated-files.txt && go list ./api/openapi/models/... | grep -q . && go generate ./api/openapi/models/... && git diff --exit-code -- api/openapi/models && test -z \"$(git ls-files --others --exclude-standard -- api/openapi/models)\"",
+              "exit_code": 0
+            },
+            {
+              "cmd": "python3 scripts/release/link_go_component.py --component-manifest artifacts/model-catalog/component-manifest.json --component-manifest artifacts/model-manual/component-manifest.json --entrypoint-input internal/httpapi/models --entrypoint-input api/openapi/models --bundle artifacts/api-model/source-bundle.tar.zst --component-manifest artifacts/api-model/component-manifest.json --digest-output artifacts/api-model/bundle-digest.txt --require-all-input-digests --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner api-model --require-all-owner-sources-accounted",
+              "exit_code": 0
+            }
+          ],
+          "metrics": {
+            "statement_coverage_percent": 91.4,
+            "declared_artifact_count": 4
+          },
+          "artifacts": [
+            "artifacts/api-model/coverage.out",
+            "artifacts/api-model/bundle-digest.txt",
+            "artifacts/api-model/component-manifest.json",
+            "artifacts/api-model/source-bundle.tar.zst"
+          ]
+        }
+      ],
+      "pr_base": "main",
+      "coverage": 91.4,
+      "env_setup": [
+        "Commands ran from the repository root using the repository Go toolchain and Python 3.",
+        "No live provider or credential was needed; governance, snapshot, idempotency, and manual merge behaviors run through deterministic application tests."
+      ]
+    },
+    "verification_ref": {
+      "comment_id": "01a10957-5718-713c-85e5-adf98d40498e",
+      "attachment_id": "01a10957-562e-7644-bf0f-581a6df9e212",
+      "sha256": "c26ec1e3f675d91b51331ecab4c1bfc263a74d6769ebb5ff5a5bfab2d6a9730a",
+      "bytes": 5042,
+      "filename": "omac-verification-c26ec1e3f675.yaml"
+    },
+    "review_verdict": "pass-with-nits",
+    "review_comment": null,
+    "machine_feedback": null,
+    "machine_feedback_ref": null,
+    "review_report": {
+      "schema": "omac.review-report/v2",
+      "review_protocol": "omac.review/v2",
+      "verdict": "pass-with-nits",
+      "reviewer": "hermes-reviewer",
+      "issue_id": "01a108b7-babb-7c08-a09b-47a29df8cd87",
+      "issue_key": "AITEAM-1075",
+      "pr_url": "https://github.com/xiaohei-info/open-agent-cluster/pull/112",
+      "base_ref": "main",
+      "base_sha": "0166247401f6f238e3a88941b72306b45fec5d50",
+      "diff_base_merge_base": "d7e6663bd240562495313c5f9878c4728c385f20",
+      "head_sha": "44876d1e3c49ddad503556f75bd80ee34cc2d4af",
+      "reviewed_pr_head": "44876d1e3c49ddad503556f75bd80ee34cc2d4af",
+      "subject_digest": "aa9357d183e618aed8ed1dcc6eec4be61693697919860b53f1d027af06ac78ec",
+      "review_focus": {
+        "risk": "high",
+        "enabled": [
+          "governed HTTP-to-application model API boundary",
+          "provider connection CAS and idempotent create/update replay",
+          "discovery snapshot immutability and exact model selection",
+          "manual fallback ownership and snapshot merge",
+          "authenticated scope and authorization enforcement",
+          "generated OpenAPI reproducibility and release artifact lineage",
+          "changed-scope and prior-blocker review"
+        ]
+      },
+      "review_goals": [
+        "Independently inspect PR",
+        "Re-run every verification command declared by the contract and integration gate.",
+        "Verify that public query and manual routes are backed by governed use cases rather than optional unavailable stubs.",
+        "Verify durable same-request replay and same-key/different-request conflict behavior for create and update.",
+        "Verify authorization, scope, CAS, audit, immutable snapshots, generated output, and artifact linkage.",
+        "Disposition every prior blocker and review the complete changed scope."
+      ],
+      "summary": "Pass with nits. The exact PR head implements the complete model API composition, governed query and manual boundaries, durable connection idempotency replay/conflict behavior, scoped authorization, immutable snapshot reads, and exact model selection. All four declared api-model gate commands pass independently, generated output has no drift, and the linked release bundle is reproducible. One supplemental verification command in the uploaded verification evidence places -count=1 after package patterns; that literal command fails because of Go CLI flag ordering, while the equivalent corrected command passes. This is an evidence-command nit, not a product blocker.",
+      "full_review_completed": true,
+      "diff_reviewed": true,
+      "full_scoped_diff_reviewed": true,
+      "tests_rerun": true,
+      "integration_tests_rerun": true,
+      "coverage_checked": true,
+      "changed_scope": [
+        "api/openapi/models/doc.go",
+        "api/openapi/models/generated-files.txt",
+        "api/openapi/models/generator/main.go",
+        "api/openapi/models/generator/main_test.go",
+        "api/openapi/models/openapi.yaml",
+        "api/openapi/models/openapi_generated.go",
+        "api/openapi/models/openapi_test.go",
+        "api/openapi/models/types.go",
+        "internal/httpapi/models/application.go",
+        "internal/httpapi/models/handler.go",
+        "internal/httpapi/models/handler_test.go",
+        "internal/modelcatalog/core/application.go",
+        "internal/modelcatalog/core/application_queries.go",
+        "internal/modelcatalog/core/connection_idempotency_test.go",
+        "internal/modelcatalog/core/public_api_test.go",
+        "internal/modelcatalog/core/store.go",
+        "internal/modelcatalog/core/types.go",
+        "internal/modelcatalog/manual/application.go",
+        "internal/modelcatalog/manual/application_test.go",
+        "internal/modelcatalog/manual/manual.go",
+        "artifacts/api-model/bundle-digest.txt",
+        "artifacts/api-model/component-manifest.json",
+        "artifacts/api-model/coverage.out",
+        "artifacts/api-model/source-bundle.tar.zst",
+        "artifacts/model-catalog/component-manifest.json",
+        "artifacts/model-catalog/source-bundle.tar.zst",
+        "artifacts/model-manual/component-manifest.json",
+        "artifacts/model-manual/source-bundle.tar.zst",
+        "verification-aiteam-1075.yaml"
+      ],
+      "prior_open_blocker_ids": [
+        "BLK-507ac406e86a",
+        "BLK-836c976e52bf"
+      ],
+      "prior_blocker_results": [
+        {
+          "blocker_id": "BLK-507ac406e86a",
+          "root_cause_key": "model-api-query-and-manual-wiring-disconnected",
+          "status": "fixed",
+          "evidence": "NewApplication now requires catalog commands, authorized query ports, and the separately owned manual use case; core Application implements the query ports and manual.Application is adapted explicitly. The composition test exercises GET connection, GET snapshot, and manual fallback, while core public_api_test.go covers authorized reads, cross-scope rejection, audit failure, immutable snapshot validation, and exact connection/snapshot binding."
+        },
+        {
+          "blocker_id": "BLK-836c976e52bf",
+          "root_cause_key": "model-api-command-idempotency-not-bound",
+          "status": "fixed",
+          "evidence": "HTTP create/update require Idempotency-Key, compute a request digest, and pass both values into governed command inputs. Core stores durable command records transactionally and replays the original result without duplicate audit or mutation; connection_idempotency_test.go independently covers lost-response replay, same-key/different-digest conflict, principal binding, scope ordering, and invalid identities."
+        }
+      ],
+      "obligation_results": [
+        {
+          "obligation_id": "dimension:authority",
+          "status": "pass",
+          "result": "pass",
+          "evidence": "The API adapter delegates commands, queries, and manual fallback to narrow governed ports; core query methods perform RequestContext validation, scope checks, authorization, audit recording, and exact snapshot/connection binding."
+        },
+        {
+          "obligation_id": "dimension:structure",
+          "status": "pass",
+          "result": "pass",
+          "evidence": "OpenAPI schemas, generated Go output, typed HTTP request/response mapping, explicit application composition, and catalog/manual owner boundaries are complete and generated output is reproducible without drift."
+        },
+        {
+          "obligation_id": "dimension:execution",
+          "status": "pass",
+          "result": "pass",
+          "evidence": "Create and update use durable transactional idempotency records with replay and conflict semantics; update uses revision CAS; discovery, testing, manual merge, and selection preserve exact snapshot and probe requirements. The declared gate tests and the full API/catalog/manual suites pass."
+        },
+        {
+          "obligation_id": "dimension:ownership",
+          "status": "pass",
+          "result": "pass",
+          "evidence": "The public adapter composes the core catalog owner and separately owned manual application without a second source of truth. The exact task diff contains 20 scoped source files plus the declared release evidence files; no unrelated source-scope violation was found."
+        },
+        {
+          "obligation_id": "dimension:evidence",
+          "status": "pass",
+          "result": "pass",
+          "evidence": "Coverage is 91.4%, generated contract verification passes, the four declared artifacts are present, and link_go_component.py successfully links current model-catalog and model-manual component digests into the api-model bundle."
+        },
+        {
+          "obligation_id": "dimension:regression",
+          "status": "pass",
+          "result": "pass",
+          "evidence": "Both prior blockers are fixed and covered by permanent composition, query, scope, audit, immutable snapshot, and connection idempotency regressions. The exact scoped diff passes git diff --check."
+        },
+        {
+          "obligation_id": "integration:api-model-gate",
+          "status": "pass",
+          "result": "pass",
+          "evidence": "Independently rerun: HTTP/OpenAPI tests pass; coverage is 91.4%; generated Go contract verification and reproducibility pass; release linkage emits the declared api-model bundle and manifest."
+        }
+      ],
+      "acceptance_mapping": [
+        {
+          "acceptance": "UJ-MODEL-001",
+          "status": "pass",
+          "evidence": "Provider connection creation/update, discovery, connectivity testing, and exact model selection are exposed through authenticated HTTP routes and delegated to governed catalog commands with CAS, authorization, audit, and idempotency behavior."
+        },
+        {
+          "acceptance": "UJ-MODEL-002",
+          "status": "pass",
+          "evidence": "Manual fallback is exposed through the separately owned manual application; its snapshot merge, immutable predecessor handling, request digest, and idempotent publication are covered by the manual and core tests."
+        }
+      ],
+      "metrics": {
+        "statement_coverage_percent": 91.4,
+        "required_named_regression_count": 2,
+        "required_named_regression_pass_count": 2,
+        "declared_artifact_count": 4,
+        "prior_open_blocker_count": 2,
+        "prior_fixed_blocker_count": 2,
+        "generated_contract_drift_count": 0,
+        "source_scope_violation_count": 0,
+        "connection_idempotency_conflict_accept_count": 0,
+        "cross_scope_query_accept_count": 0,
+        "immutable_snapshot_mutation_accept_count": 0
+      },
+      "blockers": [],
+      "nits": [
+        "The uploaded supplemental command `go test ./api/openapi/models/... ./internal/httpapi/models/... ./internal/modelcatalog/core/... ./internal/modelcatalog/manual/... -count=1` fails because Go treats the trailing flag as an invalid package argument. The equivalent valid invocation with `-count=1` before the package patterns passes all five packages. Move the flag before the package list when refreshing verification evidence."
+      ],
+      "integration_gate_mapping": [
+        {
+          "gate": "api-model-gate",
+          "name": "api-model-gate",
+          "layer": "L1",
+          "status": "pass",
+          "source_of_truth": [
+            "docs/design/detailed/10-web-api-cli-detailed-design.md:L1392-L1428",
+            "docs/design/detailed/10-web-api-cli-detailed-design.md:L1375-L1545",
+            "docs/design/detailed/09-governance-and-security-detailed-design.md:L11-L872"
+          ],
+          "delivery_goal": "Expose provider connections, discovery snapshots, connectivity tests, manual fallback and exact model selection.",
+          "acceptance_refs": [
+            "UJ-MODEL-001",
+            "UJ-MODEL-002"
+          ],
+          "commands": [
+            {
+              "cmd": "mkdir -p artifacts/api-model && go test -covermode=atomic -coverprofile=artifacts/api-model/coverage.out ./api/openapi/models/... ./internal/httpapi/models/...",
+              "exit_code": 0
+            },
+            {
+              "cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/api-model/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+              "exit_code": 0
+            },
+            {
+              "cmd": "python3 scripts/release/verify_generated_contract.py --root api/openapi/models --require-go-generate-directive --require-generator-package ./api/openapi/models/generator --expected-outputs-file api/openapi/models/generated-files.txt && go list ./api/openapi/models/... | grep -q . && go generate ./api/openapi/models/... && git diff --exit-code -- api/openapi/models && test -z \"$(git ls-files --others --exclude-standard -- api/openapi/models)\"",
+              "exit_code": 0
+            },
+            {
+              "cmd": "python3 scripts/release/link_go_component.py --component-manifest artifacts/model-catalog/component-manifest.json --component-manifest artifacts/model-manual/component-manifest.json --entrypoint-input internal/httpapi/models --entrypoint-input api/openapi/models --bundle artifacts/api-model/source-bundle.tar.zst --component-manifest artifacts/api-model/component-manifest.json --digest-output artifacts/api-model/bundle-digest.txt --require-all-input-digests --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner api-model --require-all-owner-sources-accounted",
+              "exit_code": 0
+            }
+          ],
+          "metrics": {
+            "statement_coverage_percent": 91.4,
+            "declared_artifact_count": 4
+          },
+          "artifacts": [
+            "artifacts/api-model/coverage.out",
+            "artifacts/api-model/bundle-digest.txt",
+            "artifacts/api-model/component-manifest.json",
+            "artifacts/api-model/source-bundle.tar.zst"
+          ]
+        }
+      ]
+    },
+    "review_report_ref": {
+      "comment_id": "01a10971-0ebe-7155-8b1c-be53a14dee4f",
+      "attachment_id": "01a10971-0e58-758f-9a59-6cfbea392d44",
+      "sha256": "f3d4ab2b1d37760a68c3873ff347fb943c99cd50e6cc6c60ee065eaa4c436132",
+      "bytes": 11484,
+      "filename": "omac-review-report-f3d4ab2b1d37.yaml"
+    },
+    "review_subject_digest": "aa9357d183e618aed8ed1dcc6eec4be61693697919860b53f1d027af06ac78ec",
+    "review_obligations": [
+      {
+        "obligation_id": "dimension:authority",
+        "category": "dimension",
+        "requirement": "Authoritative inputs and source references"
+      },
+      {
+        "obligation_id": "dimension:structure",
+        "category": "dimension",
+        "requirement": "Structure, schema, dependency, and completeness"
+      },
+      {
+        "obligation_id": "dimension:execution",
+        "category": "dimension",
+        "requirement": "Executable commands and fail-closed verification"
+      },
+      {
+        "obligation_id": "dimension:ownership",
+        "category": "dimension",
+        "requirement": "Ownership, boundaries, and unique write paths"
+      },
+      {
+        "obligation_id": "dimension:evidence",
+        "category": "dimension",
+        "requirement": "Artifact lineage and evidence traceability"
+      },
+      {
+        "obligation_id": "dimension:regression",
+        "category": "dimension",
+        "requirement": "Prior blocker regression and changed-scope review"
+      },
+      {
+        "obligation_id": "integration:api-model-gate",
+        "category": "integration",
+        "requirement": "Independently verify integration gate api-model-gate",
+        "subject": "api-model-gate"
+      }
+    ],
+    "review_obligations_ref": {
+      "comment_id": "01a10958-ea10-7af1-82c0-1f8da3699a84",
+      "attachment_id": "01a10958-e8c8-78e4-b6cb-98bb6dadb9be",
+      "sha256": "3d259b32e95ae7b881dd431221ae32784932550a84839887f85e08aef8bc3cf0",
+      "bytes": 885,
+      "filename": "omac-review-obligations-3d259b32e95a.yaml"
+    },
+    "review_ledger": {
+      "schema": "omac.review-ledger/v2",
+      "cycles": [
+        {
+          "round": 1,
+          "subject_digest": "0505005868f19cb59fc94fac76cf54c031feb3e7fd884377d22ff170fca4c6a9",
+          "report_digest": "1e23f36d59c0fe50bb06f0b9cf3706a9d0e32ee536f77d3895e7ce0b53ca5ab7",
+          "verdict": "reject",
+          "obligation_results": {
+            "dimension:authority": "pass",
+            "dimension:structure": "pass",
+            "dimension:execution": "fail",
+            "dimension:ownership": "fail",
+            "dimension:evidence": "pass",
+            "dimension:regression": "pass",
+            "integration:api-model-gate": "pass"
+          },
+          "new_count": 2,
+          "fixed_count": 0,
+          "regressed_count": 0,
+          "unchanged_count": 0,
+          "open_count": 2,
+          "prior_open_blocker_ids": [],
+          "open_blocker_ids": [
+            "BLK-507ac406e86a",
+            "BLK-836c976e52bf"
+          ],
+          "reported_blocker_ids": [
+            "BLK-507ac406e86a",
+            "BLK-836c976e52bf"
+          ],
+          "blocker_facts_schema": "omac.review-cycle-blocker-facts/v1",
+          "blocker_facts": [
+            {
+              "blocker_id": "BLK-507ac406e86a",
+              "root_cause_key": "model-api-query-and-manual-wiring-disconnected",
+              "obligation_id": "dimension:ownership",
+              "summary": "The delivered public query and manual fallback routes have no executable implementation when the governed model Application is registered.",
+              "evidence": "internal/httpapi/models/handler.go:38-56 defines optional reader/manual ports; internal/httpapi/models/handler.go:362-401 and :265-299 return query_unavailable/manual_model_unavailable when those ports are absent. Repository search found no implementation of GetModelProviderConnection, GetModelCatalogSnapshot, or the context-aware ManualModelUseCase outside this adapter, while handler_test.go:263-285 explicitly accepts those unavailable responses.",
+              "required_fix": "Provide governed query use cases/read ports and the model-manual application boundary in the delivered composition, register them with the handler, and add an executable business test proving GET connection, GET snapshot, and manual fallback succeed with authorization/scope enforcement and immutable snapshot behavior; do not ship these required public routes as optional unavailable paths.",
+              "status": "open",
+              "classification": "new"
+            },
+            {
+              "blocker_id": "BLK-836c976e52bf",
+              "root_cause_key": "model-api-command-idempotency-not-bound",
+              "obligation_id": "dimension:execution",
+              "summary": "Create and update API idempotency is validated at HTTP input but is not part of the governed command contract.",
+              "evidence": "internal/httpapi/models/handler.go:181-202 and :205-232 require Idempotency-Key but do not pass it to the application; the corresponding core input types in internal/modelcatalog/core/types.go:184-206 contain no idempotency identity, and the application has no create/update claim or replay path.",
+              "required_fix": "Add a governed idempotency identity and durable same-request replay/conflict behavior to create and update, carry the exact key and request digest through the HTTP-to-application boundary, and add tests for lost-response retry and same-key/different-payload conflict.",
+              "status": "open",
+              "classification": "new"
+            }
+          ]
+        },
+        {
+          "round": 2,
+          "subject_digest": "aa9357d183e618aed8ed1dcc6eec4be61693697919860b53f1d027af06ac78ec",
+          "report_digest": "08ddace49f9fa72dbb0ff169f4858af7fd85809c0010c0c5a41e5f37db8b89f7",
+          "verdict": "pass-with-nits",
+          "obligation_results": {
+            "dimension:authority": "pass",
+            "dimension:structure": "pass",
+            "dimension:execution": "pass",
+            "dimension:ownership": "pass",
+            "dimension:evidence": "pass",
+            "dimension:regression": "pass",
+            "integration:api-model-gate": "pass"
+          },
+          "new_count": 0,
+          "fixed_count": 2,
+          "regressed_count": 0,
+          "unchanged_count": 0,
+          "open_count": 0,
+          "prior_open_blocker_ids": [
+            "BLK-507ac406e86a",
+            "BLK-836c976e52bf"
+          ],
+          "open_blocker_ids": [],
+          "reported_blocker_ids": [],
+          "blocker_facts_schema": "omac.review-cycle-blocker-facts/v1",
+          "blocker_facts": [
+            {
+              "blocker_id": "BLK-507ac406e86a",
+              "root_cause_key": "model-api-query-and-manual-wiring-disconnected",
+              "obligation_id": "dimension:ownership",
+              "summary": "The delivered public query and manual fallback routes have no executable implementation when the governed model Application is registered.",
+              "evidence": "internal/httpapi/models/handler.go:38-56 defines optional reader/manual ports; internal/httpapi/models/handler.go:362-401 and :265-299 return query_unavailable/manual_model_unavailable when those ports are absent. Repository search found no implementation of GetModelProviderConnection, GetModelCatalogSnapshot, or the context-aware ManualModelUseCase outside this adapter, while handler_test.go:263-285 explicitly accepts those unavailable responses.",
+              "required_fix": "Provide governed query use cases/read ports and the model-manual application boundary in the delivered composition, register them with the handler, and add an executable business test proving GET connection, GET snapshot, and manual fallback succeed with authorization/scope enforcement and immutable snapshot behavior; do not ship these required public routes as optional unavailable paths.",
+              "status": "fixed",
+              "classification": "fixed",
+              "last_evidence": "NewApplication now requires catalog commands, authorized query ports, and the separately owned manual use case; core Application implements the query ports and manual.Application is adapted explicitly. The composition test exercises GET connection, GET snapshot, and manual fallback, while core public_api_test.go covers authorized reads, cross-scope rejection, audit failure, immutable snapshot validation, and exact connection/snapshot binding."
+            },
+            {
+              "blocker_id": "BLK-836c976e52bf",
+              "root_cause_key": "model-api-command-idempotency-not-bound",
+              "obligation_id": "dimension:execution",
+              "summary": "Create and update API idempotency is validated at HTTP input but is not part of the governed command contract.",
+              "evidence": "internal/httpapi/models/handler.go:181-202 and :205-232 require Idempotency-Key but do not pass it to the application; the corresponding core input types in internal/modelcatalog/core/types.go:184-206 contain no idempotency identity, and the application has no create/update claim or replay path.",
+              "required_fix": "Add a governed idempotency identity and durable same-request replay/conflict behavior to create and update, carry the exact key and request digest through the HTTP-to-application boundary, and add tests for lost-response retry and same-key/different-payload conflict.",
+              "status": "fixed",
+              "classification": "fixed",
+              "last_evidence": "HTTP create/update require Idempotency-Key, compute a request digest, and pass both values into governed command inputs. Core stores durable command records transactionally and replays the original result without duplicate audit or mutation; connection_idempotency_test.go independently covers lost-response replay, same-key/different-digest conflict, principal binding, scope ordering, and invalid identities."
+            }
+          ]
+        }
+      ],
+      "blockers": [
+        {
+          "blocker_id": "BLK-507ac406e86a",
+          "root_cause_key": "model-api-query-and-manual-wiring-disconnected",
+          "obligation_id": "dimension:ownership",
+          "summary": "The delivered public query and manual fallback routes have no executable implementation when the governed model Application is registered.",
+          "evidence": "internal/httpapi/models/handler.go:38-56 defines optional reader/manual ports; internal/httpapi/models/handler.go:362-401 and :265-299 return query_unavailable/manual_model_unavailable when those ports are absent. Repository search found no implementation of GetModelProviderConnection, GetModelCatalogSnapshot, or the context-aware ManualModelUseCase outside this adapter, while handler_test.go:263-285 explicitly accepts those unavailable responses.",
+          "required_fix": "Provide governed query use cases/read ports and the model-manual application boundary in the delivered composition, register them with the handler, and add an executable business test proving GET connection, GET snapshot, and manual fallback succeed with authorization/scope enforcement and immutable snapshot behavior; do not ship these required public routes as optional unavailable paths.",
+          "status": "fixed",
+          "classification": "fixed",
+          "first_seen_round": 1,
+          "last_seen_round": 2,
+          "seen_count": 1,
+          "last_evidence": "NewApplication now requires catalog commands, authorized query ports, and the separately owned manual use case; core Application implements the query ports and manual.Application is adapted explicitly. The composition test exercises GET connection, GET snapshot, and manual fallback, while core public_api_test.go covers authorized reads, cross-scope rejection, audit failure, immutable snapshot validation, and exact connection/snapshot binding."
+        },
+        {
+          "blocker_id": "BLK-836c976e52bf",
+          "root_cause_key": "model-api-command-idempotency-not-bound",
+          "obligation_id": "dimension:execution",
+          "summary": "Create and update API idempotency is validated at HTTP input but is not part of the governed command contract.",
+          "evidence": "internal/httpapi/models/handler.go:181-202 and :205-232 require Idempotency-Key but do not pass it to the application; the corresponding core input types in internal/modelcatalog/core/types.go:184-206 contain no idempotency identity, and the application has no create/update claim or replay path.",
+          "required_fix": "Add a governed idempotency identity and durable same-request replay/conflict behavior to create and update, carry the exact key and request digest through the HTTP-to-application boundary, and add tests for lost-response retry and same-key/different-payload conflict.",
+          "status": "fixed",
+          "classification": "fixed",
+          "first_seen_round": 1,
+          "last_seen_round": 2,
+          "seen_count": 1,
+          "last_evidence": "HTTP create/update require Idempotency-Key, compute a request digest, and pass both values into governed command inputs. Core stores durable command records transactionally and replays the original result without duplicate audit or mutation; connection_idempotency_test.go independently covers lost-response replay, same-key/different-digest conflict, principal binding, scope ordering, and invalid identities."
+        }
+      ]
+    },
+    "review_ledger_ref": {
+      "comment_id": "01a10971-119f-757f-ae93-8dd262ea40d6",
+      "attachment_id": "01a10971-113b-7079-b59f-69fbac4dd4db",
+      "sha256": "0cd0dfaef1355c18eae8d93d176464885f4d7434baa4c45b5ca6db4e246c8241",
+      "bytes": 10072,
+      "filename": "omac-review-ledger-0cd0dfaef135.yaml"
+    },
+    "review_generation": null,
+    "review_ledger_generation": null,
+    "review_continuation": null,
+    "reviewer_run_baseline": {
+      "schema": "omac.reviewer-run-baseline/v1",
+      "subject_digest": "aa9357d183e618aed8ed1dcc6eec4be61693697919860b53f1d027af06ac78ec",
+      "target_reviewer": "hermes-reviewer",
+      "target_agent_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+      "cutoff_created_at": "2026-10-04T23:54:41Z",
+      "generation": "review-381ae6a1b9db4cf4",
+      "attempt": 1,
+      "baseline_direct_run_ids": [
+        "01a108b8-5fc5-74be-9e7c-206bd3ec413b",
+        "01a108df-238e-7dd0-be73-3abafd99606a",
+        "01a108ea-74b1-7dd7-876c-dddcc8f40647"
+      ],
+      "target_run_id": "01a10959-81ba-7182-93a4-c8c0bd984017"
+    },
+    "worker_handoff": null,
+    "delivery_identity": {
+      "schema": "omac.delivery-identity/v1",
+      "handoff_generation": "handoff-666ae24fb5e564a5",
+      "worker": "codex-macmini-newapi",
+      "agent_id": "037ad7f0-98f9-489f-bf43-0d1148233356",
+      "run_id": "01a108ea-74b1-7dd7-876c-dddcc8f40647",
+      "pr_url": "https://github.com/xiaohei-info/open-agent-cluster/pull/112",
+      "pr_head_sha": "44876d1e3c49ddad503556f75bd80ee34cc2d4af",
+      "verification_sha256": "c26ec1e3f675d91b51331ecab4c1bfc263a74d6769ebb5ff5a5bfab2d6a9730a",
+      "verification_attachment_id": "01a10957-562e-7644-bf0f-581a6df9e212",
+      "verification_comment_id": "01a10957-5718-713c-85e5-adf98d40498e",
+      "verification_uploader_id": "037ad7f0-98f9-489f-bf43-0d1148233356",
+      "verification_uploader_type": "agent",
+      "verification_task_id": "01a108ea-74b1-7dd7-876c-dddcc8f40647",
+      "verification_created_at": "2026-10-04T23:54:41Z"
+    },
+    "decision_required": null,
+    "amendment_attempt": null,
+    "contract": {
+      "objective": "Expose provider connections, discovery snapshots, connectivity tests, manual fallback and exact model selection.",
+      "non_goals": [
+        "Do not change adjacent domain ownership or introduce a competing source of truth.",
+        "Do not bypass authorization, admission, CAS, idempotency, review or evidence gates.",
+        "Do not preserve unpublished prototype behavior unless the owning design explicitly requires it."
+      ],
+      "verification_commands": [
+        "mkdir -p artifacts/api-model && go test -covermode=atomic -coverprofile=artifacts/api-model/coverage.out ./api/openapi/models/... ./internal/httpapi/models/...",
+        "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/api-model/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+        "python3 scripts/release/verify_generated_contract.py --root api/openapi/models --require-go-generate-directive --require-generator-package ./api/openapi/models/generator --expected-outputs-file api/openapi/models/generated-files.txt && go list ./api/openapi/models/... | grep -q . && go generate ./api/openapi/models/... && git diff --exit-code -- api/openapi/models && test -z \"$(git ls-files --others --exclude-standard -- api/openapi/models)\"",
+        "python3 scripts/release/link_go_component.py --component-manifest artifacts/model-catalog/component-manifest.json --component-manifest artifacts/model-manual/component-manifest.json --entrypoint-input internal/httpapi/models --entrypoint-input api/openapi/models --bundle artifacts/api-model/source-bundle.tar.zst --component-manifest artifacts/api-model/component-manifest.json --digest-output artifacts/api-model/bundle-digest.txt --require-all-input-digests --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner api-model --require-all-owner-sources-accounted"
+      ],
+      "integration_gates": [
+        {
+          "name": "api-model-gate",
+          "layer": "L1",
+          "source_of_truth": [
+            "docs/design/detailed/10-web-api-cli-detailed-design.md:L1392-L1428",
+            "docs/design/detailed/10-web-api-cli-detailed-design.md:L1375-L1545",
+            "docs/design/detailed/09-governance-and-security-detailed-design.md:L11-L872"
+          ],
+          "delivery_goal": "Expose provider connections, discovery snapshots, connectivity tests, manual fallback and exact model selection.",
+          "covers": [
+            "api-model"
+          ],
+          "acceptance_refs": [
+            "UJ-MODEL-001",
+            "UJ-MODEL-002"
+          ],
+          "commands": [
+            "mkdir -p artifacts/api-model && go test -covermode=atomic -coverprofile=artifacts/api-model/coverage.out ./api/openapi/models/... ./internal/httpapi/models/...",
+            "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/api-model/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+            "python3 scripts/release/verify_generated_contract.py --root api/openapi/models --require-go-generate-directive --require-generator-package ./api/openapi/models/generator --expected-outputs-file api/openapi/models/generated-files.txt && go list ./api/openapi/models/... | grep -q . && go generate ./api/openapi/models/... && git diff --exit-code -- api/openapi/models && test -z \"$(git ls-files --others --exclude-standard -- api/openapi/models)\"",
+            "python3 scripts/release/link_go_component.py --component-manifest artifacts/model-catalog/component-manifest.json --component-manifest artifacts/model-manual/component-manifest.json --entrypoint-input internal/httpapi/models --entrypoint-input api/openapi/models --bundle artifacts/api-model/source-bundle.tar.zst --component-manifest artifacts/api-model/component-manifest.json --digest-output artifacts/api-model/bundle-digest.txt --require-all-input-digests --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner api-model --require-all-owner-sources-accounted"
+          ],
+          "required_metrics": {
+            "statement_coverage_percent": 90,
+            "declared_artifact_count": 4
+          },
+          "artifacts": [
+            "artifacts/api-model/coverage.out",
+            "artifacts/api-model/bundle-digest.txt",
+            "artifacts/api-model/component-manifest.json",
+            "artifacts/api-model/source-bundle.tar.zst"
+          ]
+        }
+      ],
+      "pr_base": "main",
+      "acceptance_refs": [
+        "UJ-MODEL-001",
+        "UJ-MODEL-002"
+      ],
+      "source_of_truth": [
+        "docs/design/detailed/10-web-api-cli-detailed-design.md:L1392-L1428",
+        "docs/design/detailed/10-web-api-cli-detailed-design.md:L1375-L1545",
+        "docs/design/detailed/09-governance-and-security-detailed-design.md:L11-L872"
+      ],
+      "required_contracts": [
+        "docs/references/execution/agent-runtime.md"
+      ],
+      "scope_paths": [
+        "api/openapi/models/**",
+        "internal/httpapi/models/**"
+      ]
+    },
+    "contract_ref": {
+      "comment_id": "01a108b7-dcfd-71fb-bb09-c60d9ed2e82c",
+      "attachment_id": "01a108b7-dba6-74d4-983c-e28b121affd7",
+      "sha256": "459375ebc85ce0e16cfad02b1487bc1a3a6ebbc357f5a47e08cc9ae03de9e8c7",
+      "bytes": 4789,
+      "filename": "omac-contract-459375ebc85c.yaml"
+    },
+    "source_refs": [
+      {
+        "issue_id": "289a13bf-cede-4b5b-ba86-d72f0bef8164",
+        "label": "\u8bbe\u8ba1\u65b9\u6848"
+      },
+      {
+        "issue_id": "8e6bd282-6039-41d2-aa00-969a0bf1554a",
+        "label": "\u9a8c\u6536\u6587\u6863"
+      },
+      {
+        "issue_id": "01a03a19-212d-7586-8884-86981457457e",
+        "label": "\u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Implement model provider catalog and discovery"
+      },
+      {
+        "issue_id": "3bbc777c-42c5-457f-9217-3b09d7e87bdf",
+        "label": "\u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Implement manual model fallback management"
+      },
+      {
+        "issue_id": "152d735a-c373-4967-8ae0-45c191de2eff",
+        "label": "\u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Implement deterministic release artifact packaging"
+      }
+    ],
+    "kind": "develop",
+    "phase": "review",
+    "bounces": {
+      "worker": 0,
+      "ci": 0,
+      "review": 1,
+      "merge": 0
+    },
+    "bounce_baseline": null,
+    "deliverable": null,
+    "deliverable_ref": null,
+    "project_rules": null,
+    "project_rules_ref": null,
+    "agent_run_finished_without_submit": false,
+    "agent_run_failed": false,
+    "created_at": "2026-10-04T21:00:21Z",
+    "updated_at": "2026-10-06T00:50:12Z",
+    "platform_assignee_id": null,
+    "unknown_persisted_fields": {},
+    "review_nits_acceptance": {
+      "schema": "omac.review-nits-acceptance/v1",
+      "review_subject_digest": "aa9357d183e618aed8ed1dcc6eec4be61693697919860b53f1d027af06ac78ec",
+      "review_report_ref": {
+        "comment_id": "01a10971-0ebe-7155-8b1c-be53a14dee4f",
+        "attachment_id": "01a10971-0e58-758f-9a59-6cfbea392d44",
+        "sha256": "f3d4ab2b1d37760a68c3873ff347fb943c99cd50e6cc6c60ee065eaa4c436132",
+        "bytes": 11484,
+        "filename": "omac-review-report-f3d4ab2b1d37.yaml"
+      },
+      "verdict": "pass-with-nits"
+    }
+  },
+  "runs": [
+    {
+      "id": "01a10959-81ba-7182-93a4-c8c0bd984017",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+      "created_at": "2026-10-04T23:57:03Z",
+      "updated_at": "2026-10-05T00:23:01Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "01a108ea-74b1-7dd7-876c-dddcc8f40647",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "037ad7f0-98f9-489f-bf43-0d1148233356",
+      "created_at": "2026-10-04T21:55:45Z",
+      "updated_at": "2026-10-04T23:55:29Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "01a108df-238e-7dd0-be73-3abafd99606a",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+      "created_at": "2026-10-04T21:43:23Z",
+      "updated_at": "2026-10-04T21:54:54Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "01a108b8-5fc5-74be-9e7c-206bd3ec413b",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "037ad7f0-98f9-489f-bf43-0d1148233356",
+      "created_at": "2026-10-04T21:01:03Z",
+      "updated_at": "2026-10-04T21:42:09Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    }
+  ],
+  "effective_absolute_relative_budget": {
+    "work_item_id": "01a108b7-babb-7c08-a09b-47a29df8cd87",
+    "contract_sha256": "a35c9efce10c9eb86d90092caa0f9ba39317e8aabbcab1b1677363a87648af5e",
+    "absolute": {
+      "worker": 0,
+      "review": 1,
+      "merge": 0,
+      "ci": 0
+    },
+    "native_baseline": null,
+    "effective_baseline": {
+      "merge": 0,
+      "review": 0,
+      "worker": 0
+    },
+    "consumed": {
+      "merge": 0,
+      "review": 1,
+      "worker": 0
+    },
+    "authority_source": "implicit-zero",
+    "authority": null
+  },
+  "budget_validation_error": null
+}

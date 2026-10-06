@@ -735,6 +735,8 @@ omac node continue-evidence <manifest> <node> --rejected-source-file <original-r
 omac node continue-evidence <manifest> <node> --resolve-request <prepared-request.json> --request-sha256 <returned-request-sha256> --authority <coordinator> --reason '<exact new evidence-only resolution>'
 ```
 
+针对这条因已确认 APIModel marker 正常 reconcile 而失效、从未消费的精确 Fixture 授权，可用 `omac node continue-evidence <manifest> <node> --prepare-retirement <old-request-sha256>` 准备独立退休请求。仅以 `--retire-request <retirement.json> --request-sha256 <returned-retirement-sha256> --authority <coordinator> --reason '<精确来源退休原因>'` 批准该完整保存请求；只在 `rejected_evidence_resolution_retirements` 追加一个不可变 `retired-unconsumed` 证书，保留全部旧请求、批准、失败历史、节点与预算，不伪造 consumed、不封存或创建 Review、不 grant。只有精确 classifier/native 支持的 marker 变化可用；其它 Source 漂移、真实 hold、unknown/active Run、部分 effect、配置/required-input 变化全部拒绝。未知追加结果只观察同一证书，不替换或重做；已确认退休只从候选选择中排除该旧授权。Root 须在另行批准的单写者窗口中通过 guarded `dag status` 稳定当前 Source（该命令可能写 manifest 投影），再从完整新 Source 重新 prepare 并明确 resolve 一条新 continuation；所有全文 guards 与正常独立 Review 仍然必需。
+
 prepare 只读；resolution 仅持久记录该精确请求的批准。实际正常 result collection 才会消费批准、封存当前 Worker 交付，并进入一个新的独立 Review。原拒绝来源通过完整原生 verification、独立报告/ledger、uploader、comment task、Run 时间和所有发布文件 SHA/字节关联。未提供的历史 seal 保持 UNKNOWN，不重构旧 subject。新 seal 只属于当前 Worker；批准不代表产品 PASS、merge 或部署许可。
 
 每次封存及 Reviewer baseline/正文/状态/assignment/wake 写入前复核完整来源、required-contract/acceptance 实际文件、所有 DONE/历史/预算、实际 generation（包括 null）和 Run 集合；意图先持久化并读回。八步封存的 Unknown 只续行相同请求，已接受步骤不重写。Unknown assignment 或尚无唯一原生 Run 的 wake 保持 STOP，不重做 assign/wake；已观察的唯一正式独立 Reviewer Run 可绑定原意图，不能产生第二个 Run 或预算消费。无关 active/queued/unknown/nonformal Run、来源变更或歧义均不获得继续许可。

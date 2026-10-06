@@ -1,0 +1,11 @@
+{
+  "cause": "The assertion was started concurrently before the producer test command finished writing stream-json-hardening.json, so it observed an incomplete output file. The producer later exited 0; the assertion is rerun after completion.",
+  "classification": "verification-ordering error",
+  "command": "python3 -c \"import json; required={'TestStreamJSONRejectsDuplicateAcceptanceAndPostTerminalData', 'TestPublishedRuntimeAdapterContainsNoFixtureHooks', 'TestStreamJSONRejectsForeignSessionEvents', 'TestStreamJSONCleansUpAcceptanceKindMismatch', 'TestProductionStreamJSONAdapterLaunchesConfiguredCommand'}; rows=[json.loads(x) for x in open('artifacts/agentrun-malformed-marker-fixture/release/stream-json-hardening.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing required passing stream-json tests: {sorted(required-passed)}'\"",
+  "exit_code": 1,
+  "producer_exit_code": 0,
+  "schema": "oac.agentrun-malformed-marker-verification-attempt/v1",
+  "source": {
+    "commit": "f0263abee210d80e9854addd6d3bcafa2d731225"
+  }
+}

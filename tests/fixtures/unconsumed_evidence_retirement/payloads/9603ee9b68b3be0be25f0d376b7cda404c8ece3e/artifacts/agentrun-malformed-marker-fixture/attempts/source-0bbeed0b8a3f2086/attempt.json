@@ -1,0 +1,19 @@
+{
+  "attempt": "initial-final-source-full-suite-with-publication-staging",
+  "cause": "The copied Go overlay sources were stored with .go extensions under artifacts/, so the recursive repository test command discovered them as package files.",
+  "classification": "verification-input-contamination",
+  "command": "GOTOOLCHAIN=go1.26.0 go test -count=1 ./... > artifacts/agentrun-malformed-marker-fixture/first-full-suite.log 2>&1",
+  "exit_code": 1,
+  "observed_failure": "go test ./... treated before-control/legacy-test-overlay.go as a Go package and failed to compile it outside cmd/agentrun-job; cmd/agentrun-job itself passed in 194.783s",
+  "preserved_log": {
+    "bytes": 5935,
+    "path": "artifacts/agentrun-malformed-marker-fixture/attempts/source-0bbeed0b8a3f2086/full-suite.log",
+    "sha256": "11e135a45f03aab6a2e19ebfdcfed3b9b87ca148e9ca367e0985faae15d45e6f"
+  },
+  "repair": "Publish overlay source copies with .go.txt extensions; retain the exact generated source bytes and overlay digests.",
+  "schema": "oac.agentrun-malformed-marker-full-suite-attempt/v1",
+  "source": {
+    "commit": "0bbeed0b8a3f208638e036897e033a5c374cf9ab",
+    "tree": "501fe0fcddc5d51a5a5b8cdd47fba9a7bb7029a0"
+  }
+}

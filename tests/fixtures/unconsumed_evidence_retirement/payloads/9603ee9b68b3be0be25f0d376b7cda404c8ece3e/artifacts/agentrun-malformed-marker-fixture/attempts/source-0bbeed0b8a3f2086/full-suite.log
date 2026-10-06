@@ -1,0 +1,69 @@
+# github.com/xiaohei-info/open-agent-cluster/artifacts/agentrun-malformed-marker-fixture/before-control
+artifacts/agentrun-malformed-marker-fixture/before-control/legacy-test-overlay.go:32:18: undefined: Dependencies
+artifacts/agentrun-malformed-marker-fixture/before-control/legacy-test-overlay.go:38:12: undefined: run
+artifacts/agentrun-malformed-marker-fixture/before-control/legacy-test-overlay.go:38:83: undefined: Dependencies
+artifacts/agentrun-malformed-marker-fixture/before-control/legacy-test-overlay.go:47:12: undefined: run
+artifacts/agentrun-malformed-marker-fixture/before-control/legacy-test-overlay.go:56:19: undefined: Dependencies
+artifacts/agentrun-malformed-marker-fixture/before-control/legacy-test-overlay.go:59:86: undefined: Dependencies
+artifacts/agentrun-malformed-marker-fixture/before-control/legacy-test-overlay.go:59:145: undefined: launchFileEnvironment
+artifacts/agentrun-malformed-marker-fixture/before-control/legacy-test-overlay.go:60:104: undefined: Dependencies
+artifacts/agentrun-malformed-marker-fixture/before-control/legacy-test-overlay.go:61:99: undefined: Dependencies
+artifacts/agentrun-malformed-marker-fixture/before-control/legacy-test-overlay.go:64:115: undefined: Dependencies
+artifacts/agentrun-malformed-marker-fixture/before-control/legacy-test-overlay.go:64:115: too many errors
+FAIL	github.com/xiaohei-info/open-agent-cluster/artifacts/agentrun-malformed-marker-fixture/before-control [build failed]
+ok  	github.com/xiaohei-info/open-agent-cluster/authentication-sdk	0.029s
+ok  	github.com/xiaohei-info/open-agent-cluster/cmd/agentrun-job	194.783s
+ok  	github.com/xiaohei-info/open-agent-cluster/cmd/agentrun-job/vendor	0.425s
+ok  	github.com/xiaohei-info/open-agent-cluster/contracts/agent	0.009s
+ok  	github.com/xiaohei-info/open-agent-cluster/contracts/agentrun	0.012s
+ok  	github.com/xiaohei-info/open-agent-cluster/contracts/extension	0.012s
+ok  	github.com/xiaohei-info/open-agent-cluster/contracts/governance/admission	0.007s
+ok  	github.com/xiaohei-info/open-agent-cluster/contracts/governance/audit	0.007s
+ok  	github.com/xiaohei-info/open-agent-cluster/contracts/governance/authz	0.015s
+ok  	github.com/xiaohei-info/open-agent-cluster/contracts/governance/credential	0.011s
+ok  	github.com/xiaohei-info/open-agent-cluster/contracts/identity/externalidentitylink	0.008s
+ok  	github.com/xiaohei-info/open-agent-cluster/contracts/identity/invitation	0.005s
+ok  	github.com/xiaohei-info/open-agent-cluster/contracts/identity/principal	0.008s
+ok  	github.com/xiaohei-info/open-agent-cluster/contracts/identity/recovery	0.005s
+ok  	github.com/xiaohei-info/open-agent-cluster/contracts/identity/requestcontext	0.006s
+ok  	github.com/xiaohei-info/open-agent-cluster/contracts/identity/session	0.005s
+ok  	github.com/xiaohei-info/open-agent-cluster/contracts/kernel	6.439s
+ok  	github.com/xiaohei-info/open-agent-cluster/contracts/kernel/lifecyclev1	0.530s
+ok  	github.com/xiaohei-info/open-agent-cluster/contracts/project	0.026s
+ok  	github.com/xiaohei-info/open-agent-cluster/contracts/runtime-adapter	0.006s
+ok  	github.com/xiaohei-info/open-agent-cluster/contracts/solution	0.017s
+ok  	github.com/xiaohei-info/open-agent-cluster/contracts/workflow/commands	0.338s
+ok  	github.com/xiaohei-info/open-agent-cluster/contracts/workflow/commands/schema	0.013s
+ok  	github.com/xiaohei-info/open-agent-cluster/contracts/workflow/commands/schema/cmd	0.010s
+ok  	github.com/xiaohei-info/open-agent-cluster/contracts/workflow/commands/schema/cmd/verifybundle	0.043s
+ok  	github.com/xiaohei-info/open-agent-cluster/contracts/workflow/events	0.025s
+ok  	github.com/xiaohei-info/open-agent-cluster/contracts/workflow/resource	3.537s
+ok  	github.com/xiaohei-info/open-agent-cluster/contracts/workspace	4.836s
+ok  	github.com/xiaohei-info/open-agent-cluster/internal/admission	0.007s
+ok  	github.com/xiaohei-info/open-agent-cluster/internal/agentrun	0.068s
+ok  	github.com/xiaohei-info/open-agent-cluster/internal/agents/definitions	0.025s
+ok  	github.com/xiaohei-info/open-agent-cluster/internal/agents/modelpolicy	0.007s
+ok  	github.com/xiaohei-info/open-agent-cluster/internal/agents/templates	0.006s
+ok  	github.com/xiaohei-info/open-agent-cluster/internal/bootstrap	1.128s
+?   	github.com/xiaohei-info/open-agent-cluster/internal/harnesshandoff	[no test files]
+ok  	github.com/xiaohei-info/open-agent-cluster/internal/mcp	0.012s
+ok  	github.com/xiaohei-info/open-agent-cluster/internal/modelcatalog/manual	0.006s
+ok  	github.com/xiaohei-info/open-agent-cluster/internal/platformcore/agentrun	0.117s
+ok  	github.com/xiaohei-info/open-agent-cluster/internal/projects/bindings	0.007s
+ok  	github.com/xiaohei-info/open-agent-cluster/internal/projects/lifecycle	0.006s
+ok  	github.com/xiaohei-info/open-agent-cluster/internal/projects/precheck	0.007s
+ok  	github.com/xiaohei-info/open-agent-cluster/internal/skills	0.035s
+ok  	github.com/xiaohei-info/open-agent-cluster/internal/softwaredelivery/artifacts	0.218s
+ok  	github.com/xiaohei-info/open-agent-cluster/internal/softwaredelivery/preview	0.192s
+ok  	github.com/xiaohei-info/open-agent-cluster/internal/softwaredelivery/release	0.010s
+ok  	github.com/xiaohei-info/open-agent-cluster/internal/solutions/definition	0.020s
+ok  	github.com/xiaohei-info/open-agent-cluster/internal/workspace/filesystem	0.008s
+ok  	github.com/xiaohei-info/open-agent-cluster/internal/workspace/kubernetes	1.546s
+ok  	github.com/xiaohei-info/open-agent-cluster/internal/workspace/source	0.079s
+ok  	github.com/xiaohei-info/open-agent-cluster/kernel/planning	0.057s
+ok  	github.com/xiaohei-info/open-agent-cluster/runtime-sdk	20.649s
+?   	github.com/xiaohei-info/open-agent-cluster/scripts/go-quality	[no test files]
+?   	github.com/xiaohei-info/open-agent-cluster/scripts/go-quality/check-toolchain	[no test files]
+ok  	github.com/xiaohei-info/open-agent-cluster/sdk/deployment	0.014s
+ok  	github.com/xiaohei-info/open-agent-cluster/sdk/harness	3.889s
+FAIL

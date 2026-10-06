@@ -32,6 +32,12 @@ from .operator_review_recovery import _plain, _control, _budget
 SCHEMA = "omac.rejected-evidence-handoff/v1"
 RESOLUTIONS = "rejected_evidence_resolutions"
 JOURNAL = "rejected_evidence_handoffs"
+RETIREMENTS = "rejected_evidence_resolution_retirements"
+RETIREMENT_SCHEMA = "omac.unconsumed-evidence-resolution-retirement/v1"
+_RETIREMENT_TOKEN = "33d055c04a9f98cd61460ad4ffeba449513381cfbc63340827c5fc70338e9576"
+_RETIREMENT_APPROVAL = "aec9ab09487de76d88694a5fa0e11171de716843f9349b020a6195555454fcf0"
+_RETIREMENT_MARKER_CONTROL = "d0c80dfe6a461934e6b4f4cf156acfb36b86e21c53da1bce07d5bdafd1fa494f"
+_RETIREMENT_MARKER_RUNS = "e85551b701e71e9d8e67297e79a7fb5417db64d9ff9d239b0370480a532143c4"
 
 
 def _fail(detail):
@@ -750,6 +756,203 @@ def _approval(manifest, token, request):
         _fail("Exact current coordinator resolution is absent or forged")
 
 
+def _retirement_expected_source(manifest, token):
+    entry = manifest.meta.get(RESOLUTIONS, {}).get(token)
+    if token != _RETIREMENT_TOKEN or not isinstance(entry, dict):
+        _fail("This exact qualified unconsumed retirement source is unsupported")
+    request = entry.get("request")
+    _approval(manifest, token, request)
+    if entry["approval_sha256"] != _RETIREMENT_APPROVAL or token in manifest.meta.get(JOURNAL, {}):
+        _fail("Original retirement authority changed or old handoff has an intent/effect")
+    expected = deepcopy(request["tuple"]["manifest_source"])
+    node = expected["nodes"].get("api-model", {})
+    if node.get("recovery_marker") is not True:
+        _fail("Original confirmed-merge marker source differs")
+    node["recovery_marker"] = False
+    expected["meta"].setdefault(RESOLUTIONS, {})[token] = deepcopy(entry)
+    return expected
+
+
+def prepare_evidence_retirement(
+    store, runtime, manifest, path, key, *, old_request_sha256, config
+):
+    """Qualify one exact never-consumed stale tuple, without changing its source."""
+    from ..core.manifest import confirmed_merge_is_closed
+    from .loop import _confirmed_merge_has_real_recovery
+
+    token = old_request_sha256
+    if token in manifest.meta.get(RETIREMENTS, {}):
+        _fail("Existing retirement must be observed, never prepared or appended again")
+    expected = _retirement_expected_source(manifest, token)
+    if _manifest_source(manifest) != expected:
+        _fail("Current full Source drift exceeds the exact qualified marker projection")
+    candidates = [
+        t for t, e in manifest.meta.get(RESOLUTIONS, {}).items()
+        if isinstance(e, dict) and e.get("request", {}).get("tuple", {}).get("node_id") == key
+        and manifest.meta.get(JOURNAL, {}).get(t, {}).get("state") != "consumed"
+    ]
+    if candidates != [token]:
+        _fail("Exact per-node unconsumed candidate set changed or is ambiguous")
+    model_node = manifest.nodes["api-model"]
+    model = store.get_work_item(model_node.work_item_id)
+    model_runs = sorted((_plain(r) for r in _runs(runtime, model.id)), key=lambda r: r["id"])
+    if (
+        not confirmed_merge_is_closed(model_node)
+        or model.id != model_node.work_item_id
+        or model.workspace_id != store.config.workspace_id
+        or model.dag_key != "api-model"
+        or model.kind != TaskKind.DEVELOP
+        or model.phase != TaskPhase.REVIEW
+        or model.status != WorkItemStatus.DONE
+        or _confirmed_merge_has_real_recovery(model)
+        or model.platform_assignee_id
+        or model.unknown_persisted_fields
+        or _digest(_control(model)) != _RETIREMENT_MARKER_CONTROL
+        or _digest(model_runs) != _RETIREMENT_MARKER_RUNS
+    ):
+        _fail("Full confirmed-merge marker/native history qualification changed")
+    old = manifest.meta[RESOLUTIONS][token]
+    request = old["request"]
+    # Only this fully qualified projection is reconstructed in a private copy
+    # to revalidate all OLD native/evidence/config/budget guards. The actual
+    # stale source and _current_source remain unchanged and still reject.
+    historical = deepcopy(manifest)
+    historical.nodes["api-model"].recovery_marker = True
+    item, value, _, runs = _verify_request(
+        store, runtime, historical, path, key, request, config
+    )
+    _initial(item, manifest.nodes[key])
+    if _control(item) != request["tuple"]["full_control"]:
+        _fail("Full original Fixture control changed before retirement")
+    if (
+        _control(store.get_work_item(model.id)) != _control(model)
+        or sorted((_plain(r) for r in _runs(runtime, model.id)), key=lambda r: r["id"]) != model_runs
+        or load_manifest(path) != manifest
+    ):
+        _fail("Full native/manifest Source changed during retirement observation")
+    return {
+        "schema": RETIREMENT_SCHEMA,
+        "old_request_sha256": token,
+        "old_approval_sha256": old["approval_sha256"],
+        "old_entry_sha256": _digest(old),
+        "node_id": key,
+        "manifest_path": str(Path(path).resolve()),
+        "current_manifest_source_sha256": _digest(expected),
+        "marker_native": {"full_control": _control(model), "runs": model_runs},
+        "fixture_native": {
+            "full_control": _control(item),
+            "runs": sorted((_plain(r) for r in runs), key=lambda r: r["id"]),
+            "budget": value["budget"],
+        },
+        "config_sha256": value["config_sha256"],
+        "required_inputs": value["required_inputs"],
+    }
+
+
+def _validate_retirement(manifest, token, certificate):
+    """Validate historical explicit retirement; it is never a consumed handoff."""
+    if (
+        not isinstance(certificate, dict)
+        or set(certificate) != {"schema", "state", "request", "approval", "approval_sha256"}
+        or certificate.get("schema") != RETIREMENT_SCHEMA
+        or certificate.get("state") != "retired-unconsumed"
+        or not isinstance(certificate.get("request"), dict)
+        or not isinstance(certificate.get("approval"), dict)
+    ):
+        _fail("Immutable retired-unconsumed certificate is malformed")
+    request, approval = certificate["request"], certificate["approval"]
+    expected_keys = {
+        "schema", "old_request_sha256", "old_approval_sha256", "old_entry_sha256",
+        "node_id", "manifest_path", "current_manifest_source_sha256",
+        "marker_native", "fixture_native", "config_sha256", "required_inputs",
+    }
+    old_source = _retirement_expected_source(manifest, token)
+    old = manifest.meta[RESOLUTIONS][token]
+    original = old["request"]
+    marker = request.get("marker_native", {})
+    fixture = request.get("fixture_native", {})
+    if (
+        set(request) != expected_keys
+        or request.get("schema") != RETIREMENT_SCHEMA
+        or request.get("old_request_sha256") != token
+        or request.get("old_approval_sha256") != old["approval_sha256"]
+        or request.get("old_entry_sha256") != _digest(old)
+        or request.get("node_id") != original["tuple"]["node_id"]
+        or request.get("manifest_path") != original["tuple"]["manifest_path"]
+        or request.get("current_manifest_source_sha256") != _digest(old_source)
+        or not isinstance(marker, dict)
+        or set(marker) != {"full_control", "runs"}
+        or _digest(marker["full_control"]) != _RETIREMENT_MARKER_CONTROL
+        or _digest(marker["runs"]) != _RETIREMENT_MARKER_RUNS
+        or not isinstance(fixture, dict)
+        or set(fixture) != {"full_control", "runs", "budget"}
+        or fixture["full_control"] != original["tuple"]["full_control"]
+        or _digest(fixture["runs"]) != original["runs_sha256"]
+        or fixture["budget"] != original["tuple"]["budget"]
+        or request.get("config_sha256") != original["tuple"]["config_sha256"]
+        or request.get("required_inputs") != original["tuple"]["required_inputs"]
+        or set(approval) != {"request_sha256", "authority", "reason"}
+        or approval.get("request_sha256") != _digest(request)
+        or not isinstance(approval.get("authority"), str) or not approval["authority"].strip()
+        or not isinstance(approval.get("reason"), str) or not approval["reason"].strip()
+        or certificate["approval_sha256"] != _digest(approval)
+    ):
+        _fail("Exact full retirement qualification/Root approval digest changed")
+
+
+def retired_evidence_resolutions(manifest):
+    records = manifest.meta.get(RETIREMENTS, {})
+    if not isinstance(records, dict):
+        _fail("Typed unconsumed retirement table is malformed")
+    for token, certificate in records.items():
+        _validate_retirement(manifest, token, certificate)
+    return set(records)
+
+
+def resolve_evidence_retirement(
+    store, runtime, path, key, request, *, request_sha256, authority, reason, config
+):
+    """Append one immutable complete retirement intention and confirm readback."""
+    if (
+        not isinstance(request, dict) or request.get("schema") != RETIREMENT_SCHEMA
+        or request.get("node_id") != key
+        or request.get("manifest_path") != str(Path(path).resolve())
+        or request_sha256 != _digest(request)
+        or not isinstance(authority, str) or not authority.strip()
+        or not isinstance(reason, str) or not reason.strip()
+    ):
+        _fail("Fresh exact retirement request SHA and explicit Root authority/reason are required")
+    token = request.get("old_request_sha256")
+    approval = {"request_sha256": request_sha256, "authority": authority, "reason": reason}
+    certificate = {
+        "schema": RETIREMENT_SCHEMA, "state": "retired-unconsumed",
+        "request": deepcopy(request), "approval": approval,
+        "approval_sha256": _digest(approval),
+    }
+    manifest = load_manifest(path)
+    old_certificate = manifest.meta.get(RETIREMENTS, {}).get(token)
+    if old_certificate is not None:
+        _validate_retirement(manifest, token, old_certificate)
+        if old_certificate != certificate:
+            _fail("Existing exact retirement cannot be replaced")
+        return {"state": "retired-unconsumed", "old_request_sha256": token, "request_sha256": request_sha256, "observed_existing": True}
+    observed = prepare_evidence_retirement(
+        store, runtime, manifest, path, key, old_request_sha256=token, config=config
+    )
+    if observed != request:
+        _fail("Full current retirement Source CAS changed before append")
+    # This single atomic local append is both the durable once-only intention
+    # and immutable certificate. No native effect follows it. Unknown results
+    # are resolved by observing this exact record, never replacing/replaying it.
+    manifest.meta.setdefault(RETIREMENTS, {})[token] = certificate
+    _checkpoint(manifest, path)
+    disk = load_manifest(path)
+    _validate_retirement(disk, token, certificate)
+    if disk.meta[RETIREMENTS][token] != certificate:
+        _fail("Retirement append is unconfirmed; observe the same exact certificate before continuing")
+    return {"state": "retired-unconsumed", "old_request_sha256": token, "request_sha256": request_sha256, "observed_existing": False}
+
+
 def _review_obligations(obligations, value):
     """Expose full retained inputs to the actual Reviewer through native obligations."""
     result = deepcopy(obligations)
@@ -842,10 +1045,12 @@ def _matches_owned(current, expected, step, store):
 def consume_evidence_handoff(store, runtime, manifest, path, key, config):
     """Normal collection consumes only a newly explicitly resolved exact tuple."""
     records = manifest.meta.get(RESOLUTIONS, {})
+    retired = retired_evidence_resolutions(manifest)
     candidates = [
         (t, e)
         for t, e in records.items()
         if isinstance(e, dict)
+        and t not in retired
         and e.get("request", {}).get("tuple", {}).get("node_id") == key
         and manifest.meta.get(JOURNAL, {}).get(t, {}).get("state") != "consumed"
     ]

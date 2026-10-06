@@ -1,0 +1,70 @@
+{
+  "records": [
+    {
+      "capture_command": "cp artifacts/agentrun-malformed-marker-fixture/held-wait-process-evidence.jsonl artifacts/agentrun-malformed-marker-fixture/held-wait-focused.jsonl",
+      "producer": "focused",
+      "raw": {
+        "bytes": 65284,
+        "path": "fixture-tests.json",
+        "sha256": "e8d5a69061acdb88bf429785168c882b160d213f32fddc79e64a8f77869573fe"
+      },
+      "raw_to_snapshot": "structured held-Wait records reconstructed from chunked Go JSON output and compared after canonical JSON serialization",
+      "scenario_count": 7,
+      "snapshot": {
+        "bytes": 17305,
+        "path": "held-wait-focused.jsonl",
+        "sha256": "27cc81053e242c7ae2fb46c3ad692f10d4cc3abc0bf82895df6553ba5be3a6f3"
+      }
+    },
+    {
+      "capture_command": "cp artifacts/agentrun-malformed-marker-fixture/held-wait-process-evidence.jsonl artifacts/agentrun-malformed-marker-fixture/held-wait-scope.jsonl",
+      "producer": "scope",
+      "raw": {
+        "bytes": 277267,
+        "path": "uncached-scope-tests.json",
+        "sha256": "e3e9f00b066346ca64c9dbb8ffa42a104a3ae8ed1a22f926e3973e398dac4d69"
+      },
+      "raw_to_snapshot": "structured held-Wait records reconstructed from chunked Go JSON output and compared after canonical JSON serialization",
+      "scenario_count": 7,
+      "snapshot": {
+        "bytes": 17305,
+        "path": "held-wait-scope.jsonl",
+        "sha256": "8fc12d60722b250667c96aedd8fdb0486eef5f64778bb00363dea3b54a00751c"
+      }
+    },
+    {
+      "capture_command": "cp artifacts/agentrun-malformed-marker-fixture/held-wait-process-evidence.jsonl artifacts/agentrun-malformed-marker-fixture/held-wait-full-suite.jsonl",
+      "producer": "full-suite",
+      "raw": {
+        "bytes": 4474,
+        "path": "first-full-suite.log",
+        "sha256": "b2025c79fd2229cfa334a16280623a249488c09aa924d0341b2bf0c7e3a9eceb"
+      },
+      "raw_to_snapshot": "snapshot copied from current namespace immediately after producer",
+      "scenario_count": 7,
+      "snapshot": {
+        "bytes": 16545,
+        "path": "held-wait-full-suite.jsonl",
+        "sha256": "ee8d2a37e962ebbdeb4adeff3cb5d876269abf0b8b3aef5a146200de7f7d5387"
+      }
+    },
+    {
+      "capture_command": "cp artifacts/agentrun-malformed-marker-fixture/held-wait-process-evidence.jsonl artifacts/agentrun-malformed-marker-fixture/held-wait-coverage.jsonl",
+      "producer": "coverage",
+      "raw": {
+        "bytes": 63349,
+        "path": "release/coverage.out",
+        "sha256": "18c5f898f725d6deb22f8dfcae23b53d40fe50eb76b4a2d1277bade99597dad7"
+      },
+      "raw_to_snapshot": "snapshot copied from current namespace immediately after producer",
+      "scenario_count": 7,
+      "snapshot": {
+        "bytes": 16545,
+        "path": "held-wait-coverage.jsonl",
+        "sha256": "c8d6b3cae77abc5ca24de932f7cb65c0bff288bc751064acf7839ee9b1149b53"
+      }
+    }
+  ],
+  "schema": "oac.agentrun-malformed-marker-snapshot-captures/v1",
+  "source_commit": "e9b4440f9c119275ccbacf989087b8b067385ca7"
+}

@@ -1,0 +1,20 @@
+{
+  "host": {
+    "goarch": "arm64",
+    "goos": "linux",
+    "native_process_tests": true,
+    "procfs_stat_readable": true,
+    "uname": "Linux instance-20250903-1943 6.17.0-1011-oracle #11~24.04.1-Ubuntu SMP Fri Apr 10 02:09:09 UTC 2026 aarch64 aarch64 aarch64 GNU/Linux"
+  },
+  "schema": "oac.agentrun-malformed-marker-environment/v1",
+  "source": {
+    "commit": "985f5434766a58e45b0a2fa3768d5ee2a35cdf0c",
+    "tree": "960b7ceddc69c3357df9152f7e997159fd420e2d"
+  },
+  "toolchain": {
+    "docker_server": "29.2.1 linux/arm64",
+    "go_version": "go version go1.26.0 linux/arm64",
+    "pinned_release_image": "golang@sha256:1ee99c345f8179002a0de40728e0eaa8865b81257b3924ef150ee65b3f1d3fc7"
+  },
+  "wait_evidence": "Each of the focused, scope, full-suite, and coverage snapshots contains seven unique scenarios. The H prospective artifact retains pending Wait and post-release reaping observations."
+}

@@ -95,6 +95,8 @@ def register(parser):
     continuation.add_argument("--rejected-source-file", help="Complete original independent Reviewer workshow JSON")
     continuation.add_argument("--history-file", action="append", default=[], help="Full retained original native/unsubmitted failure bytes")
     continuation.add_argument("--resolve-request", help="Exact prepared JSON request")
+    continuation.add_argument("--prepare-retirement", help="Prepare exact never-consumed stale-resolution retirement for this old request SHA")
+    continuation.add_argument("--retire-request", help="Resolve one saved exact retirement request; no seal, Review or budget permission")
     continuation.add_argument("--request-sha256", help="Explicitly approved canonical request digest")
     continuation.add_argument("--authority", help="New explicit coordinator authority")
     continuation.add_argument("--reason", help="Exact bounded resolution reason")
@@ -946,6 +948,38 @@ def _cmd_continue_evidence(args) -> int:
     engine = _build_engine(config)
     if engine is None:
         raise ValidationError("Configure an engine, then run `omac node continue-evidence --help`")
+    if args.prepare_retirement or args.retire_request:
+        from ...pipeline.evidence_handoff import prepare_evidence_retirement, resolve_evidence_retirement
+
+        if (
+            args.prepare_retirement and args.retire_request
+            or args.resolve_request or args.rejected_source_file or args.history_file
+        ):
+            raise ValidationError("Retirement is separate from continuation preparation/resolution; run `omac node continue-evidence --help`")
+        if args.prepare_retirement:
+            if args.request_sha256 or args.authority or args.reason:
+                raise ValidationError("Retirement preparation is read-only; resolve its saved request with --retire-request")
+            with manifest_write_lock(args.manifest):
+                request = prepare_evidence_retirement(
+                    engine.store, engine.runtime, _load_or_raise(args.manifest),
+                    args.manifest, args.node_key, old_request_sha256=args.prepare_retirement, config=config,
+                )
+            result = {"state": "pending-explicit-retirement-resolution", "request_sha256": _digest(request), "request": request}
+        else:
+            try:
+                data = json.loads(Path(args.retire_request).read_text())
+            except (OSError, ValueError) as exc:
+                raise ValidationError("Complete saved retirement request is required") from exc
+            if not isinstance(data, dict):
+                raise ValidationError("Complete saved retirement request must be an object")
+            request = data.get("request", data)
+            with manifest_write_lock(args.manifest):
+                result = resolve_evidence_retirement(
+                    engine.store, engine.runtime, args.manifest, args.node_key, request,
+                    request_sha256=args.request_sha256, authority=args.authority, reason=args.reason, config=config,
+                )
+        print_json(result)
+        return exit_codes.OK
     if args.resolve_request:
         if args.rejected_source_file or args.history_file:
             raise ValidationError("Resolution uses the exact saved request; omit preparation inputs")

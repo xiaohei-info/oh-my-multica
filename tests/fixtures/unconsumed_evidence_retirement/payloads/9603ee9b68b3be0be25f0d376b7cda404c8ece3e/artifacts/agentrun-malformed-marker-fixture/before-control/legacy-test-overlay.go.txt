@@ -1,0 +1,1448 @@
+package main
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
+	"testing"
+	"time"
+
+	contractsagentrun "github.com/xiaohei-info/open-agent-cluster/contracts/agentrun"
+	runtimeadapter "github.com/xiaohei-info/open-agent-cluster/contracts/runtime-adapter"
+	job "github.com/xiaohei-info/open-agent-cluster/internal/agentrun"
+	runtimesdk "github.com/xiaohei-info/open-agent-cluster/runtime-sdk"
+)
+
+func TestRunExecutesFixedLaunchWithLinkedDependencies(t *testing.T) {
+	path := writeLaunch(t, validLaunch())
+	client := &testClient{}
+	dependencies := Dependencies{
+		DriverFactory:   testDriverFactory{},
+		ClientFactory:   testClientFactory{client: client},
+		MCPMaterializer: testMaterializer{},
+		Config:          testConfig(),
+	}
+	if err := run(context.Background(), func(string) string { return path }, func() (Dependencies, error) { return dependencies, nil }); err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+	if client.appendAttempts != 2 || !client.completed {
+		t.Fatalf("append attempts=%d completed=%t", client.appendAttempts, client.completed)
+	}
+}
+
+func TestRunFailsWithoutLinkedDependencies(t *testing.T) {
+	if err := run(context.Background(), func(string) string { return "/launch.json" }, nil); err == nil || !strings.Contains(err.Error(), "not linked") {
+		t.Fatalf("run() error = %v", err)
+	}
+}
+
+func TestRunReportsInputAndDependencyFailures(t *testing.T) {
+	for _, testCase := range []struct {
+		name    string
+		lookup  func(string) string
+		factory func() (Dependencies, error)
+		want    string
+	}{
+		{name: "missing path", lookup: func(string) string { return "" }, factory: func() (Dependencies, error) { return Dependencies{}, nil }, want: launchFileEnvironment},
+		{name: "dependency factory", lookup: func(string) string { return "/launch.json" }, factory: func() (Dependencies, error) { return Dependencies{}, errors.New("unavailable") }, want: "construct in-image"},
+		{name: "open input", lookup: func(string) string { return "/does-not-exist" }, factory: func() (Dependencies, error) {
+			return Dependencies{DriverFactory: testDriverFactory{}, ClientFactory: testClientFactory{client: &testClient{}}, MCPMaterializer: testMaterializer{}, Config: testConfig()}, nil
+		}, want: "open mounted launch input"},
+		{name: "invalid config", lookup: func(string) string { return writeLaunch(t, validLaunch()) }, factory: func() (Dependencies, error) {
+			return Dependencies{DriverFactory: testDriverFactory{}, ClientFactory: testClientFactory{client: &testClient{}}, MCPMaterializer: testMaterializer{}}, nil
+		}, want: "maximum batch"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			err := run(context.Background(), testCase.lookup, testCase.factory)
+			if err == nil || !strings.Contains(err.Error(), testCase.want) {
+				t.Fatalf("run() error = %v; want %q", err, testCase.want)
+			}
+		})
+	}
+}
+
+func TestRegisterDependenciesAndMain(t *testing.T) {
+	previous := linkedDependencies
+	linkedDependencies = nil
+	defer func() { linkedDependencies = previous }()
+
+	assertPanics(t, func() { RegisterDependencies(nil) })
+	dependencies := Dependencies{DriverFactory: testDriverFactory{}, ClientFactory: testClientFactory{client: &testClient{}}, MCPMaterializer: testMaterializer{}, Config: testConfig()}
+	RegisterDependencies(func() (Dependencies, error) { return dependencies, nil })
+	assertPanics(t, func() { RegisterDependencies(func() (Dependencies, error) { return dependencies, nil }) })
+
+	t.Setenv(launchFileEnvironment, writeLaunch(t, validLaunch()))
+	main()
+}
+
+func TestDecodeLaunchRejectsInvalidAndTrailingInput(t *testing.T) {
+	for _, input := range []string{"not json", `{}` + `{}`, `{"unknown":true}`} {
+		if _, err := decodeLaunch(strings.NewReader(input)); err == nil {
+			t.Fatalf("decodeLaunch(%q) succeeded", input)
+		}
+	}
+	if _, err := decodeLaunch(strings.NewReader(`{}`)); err == nil || !strings.Contains(err.Error(), "invalid mounted launch input") {
+		t.Fatalf("decodeLaunch(empty launch) error = %v", err)
+	}
+}
+
+func assertPanics(t *testing.T, call func()) {
+	t.Helper()
+	defer func() {
+		if recover() == nil {
+			t.Fatal("call did not panic")
+		}
+	}()
+	call()
+}
+
+// TestBuiltEntrypointRunsConcreteDeliveryPath builds the exact untagged
+// agentrun-job binary and runs one full AgentRun delivery against a fixture
+// vendor process and a run-scoped Platform Core fixture: the concrete
+// stream-json driver is invoked exactly once, the normalized SDK envelopes are
+// uploaded unchanged and acknowledged by the server, and the terminal result
+// is completed only after that acknowledgement.
+func TestBuiltEntrypointRunsConcreteDeliveryPath(t *testing.T) {
+	binary := buildCommand(t)
+	server := newFixturePlatformServer(t)
+	injectionDirectory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(injectionDirectory, "mcp-1.json"), []byte(`{"server_id":"mcp-1"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	credentialPath := writeCredential(t, "fixture-token")
+	marker := filepath.Join(t.TempDir(), "marker")
+	t.Setenv("AGENTRUN_FIXTURE_MARKER", marker)
+
+	launch := validLaunch()
+	launch.MCPServers = []contractsagentrun.MCPServerLaunch{{
+		ServerID: "mcp-1", Transport: contractsagentrun.MCPStdioTransport, ConfigurationDigest: "mcp-digest",
+		Stdio: &contractsagentrun.MCPStdioLaunch{Command: "mcp", WorkingDirectory: "/workspace", CredentialBindings: []contractsagentrun.CredentialInjectionBinding{{CredentialBindingID: "credential-1", Target: "API_TOKEN", Purpose: contractsagentrun.MCPStdioEnvironmentCredentialPurpose}}},
+	}}
+	launchPath := writeLaunch(t, launch)
+
+	command := exec.Command(binary)
+	command.Env = append(os.Environ(),
+		launchFileEnvironment+"="+launchPath,
+		platformEndpointEnvironment+"="+server.URL(),
+		runCredentialEnvironment+"="+credentialPath,
+		mcpInjectionDirectoryEnvironment+"="+injectionDirectory,
+		"AGENTRUN_FIXTURE_MARKER="+marker,
+	)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("built command error = %v\n%s", err, output)
+	}
+
+	received := server.events()
+	if len(received) < 3 {
+		t.Fatalf("server received %d events; want started, message, terminal", len(received))
+	}
+	if received[0]["event_type"] != "started" || received[0]["sequence"] != float64(1) {
+		t.Fatalf("first event = %#v", received[0])
+	}
+	last := received[len(received)-1]
+	if last["event_type"] != "terminal" {
+		t.Fatalf("last event = %#v", last)
+	}
+	var streamID string
+	for _, event := range received {
+		if event["stream_id"] != nil {
+			streamID, _ = event["stream_id"].(string)
+		}
+		if event["stream_id"] != streamID {
+			t.Fatalf("event stream drifted: %#v vs %q", event, streamID)
+		}
+	}
+	if !server.completed {
+		t.Fatal("Platform Core fixture did not receive the completion")
+	}
+	if server.completionResult["outcome"] != "succeeded" {
+		t.Fatalf("completion result = %#v", server.completionResult)
+	}
+	contents, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(contents)) != filepath.Join(injectionDirectory, "mcp-1.json") {
+		t.Fatalf("vendor marker = %q", contents)
+	}
+	if server.agentRunID != "run-1" || server.authorization != "Bearer fixture-token" {
+		t.Fatalf("run scope = %q auth = %q", server.agentRunID, server.authorization)
+	}
+}
+
+// TestBuiltEntrypointCancelsVendorOnPersistentAppendFailure proves that when
+// event delivery retries are exhausted, the Job cancels the still-running
+// vendor session, observes its terminal state, reaps the child, and fails
+// without reporting a completion to Platform Core.
+func TestBuiltEntrypointCancelsVendorOnPersistentAppendFailure(t *testing.T) {
+	binary := buildCommand(t)
+	t.Setenv("AGENTRUN_FIXTURE_MODE", "slow")
+
+	failing := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer failing.Close()
+
+	injectionDirectory := t.TempDir()
+	pidFile := filepath.Join(t.TempDir(), "vendor.pid")
+	t.Setenv("AGENTRUN_FIXTURE_PID_FILE", pidFile)
+	credentialPath := writeCredential(t, "fixture-token")
+	launchPath := writeLaunch(t, validLaunch())
+
+	command := exec.Command(binary)
+	command.Env = append(os.Environ(),
+		launchFileEnvironment+"="+launchPath,
+		platformEndpointEnvironment+"="+failing.URL,
+		runCredentialEnvironment+"="+credentialPath,
+		mcpInjectionDirectoryEnvironment+"="+injectionDirectory,
+		"AGENTRUN_FIXTURE_PID_FILE="+pidFile,
+	)
+	output, err, jobIdentity, identityErr := runCommandWithIdentity(command)
+	if identityErr != nil {
+		t.Fatal(identityErr)
+	}
+	if err == nil {
+		t.Fatalf("built command unexpectedly succeeded with persistent append failure\n%s", output)
+	}
+	if !strings.Contains(string(output), "append AgentRun events") {
+		t.Fatalf("built command output does not report the delivery failure: %s", output)
+	}
+	pid, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatalf("read vendor process identity: %v", err)
+	}
+	if err := assertProcessGone(t, strings.TrimSpace(string(pid)), jobIdentity); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBuiltEntrypointWaitsForRuntimeWaitOnPersistentAppendFailure(t *testing.T) {
+	binary := buildCommand(t)
+	processEvidence := map[string]any{
+		"schema":       "oac.agentrun-process-cancellation-observation/v1",
+		"test":         "TestBuiltEntrypointWaitsForRuntimeWaitOnPersistentAppendFailure",
+		"wait_owners":  []string{"agentrun-vendor owns the configured Runtime exec.Cmd.Wait", "agentrun-job childReaper owns the adapter exec.Cmd.Wait"},
+		"observations": []map[string]any{},
+	}
+	processEvidencePath := filepath.Join("..", "..", "artifacts", "agentrun-cancellation-prerequisite", "built-production-chain-process.json")
+	t.Cleanup(func() {
+		if err := os.MkdirAll(filepath.Dir(processEvidencePath), 0o755); err != nil {
+			t.Error(err)
+			return
+		}
+		contents, err := json.MarshalIndent(processEvidence, "", "  ")
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		if err := os.WriteFile(processEvidencePath, contents, 0o600); err != nil {
+			t.Error(err)
+		}
+	})
+	t.Setenv("AGENTRUN_FIXTURE_MODE", "delayed-termination")
+	pidFile := filepath.Join(t.TempDir(), "runtime.json")
+	t.Setenv("AGENTRUN_FIXTURE_PID_FILE", pidFile)
+	failing := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer failing.Close()
+	launchPath := writeLaunch(t, validLaunch())
+	command := exec.Command(binary)
+	command.Env = append(os.Environ(),
+		launchFileEnvironment+"="+launchPath,
+		platformEndpointEnvironment+"="+failing.URL,
+		runCredentialEnvironment+"="+writeCredential(t, "fixture-token"),
+		mcpInjectionDirectoryEnvironment+"="+t.TempDir(),
+		"AGENTRUN_FIXTURE_PID_FILE="+pidFile,
+	)
+	var stdout, stderr bytes.Buffer
+	command.Stdout, command.Stderr = &stdout, &stderr
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	job, err := readProcessSnapshot("/proc", command.Process.Pid)
+	if err != nil {
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		t.Fatal(err)
+	}
+	finished := make(chan struct{})
+	var runErr error
+	go func() {
+		runErr = command.Wait()
+		close(finished)
+	}()
+	releasePath := pidFile + ".release"
+	t.Cleanup(func() {
+		_ = os.WriteFile(releasePath, []byte("release"), 0o600)
+		if raw, readErr := os.ReadFile(pidFile); readErr == nil {
+			if chain, parseErr := parseProcessIdentity(strings.TrimSpace(string(raw))); parseErr == nil {
+				if child, same, observeErr := observeProcess("/proc", chain.Child); observeErr == nil && same && child.state != "Z" {
+					process, _ := os.FindProcess(chain.Child.PID)
+					if process != nil {
+						_ = process.Kill()
+					}
+				}
+			}
+		}
+		select {
+		case <-finished:
+		case <-time.After(5 * time.Second):
+			_ = command.Process.Kill()
+			<-finished
+		}
+	})
+
+	waitFile := func(path string) []byte {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			contents, readErr := os.ReadFile(path)
+			if readErr == nil {
+				return contents
+			}
+			if !os.IsNotExist(readErr) {
+				t.Fatal(readErr)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		select {
+		case <-finished:
+			t.Fatalf("fixture did not create %s; Job error=%v output=%s", filepath.Base(path), runErr, stdout.String()+stderr.String())
+		default:
+			t.Fatalf("fixture did not create %s before the Job completed", filepath.Base(path))
+		}
+		return nil
+	}
+	rawChain := strings.TrimSpace(string(waitFile(pidFile)))
+	chain, err := parseProcessIdentity(rawChain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	processEvidence["process_chain"] = chain
+	if chain.Owner != job.processIdentity || chain.Child.ParentPID != chain.Parent.PID || chain.Parent.ParentPID != job.PID {
+		t.Fatal("Runtime process chain does not match the built Job and linked adapter")
+	}
+	_ = waitFile(pidFile + ".term")
+	child, same, err := observeProcess("/proc", chain.Child)
+	if err != nil || !same || child.state == "Z" || child.ParentPID != chain.Parent.PID {
+		t.Fatal("the same Runtime process was not live under its recorded adapter during cancellation")
+	}
+	adapter, sameAdapter, adapterErr := observeProcess("/proc", chain.Parent)
+	jobAtTerm, sameJob, err := observeProcess("/proc", job.processIdentity)
+	processEvidence["observations"] = append(processEvidence["observations"].([]map[string]any), map[string]any{
+		"phase":        "after Runtime TERM and before release",
+		"runtime":      map[string]any{"pid": child.PID, "start_ticks": child.StartTicks, "ppid": child.ParentPID, "state": child.state, "same_identity": same},
+		"adapter":      map[string]any{"pid": adapter.PID, "start_ticks": adapter.StartTicks, "ppid": adapter.ParentPID, "state": adapter.state, "same_identity": sameAdapter, "probe_error": errText(adapterErr)},
+		"job":          map[string]any{"pid": jobAtTerm.PID, "start_ticks": jobAtTerm.StartTicks, "ppid": jobAtTerm.ParentPID, "state": jobAtTerm.state, "same_identity": sameJob, "probe_error": errText(err)},
+		"runtime_wait": "not returned; the same Runtime identity is live",
+	})
+	select {
+	case <-finished:
+		childAtReturn, sameChildAtReturn, childErr := observeProcess("/proc", chain.Child)
+		adapterAtReturn, sameAdapterAtReturn, adapterErr := observeProcess("/proc", chain.Parent)
+		jobAtReturn, sameJobAtReturn, jobErr := observeProcess("/proc", job.processIdentity)
+		processEvidence["outcome"] = "Job returned before the Runtime owning Wait"
+		processEvidence["observations"] = append(processEvidence["observations"].([]map[string]any), map[string]any{
+			"phase":        "when Job returned before release",
+			"runtime":      map[string]any{"pid": chain.Child.PID, "start_ticks": childAtReturn.StartTicks, "ppid": childAtReturn.ParentPID, "state": childAtReturn.state, "same_identity": sameChildAtReturn, "probe_error": errText(childErr)},
+			"adapter":      map[string]any{"pid": chain.Parent.PID, "start_ticks": adapterAtReturn.StartTicks, "ppid": adapterAtReturn.ParentPID, "state": adapterAtReturn.state, "same_identity": sameAdapterAtReturn, "probe_error": errText(adapterErr)},
+			"job":          map[string]any{"pid": jobAtReturn.PID, "start_ticks": jobAtReturn.StartTicks, "ppid": jobAtReturn.ParentPID, "state": jobAtReturn.state, "same_identity": sameJobAtReturn, "probe_error": errText(jobErr)},
+			"runtime_wait": "unconfirmed while the same original child remains live",
+		})
+		t.Fatal("built Job returned before the production Runtime Wait completed")
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err != nil || !sameJob || jobAtTerm.state == "Z" {
+		t.Fatal("the Job process changed while the Runtime owning Wait was pending")
+	}
+	if adapterErr != nil || !sameAdapter || adapter.state == "Z" || adapter.ParentPID != job.PID {
+		t.Fatal("the Runtime Wait owner did not remain live under the Job while its child was live")
+	}
+	processEvidence["outcome"] = "Job remained pending while original Runtime Wait was unresolved"
+	if err := os.WriteFile(releasePath, []byte("release"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-finished:
+	case <-time.After(5 * time.Second):
+		t.Fatal("built Job did not return after the Runtime Wait")
+	}
+	if runErr == nil || !strings.Contains(stdout.String()+stderr.String(), "append AgentRun events") {
+		t.Fatalf("built Job error=%v output=%s; want persistent append failure", runErr, stdout.String()+stderr.String())
+	}
+	if err := assertProcessGone(t, rawChain, job.processIdentity); err != nil {
+		t.Fatal(err)
+	}
+	waitFile(pidFile + ".exit")
+	processEvidence["outcome"] = "Job returned after fixture release and process-owner cleanup"
+	processEvidence["runtime_wait_result"] = "Runtime exit observed before adapter and Job owners returned"
+	processEvidence["observations"] = append(processEvidence["observations"].([]map[string]any), map[string]any{
+		"phase":                   "after Job return",
+		"runtime_identity_absent": true,
+		"adapter_identity_absent": true,
+		"job_wait_returned":       true,
+		"runtime_wait":            "owner completed after fixture release",
+	})
+}
+
+func errText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+func TestBuiltEntrypointHoldsOriginalWaitAcrossCleanupDeadlines(t *testing.T) {
+	tempDir := t.TempDir()
+	waitReturned := filepath.Join(tempDir, "runtime-wait-returned")
+	releaseWait := filepath.Join(tempDir, "release-runtime-wait")
+	evidencePath := filepath.Join("..", "..", "artifacts", "agentrun-cancellation-prerequisite", "held-wait-process-evidence.jsonl")
+	if err := os.MkdirAll(filepath.Dir(evidencePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(evidencePath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	binary, runtimeFixture := buildHeldWaitCommand(t, waitReturned, releaseWait)
+	previousRuntime := testRuntimeExecutable
+	testRuntimeExecutable = runtimeFixture
+	t.Cleanup(func() { testRuntimeExecutable = previousRuntime })
+
+	for _, testCase := range []struct {
+		name          string
+		mode          string
+		appendFailure bool
+		cancelJob     bool
+		timeout       bool
+		hold          time.Duration
+	}{
+		{name: "startup without acceptance", mode: "no-acceptance-delayed-termination", cancelJob: true, hold: 12 * time.Second},
+		{name: "malformed stream", mode: "invalid-after-acceptance", hold: 31 * time.Second},
+		{name: "persistent append failure", mode: "delayed-termination", appendFailure: true, hold: 31 * time.Second},
+		{name: "runtime timeout", mode: "delayed-termination", timeout: true, hold: 31 * time.Second},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			_ = os.Remove(waitReturned)
+			_ = os.Remove(releaseWait)
+			pidFile := filepath.Join("..", "..", "artifacts", "agentrun-malformed-marker-fixture", "before-control", "runtime.json")
+			if err := os.MkdirAll(filepath.Dir(pidFile), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("AGENTRUN_FIXTURE_MODE", testCase.mode)
+			t.Setenv("AGENTRUN_FIXTURE_PID_FILE", pidFile)
+
+			terminalAppends := make(chan struct{}, 1)
+			completions := make(chan struct{}, 1)
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				switch {
+				case strings.HasSuffix(request.URL.Path, "/completion"):
+					select {
+					case completions <- struct{}{}:
+					default:
+					}
+					_ = json.NewEncoder(writer).Encode(map[string]bool{"accepted": true})
+				case strings.HasSuffix(request.URL.Path, "/events"):
+					var body struct {
+						Events []struct {
+							Sequence uint64 `json:"sequence"`
+							Type     string `json:"event_type"`
+						} `json:"events"`
+					}
+					if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+						t.Errorf("decode event append: %v", err)
+						writer.WriteHeader(http.StatusBadRequest)
+						return
+					}
+					var sequence uint64
+					for _, event := range body.Events {
+						if event.Sequence > sequence {
+							sequence = event.Sequence
+						}
+						if event.Type == "terminal" {
+							select {
+							case terminalAppends <- struct{}{}:
+							default:
+							}
+						}
+					}
+					if testCase.appendFailure {
+						writer.WriteHeader(http.StatusInternalServerError)
+						return
+					}
+					_ = json.NewEncoder(writer).Encode(map[string]any{"stream_id": "held-wait-test", "accepted_sequence": sequence})
+				default:
+					writer.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer server.Close()
+
+			launch := validLaunch()
+			if testCase.timeout {
+				launch.Limits.TimeoutSeconds = 1
+			}
+			launchPath := writeLaunch(t, launch)
+			command := exec.Command(binary)
+			command.Env = append(os.Environ(),
+				launchFileEnvironment+"="+launchPath,
+				platformEndpointEnvironment+"="+server.URL,
+				runCredentialEnvironment+"="+writeCredential(t, "fixture-token"),
+				mcpInjectionDirectoryEnvironment+"="+t.TempDir(),
+			)
+			var stdout, stderr lockedBuffer
+			command.Stdout, command.Stderr = &stdout, &stderr
+			if err := command.Start(); err != nil {
+				t.Fatal(err)
+			}
+			jobSnapshot, err := readProcessSnapshot("/proc", command.Process.Pid)
+			if err != nil {
+				_ = command.Process.Kill()
+				_ = command.Wait()
+				t.Fatal(err)
+			}
+			finished := make(chan struct{})
+			var runErr error
+			go func() {
+				runErr = command.Wait()
+				close(finished)
+			}()
+			var rawChain string
+			t.Cleanup(func() {
+				_ = os.WriteFile(pidFile+".release", []byte("release"), 0o600)
+				_ = os.WriteFile(releaseWait, []byte("release"), 0o600)
+				select {
+				case <-finished:
+					return
+				default:
+				}
+				_ = command.Process.Signal(syscall.SIGTERM)
+				select {
+				case <-finished:
+				case <-time.After(12 * time.Second):
+					if rawChain != "" {
+						if chain, parseErr := parseProcessIdentity(rawChain); parseErr == nil {
+							if child, same, observeErr := observeProcess("/proc", chain.Child); observeErr == nil && same {
+								if process, findErr := os.FindProcess(child.PID); findErr == nil {
+									_ = process.Kill()
+								}
+							}
+						}
+					}
+					_ = command.Process.Kill()
+					<-finished
+				}
+			})
+
+			waitForFile := func(path string, timeout time.Duration) []byte {
+				t.Helper()
+				deadline := time.Now().Add(timeout)
+				for time.Now().Before(deadline) {
+					contents, readErr := os.ReadFile(path)
+					if readErr == nil {
+						return contents
+					}
+					if !os.IsNotExist(readErr) {
+						t.Fatal(readErr)
+					}
+					select {
+					case <-finished:
+						t.Fatalf("Job returned before %s: error=%v output=%s", filepath.Base(path), runErr, stdout.String()+stderr.String())
+					default:
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
+				t.Fatalf("fixture did not create %s", filepath.Base(path))
+				return nil
+			}
+
+			var chain processChain
+			identityDeadline := time.Now().Add(8 * time.Second)
+			for time.Now().Before(identityDeadline) {
+				contents, readErr := os.ReadFile(pidFile)
+				if readErr == nil {
+					rawChain = strings.TrimSpace(string(contents))
+					if candidate, parseErr := parseProcessIdentity(rawChain); parseErr == nil {
+						chain = candidate
+						break
+					}
+				} else if !os.IsNotExist(readErr) {
+					t.Fatal(readErr)
+				}
+				select {
+				case <-finished:
+					t.Fatalf("Job returned before writing its process chain: %v", runErr)
+				default:
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			if chain.Child.PID == 0 {
+				t.Fatal("fixture did not write a complete process chain")
+			}
+			if chain.Owner != jobSnapshot.processIdentity || chain.Child.ParentPID != chain.Parent.PID || chain.Parent.ParentPID != jobSnapshot.PID {
+				t.Fatalf("Runtime chain does not bind to the built Job and linked adapter")
+			}
+			caseEvidence := map[string]any{"scenario": testCase.name, "process_chain": chain}
+			openPipes, err := processPipeDescriptors(jobSnapshot.PID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			adapterStdout, err := os.Readlink(filepath.Join("/proc", strconv.Itoa(chain.Parent.PID), "fd", "1"))
+			if err != nil || !strings.HasPrefix(adapterStdout, "pipe:[") {
+				t.Fatalf("adapter stdout is not an owned Job pipe: target=%q err=%v", adapterStdout, err)
+			}
+			jobOwnsAdapterStdout := false
+			for pipe := range openPipes {
+				if strings.HasSuffix(pipe, ":"+adapterStdout) {
+					jobOwnsAdapterStdout = true
+				}
+			}
+			if !jobOwnsAdapterStdout {
+				t.Fatal("Job did not own the adapter stdout pipe before cancellation")
+			}
+			if testCase.cancelJob {
+				if err := command.Process.Signal(syscall.SIGTERM); err != nil {
+					t.Fatal(err)
+				}
+			}
+			triggerMarker := pidFile + ".term"
+			if testCase.mode == "invalid-after-acceptance" {
+				triggerMarker = pidFile + ".malformed"
+			}
+			waitForFile(triggerMarker, 8*time.Second)
+			termObservedAt := time.Now()
+			if got := string(waitForFile(waitReturned, 12*time.Second)); got != "wait-returned-error" {
+				t.Fatalf("held Wait seam result = %q; want a returned process error before its held return", got)
+			}
+			waitReturnedAt := time.Now()
+			if testCase.mode == "invalid-after-acceptance" {
+				caseEvidence["runtime_wait_result"] = "returned error after malformed-stream cancellation"
+			} else {
+				caseEvidence["runtime_wait_result"] = "returned error after five-second TERM grace and SIGKILL escalation"
+			}
+			caseEvidence["runtime_wait_return_ms_after_cancel_marker"] = waitReturnedAt.Sub(termObservedAt).Milliseconds()
+			if testCase.mode != "invalid-after-acceptance" && waitReturnedAt.Sub(termObservedAt) < 4900*time.Millisecond {
+				t.Fatalf("Runtime Wait returned after %s; want the unchanged five-second TERM grace", waitReturnedAt.Sub(termObservedAt))
+			}
+			child, sameChild, err := observeProcess("/proc", chain.Child)
+			if err != nil || sameChild {
+				t.Fatalf("Runtime identity remained after its actual Wait returned: %#v same=%t err=%v", child, sameChild, err)
+			}
+			adapter, sameAdapter, err := observeProcess("/proc", chain.Parent)
+			if err != nil || !sameAdapter || adapter.state == "Z" || adapter.ParentPID != jobSnapshot.PID {
+				t.Fatalf("adapter owning the gated Wait is not live under the built Job: %#v same=%t err=%v", adapter, sameAdapter, err)
+			}
+			jobAfterWait, sameJob, err := observeProcess("/proc", jobSnapshot.processIdentity)
+			if err != nil || !sameJob || jobAfterWait.state == "Z" {
+				t.Fatalf("Job returned while its linked adapter Wait was held: %#v same=%t err=%v", jobAfterWait, sameJob, err)
+			}
+			pipesAfterCancel, err := processPipeDescriptors(jobSnapshot.PID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for pipe := range pipesAfterCancel {
+				if strings.HasSuffix(pipe, ":"+adapterStdout) {
+					t.Fatal("cancellation left the Job-owned adapter stdout pipe open")
+				}
+			}
+			if _, err := os.Readlink(filepath.Join("/proc", strconv.Itoa(chain.Parent.PID), "fd", "1")); !os.IsNotExist(err) {
+				t.Fatalf("adapter retained its owned stdout endpoint after cancellation: %v", err)
+			}
+			caseEvidence["adapter_and_job_alive_after_wait_result"] = true
+			caseEvidence["job_owned_adapter_stdout_closed"] = true
+
+			lastOwnerCheck := time.Time{}
+			const diagnosticText = "cleanup remains pending; adapter owning Wait has not returned"
+			assertStillPending := func() {
+				t.Helper()
+				select {
+				case <-finished:
+					t.Fatalf("Job returned before held Wait release: %v", runErr)
+				default:
+				}
+				select {
+				case <-terminalAppends:
+					t.Fatal("SDK terminal was published before held Wait release")
+				default:
+				}
+				select {
+				case <-completions:
+					t.Fatal("CompleteAgentRun ran before held Wait release")
+				default:
+				}
+				if time.Since(lastOwnerCheck) >= time.Second {
+					adapter, sameAdapter, err := observeProcess("/proc", chain.Parent)
+					if err != nil || !sameAdapter || adapter.state == "Z" || adapter.ParentPID != jobSnapshot.PID {
+						t.Fatalf("adapter owning the held Wait stopped during the deadline window: %#v same=%t err=%v", adapter, sameAdapter, err)
+					}
+					job, sameJob, err := observeProcess("/proc", jobSnapshot.processIdentity)
+					if err != nil || !sameJob || job.state == "Z" {
+						t.Fatalf("Job stopped during the held Wait deadline window: %#v same=%t err=%v", job, sameJob, err)
+					}
+					lastOwnerCheck = time.Now()
+				}
+			}
+			waitUntil := func(deadline time.Time) {
+				t.Helper()
+				for time.Now().Before(deadline) {
+					assertStillPending()
+					time.Sleep(min(100*time.Millisecond, time.Until(deadline)))
+				}
+				assertStillPending()
+			}
+			diagnosticDeadline := termObservedAt.Add(12 * time.Second)
+			diagnosticEarliest := termObservedAt.Add(9 * time.Second)
+			diagnosticSeen := false
+			var diagnosticSeenAt time.Time
+			for time.Now().Before(diagnosticDeadline) {
+				assertStillPending()
+				if strings.Contains(stderr.String(), diagnosticText) {
+					diagnosticSeen = true
+					diagnosticSeenAt = time.Now()
+					break
+				}
+				time.Sleep(25 * time.Millisecond)
+			}
+			if !diagnosticSeen || diagnosticSeenAt.Before(diagnosticEarliest) {
+				t.Fatalf("pending cleanup diagnostic did not appear at the unchanged ten-second observation window")
+			}
+			waitUntil(termObservedAt.Add(11 * time.Second))
+
+			diagnostic := stderr.String()
+			if strings.Count(diagnostic, diagnosticText) != 1 {
+				t.Fatalf("pending cleanup diagnostic count=%d output=%q", strings.Count(diagnostic, diagnosticText), diagnostic)
+			}
+			for _, private := range []string{strconv.Itoa(chain.Child.PID), strconv.Itoa(chain.Parent.PID), strconv.Itoa(jobSnapshot.PID), pidFile, "fixture-token"} {
+				if strings.Contains(diagnostic, private) {
+					t.Fatalf("pending cleanup diagnostic disclosed process or credential data")
+				}
+			}
+			for _, line := range strings.Split(strings.TrimSpace(diagnostic), "\n") {
+				if strings.Contains(line, diagnosticText) && len(line) > 256 {
+					t.Fatalf("pending cleanup diagnostic exceeded its bound: %d bytes", len(line))
+				}
+			}
+			waitUntil(termObservedAt.Add(testCase.hold))
+			caseEvidence["held_ms_after_cancel_marker"] = time.Since(termObservedAt).Milliseconds()
+			caseEvidence["pending_diagnostic_count"] = 1
+			caseEvidence["no_job_return_terminal_or_complete_before_release"] = true
+			caseEvidence["deadlines_checked_seconds"] = []int{10}
+			if testCase.hold >= 31*time.Second {
+				caseEvidence["deadlines_checked_seconds"] = []int{10, 20, 30}
+			}
+
+			if err := os.WriteFile(releaseWait, []byte("release"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-finished:
+			case <-time.After(8 * time.Second):
+				t.Fatal("Job did not settle after the held owning Wait was released")
+			}
+			if testCase.appendFailure && (runErr == nil || !strings.Contains(stdout.String()+stderr.String(), "append AgentRun events")) {
+				t.Fatalf("Job error=%v output=%s; want the persistent append failure", runErr, stdout.String()+stderr.String())
+			}
+			if err := assertProcessGone(t, rawChain, jobSnapshot.processIdentity); err != nil {
+				t.Fatal(err)
+			}
+			caseEvidence["process_chain_reaped_after_release"] = true
+			encodedEvidence, err := json.Marshal(caseEvidence)
+			if err != nil {
+				t.Fatal(err)
+			}
+			file, err := os.OpenFile(evidencePath, os.O_APPEND|os.O_WRONLY, 0o600)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := file.Write(append(encodedEvidence, '\n')); err != nil {
+				_ = file.Close()
+				t.Fatal(err)
+			}
+			if err := file.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if testCase.appendFailure || testCase.cancelJob {
+				select {
+				case <-completions:
+					t.Fatal("CompleteAgentRun ran for a failed or unaccepted session")
+				default:
+				}
+			}
+		})
+	}
+}
+
+func buildHeldWaitCommand(t *testing.T, waitReturned, releaseWait string) (string, string) {
+	t.Helper()
+	root := filepath.Clean(filepath.Join("..", ".."))
+	directory := t.TempDir()
+	vendorSource := filepath.Join(root, "cmd/agentrun-job/vendor/main.go")
+	contents, err := os.ReadFile(vendorSource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalWait := "waitErr = process.Wait()"
+	call := fmt.Sprintf("waitErr = holdRuntimeWaitForTest(process, %q, %q)", waitReturned, releaseWait)
+	if !strings.Contains(string(contents), originalWait) {
+		originalWait = "err := process.Wait()"
+		call = fmt.Sprintf("err := holdRuntimeWaitForTest(process, %q, %q)", waitReturned, releaseWait)
+	}
+	if !strings.Contains(string(contents), originalWait) {
+		t.Fatal("could not locate the Runtime's original owning Wait")
+	}
+	contents = bytes.Replace(contents, []byte(originalWait), []byte(call), 1)
+	contents = append(contents, []byte(fmt.Sprintf(`
+
+func holdRuntimeWaitForTest(process *exec.Cmd, enteredPath, releasePath string) error {
+	waitErr := process.Wait()
+	result := "wait-returned-ok"
+	if waitErr != nil { result = "wait-returned-error" }
+	if err := os.WriteFile(enteredPath, []byte(result), 0600); err != nil { return err }
+	for {
+		if _, err := os.Stat(releasePath); err == nil { return waitErr } else if !os.IsNotExist(err) { return err }
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+`))...)
+	testVendorSource := filepath.Join(directory, "vendor-main-test.go")
+	if err := os.WriteFile(testVendorSource, contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	vendorOverlay := filepath.Join(directory, "vendor-overlay.json")
+	writeGoOverlay(t, vendorOverlay, vendorSource, testVendorSource)
+	vendorBinary := filepath.Join(directory, "agentrun-vendor")
+	buildVendor := exec.Command("go", "test", "-c", "-trimpath", "-buildvcs=false", "-ldflags=-s -w -buildid=", "-overlay="+vendorOverlay, "-o", vendorBinary, "./cmd/agentrun-job/vendor")
+	buildVendor.Dir = root
+	buildVendor.Env = append(os.Environ(), "CGO_ENABLED=0")
+	if output, err := buildVendor.CombinedOutput(); err != nil {
+		t.Fatalf("build test-only held-Wait adapter error=%v\n%s", err, output)
+	}
+
+	identityPath := filepath.Join(root, "cmd/agentrun-job/driver_identity.json")
+	identityJSON, err := os.ReadFile(identityPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var identity driverIdentity
+	if err := json.Unmarshal(identityJSON, &identity); err != nil {
+		t.Fatal(err)
+	}
+	vendorBytes, err := os.ReadFile(vendorBinary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(vendorBytes)
+	identity.Vendor.ArtifactDigest = fmt.Sprintf("sha256:%x", digest)
+	identity.Vendor.Args = []string{"--oac-held-wait-test"}
+	testIdentity := filepath.Join(directory, "driver_identity.json")
+	identityJSON, err = json.MarshalIndent(identity, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(testIdentity, identityJSON, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	jobOverlay := filepath.Join(directory, "job-overlay.json")
+	writeGoOverlay(t, jobOverlay, identityPath, testIdentity)
+	jobBinary := filepath.Join(directory, "agentrun-job")
+	buildJob := exec.Command("go", "build", "-trimpath", "-buildvcs=false", "-ldflags=-s -w -buildid=", "-overlay="+jobOverlay, "-o", jobBinary, "./cmd/agentrun-job")
+	buildJob.Dir = root
+	buildJob.Env = append(os.Environ(), "CGO_ENABLED=0")
+	if output, err := buildJob.CombinedOutput(); err != nil {
+		t.Fatalf("build held-Wait Job error=%v\n%s", err, output)
+	}
+
+	runtimeFixture := filepath.Join(directory, "runtime-fixture")
+	buildFixture := exec.Command("go", "build", "-trimpath", "-buildvcs=false", "-ldflags=-s -w -buildid=", "-o", runtimeFixture, "./cmd/agentrun-job/testdata/vendor")
+	buildFixture.Dir = root
+	buildFixture.Env = append(os.Environ(), "CGO_ENABLED=0")
+	if output, err := buildFixture.CombinedOutput(); err != nil {
+		t.Fatalf("build configured Runtime fixture error=%v\n%s", err, output)
+	}
+	return jobBinary, runtimeFixture
+}
+
+func writeGoOverlay(t *testing.T, overlayPath, originalPath, replacementPath string) {
+	t.Helper()
+	originalPath, err := filepath.Abs(originalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacementPath, err = filepath.Abs(replacementPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contents, err := json.Marshal(map[string]any{"Replace": map[string]string{originalPath: replacementPath}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(overlayPath, contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func processPipeDescriptors(pid int) (map[string]struct{}, error) {
+	entries, err := os.ReadDir(filepath.Join("/proc", strconv.Itoa(pid), "fd"))
+	if err != nil {
+		return nil, err
+	}
+	pipes := make(map[string]struct{})
+	for _, entry := range entries {
+		target, err := os.Readlink(filepath.Join("/proc", strconv.Itoa(pid), "fd", entry.Name()))
+		if err != nil {
+			return nil, err
+		}
+		if strings.HasPrefix(target, "pipe:[") {
+			pipes[entry.Name()+":"+target] = struct{}{}
+		}
+	}
+	return pipes, nil
+}
+
+type lockedBuffer struct {
+	mu sync.Mutex
+	bytes.Buffer
+}
+
+func (buffer *lockedBuffer) Write(contents []byte) (int, error) {
+	buffer.mu.Lock()
+	defer buffer.mu.Unlock()
+	return buffer.Buffer.Write(contents)
+}
+
+func (buffer *lockedBuffer) String() string {
+	buffer.mu.Lock()
+	defer buffer.mu.Unlock()
+	return buffer.Buffer.String()
+}
+
+func TestRunWaitsForDriverWaitAfterPersistentAppendFailure(t *testing.T) {
+	runCtx, cancel := context.WithCancel(context.Background())
+	vendor := newWaitGateVendor()
+	client := &waitGateClient{appendCalls: make(chan []runtimesdk.RuntimeEvent, 4), completeCalls: make(chan struct{}, 1)}
+	config := testConfig()
+	config.MaxBatchEvents = 1
+	config.MaxBufferedEvents = 1
+	config.Retry.MaxAttempts = 1
+	launchPath := writeLaunch(t, validLaunch())
+	dependencies := Dependencies{
+		DriverFactory:   waitGateDriverFactory{vendor: vendor},
+		ClientFactory:   testClientFactory{client: client},
+		MCPMaterializer: testMaterializer{},
+		Config:          config,
+	}
+	runResult := make(chan error, 1)
+	go func() {
+		runResult <- run(runCtx, func(string) string { return launchPath }, func() (Dependencies, error) { return dependencies, nil })
+	}()
+	t.Cleanup(func() {
+		cancel()
+		vendor.releaseWait()
+		select {
+		case <-vendor.waitDone:
+		case <-time.After(3 * time.Second):
+			t.Error("test vendor child was not waited during cleanup")
+		}
+	})
+
+	select {
+	case <-vendor.started:
+	case err := <-runResult:
+		t.Fatalf("Job run ended before starting its vendor: %v", err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("vendor child did not start")
+	}
+	chain := vendor.chain
+	owner, err := currentProcessIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chain.Owner != owner || chain.Child.ParentPID != chain.Parent.PID || chain.Parent.ParentPID != owner.PID {
+		t.Fatalf("vendor process chain = %#v; owner = %#v", chain, owner)
+	}
+	select {
+	case batch := <-client.appendCalls:
+		if len(batch) != 1 || batch[0].Type != runtimesdk.StartedEvent {
+			t.Fatalf("first append batch = %#v; want started", batch)
+		}
+	case err := <-runResult:
+		t.Fatalf("Job run ended before persistent append failure: %v", err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("AgentRun Job did not attempt the first event append")
+	}
+	assertChildLive := func() {
+		child, sameChild, err := observeProcess("/proc", chain.Child)
+		if err != nil || !sameChild || child.state == "Z" || child.ParentPID != chain.Parent.PID {
+			t.Fatal("the delayed vendor child is not the same live process under its recorded parent")
+		}
+		parent, sameParent, err := observeProcess("/proc", chain.Parent)
+		if err != nil || !sameParent || parent.ParentPID != owner.PID {
+			t.Fatal("the delayed vendor parent is not the same process under the recorded Job owner")
+		}
+	}
+	select {
+	case <-vendor.cancelSeen:
+	case err := <-runResult:
+		select {
+		case <-vendor.cancelSeen:
+		case <-time.After(time.Second):
+			t.Fatal("Job returned before its driver observed cancellation")
+		}
+		assertChildLive()
+		t.Fatalf("Job run returned while the vendor child was live and before its owner's Wait: %v", err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("persistent append failure did not cancel the vendor context")
+	}
+	assertChildLive()
+
+	postCancelEvent := runtimesdk.RuntimeEventDraft{Type: runtimesdk.MessageEvent, Payload: &runtimesdk.MessagePayload{MessageID: "after-cancel", Content: "discarded"}}
+	select {
+	case vendor.events <- postCancelEvent:
+	case err := <-runResult:
+		assertChildLive()
+		t.Fatalf("Job returned while its child was live and unreaped: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("Runtime SDK stopped draining the driver after cancellation")
+	}
+	select {
+	case err := <-runResult:
+		assertChildLive()
+		t.Fatalf("Job returned before the driver's owning Wait: %v", err)
+	case <-time.After(vendorExitWait + 100*time.Millisecond):
+	}
+	assertChildLive()
+	select {
+	case <-client.completeCalls:
+		t.Fatal("CompleteAgentRun ran while the driver's owning Wait was pending")
+	default:
+	}
+
+	vendor.releaseWait()
+	select {
+	case <-vendor.waitDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("driver did not complete its owning Wait")
+	}
+	select {
+	case err := <-runResult:
+		if err == nil || !strings.Contains(err.Error(), "append AgentRun events") {
+			t.Fatalf("Job run error = %v; want the persistent append failure", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Job did not return after driver Wait completed")
+	}
+	select {
+	case <-client.completeCalls:
+		t.Fatal("CompleteAgentRun ran after persistent append failure")
+	default:
+	}
+	rawIdentity, err := json.Marshal(chain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := assertProcessGone(t, string(rawIdentity), owner); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestBuiltEntrypointRejectsTerminalSessionMismatch proves that a terminal
+// protocol message carrying a different native vendor session id is rejected
+// and reported as a failed completion rather than rewritten to the accepted
+// session.
+func TestBuiltEntrypointRejectsTerminalSessionMismatch(t *testing.T) {
+	binary := buildCommand(t)
+	t.Setenv("AGENTRUN_FIXTURE_MODE", "terminal-wrong-session")
+	server := newFixturePlatformServer(t)
+	injectionDirectory := t.TempDir()
+	credentialPath := writeCredential(t, "fixture-token")
+	launchPath := writeLaunch(t, validLaunch())
+
+	command := exec.Command(binary)
+	command.Env = append(os.Environ(),
+		launchFileEnvironment+"="+launchPath,
+		platformEndpointEnvironment+"="+server.URL(),
+		runCredentialEnvironment+"="+credentialPath,
+		mcpInjectionDirectoryEnvironment+"="+injectionDirectory,
+	)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("built command error = %v\n%s", err, output)
+	}
+	if !server.completed {
+		t.Fatal("Platform Core fixture did not receive the completion")
+	}
+	if server.completionResult["outcome"] != "failed" {
+		t.Fatalf("completion result = %#v; want failed", server.completionResult)
+	}
+	if server.completionResult["error_type"] != "terminal-session-mismatch" {
+		t.Fatalf("completion result = %#v; want terminal-session-mismatch", server.completionResult)
+	}
+}
+
+// TestBuiltEntrypointEnforcesRuntimeTimeout proves that the fixed Runtime
+// timeout is enforced as a cancellation deadline: a non-terminating vendor is
+// cancelled at the deadline, reaped, and the Job reports a truthful cancelled
+// completion (never a false success).
+func TestBuiltEntrypointEnforcesRuntimeTimeout(t *testing.T) {
+	binary := buildCommand(t)
+	t.Setenv("AGENTRUN_FIXTURE_MODE", "slow")
+	server := newFixturePlatformServer(t)
+	injectionDirectory := t.TempDir()
+	pidFile := filepath.Join(t.TempDir(), "vendor.pid")
+	t.Setenv("AGENTRUN_FIXTURE_PID_FILE", pidFile)
+	credentialPath := writeCredential(t, "fixture-token")
+
+	launch := validLaunch()
+	launch.Limits.TimeoutSeconds = 1
+	launchPath := writeLaunch(t, launch)
+
+	command := exec.Command(binary)
+	command.Env = append(os.Environ(),
+		launchFileEnvironment+"="+launchPath,
+		platformEndpointEnvironment+"="+server.URL(),
+		runCredentialEnvironment+"="+credentialPath,
+		mcpInjectionDirectoryEnvironment+"="+injectionDirectory,
+		"AGENTRUN_FIXTURE_PID_FILE="+pidFile,
+	)
+	output, err, jobIdentity, identityErr := runCommandWithIdentity(command)
+	if identityErr != nil {
+		t.Fatal(identityErr)
+	}
+	if err != nil {
+		t.Fatalf("built command error = %v\n%s", err, output)
+	}
+	if !server.completed {
+		t.Fatal("Platform Core fixture did not receive the completion")
+	}
+	if server.completionResult["outcome"] != "cancelled" {
+		t.Fatalf("completion result = %#v; want cancelled", server.completionResult)
+	}
+	pid, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatalf("read vendor process identity: %v", err)
+	}
+	if err := assertProcessGone(t, strings.TrimSpace(string(pid)), jobIdentity); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestBuiltEntrypointNoFalseSuccessOnTerminalThenHang proves that a vendor
+// which emits a successful terminal but keeps running cannot yield a false
+// success completion: the child is killed and reaped, and the completion is
+// reported as failed (vendor-not-exited) with no live child remaining.
+func TestBuiltEntrypointNoFalseSuccessOnTerminalThenHang(t *testing.T) {
+	binary := buildCommand(t)
+	t.Setenv("AGENTRUN_FIXTURE_MODE", "terminal-then-hang")
+	server := newFixturePlatformServer(t)
+	injectionDirectory := t.TempDir()
+	pidFile := filepath.Join(t.TempDir(), "vendor.pid")
+	t.Setenv("AGENTRUN_FIXTURE_PID_FILE", pidFile)
+	credentialPath := writeCredential(t, "fixture-token")
+	launchPath := writeLaunch(t, validLaunch())
+
+	command := exec.Command(binary)
+	command.Env = append(os.Environ(),
+		launchFileEnvironment+"="+launchPath,
+		platformEndpointEnvironment+"="+server.URL(),
+		runCredentialEnvironment+"="+credentialPath,
+		mcpInjectionDirectoryEnvironment+"="+injectionDirectory,
+		"AGENTRUN_FIXTURE_PID_FILE="+pidFile,
+	)
+	output, err, jobIdentity, identityErr := runCommandWithIdentity(command)
+	if identityErr != nil {
+		t.Fatal(identityErr)
+	}
+	if err != nil {
+		t.Fatalf("built command error = %v\n%s", err, output)
+	}
+	if !server.completed {
+		t.Fatal("Platform Core fixture did not receive the completion")
+	}
+	if server.completionResult["outcome"] != "failed" {
+		t.Fatalf("completion result = %#v; want failed", server.completionResult)
+	}
+	if server.completionResult["error_type"] != "vendor-no-eof" {
+		t.Fatalf("completion result = %#v; want vendor-no-eof", server.completionResult)
+	}
+	pid, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatalf("read vendor process identity: %v", err)
+	}
+	if err := assertProcessGone(t, strings.TrimSpace(string(pid)), jobIdentity); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBuiltEntrypointReturnsNonZeroForInvalidLaunch(t *testing.T) {
+	binary := buildCommand(t)
+	server := newFixturePlatformServer(t)
+	launchPath := filepath.Join(t.TempDir(), "invalid-launch.json")
+	if err := os.WriteFile(launchPath, []byte("not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(binary)
+	command.Env = append(os.Environ(),
+		launchFileEnvironment+"="+launchPath,
+		platformEndpointEnvironment+"="+server.URL(),
+		runCredentialEnvironment+"="+writeCredential(t, "fixture-token"),
+		mcpInjectionDirectoryEnvironment+"="+t.TempDir(),
+	)
+	if output, err := command.CombinedOutput(); err == nil || !strings.Contains(string(output), "decode mounted launch input") {
+		t.Fatalf("built command error=%v output=%s", err, output)
+	}
+}
+
+func TestBuiltEntrypointFailsClosedWithoutHostEnvironment(t *testing.T) {
+	binary := buildCommand(t)
+	launchPath := writeLaunch(t, validLaunch())
+	command := exec.Command(binary)
+	command.Env = append(os.Environ(), launchFileEnvironment+"="+launchPath)
+	if output, err := command.CombinedOutput(); err == nil || !strings.Contains(string(output), platformEndpointEnvironment) {
+		t.Fatalf("built command error=%v output=%s", err, output)
+	}
+}
+
+func buildCommand(t *testing.T) string {
+	t.Helper()
+	root := filepath.Clean(filepath.Join("..", ".."))
+	binary := filepath.Join(t.TempDir(), "agentrun-job")
+	command := exec.Command("go", "build", "-trimpath", "-buildvcs=false", "-ldflags=-s -w -buildid=", "-o", binary, "./cmd/agentrun-job")
+	command.Dir = root
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("build command error = %v\n%s", err, output)
+	}
+	installVendorBeside(t, binary)
+	return binary
+}
+
+func runCommandWithIdentity(command *exec.Cmd) (string, error, processIdentity, error) {
+	var stdout, stderr bytes.Buffer
+	command.Stdout = &stdout
+	command.Stderr = &stderr
+	if err := command.Start(); err != nil {
+		return "", err, processIdentity{}, nil
+	}
+	snapshot, err := readProcessSnapshot("/proc", command.Process.Pid)
+	if err != nil {
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		return stdout.String() + stderr.String(), nil, processIdentity{}, err
+	}
+	runErr := command.Wait()
+	return stdout.String() + stderr.String(), runErr, snapshot.processIdentity, nil
+}
+
+func writeLaunch(t *testing.T, launch contractsagentrun.LaunchFact) string {
+	t.Helper()
+	contents, err := json.Marshal(launch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "launch.json")
+	if err := os.WriteFile(path, contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func validLaunch() contractsagentrun.LaunchFact {
+	return contractsagentrun.LaunchFact{
+		AgentRunID: "run-1", LaunchDigest: "launch-digest", AgentDefinitionID: "agent-1", RuntimeBindingID: "binding-1",
+		Invocation:       contractsagentrun.InvocationRequest{InvocationID: "invocation-1", RequestDigest: "request-digest", Objective: "run tests", Contract: contractsagentrun.WorkContract{ContractID: "work-contract", ContractDigest: "work-digest", OutputSlots: []contractsagentrun.ContractSlot{{Key: "result", MediaType: "application/json"}}, CompletionRequirements: []string{"submit"}, ResultSchemaDigest: "result-schema"}, SubmissionContract: contractsagentrun.SubmissionContract{ContractID: "submission-contract", ContractDigest: "submission-digest", RequiredConclusion: true, OutputSlots: []contractsagentrun.ContractSlot{{Key: "result", MediaType: "application/json"}}, ResultSchemaDigest: "submission-schema", Channel: contractsagentrun.AgentWorkChannel}},
+		Lineage:          contractsagentrun.Lineage{LineageID: "lineage-1", WorkUnitID: "work-unit-1", ResponsibilityKey: "developer", Iteration: 1},
+		Session:          contractsagentrun.SessionReference{Mode: contractsagentrun.NewSession},
+		Instructions:     contractsagentrun.LaunchInstructionSet{AgentInstructions: contractsagentrun.InstructionLayer{Language: "en", Content: "agent", Digest: "agent-digest"}, CollaborationBootstrap: contractsagentrun.InstructionLayer{Language: "en", Content: "bootstrap", Digest: "bootstrap-digest"}, InstructionSetDigest: "instructions-digest"},
+		Model:            contractsagentrun.ResolvedModel{APIType: contractsagentrun.OpenAIResponsesAPI, Name: "model-1", ConfigurationDigest: "model-digest", Configuration: []contractsagentrun.NonSensitiveSetting{{Key: "base_uri", Value: "https://models.example.test"}}},
+		Workspace:        contractsagentrun.WorkspaceLaunch{RootPath: "/workspace", BaselineDigest: "workspace-digest"},
+		DriverParameters: mapRuntimeDriverParameters(),
+		Limits:           contractsagentrun.RuntimeLimits{TimeoutSeconds: 30, MaxTurns: 3},
+		RuntimeAdapter:   linkedDriverAdapter(),
+	}
+}
+
+func mapRuntimeDriverParameters() []contractsagentrun.DriverParameter {
+	parameters := runtimeDriverParameters()
+	mapped := make([]contractsagentrun.DriverParameter, len(parameters))
+	for index, parameter := range parameters {
+		mapped[index] = contractsagentrun.DriverParameter{Name: parameter.Name, Value: parameter.Value}
+	}
+	return mapped
+}
+
+func testConfig() job.Config {
+	return job.Config{MaxBatchEvents: 2, MaxBufferedEvents: 2, FlushAfter: time.Second, Retry: job.RetryPolicy{MaxAttempts: 2}}
+}
+
+type waitGateDriverFactory struct{ vendor *waitGateVendor }
+
+func (factory waitGateDriverFactory) RuntimeDriver(context.Context, runtimeadapter.ResolvedRuntimeAdapter) (runtimesdk.RuntimeDriver, error) {
+	return runtimesdk.NewCore(factory.vendor, nil), nil
+}
+
+type waitGateVendor struct {
+	started    chan struct{}
+	cancelSeen chan struct{}
+	allowWait  chan struct{}
+	waitDone   chan struct{}
+	events     chan runtimesdk.RuntimeEventDraft
+	chain      processChain
+	release    sync.Once
+}
+
+func newWaitGateVendor() *waitGateVendor {
+	return &waitGateVendor{
+		started:    make(chan struct{}),
+		cancelSeen: make(chan struct{}),
+		allowWait:  make(chan struct{}),
+		waitDone:   make(chan struct{}),
+	}
+}
+
+func (vendor *waitGateVendor) ValidateParameters([]runtimesdk.DriverParameter) error { return nil }
+
+func (vendor *waitGateVendor) Start(ctx context.Context, request runtimesdk.RuntimeRequest) (*runtimesdk.VendorSession, error) {
+	command := exec.Command("sh", "-c", `sleep 60 & child=$!; printf '%s\n' "$child"; wait "$child"`)
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	stdout, err := command.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err := command.Start(); err != nil {
+		return nil, err
+	}
+	cleanupStartFailure := func(err error) (*runtimesdk.VendorSession, error) {
+		_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+		_ = command.Wait()
+		return nil, err
+	}
+	childLine, err := bufio.NewReader(stdout).ReadString('\n')
+	if err != nil {
+		return cleanupStartFailure(err)
+	}
+	childPID, err := strconv.Atoi(strings.TrimSpace(childLine))
+	if err != nil {
+		return cleanupStartFailure(err)
+	}
+	child, err := readProcessSnapshot("/proc", childPID)
+	if err != nil {
+		return cleanupStartFailure(err)
+	}
+	parent, err := readProcessSnapshot("/proc", command.Process.Pid)
+	if err != nil {
+		return cleanupStartFailure(err)
+	}
+	owner, err := currentProcessIdentity()
+	if err != nil {
+		return cleanupStartFailure(err)
+	}
+	vendor.chain = processChain{Child: child.processIdentity, Parent: parent.processIdentity, Owner: owner}
+	vendor.events = make(chan runtimesdk.RuntimeEventDraft)
+	close(vendor.started)
+	results := make(chan runtimesdk.RuntimeResult, 1)
+	go func() {
+		<-ctx.Done()
+		close(vendor.cancelSeen)
+		<-vendor.allowWait
+		_ = syscall.Kill(childPID, syscall.SIGTERM)
+		_ = command.Wait()
+		close(vendor.waitDone)
+		close(vendor.events)
+		results <- runtimesdk.RuntimeResult{Outcome: runtimesdk.CancelledOutcome, VendorSessionID: "vendor-1"}
+		close(results)
+	}()
+	return &runtimesdk.VendorSession{
+		Acceptance: runtimesdk.DriverAcceptance{
+			Outcome:         runtimesdk.CreatedSession,
+			VendorSessionID: "vendor-1",
+			Instructions: runtimesdk.InstructionAcceptance{
+				AgentInstructionsDigest:      request.Instructions.AgentInstructions.Digest,
+				CollaborationBootstrapDigest: request.Instructions.CollaborationBootstrap.Digest,
+				InstructionSetDigest:         request.Instructions.InstructionSetDigest,
+			},
+		},
+		Events: vendor.events,
+		Result: results,
+	}, nil
+}
+
+func (vendor *waitGateVendor) releaseWait() {
+	vendor.release.Do(func() { close(vendor.allowWait) })
+}
+
+type waitGateClient struct {
+	appendCalls   chan []runtimesdk.RuntimeEvent
+	completeCalls chan struct{}
+}
+
+func (client *waitGateClient) AppendAgentRunEvents(_ context.Context, events []runtimesdk.RuntimeEvent) (job.EventAcknowledgement, error) {
+	client.appendCalls <- append([]runtimesdk.RuntimeEvent(nil), events...)
+	return job.EventAcknowledgement{}, errors.New("persistent append failure")
+}
+
+func (client *waitGateClient) CompleteAgentRun(context.Context, runtimesdk.RuntimeResult) error {
+	select {
+	case client.completeCalls <- struct{}{}:
+	default:
+	}
+	return nil
+}
+
+type testDriverFactory struct{}
+
+func (testDriverFactory) RuntimeDriver(context.Context, runtimeadapter.ResolvedRuntimeAdapter) (runtimesdk.RuntimeDriver, error) {
+	return runtimesdk.NewCore(testVendor{}, func() string { return "stream-1" }), nil
+}
+
+type testVendor struct{}
+
+func (testVendor) ValidateParameters([]runtimesdk.DriverParameter) error { return nil }
+
+func (testVendor) Start(_ context.Context, request runtimesdk.RuntimeRequest) (*runtimesdk.VendorSession, error) {
+	events := make(chan runtimesdk.RuntimeEventDraft, 1)
+	events <- runtimesdk.RuntimeEventDraft{DraftID: "message-1", Type: runtimesdk.MessageEvent, Payload: &runtimesdk.MessagePayload{MessageID: "message-1", Content: "hello"}}
+	close(events)
+	result := make(chan runtimesdk.RuntimeResult, 1)
+	result <- runtimesdk.RuntimeResult{Outcome: runtimesdk.SucceededOutcome, VendorSessionID: "vendor-1"}
+	close(result)
+	return &runtimesdk.VendorSession{Acceptance: runtimesdk.DriverAcceptance{Outcome: runtimesdk.CreatedSession, VendorSessionID: "vendor-1", Instructions: runtimesdk.InstructionAcceptance{AgentInstructionsDigest: request.Instructions.AgentInstructions.Digest, CollaborationBootstrapDigest: request.Instructions.CollaborationBootstrap.Digest, InstructionSetDigest: request.Instructions.InstructionSetDigest}}, Events: events, Result: result}, nil
+}
+
+type testClientFactory struct{ client job.PlatformClient }
+
+func (factory testClientFactory) PlatformClient(context.Context, string) (job.PlatformClient, error) {
+	return factory.client, nil
+}
+
+type testMaterializer struct{}
+
+func (testMaterializer) MaterializeMCP(context.Context, contractsagentrun.MCPServerLaunch) (string, error) {
+	return "/run/oac/mcp-credentials.json", nil
+}
+
+type testClient struct {
+	appendAttempts int
+	completed      bool
+}
+
+func (client *testClient) AppendAgentRunEvents(_ context.Context, events []runtimesdk.RuntimeEvent) (job.EventAcknowledgement, error) {
+	client.appendAttempts++
+	return job.EventAcknowledgement{StreamID: events[len(events)-1].StreamID, AcceptedSequence: events[len(events)-1].Sequence}, nil
+}
+
+func (client *testClient) CompleteAgentRun(context.Context, runtimesdk.RuntimeResult) error {
+	client.completed = true
+	return nil
+}
+
+var _ http.Handler = (http.HandlerFunc)(nil)

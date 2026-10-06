@@ -1,0 +1,24 @@
+{
+  "classification": "atomic-marker-publication diagnosed after partial-file read",
+  "command": "mkdir -p artifacts/agentrun-malformed-marker-fixture && GOTOOLCHAIN=go1.26.0 go test -count=1 -json ./cmd/agentrun-job -run '^(TestMalformedStreamMarkerEvidenceControls|TestBuiltEntrypointHoldsOriginalWaitAcrossCleanupDeadlines|TestBuiltEntrypointCancelsVendorOnPersistentAppendFailure|TestBuiltEntrypointWaitsForRuntimeWaitOnPersistentAppendFailure)$' > artifacts/agentrun-malformed-marker-fixture/fixture-tests.json",
+  "diagnosis": "The partial-file read came from direct marker publication. No production code changed. The testdata fixture now writes each marker to a same-directory temporary file and renames it into place before readers can observe it.",
+  "exit_code": 1,
+  "retained_files": [
+    {
+      "bytes": 58717,
+      "path": "fixture-tests.json",
+      "sha256": "1c4f0900c8f2b609c80e2434f341952c6e0b1f1621a5abaf892027065f0cf626"
+    },
+    {
+      "bytes": 14037,
+      "path": "partial-held-wait-process-evidence.jsonl",
+      "sha256": "c3c4aa46a3007eeea40e421636c75d19d94c114fb63d01fe583d1510333e4fed"
+    }
+  ],
+  "schema": "oac.agentrun-malformed-marker-focused-attempt/v1",
+  "source": {
+    "commit": "4ec04ccdfe7d612837d04116277a100883409d8a",
+    "tree": "0fb6c601edb233a2530ae37f488daa004e35ec43"
+  },
+  "unexpected_failure": "The unwritten-control test read the prepared marker while the fixture was still writing the JSON file; direct os.WriteFile exposed a partial file."
+}

@@ -1,0 +1,17 @@
+{
+  "attempt": "successful-unfiltered-suite-before-authenticated-publication-retrieval",
+  "classification": "superseded-successful-source-validation",
+  "command": "GOTOOLCHAIN=go1.26.0 go test -count=1 ./... > artifacts/agentrun-malformed-marker-fixture/first-full-suite.log 2>&1",
+  "exit_code": 0,
+  "preserved_log": {
+    "bytes": 4474,
+    "path": "artifacts/agentrun-malformed-marker-fixture/attempts/source-c106fbf63/full-suite.log",
+    "sha256": "64db9acfe106af945769c73f266d1739d2f35fc04e86dfdc46dbc499777ab2c2"
+  },
+  "schema": "oac.agentrun-malformed-marker-full-suite-attempt/v1",
+  "source": {
+    "commit": "c106fbf6384b4d8e7c12c6af2c4823d6aefe5070",
+    "tree": "3c86e462dd82d39ff61bb0f04e61ad4785aedbb4"
+  },
+  "summary": "The unfiltered suite passed; a subsequent verifier-only correction switched immutable private GitHub retrieval to authenticated gh api reads before evidence publication."
+}

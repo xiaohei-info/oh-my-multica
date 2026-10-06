@@ -1,0 +1,32 @@
+language: cn
+engine: multica
+workspace: 410ade5e-8ae0-4402-b975-813dea2ff3e1
+project: 732ce83f-5cbd-4485-850d-1b8a1bf16340
+roles:
+  planner: hermes-pm
+  orchestrator: hermes-orchestrator
+  workers:
+  - codex-ubuntu-newapi
+  - codex-macmini-newapi
+  - pi-ubuntu-newapi
+  - pi-macmini-newapi
+  reviewers:
+  - hermes-reviewer
+  acceptor: hermes-pm
+defaults:
+  max_parallel: 10
+  poll_interval: 30
+  coverage_gate: 90
+workflow:
+  human_in_loop: true
+  review: true
+  acceptance_doc: true
+  goal_required: false
+retry:
+  worker: 20
+  ci: 20
+  review: 20
+  merge: 20
+  no_submit_runs: 6
+acceptance:
+  max_rounds: 3
