@@ -1,0 +1,704 @@
+{
+  "count": 116,
+  "bytes": 62776382,
+  "source": "Root complete actual OAC untracked captures; unknown provenance retained",
+  "files": [
+    {
+      "file": ".omac/.open-agent-cluster.yaml.exs8sp_5.tmp",
+      "bytes": 247202,
+      "sha256": "0b6e058c9717ae2f8d45266c8919ff44a2b37f1e3c14fb19be57c84029bc101e",
+      "mode": 420
+    },
+    {
+      "file": ".omac/.open-agent-cluster.yaml.f1yi5ei8.tmp",
+      "bytes": 246875,
+      "sha256": "e4eacf37325139ddc956440c46f30b9e26748f41ae17c2261a1524607e48e7f2",
+      "mode": 420
+    },
+    {
+      "file": ".omac/.open-agent-cluster.yaml.i3zlfb64.tmp",
+      "bytes": 248038,
+      "sha256": "1abc39c8c70e17ed6491a838848b1840e33c0cd6cd564b98665cbbdb589b8649",
+      "mode": 420
+    },
+    {
+      "file": ".omac/.open-agent-cluster.yaml.rnxj5h1t.tmp",
+      "bytes": 615475,
+      "sha256": "1cde2225dd4ab5f87992c11e86bdd0fda4a1dbb29eda20fd33f4793ebc8ae8ec",
+      "mode": 420
+    },
+    {
+      "file": ".omac/agentrun-bounded-wait-conflict-request-20261001.md",
+      "bytes": 5394,
+      "sha256": "f48567310be3fdefcf3c5de48c36710540dc9c29a885cec581b42c0d50d6cf1c",
+      "mode": 420
+    },
+    {
+      "file": ".omac/agentrun-bounded-wait-reviewed-20261001.yaml",
+      "bytes": 44470,
+      "sha256": "616ff43b3736d69231e490f023d260fbf2a4199d4a12435d8e7272963981647d",
+      "mode": 384
+    },
+    {
+      "file": ".omac/agentrun-historical-evidence-decision-request-20261001.md",
+      "bytes": 8383,
+      "sha256": "54b90e0093013e74ac65f3b9dc8ac0ad246bc1fdba0900d9c656646246ce2d70",
+      "mode": 420
+    },
+    {
+      "file": ".omac/agentrun-historical-evidence-reviewed-20261001.yaml",
+      "bytes": 81640,
+      "sha256": "dd51ef8822b2ec83f21aec49b9d402271988f555f5a788e75837a7d556a9616b",
+      "mode": 384
+    },
+    {
+      "file": ".omac/agentrun-malformed-marker-owner-request-20261003.md",
+      "bytes": 5314,
+      "sha256": "febb0bc631ad50b6b014ebfb0ae41518e784cf74f7cc0bde1b7e35765dfed9f9",
+      "mode": 420
+    },
+    {
+      "file": ".omac/agentrun-malformed-marker-owner-reviewed-20261003.yaml",
+      "bytes": 38645,
+      "sha256": "b3667d8ba8d0f672411362547e0b166218f9de57f6f2a2626e6579420b9d20b0",
+      "mode": 384
+    },
+    {
+      "file": ".omac/agentrun-release-module-owner-request-20260930.md",
+      "bytes": 4811,
+      "sha256": "2f256b736a7e9a194c06b62915d830bd8bd855e922e34f92909752b58707e29c",
+      "mode": 420
+    },
+    {
+      "file": ".omac/agentrun-release-module-reviewed-20260930.yaml",
+      "bytes": 33129,
+      "sha256": "2b0ceed315f0f847ab5f339958207d7a8e02272e998fdf78c1d87742b38b20dc",
+      "mode": 384
+    },
+    {
+      "file": ".omac/agentrun-source-binding-apply-recovery-request-20261002.md",
+      "bytes": 48965,
+      "sha256": "333d95c4211c632d997ec5c4a525b3164893be8651aa83aa753ad8fcdbf28720",
+      "mode": 420
+    },
+    {
+      "file": ".omac/agentrun-source-binding-apply-recovery-reviewed-20261002.yaml",
+      "bytes": 54656,
+      "sha256": "6f585c8a0a0d4dfd0a7d878f70506aad72818fc69b17811d8ed56cb74b3c2c06",
+      "mode": 384
+    },
+    {
+      "file": ".omac/agentrun-source-binding-sealed-rebase-request-20261002.md",
+      "bytes": 105833,
+      "sha256": "e31e0cebf9faf6a1ebae3b883e7da96f0e8ced9623166e45bd9f64b4256ccb66",
+      "mode": 420
+    },
+    {
+      "file": ".omac/agentrun-source-binding-sealed-rebase-reviewed-20261002.yaml",
+      "bytes": 49658,
+      "sha256": "9a7d75b443e9bf32507debb8ba07290d49988f242c8a70e894ba5e4f9a4bb971",
+      "mode": 384
+    },
+    {
+      "file": ".omac/agentrun-source-evidence-binding-request-20261001.md",
+      "bytes": 30920,
+      "sha256": "d81bfbe996c87088d5bddfc51e630fa373a8362dd498a04ecfc361e363677268",
+      "mode": 420
+    },
+    {
+      "file": ".omac/agentrun-source-evidence-binding-reviewed-20261001.yaml",
+      "bytes": 45574,
+      "sha256": "ba9688eff9b95934612e245c7ee58e6c86a428a1a4658cbab852a269b2182f0a",
+      "mode": 384
+    },
+    {
+      "file": ".omac/api-agent-production-owner-request-20261004.md",
+      "bytes": 3075,
+      "sha256": "2f9e5695f59d4b3e24eb50bb9c06dd1afb4edadbd4c5252d0bffdd0b8a8d419c",
+      "mode": 420
+    },
+    {
+      "file": ".omac/api-mcp-grouped-owner-20261006/assessment-report.md",
+      "bytes": 197108,
+      "sha256": "80d95663b227bd5c4aaea147cfd718530cc39e46e4eb4dc19f51f23ae9e762da",
+      "mode": 420
+    },
+    {
+      "file": ".omac/api-mcp-grouped-owner-20261006/input-index.json",
+      "bytes": 165647,
+      "sha256": "84b2a5bcd01c3b2170e7197c272524a452bc8b5e0acf79f5b0d8b4f7cc2d84d9",
+      "mode": 420
+    },
+    {
+      "file": ".omac/api-mcp-grouped-owner-20261006/owner-request.json",
+      "bytes": 2812299,
+      "sha256": "0889de59d82e0245bbc1da5a8af4875e8949ecfad738d1a86fd1860a19f01792",
+      "mode": 384
+    },
+    {
+      "file": ".omac/api-mcp-grouped-owner-20261006/readonly-inputs.tar",
+      "bytes": 36208640,
+      "sha256": "118693e25095c66823195fc740dc1106e50b57f28e5970c794bded106264f644",
+      "mode": 420
+    },
+    {
+      "file": ".omac/audit-agentrun-cancellation-owner-request-20260930.md",
+      "bytes": 6342,
+      "sha256": "0e8d00e3137eb41ad6c7adc82e58d1fb7729fac38dc52beee1812520d9f03c92",
+      "mode": 420
+    },
+    {
+      "file": ".omac/audit-agentrun-cancellation-owner-reviewed-20260930.yaml",
+      "bytes": 32477,
+      "sha256": "9e26276a49a2ba8aa81997e91cc8136f33ab8772e982e762cc4efdc71a7a4f36",
+      "mode": 384
+    },
+    {
+      "file": ".omac/audit-harness-build-owner-request-20261002.md",
+      "bytes": 7796,
+      "sha256": "64c8f62c14a9e4c8c600593c10680b773cb6355c9c1831e9a23391f8b8f43e95",
+      "mode": 420
+    },
+    {
+      "file": ".omac/audit-harness-build-owner-reviewed-20261002.yaml",
+      "bytes": 157455,
+      "sha256": "fd875d615003973cb2f73dc553e00bcbfadbcd19f8bd3df0e359d82a034a4f23",
+      "mode": 384
+    },
+    {
+      "file": ".omac/audit-receipt-owner-request-20261003.md",
+      "bytes": 4161,
+      "sha256": "7ec3e7c3b8126ac6d11f44f7baf1ce8a9c4caeb3b12e832aaf54b651460dd401",
+      "mode": 420
+    },
+    {
+      "file": ".omac/audit-receipt-owner-reviewed-20261003.yaml",
+      "bytes": 40564,
+      "sha256": "e770465167fda296353113dcc66ce93d2c52423f751ac24bbb420fb44a630251",
+      "mode": 384
+    },
+    {
+      "file": ".omac/audit-scope-build-recovery-request-20260930.md",
+      "bytes": 4042,
+      "sha256": "99b44a20e200ed5d2eed0f781b3b32abbc7169663528812907189a18341dd5ea",
+      "mode": 420
+    },
+    {
+      "file": ".omac/audit-scope-build-reviewed-20260930.yaml",
+      "bytes": 53830,
+      "sha256": "409cb3910c53d1ffa00134a102d3e4180ecb9f33e60f65035f925f4171b8a162",
+      "mode": 384
+    },
+    {
+      "file": ".omac/contract-repair/28e4371db72c2dcd22cc5923.json",
+      "bytes": 138051,
+      "sha256": "546eeea5778c877757bf05e5bec19b3206b5d5941cc319de945ebe90cf99b373",
+      "mode": 384
+    },
+    {
+      "file": ".omac/convergence-historical-source-authority-request-20260930.md",
+      "bytes": 4380,
+      "sha256": "81a90f13bc6de772de492aecbf996aaa67777144b0a09c9be43286ed7e0364ac",
+      "mode": 420
+    },
+    {
+      "file": ".omac/convergence-rework-recovery-request-20260929.md",
+      "bytes": 3740,
+      "sha256": "3421eecb17233786813d381808112827306e8147e5c1bf7d64436043302e0149",
+      "mode": 420
+    },
+    {
+      "file": ".omac/convergence-rework-reviewed-20260929.yaml",
+      "bytes": 11795,
+      "sha256": "7052cb0f1d97434e1b1b9d9406d3e4f57925ecd7937975a7d343243588fcae04",
+      "mode": 384
+    },
+    {
+      "file": ".omac/credential-conditional-expiry-owner-request-20261004.md",
+      "bytes": 3496,
+      "sha256": "019a12da4d8819982a24775be45de6d966ecf59141491e03f28a5e02cb4be4a9",
+      "mode": 420
+    },
+    {
+      "file": ".omac/dispatch-stream-disconnect-20260926.md",
+      "bytes": 5478,
+      "sha256": "eb2b43d93c2099ef4ad3c0ad6ba5e84f74703c6acc9e915f1c3c56e805852f5f",
+      "mode": 420
+    },
+    {
+      "file": ".omac/extension-package-production-proof-owner-request-20261003.md",
+      "bytes": 4804,
+      "sha256": "49e883299b0a06fdcd6b1dd6aaa625201e741bf4f0e469864ffae34424d1fcb5",
+      "mode": 420
+    },
+    {
+      "file": ".omac/extension-package-production-proof-owner-request-20261004.md",
+      "bytes": 5029,
+      "sha256": "898037d7be78996051aed0780f674ae4bc4558d70f9732810c82a1616db199a8",
+      "mode": 420
+    },
+    {
+      "file": ".omac/extension-package-production-proof-owner-request-postinstall-20261004.md",
+      "bytes": 5291,
+      "sha256": "11078f57260793d42479f75fd8a94da1accd0572e5ce744242a840c35fdfc89b",
+      "mode": 420
+    },
+    {
+      "file": ".omac/harness-build-full-test-owner-request-20261002.md",
+      "bytes": 5784,
+      "sha256": "fd7485fc734a1d3b7edd68f3d0e6b6a04bd127cd70a09bd89653700f585735f6",
+      "mode": 420
+    },
+    {
+      "file": ".omac/harness-build-full-test-owner-reviewed-20261002.yaml",
+      "bytes": 118932,
+      "sha256": "f1c8c4ac80c79170666b576f89a955f268825eb36d38605e15cb77c21e730f5f",
+      "mode": 384
+    },
+    {
+      "file": ".omac/harness-implementation-unblock-request-20260929.md",
+      "bytes": 2633,
+      "sha256": "e3023794eecfc6ca66cf73e7b68df23198210b9a7480c54f3776b3c0ef181d79",
+      "mode": 420
+    },
+    {
+      "file": ".omac/harness-one-statement-testability-request-20260930.md",
+      "bytes": 7021,
+      "sha256": "0527bf3156e5169d8e76b23a18f98e4940ae629b23e968c630538804fcbb31e9",
+      "mode": 420
+    },
+    {
+      "file": ".omac/harness-one-statement-worker-report-20260930.md",
+      "bytes": 2681,
+      "sha256": "ad674c13bd4cbfc03a63d0f4efd19e0d728480ee27da7507ec8fdc9c9dc207f8",
+      "mode": 420
+    },
+    {
+      "file": ".omac/harness-repair-closure-request-20260929.md",
+      "bytes": 1722,
+      "sha256": "1928f2a8088ab9ec4d20f65e53b05aeaa405e15f43b9c0974e0abfd414de73a5",
+      "mode": 420
+    },
+    {
+      "file": ".omac/harness-sdk-85gate-report-20260928.md",
+      "bytes": 1334,
+      "sha256": "cc68719966168aa6a556fa06c26a7177b2191d7679abfd7981d8b8da32a24d10",
+      "mode": 420
+    },
+    {
+      "file": ".omac/harness-sdk-85gate-reviewed-20260928.yaml",
+      "bytes": 15115,
+      "sha256": "85bdd061f4955256ab52229f456403fbd6b020ccdcb05dd6890ab89efbc00717",
+      "mode": 384
+    },
+    {
+      "file": ".omac/harness-sdk-consistency-reviewed-20260927.yaml",
+      "bytes": 85819,
+      "sha256": "a99e4792cb9a4384602e82967f20bee6bbd6fa9e645d42ecc1cc964f77f9f922",
+      "mode": 384
+    },
+    {
+      "file": ".omac/harness-sdk-coverage-reviewed-20260927.yaml",
+      "bytes": 8936,
+      "sha256": "61c318c3aeb7098ea56abe4b322a802610bfc5e41ac0a549175959bfdcaea7bf",
+      "mode": 384
+    },
+    {
+      "file": ".omac/harness-sdk-coverage-reviewed-20260928.yaml",
+      "bytes": 12436,
+      "sha256": "a05f52c4eb211fa84548b8850a6dfe76e585c0444f72be29605ac9eb02f15dd0",
+      "mode": 384
+    },
+    {
+      "file": ".omac/harness-sdk-coverage-worker-report-20260927.md",
+      "bytes": 2219,
+      "sha256": "8f441c4bb84deb63042a99118dae3a81dd5f4ff64e68380d14a79167fddd5f9d",
+      "mode": 420
+    },
+    {
+      "file": ".omac/harness-sdk-coverage-worker-report-20260928.md",
+      "bytes": 1875,
+      "sha256": "ce0b59433bf6d1e706070382259fed672fa3488a262becdbea60a1285bef57c6",
+      "mode": 420
+    },
+    {
+      "file": ".omac/harness-sdk-design-assessment-report-20260928.md",
+      "bytes": 4451,
+      "sha256": "c7c5bd0e86a930664e18d4fdd49d30f12cf31921360561729c9589a36d23e81f",
+      "mode": 420
+    },
+    {
+      "file": ".omac/harness-sdk-positive-negative-conflict-20260927.md",
+      "bytes": 43962,
+      "sha256": "7573e38bb059c070a6206b22da7706d6dd866b63c0887aea70e6d5875d46d9dc",
+      "mode": 420
+    },
+    {
+      "file": ".omac/harness-sdk-published-audit-report-20260928.md",
+      "bytes": 1617,
+      "sha256": "061358cab7e6e47e3a30de91fc7615d3ca0f67f2e7270ba3685fde83dcc59a12",
+      "mode": 420
+    },
+    {
+      "file": ".omac/harness-sdk-published-audit-reviewed-20260928.yaml",
+      "bytes": 96144,
+      "sha256": "b65db254d452a674edaad6205a500d2a9837c566b7e1cc073d0d32e8520266d3",
+      "mode": 384
+    },
+    {
+      "file": ".omac/harness-sdk-redesign-request-20260928.md",
+      "bytes": 20636,
+      "sha256": "3e423497c4f1f3c6b68b916e5fc719550859a886f3431d8237f3fb43a0b19315",
+      "mode": 420
+    },
+    {
+      "file": ".omac/harness-sdk-redesign-reviewed.yaml",
+      "bytes": 145797,
+      "sha256": "55b49c4d04fd8773742d58e1268312469745bd42d6b6c9236052287ee2926c98",
+      "mode": 384
+    },
+    {
+      "file": ".omac/harness-stop-policy-amend-request-20260929.md",
+      "bytes": 4705,
+      "sha256": "8c9ca580a393adb2dee3640bf9f29d1c365bf2f71dc7d651bb9f323a69199dda",
+      "mode": 420
+    },
+    {
+      "file": ".omac/harness-stop-policy-reviewed-20260929.yaml",
+      "bytes": 120918,
+      "sha256": "b2503a5b9e087dfe404336b9ea04217f63d3499513d5c541d8e90f7277ec38a2",
+      "mode": 384
+    },
+    {
+      "file": ".omac/harness-two-statement-recovery-request-20260930.md",
+      "bytes": 12662,
+      "sha256": "286d371fb5bcf602ec89af84883cee8c94666ab1ec9a0fa54131ace9026cf3e7",
+      "mode": 420
+    },
+    {
+      "file": ".omac/harness-two-statement-reviewed-20260930.yaml",
+      "bytes": 12504,
+      "sha256": "cd91af3caac682f37a14c67145c1254afebf54631dfee7bf1f79f70ffb7022cf",
+      "mode": 384
+    },
+    {
+      "file": ".omac/identity-credential-grouped-owner-20261006/assessment-report.md",
+      "bytes": 125264,
+      "sha256": "c15600747025470b20793583ea485548e6b2a21e57866455b832c30c8d18ff27",
+      "mode": 420
+    },
+    {
+      "file": ".omac/identity-credential-grouped-owner-20261006/owner-request.json",
+      "bytes": 2904550,
+      "sha256": "0fb2b470c2b8bb041cb366a763e4710f3919d8a9ef8b54488d6b0aff59051bcd",
+      "mode": 384
+    },
+    {
+      "file": ".omac/identity-expanded-derived-owner-scope-20261006/assessment-report.md",
+      "bytes": 142840,
+      "sha256": "8503ba8fc67a2a964e3cc205c2e8846435d87d142d4ab0e6ccdefaf6713679d3",
+      "mode": 420
+    },
+    {
+      "file": ".omac/identity-local-canonical-audit-proof-owner-request-20261004.md",
+      "bytes": 3117,
+      "sha256": "7d881b6cdfb73565f37f7f1e29fc844f36d8cf94a11f640ccca5601697c23a7a",
+      "mode": 420
+    },
+    {
+      "file": ".omac/identity-owner-after-group-stop-20261006/Root-captured-manifest-after-resolution.yaml",
+      "bytes": 9707485,
+      "sha256": "5c4fc91a88c23238d93ba2167f942516c63af6735c454bfc919b8b6e9caf8cef",
+      "mode": 420
+    },
+    {
+      "file": ".omac/identity-owner-after-group-stop-20261006/Root-resolution-readonly-proof.json",
+      "bytes": 1298,
+      "sha256": "bac03a0fbe071a69ae4ba0f58921c7a4ae839b0f03782606f640d476e79c0196",
+      "mode": 420
+    },
+    {
+      "file": ".omac/identity-owner-after-group-stop-20261006/assessment-report.md",
+      "bytes": 127988,
+      "sha256": "6f5c5ee03e87f5a520ce2ba82ddff8d1f6ac2dbfdcc5749455a173b9b92583c5",
+      "mode": 420
+    },
+    {
+      "file": ".omac/identity-owner-after-group-stop-20261006/input-byte-index.json",
+      "bytes": 530,
+      "sha256": "075022a08b0a97411443733fe8d0fdf66f7c20aeb560ab159f42b551e24f0367",
+      "mode": 420
+    },
+    {
+      "file": ".omac/identity-owner-after-group-stop-20261006/owner-request.json",
+      "bytes": 2737735,
+      "sha256": "193af4a4ea812dfd009c825b0f026e52a7970aae25e22147d2aedf0d46aff317",
+      "mode": 384
+    },
+    {
+      "file": ".omac/installer-signed-k3s-owner-request-20261003.md",
+      "bytes": 3498,
+      "sha256": "6471d9fe536f9e05f0aae952ded884c7d73f719318e16dcf2882b97caa7d9ea1",
+      "mode": 420
+    },
+    {
+      "file": ".omac/installer-signed-k3s-owner-reviewed-20261003.yaml",
+      "bytes": 32139,
+      "sha256": "85047642ac0588476f8a1f1e5bd9e4bf10d3c1bee58cd51c5aecca0de5f5c9f0",
+      "mode": 384
+    },
+    {
+      "file": ".omac/mcp-production-proof-owner-request-20261004.md",
+      "bytes": 4946,
+      "sha256": "42618b6b536d05fd44e12401193e0cf5cf03a85e5fcb65239ecb01f358df7ee4",
+      "mode": 420
+    },
+    {
+      "file": ".omac/mcp-production-proof-owner-request-postinstall-20261004.md",
+      "bytes": 5275,
+      "sha256": "bbcbbfb731a192367f008e4cebe9921b2c2b0b89144f0cd5eb16e0dfb6e01a44",
+      "mode": 420
+    },
+    {
+      "file": ".omac/oac-runtime-root-cause-report-20260926.md",
+      "bytes": 8359,
+      "sha256": "29ee6fd20741740adada7a9332b57ac9725f6099dca79aa52ca6b86ad70cb153",
+      "mode": 420
+    },
+    {
+      "file": ".omac/omac-handoff-binding-recovery-report.md",
+      "bytes": 2186,
+      "sha256": "247cf149d0a75ec803d08c9805c994dec9044fdc00d5b50e5b268dd998e60136",
+      "mode": 420
+    },
+    {
+      "file": ".omac/omac-handoff-binding-recovery-reviewed.yaml",
+      "bytes": 4633,
+      "sha256": "706c0d1d561fa5467c883d40238d6ec0536f1dd9a48c75644206da13a4c00b0a",
+      "mode": 384
+    },
+    {
+      "file": ".omac/open-agent-cluster.acceptance-responsibility-amendment-report.md",
+      "bytes": 6493,
+      "sha256": "cf51fa0c1d3e4f605b7f80ba580c0ca24c270b4b4bcebb4dc20a9d3b4e338283",
+      "mode": 420
+    },
+    {
+      "file": ".omac/open-agent-cluster.acceptance-responsibility.amendment.yaml",
+      "bytes": 57440,
+      "sha256": "ee0f97d8e1d87152b6c9d655801e66ffdcb554ab7dcbb07132ada28febdd5f8c",
+      "mode": 384
+    },
+    {
+      "file": ".omac/open-agent-cluster.agent-run-job-packaging-contract-amendment-report.md",
+      "bytes": 4570,
+      "sha256": "c34c585c3986feee0a5d956860192469dc84e7e01294f77abf4afe4990a9f8cc",
+      "mode": 420
+    },
+    {
+      "file": ".omac/open-agent-cluster.agent-run-job-packaging-contract.amendment.yaml",
+      "bytes": 11094,
+      "sha256": "b601229ad842b9319b0e172995e1f3b1a546f0154d824d5b2f797a9065d8436d",
+      "mode": 384
+    },
+    {
+      "file": ".omac/open-agent-cluster.amendment.yaml",
+      "bytes": 111939,
+      "sha256": "631d40083b31d3a75c6b13c992786e46411958d105f56e7ba646f30926f9e826",
+      "mode": 384
+    },
+    {
+      "file": ".omac/open-agent-cluster.cli-corpus-assembly-boundary-amendment-report.md",
+      "bytes": 6123,
+      "sha256": "32e42ce0b4fbe407b6ef96fd018137683a38f3d361cc1907fe26b5e6b0821f91",
+      "mode": 420
+    },
+    {
+      "file": ".omac/open-agent-cluster.cli-corpus-assembly-boundary.amendment.yaml",
+      "bytes": 51916,
+      "sha256": "ce33fec822e7fffcc9f2dbb2f87be7589eccdc74e1daef7ac9c9b2d26fcf3465",
+      "mode": 384
+    },
+    {
+      "file": ".omac/open-agent-cluster.contracts-platform-resource-schema-amendment-report.md",
+      "bytes": 4344,
+      "sha256": "d2843dbcbb02123b9ed80e0fb250efbdbe6b3db2398dbeb5aff8d98e0246d153",
+      "mode": 420
+    },
+    {
+      "file": ".omac/open-agent-cluster.contracts-platform-resource-schema.amendment.yaml",
+      "bytes": 81263,
+      "sha256": "58c7855582313a1a830baf2566dc809753c667b58da59442c33d9a4e36bf22b7",
+      "mode": 384
+    },
+    {
+      "file": ".omac/open-agent-cluster.evidence-boundary-amendment-report.md",
+      "bytes": 4258,
+      "sha256": "995bd19b14e331423f6b0010dd1844a3ce2ab9b9b2e340363d10fbf69beca49f",
+      "mode": 420
+    },
+    {
+      "file": ".omac/open-agent-cluster.evidence-boundary-v2.amendment.yaml",
+      "bytes": 39767,
+      "sha256": "985c71a535b79fce0bc17581e39f8564d06581b743bde994a7ad666e794a9624",
+      "mode": 384
+    },
+    {
+      "file": ".omac/open-agent-cluster.evidence-boundary.amendment.yaml",
+      "bytes": 39117,
+      "sha256": "73be2509364552ad5273da0b745e632689af94a99f9c3deb595b05c8a6efdfb1",
+      "mode": 384
+    },
+    {
+      "file": ".omac/open-agent-cluster.fixture-input-contract-amendment-report.md",
+      "bytes": 3550,
+      "sha256": "2654f9f07cc440c028b81e2d160aafbd12ede777b8147240291bc1f025d8fd78",
+      "mode": 420
+    },
+    {
+      "file": ".omac/open-agent-cluster.fixture-input-contract.amendment.yaml",
+      "bytes": 50137,
+      "sha256": "2050086a2731d8fb0d3853b3187e32355f897bbfbd074567b5fe19a202a50a70",
+      "mode": 384
+    },
+    {
+      "file": ".omac/open-agent-cluster.no-multica-product-boundary-amendment-report.md",
+      "bytes": 6383,
+      "sha256": "ebd7d8d330e3ca694b164a69fa4efc2808f974fea2a8557683ab4b961766ff2f",
+      "mode": 420
+    },
+    {
+      "file": ".omac/open-agent-cluster.platform-resource-decomposition-v2.amendment.yaml",
+      "bytes": 77110,
+      "sha256": "45613806be9cd425862277d582e5e194d619f3a6091c10811e0ce978dca7f3a4",
+      "mode": 384
+    },
+    {
+      "file": ".omac/open-agent-cluster.platform-resource-decomposition-v3.amendment.yaml",
+      "bytes": 67766,
+      "sha256": "e9215fac9065fcb92b1828b66fa773b9c0eba10b066f34a12c29a91a844328a8",
+      "mode": 384
+    },
+    {
+      "file": ".omac/open-agent-cluster.platform-resource-review-convergence-report.md",
+      "bytes": 5565,
+      "sha256": "342d0a537e6199f092d198dcb521754c5e31970800bec95aef117884cd10fba0",
+      "mode": 420
+    },
+    {
+      "file": ".omac/open-agent-cluster.system-release-boundary.amendment.yaml",
+      "bytes": 261991,
+      "sha256": "f6c6bfb3db4216235dd2e3ec8492c8c7fb31c20e5e09bac200380b3fcdf0402e",
+      "mode": 384
+    },
+    {
+      "file": ".omac/platform-artifact-diagnostic-owner-request-20261003.md",
+      "bytes": 6210,
+      "sha256": "5401eab98df5cc1123fd1140d2af5d1edae17b5b2ae8bce82e2555271d797e31",
+      "mode": 420
+    },
+    {
+      "file": ".omac/platform-artifact-diagnostic-owner-reviewed-20261003.yaml",
+      "bytes": 55674,
+      "sha256": "5264edceec905989f7cc4a43d21a80acfcbb00946b8e79bd0351c8440c99cade",
+      "mode": 384
+    },
+    {
+      "file": ".omac/platform-capability-validator-owner-budget-approved-request-20261003.md",
+      "bytes": 9621,
+      "sha256": "8faf25120e0755c5c0a0c8202704da65dba4bae9ee67c49d1bfec46187c9b551",
+      "mode": 420
+    },
+    {
+      "file": ".omac/platform-capability-validator-owner-budget-approved-reviewed-20261003.yaml",
+      "bytes": 35018,
+      "sha256": "a74d4258546359ae045e14d4f3ed983f488faeb14491bbba634cd40c8ff6923b",
+      "mode": 384
+    },
+    {
+      "file": ".omac/platform-capability-validator-owner-request-20261002.md",
+      "bytes": 5927,
+      "sha256": "0f1af114152fadbf2bb9961bd2d9a502cf3a12988fdec696a27e0d9ea77d5fa1",
+      "mode": 420
+    },
+    {
+      "file": ".omac/platform-capability-validator-owner-user-approved-rebase-request-20261003.md",
+      "bytes": 6226,
+      "sha256": "f9afb86418cad8c7cfebaa5dd634f766c720f42f5f8d2cbe2595a4b1a95dc430",
+      "mode": 420
+    },
+    {
+      "file": ".omac/platform-capability-validator-owner-user-approved-rebased-reviewed-20261003.yaml",
+      "bytes": 34945,
+      "sha256": "057884419d3d137ed149182697778e040fbb257dade9c83e58907cf17c96543a",
+      "mode": 384
+    },
+    {
+      "file": ".omac/platform-carrier-resolution-delegated-request-20261003.md",
+      "bytes": 48270,
+      "sha256": "18d0c25a9337a04ef84b983cac3bd32d228fb74a8fdf763070cf35f986bb54e1",
+      "mode": 420
+    },
+    {
+      "file": ".omac/platform-carrier-resolution-delegated-reviewed-20261003.yaml",
+      "bytes": 175338,
+      "sha256": "ab2dd9ae4c5ac7612cae842d17553edf530f07359e233dbb0ad1d2f88bc80dca",
+      "mode": 384
+    },
+    {
+      "file": ".omac/platform-input-artifact-owner-request-20261003.md",
+      "bytes": 6877,
+      "sha256": "ec6124154aede3156aa27a458c1f712207bb6ba55eec613d042b926922327bbd",
+      "mode": 420
+    },
+    {
+      "file": ".omac/preview-same-head-evidence-recovery-request-20261002.md",
+      "bytes": 5736,
+      "sha256": "1491baa9da121eb036a599a1dee0d29c032fb4de0d0fadb3bb525d5f618d6092",
+      "mode": 420
+    },
+    {
+      "file": ".omac/runner-and-review-investigation-20260926.md",
+      "bytes": 2677,
+      "sha256": "8b3c9c773fc97268a82d46f0429b82ce10dae896f091c9468b08411e60af20b6",
+      "mode": 420
+    },
+    {
+      "file": ".omac/runtime-literal-exact-review-request-20260930.md",
+      "bytes": 3597,
+      "sha256": "818cf4d5579bd07d607189dcdb8be8450c5cb4e3b0eeb1298ab901cce05b70c0",
+      "mode": 420
+    },
+    {
+      "file": ".omac/runtime-literal-exact-review-reviewed-20260930.yaml",
+      "bytes": 3067478,
+      "sha256": "1e72d00f6b07af98c699cd634eb604af252c78f6a2dd9cdb2eb3cde9e3557183",
+      "mode": 384
+    },
+    {
+      "file": ".omac/runtime-mcp-purpose-correction-request-20260930.md",
+      "bytes": 4862,
+      "sha256": "0c3bccfac3be0bc169022225a75bc421518dc42e1e61113e3c3f49ca42be12ee",
+      "mode": 420
+    },
+    {
+      "file": ".omac/sdk-same-head-independent-review-recovery-request-20261003.md",
+      "bytes": 9329,
+      "sha256": "b401bcbceaae431befa5ceea58a79bc02a0064521e0c33600a07149a24fad07d",
+      "mode": 420
+    },
+    {
+      "file": ".omac/solution-governance-evidence-request-20260930.md",
+      "bytes": 3299,
+      "sha256": "7dbfc189d8626f7690b6330d82d3881045f69cb7ff8216331faa12acd59a2172",
+      "mode": 420
+    },
+    {
+      "file": ".omac/solution-governance-reviewed-20260930.yaml",
+      "bytes": 72244,
+      "sha256": "af307b1bd546057b1d631c9aac0beeb8fc5808bef830da93312b5de6e657d176",
+      "mode": 384
+    }
+  ],
+  "other96_bodies_not_copied": true
+}

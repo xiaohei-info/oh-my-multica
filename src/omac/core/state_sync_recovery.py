@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import stat
+import shutil
 import subprocess
 import tempfile
 from contextlib import contextmanager
@@ -18,6 +19,8 @@ from .state_transport import decode, encode, identity, ENCODED_MAX
 
 SCHEMA = "omac.full-state-sync-recovery/v1"
 ARCHIVE = "omac.unpublished-managed-state-archive/v1"
+PRESERVATION = "omac.exact-untracked-preservation/v1"
+PRESERVED_RECOVERY = "omac.full-state-sync-recovery/v2"
 
 
 def fail(detail):
@@ -63,6 +66,22 @@ def _durable(path, value):
     finally:
         if os.path.exists(tmp):
             os.unlink(tmp)
+
+
+def _index_matches(repo, tree):
+    # Porcelain diff/write-tree can refresh a racy index even with optional
+    # locks disabled. Observation must never change the pinned physical CAS.
+    return not _git(repo, "diff-index", "--cached", "--raw", tree, "--")
+
+
+def _worktree_diff(repo, index, paths):
+    # Native diff refreshes stat data to distinguish unchanged racy files.
+    # Permit that refresh only in a disposable copy, never the Source index.
+    with tempfile.TemporaryDirectory(prefix="omac-index-observe-") as temporary:
+        copied = Path(temporary) / "index"
+        shutil.copyfile(index, copied)
+        return _git(repo, "diff", "--raw", *paths,
+                    env={"GIT_INDEX_FILE": str(copied)})
 
 
 @contextmanager
@@ -127,7 +146,7 @@ def _remote(repo, branch):
     return rows[0].split()[0].decode()
 
 
-def _source(path, repo):
+def _observe_source(path, repo):
     path, repo = Path(path).absolute(), Path(repo).resolve()
     if path.is_symlink() or path.resolve() != path:
         fail("Recovery requires the actual canonical manifest path, not a symlink")
@@ -159,8 +178,6 @@ def _source(path, repo):
     if _git(repo, "status", "--porcelain", "--untracked-files=no"):
         fail("Tracked/index/worktree state is dirty or unknown")
     untracked = _untracked(repo)
-    if any(r["file"].startswith(".omac/") for r in untracked):
-        fail("Managed untracked state interferes with exact recovery")
     original = path.read_bytes()
     blob = _git(repo, "rev-parse", head + ":" + rel).decode().strip()
     if _oid("blob", original) != blob:
@@ -178,6 +195,117 @@ def _source(path, repo):
             "config": _file(config) if config.exists() else None,
             "state": identity(original), "logical": _logical(original),
             "environment": _environment(original), "original_blob": blob}
+
+
+def _identity_file(path):
+    path = Path(path).absolute()
+    row = _file(path)
+    observed = path.stat()
+    if str(path.resolve()) != str(path) or observed.st_nlink != 1:
+        fail("Protected Source path alias or hardlink is unsupported")
+    return {**row, "resolved_path": str(path.resolve()), "type": "regular",
+            "mode": stat.S_IMODE(observed.st_mode), "device": observed.st_dev,
+            "inode": observed.st_ino, "nlink": observed.st_nlink,
+            "uid": observed.st_uid, "gid": observed.st_gid}
+
+
+def _protected_inventory(repo):
+    rows = []
+    for row in _untracked(repo):
+        rows.append({"file": row["file"], **_identity_file(row["path"]),
+                     "disposition": "preserve-unmodified"})
+    return rows
+
+
+
+def validate_preserved_inventory(rows, source):
+    """Validate complete typed identities without reading credential bodies."""
+    fields = {"file", "path", "resolved_path", "type", "mode", "device", "inode",
+              "nlink", "uid", "gid", "bytes", "sha256", "disposition"}
+    if not isinstance(rows, list) or not isinstance(source, dict) or not isinstance(source.get("untracked"), list):
+        fail("Complete protected inventory and untracked Source required")
+    identities = set()
+    for row in rows:
+        if not isinstance(row, dict) or set(row) != fields or not isinstance(row["file"], str):
+            fail("Exact protected file identity fields required")
+        relative = Path(row["file"])
+        if relative.is_absolute() or ".." in relative.parts or relative.as_posix() != row["file"]:
+            fail("Protected file path is not an exact relative Source path")
+        expected = str(Path(source["repo"]) / relative)
+        if row["path"] != expected or row["resolved_path"] != expected or row["path"] == source["path"] or row["type"] != "regular" or row["disposition"] != "preserve-unmodified":
+            fail("Protected canonical overlap, alias, type or disposition differs")
+        if any(type(row[k]) is not int or row[k] < 0 for k in ("mode", "device", "inode", "nlink", "uid", "gid", "bytes")) or row["mode"] > 0o7777 or row["nlink"] != 1 or row["inode"] == 0:
+            fail("Protected mode/ownership/file identity is unsupported")
+        if not isinstance(row["sha256"], str) or len(row["sha256"]) != 64 or any(c not in "0123456789abcdef" for c in row["sha256"]):
+            fail("Protected full raw SHA is invalid")
+        identity = (row["device"], row["inode"])
+        if identity in identities:
+            fail("Protected Source hardlink/path identity overlap")
+        identities.add(identity)
+    raw_rows = [{k: r[k] for k in ("file", "path", "bytes", "sha256")} for r in rows]
+    if raw_rows != source["untracked"] or len({r["file"] for r in rows}) != len(rows):
+        fail("Complete exact protected pathset/raw Source inventory differs")
+    return rows
+
+def _no_open_source(paths):
+    executable = shutil.which("lsof")
+    if not executable:
+        fail("Existing native lsof is required for Source writer observation")
+    if not paths:
+        return
+    result = subprocess.run([executable, "-F", "pfa", "--", *paths], capture_output=True)
+    if result.returncode != 1 or result.stdout or result.stderr:
+        fail("Protected or canonical Source has an open FD or writer observation is unknown")
+
+
+def prepare_preservation(path, repo, writer_lock_path, *, authority, reason):
+    if not isinstance(authority, str) or not authority.strip() or not isinstance(reason, str) or not reason.strip():
+        fail("New explicit Root preservation authority and reason are required")
+    with _owned_lock(writer_lock_path) as lock:
+        source = _observe_source(path, repo)
+        canonical = _identity_file(path)
+        protected = validate_preserved_inventory(_protected_inventory(repo), source)
+        _no_open_source([canonical["path"], *(r["path"] for r in protected)])
+        if source != _observe_source(path, repo) or protected != _protected_inventory(repo) or canonical != _identity_file(path):
+            fail("Exact full Source changed during preservation witness observation")
+        return {"schema": PRESERVATION, "source": source, "canonical_file": canonical,
+                "writer_lock": lock, "protected_files": protected,
+                "authority": authority, "reason": reason}
+
+
+def _witness(value, source, lock=None):
+    fields = {"schema", "source", "canonical_file", "writer_lock", "protected_files", "authority", "reason"}
+    if not isinstance(value, dict) or set(value) != fields or value["schema"] != PRESERVATION or value["source"] != source:
+        fail("Exact complete Root preservation witness Source is required")
+    if not all(isinstance(value[k], str) and value[k].strip() for k in ("authority", "reason")):
+        fail("Preservation witness authority/reason is absent")
+    if lock is not None and value["writer_lock"] != lock:
+        fail("Preservation witness original owned writer FD differs")
+    validate_preserved_inventory(value["protected_files"], source)
+    if value["canonical_file"] != _identity_file(source["path"]) or value["protected_files"] != _protected_inventory(source["repo"]):
+        fail("Protected complete path/type/mode/identity/bytes inventory or canonical Source changed")
+    _no_open_source([source["path"], *(r["path"] for r in value["protected_files"])])
+
+
+def _source(path, repo, preservation=None):
+    source = _observe_source(path, repo)
+    if preservation is None:
+        if any(r["file"].startswith(".omac/") for r in source["untracked"]):
+            fail("Managed untracked state interferes with exact recovery")
+        return source
+    file, sha = preservation
+    if Path(file).resolve().is_relative_to(Path(repo).resolve()):
+        fail("Preservation witness must be outside the business worktree")
+    try:
+        value = json.loads(Path(file).read_bytes())
+    except (ValueError, OSError, UnicodeError) as exc:
+        raise ValidationError("Complete immutable preservation witness required; inspect `omac dag recover-sync --help`") from exc
+    if digest(value) != sha:
+        fail("Explicit exact preservation witness SHA differs")
+    _witness(value, source)
+    _identity_file(file)
+    source["preservation"] = {"file": _file(file), "sha256": sha, "request": value}
+    return source
 
 
 def _objects(repo, base, head):
@@ -250,7 +378,7 @@ def _verify_archive(repo, archive, source, objects):
             fail("Original archive cannot independently recover the exact unpublished closure")
 
 
-def prepare(path, repo, archive_path, writer_lock_path):
+def prepare(path, repo, archive_path, writer_lock_path, *, preservation_file=None, preservation_sha256=None):
     """Archive and pin exact Source; no state encoding or managed ref change."""
     archive = Path(archive_path).absolute()
     repo = Path(repo).resolve()
@@ -260,7 +388,12 @@ def prepare(path, repo, archive_path, writer_lock_path):
     if archive.exists() and not receipt.exists():
         fail("Existing archive has no original intention; never overwrite it")
     with _owned_lock(writer_lock_path) as lock:
-        source = _source(path, repo)
+        if bool(preservation_file) != bool(preservation_sha256):
+            fail("Both exact preservation witness file and SHA are required")
+        preservation = (preservation_file, preservation_sha256) if preservation_file else None
+        source = _source(path, repo, preservation)
+        if preservation:
+            _witness(source["preservation"]["request"], {k: v for k, v in source.items() if k != "preservation"}, lock)
         original = Path(path).read_bytes()
         physical = encode(original)
         objects = _objects(repo, source["base"], source["head"])
@@ -289,14 +422,14 @@ def prepare(path, repo, archive_path, writer_lock_path):
         heads = _git(repo, "bundle", "list-heads", str(archive)).decode().splitlines()
         if len(heads) != 1 or heads[0].split()[0] != source["head"]:
             fail("Archive exact original head is unavailable")
-        if _source(path, repo) != source:
+        if _source(path, repo, preservation) != source:
             fail("Full Source changed during original archive qualification")
         if intention["state"] != "archive-verified":
             intention.update(state="archive-verified", archive=_file(archive))
             _durable(receipt, intention)
         target_objects = _target_objects(repo, source, physical)
         target = _oid("commit", target_objects[-1][1])
-        request = {"schema": SCHEMA, "source": source, "writer_lock": lock,
+        request = {"schema": PRESERVED_RECOVERY if preservation else SCHEMA, "source": source, "writer_lock": lock,
                    "archive": _file(archive), "archive_receipt": _file(receipt),
                    "original_objects": objects, "target_identity": identity(physical),
                    "target_commit": target, "target_objects": [
@@ -308,14 +441,39 @@ def prepare(path, repo, archive_path, writer_lock_path):
 def _validate(request, request_sha256):
     fields = {"schema", "source", "writer_lock", "archive", "archive_receipt",
               "original_objects", "target_identity", "target_commit", "target_objects"}
-    if not isinstance(request, dict) or set(request) != fields or request["schema"] != SCHEMA:
+    if not isinstance(request, dict) or set(request) != fields or request["schema"] not in (SCHEMA, PRESERVED_RECOVERY):
         fail("Exact complete prepared recovery request required")
     if digest(request) != request_sha256:
         fail("Exact Root request SHA differs")
     source_fields = {"repo", "path", "relative_path", "branch", "head", "base", "upstream", "remote",
                      "origin_url", "index", "untracked", "config", "state", "logical", "environment", "original_blob"}
+    if request["schema"] == PRESERVED_RECOVERY:
+        source_fields.add("preservation")
     if not isinstance(request["source"], dict) or set(request["source"]) != source_fields:
         fail("Complete prepared Source fields required")
+    if request["schema"] == PRESERVED_RECOVERY:
+        proof = request["source"]["preservation"]
+        if not isinstance(proof, dict) or set(proof) != {"file", "sha256", "request"}:
+            fail("Complete preservation witness association required")
+        row = proof["file"]
+        if not isinstance(row, dict) or set(row) != {"path", "bytes", "sha256"} or not isinstance(row["path"], str):
+            fail("Complete preservation witness file identity required")
+        _identity_file(row["path"])
+        if _file(row["path"]) != row or digest(proof["request"]) != proof["sha256"]:
+            fail("Preservation witness immutable identity changed")
+        witness = proof["request"]
+        try:
+            file_value = json.loads(Path(proof["file"]["path"]).read_bytes())
+        except (ValueError, UnicodeError, OSError) as exc:
+            raise ValidationError("Preservation file is malformed; inspect `omac dag recover-sync --help`") from exc
+        if file_value != witness or Path(proof["file"]["path"]).resolve().is_relative_to(Path(request["source"]["repo"]).resolve()):
+            fail("Preservation file/request association or outside-worktree boundary differs")
+        original_source = {k: v for k, v in request["source"].items() if k != "preservation"}
+        if not isinstance(witness, dict) or set(witness) != {"schema", "source", "canonical_file", "writer_lock", "protected_files", "authority", "reason"} or witness["schema"] != PRESERVATION or witness["source"] != original_source or witness["writer_lock"] != request["writer_lock"] or not all(isinstance(witness[k], str) and witness[k].strip() for k in ("authority", "reason")):
+            fail("Preservation witness full Source/authority/writer association differs")
+        validate_preserved_inventory(witness["protected_files"], original_source)
+        if witness["protected_files"] != _protected_inventory(original_source["repo"]):
+            fail("Protected complete Source inventory changed")
     if not isinstance(request["writer_lock"], dict) or set(request["writer_lock"]) != {"path", "device", "inode"}:
         fail("Exact existing writer identity required")
     for name in ("archive", "archive_receipt"):
@@ -340,20 +498,22 @@ def resolve(request, *, request_sha256, authority, reason):
     source = request["source"]
     repo, path = Path(source["repo"]), Path(source["path"])
     approval = {"request_sha256": request_sha256, "authority": authority, "reason": reason}
+    preservation = source.get("preservation")
+    preservation = (preservation["file"]["path"], preservation["sha256"]) if preservation else None
     journal = Path(request["archive"]["path"]).with_suffix(".recovery.json")
     with _owned_lock(request["writer_lock"]["path"], request["writer_lock"]):
         if journal.exists():
             _file(journal)
             record = json.loads(journal.read_bytes())
-            if not isinstance(record, dict) or set(record) != {"schema", "request", "approval", "effects", "state"} or record.get("schema") != SCHEMA or record.get("request") != request or record.get("approval") != approval:
+            if not isinstance(record, dict) or set(record) != {"schema", "request", "approval", "effects", "state"} or record.get("schema") != request["schema"] or record.get("request") != request or record.get("approval") != approval:
                 fail("Existing exact recovery intention cannot be replaced")
             allowed_effects = {"preserve-original-ref", "state-encoding", "index", "branch-ref", "push"} | {"object-" + o["oid"] for o in request["target_objects"]}
             if not isinstance(record["effects"], dict) or not set(record["effects"]).issubset(allowed_effects) or any(v not in ("intended", "observed") for v in record["effects"].values()) or record["state"] not in ("prepared", "complete-remote-observed"):
                 fail("Unknown recovery journal effect/state")
         else:
-            if _source(path, repo) != source:
+            if _source(path, repo, preservation) != source:
                 fail("Full original Source/CAS changed before recovery")
-            record = {"schema": SCHEMA, "request": request, "approval": approval, "effects": {}, "state": "prepared"}
+            record = {"schema": request["schema"], "request": request, "approval": approval, "effects": {}, "state": "prepared"}
             _durable(journal, record)
 
         original = _git(repo, "cat-file", "blob", source["original_blob"])
@@ -366,6 +526,17 @@ def resolve(request, *, request_sha256, authority, reason):
         _verify_archive(repo, request["archive"]["path"], source, request["original_objects"])
 
         def guard():
+            if "preservation" in source:
+                protected = source["preservation"]["request"]["protected_files"]
+                if protected != _protected_inventory(repo):
+                    fail("Protected Source type/mode/path/inode/bytes changed before effect")
+                canonical = _identity_file(path)
+                original_file = source["preservation"]["request"]["canonical_file"]
+                if any(canonical[k] != original_file[k] for k in ("path", "resolved_path", "type", "mode", "device", "nlink", "uid", "gid")):
+                    fail("Canonical Source alias/type/mode/ownership differs")
+                if "state-encoding" not in record["effects"] and canonical != original_file:
+                    fail("Original canonical file identity changed before encoding")
+                _no_open_source([str(path), *(r["path"] for r in protected)])
             lock = Path(request["writer_lock"]["path"])
             if lock.is_symlink() or not lock.is_file() or (lock.stat().st_dev, lock.stat().st_ino) != (request["writer_lock"]["device"], request["writer_lock"]["inode"]):
                 fail("Canonical writer path changed while the original FD was owned")
@@ -398,14 +569,14 @@ def resolve(request, *, request_sha256, authority, reason):
             if current_upstream not in allowed_upstreams:
                 fail("Upstream ref changed outside owned publication intention")
             excluded = ["--", ".", ":(exclude)" + source["relative_path"]]
-            if _git(repo, "diff", "--raw", *excluded) or _git(repo, "diff", "--cached", "--raw", *excluded):
+            if _worktree_diff(repo, source["index"]["path"], excluded) or _git(repo, "diff-index", "--cached", "--raw", "HEAD", *excluded):
                 fail("Unrelated tracked/index/worktree source changed")
             if "index" not in record["effects"] and _file(source["index"]["path"]) != source["index"]:
                 fail("Original index CAS changed")
             if "index" in record["effects"]:
                 allowed_trees = {_git(repo, "rev-parse", source["head"] + "^{tree}").decode().strip(),
                                  _git(repo, "rev-parse", request["target_commit"] + "^{tree}").decode().strip()}
-                if _git(repo, "write-tree").decode().strip() not in allowed_trees:
+                if not any(_index_matches(repo, tree) for tree in allowed_trees):
                     fail("Index tree changed outside exact owned intention")
             actual_state = current_identity
             allowed_states = [source["state"]]
@@ -485,7 +656,7 @@ def resolve(request, *, request_sha256, authority, reason):
                     os.unlink(temporary)
         effect("state-encoding", lambda: identity(path.read_bytes()) == request["target_identity"], migrate)
         target_tree = _git(repo, "rev-parse", target + "^{tree}").decode().strip()
-        effect("index", lambda: _git(repo, "write-tree").decode().strip() == target_tree,
+        effect("index", lambda: _index_matches(repo, target_tree),
                lambda: _git(repo, "read-tree", target))
         effect("branch-ref", lambda: ref_is("HEAD", target),
                lambda: _git(repo, "update-ref", "refs/heads/" + source["branch"], target, source["head"]))

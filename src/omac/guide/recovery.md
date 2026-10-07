@@ -755,6 +755,42 @@ Reviewer 可在首次观测时已经提交，无需先出现 active poll。完�
 
 Root 必须先核验当前 Source、所有对象、原始完整状态及 archive，再单独批准 request SHA、authority 和 reason。prepare 需要已存在的 canonical writer lock 和工作仓库之外的新 durable bundle 路径；会归档原未发布对象，完整读取并验证 source/request/object closure，保持原 manifest 与 refs 不变。resolve 只在实际持有同一锁 FD、Source/CAS 不变时执行；每个 effect 先 durable intent，再读回。Unknown 后只观察同一 intention，不能重放不明确结果。生产迁移及安装必须另有精确批准，Code grant 本身不是迁移许可。
 
+
+### 显式保留全部未跟踪 Source 文件
+
+默认 v1 prepare 仍拒绝任何 managed untracked 文件。只有经独立核验的精确 Root 决策，
+才能选择保留**全部**未跟踪文件且不改动它们。使用已存在的 writer lock，在业务仓库外捕获新见证：
+
+```bash
+omac dag recover-sync .omac/open-agent-cluster.yaml --repo "$PWD" \
+  --writer-lock /absolute/existing/writer.lock \
+  --prepare-preservation /absolute/external/preservation.json \
+  --authority "Exact Root preservation decision" --reason "Preserve every Source file unchanged"
+```
+
+`omac.exact-untracked-preservation/v1` 绑定完整 repo/canonical 路径、原 head/base/remote、
+物理与逻辑状态、index、config、environment、实际 lock device/inode、canonical 文件身份，
+以及每个未跟踪文件的精确相对/解析路径、regular 类型、mode、device/inode/link count、
+uid/gid、完整原字节大小/SHA 和 `preserve-unmodified` disposition。authority/reason 是显式
+字符串；捕获成功或摘要匹配不提供 Root 批准。独立核验完整见证后，将输出中的规范
+`preservation_sha256` 传给 prepare：
+
+```bash
+omac dag recover-sync .omac/open-agent-cluster.yaml --repo "$PWD" \
+  --writer-lock /absolute/existing/writer.lock \
+  --prepare /absolute/external/request.json --archive /absolute/external/original.bundle \
+  --preservation-witness /absolute/external/preservation.json \
+  --preservation-sha256 <exact-approved-preservation-sha256>
+```
+
+该 opt-in prepare 使用 `omac.full-state-sync-recovery/v2`；resolve 仍须单独批准精确
+request SHA/authority/reason。其他文件均在 effect set 之外。缺失、过期、不完整、抽样或
+发生变化的见证/文件，以及路径别名、symlink、hardlink、mode/owner 变化、活跃 writer lock
+和 canonical/protected 文件的 open FD，均失败关闭。必须由已存在的原生 `lsof` 给出无歧义
+观测；未观察到 open FD 只是一时事实，不能证明不活跃。未知 activity/provenance 保持未知。
+此流程不允许删除、迁移、ignore、stage 或推断新权限。每个 effect 重查保护文件身份和原始
+CAS；索引原生观察不会刷新或重写索引。
+
 版本 `omac.full-state-transport/v1` 是同一路径的单个 UTF8 YAML envelope：schema、encoding、decoded_bytes、decoded_sha256、payload。gzip+Base64 只改物理表示；解码重建全部原 YAML 字节。encoded <=90MiB、decoded <=256MiB，不合法/schema/字段/type/SHA/CRC/长度/截断/越界 fail closed，没有自动 chunk、LFS、外置 store、删重或提高上限。物理文件的 SHA/长度、decoded 原字节身份、完整 canonical Source/request/approval、Git blob/commit 必须分别保留，不能互相冒充。
 
 恢复保存原 immutable bundle 与原 commit 本地专用 ref，用完全保留非 manifest tree 的新完整 commit 接到已发布 base，非 force push 并观察远端 ACK。新 push 的整个可达 closure 不含原超限 blob；原 blob/commit 仍可由原 ref/bundle 恢复。journal 在 archive 旁，属于专用 OMAC 恢复 intention/receipt，不能作为另一个业务 truth store；所有原 meta/Node/DONE/预算/旧33d退休/newca3 consumed8/wake intention/失败历史和 Unknown seal 不变。

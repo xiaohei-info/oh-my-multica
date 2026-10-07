@@ -999,6 +999,48 @@ The Reviewer may already have submitted at its first observation; a prior active
 
 Root must qualify the exact Source, complete original objects/state and archive, then separately approve the exact request SHA, authority and reason. Prepare needs an existing canonical writer lock and a new durable bundle outside the repository. It archives and verifies original unpublished objects while leaving state/managed refs unchanged. Resolve actually owns the same FD, pins Source/CAS, persists intention before each effect and verifies readback. Unknown outcomes observe the same intention without blind replay. Code qualification is not permission for live migration or installation.
 
+
+### Explicit preservation of every untracked Source file
+
+Default v1 preparation still refuses any managed untracked file. An independently
+qualified Root decision may instead preserve **all** untracked files unchanged.
+Capture a new witness outside the business worktree using its existing writer lock:
+
+```bash
+omac dag recover-sync .omac/open-agent-cluster.yaml --repo "$PWD" \
+  --writer-lock /absolute/existing/writer.lock \
+  --prepare-preservation /absolute/external/preservation.json \
+  --authority "Exact Root preservation decision" --reason "Preserve every Source file unchanged"
+```
+
+`omac.exact-untracked-preservation/v1` binds complete repository/canonical paths,
+original head/base/remote, physical and logical state, index, config, environment,
+actual lock device/inode, canonical file identity and every untracked file's exact
+relative/resolved path, regular type, mode, device/inode/link count, uid/gid,
+complete raw size/SHA and `preserve-unmodified` disposition. Authority/reason are
+explicit strings; capture and a matching digest do not supply Root approval.
+After independently qualifying the complete witness, pass its printed canonical
+`preservation_sha256` to preparation:
+
+```bash
+omac dag recover-sync .omac/open-agent-cluster.yaml --repo "$PWD" \
+  --writer-lock /absolute/existing/writer.lock \
+  --prepare /absolute/external/request.json --archive /absolute/external/original.bundle \
+  --preservation-witness /absolute/external/preservation.json \
+  --preservation-sha256 <exact-approved-preservation-sha256>
+```
+
+Opt-in preparation uses `omac.full-state-sync-recovery/v2`; resolution still needs
+separate exact request SHA/authority/reason approval. Other files remain outside
+the effect set. Missing, stale, incomplete, sampled or changed witnesses/files,
+path aliases, symlinks, hardlinks, mode/ownership changes, active writer locks and
+open canonical/protected file descriptors fail closed. Existing native `lsof` must
+provide an unambiguous observation; no observed open FD is only a point-in-time
+fact, never proof of inactivity. Unknown activity/provenance remains unknown.
+No deletion, relocation, ignore rules, staging or permission inference is implied.
+Every effect rechecks protected identities and the original CAS; native index
+observation does not refresh or rewrite that index.
+
 The single-file `omac.full-state-transport/v1` UTF8 YAML envelope contains schema, encoding, decoded_bytes, decoded_sha256 and payload. Deterministic gzip+Base64 reconstructs the complete original YAML bytes. Encoded files are bounded at90MiB and decoded state at256MiB. Unknown schema/fields/types, invalid Base64/gzip/CRC/SHA/length, truncation or oversized output fail closed. There is no automatic chunking, LFS, external store, lossy reduction or cap escalation. Physical SHA/size, decoded original-byte identity, complete canonical Source/request/approval and Git object identities remain distinct.
 
 Recovery retains the immutable bundle and original commit under a dedicated local ref. A complete replacement commit preserves all unrelated tree entries and uses the published base as its parent; it is pushed without force and remote acceptance is observed. The entire newly published closure excludes the original oversized blob, which remains recoverable through original ref/bundle. The archive-adjacent typed journal records OMAC-only intentions/receipts, never a second business truth store. Original meta, Nodes, DONE, budgets, old33d retirement, newca3 consumed8/wake intent, failed history and unknown seals remain unchanged.
