@@ -142,9 +142,12 @@ def register(parser):
     recovery.add_argument("--repo", required=True)
     recovery.add_argument("--writer-lock", required=True, help="Existing canonical writer lock; never recreated")
     operation = recovery.add_mutually_exclusive_group(required=True)
+    operation.add_argument("--prepare-preservation", metavar="WITNESS_FILE", help="Capture exact immutable Source with new Root preservation authority; no archive or migration")
     operation.add_argument("--prepare", metavar="REQUEST_FILE")
     operation.add_argument("--resolve", metavar="REQUEST_FILE")
     recovery.add_argument("--archive", help="New immutable bundle outside repository, required for prepare")
+    recovery.add_argument("--preservation-witness", help="Exact outside-worktree preserved Source witness")
+    recovery.add_argument("--preservation-sha256", help="Explicit Root-approved complete preservation witness digest")
     recovery.add_argument("--request-sha256")
     recovery.add_argument("--authority")
     recovery.add_argument("--reason")
@@ -927,19 +930,28 @@ def run(args) -> int:
     有界:--max-rounds / --max-minutes 支持分段跑。
     """
     if args.action == "recover-sync":
-        from ...core.state_sync_recovery import prepare, resolve, digest, _validate
-        if args.prepare:
+        from ...core.state_sync_recovery import prepare, prepare_preservation, resolve, digest, _validate, _durable
+        if args.prepare_preservation:
+            if args.archive or args.request_sha256 or args.preservation_witness or args.preservation_sha256 or not all((args.authority, args.reason)):
+                raise ValidationError("Witness capture requires only new authority/reason; inspect `omac dag recover-sync --help`")
+            target = Path(args.prepare_preservation)
+            if target.exists() or target.resolve().is_relative_to(Path(args.repo).resolve()):
+                raise ValidationError("New preservation witness outside worktree required; never overwrite; inspect `omac dag recover-sync --help`")
+            witness = prepare_preservation(args.manifest, args.repo, args.writer_lock, authority=args.authority, reason=args.reason)
+            _durable(target, witness)
+            print_json({"preservation_witness": witness, "preservation_sha256": digest(witness), "state": "awaiting-exact-Root-preservation-approval"})
+        elif args.prepare:
             if not args.archive or any((args.request_sha256, args.authority, args.reason)):
                 raise ValidationError("Prepare requires --archive only; inspect `omac dag recover-sync --help`")
             target = Path(args.prepare)
             if target.exists():
                 raise ValidationError("Prepared request already exists; observe it without replacing; inspect `omac dag recover-sync --help`")
-            request = prepare(args.manifest, args.repo, args.archive, args.writer_lock)
+            request = prepare(args.manifest, args.repo, args.archive, args.writer_lock, preservation_file=args.preservation_witness, preservation_sha256=args.preservation_sha256)
             from ...core.state_sync_recovery import _durable
             _durable(target, request)
             print_json({"request": request, "request_sha256": digest(request), "state": "awaiting-exact-Root-approval"})
         else:
-            if args.archive or not all((args.request_sha256, args.authority, args.reason)):
+            if args.archive or args.preservation_witness or args.preservation_sha256 or not all((args.request_sha256, args.authority, args.reason)):
                 raise ValidationError("Resolve requires exact request SHA/authority/reason; inspect `omac dag recover-sync --help`")
             import json
             try:
