@@ -16,6 +16,7 @@ import pytest
 import yaml
 
 from omac.core.manifest import load_manifest, save_manifest, _dump_contract
+from fixture_initial_images import seed_manifest
 from omac.core.taskmeta import (
     Bounces,
     TaskKind,
@@ -266,7 +267,7 @@ def case(request, tmp_path, monkeypatch):
     )
     monkeypatch.setattr(engine.store, "list_members", lambda _: sorted(pool))
     path = tmp_path / "dag.yaml"
-    save_manifest(manifest, str(path))
+    seed_manifest(FIXTURES / "current77.yaml", path)
     docs = tmp_path / "docs.md"
     docs.write_text("Offline assessment input; no product claims are adjudicated.")
     report = tmp_path / "request.md"
