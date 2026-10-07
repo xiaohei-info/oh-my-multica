@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from copy import deepcopy
 import json
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import yaml
@@ -809,7 +810,8 @@ def _validate_decompose_authoring(
     base_manifest 提供时(增量 decompose),用 lint_increment 校验(允许引用既有节点);
     否则 standalone lint(整图必须自洽)。
     """
-    content = _read_text(manifest_file)
+    from ..core.state_transport import decode
+    content = decode(Path(manifest_file).read_bytes()).decode("utf-8")
     try:
         manifest = load_manifest(manifest_file)
     except (ValueError, OSError) as exc:
