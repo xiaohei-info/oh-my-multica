@@ -257,3 +257,107 @@ def test_document_forms_do_not_bypass_exact_transport_validation(form):
         raw = b"\n".join(b"\t" + line for line in yaml.safe_dump(value).encode().splitlines())
     with pytest.raises(ValidationError):
         decode(raw)
+
+
+def root_merge(header, form):
+    mapping = json.dumps(header)
+    if form == "inline":
+        return ("<<: " + mapping + "\n").encode()
+    if form == "block":
+        return ("<<:\n" + "\n".join("  " + k + ": " + json.dumps(v)
+                                              for k, v in header.items()) + "\n").encode()
+    if form == "after-meta":
+        return ("meta: {legacy: kept}\n<<: " + mapping + "\n").encode()
+    if form == "after-nodes":
+        return ("meta: {legacy: kept}\n"
+                "nodes:\n- id: legacy\n  worker: worker\n<<: " + mapping + "\n").encode()
+    if form == "anchor-sequence":
+        return ("<<: [&envelope " + mapping + ", *envelope]\n").encode()
+    if form == "explicit":
+        return ("? <<\n: " + mapping + "\n").encode()
+    if form == "explicit-after-meta":
+        return ("meta: {legacy: kept}\n? <<\n: " + mapping + "\n").encode()
+    return b"meta: {legacy: kept}\n" + alternate_root(header, "escaped")
+
+
+@pytest.mark.parametrize("form", ["inline", "block", "after-meta", "after-nodes", "anchor-sequence",
+                                  "explicit", "explicit-after-meta", "escaped-after-meta"])
+def test_full_original_root_merge_rejects_before_legacy_success_and_overwrite(tmp_path, form):
+    from omac.core.state_transport import encode, decode, FIELDS
+    from omac.core.manifest import Manifest, save_manifest
+
+    original = captured_bytes()
+    header = yaml.load(encode(original), Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader))
+    raw = root_merge(header, form)
+    semantic = yaml.load(raw, Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader))
+    assert FIELDS.issubset(semantic)
+    path = tmp_path / "state.yaml"
+    path.write_bytes(raw)
+    with pytest.raises(ValidationError):
+        decode(raw)
+    with pytest.raises(ValidationError):
+        load_manifest(str(path))
+    with pytest.raises(ValidationError):
+        save_manifest(Manifest(meta={}, nodes={}), str(path))
+    assert path.read_bytes() == raw
+
+
+@pytest.mark.parametrize("fallback", [False, True])
+@pytest.mark.parametrize("form", ["inline", "after-meta", "explicit-after-meta"])
+def test_root_merge_native_fallback_never_becomes_legacy(tmp_path, monkeypatch, fallback, form):
+    from omac.core.state_transport import encode, decode
+    from omac.core.manifest import Manifest, save_manifest
+
+    header = yaml.safe_load(encode(b"meta: {source: preserved}\nnodes: []\n"))
+    raw = root_merge(header, form)
+    if fallback:
+        monkeypatch.delattr(yaml, "CSafeLoader", raising=False)
+    path = tmp_path / "state.yaml"
+    path.write_bytes(raw)
+    with pytest.raises(ValidationError):
+        decode(raw)
+    with pytest.raises(ValidationError):
+        load_manifest(str(path))
+    with pytest.raises(ValidationError):
+        save_manifest(Manifest(meta={}, nodes={}), str(path))
+    assert path.read_bytes() == raw
+
+
+@pytest.mark.parametrize("fallback", [False, True])
+def test_genuine_legacy_root_merge_keeps_nested_history_and_environment(monkeypatch, fallback):
+    from omac.core.manifest import loads_manifest
+    from omac.core.state_transport import decode
+
+    text = '<<: {meta: {historical: {schema: ordinary, payload: kept}, owner: "${OMAC_ROOT_MERGE_OWNER:-default}"}, nodes: []}\n'
+    monkeypatch.setenv("OMAC_ROOT_MERGE_OWNER", "preserved")
+    if fallback:
+        monkeypatch.delattr(yaml, "CSafeLoader", raising=False)
+    assert decode(text.encode()) == text.encode()
+    model = loads_manifest(text)
+    assert model.meta == {"historical": {"schema": "ordinary", "payload": "kept"}, "owner": "preserved"}
+    assert model.nodes == {}
+
+
+@pytest.mark.parametrize("fallback", [False, True])
+def test_recursive_legacy_merge_does_not_loop_or_reserve_nested_fields(monkeypatch, fallback):
+    from omac.core.manifest import loads_manifest
+    from omac.core.state_transport import decode
+
+    text = '&root {<<: *root, meta: {historical: {schema: ordinary, payload: kept}}, nodes: []}\n'
+    expected = yaml.safe_load(text)
+    if fallback:
+        monkeypatch.delattr(yaml, "CSafeLoader", raising=False)
+    assert decode(text.encode()) == text.encode()
+    assert loads_manifest(text).meta == expected["meta"]
+
+
+def test_oversize_input_is_rejected_before_semantic_parser(monkeypatch):
+    from omac.core import state_transport as transport
+
+    raw = b'&oversize {meta: {source: kept}, nodes: []}'
+    monkeypatch.setattr(transport, "DECODED_MAX", 8)
+    parsed = []
+    monkeypatch.setattr(yaml, "compose", lambda *args, **kwargs: parsed.append(True))
+    with pytest.raises(ValidationError):
+        transport.decode(raw)
+    assert parsed == []

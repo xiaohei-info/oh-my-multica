@@ -21,24 +21,34 @@ def fail(detail):
 
 
 def is_transport(raw):
-    # Legacy manifests contain meta/nodes. Only a top-level transport declaration
-    # is reserved; quoted historical declarations inside meta remain ordinary data.
-    content = raw[3:] if raw.startswith(b"\xef\xbb\xbf") else raw
-    opening = re.search(rb'(?m)^(?![ \t]*(?:#|%|---[ \t]*(?:#[^\n]*)?$|$))([ \t]*)(\S[^\r\n]*)', content)
-    first = opening.group(2) if opening else b""
-    if first.startswith(b"--- "):
-        first = first[4:].lstrip()
-    if first.startswith((b"{", b"!", b"&", b"*", b"?", b'"')):
-        try:
-            # Unusual YAML root syntax must retain semantic field identity.
-            value = yaml.load(raw, Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader))
-        except yaml.YAMLError:
-            fail("Malformed flow-style manifest/transport")
-        return isinstance(value, dict) and bool(FIELDS.intersection(value))
-    fields = b"|".join(name.encode() for name in sorted(FIELDS))
-    key = rb'(?:' + fields + rb'|["\'](?:' + fields + rb')["\'])\s*:'
-    indent = re.escape(opening.group(1)) if opening else b""
-    return bool(re.match(key, first) or re.search(rb'(?m)^' + indent + key, content))
+    if len(raw) > DECODED_MAX:
+        fail("Complete manifest/transport exceeds256MiB")
+    # A plain block mapping with only literal meta/nodes root keys cannot declare
+    # transport fields. Any other root line (including merge/explicit/escaped
+    # keys after meta) takes the semantic path below. Dash entries belong to
+    # the ordinary indentationless nodes list, not to the root mapping.
+    if re.match(rb"(?:meta|nodes)\s*:", raw):
+        root_lines = re.findall(rb"(?m)^[^\s#][^\r\n]*", raw)
+        if all(re.match(rb"(?:meta|nodes)\s*:|-[ \t]", line) for line in root_lines):
+            return False
+    # Inspect semantic root keys without constructing legacy values. This keeps
+    # legacy safe-constructor errors intact and follows merge aliases in any order.
+    try:
+        root = yaml.compose(raw, Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader))
+    except yaml.YAMLError:
+        fail("Malformed manifest/transport")
+    pending, seen = [root], set()
+    while pending:
+        node = pending.pop()
+        if id(node) in seen or not isinstance(node, yaml.MappingNode):
+            continue
+        seen.add(id(node))
+        for key, value in node.value:
+            if isinstance(key, yaml.ScalarNode) and key.value in FIELDS:
+                return True
+            if key.tag == "tag:yaml.org,2002:merge":
+                pending.extend(value.value if isinstance(value, yaml.SequenceNode) else [value])
+    return False
 
 
 class _EnvelopeLoader(getattr(yaml, "CSafeLoader", yaml.SafeLoader)):
