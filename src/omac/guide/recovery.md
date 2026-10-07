@@ -748,3 +748,17 @@ prepare 只读；resolution 仅持久记录该精确请求的批准。实际正�
 新 Reviewer 的原生 obligations 包含完整原生失败历史、未提交报告全文及 SHA/字节，和完整不可变发布 index/inventory。`omac work show` 必须能读取这些完整来源。报告须为每项历史提供 `history_assessment`（精确 obligation_id、source_sha256、source_bytes、`accepted_verdict: false` 和非空 disposition）；未提交报告不能成为权威 verdict。`evidence_publication` 须声明精确 `index_commit`、`index_sha256` 和完整 `payload_commits` 集合，允许真实 index 固定多个 payload commit。新报告/ledger 的原生 Run 因果、现有全部正常 Review 门及旧 ledger 的 canonical 一次推进仍需通过。
 
 Reviewer 可在首次观测时已经提交，无需先出现 active poll。完整 publication 与保护来源验证后，原 request/receipt 保持 consumed，派发记录持久标记 `normal-review-handed-off`；该次 observation 权限结束，后续状态仅按现有正常流程处理，不能重用本请求再派发。
+
+## 完整状态 transport 与未发布 Git 大文件恢复
+
+`omac dag recover-sync --help` 提供显式的 prepare/resolve 边界。此命令只接受 main/origin main 上一个尚未发布、非 merge、仅修改一个 `.omac/*.yaml` manifest 的提交；不处理业务提交、dirty/index 变化、managed untracked、其他分支或游离 HEAD。普通 tick/save/sync 不会自动迁移 legacy YAML；既有 transport 的普通保存保持已选择的格式。
+
+Root 必须先核验当前 Source、所有对象、原始完整状态及 archive，再单独批准 request SHA、authority 和 reason。prepare 需要已存在的 canonical writer lock 和工作仓库之外的新 durable bundle 路径；会归档原未发布对象，完整读取并验证 source/request/object closure，保持原 manifest 与 refs 不变。resolve 只在实际持有同一锁 FD、Source/CAS 不变时执行；每个 effect 先 durable intent，再读回。Unknown 后只观察同一 intention，不能重放不明确结果。生产迁移及安装必须另有精确批准，Code grant 本身不是迁移许可。
+
+版本 `omac.full-state-transport/v1` 是同一路径的单个 UTF8 YAML envelope：schema、encoding、decoded_bytes、decoded_sha256、payload。gzip+Base64 只改物理表示；解码重建全部原 YAML 字节。encoded <=90MiB、decoded <=256MiB，不合法/schema/字段/type/SHA/CRC/长度/截断/越界 fail closed，没有自动 chunk、LFS、外置 store、删重或提高上限。物理文件的 SHA/长度、decoded 原字节身份、完整 canonical Source/request/approval、Git blob/commit 必须分别保留，不能互相冒充。
+
+恢复保存原 immutable bundle 与原 commit 本地专用 ref，用完全保留非 manifest tree 的新完整 commit 接到已发布 base，非 force push 并观察远端 ACK。新 push 的整个可达 closure 不含原超限 blob；原 blob/commit 仍可由原 ref/bundle 恢复。journal 在 archive 旁，属于专用 OMAC 恢复 intention/receipt，不能作为另一个业务 truth store；所有原 meta/Node/DONE/预算/旧33d退休/newca3 consumed8/wake intention/失败历史和 Unknown seal 不变。
+
+直接传递 manifest 内容的 decompose/check-review 消费者使用完整 decoded YAML。amendment attempt、原生 evidence witness、原 file Source/history 与仓库 revision snapshot 的 raw 字节 SHA 保持 raw 意义，不因 transport 偷换；旧 request 不重新签名，不自动消费或重发 Agent wake。
+
+prepare 的 archive 写入结果未知时，只读取并验证已保留的同一 Source/原 writer identity/档案意图。完整档案可独立恢复原对象才继续；档案缺失或不完整不会重新创建。已验证档案的重复 prepare 保持原 receipt/request SHA。

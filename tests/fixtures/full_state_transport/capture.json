@@ -1,0 +1,12 @@
+{
+  "raw_bytes": 105650411,
+  "raw_sha256": "07826bb3ccb9db13cce23cfdff452cefa98bcf4212fe0a036a577431505f0232",
+  "commit": "f9fcce7272159cbf41a401de3e8105747b6e5b00",
+  "parent": "0dae29d869278750a051cf91272f577639c59b4b",
+  "blob": "cd1615c57abaa6f1980124a3e8b9e1d081581949",
+  "nodes": 183,
+  "DONE": 80,
+  "meta": 23,
+  "ca3": "ca3ec6b55dcd09769c4c3ac74be812966d1bd89890a1a8b9926c7036b7365134",
+  "original_input_request_sha256": "a23b43ebe5bdfc5e30d499dfdac074095d040d1a95858de4f7d9a4cb29320f5f"
+}

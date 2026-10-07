@@ -316,14 +316,15 @@ def _build_nodes(raw) -> dict:
 
 def load_manifest(path: str) -> Manifest:
     """从文件路径加载 manifest(环境变量展开 + schema 校验)。"""
-    with open(path) as f:
-        raw = _expand_env(yaml.safe_load(f))
-    return Manifest(meta=raw.get("meta", {}), nodes=_build_nodes(raw))
+    from .state_transport import decode
+    with open(path, "rb") as f:
+        return loads_manifest(decode(f.read()).decode("utf-8"))
 
 
 def loads_manifest(text: str) -> Manifest:
     """从 YAML 文本解析 manifest(不落盘,供 pipeline 直接消费 LLM 产出的 manifest)。"""
-    raw = _expand_env(yaml.safe_load(text))
+    from .state_transport import decode
+    raw = _expand_env(yaml.safe_load(decode(text.encode("utf-8")).decode("utf-8")))
     return Manifest(meta=raw.get("meta", {}), nodes=_build_nodes(raw))
 
 def _canonical_manifest_target(path: str) -> str:
@@ -370,7 +371,14 @@ def save_manifest(manifest: Manifest, path: str):
         node_list.append(node)
 
     data = {"meta": manifest.meta, "nodes": node_list}
+    from .state_transport import decode, encode, is_transport, DECODED_MAX, fail
     target = _canonical_manifest_target(path)
+    selected_transport = False
+    if os.path.exists(target):
+        with open(target, "rb") as stream:
+            previous = stream.read()
+        decode(previous)  # Reject corrupt selected state before any overwrite.
+        selected_transport = is_transport(previous)
     directory = os.path.dirname(target) or "."
     os.makedirs(directory, exist_ok=True)
     fd, temporary = tempfile.mkstemp(
@@ -379,12 +387,23 @@ def save_manifest(manifest: Manifest, path: str):
         if os.path.exists(target):
             os.chmod(temporary, stat.S_IMODE(os.stat(target).st_mode))
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            yaml.dump(
-                data, f, default_flow_style=False,
-                allow_unicode=True, sort_keys=False)
+            if selected_transport:
+                body = yaml.dump(data, default_flow_style=False,
+                                 allow_unicode=True, sort_keys=False).encode("utf-8")
+                f.write(encode(body).decode("utf-8"))
+            else:
+                yaml.dump(data, f, default_flow_style=False,
+                          allow_unicode=True, sort_keys=False)
+                if f.tell() > DECODED_MAX:
+                    fail("Complete legacy state exceeds256MiB; preserve last valid state")
             f.flush()
             os.fsync(f.fileno())
         os.replace(temporary, target)
+        directory_fd = os.open(directory, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
     except BaseException:
         try:
             os.close(fd)

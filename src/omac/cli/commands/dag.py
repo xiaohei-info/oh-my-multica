@@ -18,6 +18,7 @@ from ...core.acceptance import load_acceptance_doc_file
 from ...core.graph import node_waves
 from ...core.lint import lint
 from ...core.manifest import load_manifest, manifest_write_lock
+from pathlib import Path
 from ...core.gitsync import commit_manifest, ensure_config_synced
 from ...engines import create_engine
 from ...engines.models import EngineConfig
@@ -135,6 +136,19 @@ def register(parser):
         "snapshot", help="只读 manifest 快照(不调用 Engine、不 reconcile)")
     snapshot_p.add_argument("manifest", help="manifest 文件路径")
     add_output_flag(snapshot_p)
+
+    recovery = sub.add_parser("recover-sync", help="Explicit full-state transport and unpublished managed-only Git recovery")
+    recovery.add_argument("manifest")
+    recovery.add_argument("--repo", required=True)
+    recovery.add_argument("--writer-lock", required=True, help="Existing canonical writer lock; never recreated")
+    operation = recovery.add_mutually_exclusive_group(required=True)
+    operation.add_argument("--prepare", metavar="REQUEST_FILE")
+    operation.add_argument("--resolve", metavar="REQUEST_FILE")
+    recovery.add_argument("--archive", help="New immutable bundle outside repository, required for prepare")
+    recovery.add_argument("--request-sha256")
+    recovery.add_argument("--authority")
+    recovery.add_argument("--reason")
+    add_output_flag(recovery, default="json")
 
     tick = sub.add_parser("tick", help="单轮推进后退出(exit 0/10/20)")
     tick.add_argument("manifest", help="manifest 文件路径")
@@ -380,8 +394,8 @@ def check(args) -> int:
     if reviewers and not args.no_review:
         reviewer = reviewers[0]
         env_prefix = _work_env_prefix(engine)
-        with open(path, encoding="utf-8") as manifest_file:
-            manifest_source = manifest_file.read()
+        from ...core.state_transport import decode
+        manifest_source = decode(Path(path).read_bytes()).decode("utf-8")
         run_review(
             engine, engine.store.config.workspace_id,
             title=f"[dag-check] {name}",
@@ -912,6 +926,31 @@ def run(args) -> int:
     幂等:全部状态在 manifest + 平台,任意中断重跑即续跑,done 节点复用。
     有界:--max-rounds / --max-minutes 支持分段跑。
     """
+    if args.action == "recover-sync":
+        from ...core.state_sync_recovery import prepare, resolve, digest, _validate
+        if args.prepare:
+            if not args.archive or any((args.request_sha256, args.authority, args.reason)):
+                raise ValidationError("Prepare requires --archive only; inspect `omac dag recover-sync --help`")
+            target = Path(args.prepare)
+            if target.exists():
+                raise ValidationError("Prepared request already exists; observe it without replacing; inspect `omac dag recover-sync --help`")
+            request = prepare(args.manifest, args.repo, args.archive, args.writer_lock)
+            from ...core.state_sync_recovery import _durable
+            _durable(target, request)
+            print_json({"request": request, "request_sha256": digest(request), "state": "awaiting-exact-Root-approval"})
+        else:
+            if args.archive or not all((args.request_sha256, args.authority, args.reason)):
+                raise ValidationError("Resolve requires exact request SHA/authority/reason; inspect `omac dag recover-sync --help`")
+            import json
+            try:
+                request = json.loads(Path(args.resolve).read_bytes())
+            except (ValueError, UnicodeError, OSError) as exc:
+                raise ValidationError("Complete valid prepared request required; inspect `omac dag recover-sync --help`") from exc
+            _validate(request, args.request_sha256)
+            if request["source"]["path"] != str(Path(args.manifest).resolve()) or request["source"]["repo"] != str(Path(args.repo).resolve()) or request["writer_lock"]["path"] != str(Path(args.writer_lock).resolve()):
+                raise ValidationError("Request source/path/lock differ; inspect `omac dag recover-sync --help`")
+            print_json(resolve(request, request_sha256=args.request_sha256, authority=args.authority, reason=args.reason))
+        return exit_codes.OK
     if args.action == "check":
         return check(args)
     if args.action == "show":
