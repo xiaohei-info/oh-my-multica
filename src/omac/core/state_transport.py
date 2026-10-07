@@ -28,9 +28,10 @@ def is_transport(raw):
     first = opening.group(2) if opening else b""
     if first.startswith(b"--- "):
         first = first[4:].lstrip()
-    if first.startswith(b"{"):
+    if first.startswith((b"{", b"!", b"&", b"*", b"?", b'"')):
         try:
-            value = yaml.safe_load(raw)
+            # Unusual YAML root syntax must retain semantic field identity.
+            value = yaml.load(raw, Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader))
         except yaml.YAMLError:
             fail("Malformed flow-style manifest/transport")
         return isinstance(value, dict) and bool(FIELDS.intersection(value))

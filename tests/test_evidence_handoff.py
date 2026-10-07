@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from omac.core.manifest import load_manifest, save_manifest
+from fixture_initial_images import seed_manifest
 from omac.core.taskmeta import (
     Bounces,
     TaskKind,
@@ -260,7 +261,7 @@ def captured(tmp_path, monkeypatch):
         (FIXTURES / "acceptance.yaml").read_bytes()
     )
     path = str(tmp_path / "dag.yaml")
-    save_manifest(manifest, path)
+    seed_manifest(FIXTURES / "current79.yaml", path)
     limits = json.loads((FIXTURES / "limits.json").read_bytes())
     config = {"retry": limits["limits"] | {"no_submit_runs": limits["no_submit_limit"]}}
     return SimpleNamespace(

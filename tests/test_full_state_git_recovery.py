@@ -1,5 +1,8 @@
 """Private repositories only; original f9 object identities remain separate."""
 import subprocess
+import shutil
+import tempfile
+from functools import lru_cache
 from pathlib import Path
 import json
 import pytest
@@ -13,7 +16,7 @@ def git(repo, *args, data=None):
     return subprocess.check_output(["git", "-C", str(repo), *args], input=data)
 
 
-def private_case(tmp_path):
+def _build_private_case(tmp_path):
     remote = tmp_path / "remote.git"
     subprocess.run(["git", "init", "--bare", str(remote)], check=True, capture_output=True)
     repo = tmp_path / "work"
@@ -33,6 +36,30 @@ def private_case(tmp_path):
     lock = tmp_path / "writer.lock"
     lock.touch()
     return repo, manifest, remote, lock
+
+
+@lru_cache(maxsize=1)
+def _private_seed():
+    # Only the immutable initialized fixture is reused. Both Git databases,
+    # worktree/index/config and canonical lock are independent per test.
+    temporary = tempfile.TemporaryDirectory(prefix="omac-git-fixture-seed-")
+    _build_private_case(Path(temporary.name))
+    return temporary
+
+
+def private_case(tmp_path):
+    seed = Path(_private_seed().name)
+    remote, repo = tmp_path / "remote.git", tmp_path / "work"
+    shutil.copytree(seed / "remote.git", remote)
+    shutil.copytree(seed / "work", repo)
+    git(repo, "remote", "set-url", "origin", str(remote))
+    # Copied index stat entries still describe the seed's inodes. Initialize
+    # this independent worktree's index before public prepare pins its CAS.
+    git(repo, "update-index", "--refresh")
+    git(repo, "write-tree")
+    lock = tmp_path / "writer.lock"
+    lock.touch()
+    return repo, repo / ".omac/state.yaml", remote, lock
 
 
 def test_public_exact_prepare_does_not_migrate_or_change_refs(tmp_path):

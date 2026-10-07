@@ -324,7 +324,8 @@ def load_manifest(path: str) -> Manifest:
 def loads_manifest(text: str) -> Manifest:
     """从 YAML 文本解析 manifest(不落盘,供 pipeline 直接消费 LLM 产出的 manifest)。"""
     from .state_transport import decode
-    raw = _expand_env(yaml.safe_load(decode(text.encode("utf-8")).decode("utf-8")))
+    raw = _expand_env(yaml.load(decode(text.encode("utf-8")).decode("utf-8"),
+                              Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader)))
     return Manifest(meta=raw.get("meta", {}), nodes=_build_nodes(raw))
 
 def _canonical_manifest_target(path: str) -> str:
