@@ -993,6 +993,18 @@ Native Reviewer obligations carry complete failed native history, the unsubmitte
 
 The Reviewer may already have submitted at its first observation; a prior active poll is unnecessary. After validating that complete publication and protected source, the original request/receipt remains consumed and dispatch is durably marked `normal-review-handed-off`. This observation authority ends; later states follow existing normal behavior and cannot reuse the request to redispatch.
 
+
+Completed independent review and its retirement use the same strict Source identity
+boundary. A v2 report declares `review_protocol: omac.review/v2` and complete
+`reviewed_source.head` / `reviewed_source.pr_url`; existing legacy reports declare
+complete top-level `source_commit` / `pr_url`. Every identity shape present must
+contain exact nonempty strings matching the approved HEAD and PR. If both appear,
+both must agree; a partial, null, malformed, foreign, conflicting or unknown
+protocol identity fails closed. No report rewriting or duplicated fields are
+required. Native Run attribution, publication, full canonical ledger/history,
+control, Source/CAS and budgets remain mandatory. Protocol consumption retains
+an independent `reject` and its blockers; it does not grant Product PASS.
+
 ## Complete-state transport and unpublished large Git recovery
 
 `omac dag recover-sync --help` exposes explicit prepare/resolve boundaries. Eligibility is one unpublished, nonmerge main/origin-main commit touching only one `.omac/*.yaml` manifest. Mixed business history, dirty or changed index/worktree, managed untracked state, foreign branches and detached HEAD are refused. Ordinary tick/save/sync never implicitly migrates legacy YAML; normal saving of a selected transport preserves that format.

@@ -749,6 +749,15 @@ prepare 只读；resolution 仅持久记录该精确请求的批准。实际正�
 
 Reviewer 可在首次观测时已经提交，无需先出现 active poll。完整 publication 与保护来源验证后，原 request/receipt 保持 consumed，派发记录持久标记 `normal-review-handed-off`；该次 observation 权限结束，后续状态仅按现有正常流程处理，不能重用本请求再派发。
 
+
+完成的独立审查及其退休流程共用严格的 Source 身份边界。v2 报告声明
+`review_protocol: omac.review/v2`，并提供完整 `reviewed_source.head` / `reviewed_source.pr_url`；
+既有 legacy 报告提供完整顶层 `source_commit` / `pr_url`。每种已出现的身份形状均须包含
+精确匹配已批准 HEAD 和 PR 的非空字符串；两种同时出现时必须一致。部分字段、null、
+类型错误、外来或冲突身份、未知协议均失败关闭，不要求改写报告或补写重复字段。
+原生 Run 归属、publication、完整 canonical ledger/历史、control、Source/CAS 和预算门
+仍必须通过。协议消费保留独立 `reject` 和全部 blockers，不提供 Product PASS。
+
 ## 完整状态 transport 与未发布 Git 大文件恢复
 
 `omac dag recover-sync --help` 提供显式的 prepare/resolve 边界。此命令只接受 main/origin main 上一个尚未发布、非 merge、仅修改一个 `.omac/*.yaml` manifest 的提交；不处理业务提交、dirty/index 变化、managed untracked、其他分支或游离 HEAD。普通 tick/save/sync 不会自动迁移 legacy YAML；既有 transport 的普通保存保持已选择的格式。

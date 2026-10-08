@@ -1232,7 +1232,7 @@ def test_exact_baseline_drift_after_assignment_never_wakes(
 
 @pytest.mark.parametrize("prior_active_observation", [False, True])
 def test_complete_public_flow_accepts_fresh_native_review_without_prior_poll(
-    captured, monkeypatch, capsys, prior_active_observation
+    captured, monkeypatch, capsys, prior_active_observation, source_shape="legacy"
 ):
     import yaml
     from omac.cli.main import main
@@ -1331,6 +1331,11 @@ def test_complete_public_flow_accepts_fresh_native_review_without_prior_poll(
     ]
     report["pr_url"] = c.item.artifacts["pr_url"]
     report["source_commit"] = c.item.artifacts["head_sha"]
+    if source_shape in ("nested", "both"):
+        report["reviewed_source"] = {"head": report["source_commit"], "pr_url": report["pr_url"]}
+        if source_shape == "nested":
+            del report["source_commit"]
+            del report["pr_url"]
     pub = prepared["request"]["tuple"]["current_publication"]
     report["evidence_publication"] = {
         "index_commit": pub["url"].split("/")[6],
@@ -1766,3 +1771,10 @@ def test_prepare_requires_independent_rejected_source_before_effects():
             publication_url=None,
             config={},
         )
+
+
+@pytest.mark.parametrize("source_shape", ["nested", "both"])
+def test_public_completed_retirement_collect_source_shapes(captured, monkeypatch, capsys, source_shape):
+    test_complete_public_flow_accepts_fresh_native_review_without_prior_poll(
+        captured, monkeypatch, capsys, False, source_shape=source_shape
+    )
