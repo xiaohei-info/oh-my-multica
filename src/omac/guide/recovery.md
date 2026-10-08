@@ -807,3 +807,5 @@ CAS；索引原生观察不会刷新或重写索引。
 直接传递 manifest 内容的 decompose/check-review 消费者使用完整 decoded YAML。amendment attempt、原生 evidence witness、原 file Source/history 与仓库 revision snapshot 的 raw 字节 SHA 保持 raw 意义，不因 transport 偷换；旧 request 不重新签名，不自动消费或重发 Agent wake。
 
 prepare 的 archive 写入结果未知时，只读取并验证已保留的同一 Source/原 writer identity/档案意图。完整档案可独立恢复原对象才继续；档案缺失或不完整不会重新创建。已验证档案的重复 prepare 保持原 receipt/request SHA。
+
+已消费且原 Reviewer Run 已完成的证据续接若仍存在完整控制拥有差异，会保留原报告、ledger、Run、预算和续接凭证，生成 `consumed-completed-review-recovery-required` 的 typed needs-decision 并将该节点标为 BLOCKED。完整 DAG 仍按真实依赖、容量和现有预算守卫处理独立的 ready 节点；该阻塞不意味着审查通过、Run 已绑定、凭证已退休或允许重派。未知、异源、不完整原生证据和无关 CAS/预算/历史变化仍严格失败，不能省略 selector 或手工修正 assignee/baseline。

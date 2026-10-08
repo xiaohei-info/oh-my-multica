@@ -3661,6 +3661,10 @@ def collect_results(
             node = manifest.nodes[key]
             pending_review.append((key, node.work_item_id, node.reviewer))
             continue
+        from .evidence_handoff import block_completed_review_recovery
+        if block_completed_review_recovery(store, runtime, manifest, manifest_path, key, config or {}):
+            failures[key] = "consumed-completed-review-recovery-required"
+            continue
         from .evidence_handoff import observe_evidence_review
         evidence_review_observation = observe_evidence_review(store, runtime, manifest, manifest_path, key, config or {})
         if evidence_review_observation == "complete":
