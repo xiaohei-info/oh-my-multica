@@ -1733,3 +1733,193 @@ def reviewer_admission(store, runtime, manifest, key, config):
         manifest.meta = disk.meta
 
     return admit
+
+
+def completed_review_recovery_decision(store, runtime, manifest, path, key, config, *, _authenticated=None):
+    """Authenticate a completed consumed review; a hold grants no recovery rights."""
+    candidates = active_evidence_handoffs(manifest, key)
+    if not candidates:
+        return None
+    if len(candidates) != 1:
+        _fail("Consumed evidence continuation identities are ambiguous")
+    manifest_sha = _digest(_plain(manifest))
+    token, record = candidates[0]
+    request = record["request"]
+    _approval(manifest, token, request)
+    if record.get("step") != 8 or record.get("request_sha256") != token:
+        _fail("Completed continuation lacks its exact consumed receipt")
+    dispatch = record.get("review_dispatch", {})
+    if dispatch.get("state") not in {"wake-intended", "wake-observed"}:
+        return None
+    if not runtime.capabilities.stable_direct_run_identity:
+        _fail("Completed review hold requires stable original Run identity")
+    item = deepcopy(store.get_work_item(manifest.nodes[key].work_item_id))
+    runs = deepcopy(runtime.list_runs(item.id))
+    observation = {"control": _control(item), "runs_sha256": _digest(sorted((_plain(r) for r in runs), key=lambda r: r["id"])), "manifest_sha256": manifest_sha}
+    old_ids = {row["id"] for row in dispatch["runs"]}
+    old = [run for run in runs if run.id in old_ids]
+    new = [run for run in runs if run.id not in old_ids]
+    if _digest(sorted((_plain(r) for r in old), key=lambda r: r["id"])) != request["runs_sha256"]:
+        _fail("Original related Run identities changed before completed review hold")
+    if not new:
+        pending = deepcopy(record["review_preparation"]["control"])
+        pending.update(reviewer_run_baseline=dispatch["baseline"], reviewer=dispatch["reviewer"], platform_assignee_id=dispatch["baseline"]["target_agent_id"])
+        if _matches_owned(item, pending, 8, store):
+            # An unchanged wake intention belongs to the original Unknown observer.
+            return None
+    if len(new) != 1:
+        _fail("Completed review hold requires one unambiguous original Run")
+    run = new[0]
+    if run.active:
+        return None
+    from .loop import _parse_platform_time
+
+    started = _parse_platform_time(run.created_at)
+    intended = _parse_platform_time(dispatch.get("intended_at"))
+    if (
+        not run.formal or run.kind != "direct" or run.status != "completed"
+        or run.agent_id != dispatch["baseline"]["target_agent_id"]
+        or started is None or started.tzinfo is None
+        or intended is None or intended.tzinfo is None or started < intended
+        or dispatch.get("target_run_id", run.id) != run.id
+    ):
+        _fail("Completed review hold Run is foreign, nonformal, stale or unknown")
+    baseline = dispatch["baseline"]
+    if _plain(item.reviewer_run_baseline) not in (baseline, baseline | {"target_run_id": run.id}):
+        _fail("Completed review hold baseline changed")
+    expected = deepcopy(record["review_preparation"]["control"])
+    expected.update(reviewer_run_baseline=_plain(item.reviewer_run_baseline), reviewer=dispatch["reviewer"], platform_assignee_id=baseline["target_agent_id"])
+    changes, completion = _completed_independent_review(store, item, runs, run, request, expected, manifest.nodes[key])
+    if dispatch.get("completed_review") not in (None, completion):
+        _fail("Completed review hold publication changed")
+    expected.update(changes)
+    existing = item.decision_required
+    probe = item
+    if existing not in (None, {}):
+        if not isinstance(existing, dict) or existing.get("reason_code") != "consumed-completed-review-recovery-required":
+            _fail("Another decision owns this completed review")
+        probe = replace(item, decision_required=expected.get("decision_required"), status=WorkItemStatus(expected["status"]))
+    # Only absent assignment is classified. Every other control difference fails.
+    if probe.platform_assignee_id not in (None, baseline["target_agent_id"]):
+        _fail("Foreign assignment owns the completed review")
+    owned = replace(probe, platform_assignee_id=baseline["target_agent_id"])
+    if not _matches_owned(owned, expected, 8, store):
+        _fail("Unrelated full control changed before completed review hold")
+    original_runtime = SimpleNamespace(capabilities=runtime.capabilities, list_runs=lambda _: old)
+    _, value, identity, _ = _verify_source(
+        store, original_runtime, manifest, request["tuple"]["manifest_path"], key,
+        request["tuple"]["source_file"]["path"],
+        [f["path"] for f in request["tuple"]["history_files"]], config,
+        original=request["tuple"], completed_review=True,
+    )
+    if value != request["tuple"] or identity != item.delivery_identity:
+        _fail("Original native publication, delivery, budget or history changed")
+    source = _manifest_source(manifest, token)
+    if existing not in (None, {}) and source["nodes"][key]["status"] == "blocked":
+        source["nodes"][key]["status"] = "in_review"
+    original_source = request["tuple"]["manifest_source"]
+    comparison = deepcopy(source)
+    if comparison["nodes"][key]["status"] not in {"in_review", "blocked"}:
+        _fail("Completed review hold changed stage")
+    comparison["nodes"][key]["status"] = original_source["nodes"][key]["status"]
+    comparison["nodes"][key]["recovery_marker"] = original_source["nodes"][key]["recovery_marker"]
+    # Scheduling projections are diagnostic facts, never accepted delivery facts.
+    context = []
+    if set(comparison["nodes"]) != set(original_source["nodes"]):
+        _fail("Completed review hold graph identities changed")
+    for node_key, current in comparison["nodes"].items():
+        old_node = original_source["nodes"][node_key]
+        if old_node["status"] == "done" and current != old_node:
+            _fail("Completed review hold DONE facts changed")
+        for name in ("status", "worker", "recovery_marker"):
+            if current.get(name) != old_node.get(name):
+                if name == "status" and current[name] not in {"todo", "blocked", "in_progress", "in_review", "ci_check", "merging"}:
+                    _fail("Completed review hold scheduling state is unknown")
+                if name == "worker" and (not isinstance(current[name], str) or not current[name]):
+                    _fail("Completed review hold scheduling worker is unknown")
+                if name == "recovery_marker" and type(current[name]) is not bool:
+                    _fail("Completed review hold scheduling marker is unknown")
+                context.append({"path": f"nodes/{node_key}/{name}", "original": old_node.get(name), "current": current[name]})
+                current[name] = old_node.get(name)
+        if current != old_node:
+            _fail("Completed review hold contract, dependency or delivery facts changed")
+    old_audit = original_source["meta"].get("reconcile_audit", {})
+    audit = comparison["meta"].get("reconcile_audit", {})
+    if audit.get("last_full_scan_at") != old_audit.get("last_full_scan_at"):
+        at = _parse_platform_time(audit.get("last_full_scan_at"))
+        before = _parse_platform_time(old_audit.get("last_full_scan_at"))
+        if at is None or at.tzinfo is None or before is None or before.tzinfo is None or at < before:
+            _fail("Completed review hold audit Source is unknown")
+        context.append({"path": "meta/reconcile_audit/last_full_scan_at", "original": old_audit.get("last_full_scan_at"), "current": audit["last_full_scan_at"]})
+        audit["last_full_scan_at"] = old_audit.get("last_full_scan_at")
+    if comparison != original_source:
+        _fail("Completed review hold protected budget, history or full Source changed")
+    mismatch = ["platform_assignee_id"] if probe.platform_assignee_id is None else []
+    if not mismatch and not context:
+        return None
+    decision = {
+        "schema": "omac.decision-required/v1", "kind": "develop", "phase": "review",
+        "gate": "operator-recovery", "reason_code": "consumed-completed-review-recovery-required",
+        "resume_issue_id": item.id, "node_id": key, "source_reviewer_run_id": run.id,
+        "request_sha256": token, "receipt_sha256": _digest(record),
+        "control_sha256": _digest(_control(probe) | {"updated_at": expected["updated_at"]}),
+        "source_sha256": _digest(source), "mismatch_fields": mismatch,
+        "source_mismatches": context, "review_report_sha256": item.review_report_ref["sha256"],
+        "review_ledger_sha256": item.review_ledger_ref["sha256"],
+    }
+    if existing not in (None, {}) and existing != decision:
+        _fail("Completed review hold receipt or current Source changed")
+    if _authenticated is not None:
+        _authenticated.update(observation)
+    return decision
+
+
+def block_completed_review_recovery(store, runtime, manifest, path, key, config):
+    """Persist only a typed hold and BLOCKED projection; never adopt or dispatch."""
+    if not active_evidence_handoffs(manifest, key):
+        return False
+    with store.reviewer_dispatch_lock(manifest.nodes[key].work_item_id):
+        authenticated = {}
+        decision = completed_review_recovery_decision(store, runtime, manifest, path, key, config, _authenticated=authenticated)
+        if decision is None:
+            return False
+        item_id = manifest.nodes[key].work_item_id
+        planned = deepcopy(authenticated["control"])
+
+        def confirm():
+            _confirm_disk(manifest, path)
+            if _control(store.get_work_item(item_id)) != planned or _digest(sorted(_plain(_runs(runtime, item_id)), key=lambda r: r["id"])) != authenticated["runs_sha256"] or _digest(_plain(manifest)) != authenticated["manifest_sha256"]:
+                _fail("Actual control or Runs changed before completed review hold")
+            current_auth = {}
+            current_decision = completed_review_recovery_decision(store, runtime, manifest, path, key, config, _authenticated=current_auth)
+            if current_decision != decision or current_auth.get("control") != planned or any(current_auth.get(name) != authenticated[name] for name in ("runs_sha256", "manifest_sha256")):
+                _fail("Authenticated completed review control, Runs or Source changed before effects")
+            if _control(store.get_work_item(item_id)) != planned or _digest(sorted(_plain(_runs(runtime, item_id)), key=lambda r: r["id"])) != authenticated["runs_sha256"] or _digest(_plain(manifest)) != authenticated["manifest_sha256"]:
+                _fail("Actual control or Runs changed before completed review hold")
+            _confirm_disk(manifest, path)
+
+        confirm()
+        if planned["decision_required"] != decision:
+            store.update_work_item_metadata(item_id, decision_required=decision)
+        planned["decision_required"] = decision
+        current = _control(store.get_work_item(item_id))
+        updated_at = current["updated_at"]
+        current["updated_at"] = planned["updated_at"]
+        if current != planned:
+            _fail("Completed review hold metadata outcome is unconfirmed")
+        planned["updated_at"] = updated_at
+        confirm()
+        if planned["status"] != "blocked":
+            store.update_status(item_id, WorkItemStatus.BLOCKED)
+        planned["status"] = "blocked"
+        current = _control(store.get_work_item(item_id))
+        updated_at = current["updated_at"]
+        current["updated_at"] = planned["updated_at"]
+        if current != planned or _digest(sorted(_plain(_runs(runtime, item_id)), key=lambda r: r["id"])) != authenticated["runs_sha256"]:
+            _fail("Completed review hold status or Run outcome is unconfirmed")
+        planned["updated_at"] = updated_at
+        confirm()
+        from ..core.manifest import set_node
+        set_node(manifest, key, status="blocked")
+        save_manifest(manifest, path)
+        return True

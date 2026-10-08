@@ -1,0 +1,149 @@
+{
+  "id": "01a10950-37c9-765e-b612-5accf4dd56ec",
+  "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1",
+  "title": "[DAG:system-upgrade] Implement system release upgrade and rollback",
+  "description": "> **OMAC \u63a7\u5236\u7684\u6267\u884c\u3002\u7b2c\u4e00\u52a8\u4f5c\u5fc5\u987b\u4e25\u683c\u6267\u884c\uff1a**\n\n```bash\nOMAC_ENGINE=multica OMAC_WORKSPACE_ID=410ade5e-8ae0-4402-b975-813dea2ff3e1 OMAC_PROJECT_ID=732ce83f-5cbd-4485-850d-1b8a1bf16340 omac work show 01a10950-37c9-765e-b612-5accf4dd56ec --output json\n```\n\n> `omac work show` \u548c `omac work submit` \u90fd\u53ef\u80fd\u957f\u65f6\u95f4\u8fd0\u884c\u3002\u4efb\u4f55\u5de5\u5177\u8c03\u7528\u5728\u62ff\u5230\u6700\u7ec8 tool_result \u548c\u7ec8\u6001\u9000\u51fa\u7801\u524d\u90fd\u4e0d\u5b8c\u6574\u3002\u82e5\u5de5\u5177\u8fd4\u56de running/session\u3001\u7f3a\u5c11\u6700\u7ec8 tool_result\u3001\u51fa\u73b0\u7a7a\u8f93\u51fa\u6216\u4e0d\u5b8c\u6574\u8f93\u51fa\uff0c\u5fc5\u987b\u7b49\u5f85\u6216\u8f6e\u8be2\u5230\u7ec8\u6001\u3002\u4f7f\u7528\u8db3\u591f\u957f\u7684 wait/yield\uff0c\u6216\u4fdd\u7559\u5e76\u6062\u590d\u7eed\u63a5\u53e5\u67c4\uff1b\u8fd9\u662f\u901a\u7528\u7ec8\u6001\u89c4\u5219\uff0c\u4e0d\u7ed1\u5b9a\u67d0\u4e2a\u5177\u4f53\u5de5\u5177 API\u3002timeout/yield \u4e0d\u662f\u7a7a\u7ed3\u679c\uff0c\u4e5f\u4e0d\u5141\u8bb8\u636e\u6b64\u505c\u6b62\u3002`omac work show` \u53ea\u6709\u5728\u9000\u51fa\u7801 0 \u4e14\u5f97\u5230\u53ef\u89e3\u6790 JSON \u540e\u624d\u80fd\u7ee7\u7eed\u3002`omac work submit` \u53ea\u6709\u5728\u6700\u7ec8 tool_result \u660e\u786e\u7ed9\u51fa\u9000\u51fa\u7801 0\uff0c\u4e14 JSON \u5305\u542b `\"ok\": true`\u3001`\"terminal\": true` \u548c `\"next_action\": \"stop\"` \u65f6\u624d\u53ef\u5ba3\u79f0\u6210\u529f\u3002\u7ed3\u679c\u672a\u77e5\u65f6\u4e0d\u5f97\u5ba3\u79f0\u6210\u529f\u6216\u7ed3\u675f\uff1bvalidation error \u5fc5\u987b\u4fee\u590d\u540e\u91cd\u65b0\u63d0\u4ea4\u3002submit \u6210\u529f\u5c31\u662f\u672c\u6b21\u6267\u884c\u7684\u6700\u540e\u52a8\u4f5c\uff0c\u7acb\u5373\u505c\u6b62\uff0c\u4e0d\u518d\u6267\u884c\u4efb\u4f55\u5e73\u53f0\u5199\u5165\u3002\n\n> \u5728\u4e0a\u65b9\u7cbe\u786e\u7684 `omac work show` \u547d\u4ee4\u4ee5\u9000\u51fa\u7801 0 \u6210\u529f\u8fd4\u56de\u53ef\u89e3\u6790 JSON \u524d\uff0c\u4e0d\u5f97\u6267\u884c\u4efb\u4f55\u5176\u4ed6 Issue \u67e5\u8be2\uff08\u5305\u62ec `multica issue get`\u3001`multica issue comment list` \u6216 metadata \u67e5\u8be2\uff09\uff0c\u4e5f\u4e0d\u5f97\u5f00\u59cb\u5206\u6790\u4efb\u52a1\u5185\u5bb9\u3002work show \u6210\u529f\u540e\uff0c\u53ea\u80fd\u5728\u8fd4\u56de\u4e0a\u4e0b\u6587\u786e\u6709\u9700\u8981\u65f6\u4f7f\u7528\u53ea\u8bfb Issue \u67e5\u8be2\u3002\u7981\u6b62\u4efb\u4f55\u4f1a\u521b\u5efa\u3001\u4fee\u6539\u6216\u5220\u9664 Issue \u72b6\u6001\u7684 `multica issue` \u5199\u64cd\u4f5c\u3002\u8fd9\u662f\u8bed\u4e49\u8fb9\u754c\uff0c\u4e0d\u662f\u7a77\u4e3e\u547d\u4ee4\u6e05\u5355\uff1b\u7981\u6b62\u793a\u4f8b\u5305\u62ec `multica issue status`\u3001`multica issue assign`\u3001`multica issue comment`\u3001`multica issue metadata`\u3001`multica issue rerun`\u3001`multica issue cancel-task`\u3001`multica issue update`\u3001`multica issue create`\u3001`multica issue label`\u3001`multica issue property`\u3001`multica issue reorder` \u548c `multica issue subscriber`\u3002\u53ea\u5141\u8bb8\u4f7f\u7528\u4e0a\u65b9\u7ed9\u51fa\u7684\u7cbe\u786e `omac work show` \u547d\u4ee4\uff0c\u4ee5\u53ca work show \u8fd4\u56de\u7684\u7cbe\u786e `omac work submit` \u547d\u4ee4\u4f5c\u4e3a OMAC \u63a7\u5236\u547d\u4ee4\uff1b\u5df2\u6709\u624b\u5de5\u9644\u4ef6\u6216 verification \u4f46\u7f3a\u5c11 `delivery_identity` \u65f6\u4e5f\u5fc5\u987b\u901a\u8fc7\u8be5 submit \u547d\u4ee4\u5c01\u5b58\u3002\n\n# Implement system release upgrade and rollback\n\n## \u4efb\u52a1\u6458\u8981\n- \u7c7b\u578b: \u5f00\u53d1\u5b9e\u73b0\uff08`develop`\uff09\n- \u6267\u884c\u89d2\u8272: \u5f00\u53d1\u6267\u884c\u8005\uff08`worker`\uff09\n- \u76ee\u6807: Deliver exact-version preflight, ordered upgrade, rollback and continuity evidence for OAC system releases.\n- \u4f9d\u636e: `docs/deploy-ops/deployment-and-operations-design.md:L244-L299`\n- \u4f9d\u636e: `docs/design/detailed/05-kubernetes-native-control-plane-detailed-design.md:L538-L566`\n- \u4f9d\u636e: `docs/delivery/acceptance-and-validation.md:L107-L128`\n\n## \u4efb\u52a1\u8be6\u60c5\nSmallest independently PR-able, testable and reviewable delivery boundary for this capability.\n\n## \u975e\u76ee\u6807\n- Do not change adjacent domain ownership or introduce a competing source of truth.\n- Do not bypass authorization, admission, CAS, idempotency, review or evidence gates.\n- Do not preserve unpublished prototype behavior unless the owning design explicitly requires it.\n\n## \u4e3b\u8981\u4ee3\u7801\u5f52\u5c5e\u8303\u56f4\n- `internal/systemrelease/upgrade/**`\n- `cmd/oac-installer/upgrade/**`\n\n## \u4ea4\u4ed8\u7ea6\u675f\n- PR \u57fa\u7ebf: `main`\n- \u6539\u52a8\u5206\u652f\u8986\u76d6\u7387: `\u2265 90%`\n- PR \u5173\u8054\u6807\u8bc6: `AITEAM-1076`\n\n## \u4e0a\u6e38 issue\uff08\u9632\u8dd1\u504f\uff09\n\u672c\u4efb\u52a1\u627f\u63a5\u4ee5\u4e0b\u4e0a\u6e38 issue\uff0c\u7528\u4e8e\u8ffd\u6eaf\u9700\u6c42\u4e0e\u51b3\u7b56\uff1b\u82e5\u4e0e\u5f53\u524d contract \u51b2\u7a81\uff0c\u5148\u8bf7\u6c42\u786e\u8ba4\uff1a\n- \u8bbe\u8ba1\u65b9\u6848: `289a13bf-cede-4b5b-ba86-d72f0bef8164`\n- \u9a8c\u6536\u6587\u6863: `8e6bd282-6039-41d2-aa00-969a0bf1554a`\n- \u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Bootstrap Go module and quality harness: `5849f786-8c97-42ac-adf9-1c96957f28ee`\n- \u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Implement cross-platform installer: `01a10382-2e37-743b-92c9-d1cc22e52c9b`\n- \u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Implement deterministic release artifact packaging: `152d735a-c373-4967-8ae0-45c191de2eff`",
+  "status": "WorkItemStatus.TODO",
+  "dag_key": "system-upgrade",
+  "identifier": "AITEAM-1076",
+  "worker": "codex-macmini-newapi",
+  "reviewer": "",
+  "blocked_by": [
+    "bootstrap-go",
+    "installer",
+    "release-artifact-tooling"
+  ],
+  "wave": null,
+  "artifacts": null,
+  "verification": null,
+  "verification_ref": null,
+  "review_verdict": null,
+  "review_comment": null,
+  "machine_feedback": null,
+  "machine_feedback_ref": null,
+  "review_report": null,
+  "review_report_ref": null,
+  "review_subject_digest": null,
+  "review_obligations": [],
+  "review_obligations_ref": null,
+  "review_ledger": null,
+  "review_ledger_ref": null,
+  "review_generation": "authoring-7b50168768f32f95b83b450f",
+  "review_ledger_generation": null,
+  "review_continuation": null,
+  "reviewer_run_baseline": null,
+  "worker_handoff": null,
+  "delivery_identity": null,
+  "decision_required": null,
+  "amendment_attempt": null,
+  "contract": {
+    "objective": "Deliver exact-version preflight, ordered upgrade, rollback and continuity evidence for OAC system releases.",
+    "non_goals": [
+      "Do not change adjacent domain ownership or introduce a competing source of truth.",
+      "Do not bypass authorization, admission, CAS, idempotency, review or evidence gates.",
+      "Do not preserve unpublished prototype behavior unless the owning design explicitly requires it."
+    ],
+    "verification_commands": [
+      "mkdir -p artifacts/system-upgrade && go test -covermode=atomic -coverprofile=artifacts/system-upgrade/coverage.out ./internal/systemrelease/... ./cmd/oac-installer/upgrade/...",
+      "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/system-upgrade/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+      "python3 scripts/release/package_component.py --component system-upgrade --kind upgrader-source --input internal/systemrelease/upgrade --input cmd/oac-installer/upgrade --bundle artifacts/system-upgrade/source-bundle.tar.zst --component-manifest artifacts/system-upgrade/component-manifest.json --digest-output artifacts/system-upgrade/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner system-upgrade --require-all-owner-sources-accounted"
+    ],
+    "integration_gates": [
+      {
+        "name": "system-upgrade-gate",
+        "layer": "L1",
+        "source_of_truth": [
+          "docs/deploy-ops/deployment-and-operations-design.md:L244-L299",
+          "docs/design/detailed/05-kubernetes-native-control-plane-detailed-design.md:L538-L566",
+          "docs/delivery/acceptance-and-validation.md:L107-L128"
+        ],
+        "delivery_goal": "Deliver exact-version preflight, ordered upgrade, rollback and continuity evidence for OAC system releases.",
+        "covers": [
+          "system-upgrade"
+        ],
+        "acceptance_refs": [
+          "UJ-OAC-UPGRADE-001"
+        ],
+        "commands": [
+          "mkdir -p artifacts/system-upgrade && go test -covermode=atomic -coverprofile=artifacts/system-upgrade/coverage.out ./internal/systemrelease/... ./cmd/oac-installer/upgrade/...",
+          "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/system-upgrade/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+          "python3 scripts/release/package_component.py --component system-upgrade --kind upgrader-source --input internal/systemrelease/upgrade --input cmd/oac-installer/upgrade --bundle artifacts/system-upgrade/source-bundle.tar.zst --component-manifest artifacts/system-upgrade/component-manifest.json --digest-output artifacts/system-upgrade/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner system-upgrade --require-all-owner-sources-accounted"
+        ],
+        "required_metrics": {
+          "statement_coverage_percent": 90
+        },
+        "artifacts": [
+          "artifacts/system-upgrade/coverage.out",
+          "artifacts/system-upgrade/source-bundle.tar.zst",
+          "artifacts/system-upgrade/bundle-digest.txt",
+          "artifacts/system-upgrade/component-manifest.json"
+        ]
+      }
+    ],
+    "pr_base": "main",
+    "acceptance_refs": [
+      "UJ-OAC-UPGRADE-001"
+    ],
+    "source_of_truth": [
+      "docs/deploy-ops/deployment-and-operations-design.md:L244-L299",
+      "docs/design/detailed/05-kubernetes-native-control-plane-detailed-design.md:L538-L566",
+      "docs/delivery/acceptance-and-validation.md:L107-L128"
+    ],
+    "required_contracts": [
+      "docs/references/cloud-native/kubernetes-resources.md"
+    ],
+    "scope_paths": [
+      "internal/systemrelease/upgrade/**",
+      "cmd/oac-installer/upgrade/**"
+    ]
+  },
+  "contract_ref": {
+    "comment_id": "01a119ad-95c6-727b-b1e7-eca7fb705ef8",
+    "attachment_id": "01a119ad-947c-702a-849d-1b88b2501830",
+    "sha256": "78fdfeb712e5bcb0ca7f4c3251c071ef7d8e957a4713b7327c01c0ba78915c2e",
+    "bytes": 3670,
+    "filename": "omac-contract-78fdfeb712e5.yaml"
+  },
+  "source_refs": [
+    {
+      "issue_id": "289a13bf-cede-4b5b-ba86-d72f0bef8164",
+      "label": "\u8bbe\u8ba1\u65b9\u6848"
+    },
+    {
+      "issue_id": "8e6bd282-6039-41d2-aa00-969a0bf1554a",
+      "label": "\u9a8c\u6536\u6587\u6863"
+    },
+    {
+      "issue_id": "5849f786-8c97-42ac-adf9-1c96957f28ee",
+      "label": "\u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Bootstrap Go module and quality harness"
+    },
+    {
+      "issue_id": "01a10382-2e37-743b-92c9-d1cc22e52c9b",
+      "label": "\u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Implement cross-platform installer"
+    },
+    {
+      "issue_id": "152d735a-c373-4967-8ae0-45c191de2eff",
+      "label": "\u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Implement deterministic release artifact packaging"
+    }
+  ],
+  "kind": "TaskKind.DEVELOP",
+  "phase": "TaskPhase.AUTHORING",
+  "bounces": {
+    "worker": 0,
+    "ci": 0,
+    "review": 0,
+    "merge": 0
+  },
+  "bounce_baseline": null,
+  "deliverable": null,
+  "deliverable_ref": null,
+  "project_rules": null,
+  "project_rules_ref": null,
+  "agent_run_finished_without_submit": false,
+  "agent_run_failed": false,
+  "created_at": "2026-10-04T23:46:54Z",
+  "updated_at": "2026-10-08T04:02:54Z",
+  "platform_assignee_id": null,
+  "unknown_persisted_fields": {},
+  "review_nits_acceptance": null
+}

@@ -1,0 +1,1940 @@
+[
+  {
+    "action": "created",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-03T18:23:49Z",
+    "details": {},
+    "id": "01a10302-10a4-7869-ac6b-1ca06836258f",
+    "type": "activity"
+  },
+  {
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "attachments": [
+      {
+        "chat_message_id": null,
+        "chat_session_id": null,
+        "comment_id": "01a10302-3414-78f9-b304-2bdcdc5b98e8",
+        "content_type": "text/plain; charset=utf-8",
+        "created_at": "2026-10-03T18:23:58Z",
+        "download_url": "/api/attachments/01a10302-3300-7df4-98a9-0ec3fc195b2c/download",
+        "filename": "omac-contract-6af6cac52a7f.yaml",
+        "id": "01a10302-3300-7df4-98a9-0ec3fc195b2c",
+        "issue_id": "01a10302-109c-7097-b200-4dd71a531aba",
+        "markdown_url": "https://multica.ai/api/attachments/01a10302-3300-7df4-98a9-0ec3fc195b2c/download",
+        "size_bytes": 34409,
+        "uploader_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+        "uploader_type": "member",
+        "url": "https://static.multica.ai/workspaces/410ade5e-8ae0-4402-b975-813dea2ff3e1/01a10302-3300-7df4-98a9-0ec3fc195b2c.yaml",
+        "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1"
+      }
+    ],
+    "comment_type": "comment",
+    "content": "## omac contract\n节点 contract 文件已作为附件上传。\n\n- attachment: omac-contract-6af6cac52a7f.yaml\n- sha256: 6af6cac52a7f65352a9b608f973c62afdfc78e58e0b8fa0ae7dddfcf097d1fbd\n- bytes: 34409\n- metadata: `contract_ref`\n\n后续 Agent 应通过 `omac work show \u003cissue-id\u003e --output json` 读取交接上下文；程序化引用见 issue metadata。",
+    "created_at": "2026-10-03T18:23:58Z",
+    "id": "01a10302-3414-78f9-b304-2bdcdc5b98e8",
+    "revision": 1,
+    "type": "comment",
+    "updated_at": "2026-10-03T18:23:58Z"
+  },
+  {
+    "action": "status_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-03T18:24:12Z",
+    "details": {
+      "from": "todo",
+      "to": "in_progress"
+    },
+    "id": "01a10302-6a95-792a-9c90-b1f22e5344ff",
+    "type": "activity"
+  },
+  {
+    "action": "description_updated",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-03T18:24:16Z",
+    "details": {},
+    "id": "01a10302-7b9f-7bf0-bdc5-918ab57f80c1",
+    "type": "activity"
+  },
+  {
+    "action": "assignee_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-03T18:24:30Z",
+    "details": {
+      "to_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "to_type": "agent"
+    },
+    "id": "01a10302-b1e1-7cb0-a03f-98fa26828f61",
+    "type": "activity"
+  },
+  {
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "attachments": [
+      {
+        "chat_message_id": null,
+        "chat_session_id": null,
+        "comment_id": "01a103a8-e2b3-71eb-a1b8-63c91e41ac51",
+        "content_type": "text/plain; charset=utf-8",
+        "created_at": "2026-10-03T21:26:02Z",
+        "download_url": "/api/attachments/01a103a8-e261-73ff-9ce4-957f3685b539/download",
+        "filename": "omac-verification-018bd0c7f8cc.yaml",
+        "id": "01a103a8-e261-73ff-9ce4-957f3685b539",
+        "issue_id": "01a10302-109c-7097-b200-4dd71a531aba",
+        "markdown_url": "https://multica.ai/api/attachments/01a103a8-e261-73ff-9ce4-957f3685b539/download",
+        "size_bytes": 31109,
+        "uploader_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+        "uploader_type": "agent",
+        "url": "https://static.multica.ai/workspaces/410ade5e-8ae0-4402-b975-813dea2ff3e1/01a103a8-e261-73ff-9ce4-957f3685b539.yaml",
+        "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1"
+      }
+    ],
+    "comment_type": "comment",
+    "content": "## omac verification\nVerification evidence file was uploaded as an attachment.\n\n- attachment: omac-verification-018bd0c7f8cc.yaml\n- sha256: 018bd0c7f8ccb25865d83cc21669ef843e17cddd417f1adb517b70fff7826946\n- bytes: 31109\n- metadata: `verification_ref`\n\nLater Agents should read handoff context through `omac work show \u003cissue-id\u003e --output json`; programmatic references are stored in issue metadata.",
+    "created_at": "2026-10-03T21:26:02Z",
+    "id": "01a103a8-e2b3-71eb-a1b8-63c91e41ac51",
+    "revision": 1,
+    "source_task_id": "01a10302-b1ea-7970-8032-f14181019a43",
+    "type": "comment",
+    "updated_at": "2026-10-03T21:26:02Z"
+  },
+  {
+    "action": "status_changed",
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "created_at": "2026-10-03T21:26:03Z",
+    "details": {
+      "from": "in_progress",
+      "to": "done"
+    },
+    "id": "01a103a8-e6b1-7c8c-8d31-4505ced00a4e",
+    "type": "activity"
+  },
+  {
+    "action": "task_completed",
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "created_at": "2026-10-03T21:26:21Z",
+    "details": {},
+    "id": "01a103a9-2e7d-7edf-8e87-4783daa2cb44",
+    "type": "activity"
+  },
+  {
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "attachments": [
+      {
+        "chat_message_id": null,
+        "chat_session_id": null,
+        "comment_id": "01a103a9-bda6-7248-9495-da57212385ef",
+        "content_type": "text/plain; charset=utf-8",
+        "created_at": "2026-10-03T21:26:57Z",
+        "download_url": "/api/attachments/01a103a9-bc76-7007-8404-aaed91f7d22c/download",
+        "filename": "omac-review-obligations-4f36d4b9769b.yaml",
+        "id": "01a103a9-bc76-7007-8404-aaed91f7d22c",
+        "issue_id": "01a10302-109c-7097-b200-4dd71a531aba",
+        "markdown_url": "https://multica.ai/api/attachments/01a103a9-bc76-7007-8404-aaed91f7d22c/download",
+        "size_bytes": 1509,
+        "uploader_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+        "uploader_type": "member",
+        "url": "https://static.multica.ai/workspaces/410ade5e-8ae0-4402-b975-813dea2ff3e1/01a103a9-bc76-7007-8404-aaed91f7d22c.yaml",
+        "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1"
+      }
+    ],
+    "comment_type": "comment",
+    "content": "## omac review-obligations\n评审义务文件已作为附件上传。\n\n- attachment: omac-review-obligations-4f36d4b9769b.yaml\n- sha256: 4f36d4b9769b03222d4e77130cc2d7bbb64d40b9742754a4fca8a1bb09fc9bbb\n- bytes: 1509\n- metadata: `review_obligations_ref`\n\n后续 Agent 应通过 `omac work show \u003cissue-id\u003e --output json` 读取交接上下文；程序化引用见 issue metadata。",
+    "created_at": "2026-10-03T21:26:58Z",
+    "id": "01a103a9-bda6-7248-9495-da57212385ef",
+    "revision": 1,
+    "type": "comment",
+    "updated_at": "2026-10-03T21:26:58Z"
+  },
+  {
+    "action": "description_updated",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-03T21:27:21Z",
+    "details": {},
+    "id": "01a103aa-17e6-7a76-809f-0259a3255657",
+    "type": "activity"
+  },
+  {
+    "action": "status_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-03T21:27:25Z",
+    "details": {
+      "from": "done",
+      "to": "in_review"
+    },
+    "id": "01a103aa-2993-7ef6-88c4-7e196c7ff764",
+    "type": "activity"
+  },
+  {
+    "action": "assignee_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-03T21:27:35Z",
+    "details": {
+      "to_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+      "to_type": "agent"
+    },
+    "id": "01a103aa-5046-7ca5-ac9e-8e5bcbdfdc35",
+    "type": "activity"
+  },
+  {
+    "actor_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+    "actor_type": "agent",
+    "comment_type": "comment",
+    "content": "\n\n**Review complete: reject PR #96. Submission is blocked by OMAC validation, so the issue is not completed.**\n\nAt commit `9944b08330a788b64e4ddd74f85fbc3461848a85`, independent verification found four blockers:\n\n- The required coverage run failed at `adapters_test.go:364` while decoding partially published process identity. Coverage was **89.9%**, below the **90%** gate.\n- Nested legacy-control execution overwrites held-Wait evidence, losing required sibling records.\n- Absent/unwritten malformed input and failed marker publication lack built-chain negative tests.\n- The Python evidence verifier does not fully bind prepared, written, and cancellation records to the expected trigger.\n\nBoth reject submissions exited with validation errors. The installed OMAC validator accepts only **passing** integration-gate mappings—even for a reject verdict. I did not replace the actual failures with fabricated passing results.\n\nThe report is retained locally as `review-output/review-report.json`. **The OMAC owner must repair reject-report validation before the verdict can be delivered.** No worker source, issue status, or assignee was changed.",
+    "created_at": "2026-10-03T21:56:03Z",
+    "id": "01a103c4-6010-7884-83c9-f9cb80997bd6",
+    "revision": 1,
+    "source_task_id": "01a103aa-61f1-7828-bf87-6bb4361a4c6a",
+    "type": "comment",
+    "updated_at": "2026-10-03T21:56:03Z"
+  },
+  {
+    "action": "task_completed",
+    "actor_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+    "actor_type": "agent",
+    "created_at": "2026-10-03T21:56:03Z",
+    "details": {},
+    "id": "01a103c4-601c-7237-ac63-7ac55d2619f5",
+    "type": "activity"
+  },
+  {
+    "action": "status_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-03T22:23:48Z",
+    "details": {
+      "from": "in_review",
+      "to": "blocked"
+    },
+    "id": "01a103dd-c812-72e7-973c-899934381525",
+    "type": "activity"
+  },
+  {
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "comment_type": "comment",
+    "content": "Coordinator factual handoff under existing direct delegation9512; not a Worker report, formal reject, technical verdict, gate waiver or business completion. Root independently verified actual d2b6 installed8/CLI on both hosts after NEW exact window and dedicated GREEN HANDOFF STOP. Preserve current approved contract, every original failure/raw attempt, original immutable artifacts, absolute/relative bounces, limits, approved baseline, current controller-sealed delivery tuple and all done producers. Fresh independent Reviewer must independently reproduce all original required commands/gates/coverage/source publications and determine honest dispositions/valid blocker-obligation associations. Do not fabricate/duplicate ROOTs, drop failed dimensions, mark failed rows pass to fit syntax, reuse an unsubmitted report as accepted or waive initial association errors. Root has made no product technical judgment.\nSAME ISSUE review-stage recovery only. Source Reviewer01a103aa61f1's two submits failed; formal report/verdict remained null. Final54070-byte UNSUBMITTED report is not an accepted review. Preserve full native submit calls/results, FIRST89.9 coverage failure, shipped pair, original SDK cmd23 first failure plus ONE exact uncached unfiltered repeat pass, H/S/D969 original cause permanently UNKNOWN, heldWait5/10/20/30/siblings/bounded teardown. Four unsubmitted roots and three failed dimensions without structured blocker must receive fresh independent honest dispositions, not syntactic ROOT duplication or failed-row removal. Fresh reviewer must preserve original failed records and determine actual valid associations; if the existing representation is truly insufficient, STOP with complete concrete evidence rather than fake a pass. Full files on Mac/Oracle /tmp/oac-current-review-recovery-bound-0703-20261004/fixture-final-unsubmitted.json, fixture-failed-submit-calls.json, fixture-full-native-messages.json, exact SHA/bytes in index.json. Original verification018bd0/currentPR96HEAD9944b083/controller seal retained. No rerun of failed coverage to erase original, extra attack experiment, fixture waiver, allSDK23first0 claim or Host closure.",
+    "created_at": "2026-10-04T07:04:54Z",
+    "id": "01a105ba-dd08-7201-8f29-0f2b3a837a5d",
+    "revision": 1,
+    "type": "comment",
+    "updated_at": "2026-10-04T07:04:54Z"
+  },
+  {
+    "action": "status_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T12:15:37Z",
+    "details": {
+      "from": "blocked",
+      "to": "in_review"
+    },
+    "id": "01a106d7-55f1-76e6-ab7d-848d62aa5cf8",
+    "type": "activity"
+  },
+  {
+    "action": "status_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T12:28:25Z",
+    "details": {
+      "from": "in_review",
+      "to": "blocked"
+    },
+    "id": "01a106e3-0d4c-77cc-adb5-54931e89a5d1",
+    "type": "activity"
+  },
+  {
+    "action": "status_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T19:35:09Z",
+    "details": {
+      "from": "blocked",
+      "to": "in_review"
+    },
+    "id": "01a10869-ba5e-7c8a-8f3b-9df24cf46c06",
+    "type": "activity"
+  },
+  {
+    "action": "assignee_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T19:36:02Z",
+    "details": {
+      "to_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+      "to_type": "agent"
+    },
+    "id": "01a1086a-8bc8-7435-84ba-11c00b0cc6f0",
+    "type": "activity"
+  },
+  {
+    "actor_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+    "actor_type": "agent",
+    "attachments": [
+      {
+        "chat_message_id": null,
+        "chat_session_id": null,
+        "comment_id": "01a1088f-1b09-7755-a778-be55a79f37ab",
+        "content_type": "text/plain; charset=utf-8",
+        "created_at": "2026-10-04T20:15:58Z",
+        "download_url": "/api/attachments/01a1088f-1ab7-7cbb-b187-eefb803edbad/download",
+        "filename": "omac-review-report-b5158aada1fa.yaml",
+        "id": "01a1088f-1ab7-7cbb-b187-eefb803edbad",
+        "issue_id": "01a10302-109c-7097-b200-4dd71a531aba",
+        "markdown_url": "https://multica.ai/api/attachments/01a1088f-1ab7-7cbb-b187-eefb803edbad/download",
+        "size_bytes": 33797,
+        "uploader_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+        "uploader_type": "agent",
+        "url": "https://static.multica.ai/workspaces/410ade5e-8ae0-4402-b975-813dea2ff3e1/01a1088f-1ab7-7cbb-b187-eefb803edbad.yaml",
+        "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1"
+      }
+    ],
+    "comment_type": "comment",
+    "content": "## omac review-report\nReview report file was uploaded as an attachment.\n\n- attachment: omac-review-report-b5158aada1fa.yaml\n- sha256: b5158aada1fa982ecd9ab9a0469bd0169e0e6c88cdd5026b6b51e318cc763ae9\n- bytes: 33797\n- metadata: `review_report_ref`\n\nLater Agents should read handoff context through `omac work show \u003cissue-id\u003e --output json`; programmatic references are stored in issue metadata.",
+    "created_at": "2026-10-04T20:15:58Z",
+    "id": "01a1088f-1b09-7755-a778-be55a79f37ab",
+    "revision": 1,
+    "source_task_id": "01a1086b-04be-7287-916f-fe5e12e9b6b1",
+    "type": "comment",
+    "updated_at": "2026-10-04T20:15:58Z"
+  },
+  {
+    "actor_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+    "actor_type": "agent",
+    "attachments": [
+      {
+        "chat_message_id": null,
+        "chat_session_id": null,
+        "comment_id": "01a1088f-1df5-7424-86b3-3381750ce138",
+        "content_type": "text/plain; charset=utf-8",
+        "created_at": "2026-10-04T20:15:59Z",
+        "download_url": "/api/attachments/01a1088f-1d8e-7583-80de-c1f3a9489ab8/download",
+        "filename": "omac-review-ledger-6bf97cd7a49a.yaml",
+        "id": "01a1088f-1d8e-7583-80de-c1f3a9489ab8",
+        "issue_id": "01a10302-109c-7097-b200-4dd71a531aba",
+        "markdown_url": "https://multica.ai/api/attachments/01a1088f-1d8e-7583-80de-c1f3a9489ab8/download",
+        "size_bytes": 9298,
+        "uploader_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+        "uploader_type": "agent",
+        "url": "https://static.multica.ai/workspaces/410ade5e-8ae0-4402-b975-813dea2ff3e1/01a1088f-1d8e-7583-80de-c1f3a9489ab8.yaml",
+        "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1"
+      }
+    ],
+    "comment_type": "comment",
+    "content": "## omac review-ledger\nHandoff file was uploaded as an attachment.\n\n- attachment: omac-review-ledger-6bf97cd7a49a.yaml\n- sha256: 6bf97cd7a49ad8fcfb1d28e97ee42495a4ae633edf11e6ac594750ecf8dbd597\n- bytes: 9298\n- metadata: `review-ledger_ref`\n\nLater Agents should read handoff context through `omac work show \u003cissue-id\u003e --output json`; programmatic references are stored in issue metadata.",
+    "created_at": "2026-10-04T20:15:59Z",
+    "id": "01a1088f-1df5-7424-86b3-3381750ce138",
+    "revision": 1,
+    "source_task_id": "01a1086b-04be-7287-916f-fe5e12e9b6b1",
+    "type": "comment",
+    "updated_at": "2026-10-04T20:15:59Z"
+  },
+  {
+    "action": "task_completed",
+    "actor_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+    "actor_type": "agent",
+    "created_at": "2026-10-04T20:16:11Z",
+    "details": {},
+    "id": "01a1088f-4cf7-757f-8b38-4259497077a9",
+    "type": "activity"
+  },
+  {
+    "action": "status_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T20:39:21Z",
+    "details": {
+      "from": "in_review",
+      "to": "in_progress"
+    },
+    "id": "01a108a4-80fe-7821-9338-79835c0687d3",
+    "type": "activity"
+  },
+  {
+    "action": "description_updated",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T20:39:25Z",
+    "details": {},
+    "id": "01a108a4-93e7-78ef-b184-64ad40a841a2",
+    "type": "activity"
+  },
+  {
+    "action": "assignee_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T20:39:39Z",
+    "details": {
+      "to_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "to_type": "agent"
+    },
+    "id": "01a108a4-c8ce-7192-b586-7c6b7868aca2",
+    "type": "activity"
+  },
+  {
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "attachments": [
+      {
+        "chat_message_id": null,
+        "chat_session_id": null,
+        "comment_id": "01a108fc-697c-71a1-bf08-3b55be61a026",
+        "content_type": "text/plain; charset=utf-8",
+        "created_at": "2026-10-04T22:15:22Z",
+        "download_url": "/api/attachments/01a108fc-690f-73ed-b4e1-5f82622c079c/download",
+        "filename": "omac-verification-8e4740766896.yaml",
+        "id": "01a108fc-690f-73ed-b4e1-5f82622c079c",
+        "issue_id": "01a10302-109c-7097-b200-4dd71a531aba",
+        "markdown_url": "https://multica.ai/api/attachments/01a108fc-690f-73ed-b4e1-5f82622c079c/download",
+        "size_bytes": 31263,
+        "uploader_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+        "uploader_type": "agent",
+        "url": "https://static.multica.ai/workspaces/410ade5e-8ae0-4402-b975-813dea2ff3e1/01a108fc-690f-73ed-b4e1-5f82622c079c.yaml",
+        "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1"
+      }
+    ],
+    "comment_type": "comment",
+    "content": "## omac verification\nVerification evidence file was uploaded as an attachment.\n\n- attachment: omac-verification-8e4740766896.yaml\n- sha256: 8e4740766896d9ed9ad4346b11514e1108e3e14ae4b4cf2ccff175d6a156e2da\n- bytes: 31263\n- metadata: `verification_ref`\n\nLater Agents should read handoff context through `omac work show \u003cissue-id\u003e --output json`; programmatic references are stored in issue metadata.",
+    "created_at": "2026-10-04T22:15:22Z",
+    "id": "01a108fc-697c-71a1-bf08-3b55be61a026",
+    "revision": 1,
+    "source_task_id": "01a108a4-c8d4-7c52-9fe3-b9d4b7b012b3",
+    "type": "comment",
+    "updated_at": "2026-10-04T22:15:22Z"
+  },
+  {
+    "action": "status_changed",
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "created_at": "2026-10-04T22:15:24Z",
+    "details": {
+      "from": "in_progress",
+      "to": "done"
+    },
+    "id": "01a108fc-70f1-7a36-80f1-219e5706b386",
+    "type": "activity"
+  },
+  {
+    "action": "task_completed",
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "created_at": "2026-10-04T22:15:38Z",
+    "details": {},
+    "id": "01a108fc-a989-73d5-ad2e-bed8bf5b06d3",
+    "type": "activity"
+  },
+  {
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "attachments": [
+      {
+        "chat_message_id": null,
+        "chat_session_id": null,
+        "comment_id": "01a108fd-4f27-7bd1-880e-092b3b4fe8a0",
+        "content_type": "text/plain; charset=utf-8",
+        "created_at": "2026-10-04T22:16:20Z",
+        "download_url": "/api/attachments/01a108fd-4ddf-717a-a26d-93cf69c40b88/download",
+        "filename": "omac-review-obligations-4f36d4b9769b.yaml",
+        "id": "01a108fd-4ddf-717a-a26d-93cf69c40b88",
+        "issue_id": "01a10302-109c-7097-b200-4dd71a531aba",
+        "markdown_url": "https://multica.ai/api/attachments/01a108fd-4ddf-717a-a26d-93cf69c40b88/download",
+        "size_bytes": 1509,
+        "uploader_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+        "uploader_type": "member",
+        "url": "https://static.multica.ai/workspaces/410ade5e-8ae0-4402-b975-813dea2ff3e1/01a108fd-4ddf-717a-a26d-93cf69c40b88.yaml",
+        "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1"
+      }
+    ],
+    "comment_type": "comment",
+    "content": "## omac review-obligations\n评审义务文件已作为附件上传。\n\n- attachment: omac-review-obligations-4f36d4b9769b.yaml\n- sha256: 4f36d4b9769b03222d4e77130cc2d7bbb64d40b9742754a4fca8a1bb09fc9bbb\n- bytes: 1509\n- metadata: `review_obligations_ref`\n\n后续 Agent 应通过 `omac work show \u003cissue-id\u003e --output json` 读取交接上下文；程序化引用见 issue metadata。",
+    "created_at": "2026-10-04T22:16:21Z",
+    "id": "01a108fd-4f27-7bd1-880e-092b3b4fe8a0",
+    "revision": 1,
+    "type": "comment",
+    "updated_at": "2026-10-04T22:16:21Z"
+  },
+  {
+    "action": "description_updated",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T22:16:42Z",
+    "details": {},
+    "id": "01a108fd-a1c7-7550-97db-3b30b3041b6e",
+    "type": "activity"
+  },
+  {
+    "action": "status_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T22:16:46Z",
+    "details": {
+      "from": "done",
+      "to": "in_review"
+    },
+    "id": "01a108fd-b29c-7c51-ae2a-afcbe45a46a9",
+    "type": "activity"
+  },
+  {
+    "action": "assignee_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T22:16:56Z",
+    "details": {
+      "to_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+      "to_type": "agent"
+    },
+    "id": "01a108fd-d7c7-7b12-9799-8a6a53febe08",
+    "type": "activity"
+  },
+  {
+    "actor_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+    "actor_type": "agent",
+    "attachments": [
+      {
+        "chat_message_id": null,
+        "chat_session_id": null,
+        "comment_id": "01a10918-32dd-7a3e-9b23-70b293d9dd15",
+        "content_type": "text/plain; charset=utf-8",
+        "created_at": "2026-10-04T22:45:43Z",
+        "download_url": "/api/attachments/01a10918-3275-7498-b16e-cb1258b2edf6/download",
+        "filename": "omac-review-report-cbaf163d01ac.yaml",
+        "id": "01a10918-3275-7498-b16e-cb1258b2edf6",
+        "issue_id": "01a10302-109c-7097-b200-4dd71a531aba",
+        "markdown_url": "https://multica.ai/api/attachments/01a10918-3275-7498-b16e-cb1258b2edf6/download",
+        "size_bytes": 44266,
+        "uploader_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+        "uploader_type": "agent",
+        "url": "https://static.multica.ai/workspaces/410ade5e-8ae0-4402-b975-813dea2ff3e1/01a10918-3275-7498-b16e-cb1258b2edf6.yaml",
+        "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1"
+      }
+    ],
+    "comment_type": "comment",
+    "content": "## omac review-report\n评审报告文件已作为附件上传。\n\n- attachment: omac-review-report-cbaf163d01ac.yaml\n- sha256: cbaf163d01aca43f131837e584ee7643e722b05b6c74332eb5a3ccf9abc14d7f\n- bytes: 44266\n- metadata: `review_report_ref`\n\n后续 Agent 应通过 `omac work show \u003cissue-id\u003e --output json` 读取交接上下文；程序化引用见 issue metadata。",
+    "created_at": "2026-10-04T22:45:43Z",
+    "id": "01a10918-32dd-7a3e-9b23-70b293d9dd15",
+    "revision": 1,
+    "source_task_id": "01a108fd-ea65-779d-a8a3-73fbd8f7f71d",
+    "type": "comment",
+    "updated_at": "2026-10-04T22:45:43Z"
+  },
+  {
+    "actor_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+    "actor_type": "agent",
+    "attachments": [
+      {
+        "chat_message_id": null,
+        "chat_session_id": null,
+        "comment_id": "01a10918-3609-7eb5-980c-8e4e9fb748de",
+        "content_type": "text/plain; charset=utf-8",
+        "created_at": "2026-10-04T22:45:44Z",
+        "download_url": "/api/attachments/01a10918-359c-7c06-ae43-af0da99f00e9/download",
+        "filename": "omac-review-ledger-5a97fe34cfd5.yaml",
+        "id": "01a10918-359c-7c06-ae43-af0da99f00e9",
+        "issue_id": "01a10302-109c-7097-b200-4dd71a531aba",
+        "markdown_url": "https://multica.ai/api/attachments/01a10918-359c-7c06-ae43-af0da99f00e9/download",
+        "size_bytes": 20989,
+        "uploader_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+        "uploader_type": "agent",
+        "url": "https://static.multica.ai/workspaces/410ade5e-8ae0-4402-b975-813dea2ff3e1/01a10918-359c-7c06-ae43-af0da99f00e9.yaml",
+        "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1"
+      }
+    ],
+    "comment_type": "comment",
+    "content": "## omac review-ledger\n交接文件已作为附件上传。\n\n- attachment: omac-review-ledger-5a97fe34cfd5.yaml\n- sha256: 5a97fe34cfd53318ef030c3fb0d07e63f874afe779cfe0dc4bf52957d3afbb1d\n- bytes: 20989\n- metadata: `review-ledger_ref`\n\n后续 Agent 应通过 `omac work show \u003cissue-id\u003e --output json` 读取交接上下文；程序化引用见 issue metadata。",
+    "created_at": "2026-10-04T22:45:44Z",
+    "id": "01a10918-3609-7eb5-980c-8e4e9fb748de",
+    "revision": 1,
+    "source_task_id": "01a108fd-ea65-779d-a8a3-73fbd8f7f71d",
+    "type": "comment",
+    "updated_at": "2026-10-04T22:45:44Z"
+  },
+  {
+    "action": "task_completed",
+    "actor_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+    "actor_type": "agent",
+    "created_at": "2026-10-04T22:45:55Z",
+    "details": {},
+    "id": "01a10918-640e-75b3-92cb-773f7eaaed28",
+    "type": "activity"
+  },
+  {
+    "action": "status_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T22:46:26Z",
+    "details": {
+      "from": "in_review",
+      "to": "in_progress"
+    },
+    "id": "01a10918-da62-7b9f-aa48-722b9fa9659c",
+    "type": "activity"
+  },
+  {
+    "action": "description_updated",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T22:46:30Z",
+    "details": {},
+    "id": "01a10918-eaf7-76b5-b2c6-349d2810908f",
+    "type": "activity"
+  },
+  {
+    "action": "assignee_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T22:46:43Z",
+    "details": {
+      "to_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "to_type": "agent"
+    },
+    "id": "01a10919-1da1-7972-b614-ffb0b0d057a8",
+    "type": "activity"
+  },
+  {
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "attachments": [
+      {
+        "chat_message_id": null,
+        "chat_session_id": null,
+        "comment_id": "01a1091d-813b-7099-83a0-83a20e7fbe17",
+        "content_type": "text/plain; charset=utf-8",
+        "created_at": "2026-10-04T22:51:30Z",
+        "download_url": "/api/attachments/01a1091d-80e3-7ab2-8143-65b1c30a1dda/download",
+        "filename": "omac-verification-502590161d37.yaml",
+        "id": "01a1091d-80e3-7ab2-8143-65b1c30a1dda",
+        "issue_id": "01a10302-109c-7097-b200-4dd71a531aba",
+        "markdown_url": "https://multica.ai/api/attachments/01a1091d-80e3-7ab2-8143-65b1c30a1dda/download",
+        "size_bytes": 32138,
+        "uploader_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+        "uploader_type": "agent",
+        "url": "https://static.multica.ai/workspaces/410ade5e-8ae0-4402-b975-813dea2ff3e1/01a1091d-80e3-7ab2-8143-65b1c30a1dda.yaml",
+        "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1"
+      }
+    ],
+    "comment_type": "comment",
+    "content": "## omac verification\nVerification evidence file was uploaded as an attachment.\n\n- attachment: omac-verification-502590161d37.yaml\n- sha256: 502590161d37e8fa5bcfd0fc5117fbae385e1f8474d5c432f246cd03d35ee63c\n- bytes: 32138\n- metadata: `verification_ref`\n\nLater Agents should read handoff context through `omac work show \u003cissue-id\u003e --output json`; programmatic references are stored in issue metadata.",
+    "created_at": "2026-10-04T22:51:31Z",
+    "id": "01a1091d-813b-7099-83a0-83a20e7fbe17",
+    "revision": 1,
+    "source_task_id": "01a10919-1da8-7eb9-9c2c-8b65ce12bd98",
+    "type": "comment",
+    "updated_at": "2026-10-04T22:51:31Z"
+  },
+  {
+    "action": "status_changed",
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "created_at": "2026-10-04T22:51:32Z",
+    "details": {
+      "from": "in_progress",
+      "to": "done"
+    },
+    "id": "01a1091d-88ef-7d25-a56d-5494be01ef06",
+    "type": "activity"
+  },
+  {
+    "action": "task_completed",
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "created_at": "2026-10-04T22:51:44Z",
+    "details": {},
+    "id": "01a1091d-b50f-71a4-9d0d-f01b118f683a",
+    "type": "activity"
+  },
+  {
+    "action": "status_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T22:52:51Z",
+    "details": {
+      "from": "done",
+      "to": "in_progress"
+    },
+    "id": "01a1091e-bb91-78c6-9934-bef1c314e7ac",
+    "type": "activity"
+  },
+  {
+    "action": "description_updated",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T22:52:55Z",
+    "details": {},
+    "id": "01a1091e-ccec-7d0a-b043-f3f02c618483",
+    "type": "activity"
+  },
+  {
+    "action": "assignee_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T22:53:08Z",
+    "details": {
+      "to_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "to_type": "agent"
+    },
+    "id": "01a1091e-ff8d-7eae-b75a-8ad8480a4054",
+    "type": "activity"
+  },
+  {
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "attachments": [
+      {
+        "chat_message_id": null,
+        "chat_session_id": null,
+        "comment_id": "01a10925-94c8-720c-9477-ee1af475d139",
+        "content_type": "text/plain; charset=utf-8",
+        "created_at": "2026-10-04T23:00:20Z",
+        "download_url": "/api/attachments/01a10925-9454-7e28-80df-6f86074a14d1/download",
+        "filename": "omac-verification-c7fddb19f012.yaml",
+        "id": "01a10925-9454-7e28-80df-6f86074a14d1",
+        "issue_id": "01a10302-109c-7097-b200-4dd71a531aba",
+        "markdown_url": "https://multica.ai/api/attachments/01a10925-9454-7e28-80df-6f86074a14d1/download",
+        "size_bytes": 34039,
+        "uploader_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+        "uploader_type": "agent",
+        "url": "https://static.multica.ai/workspaces/410ade5e-8ae0-4402-b975-813dea2ff3e1/01a10925-9454-7e28-80df-6f86074a14d1.yaml",
+        "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1"
+      }
+    ],
+    "comment_type": "comment",
+    "content": "## omac verification\nVerification evidence file was uploaded as an attachment.\n\n- attachment: omac-verification-c7fddb19f012.yaml\n- sha256: c7fddb19f012f5fce2727b4d0ae03ce84a4522471b874aeef51a4752e3ae38a5\n- bytes: 34039\n- metadata: `verification_ref`\n\nLater Agents should read handoff context through `omac work show \u003cissue-id\u003e --output json`; programmatic references are stored in issue metadata.",
+    "created_at": "2026-10-04T23:00:20Z",
+    "id": "01a10925-94c8-720c-9477-ee1af475d139",
+    "revision": 1,
+    "source_task_id": "01a1091e-ff94-7ec0-8bbc-8d52fe3a7c28",
+    "type": "comment",
+    "updated_at": "2026-10-04T23:00:20Z"
+  },
+  {
+    "action": "status_changed",
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "created_at": "2026-10-04T23:00:22Z",
+    "details": {
+      "from": "in_progress",
+      "to": "done"
+    },
+    "id": "01a10925-9c11-7a6b-b926-86c287319aa5",
+    "type": "activity"
+  },
+  {
+    "action": "task_completed",
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "created_at": "2026-10-04T23:00:27Z",
+    "details": {},
+    "id": "01a10925-b2b7-7842-af12-973be34b8964",
+    "type": "activity"
+  },
+  {
+    "action": "status_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T23:21:14Z",
+    "details": {
+      "from": "done",
+      "to": "in_progress"
+    },
+    "id": "01a10938-b875-7c09-a6ff-82256ae5f6ab",
+    "type": "activity"
+  },
+  {
+    "action": "description_updated",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T23:21:18Z",
+    "details": {},
+    "id": "01a10938-c92f-7aee-820a-840f334d929a",
+    "type": "activity"
+  },
+  {
+    "action": "assignee_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T23:21:31Z",
+    "details": {
+      "to_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "to_type": "agent"
+    },
+    "id": "01a10938-fa8c-7f0c-b3c3-995cfe19fbe9",
+    "type": "activity"
+  },
+  {
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "attachments": [
+      {
+        "chat_message_id": null,
+        "chat_session_id": null,
+        "comment_id": "01a1093d-70f6-73c9-b403-a33d30a9432b",
+        "content_type": "text/plain; charset=utf-8",
+        "created_at": "2026-10-04T23:26:23Z",
+        "download_url": "/api/attachments/01a1093d-70a7-7eec-b49d-8fee4de7445e/download",
+        "filename": "omac-verification-4f89254479cb.yaml",
+        "id": "01a1093d-70a7-7eec-b49d-8fee4de7445e",
+        "issue_id": "01a10302-109c-7097-b200-4dd71a531aba",
+        "markdown_url": "https://multica.ai/api/attachments/01a1093d-70a7-7eec-b49d-8fee4de7445e/download",
+        "size_bytes": 33931,
+        "uploader_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+        "uploader_type": "agent",
+        "url": "https://static.multica.ai/workspaces/410ade5e-8ae0-4402-b975-813dea2ff3e1/01a1093d-70a7-7eec-b49d-8fee4de7445e.yaml",
+        "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1"
+      }
+    ],
+    "comment_type": "comment",
+    "content": "## omac verification\nVerification evidence file was uploaded as an attachment.\n\n- attachment: omac-verification-4f89254479cb.yaml\n- sha256: 4f89254479cbf543432b52f4b6fe849887044f8b6377047ae2e99bb2bb4f8c89\n- bytes: 33931\n- metadata: `verification_ref`\n\nLater Agents should read handoff context through `omac work show \u003cissue-id\u003e --output json`; programmatic references are stored in issue metadata.",
+    "created_at": "2026-10-04T23:26:23Z",
+    "id": "01a1093d-70f6-73c9-b403-a33d30a9432b",
+    "revision": 1,
+    "source_task_id": "01a10938-fa95-7c11-8807-d311592e9f9e",
+    "type": "comment",
+    "updated_at": "2026-10-04T23:26:23Z"
+  },
+  {
+    "action": "status_changed",
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "created_at": "2026-10-04T23:26:25Z",
+    "details": {
+      "from": "in_progress",
+      "to": "done"
+    },
+    "id": "01a1093d-7710-70db-a62b-80cb532bd972",
+    "type": "activity"
+  },
+  {
+    "action": "task_completed",
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "created_at": "2026-10-04T23:26:29Z",
+    "details": {},
+    "id": "01a1093d-84f1-79b8-98d5-2989d0d0e0ed",
+    "type": "activity"
+  },
+  {
+    "action": "status_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T23:27:32Z",
+    "details": {
+      "from": "done",
+      "to": "in_progress"
+    },
+    "id": "01a1093e-7d02-7815-aa60-a8055bbc4c07",
+    "type": "activity"
+  },
+  {
+    "action": "description_updated",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T23:27:36Z",
+    "details": {},
+    "id": "01a1093e-8ce0-7a1e-88f4-e682373797ec",
+    "type": "activity"
+  },
+  {
+    "action": "assignee_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T23:27:50Z",
+    "details": {
+      "to_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "to_type": "agent"
+    },
+    "id": "01a1093e-c3cb-7560-bb61-b479375f1a1f",
+    "type": "activity"
+  },
+  {
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "attachments": [
+      {
+        "chat_message_id": null,
+        "chat_session_id": null,
+        "comment_id": "01a10947-d074-71a4-b158-dc2a8d73aa0c",
+        "content_type": "text/plain; charset=utf-8",
+        "created_at": "2026-10-04T23:37:43Z",
+        "download_url": "/api/attachments/01a10947-d00a-7453-960c-37c1941f05bc/download",
+        "filename": "omac-verification-e492ed873f91.yaml",
+        "id": "01a10947-d00a-7453-960c-37c1941f05bc",
+        "issue_id": "01a10302-109c-7097-b200-4dd71a531aba",
+        "markdown_url": "https://multica.ai/api/attachments/01a10947-d00a-7453-960c-37c1941f05bc/download",
+        "size_bytes": 34577,
+        "uploader_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+        "uploader_type": "agent",
+        "url": "https://static.multica.ai/workspaces/410ade5e-8ae0-4402-b975-813dea2ff3e1/01a10947-d00a-7453-960c-37c1941f05bc.yaml",
+        "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1"
+      }
+    ],
+    "comment_type": "comment",
+    "content": "## omac verification\nVerification evidence file was uploaded as an attachment.\n\n- attachment: omac-verification-e492ed873f91.yaml\n- sha256: e492ed873f91737499d3a083158d07cdcf24e8a0043f9bfc7c9e9319f984e927\n- bytes: 34577\n- metadata: `verification_ref`\n\nLater Agents should read handoff context through `omac work show \u003cissue-id\u003e --output json`; programmatic references are stored in issue metadata.",
+    "created_at": "2026-10-04T23:37:43Z",
+    "id": "01a10947-d074-71a4-b158-dc2a8d73aa0c",
+    "revision": 1,
+    "source_task_id": "01a1093e-c3d2-7c43-8b01-38f64054cbff",
+    "type": "comment",
+    "updated_at": "2026-10-04T23:37:43Z"
+  },
+  {
+    "action": "status_changed",
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "created_at": "2026-10-04T23:37:45Z",
+    "details": {
+      "from": "in_progress",
+      "to": "done"
+    },
+    "id": "01a10947-d78e-7733-8cb1-fc7aa207672c",
+    "type": "activity"
+  },
+  {
+    "action": "task_completed",
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "created_at": "2026-10-04T23:37:50Z",
+    "details": {},
+    "id": "01a10947-ebaf-7e5e-87b4-08195088d2a9",
+    "type": "activity"
+  },
+  {
+    "action": "status_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T23:38:47Z",
+    "details": {
+      "from": "done",
+      "to": "in_progress"
+    },
+    "id": "01a10948-c9a1-7b4c-8881-33a72e5a1df0",
+    "type": "activity"
+  },
+  {
+    "action": "description_updated",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T23:38:51Z",
+    "details": {},
+    "id": "01a10948-d9b3-7e64-b53b-21d28494b656",
+    "type": "activity"
+  },
+  {
+    "action": "assignee_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T23:39:04Z",
+    "details": {
+      "to_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "to_type": "agent"
+    },
+    "id": "01a10949-0a3d-74a2-a858-1d8fab1870e5",
+    "type": "activity"
+  },
+  {
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "attachments": [
+      {
+        "chat_message_id": null,
+        "chat_session_id": null,
+        "comment_id": "01a1094a-02e8-7dce-a053-29b23ef576d4",
+        "content_type": "text/plain; charset=utf-8",
+        "created_at": "2026-10-04T23:40:07Z",
+        "download_url": "/api/attachments/01a1094a-0283-7be6-8d40-f92c03ecc290/download",
+        "filename": "omac-verification-e492ed873f91.yaml",
+        "id": "01a1094a-0283-7be6-8d40-f92c03ecc290",
+        "issue_id": "01a10302-109c-7097-b200-4dd71a531aba",
+        "markdown_url": "https://multica.ai/api/attachments/01a1094a-0283-7be6-8d40-f92c03ecc290/download",
+        "size_bytes": 34577,
+        "uploader_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+        "uploader_type": "agent",
+        "url": "https://static.multica.ai/workspaces/410ade5e-8ae0-4402-b975-813dea2ff3e1/01a1094a-0283-7be6-8d40-f92c03ecc290.yaml",
+        "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1"
+      }
+    ],
+    "comment_type": "comment",
+    "content": "## omac verification\nVerification evidence file was uploaded as an attachment.\n\n- attachment: omac-verification-e492ed873f91.yaml\n- sha256: e492ed873f91737499d3a083158d07cdcf24e8a0043f9bfc7c9e9319f984e927\n- bytes: 34577\n- metadata: `verification_ref`\n\nLater Agents should read handoff context through `omac work show \u003cissue-id\u003e --output json`; programmatic references are stored in issue metadata.",
+    "created_at": "2026-10-04T23:40:07Z",
+    "id": "01a1094a-02e8-7dce-a053-29b23ef576d4",
+    "revision": 1,
+    "source_task_id": "01a10949-0a44-7761-a183-6d1ced5c4398",
+    "type": "comment",
+    "updated_at": "2026-10-04T23:40:07Z"
+  },
+  {
+    "action": "status_changed",
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "created_at": "2026-10-04T23:40:09Z",
+    "details": {
+      "from": "in_progress",
+      "to": "done"
+    },
+    "id": "01a1094a-091b-7400-8ce9-54fcdd5c7093",
+    "type": "activity"
+  },
+  {
+    "action": "task_completed",
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "created_at": "2026-10-04T23:40:13Z",
+    "details": {},
+    "id": "01a1094a-1865-7d6c-89ae-502013e2969b",
+    "type": "activity"
+  },
+  {
+    "action": "status_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T23:41:05Z",
+    "details": {
+      "from": "done",
+      "to": "in_progress"
+    },
+    "id": "01a1094a-e2bd-7d8e-a0c5-2dd1b13e9b67",
+    "type": "activity"
+  },
+  {
+    "action": "description_updated",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T23:41:09Z",
+    "details": {},
+    "id": "01a1094a-f2ee-7330-ab3a-e1fce4462451",
+    "type": "activity"
+  },
+  {
+    "action": "assignee_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T23:41:21Z",
+    "details": {
+      "to_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "to_type": "agent"
+    },
+    "id": "01a1094b-235a-7ee3-b697-18bf2cfb47cc",
+    "type": "activity"
+  },
+  {
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "attachments": [
+      {
+        "chat_message_id": null,
+        "chat_session_id": null,
+        "comment_id": "01a1094b-e30a-7305-925c-93cb4794abf8",
+        "content_type": "text/plain; charset=utf-8",
+        "created_at": "2026-10-04T23:42:10Z",
+        "download_url": "/api/attachments/01a1094b-e296-789e-af2a-c8efd7163abf/download",
+        "filename": "omac-verification-e492ed873f91.yaml",
+        "id": "01a1094b-e296-789e-af2a-c8efd7163abf",
+        "issue_id": "01a10302-109c-7097-b200-4dd71a531aba",
+        "markdown_url": "https://multica.ai/api/attachments/01a1094b-e296-789e-af2a-c8efd7163abf/download",
+        "size_bytes": 34577,
+        "uploader_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+        "uploader_type": "agent",
+        "url": "https://static.multica.ai/workspaces/410ade5e-8ae0-4402-b975-813dea2ff3e1/01a1094b-e296-789e-af2a-c8efd7163abf.yaml",
+        "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1"
+      }
+    ],
+    "comment_type": "comment",
+    "content": "## omac verification\nVerification evidence file was uploaded as an attachment.\n\n- attachment: omac-verification-e492ed873f91.yaml\n- sha256: e492ed873f91737499d3a083158d07cdcf24e8a0043f9bfc7c9e9319f984e927\n- bytes: 34577\n- metadata: `verification_ref`\n\nLater Agents should read handoff context through `omac work show \u003cissue-id\u003e --output json`; programmatic references are stored in issue metadata.",
+    "created_at": "2026-10-04T23:42:10Z",
+    "id": "01a1094b-e30a-7305-925c-93cb4794abf8",
+    "revision": 1,
+    "source_task_id": "01a1094b-2361-77af-b13d-b8a76953aa17",
+    "type": "comment",
+    "updated_at": "2026-10-04T23:42:10Z"
+  },
+  {
+    "action": "status_changed",
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "created_at": "2026-10-04T23:42:12Z",
+    "details": {
+      "from": "in_progress",
+      "to": "done"
+    },
+    "id": "01a1094b-e945-7d70-957c-9943cc41c3b0",
+    "type": "activity"
+  },
+  {
+    "action": "task_completed",
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "created_at": "2026-10-04T23:42:16Z",
+    "details": {},
+    "id": "01a1094b-f855-75bf-8463-0ba0e8d90d56",
+    "type": "activity"
+  },
+  {
+    "action": "status_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T23:43:08Z",
+    "details": {
+      "from": "done",
+      "to": "in_progress"
+    },
+    "id": "01a1094c-c391-7be0-b9dd-456d8e9b8128",
+    "type": "activity"
+  },
+  {
+    "action": "description_updated",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T23:43:12Z",
+    "details": {},
+    "id": "01a1094c-d39f-7e54-b5b9-7704ea4e0457",
+    "type": "activity"
+  },
+  {
+    "action": "assignee_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T23:43:24Z",
+    "details": {
+      "to_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "to_type": "agent"
+    },
+    "id": "01a1094d-0415-7f21-8cc1-0bc68960560b",
+    "type": "activity"
+  },
+  {
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "attachments": [
+      {
+        "chat_message_id": null,
+        "chat_session_id": null,
+        "comment_id": "01a1094d-c318-74cc-aaf8-5270b509a349",
+        "content_type": "text/plain; charset=utf-8",
+        "created_at": "2026-10-04T23:44:13Z",
+        "download_url": "/api/attachments/01a1094d-c2aa-7f24-9436-dd8b4174801a/download",
+        "filename": "omac-verification-e492ed873f91.yaml",
+        "id": "01a1094d-c2aa-7f24-9436-dd8b4174801a",
+        "issue_id": "01a10302-109c-7097-b200-4dd71a531aba",
+        "markdown_url": "https://multica.ai/api/attachments/01a1094d-c2aa-7f24-9436-dd8b4174801a/download",
+        "size_bytes": 34577,
+        "uploader_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+        "uploader_type": "agent",
+        "url": "https://static.multica.ai/workspaces/410ade5e-8ae0-4402-b975-813dea2ff3e1/01a1094d-c2aa-7f24-9436-dd8b4174801a.yaml",
+        "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1"
+      }
+    ],
+    "comment_type": "comment",
+    "content": "## omac verification\nVerification evidence file was uploaded as an attachment.\n\n- attachment: omac-verification-e492ed873f91.yaml\n- sha256: e492ed873f91737499d3a083158d07cdcf24e8a0043f9bfc7c9e9319f984e927\n- bytes: 34577\n- metadata: `verification_ref`\n\nLater Agents should read handoff context through `omac work show \u003cissue-id\u003e --output json`; programmatic references are stored in issue metadata.",
+    "created_at": "2026-10-04T23:44:13Z",
+    "id": "01a1094d-c318-74cc-aaf8-5270b509a349",
+    "revision": 1,
+    "source_task_id": "01a1094d-041e-7cea-aea9-5a8a5c934083",
+    "type": "comment",
+    "updated_at": "2026-10-04T23:44:13Z"
+  },
+  {
+    "action": "status_changed",
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "created_at": "2026-10-04T23:44:15Z",
+    "details": {
+      "from": "in_progress",
+      "to": "done"
+    },
+    "id": "01a1094d-c936-7aa1-9bb6-3e41c6d23be4",
+    "type": "activity"
+  },
+  {
+    "action": "task_completed",
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "created_at": "2026-10-04T23:44:19Z",
+    "details": {},
+    "id": "01a1094d-da57-719c-b270-45792ccb6b17",
+    "type": "activity"
+  },
+  {
+    "action": "status_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T23:45:23Z",
+    "details": {
+      "from": "done",
+      "to": "in_progress"
+    },
+    "id": "01a1094e-d4a1-7795-b6a9-598017fcd75d",
+    "type": "activity"
+  },
+  {
+    "action": "description_updated",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T23:45:27Z",
+    "details": {},
+    "id": "01a1094e-e4b3-7ee7-942f-7e8b3d35b83a",
+    "type": "activity"
+  },
+  {
+    "action": "assignee_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T23:45:39Z",
+    "details": {
+      "to_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "to_type": "agent"
+    },
+    "id": "01a1094f-1425-7614-8eeb-bcfe220b1901",
+    "type": "activity"
+  },
+  {
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "attachments": [
+      {
+        "chat_message_id": null,
+        "chat_session_id": null,
+        "comment_id": "01a1094f-c07b-757e-b1ef-8b471e0cec7b",
+        "content_type": "text/plain; charset=utf-8",
+        "created_at": "2026-10-04T23:46:23Z",
+        "download_url": "/api/attachments/01a1094f-c018-793e-ba18-be126b397251/download",
+        "filename": "omac-verification-e492ed873f91.yaml",
+        "id": "01a1094f-c018-793e-ba18-be126b397251",
+        "issue_id": "01a10302-109c-7097-b200-4dd71a531aba",
+        "markdown_url": "https://multica.ai/api/attachments/01a1094f-c018-793e-ba18-be126b397251/download",
+        "size_bytes": 34577,
+        "uploader_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+        "uploader_type": "agent",
+        "url": "https://static.multica.ai/workspaces/410ade5e-8ae0-4402-b975-813dea2ff3e1/01a1094f-c018-793e-ba18-be126b397251.yaml",
+        "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1"
+      }
+    ],
+    "comment_type": "comment",
+    "content": "## omac verification\nVerification evidence file was uploaded as an attachment.\n\n- attachment: omac-verification-e492ed873f91.yaml\n- sha256: e492ed873f91737499d3a083158d07cdcf24e8a0043f9bfc7c9e9319f984e927\n- bytes: 34577\n- metadata: `verification_ref`\n\nLater Agents should read handoff context through `omac work show \u003cissue-id\u003e --output json`; programmatic references are stored in issue metadata.",
+    "created_at": "2026-10-04T23:46:23Z",
+    "id": "01a1094f-c07b-757e-b1ef-8b471e0cec7b",
+    "revision": 1,
+    "source_task_id": "01a1094f-142f-774f-9409-fc3d76fc2468",
+    "type": "comment",
+    "updated_at": "2026-10-04T23:46:23Z"
+  },
+  {
+    "action": "status_changed",
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "created_at": "2026-10-04T23:46:25Z",
+    "details": {
+      "from": "in_progress",
+      "to": "done"
+    },
+    "id": "01a1094f-c692-7992-9b74-80157dc82d6c",
+    "type": "activity"
+  },
+  {
+    "action": "task_completed",
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "created_at": "2026-10-04T23:46:30Z",
+    "details": {},
+    "id": "01a1094f-d87b-7bbc-9d11-dcfca8312068",
+    "type": "activity"
+  },
+  {
+    "action": "status_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T23:48:27Z",
+    "details": {
+      "from": "done",
+      "to": "in_progress"
+    },
+    "id": "01a10951-a30b-73fd-b0a6-77e8c3968de2",
+    "type": "activity"
+  },
+  {
+    "action": "description_updated",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T23:48:32Z",
+    "details": {},
+    "id": "01a10951-b578-79dd-b6ae-2c64616d5c76",
+    "type": "activity"
+  },
+  {
+    "action": "assignee_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T23:48:45Z",
+    "details": {
+      "to_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "to_type": "agent"
+    },
+    "id": "01a10951-e8dc-75e5-beb6-2fa297deb8f2",
+    "type": "activity"
+  },
+  {
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "attachments": [
+      {
+        "chat_message_id": null,
+        "chat_session_id": null,
+        "comment_id": "01a10952-bc13-7c4e-8570-a292df98c220",
+        "content_type": "text/plain; charset=utf-8",
+        "created_at": "2026-10-04T23:49:39Z",
+        "download_url": "/api/attachments/01a10952-bbb2-713e-84e9-b7f3a29be3e6/download",
+        "filename": "omac-verification-e492ed873f91.yaml",
+        "id": "01a10952-bbb2-713e-84e9-b7f3a29be3e6",
+        "issue_id": "01a10302-109c-7097-b200-4dd71a531aba",
+        "markdown_url": "https://multica.ai/api/attachments/01a10952-bbb2-713e-84e9-b7f3a29be3e6/download",
+        "size_bytes": 34577,
+        "uploader_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+        "uploader_type": "agent",
+        "url": "https://static.multica.ai/workspaces/410ade5e-8ae0-4402-b975-813dea2ff3e1/01a10952-bbb2-713e-84e9-b7f3a29be3e6.yaml",
+        "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1"
+      }
+    ],
+    "comment_type": "comment",
+    "content": "## omac verification\nVerification evidence file was uploaded as an attachment.\n\n- attachment: omac-verification-e492ed873f91.yaml\n- sha256: e492ed873f91737499d3a083158d07cdcf24e8a0043f9bfc7c9e9319f984e927\n- bytes: 34577\n- metadata: `verification_ref`\n\nLater Agents should read handoff context through `omac work show \u003cissue-id\u003e --output json`; programmatic references are stored in issue metadata.",
+    "created_at": "2026-10-04T23:49:39Z",
+    "id": "01a10952-bc13-7c4e-8570-a292df98c220",
+    "revision": 1,
+    "source_task_id": "01a10951-e8e5-7f19-a944-0c14a68628f1",
+    "type": "comment",
+    "updated_at": "2026-10-04T23:49:39Z"
+  },
+  {
+    "action": "status_changed",
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "created_at": "2026-10-04T23:49:41Z",
+    "details": {
+      "from": "in_progress",
+      "to": "done"
+    },
+    "id": "01a10952-c384-7b4b-b730-b4d2b2deb9e9",
+    "type": "activity"
+  },
+  {
+    "action": "task_completed",
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "created_at": "2026-10-04T23:49:46Z",
+    "details": {},
+    "id": "01a10952-d8fc-751a-811b-b6fd88653f42",
+    "type": "activity"
+  },
+  {
+    "action": "status_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T23:50:51Z",
+    "details": {
+      "from": "done",
+      "to": "in_progress"
+    },
+    "id": "01a10953-d754-70cf-8ac4-b610e8e1d0e9",
+    "type": "activity"
+  },
+  {
+    "action": "description_updated",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T23:50:56Z",
+    "details": {},
+    "id": "01a10953-e7dd-78ed-85c2-af01128126bf",
+    "type": "activity"
+  },
+  {
+    "action": "assignee_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T23:51:08Z",
+    "details": {
+      "to_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "to_type": "agent"
+    },
+    "id": "01a10954-1943-758c-a259-2f4427c9b511",
+    "type": "activity"
+  },
+  {
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "attachments": [
+      {
+        "chat_message_id": null,
+        "chat_session_id": null,
+        "comment_id": "01a10954-e74f-7eca-913e-971f497bc663",
+        "content_type": "text/plain; charset=utf-8",
+        "created_at": "2026-10-04T23:52:01Z",
+        "download_url": "/api/attachments/01a10954-e6eb-728f-9a4a-19814dde0b93/download",
+        "filename": "omac-verification-e492ed873f91.yaml",
+        "id": "01a10954-e6eb-728f-9a4a-19814dde0b93",
+        "issue_id": "01a10302-109c-7097-b200-4dd71a531aba",
+        "markdown_url": "https://multica.ai/api/attachments/01a10954-e6eb-728f-9a4a-19814dde0b93/download",
+        "size_bytes": 34577,
+        "uploader_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+        "uploader_type": "agent",
+        "url": "https://static.multica.ai/workspaces/410ade5e-8ae0-4402-b975-813dea2ff3e1/01a10954-e6eb-728f-9a4a-19814dde0b93.yaml",
+        "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1"
+      }
+    ],
+    "comment_type": "comment",
+    "content": "## omac verification\nVerification evidence file was uploaded as an attachment.\n\n- attachment: omac-verification-e492ed873f91.yaml\n- sha256: e492ed873f91737499d3a083158d07cdcf24e8a0043f9bfc7c9e9319f984e927\n- bytes: 34577\n- metadata: `verification_ref`\n\nLater Agents should read handoff context through `omac work show \u003cissue-id\u003e --output json`; programmatic references are stored in issue metadata.",
+    "created_at": "2026-10-04T23:52:01Z",
+    "id": "01a10954-e74f-7eca-913e-971f497bc663",
+    "revision": 1,
+    "source_task_id": "01a10954-194d-7ae5-870c-27a71cac9103",
+    "type": "comment",
+    "updated_at": "2026-10-04T23:52:01Z"
+  },
+  {
+    "action": "status_changed",
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "created_at": "2026-10-04T23:52:03Z",
+    "details": {
+      "from": "in_progress",
+      "to": "done"
+    },
+    "id": "01a10954-ed58-7a6d-b107-1b28030cb2c6",
+    "type": "activity"
+  },
+  {
+    "action": "task_completed",
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "created_at": "2026-10-04T23:52:08Z",
+    "details": {},
+    "id": "01a10955-0055-7044-ae72-04263763ad03",
+    "type": "activity"
+  },
+  {
+    "action": "status_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T23:53:16Z",
+    "details": {
+      "from": "done",
+      "to": "in_progress"
+    },
+    "id": "01a10956-0c81-768a-971d-35201971096a",
+    "type": "activity"
+  },
+  {
+    "action": "description_updated",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T23:53:21Z",
+    "details": {},
+    "id": "01a10956-2100-7ebb-9454-23f7725e3b5f",
+    "type": "activity"
+  },
+  {
+    "action": "assignee_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T23:53:34Z",
+    "details": {
+      "to_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "to_type": "agent"
+    },
+    "id": "01a10956-5357-7431-a43a-605c651d7d3c",
+    "type": "activity"
+  },
+  {
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "attachments": [
+      {
+        "chat_message_id": null,
+        "chat_session_id": null,
+        "comment_id": "01a10956-db05-7483-9f4c-c9f13ce44da0",
+        "content_type": "text/plain; charset=utf-8",
+        "created_at": "2026-10-04T23:54:09Z",
+        "download_url": "/api/attachments/01a10956-dab1-7e72-abfe-207e76b2e0d1/download",
+        "filename": "omac-verification-e492ed873f91.yaml",
+        "id": "01a10956-dab1-7e72-abfe-207e76b2e0d1",
+        "issue_id": "01a10302-109c-7097-b200-4dd71a531aba",
+        "markdown_url": "https://multica.ai/api/attachments/01a10956-dab1-7e72-abfe-207e76b2e0d1/download",
+        "size_bytes": 34577,
+        "uploader_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+        "uploader_type": "agent",
+        "url": "https://static.multica.ai/workspaces/410ade5e-8ae0-4402-b975-813dea2ff3e1/01a10956-dab1-7e72-abfe-207e76b2e0d1.yaml",
+        "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1"
+      }
+    ],
+    "comment_type": "comment",
+    "content": "## omac verification\nVerification evidence file was uploaded as an attachment.\n\n- attachment: omac-verification-e492ed873f91.yaml\n- sha256: e492ed873f91737499d3a083158d07cdcf24e8a0043f9bfc7c9e9319f984e927\n- bytes: 34577\n- metadata: `verification_ref`\n\nLater Agents should read handoff context through `omac work show \u003cissue-id\u003e --output json`; programmatic references are stored in issue metadata.",
+    "created_at": "2026-10-04T23:54:09Z",
+    "id": "01a10956-db05-7483-9f4c-c9f13ce44da0",
+    "revision": 1,
+    "source_task_id": "01a10956-5361-72dd-a2c5-88ad8f14a1ec",
+    "type": "comment",
+    "updated_at": "2026-10-04T23:54:09Z"
+  },
+  {
+    "action": "status_changed",
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "created_at": "2026-10-04T23:54:11Z",
+    "details": {
+      "from": "in_progress",
+      "to": "done"
+    },
+    "id": "01a10956-e124-7ab1-bc91-6fc87884a28e",
+    "type": "activity"
+  },
+  {
+    "action": "task_completed",
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "created_at": "2026-10-04T23:54:17Z",
+    "details": {},
+    "id": "01a10956-f99e-79aa-afe1-f6898548f9b1",
+    "type": "activity"
+  },
+  {
+    "action": "status_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T23:55:21Z",
+    "details": {
+      "from": "done",
+      "to": "in_progress"
+    },
+    "id": "01a10957-f3fc-7e08-bc51-7aaf14e97fd9",
+    "type": "activity"
+  },
+  {
+    "action": "description_updated",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T23:55:25Z",
+    "details": {},
+    "id": "01a10958-043e-7d2a-ae69-da0fa0e0ef65",
+    "type": "activity"
+  },
+  {
+    "action": "assignee_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-04T23:55:37Z",
+    "details": {
+      "to_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "to_type": "agent"
+    },
+    "id": "01a10958-347b-7544-a635-488ae347d32a",
+    "type": "activity"
+  },
+  {
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "attachments": [
+      {
+        "chat_message_id": null,
+        "chat_session_id": null,
+        "comment_id": "01a10958-feeb-7c30-9c49-0d3e22fdf89c",
+        "content_type": "text/plain; charset=utf-8",
+        "created_at": "2026-10-04T23:56:29Z",
+        "download_url": "/api/attachments/01a10958-fe9c-7c07-8994-7a36f8d6adc8/download",
+        "filename": "omac-verification-e492ed873f91.yaml",
+        "id": "01a10958-fe9c-7c07-8994-7a36f8d6adc8",
+        "issue_id": "01a10302-109c-7097-b200-4dd71a531aba",
+        "markdown_url": "https://multica.ai/api/attachments/01a10958-fe9c-7c07-8994-7a36f8d6adc8/download",
+        "size_bytes": 34577,
+        "uploader_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+        "uploader_type": "agent",
+        "url": "https://static.multica.ai/workspaces/410ade5e-8ae0-4402-b975-813dea2ff3e1/01a10958-fe9c-7c07-8994-7a36f8d6adc8.yaml",
+        "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1"
+      }
+    ],
+    "comment_type": "comment",
+    "content": "## omac verification\nVerification evidence file was uploaded as an attachment.\n\n- attachment: omac-verification-e492ed873f91.yaml\n- sha256: e492ed873f91737499d3a083158d07cdcf24e8a0043f9bfc7c9e9319f984e927\n- bytes: 34577\n- metadata: `verification_ref`\n\nLater Agents should read handoff context through `omac work show \u003cissue-id\u003e --output json`; programmatic references are stored in issue metadata.",
+    "created_at": "2026-10-04T23:56:29Z",
+    "id": "01a10958-feeb-7c30-9c49-0d3e22fdf89c",
+    "revision": 1,
+    "source_task_id": "01a10958-3483-750c-8635-a3d8373bd57a",
+    "type": "comment",
+    "updated_at": "2026-10-04T23:56:29Z"
+  },
+  {
+    "action": "status_changed",
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "created_at": "2026-10-04T23:56:31Z",
+    "details": {
+      "from": "in_progress",
+      "to": "done"
+    },
+    "id": "01a10959-04fd-7ed8-b5eb-e4aebf2435db",
+    "type": "activity"
+  },
+  {
+    "action": "task_completed",
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "created_at": "2026-10-04T23:56:37Z",
+    "details": {},
+    "id": "01a10959-1e9e-7aad-a551-3ab7d994e8cf",
+    "type": "activity"
+  },
+  {
+    "action": "status_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-06T00:50:39Z",
+    "details": {
+      "from": "done",
+      "to": "in_progress"
+    },
+    "id": "01a10eb0-f1f9-7892-b8b7-5f6d71cc7502",
+    "type": "activity"
+  },
+  {
+    "action": "description_updated",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-06T00:50:44Z",
+    "details": {},
+    "id": "01a10eb1-02cb-7181-93ad-1ffd8d9d5e4c",
+    "type": "activity"
+  },
+  {
+    "action": "assignee_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-06T00:50:56Z",
+    "details": {
+      "to_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "to_type": "agent"
+    },
+    "id": "01a10eb1-33ec-7180-9215-83ba5e0fccf5",
+    "type": "activity"
+  },
+  {
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "attachments": [
+      {
+        "chat_message_id": null,
+        "chat_session_id": null,
+        "comment_id": "01a10eb2-1178-7572-b915-58279895bfcf",
+        "content_type": "text/plain; charset=utf-8",
+        "created_at": "2026-10-06T00:51:53Z",
+        "download_url": "/api/attachments/01a10eb2-111a-7aa0-98d8-6637ff6682b9/download",
+        "filename": "omac-verification-e492ed873f91.yaml",
+        "id": "01a10eb2-111a-7aa0-98d8-6637ff6682b9",
+        "issue_id": "01a10302-109c-7097-b200-4dd71a531aba",
+        "markdown_url": "https://multica.ai/api/attachments/01a10eb2-111a-7aa0-98d8-6637ff6682b9/download",
+        "size_bytes": 34577,
+        "uploader_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+        "uploader_type": "agent",
+        "url": "https://static.multica.ai/workspaces/410ade5e-8ae0-4402-b975-813dea2ff3e1/01a10eb2-111a-7aa0-98d8-6637ff6682b9.yaml",
+        "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1"
+      }
+    ],
+    "comment_type": "comment",
+    "content": "## omac verification\nVerification evidence file was uploaded as an attachment.\n\n- attachment: omac-verification-e492ed873f91.yaml\n- sha256: e492ed873f91737499d3a083158d07cdcf24e8a0043f9bfc7c9e9319f984e927\n- bytes: 34577\n- metadata: `verification_ref`\n\nLater Agents should read handoff context through `omac work show \u003cissue-id\u003e --output json`; programmatic references are stored in issue metadata.",
+    "created_at": "2026-10-06T00:51:53Z",
+    "id": "01a10eb2-1178-7572-b915-58279895bfcf",
+    "revision": 1,
+    "source_task_id": "01a10eb1-33fc-7b62-ab5d-0ab8325f00cf",
+    "type": "comment",
+    "updated_at": "2026-10-06T00:51:53Z"
+  },
+  {
+    "action": "status_changed",
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "created_at": "2026-10-06T00:51:55Z",
+    "details": {
+      "from": "in_progress",
+      "to": "done"
+    },
+    "id": "01a10eb2-18cd-7f36-907d-60b91a65472b",
+    "type": "activity"
+  },
+  {
+    "action": "task_completed",
+    "actor_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "actor_type": "agent",
+    "created_at": "2026-10-06T00:52:00Z",
+    "details": {},
+    "id": "01a10eb2-2c76-75e8-aa42-a1eb29115f75",
+    "type": "activity"
+  },
+  {
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "attachments": [
+      {
+        "chat_message_id": null,
+        "chat_session_id": null,
+        "comment_id": "01a112cf-0c72-7d9a-b1ce-d08e7f4fb2fd",
+        "content_type": "text/plain; charset=utf-8",
+        "created_at": "2026-10-06T20:02:01Z",
+        "download_url": "/api/attachments/01a112cf-0b53-799b-8ea7-01752e3f08d6/download",
+        "filename": "omac-review-obligations-fd433446ec9c.yaml",
+        "id": "01a112cf-0b53-799b-8ea7-01752e3f08d6",
+        "issue_id": "01a10302-109c-7097-b200-4dd71a531aba",
+        "markdown_url": "https://multica.ai/api/attachments/01a112cf-0b53-799b-8ea7-01752e3f08d6/download",
+        "size_bytes": 373633,
+        "uploader_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+        "uploader_type": "member",
+        "url": "https://static.multica.ai/workspaces/410ade5e-8ae0-4402-b975-813dea2ff3e1/01a112cf-0b53-799b-8ea7-01752e3f08d6.yaml",
+        "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1"
+      }
+    ],
+    "comment_type": "comment",
+    "content": "## omac review-obligations\n评审义务文件已作为附件上传。\n\n- attachment: omac-review-obligations-fd433446ec9c.yaml\n- sha256: fd433446ec9cc00f7531e7a4916f443325381185d6a5affa40c4982fd54229ed\n- bytes: 373633\n- metadata: `review_obligations_ref`\n\n后续 Agent 应通过 `omac work show \u003cissue-id\u003e --output json` 读取交接上下文；程序化引用见 issue metadata。",
+    "created_at": "2026-10-06T20:02:01Z",
+    "id": "01a112cf-0c72-7d9a-b1ce-d08e7f4fb2fd",
+    "revision": 1,
+    "type": "comment",
+    "updated_at": "2026-10-06T20:02:01Z"
+  },
+  {
+    "action": "status_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-06T20:16:04Z",
+    "details": {
+      "from": "done",
+      "to": "in_review"
+    },
+    "id": "01a112db-eb0f-777b-b1c6-0437c13c28ae",
+    "type": "activity"
+  },
+  {
+    "action": "description_updated",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-06T20:32:23Z",
+    "details": {},
+    "id": "01a112ea-d8c7-74fc-96a0-0a3c260df65e",
+    "type": "activity"
+  },
+  {
+    "action": "assignee_changed",
+    "actor_avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+    "actor_id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+    "actor_name": "Guantik Chiang",
+    "actor_type": "member",
+    "created_at": "2026-10-06T20:41:24Z",
+    "details": {
+      "to_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+      "to_type": "agent"
+    },
+    "id": "01a112f3-1bb2-7906-bb13-6042010fd435",
+    "type": "activity"
+  },
+  {
+    "actor_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+    "actor_type": "agent",
+    "attachments": [
+      {
+        "chat_message_id": null,
+        "chat_session_id": null,
+        "comment_id": "01a1130e-c3b1-7717-a647-58e8323e4b0a",
+        "content_type": "text/plain; charset=utf-8",
+        "created_at": "2026-10-06T21:11:37Z",
+        "download_url": "/api/attachments/01a1130e-c35d-7485-86f7-b78d18b50b59/download",
+        "filename": "omac-review-report-044cc1ddd59d.yaml",
+        "id": "01a1130e-c35d-7485-86f7-b78d18b50b59",
+        "issue_id": "01a10302-109c-7097-b200-4dd71a531aba",
+        "markdown_url": "https://multica.ai/api/attachments/01a1130e-c35d-7485-86f7-b78d18b50b59/download",
+        "size_bytes": 55250,
+        "uploader_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+        "uploader_type": "agent",
+        "url": "https://static.multica.ai/workspaces/410ade5e-8ae0-4402-b975-813dea2ff3e1/01a1130e-c35d-7485-86f7-b78d18b50b59.yaml",
+        "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1"
+      }
+    ],
+    "comment_type": "comment",
+    "content": "## omac review-report\nReview report file was uploaded as an attachment.\n\n- attachment: omac-review-report-044cc1ddd59d.yaml\n- sha256: 044cc1ddd59d0fd5058148d839336fe04e856215643edb8c938adb3fd9743421\n- bytes: 55250\n- metadata: `review_report_ref`\n\nLater Agents should read handoff context through `omac work show \u003cissue-id\u003e --output json`; programmatic references are stored in issue metadata.",
+    "created_at": "2026-10-06T21:11:37Z",
+    "id": "01a1130e-c3b1-7717-a647-58e8323e4b0a",
+    "revision": 1,
+    "source_task_id": "01a112f6-4184-72ba-9cab-233fbeb66214",
+    "type": "comment",
+    "updated_at": "2026-10-06T21:11:37Z"
+  },
+  {
+    "actor_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+    "actor_type": "agent",
+    "attachments": [
+      {
+        "chat_message_id": null,
+        "chat_session_id": null,
+        "comment_id": "01a1130e-c6d7-7dba-8531-833d6f6289d0",
+        "content_type": "text/plain; charset=utf-8",
+        "created_at": "2026-10-06T21:11:37Z",
+        "download_url": "/api/attachments/01a1130e-c671-75c8-8d9b-33cac6cb36c3/download",
+        "filename": "omac-review-ledger-c9df2042a7b2.yaml",
+        "id": "01a1130e-c671-75c8-8d9b-33cac6cb36c3",
+        "issue_id": "01a10302-109c-7097-b200-4dd71a531aba",
+        "markdown_url": "https://multica.ai/api/attachments/01a1130e-c671-75c8-8d9b-33cac6cb36c3/download",
+        "size_bytes": 29842,
+        "uploader_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+        "uploader_type": "agent",
+        "url": "https://static.multica.ai/workspaces/410ade5e-8ae0-4402-b975-813dea2ff3e1/01a1130e-c671-75c8-8d9b-33cac6cb36c3.yaml",
+        "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1"
+      }
+    ],
+    "comment_type": "comment",
+    "content": "## omac review-ledger\nHandoff file was uploaded as an attachment.\n\n- attachment: omac-review-ledger-c9df2042a7b2.yaml\n- sha256: c9df2042a7b2c5dfcaa1a792d0336dae320520cf7d24ceb822a1edb1e990ccf1\n- bytes: 29842\n- metadata: `review-ledger_ref`\n\nLater Agents should read handoff context through `omac work show \u003cissue-id\u003e --output json`; programmatic references are stored in issue metadata.",
+    "created_at": "2026-10-06T21:11:37Z",
+    "id": "01a1130e-c6d7-7dba-8531-833d6f6289d0",
+    "revision": 1,
+    "source_task_id": "01a112f6-4184-72ba-9cab-233fbeb66214",
+    "type": "comment",
+    "updated_at": "2026-10-06T21:11:37Z"
+  },
+  {
+    "action": "task_completed",
+    "actor_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+    "actor_type": "agent",
+    "created_at": "2026-10-06T21:11:48Z",
+    "details": {},
+    "id": "01a1130e-ee23-79d0-86a2-58a01fc506ab",
+    "type": "activity"
+  }
+]
