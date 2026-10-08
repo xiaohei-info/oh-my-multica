@@ -9,7 +9,7 @@ import re
 from types import SimpleNamespace
 from urllib.parse import urlsplit
 
-from ..core.evidence import validate_worker_evidence, validate_review_evidence
+from ..core.evidence import validate_worker_evidence, validate_review_evidence, review_source_matches
 from ..core.manifest import load_manifest, save_manifest, _dump_contract
 from ..core.review_convergence import validate_review_ledger, _review_report_digest
 from ..core.taskmeta import (
@@ -475,8 +475,7 @@ def _verify_source(
     pr_url, head = item.artifacts.get("pr_url"), item.artifacts.get("head_sha")
     if (
         head != intent.baseline_pr_head_sha
-        or report.get("source_commit") != head
-        or report.get("pr_url") != pr_url
+        or not review_source_matches(report, head, pr_url)
     ):
         _fail("This route requires the exact unchanged independently rejected HEAD")
     original_pub = _publication(store, old["verification"], pr_url, head)
@@ -1171,8 +1170,7 @@ def _completed_independent_review(store, item, runs, run, request, expected, nod
     publication = report.get("evidence_publication", {})
     current_pub = request["tuple"]["current_publication"]
     if (
-        report.get("source_commit") != request["tuple"]["head_sha"]
-        or report.get("pr_url") != request["tuple"]["pr_url"]
+        not review_source_matches(report, request["tuple"]["head_sha"], request["tuple"]["pr_url"])
         or not isinstance(publication, dict)
         or publication.get("index_commit")
         != urlsplit(current_pub["url"]).path.split("/")[4]
@@ -1355,8 +1353,7 @@ def _retired_review(manifest, token, record):
         or archived.get("machine_feedback") not in (None, {})
         or archived.get("machine_feedback_ref") is not None
         or archived.get("review_verdict") != ledger["cycles"][-1]["verdict"]
-        or report.get("source_commit") != request["tuple"]["head_sha"]
-        or report.get("pr_url") != request["tuple"]["pr_url"]
+        or not review_source_matches(report, request["tuple"]["head_sha"], request["tuple"]["pr_url"])
         or archived.get("review_report") != report
         or archived.get("review_ledger") != ledger
     ):

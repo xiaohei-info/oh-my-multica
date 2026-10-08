@@ -1760,7 +1760,9 @@ _OAC_MANIFEST = Path(
 
 @pytest.mark.skipif(not _OAC_MANIFEST.exists(), reason="local OAC regression input is unavailable")
 def test_real_oac_done_node_historical_responsibility_correction_is_facts_only(tmp_path, monkeypatch):
-    raw = yaml.safe_load(_OAC_MANIFEST.read_text())
+    from omac.core.state_transport import decode
+
+    raw = yaml.safe_load(decode(_OAC_MANIFEST.read_bytes()))
     source = next(
         node for node in raw["nodes"]
         if node["id"] == "source-ownership-baseline-contract")

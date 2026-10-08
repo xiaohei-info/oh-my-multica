@@ -20,6 +20,29 @@ REVIEW_VERDICTS = REVIEW_APPROVE | {"reject"}
 ACCEPTANCE_STATUS = {"pass", "fail"}
 
 
+def review_source_matches(report, head, pr_url) -> bool:
+    """Require every present legacy/v2 Source identity to match exactly."""
+    if not isinstance(report, dict) or not all(
+        isinstance(value, str) and value.strip() for value in (head, pr_url)
+    ):
+        return False
+    if "review_protocol" in report and report["review_protocol"] != "omac.review/v2":
+        return False
+    identities = []
+    if "reviewed_source" in report:
+        source = report["reviewed_source"]
+        if report.get("review_protocol") != "omac.review/v2" or not isinstance(source, dict):
+            return False
+        identities.append((source.get("head"), source.get("pr_url")))
+    if "source_commit" in report or "pr_url" in report:
+        identities.append((report.get("source_commit"), report.get("pr_url")))
+    return bool(identities) and all(
+        isinstance(actual_head, str) and isinstance(actual_pr, str)
+        and actual_head == head and actual_pr == pr_url
+        for actual_head, actual_pr in identities
+    )
+
+
 def _command_succeeded(command) -> bool:
     if not isinstance(command, dict):
         return False
