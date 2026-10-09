@@ -49,7 +49,7 @@ def _runs_sha(runs, run_id, *, decided):
 
 
 def _observe_gap_binding(store, runtime, issue_id, decision, status):
-    item = store.get_work_item(issue_id)
+    item = deepcopy(store.get_work_item(issue_id))
     binding = decision["scope_gap_binding"]
     if (digest(item.decision_required) != digest(decision)
             or item.status.value != status
@@ -67,7 +67,7 @@ def report_scope_gap(store, runtime, issue_id, report):
     if not isinstance(report, dict) or runtime is None:
         raise ValidationError("Use the amendment scope-gap template from omac work show")
     with store.worker_control_lock(issue_id):
-        item = store.get_work_item(issue_id)
+        item = deepcopy(store.get_work_item(issue_id))
         template = scope_gap_template(item)
         fixed = {"schema", "issue_id", "worker", "review_context_binding", "owner_resolution", "owner_source_sha256"}
         if (set(report) != set(template) or any(report[k] != template[k] for k in fixed)
