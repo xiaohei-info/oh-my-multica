@@ -1,0 +1,765 @@
+{
+  "id": "01a10382-ee40-74ef-8809-109e5d50bbe7",
+  "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1",
+  "title": "[DAG:identity-local] Implement administrator bootstrap, invitations and sessions",
+  "description": "> **OMAC 控制的执行。第一动作必须严格执行：**\n\n```bash\nOMAC_ENGINE=multica OMAC_WORKSPACE_ID=410ade5e-8ae0-4402-b975-813dea2ff3e1 OMAC_PROJECT_ID=732ce83f-5cbd-4485-850d-1b8a1bf16340 omac work show 01a10382-ee40-74ef-8809-109e5d50bbe7 --output json\n```\n\n> `omac work show` 和 `omac work submit` 都可能长时间运行。任何工具调用在拿到最终 tool_result 和终态退出码前都不完整。若工具返回 running/session、缺少最终 tool_result、出现空输出或不完整输出，必须等待或轮询到终态。使用足够长的 wait/yield，或保留并恢复续接句柄；这是通用终态规则，不绑定某个具体工具 API。timeout/yield 不是空结果，也不允许据此停止。`omac work show` 只有在退出码 0 且得到可解析 JSON 后才能继续。`omac work submit` 只有在最终 tool_result 明确给出退出码 0，且 JSON 包含 `\"ok\": true`、`\"terminal\": true` 和 `\"next_action\": \"stop\"` 时才可宣称成功。结果未知时不得宣称成功或结束；validation error 必须修复后重新提交。submit 成功就是本次执行的最后动作，立即停止，不再执行任何平台写入。\n\n> 在上方精确的 `omac work show` 命令以退出码 0 成功返回可解析 JSON 前，不得执行任何其他 Issue 查询（包括 `multica issue get`、`multica issue comment list` 或 metadata 查询），也不得开始分析任务内容。work show 成功后，只能在返回上下文确有需要时使用只读 Issue 查询。禁止任何会创建、修改或删除 Issue 状态的 `multica issue` 写操作。这是语义边界，不是穷举命令清单；禁止示例包括 `multica issue status`、`multica issue assign`、`multica issue comment`、`multica issue metadata`、`multica issue rerun`、`multica issue cancel-task`、`multica issue update`、`multica issue create`、`multica issue label`、`multica issue property`、`multica issue reorder` 和 `multica issue subscriber`。只允许使用上方给出的精确 `omac work show` 命令，以及 work show 返回的精确 `omac work submit` 命令作为 OMAC 控制命令；已有手工附件或 verification 但缺少 `delivery_identity` 时也必须通过该 submit 命令封存。\n\n# Implement administrator bootstrap, invitations and sessions\n\n## 任务摘要\n- 类型: 开发实现（`develop`）\n- 执行角色: 开发执行者（`worker`）\n- 目标: Deliver first-admin, invitation, recovery and browser-session behavior plus one Principal-owned saved locale preference restricted to zh-CN|en-US, updated by Authorization and expected_revision CAS, audited without storing locale on Scope, Project, Workflow or Solution.\n- 依据: `docs/design/detailed/09-governance-and-security-detailed-design.md:L100-L213`\n- 依据: `docs/design/detailed/10-web-api-cli-detailed-design.md:L170-L354`\n- 依据: `docs/delivery/acceptance-and-validation.md:L129-L150`\n- 依据: `account-locale-ownership-decision.md`\n\n## 任务详情\nImplement identity lifecycle plus the Principal-owned authenticated locale preference defined by the approved locale contract.\n\n## 非目标\n- Do not let organization, Scope or Project override a Principal saved locale.\n- Do not persist anonymous browser locale on the server.\n- Do not treat a locale update as identity, authorization, Session or business-resource mutation.\n- Do not bypass authorization, expected_revision CAS, idempotency or audit.\n\n## 主要代码归属范围\n- `internal/identity/**`\n- `api/auth/local/**`\n- `account-locale-ownership-decision.md`\n\n## 责任边界\n- 证据模式: `artifact`\n- 输入策略: `transitional-upstream`\n- 产物: `identity-local-account-locale-component`\n- 边界: consumes 处于过渡期未声明状态：只允许传递上游输入；非上游和下游产物仍不属于当前 contract。\n\n## 交付约束\n- PR 基线: `main`\n- 改动分支覆盖率: `≥ 90%`\n- PR 关联标识: `AITEAM-1058`\n\n## 上游 issue（防跑偏）\n本任务承接以下上游 issue，用于追溯需求与决策；若与当前 contract 冲突，先请求确认：\n- 设计方案: `289a13bf-cede-4b5b-ba86-d72f0bef8164`\n- 验收文档: `8e6bd282-6039-41d2-aa00-969a0bf1554a`\n- 前置开发任务 · Bootstrap Go module and quality harness: `5849f786-8c97-42ac-adf9-1c96957f28ee`\n- 前置开发任务 · Create identity and authentication contracts: `d5f92ac5-6836-49c5-b218-d24164e3c2e9`\n- 前置开发任务 · Create authorization and admission contracts: `8fc120a0-23c5-4119-96c1-b827222ed9dd`\n- 前置开发任务 · Create audit and usage contracts: `7b568083-2a29-47d5-a56e-3509b79ebb6c`\n- 前置开发任务 · Create credential contracts: `30335cd6-d2e8-4c9d-8988-7f7b134ed6e9`\n- 前置开发任务 · Implement deterministic release artifact packaging: `152d735a-c373-4967-8ae0-45c191de2eff`\n- 前置开发任务 · Publish Authentication SDK and conformance suite: `4b369c7b-1ee7-4047-bb1f-d288db2b13fe`",
+  "status": "WorkItemStatus.BLOCKED",
+  "dag_key": "identity-local",
+  "identifier": "AITEAM-1058",
+  "worker": "codex-ubuntu-newapi",
+  "reviewer": "hermes-reviewer",
+  "blocked_by": [
+    "bootstrap-go",
+    "contracts-identity",
+    "contracts-authz-admission",
+    "contracts-audit-usage",
+    "contracts-credential",
+    "release-artifact-tooling",
+    "authentication-sdk"
+  ],
+  "wave": null,
+  "artifacts": {
+    "pr_url": "https://github.com/xiaohei-info/open-agent-cluster/pull/101",
+    "head_sha": "ce2e24013d151c41c9d058cb2262f64d8374281a"
+  },
+  "verification": {
+    "commands": [
+      {
+        "cmd": "python3 -c \"from pathlib import Path; import hashlib; p=Path('account-locale-ownership-decision.md'); assert p.is_file() and hashlib.sha256(p.read_bytes()).hexdigest()=='2ee85c6551db299f14f4903e5b0086e678208b38c6a3cba276c8a32a5f1a5be6'\"",
+        "exit_code": 0,
+        "summary": "Approved locale decision digest matched."
+      },
+      {
+        "cmd": "mkdir -p artifacts/identity-local && go test -covermode=atomic -coverprofile=artifacts/identity-local/coverage.out ./internal/identity/... ./api/auth/local/...",
+        "exit_code": 0,
+        "summary": "Identity and local API packages passed (identity 89.3%, local API 98.4%, aggregate 90.6% statement coverage). Executed named tests include internal/identity.TestBootstrapOneTimeCodeCreatesFirstAdministratorAndSession, internal/identity.TestConcurrentBootstrapUsesOneSuccessfulCAS, internal/identity.TestInvitationIssueReissueAcceptAndIdempotentReplay, internal/identity.TestInvitationAuthorizationRevocationAndNotificationFallback, api/auth/local.TestStrictJSONRegistrationDisabledAndGenericErrorMapping, api/auth/local.TestInvitationPreviewShowsFixedSummaryWithoutReturningToken, internal/identity.TestConcurrentInvitationAcceptanceConsumesOneTokenOnce, internal/identity.TestLocalLoginExactIdentitySessionLogoutAndScopeRevalidation, internal/identity.TestUJIdentity001BootstrapInvitationLocaleRecoveryAndSessionLifecycle, internal/identity.TestRecoveryIssueCompletionRevokesSessionsAndIsIdempotent, api/auth/local.TestInvitationAndRecoveryResponsesExposeOneTimeLinksWithoutDigests, internal/identity.TestRecoveryFencesAuthenticationBeforeSessionIssue, internal/identity.TestConcurrentBootstrapIdempotencyChecksPasswordEquivalence, internal/identity.TestConcurrentInvitationIdempotencyChecksPasswordEquivalence, internal/identity.TestConcurrentRecoveryIdempotencyChecksPasswordEquivalence, internal/identity.TestIdempotencyReplayPreservesPasswordVerifierFailures, internal/identity.TestSessionAndAuthorizationFailureMatrix, and api/auth/local.TestProtectedMutationsPropagateOneRequestMetadataValue. Installer dependency denial, operational failure, and cancellation cases are covered by internal/identity.TestBootstrapInstallerAndPersistenceFailureMatrix and internal/identity.TestRecoveryAuthorizationScopeAndBreakGlassReplayFailures. Concurrent token persistence is covered by internal/identity.TestConcurrentBreakGlassReplayOnlyReturnsPersistedToken."
+      },
+      {
+        "cmd": "go test ./internal/identity/... ./api/auth/local/... -run \"Test.*LocalePreference.*(Create|Read|CAS|Conflict|Authorization|Audit|Session|Fallback)\" -count=1",
+        "exit_code": 0,
+        "summary": "Locale preference behavior cases passed, including internal/identity.TestLocalePreferenceCreateReadCASConflictAuthorizationAuditSessionFallback, internal/identity.TestLocalePreferenceNoOpConflictCASAndCorruptRead, internal/identity.TestLocalePreferenceAuthorizationOwnAccountOnly, and internal/identity.TestLocalePreferenceFallbackDoesNotDefaultOrPersist."
+      },
+      {
+        "cmd": "go test ./internal/identity/... -run \"Test.*LocalePreference.*Rejects(Scope|Project|Workflow|Solution|UnsupportedLocale|AnonymousWrite)\" -count=1",
+        "exit_code": 0,
+        "summary": "Rejection cases passed in internal/identity.TestLocalePreferenceRejectsScopeProjectWorkflowSolutionUnsupportedLocaleAnonymousWrite."
+      },
+      {
+        "cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/identity-local/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+        "exit_code": 0,
+        "summary": "Coverage gate passed at 90.6%."
+      },
+      {
+        "cmd": "python3 scripts/release/package_component.py --component identity-local --kind platform-core-dependency-source --input internal/identity --input api/auth/local --bundle artifacts/identity-local/source-bundle.tar.zst --component-manifest artifacts/identity-local/component-manifest.json --digest-output artifacts/identity-local/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner identity-local --require-all-owner-sources-accounted",
+        "exit_code": 0,
+        "summary": "Identity component package created; bundle SHA-256 f7ea40f84c65438263ca708632e1d91cae6a0ce196a88b0eeb5b93b66ee54ec3, manifest source revision 9e2acf9798a558ea9a9301bfedb9354916813ece."
+      }
+    ],
+    "env_setup": [
+      "Go toolchain and Python 3 are available; no external service is required.",
+      "The local zstd CLI is available for deterministic component packaging."
+    ],
+    "integration_gates": [
+      {
+        "name": "identity-local-gate",
+        "source_of_truth": [
+          "docs/design/detailed/09-governance-and-security-detailed-design.md:L100-L213",
+          "docs/design/detailed/10-web-api-cli-detailed-design.md:L170-L354",
+          "docs/delivery/acceptance-and-validation.md:L129-L150",
+          "account-locale-ownership-decision.md"
+        ],
+        "delivery_goal": "Deliver first-admin, invitation, recovery and browser-session behavior plus one Principal-owned saved locale preference restricted to zh-CN|en-US, updated by Authorization and expected_revision CAS, audited without storing locale on Scope, Project, Workflow or Solution.",
+        "covers": [
+          "identity-local"
+        ],
+        "acceptance_refs": [
+          "UJ-IDENTITY-001"
+        ],
+        "commands": [
+          {
+            "cmd": "python3 -c \"from pathlib import Path; import hashlib; p=Path('account-locale-ownership-decision.md'); assert p.is_file() and hashlib.sha256(p.read_bytes()).hexdigest()=='2ee85c6551db299f14f4903e5b0086e678208b38c6a3cba276c8a32a5f1a5be6'\"",
+            "exit_code": 0
+          },
+          {
+            "cmd": "mkdir -p artifacts/identity-local && go test -covermode=atomic -coverprofile=artifacts/identity-local/coverage.out ./internal/identity/... ./api/auth/local/...",
+            "exit_code": 0
+          },
+          {
+            "cmd": "go test ./internal/identity/... ./api/auth/local/... -run \"Test.*LocalePreference.*(Create|Read|CAS|Conflict|Authorization|Audit|Session|Fallback)\" -count=1",
+            "exit_code": 0
+          },
+          {
+            "cmd": "go test ./internal/identity/... -run \"Test.*LocalePreference.*Rejects(Scope|Project|Workflow|Solution|UnsupportedLocale|AnonymousWrite)\" -count=1",
+            "exit_code": 0
+          },
+          {
+            "cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/identity-local/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+            "exit_code": 0
+          },
+          {
+            "cmd": "python3 scripts/release/package_component.py --component identity-local --kind platform-core-dependency-source --input internal/identity --input api/auth/local --bundle artifacts/identity-local/source-bundle.tar.zst --component-manifest artifacts/identity-local/component-manifest.json --digest-output artifacts/identity-local/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner identity-local --require-all-owner-sources-accounted",
+            "exit_code": 0
+          }
+        ],
+        "metrics": {
+          "statement_coverage_percent": 90.6,
+          "locale_preference_conflict_accept_count": 0
+        },
+        "artifacts": [
+          "artifacts/identity-local/coverage.out",
+          "artifacts/identity-local/source-bundle.tar.zst",
+          "artifacts/identity-local/bundle-digest.txt",
+          "artifacts/identity-local/component-manifest.json"
+        ]
+      }
+    ],
+    "pr_base": "main",
+    "coverage": 90.6
+  },
+  "verification_ref": {
+    "comment_id": "01a105c7-91f0-75d2-9ba8-04227b14529f",
+    "attachment_id": "01a105c7-919f-759d-aef1-fe769f1213e3",
+    "sha256": "c6f4b9851daa79d214480300891efc2135334b82fcb3fba77b691030e35df717",
+    "bytes": 7667,
+    "filename": "omac-verification-c6f4b9851daa.yaml"
+  },
+  "review_verdict": null,
+  "review_comment": null,
+  "machine_feedback": null,
+  "machine_feedback_ref": null,
+  "review_report": null,
+  "review_report_ref": null,
+  "review_subject_digest": null,
+  "review_obligations": [
+    {
+      "obligation_id": "dimension:authority",
+      "category": "dimension",
+      "requirement": "Authoritative inputs and source references"
+    },
+    {
+      "obligation_id": "dimension:structure",
+      "category": "dimension",
+      "requirement": "Structure, schema, dependency, and completeness"
+    },
+    {
+      "obligation_id": "dimension:execution",
+      "category": "dimension",
+      "requirement": "Executable commands and fail-closed verification"
+    },
+    {
+      "obligation_id": "dimension:ownership",
+      "category": "dimension",
+      "requirement": "Ownership, boundaries, and unique write paths"
+    },
+    {
+      "obligation_id": "dimension:evidence",
+      "category": "dimension",
+      "requirement": "Artifact lineage and evidence traceability"
+    },
+    {
+      "obligation_id": "dimension:regression",
+      "category": "dimension",
+      "requirement": "Prior blocker regression and changed-scope review"
+    },
+    {
+      "obligation_id": "integration:identity-local-gate",
+      "category": "integration",
+      "requirement": "Independently verify integration gate identity-local-gate",
+      "subject": "identity-local-gate"
+    }
+  ],
+  "review_obligations_ref": {
+    "comment_id": "01a105c8-c020-7466-894b-a3b686488ffe",
+    "attachment_id": "01a105c8-bec9-7416-914e-7e89a7e1b6fb",
+    "sha256": "fd0840897339ba49da5cb5e05c5897cfd3483196a0f09b77777f952651e01c79",
+    "bytes": 900,
+    "filename": "omac-review-obligations-fd0840897339.yaml"
+  },
+  "review_ledger": {
+    "schema": "omac.review-ledger/v2",
+    "cycles": [
+      {
+        "round": 1,
+        "subject_digest": "8fb4b93a41bc8d44629f81d919199e67e206ef206ede979664e34fdcce60bd83",
+        "report_digest": "66ea718b189247163324e9c7071af21f45781be63babfd45212aa51010d29cbb",
+        "verdict": "reject",
+        "obligation_results": {
+          "dimension:authority": "pass",
+          "dimension:structure": "fail",
+          "dimension:execution": "fail",
+          "dimension:ownership": "pass",
+          "dimension:evidence": "fail",
+          "dimension:regression": "pass",
+          "integration:identity-local-gate": "pass"
+        },
+        "new_count": 4,
+        "fixed_count": 0,
+        "regressed_count": 0,
+        "unchanged_count": 0,
+        "open_count": 4,
+        "prior_open_blocker_ids": [],
+        "open_blocker_ids": [
+          "BLK-62858e200019",
+          "BLK-7e002b74f69c",
+          "BLK-8646e42ba221",
+          "BLK-8c9128c2b72c"
+        ],
+        "reported_blocker_ids": [
+          "BLK-62858e200019",
+          "BLK-7e002b74f69c",
+          "BLK-8646e42ba221",
+          "BLK-8c9128c2b72c"
+        ],
+        "blocker_facts_schema": "omac.review-cycle-blocker-facts/v1",
+        "blocker_facts": [
+          {
+            "blocker_id": "BLK-62858e200019",
+            "root_cause_key": "identity-recovery-session-issuance-not-serialized",
+            "obligation_id": "dimension:structure",
+            "summary": "Session issuance is not fenced against concurrent password recovery.",
+            "evidence": "Static control-flow evidence: internal/identity/service.go:362-370 authenticates outside the session-write transaction; createSession at service.go:294-355 resolves identity and access before a transaction containing only CreateSession and AppendAudit. internal/identity/recovery.go:247-255 replaces the credential and revokes currently stored sessions in a separate transaction. SessionRecord/Tx at types.go:81-86,125-127 carry no credential generation or conditional issuance fence. TestRecoveryIssueCompletionRevokesSessionsAndIsIdempotent and TestUJIdentity001BootstrapInvitationLocaleRecoveryAndSessionLifecycle exercise already-persisted sessions sequentially; they do not cover in-flight authentication. This finding is based on code inspection, not an additional security experiment.",
+            "required_fix": "Serialize local credential validation/session issuance with recovery, or bind the verified authentication to a credential/session generation checked atomically at session creation and session resolution. Apply the same boundary to login and bootstrap/invitation auto-login. Add a deterministic local regression proving recovery invalidates pre-recovery authentication even when session persistence completes later, without retaining plaintext credentials.",
+            "status": "open",
+            "classification": "new",
+            "owner": "identity-local"
+          },
+          {
+            "blocker_id": "BLK-7e002b74f69c",
+            "root_cause_key": "identity-concurrent-idempotency-omits-password-equivalence",
+            "obligation_id": "dimension:structure",
+            "summary": "Concurrent replay branches skip the password-equivalence checks used for ordinary idempotent retries.",
+            "evidence": "Static evidence: recovery.go:195 hashes only the token digest; completedRecoveryReplay at 271-311 verifies password equivalence, but the transaction replay branch at 228-232 directly unmarshals the saved result. service.go:128-130 omits password from the bootstrap digest and 177-183 skips bootstrapReplay verification when the record appears between the initial lookup and transaction. invitation.go:308 similarly omits password and 326-330 skips acceptedInvitationReplay verification. Existing concurrent tests use different idempotency keys; ordinary replay tests validate sequential changed-input rejection, not this race. No additional negative-test input was constructed.",
+            "required_fix": "Make password-equivalence validation part of every idempotency replay decision, including the atomic transaction branch, using the same protected comparison semantics as the ordinary replay path. Do not store plaintext or an unkeyed low-entropy request-password digest. Add deterministic concurrent same-key tests for identical input and changed input across bootstrap, invitation acceptance, and recovery; changed input must return a conflict rather than success.",
+            "status": "open",
+            "classification": "new",
+            "owner": "identity-local"
+          },
+          {
+            "blocker_id": "BLK-8646e42ba221",
+            "root_cause_key": "identity-dependency-errors-mapped-to-user-denials",
+            "obligation_id": "dimension:execution",
+            "summary": "Authentication and governance dependency failures are flattened into credential or permission errors.",
+            "evidence": "service.go:366-368 turns every LocalAuthenticator.Authenticate error into ErrInvalidCredentials; service.go:435-437 and invitation.go:467-469 turn Policy lookup errors into ErrForbidden; recovery.go:217-219 turns LocalScopeID errors into ErrNotFound. bootstrapReplay service.go:268-270, acceptedInvitationReplay invitation.go:415-417, and completedRecoveryReplay recovery.go:308-310 also flatten VerifyPassword operational errors into idempotency conflicts. The independently executed declared suite includes TestSessionAndAuthorizationFailureMatrix (failure_paths_test.go:194-275), which injects an operational driver failure at identity_test.go:485-487 and currently asserts ErrInvalidCredentials at failure_paths_test.go:248-251. handler.go:337-353 already supports sanitized 500 responses, and its handler-only internal-error test does not exercise this Service path.",
+            "required_fix": "Distinguish known invalid-credential/authorization/not-found outcomes from operational errors through typed port/SDK errors. Preserve or wrap operational errors at the service boundary and return sanitized 5xx responses at HTTP boundaries. Update the declared failure tests to assert propagation for outages/cancellation and user-facing denial only for genuine credential or permission failures. Retain the intentionally designed post-commit login and notification fallbacks.",
+            "status": "open",
+            "classification": "new",
+            "owner": "identity-local"
+          },
+          {
+            "blocker_id": "BLK-8c9128c2b72c",
+            "root_cause_key": "identity-request-metadata-regenerated-within-http-request",
+            "obligation_id": "dimension:evidence",
+            "summary": "Protected HTTP mutations regenerate request identity instead of propagating the resolved request metadata.",
+            "evidence": "handler.go:267 obtains requestMetadata for ResolveBrowserSession and 273 exposes that RequestID; protected route callbacks invoke requestMetadata(r) again (e.g. 204 and 252). requestMetadata at 292-303 generates a new random RequestID each call and does not attach it to the request. locale.go:54-56 and recovery.go:40-42 overwrite the RequestContext IDs with the second metadata. The shared governance reference security-and-enterprise.md:13-15 requires request identity propagation and causal tracing. Handler tests use testApplication, returning a fixed context at handler_test.go:119-124, and do not assert identity equality between resolution, authorization, audit, and response. Static code inspection establishes this discrepancy; no new request experiment was run.",
+            "required_fix": "Normalize metadata exactly once at the HTTP entry and pass the same immutable metadata through session resolution and the application call. Preserve the resolved RequestContext request/causation/correlation IDs instead of overwriting them with independently generated ones. Add handler-to-service regression assertions for absent and supplied request IDs across locale, recovery, invitation, and logout paths.",
+            "status": "open",
+            "classification": "new",
+            "owner": "identity-local"
+          }
+        ]
+      },
+      {
+        "round": 2,
+        "subject_digest": "208b06850fad83b3aad1386432bec49e9d219562b7f2030cb4dc6f1058027944",
+        "report_digest": "1d3baab9c1ca027c3fa775d840f944d6db615dc5c5a5ce2e6c4498e0e9bc1ce6",
+        "verdict": "reject",
+        "obligation_results": {
+          "dimension:authority": "pass",
+          "dimension:structure": "fail",
+          "dimension:execution": "fail",
+          "dimension:ownership": "pass",
+          "dimension:evidence": "pass",
+          "dimension:regression": "pass",
+          "integration:identity-local-gate": "pass"
+        },
+        "new_count": 1,
+        "fixed_count": 3,
+        "regressed_count": 0,
+        "unchanged_count": 0,
+        "open_count": 2,
+        "prior_open_blocker_ids": [
+          "BLK-62858e200019",
+          "BLK-7e002b74f69c",
+          "BLK-8646e42ba221",
+          "BLK-8c9128c2b72c"
+        ],
+        "open_blocker_ids": [
+          "BLK-8646e42ba221",
+          "BLK-9a7d286279b9"
+        ],
+        "reported_blocker_ids": [
+          "BLK-8646e42ba221",
+          "BLK-9a7d286279b9"
+        ],
+        "blocker_facts_schema": "omac.review-cycle-blocker-facts/v1",
+        "blocker_facts": [
+          {
+            "blocker_id": "BLK-62858e200019",
+            "root_cause_key": "identity-recovery-session-issuance-not-serialized",
+            "obligation_id": "dimension:structure",
+            "summary": "Session issuance is not fenced against concurrent password recovery.",
+            "evidence": "Static control-flow evidence: internal/identity/service.go:362-370 authenticates outside the session-write transaction; createSession at service.go:294-355 resolves identity and access before a transaction containing only CreateSession and AppendAudit. internal/identity/recovery.go:247-255 replaces the credential and revokes currently stored sessions in a separate transaction. SessionRecord/Tx at types.go:81-86,125-127 carry no credential generation or conditional issuance fence. TestRecoveryIssueCompletionRevokesSessionsAndIsIdempotent and TestUJIdentity001BootstrapInvitationLocaleRecoveryAndSessionLifecycle exercise already-persisted sessions sequentially; they do not cover in-flight authentication. This finding is based on code inspection, not an additional security experiment.",
+            "required_fix": "Serialize local credential validation/session issuance with recovery, or bind the verified authentication to a credential/session generation checked atomically at session creation and session resolution. Apply the same boundary to login and bootstrap/invitation auto-login. Add a deterministic local regression proving recovery invalidates pre-recovery authentication even when session persistence completes later, without retaining plaintext credentials.",
+            "status": "fixed",
+            "classification": "fixed",
+            "last_evidence": "internal/identity/service.go:338-353 revalidates the current password inside the session-write transaction; recovery.go:253-260 replaces the credential and revokes sessions in the same Store transaction boundary. Login, bootstrap auto-login (service.go:271), and invitation auto-login (invitation.go:420) share createSession. Independently rerun full declared suite includes TestRecoveryFencesAuthenticationBeforeSessionIssue (identity_test.go:1134-1179), which deterministically pauses authenticated login, completes recovery, and asserts no late session is created. No undeclared experiment was run.",
+            "owner": "identity-local"
+          },
+          {
+            "blocker_id": "BLK-7e002b74f69c",
+            "root_cause_key": "identity-concurrent-idempotency-omits-password-equivalence",
+            "obligation_id": "dimension:structure",
+            "summary": "Concurrent replay branches skip the password-equivalence checks used for ordinary idempotent retries.",
+            "evidence": "Static evidence: recovery.go:195 hashes only the token digest; completedRecoveryReplay at 271-311 verifies password equivalence, but the transaction replay branch at 228-232 directly unmarshals the saved result. service.go:128-130 omits password from the bootstrap digest and 177-183 skips bootstrapReplay verification when the record appears between the initial lookup and transaction. invitation.go:308 similarly omits password and 326-330 skips acceptedInvitationReplay verification. Existing concurrent tests use different idempotency keys; ordinary replay tests validate sequential changed-input rejection, not this race. No additional negative-test input was constructed.",
+            "required_fix": "Make password-equivalence validation part of every idempotency replay decision, including the atomic transaction branch, using the same protected comparison semantics as the ordinary replay path. Do not store plaintext or an unkeyed low-entropy request-password digest. Add deterministic concurrent same-key tests for identical input and changed input across bootstrap, invitation acceptance, and recovery; changed input must return a conflict rather than success.",
+            "status": "fixed",
+            "classification": "fixed",
+            "last_evidence": "Transaction replay branches at service.go:178-184, invitation.go:326-332, recovery.go:231-237 all invoke verifyReplayPassword (service.go:572-583), as do ordinary replay paths. This reads the protected credential hash and compares through the authenticator, with no persisted plaintext or added password request digest. Declared full suite independently passed TestConcurrentBootstrapIdempotencyChecksPasswordEquivalence, TestConcurrentInvitationIdempotencyChecksPasswordEquivalence, and TestConcurrentRecoveryIdempotencyChecksPasswordEquivalence; deterministic hashing barriers exercise same-input success and changed-input conflict.",
+            "owner": "identity-local"
+          },
+          {
+            "blocker_id": "BLK-8646e42ba221",
+            "root_cause_key": "identity-dependency-errors-mapped-to-user-denials",
+            "obligation_id": "dimension:execution",
+            "summary": "Installer-authority outages and cancellation are still converted into permission denials.",
+            "evidence": "Static control-flow evidence at internal/identity/service.go:93-95 and internal/identity/recovery.go:121-123: any InstallerAuthority error is replaced with ErrForbidden. The port at types.go:163-166 returns a general error, with no denial-only restriction. fakeInstaller at identity_test.go:713-732 returns only business denials; TestBootstrapInstallerAndPersistenceFailureMatrix and TestRecoveryIssueAndBreakGlassFailureMatrix therefore do not exercise these operational failure paths. All existing declared commands passed; no additional negative test was constructed.",
+            "required_fix": "Preserve or wrap operational/cancellation errors from both InstallerAuthority calls; map only an explicitly typed/sentinel authorization denial to ErrForbidden. Keep missing/invalid proof fail-closed and retain the intentional post-commit session and notification fallbacks. Add coverage in the existing declared suite for actual denial versus operational failure and cancellation for both installer entry points.",
+            "status": "open",
+            "classification": "deeper",
+            "owner": "identity-local",
+            "last_evidence": "Previously cited authentication, replay-verification, Policy and LocalScopeID errors are now preserved at service.go:365-367,572-601,434-439; invitation.go:457-462; recovery.go:217-219. TestSessionAndAuthorizationFailureMatrix and TestIdempotencyReplayPreservesPasswordVerifierFailures passed independently. However the same error-flattening defect remains at installer-authority dependencies: service.go:93-95 maps every error to ErrForbidden and recovery.go:121-123 does likewise. The error-returning InstallerAuthority port (types.go:163-166) provides no guarantee that only business denials can be returned. Current installer tests cover denial/missing proof, not operational errors or cancellation. See the retained root-cause blocker."
+          },
+          {
+            "blocker_id": "BLK-8c9128c2b72c",
+            "root_cause_key": "identity-request-metadata-regenerated-within-http-request",
+            "obligation_id": "dimension:evidence",
+            "summary": "Protected HTTP mutations regenerate request identity instead of propagating the resolved request metadata.",
+            "evidence": "handler.go:267 obtains requestMetadata for ResolveBrowserSession and 273 exposes that RequestID; protected route callbacks invoke requestMetadata(r) again (e.g. 204 and 252). requestMetadata at 292-303 generates a new random RequestID each call and does not attach it to the request. locale.go:54-56 and recovery.go:40-42 overwrite the RequestContext IDs with the second metadata. The shared governance reference security-and-enterprise.md:13-15 requires request identity propagation and causal tracing. Handler tests use testApplication, returning a fixed context at handler_test.go:119-124, and do not assert identity equality between resolution, authorization, audit, and response. Static code inspection establishes this discrepancy; no new request experiment was run.",
+            "required_fix": "Normalize metadata exactly once at the HTTP entry and pass the same immutable metadata through session resolution and the application call. Preserve the resolved RequestContext request/causation/correlation IDs instead of overwriting them with independently generated ones. Add handler-to-service regression assertions for absent and supplied request IDs across locale, recovery, invitation, and logout paths.",
+            "status": "fixed",
+            "classification": "fixed",
+            "last_evidence": "api/auth/local/handler.go:63,294-321 resolves request metadata once in the outer middleware and caches it in the request context. Session resolution and protected callbacks receive the same metadata; RequestContext IDs are carried to authorization and canonical audit in internal/identity/locale.go:50-57,99 and recovery.go:40-43,94. The independently rerun TestProtectedMutationsPropagateOneRequestMetadataValue checks generated and supplied IDs, correlation/causation, application RequestContext, and response headers for locale, recovery, invitation create/reissue/revoke, and logout.",
+            "owner": "identity-local"
+          },
+          {
+            "blocker_id": "BLK-9a7d286279b9",
+            "root_cause_key": "identity-breakglass-concurrent-replay-returns-unpersisted-token",
+            "obligation_id": "dimension:structure",
+            "summary": "Concurrent break-glass recovery replay can return a successful response with a recovery link that was never persisted.",
+            "evidence": "Static evidence: internal/identity/recovery.go:134-145 performs an initial replay read, then allocates a fresh challenge identity and token. If another identical request commits before this call enters Transact, lines 148-151 load the prior result and return from the callback without storing this call's challenge/token digest. After that successful transaction, line 178 unconditionally attaches this call's fresh token to the replayed result. Ordinary recovery issue at recovery.go:102-104, invitation create at invitation.go:112-114, and reissue at invitation.go:205-207 already guard this exact branch by comparing the committed result identity. TestRecoveryAuthorizationScopeAndBreakGlassReplayFailures at failure_paths_test.go:910-917 only checks sequential replay, so the declared passing suite does not rule this out. This finding is based solely on code inspection, not a new security experiment.",
+            "required_fix": "Track whether this call actually committed the newly generated break-glass challenge and only expose its one-time link on that branch. Return the persisted token-free result on concurrent replay, consistently with ordinary recovery/invitation issuance, without storing plaintext tokens. Add a deterministic concurrent same-key regression to the existing declared suite proving that every emitted link corresponds to a committed challenge, only one challenge/audit is created, and replay emits no new link.",
+            "status": "open",
+            "classification": "new",
+            "owner": "identity-local"
+          }
+        ]
+      },
+      {
+        "round": 3,
+        "subject_digest": "235a8e4f0b3b413af689babf309f65d66f51db88d0b0b4d38042697e2cbd43ed",
+        "report_digest": "7dc767b988f3a6a5e0c8ca6606fc4cb15bb184d61998098011e4233195bcc244",
+        "verdict": "reject",
+        "obligation_results": {
+          "dimension:authority": "pass",
+          "dimension:structure": "fail",
+          "dimension:execution": "pass",
+          "dimension:ownership": "fail",
+          "dimension:evidence": "pass",
+          "dimension:regression": "pass",
+          "integration:identity-local-gate": "pass"
+        },
+        "new_count": 2,
+        "fixed_count": 2,
+        "regressed_count": 0,
+        "unchanged_count": 0,
+        "open_count": 2,
+        "prior_open_blocker_ids": [
+          "BLK-8646e42ba221",
+          "BLK-9a7d286279b9"
+        ],
+        "open_blocker_ids": [
+          "BLK-36b4b6bd212e",
+          "BLK-6edcc5450e8d"
+        ],
+        "reported_blocker_ids": [
+          "BLK-36b4b6bd212e",
+          "BLK-6edcc5450e8d"
+        ],
+        "blocker_facts_schema": "omac.review-cycle-blocker-facts/v1",
+        "blocker_facts": [
+          {
+            "blocker_id": "BLK-36b4b6bd212e",
+            "root_cause_key": "identity-one-time-proof-audit-fabricates-authorization-policy-provenance",
+            "obligation_id": "dimension:ownership",
+            "summary": "One-time proof audits manufacture AuthorizationPolicy and matched-grant provenance instead of recording the controls actually evaluated.",
+            "evidence": "Static evidence: internal/identity/audit.go:22-43 constructs a fresh authz.AuthorizationDecision with an identity.one-time.<proof-kind> policy ID, revision 1, the proof digest as PolicyDigest and a hard-coded one-time/valid-<proof-kind> matched grant. It never obtains an AuthorizationDecision from Authorizer or a persisted policy from Governance. authorizationControl at audit.go:59-80 presents those fields as ControlAuthorization provenance. Callers are service.go:220, invitation.go:366 and recovery.go:175,277. Required security-and-enterprise.md:184-201,247-259 requires the single engine/current Scope policy and real immutable policy provenance; docs/design/detailed/10-web-api-cli-detailed-design.md:304 states one Scope has one current policy. The helper creates a parallel fictional policy family solely to satisfy audit validation. AuditEvent.Validate (contracts/governance/audit/contract.go:373-390) requires evaluated controls but does not establish that their policy/grant references exist. No exploit, network probe or new negative test was performed.",
+            "required_fix": "Remove the synthesized AuthorizationDecision/policy/grant family. Record truthful evaluated-control evidence from the actual installer authority, bootstrap/current governance policy, invitation authorization and/or authentication receipt as appropriate to each entry point, keeping pre-authentication proof checks distinct from a Scope AuthorizationEngine decision. Do not relabel a token digest as a policy digest or invent a Provider release. If the upstream canonical audit schema cannot represent the required proof control, expose that precise contract-boundary conflict rather than fabricating provenance. Add existing-suite assertions that policy/control identities, revisions, digests and grants resolve to the real evaluated source.",
+            "status": "open",
+            "classification": "new",
+            "owner": "identity-local"
+          },
+          {
+            "blocker_id": "BLK-6edcc5450e8d",
+            "root_cause_key": "identity-audit-context-reference-is-external-request-id",
+            "obligation_id": "dimension:structure",
+            "summary": "Identity audit events use the external request ID as a persisted RequestContext reference without a context persistence/binding boundary.",
+            "evidence": "Static evidence on reviewed head: internal/identity/audit.go:14-19 drops the authenticated RequestContext down to three correlation fields; audit.go:83-99 unconditionally sets AuditEvent.RequestContextID to metadata.RequestID. RequestMetadata at types.go:192-197 has no persisted context reference; Tx at types.go:113-134 exposes only AppendAudit(AuditEvent), with no operation receiving/binding the trusted context. ResolveBrowserSession at service.go:444-464 constructs and returns the transient context, without issuing a persisted reference. The HTTP request ID may originate from a caller header (api/auth/local/handler.go:310-321). This conflicts with required security-and-enterprise.md:305-306,317 and contracts/governance/audit/contract.go:1075-1083, which explicitly distinguish the persisted RequestContextID from the external RequestID. Test store AppendAudit at identity_test.go:408-416 only validates/appends the event; locale audit tests count events/denials, not persisted context bindings. All declared tests pass; no additional negative experiment was constructed.",
+            "required_fix": "Provide an explicit canonical audit/context persistence boundary in the owned identity port that receives the trusted context and supplies a server-issued persisted reference. Set AuditEvent.RequestContextID to that reference and retain external RequestID in the context record/summary, preserving correlation and causation. Apply this to successful writes, denials and the explicitly supported pre-authentication/installer evidence paths without inventing anonymous administrator contexts. Extend the existing declared tests to prove the event resolves to the correct persisted context and that external RequestID is not substituted for its identity. This is a module port/binding requirement, not a demand for an undeclared downstream live database.",
+            "status": "open",
+            "classification": "new",
+            "owner": "identity-local"
+          },
+          {
+            "blocker_id": "BLK-8646e42ba221",
+            "root_cause_key": "identity-dependency-errors-mapped-to-user-denials",
+            "obligation_id": "dimension:execution",
+            "summary": "Installer-authority outages and cancellation are still converted into permission denials.",
+            "evidence": "Static control-flow evidence at internal/identity/service.go:93-95 and internal/identity/recovery.go:121-123: any InstallerAuthority error is replaced with ErrForbidden. The port at types.go:163-166 returns a general error, with no denial-only restriction. fakeInstaller at identity_test.go:713-732 returns only business denials; TestBootstrapInstallerAndPersistenceFailureMatrix and TestRecoveryIssueAndBreakGlassFailureMatrix therefore do not exercise these operational failure paths. All existing declared commands passed; no additional negative test was constructed.",
+            "required_fix": "Preserve or wrap operational/cancellation errors from both InstallerAuthority calls; map only an explicitly typed/sentinel authorization denial to ErrForbidden. Keep missing/invalid proof fail-closed and retain the intentional post-commit session and notification fallbacks. Add coverage in the existing declared suite for actual denial versus operational failure and cancellation for both installer entry points.",
+            "status": "fixed",
+            "classification": "fixed",
+            "last_evidence": "service.go:93-97 and recovery.go:122-130 map only errors.Is(ErrForbidden) to denial, wrap all other installer errors and reject missing proof. The independently executed TestBootstrapInstallerAndPersistenceFailureMatrix and TestRecoveryAuthorizationScopeAndBreakGlassReplayFailures include operational error and cancellation cases and distinguish them from actual denial. Existing credential/governance error propagation and intentional post-commit fallbacks remain intact.",
+            "owner": "identity-local"
+          },
+          {
+            "blocker_id": "BLK-9a7d286279b9",
+            "root_cause_key": "identity-breakglass-concurrent-replay-returns-unpersisted-token",
+            "obligation_id": "dimension:structure",
+            "summary": "Concurrent break-glass recovery replay can return a successful response with a recovery link that was never persisted.",
+            "evidence": "Static evidence: internal/identity/recovery.go:134-145 performs an initial replay read, then allocates a fresh challenge identity and token. If another identical request commits before this call enters Transact, lines 148-151 load the prior result and return from the callback without storing this call's challenge/token digest. After that successful transaction, line 178 unconditionally attaches this call's fresh token to the replayed result. Ordinary recovery issue at recovery.go:102-104, invitation create at invitation.go:112-114, and reissue at invitation.go:205-207 already guard this exact branch by comparing the committed result identity. TestRecoveryAuthorizationScopeAndBreakGlassReplayFailures at failure_paths_test.go:910-917 only checks sequential replay, so the declared passing suite does not rule this out. This finding is based solely on code inspection, not a new security experiment.",
+            "required_fix": "Track whether this call actually committed the newly generated break-glass challenge and only expose its one-time link on that branch. Return the persisted token-free result on concurrent replay, consistently with ordinary recovery/invitation issuance, without storing plaintext tokens. Add a deterministic concurrent same-key regression to the existing declared suite proving that every emitted link corresponds to a committed challenge, only one challenge/audit is created, and replay emits no new link.",
+            "status": "fixed",
+            "classification": "fixed",
+            "last_evidence": "recovery.go:154-193 resets a created flag for each transaction callback, sets it only after challenge/audit/idempotency persistence succeeds, and attaches the token URL only for created=true. Concurrent replay returns the persisted token-free summary. TestConcurrentBreakGlassReplayOnlyReturnsPersistedToken at failure_paths_test.go:959-1025 uses a deterministic ID barrier, asserts one persisted challenge, one matching emitted link, one audit and a token-free subsequent replay; it passed in the uncached full declared suite.",
+            "owner": "identity-local"
+          }
+        ]
+      }
+    ],
+    "blockers": [
+      {
+        "blocker_id": "BLK-36b4b6bd212e",
+        "root_cause_key": "identity-one-time-proof-audit-fabricates-authorization-policy-provenance",
+        "obligation_id": "dimension:ownership",
+        "summary": "One-time proof audits manufacture AuthorizationPolicy and matched-grant provenance instead of recording the controls actually evaluated.",
+        "evidence": "Static evidence: internal/identity/audit.go:22-43 constructs a fresh authz.AuthorizationDecision with an identity.one-time.<proof-kind> policy ID, revision 1, the proof digest as PolicyDigest and a hard-coded one-time/valid-<proof-kind> matched grant. It never obtains an AuthorizationDecision from Authorizer or a persisted policy from Governance. authorizationControl at audit.go:59-80 presents those fields as ControlAuthorization provenance. Callers are service.go:220, invitation.go:366 and recovery.go:175,277. Required security-and-enterprise.md:184-201,247-259 requires the single engine/current Scope policy and real immutable policy provenance; docs/design/detailed/10-web-api-cli-detailed-design.md:304 states one Scope has one current policy. The helper creates a parallel fictional policy family solely to satisfy audit validation. AuditEvent.Validate (contracts/governance/audit/contract.go:373-390) requires evaluated controls but does not establish that their policy/grant references exist. No exploit, network probe or new negative test was performed.",
+        "required_fix": "Remove the synthesized AuthorizationDecision/policy/grant family. Record truthful evaluated-control evidence from the actual installer authority, bootstrap/current governance policy, invitation authorization and/or authentication receipt as appropriate to each entry point, keeping pre-authentication proof checks distinct from a Scope AuthorizationEngine decision. Do not relabel a token digest as a policy digest or invent a Provider release. If the upstream canonical audit schema cannot represent the required proof control, expose that precise contract-boundary conflict rather than fabricating provenance. Add existing-suite assertions that policy/control identities, revisions, digests and grants resolve to the real evaluated source.",
+        "status": "open",
+        "classification": "new",
+        "owner": "identity-local",
+        "first_seen_round": 3,
+        "last_seen_round": 3,
+        "seen_count": 1
+      },
+      {
+        "blocker_id": "BLK-62858e200019",
+        "root_cause_key": "identity-recovery-session-issuance-not-serialized",
+        "obligation_id": "dimension:structure",
+        "summary": "Session issuance is not fenced against concurrent password recovery.",
+        "evidence": "Static control-flow evidence: internal/identity/service.go:362-370 authenticates outside the session-write transaction; createSession at service.go:294-355 resolves identity and access before a transaction containing only CreateSession and AppendAudit. internal/identity/recovery.go:247-255 replaces the credential and revokes currently stored sessions in a separate transaction. SessionRecord/Tx at types.go:81-86,125-127 carry no credential generation or conditional issuance fence. TestRecoveryIssueCompletionRevokesSessionsAndIsIdempotent and TestUJIdentity001BootstrapInvitationLocaleRecoveryAndSessionLifecycle exercise already-persisted sessions sequentially; they do not cover in-flight authentication. This finding is based on code inspection, not an additional security experiment.",
+        "required_fix": "Serialize local credential validation/session issuance with recovery, or bind the verified authentication to a credential/session generation checked atomically at session creation and session resolution. Apply the same boundary to login and bootstrap/invitation auto-login. Add a deterministic local regression proving recovery invalidates pre-recovery authentication even when session persistence completes later, without retaining plaintext credentials.",
+        "status": "fixed",
+        "classification": "fixed",
+        "owner": "identity-local",
+        "first_seen_round": 1,
+        "last_seen_round": 2,
+        "seen_count": 1,
+        "last_evidence": "internal/identity/service.go:338-353 revalidates the current password inside the session-write transaction; recovery.go:253-260 replaces the credential and revokes sessions in the same Store transaction boundary. Login, bootstrap auto-login (service.go:271), and invitation auto-login (invitation.go:420) share createSession. Independently rerun full declared suite includes TestRecoveryFencesAuthenticationBeforeSessionIssue (identity_test.go:1134-1179), which deterministically pauses authenticated login, completes recovery, and asserts no late session is created. No undeclared experiment was run."
+      },
+      {
+        "blocker_id": "BLK-6edcc5450e8d",
+        "root_cause_key": "identity-audit-context-reference-is-external-request-id",
+        "obligation_id": "dimension:structure",
+        "summary": "Identity audit events use the external request ID as a persisted RequestContext reference without a context persistence/binding boundary.",
+        "evidence": "Static evidence on reviewed head: internal/identity/audit.go:14-19 drops the authenticated RequestContext down to three correlation fields; audit.go:83-99 unconditionally sets AuditEvent.RequestContextID to metadata.RequestID. RequestMetadata at types.go:192-197 has no persisted context reference; Tx at types.go:113-134 exposes only AppendAudit(AuditEvent), with no operation receiving/binding the trusted context. ResolveBrowserSession at service.go:444-464 constructs and returns the transient context, without issuing a persisted reference. The HTTP request ID may originate from a caller header (api/auth/local/handler.go:310-321). This conflicts with required security-and-enterprise.md:305-306,317 and contracts/governance/audit/contract.go:1075-1083, which explicitly distinguish the persisted RequestContextID from the external RequestID. Test store AppendAudit at identity_test.go:408-416 only validates/appends the event; locale audit tests count events/denials, not persisted context bindings. All declared tests pass; no additional negative experiment was constructed.",
+        "required_fix": "Provide an explicit canonical audit/context persistence boundary in the owned identity port that receives the trusted context and supplies a server-issued persisted reference. Set AuditEvent.RequestContextID to that reference and retain external RequestID in the context record/summary, preserving correlation and causation. Apply this to successful writes, denials and the explicitly supported pre-authentication/installer evidence paths without inventing anonymous administrator contexts. Extend the existing declared tests to prove the event resolves to the correct persisted context and that external RequestID is not substituted for its identity. This is a module port/binding requirement, not a demand for an undeclared downstream live database.",
+        "status": "open",
+        "classification": "new",
+        "owner": "identity-local",
+        "first_seen_round": 3,
+        "last_seen_round": 3,
+        "seen_count": 1
+      },
+      {
+        "blocker_id": "BLK-7e002b74f69c",
+        "root_cause_key": "identity-concurrent-idempotency-omits-password-equivalence",
+        "obligation_id": "dimension:structure",
+        "summary": "Concurrent replay branches skip the password-equivalence checks used for ordinary idempotent retries.",
+        "evidence": "Static evidence: recovery.go:195 hashes only the token digest; completedRecoveryReplay at 271-311 verifies password equivalence, but the transaction replay branch at 228-232 directly unmarshals the saved result. service.go:128-130 omits password from the bootstrap digest and 177-183 skips bootstrapReplay verification when the record appears between the initial lookup and transaction. invitation.go:308 similarly omits password and 326-330 skips acceptedInvitationReplay verification. Existing concurrent tests use different idempotency keys; ordinary replay tests validate sequential changed-input rejection, not this race. No additional negative-test input was constructed.",
+        "required_fix": "Make password-equivalence validation part of every idempotency replay decision, including the atomic transaction branch, using the same protected comparison semantics as the ordinary replay path. Do not store plaintext or an unkeyed low-entropy request-password digest. Add deterministic concurrent same-key tests for identical input and changed input across bootstrap, invitation acceptance, and recovery; changed input must return a conflict rather than success.",
+        "status": "fixed",
+        "classification": "fixed",
+        "owner": "identity-local",
+        "first_seen_round": 1,
+        "last_seen_round": 2,
+        "seen_count": 1,
+        "last_evidence": "Transaction replay branches at service.go:178-184, invitation.go:326-332, recovery.go:231-237 all invoke verifyReplayPassword (service.go:572-583), as do ordinary replay paths. This reads the protected credential hash and compares through the authenticator, with no persisted plaintext or added password request digest. Declared full suite independently passed TestConcurrentBootstrapIdempotencyChecksPasswordEquivalence, TestConcurrentInvitationIdempotencyChecksPasswordEquivalence, and TestConcurrentRecoveryIdempotencyChecksPasswordEquivalence; deterministic hashing barriers exercise same-input success and changed-input conflict."
+      },
+      {
+        "blocker_id": "BLK-8646e42ba221",
+        "root_cause_key": "identity-dependency-errors-mapped-to-user-denials",
+        "obligation_id": "dimension:execution",
+        "summary": "Installer-authority outages and cancellation are still converted into permission denials.",
+        "evidence": "Static control-flow evidence at internal/identity/service.go:93-95 and internal/identity/recovery.go:121-123: any InstallerAuthority error is replaced with ErrForbidden. The port at types.go:163-166 returns a general error, with no denial-only restriction. fakeInstaller at identity_test.go:713-732 returns only business denials; TestBootstrapInstallerAndPersistenceFailureMatrix and TestRecoveryIssueAndBreakGlassFailureMatrix therefore do not exercise these operational failure paths. All existing declared commands passed; no additional negative test was constructed.",
+        "required_fix": "Preserve or wrap operational/cancellation errors from both InstallerAuthority calls; map only an explicitly typed/sentinel authorization denial to ErrForbidden. Keep missing/invalid proof fail-closed and retain the intentional post-commit session and notification fallbacks. Add coverage in the existing declared suite for actual denial versus operational failure and cancellation for both installer entry points.",
+        "status": "fixed",
+        "classification": "fixed",
+        "owner": "identity-local",
+        "first_seen_round": 1,
+        "last_seen_round": 3,
+        "seen_count": 2,
+        "last_evidence": "service.go:93-97 and recovery.go:122-130 map only errors.Is(ErrForbidden) to denial, wrap all other installer errors and reject missing proof. The independently executed TestBootstrapInstallerAndPersistenceFailureMatrix and TestRecoveryAuthorizationScopeAndBreakGlassReplayFailures include operational error and cancellation cases and distinguish them from actual denial. Existing credential/governance error propagation and intentional post-commit fallbacks remain intact."
+      },
+      {
+        "blocker_id": "BLK-8c9128c2b72c",
+        "root_cause_key": "identity-request-metadata-regenerated-within-http-request",
+        "obligation_id": "dimension:evidence",
+        "summary": "Protected HTTP mutations regenerate request identity instead of propagating the resolved request metadata.",
+        "evidence": "handler.go:267 obtains requestMetadata for ResolveBrowserSession and 273 exposes that RequestID; protected route callbacks invoke requestMetadata(r) again (e.g. 204 and 252). requestMetadata at 292-303 generates a new random RequestID each call and does not attach it to the request. locale.go:54-56 and recovery.go:40-42 overwrite the RequestContext IDs with the second metadata. The shared governance reference security-and-enterprise.md:13-15 requires request identity propagation and causal tracing. Handler tests use testApplication, returning a fixed context at handler_test.go:119-124, and do not assert identity equality between resolution, authorization, audit, and response. Static code inspection establishes this discrepancy; no new request experiment was run.",
+        "required_fix": "Normalize metadata exactly once at the HTTP entry and pass the same immutable metadata through session resolution and the application call. Preserve the resolved RequestContext request/causation/correlation IDs instead of overwriting them with independently generated ones. Add handler-to-service regression assertions for absent and supplied request IDs across locale, recovery, invitation, and logout paths.",
+        "status": "fixed",
+        "classification": "fixed",
+        "owner": "identity-local",
+        "first_seen_round": 1,
+        "last_seen_round": 2,
+        "seen_count": 1,
+        "last_evidence": "api/auth/local/handler.go:63,294-321 resolves request metadata once in the outer middleware and caches it in the request context. Session resolution and protected callbacks receive the same metadata; RequestContext IDs are carried to authorization and canonical audit in internal/identity/locale.go:50-57,99 and recovery.go:40-43,94. The independently rerun TestProtectedMutationsPropagateOneRequestMetadataValue checks generated and supplied IDs, correlation/causation, application RequestContext, and response headers for locale, recovery, invitation create/reissue/revoke, and logout."
+      },
+      {
+        "blocker_id": "BLK-9a7d286279b9",
+        "root_cause_key": "identity-breakglass-concurrent-replay-returns-unpersisted-token",
+        "obligation_id": "dimension:structure",
+        "summary": "Concurrent break-glass recovery replay can return a successful response with a recovery link that was never persisted.",
+        "evidence": "Static evidence: internal/identity/recovery.go:134-145 performs an initial replay read, then allocates a fresh challenge identity and token. If another identical request commits before this call enters Transact, lines 148-151 load the prior result and return from the callback without storing this call's challenge/token digest. After that successful transaction, line 178 unconditionally attaches this call's fresh token to the replayed result. Ordinary recovery issue at recovery.go:102-104, invitation create at invitation.go:112-114, and reissue at invitation.go:205-207 already guard this exact branch by comparing the committed result identity. TestRecoveryAuthorizationScopeAndBreakGlassReplayFailures at failure_paths_test.go:910-917 only checks sequential replay, so the declared passing suite does not rule this out. This finding is based solely on code inspection, not a new security experiment.",
+        "required_fix": "Track whether this call actually committed the newly generated break-glass challenge and only expose its one-time link on that branch. Return the persisted token-free result on concurrent replay, consistently with ordinary recovery/invitation issuance, without storing plaintext tokens. Add a deterministic concurrent same-key regression to the existing declared suite proving that every emitted link corresponds to a committed challenge, only one challenge/audit is created, and replay emits no new link.",
+        "status": "fixed",
+        "classification": "fixed",
+        "owner": "identity-local",
+        "first_seen_round": 2,
+        "last_seen_round": 3,
+        "seen_count": 1,
+        "last_evidence": "recovery.go:154-193 resets a created flag for each transaction callback, sets it only after challenge/audit/idempotency persistence succeeds, and attaches the token URL only for created=true. Concurrent replay returns the persisted token-free summary. TestConcurrentBreakGlassReplayOnlyReturnsPersistedToken at failure_paths_test.go:959-1025 uses a deterministic ID barrier, asserts one persisted challenge, one matching emitted link, one audit and a token-free subsequent replay; it passed in the uncached full declared suite."
+      }
+    ]
+  },
+  "review_ledger_ref": {
+    "comment_id": "01a105da-f837-7958-ae81-d36ecd5570b0",
+    "attachment_id": "01a105da-f7e4-73f5-ad13-ac6b09400786",
+    "sha256": "b116b01b16757abbe0b4afabe9e6a287319ab60a62f41a0b733fea38a41318dc",
+    "bytes": 45330,
+    "filename": "omac-review-ledger-b116b01b1675.yaml"
+  },
+  "review_generation": "authoring-0c622c5ff02a17941d851639",
+  "review_ledger_generation": "authoring-0c622c5ff02a17941d851639",
+  "review_continuation": null,
+  "reviewer_run_baseline": null,
+  "worker_handoff": {
+    "schema": "omac.worker-handoff/v1",
+    "state": "pending",
+    "target_worker": "codex-ubuntu-newapi",
+    "gate": "review",
+    "source_review_subject_digest": "235a8e4f0b3b413af689babf309f65d66f51db88d0b0b4d38042697e2cbd43ed",
+    "source_review_round": 3,
+    "source_review_verdict": "reject",
+    "source_review_feedback": {
+      "schema": "omac.worker-rework-feedback/v1",
+      "verdict": "reject",
+      "report_ref": {
+        "comment_id": "01a105da-f54b-7b25-9755-2731e5d865d0",
+        "attachment_id": "01a105da-f4d7-702b-bbc2-1e6e082cd22b",
+        "sha256": "2027651b5ad18ad04b65a2fe37c6118e75390919914e363950070359c7a91b9c",
+        "bytes": 17541,
+        "filename": "omac-review-report-2027651b5ad1.yaml"
+      },
+      "ledger_ref": {
+        "comment_id": "01a105da-f837-7958-ae81-d36ecd5570b0",
+        "attachment_id": "01a105da-f7e4-73f5-ad13-ac6b09400786",
+        "sha256": "b116b01b16757abbe0b4afabe9e6a287319ab60a62f41a0b733fea38a41318dc",
+        "bytes": 45330,
+        "filename": "omac-review-ledger-b116b01b1675.yaml"
+      },
+      "blockers": [
+        {
+          "root_cause_key": "identity-audit-context-reference-is-external-request-id",
+          "summary": "Identity audit events use the external request ID as a persisted RequestContext reference without a context persistence/binding boundary.",
+          "required_fix": "Provide an explicit canonical audit/context persistence boundary in the owned identity port that receives the trusted context and supplies a server-issued persisted reference. Set AuditEvent.RequestContextID to that reference and retain external RequestID "
+        },
+        {
+          "root_cause_key": "identity-one-time-proof-audit-fabricates-authorization-policy-provenance",
+          "summary": "One-time proof audits manufacture AuthorizationPolicy and matched-grant provenance instead of recording the controls actually evaluated.",
+          "required_fix": "Remove the synthesized AuthorizationDecision/policy/grant family. Record truthful evaluated-control evidence from the actual installer authority, bootstrap/current governance policy, invitation authorization and/or authentication receipt as appropriate to "
+        }
+      ]
+    },
+    "review_context_binding": {
+      "generation": "authoring-0c622c5ff02a17941d851639",
+      "contract_sha256": "6e04456af2eded11a203e196e04570284629005a2d834872ada9fcd235bca017"
+    },
+    "target_review_bounce": 3,
+    "generation": "handoff-302dcd58d8364b3f",
+    "target_agent_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+    "baseline_direct_run_ids": [
+      "01a10383-95f4-74eb-8f1c-4378bdb2cde8",
+      "01a10433-e80a-73ff-a12b-c403725bd25b",
+      "01a10480-16e8-7208-8ddc-c90188c0d06c",
+      "01a1048f-f04e-7259-b41d-c2e2cfddf844",
+      "01a104b0-3baf-78db-8a53-38bacb419958",
+      "01a105be-f42b-7bb9-8a29-2297125e0187",
+      "01a105c9-654e-7103-8438-06c4c6e36d98"
+    ],
+    "baseline_cutoff_created_at": null,
+    "baseline_verification_attachment_id": "01a105c7-919f-759d-aef1-fe769f1213e3",
+    "baseline_pr_head_sha": "ce2e24013d151c41c9d058cb2262f64d8374281a",
+    "target_run_id": "01a105e7-b226-7d74-aaa1-c2ebf8f397f0",
+    "target_worker_bounce": 0,
+    "terminal_observed_at": null,
+    "authoring_recovery": null
+  },
+  "delivery_identity": null,
+  "decision_required": {
+    "schema": "omac.decision-required/v1",
+    "reason_code": "worker-decision-required",
+    "kind": "develop",
+    "phase": "authoring",
+    "gate": "worker",
+    "resume_issue_id": "01a10382-ee40-74ef-8809-109e5d50bbe7",
+    "review_context_binding": {
+      "generation": "authoring-0c622c5ff02a17941d851639",
+      "contract_sha256": "6e04456af2eded11a203e196e04570284629005a2d834872ada9fcd235bca017"
+    },
+    "blocker": {
+      "schema": "omac.worker-blocker/v2",
+      "reason_code": "owner-decision-required",
+      "issue_id": "01a10382-ee40-74ef-8809-109e5d50bbe7",
+      "review_context_binding": {
+        "generation": "authoring-0c622c5ff02a17941d851639",
+        "contract_sha256": "6e04456af2eded11a203e196e04570284629005a2d834872ada9fcd235bca017"
+      },
+      "handoff_generation": "handoff-302dcd58d8364b3f",
+      "worker": "codex-ubuntu-newapi",
+      "run_id": "01a105e7-b226-7d74-aaa1-c2ebf8f397f0",
+      "summary": "Canonical contracts cannot represent required proof audits or installer contexts without fictional authorization and identity provenance.",
+      "decision_needed": "Approve an upstream audit/context schema extension for credential proofs and installer contexts, or narrow this issue's audit scope for those flows.",
+      "contract_ref": "required_contracts",
+      "evidence": [
+        {
+          "ref": "open-agent-cluster/contracts/governance/audit/contract.go#L42-L48,L174-L212; open-agent-cluster/docs/references/governance/security-and-enterprise.md#L311-L321",
+          "observation": "Only authorization, admission, and provider controls are valid. They require policy/grant, typed execution-admission, or exact provider-release evidence; no control represents credential proof."
+        },
+        {
+          "ref": "open-agent-cluster/contracts/identity/requestcontext/request_context.go#L21-L55; open-agent-cluster/contracts/governance/audit/contract.go#L1075-L1085; open-agent-cluster/internal/identity/types.go#L113-L133; open-agent-cluster/internal/identity/audit.go#L22-L43; open-agent-cluster/internal/identity/recovery.go#L152-L179",
+          "observation": "RequestContext requires an authenticated Principal and auth/policy facts; AuditEvent requires a persisted context ID distinct from RequestID. Tx only appends audit. Installer supplies scope/proof digest but no authenticated actor; proofAuditEvent instead fabricates Authorization policy provenance."
+        }
+      ]
+    },
+    "next_action": "Resolve the reported decision, then explicitly run omac node retry <manifest> identity-local"
+  },
+  "amendment_attempt": null,
+  "contract": {
+    "objective": "Deliver first-admin, invitation, recovery and browser-session behavior plus one Principal-owned saved locale preference restricted to zh-CN|en-US, updated by Authorization and expected_revision CAS, audited without storing locale on Scope, Project, Workflow or Solution.",
+    "non_goals": [
+      "Do not let organization, Scope or Project override a Principal saved locale.",
+      "Do not persist anonymous browser locale on the server.",
+      "Do not treat a locale update as identity, authorization, Session or business-resource mutation.",
+      "Do not bypass authorization, expected_revision CAS, idempotency or audit."
+    ],
+    "verification_commands": [
+      "python3 -c \"from pathlib import Path; import hashlib; p=Path('account-locale-ownership-decision.md'); assert p.is_file() and hashlib.sha256(p.read_bytes()).hexdigest()=='2ee85c6551db299f14f4903e5b0086e678208b38c6a3cba276c8a32a5f1a5be6'\"",
+      "mkdir -p artifacts/identity-local && go test -covermode=atomic -coverprofile=artifacts/identity-local/coverage.out ./internal/identity/... ./api/auth/local/...",
+      "go test ./internal/identity/... ./api/auth/local/... -run \"Test.*LocalePreference.*(Create|Read|CAS|Conflict|Authorization|Audit|Session|Fallback)\" -count=1",
+      "go test ./internal/identity/... -run \"Test.*LocalePreference.*Rejects(Scope|Project|Workflow|Solution|UnsupportedLocale|AnonymousWrite)\" -count=1",
+      "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/identity-local/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+      "python3 scripts/release/package_component.py --component identity-local --kind platform-core-dependency-source --input internal/identity --input api/auth/local --bundle artifacts/identity-local/source-bundle.tar.zst --component-manifest artifacts/identity-local/component-manifest.json --digest-output artifacts/identity-local/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner identity-local --require-all-owner-sources-accounted"
+    ],
+    "integration_gates": [
+      {
+        "name": "identity-local-gate",
+        "layer": "L1",
+        "source_of_truth": [
+          "docs/design/detailed/09-governance-and-security-detailed-design.md:L100-L213",
+          "docs/design/detailed/10-web-api-cli-detailed-design.md:L170-L354",
+          "docs/delivery/acceptance-and-validation.md:L129-L150",
+          "account-locale-ownership-decision.md"
+        ],
+        "delivery_goal": "Deliver first-admin, invitation, recovery and browser-session behavior plus one Principal-owned saved locale preference restricted to zh-CN|en-US, updated by Authorization and expected_revision CAS, audited without storing locale on Scope, Project, Workflow or Solution.",
+        "covers": [
+          "identity-local"
+        ],
+        "acceptance_refs": [
+          "UJ-IDENTITY-001"
+        ],
+        "commands": [
+          "python3 -c \"from pathlib import Path; import hashlib; p=Path('account-locale-ownership-decision.md'); assert p.is_file() and hashlib.sha256(p.read_bytes()).hexdigest()=='2ee85c6551db299f14f4903e5b0086e678208b38c6a3cba276c8a32a5f1a5be6'\"",
+          "mkdir -p artifacts/identity-local && go test -covermode=atomic -coverprofile=artifacts/identity-local/coverage.out ./internal/identity/... ./api/auth/local/...",
+          "go test ./internal/identity/... ./api/auth/local/... -run \"Test.*LocalePreference.*(Create|Read|CAS|Conflict|Authorization|Audit|Session|Fallback)\" -count=1",
+          "go test ./internal/identity/... -run \"Test.*LocalePreference.*Rejects(Scope|Project|Workflow|Solution|UnsupportedLocale|AnonymousWrite)\" -count=1",
+          "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/identity-local/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+          "python3 scripts/release/package_component.py --component identity-local --kind platform-core-dependency-source --input internal/identity --input api/auth/local --bundle artifacts/identity-local/source-bundle.tar.zst --component-manifest artifacts/identity-local/component-manifest.json --digest-output artifacts/identity-local/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner identity-local --require-all-owner-sources-accounted"
+        ],
+        "required_metrics": {
+          "statement_coverage_percent": 90,
+          "locale_preference_conflict_accept_count": 0
+        },
+        "artifacts": [
+          "artifacts/identity-local/coverage.out",
+          "artifacts/identity-local/source-bundle.tar.zst",
+          "artifacts/identity-local/bundle-digest.txt",
+          "artifacts/identity-local/component-manifest.json"
+        ]
+      }
+    ],
+    "pr_base": "main",
+    "acceptance_refs": [
+      "UJ-IDENTITY-001"
+    ],
+    "source_of_truth": [
+      "docs/design/detailed/09-governance-and-security-detailed-design.md:L100-L213",
+      "docs/design/detailed/10-web-api-cli-detailed-design.md:L170-L354",
+      "docs/delivery/acceptance-and-validation.md:L129-L150",
+      "account-locale-ownership-decision.md"
+    ],
+    "required_contracts": [
+      "docs/references/governance/security-and-enterprise.md",
+      "account-locale-ownership-decision.md"
+    ],
+    "scope_paths": [
+      "internal/identity/**",
+      "api/auth/local/**",
+      "account-locale-ownership-decision.md"
+    ],
+    "evidence_mode": "artifact",
+    "produces": [
+      {
+        "artifact_id": "identity-local-account-locale-component"
+      }
+    ]
+  },
+  "contract_ref": {
+    "comment_id": "01a1042a-59f5-7d6d-8041-82b4b89dd126",
+    "attachment_id": "01a1042a-5872-7c67-9006-6b06067a2b45",
+    "sha256": "e417a6f6e3ea25e66ce001608ec11b8ec2074f9eb5153fe4ff27de5cea775fd4",
+    "bytes": 5373,
+    "filename": "omac-contract-e417a6f6e3ea.yaml"
+  },
+  "source_refs": [],
+  "kind": "TaskKind.DEVELOP",
+  "phase": "TaskPhase.AUTHORING",
+  "bounces": {
+    "worker": 0,
+    "ci": 0,
+    "review": 3,
+    "merge": 0
+  },
+  "bounce_baseline": null,
+  "deliverable": null,
+  "deliverable_ref": null,
+  "project_rules": null,
+  "project_rules_ref": null,
+  "agent_run_finished_without_submit": false,
+  "agent_run_failed": false,
+  "created_at": "2026-10-03T20:44:34Z",
+  "updated_at": "2026-10-04T08:12:48Z",
+  "platform_assignee_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+  "unknown_persisted_fields": {},
+  "review_nits_acceptance": null
+}

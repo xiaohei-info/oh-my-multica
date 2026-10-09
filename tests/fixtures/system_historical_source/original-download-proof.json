@@ -1,0 +1,62 @@
+{
+  "at": "2026-10-09T06:20:09.281514+00:00",
+  "rows": [
+    {
+      "source": "new-Reviewer-full-Store.json",
+      "kind": "report_ref",
+      "full_native_ref": {
+        "comment_id": "01a11e50-6970-7c64-93bc-cec7050091c6",
+        "attachment_id": "01a11e50-68fe-78a3-8a4e-bbfe95c57a9b",
+        "sha256": "ad632e6c2d92486ff50c635e815fb209def077df710d9a2403758450deb720e5",
+        "bytes": 16538,
+        "filename": "omac-review-report-ad632e6c2d92.yaml"
+      },
+      "physical_file": "/Users/chiangguantik/Documents/Codex/2026-09-26/omac-recovery-fixes/outputs/Root-System-release-owner-amendment-Source-20261009/original-independent-review-artifacts/01a11e50-68fe-78a3-8a4e-bbfe95c57a9b/omac-review-report-ad632e6c2d92.yaml",
+      "actual_exit": 0,
+      "full_SHA_bytes_exact": true
+    },
+    {
+      "source": "new-Reviewer-full-Store.json",
+      "kind": "ledger_ref",
+      "full_native_ref": {
+        "comment_id": "01a11e50-6c5e-7d40-8b95-9b9e758c421a",
+        "attachment_id": "01a11e50-6be1-7ac9-a218-1630117782a6",
+        "sha256": "09ded9238195407899585f9cb7e043e48ac5d9908d139e0c313ae391424f56e0",
+        "bytes": 13529,
+        "filename": "omac-review-ledger-09ded9238195.yaml"
+      },
+      "physical_file": "/Users/chiangguantik/Documents/Codex/2026-09-26/omac-recovery-fixes/outputs/Root-System-release-owner-amendment-Source-20261009/original-independent-review-artifacts/01a11e50-6be1-7ac9-a218-1630117782a6/omac-review-ledger-09ded9238195.yaml",
+      "actual_exit": 0,
+      "full_SHA_bytes_exact": true
+    },
+    {
+      "source": "Reviewer-cycle2-full-Store.json",
+      "kind": "report_ref",
+      "full_native_ref": {
+        "comment_id": "01a11ed0-7797-7d8c-83ad-b66e71f01be5",
+        "attachment_id": "01a11ed0-7732-782d-a67d-746ac5c48da8",
+        "sha256": "03b60b266b1d29a19d72981321108c5b69b282e109130aa15f123abb395872e3",
+        "bytes": 30573,
+        "filename": "omac-review-report-03b60b266b1d.yaml"
+      },
+      "physical_file": "/Users/chiangguantik/Documents/Codex/2026-09-26/omac-recovery-fixes/outputs/Root-System-release-owner-amendment-Source-20261009/original-independent-review-artifacts/01a11ed0-7732-782d-a67d-746ac5c48da8/omac-review-report-03b60b266b1d.yaml",
+      "actual_exit": 0,
+      "full_SHA_bytes_exact": true
+    },
+    {
+      "source": "Reviewer-cycle2-full-Store.json",
+      "kind": "ledger_ref",
+      "full_native_ref": {
+        "comment_id": "01a11ed0-7ab0-79ab-821f-299f08af9540",
+        "attachment_id": "01a11ed0-7a4c-7d6e-92b1-a79d4329e2ef",
+        "sha256": "df834e42602fb86576ad4929e61327257d9201f1df01fa5a1d271842500dc002",
+        "bytes": 50534,
+        "filename": "omac-review-ledger-df834e42602f.yaml"
+      },
+      "physical_file": "/Users/chiangguantik/Documents/Codex/2026-09-26/omac-recovery-fixes/outputs/Root-System-release-owner-amendment-Source-20261009/original-independent-review-artifacts/01a11ed0-7a4c-7d6e-92b1-a79d4329e2ef/omac-review-ledger-df834e42602f.yaml",
+      "actual_exit": 0,
+      "full_SHA_bytes_exact": true
+    }
+  ],
+  "not_new_review_or_Product_verdict": true
+}

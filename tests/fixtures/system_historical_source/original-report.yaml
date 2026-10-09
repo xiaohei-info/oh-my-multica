@@ -1,0 +1,152 @@
+{
+  "review_protocol": "omac.review/v2",
+  "review_goals": [
+    "Verify the current PR against exact-version preflight, ordered upgrade, previous-release rollback, recovery, and continuity requirements without claiming the trace-only UJ journey as a full acceptance pass.",
+    "Inspect the complete implementation and test diff, preserve installer and Workflow ownership boundaries, and independently reproduce all declared system-upgrade-gate commands and artifact lineage."
+  ],
+  "pr_url": "https://github.com/xiaohei-info/open-agent-cluster/pull/113",
+  "reviewed_head_sha": "f56e188d9abb9af5ac505b7f38de8ec6764c4b89",
+  "pr_base": "main",
+  "summary": "Reject: all declared commands pass and total statement coverage is 93.0%, but the implementation is disconnected from a production installer runtime, considers image-only convergence sufficient for release completion, cannot recover a same-target upgrade after a successful metadata commit with a lost response, and treats legitimate activity of running Workflows as continuity damage.",
+  "diff_reviewed": true,
+  "tests_rerun": true,
+  "integration_tests_rerun": true,
+  "coverage_checked": true,
+  "full_review_completed": true,
+  "coverage": 93.0,
+  "env_setup": [
+    "Checked out the exact declared PR head in a dedicated reviewer checkout; inspected all eight added files and relevant installer contracts and adapters. Go 1.26.0 on Linux/arm64.",
+    "No external services or live Kubernetes cluster were used; ran the declared deterministic fixture checks. Functional findings below are static source findings, not additional negative-test experiments."
+  ],
+  "acceptance_scope": "UJ-OAC-UPGRADE-001 is trace-only under the current contract and coordinator clarification. No full-journey acceptance or undeclared live-environment claim is made; no new Action IDs or business_tests bindings are introduced.",
+  "obligation_results": [
+    {
+      "obligation_id": "dimension:authority",
+      "status": "pass",
+      "evidence": "Used current successful work-show facts, the current contract and review obligations, coordinator trace-only clarification, current PR metadata (open, non-draft, base main, declared exact head), deployment-and-operations-design.md sections 13.1-13.4, control-plane detailed design section 12.4, acceptance journey UJ-OAC-UPGRADE-001, overview section 8.3, and kubernetes-resources.md. Source anchors were read through the complete relevant sections rather than stopping at shifted line numbers."
+    },
+    {
+      "obligation_id": "dimension:structure",
+      "status": "fail",
+      "evidence": "The complete eight-file diff is confined to the two owned paths, but cmd/oac-installer/upgrade is a library package with injected dependencies only. Repository-wide Go searches found the upgrade Runtime implemented exclusively by fixtureRuntime and cliRuntime in test files, and no production caller of upgrade.Run. No runnable installer command or connected upgrade adapter is delivered. See blocker system-upgrade-runtime-disconnected."
+    },
+    {
+      "obligation_id": "dimension:execution",
+      "status": "fail",
+      "evidence": "All declared verification commands independently exit 0. Static inspection nevertheless identifies image-only rollout/status convergence (upgrade.go:161-165, 510-547, 607-627) and unconditional rejection of the same target once metadata has been committed (upgrade.go:403-407 versus 539-551). Existing tests cover interruption before commit, not recovery after an applied-but-unacknowledged commit or a manifest-only release change. See blockers system-upgrade-image-only-convergence and system-upgrade-postcommit-recovery."
+    },
+    {
+      "obligation_id": "dimension:ownership",
+      "status": "pass",
+      "evidence": "All changed files remain within internal/systemrelease/upgrade/** and cmd/oac-installer/upgrade/**. Signed release verification reuses internal/installer.VerifiedRelease. No Platform API, Kernel call, Workflow writer, new CRD, UpgradePlan aggregate, product database state machine, or adjacent-domain code is added. Missing production runtime delivery is separately rejected; this ownership pass does not certify an absent adapter."
+    },
+    {
+      "obligation_id": "dimension:evidence",
+      "status": "fail",
+      "evidence": "Artifact lineage is independently verified: bundle digest matches the worker digest, manifest source_revision matches the reviewed head, and all eight source hashes and sizes match. However continuityEqual compares the complete Workflow state digest, Run/object counts and Kernel action count for exact equality, and Execute treats changes as preflight drift or continuity damage. This cannot distinguish normal ongoing reconciliation from changes caused by the installer. Existing fixture continuity evidence remains static and does not prove that distinction. See blocker system-upgrade-continuity-attribution."
+    },
+    {
+      "obligation_id": "dimension:regression",
+      "status": "pass",
+      "evidence": "There are no prior_open_blockers in current work-show facts. Inspected the complete current eight-file, 2700-line additive diff, including signed fixtures, preflight failures, migration conflicts, Context drift, confirmation freshness, stage failure handling, interrupted rollout recovery and reverse-order rollback tests. Continued review after identifying the first blocker and reported all findings in this cycle."
+    },
+    {
+      "obligation_id": "integration:system-upgrade-gate",
+      "status": "pass",
+      "evidence": "Independently reran all three exact contract commands in the exact-head checkout: tests passed (92.6% core, 94.4% CLI), threshold assertion passed (93.0% total), and ownership packaging passed. All four required artifacts exist and are nonempty. Bundle SHA-256 is 1dc9d4179341f9641df68482aae9e548decad3d92cb5a6379e4aaa6f38666f0a. This fixture command gate pass does not remove the functional blockers."
+    }
+  ],
+  "prior_blocker_results": [],
+  "acceptance_mapping": [
+    {
+      "acceptance": "UJ-OAC-UPGRADE-001",
+      "status": "fail",
+      "evidence": "Trace-only contract reference, not a full end-to-end acceptance claim: the owned upgrade capability has the four static functional blockers reported below. The declared fixture commands pass, but neither a complete journey pass nor a live-cluster result is claimed. This non-empty trace mapping is included to satisfy the submit validator's required acceptance_mapping field."
+    }
+  ],
+  "integration_gate_mapping": [
+    {
+      "gate": "system-upgrade-gate",
+      "status": "pass",
+      "source_of_truth": [
+        "docs/deploy-ops/deployment-and-operations-design.md:L244-L299",
+        "docs/design/detailed/05-kubernetes-native-control-plane-detailed-design.md:L538-L566",
+        "docs/delivery/acceptance-and-validation.md:L107-L128"
+      ],
+      "delivery_goal": "Deliver exact-version preflight, ordered upgrade, rollback and continuity evidence for OAC system releases.",
+      "commands": [
+        {
+          "cmd": "mkdir -p artifacts/system-upgrade && go test -covermode=atomic -coverprofile=artifacts/system-upgrade/coverage.out ./internal/systemrelease/... ./cmd/oac-installer/upgrade/...",
+          "exit_code": 0,
+          "summary": "Both packages pass; statement coverage is 92.6% for core and 94.4% for CLI."
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/system-upgrade/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+          "exit_code": 0,
+          "summary": "Threshold assertion passes; independently read go tool cover total as 93.0%."
+        },
+        {
+          "cmd": "python3 scripts/release/package_component.py --component system-upgrade --kind upgrader-source --input internal/systemrelease/upgrade --input cmd/oac-installer/upgrade --bundle artifacts/system-upgrade/source-bundle.tar.zst --component-manifest artifacts/system-upgrade/component-manifest.json --digest-output artifacts/system-upgrade/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner system-upgrade --require-all-owner-sources-accounted",
+          "exit_code": 0,
+          "summary": "Packaging and ownership checks pass; separately verified manifest source revision, eight source hashes and sizes, bundle digest and nonempty artifacts."
+        }
+      ],
+      "metrics": {
+        "statement_coverage_percent": 93.0
+      },
+      "artifacts": [
+        "artifacts/system-upgrade/coverage.out",
+        "artifacts/system-upgrade/source-bundle.tar.zst",
+        "artifacts/system-upgrade/bundle-digest.txt",
+        "artifacts/system-upgrade/component-manifest.json"
+      ]
+    }
+  ],
+  "blockers": [
+    {
+      "root_cause_key": "system-upgrade-runtime-disconnected",
+      "obligation_id": "dimension:structure",
+      "classification": "new",
+      "owner": "system-upgrade",
+      "severity": "high",
+      "summary": "No production runtime or executable installer path is connected to the new upgrade capability.",
+      "impact": "An operator cannot use the delivered repository implementation to read installed state, expand CRDs/database schema, perform guarded rollouts, commit release metadata, or gather actual continuity evidence. The passing command tests exercise only caller-supplied test doubles, not a connected upgrade implementation.",
+      "evidence": "cmd/oac-installer/upgrade/upgrade.go:1,16-24,26 defines a non-main package and requires injected Context/Release resolvers and a Runtime. internal/systemrelease/upgrade/upgrade.go:223-231 declares the entire effect boundary. Repository-wide searches for AssessCompatibility, WaitCompatibilityReady, CommitRelease, ObserveContinuity and upgrade imports found implementations only in internal/systemrelease/upgrade/upgrade_test.go:253-359 and cmd/oac-installer/upgrade/upgrade_test.go:393-471; the latter is the only caller/importer of the CLI library. The complete PR adds only these two libraries and their tests. The existing DynamicKubernetesInstaller implements installation-specific methods, not this upgrade Runtime.",
+      "required_fix": "Deliver and connect a production installer runtime and command entry point using the existing signed-release and installer infrastructure boundaries. Implement actual-state observations, compatibility/health probes, compatible migration execution, guarded idempotent/CAS mutations and release metadata handling. Exercise the connected path with deterministic adapter fixtures under the declared gate; this does not require a new live-cluster acceptance claim."
+    },
+    {
+      "root_cause_key": "system-upgrade-image-only-convergence",
+      "obligation_id": "dimension:execution",
+      "classification": "new",
+      "owner": "system-upgrade",
+      "severity": "high",
+      "summary": "Release convergence ignores deployment manifest identity and can skip required manifest changes when image digests remain unchanged.",
+      "impact": "A valid release that changes deployment configuration, probes, resources or other manifest content while retaining its images can be marked installed without applying those changes. Rollback has the same defect and can leave N+1 deployment resources in place while reporting N complete.",
+      "evidence": "AffectedWorkload carries ManifestDigest at internal/systemrelease/upgrade/upgrade.go:115-120 and buildTarget populates it at 285, but ReleaseEvidence/WorkloadProgress at 153-165 expose only workload image identity. Execute calls Rollout only if DesiredImageDigest differs at 510-515; readiness/convergence at 524-547 and statusFromObservation at 607-627 likewise compare only image digests and readiness. The resulting contract offers no observed manifest digest with which to require or verify restoration of the signed deployment resources. deployment-and-operations-design.md:262-264,306 includes Kubernetes resources and previous deployment resources in the release/rollback boundary.",
+      "required_fix": "Track and validate live signed-resource/manifest identity alongside image identity, and base rollout/recovery/completion on both. Apply the required target manifests even when images are unchanged; verify previous deployment resource convergence on rollback while retaining only the explicitly compatible schema expansions. Add fixture cases for same-image manifest-only upgrades and rollbacks."
+    },
+    {
+      "root_cause_key": "system-upgrade-postcommit-recovery",
+      "obligation_id": "dimension:execution",
+      "classification": "new",
+      "owner": "system-upgrade",
+      "severity": "high",
+      "summary": "Same-target recovery is rejected after release metadata has already been committed.",
+      "impact": "If CommitRelease applies successfully but its response is lost, or the CLI stops before final status/continuity checks, Execute reports an unknown outcome. Retrying the same exact target cannot observe and finish the operation because preflight returns ErrNotUpgrade. This leaves the documented recovery protocol incomplete at its final write boundary.",
+      "evidence": "internal/systemrelease/upgrade/upgrade.go:539-551 commits metadata before the final status and continuity reads and returns ErrOutcomeUnknown on a commit error. preflight:403-407 rejects every target whose version is equal to installed metadata, including this already-committed exact target. Therefore Execute's already-target branch at 539 is unreachable through a fresh normal preflight in that state. TestInterruptedUpgradeResumesFromObservedTargetState at upgrade_test.go:81-107 interrupts Execution Host readiness; upgrade_flow_edges_test.go:72 tests a commit error before mutation, not a successful write with a lost response. deployment-and-operations-design.md:302 requires same-target observation and idempotent continuation after lost responses or restart.",
+      "required_fix": "Recognize an exact already-installed target as a read-only verification/recovery path and finish actual-state, resource readiness and continuity validation without reapplying effects or changing previous-release lineage. Preserve rejection of downgrades and conflicting same-version digests. Add declared fixture coverage for applied-but-unacknowledged CommitRelease and interruption immediately after commit."
+    },
+    {
+      "root_cause_key": "system-upgrade-continuity-attribution",
+      "obligation_id": "dimension:evidence",
+      "classification": "new",
+      "owner": "system-upgrade",
+      "severity": "high",
+      "summary": "Continuity verification equates all normal Workflow progress with installer-caused mutation.",
+      "impact": "With active Workflows continuing ordinary reconciliation, Run/object counts, Workflow status digests or Kernel action counts may legitimately change during an upgrade. The current exact-equality check can prevent startup or return ErrContinuityChanged after all rollouts and the metadata commit have succeeded. It both produces false failure evidence and cannot establish attribution to the installer.",
+      "evidence": "internal/systemrelease/upgrade/upgrade.go:167-175 collects a WorkflowStateDigest, KernelActionCount and counts for mutable business objects. Execute:478-483 requires equality between two pre-change observations, and 549-554 requires equality across the whole upgrade. continuityEqual:772-781 compares all those facts exactly. Tests use static repeated digests/counts (upgrade_test.go:207-213,351-359; CLI upgrade_test.go:367-370,470-471) and never demonstrate permitted ordinary progress. deployment-and-operations-design.md:298-308 and detailed design:565-567 explicitly require active Workflows to continue the same reconcile/control loop; they forbid upgrade-driven rewrites or reruns, not normal progress by the established owners.",
+      "required_fix": "Separate immutable protected configuration/execution baselines and installer-attributable effects from legitimate mutations by normal Workflow owners. Prove the installer does not issue business writes or Kernel actions while allowing expected reconciliation progress; do not require a globally frozen Workflow/status/count snapshot. Add deterministic concurrent-progress fixtures and an independently attributable forbidden-mutation fixture."
+    }
+  ],
+  "nits": []
+}

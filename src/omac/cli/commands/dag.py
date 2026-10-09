@@ -208,13 +208,43 @@ def register(parser):
     owner_witness = owner_prepare.add_mutually_exclusive_group()
     owner_witness.add_argument("--source-witness-file", help="Exact unresolved historical source preservation witness; no active-hold retirement")
     owner_witness.add_argument("--prospective-source-file", help="Exact qualified assessment-only prospective declaration witness; grants no allocation/application")
+    owner_prepare.add_argument("--current-source-file", help="Separately approved complete current Source; old historical witness remains mandatory")
+    history_prepare = amend_sub.add_parser("prepare-review-source", help="Capture complete historical reject source qualification without control effects")
+    history_prepare.add_argument("manifest")
+    history_prepare.add_argument("--node", required=True)
+    history_prepare.add_argument("--witness-file", required=True)
+    history_prepare.add_argument("--output-file", required=True)
+    for action in ("observe-review-source", "resolve-review-source"):
+        history = amend_sub.add_parser(action, help="Observe or explicitly resolve exact historical review source identity")
+        history.add_argument("manifest")
+        history.add_argument("source_file")
+        if action == "resolve-review-source":
+            history.add_argument("--source-sha256", required=True)
+            history.add_argument("--authority", required=True)
+            history.add_argument("--reason", required=True)
+    current_prepare = amend_sub.add_parser("prepare-owner-source", help="Capture complete pending current assessment Source, no authority or Actor effect")
+    current_prepare.add_argument("manifest")
+    current_prepare.add_argument("--blocked-node", action="append", required=True)
+    current_prepare.add_argument("--allowed-node", action="append", required=True)
+    current_prepare.add_argument("--report-file", required=True)
+    current_prepare.add_argument("--docs", action="append", required=True)
+    current_prepare.add_argument("--output-file", required=True)
+    current_witness = current_prepare.add_mutually_exclusive_group(required=True)
+    current_witness.add_argument("--source-witness-file")
+    current_witness.add_argument("--prospective-source-file")
+    current_resolve = amend_sub.add_parser("resolve-owner-source", help="Explicit exact current operator Source approval; assessment only")
+    current_resolve.add_argument("manifest")
+    current_resolve.add_argument("source_file")
+    current_resolve.add_argument("--source-sha256", required=True)
+    current_resolve.add_argument("--authority", required=True)
+    current_resolve.add_argument("--reason", required=True)
     owner_resolve = amend_sub.add_parser("resolve-owner", help="Explicit exact coordinator resolution for assessment only")
     owner_resolve.add_argument("manifest")
     owner_resolve.add_argument("request_file")
     owner_resolve.add_argument("--request-sha256", required=True)
     owner_resolve.add_argument("--authority", required=True)
     owner_resolve.add_argument("--reason", required=True)
-    for owner_parser in (owner_prepare, owner_resolve):
+    for owner_parser in (owner_prepare, owner_resolve, current_prepare, current_resolve):
         owner_parser.add_argument("--engine")
         owner_parser.add_argument("--workspace")
         add_output_flag(owner_parser, default="json")
@@ -614,6 +644,32 @@ def _amend_locked(args) -> int:
     engine, _ = _assemble_engine(args)
     config = _load_config_for_manifest(args.manifest)
     roles = config.get("roles") or {}
+    if args.amend_action in {"prepare-review-source", "observe-review-source", "resolve-review-source"}:
+        from ...pipeline.historical_review_source import prepare_review_source, observe_review_source, resolve_review_source
+        if args.amend_action == "prepare-review-source":
+            result = prepare_review_source(engine, args.manifest, args.node, args.witness_file, args.output_file)
+        elif args.amend_action == "observe-review-source":
+            result = observe_review_source(engine, args.manifest, args.source_file)
+        else:
+            result = resolve_review_source(engine, args.manifest, args.source_file,
+                                          source_sha256=args.source_sha256, authority=args.authority, reason=args.reason)
+        print_json(result)
+        return exit_codes.OK
+    if args.amend_action in {"prepare-owner-source", "resolve-owner-source"}:
+        from ...pipeline.owner_amendment import prepare_current_owner_source, resolve_current_owner_source
+        if args.amend_action == "prepare-owner-source":
+            result = prepare_current_owner_source(
+                engine, args.manifest, blocked_nodes=args.blocked_node,
+                allowed_nodes=args.allowed_node, report_file=args.report_file,
+                docs=args.docs, output_file=args.output_file,
+                source_witness_file=args.source_witness_file,
+                prospective_source_file=args.prospective_source_file)
+        else:
+            result = resolve_current_owner_source(
+                engine, args.manifest, args.source_file,
+                source_sha256=args.source_sha256, authority=args.authority, reason=args.reason)
+        print_json(result)
+        return exit_codes.OK
     if args.amend_action in {"prepare-owner", "resolve-owner"}:
         from ...pipeline.owner_amendment import prepare_owner_amendment, resolve_owner_amendment
         if args.amend_action == "prepare-owner":
@@ -622,7 +678,8 @@ def _amend_locked(args) -> int:
                 allowed_nodes=args.allowed_node, report_file=args.report_file,
                 docs=args.docs, output_file=args.output_file,
                 source_witness_file=args.source_witness_file,
-                prospective_source_file=args.prospective_source_file)
+                prospective_source_file=args.prospective_source_file,
+                current_source_file=args.current_source_file)
         else:
             result = resolve_owner_amendment(
                 engine, args.manifest, args.request_file,

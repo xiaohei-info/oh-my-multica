@@ -716,6 +716,12 @@ omac dag amend propose <manifest> --owner-request-file <immutable-request.json> 
 omac dag amend accept <manifest> <reviewed.yaml> --reason '<accepted fresh reviewed amendment>'
 ```
 
+当前完整来源已合法变化时，旧 v1 witness 仍只证明历史，不能自动成为当前授权。使用 `omac dag amend prepare-owner-source <manifest> --blocked-node <held> --allowed-node <existing> --report-file <report> --docs <docs> --source-witness-file <historical-witness> --output-file <current-source.json>` 捕获待批准当前来源；prospective 组改用 `--prospective-source-file`，两个历史类型互斥。捕获不修改 manifest 或派发 Actor。由 Root 在新的精确当前范围内审阅完整文件后，显式运行 `omac dag amend resolve-owner-source <manifest> <current-source.json> --source-sha256 <returned-source-sha> --authority <current-Root-scope> --reason <assessment-only>`，把当前 approval 记录进 canonical `owner_source_qualifications`。这沿用公开 CLI 的操作员信任边界，不声称自由文本 authority 是密码学身份认证；单独提供、伪造或重写捕获文件不会成为 canonical approval。
+
+随后原 `prepare-owner` 同时传入原历史 witness 和 `--current-source-file <current-source.json>`，并继续原 `resolve-owner`、正常 Planner／独立 Review 流程。完整当前文件保存并绑定所有当前节点／DONE、全部 owner 历史（包括未审查的第三条）、相关真实 terminal Runs、原 failed report／ledger、有效预算／合同／代际、全部 required acceptance bytes、报告／文档以及精确 blocked／allowed／candidate 范围。文件自身字节与语义摘要、历史完整引用和 canonical approval 每次重新核验；任何其他 DAG 进展都需新捕获、新精确批准，不能推断为无关。请求只引用不可变完整文件，避免把同一历史重复嵌入 canonical 或扩大既有状态上限。文件是正常独立 Review 的必读来源。
+
+当前 qualification 仍仅用于评估，不是 live admission、Product PASS、历史消费、active hold retirement、预算 grant/reset/refund/borrow 或前瞻节点 allocation/apply/dispatch。自己的合法新 source approval 和 owner resolution journal 步骤与外来历史漂移分开验证；原历史记录从不删除或改写。当前原 rejected-subject／原生因果链若不匹配，原守卫仍拒绝，不能借当前 qualification 洗白。实施或部署该接口不授权其在线调用；Root 后续必须另外批准精确 live scope。
+
 已完成来源资格的 `ui-foundation` 历史控制记录可显式传入 `--source-witness-file <witness.json>`。该窄能力只支持已固定的原 UI issue、三项原 typed metadata、已批准的 authoring generation、完整 34 个 Run/197 条 timeline/63 条 comments、原失败和前瞻保留权限；不是按字段名放行。witness 使用 `omac.preserved-owner-source/v1`、`disposition: unresolved-product-obligation` 和完整 `references`，每项包含本机 `file`、原 `bytes`、`sha256`；相对路径按 witness 所在目录解析，必须提供完整合格输入集。原无效 call-correlation 证明仅作为失败历史保存，不能授权；缺失 call_id 和实际截断的旧输出保持 UNKNOWN/不完整。原字段与 unknown map 不变，不解除 active hold、不清预算、不将旧拒绝变为产品 PASS。请求、独立评估上下文和每个待恢复步骤继续验证完整来源及原授权历史；Identity/UI/AuthMethod 必须完整绑定，任意第四字段、值/type/代际/合同/Run/预算/DONE/receipt 或 witness 漂移均拒绝。未来执行仍需新的精确 resolution 和实时资格，捕获文件不是 live eligibility。
 
 `prepare-owner` 只读平台事实并写离线请求文件；`resolve-owner` 显式写 manifest 中的 `owner_amendment_resolutions` 授权记录。请求 SHA 是完整内容的 canonical JSON SHA256，不是 YAML 文件的格式字节摘要。原决定、v2、失败报告/ledger 完整原字节、handoff、generation（包括实际 null）、Run 因果、计数、预算和完整 DONE/历史事实保留；不以 retry、清分类或省略 blocked-node 获得 admission。旧 9512 文件不自动构成这次 resolution。
@@ -811,3 +817,15 @@ CAS；索引原生观察不会刷新或重写索引。
 prepare 的 archive 写入结果未知时，只读取并验证已保留的同一 Source/原 writer identity/档案意图。完整档案可独立恢复原对象才继续；档案缺失或不完整不会重新创建。已验证档案的重复 prepare 保持原 receipt/request SHA。
 
 已消费且原 Reviewer Run 已完成的证据续接若仍存在完整控制拥有差异，会保留原报告、ledger、Run、预算和续接凭证，生成 `consumed-completed-review-recovery-required` 的 typed needs-decision 并将该节点标为 BLOCKED。完整 DAG 仍按真实依赖、容量和现有预算守卫处理独立的 ready 节点；该阻塞不意味着审查通过、Run 已绑定、凭证已退休或允许重派。未知、异源、不完整原生证据和无关 CAS/预算/历史变化仍严格失败，不能省略 selector 或手工修正 assignee/baseline。
+
+历史拒绝身份通过 `dag amend prepare-review-source <manifest> --node system-upgrade --witness-file <完整witness.json> --output-file <source.json>` 单独准备，使用 `observe-review-source <manifest> <source.json>` 观察，并由 operator 显式执行 `resolve-review-source <manifest> <source.json> --source-sha256 <精确SHA> --authority <Root范围> --reason <仅源资格>`。完整原始 retry 前后记录、命令及授权、native uploader/task/time 保持不变。解析只追加源资格，不改写 handoff，不重建旧 subject/seal，不改变阶段、状态、预算，不派发或授权后续 owner assessment。当前完整 Source、DONE、历史、附件、Run 或必需输入变化均须重新取得资格。
+
+Owner assessment 在 Planner 派发前通过有界托管附件块发布精确 request、当前 runtime manifest、已批准 Source 和完整引用文档，独立 Reviewer 使用同一个固定 `owner-source` 索引。执行 `omac work read <assessment-id> --source owner-source --output-file owner-source.json`，再用 `--entry <索引中的精确label>` 物化每个完整文件。操作员路径仅作为来源记录；Git runtime 快照不能替代当前权威。发布、读取、locator、hash 或长度不匹配时在执行前停止。
+
+Amendment Planner 遇到 Source 或 assessment 范围不足时，按 `work show` 的 control 模板，通过 `omac work block <assessment-id> --report-file <scope-gap.json>` 提交 `omac.amendment-scope-gap/v1`。报告绑定当前 Planner Run、contract/generation、owner resolution 和 portable Source 摘要，返回 20，不伪造 proposal 或自动派发 Review。历史 Credential 未提交 Run 不会被追认为新的有效提交。
+
+精确 `credential` prospective witness 还要求完整 decision/original-request/scope-gap/workshow/Planner-runs/provenance 文件及原始 147 条 native Planner 消息。`credential-rotation-wire-publication` 仅是 assessment-only、not-created/not-allocated 声明，没有已观察 native 用量或已授预算；`contracts-credential` 保持不可修改的 DONE producer 上下文。当前 Root Source 批准及独立 draft Review 均不授权候选 apply 或 dispatch，仍须未来单独 typed authority。
+
+新的 current-qualified owner resolution 在 canonical approval 中绑定完整不可变 request 文件的原始字节数、SHA 和逻辑摘要。已有内嵌历史条目保持不变；每次权威检查重新读取并验证完整 request，且通过 portable 索引交付，不裁剪为 selectors 或摘要。Current Source 同时物化每个早先引用请求的完整正文并保留完整 canonical 历史记录。原有 256 MiB decoded state 上限保持不变。
+
+便携来源发布在第一次 Store 写入前验证规范批准请求、完整当前 manifest、既有 owner 历史，以及全部报告、文档和资格材料字节。发布使用这批固定字节；Planner 和 Reviewer 检查点将完整读回材料与同一规范授权比较。scope-gap 决策保留原完整控制状态和原生 Run 集合的摘要；每次后续写入及丢失确认的读回都重新校验。一次性决策后原 Planner Run 可以正常完成；其他控制变化、Run 缺失或增加、原生身份变化均要求调用者重新决策。

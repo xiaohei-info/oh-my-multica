@@ -16,7 +16,7 @@ from ...core.graph import downstream_of
 from ...core.taskmeta import (
     DECISION_REQUIRED_SCHEMA, REVIEW_NITS_ACCEPTANCE_SCHEMA,
     WORKER_HANDOFF_SCHEMA,
-    build_worker_rework_feedback as _operator_retry_feedback,
+    build_worker_rework_feedback as _operator_retry_feedback, retained_review_subject,
     TaskKind, TaskPhase,
     WorkerHandoffIntent, exact_review_report_ref,
     review_nits_acceptance_is_valid, review_feedback_is_current, review_context_binding,
@@ -518,8 +518,15 @@ def _cmd_retry(args) -> int:
             ):
                 from ...pipeline.loop import _bounded_direct_run_baseline
 
+                source_review_feedback = _operator_retry_feedback(
+                    current, prior_handoff, recovered_context)
+                try:
+                    retained_subject = retained_review_subject(
+                        current, prior_handoff, source_review_feedback, store=engine.store)
+                except ValueError as exc:
+                    raise ValidationError(str(exc)) from exc
                 source_subject = (
-                    current.review_subject_digest
+                    retained_subject or current.review_subject_digest
                     or recovered_context.get("subject_digest")
                     or stage_recovery_subject(node, current)
                 )

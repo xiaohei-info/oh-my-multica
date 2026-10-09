@@ -1202,6 +1202,10 @@ def run_task(
         )
 
     def _raise_if_authoring_stopped(candidate: WorkItem) -> None:
+        if (kind == TaskKind.AMENDMENT and candidate.decision_required
+                and candidate.decision_required.get("reason_code") == "amendment-scope-gap"):
+            raise NeedsDecision("Planner submitted a terminal assessment scope/source gap",
+                                report=candidate.decision_required)
         if candidate.phase != TaskPhase.AUTHORING:
             return
         if candidate.status not in (WorkItemStatus.FAILED, WorkItemStatus.BLOCKED):
@@ -1322,6 +1326,7 @@ def run_task(
                     current = store.get_work_item(item_id)
                     if predicate(current):
                         return current, observed_run_id
+                    _raise_if_authoring_stopped(current)
                     if role == "reviewer":
                         _raise_if_reviewer_dispatch_stopped(
                             store, item_id, kind)

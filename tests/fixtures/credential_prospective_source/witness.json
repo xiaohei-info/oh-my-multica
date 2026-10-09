@@ -1,0 +1,41 @@
+{
+  "schema": "omac.prospective-owner-assessment/v1",
+  "group": "credential",
+  "references": {
+    "decision.json": {
+      "file": "decision.json",
+      "bytes": 2504,
+      "sha256": "0d87154a6071ecb6e3b9e4366d73aa0e2b83bb7219b3fdafafed88f227b25d0a"
+    },
+    "original-request.json": {
+      "file": "original-request.json",
+      "bytes": 62110663,
+      "sha256": "08c14296cc47a83cffc2779b7b53ee0ae8a633954b48ec1261d730277f97e9dc"
+    },
+    "scope-gap.md": {
+      "file": "scope-gap.md",
+      "bytes": 7582,
+      "sha256": "5b6c0ab94eb908245bc830dc3429713c1e8073ceff6cbe4b1ff06abb995465ee"
+    },
+    "workshow.json": {
+      "file": "workshow.json",
+      "bytes": 15558,
+      "sha256": "9d880d58a6378baacf88db3658110fa2621649ded01b4c4da2882c2fa2aa0e61"
+    },
+    "planner-runs.json": {
+      "file": "planner-runs.json",
+      "bytes": 3687,
+      "sha256": "19b2a13ea37a6999b521059402366d9af6bb052b6593817dbb26475af147c5dd"
+    },
+    "scope-gap-provenance.json": {
+      "file": "scope-gap-provenance.json",
+      "bytes": 550,
+      "sha256": "9b4b3b1f09a6501a7763fc387dbc1db5cd8a8a7c72dd4328579fa7766f46fd99"
+    },
+    "planner-messages.json": {
+      "file": "planner-messages.json",
+      "bytes": 129259,
+      "sha256": "9de51127bdf1406a316de54b4672a4db3ac53e72655a9f0933991a986aadff1c"
+    }
+  }
+}

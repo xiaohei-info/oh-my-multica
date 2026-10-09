@@ -1,0 +1,687 @@
+{
+  "id": "01a10384-778a-7d81-aacf-09c8da085586",
+  "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1",
+  "title": "[DAG:credential-store] Implement CredentialBinding and secret store boundary",
+  "description": "> **OMAC 控制的执行。第一动作必须严格执行：**\n\n```bash\nOMAC_ENGINE=multica OMAC_WORKSPACE_ID=410ade5e-8ae0-4402-b975-813dea2ff3e1 OMAC_PROJECT_ID=732ce83f-5cbd-4485-850d-1b8a1bf16340 omac work show 01a10384-778a-7d81-aacf-09c8da085586 --output json\n```\n\n> `omac work show` 和 `omac work submit` 都可能长时间运行。任何工具调用在拿到最终 tool_result 和终态退出码前都不完整。若工具返回 running/session、缺少最终 tool_result、出现空输出或不完整输出，必须等待或轮询到终态。使用足够长的 wait/yield，或保留并恢复续接句柄；这是通用终态规则，不绑定某个具体工具 API。timeout/yield 不是空结果，也不允许据此停止。`omac work show` 只有在退出码 0 且得到可解析 JSON 后才能继续。`omac work submit` 只有在最终 tool_result 明确给出退出码 0，且 JSON 包含 `\"ok\": true`、`\"terminal\": true` 和 `\"next_action\": \"stop\"` 时才可宣称成功。结果未知时不得宣称成功或结束；validation error 必须修复后重新提交。submit 成功就是本次执行的最后动作，立即停止，不再执行任何平台写入。\n\n> 在上方精确的 `omac work show` 命令以退出码 0 成功返回可解析 JSON 前，不得执行任何其他 Issue 查询（包括 `multica issue get`、`multica issue comment list` 或 metadata 查询），也不得开始分析任务内容。work show 成功后，只能在返回上下文确有需要时使用只读 Issue 查询。禁止任何会创建、修改或删除 Issue 状态的 `multica issue` 写操作。这是语义边界，不是穷举命令清单；禁止示例包括 `multica issue status`、`multica issue assign`、`multica issue comment`、`multica issue metadata`、`multica issue rerun`、`multica issue cancel-task`、`multica issue update`、`multica issue create`、`multica issue label`、`multica issue property`、`multica issue reorder` 和 `multica issue subscriber`。只允许使用上方给出的精确 `omac work show` 命令，以及 work show 返回的精确 `omac work submit` 命令作为 OMAC 控制命令；已有手工附件或 verification 但缺少 `delivery_identity` 时也必须通过该 submit 命令封存。\n\n# Implement CredentialBinding and secret store boundary\n\n## 任务摘要\n- 类型: 开发实现（`develop`）\n- 执行角色: 开发执行者（`worker`）\n- 目标: Implement the Governance-owned current Binding CAS reservation, durable rotation finalization/audit witness, authenticated terminal materialization replay, redacted panic cleanup, and atomic broker/store reconciliation behind the narrow credential wire contract.\n- 依据: `git:e1e48af331c0d568257e0eb2cbb88c1f19c97cb0:b-class-structural-decomposition-decisions.md#sha256=bee2866be23e0d5fe6f77a245f7f3177522308d5bd3ebbd14fb2baf0d9e37f19`\n- 依据: `docs/design/detailed/09-governance-and-security-detailed-design.md:L408-L524`\n- 依据: `docs/references/governance/security-and-enterprise.md:L402-L567`\n- 依据: `docs/delivery/acceptance-and-validation.md:L314-L332`\n\n## 任务详情\nWhen its existing dependencies unlock, author the concrete Governance owner for Binding CAS, durable finalization/audit evidence, materialization terminalization, redaction, and reconciliation; consume the narrow credential wire artifact.\n\n## 非目标\n- Do not change adjacent domain ownership or introduce a competing source of truth.\n- Do not bypass authorization, admission, CAS, idempotency, review, or evidence gates.\n- Do not preserve unpublished prototype behavior unless the owning design explicitly requires it.\n- Do not hand reservation issuance, owner transaction markers, result authentication, or authoritative reconciliation to caller-controlled registry, Store, adapter, or callback implementations.\n- Do not accept a structurally equal terminal result without loading and validating the durable owner-issued record and exact Binding/rotation/materialization lineage.\n- Do not let any exported materialization entry point escape Store, consumer, or cleanup panic without a persisted redacted terminal Unknown record.\n\n## 主要代码归属范围\n- `internal/credentials/**`\n\n## 责任边界\n- 证据模式: `artifact`\n- 输入策略: `allowlist`\n- 允许输入: `contracts-credential-wire-component`，来自 `contracts-credential`（`artifact`）\n- 产物: `credential-store-owner-evidence`\n- 边界: 只允许 consumes 明确声明的外部输入；非上游或下游节点产物不属于当前 contract。\n\n## 交付约束\n- PR 基线: `main`\n- 改动分支覆盖率: `≥ 90%`\n- PR 关联标识: `AITEAM-1060`\n\n## 上游 issue（防跑偏）\n本任务承接以下上游 issue，用于追溯需求与决策；若与当前 contract 冲突，先请求确认：\n- 设计方案: `289a13bf-cede-4b5b-ba86-d72f0bef8164`\n- 验收文档: `8e6bd282-6039-41d2-aa00-969a0bf1554a`\n- 前置开发任务 · Bootstrap Go module and quality harness: `5849f786-8c97-42ac-adf9-1c96957f28ee`\n- 前置开发任务 · Create credential contracts: `30335cd6-d2e8-4c9d-8988-7f7b134ed6e9`\n- 前置开发任务 · Create authorization and admission contracts: `8fc120a0-23c5-4119-96c1-b827222ed9dd`\n- 前置开发任务 · Create audit and usage contracts: `7b568083-2a29-47d5-a56e-3509b79ebb6c`\n- 前置开发任务 · Implement deterministic release artifact packaging: `152d735a-c373-4967-8ae0-45c191de2eff`",
+  "status": "WorkItemStatus.BLOCKED",
+  "dag_key": "credential-store",
+  "identifier": "AITEAM-1060",
+  "worker": "codex-macmini-newapi",
+  "reviewer": "hermes-reviewer",
+  "blocked_by": [
+    "bootstrap-go",
+    "contracts-credential",
+    "contracts-authz-admission",
+    "contracts-audit-usage",
+    "release-artifact-tooling"
+  ],
+  "wave": null,
+  "artifacts": {
+    "pr_url": "https://github.com/xiaohei-info/open-agent-cluster/pull/102",
+    "head_sha": "6c626bf573e6038634658890e8d7de205913ae02"
+  },
+  "verification": {
+    "commands": [
+      {
+        "cmd": "mkdir -p artifacts/credential-store && go test -covermode=atomic -coverprofile=artifacts/credential-store/coverage.out ./internal/credentials/...",
+        "exit_code": 0,
+        "summary": "passed; statement coverage 90.1%; module test traces include internal/credentials/owner_test.go::TestCredentialBindingCreateIdempotencyAndLeastPrivilegeDerivation, internal/credentials/owner_test.go::TestCredentialDeploymentLeaseBindsExecutionIdentity, internal/credentials/owner_test.go::TestCredentialResolveBindsBoundaryAndFailsClosedOnStatusChange, internal/credentials/owner_review_test.go::TestCredentialBindingCreationEnforcesSupportedTypeEvidence, internal/credentials/owner_review_test.go::TestCredentialCreationRejectsMalformedProfileEvidence, internal/credentials/owner_review_test.go::TestCredentialGitHubAppCreationRequiresSuccessfulProviderScopeEvidence, internal/credentials/owner_review_test.go::TestCredentialMaterializationRechecksExpiryAndCoordinatesStatus, internal/credentials/owner_review_test.go::TestCredentialMaterializationExpiresBeforeCreationAndDuringStoreRead, internal/credentials/owner_review_test.go::TestCredentialStatusUpdateTerminalizesExpiredPendingMaterialization, internal/credentials/owner_review_test.go::TestCredentialPendingMaterializationWindowAndTerminalEvidence, internal/credentials/owner_review_test.go::TestCredentialMaterializationContainsPanicBeforePendingReservation, internal/credentials/owner_review_test.go::TestCredentialAuditHandoffRejectsInvalidOwnerEvidence"
+      },
+      {
+        "cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/credential-store/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:[ ]+[(]statements[)][ ]+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+        "exit_code": 0,
+        "summary": "passed with the Go 1.26 output compatibility shim described in env_setup"
+      },
+      {
+        "cmd": "mkdir -p artifacts/credential-store && go test -json ./internal/credentials/... -run '^(TestCredentialBindingReservationRequiresAuthoritativeCurrentCAS|TestCredentialRotationFinalizationRequiresDurableOwnerWitness|TestCredentialMaterializationTerminalReplayRequiresOwnerRecord|TestCredentialMaterializationPanicPersistsRedactedUnknown|TestCredentialReconciliationRejectsCallerAuthoredResult)$' -count=1 > artifacts/credential-store/owner-boundary-tests.json",
+        "exit_code": 0,
+        "summary": "all five owner boundary test traces passed: internal/credentials/owner_test.go::TestCredentialBindingReservationRequiresAuthoritativeCurrentCAS, internal/credentials/owner_test.go::TestCredentialRotationFinalizationRequiresDurableOwnerWitness, internal/credentials/owner_test.go::TestCredentialMaterializationTerminalReplayRequiresOwnerRecord, internal/credentials/owner_test.go::TestCredentialMaterializationPanicPersistsRedactedUnknown, and internal/credentials/owner_test.go::TestCredentialReconciliationRejectsCallerAuthoredResult"
+      },
+      {
+        "cmd": "python3 -c \"import json; required={'TestCredentialBindingReservationRequiresAuthoritativeCurrentCAS', 'TestCredentialRotationFinalizationRequiresDurableOwnerWitness', 'TestCredentialMaterializationTerminalReplayRequiresOwnerRecord', 'TestCredentialMaterializationPanicPersistsRedactedUnknown', 'TestCredentialReconciliationRejectsCallerAuthoredResult'}; rows=[json.loads(x) for x in open('artifacts/credential-store/owner-boundary-tests.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing required passing tests: {sorted(required-passed)}'\"",
+        "exit_code": 0,
+        "summary": "confirmed all five named owner boundary tests have passing go test events: TestCredentialBindingReservationRequiresAuthoritativeCurrentCAS, TestCredentialRotationFinalizationRequiresDurableOwnerWitness, TestCredentialMaterializationTerminalReplayRequiresOwnerRecord, TestCredentialMaterializationPanicPersistsRedactedUnknown, and TestCredentialReconciliationRejectsCallerAuthoredResult"
+      },
+      {
+        "cmd": "python3 scripts/release/package_component.py --component credential-store --kind platform-core-dependency-source --input internal/credentials --bundle artifacts/credential-store/source-bundle.tar.zst --component-manifest artifacts/credential-store/component-manifest.json --digest-output artifacts/credential-store/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner credential-store --require-all-owner-sources-accounted",
+        "exit_code": 0,
+        "summary": "packaged the current credential-store source; bundle SHA-256 f6c79a83f4061f9430e5f15994cea44a73efdb7ee99c1b9c6be88c7b3da2b73e"
+      }
+    ],
+    "integration_gates": [
+      {
+        "name": "credential-store-gate",
+        "source_of_truth": [
+          "git:e1e48af331c0d568257e0eb2cbb88c1f19c97cb0:b-class-structural-decomposition-decisions.md#sha256=bee2866be23e0d5fe6f77a245f7f3177522308d5bd3ebbd14fb2baf0d9e37f19",
+          "docs/design/detailed/09-governance-and-security-detailed-design.md:L408-L524",
+          "docs/references/governance/security-and-enterprise.md:L402-L567",
+          "docs/delivery/acceptance-and-validation.md:L314-L332"
+        ],
+        "delivery_goal": "Implement the Governance-owned current Binding CAS reservation, durable rotation finalization/audit witness, authenticated terminal materialization replay, redacted panic cleanup, and atomic broker/store reconciliation behind the narrow credential wire contract.",
+        "commands": [
+          {
+            "cmd": "mkdir -p artifacts/credential-store && go test -covermode=atomic -coverprofile=artifacts/credential-store/coverage.out ./internal/credentials/...",
+            "exit_code": 0
+          },
+          {
+            "cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/credential-store/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:[ ]+[(]statements[)][ ]+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+            "exit_code": 0
+          },
+          {
+            "cmd": "mkdir -p artifacts/credential-store && go test -json ./internal/credentials/... -run '^(TestCredentialBindingReservationRequiresAuthoritativeCurrentCAS|TestCredentialRotationFinalizationRequiresDurableOwnerWitness|TestCredentialMaterializationTerminalReplayRequiresOwnerRecord|TestCredentialMaterializationPanicPersistsRedactedUnknown|TestCredentialReconciliationRejectsCallerAuthoredResult)$' -count=1 > artifacts/credential-store/owner-boundary-tests.json",
+            "exit_code": 0
+          },
+          {
+            "cmd": "python3 -c \"import json; required={'TestCredentialBindingReservationRequiresAuthoritativeCurrentCAS', 'TestCredentialRotationFinalizationRequiresDurableOwnerWitness', 'TestCredentialMaterializationTerminalReplayRequiresOwnerRecord', 'TestCredentialMaterializationPanicPersistsRedactedUnknown', 'TestCredentialReconciliationRejectsCallerAuthoredResult'}; rows=[json.loads(x) for x in open('artifacts/credential-store/owner-boundary-tests.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing required passing tests: {sorted(required-passed)}'\"",
+            "exit_code": 0
+          },
+          {
+            "cmd": "python3 scripts/release/package_component.py --component credential-store --kind platform-core-dependency-source --input internal/credentials --bundle artifacts/credential-store/source-bundle.tar.zst --component-manifest artifacts/credential-store/component-manifest.json --digest-output artifacts/credential-store/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner credential-store --require-all-owner-sources-accounted",
+            "exit_code": 0
+          }
+        ],
+        "metrics": {
+          "statement_coverage_percent": 90.1,
+          "required_owner_boundary_test_count": 5,
+          "caller_minted_reservation_accept_count": 0,
+          "caller_minted_finalization_accept_count": 0,
+          "unsealed_terminal_result_accept_count": 0,
+          "raw_panic_escape_count": 0
+        },
+        "artifacts": [
+          "artifacts/credential-store/coverage.out",
+          "artifacts/credential-store/owner-boundary-tests.json",
+          "artifacts/credential-store/source-bundle.tar.zst",
+          "artifacts/credential-store/bundle-digest.txt",
+          "artifacts/credential-store/component-manifest.json",
+          "artifacts/credential-store/go-shim/go"
+        ]
+      }
+    ],
+    "pr_base": "main",
+    "coverage": 90.1,
+    "env_setup": [
+      "Use the Go 1.26.5 toolchain; repository dependencies are already available.",
+      "Set OAC_REAL_GO to the Go binary and prepend artifacts/credential-store/go-shim to PATH for the declared coverage assertion; go tool cover emits tab-aligned columns while the contract parser expects spaces.",
+      "Stage source files under internal/credentials before running the release packager so its indexed-source check can resolve the current tree."
+    ]
+  },
+  "verification_ref": {
+    "comment_id": "01a104f3-6563-7ec0-8afc-612cafbb7af8",
+    "attachment_id": "01a104f3-63f8-77bd-8496-953fb5405642",
+    "sha256": "5dbeafd0c1fe3ba495748ab7cf37d4d686fce4623601621db90760dcf34d8652",
+    "bytes": 8957,
+    "filename": "omac-verification-5dbeafd0c1fe.yaml"
+  },
+  "review_verdict": null,
+  "review_comment": null,
+  "machine_feedback": null,
+  "machine_feedback_ref": null,
+  "review_report": null,
+  "review_report_ref": null,
+  "review_subject_digest": null,
+  "review_obligations": [
+    {
+      "obligation_id": "dimension:authority",
+      "category": "dimension",
+      "requirement": "Authoritative inputs and source references"
+    },
+    {
+      "obligation_id": "dimension:structure",
+      "category": "dimension",
+      "requirement": "Structure, schema, dependency, and completeness"
+    },
+    {
+      "obligation_id": "dimension:execution",
+      "category": "dimension",
+      "requirement": "Executable commands and fail-closed verification"
+    },
+    {
+      "obligation_id": "dimension:ownership",
+      "category": "dimension",
+      "requirement": "Ownership, boundaries, and unique write paths"
+    },
+    {
+      "obligation_id": "dimension:evidence",
+      "category": "dimension",
+      "requirement": "Artifact lineage and evidence traceability"
+    },
+    {
+      "obligation_id": "dimension:regression",
+      "category": "dimension",
+      "requirement": "Prior blocker regression and changed-scope review"
+    },
+    {
+      "obligation_id": "integration:credential-store-gate",
+      "category": "integration",
+      "requirement": "Independently verify integration gate credential-store-gate",
+      "subject": "credential-store-gate"
+    }
+  ],
+  "review_obligations_ref": {
+    "comment_id": "01a105c1-7ce8-7032-be04-446038758be0",
+    "attachment_id": "01a105c1-7b92-72d4-a747-fc30172a4e08",
+    "sha256": "b971f97cb2fa35333e166d029dbdff0de0e03417aa028d2698e3953ccd792a1d",
+    "bytes": 906,
+    "filename": "omac-review-obligations-b971f97cb2fa.yaml"
+  },
+  "review_ledger": {
+    "schema": "omac.review-ledger/v2",
+    "cycles": [
+      {
+        "round": 1,
+        "subject_digest": "58fcadbd505dd89c518939ad866bab1427f02bb395a76ee8fe29162b851c6a6d",
+        "report_digest": "6e5ea9f54fe95acbf8b5ee8e67f458d3b83979215c70bf1adc88bfa6eda3c236",
+        "verdict": "reject",
+        "obligation_results": {
+          "dimension:authority": "pass",
+          "dimension:structure": "fail",
+          "dimension:execution": "fail",
+          "dimension:ownership": "pass",
+          "dimension:evidence": "fail",
+          "dimension:regression": "pass",
+          "integration:credential-store-gate": "pass"
+        },
+        "new_count": 3,
+        "fixed_count": 0,
+        "regressed_count": 0,
+        "unchanged_count": 0,
+        "open_count": 3,
+        "prior_open_blocker_ids": [],
+        "open_blocker_ids": [
+          "BLK-74de0bf0a781",
+          "BLK-8bf407e188ad",
+          "BLK-9e9b43e03248"
+        ],
+        "reported_blocker_ids": [
+          "BLK-74de0bf0a781",
+          "BLK-8bf407e188ad",
+          "BLK-9e9b43e03248"
+        ],
+        "blocker_facts_schema": "omac.review-cycle-blocker-facts/v1",
+        "blocker_facts": [
+          {
+            "blocker_id": "BLK-74de0bf0a781",
+            "root_cause_key": "credential-use-and-failure-audit-gap",
+            "obligation_id": "dimension:evidence",
+            "summary": "Materialization outcomes and credential failure paths produce no durable AuditEvent.",
+            "evidence": "All production AuditEvents insertions are success-only creation/status/rotation/resolve writes at internal/credentials/owner.go:196,290,532,651. Materialize/finishMaterialization (664-803) update only Materializations and idempotency indexes; consumer failure, Store failure and panic cleanup never create an audit event. materializationEvidence (internal/credentials/durable.go:133-162) carries no audit witness. Rotate validation failures at owner.go:349-353 only release the reservation; Resolve rejection branches at 570-604 persist no failure audit. security-and-enterprise.md:491 explicitly requires audit for every resolution, use, failure, rotation and revocation, and detailed design:464-471 includes cleanup plus AuditEvent. Passing panic tests prove durable redacted Unknown, not auditable failure.",
+            "required_fix": "Persist redacted credential-use/outcome and authorized failure AuditEvents with exact Binding, lease/materialization, request and purpose lineage in the owner transaction, and provide the canonical audit handoff rather than relying only on the private success-event map. Preserve idempotent replay so it does not emit duplicate events; keep Secret bytes, provider responses and panic payloads out of audit data. Add assertions for successful use, failure, panic/cleanup and terminal replay audit behavior.",
+            "status": "open",
+            "classification": "new",
+            "owner": "credential-store"
+          },
+          {
+            "blocker_id": "BLK-8bf407e188ad",
+            "root_cause_key": "credential-materialization-stale-use-window",
+            "obligation_id": "dimension:execution",
+            "summary": "Materialization can deliver material after the Binding is disabled or the lease expires between its two owner transactions.",
+            "evidence": "internal/credentials/owner.go:697-748 checks active Binding and lease expiry only while committing Pending (726-727), then releases the owner lock. The separate Store-read transaction at 753-764 verifies sealed lineage but never reloads/checks current Binding status, lease expiry, or that the materialization is still Pending. consume runs at 770. UpdateStatus can commit Disabled in the gap (248-293); Disabled retains encrypted material. Likewise expiry can occur while the second transaction waits. TestCredentialResolveBindsBoundaryAndFailsClosedOnStatusChange only tests disable before Materialize starts (owner_test.go:457-463), not this gap. This is a static control-flow finding; no additional security experiment was constructed.",
+            "required_fix": "Make the authoritative eligibility check and material acquisition one guarded owner operation at the last safe boundary, verifying current Binding status, lease state/expiry and Pending ownership before delivering bytes. Define coordination with concurrent lifecycle changes so an already-issued Pending marker is not treated as indefinite authority. Preserve legitimate pre-rotation lease lineage and immutable terminal replay. Add deterministic interleaving/expiry regression tests in the owning package.",
+            "status": "open",
+            "classification": "new",
+            "owner": "credential-store"
+          },
+          {
+            "blocker_id": "BLK-9e9b43e03248",
+            "root_cause_key": "credential-creation-skips-type-safety",
+            "obligation_id": "dimension:structure",
+            "summary": "CreateBinding marks arbitrary credential types Active without applying any type-specific creation rules.",
+            "evidence": "internal/credentials/owner.go:63-77 has no TypeMetadata or typed creation evidence. CreateBinding at 119-200 checks generic metadata, derives usage/subject, encrypts material and writes Active; it never invokes the configured Validator. CredentialBindingMetadata.Validate at contracts/governance/credential/wire.go:212-240 requires only a nonempty CredentialType, and a zero ExpiresAt is accepted by CreateBinding at 126. validateMaterial is reached only from Rotate (349). The owning design requires type-fixed safety rules (detailed design:439), conditional PAT expiry (489), and controlled GitHub App validation/provider-derived scope before final creation (487; security reference:512). Generic API-key target Probe is expressly different and must not be converted into a universal credential test.",
+            "required_fix": "Add an explicit supported-type creation path that carries and validates required non-sensitive type metadata, enforces conditional expiry, and requires controlled type-specific validation/scope evidence where the design requires it before committing Active. Reject unsupported types instead of treating arbitrary nonempty strings as implemented. Keep generic API-key/MCP validity testing at the selected target Probe boundary and retain failure cleanup. This repair belongs to credential-store; no downstream evidence or new external artifact is requested.",
+            "status": "open",
+            "classification": "new",
+            "owner": "credential-store"
+          }
+        ]
+      },
+      {
+        "round": 2,
+        "subject_digest": "dc3a78442552735f609d2bb105ee3a30e6e300f5e94bd73563b84f2f969b6d94",
+        "report_digest": "74cababdf31de3be267a7e54c3d648575d1272fc0f587815f0b2aed82661aa9f",
+        "verdict": "reject",
+        "obligation_results": {
+          "dimension:authority": "fail",
+          "dimension:structure": "fail",
+          "dimension:execution": "fail",
+          "dimension:ownership": "pass",
+          "dimension:evidence": "fail",
+          "dimension:regression": "pass",
+          "integration:credential-store-gate": "pass"
+        },
+        "new_count": 2,
+        "fixed_count": 1,
+        "regressed_count": 0,
+        "unchanged_count": 0,
+        "open_count": 4,
+        "prior_open_blocker_ids": [
+          "BLK-74de0bf0a781",
+          "BLK-8bf407e188ad",
+          "BLK-9e9b43e03248"
+        ],
+        "open_blocker_ids": [
+          "BLK-74de0bf0a781",
+          "BLK-8bf407e188ad",
+          "BLK-a9b452c2b67e",
+          "BLK-c3a9a7b897fb"
+        ],
+        "reported_blocker_ids": [
+          "BLK-74de0bf0a781",
+          "BLK-8bf407e188ad",
+          "BLK-a9b452c2b67e",
+          "BLK-c3a9a7b897fb"
+        ],
+        "blocker_facts_schema": "omac.review-cycle-blocker-facts/v1",
+        "blocker_facts": [
+          {
+            "blocker_id": "BLK-74de0bf0a781",
+            "root_cause_key": "credential-use-and-failure-audit-gap",
+            "obligation_id": "dimension:evidence",
+            "summary": "Durable use/outcome handoffs were added, but authorized rotation failures still bypass audit and some resolution failures lose purpose/target lineage.",
+            "evidence": "internal/credentials/owner.go:465-488 validates the rotation authorization, then returns replay conflicts or a stale-CAS error without recordCredentialFailure/failRotation; rotationReplay at 523-537 is read-only. The existing stale-CAS case at owner_test.go:501-504 asserts only the returned error. Resolve at owner.go:815-825 sends authorized target/usage/subject failures through recordCredentialFailure; that helper at 1425-1435 persists Purpose=action and an empty boundary rather than the attempted request. In contrast, success/use witnesses and terminal replay deduplication are now implemented at 1142-1183 and independently passing owner_test.go:275-365. security-and-enterprise.md:491 requires audit for every resolution/use/failure/rotation/revocation. This is a static branch/lineage finding; no additional negative experiment was constructed.",
+            "required_fix": "Route all post-authorization rotation failure exits, including stale CAS and conflicting replay, through the durable redacted failure handoff. Preserve attempted resolve Usage, Subject and selected MaterializationBoundary in authorized failure lineage instead of replacing them with the action name and an empty boundary. Keep successful terminal replay audit deduplication. Add owning-package audit assertions for these existing rejection paths.",
+            "status": "open",
+            "classification": "deeper",
+            "owner": "credential-store",
+            "last_evidence": "internal/credentials/owner.go:465-488 validates the rotation authorization, then returns replay conflicts or a stale-CAS error without recordCredentialFailure/failRotation; rotationReplay at 523-537 is read-only. The existing stale-CAS case at owner_test.go:501-504 asserts only the returned error. Resolve at owner.go:815-825 sends authorized target/usage/subject failures through recordCredentialFailure; that helper at 1425-1435 persists Purpose=action and an empty boundary rather than the attempted request. In contrast, success/use witnesses and terminal replay deduplication are now implemented at 1142-1183 and independently passing owner_test.go:275-365. security-and-enterprise.md:491 requires audit for every resolution/use/failure/rotation/revocation. This is a static branch/lineage finding; no additional negative experiment was constructed."
+          },
+          {
+            "blocker_id": "BLK-8bf407e188ad",
+            "root_cause_key": "credential-materialization-stale-use-window",
+            "obligation_id": "dimension:execution",
+            "summary": "Eligibility is rechecked around Store read, but not after persisting the delivery marker and before invoking the consumer.",
+            "evidence": "internal/credentials/owner.go:1046 performs the last materializationEligible check; 1057-1066 marks delivery started. withState then validates state and performs the fsync/rename/directory-sync commit at durable.go:315-325,350-386 before returning. owner.go:1068-1076 invokes consume based solely on acquired, without a post-commit eligibility or terminal-state check. pendingMaterializationActive at 1128-1139 stops guarding lifecycle changes when the lease or two-minute delivery window expires; UpdateStatus at 373-393 can then terminalize Unknown and change status even though this original call has not reached consume. New tests at owner_review_test.go:343-475 cover expiry before acquisition and during Store read, not the commit-to-consumer interval. detailed design:418,505 requires current eligibility and fail-closed expiry. This is a static control-flow finding, not an added interleaving/security experiment.",
+            "required_fix": "Coordinate the durable delivery-start commit, final eligibility/terminal-state check, and actual consumer admission as one owner-controlled handoff. A marker that expires or becomes terminal while persistence/scheduling completes must not authorize subsequent byte delivery. Define lifecycle coordination at that final boundary without extending the lease; wipe acquired material and retain the authenticated redacted Unknown/audit outcome when admission is lost. Add a deterministic slow-commit/expired-marker regression test while preserving valid pre-rotation leases and immutable replay.",
+            "status": "open",
+            "classification": "deeper",
+            "owner": "credential-store",
+            "last_evidence": "internal/credentials/owner.go:1046 performs the last materializationEligible check; 1057-1066 marks delivery started. withState then validates state and performs the fsync/rename/directory-sync commit at durable.go:315-325,350-386 before returning. owner.go:1068-1076 invokes consume based solely on acquired, without a post-commit eligibility or terminal-state check. pendingMaterializationActive at 1128-1139 stops guarding lifecycle changes when the lease or two-minute delivery window expires; UpdateStatus at 373-393 can then terminalize Unknown and change status even though this original call has not reached consume. New tests at owner_review_test.go:343-475 cover expiry before acquisition and during Store read, not the commit-to-consumer interval. detailed design:418,505 requires current eligibility and fail-closed expiry. This is a static control-flow finding, not an added interleaving/security experiment."
+          },
+          {
+            "blocker_id": "BLK-9e9b43e03248",
+            "root_cause_key": "credential-creation-skips-type-safety",
+            "obligation_id": "dimension:structure",
+            "summary": "CreateBinding marks arbitrary credential types Active without applying any type-specific creation rules.",
+            "evidence": "internal/credentials/owner.go:63-77 has no TypeMetadata or typed creation evidence. CreateBinding at 119-200 checks generic metadata, derives usage/subject, encrypts material and writes Active; it never invokes the configured Validator. CredentialBindingMetadata.Validate at contracts/governance/credential/wire.go:212-240 requires only a nonempty CredentialType, and a zero ExpiresAt is accepted by CreateBinding at 126. validateMaterial is reached only from Rotate (349). The owning design requires type-fixed safety rules (detailed design:439), conditional PAT expiry (489), and controlled GitHub App validation/provider-derived scope before final creation (487; security reference:512). Generic API-key target Probe is expressly different and must not be converted into a universal credential test.",
+            "required_fix": "Add an explicit supported-type creation path that carries and validates required non-sensitive type metadata, enforces conditional expiry, and requires controlled type-specific validation/scope evidence where the design requires it before committing Active. Reject unsupported types instead of treating arbitrary nonempty strings as implemented. Keep generic API-key/MCP validity testing at the selected target Probe boundary and retain failure cleanup. This repair belongs to credential-store; no downstream evidence or new external artifact is requested.",
+            "status": "fixed",
+            "classification": "fixed",
+            "last_evidence": "owner.go:1533-1616 rejects unsupported types, checks context/subject, enforces PAT expiry/permissions/repository metadata, and requires a controlled App CreationValidator with provider-derived subject scope and permissions. API-key stays target-Probe based. Creation failure paths wipe copied secret bytes, do not persist an Active Binding and persist redacted failures. Independently passing owner_review_test.go:32-341 covers these creation branches; residual runtime/rotation findings are separately identified new roots, not re-labelled creation defects.",
+            "owner": "credential-store"
+          },
+          {
+            "blocker_id": "BLK-a9b452c2b67e",
+            "root_cause_key": "credential-github-app-materialization-missing-type-handler",
+            "obligation_id": "dimension:structure",
+            "summary": "The newly supported GitHub App profile materializes the stored private key, not an on-demand installation token.",
+            "evidence": "CreateBinding persists the uploaded material at internal/credentials/owner.go:282-298 and accepts github-app at 1568-1613. Resolve constructs a generic lease at 867-895, with no type-specific materialization descriptor. Materialize directly decrypts the stored handle at 1036 and sends those same bytes to consume at 1076. The production secretStore at durable.go:221-224,249-261 only encrypts/decrypts; Validator/CreationValidator at owner.go:47-65 provide validation, not token issuance. No production profile-dispatch or JWT/installation-token exchange path appears in the complete five-file PR diff. detailed design:482,487,498 and security reference:497 require Broker-owned JWT-to-installation-token issuance and provider-returned expires_at. Passing creation tests at owner_review_test.go:32-153 prove validation/scope retention, not this runtime behavior.",
+            "required_fix": "Implement a controlled GitHub App type handler inside the Governance credential Store/Broker boundary that uses retained type metadata to obtain a purpose/subject-scoped installation token and bounds use by the provider expiry. Keep App private keys internal to that handler and materialize only the resulting short-lived credential to the selected consumer. Fail closed if the handler is absent or issuance fails; never delegate token minting to the arbitrary materializer callback. Add owning-package runtime profile/expiry/failure tests using controlled local fixtures, without requiring an undeclared live environment.",
+            "status": "open",
+            "classification": "new",
+            "owner": "credential-store"
+          },
+          {
+            "blocker_id": "BLK-c3a9a7b897fb",
+            "root_cause_key": "credential-rotation-conditional-expiry-conflicts-with-wire",
+            "obligation_id": "dimension:authority",
+            "summary": "Supported non-expiring credentials cannot rotate without inventing an expiry, and the consumed wire also requires one.",
+            "evidence": "internal/credentials/owner.go:1568-1570 accepts github-app only with zero ExpiresAt. Rotate at 460-462 and finalizeRotation at 659 reject zero expiry for every type; owner.go:683-688 copies that mandatory expiry into the record and 704-710 into Binding metadata. The allowlisted credential wire at contracts/governance/credential/wire.go:341-343 also rejects a rotation record with zero ExpiresAt. In contrast detailed design:427 says rotation expiry is optional, 489 explicitly states App private keys do not expire and requires rotation, and security reference:424,444 makes expiry type-dependent. All existing successful rotation fixtures at owner_test.go:122-126 supply an arbitrary future date for API-key credentials, so the passing gate does not exercise this conflict.",
+            "required_fix": "Obtain explicit alignment of the consumed rotation wire with the authoritative conditional-expiry design, then enforce the resolved type-specific expiry rule in the owner and its durable witnesses. Do not fabricate App-key expiry merely to satisfy wire validation or silently edit upstream contracts in this implementation. Add a non-expiring-key rotation case and an expiring-PAT case against the aligned wire. Retain the existing CAS, idempotency and audit gates.",
+            "status": "open",
+            "classification": "new",
+            "owner": "credential-store"
+          }
+        ]
+      }
+    ],
+    "blockers": [
+      {
+        "blocker_id": "BLK-74de0bf0a781",
+        "root_cause_key": "credential-use-and-failure-audit-gap",
+        "obligation_id": "dimension:evidence",
+        "summary": "Durable use/outcome handoffs were added, but authorized rotation failures still bypass audit and some resolution failures lose purpose/target lineage.",
+        "evidence": "internal/credentials/owner.go:465-488 validates the rotation authorization, then returns replay conflicts or a stale-CAS error without recordCredentialFailure/failRotation; rotationReplay at 523-537 is read-only. The existing stale-CAS case at owner_test.go:501-504 asserts only the returned error. Resolve at owner.go:815-825 sends authorized target/usage/subject failures through recordCredentialFailure; that helper at 1425-1435 persists Purpose=action and an empty boundary rather than the attempted request. In contrast, success/use witnesses and terminal replay deduplication are now implemented at 1142-1183 and independently passing owner_test.go:275-365. security-and-enterprise.md:491 requires audit for every resolution/use/failure/rotation/revocation. This is a static branch/lineage finding; no additional negative experiment was constructed.",
+        "required_fix": "Route all post-authorization rotation failure exits, including stale CAS and conflicting replay, through the durable redacted failure handoff. Preserve attempted resolve Usage, Subject and selected MaterializationBoundary in authorized failure lineage instead of replacing them with the action name and an empty boundary. Keep successful terminal replay audit deduplication. Add owning-package audit assertions for these existing rejection paths.",
+        "status": "open",
+        "classification": "deeper",
+        "owner": "credential-store",
+        "first_seen_round": 1,
+        "last_seen_round": 2,
+        "seen_count": 2,
+        "last_evidence": "internal/credentials/owner.go:465-488 validates the rotation authorization, then returns replay conflicts or a stale-CAS error without recordCredentialFailure/failRotation; rotationReplay at 523-537 is read-only. The existing stale-CAS case at owner_test.go:501-504 asserts only the returned error. Resolve at owner.go:815-825 sends authorized target/usage/subject failures through recordCredentialFailure; that helper at 1425-1435 persists Purpose=action and an empty boundary rather than the attempted request. In contrast, success/use witnesses and terminal replay deduplication are now implemented at 1142-1183 and independently passing owner_test.go:275-365. security-and-enterprise.md:491 requires audit for every resolution/use/failure/rotation/revocation. This is a static branch/lineage finding; no additional negative experiment was constructed."
+      },
+      {
+        "blocker_id": "BLK-8bf407e188ad",
+        "root_cause_key": "credential-materialization-stale-use-window",
+        "obligation_id": "dimension:execution",
+        "summary": "Eligibility is rechecked around Store read, but not after persisting the delivery marker and before invoking the consumer.",
+        "evidence": "internal/credentials/owner.go:1046 performs the last materializationEligible check; 1057-1066 marks delivery started. withState then validates state and performs the fsync/rename/directory-sync commit at durable.go:315-325,350-386 before returning. owner.go:1068-1076 invokes consume based solely on acquired, without a post-commit eligibility or terminal-state check. pendingMaterializationActive at 1128-1139 stops guarding lifecycle changes when the lease or two-minute delivery window expires; UpdateStatus at 373-393 can then terminalize Unknown and change status even though this original call has not reached consume. New tests at owner_review_test.go:343-475 cover expiry before acquisition and during Store read, not the commit-to-consumer interval. detailed design:418,505 requires current eligibility and fail-closed expiry. This is a static control-flow finding, not an added interleaving/security experiment.",
+        "required_fix": "Coordinate the durable delivery-start commit, final eligibility/terminal-state check, and actual consumer admission as one owner-controlled handoff. A marker that expires or becomes terminal while persistence/scheduling completes must not authorize subsequent byte delivery. Define lifecycle coordination at that final boundary without extending the lease; wipe acquired material and retain the authenticated redacted Unknown/audit outcome when admission is lost. Add a deterministic slow-commit/expired-marker regression test while preserving valid pre-rotation leases and immutable replay.",
+        "status": "open",
+        "classification": "deeper",
+        "owner": "credential-store",
+        "first_seen_round": 1,
+        "last_seen_round": 2,
+        "seen_count": 2,
+        "last_evidence": "internal/credentials/owner.go:1046 performs the last materializationEligible check; 1057-1066 marks delivery started. withState then validates state and performs the fsync/rename/directory-sync commit at durable.go:315-325,350-386 before returning. owner.go:1068-1076 invokes consume based solely on acquired, without a post-commit eligibility or terminal-state check. pendingMaterializationActive at 1128-1139 stops guarding lifecycle changes when the lease or two-minute delivery window expires; UpdateStatus at 373-393 can then terminalize Unknown and change status even though this original call has not reached consume. New tests at owner_review_test.go:343-475 cover expiry before acquisition and during Store read, not the commit-to-consumer interval. detailed design:418,505 requires current eligibility and fail-closed expiry. This is a static control-flow finding, not an added interleaving/security experiment."
+      },
+      {
+        "blocker_id": "BLK-9e9b43e03248",
+        "root_cause_key": "credential-creation-skips-type-safety",
+        "obligation_id": "dimension:structure",
+        "summary": "CreateBinding marks arbitrary credential types Active without applying any type-specific creation rules.",
+        "evidence": "internal/credentials/owner.go:63-77 has no TypeMetadata or typed creation evidence. CreateBinding at 119-200 checks generic metadata, derives usage/subject, encrypts material and writes Active; it never invokes the configured Validator. CredentialBindingMetadata.Validate at contracts/governance/credential/wire.go:212-240 requires only a nonempty CredentialType, and a zero ExpiresAt is accepted by CreateBinding at 126. validateMaterial is reached only from Rotate (349). The owning design requires type-fixed safety rules (detailed design:439), conditional PAT expiry (489), and controlled GitHub App validation/provider-derived scope before final creation (487; security reference:512). Generic API-key target Probe is expressly different and must not be converted into a universal credential test.",
+        "required_fix": "Add an explicit supported-type creation path that carries and validates required non-sensitive type metadata, enforces conditional expiry, and requires controlled type-specific validation/scope evidence where the design requires it before committing Active. Reject unsupported types instead of treating arbitrary nonempty strings as implemented. Keep generic API-key/MCP validity testing at the selected target Probe boundary and retain failure cleanup. This repair belongs to credential-store; no downstream evidence or new external artifact is requested.",
+        "status": "fixed",
+        "classification": "fixed",
+        "owner": "credential-store",
+        "first_seen_round": 1,
+        "last_seen_round": 2,
+        "seen_count": 1,
+        "last_evidence": "owner.go:1533-1616 rejects unsupported types, checks context/subject, enforces PAT expiry/permissions/repository metadata, and requires a controlled App CreationValidator with provider-derived subject scope and permissions. API-key stays target-Probe based. Creation failure paths wipe copied secret bytes, do not persist an Active Binding and persist redacted failures. Independently passing owner_review_test.go:32-341 covers these creation branches; residual runtime/rotation findings are separately identified new roots, not re-labelled creation defects."
+      },
+      {
+        "blocker_id": "BLK-a9b452c2b67e",
+        "root_cause_key": "credential-github-app-materialization-missing-type-handler",
+        "obligation_id": "dimension:structure",
+        "summary": "The newly supported GitHub App profile materializes the stored private key, not an on-demand installation token.",
+        "evidence": "CreateBinding persists the uploaded material at internal/credentials/owner.go:282-298 and accepts github-app at 1568-1613. Resolve constructs a generic lease at 867-895, with no type-specific materialization descriptor. Materialize directly decrypts the stored handle at 1036 and sends those same bytes to consume at 1076. The production secretStore at durable.go:221-224,249-261 only encrypts/decrypts; Validator/CreationValidator at owner.go:47-65 provide validation, not token issuance. No production profile-dispatch or JWT/installation-token exchange path appears in the complete five-file PR diff. detailed design:482,487,498 and security reference:497 require Broker-owned JWT-to-installation-token issuance and provider-returned expires_at. Passing creation tests at owner_review_test.go:32-153 prove validation/scope retention, not this runtime behavior.",
+        "required_fix": "Implement a controlled GitHub App type handler inside the Governance credential Store/Broker boundary that uses retained type metadata to obtain a purpose/subject-scoped installation token and bounds use by the provider expiry. Keep App private keys internal to that handler and materialize only the resulting short-lived credential to the selected consumer. Fail closed if the handler is absent or issuance fails; never delegate token minting to the arbitrary materializer callback. Add owning-package runtime profile/expiry/failure tests using controlled local fixtures, without requiring an undeclared live environment.",
+        "status": "open",
+        "classification": "new",
+        "owner": "credential-store",
+        "first_seen_round": 2,
+        "last_seen_round": 2,
+        "seen_count": 1
+      },
+      {
+        "blocker_id": "BLK-c3a9a7b897fb",
+        "root_cause_key": "credential-rotation-conditional-expiry-conflicts-with-wire",
+        "obligation_id": "dimension:authority",
+        "summary": "Supported non-expiring credentials cannot rotate without inventing an expiry, and the consumed wire also requires one.",
+        "evidence": "internal/credentials/owner.go:1568-1570 accepts github-app only with zero ExpiresAt. Rotate at 460-462 and finalizeRotation at 659 reject zero expiry for every type; owner.go:683-688 copies that mandatory expiry into the record and 704-710 into Binding metadata. The allowlisted credential wire at contracts/governance/credential/wire.go:341-343 also rejects a rotation record with zero ExpiresAt. In contrast detailed design:427 says rotation expiry is optional, 489 explicitly states App private keys do not expire and requires rotation, and security reference:424,444 makes expiry type-dependent. All existing successful rotation fixtures at owner_test.go:122-126 supply an arbitrary future date for API-key credentials, so the passing gate does not exercise this conflict.",
+        "required_fix": "Obtain explicit alignment of the consumed rotation wire with the authoritative conditional-expiry design, then enforce the resolved type-specific expiry rule in the owner and its durable witnesses. Do not fabricate App-key expiry merely to satisfy wire validation or silently edit upstream contracts in this implementation. Add a non-expiring-key rotation case and an expiring-PAT case against the aligned wire. Retain the existing CAS, idempotency and audit gates.",
+        "status": "open",
+        "classification": "new",
+        "owner": "credential-store",
+        "first_seen_round": 2,
+        "last_seen_round": 2,
+        "seen_count": 1
+      }
+    ]
+  },
+  "review_ledger_ref": {
+    "comment_id": "01a105d0-4d07-77ad-88d6-1f42d8011eea",
+    "attachment_id": "01a105d0-4c9f-7b77-b70a-ce7144473768",
+    "sha256": "df637f5349894ccd92cea533d21dad5678e3d0383c2db267b5fdaed6a517550b",
+    "bytes": 30595,
+    "filename": "omac-review-ledger-df637f534989.yaml"
+  },
+  "review_generation": "authoring-6e52e8a37eebf435b3e10373",
+  "review_ledger_generation": "authoring-6e52e8a37eebf435b3e10373",
+  "review_continuation": null,
+  "reviewer_run_baseline": null,
+  "worker_handoff": {
+    "schema": "omac.worker-handoff/v1",
+    "state": "pending",
+    "target_worker": "codex-macmini-newapi",
+    "gate": "review",
+    "source_review_subject_digest": "dc3a78442552735f609d2bb105ee3a30e6e300f5e94bd73563b84f2f969b6d94",
+    "source_review_round": 2,
+    "source_review_verdict": "reject",
+    "source_review_feedback": {
+      "schema": "omac.worker-rework-feedback/v1",
+      "verdict": "reject",
+      "report_ref": {
+        "comment_id": "01a105d0-4a0c-7c76-89e7-8740e7102490",
+        "attachment_id": "01a105d0-49a1-7253-9c49-12e37b5e57ce",
+        "sha256": "d4b44c80ad70cb6d63231afb8af079316bccbaf55a5f9cf9ab0d00fc3bf0e321",
+        "bytes": 21914,
+        "filename": "omac-review-report-d4b44c80ad70.yaml"
+      },
+      "ledger_ref": {
+        "comment_id": "01a105d0-4d07-77ad-88d6-1f42d8011eea",
+        "attachment_id": "01a105d0-4c9f-7b77-b70a-ce7144473768",
+        "sha256": "df637f5349894ccd92cea533d21dad5678e3d0383c2db267b5fdaed6a517550b",
+        "bytes": 30595,
+        "filename": "omac-review-ledger-df637f534989.yaml"
+      },
+      "blockers": [
+        {
+          "root_cause_key": "credential-use-and-failure-audit-gap",
+          "summary": "Durable use/outcome handoffs were added, but authorized rotation failures still bypass audit and some resolution failures lose purpose/target lineage.",
+          "required_fix": "Route all post-authorization rotation failure exits, including stale CAS and conflicting replay, through the durable redacted failure handoff. Preserve attempted resolve Usage, Subject and selected MaterializationBoundary in authorized failure lineage inst"
+        },
+        {
+          "root_cause_key": "credential-materialization-stale-use-window",
+          "summary": "Eligibility is rechecked around Store read, but not after persisting the delivery marker and before invoking the consumer.",
+          "required_fix": "Coordinate the durable delivery-start commit, final eligibility/terminal-state check, and actual consumer admission as one owner-controlled handoff. A marker that expires or becomes terminal while persistence/scheduling completes must not authorize subsequ"
+        },
+        {
+          "root_cause_key": "credential-github-app-materialization-missing-type-handler",
+          "summary": "The newly supported GitHub App profile materializes the stored private key, not an on-demand installation token.",
+          "required_fix": "Implement a controlled GitHub App type handler inside the Governance credential Store/Broker boundary that uses retained type metadata to obtain a purpose/subject-scoped installation token and bounds use by the provider expiry. Keep App private keys intern"
+        },
+        {
+          "root_cause_key": "credential-rotation-conditional-expiry-conflicts-with-wire",
+          "summary": "Supported non-expiring credentials cannot rotate without inventing an expiry, and the consumed wire also requires one.",
+          "required_fix": "Obtain explicit alignment of the consumed rotation wire with the authoritative conditional-expiry design, then enforce the resolved type-specific expiry rule in the owner and its durable witnesses. Do not fabricate App-key expiry merely to satisfy wire val"
+        }
+      ]
+    },
+    "review_context_binding": {
+      "generation": "authoring-6e52e8a37eebf435b3e10373",
+      "contract_sha256": "839d8002ba6367b0e903dc42c19a908b50c54f07f6de26a81992bab788cfe3bc"
+    },
+    "target_review_bounce": 2,
+    "generation": "handoff-3dbcc3022199506c",
+    "target_agent_id": "037ad7f0-98f9-489f-bf43-0d1148233356",
+    "baseline_direct_run_ids": [
+      "01a10385-22e4-77d7-bc8f-5a098bcde97c",
+      "01a10434-991a-76bb-97db-50361ede7ddb",
+      "01a10481-be81-773e-b6f9-1b4ed6715391",
+      "01a1048b-abc2-7b12-8ccf-79a5647539f5",
+      "01a105c2-1f24-7e2d-a92c-7b19e7ad59eb"
+    ],
+    "baseline_cutoff_created_at": null,
+    "baseline_verification_attachment_id": "01a104f3-63f8-77bd-8496-953fb5405642",
+    "baseline_pr_head_sha": "6c626bf573e6038634658890e8d7de205913ae02",
+    "target_run_id": "01a105d1-aab6-7377-b49b-6d5230973bf6",
+    "target_worker_bounce": 0,
+    "terminal_observed_at": null,
+    "authoring_recovery": null
+  },
+  "delivery_identity": null,
+  "decision_required": {
+    "schema": "omac.decision-required/v1",
+    "reason_code": "worker-decision-required",
+    "kind": "develop",
+    "phase": "authoring",
+    "gate": "worker",
+    "resume_issue_id": "01a10384-778a-7d81-aacf-09c8da085586",
+    "review_context_binding": {
+      "generation": "authoring-6e52e8a37eebf435b3e10373",
+      "contract_sha256": "839d8002ba6367b0e903dc42c19a908b50c54f07f6de26a81992bab788cfe3bc"
+    },
+    "blocker": {
+      "schema": "omac.worker-blocker/v2",
+      "reason_code": "owner-decision-required",
+      "issue_id": "01a10384-778a-7d81-aacf-09c8da085586",
+      "review_context_binding": {
+        "generation": "authoring-6e52e8a37eebf435b3e10373",
+        "contract_sha256": "839d8002ba6367b0e903dc42c19a908b50c54f07f6de26a81992bab788cfe3bc"
+      },
+      "handoff_generation": "handoff-3dbcc3022199506c",
+      "worker": "codex-macmini-newapi",
+      "run_id": "01a105d1-aab6-7377-b49b-6d5230973bf6",
+      "summary": "PR #102 commit 83ccdab fixes the audit, materialization admission, and GitHub App runtime review gaps. The conditional-expiry wire conflict still blocks a correct rotation record for non-expiring App keys.",
+      "decision_needed": "Align required CredentialRotationRecord.expires_at with conditional expiry for GitHub App keys: publish an upstream wire update, or explicitly amend the approved design to require expiry. Authorize implementation after that aligned contract is published.",
+      "contract_ref": "source_of_truth",
+      "evidence": [
+        {
+          "ref": "contracts/governance/credential/wire.go:319-343",
+          "observation": "The record field and validator require nonzero expires_at."
+        },
+        {
+          "ref": "docs/design/detailed/09-governance-and-security-detailed-design.md:424-427,489",
+          "observation": "Rotate permits optional expiry; GitHub App keys do not auto-expire."
+        },
+        {
+          "ref": "docs/references/governance/security-and-enterprise.md:444-445,568",
+          "observation": "Expiry depends on credential type; App key rotation does not rely on expiry."
+        },
+        {
+          "ref": "artifacts/credential-store/verification.yaml",
+          "observation": "PR"
+        }
+      ]
+    },
+    "next_action": "Resolve the reported decision, then explicitly run omac node retry <manifest> credential-store"
+  },
+  "amendment_attempt": null,
+  "contract": {
+    "objective": "Implement the Governance-owned current Binding CAS reservation, durable rotation finalization/audit witness, authenticated terminal materialization replay, redacted panic cleanup, and atomic broker/store reconciliation behind the narrow credential wire contract.",
+    "non_goals": [
+      "Do not change adjacent domain ownership or introduce a competing source of truth.",
+      "Do not bypass authorization, admission, CAS, idempotency, review, or evidence gates.",
+      "Do not preserve unpublished prototype behavior unless the owning design explicitly requires it.",
+      "Do not hand reservation issuance, owner transaction markers, result authentication, or authoritative reconciliation to caller-controlled registry, Store, adapter, or callback implementations.",
+      "Do not accept a structurally equal terminal result without loading and validating the durable owner-issued record and exact Binding/rotation/materialization lineage.",
+      "Do not let any exported materialization entry point escape Store, consumer, or cleanup panic without a persisted redacted terminal Unknown record."
+    ],
+    "verification_commands": [
+      "mkdir -p artifacts/credential-store && go test -covermode=atomic -coverprofile=artifacts/credential-store/coverage.out ./internal/credentials/...",
+      "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/credential-store/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:[ ]+[(]statements[)][ ]+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+      "mkdir -p artifacts/credential-store && go test -json ./internal/credentials/... -run '^(TestCredentialBindingReservationRequiresAuthoritativeCurrentCAS|TestCredentialRotationFinalizationRequiresDurableOwnerWitness|TestCredentialMaterializationTerminalReplayRequiresOwnerRecord|TestCredentialMaterializationPanicPersistsRedactedUnknown|TestCredentialReconciliationRejectsCallerAuthoredResult)$' -count=1 > artifacts/credential-store/owner-boundary-tests.json",
+      "python3 -c \"import json; required={'TestCredentialBindingReservationRequiresAuthoritativeCurrentCAS', 'TestCredentialRotationFinalizationRequiresDurableOwnerWitness', 'TestCredentialMaterializationTerminalReplayRequiresOwnerRecord', 'TestCredentialMaterializationPanicPersistsRedactedUnknown', 'TestCredentialReconciliationRejectsCallerAuthoredResult'}; rows=[json.loads(x) for x in open('artifacts/credential-store/owner-boundary-tests.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing required passing tests: {sorted(required-passed)}'\"",
+      "python3 scripts/release/package_component.py --component credential-store --kind platform-core-dependency-source --input internal/credentials --bundle artifacts/credential-store/source-bundle.tar.zst --component-manifest artifacts/credential-store/component-manifest.json --digest-output artifacts/credential-store/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner credential-store --require-all-owner-sources-accounted"
+    ],
+    "integration_gates": [
+      {
+        "name": "credential-store-gate",
+        "layer": "L1",
+        "source_of_truth": [
+          "git:e1e48af331c0d568257e0eb2cbb88c1f19c97cb0:b-class-structural-decomposition-decisions.md#sha256=bee2866be23e0d5fe6f77a245f7f3177522308d5bd3ebbd14fb2baf0d9e37f19",
+          "docs/design/detailed/09-governance-and-security-detailed-design.md:L408-L524",
+          "docs/references/governance/security-and-enterprise.md:L402-L567",
+          "docs/delivery/acceptance-and-validation.md:L314-L332"
+        ],
+        "delivery_goal": "Implement the Governance-owned current Binding CAS reservation, durable rotation finalization/audit witness, authenticated terminal materialization replay, redacted panic cleanup, and atomic broker/store reconciliation behind the narrow credential wire contract.",
+        "covers": [
+          "credential-store"
+        ],
+        "acceptance_refs": [
+          "UJ-CRED-001"
+        ],
+        "commands": [
+          "mkdir -p artifacts/credential-store && go test -covermode=atomic -coverprofile=artifacts/credential-store/coverage.out ./internal/credentials/...",
+          "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/credential-store/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:[ ]+[(]statements[)][ ]+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+          "mkdir -p artifacts/credential-store && go test -json ./internal/credentials/... -run '^(TestCredentialBindingReservationRequiresAuthoritativeCurrentCAS|TestCredentialRotationFinalizationRequiresDurableOwnerWitness|TestCredentialMaterializationTerminalReplayRequiresOwnerRecord|TestCredentialMaterializationPanicPersistsRedactedUnknown|TestCredentialReconciliationRejectsCallerAuthoredResult)$' -count=1 > artifacts/credential-store/owner-boundary-tests.json",
+          "python3 -c \"import json; required={'TestCredentialBindingReservationRequiresAuthoritativeCurrentCAS', 'TestCredentialRotationFinalizationRequiresDurableOwnerWitness', 'TestCredentialMaterializationTerminalReplayRequiresOwnerRecord', 'TestCredentialMaterializationPanicPersistsRedactedUnknown', 'TestCredentialReconciliationRejectsCallerAuthoredResult'}; rows=[json.loads(x) for x in open('artifacts/credential-store/owner-boundary-tests.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing required passing tests: {sorted(required-passed)}'\"",
+          "python3 scripts/release/package_component.py --component credential-store --kind platform-core-dependency-source --input internal/credentials --bundle artifacts/credential-store/source-bundle.tar.zst --component-manifest artifacts/credential-store/component-manifest.json --digest-output artifacts/credential-store/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner credential-store --require-all-owner-sources-accounted"
+        ],
+        "required_metrics": {
+          "statement_coverage_percent": 90,
+          "required_owner_boundary_test_count": 5,
+          "caller_minted_reservation_accept_count": 0,
+          "caller_minted_finalization_accept_count": 0,
+          "unsealed_terminal_result_accept_count": 0,
+          "raw_panic_escape_count": 0
+        },
+        "artifacts": [
+          "artifacts/credential-store/coverage.out",
+          "artifacts/credential-store/owner-boundary-tests.json",
+          "artifacts/credential-store/source-bundle.tar.zst",
+          "artifacts/credential-store/bundle-digest.txt",
+          "artifacts/credential-store/component-manifest.json"
+        ]
+      }
+    ],
+    "pr_base": "main",
+    "acceptance_refs": [
+      "UJ-CRED-001"
+    ],
+    "source_of_truth": [
+      "git:e1e48af331c0d568257e0eb2cbb88c1f19c97cb0:b-class-structural-decomposition-decisions.md#sha256=bee2866be23e0d5fe6f77a245f7f3177522308d5bd3ebbd14fb2baf0d9e37f19",
+      "docs/design/detailed/09-governance-and-security-detailed-design.md:L408-L524",
+      "docs/references/governance/security-and-enterprise.md:L402-L567",
+      "docs/delivery/acceptance-and-validation.md:L314-L332"
+    ],
+    "required_contracts": [
+      "docs/references/governance/security-and-enterprise.md"
+    ],
+    "scope_paths": [
+      "internal/credentials/**"
+    ],
+    "evidence_mode": "artifact",
+    "produces": [
+      {
+        "artifact_id": "credential-store-owner-evidence"
+      }
+    ],
+    "consumes": [
+      {
+        "artifact_id": "contracts-credential-wire-component",
+        "producer": "contracts-credential",
+        "evidence_mode": "artifact"
+      }
+    ]
+  },
+  "contract_ref": {
+    "comment_id": "01a1042a-f538-77e9-a28d-c69acd894661",
+    "attachment_id": "01a1042a-f3c3-73b3-8e1e-1e9eec46ec42",
+    "sha256": "8b1de2adeede86ff55de66c74d9150dab80b84a533a3e3cbceacb397f80edf40",
+    "bytes": 7480,
+    "filename": "omac-contract-8b1de2adeede.yaml"
+  },
+  "source_refs": [
+    {
+      "issue_id": "289a13bf-cede-4b5b-ba86-d72f0bef8164",
+      "label": "设计方案"
+    },
+    {
+      "issue_id": "8e6bd282-6039-41d2-aa00-969a0bf1554a",
+      "label": "验收文档"
+    },
+    {
+      "issue_id": "5849f786-8c97-42ac-adf9-1c96957f28ee",
+      "label": "前置开发任务 · Bootstrap Go module and quality harness"
+    },
+    {
+      "issue_id": "30335cd6-d2e8-4c9d-8988-7f7b134ed6e9",
+      "label": "前置开发任务 · Create credential contracts"
+    },
+    {
+      "issue_id": "8fc120a0-23c5-4119-96c1-b827222ed9dd",
+      "label": "前置开发任务 · Create authorization and admission contracts"
+    },
+    {
+      "issue_id": "7b568083-2a29-47d5-a56e-3509b79ebb6c",
+      "label": "前置开发任务 · Create audit and usage contracts"
+    },
+    {
+      "issue_id": "152d735a-c373-4967-8ae0-45c191de2eff",
+      "label": "前置开发任务 · Implement deterministic release artifact packaging"
+    }
+  ],
+  "kind": "TaskKind.DEVELOP",
+  "phase": "TaskPhase.AUTHORING",
+  "bounces": {
+    "worker": 0,
+    "ci": 0,
+    "review": 2,
+    "merge": 0
+  },
+  "bounce_baseline": null,
+  "deliverable": null,
+  "deliverable_ref": null,
+  "project_rules": null,
+  "project_rules_ref": null,
+  "agent_run_finished_without_submit": false,
+  "agent_run_failed": false,
+  "created_at": "2026-10-03T20:46:15Z",
+  "updated_at": "2026-10-04T08:57:20Z",
+  "platform_assignee_id": "037ad7f0-98f9-489f-bf43-0d1148233356",
+  "unknown_persisted_fields": {},
+  "review_nits_acceptance": null
+}

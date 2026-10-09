@@ -364,8 +364,12 @@ def test_public_assessment_context_contains_full_unresolved_history_without_acto
             orchestrator="offline-planner", reviewers=["offline-reviewer"], max_revisions=1,
             output_file=str(Path(c.output).with_name("reviewed.yaml")))
     q = json.loads(Path(c.output).read_text())["source_qualification"]
-    assert {v["file"] for v in q["references"].values()} <= set(observed["contract"].source_of_truth)
-    assert q["input"]["file"] in observed["contract"].source_of_truth
+    from omac.pipeline.portable_owner import assessment_files
+    request = json.loads(Path(c.output).read_bytes())
+    files = assessment_files(c.path, c.output, request, c.report, c.docs)
+    assert {v["file"] for v in q["references"].values()} <= {str(p) for p in files.values()}
+    assert q["input"]["file"] in {str(p) for p in files.values()}
+    assert all("omac work read" in source for source in observed["contract"].source_of_truth)
     assert "unresolved product obligations" in observed["description"]
     assert "never authority" in observed["description"]
     assert any("opaque fields" in text for text in observed["contract"].acceptance)

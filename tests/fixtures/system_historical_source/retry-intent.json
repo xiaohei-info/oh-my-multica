@@ -1,0 +1,36 @@
+{
+  "at": "2026-10-09T04:23:07.730623+00:00",
+  "argv": [
+    "/Users/chiangguantik/.local/bin/omac",
+    "node",
+    "retry",
+    "/Volumes/SSD1T/code/ai/open-agent-cluster/.omac/open-agent-cluster.yaml",
+    "system-upgrade",
+    "--stage",
+    "authoring"
+  ],
+  "owned_fd": 3,
+  "budget": {
+    "work_item_id": "01a10950-37c9-765e-b612-5accf4dd56ec",
+    "contract_sha256": "ba380ed254f8ad478f71057256fefa07a7c13614f32ca4a1abe13670710202a0",
+    "absolute": {
+      "worker": 1,
+      "review": 2,
+      "merge": 0,
+      "ci": 0
+    },
+    "native_baseline": null,
+    "effective_baseline": {
+      "merge": 0,
+      "review": 0,
+      "worker": 0
+    },
+    "consumed": {
+      "merge": 0,
+      "review": 2,
+      "worker": 1
+    },
+    "authority_source": "implicit-zero",
+    "authority": null
+  }
+}

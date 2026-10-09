@@ -1,0 +1,31 @@
+{
+  "at": "2026-10-09T04:22:47.674994+00:00",
+  "authority": "Direct user foreground takeover/problem handling plus standing internal coordinator delegation",
+  "source": "Current issue description exact work-show command; two terminal native Runs explicitly stop because that command was absent in visible handoff",
+  "scope": "One supported Store coordinator comment only on actual terminal target, public node retry authoring preserving complete review feedback, then foreground DAG run without max rounds/minutes. No OAC code/design/contract changes, private metadata, refund/reset, model/auth/config/dependency effects, or B amendment apply.",
+  "note_sha": "6f9209ec494cafad20bd641cb1de2543fa7913ab2e3465c4f2195e8da9062410",
+  "argv": [
+    [
+      "/Users/chiangguantik/.local/bin/omac",
+      "node",
+      "retry",
+      "/Volumes/SSD1T/code/ai/open-agent-cluster/.omac/open-agent-cluster.yaml",
+      "system-upgrade",
+      "--stage",
+      "authoring"
+    ],
+    [
+      "/Users/chiangguantik/.local/bin/omac",
+      "dag",
+      "run",
+      "/Volumes/SSD1T/code/ai/open-agent-cluster/.omac/open-agent-cluster.yaml",
+      "--engine",
+      "multica",
+      "--workspace",
+      "410ade5e-8ae0-4402-b975-813dea2ff3e1",
+      "--output",
+      "json",
+      "--json-logs"
+    ]
+  ]
+}

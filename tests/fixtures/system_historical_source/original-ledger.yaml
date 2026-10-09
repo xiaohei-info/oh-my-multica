@@ -1,0 +1,225 @@
+schema: omac.review-ledger/v2
+cycles:
+- round: 1
+  subject_digest: f8233551a41f5f5fab00e84ab8611c447e7efeb371068c8f4ac900477bbb16f9
+  report_digest: d0863a1a932e528da085c2d827833e07a787fbfad305d85d286f76d1f05871e1
+  verdict: reject
+  obligation_results:
+    dimension:authority: pass
+    dimension:structure: fail
+    dimension:execution: fail
+    dimension:ownership: pass
+    dimension:evidence: fail
+    dimension:regression: pass
+    integration:system-upgrade-gate: pass
+  new_count: 4
+  fixed_count: 0
+  regressed_count: 0
+  unchanged_count: 0
+  open_count: 4
+  prior_open_blocker_ids: []
+  open_blocker_ids: &id001
+  - BLK-187ae9f7e862
+  - BLK-44d5a907d12f
+  - BLK-bcafc0bbb9e1
+  - BLK-dcefb47a0264
+  reported_blocker_ids: *id001
+  blocker_facts_schema: omac.review-cycle-blocker-facts/v1
+  blocker_facts:
+  - blocker_id: BLK-187ae9f7e862
+    root_cause_key: system-upgrade-image-only-convergence
+    obligation_id: dimension:execution
+    summary: Release convergence ignores deployment manifest identity and can skip
+      required manifest changes when image digests remain unchanged.
+    evidence: AffectedWorkload carries ManifestDigest at internal/systemrelease/upgrade/upgrade.go:115-120
+      and buildTarget populates it at 285, but ReleaseEvidence/WorkloadProgress at
+      153-165 expose only workload image identity. Execute calls Rollout only if DesiredImageDigest
+      differs at 510-515; readiness/convergence at 524-547 and statusFromObservation
+      at 607-627 likewise compare only image digests and readiness. The resulting
+      contract offers no observed manifest digest with which to require or verify
+      restoration of the signed deployment resources. deployment-and-operations-design.md:262-264,306
+      includes Kubernetes resources and previous deployment resources in the release/rollback
+      boundary.
+    required_fix: Track and validate live signed-resource/manifest identity alongside
+      image identity, and base rollout/recovery/completion on both. Apply the required
+      target manifests even when images are unchanged; verify previous deployment
+      resource convergence on rollback while retaining only the explicitly compatible
+      schema expansions. Add fixture cases for same-image manifest-only upgrades and
+      rollbacks.
+    status: open
+    classification: new
+    owner: system-upgrade
+  - blocker_id: BLK-44d5a907d12f
+    root_cause_key: system-upgrade-postcommit-recovery
+    obligation_id: dimension:execution
+    summary: Same-target recovery is rejected after release metadata has already been
+      committed.
+    evidence: internal/systemrelease/upgrade/upgrade.go:539-551 commits metadata before
+      the final status and continuity reads and returns ErrOutcomeUnknown on a commit
+      error. preflight:403-407 rejects every target whose version is equal to installed
+      metadata, including this already-committed exact target. Therefore Execute's
+      already-target branch at 539 is unreachable through a fresh normal preflight
+      in that state. TestInterruptedUpgradeResumesFromObservedTargetState at upgrade_test.go:81-107
+      interrupts Execution Host readiness; upgrade_flow_edges_test.go:72 tests a commit
+      error before mutation, not a successful write with a lost response. deployment-and-operations-design.md:302
+      requires same-target observation and idempotent continuation after lost responses
+      or restart.
+    required_fix: Recognize an exact already-installed target as a read-only verification/recovery
+      path and finish actual-state, resource readiness and continuity validation without
+      reapplying effects or changing previous-release lineage. Preserve rejection
+      of downgrades and conflicting same-version digests. Add declared fixture coverage
+      for applied-but-unacknowledged CommitRelease and interruption immediately after
+      commit.
+    status: open
+    classification: new
+    owner: system-upgrade
+  - blocker_id: BLK-bcafc0bbb9e1
+    root_cause_key: system-upgrade-continuity-attribution
+    obligation_id: dimension:evidence
+    summary: Continuity verification equates all normal Workflow progress with installer-caused
+      mutation.
+    evidence: internal/systemrelease/upgrade/upgrade.go:167-175 collects a WorkflowStateDigest,
+      KernelActionCount and counts for mutable business objects. Execute:478-483 requires
+      equality between two pre-change observations, and 549-554 requires equality
+      across the whole upgrade. continuityEqual:772-781 compares all those facts exactly.
+      Tests use static repeated digests/counts (upgrade_test.go:207-213,351-359; CLI
+      upgrade_test.go:367-370,470-471) and never demonstrate permitted ordinary progress.
+      deployment-and-operations-design.md:298-308 and detailed design:565-567 explicitly
+      require active Workflows to continue the same reconcile/control loop; they forbid
+      upgrade-driven rewrites or reruns, not normal progress by the established owners.
+    required_fix: Separate immutable protected configuration/execution baselines and
+      installer-attributable effects from legitimate mutations by normal Workflow
+      owners. Prove the installer does not issue business writes or Kernel actions
+      while allowing expected reconciliation progress; do not require a globally frozen
+      Workflow/status/count snapshot. Add deterministic concurrent-progress fixtures
+      and an independently attributable forbidden-mutation fixture.
+    status: open
+    classification: new
+    owner: system-upgrade
+  - blocker_id: BLK-dcefb47a0264
+    root_cause_key: system-upgrade-runtime-disconnected
+    obligation_id: dimension:structure
+    summary: No production runtime or executable installer path is connected to the
+      new upgrade capability.
+    evidence: cmd/oac-installer/upgrade/upgrade.go:1,16-24,26 defines a non-main package
+      and requires injected Context/Release resolvers and a Runtime. internal/systemrelease/upgrade/upgrade.go:223-231
+      declares the entire effect boundary. Repository-wide searches for AssessCompatibility,
+      WaitCompatibilityReady, CommitRelease, ObserveContinuity and upgrade imports
+      found implementations only in internal/systemrelease/upgrade/upgrade_test.go:253-359
+      and cmd/oac-installer/upgrade/upgrade_test.go:393-471; the latter is the only
+      caller/importer of the CLI library. The complete PR adds only these two libraries
+      and their tests. The existing DynamicKubernetesInstaller implements installation-specific
+      methods, not this upgrade Runtime.
+    required_fix: Deliver and connect a production installer runtime and command entry
+      point using the existing signed-release and installer infrastructure boundaries.
+      Implement actual-state observations, compatibility/health probes, compatible
+      migration execution, guarded idempotent/CAS mutations and release metadata handling.
+      Exercise the connected path with deterministic adapter fixtures under the declared
+      gate; this does not require a new live-cluster acceptance claim.
+    status: open
+    classification: new
+    owner: system-upgrade
+blockers:
+- blocker_id: BLK-187ae9f7e862
+  root_cause_key: system-upgrade-image-only-convergence
+  obligation_id: dimension:execution
+  summary: Release convergence ignores deployment manifest identity and can skip required
+    manifest changes when image digests remain unchanged.
+  evidence: AffectedWorkload carries ManifestDigest at internal/systemrelease/upgrade/upgrade.go:115-120
+    and buildTarget populates it at 285, but ReleaseEvidence/WorkloadProgress at 153-165
+    expose only workload image identity. Execute calls Rollout only if DesiredImageDigest
+    differs at 510-515; readiness/convergence at 524-547 and statusFromObservation
+    at 607-627 likewise compare only image digests and readiness. The resulting contract
+    offers no observed manifest digest with which to require or verify restoration
+    of the signed deployment resources. deployment-and-operations-design.md:262-264,306
+    includes Kubernetes resources and previous deployment resources in the release/rollback
+    boundary.
+  required_fix: Track and validate live signed-resource/manifest identity alongside
+    image identity, and base rollout/recovery/completion on both. Apply the required
+    target manifests even when images are unchanged; verify previous deployment resource
+    convergence on rollback while retaining only the explicitly compatible schema
+    expansions. Add fixture cases for same-image manifest-only upgrades and rollbacks.
+  status: open
+  classification: new
+  owner: system-upgrade
+  first_seen_round: 1
+  last_seen_round: 1
+  seen_count: 1
+- blocker_id: BLK-44d5a907d12f
+  root_cause_key: system-upgrade-postcommit-recovery
+  obligation_id: dimension:execution
+  summary: Same-target recovery is rejected after release metadata has already been
+    committed.
+  evidence: internal/systemrelease/upgrade/upgrade.go:539-551 commits metadata before
+    the final status and continuity reads and returns ErrOutcomeUnknown on a commit
+    error. preflight:403-407 rejects every target whose version is equal to installed
+    metadata, including this already-committed exact target. Therefore Execute's already-target
+    branch at 539 is unreachable through a fresh normal preflight in that state. TestInterruptedUpgradeResumesFromObservedTargetState
+    at upgrade_test.go:81-107 interrupts Execution Host readiness; upgrade_flow_edges_test.go:72
+    tests a commit error before mutation, not a successful write with a lost response.
+    deployment-and-operations-design.md:302 requires same-target observation and idempotent
+    continuation after lost responses or restart.
+  required_fix: Recognize an exact already-installed target as a read-only verification/recovery
+    path and finish actual-state, resource readiness and continuity validation without
+    reapplying effects or changing previous-release lineage. Preserve rejection of
+    downgrades and conflicting same-version digests. Add declared fixture coverage
+    for applied-but-unacknowledged CommitRelease and interruption immediately after
+    commit.
+  status: open
+  classification: new
+  owner: system-upgrade
+  first_seen_round: 1
+  last_seen_round: 1
+  seen_count: 1
+- blocker_id: BLK-bcafc0bbb9e1
+  root_cause_key: system-upgrade-continuity-attribution
+  obligation_id: dimension:evidence
+  summary: Continuity verification equates all normal Workflow progress with installer-caused
+    mutation.
+  evidence: internal/systemrelease/upgrade/upgrade.go:167-175 collects a WorkflowStateDigest,
+    KernelActionCount and counts for mutable business objects. Execute:478-483 requires
+    equality between two pre-change observations, and 549-554 requires equality across
+    the whole upgrade. continuityEqual:772-781 compares all those facts exactly. Tests
+    use static repeated digests/counts (upgrade_test.go:207-213,351-359; CLI upgrade_test.go:367-370,470-471)
+    and never demonstrate permitted ordinary progress. deployment-and-operations-design.md:298-308
+    and detailed design:565-567 explicitly require active Workflows to continue the
+    same reconcile/control loop; they forbid upgrade-driven rewrites or reruns, not
+    normal progress by the established owners.
+  required_fix: Separate immutable protected configuration/execution baselines and
+    installer-attributable effects from legitimate mutations by normal Workflow owners.
+    Prove the installer does not issue business writes or Kernel actions while allowing
+    expected reconciliation progress; do not require a globally frozen Workflow/status/count
+    snapshot. Add deterministic concurrent-progress fixtures and an independently
+    attributable forbidden-mutation fixture.
+  status: open
+  classification: new
+  owner: system-upgrade
+  first_seen_round: 1
+  last_seen_round: 1
+  seen_count: 1
+- blocker_id: BLK-dcefb47a0264
+  root_cause_key: system-upgrade-runtime-disconnected
+  obligation_id: dimension:structure
+  summary: No production runtime or executable installer path is connected to the
+    new upgrade capability.
+  evidence: cmd/oac-installer/upgrade/upgrade.go:1,16-24,26 defines a non-main package
+    and requires injected Context/Release resolvers and a Runtime. internal/systemrelease/upgrade/upgrade.go:223-231
+    declares the entire effect boundary. Repository-wide searches for AssessCompatibility,
+    WaitCompatibilityReady, CommitRelease, ObserveContinuity and upgrade imports found
+    implementations only in internal/systemrelease/upgrade/upgrade_test.go:253-359
+    and cmd/oac-installer/upgrade/upgrade_test.go:393-471; the latter is the only
+    caller/importer of the CLI library. The complete PR adds only these two libraries
+    and their tests. The existing DynamicKubernetesInstaller implements installation-specific
+    methods, not this upgrade Runtime.
+  required_fix: Deliver and connect a production installer runtime and command entry
+    point using the existing signed-release and installer infrastructure boundaries.
+    Implement actual-state observations, compatibility/health probes, compatible migration
+    execution, guarded idempotent/CAS mutations and release metadata handling. Exercise
+    the connected path with deterministic adapter fixtures under the declared gate;
+    this does not require a new live-cluster acceptance claim.
+  status: open
+  classification: new
+  owner: system-upgrade
+  first_seen_round: 1
+  last_seen_round: 1
+  seen_count: 1

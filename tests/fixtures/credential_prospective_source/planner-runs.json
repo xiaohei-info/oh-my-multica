@@ -1,0 +1,58 @@
+[
+  {
+    "agent_id": "6077c018-7330-4a46-9439-bb156b5aae07",
+    "attempt": 1,
+    "attribution": {
+      "evidence": {
+        "kind": "issue_assignment",
+        "ref_id": "01a11f7b-d5ac-73a8-972c-7939d1458ccf"
+      },
+      "initiator": {
+        "avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+        "email": "xiaohei.info@gmail.com",
+        "id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+        "name": "Guantik Chiang"
+      },
+      "originator": {
+        "avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+        "email": "xiaohei.info@gmail.com",
+        "id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+        "name": "Guantik Chiang"
+      },
+      "precise": true,
+      "source": "direct_human"
+    },
+    "completed_at": "2026-10-09T07:23:31Z",
+    "created_at": "2026-10-09T07:08:10Z",
+    "delivered_comment_ids": [],
+    "dispatched_at": "2026-10-09T07:08:10Z",
+    "error": null,
+    "id": "01a11f7d-a4b4-77b1-99ae-4212cf3c1e8a",
+    "issue_id": "01a11f7b-d5ac-73a8-972c-7939d1458ccf",
+    "kind": "direct",
+    "max_attempts": 2,
+    "priority": 0,
+    "relative_work_dir": "guantik-ait-813dea2ff3e1/aiteam-1080-4212cf3c1e8a/workdir",
+    "result": {
+      "output": "\n\n**Blocked: no amendment was submitted or applied.**\n\nThe assessment found two prerequisites:\n\n1. **Missing authoritative Source.** The referenced `new-full-owner-request.json` is on an unavailable operator-local path. Neither inspected published manifest contains the exact approved owner resolution. The `manifest-runtime` snapshot is also stale relative to the current credential-store issue, so it cannot establish current CAS or budget authority.\n\n2. **Insufficient publication authority.** The published rotation wire requires nonzero `expires_at`, while the design permits non-expiring GitHub App keys. `credential-store` only consumes that wire; its producer, `contracts-credential`, is DONE/merged. Correcting the defect requires an explicitly authorized compensating publication—not a consumer-only workaround or reopening the completed producer.\n\nVerified both original review reports and both ledgers against their attachment hashes and sizes. The published `manifest-runtime` snapshot passes manifest lint; that does **not** validate a current amendment.\n\n**Needed from Root:** an accessible immutable owner-request/Source package and matching current manifest, followed by exact authorization for the compensating publication and all affected recovery targets, retaining `budget_policy: preserve`.\n\nThe partial assessment is saved locally as `credential-source-scope-gap.md`. Repository and platform state remain unchanged. No issue comment was posted because the task permits only OMAC writes, and its supported submission route cannot carry a scope-gap report without inventing amendment operations.",
+      "pr_url": "",
+      "session_id": "b38da510-a2d4-4962-93cd-de44b35c9ad9",
+      "work_dir": "/home/ubuntu/multica_workspaces/guantik-ait-813dea2ff3e1/aiteam-1080-4212cf3c1e8a/workdir"
+    },
+    "runtime_id": "fd30a34a-7e03-410d-b45d-ceb40dcda4e4",
+    "started_at": "2026-10-09T07:08:10Z",
+    "status": "completed",
+    "usage": [
+      {
+        "cache_read_tokens": 1714432,
+        "cache_write_tokens": 0,
+        "input_tokens": 138798,
+        "model": "gpt-6-astra",
+        "output_tokens": 9028,
+        "provider": "hermes"
+      }
+    ],
+    "work_dir": "/home/ubuntu/multica_workspaces/guantik-ait-813dea2ff3e1/aiteam-1080-4212cf3c1e8a/workdir",
+    "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1"
+  }
+]

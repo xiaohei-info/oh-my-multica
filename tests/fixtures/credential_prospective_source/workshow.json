@@ -1,0 +1,161 @@
+{
+  "task": {
+    "kind": "amendment",
+    "phase": "authoring",
+    "status": "blocked",
+    "dag_key": "amend-owner-3f706c3a28b2730417030ad99998e907ac29884c0423a50351e19d8779844c0b",
+    "issue_id": "01a11f7b-d5ac-73a8-972c-7939d1458ccf",
+    "issue_key": "AITEAM-1080",
+    "title": "[DAG:amend-owner-3f706c3a28b2730417030ad99998e907ac29884c0423a50351e19d8779844c0b] Running DAG amendment: open-agent-cluster.yaml",
+    "worker": "hermes-orchestrator",
+    "reviewer": null,
+    "identity": "orchestrator:hermes-orchestrator",
+    "blocked_by": [],
+    "wave": null,
+    "bounces": {
+      "worker_bounce": 0,
+      "ci_bounce": 0,
+      "review_bounce": 0,
+      "merge_bounce": 0
+    }
+  },
+  "context": {
+    "issue_description": "> **Agent 入口:** 先读取当前任务的权威 JSON 上下文。\n\n```bash\nOMAC_ENGINE=multica OMAC_WORKSPACE_ID=410ade5e-8ae0-4402-b975-813dea2ff3e1 OMAC_PROJECT_ID=732ce83f-5cbd-4485-850d-1b8a1bf16340 omac work show 01a11f7b-d5ac-73a8-972c-7939d1458ccf --output json\n```\n\n# Running DAG amendment: open-agent-cluster.yaml\n\n## 任务摘要\n- 类型: 运行中 DAG 修订（`amendment`）\n- 执行角色: 任务编排者（`orchestrator`）\n- 目标: Produce the smallest structured running-DAG amendment that resolves the reported contract or topology defect without rewriting runtime facts.\n- 依据: `.omac/open-agent-cluster.yaml`\n- 依据: `docs/design/open-agent-cluster-overview-design.md`\n- 依据: `docs/design/detailed/09-governance-and-security-detailed-design.md`\n- 依据: `docs/references/governance/security-and-enterprise.md`\n- 依据: `docs/delivery/acceptance-and-validation.md`\n- 依据: `contracts/governance/credential/wire.go`\n- 依据: `contracts/release/source-ownership-baseline.yaml`\n- 依据: `/Users/chiangguantik/Documents/Codex/2026-09-26/omac-recovery-fixes/outputs/Root-Credential-current-owner-assessment-Source-20261009/new-full-owner-request.json`\n\n## 完成标准\n- The amendment is schema-valid and changes only the minimum required nodes\n- Done/merged facts and unaffected node runtime state remain immutable\n- The output states why each changed node resumes at review, authoring, or merging\n\n## 任务详情\nA DAG already approved and running has exposed a contract/topology defect. Read every design document under each supplied docs path, the current manifest, and the Reviewer report. Submit one YAML object using schema omac.dag-amendment/v1 with reason and operations. Supported operations are update/add/remove/resume/update-responsibility/correct-contract-literal. Never patch runtime fields. A correct-contract-literal operation must be the sole operation and preserve the exact read-only prepare-literal-correction output, including immutable authority, the real prior reject and every frozen descendant snapshot. Never invent or edit that witness package; a new independent review must explicitly prove semantic non-propagation. Done/merged nodes are immutable except update-responsibility with explicit historical_contract_correction=true and an operation reason. Use update-responsibility for every acceptance responsibility migration: carry only acceptance_claims, acceptance_contributions, acceptance_refs, explicit legacy acceptance clearing, and optional named integration-gate acceptance_refs patches; never copy a complete contract. Use migration.ownership_transfer=true plus a reason when an executed node changes worker or scope_paths. For an acceptance responsibility migration that needs recovery, set its optional resume_stage to review, authoring, or merging on that same update-responsibility operation; never add a second resume operation for the same node. A contract update is a complete replacement: preserve every intended acceptance_claims, acceptance_contributions, and acceptance_refs responsibility field and use only flow/action identities from the authoritative acceptance document. If the existing contract has typed boundary fields, preserve only the boundary fields actually present. An omitted consumes must remain omitted unless the amendment explicitly changes the input policy. To clear the whole boundary, set top-level clear_contract_boundary: true and omit every boundary field. Do not edit the live manifest.\n\nCurrent manifest: .omac/open-agent-cluster.yaml\nAuthoritative docs paths (read every design document under each path): docs/design/open-agent-cluster-overview-design.md, docs/design/detailed/09-governance-and-security-detailed-design.md, docs/references/governance/security-and-enterprise.md, docs/delivery/acceptance-and-validation.md, contracts/governance/credential/wire.go, contracts/release/source-ownership-baseline.yaml\nBlocked nodes: credential-store\n\nReviewer report:\n\n# Credential conditional-expiry Source-bound owner assessment\n\nThis is a concrete new coordinator input for actual terminal owner-decision-required. It is not Product PASS, a preselected implementation, a budget grant or an instruction to apply.\n\nExact issue 01a10384-778a-7d81-aacf-09c8da085586; actual blocker generation authoring-6e52e8a37eebf435b3e10373, contract SHA 839d8002ba6367b0e903dc42c19a908b50c54f07f6de26a81992bab788cfe3bc. Current Worker handoff, full native causal Run history and all original independent rejected report/ledger Source must be authenticated through the supported owner request capture. Current observed absolute worker0/review2 and native None baseline are preserved, never reset/refunded or converted to a fresh grant.\n\nThe authenticated Worker summary is: PR #102 commit 83ccdab fixes the audit, materialization admission, and GitHub App runtime review gaps. The conditional-expiry wire conflict still blocks a correct rotation record for non-expiring App keys.\nThe exact owner decision requested is: Align required CredentialRotationRecord.expires_at with conditional expiry for GitHub App keys: publish an upstream wire update, or explicitly amend the approved design to require expiry. Authorize implementation after that aligned contract is published.\nFull retained v2 evidence: [{\"ref\": \"contracts/governance/credential/wire.go:319-343\", \"observation\": \"The record field and validator require nonzero expires_at.\"}, {\"ref\": \"docs/design/detailed/09-governance-and-security-detailed-design.md:424-427,489\", \"observation\": \"Rotate permits optional expiry; GitHub App keys do not auto-expire.\"}, {\"ref\": \"docs/references/governance/security-and-enterprise.md:444-445,568\", \"observation\": \"Expiry depends on credential type; App key rotation does not rely on expiry.\"}, {\"ref\": \"artifacts/credential-store/verification.yaml\", \"observation\": \"PR\"}]\n\nRead complete owning overview/governance/security/credential reference/acceptance and actual published CredentialRotationRecord Source and every original failed report/ledger/command. Resolve the actual approved conditional-expiry design versus the published required-nonzero expires_at contract through the smallest reviewed explicitly owned compensating publication/consumer scope. Preserve all original published/stored record digests, DONE producers, security, authorization/admission/audit/least privilege/secret boundaries. Do not reopen DONE or silently transfer ownership, mutate stored record interpretation, narrow approved expiry semantics for convenience, fabricate expiry or weaken denial/validation. Do not fake producer publication readiness.\n\nThis assessment initially authorizes only existing credential-store. Actual Planner must determine real common owner/causal dependencies/minimum changes and derived stages; if other existing/prospective nodes or producer authority are needed, return a concrete Source scope gap before those effects for a new exact Root decision. This source is independent of the legacy UI/prospective fixed-manifest entry and the current System historical subject mismatch; do not force unrelated grouping or stall globally on unrelated SDK/Conformance UNKNOWN budgets.\n\nRequire explicit budget_policy: preserve every actual affected/derived effective approved authority, absolute-relative consumed/remaining/limits, Source CAS and full original failures/native baselines/DONE/history. Normal real Planner plus one fresh independent OAC Reviewer must assess complete obligations and proposal. Root examines actual fully reviewed results before separate acceptable apply/recovery. No unchanged Worker retry to clear classification, no private baseline/receipt/control repair, no old rejected proposal replay, no dummy evidence, no new live Credential operations, no Root OAC implementation/Product technical verdict. All credential secret material stays within authorized purposes; no artifact/log copying of credentials.\n\n\nThis is only an operator-authorized source-bound amendment assessment, not product PASS or approval of owner claims/operations. Preserve full sources and use budget_policy: preserve. Exact proposal owner_resolution: 3f706c3a28b2730417030ad99998e907ac29884c0423a50351e19d8779844c0b\nExact owner_resolution_approval: 176e36b06eac76ebe3f05eb2565ba26cf2291fab73e1836d1453948713baa1d0\n\n## 非目标\n- Do not implement project code\n- Do not edit the live manifest directly\n- Do not regenerate the whole plan or reset unaffected nodes\n\n## 交付约束\n- PR 基线: `manifest-runtime`",
+    "contract": {
+      "objective": "Produce the smallest structured running-DAG amendment that resolves the reported contract or topology defect without rewriting runtime facts.",
+      "non_goals": [
+        "Do not implement project code",
+        "Do not edit the live manifest directly",
+        "Do not regenerate the whole plan or reset unaffected nodes"
+      ],
+      "verification_commands": [
+        "omac dag check .omac/open-agent-cluster.yaml --no-review"
+      ],
+      "integration_gates": [
+        {
+          "name": "running-dag-amendment",
+          "layer": "control-plane",
+          "delivery_goal": "reviewable minimal manifest diff",
+          "source_of_truth": [
+            ".omac/open-agent-cluster.yaml",
+            "docs/design/open-agent-cluster-overview-design.md",
+            "docs/design/detailed/09-governance-and-security-detailed-design.md",
+            "docs/references/governance/security-and-enterprise.md",
+            "docs/delivery/acceptance-and-validation.md",
+            "contracts/governance/credential/wire.go",
+            "contracts/release/source-ownership-baseline.yaml",
+            "/Users/chiangguantik/Documents/Codex/2026-09-26/omac-recovery-fixes/outputs/Root-Credential-current-owner-assessment-Source-20261009/new-full-owner-request.json"
+          ],
+          "covers": [
+            "credential-store"
+          ],
+          "acceptance_refs": [
+            "amendment schema and invariant validation"
+          ],
+          "commands": [
+            "omac dag show .omac/open-agent-cluster.yaml --output json"
+          ]
+        }
+      ],
+      "pr_base": "manifest-runtime",
+      "acceptance": [
+        "The amendment is schema-valid and changes only the minimum required nodes",
+        "Done/merged facts and unaffected node runtime state remain immutable",
+        "The output states why each changed node resumes at review, authoring, or merging"
+      ],
+      "source_of_truth": [
+        ".omac/open-agent-cluster.yaml",
+        "docs/design/open-agent-cluster-overview-design.md",
+        "docs/design/detailed/09-governance-and-security-detailed-design.md",
+        "docs/references/governance/security-and-enterprise.md",
+        "docs/delivery/acceptance-and-validation.md",
+        "contracts/governance/credential/wire.go",
+        "contracts/release/source-ownership-baseline.yaml",
+        "/Users/chiangguantik/Documents/Codex/2026-09-26/omac-recovery-fixes/outputs/Root-Credential-current-owner-assessment-Source-20261009/new-full-owner-request.json"
+      ],
+      "coverage_gate": 0
+    },
+    "contract_boundary_schema": {
+      "evidence_mode": [
+        "fixture",
+        "artifact",
+        "live"
+      ],
+      "produces": [
+        {
+          "artifact_id": "stable-artifact-id"
+        }
+      ],
+      "consumes": [
+        {
+          "artifact_id": "stable-artifact-id",
+          "producer": "upstream-node-id",
+          "evidence_mode": "artifact"
+        }
+      ],
+      "consumes_semantics": {
+        "omitted": "transitional upstream inputs not yet enumerated",
+        "empty": "no external inputs",
+        "non_empty": "strict artifact allowlist",
+        "null": "invalid; consumes must be omitted or a list"
+      }
+    },
+    "contract_ref": {
+      "comment_id": "01a11f7b-ef2d-70b2-887d-a999e9293797",
+      "attachment_id": "01a11f7b-eddf-7408-bc58-d552d2f129f0",
+      "sha256": "955315456e02de452243364556735e26f240c7a03e028345bb89c8823c1ee2b2",
+      "bytes": 2031,
+      "filename": "omac-contract-955315456e02.yaml"
+    },
+    "decision_required": {
+      "schema": "omac.decision-required/v1",
+      "reason_code": "completed-without-submit",
+      "kind": "amendment",
+      "phase": "authoring",
+      "resume_issue_id": "01a11f7b-d5ac-73a8-972c-7939d1458ccf"
+    }
+  },
+  "protocol": "把设计方案和验收文档拆成 manifest DAG：为每个 flow 分配唯一完整 owner，使其位于所有精确业务 Action contribution owners 之后，并区分仅追溯引用；每个节点都有完整 contract，DAG 无环。\n不要直接修改平台状态、负责人、metadata，也不要直接 rerun 或 cancel；所有写入只通过 OMAC。\n`omac work show` 和 `omac work submit` 都可能长时间运行。任何工具调用在拿到最终 tool_result 和终态退出码前都不完整。若工具返回 running/session、缺少最终 tool_result、出现空输出或不完整输出，必须等待或轮询到终态。使用足够长的 wait/yield，或保留并恢复续接句柄；这是通用终态规则，不绑定某个具体工具 API。timeout/yield 不是空结果，也不允许据此停止。`omac work show` 只有在退出码 0 且得到可解析 JSON 后才能继续。`omac work submit` 只有在最终 tool_result 明确给出退出码 0，且 JSON 包含 `\"ok\": true`、`\"terminal\": true` 和 `\"next_action\": \"stop\"` 时才可宣称成功。结果未知时不得宣称成功或结束；validation error 必须修复后重新提交。submit 成功就是本次执行的最后动作，立即停止，不再执行任何平台写入。",
+  "control": {
+    "platform_writes": "omac-only",
+    "submit_is_terminal": true,
+    "post_submit_actions": [],
+    "submit_confirmation": {
+      "may_run_long": true,
+      "terminal_result_required": true,
+      "wait_when": [
+        "running",
+        "session",
+        "missing_tool_result",
+        "incomplete_output",
+        "unknown_result"
+      ],
+      "success_requires": {
+        "exit_code": 0,
+        "json": {
+          "ok": true,
+          "terminal": true,
+          "next_action": "stop"
+        }
+      },
+      "validation_error": "fix-and-resubmit"
+    }
+  },
+  "submit": "omac work submit 01a11f7b-d5ac-73a8-972c-7939d1458ccf --amendment-file <amendment_file>",
+  "authority": [
+    "work show 当前实例事实",
+    "contract / previous_review",
+    "role guide",
+    "artifact guide",
+    "workflow 总览"
+  ],
+  "guide_refs": [
+    "omac guide role orchestrator",
+    "omac guide artifact manifest"
+  ],
+  "engine_env": {
+    "OMAC_ENGINE": "multica",
+    "OMAC_WORKSPACE_ID": "410ade5e-8ae0-4402-b975-813dea2ff3e1",
+    "OMAC_PROJECT_ID": "732ce83f-5cbd-4485-850d-1b8a1bf16340"
+  }
+}

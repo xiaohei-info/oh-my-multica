@@ -585,13 +585,15 @@ def propose_amendment(
     }
 
     if owner_digest:
+        from ..core.owner_amendment import owner_request
+        assessment_request = owner_request(manifest.meta["owner_amendment_resolutions"][owner_digest])
         description += ("\n\nThis is only an operator-authorized source-bound amendment assessment, "
-                        "not product PASS or approval of owner claims/operations. Preserve full sources "
+                        "not product PASS or approval of owner claims/operations. Retrieve the authoritative owner-source index with omac work read <this-issue-id> --source owner-source --output-file owner-source.json and every exact entry with --entry <label>. Git manifest-runtime and operator-local paths are provenance, never current runtime authority. If source or assessment scope is missing, use the typed omac work block report from work show and stop without a fake proposal. Preserve full sources "
                         "and use budget_policy: preserve. Exact proposal owner_resolution: " + owner_digest +
                         "\nExact owner_resolution_approval: " + manifest.meta["owner_amendment_resolutions"][owner_digest]["approval_sha256"])
         payload["description"] = description
         payload["contract"].source_of_truth.append(owner_request_file)
-        qualification = manifest.meta["owner_amendment_resolutions"][owner_digest]["request"].get("source_qualification")
+        qualification = assessment_request.get("source_qualification")
         if qualification is not None:
             description += ("\n\nThe qualified opaque fields and all original native failures remain "
                             "unresolved product obligations. Read the full preservation witness and "
@@ -609,7 +611,7 @@ def propose_amendment(
                 [qualification["input"]["file"]]
                 + [v["file"] for v in qualification["references"].values()]
             )
-        prospective = manifest.meta["owner_amendment_resolutions"][owner_digest]["request"].get("prospective_assessment")
+        prospective = assessment_request.get("prospective_assessment")
         if prospective:
             description += ("\n\nProspective assessment-only declarations: " + json.dumps(prospective["declarations"], sort_keys=True) +
                             "\nThese candidates are not-created and not-allocated. No consumed usage, native baseline, remaining budget or default 20 grant is asserted. "
@@ -618,6 +620,22 @@ def propose_amendment(
             payload["description"] = description
             payload["contract"].acceptance.append("Prospective declarations remain assessment-only/not-created/not-allocated; Reviewer PASS is not allocation/application/dispatch permission.")
             payload["contract"].source_of_truth.extend(ref["file"] for ref in [prospective["input"], *prospective["references"].values()])
+        current_source = assessment_request.get("current_source_qualification")
+        if current_source is not None:
+            description += (
+                "\n\nRead the complete separately approved current Source file and every full historical entry. "
+                "The file binds the whole current manifest/DONE, full owner history, native terminal Runs, "
+                "budgets/contracts/generations/required bytes and exact existing/candidate scope. "
+                "Historical authority is not current authority. Preserve the third unreviewed entry and "
+                "all original failures without consuming/replaying them. This is assessment only, not "
+                "Product PASS, budget grant, candidate allocation/application/dispatch or live eligibility."
+            )
+            payload["description"] = description
+            payload["contract"].source_of_truth.append(current_source["input"]["file"])
+            payload["contract"].acceptance.append(
+                "Independent Review reads complete current Source and all historical entries; "
+                "current approval and original provenance remain separate, exact and unresolved."
+            )
     attempt = None
     source_refs = None
     dag_key = f"amend-{Path(manifest_path).stem}"
@@ -700,10 +718,30 @@ def propose_amendment(
     if owner_digest:
         from .owner_amendment import checkpoint_review_dispatch
         from .owner_amendment import checkpoint_authoring_dispatch
-        assessment_kwargs["before_authoring_dispatch"] = lambda item_id, stage: checkpoint_authoring_dispatch(
-            engine, manifest_path, owner_digest, item_id, stage)
-        assessment_kwargs["before_review_dispatch"] = lambda item, reviewer: checkpoint_review_dispatch(
-            engine, manifest_path, owner_digest, item, reviewer)
+        from .portable_owner import authenticate_sources, publish_sources, read_source
+        source_request = assessment_request
+        payload["contract"].source_of_truth = [
+            "omac work read <this-issue-id> --source owner-source --output-file owner-source.json; "
+            "retrieve every exact entry using --entry <index-label>; local paths are provenance only"
+        ]
+        def authoring_checkpoint(item_id, stage):
+            reference = None
+            authority = None
+            if stage == "before":
+                files, contents, authority = authenticate_sources(
+                    engine, manifest_path, owner_request_file, owner_digest, source_request, report_file, requested_docs)
+                reference = publish_sources(engine.store, item_id, files, owner_resolution=owner_digest,
+                                            approval=authority["approval_sha256"], expected=authority, contents=contents)[0]
+            checkpoint_authoring_dispatch(engine, manifest_path, owner_digest, item_id, stage,
+                                          portable_reference=reference, portable_authority=authority)
+        assessment_kwargs["before_authoring_dispatch"] = authoring_checkpoint
+        def review_checkpoint(item, reviewer):
+            ref = next((r for r in item.source_refs if r.get("label") == "owner-source"), None)
+            if ref is None:
+                raise ValidationError("Independent Review requires the same exact portable owner Source")
+            read_source(engine.store, ref)
+            checkpoint_review_dispatch(engine, manifest_path, owner_digest, item, reviewer)
+        assessment_kwargs["before_review_dispatch"] = review_checkpoint
     try:
         outcome = run_task(
             engine,

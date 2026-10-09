@@ -1,0 +1,261 @@
+{
+  "review_protocol": "omac.review/v2",
+  "review_goals": [
+    "Review exact signed target/context validation, genuine fail-closed compatibility and safe ordered upgrade/rollback against the current authoritative sources.",
+    "Independently rerun all declared integration verification and inspect the complete PR diff, fixtures, adapter boundaries and supporting installer changes.",
+    "Disposition every prior blocker, verify changed-scope regression, and preserve the trace-only acceptance responsibility without inventing a full UJ claim."
+  ],
+  "pr_url": "https://github.com/xiaohei-info/open-agent-cluster/pull/113",
+  "reviewed_head_sha": "638d3d2229646215afbf7aea968f4f2247c22af0",
+  "pr_base": "main",
+  "coverage": 90.0,
+  "diff_reviewed": true,
+  "tests_rerun": true,
+  "integration_tests_rerun": true,
+  "coverage_checked": true,
+  "full_review_completed": true,
+  "review_summary": "Reject. The checked-in verification gate passes, and production wiring plus core postcommit recovery are now present, but resource restoration, continuity attribution and multiple production correctness/fail-closed gaps remain. Evidence is static code inspection plus independent execution of the declared fixture suite; no live-cluster acceptance or additional attack experiment is claimed.",
+  "env_setup": [
+    "Isolated reviewer clone at the exact PR head; no author/shared worktree modified. No external services or live Kubernetes cluster were used; declared verification ran against checked-in deterministic fixtures."
+  ],
+  "responsibility_notes": "UJ-OAC-UPGRADE-001 is trace-only under the current contract/coordinator clarification. No acceptance_claims or Action contributions are declared. This report does not claim full journey acceptance and intentionally omits unsupported empty acceptance mapping/business-test containers.",
+  "acceptance_mapping": [
+    {
+      "acceptance": "UJ-OAC-UPGRADE-001",
+      "status": "fail",
+      "evidence": "Trace-only reference, not a full acceptance claim or Action contribution. The independently reproduced local system-upgrade gate passes, but the owning node contract is rejected for the detailed production/continuity blockers. No full journey was executed or claimed. This nonempty trace mapping satisfies the reviewer report schema only; it does not expand acceptance responsibility."
+    }
+  ],
+  "obligation_results": [
+    {
+      "obligation_id": "dimension:authority",
+      "status": "pass",
+      "evidence": "Successful exact work show identified reviewer-only review/v2, current contract SHA-256 78fdfeb712e5bcb0ca7f4c3251c071ef7d8e957a4713b7327c01c0ba78915c2e, delivered PR head, verification and four prior blockers. Bounded thread scan and relevant coordinator/prior-report thread expansion were completed. Read authoritative deployment section 13, detailed control-plane section 12.4, acceptance source and required Kubernetes resource reference; overview 8.3 preserves the external installer/business-owner boundary."
+    },
+    {
+      "obligation_id": "dimension:structure",
+      "status": "pass",
+      "evidence": "Inspected the entire 22-file PR diff: all added core/CLI/runtime/fixture/test files plus go.mod, installer exports/loaders/test additions and the production main entrypoint. Main calls NewProductionDependencies then Run; KubernetesUpgradeRuntime implements every Runtime port. Supporting installer exports and main wiring serve the declared scope. No disconnected stub remains, though production semantics are blocked under execution/evidence."
+    },
+    {
+      "obligation_id": "dimension:execution",
+      "status": "fail",
+      "evidence": "All declared commands passed independently, but static inspection demonstrates incomplete rollback resource restoration, binary-provenance coupling, presence-only protocol checks, reverse CRD rollback rejection, desired-template-as-running readiness, incomplete schema compatibility, omitted final health/permission gates and unknown-create recovery. See the execution-associated blockers with exact locations and fixture gaps."
+    },
+    {
+      "obligation_id": "dimension:ownership",
+      "status": "pass",
+      "evidence": "Source owner packaging passes with all owner sources accounted. Production effects are signed installer/Kubernetes resource writes, namespace installation metadata and technical migration Jobs. Workflow is only listed/read and rejected as a mutation kind. No Platform API/business use case, Kernel invocation, infrastructure upgrade or package/business aggregate write path was added; existing trust/resource comparison boundaries are reused rather than a second product lifecycle."
+    },
+    {
+      "obligation_id": "dimension:evidence",
+      "status": "fail",
+      "evidence": "Independent source bundle and manifest match the delivered head and worker digest, but the continuity digest is still a global whole-spec/object-membership equality test, so legitimate owner-attributable child creation/cleanup/user commands are misclassified as upgrade-caused changes. See retained continuity-attribution blocker."
+    },
+    {
+      "obligation_id": "dimension:regression",
+      "status": "pass",
+      "evidence": "Every prior blocker was independently dispositioned. Manifest-only Deployment rollout/rollback tests and observed manifest identities are added; whole resource restoration remains deeper. Applied-but-unacknowledged CommitRelease and exact-target read-only recovery now have core/runtime fixtures; runtime/main are connected. Status-only Workflow progress is allowed, but ordinary membership/spec-owner changes remain deeper. Reviewed the complete revised diff and newly introduced production paths, not only earlier findings."
+    },
+    {
+      "obligation_id": "integration:system-upgrade-gate",
+      "status": "pass",
+      "evidence": "Independent declared test command exits 0; combined statement coverage assertion exits 0 with 90.0%; owner-source bundle packaging exits 0. All four gate artifacts are nonempty, source revision matches the exact reviewed head, all 17 manifest source hashes match, and bundle SHA-256 eadf3dd5847bbf69ab18abba95ba790b2dfee08d3a4dc8dc2b00e73e06b5d0c8 matches worker evidence. This is a fixture/packaging gate result, not approval of the missing behaviors."
+    }
+  ],
+  "prior_blocker_results": [
+    {
+      "blocker_id": "BLK-187ae9f7e862",
+      "status": "deeper",
+      "evidence": "Deployment ManifestDigest is now observed and checked by rollout/readiness/status; manifest-only upgrade and rollback fixtures pass. However only Deployments are restored during rollback and non-Deployment release convergence is omitted; same root remains open."
+    },
+    {
+      "blocker_id": "BLK-44d5a907d12f",
+      "status": "fixed",
+      "evidence": "Core upgrade.go:413-418,502-515,693-699 admits exact committed-target read-only verification. TestSameTargetRetryAfterAppliedCommitIsReadOnly exercises applied commit with response loss, no replay and preserved previous lineage; runtime commit response loss and exact-target recovery fixtures also pass. The independent production binary-provenance defect is recorded separately, not hidden as a recurrence of the removed equal-version rule."
+    },
+    {
+      "blocker_id": "BLK-bcafc0bbb9e1",
+      "status": "deeper",
+      "evidence": "Continuity now separates protected spec digest from installer-effect counts, ignores status progress/resourceVersion and tests ordinary status reconciliation. However a whole listed-object/all-spec equality requirement still rejects expected ordinary new child Workflows, cleanup and user desiredState changes. Same attribution root remains open."
+    },
+    {
+      "blocker_id": "BLK-dcefb47a0264",
+      "status": "fixed",
+      "evidence": "Production main, FileReleaseCatalog, exact kubeconfig loader and concrete KubernetesUpgradeRuntime are implemented and connected. Declared deterministic Run upgrade/rollback/runtime fixtures execute this adapter, including signed manifests, metadata CAS and migration Job operations. Entrypoint verification go test ./cmd/oac-installer exits 0 (no package-local tests). New production defects are listed independently rather than claiming this remains a missing implementation."
+    }
+  ],
+  "integration_gate_mapping": [
+    {
+      "gate": "system-upgrade-gate",
+      "status": "pass",
+      "source_of_truth": [
+        "docs/deploy-ops/deployment-and-operations-design.md:L244-L299",
+        "docs/design/detailed/05-kubernetes-native-control-plane-detailed-design.md:L538-L566",
+        "docs/delivery/acceptance-and-validation.md:L107-L128"
+      ],
+      "delivery_goal": "Deliver exact-version preflight, ordered upgrade, rollback and continuity evidence for OAC system releases.",
+      "commands": [
+        {
+          "cmd": "mkdir -p artifacts/system-upgrade && go test -covermode=atomic -coverprofile=artifacts/system-upgrade/coverage.out ./internal/systemrelease/... ./cmd/oac-installer/upgrade/...",
+          "exit_code": 0,
+          "summary": "Independent rerun: core 94.0%, installer upgrade 88.8%; all checked-in tests passed."
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/system-upgrade/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+          "exit_code": 0,
+          "summary": "Independent coverage assertion passed; go tool cover reports combined statement coverage 90.0%."
+        },
+        {
+          "cmd": "python3 scripts/release/package_component.py --component system-upgrade --kind upgrader-source --input internal/systemrelease/upgrade --input cmd/oac-installer/upgrade --bundle artifacts/system-upgrade/source-bundle.tar.zst --component-manifest artifacts/system-upgrade/component-manifest.json --digest-output artifacts/system-upgrade/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner system-upgrade --require-all-owner-sources-accounted",
+          "exit_code": 0,
+          "summary": "Independent owner-source packaging passed; bundle SHA-256 eadf3dd5847bbf69ab18abba95ba790b2dfee08d3a4dc8dc2b00e73e06b5d0c8; manifest source revision and all 17 source hashes match the reviewed checkout."
+        }
+      ],
+      "metrics": {
+        "statement_coverage_percent": 90.0
+      },
+      "artifacts": [
+        "artifacts/system-upgrade/coverage.out",
+        "artifacts/system-upgrade/source-bundle.tar.zst",
+        "artifacts/system-upgrade/bundle-digest.txt",
+        "artifacts/system-upgrade/component-manifest.json"
+      ]
+    }
+  ],
+  "additional_verification": [
+    {
+      "cmd": "go test ./cmd/oac-installer",
+      "exit_code": 0,
+      "summary": "Declared worker entrypoint verification independently reproduced; package compiles, no local tests."
+    }
+  ],
+  "blockers": [
+    {
+      "root_cause_key": "system-upgrade-image-only-convergence",
+      "obligation_id": "dimension:execution",
+      "classification": "deeper",
+      "owner": "system-upgrade",
+      "severity": "high",
+      "summary": "Signed Deployment manifests now converge, but rollback and complete status still omit the other release deployment resources.",
+      "evidence": "internal/systemrelease/upgrade/upgrade.go:516-531 performs compatibility/resource application only for upgrade; 532-565 rolls just four Deployment groups. cmd/oac-installer/upgrade/kubernetes_runtime_mutations.go:148-173 applies only the selected Deployment. Non-Deployment resources are applied exclusively by ExpandCompatibility:88-103. kubernetes_runtime.go:146-191 validates live manifests only for those four Deployments; addReleaseResourceVersions at 217-232 merely reads resource versions. The rollback fixture at kubernetes_runtime_test.go:540-577 asserts Deployment patch order and status, not restoration of changed Service/ConfigMap/RBAC/NetworkPolicy/Ingress/PDB resources. deployment-and-operations-design.md:262-264,306 requires the previous deployment resources, with only compatible CRD/database expansions retained.",
+      "impact": "A rollback can report complete with the previous service images/manifests but still run against the newer release configuration, routing and permissions; unrelated release-resource drift can also remain green.",
+      "required_fix": "Restore and verify the previous signed non-schema deployment resources at appropriate reverse-rollout stages, and include resource-set convergence in installed-state/recovery/completion evidence. Explicitly preserve compatible CRD/database expansions rather than exempting every non-Deployment resource. Add changed ConfigMap/Service/RBAC/routing rollback and drift fixtures.",
+      "required_evidence_mode": "fixture",
+      "blocker_id": "BLK-187ae9f7e862"
+    },
+    {
+      "root_cause_key": "system-upgrade-continuity-attribution",
+      "obligation_id": "dimension:evidence",
+      "classification": "deeper",
+      "owner": "system-upgrade",
+      "severity": "high",
+      "summary": "Continuity allows status progress but still freezes the complete Workflow membership and all spec fields rather than protecting existing baselines from installer-attributable changes.",
+      "evidence": "cmd/oac-installer/upgrade/kubernetes_runtime_helpers.go:245-287 hashes every listed Workflow UID and entire spec into one digest. kubernetes_runtime_apply.go:45-60 rejects any difference from that digest before each resource write. internal/systemrelease/upgrade/upgrade.go:496-497,511-512,584-585 also require equality. Workflow specs include user-controlled desiredState (docs/references/cloud-native/kubernetes-resources.md:36-46,60-68), and normal orchestration may create child Workflows. The declared fixtures cover a pre-existing Workflow changing status to Succeeded (kubernetes_runtime_test.go:55-65,632-644), not legitimate object creation, retention deletion or user desired-state commands during upgrade. The existing-controller continuity requirement is deployment-and-operations-design.md:302,308 and detailed design:565-567.",
+      "impact": "Ordinary creation of a child/new Workflow, terminal retention cleanup, or an authorized pause/cancel changes this global digest and aborts a partially applied release despite the installer having issued no business writes.",
+      "required_fix": "Protect the relevant immutable baselines of existing executions and prove the installer write boundary is read-only for business state, without treating normal owner-attributable object membership or desired-state changes as installer mutations. Add deterministic concurrent child-creation/retention/user-command fixtures and separately attributable forbidden-mutation evidence.",
+      "required_evidence_mode": "fixture",
+      "blocker_id": "BLK-bcafc0bbb9e1"
+    },
+    {
+      "root_cause_key": "system-upgrade-running-binary-installed-release-coupling",
+      "obligation_id": "dimension:execution",
+      "classification": "new",
+      "owner": "system-upgrade",
+      "severity": "high",
+      "summary": "Production release observation authenticates the running installer against the currently installed release, breaking upgrades when adjacent releases ship different installer binaries.",
+      "evidence": "cmd/oac-installer/upgrade/production.go:75-88 calls the strict LoadSignedRelease with catalog.installerBinary for every ResolveInstalled. kubernetes_runtime.go:110-115 uses that method whenever the new release metadata exists. A legacy installation instead uses ResolveDigest:117-128, which skips running-binary authentication; ExpandCompatibility then writes that metadata baseline at kubernetes_runtime_mutations.go:76-79. NewProductionDependencies:189-205 obtains InstallerVersion independently from an environment string. The connected runtime fixtures replace ResolveInstalled with a plain Resolve at kubernetes_runtime_test.go:868-870; fixture variants reuse the same installer bytes (fixture_test.go:94,202-221). production_test.go:60-65 confirms strict rejection for a nonmatching executable, but no adjacent-release/different-binary flow is exercised.",
+      "impact": "A newer compatible signed installer cannot observe an older release with metadata; on a legacy install it can pass preflight then fail immediately after recording metadata. Conversely, the older installer can lose status/recovery access as soon as commit changes Current to a release with a different installer binary. Legacy preflight also does not authenticate the running binary at all.",
+      "required_fix": "Authenticate the running executable and its version against its own trusted signed provenance before changes, independently verify installed/previous/target release payloads, and enforce the proven installer version against target compatibility. Do not require the executable to occur in whichever release is currently installed. Cover distinct N and N+1 installer binaries, legacy bootstrap, postcommit recovery and rollback using the real FileReleaseCatalog.",
+      "required_evidence_mode": "fixture"
+    },
+    {
+      "root_cause_key": "system-upgrade-protocol-compatibility-presence-only",
+      "obligation_id": "dimension:execution",
+      "classification": "new",
+      "owner": "system-upgrade",
+      "severity": "high",
+      "summary": "Platform API, internal Command/Report/Event and SDK compatibility checks are presence/health checks, not N/N-1 compatibility evidence.",
+      "evidence": "cmd/oac-installer/upgrade/kubernetes_runtime_mutations.go:47-51 marks platform-api from the current HTTP readiness and workload presence, command-report-event from CRD readiness/schema and Controller/Host presence, and sdk-service from Execution Host presence plus a nonempty OCI list. None consumes current/target protocol compatibility identities, supported adjacent-release evidence, or compatible API/SDK contracts. helpers.go:471-476 shows hasWorkloadResource checks only an indexed Deployment digest. deployment-and-operations-design.md:282,294,297-299 requires N/N-1 checks before rollout. This finding comes from complete static inspection and the declared fixtures, not an additional network or bypass experiment.",
+      "impact": "An exact signed target with incompatible service/protocol behavior passes these Required checks whenever ordinary Deployments and health endpoints exist; unknown compatibility is represented as pass.",
+      "required_fix": "Consume authoritative exact current/target compatibility evidence through the owning release/installer contract, validate the N/N-1 API, internal protocol and embedded SDK/service window, and fail closed when it is missing or incompatible. Exercise compatible, incompatible and unknown evidence with deterministic adapter fixtures; no new live-cluster gate is requested.",
+      "required_evidence_mode": "fixture"
+    },
+    {
+      "root_cause_key": "system-upgrade-rollback-additive-crd-preflight",
+      "obligation_id": "dimension:execution",
+      "classification": "new",
+      "owner": "system-upgrade",
+      "severity": "high",
+      "summary": "Rollback applies the forward CRD compatibility test in reverse and therefore rejects the additive schema upgrades it promises to roll back.",
+      "evidence": "cmd/oac-installer/upgrade/kubernetes_runtime_mutations.go:40-41 computes workflowCRDCompatible(snapshot.release, target.VerifiedRelease()) for both modes; lines 53-55 change only rollbackSupported, not the failed Required crd check. helpers.go:678-695 compares every currently served schema with the target and schemaBackwardCompatible:774-780 requires every current property in the target. After an allowed optional-field expansion N to N+1, target N naturally lacks that field. The production rollback fixture changes Deployment/Job annotations only (fixture_test.go:103-150), so it does not cover additive CRD rollback. deployment-and-operations-design.md:306 and detailed design:565 require retaining the expanded CRD while rolling services back.",
+      "impact": "A normal backward-compatible optional CRD expansion can be advertised as rollback_supported=true, yet rollback preflight refuses the previous release despite the intended expanded schema being retained.",
+      "required_fix": "Use mode-specific compatibility: assess previous services against the retained live expanded schema and the declared adjacent compatibility window, not whether the old manifest contains every newer field. Add a signed optional-field CRD expansion followed by rollback fixture and verify the new field remains installed.",
+      "required_evidence_mode": "fixture"
+    },
+    {
+      "root_cause_key": "system-upgrade-desired-template-as-running-convergence",
+      "obligation_id": "dimension:execution",
+      "classification": "new",
+      "owner": "system-upgrade",
+      "severity": "high",
+      "summary": "Observed image/manifest and readiness evidence can declare convergence while only the desired Deployment template has changed and old replicas still serve.",
+      "evidence": "cmd/oac-installer/upgrade/kubernetes_runtime.go:151-189 obtains ActualWorkloads and ActualWorkloadManifests from the live Deployment spec/annotations, not running replicas. helpers.go:386-413 tests observedGeneration, total ready/available replicas and Available, but never updatedReplicas or full rollout completion. WaitReady uses the existing installer ProbeDeploymentAvailable (mutations.go:176-196; internal/installer/readiness_kubernetes.go:185-200), which likewise checks total readyReplicas, not updatedReplicas. A Kubernetes controller can have observed the new generation and still have Available=True and old ready replicas during RollingUpdate. The fixture patch reactor at kubernetes_runtime_test.go:1104-1130 merges desired fields and preserves prior readiness without simulating a generation/replica transition; the target variants keep image digests unchanged.",
+      "impact": "Execute can skip WaitReady or advance to later service groups, commit metadata and report complete before target replicas are ready. That invalidates the required compatibility ordering and exact actual-image status.",
+      "required_fix": "Distinguish desired signed template identity from observed running rollout identity. Require all desired replicas updated and ready/available with no old replicas, plus generation-aligned evidence and target digest proof sufficient for each group. Add declared deterministic rollout fixtures with observedGeneration advanced but old replicas still ready, mixed images, delayed update and failed target readiness.",
+      "required_evidence_mode": "fixture"
+    },
+    {
+      "root_cause_key": "system-upgrade-schema-compatibility-unsupported-validation",
+      "obligation_id": "dimension:execution",
+      "classification": "new",
+      "owner": "system-upgrade",
+      "severity": "high",
+      "summary": "The CRD backward-compatibility comparator silently accepts validation and structural semantics it does not evaluate.",
+      "evidence": "cmd/oac-installer/upgrade/kubernetes_runtime_helpers.go:703-815 inspects type/format/nullable/required/enum, selected bounds/pattern, properties/additionalProperties and items. It ignores other admission constraints including allOf/anyOf/oneOf/not, exclusive bounds, uniqueItems and x-kubernetes-validations, as well as Kubernetes list/map/preserve-unknown semantics. workflowCRDCompatible:691-694 treats its Boolean result as authoritative; AssessCompatibility then turns it into a Required pass. The existing comparator tests at kubernetes_runtime_test.go:652-682,740-768 cover only the implemented subset. No additional negative test or sensitive payload was constructed.",
+      "impact": "A signed target can tighten an ignored validation or change merge/pruning semantics and still be applied as a compatible expansion, making existing Workflow data or subsequent legitimate owner writes invalid or semantically different.",
+      "required_fix": "Use the owning Kubernetes schema compatibility/conformance boundary, or conservatively reject changes to constraints and structural keywords not proven compatible. Cover newly restrictive validation and changed list/map/pruning semantics in declared fixtures alongside allowed optional-field expansion.",
+      "required_evidence_mode": "fixture"
+    },
+    {
+      "root_cause_key": "system-upgrade-required-health-final-convergence",
+      "obligation_id": "dimension:execution",
+      "classification": "new",
+      "owner": "system-upgrade",
+      "severity": "high",
+      "summary": "Successful release completion does not revalidate the target release complete Required health set.",
+      "evidence": "cmd/oac-installer/upgrade/kubernetes_runtime_helpers.go:479-490 selects only CRD/database/migration/ingress/Web API rules for compatibility readiness. mutations.go:188-196 waits only one DeploymentAvailable rule per group. internal/systemrelease/upgrade/upgrade.go:576-585 then completes from Status and continuity. Runtime Status observation probes only the database (kubernetes_runtime.go:211-212) in addition to local Deployment status. Required ArtifactStorageReady, service reachability/RBAC and other signed readiness rules are not part of final target convergence; ingress/Web API probes run before the service rollouts and are not repeated after Web. deployment-and-operations-design.md:300,302 explicitly requires final Required health and per-group compatible readiness.",
+      "impact": "The CLI can print Upgrade/Rollback complete even if the newly rolled Web/API, artifact store, routing or another signed Required dependency is unavailable. Earlier health observations do not prove health of the final release.",
+      "required_fix": "Add target-bound final Required readiness convergence and appropriate stage-specific compatibility probes before advancing service groups. Preserve unknown/failed outcomes and stop completion on absent/stale evidence. Add deterministic fixtures where a dependency becomes unknown or fails after rollout and where target Web/API readiness does not converge.",
+      "required_evidence_mode": "fixture"
+    },
+    {
+      "root_cause_key": "system-upgrade-permission-preflight-omitted",
+      "obligation_id": "dimension:execution",
+      "classification": "new",
+      "owner": "system-upgrade",
+      "severity": "high",
+      "summary": "Required Kubernetes mutation permissions are not established before upgrade starts writing resources.",
+      "evidence": "cmd/oac-installer/upgrade/production.go:125-181 loads clients and discovery/cluster identity, but performs no mutation-permission preflight. AssessCompatibility at kubernetes_runtime_mutations.go:20-56 contains only seven checks with no authorization/capability result. ExpandCompatibility records namespace metadata and acquires PendingTarget at 76-86 before attempting resource writes at 96-102. No SelfSubjectAccessReview or equivalent required-verb capability check is present in the added production path. deployment-and-operations-design.md:293 requires permission checks before confirmation and changes.",
+      "impact": "An operator permitted to read and update the namespace but not apply a later CRD/RBAC/Deployment can receive a passing preflight and then leave an incomplete, locked or partially expanded installation before the permission failure is discovered.",
+      "required_fix": "Before presenting a successful preflight, establish the exact required read/create/apply/update/delete/exec capabilities for the target resources and migration/readiness path using the existing installer authorization boundary. Missing or unknown permission evidence must block without writes. Add deterministic denied/unknown permission fixtures and verify no metadata/resource mutation precedes refusal.",
+      "required_evidence_mode": "fixture"
+    },
+    {
+      "root_cause_key": "system-upgrade-create-unknown-uid-binding-recovery",
+      "obligation_id": "dimension:execution",
+      "classification": "new",
+      "owner": "system-upgrade",
+      "severity": "high",
+      "summary": "A created signed resource cannot recover if its create response or the following UID-binding update is lost before the binding is recorded.",
+      "evidence": "cmd/oac-installer/upgrade/kubernetes_runtime_apply.go:140-155 creates the resource, returns immediately on any create error, and records the UID binding only afterward. On the next observation, a successful but unacknowledged create now exists; line 160-162 rejects it because bindings[key] is empty, before the exact-target match at 163. The same stranded state follows a successful create with an unsuccessful bindResourceUID update at 484-540. The declared tests cover acknowledged PVC creation/idempotent retry (kubernetes_runtime_test.go:403-460) and metadata response loss (220-262), but not this create-to-binding gap. deployment-and-operations-design.md:302 requires same-target observation/idempotent continuation after lost responses or restart.",
+      "impact": "Adding a legitimate target resource or replacing a replayable migration Job can leave the exact signed installer-owned object present but permanently rejected by normal same-target recovery; the CLI cannot safely finish the upgrade without undeclared manual recovery.",
+      "required_fix": "Persist sufficient bounded creation intent/ownership evidence and use actual-state observation to reconcile the acknowledged resource UID after an unknown create/binding outcome, while continuing to reject foreign or recreated objects. Do not blindly recreate or adopt. Add applied-but-unacknowledged create and interruption-before/after-UID-binding fixtures on the production adapter.",
+      "required_evidence_mode": "fixture"
+    }
+  ],
+  "nits": [
+    "Refresh the PR body: it still reports 93.0% combined coverage and an older source-bundle digest, while current worker evidence and reviewer reproduction report 90.0% and eadf3dd5847bbf69ab18abba95ba790b2dfee08d3a4dc8dc2b00e73e06b5d0c8. Update command results and distinguish fixture verification from full acceptance.",
+    "Improve the operator migration/risk summary: Summary.Migrations/FormatSummary show database migration names and irreversible flags only. Present concise target-specific CRD/database changes and estimated impact plus the read-only active-Workflow risk hint described at deployment-and-operations-design.md:283,285."
+  ]
+}

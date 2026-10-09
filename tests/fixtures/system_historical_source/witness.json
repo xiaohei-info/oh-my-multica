@@ -1,0 +1,65 @@
+{
+  "schema": "omac.historical-review-source-witness/v1",
+  "references": {
+    "before.json": {
+      "file": "before.json",
+      "bytes": 75116,
+      "sha256": "5cdfc30be37adb22c3be7a9fc14c18d76e7e794958bafcca79c9333ab46aed51"
+    },
+    "after.json": {
+      "file": "after.json",
+      "bytes": 73600,
+      "sha256": "40d3f126b0f969fd99f5a16fe5974ece44a7dcdd4c1671822c6bbacea8027e69"
+    },
+    "retry-intent.json": {
+      "file": "retry-intent.json",
+      "bytes": 808,
+      "sha256": "3f385a47cf75ea82c621c9595821d8098c6d2031a4831441ef4f985b3843d92f"
+    },
+    "retry-stdout.json": {
+      "file": "retry-stdout.json",
+      "bytes": 172,
+      "sha256": "04a2dab900c7a63384a1578c286c8301d890a34e4ad32c78a7af0436cc968d96"
+    },
+    "retry-stderr.log": {
+      "file": "retry-stderr.log",
+      "bytes": 157,
+      "sha256": "40d79ea2dfe4a732fb7acef2cd674905c70b85e64caea4eb5c00fe6c084f3c7d"
+    },
+    "retry-authority.json": {
+      "file": "retry-authority.json",
+      "bytes": 1295,
+      "sha256": "3660240944e62ee7fd6f07654450811cad80ab0cbc8c659c1252966fc2915e05"
+    },
+    "native-attribution.json": {
+      "file": "native-attribution.json",
+      "bytes": 1903,
+      "sha256": "389cde6f94095365dcac7860b89a1563b3293ad0d4492551459d685dde95304e"
+    },
+    "original-report.yaml": {
+      "file": "original-report.yaml",
+      "bytes": 16538,
+      "sha256": "ad632e6c2d92486ff50c635e815fb209def077df710d9a2403758450deb720e5"
+    },
+    "original-ledger.yaml": {
+      "file": "original-ledger.yaml",
+      "bytes": 13529,
+      "sha256": "09ded9238195407899585f9cb7e043e48ac5d9908d139e0c313ae391424f56e0"
+    },
+    "report.yaml": {
+      "file": "report.yaml",
+      "bytes": 30573,
+      "sha256": "03b60b266b1d29a19d72981321108c5b69b282e109130aa15f123abb395872e3"
+    },
+    "ledger.yaml": {
+      "file": "ledger.yaml",
+      "bytes": 50534,
+      "sha256": "df834e42602fb86576ad4929e61327257d9201f1df01fa5a1d271842500dc002"
+    },
+    "original-download-proof.json": {
+      "file": "original-download-proof.json",
+      "bytes": 3097,
+      "sha256": "d7a5e842dffba0126690e91a0b4785b2c5e010044130978dae84020dff9317dd"
+    }
+  }
+}

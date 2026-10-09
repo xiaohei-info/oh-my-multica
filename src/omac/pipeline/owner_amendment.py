@@ -18,6 +18,7 @@ from ..core.owner_amendment import (
     remaining_budget,
     authorized_request,
     terminal_runs,
+    owner_request,
 )
 from ..core.taskmeta import TaskKind, TaskPhase
 from ..errors import ValidationError, NeedsDecision
@@ -58,6 +59,15 @@ def required_inputs(manifest, manifest_path):
         "files": _docs_snapshot(resolved, project_root=root),
     }
 
+def _save_checkpoint(manifest, manifest_path, canonical_raw):
+    from dataclasses import asdict
+    from ..core.owner_amendment import plain
+    if Path(manifest_path).read_bytes() != canonical_raw:
+        raise ValidationError("Complete canonical manifest changed during native Source observation; do not overwrite")
+    save_manifest(manifest, manifest_path)
+    if digest(plain(asdict(load_manifest(manifest_path)))) != digest(plain(asdict(manifest))):
+        raise ValidationError("Complete canonical Source checkpoint was not confirmed; do not dispatch")
+
 
 def prepare_owner_amendment(
     engine,
@@ -70,6 +80,7 @@ def prepare_owner_amendment(
     output_file,
     source_witness_file=None,
     prospective_source_file=None,
+    current_source_file=None,
 ):
     from .amendment import _write_yaml_atomic
     from ..core.owner_amendment import preserved_source_input
@@ -82,6 +93,29 @@ def prepare_owner_amendment(
             "Explicit blocked and allowed targets are required; run `omac dag amend prepare-owner --help`"
         )
     manifest = load_manifest(manifest_path)
+    current_qualification = None
+    if current_source_file is not None:
+        from ..core.current_owner_source import (
+            CURRENT_JOURNAL, load_current_source, approved_current_source,
+            recapture_current_source,
+        )
+        source = load_current_source(current_source_file)
+        entry = manifest.meta.get(CURRENT_JOURNAL, {}).get(digest(source), {})
+        import hashlib
+        raw = Path(current_source_file).read_bytes()
+        current_qualification = {
+            "input": {"file": str(Path(current_source_file).resolve()),
+                      "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()},
+            "source_sha256": digest(source),
+            "approval_sha256": entry.get("approval_sha256"),
+        }
+        approved_current_source(manifest, current_qualification)
+        recapture_current_source(engine, manifest, source)
+        if (source["historical_source"] != qualification
+                or source["blocked_nodes"] != sorted(set(blocked_nodes))
+                or source["allowed_nodes"] != sorted(set(allowed_nodes))
+                or source["inputs"] != request_inputs(manifest_path, report_file, docs, blocked_nodes)):
+            raise ValidationError("Current source authority differs from the exact requested scope/inputs")
     prospective_qualification = None
     if prospective_source_file is not None:
         from ..core.prospective_owner import GROUPS, prospective_input, qualify_prospective
@@ -99,6 +133,7 @@ def prepare_owner_amendment(
             key: capture_source(
                 manifest, key, engine.store, engine.runtime, held=key in blocked_nodes,
                 qualification=qualification if key == "ui-foundation" else None,
+                current_source=current_qualification,
             )
             for key in sorted(set(allowed_nodes))
         },
@@ -108,8 +143,11 @@ def prepare_owner_amendment(
         request["source_qualification"] = qualification
     if prospective_qualification is not None:
         request["prospective_assessment"] = qualify_prospective(
-            manifest, prospective_qualification, engine.store, engine.runtime
+            manifest, prospective_qualification, engine.store, engine.runtime,
+            current_source=current_qualification,
         )
+    if current_qualification is not None:
+        request["current_source_qualification"] = current_qualification
     request["required_inputs"] = required_inputs(manifest, manifest_path)
     request["retry_policy"] = retry_policy(manifest_path)
     request["remaining_budgets"] = {
@@ -177,16 +215,27 @@ def resolve_owner_amendment(
         "authority": authority,
         "reason": reason,
     }
+    request_ref = None
+    if "current_source_qualification" in request:
+        import hashlib
+        raw_request = Path(request_file).read_bytes()
+        if digest(json.loads(raw_request)) != digest(request):
+            raise ValidationError("Exact owner request changed before resolution")
+        request_ref = {"file": str(Path(request_file).resolve()), "bytes": len(raw_request),
+                       "sha256": hashlib.sha256(raw_request).hexdigest()}
+        approval["request_input"] = request_ref
     entries = manifest.meta.setdefault(JOURNAL, {})
     old = entries.get(request_sha256)
     if old is not None:
-        if old.get("request") != request or old.get("approval") != approval:
+        if digest(owner_request(old)) != digest(request) or old.get("approval") != approval:
             raise ValidationError(
                 "Existing exact operator resolution cannot be replaced"
             )
     else:
+        if request_ref is not None and Path(request_file).read_bytes() != raw_request:
+            raise ValidationError("Immutable full owner request changed before resolution effect")
         entries[request_sha256] = {
-            "request": copy.deepcopy(request),
+            **({"request_ref": request_ref} if request_ref is not None else {"request": copy.deepcopy(request)}),
             "approval": approval,
             "approval_sha256": digest(approval),
             "state": "approved",
@@ -195,7 +244,7 @@ def resolve_owner_amendment(
     current = load_manifest(manifest_path).meta.get(JOURNAL, {}).get(request_sha256)
     if (
         current is None
-        or current.get("request") != request
+        or digest(owner_request(current)) != digest(request)
         or current.get("approval") != approval
     ):
         raise ValidationError(
@@ -206,6 +255,83 @@ def resolve_owner_amendment(
         "request_sha256": request_sha256,
         "approval_sha256": current["approval_sha256"],
     }
+
+
+def prepare_current_owner_source(
+    engine, manifest_path, *, blocked_nodes, allowed_nodes, report_file, docs,
+    output_file, source_witness_file=None, prospective_source_file=None,
+):
+    """Capture pending current facts. This file grants no source approval."""
+    from ..core.current_owner_source import capture_current_source, recapture_current_source
+    from .amendment import _write_yaml_atomic
+
+    manifest = load_manifest(manifest_path)
+    source = capture_current_source(
+        engine, manifest, manifest_path, blocked_nodes=blocked_nodes,
+        allowed_nodes=allowed_nodes, report_file=report_file, docs=docs,
+        source_witness_file=source_witness_file,
+        prospective_source_file=prospective_source_file,
+    )
+    recapture_current_source(engine, load_manifest(manifest_path), source)
+    if Path(output_file).exists():
+        if load_request(output_file) != source:
+            raise ValidationError("Immutable current source differs; choose a new output path")
+    else:
+        _write_yaml_atomic(output_file, source, as_json=True)
+    return {"state": "pending_current_source_resolution", "source_file": output_file,
+            "source_sha256": digest(source),
+            "next_action": f"omac dag amend resolve-owner-source {manifest_path} {output_file} --source-sha256 {digest(source)} --authority <current-Root-scope> --reason <assessment-only>"}
+
+
+def resolve_current_owner_source(
+    engine, manifest_path, source_file, *, source_sha256, authority, reason,
+):
+    """Explicit operator approval, separate from the ordinary owner resolution."""
+    from ..core.current_owner_source import (
+        CURRENT_JOURNAL, load_current_source, recapture_current_source,
+    )
+
+    if (not isinstance(authority, str) or not authority.strip()
+            or not isinstance(reason, str) or not reason.strip()):
+        raise ValidationError("Explicit current Root authority and reason required; run omac dag amend resolve-owner-source --help")
+    source_bytes = Path(source_file).read_bytes()
+    source = load_current_source(source_file)
+    if Path(source_file).read_bytes() != source_bytes:
+        raise ValidationError("Current source file changed while reading; inspect exact source before approval")
+    if (digest(source) != source_sha256
+            or source["manifest_path"] != str(Path(manifest_path).resolve())):
+        raise ValidationError("Exact current source SHA/path differs from explicit approval")
+    manifest = load_manifest(manifest_path)
+    recapture_current_source(engine, manifest, source)
+    import hashlib
+    raw = source_bytes
+    source_input = {"file": str(Path(source_file).resolve()), "bytes": len(raw),
+                    "sha256": hashlib.sha256(raw).hexdigest()}
+    approval = {"source_sha256": source_sha256,
+                "source_input": source_input,
+                "manifest_path": source["manifest_path"],
+                "scope": "assessment-only-current-source",
+                "authority": authority, "reason": reason}
+    record = {"state": "approved", "approval": approval,
+              "approval_sha256": digest(approval)}
+    entries = manifest.meta.setdefault(CURRENT_JOURNAL, {})
+    if source_sha256 in entries:
+        if entries[source_sha256] != record:
+            raise ValidationError("Existing exact current source approval cannot be replaced")
+    else:
+        # Recheck complete Source/native/required bytes directly before the one
+        # manifest effect. A lost ACK is observed by repeating this exact input.
+        recapture_current_source(engine, load_manifest(manifest_path), source)
+        if Path(source_file).read_bytes() != source_bytes:
+            raise ValidationError("Current source file changed before approval effect; capture a new source")
+        entries[source_sha256] = record
+        save_manifest(manifest, manifest_path)
+    current = load_manifest(manifest_path)
+    if current.meta.get(CURRENT_JOURNAL, {}).get(source_sha256) != record:
+        raise ValidationError("Current source approval write unknown; observe this same exact source")
+    recapture_current_source(engine, current, source)
+    return {"state": "approved", "source_sha256": source_sha256,
+            "approval_sha256": record["approval_sha256"]}
 
 
 def begin_assessment(
@@ -231,7 +357,7 @@ def begin_assessment(
     manifest = load_manifest(manifest_path)
     entry = authorized_request(manifest, request_digest, engine.store, engine.runtime)
     if (
-        request != entry["request"]
+        digest(request) != digest(owner_request(entry))
         or sorted(blocked_nodes) != request["blocked_nodes"]
         or request_inputs(manifest_path, report_file, docs, blocked_nodes)
         != request["inputs"]
@@ -306,6 +432,7 @@ def begin_assessment(
 def record_review(engine, manifest_path, request_digest, item):
     from ..core.amendment import amendment_review_binding
 
+    canonical_raw = Path(manifest_path).read_bytes()
     manifest = load_manifest(manifest_path)
     entry = authorized_request(manifest, request_digest, engine.store, engine.runtime)
     terminal_runs(engine.runtime, item.id)
@@ -343,16 +470,23 @@ def record_review(engine, manifest_path, request_digest, item):
         review_binding=binding,
         review_source=review_source,
     )
-    save_manifest(manifest, manifest_path)
+    _save_checkpoint(manifest, manifest_path, canonical_raw)
     if load_manifest(manifest_path).meta[JOURNAL][request_digest] != entry:
         raise ValidationError("Reviewed assessment checkpoint is unconfirmed")
     return load_manifest(manifest_path)
 
 
 def checkpoint_review_dispatch(engine, manifest_path, request_digest, item, reviewer):
+    canonical_raw = Path(manifest_path).read_bytes()
     manifest = load_manifest(manifest_path)
     entry = authorized_request(manifest, request_digest, engine.store, engine.runtime)
     from ..core.owner_amendment import planner_source
+    if entry.get("portable_source") is not None:
+        actual_ref = next((r for r in item.source_refs if r.get("label") == "owner-source"), None)
+        if actual_ref != entry["portable_source"]:
+            raise ValidationError("Independent Review portable Source differs from exact canonical Planner context")
+        from .portable_owner import verify_approved_source
+        verify_approved_source(engine.store, actual_ref, entry)
 
     delivery_source = planner_source(engine.store, engine.runtime, item, entry)
     previous = entry.get("planner_source")
@@ -382,7 +516,7 @@ def checkpoint_review_dispatch(engine, manifest_path, request_digest, item, revi
         "reviewer": reviewer,
         "baseline_runs": terminal_runs(engine.runtime, item.id),
     }
-    save_manifest(manifest, manifest_path)
+    _save_checkpoint(manifest, manifest_path, canonical_raw)
     if load_manifest(manifest_path).meta[JOURNAL][request_digest] != entry:
         raise ValidationError(
             "Review dispatch intention was not confirmed; do not dispatch"
@@ -390,8 +524,9 @@ def checkpoint_review_dispatch(engine, manifest_path, request_digest, item, revi
 
 
 def checkpoint_authoring_dispatch(
-    engine, manifest_path, request_digest, item_id, stage
+    engine, manifest_path, request_digest, item_id, stage, *, portable_reference=None, portable_authority=None
 ):
+    canonical_raw = Path(manifest_path).read_bytes()
     manifest = load_manifest(manifest_path)
     entry = authorized_request(manifest, request_digest, engine.store, engine.runtime)
     item = engine.store.observe_work_item_control(item_id).work_item
@@ -402,6 +537,31 @@ def checkpoint_authoring_dispatch(
         or item.worker != entry["assessment"]["orchestrator"]
     ):
         raise ValidationError("Planner identity changed before authoring dispatch")
+    if portable_reference is not None:
+        if entry.get("portable_source", portable_reference) != portable_reference:
+            raise ValidationError("Exact original portable owner Source cannot be replaced")
+        from .portable_owner import verify_approved_source
+        if portable_authority is None or entry.get("portable_authority", portable_authority) != portable_authority:
+            raise ValidationError("Authenticated original portable Source authority is missing or changed")
+        from ..core.owner_amendment import owner_history_sha
+        if portable_authority.get("owner_history_sha256") != owner_history_sha(manifest, request_digest):
+            raise ValidationError("Complete owner history changed before portable Source adoption")
+        manifest_pin = portable_authority["files"].get("current-runtime-manifest")
+        if manifest_pin is not None:
+            import hashlib
+            raw = Path(manifest_path).read_bytes()
+            if len(raw) != manifest_pin["bytes"] or hashlib.sha256(raw).hexdigest() != manifest_pin["sha256"]:
+                raise ValidationError("Complete manifest changed before portable Source adoption")
+        verify_approved_source(engine.store, portable_reference, entry, authority=portable_authority)
+        entry["portable_authority"] = portable_authority
+        entry["portable_source"] = portable_reference
+    if entry.get("portable_source") is not None:
+        from .portable_owner import verify_approved_source
+        current = engine.store.get_work_item(item_id)
+        actual_ref = next((r for r in current.source_refs if r.get("label") == "owner-source"), None)
+        if actual_ref != entry["portable_source"]:
+            raise ValidationError("Planner portable Source locator differs from canonical dispatch intention")
+        verify_approved_source(engine.store, actual_ref, entry)
     if stage == "before":
         records = entry.setdefault("authoring_dispatches", [])
         records.append(
@@ -412,8 +572,10 @@ def checkpoint_authoring_dispatch(
                 ],
             }
         )
-        save_manifest(manifest, manifest_path)
+        _save_checkpoint(manifest, manifest_path, canonical_raw)
         if load_manifest(manifest_path).meta[JOURNAL][request_digest] != entry:
             raise ValidationError(
                 "Planner dispatch intention was not confirmed; do not assign/wake"
             )
+    elif Path(manifest_path).read_bytes() != canonical_raw:
+        raise ValidationError("Complete canonical manifest changed during native Source observation; do not dispatch")

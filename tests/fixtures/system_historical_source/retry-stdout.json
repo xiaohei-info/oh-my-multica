@@ -1,0 +1,7 @@
+{
+  "node_key": "system-upgrade",
+  "status": "todo",
+  "stage": "authoring",
+  "worker": "codex-ubuntu-newapi",
+  "work_item_id": "01a10950-37c9-765e-b612-5accf4dd56ec"
+}

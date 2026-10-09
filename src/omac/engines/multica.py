@@ -846,6 +846,64 @@ class MulticaStore(WorkItemStore):
                 f"Downloaded {key} attachment is not valid UTF-8 for work item "
                 f"{item_id}") from exc
 
+
+    def publish_source_artifact(self, item_id: str, content: bytes) -> Dict[str, Any]:
+        import base64
+        if not isinstance(content, bytes) or not 0 < len(content) <= 1024 * 1024:
+            raise PlatformError("Owner source chunks must contain at most 1 MiB of exact bytes")
+        text = base64.b64encode(content).decode("ascii")
+        sha = hashlib.sha256(text.encode()).hexdigest()
+        comments = self._run_idempotent_read("owner source comments", lambda: self._run_multica(
+            ["issue", "comment", "list", item_id, "--output", "json", "--full"]))
+        if not isinstance(comments, list):
+            raise PlatformError("Owner source publication history is unavailable; do not replay uploads")
+        refs = [ref for comment in comments for attachment in comment.get("attachments", [])
+                if (ref := self._review_attachment_ref(comment, attachment, "owner-source"))
+                and ref["sha256"] == sha]
+        if len(refs) > 1:
+            raise PlatformError("Owner source publication identity is ambiguous; inspect work show")
+        if refs:
+            ref = refs[0]
+        else:
+            if self.observe_work_item_control(item_id).work_item.platform_assignee_id:
+                raise PlatformError("Publish owner source before assigning any Agent")
+            ref = self._publish_payload_comment(item_id, "owner-source", text, ".b64")
+        result = {**ref, "issue_id": item_id, "encoding": "base64"}
+        if self.read_source_artifact(result) != content:
+            raise PlatformError("Owner source upload differs from its exact intention")
+        return result
+
+    def read_source_artifact(self, ref: Dict[str, Any]) -> bytes:
+        import base64
+        if (not isinstance(ref, dict) or ref.get("encoding") != "base64"
+                or not ref.get("issue_id") or not ref.get("comment_id")
+                or not ref.get("attachment_id") or type(ref.get("bytes")) is not int
+                or not 0 < ref["bytes"] <= 4 * ((1024 * 1024 + 2) // 3)):
+            raise PlatformError("Invalid bounded native owner source locator")
+        comments = self._run_idempotent_read("owner source locator", lambda: self._run_multica(
+            ["issue", "comment", "list", ref["issue_id"], "--thread", ref["comment_id"], "--output", "json", "--full"]))
+        if not isinstance(comments, list):
+            raise PlatformError("Owner source locator cannot be observed")
+        matches = [candidate for comment in comments if comment.get("id") == ref["comment_id"]
+                   for attachment in comment.get("attachments", [])
+                   if attachment.get("id") == ref["attachment_id"]
+                   and (candidate := self._review_attachment_ref(comment, attachment, "owner-source"))]
+        if len(matches) != 1 or any(matches[0].get(k) != ref.get(k)
+                                   for k in ("sha256", "bytes", "filename")):
+            raise PlatformError("Native owner source locator identity changed")
+        if ref.get("filename") != f"omac-owner-source-{ref.get('sha256', '')[:12]}.b64":
+            raise PlatformError("Unsupported owner source filename or native locator")
+        text = self._load_payload_comment(ref["issue_id"], "owner-source", ref)
+        if text is None:
+            raise PlatformError("Native owner source content is unavailable")
+        try:
+            body = base64.b64decode(text, validate=True)
+            if not 0 < len(body) <= 1024 * 1024:
+                raise ValueError("owner source chunk exceeds its bound")
+            return body
+        except ValueError as exc:
+            raise PlatformError("Native owner source encoding is invalid") from exc
+
     def observe_verification_attachment(
         self, item_id: str, ref: Dict[str, Any],
     ) -> VerificationAttachmentObservation:

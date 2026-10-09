@@ -1,0 +1,27 @@
+{
+  "schema": "omac.Root-exact-prospective-publication-assessment-decision/v1",
+  "at": "2026-10-09T07:45:53.376443+00:00",
+  "authority_SHA256": "9512a6735dc4fea22961757d58bf2cceabc787186675373757fc052b72307db4",
+  "actual_primary_scope_gap": "/Users/chiangguantik/Documents/Codex/2026-09-26/omac-recovery-fixes/outputs/Root-Credential-current-owner-assessment-Source-20261009/actual-Planner-unsubmitted-credential-source-scope-gap.md",
+  "real_actual_Planner_Run": "01a11f7d-a4b4-77b1-99ae-4212cf3c1e8a",
+  "existing_held_source": "credential-store",
+  "producer_context_only": "contracts-credential DONE/merged preserved; no reopen/scope-transfer",
+  "draft_declaration": {
+    "node_id": "credential-rotation-wire-publication",
+    "intent": "Assess smallest explicitly owned compensating conditional-expiry rotation-wire publication preserving existing published/stored bytes/digests and record interpretation, then aligned existing Credential consumer and exact actual derived recovery set. Actual Planner defines full approved design/ownership/compatibility/acceptance/verification/dependencies; Root does not define wire fields or fake evidence.",
+    "definition": "not-approved; drafting identity only",
+    "native_identity": "not-created",
+    "allocation": "not-authorized",
+    "history": "not-observed",
+    "native_usage": null,
+    "remaining_budget": null
+  },
+  "authorized_now": "Only new exact Source-bound prospective definition assessment after supported portable Source/current qualification; normal actual Planner plus fresh independent Review can draft candidate add/update. No allocation/apply/Worker/definition-approval/currentOwnerRequest replay from this decision. Future explicit Root source-qualified reviewed-definition/new-budget authority required separately.",
+  "requirements": [
+    "Never modify/reopen original DONE producer or reinterpret old stored records; make compensating publication separate and individually verifiable.",
+    "Keep all Credential accepted design/required tests/security/authorization/admission/CAS/idempotency/audit/secrets and original rejected reports/ledgers.",
+    "budget_policy preserve all actual affected existing absolute-relative authority/consumption/remaining/limits/history; candidates are not0 and no default20 grant.",
+    "No UI/System/SDK/Conformance/unrelated task forced grouping; actual minimal changed-derived set controls. Scope gap must be returned before unauthorized effects."
+  ],
+  "Root_Product_verdict": null
+}

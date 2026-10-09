@@ -1,0 +1,1469 @@
+{
+  "id": "01a03bcf-a6bc-7a45-a745-7f6f08c06ecf",
+  "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1",
+  "title": "[DAG:authentication-methods] Implement pluggable authentication methods",
+  "description": "> **OMAC 控制的执行。第一动作必须严格执行：**\n\n```bash\nOMAC_ENGINE=multica OMAC_WORKSPACE_ID=410ade5e-8ae0-4402-b975-813dea2ff3e1 OMAC_PROJECT_ID=732ce83f-5cbd-4485-850d-1b8a1bf16340 omac work show 01a03bcf-a6bc-7a45-a745-7f6f08c06ecf --output json\n```\n\n> `omac work show` 和 `omac work submit` 都可能长时间运行。任何工具调用在拿到最终 tool_result 和终态退出码前都不完整。若工具返回 running/session、缺少最终 tool_result、出现空输出或不完整输出，必须等待或轮询到终态。使用足够长的 wait/yield，或保留并恢复续接句柄；这是通用终态规则，不绑定某个具体工具 API。timeout/yield 不是空结果，也不允许据此停止。`omac work show` 只有在退出码 0 且得到可解析 JSON 后才能继续。`omac work submit` 只有在最终 tool_result 明确给出退出码 0，且 JSON 包含 `\"ok\": true`、`\"terminal\": true` 和 `\"next_action\": \"stop\"` 时才可宣称成功。结果未知时不得宣称成功或结束；validation error 必须修复后重新提交。submit 成功就是本次执行的最后动作，立即停止，不再执行任何平台写入。\n\n> 在上方精确的 `omac work show` 命令以退出码 0 成功返回可解析 JSON 前，不得执行任何其他 Issue 查询（包括 `multica issue get`、`multica issue comment list` 或 metadata 查询），也不得开始分析任务内容。work show 成功后，只能在返回上下文确有需要时使用只读 Issue 查询。禁止任何会创建、修改或删除 Issue 状态的 `multica issue` 写操作。这是语义边界，不是穷举命令清单；禁止示例包括 `multica issue status`、`multica issue assign`、`multica issue comment`、`multica issue metadata`、`multica issue rerun`、`multica issue cancel-task`、`multica issue update`、`multica issue create`、`multica issue label`、`multica issue property`、`multica issue reorder` 和 `multica issue subscriber`。只允许使用上方给出的精确 `omac work show` 命令，以及 work show 返回的精确 `omac work submit` 命令作为 OMAC 控制命令；已有手工附件或 verification 但缺少 `delivery_identity` 时也必须通过该 submit 命令封存。\n\n# Implement pluggable authentication methods\n\n## 任务摘要\n- 类型: 开发实现（`develop`）\n- 执行角色: 独立评审者（`reviewer`）\n- 目标: Deliver AuthenticationMethod configuration, probe/test/enable, single-use AuthenticationFlow, ExternalIdentityLink resolution, and exact Principal/session/scope convergence through a selected public Authentication SDK Driver, using canonical Credential Broker leases and one durable fenced method-flow-session-audit commit or fail-closed recovery journal for terminal success and failure.\n- 依据: `authentication-methods-amendment-decision.md:L3-L28`\n- 依据: `docs/design/open-agent-cluster-overview-design.md:L397-L405`\n- 依据: `docs/design/open-agent-cluster-overview-design.md:L677-L684`\n- 依据: `docs/design/detailed/09-governance-and-security-detailed-design.md:L11-L163`\n- 依据: `docs/design/detailed/09-governance-and-security-detailed-design.md:L408-L524`\n- 依据: `docs/design/detailed/09-governance-and-security-detailed-design.md:L553-L620`\n- 依据: `docs/design/detailed/10-web-api-cli-detailed-design.md:L202-L235`\n- 依据: `docs/references/governance/security-and-enterprise.md:L32-L183`\n- 依据: `docs/references/governance/security-and-enterprise.md:L402-L487`\n- 依据: `docs/references/extension/plugin-contracts.md`\n- 依据: `docs/delivery/acceptance-and-validation.md:L150-L168`\n\n## 任务详情\nRework the existing authentication-methods delivery as one sealed Governance-owned method/flow transaction that consumes the public Authentication SDK proof and canonical credential lease contracts, then proves replay, recovery, session scope, revocation, and audit behavior under failure and concurrency.\n\n## 非目标\n- Do not change adjacent domain ownership or introduce a competing source of truth.\n- Do not bypass Authorization, Credential Broker, CAS, idempotency, review, audit, or evidence gates.\n- Do not define or vendor the Authentication SDK, AuthenticationDriver protocol, credential lease wire, Principal, Session, or Audit contracts in this node.\n- Do not issue credential capabilities locally, add a feature-local credential store, expose secret material, or contact the Broker on describe/read-only view paths.\n- Do not use separately injectable reference snapshots, lifecycle validation, session revocation, flow persistence, or audit writes where the contract requires one fenced commit or recoverable journal.\n- Do not let a Driver create Principal, Session, Scope, authorization decisions, permissions, or a host-private identity proof.\n- Do not accept a fresh-key completion of a consumed flow, a caller-authored test receipt, a session without selected scope, or terminal flow state without durable redacted evidence.\n- Do not claim completion from only in-memory adapters or focused happy-path tests; the sealed delivery must include concurrent, multi-instance, restart, failure-injection, and negative evidence for every listed closure.\n\n## 主要代码归属范围\n- `internal/authentication/methods/**`\n- `internal/authentication/flows/**`\n- `api/auth/methods/**`\n\n## 交付约束\n- PR 基线: `main`\n- 改动分支覆盖率: `≥ 90%`\n- PR 关联标识: `AITEAM-944`\n\n## 上游 issue（防跑偏）\n本任务承接以下上游 issue，用于追溯需求与决策；若与当前 contract 冲突，先请求确认：\n- 设计方案: `289a13bf-cede-4b5b-ba86-d72f0bef8164`\n- 验收文档: `8e6bd282-6039-41d2-aa00-969a0bf1554a`\n- 前置开发任务 · Bootstrap Go module and quality harness: `5849f786-8c97-42ac-adf9-1c96957f28ee`\n- 前置开发任务 · Publish Authentication SDK and conformance suite: `4b369c7b-1ee7-4047-bb1f-d288db2b13fe`\n- 前置开发任务 · Harden the public Authentication SDK method contract: `01a04768-7f90-77f5-8bcf-912cf51642ad`\n- 前置开发任务 · Create identity and authentication contracts: `d5f92ac5-6836-49c5-b218-d24164e3c2e9`\n- 前置开发任务 · Publish Package, Harness and ComponentRun wire contracts: `01a032bd-188a-7c88-b4b8-06e682c7b907`\n- 前置开发任务 · Create credential contracts: `30335cd6-d2e8-4c9d-8988-7f7b134ed6e9`\n- 前置开发任务 · Implement deterministic release artifact packaging: `152d735a-c373-4967-8ae0-45c191de2eff`",
+  "status": "WorkItemStatus.TODO",
+  "dag_key": "authentication-methods",
+  "identifier": "AITEAM-944",
+  "worker": "pi-macmini-newapi",
+  "reviewer": "",
+  "blocked_by": [
+    "bootstrap-go",
+    "authentication-sdk",
+    "authentication-sdk-method-hardening",
+    "contracts-identity",
+    "contracts-extension-wire",
+    "contracts-credential",
+    "release-artifact-tooling"
+  ],
+  "wave": null,
+  "artifacts": {
+    "pr_url": "https://github.com/xiaohei-info/open-agent-cluster/pull/74",
+    "head_sha": "34abdef1664a48662d04c56ca760bd37b837f33f"
+  },
+  "verification": {
+    "commands": [
+      {
+        "cmd": "mkdir -p artifacts/authentication-methods && go test -covermode=atomic -coverprofile=artifacts/authentication-methods/coverage.out ./internal/authentication/methods/... ./internal/authentication/flows/... ./api/auth/methods/...",
+        "exit_code": 0,
+        "summary": "scoped authentication method, flow, and API tests passed with atomic coverage"
+      },
+      {
+        "cmd": "mkdir -p artifacts/authentication-methods && go test -json ./internal/authentication/methods/... ./internal/authentication/flows/... ./api/auth/methods/... -run '^(TestCredentialUseRequiresCanonicalLeaseConsumeReleaseExpiryAndExactBoundary|TestIdentityReferenceCASRejectsConcurrentInsertionAcrossInstances|TestAuthenticationConfigurationRejectsSensitiveAndUnknownFields|TestFlowLifecycleCommitRecoversAcrossRestartAndDisable|TestTestLoginReceiptRequiresDurableFlowOwner|TestCommandReplayPrecedesMutableMethodState|TestExternalDriverUsesPublicIdentityProof|TestMissingOrAmbiguousIdentityProofRequiresNewMethod|TestConsumedFlowRejectsFreshIdempotencyKey|TestBrowserSessionPersistsSelectedScope|TestDisableRevocationConvergesAfterCommitFailure|TestTerminalFlowFailurePersistsAuditAndOutbox|TestLoginCompletionAuditsAuthenticatedContext)$' -count=1 > artifacts/authentication-methods/hardening-tests.json",
+        "exit_code": 0,
+        "summary": "all 13 required authentication hardening tests captured as passing JSON evidence"
+      },
+      {
+        "cmd": "python3 -c \"import json; required={'TestCredentialUseRequiresCanonicalLeaseConsumeReleaseExpiryAndExactBoundary','TestIdentityReferenceCASRejectsConcurrentInsertionAcrossInstances','TestAuthenticationConfigurationRejectsSensitiveAndUnknownFields','TestFlowLifecycleCommitRecoversAcrossRestartAndDisable','TestTestLoginReceiptRequiresDurableFlowOwner','TestCommandReplayPrecedesMutableMethodState','TestExternalDriverUsesPublicIdentityProof','TestMissingOrAmbiguousIdentityProofRequiresNewMethod','TestConsumedFlowRejectsFreshIdempotencyKey','TestBrowserSessionPersistsSelectedScope','TestDisableRevocationConvergesAfterCommitFailure','TestTerminalFlowFailurePersistsAuditAndOutbox','TestLoginCompletionAuditsAuthenticatedContext'}; rows=[json.loads(x) for x in open('artifacts/authentication-methods/hardening-tests.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing required passing tests: {sorted(required-passed)}'\"",
+        "exit_code": 0,
+        "summary": "required hardening evidence contains all 13 passing test names"
+      },
+      {
+        "cmd": "CGO_ENABLED=1 go test -race -count=1 ./internal/authentication/methods/... ./internal/authentication/flows/... ./api/auth/methods/...",
+        "exit_code": 0,
+        "summary": "scoped race tests passed with CGO enabled"
+      },
+      {
+        "cmd": "CGO_ENABLED=1 go vet ./internal/authentication/methods/... ./internal/authentication/flows/... ./api/auth/methods/...",
+        "exit_code": 0,
+        "summary": "scoped go vet checks passed"
+      },
+      {
+        "cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/authentication-methods/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+        "exit_code": 0,
+        "summary": "aggregate statement coverage reached at least 90 percent"
+      },
+      {
+        "cmd": "python3 scripts/release/package_component.py --component authentication-methods --kind platform-core-dependency-source --input internal/authentication/methods --input internal/authentication/flows --input api/auth/methods --bundle artifacts/authentication-methods/source-bundle.tar.zst --component-manifest artifacts/authentication-methods/component-manifest.json --digest-output artifacts/authentication-methods/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner authentication-methods --require-all-owner-sources-accounted",
+        "exit_code": 0,
+        "summary": "deterministic source bundle and component manifest generated from the reviewed head"
+      }
+    ],
+    "integration_gates": [
+      {
+        "name": "authentication-methods-gate",
+        "source_of_truth": [
+          "authentication-methods-amendment-decision.md:L3-L28",
+          "docs/design/detailed/09-governance-and-security-detailed-design.md:L48-L163",
+          "docs/design/detailed/09-governance-and-security-detailed-design.md:L408-L524",
+          "docs/references/governance/security-and-enterprise.md:L32-L183",
+          "docs/references/governance/security-and-enterprise.md:L402-L487",
+          "docs/delivery/acceptance-and-validation.md:L150-L168"
+        ],
+        "delivery_goal": "Prove one externally implementable AuthenticationDriver path from typed non-sensitive Method configuration and canonical credential lease through fenced single-use flow completion to the exact Principal, selected-scope BrowserSession, authenticated RequestContext, and redacted terminal evidence, including replay, disable, failure, restart, and multi-instance recovery.",
+        "covers": [
+          "authentication-methods"
+        ],
+        "acceptance_refs": [
+          "UJ-AUTHENTICATION-METHOD-001"
+        ],
+        "status": "pass",
+        "commands": [
+          {
+            "cmd": "mkdir -p artifacts/authentication-methods && go test -covermode=atomic -coverprofile=artifacts/authentication-methods/coverage.out ./internal/authentication/methods/... ./internal/authentication/flows/... ./api/auth/methods/...",
+            "exit_code": 0,
+            "summary": "command completed successfully"
+          },
+          {
+            "cmd": "mkdir -p artifacts/authentication-methods && go test -json ./internal/authentication/methods/... ./internal/authentication/flows/... ./api/auth/methods/... -run '^(TestCredentialUseRequiresCanonicalLeaseConsumeReleaseExpiryAndExactBoundary|TestIdentityReferenceCASRejectsConcurrentInsertionAcrossInstances|TestAuthenticationConfigurationRejectsSensitiveAndUnknownFields|TestFlowLifecycleCommitRecoversAcrossRestartAndDisable|TestTestLoginReceiptRequiresDurableFlowOwner|TestCommandReplayPrecedesMutableMethodState|TestExternalDriverUsesPublicIdentityProof|TestMissingOrAmbiguousIdentityProofRequiresNewMethod|TestConsumedFlowRejectsFreshIdempotencyKey|TestBrowserSessionPersistsSelectedScope|TestDisableRevocationConvergesAfterCommitFailure|TestTerminalFlowFailurePersistsAuditAndOutbox|TestLoginCompletionAuditsAuthenticatedContext)$' -count=1 > artifacts/authentication-methods/hardening-tests.json",
+            "exit_code": 0,
+            "summary": "command completed successfully"
+          },
+          {
+            "cmd": "python3 -c \"import json; required={'TestCredentialUseRequiresCanonicalLeaseConsumeReleaseExpiryAndExactBoundary','TestIdentityReferenceCASRejectsConcurrentInsertionAcrossInstances','TestAuthenticationConfigurationRejectsSensitiveAndUnknownFields','TestFlowLifecycleCommitRecoversAcrossRestartAndDisable','TestTestLoginReceiptRequiresDurableFlowOwner','TestCommandReplayPrecedesMutableMethodState','TestExternalDriverUsesPublicIdentityProof','TestMissingOrAmbiguousIdentityProofRequiresNewMethod','TestConsumedFlowRejectsFreshIdempotencyKey','TestBrowserSessionPersistsSelectedScope','TestDisableRevocationConvergesAfterCommitFailure','TestTerminalFlowFailurePersistsAuditAndOutbox','TestLoginCompletionAuditsAuthenticatedContext'}; rows=[json.loads(x) for x in open('artifacts/authentication-methods/hardening-tests.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing required passing tests: {sorted(required-passed)}'\"",
+            "exit_code": 0,
+            "summary": "command completed successfully"
+          },
+          {
+            "cmd": "CGO_ENABLED=1 go test -race -count=1 ./internal/authentication/methods/... ./internal/authentication/flows/... ./api/auth/methods/...",
+            "exit_code": 0,
+            "summary": "command completed successfully"
+          },
+          {
+            "cmd": "CGO_ENABLED=1 go vet ./internal/authentication/methods/... ./internal/authentication/flows/... ./api/auth/methods/...",
+            "exit_code": 0,
+            "summary": "command completed successfully"
+          },
+          {
+            "cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/authentication-methods/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+            "exit_code": 0,
+            "summary": "command completed successfully"
+          },
+          {
+            "cmd": "python3 scripts/release/package_component.py --component authentication-methods --kind platform-core-dependency-source --input internal/authentication/methods --input internal/authentication/flows --input api/auth/methods --bundle artifacts/authentication-methods/source-bundle.tar.zst --component-manifest artifacts/authentication-methods/component-manifest.json --digest-output artifacts/authentication-methods/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner authentication-methods --require-all-owner-sources-accounted",
+            "exit_code": 0,
+            "summary": "command completed successfully"
+          }
+        ],
+        "metrics": {
+          "statement_coverage_percent": 90.0,
+          "required_hardening_test_count": 13,
+          "declared_artifact_count": 5,
+          "unleased_credential_materialization_count": 0,
+          "sensitive_configuration_persistence_count": 0,
+          "fresh_key_consumed_flow_replay_accept_count": 0,
+          "session_without_selected_scope_count": 0,
+          "terminal_flow_without_evidence_count": 0,
+          "preauth_audit_after_identity_resolution_count": 0
+        },
+        "artifacts": [
+          "artifacts/authentication-methods/coverage.out",
+          "artifacts/authentication-methods/hardening-tests.json",
+          "artifacts/authentication-methods/source-bundle.tar.zst",
+          "artifacts/authentication-methods/bundle-digest.txt",
+          "artifacts/authentication-methods/component-manifest.json"
+        ]
+      }
+    ],
+    "pr_base": "main",
+    "coverage": 90.0,
+    "env_setup": [
+      "Go toolchain available from the repository environment",
+      "CGO_ENABLED=1 used for race and vet checks",
+      "component manifest source_revision=34abdef1664a48662d04c56ca760bd37b837f33f",
+      "source bundle SHA-256=d6dd5fd3406c8ee01af8ed4bfbb2598bae389f2983d61fa3782bc5f39fb538f6"
+    ]
+  },
+  "verification_ref": {
+    "comment_id": "01a05bc1-fd2a-7899-8b74-8abcb6acf542",
+    "attachment_id": "01a05bc1-fc39-76ba-b8b1-71ca10023b0f",
+    "sha256": "fb06c1f2abdcad2857a9d54ab93815d07d88074c3d316cc61f3f64d7f99e99ab",
+    "bytes": 10071,
+    "filename": "omac-verification-fb06c1f2abdc.yaml"
+  },
+  "review_verdict": null,
+  "review_comment": null,
+  "machine_feedback": null,
+  "machine_feedback_ref": null,
+  "review_report": null,
+  "review_report_ref": null,
+  "review_subject_digest": null,
+  "review_obligations": [],
+  "review_obligations_ref": null,
+  "review_ledger": {
+    "schema": "omac.review-ledger/v1",
+    "cycles": [
+      {
+        "round": 1,
+        "subject_digest": "0255f6bd370422c30dfc4a268d3ed2f34a0674bcbeae316279dc0b030f7f5dc9",
+        "report_digest": "2b9051ccef9837e1b8843dba00f36079392f6b752f8b666204da1cb2f2d00b6a",
+        "verdict": "reject",
+        "obligation_results": {
+          "dimension:authority": "fail",
+          "dimension:structure": "fail",
+          "dimension:execution": "fail",
+          "dimension:ownership": "fail",
+          "dimension:evidence": "fail",
+          "dimension:regression": "pass",
+          "integration:authentication-methods-gate": "fail"
+        },
+        "new_count": 9,
+        "fixed_count": 0,
+        "regressed_count": 0,
+        "unchanged_count": 0,
+        "open_count": 9,
+        "prior_open_blocker_ids": [],
+        "open_blocker_ids": [
+          "BLK-0257cbb2c411",
+          "BLK-38f8db92eaf4",
+          "BLK-69b01031fd8a",
+          "BLK-72e115378b75",
+          "BLK-7de9ed57f284",
+          "BLK-8a80e1c7b3a7",
+          "BLK-90863f4fdd5b",
+          "BLK-b83f2a1f0d96",
+          "BLK-fcedb5bcb0e2"
+        ],
+        "reported_blocker_ids": [
+          "BLK-0257cbb2c411",
+          "BLK-38f8db92eaf4",
+          "BLK-69b01031fd8a",
+          "BLK-72e115378b75",
+          "BLK-7de9ed57f284",
+          "BLK-8a80e1c7b3a7",
+          "BLK-90863f4fdd5b",
+          "BLK-b83f2a1f0d96",
+          "BLK-fcedb5bcb0e2"
+        ],
+        "blocker_facts_schema": "omac.review-cycle-blocker-facts/v1",
+        "blocker_facts": [
+          {
+            "blocker_id": "BLK-0257cbb2c411",
+            "root_cause_key": "credential-use-not-bound-to-canonical-lease",
+            "obligation_id": "dimension:authority",
+            "summary": "Canonical Credential Broker leasing is not the only executable path and the pre-auth Broker request does not carry the evaluated authorization/binding proof from its wrapper.",
+            "evidence": "internal/authentication/methods/methods.go:160-173 keeps the legacy CredentialResolver beside CredentialLeaseResolver; :2337-2415 selects the legacy branch when no Broker is configured. Pre-auth wrapper data is built at :2441-2459, but the Broker receives only canonicalRequest at :2383-2401; contracts/governance/credential/wire.go:619-652 permits the pre-auth shortcut without an authorization proof. A consume error is terminalized at internal/authentication/flows/flows.go:966-973. Credential-use audit evidence is also optional unless a strict constructor was selected.",
+            "required_fix": "Remove the executable bare-capability path for this delivery. Require one canonical Broker resolve request on every materializing path, bind its lease to the exact method/Driver, purpose, target, authorization, and command identity, model Unknown as recoverable reconciliation, and record consume / release evidence without exposing secret bytes.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-38f8db92eaf4",
+            "root_cause_key": "authentication-state-has-multiple-durable-owners",
+            "obligation_id": "dimension:structure",
+            "summary": "Constructor contracts do not enforce one durable owner for method/flow lifecycle, reference CAS, session intent, receipt, audit, outbox, and idempotency state.",
+            "evidence": "Methods Dependencies and New at internal/authentication/methods/methods.go:825-1101 independently accept Mutations, ReferenceOwner, Revocations, and TransactionOwner; RequireDurable checks presence but not owner identity. Flow Dependencies and New at internal/authentication/flows/flows.go:256-422 independently accept Flows, Transactions, FailureJournal, and Sessions. primaryFlowOwner at :611-645 merely selects a supplied transaction owner. InMemoryStore.AuthenticationTransactionOwner is a no-op at internal/authentication/methods/methods.go:3076-3132 and its aggregate commit delegates to CommitMethodMutation at :3555-3562. InMemoryFlowStore's aggregate commit similarly dispatches to separate CommitFlow* methods at internal/authentication/flows/flows.go:1887-1900; neither store survives process restart.",
+            "required_fix": "Make one durable owner a mandatory constructor dependency and bind methods, flow lifecycle, reference CAS, session intent, receipts, audit, outbox, and idempotency to that owner. Reject split-owner compositions and replace the in-memory marker with a restart-safe transactional implementation or an explicitly fail-closed production adapter. Add crash/restart and multi-process evidence at each commit boundary.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-69b01031fd8a",
+            "root_cause_key": "credential-use-audit-not-bound-to-command",
+            "obligation_id": "dimension:evidence",
+            "summary": "Credential-use audit events are structurally checked but not bound to the lease request and authorization that produced them.",
+            "evidence": "CredentialUseAuditCommand.Validate and CredentialUseAuditEvidence.Validate check shape and lease/request digests in internal/authentication/methods/governance.go:69-119, but prepareCredentialUseAudit at internal/authentication/methods/methods.go:2423-2438 does not call the command validator or compare the returned event with the canonical request, lease, operation, subject, or evaluated authorization. InMemoryFlowStore.persistCredentialUseAudits at internal/authentication/flows/flows.go:1881-1885 then stores the returned event unchanged.",
+            "required_fix": "Validate the command before calling the audit port and require the returned event to carry the exact request/lease digest, method and flow subject, operation, request-context lineage, and evaluated authorization; persist it only inside the same owner transaction or recovery journal.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-72e115378b75",
+            "root_cause_key": "revocation-journal-does-not-prove-method-commit",
+            "obligation_id": "dimension:execution",
+            "summary": "Pending method revocation is replayed without proving that its paired method mutation committed.",
+            "evidence": "Disable and Update stage PendingMethodRevocation before the method commit at internal/authentication/methods/methods.go:1607-1619 and :1987-2049. RecoverPendingRevocations at :2087-2107 unconditionally calls revokeSessionsAt and then completes every pending intent. PendingMethodRevocation and its journal at :264-287 contain no submission digest, reservation identity, or committed-command proof; commitMethodMutationLocked at :3605-3658 never transitions that journal entry. The named failure test only checks the pre-commit legacy retry path and does not exercise recovery of a failed strict commit.",
+            "required_fix": "Store a method-command identity/digest and committed state in the same durable owner transaction, or make recovery verify the committed method revision and exact command record before revoking. Keep the intent pending until both the method mutation and idempotent session revocation are proven.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-7de9ed57f284",
+            "root_cause_key": "authentication-methods-gate-not-closed",
+            "obligation_id": "integration:authentication-methods-gate",
+            "summary": "The authentication-methods integration gate remains open despite green mechanical commands.",
+            "evidence": "The source-level findings above remain in the reviewed head. The 13 named hardening entry points all pass, but their source uses reference in-memory or legacy adapters and does not establish the required production-shaped concurrent, multi-instance, restart, failure-injection, and unknown-outcome closures. The exact declared commands pass mechanically; this gate's own delivery_goal therefore is not satisfied.",
+            "required_fix": "Resolve all mapped blockers, enforce a single durable owner and canonical Broker/recovery contracts, add production-shaped multi-instance/restart/ failure-injection and negative evidence, then regenerate all five artifacts from the fixed PR head.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-8a80e1c7b3a7",
+            "root_cause_key": "authenticated-context-not-bound-to-resolved-identity",
+            "obligation_id": "dimension:ownership",
+            "summary": "The post-identity RequestContext resolver is only structurally validated and is not cross-checked against the exact Principal, link, method, and subject.",
+            "evidence": "The resolver contract receives the exact subject/link/principal at internal/authentication/flows/flows.go:219-224, but completion only calls Validate and Authorization on its return at :868-886. It never checks PrincipalID against link.PrincipalID, AuthenticationMethodID and strength/time against the completed subject, ExternalIdentityLinkID against the link, or ScopeID against an owner-approved selection. RequestContext.Validate at contracts/identity/requestcontext/request_context.go:46-55 checks presence only. The named audit test checks a permissive fixture's expected values and has no mismatched-context negative case.",
+            "required_fix": "Make the identity owner return a typed context proof or have the flow host enforce exact equality for Principal, selected Scope, method, link, driver, strength, authenticated time, request/correlation lineage, and policy context before Authorization, session persistence, and audit commit.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-90863f4fdd5b",
+            "root_cause_key": "protected-method-read-has-legacy-bypass",
+            "obligation_id": "dimension:ownership",
+            "summary": "Public and internal method read helpers still allow an un-authorized compatibility path.",
+            "evidence": "internal/authentication/methods/methods.go:1435-1444 and :2237-2255 implement Get/Describe without Authorization. api/auth/methods/methods.go:286-300 and :373-396 reject a context-less read only when ProtectedReads is already true; otherwise they call those unprotected helpers. The public API tests exercise `Get(context.Background(), ...)` in methods_test.go:295-304, and QueryEnabled is not a substitute for an explicitly authorized administrator read.",
+            "required_fix": "Remove the compatibility read path from the public service. Require an explicit RequestContext and server-side Authorization for administrator Get/Describe, bind results to the current Scope, and keep a separate configuration-free public descriptor query for login discovery with denied cross-scope/read tests.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-b83f2a1f0d96",
+            "root_cause_key": "authentication-recovery-does-not-enforce-original-fence",
+            "obligation_id": "dimension:execution",
+            "summary": "Pending completion recovery can use the current method revision instead of the original historical method fence.",
+            "evidence": "AcquireFlowRecovery at internal/authentication/methods/methods.go:1203-1241 accepts a caller-supplied method/configuration pair and falls back to ReserveFlowLifecycleLease when FlowLifecycleRecoveryStore is absent. The in-memory recovery reservation at :3285-3314 records the current method revision. ValidateFlowLifecycleRecoveryLeaseAt at :3380-3393 deliberately ignores its revision argument. recoverPendingCompletion at internal/authentication/flows/flows.go:1134-1168 passes that current revision and checks only PendingCompletion.SubmissionDigest; it does not compare the stored Identity, RequestContextID, IdempotencyKey, or pre-auth entry.",
+            "required_fix": "Persist the original lifecycle reservation, owner/fencing token, method revision, purpose, command identity, and submission digest in the pending record. Require an owner-issued recovery reservation that verifies all of those facts and does not fall back to a new-operation lease; add restart, disable, expiry, and response-loss tests.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-fcedb5bcb0e2",
+            "root_cause_key": "test-login-proof-can-be-injected-outside-flow-owner",
+            "obligation_id": "dimension:ownership",
+            "summary": "Test-login verification and receipt consumption remain standalone injectable seams rather than an inseparable flow-owner completion proof.",
+            "evidence": "TestLoginFlowVerifier, TestLoginReceiptConsumer, TestLoginReceiptProvider, and rollback are independent interfaces at internal/authentication/methods.go:803-823; Dependencies.TestLoginVerifier is optional in New at :836-1101, and BindTestLoginVerifier only checks interface shape at :1104-1120. Enable calls ConsumeTestLoginReceipt at :1817-1827 with no flow ID and an empty result digest. Flow completion commits the flow first and then invokes the separate receipt hook at internal/authentication/flows/flows.go:829-840 and :1171-1198. The reference `Store.RecordTestLogin` primitive remains callable independently at methods.go:3682-3701.",
+            "required_fix": "Remove standalone method-side receipt writes and arbitrary verifier injection. Require the flow owner to issue an opaque single-use receipt in the same durable completion record, and make Enable consume it with flow ID, purpose, method revision/digest, result digest, authorization, and owner lineage in the same owner transaction.",
+            "status": "open",
+            "classification": "new"
+          }
+        ]
+      },
+      {
+        "round": 2,
+        "subject_digest": "00af7dbcc744ef5c93690f0769ac1cdd11c9953b1540a09e963fb03a8fb28d03",
+        "report_digest": "8cd7f819246285bb566c1863e99e1fd176875243d420233fa53c37a491a0c0c6",
+        "verdict": "reject",
+        "obligation_results": {
+          "dimension:authority": "fail",
+          "dimension:structure": "fail",
+          "dimension:execution": "fail",
+          "dimension:ownership": "fail",
+          "dimension:evidence": "fail",
+          "dimension:regression": "fail",
+          "integration:authentication-methods-gate": "fail"
+        },
+        "new_count": 3,
+        "fixed_count": 0,
+        "regressed_count": 0,
+        "unchanged_count": 0,
+        "open_count": 12,
+        "prior_open_blocker_ids": [
+          "BLK-0257cbb2c411",
+          "BLK-38f8db92eaf4",
+          "BLK-69b01031fd8a",
+          "BLK-72e115378b75",
+          "BLK-7de9ed57f284",
+          "BLK-8a80e1c7b3a7",
+          "BLK-90863f4fdd5b",
+          "BLK-b83f2a1f0d96",
+          "BLK-fcedb5bcb0e2"
+        ],
+        "open_blocker_ids": [
+          "BLK-0257cbb2c411",
+          "BLK-172c4fe9e523",
+          "BLK-38f8db92eaf4",
+          "BLK-598af57e94a0",
+          "BLK-69b01031fd8a",
+          "BLK-72e115378b75",
+          "BLK-7de9ed57f284",
+          "BLK-8a80e1c7b3a7",
+          "BLK-90863f4fdd5b",
+          "BLK-99b9a105f0e2",
+          "BLK-b83f2a1f0d96",
+          "BLK-fcedb5bcb0e2"
+        ],
+        "reported_blocker_ids": [
+          "BLK-0257cbb2c411",
+          "BLK-172c4fe9e523",
+          "BLK-38f8db92eaf4",
+          "BLK-598af57e94a0",
+          "BLK-69b01031fd8a",
+          "BLK-72e115378b75",
+          "BLK-7de9ed57f284",
+          "BLK-8a80e1c7b3a7",
+          "BLK-90863f4fdd5b",
+          "BLK-99b9a105f0e2",
+          "BLK-b83f2a1f0d96",
+          "BLK-fcedb5bcb0e2"
+        ],
+        "blocker_facts_schema": "omac.review-cycle-blocker-facts/v1",
+        "blocker_facts": [
+          {
+            "blocker_id": "BLK-0257cbb2c411",
+            "root_cause_key": "credential-use-not-bound-to-canonical-lease",
+            "obligation_id": "dimension:authority",
+            "summary": "Canonical Credential Broker leasing is not the only executable materialization path.",
+            "evidence": "See prior_blocker_results. New retains the legacy CredentialResolver and PreAuthenticationCredentialResolver branches at methods.go:2574-2621 and gates the canonical Broker at New:1191-1203 behind RequireDurable.",
+            "required_fix": "Make a canonical Broker lease and exact authorization envelope mandatory for every materializing path, including pre-authentication; remove or isolate legacy bare-capability adapters from production construction.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "The current head adds CredentialLeaseResolution and a V2 broker method, but internal/authentication/methods/methods.go:934-958 keeps Credentials and CredentialBroker optional. New only requires the broker when RequireDurable is true (:1176-1203). In resolve, :2574-2621 still calls the legacy PreAuthenticationCredentialResolver or CredentialResolver when no broker is configured, and returns a bare SDK CredentialCapability without a lease. The same path is exercised by the non-durable fixtures and is executable whenever a legacy declaration is accepted."
+          },
+          {
+            "blocker_id": "BLK-172c4fe9e523",
+            "root_cause_key": "upstream-contracts-changed-in-authentication-methods-pr",
+            "obligation_id": "dimension:structure",
+            "summary": "Upstream SDK and credential wire files are part of this node's PR diff despite the explicit non-goal.",
+            "evidence": "The exact three-dot diff from e7ad9550... to 3323fbdb... contains five authentication-sdk files and contracts/governance/credential/wire.go in addition to the declared node paths.",
+            "required_fix": "Move those changes to their prerequisite deliveries and rebase this PR onto the accepted published contracts, or obtain an explicit scope decision.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-38f8db92eaf4",
+            "root_cause_key": "authentication-state-has-multiple-durable-owners",
+            "obligation_id": "dimension:structure",
+            "summary": "Constructor contracts do not prove one restart-safe owner for method, flow, reference, session, receipt, audit, outbox, and idempotency state.",
+            "evidence": "See prior_blocker_results. validateSharedDurableOwner skips dependencies without the optional identity interface, and the reviewed implementation has only in-memory reference stores for the owner contracts.",
+            "required_fix": "Require one durable owner/transaction handle that owns every listed record, reject split and in-memory production compositions, and prove restart and multi-instance fencing with the owner implementation.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "New's validateSharedDurableOwner at internal/authentication/methods/methods.go:1235-1249 compares owner IDs only for dependencies that happen to implement the optional DurableOwnerIdentity and silently skips the rest. The commit helper at :2358-2372 dispatches through service.mutations rather than the explicitly supplied transactionOwner. The method and flow sides expose separate owner interfaces (:3399-3409 and internal/authentication/flows/flows.go:146-155), while InMemoryStore and InMemoryFlowStore are process-local maps explicitly described as reference adapters (:3411-3413 and :1655-1657). Flow owner checks further exempt all in-memory IDs via flows.go:1584-1586."
+          },
+          {
+            "blocker_id": "BLK-598af57e94a0",
+            "root_cause_key": "configuration-policy-derived-from-driver",
+            "obligation_id": "dimension:authority",
+            "summary": "Driver-declared non-sensitive classification is used as host approval.",
+            "evidence": "authentication-sdk/authentication.go:233-238 defines ConfigurationSafetyPolicy as host-owned, but internal/authentication/methods/methods.go:2847-2862 derives it from the Driver declaration; api/auth/methods.go:458-471 uses the derived safe-key set.",
+            "required_fix": "Add an independently host-owned allowlist/type policy and reject secret/unknown fields before persistence; do not derive safety approval from Driver output.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-69b01031fd8a",
+            "root_cause_key": "credential-use-audit-not-bound-to-command",
+            "obligation_id": "dimension:evidence",
+            "summary": "Credential-use audit evidence remains optional or legacy-unbound.",
+            "evidence": "See prior_blocker_results. The optional path is visible in prepareCredentialUseAuditBound at methods.go:2709-2748 and the legacy compatibility branches in governance.go:194-197 and :261-270.",
+            "required_fix": "Require bound credential-use evidence and consume/release lineage for every Broker lease in the same owner transaction or recovery journal; remove legacy wire-only audit acceptance.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "prepareCredentialUseAuditBound at internal/authentication/methods/methods.go:2709-2748 returns no error and no evidence when Audit lacks CredentialUseAuditPort unless RequireDurable is set. Its command/event provenance checks are also conditional on RequireDurable and the legacy proof flag. CredentialUseAuditCommand.Validate retains an unbound wire-only compatibility return at methods/governance.go:194-197, and CredentialUseAuditEvidence skips command binding for LegacyProof at :261-270. Thus enriched evidence is stronger when present, but every lease use is not unconditionally required to produce bound evidence."
+          },
+          {
+            "blocker_id": "BLK-72e115378b75",
+            "root_cause_key": "revocation-journal-does-not-prove-method-commit",
+            "obligation_id": "dimension:execution",
+            "summary": "Pending session revocation is not structurally tied to the exact committed method mutation for every accepted composition.",
+            "evidence": "Update/Disable stage the intent before commit at methods.go:1812-1823 and :2211-2277. Only InMemoryStore upgrades its own pending map at :4052-4058; MethodRevocationJournal itself has no commit-proof API.",
+            "required_fix": "Record and mark the pending intent in the same durable method transaction, or require a mandatory owner-issued verifier over reservation, command digest, expected/committed revision, and fencing token before replay or completion.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "Update and Disable stage PendingMethodRevocation before method commit at internal/authentication/methods/methods.go:1812-1823 and :2211-2277. Only InMemoryStore's private map is upgraded to Committed by commitMethodMutationLocked at :4052-4058. MethodRevocationJournal has no commit-proof operation; RecoverPendingRevocations accepts an optional verifier and otherwise merely fails closed for an uncommitted intent (:2311-2340), while the strict constructor does not require that verifier. A separate journal can therefore be left without convergence or can define completion semantics not tied to the method commit."
+          },
+          {
+            "blocker_id": "BLK-7de9ed57f284",
+            "root_cause_key": "authentication-methods-gate-not-closed",
+            "obligation_id": "integration:authentication-methods-gate",
+            "summary": "The authentication-methods integration gate is mechanically green but delivery-goal red.",
+            "evidence": "All declared commands exit 0, but the named path tests use legacy/in-memory fixtures, including flowTestDriver's unclassified declaration and newFlowFixture's bare credential resolver. No restart-safe or multi-process implementation is present in the scoped component.",
+            "required_fix": "Resolve all open authority, owner, audit, replay, identity, read, recovery, and receipt blockers, then rerun the full declared gate and regenerate all five artifacts from the fixed head.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "The declared commands pass, but the gate delivery_goal requires a production-shaped path covering restart, multi-instance, failure injection, replay, disable, and exact evidence. The named tests use in-memory stores; flows/flows_test.go:252-263 supplies a declaration with no public classifications or identity proof, and newFlowFixture at :364-410 uses a bare CredentialResolver and does not enable durable mode. No restart-safe method/flow/session owner is present in the reviewed component."
+          },
+          {
+            "blocker_id": "BLK-8a80e1c7b3a7",
+            "root_cause_key": "authenticated-context-not-bound-to-resolved-identity",
+            "obligation_id": "dimension:ownership",
+            "summary": "Returned authenticated RequestContext is only partially cross-checked against the exact selected Driver and owner-approved Scope.",
+            "evidence": "validateAuthenticatedContextBinding checks package ID and non-empty scope at flows.go:1547-1554, while scope validation is optional at :992-998 and the base RequestContext validator checks presence only.",
+            "required_fix": "Return or verify an owner-issued context proof covering full Driver release, method, link, Principal, subject facts, selected Scope, policy context, and request lineage; require a bound scope validator in durable mode.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "The new validateAuthenticatedContextBinding at internal/authentication/flows/flows.go:1547-1554 closes several identity-drift cases, but it compares AuthenticationDriver only to PackageID, not the exact selected release/version/artifact digest. ScopeValidator is optional and is skipped when methods.Durable() is false at :992-998. RequestContext.Validate remains structural presence validation in contracts/identity/requestcontext/request_context.go:46-55. The constructor does not bind the resolver/scope validator to the same identity owner, so exact owner-approved scope and full selected-driver lineage remain unenforced on compatible paths."
+          },
+          {
+            "blocker_id": "BLK-90863f4fdd5b",
+            "root_cause_key": "protected-method-read-has-legacy-bypass",
+            "obligation_id": "dimension:ownership",
+            "summary": "Public and internal administrator method reads still have an unauthenticated compatibility path.",
+            "evidence": "methods.Get/Describe bypass authorization when strictMode is false at methods.go:1637-1650 and :2470-2491; API Get/Describe call them at api/auth/methods/methods.go:289-302 and :376-399 when no context is carried.",
+            "required_fix": "Remove the compatibility administrator read path. Require explicit RequestContext plus server-side authorization for Get/Describe and keep only a separately authorized, configuration-free public descriptor query.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "Internal Get and Describe still bypass Authorization when strictMode is false at internal/authentication/methods/methods.go:1637-1650 and :2470-2491. API Get and Describe preserve that compatibility path at api/auth/methods/methods.go:289-302 and :376-399 whenever no context carrier is present and ProtectedReads is false. A normal legacy/non-durable composition can therefore read method configuration without an explicit authorized RequestContext; QueryEnabled is not an administrator read substitute."
+          },
+          {
+            "blocker_id": "BLK-99b9a105f0e2",
+            "root_cause_key": "hardening-tests-cover-legacy-in-memory-fixtures",
+            "obligation_id": "dimension:regression",
+            "summary": "Required regression names pass, but their fixtures do not exercise the production contract.",
+            "evidence": "flows/flows_test.go:252-263 defines flowTestDriver without public classifications or identity proof, and newFlowFixture at :364-410 uses NewInMemoryStore, NewInMemoryFlowStore, NewInMemorySessionStore, and a bare CredentialResolver. The strict review closure also remains in-memory. There is no production-shaped restart or multi-instance fixture in the scoped package.",
+            "required_fix": "Replace the helper-only fixtures with an external public-SDK Driver, canonical Broker, owner-issued durable stores, restart/multi-instance execution, and injected failure/replay assertions; keep the named tests as permanent executable regressions.",
+            "status": "open",
+            "classification": "new"
+          },
+          {
+            "blocker_id": "BLK-b83f2a1f0d96",
+            "root_cause_key": "authentication-recovery-does-not-enforce-original-fence",
+            "obligation_id": "dimension:execution",
+            "summary": "Legacy pending-completion recovery can fall back to a new current-state lifecycle lease.",
+            "evidence": "recoverPendingCompletion retains the legacy shape branch at flows.go:1269-1292, and AcquireFlowRecovery uses a normal lease fallback in methods.go:1380-1387 whenever strict mode is false. The V1 in-memory recovery store records current method state rather than the original command proof.",
+            "required_fix": "Reject legacy pending records in this delivery and require an owner-issued recovery reservation that verifies original reservation, owner/fence, method revision/digest, purpose, command identity, and submission digest.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "The new pending record and AcquireFlowRecoveryFor path preserve an original reservation for the hardened shape, but recoverPendingCompletion explicitly retains a legacy branch at internal/authentication/flows/flows.go:1269-1292. AcquireFlowRecovery falls back to a normal current-state lease when strict mode is false at internal/authentication/methods/methods.go:1363-1404, and the V1 InMemory recovery reservation at :3631-3660 has no original command fence. An old pending record can therefore be adopted under the current method revision on a compatible composition."
+          },
+          {
+            "blocker_id": "BLK-fcedb5bcb0e2",
+            "root_cause_key": "test-login-proof-can-be-injected-outside-flow-owner",
+            "obligation_id": "dimension:ownership",
+            "summary": "Test-login verification and receipt consumption remain independently injectable method-side seams.",
+            "evidence": "RecordTestLogin remains callable in methods.go:2073-2162 outside durable mode; Enable uses the V1 consumer with an empty result digest at :2038-2048, and the non-durable flow adapter invokes RecordTestLogin at flows.go:1348-1366.",
+            "required_fix": "Make the flow owner issue an opaque single-use receipt in the durable completion record and require V2 consumption bound to flow, purpose, method revision/digest, result digest, authorization, and owner lineage. Remove the standalone method-side success primitive from production construction.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "RecordTestLogin remains an exported standalone mutation at internal/authentication/methods/methods.go:2073-2162. It is rejected only when RequireDurable is true (:2079-2081); otherwise an arbitrary injected TestLoginFlowVerifier can establish LastTestLogin, and Enable can consume the legacy receipt with an empty result digest at :2038-2048. The flow-side recordTestLoginReceipt calls this separate method for non-durable services at internal/authentication/flows/flows.go:1348-1366. BindTestLoginVerifier only checks interface shape, not owner identity."
+          }
+        ]
+      },
+      {
+        "round": 3,
+        "subject_digest": "e3e7abbfca632e070b06efed8f9660cdf3458c09bfbc0674acc3d92b0a4d74bf",
+        "report_digest": "707767d3058d813b7109e22ba715477a3f808c5b22ca2894d242728fc55166e3",
+        "verdict": "reject",
+        "obligation_results": {
+          "dimension:authority": "fail",
+          "dimension:structure": "fail",
+          "dimension:execution": "fail",
+          "dimension:ownership": "fail",
+          "dimension:evidence": "fail",
+          "dimension:regression": "fail",
+          "integration:authentication-methods-gate": "fail"
+        },
+        "new_count": 0,
+        "fixed_count": 0,
+        "regressed_count": 0,
+        "unchanged_count": 0,
+        "open_count": 12,
+        "prior_open_blocker_ids": [
+          "BLK-0257cbb2c411",
+          "BLK-172c4fe9e523",
+          "BLK-38f8db92eaf4",
+          "BLK-598af57e94a0",
+          "BLK-69b01031fd8a",
+          "BLK-72e115378b75",
+          "BLK-7de9ed57f284",
+          "BLK-8a80e1c7b3a7",
+          "BLK-90863f4fdd5b",
+          "BLK-99b9a105f0e2",
+          "BLK-b83f2a1f0d96",
+          "BLK-fcedb5bcb0e2"
+        ],
+        "open_blocker_ids": [
+          "BLK-0257cbb2c411",
+          "BLK-172c4fe9e523",
+          "BLK-38f8db92eaf4",
+          "BLK-598af57e94a0",
+          "BLK-69b01031fd8a",
+          "BLK-72e115378b75",
+          "BLK-7de9ed57f284",
+          "BLK-8a80e1c7b3a7",
+          "BLK-90863f4fdd5b",
+          "BLK-99b9a105f0e2",
+          "BLK-b83f2a1f0d96",
+          "BLK-fcedb5bcb0e2"
+        ],
+        "reported_blocker_ids": [
+          "BLK-0257cbb2c411",
+          "BLK-172c4fe9e523",
+          "BLK-38f8db92eaf4",
+          "BLK-598af57e94a0",
+          "BLK-69b01031fd8a",
+          "BLK-72e115378b75",
+          "BLK-7de9ed57f284",
+          "BLK-8a80e1c7b3a7",
+          "BLK-90863f4fdd5b",
+          "BLK-99b9a105f0e2",
+          "BLK-b83f2a1f0d96",
+          "BLK-fcedb5bcb0e2"
+        ],
+        "blocker_facts_schema": "omac.review-cycle-blocker-facts/v1",
+        "blocker_facts": [
+          {
+            "blocker_id": "BLK-0257cbb2c411",
+            "root_cause_key": "credential-use-not-bound-to-canonical-lease",
+            "obligation_id": "dimension:authority",
+            "summary": "Canonical Credential Broker leasing is not the only executable materialization path.",
+            "evidence": "Dependencies retain optional Credentials/CredentialBroker fields at internal/authentication/methods/methods.go:939-960. New permits a legacy resolver when LegacyCompatibility is true at :1180-1203, and resolve falls back to PreAuthenticationCredentialResolver/CredentialResolver at :2644-2690. The declared flow fixture uses that bare resolver at internal/authentication/flows/flows_test.go:373-393.",
+            "required_fix": "Make a canonical Broker lease and exact authorization envelope mandatory for every materializing path, including pre-authentication. Remove legacy bare-capability adapters from production construction; keep them only in isolated tests that cannot satisfy the production composition interfaces.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "Still open at the reviewed head. Dependencies keep Credentials and CredentialBroker as broad optional fields at internal/authentication/methods/methods.go:939-960; resolve retains legacy CredentialResolver and PreAuthenticationCredentialResolver materialization at :2644-2690. LegacyCompatibility allows those branches, so the canonical lease is not the only executable materialization path."
+          },
+          {
+            "blocker_id": "BLK-172c4fe9e523",
+            "root_cause_key": "upstream-contracts-changed-in-authentication-methods-pr",
+            "obligation_id": "dimension:structure",
+            "summary": "Upstream SDK and credential wire files are part of this node's PR diff despite the explicit non-goal.",
+            "evidence": "The exact e7ad9550b96edf799a6c6718a8359b1f0a5878c3...f535b5c37aa353ff5ef23e4da92831f066981196 diff has 39 files and 20,044 additions / 84 deletions, including five authentication-sdk files, authentication-sdk/public_contract_test.go, and contracts/governance/credential/wire.go outside the declared scope paths.",
+            "required_fix": "Move SDK and credential-wire changes to their prerequisite deliveries, then rebase this PR onto the accepted published contracts; alternatively obtain an explicit scope decision before accepting the combined change.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "Still open. The exact e7ad9550... three-dot diff contains authentication-sdk/* and contracts/governance/credential/wire.go in addition to the declared node paths, despite the task non-goal forbidding definition or vendoring of those contracts."
+          },
+          {
+            "blocker_id": "BLK-38f8db92eaf4",
+            "root_cause_key": "authentication-state-has-multiple-durable-owners",
+            "obligation_id": "dimension:structure",
+            "summary": "Constructors do not guarantee one restart-safe owner for method, flow, reference, session, receipt, audit, outbox, idempotency, and recovery state.",
+            "evidence": "methods.go:2417-2442 routes method commits through service.transactionOwner, while flows.go:715-748 routes flow commits through service.transactionOwner or the flow mutation store. The two services accept different owner objects when IDs match; flow New's checks at flows.go:399-466 do not require object identity or a shared transaction. InMemoryStore and InMemoryFlowStore are map-backed reference adapters at methods.go:3543-3597 and flows.go:1686-1743; the review test wraps them with marker methods rather than supplying restart-safe persistence.",
+            "required_fix": "Require one durable owner/transaction handle that owns every listed record and is used by both method and flow commit paths. Reject map-backed adapters and marker wrappers in production; prove restart and multi-instance fencing with the actual owner implementation.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "Still open. Method commits dispatch through the method transaction owner at internal/authentication/methods/methods.go:2417-2442, while flow commits select the flow transaction owner at internal/authentication/flows/flows.go:715-748. Constructors compare owner IDs and marker interfaces, not one shared durable transaction authority; the scoped implementation contains only process-local InMemoryStore/InMemoryFlowStore maps."
+          },
+          {
+            "blocker_id": "BLK-598af57e94a0",
+            "root_cause_key": "configuration-policy-derived-from-driver",
+            "obligation_id": "dimension:authority",
+            "summary": "Driver-declared non-sensitive classification can still become host approval on a compatibility composition.",
+            "evidence": "configurationPolicyForMethod returns configurationPolicyForDeclaration when service.legacyCompatibility is true at internal/authentication/methods/methods.go:3073-3075. New accepts RequireDurable with LegacyCompatibility; the compatibility closure fixture explicitly uses that combination in internal/authentication/methods/hardening_review_closures_test.go:82-84.",
+            "required_fix": "Require an independently host-owned allowlist/type policy for every production composition, reject RequireDurable+LegacyCompatibility, and never derive safety approval from Driver output.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "Still open. configurationPolicyForMethod returns configurationPolicyForDeclaration whenever LegacyCompatibility is true at internal/authentication/methods/methods.go:3073-3075. New does not reject RequireDurable combined with LegacyCompatibility, and the review fixtures exercise that combination, so Driver classification can still become the effective approval on an accepted path."
+          },
+          {
+            "blocker_id": "BLK-69b01031fd8a",
+            "root_cause_key": "credential-use-audit-not-bound-to-command",
+            "obligation_id": "dimension:evidence",
+            "summary": "Credential-use audit evidence remains optional or legacy-unbound.",
+            "evidence": "prepareCredentialUseAuditBound at internal/authentication/methods/methods.go:2779-2834 sets strictAudit only from !LegacyCompatibility. Under compatibility it accepts the v1 PrepareCredentialUseAudit event without command/evidence validation and can return no evidence when the optional port is absent; governance.go:194-220 retains LegacyProof compatibility validation.",
+            "required_fix": "Require bound V2 credential-use evidence and consume/release lineage for every Broker lease in the same owner transaction or recovery journal. Remove the legacy wire-only and optional auditor exceptions from production construction.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "Still open. prepareCredentialUseAuditBound at internal/authentication/methods/methods.go:2779-2834 selects the legacy v1 audit path under compatibility, validates only the returned AuditEvent, and can return no evidence when the optional port is absent. The LegacyProof compatibility returns in internal/authentication/methods/governance.go:194-220 and :289-311 leave command binding non-mandatory for those compositions."
+          },
+          {
+            "blocker_id": "BLK-72e115378b75",
+            "root_cause_key": "revocation-journal-does-not-prove-method-commit",
+            "obligation_id": "dimension:execution",
+            "summary": "Pending session revocation is not structurally tied to the exact committed method mutation for every accepted composition.",
+            "evidence": "Disable stages the intent at internal/authentication/methods/methods.go:2270-2308. commitMethodMutationLocked upgrades it only when an entry is found at :4182-4188; missing entries are not errors. CompletePendingMethodRevocation at :3646-3651 accepts a missing entry, and VerifyMethodRevocationCommit at :4090-4091 accepts proof-free legacy intents.",
+            "required_fix": "Record and mark the pending intent in the same durable method transaction, or require a mandatory owner-issued verifier over reservation, command digest, expected/committed revision, and fencing token before replay or completion. Missing proof or missing intent must fail closed.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "Still open. Disable stages PendingMethodRevocation before commit at internal/authentication/methods/methods.go:2270-2308; commitMethodMutationLocked only upgrades a pending intent if it happens to be found at :4182-4188, while CompletePendingMethodRevocation deletes a missing intent successfully at :3646-3651. VerifyMethodRevocationCommit also returns nil for proof-free legacy intents at :4090-4091. The journal contract is therefore not structurally tied to the exact method commit on every accepted composition."
+          },
+          {
+            "blocker_id": "BLK-7de9ed57f284",
+            "root_cause_key": "authentication-methods-gate-not-closed",
+            "obligation_id": "integration:authentication-methods-gate",
+            "summary": "The authentication-methods integration gate is mechanically green but delivery-goal red.",
+            "evidence": "All seven declared commands exit 0, but the required tests use legacy/in-memory fixtures and the strict review fixture is a single-process wrapper around map stores. No restart-safe or multi-process implementation is present in the scoped component.",
+            "required_fix": "Resolve all authority, owner, audit, replay, identity, read, recovery, and receipt blockers; then rerun the full declared gate and regenerate all five artifacts from the fixed head.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "Still open. The authentication-methods commands are mechanically green, but the integration delivery goal requires external Driver, canonical Broker, restart-safe owner, failure recovery, exact session scope, and redacted evidence; the required tests do not establish that production-shaped closure."
+          },
+          {
+            "blocker_id": "BLK-8a80e1c7b3a7",
+            "root_cause_key": "authenticated-context-not-bound-to-resolved-identity",
+            "obligation_id": "dimension:ownership",
+            "summary": "Returned authenticated RequestContext is only partially cross-checked against the exact selected Driver and owner-approved Scope.",
+            "evidence": "Completion chooses a package-only driver identity under compatibility at internal/authentication/flows/flows.go:1017-1021. The binding helper at :1582-1589 checks method/link/subject basics and non-empty scope, while the scope validator is optional at :1024-1030. It does not universally carry an owner-issued proof of full Driver release, policy context, and request lineage.",
+            "required_fix": "Return or verify an owner-issued context proof covering exact Driver release, method, ExternalIdentityLink, Principal, AuthenticatedSubject, selected Scope, policy context, and request lineage; require the bound scope validator in every production composition.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "Still open. Completion uses validateAuthenticatedContextBinding at internal/authentication/flows/flows.go:1582-1589 and selects only a package ID under LegacyCompatibility at :1017-1021; scope validation is optional at :1024-1030. The binding does not always carry an owner-issued proof of full Driver release, method, link, Principal, subject, selected Scope, policy context, and request lineage."
+          },
+          {
+            "blocker_id": "BLK-90863f4fdd5b",
+            "root_cause_key": "protected-method-read-has-legacy-bypass",
+            "obligation_id": "dimension:ownership",
+            "summary": "Public and internal administrator method reads still have an unauthenticated compatibility path.",
+            "evidence": "API Get and Describe call the unauthenticated helper when no context carrier is present at api/auth/methods/methods.go:289-302 and :376-399. Internal Get's compatibility return is visible at internal/authentication/methods/methods.go:1691-1702.",
+            "required_fix": "Remove the compatibility administrator read path. Require explicit RequestContext plus server-side authorization for Get/Describe and keep only a separately authorized, configuration-free public descriptor query.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "Still open. Internal Get rejects only strict/non-legacy calls at internal/authentication/methods/methods.go:1691-1702, and API Get/Describe retain the no-context compatibility path at api/auth/methods/methods.go:289-302 and :376-399. A legacy/non-durable composition can still read method configuration without an authorized RequestContext."
+          },
+          {
+            "blocker_id": "BLK-99b9a105f0e2",
+            "root_cause_key": "hardening-tests-cover-legacy-in-memory-fixtures",
+            "obligation_id": "dimension:regression",
+            "summary": "Required regression names pass, but their fixtures do not exercise the production contract.",
+            "evidence": "The exact JSON assertion independently found all 13 required names as Action=pass, but flow fixtures at internal/authentication/flows/flows_test.go:248-425 use an unclassified flowTestDriver, bare CredentialResolver, InMemory stores, and LegacyCompatibility: true. hardening_review_production_test.go:18-52 adds only marker wrappers over InMemory stores and performs no restart or multi-instance execution.",
+            "required_fix": "Replace the helper fixtures with an external public-SDK Driver, canonical Broker, owner-issued durable stores, restart/multi-instance execution, and injected failure/replay assertions; retain the named tests as permanent regressions.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "Still open. Required aliases in internal/authentication/methods/methods_test.go:3279-3370 mostly delegate to legacy helper tests. Flow hardening tests use newFlowFixture at internal/authentication/flows/flows_test.go:359-425, which wires bare CredentialResolver, InMemory stores, and LegacyCompatibility: true; the strict review fixture wraps InMemory stores and runs in one process only."
+          },
+          {
+            "blocker_id": "BLK-b83f2a1f0d96",
+            "root_cause_key": "authentication-recovery-does-not-enforce-original-fence",
+            "obligation_id": "dimension:execution",
+            "summary": "Legacy pending-completion recovery can fall back to a new current-state lifecycle lease.",
+            "evidence": "recoverPendingCompletion retains the legacy branch at internal/authentication/flows/flows.go:1301-1327. Its AcquireFlowRecovery path is allowed only by LegacyCompatibility and can use ReserveFlowLifecycleRecovery at methods.go:3761-3790, which records current method revision and does not prove the original reservation. The flow lease history used by the V2 reference implementation is process-local at :3832-3838.",
+            "required_fix": "Reject legacy pending records in this delivery. Recovery must use an owner-issued reservation that verifies original reservation, owner/fence, method revision and digest, purpose, command identity, and submission digest.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "Still open. recoverPendingCompletion retains a legacy record branch at internal/authentication/flows/flows.go:1301-1327. Its compatibility path calls AcquireFlowRecovery, and the V1 InMemory recovery reservation at internal/authentication/methods/methods.go:3761-3790 records the current method revision instead of verifying an original command fence. flowLeaseHistory is a process-local map at :3832-3838, so restart durability is not present."
+          },
+          {
+            "blocker_id": "BLK-fcedb5bcb0e2",
+            "root_cause_key": "test-login-proof-can-be-injected-outside-flow-owner",
+            "obligation_id": "dimension:ownership",
+            "summary": "Test-login verification and receipt consumption remain independently injectable method-side seams.",
+            "evidence": "recordTestLoginReceipt calls methods.RecordTestLogin on compatibility paths at internal/authentication/flows/flows.go:1368-1400. RecordTestLogin is an exported standalone mutation at methods.go:2132-2222, and Enable consumes the legacy TestLoginReceiptConsumer at :2097-2107 without the V2 completion proof.",
+            "required_fix": "Make the flow owner issue an opaque single-use receipt in the durable completion record and require V2 consumption bound to flow, purpose, method revision/digest, result digest, authorization, and owner lineage. Remove the standalone method-side success primitive from production construction.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "Still open. recordTestLoginReceipt calls standalone methods.RecordTestLogin on compatibility paths at internal/authentication/flows/flows.go:1368-1400. RecordTestLogin remains an exported method-side mutation (methods.go:2132-2222), and Enable uses the legacy consumer at :2097-2107 without the V2 flow-owner proof."
+          }
+        ]
+      },
+      {
+        "round": 4,
+        "subject_digest": "65470f96d00e630084db954cab5524b7fb18803991c44b5afb48cca2c0bd94a8",
+        "report_digest": "95a403163b698b3e15d47556e486cd16f78895429116b0283b805ac1b3178fc2",
+        "verdict": "reject",
+        "obligation_results": {
+          "dimension:authority": "fail",
+          "dimension:structure": "fail",
+          "dimension:execution": "fail",
+          "dimension:ownership": "fail",
+          "dimension:evidence": "fail",
+          "dimension:regression": "fail",
+          "integration:authentication-methods-gate": "fail"
+        },
+        "new_count": 0,
+        "fixed_count": 0,
+        "regressed_count": 0,
+        "unchanged_count": 0,
+        "open_count": 12,
+        "prior_open_blocker_ids": [
+          "BLK-0257cbb2c411",
+          "BLK-172c4fe9e523",
+          "BLK-38f8db92eaf4",
+          "BLK-598af57e94a0",
+          "BLK-69b01031fd8a",
+          "BLK-72e115378b75",
+          "BLK-7de9ed57f284",
+          "BLK-8a80e1c7b3a7",
+          "BLK-90863f4fdd5b",
+          "BLK-99b9a105f0e2",
+          "BLK-b83f2a1f0d96",
+          "BLK-fcedb5bcb0e2"
+        ],
+        "open_blocker_ids": [
+          "BLK-0257cbb2c411",
+          "BLK-172c4fe9e523",
+          "BLK-38f8db92eaf4",
+          "BLK-598af57e94a0",
+          "BLK-69b01031fd8a",
+          "BLK-72e115378b75",
+          "BLK-7de9ed57f284",
+          "BLK-8a80e1c7b3a7",
+          "BLK-90863f4fdd5b",
+          "BLK-99b9a105f0e2",
+          "BLK-b83f2a1f0d96",
+          "BLK-fcedb5bcb0e2"
+        ],
+        "reported_blocker_ids": [
+          "BLK-0257cbb2c411",
+          "BLK-172c4fe9e523",
+          "BLK-38f8db92eaf4",
+          "BLK-598af57e94a0",
+          "BLK-69b01031fd8a",
+          "BLK-72e115378b75",
+          "BLK-7de9ed57f284",
+          "BLK-8a80e1c7b3a7",
+          "BLK-90863f4fdd5b",
+          "BLK-99b9a105f0e2",
+          "BLK-b83f2a1f0d96",
+          "BLK-fcedb5bcb0e2"
+        ],
+        "blocker_facts_schema": "omac.review-cycle-blocker-facts/v1",
+        "blocker_facts": [
+          {
+            "blocker_id": "BLK-0257cbb2c411",
+            "root_cause_key": "credential-use-not-bound-to-canonical-lease",
+            "obligation_id": "dimension:authority",
+            "summary": "Canonical Credential Broker leasing is not the only executable materialization path.",
+            "evidence": "Dependencies retain optional Credentials/CredentialBroker fields at internal/authentication/methods/methods.go:934-960. New permits a legacy resolver when LegacyCompatibility is true at :1180-1203, and resolve falls back to PreAuthenticationCredentialResolver/CredentialResolver at :2644-2690. The declared flow fixture uses that bare resolver at internal/authentication/flows/flows_test.go:373-393.",
+            "required_fix": "Make a canonical Broker lease and exact authorization envelope mandatory for every materializing path, including pre-authentication. Remove legacy bare-capability adapters from production construction; keep them only in isolated tests that cannot satisfy production composition interfaces.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "Still open at b9eeb1edc95557b18e25e533e86b72673db7ad04. Dependencies retain optional Credentials/CredentialBroker fields at internal/authentication/methods/methods.go:934-960; New permits the legacy resolver when LegacyCompatibility is true at :1180-1203, and resolve falls back to PreAuthenticationCredentialResolver/CredentialResolver at :2644-2690. The flow fixture wires that bare resolver at flows/flows_test.go:373-393."
+          },
+          {
+            "blocker_id": "BLK-172c4fe9e523",
+            "root_cause_key": "upstream-contracts-changed-in-authentication-methods-pr",
+            "obligation_id": "dimension:structure",
+            "summary": "Upstream SDK and credential wire files are part of this node's PR diff despite the explicit non-goal.",
+            "evidence": "The exact PR-base diff contains 39 files, 20,047 additions, and 84 deletions; ten paths are outside scope_paths, including authentication-sdk/*, authentication-sdk/public_contract_test.go, and contracts/governance/credential/wire.go. The exact changed-path list also includes four design/reference documentation files and acceptance text.",
+            "required_fix": "Move SDK and credential-wire changes to their prerequisite deliveries, then rebase this PR onto the accepted published contracts; alternatively obtain an explicit scope decision before accepting the combined change.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "Still open. The exact e7ad9550b96edf799a6c6718a8359b1f0a5878c3...b9eeb1edc95557b18e25e533e86b72673db7ad04 diff contains authentication-sdk/* and contracts/governance/credential/wire.go, in addition to the declared node paths, despite the non-goal forbidding this node from defining or vendoring those contracts."
+          },
+          {
+            "blocker_id": "BLK-38f8db92eaf4",
+            "root_cause_key": "authentication-state-has-multiple-durable-owners",
+            "obligation_id": "dimension:structure",
+            "summary": "Constructors do not guarantee one restart-safe owner for method, flow, reference, session, receipt, audit, outbox, idempotency, and recovery state.",
+            "evidence": "methods.go:2417-2442 routes method commits through its transaction owner, while flows.go:715-748 routes flow commits through a separate flow owner. Flow New checks owner IDs and markers rather than one shared transaction handle at :399-466. The accepted review production composition wraps independent InMemoryStore, InMemoryFlowStore, session, link, and context objects with the same marker ID; no restart-safe persistence or multi-instance execution exists.",
+            "required_fix": "Require one durable owner/transaction handle that owns every listed record and is used by both method and flow commit paths. Reject map-backed adapters and marker wrappers in production; prove restart and multi-instance fencing with the actual owner implementation.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "Still open. Method commits dispatch through transactionOwner at internal/authentication/methods/methods.go:2417-2442, while flow commits select a flow transactionOwner at internal/authentication/flows/flows.go:715-748. Flow construction accepts different objects when owner IDs match at :399-466; InMemoryStore/InMemoryFlowStore and the review production wrappers are process-local maps, not restart-safe shared transaction storage."
+          },
+          {
+            "blocker_id": "BLK-598af57e94a0",
+            "root_cause_key": "configuration-policy-derived-from-driver",
+            "obligation_id": "dimension:authority",
+            "summary": "Driver-declared non-sensitive classification can still become host approval on a compatibility composition.",
+            "evidence": "configurationPolicyForMethod returns configurationPolicyForDeclaration when service.legacyCompatibility is true at internal/authentication/methods/methods.go:3073-3075. New accepts RequireDurable with LegacyCompatibility, and the review fixtures exercise that combination at methods/hardening_review_closures_test.go:82-84.",
+            "required_fix": "Require an independently host-owned allowlist/type policy for every production composition, reject RequireDurable+LegacyCompatibility, and never derive safety approval from Driver output.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "Still open. configurationPolicyForMethod returns configurationPolicyForDeclaration whenever LegacyCompatibility is true at internal/authentication/methods/methods.go:3073-3075. New does not reject RequireDurable combined with LegacyCompatibility, and the review closure explicitly accepts that combination at methods/hardening_review_closures_test.go:82-84."
+          },
+          {
+            "blocker_id": "BLK-69b01031fd8a",
+            "root_cause_key": "credential-use-audit-not-bound-to-command",
+            "obligation_id": "dimension:evidence",
+            "summary": "Credential-use audit evidence remains optional or legacy-unbound.",
+            "evidence": "prepareCredentialUseAuditBound at internal/authentication/methods/methods.go:2779-2834 sets strictAudit only from !LegacyCompatibility. Under compatibility it accepts the V1 PrepareCredentialUseAudit event without command/evidence validation and can return no evidence when the optional port is absent; methods/governance.go:194-220 retains LegacyProof compatibility validation.",
+            "required_fix": "Require bound V2 credential-use evidence and consume/release lineage for every Broker lease in the same owner transaction or recovery journal. Remove the legacy wire-only and optional auditor exceptions from production construction.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "Still open. prepareCredentialUseAuditBound at internal/authentication/methods/methods.go:2779-2834 selects the legacy V1 audit path under compatibility, validates only the returned AuditEvent, and can return no evidence when the optional port is absent. The LegacyProof compatibility exceptions remain in methods/governance.go:194-220 and :289-311."
+          },
+          {
+            "blocker_id": "BLK-72e115378b75",
+            "root_cause_key": "revocation-journal-does-not-prove-method-commit",
+            "obligation_id": "dimension:execution",
+            "summary": "Pending session revocation is not structurally tied to the exact committed method mutation for every accepted composition.",
+            "evidence": "Disable stages the intent at methods.go:2270-2308. commitMethodMutationLocked only upgrades a pending entry if it is found at :4182-4188; missing entries are not errors. CompletePendingMethodRevocation deletes a missing entry at :3637-3651, and VerifyMethodRevocationCommit accepts proof-free legacy intents at :4090-4091.",
+            "required_fix": "Record and mark the pending intent in the same durable method transaction, or require a mandatory owner-issued verifier over reservation, command digest, expected/committed revision, and fencing token before replay or completion. Missing proof or missing intent must fail closed.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "Still open. Disable stages PendingMethodRevocation before commit at internal/authentication/methods/methods.go:2270-2308; commitMethodMutationLocked only upgrades it if an entry happens to be found at :4182-4188. CompletePendingMethodRevocation accepts a missing entry at :3637-3651, and VerifyMethodRevocationCommit returns nil for proof-free legacy intents at :4090-4091."
+          },
+          {
+            "blocker_id": "BLK-7de9ed57f284",
+            "root_cause_key": "authentication-methods-gate-not-closed",
+            "obligation_id": "integration:authentication-methods-gate",
+            "summary": "The authentication-methods integration gate is mechanically green but delivery-goal red.",
+            "evidence": "All seven declared commands exit 0 and all five artifacts are reproducible, but the gate delivery_goal requires external Driver, canonical Broker, restart-safe owner, failure recovery, exact selected scope, and multi-instance evidence that the scoped implementation and fixtures do not provide.",
+            "required_fix": "Resolve all authority, owner, audit, replay, identity, read, recovery, and receipt blockers; then rerun the full declared gate and regenerate all five artifacts from the fixed head.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "Still open. The seven declared commands independently pass, but the authentication-methods delivery goal requires an external public-SDK Driver, canonical Broker, restart-safe owner, failure recovery, exact session scope, and multi-instance fencing. The scoped component contains no restart-safe implementation and its named fixtures are compatibility/in-memory paths."
+          },
+          {
+            "blocker_id": "BLK-8a80e1c7b3a7",
+            "root_cause_key": "authenticated-context-not-bound-to-resolved-identity",
+            "obligation_id": "dimension:ownership",
+            "summary": "Returned authenticated RequestContext is only partially cross-checked against the exact selected Driver and owner-approved Scope.",
+            "evidence": "Completion chooses a package-only driver identity under compatibility at internal/authentication/flows/flows.go:1017-1021. The binding helper at :1582-1589 checks method/link/subject basics and non-empty scope, while scope validation is optional at :1024-1030. It does not universally carry an owner-issued proof of full Driver release, policy context, and request lineage.",
+            "required_fix": "Return or verify an owner-issued context proof covering exact Driver release, method, ExternalIdentityLink, Principal, AuthenticatedSubject, selected Scope, policy context, and request lineage; require the bound scope validator in every production composition.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "Still open. Completion selects only a package ID under compatibility at internal/authentication/flows/flows.go:1017-1021. The binding helper at :1582-1589 checks basic method/link/subject facts and non-empty scope, while scope validation is conditional at :1024-1030; it does not universally verify an owner-issued proof of exact Driver release, policy context, and request lineage."
+          },
+          {
+            "blocker_id": "BLK-90863f4fdd5b",
+            "root_cause_key": "protected-method-read-has-legacy-bypass",
+            "obligation_id": "dimension:ownership",
+            "summary": "Public and internal administrator method reads still have an unauthenticated compatibility path.",
+            "evidence": "Internal Get rejects only strict/non-legacy calls at internal/authentication/methods/methods.go:1691-1702. API Get and Describe retain the no-context compatibility path at api/auth/methods/methods.go:289-302 and :376-399, so a legacy/non-durable composition can read method configuration without server-side authorization.",
+            "required_fix": "Remove the compatibility administrator read path. Require explicit RequestContext plus server-side authorization for Get/Describe and keep only a separately authorized, configuration-free public descriptor query.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "Still open. Internal Get rejects only strict/non-legacy calls at internal/authentication/methods/methods.go:1691-1702. API Get and Describe retain the no-context compatibility path at api/auth/methods/methods.go:289-302 and :376-399, so a legacy/non-durable composition can read protected method configuration without an authorized RequestContext."
+          },
+          {
+            "blocker_id": "BLK-99b9a105f0e2",
+            "root_cause_key": "hardening-tests-cover-legacy-in-memory-fixtures",
+            "obligation_id": "dimension:regression",
+            "summary": "Required regression names pass, but their fixtures do not exercise the production contract.",
+            "evidence": "The exact JSON assertion found all 13 required root names with Action=pass, but flows/flows_test.go:248-425 uses an unclassified flowTestDriver, bare CredentialResolver, InMemory stores, and LegacyCompatibility: true. hardening_review_production_test.go:18-52 and :94-163 only wrap maps with marker methods and perform no restart or multi-instance execution.",
+            "required_fix": "Replace helper fixtures with an external public-SDK Driver, canonical Broker, owner-issued durable stores, restart/multi-instance execution, and injected failure/replay assertions; retain the named tests as permanent regressions.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "Still open. Required aliases at internal/authentication/methods/methods_test.go:3280-3370 mostly delegate to older helper tests. Flow fixtures at internal/authentication/flows/flows_test.go:359-425 use an unclassified flowTestDriver, bare CredentialResolver, InMemory stores, and LegacyCompatibility: true. hardening_review_production_test.go:18-52 and :94-163 only add marker wrappers over those maps and run in one process."
+          },
+          {
+            "blocker_id": "BLK-b83f2a1f0d96",
+            "root_cause_key": "authentication-recovery-does-not-enforce-original-fence",
+            "obligation_id": "dimension:execution",
+            "summary": "Legacy pending-completion recovery can fall back to a new current-state lifecycle lease.",
+            "evidence": "recoverPendingCompletion retains the legacy branch at internal/authentication/flows/flows.go:1301-1327. Its compatibility path calls AcquireFlowRecovery, which can use ReserveFlowLifecycleRecovery at internal/authentication/methods/methods.go:3761-3790; that path records current method revision and does not prove the original reservation. flowLeaseHistory is process-local at methods.go:3832-3838.",
+            "required_fix": "Reject legacy pending records in this delivery. Recovery must use an owner-issued reservation that verifies original reservation, owner/fence, method revision and digest, purpose, command identity, and submission digest.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "Still open. recoverPendingCompletion retains a legacy record branch at internal/authentication/flows/flows.go:1301-1327. Its compatibility path calls AcquireFlowRecovery; the V1 InMemory recovery reservation at internal/authentication/methods/methods.go:3761-3790 records current method state instead of proving an original reservation. flowLeaseHistory is a process-local map at methods.go:3832-3838."
+          },
+          {
+            "blocker_id": "BLK-fcedb5bcb0e2",
+            "root_cause_key": "test-login-proof-can-be-injected-outside-flow-owner",
+            "obligation_id": "dimension:ownership",
+            "summary": "Test-login verification and receipt consumption remain independently injectable method-side seams.",
+            "evidence": "recordTestLoginReceipt calls standalone methods.RecordTestLogin on compatibility paths at internal/authentication/flows/flows.go:1368-1400. RecordTestLogin remains an exported method-side mutation at methods.go:2132-2222, and Enable consumes the legacy TestLoginReceiptConsumer at :2080-2107 without the V2 flow-owner proof.",
+            "required_fix": "Make the flow owner issue an opaque single-use receipt in the durable completion record and require V2 consumption bound to flow, purpose, method revision/digest, result digest, authorization, and owner lineage. Remove the standalone method-side success primitive from production construction.",
+            "status": "open",
+            "classification": "deeper",
+            "last_evidence": "Still open. recordTestLoginReceipt calls standalone methods.RecordTestLogin on compatibility paths at internal/authentication/flows/flows.go:1368-1400. RecordTestLogin remains an exported method-side mutation at methods.go:2132-2222, and Enable consumes the legacy TestLoginReceiptConsumer at :2080-2107 without the V2 flow-owner proof."
+          }
+        ]
+      },
+      {
+        "round": 5,
+        "subject_digest": "dcb5581283e2aa858a27c23150b8f409fd9f27689ecbd7c57fa1cd8f082a0511",
+        "report_digest": "743208865e258790bb3ff2c698638bf9d212d846f04c72e779896607c9129a9e",
+        "verdict": "reject",
+        "obligation_results": {
+          "dimension:authority": "fail",
+          "dimension:structure": "fail",
+          "dimension:execution": "fail",
+          "dimension:ownership": "fail",
+          "dimension:evidence": "fail",
+          "dimension:regression": "fail",
+          "integration:authentication-methods-gate": "fail"
+        },
+        "new_count": 1,
+        "fixed_count": 0,
+        "regressed_count": 0,
+        "unchanged_count": 1,
+        "open_count": 13,
+        "prior_open_blocker_ids": [
+          "BLK-0257cbb2c411",
+          "BLK-172c4fe9e523",
+          "BLK-38f8db92eaf4",
+          "BLK-598af57e94a0",
+          "BLK-69b01031fd8a",
+          "BLK-72e115378b75",
+          "BLK-7de9ed57f284",
+          "BLK-8a80e1c7b3a7",
+          "BLK-90863f4fdd5b",
+          "BLK-99b9a105f0e2",
+          "BLK-b83f2a1f0d96",
+          "BLK-fcedb5bcb0e2"
+        ],
+        "open_blocker_ids": [
+          "BLK-0257cbb2c411",
+          "BLK-172c4fe9e523",
+          "BLK-38f8db92eaf4",
+          "BLK-598af57e94a0",
+          "BLK-69b01031fd8a",
+          "BLK-6a60e571b3c4",
+          "BLK-72e115378b75",
+          "BLK-7de9ed57f284",
+          "BLK-8a80e1c7b3a7",
+          "BLK-90863f4fdd5b",
+          "BLK-99b9a105f0e2",
+          "BLK-b83f2a1f0d96",
+          "BLK-fcedb5bcb0e2"
+        ],
+        "reported_blocker_ids": [
+          "BLK-0257cbb2c411",
+          "BLK-172c4fe9e523",
+          "BLK-38f8db92eaf4",
+          "BLK-598af57e94a0",
+          "BLK-69b01031fd8a",
+          "BLK-6a60e571b3c4",
+          "BLK-72e115378b75",
+          "BLK-7de9ed57f284",
+          "BLK-8a80e1c7b3a7",
+          "BLK-90863f4fdd5b",
+          "BLK-99b9a105f0e2",
+          "BLK-b83f2a1f0d96",
+          "BLK-fcedb5bcb0e2"
+        ],
+        "blocker_facts_schema": "omac.review-cycle-blocker-facts/v1",
+        "blocker_facts": [
+          {
+            "blocker_id": "BLK-0257cbb2c411",
+            "root_cause_key": "credential-use-not-bound-to-canonical-lease",
+            "obligation_id": "dimension:authority",
+            "summary": "Legacy-compatible construction still permits credential materialization outside a canonical Broker lease.",
+            "evidence": "methods.go:934-960 keeps Credentials and CredentialBroker optional; New at 1180-1207 accepts the legacy resolver when LegacyCompatibility=true; resolve at 2707-2817 calls bare PreAuthenticationCredentialResolver/CredentialResolver. This path is public-constructor reachable and is used by flows_test.go:359-425.",
+            "required_fix": "Remove legacy bare-capability construction from production. Require canonical Broker lease, exact authorization envelope, consume/release lifecycle and bound evidence for every materializing path, including pre-authentication; isolate any compatibility helper behind test-only composition that cannot satisfy production interfaces.",
+            "status": "open",
+            "classification": "deeper",
+            "owner": "authentication-methods-owner",
+            "last_evidence": "当前 head 仍保留 Dependencies.Credentials any 和 LegacyCompatibility fallback （methods.go:934-960、1180-1188），resolve 在 2707-2754 可调用 PreAuthenticationCredentialResolver/CredentialResolver；flows_test.go:373-393 仍以裸 resolver 装配。新增 canonical lease 校验没有移除 production-constructible bypass。"
+          },
+          {
+            "blocker_id": "BLK-172c4fe9e523",
+            "root_cause_key": "upstream-contracts-changed-in-authentication-methods-pr",
+            "obligation_id": "dimension:structure",
+            "summary": "The PR vendors upstream Authentication SDK and credential-wire contract changes outside this node.",
+            "evidence": "git diff e7ad9550b96edf799a6c6718a8359b1f0a5878c3..34abdef1664a48662d04c56ca760bd37b837f33f contains authentication-sdk/authentication.go, authentication-sdk/authentication_test.go, authentication-sdk/conformance.go, authentication-sdk/public_contract_test.go, authentication-sdk/validation_test.go and contracts/governance/credential/wire.go, while the node non_goals explicitly forbid defining or vendoring those contracts.",
+            "required_fix": "Move SDK and credential-wire changes to their prerequisite deliveries, rebase this PR onto the accepted published contracts, and rerun this node gate; otherwise obtain an explicit scope decision before accepting the combined change.",
+            "status": "open",
+            "classification": "unchanged",
+            "owner": "contract-publisher",
+            "last_evidence": "当前基线到 head 的 35 个变更文件中仍有 6 个越过 scope_paths： authentication-sdk/authentication.go、authentication-sdk/authentication_test.go、 authentication-sdk/conformance.go、authentication-sdk/public_contract_test.go、 authentication-sdk/validation_test.go 和 contracts/governance/credential/wire.go。 这些正是当前节点 non_goals 明确排除的上游契约文件，未见显式 scope decision。"
+          },
+          {
+            "blocker_id": "BLK-38f8db92eaf4",
+            "root_cause_key": "authentication-state-has-multiple-durable-owners",
+            "obligation_id": "dimension:structure",
+            "summary": "Owner identity/epoch markers do not establish one restart-safe transaction owner for all authentication state.",
+            "evidence": "Independent maps remain in methods.go:3614-3670, flows.go:1851-1916 and flows.go:1646-1724. Method commits and flow commits use different interfaces and locks; flow completion invokes the separate session store in flows.go:2711-2757. The reviewProductionOwner fixture only embeds independent in-memory stores and returns a constant epoch at hardening_review_production_test.go:20-40.",
+            "required_fix": "Require one real durable owner/transaction handle that owns method, lifecycle, identity CAS, session intent, receipt, audit, outbox and recovery records. Reject map-backed marker wrappers in production and prove process restart plus multi-instance fencing with that owner.",
+            "status": "open",
+            "classification": "deeper",
+            "owner": "governance-persistence-owner",
+            "last_evidence": "methods.go:3614-3670 的 method state、flows.go:1851-1916 的 flow/receipt/audit/outbox state、flows.go:1646-1724 的 session state 仍是独立内存 map；method commit 走 methods.go:4136-4143，flow commit 走 flows.go:2384-2397/2533-2547。新增 reviewProductionOwner 只在 hardening_review_production_test.go:20-40、298-321 组合这些 map 并提供 owner/epoch marker，没有 restart-safe shared transaction 或跨实例执行。"
+          },
+          {
+            "blocker_id": "BLK-598af57e94a0",
+            "root_cause_key": "configuration-policy-derived-from-driver",
+            "obligation_id": "dimension:authority",
+            "summary": "Driver declaration remains the effective configuration safety policy on an accepted compatibility composition.",
+            "evidence": "methods.go:3140-3163 correctly checks the host allowlist in strict mode, but configurationPolicyForMethod returns configurationPolicyForDeclaration at 3141-3143 when LegacyCompatibility is true. New rejects only RequireDurable+LegacyCompatibility at 1199-1201; LegacyCompatibility=true, RequireDurable=false remains constructible.",
+            "required_fix": "Make host-owned configuration policy mandatory for every production composition, reject the compatibility flag in production constructors, and never turn Driver classification into host approval.",
+            "status": "open",
+            "classification": "deeper",
+            "owner": "authentication-methods-owner",
+            "last_evidence": "strict 分支现在会校验 host allowlist（methods.go:3140-3163），且 New 拒绝 RequireDurable+LegacyCompatibility（1186-1201）；但 LegacyCompatibility=true 且 RequireDurable=false 仍被接受，并在 3141-3143 从 Driver declaration 推导配置 policy。 该 compatibility composition 仍可由公开 constructor 构造，不能作为生产安全边界。"
+          },
+          {
+            "blocker_id": "BLK-69b01031fd8a",
+            "root_cause_key": "credential-use-audit-not-bound-to-command",
+            "obligation_id": "dimension:evidence",
+            "summary": "Credential-use audit evidence is optional or legacy-unbound on an accepted path.",
+            "evidence": "prepareCredentialUseAuditBound at methods.go:2843-2898 makes strictAudit depend on LegacyCompatibility. The compatibility branch can use V1 audit and returns no evidence at 2855-2856 when the optional auditor is absent; methods/governance.go:194-220 preserves the LegacyProof exception.",
+            "required_fix": "Require V2 command-bound lease evidence and consume/release lineage for every Broker lease, persisted with the same durable owner transaction or a fail-closed recovery journal; remove optional and legacy production exceptions.",
+            "status": "open",
+            "classification": "deeper",
+            "owner": "governance-audit-owner",
+            "last_evidence": "strict mode 新增 CredentialUseAuditPortV2 校验，但 compatibility 路径在 methods.go:2843-2898 仍可使用 V1 auditor，且缺少 auditor 时 2855-2856 返回空 evidence； LegacyProof 例外仍在 methods/governance.go:194-220。故每个 lease 的 bound audit 并非所有可构造路径的硬要求。"
+          },
+          {
+            "blocker_id": "BLK-6a60e571b3c4",
+            "root_cause_key": "credential-binding-wire-shape-mismatch",
+            "obligation_id": "dimension:structure",
+            "summary": "Public credential_binding_ids wire shape is ambiguous and implementation does not match the documented list notation.",
+            "evidence": "api/auth/methods/methods.go:75-123 serializes credential_binding_ids as map[authentication.CredentialPurpose]string; its tests at api/auth/methods/methods_test.go:574-578 also treat it as a map. The authoritative governance/design/acceptance text uses credential_binding_ids[] (for example security-and-enterprise.md:59 and acceptance-and-validation.md:155), but no public JSON schema or wire test resolves whether clients must send an object map or an array of purpose/binding records.",
+            "required_fix": "Choose one public wire shape and define it in the API/contract schema. Either document and test the purpose-to-binding object map consistently, or expose an explicit array element type such as {purpose,binding_id} and normalize it internally; add marshal/unmarshal and client-facing contract tests before acceptance.",
+            "status": "open",
+            "classification": "new",
+            "owner": "api-contract-owner"
+          },
+          {
+            "blocker_id": "BLK-72e115378b75",
+            "root_cause_key": "revocation-journal-does-not-prove-method-commit",
+            "obligation_id": "dimension:execution",
+            "summary": "Session revocation intent is not guaranteed to be atomically proven as part of the method mutation.",
+            "evidence": "Disable stages the intent before commit (methods.go:2297-2336). The commit only upgrades an existing entry (methods.go:4264-4270), CompletePendingMethodRevocation deletes a missing entry (3719-3723), and VerifyMethodRevocationCommit accepts both-empty legacy proof (4165-4184). Missing or lost journal evidence can therefore evade the intended fence on a compatibility composition.",
+            "required_fix": "Record and mark the pending intent in the same durable method transaction, or require a mandatory owner-issued verifier over reservation, command digest, expected/committed revision and fencing token. Missing intent/proof must fail closed in every accepted composition.",
+            "status": "open",
+            "classification": "deeper",
+            "owner": "governance-persistence-owner",
+            "last_evidence": "Disable 先在 methods.go:2367-2380 写独立 pending journal，再由 commitMethodMutationLocked:4264-4270 尝试标记 committed；pending 缺失时不报错。 CompletePendingMethodRevocation:3719-3723 对缺失 entry 直接 delete， VerifyMethodRevocationCommit:4172-4174 仍接受无 command proof 的 legacy intent。 新增字段检查未建立所有组合都必须满足的原子关系。"
+          },
+          {
+            "blocker_id": "BLK-7de9ed57f284",
+            "root_cause_key": "authentication-methods-gate-not-closed",
+            "obligation_id": "integration:authentication-methods-gate",
+            "summary": "The integration gate is mechanically green but its delivery goal remains unproven.",
+            "evidence": "The seven declared commands exited 0 and the five declared artifacts are present; however, the current component contains only in-memory stores and test/marker wrappers, with no restart-safe persistence or multi-instance execution proving the delivery_goal's external Driver, Broker, recovery and fencing requirements.",
+            "required_fix": "Resolve the authority, owner, audit, replay, identity, recovery and receipt blockers; add a real external public-SDK Driver/Broker and durable multi-instance failure/restart fixture; then regenerate all five artifacts from the fixed head and rerun the full gate.",
+            "status": "open",
+            "classification": "deeper",
+            "owner": "release-integrator",
+            "last_evidence": "本轮独立执行的七条 gate command 全部 exit_code=0、五个 artifact 均存在且 bundle digest 可复算；但 gate goal 所需的外部 Driver、canonical Broker、持久 owner、失败恢复 和 multi-instance fencing 仍只由 in-memory/marker fixture 表示，故机械绿不等于交付闭合。"
+          },
+          {
+            "blocker_id": "BLK-8a80e1c7b3a7",
+            "root_cause_key": "authenticated-context-not-bound-to-resolved-identity",
+            "obligation_id": "dimension:ownership",
+            "summary": "Exact Driver/link/Principal/scope/request lineage is enforced only on strict paths, not every accepted composition.",
+            "evidence": "Strict completion verifies AuthenticatedContextProof and AuthenticatedScopeProof at flows.go:1142-1168, but compatibility completion falls back to an ordinary resolver and optional scope validator at 1170-1187. The constructor still accepts a legacy composition, so a returned RequestContext is not universally owner-issued and exact-release bound.",
+            "required_fix": "Make owner-issued proof covering exact Driver release, method, link, Principal, subject, selected Scope, policy context and request lineage mandatory; bind the scope validator and reject compatibility fallback in production.",
+            "status": "open",
+            "classification": "deeper",
+            "owner": "identity-governance-owner",
+            "last_evidence": "strict completion 在 flows.go:1142-1168 增加 AuthenticatedContextProof 和 AuthenticatedScopeProof，属于有效收紧；但 compatibility fallback 在 1170-1187 仍可使用普通 context resolver，scope validator 仍可选。由于 legacy composition 未被 constructor 完全排除，返回 context 仍不是所有接受路径都由 exact Driver/owner proof 绑定。"
+          },
+          {
+            "blocker_id": "BLK-90863f4fdd5b",
+            "root_cause_key": "protected-method-read-has-legacy-bypass",
+            "obligation_id": "dimension:ownership",
+            "summary": "User-facing API reads are fixed, but the exported legacy internal read bypass remains production-constructible.",
+            "evidence": "api/auth/methods/methods.go:289-306 and 368-393 now require RequestContext and authorized reads. Nonetheless methods.Service.Get/Describe at methods.go:1717-1729 and 2579-2600 still allow no-context reads when LegacyCompatibility=true, and New permits that mode without RequireDurable. The compatibility bypass is therefore not isolated to tests.",
+            "required_fix": "Remove the legacy administrator read path from production construction. Require explicit RequestContext plus server-side authorization for protected Get/Describe, retaining only a separately authorized configuration-free public descriptor query.",
+            "status": "open",
+            "classification": "deeper",
+            "owner": "authentication-methods-owner",
+            "last_evidence": "API Get/Describe 当前已在 api/auth/methods/methods.go:289-306、368-393 强制从 RequestContext 进入 authorized path，直接修复了用户面旧 bypass；但内部 exported methods.Service.Get/Describe 在 methods.go:1717-1729、2579-2600 仍允许 LegacyCompatibility no-context helper，而 New 仍允许该 compatibility composition。 生产构造未被机械限制，因此原 ownership root 未完全关闭。"
+          },
+          {
+            "blocker_id": "BLK-99b9a105f0e2",
+            "root_cause_key": "hardening-tests-cover-legacy-in-memory-fixtures",
+            "obligation_id": "dimension:regression",
+            "summary": "Passing required names do not prove the production contract because their fixtures remain legacy and in-memory.",
+            "evidence": "methods_test.go:3284-3311 aliases several required names to older helper tests; flows_test.go:359-425 uses flowTestDriver, bare CredentialResolver, InMemory stores and LegacyCompatibility=true. hardening_review_production_test.go:324-469 checks interface/marker rejection but runs no process restart, replacement instance or durable multi-instance race.",
+            "required_fix": "Replace or supplement helpers with an external public-SDK Driver, canonical Broker, durable owner and injected restart/commit/session failures; assert replay, recovery, selected scope, redacted audit and multi-instance fencing against those real boundaries.",
+            "status": "open",
+            "classification": "deeper",
+            "owner": "test-evidence-owner",
+            "last_evidence": "required JSON assertion 独立确认 13 个指定根测试均 Action=pass，但 alias tests （methods_test.go:3284-3365）和 flow tests（flows_test.go:2561-2692）仍主要落在 legacy/in-memory fixture；hardening_review_production_test.go:324-469 的 owner test 只做 marker/interface rejection，未执行实际 restart、process replacement 或 concurrent multi-instance persistence。"
+          },
+          {
+            "blocker_id": "BLK-b83f2a1f0d96",
+            "root_cause_key": "authentication-recovery-does-not-enforce-original-fence",
+            "obligation_id": "dimension:execution",
+            "summary": "Recovery still has a legacy path and its original fence history is process-local.",
+            "evidence": "flows.go:1466-1492 retains legacy pending completion recovery through V1 AcquireFlowRecovery; methods.go:3833-3862 can reserve from current method state, while original history is only the InMemoryStore.flowLeaseHistory map at methods.go:3627 and 3904-3910. The strict V2 path does not supply a real persisted owner proof in this PR.",
+            "required_fix": "Reject legacy pending records for this delivery. Recovery must use a durable owner-issued reservation that verifies original reservation, owner/fence, method revision/digest, purpose, command identity and submission digest, and must be exercised after process restart.",
+            "status": "open",
+            "classification": "deeper",
+            "owner": "governance-persistence-owner",
+            "last_evidence": "strict recovery 已改为 AcquireFlowRecoveryFor（flows.go:1494-1522）并在 methods.go:3865-3888 查 original reservation；但 legacy pending branch flows.go:1466-1492 仍可调用 V1 AcquireFlowRecovery，且 original fence history 是 methods.go InMemoryStore.flowLeaseHistory map（3627、3904-3910）。V2 owner 方法也只 在内存 history 中核对 method/purpose/owner/fence/revision/digest，未提供真实持久化证明。"
+          },
+          {
+            "blocker_id": "BLK-fcedb5bcb0e2",
+            "root_cause_key": "test-login-proof-can-be-injected-outside-flow-owner",
+            "obligation_id": "dimension:ownership",
+            "summary": "A standalone method-side test-login mutation and legacy receipt consumer remain injectable.",
+            "evidence": "flows.go:1533-1566 calls methods.RecordTestLogin under compatibility; methods.go:2159-2248 exposes that mutation, and Enable:2107-2134 consumes TestLoginReceiptConsumer on the legacy branch. Only strict mode requires the V2 flow-owner proof, while legacy mode remains accepted.",
+            "required_fix": "Make the flow owner issue an opaque single-use receipt in the durable completion record and require V2 consumption bound to flow, purpose, method revision/digest, result digest, authorization and owner lineage; remove the standalone production primitive.",
+            "status": "open",
+            "classification": "deeper",
+            "owner": "authentication-methods-owner",
+            "last_evidence": "strict completion 会调用 flow owner 的 V2 receipt consumer，但 flows.go:1533-1566 仍在 compatibility 下调用 methods.Service.RecordTestLogin； methods.go:2159-2248 保留该独立 method-side mutation，Enable:2107-2134 也保留 legacy TestLoginReceiptConsumer。可构造的 legacy path 仍允许绕开 sealed flow-owner proof。"
+          }
+        ]
+      }
+    ],
+    "blockers": [
+      {
+        "blocker_id": "BLK-0257cbb2c411",
+        "root_cause_key": "credential-use-not-bound-to-canonical-lease",
+        "obligation_id": "dimension:authority",
+        "summary": "Legacy-compatible construction still permits credential materialization outside a canonical Broker lease.",
+        "evidence": "methods.go:934-960 keeps Credentials and CredentialBroker optional; New at 1180-1207 accepts the legacy resolver when LegacyCompatibility=true; resolve at 2707-2817 calls bare PreAuthenticationCredentialResolver/CredentialResolver. This path is public-constructor reachable and is used by flows_test.go:359-425.",
+        "required_fix": "Remove legacy bare-capability construction from production. Require canonical Broker lease, exact authorization envelope, consume/release lifecycle and bound evidence for every materializing path, including pre-authentication; isolate any compatibility helper behind test-only composition that cannot satisfy production interfaces.",
+        "status": "open",
+        "classification": "deeper",
+        "owner": "authentication-methods-owner",
+        "first_seen_round": 1,
+        "last_seen_round": 5,
+        "seen_count": 5,
+        "last_evidence": "当前 head 仍保留 Dependencies.Credentials any 和 LegacyCompatibility fallback （methods.go:934-960、1180-1188），resolve 在 2707-2754 可调用 PreAuthenticationCredentialResolver/CredentialResolver；flows_test.go:373-393 仍以裸 resolver 装配。新增 canonical lease 校验没有移除 production-constructible bypass。"
+      },
+      {
+        "blocker_id": "BLK-172c4fe9e523",
+        "root_cause_key": "upstream-contracts-changed-in-authentication-methods-pr",
+        "obligation_id": "dimension:structure",
+        "summary": "The PR vendors upstream Authentication SDK and credential-wire contract changes outside this node.",
+        "evidence": "git diff e7ad9550b96edf799a6c6718a8359b1f0a5878c3..34abdef1664a48662d04c56ca760bd37b837f33f contains authentication-sdk/authentication.go, authentication-sdk/authentication_test.go, authentication-sdk/conformance.go, authentication-sdk/public_contract_test.go, authentication-sdk/validation_test.go and contracts/governance/credential/wire.go, while the node non_goals explicitly forbid defining or vendoring those contracts.",
+        "required_fix": "Move SDK and credential-wire changes to their prerequisite deliveries, rebase this PR onto the accepted published contracts, and rerun this node gate; otherwise obtain an explicit scope decision before accepting the combined change.",
+        "status": "open",
+        "classification": "unchanged",
+        "owner": "contract-publisher",
+        "first_seen_round": 2,
+        "last_seen_round": 5,
+        "seen_count": 4,
+        "last_evidence": "当前基线到 head 的 35 个变更文件中仍有 6 个越过 scope_paths： authentication-sdk/authentication.go、authentication-sdk/authentication_test.go、 authentication-sdk/conformance.go、authentication-sdk/public_contract_test.go、 authentication-sdk/validation_test.go 和 contracts/governance/credential/wire.go。 这些正是当前节点 non_goals 明确排除的上游契约文件，未见显式 scope decision。"
+      },
+      {
+        "blocker_id": "BLK-38f8db92eaf4",
+        "root_cause_key": "authentication-state-has-multiple-durable-owners",
+        "obligation_id": "dimension:structure",
+        "summary": "Owner identity/epoch markers do not establish one restart-safe transaction owner for all authentication state.",
+        "evidence": "Independent maps remain in methods.go:3614-3670, flows.go:1851-1916 and flows.go:1646-1724. Method commits and flow commits use different interfaces and locks; flow completion invokes the separate session store in flows.go:2711-2757. The reviewProductionOwner fixture only embeds independent in-memory stores and returns a constant epoch at hardening_review_production_test.go:20-40.",
+        "required_fix": "Require one real durable owner/transaction handle that owns method, lifecycle, identity CAS, session intent, receipt, audit, outbox and recovery records. Reject map-backed marker wrappers in production and prove process restart plus multi-instance fencing with that owner.",
+        "status": "open",
+        "classification": "deeper",
+        "owner": "governance-persistence-owner",
+        "first_seen_round": 1,
+        "last_seen_round": 5,
+        "seen_count": 5,
+        "last_evidence": "methods.go:3614-3670 的 method state、flows.go:1851-1916 的 flow/receipt/audit/outbox state、flows.go:1646-1724 的 session state 仍是独立内存 map；method commit 走 methods.go:4136-4143，flow commit 走 flows.go:2384-2397/2533-2547。新增 reviewProductionOwner 只在 hardening_review_production_test.go:20-40、298-321 组合这些 map 并提供 owner/epoch marker，没有 restart-safe shared transaction 或跨实例执行。"
+      },
+      {
+        "blocker_id": "BLK-598af57e94a0",
+        "root_cause_key": "configuration-policy-derived-from-driver",
+        "obligation_id": "dimension:authority",
+        "summary": "Driver declaration remains the effective configuration safety policy on an accepted compatibility composition.",
+        "evidence": "methods.go:3140-3163 correctly checks the host allowlist in strict mode, but configurationPolicyForMethod returns configurationPolicyForDeclaration at 3141-3143 when LegacyCompatibility is true. New rejects only RequireDurable+LegacyCompatibility at 1199-1201; LegacyCompatibility=true, RequireDurable=false remains constructible.",
+        "required_fix": "Make host-owned configuration policy mandatory for every production composition, reject the compatibility flag in production constructors, and never turn Driver classification into host approval.",
+        "status": "open",
+        "classification": "deeper",
+        "owner": "authentication-methods-owner",
+        "first_seen_round": 2,
+        "last_seen_round": 5,
+        "seen_count": 4,
+        "last_evidence": "strict 分支现在会校验 host allowlist（methods.go:3140-3163），且 New 拒绝 RequireDurable+LegacyCompatibility（1186-1201）；但 LegacyCompatibility=true 且 RequireDurable=false 仍被接受，并在 3141-3143 从 Driver declaration 推导配置 policy。 该 compatibility composition 仍可由公开 constructor 构造，不能作为生产安全边界。"
+      },
+      {
+        "blocker_id": "BLK-69b01031fd8a",
+        "root_cause_key": "credential-use-audit-not-bound-to-command",
+        "obligation_id": "dimension:evidence",
+        "summary": "Credential-use audit evidence is optional or legacy-unbound on an accepted path.",
+        "evidence": "prepareCredentialUseAuditBound at methods.go:2843-2898 makes strictAudit depend on LegacyCompatibility. The compatibility branch can use V1 audit and returns no evidence at 2855-2856 when the optional auditor is absent; methods/governance.go:194-220 preserves the LegacyProof exception.",
+        "required_fix": "Require V2 command-bound lease evidence and consume/release lineage for every Broker lease, persisted with the same durable owner transaction or a fail-closed recovery journal; remove optional and legacy production exceptions.",
+        "status": "open",
+        "classification": "deeper",
+        "owner": "governance-audit-owner",
+        "first_seen_round": 1,
+        "last_seen_round": 5,
+        "seen_count": 5,
+        "last_evidence": "strict mode 新增 CredentialUseAuditPortV2 校验，但 compatibility 路径在 methods.go:2843-2898 仍可使用 V1 auditor，且缺少 auditor 时 2855-2856 返回空 evidence； LegacyProof 例外仍在 methods/governance.go:194-220。故每个 lease 的 bound audit 并非所有可构造路径的硬要求。"
+      },
+      {
+        "blocker_id": "BLK-6a60e571b3c4",
+        "root_cause_key": "credential-binding-wire-shape-mismatch",
+        "obligation_id": "dimension:structure",
+        "summary": "Public credential_binding_ids wire shape is ambiguous and implementation does not match the documented list notation.",
+        "evidence": "api/auth/methods/methods.go:75-123 serializes credential_binding_ids as map[authentication.CredentialPurpose]string; its tests at api/auth/methods/methods_test.go:574-578 also treat it as a map. The authoritative governance/design/acceptance text uses credential_binding_ids[] (for example security-and-enterprise.md:59 and acceptance-and-validation.md:155), but no public JSON schema or wire test resolves whether clients must send an object map or an array of purpose/binding records.",
+        "required_fix": "Choose one public wire shape and define it in the API/contract schema. Either document and test the purpose-to-binding object map consistently, or expose an explicit array element type such as {purpose,binding_id} and normalize it internally; add marshal/unmarshal and client-facing contract tests before acceptance.",
+        "status": "open",
+        "classification": "new",
+        "owner": "api-contract-owner",
+        "first_seen_round": 5,
+        "last_seen_round": 5,
+        "seen_count": 1
+      },
+      {
+        "blocker_id": "BLK-72e115378b75",
+        "root_cause_key": "revocation-journal-does-not-prove-method-commit",
+        "obligation_id": "dimension:execution",
+        "summary": "Session revocation intent is not guaranteed to be atomically proven as part of the method mutation.",
+        "evidence": "Disable stages the intent before commit (methods.go:2297-2336). The commit only upgrades an existing entry (methods.go:4264-4270), CompletePendingMethodRevocation deletes a missing entry (3719-3723), and VerifyMethodRevocationCommit accepts both-empty legacy proof (4165-4184). Missing or lost journal evidence can therefore evade the intended fence on a compatibility composition.",
+        "required_fix": "Record and mark the pending intent in the same durable method transaction, or require a mandatory owner-issued verifier over reservation, command digest, expected/committed revision and fencing token. Missing intent/proof must fail closed in every accepted composition.",
+        "status": "open",
+        "classification": "deeper",
+        "owner": "governance-persistence-owner",
+        "first_seen_round": 1,
+        "last_seen_round": 5,
+        "seen_count": 5,
+        "last_evidence": "Disable 先在 methods.go:2367-2380 写独立 pending journal，再由 commitMethodMutationLocked:4264-4270 尝试标记 committed；pending 缺失时不报错。 CompletePendingMethodRevocation:3719-3723 对缺失 entry 直接 delete， VerifyMethodRevocationCommit:4172-4174 仍接受无 command proof 的 legacy intent。 新增字段检查未建立所有组合都必须满足的原子关系。"
+      },
+      {
+        "blocker_id": "BLK-7de9ed57f284",
+        "root_cause_key": "authentication-methods-gate-not-closed",
+        "obligation_id": "integration:authentication-methods-gate",
+        "summary": "The integration gate is mechanically green but its delivery goal remains unproven.",
+        "evidence": "The seven declared commands exited 0 and the five declared artifacts are present; however, the current component contains only in-memory stores and test/marker wrappers, with no restart-safe persistence or multi-instance execution proving the delivery_goal's external Driver, Broker, recovery and fencing requirements.",
+        "required_fix": "Resolve the authority, owner, audit, replay, identity, recovery and receipt blockers; add a real external public-SDK Driver/Broker and durable multi-instance failure/restart fixture; then regenerate all five artifacts from the fixed head and rerun the full gate.",
+        "status": "open",
+        "classification": "deeper",
+        "owner": "release-integrator",
+        "first_seen_round": 1,
+        "last_seen_round": 5,
+        "seen_count": 5,
+        "last_evidence": "本轮独立执行的七条 gate command 全部 exit_code=0、五个 artifact 均存在且 bundle digest 可复算；但 gate goal 所需的外部 Driver、canonical Broker、持久 owner、失败恢复 和 multi-instance fencing 仍只由 in-memory/marker fixture 表示，故机械绿不等于交付闭合。"
+      },
+      {
+        "blocker_id": "BLK-8a80e1c7b3a7",
+        "root_cause_key": "authenticated-context-not-bound-to-resolved-identity",
+        "obligation_id": "dimension:ownership",
+        "summary": "Exact Driver/link/Principal/scope/request lineage is enforced only on strict paths, not every accepted composition.",
+        "evidence": "Strict completion verifies AuthenticatedContextProof and AuthenticatedScopeProof at flows.go:1142-1168, but compatibility completion falls back to an ordinary resolver and optional scope validator at 1170-1187. The constructor still accepts a legacy composition, so a returned RequestContext is not universally owner-issued and exact-release bound.",
+        "required_fix": "Make owner-issued proof covering exact Driver release, method, link, Principal, subject, selected Scope, policy context and request lineage mandatory; bind the scope validator and reject compatibility fallback in production.",
+        "status": "open",
+        "classification": "deeper",
+        "owner": "identity-governance-owner",
+        "first_seen_round": 1,
+        "last_seen_round": 5,
+        "seen_count": 5,
+        "last_evidence": "strict completion 在 flows.go:1142-1168 增加 AuthenticatedContextProof 和 AuthenticatedScopeProof，属于有效收紧；但 compatibility fallback 在 1170-1187 仍可使用普通 context resolver，scope validator 仍可选。由于 legacy composition 未被 constructor 完全排除，返回 context 仍不是所有接受路径都由 exact Driver/owner proof 绑定。"
+      },
+      {
+        "blocker_id": "BLK-90863f4fdd5b",
+        "root_cause_key": "protected-method-read-has-legacy-bypass",
+        "obligation_id": "dimension:ownership",
+        "summary": "User-facing API reads are fixed, but the exported legacy internal read bypass remains production-constructible.",
+        "evidence": "api/auth/methods/methods.go:289-306 and 368-393 now require RequestContext and authorized reads. Nonetheless methods.Service.Get/Describe at methods.go:1717-1729 and 2579-2600 still allow no-context reads when LegacyCompatibility=true, and New permits that mode without RequireDurable. The compatibility bypass is therefore not isolated to tests.",
+        "required_fix": "Remove the legacy administrator read path from production construction. Require explicit RequestContext plus server-side authorization for protected Get/Describe, retaining only a separately authorized configuration-free public descriptor query.",
+        "status": "open",
+        "classification": "deeper",
+        "owner": "authentication-methods-owner",
+        "first_seen_round": 1,
+        "last_seen_round": 5,
+        "seen_count": 5,
+        "last_evidence": "API Get/Describe 当前已在 api/auth/methods/methods.go:289-306、368-393 强制从 RequestContext 进入 authorized path，直接修复了用户面旧 bypass；但内部 exported methods.Service.Get/Describe 在 methods.go:1717-1729、2579-2600 仍允许 LegacyCompatibility no-context helper，而 New 仍允许该 compatibility composition。 生产构造未被机械限制，因此原 ownership root 未完全关闭。"
+      },
+      {
+        "blocker_id": "BLK-99b9a105f0e2",
+        "root_cause_key": "hardening-tests-cover-legacy-in-memory-fixtures",
+        "obligation_id": "dimension:regression",
+        "summary": "Passing required names do not prove the production contract because their fixtures remain legacy and in-memory.",
+        "evidence": "methods_test.go:3284-3311 aliases several required names to older helper tests; flows_test.go:359-425 uses flowTestDriver, bare CredentialResolver, InMemory stores and LegacyCompatibility=true. hardening_review_production_test.go:324-469 checks interface/marker rejection but runs no process restart, replacement instance or durable multi-instance race.",
+        "required_fix": "Replace or supplement helpers with an external public-SDK Driver, canonical Broker, durable owner and injected restart/commit/session failures; assert replay, recovery, selected scope, redacted audit and multi-instance fencing against those real boundaries.",
+        "status": "open",
+        "classification": "deeper",
+        "owner": "test-evidence-owner",
+        "first_seen_round": 2,
+        "last_seen_round": 5,
+        "seen_count": 4,
+        "last_evidence": "required JSON assertion 独立确认 13 个指定根测试均 Action=pass，但 alias tests （methods_test.go:3284-3365）和 flow tests（flows_test.go:2561-2692）仍主要落在 legacy/in-memory fixture；hardening_review_production_test.go:324-469 的 owner test 只做 marker/interface rejection，未执行实际 restart、process replacement 或 concurrent multi-instance persistence。"
+      },
+      {
+        "blocker_id": "BLK-b83f2a1f0d96",
+        "root_cause_key": "authentication-recovery-does-not-enforce-original-fence",
+        "obligation_id": "dimension:execution",
+        "summary": "Recovery still has a legacy path and its original fence history is process-local.",
+        "evidence": "flows.go:1466-1492 retains legacy pending completion recovery through V1 AcquireFlowRecovery; methods.go:3833-3862 can reserve from current method state, while original history is only the InMemoryStore.flowLeaseHistory map at methods.go:3627 and 3904-3910. The strict V2 path does not supply a real persisted owner proof in this PR.",
+        "required_fix": "Reject legacy pending records for this delivery. Recovery must use a durable owner-issued reservation that verifies original reservation, owner/fence, method revision/digest, purpose, command identity and submission digest, and must be exercised after process restart.",
+        "status": "open",
+        "classification": "deeper",
+        "owner": "governance-persistence-owner",
+        "first_seen_round": 1,
+        "last_seen_round": 5,
+        "seen_count": 5,
+        "last_evidence": "strict recovery 已改为 AcquireFlowRecoveryFor（flows.go:1494-1522）并在 methods.go:3865-3888 查 original reservation；但 legacy pending branch flows.go:1466-1492 仍可调用 V1 AcquireFlowRecovery，且 original fence history 是 methods.go InMemoryStore.flowLeaseHistory map（3627、3904-3910）。V2 owner 方法也只 在内存 history 中核对 method/purpose/owner/fence/revision/digest，未提供真实持久化证明。"
+      },
+      {
+        "blocker_id": "BLK-fcedb5bcb0e2",
+        "root_cause_key": "test-login-proof-can-be-injected-outside-flow-owner",
+        "obligation_id": "dimension:ownership",
+        "summary": "A standalone method-side test-login mutation and legacy receipt consumer remain injectable.",
+        "evidence": "flows.go:1533-1566 calls methods.RecordTestLogin under compatibility; methods.go:2159-2248 exposes that mutation, and Enable:2107-2134 consumes TestLoginReceiptConsumer on the legacy branch. Only strict mode requires the V2 flow-owner proof, while legacy mode remains accepted.",
+        "required_fix": "Make the flow owner issue an opaque single-use receipt in the durable completion record and require V2 consumption bound to flow, purpose, method revision/digest, result digest, authorization and owner lineage; remove the standalone production primitive.",
+        "status": "open",
+        "classification": "deeper",
+        "owner": "authentication-methods-owner",
+        "first_seen_round": 1,
+        "last_seen_round": 5,
+        "seen_count": 5,
+        "last_evidence": "strict completion 会调用 flow owner 的 V2 receipt consumer，但 flows.go:1533-1566 仍在 compatibility 下调用 methods.Service.RecordTestLogin； methods.go:2159-2248 保留该独立 method-side mutation，Enable:2107-2134 也保留 legacy TestLoginReceiptConsumer。可构造的 legacy path 仍允许绕开 sealed flow-owner proof。"
+      }
+    ]
+  },
+  "review_ledger_ref": {
+    "comment_id": "01a05c66-3ce7-76db-82fe-55798481b05b",
+    "attachment_id": "01a05c66-3c65-7b44-86e6-bef11de09e9e",
+    "sha256": "9eae904820e8f07a092c1fa9f71cdba722a44f8154b6dd55efb7eec31db1d6c3",
+    "bytes": 103533,
+    "filename": "omac-review-ledger-9eae904820e8.yaml"
+  },
+  "review_generation": "amendment-46e5a4d16b763cd7c0dc2b3c",
+  "review_ledger_generation": "authoring-a2ed2299de9592fd94d65a9c",
+  "review_continuation": null,
+  "reviewer_run_baseline": null,
+  "worker_handoff": null,
+  "delivery_identity": null,
+  "decision_required": null,
+  "amendment_attempt": null,
+  "contract": {
+    "objective": "Deliver AuthenticationMethod configuration, probe/test/enable, single-use AuthenticationFlow, ExternalIdentityLink resolution, and exact Principal/session/scope convergence through an external public Authentication SDK Driver, consuming the concrete credential-store, identity-local, authorization, and audit-ledger owners through one durable fenced method-flow transaction or fail-closed recovery journal for terminal success and failure; expose credential_binding_ids as the single canonical JSON array of typed {purpose,binding_id} records and normalize it internally.",
+    "non_goals": [
+      "Do not change adjacent domain ownership or introduce a competing source of truth.",
+      "Do not bypass Authorization, Credential Broker, CAS, idempotency, review, audit, or evidence gates.",
+      "Do not define, vendor, or modify authentication-sdk/**, the AuthenticationDriver protocol, contracts/governance/credential/**, Principal, Session, or Audit contracts in this node; consume the exact merged upstream releases.",
+      "Do not issue credential capabilities locally, add a feature-local credential store, expose secret material, or contact the Broker on describe/read-only view paths.",
+      "Do not accept a production composition that omits the canonical credential, identity/session, Authorization, or Audit owner; LegacyCompatibility, a bare CredentialResolver, process-local or map-backed owner markers, V1/optional credential-use audit, V1 flow recovery, method-side RecordTestLogin, or any production constructor composition that can reach those paths.",
+      "Do not use separately injectable reference snapshots, lifecycle validation, session revocation, flow persistence, or audit writes where the contract requires one fenced durable commit or recoverable journal.",
+      "Do not let a Driver create Principal, Session, Scope, authorization decisions, permissions, or a host-private identity proof.",
+      "Do not expose credential_binding_ids as an object map or accept ambiguous, duplicate, missing-purpose, unknown-purpose, or empty-binding entries; the public JSON shape is an array of {purpose,binding_id} records normalized to the approved SDK boundary.",
+      "Do not accept a fresh-key completion of a consumed flow, a caller-authored test receipt, a session without selected scope, or terminal flow state without durable redacted evidence.",
+      "Do not claim completion from aliases, marker-only wrappers, in-memory adapters, or focused happy-path tests; the sealed delivery must execute an external SDK-only Driver and canonical Broker against a real durable owner with process restart, replacement instance, concurrent multi-instance fencing, failure injection, and negative evidence."
+    ],
+    "verification_commands": [
+      "mkdir -p artifacts/authentication-methods && go test -covermode=atomic -coverprofile=artifacts/authentication-methods/coverage.out ./internal/authentication/methods/... ./internal/authentication/flows/... ./api/auth/methods/...",
+      "mkdir -p artifacts/authentication-methods && go test -json ./internal/authentication/methods/... ./internal/authentication/flows/... ./api/auth/methods/... -run '^(TestCredentialUseRequiresCanonicalLeaseConsumeReleaseExpiryAndExactBoundary|TestIdentityReferenceCASRejectsConcurrentInsertionAcrossInstances|TestAuthenticationConfigurationRejectsSensitiveAndUnknownFields|TestFlowLifecycleCommitRecoversAcrossRestartAndDisable|TestTestLoginReceiptRequiresDurableFlowOwner|TestCommandReplayPrecedesMutableMethodState|TestExternalDriverUsesPublicIdentityProof|TestMissingOrAmbiguousIdentityProofRequiresNewMethod|TestConsumedFlowRejectsFreshIdempotencyKey|TestBrowserSessionPersistsSelectedScope|TestDisableRevocationConvergesAfterCommitFailure|TestTerminalFlowFailurePersistsAuditAndOutbox|TestLoginCompletionAuditsAuthenticatedContext|TestProductionAuthenticationCompositionRequiresCanonicalGovernanceOwners|TestProductionCompositionRejectsLegacyCompatibilityAndBareCredentialResolver|TestDurableAuthenticationOwnerSurvivesRestartAndFencesConcurrentInstances|TestAuthenticationCredentialBindingIDsJSONRoundTripAsArray|TestCredentialUseAuditRequiresCommandBoundV2Evidence|TestRevocationAndRecoveryFailClosedWithoutOwnerProof|TestFlowOwnerReceiptRejectsMethodSideInjection)$' -count=1 > artifacts/authentication-methods/hardening-tests.json",
+      "python3 -c \"import json; required={'TestCredentialUseRequiresCanonicalLeaseConsumeReleaseExpiryAndExactBoundary','TestIdentityReferenceCASRejectsConcurrentInsertionAcrossInstances','TestAuthenticationConfigurationRejectsSensitiveAndUnknownFields','TestFlowLifecycleCommitRecoversAcrossRestartAndDisable','TestTestLoginReceiptRequiresDurableFlowOwner','TestCommandReplayPrecedesMutableMethodState','TestExternalDriverUsesPublicIdentityProof','TestMissingOrAmbiguousIdentityProofRequiresNewMethod','TestConsumedFlowRejectsFreshIdempotencyKey','TestBrowserSessionPersistsSelectedScope','TestDisableRevocationConvergesAfterCommitFailure','TestTerminalFlowFailurePersistsAuditAndOutbox','TestLoginCompletionAuditsAuthenticatedContext','TestProductionAuthenticationCompositionRequiresCanonicalGovernanceOwners','TestProductionCompositionRejectsLegacyCompatibilityAndBareCredentialResolver','TestDurableAuthenticationOwnerSurvivesRestartAndFencesConcurrentInstances','TestAuthenticationCredentialBindingIDsJSONRoundTripAsArray','TestCredentialUseAuditRequiresCommandBoundV2Evidence','TestRevocationAndRecoveryFailClosedWithoutOwnerProof','TestFlowOwnerReceiptRejectsMethodSideInjection'}; rows=[json.loads(x) for x in open('artifacts/authentication-methods/hardening-tests.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing required passing tests: {sorted(required-passed)}'\"",
+      "CGO_ENABLED=1 go test -race -count=1 ./internal/authentication/methods/... ./internal/authentication/flows/... ./api/auth/methods/...",
+      "CGO_ENABLED=1 go vet ./internal/authentication/methods/... ./internal/authentication/flows/... ./api/auth/methods/...",
+      "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/authentication-methods/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+      "python3 -c \"import subprocess; base=subprocess.check_output(['git','merge-base','HEAD','origin/main'],text=True).strip(); paths=[p for p in subprocess.check_output(['git','diff','--name-only',base+'...HEAD'],text=True).splitlines() if p]; prefixes=('internal/authentication/methods/','internal/authentication/flows/','api/auth/methods/'); exact={'verification.yaml'}; bad=[p for p in paths if p not in exact and not p.startswith(prefixes)]; assert not bad, f'cross-owner paths remain: {bad}'\"",
+      "python3 scripts/release/package_component.py --component authentication-methods --kind platform-core-dependency-source --input internal/authentication/methods --input internal/authentication/flows --input api/auth/methods --bundle artifacts/authentication-methods/source-bundle.tar.zst --component-manifest artifacts/authentication-methods/component-manifest.json --digest-output artifacts/authentication-methods/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner authentication-methods --require-all-owner-sources-accounted"
+    ],
+    "integration_gates": [
+      {
+        "name": "authentication-methods-gate",
+        "layer": "L1",
+        "source_of_truth": [
+          "authentication-methods-amendment-decision.md:L3-L28",
+          "docs/design/detailed/09-governance-and-security-detailed-design.md:L48-L163",
+          "docs/design/detailed/09-governance-and-security-detailed-design.md:L408-L524",
+          "docs/design/detailed/10-web-api-cli-detailed-design.md:L202-L235",
+          "docs/design/detailed/10-web-api-cli-detailed-design.md:L1392-L1407",
+          "docs/references/governance/security-and-enterprise.md:L32-L183",
+          "docs/references/governance/security-and-enterprise.md:L402-L487",
+          "docs/delivery/acceptance-and-validation.md:L150-L168"
+        ],
+        "delivery_goal": "Prove one externally implementable AuthenticationDriver path from the canonical JSON-array credential-binding request and typed non-sensitive Method configuration through the concrete canonical Credential Broker, identity/session, Authorization, and Audit owners and fenced single-use flow completion to the exact Principal, selected-scope BrowserSession, authenticated RequestContext, and redacted terminal evidence, including fail-closed legacy exclusion, replay, disable, failure, process restart, replacement instance, and concurrent multi-instance recovery.",
+        "covers": [
+          "authentication-methods"
+        ],
+        "acceptance_refs": [
+          "UJ-AUTHENTICATION-METHOD-001"
+        ],
+        "commands": [
+          "mkdir -p artifacts/authentication-methods && go test -covermode=atomic -coverprofile=artifacts/authentication-methods/coverage.out ./internal/authentication/methods/... ./internal/authentication/flows/... ./api/auth/methods/...",
+          "mkdir -p artifacts/authentication-methods && go test -json ./internal/authentication/methods/... ./internal/authentication/flows/... ./api/auth/methods/... -run '^(TestCredentialUseRequiresCanonicalLeaseConsumeReleaseExpiryAndExactBoundary|TestIdentityReferenceCASRejectsConcurrentInsertionAcrossInstances|TestAuthenticationConfigurationRejectsSensitiveAndUnknownFields|TestFlowLifecycleCommitRecoversAcrossRestartAndDisable|TestTestLoginReceiptRequiresDurableFlowOwner|TestCommandReplayPrecedesMutableMethodState|TestExternalDriverUsesPublicIdentityProof|TestMissingOrAmbiguousIdentityProofRequiresNewMethod|TestConsumedFlowRejectsFreshIdempotencyKey|TestBrowserSessionPersistsSelectedScope|TestDisableRevocationConvergesAfterCommitFailure|TestTerminalFlowFailurePersistsAuditAndOutbox|TestLoginCompletionAuditsAuthenticatedContext|TestProductionAuthenticationCompositionRequiresCanonicalGovernanceOwners|TestProductionCompositionRejectsLegacyCompatibilityAndBareCredentialResolver|TestDurableAuthenticationOwnerSurvivesRestartAndFencesConcurrentInstances|TestAuthenticationCredentialBindingIDsJSONRoundTripAsArray|TestCredentialUseAuditRequiresCommandBoundV2Evidence|TestRevocationAndRecoveryFailClosedWithoutOwnerProof|TestFlowOwnerReceiptRejectsMethodSideInjection)$' -count=1 > artifacts/authentication-methods/hardening-tests.json",
+          "python3 -c \"import json; required={'TestCredentialUseRequiresCanonicalLeaseConsumeReleaseExpiryAndExactBoundary','TestIdentityReferenceCASRejectsConcurrentInsertionAcrossInstances','TestAuthenticationConfigurationRejectsSensitiveAndUnknownFields','TestFlowLifecycleCommitRecoversAcrossRestartAndDisable','TestTestLoginReceiptRequiresDurableFlowOwner','TestCommandReplayPrecedesMutableMethodState','TestExternalDriverUsesPublicIdentityProof','TestMissingOrAmbiguousIdentityProofRequiresNewMethod','TestConsumedFlowRejectsFreshIdempotencyKey','TestBrowserSessionPersistsSelectedScope','TestDisableRevocationConvergesAfterCommitFailure','TestTerminalFlowFailurePersistsAuditAndOutbox','TestLoginCompletionAuditsAuthenticatedContext','TestProductionAuthenticationCompositionRequiresCanonicalGovernanceOwners','TestProductionCompositionRejectsLegacyCompatibilityAndBareCredentialResolver','TestDurableAuthenticationOwnerSurvivesRestartAndFencesConcurrentInstances','TestAuthenticationCredentialBindingIDsJSONRoundTripAsArray','TestCredentialUseAuditRequiresCommandBoundV2Evidence','TestRevocationAndRecoveryFailClosedWithoutOwnerProof','TestFlowOwnerReceiptRejectsMethodSideInjection'}; rows=[json.loads(x) for x in open('artifacts/authentication-methods/hardening-tests.json') if x.strip()]; passed={x.get('Test') for x in rows if x.get('Action')=='pass' and x.get('Test') in required}; assert passed==required, f'missing required passing tests: {sorted(required-passed)}'\"",
+          "CGO_ENABLED=1 go test -race -count=1 ./internal/authentication/methods/... ./internal/authentication/flows/... ./api/auth/methods/...",
+          "CGO_ENABLED=1 go vet ./internal/authentication/methods/... ./internal/authentication/flows/... ./api/auth/methods/...",
+          "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/authentication-methods/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+          "python3 -c \"import subprocess; base=subprocess.check_output(['git','merge-base','HEAD','origin/main'],text=True).strip(); paths=[p for p in subprocess.check_output(['git','diff','--name-only',base+'...HEAD'],text=True).splitlines() if p]; prefixes=('internal/authentication/methods/','internal/authentication/flows/','api/auth/methods/'); exact={'verification.yaml'}; bad=[p for p in paths if p not in exact and not p.startswith(prefixes)]; assert not bad, f'cross-owner paths remain: {bad}'\"",
+          "python3 scripts/release/package_component.py --component authentication-methods --kind platform-core-dependency-source --input internal/authentication/methods --input internal/authentication/flows --input api/auth/methods --bundle artifacts/authentication-methods/source-bundle.tar.zst --component-manifest artifacts/authentication-methods/component-manifest.json --digest-output artifacts/authentication-methods/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner authentication-methods --require-all-owner-sources-accounted"
+        ],
+        "required_metrics": {
+          "statement_coverage_percent": 90,
+          "required_hardening_test_count": 20,
+          "declared_artifact_count": 5,
+          "cross_owner_changed_path_count": 0,
+          "legacy_production_composition_accept_count": 0,
+          "object_map_credential_binding_wire_accept_count": 0,
+          "process_local_owner_marker_accept_count": 0,
+          "unleased_credential_materialization_count": 0,
+          "sensitive_configuration_persistence_count": 0,
+          "fresh_key_consumed_flow_replay_accept_count": 0,
+          "session_without_selected_scope_count": 0,
+          "terminal_flow_without_evidence_count": 0,
+          "preauth_audit_after_identity_resolution_count": 0
+        },
+        "artifacts": [
+          "artifacts/authentication-methods/coverage.out",
+          "artifacts/authentication-methods/hardening-tests.json",
+          "artifacts/authentication-methods/source-bundle.tar.zst",
+          "artifacts/authentication-methods/bundle-digest.txt",
+          "artifacts/authentication-methods/component-manifest.json"
+        ]
+      }
+    ],
+    "pr_base": "main",
+    "acceptance_refs": [
+      "UJ-AUTHENTICATION-METHOD-001"
+    ],
+    "source_of_truth": [
+      "authentication-methods-amendment-decision.md:L3-L28",
+      "docs/design/open-agent-cluster-overview-design.md:L397-L405",
+      "docs/design/open-agent-cluster-overview-design.md:L677-L684",
+      "docs/design/detailed/09-governance-and-security-detailed-design.md:L11-L163",
+      "docs/design/detailed/09-governance-and-security-detailed-design.md:L408-L524",
+      "docs/design/detailed/09-governance-and-security-detailed-design.md:L553-L620",
+      "docs/design/detailed/10-web-api-cli-detailed-design.md:L202-L235",
+      "docs/design/detailed/10-web-api-cli-detailed-design.md:L1392-L1407",
+      "docs/references/governance/security-and-enterprise.md:L32-L183",
+      "docs/references/governance/security-and-enterprise.md:L402-L487",
+      "docs/references/extension/plugin-contracts.md",
+      "docs/delivery/acceptance-and-validation.md:L150-L168"
+    ],
+    "required_contracts": [
+      "authentication-sdk/authentication.go",
+      "contracts/governance/credential/wire.go",
+      "contracts/governance/authz/contract.go",
+      "contracts/governance/audit/audit.go",
+      "contracts/identity/requestcontext/request_context.go",
+      "contracts/identity/externalidentitylink/external_identity_link.go",
+      "contracts/identity/session/session.go",
+      "docs/references/governance/security-and-enterprise.md",
+      "docs/references/extension/plugin-contracts.md"
+    ],
+    "scope_paths": [
+      "internal/authentication/methods/**",
+      "internal/authentication/flows/**",
+      "api/auth/methods/**"
+    ]
+  },
+  "contract_ref": {
+    "comment_id": "01a103da-ac69-76e0-9c31-3a2fb5067e8e",
+    "attachment_id": "01a103da-ab3e-7b13-bfc0-0ddd6ffc90f1",
+    "sha256": "e45f34ed596d07f8063c0972f4fa08870a73b3ab408eeeb0f082a3a76350657a",
+    "bytes": 16112,
+    "filename": "omac-contract-e45f34ed596d.yaml"
+  },
+  "source_refs": [],
+  "kind": "TaskKind.DEVELOP",
+  "phase": "TaskPhase.AUTHORING",
+  "bounces": {
+    "worker": 0,
+    "ci": 0,
+    "review": 9,
+    "merge": 0
+  },
+  "bounce_baseline": {
+    "merge": 0,
+    "review": 9,
+    "worker": 0
+  },
+  "deliverable": null,
+  "deliverable_ref": null,
+  "project_rules": null,
+  "project_rules_ref": null,
+  "agent_run_finished_without_submit": false,
+  "agent_run_failed": false,
+  "created_at": "2026-08-26T02:04:19Z",
+  "updated_at": "2026-10-03T22:20:29Z",
+  "platform_assignee_id": null,
+  "unknown_persisted_fields": {},
+  "review_nits_acceptance": null
+}

@@ -1,0 +1,11 @@
+{
+  "at": "2026-10-09T07:41:17.910889+00:00",
+  "actual_native_Run": "01a11f7d-a4b4-77b1-99ae-4212cf3c1e8a",
+  "actual_issue": "01a11f7b-d5ac-73a8-972c-7939d1458ccf",
+  "source": "/home/ubuntu/multica_workspaces/guantik-ait-813dea2ff3e1/aiteam-1080-4212cf3c1e8a/workdir/credential-source-scope-gap.md",
+  "bytes": 7582,
+  "SHA256": "5b6c0ab94eb908245bc830dc3429713c1e8073ceff6cbe4b1ff06abb995465ee",
+  "discovered_by_readonly_exact_filename_inventory": true,
+  "read_copy_only": true,
+  "not_submitted_proposal_or_Reviewer_or_Product_verdict": true
+}

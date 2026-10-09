@@ -1,0 +1,47 @@
+{
+  "at": "2026-10-09T07:21:46.069675+00:00",
+  "rows": [
+    {
+      "kind": "report_ref",
+      "ref": {
+        "comment_id": "01a11ed0-7797-7d8c-83ad-b66e71f01be5",
+        "attachment_id": "01a11ed0-7732-782d-a67d-746ac5c48da8",
+        "sha256": "03b60b266b1d29a19d72981321108c5b69b282e109130aa15f123abb395872e3",
+        "bytes": 30573,
+        "filename": "omac-review-report-03b60b266b1d.yaml"
+      },
+      "native_primary_metadata": {
+        "attachment_id": "01a11ed0-7732-782d-a67d-746ac5c48da8",
+        "comment_id": "01a11ed0-7797-7d8c-83ad-b66e71f01be5",
+        "sha256": "03b60b266b1d29a19d72981321108c5b69b282e109130aa15f123abb395872e3",
+        "uploader_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+        "uploader_type": "agent",
+        "task_id": "01a11ec3-0afe-7a1b-836f-e17e4cbf1bc9",
+        "created_at": "2026-10-09T03:59:00Z"
+      },
+      "physical_full_body_SHA_size_match_original": true
+    },
+    {
+      "kind": "ledger_ref",
+      "ref": {
+        "comment_id": "01a11ed0-7ab0-79ab-821f-299f08af9540",
+        "attachment_id": "01a11ed0-7a4c-7d6e-92b1-a79d4329e2ef",
+        "sha256": "df834e42602fb86576ad4929e61327257d9201f1df01fa5a1d271842500dc002",
+        "bytes": 50534,
+        "filename": "omac-review-ledger-df834e42602f.yaml"
+      },
+      "native_primary_metadata": {
+        "attachment_id": "01a11ed0-7a4c-7d6e-92b1-a79d4329e2ef",
+        "comment_id": "01a11ed0-7ab0-79ab-821f-299f08af9540",
+        "sha256": "df834e42602fb86576ad4929e61327257d9201f1df01fa5a1d271842500dc002",
+        "uploader_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+        "uploader_type": "agent",
+        "task_id": "01a11ec3-0afe-7a1b-836f-e17e4cbf1bc9",
+        "created_at": "2026-10-09T03:59:01Z"
+      },
+      "physical_full_body_SHA_size_match_original": true
+    }
+  ],
+  "Root_Product_verdict": null,
+  "no_oldsubject_recomputation_or_control_effect": true
+}
