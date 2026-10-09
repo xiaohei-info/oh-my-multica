@@ -2077,6 +2077,9 @@ def _dispatch_reviewer_for_current_subject_locked(
 
 
 def _dispatch_worker_handoff(store, runtime, manifest, key, **kwargs):
+    from ..core.prospective_owner import reject_unallocated_dispatch
+
+    reject_unallocated_dispatch([key])
     # Same-host writers serialize; remote platform state still requires fresh reads.
     with store.worker_control_lock(manifest.nodes[key].work_item_id):
         kwargs["projection"] = store.observe_work_item_control(
@@ -4587,6 +4590,9 @@ def _dispatch(
     )
     slots = max(0, max_parallel - running_count)
     to_dispatch = ready[:slots]
+    from ..core.prospective_owner import reject_unallocated_dispatch
+
+    reject_unallocated_dispatch(to_dispatch)
 
     dispatched: List[str] = []
     manifest_changed = False

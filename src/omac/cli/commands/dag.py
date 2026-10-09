@@ -205,6 +205,9 @@ def register(parser):
     owner_prepare.add_argument("--report-file", required=True)
     owner_prepare.add_argument("--docs", action="append", required=True)
     owner_prepare.add_argument("--output-file", required=True)
+    owner_witness = owner_prepare.add_mutually_exclusive_group()
+    owner_witness.add_argument("--source-witness-file", help="Exact unresolved historical source preservation witness; no active-hold retirement")
+    owner_witness.add_argument("--prospective-source-file", help="Exact qualified assessment-only prospective declaration witness; grants no allocation/application")
     owner_resolve = amend_sub.add_parser("resolve-owner", help="Explicit exact coordinator resolution for assessment only")
     owner_resolve.add_argument("manifest")
     owner_resolve.add_argument("request_file")
@@ -617,7 +620,9 @@ def _amend_locked(args) -> int:
             result = prepare_owner_amendment(
                 engine, args.manifest, blocked_nodes=args.blocked_node,
                 allowed_nodes=args.allowed_node, report_file=args.report_file,
-                docs=args.docs, output_file=args.output_file)
+                docs=args.docs, output_file=args.output_file,
+                source_witness_file=args.source_witness_file,
+                prospective_source_file=args.prospective_source_file)
         else:
             result = resolve_owner_amendment(
                 engine, args.manifest, args.request_file,
